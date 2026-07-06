@@ -1,10 +1,12 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 
 import 'driver_navigation_formatters.dart';
 import 'driver_navigation_geometry.dart';
 import 'driver_navigation_models.dart';
+import 'nav_engine/nav_instruction_policy.dart';
 
 const double kDriverNavStepPassStraightLineMeters = 32.0;
 const double kDriverNavStepPassRouteBufferMeters = 18.0;
@@ -639,5 +641,175 @@ NavInstructionSnapshot applyDriverNavInstructionDisplayLines({
     isHighwayLike: snapshot.isHighwayLike,
     lanes: snapshot.lanes,
     source: snapshot.source,
+  );
+}
+
+/// True when Mapbox step type/modifier explicitly indicates a U-turn.
+bool driverNavManeuverExplicitlyIndicatesUturn(String type, String modifier) {
+  final t = type.trim().toLowerCase();
+  final m = modifier.trim().toLowerCase();
+  if (m.contains('uturn') || m.contains('u-turn')) return true;
+  if (t.contains('uturn') || t.contains('u-turn')) return true;
+  if (t == 'end of road' &&
+      (m.contains('uturn') ||
+          m.contains('u-turn') ||
+          m.contains('left') ||
+          m.contains('right') ||
+          m.isEmpty)) {
+    return true;
+  }
+  return false;
+}
+
+/// Text-only U-turn / turn-around detection for defensive filtering.
+bool driverNavInstructionTextLooksLikeUturn(String text) {
+  final lower = text.trim().toLowerCase();
+  if (lower.isEmpty) return false;
+  const markers = <String>[
+    'u-turn',
+    'uturn',
+    'u turn',
+    'turn around',
+    'turn-around',
+    'keer om',
+    'keer terug',
+    'omkeren',
+    'demi-tour',
+    'demi tour',
+    'faire demi-tour',
+    'giro en u',
+    'media vuelta',
+  ];
+  for (final marker in markers) {
+    if (lower.contains(marker)) return true;
+  }
+  return false;
+}
+
+/// NAV-R8 instruction policy filter — deterministic maneuver display safety.
+NavInstructionSnapshot applyDriverNavInstructionPolicyFilter({
+  required NavInstructionSnapshot snapshot,
+  required DriverNavInstructionPolicy policy,
+  required bool liveRideActive,
+  required bool trustRouteSnap,
+  required bool trustInstruction,
+  required bool offRouteLikely,
+  required bool forwardProgress,
+  required bool predictionActive,
+  double? routeConfidence,
+  double? instructionConfidenceScore,
+  double? speedKmh,
+  required DriverNavTranslate tr,
+}) {
+  if (!snapshot.hasInstruction) return snapshot;
+
+  final primary = snapshot.primaryText.trim();
+  final secondary = snapshot.secondaryText.trim();
+  final rawInstruction = primary.isNotEmpty ? primary : secondary;
+
+  final policyOutput = policy.update(
+    NavInstructionPolicyInput(
+      timestamp: DateTime.now(),
+      liveRideActive: liveRideActive,
+      rawInstructionText: rawInstruction,
+      maneuverType: snapshot.maneuverType,
+      maneuverModifier: snapshot.maneuverModifier,
+      distanceToManeuverM: snapshot.distanceToManeuverMeters,
+      routeConfidence: routeConfidence,
+      instructionConfidenceScore: instructionConfidenceScore,
+      trustInstruction: trustInstruction,
+      trustRouteSnap: trustRouteSnap,
+      offRouteLikely: offRouteLikely,
+      forwardProgress: forwardProgress,
+      predictionActive: predictionActive,
+      speedKmh: speedKmh,
+    ),
+  );
+
+  final displayText = navInstructionPolicyLocalizedText(
+    policy: policyOutput,
+    originalText: rawInstruction,
+    tr: tr,
+  );
+
+  if (kDebugMode) {
+    debugPrint(
+      '[NAV_R8_INSTRUCTION_POLICY] '
+      'original=${navInstructionPolicyLogSnippet(rawInstruction)} '
+      'displayed=${navInstructionPolicyLogSnippet(displayText)} '
+      'reason=${policyOutput.reason}',
+    );
+  }
+
+  if (policyOutput.showOriginalInstruction) {
+    return NavInstructionSnapshot(
+      distanceToManeuverMeters: snapshot.distanceToManeuverMeters,
+      primaryText: snapshot.primaryText,
+      secondaryText: snapshot.secondaryText,
+      subText: snapshot.subText,
+      maneuverType: snapshot.maneuverType,
+      maneuverModifier: snapshot.maneuverModifier,
+      roadName: snapshot.roadName,
+      exitNumber: snapshot.exitNumber,
+      destinationText: snapshot.destinationText,
+      roadRef: snapshot.roadRef,
+      isHighwayLike: snapshot.isHighwayLike,
+      lanes: const <DriverNavLaneGuidance>[],
+      source: snapshot.source,
+    );
+  }
+
+  return NavInstructionSnapshot(
+    distanceToManeuverMeters: snapshot.distanceToManeuverMeters,
+    primaryText: displayText,
+    secondaryText: '',
+    subText: snapshot.subText,
+    maneuverType: policyOutput.isNeutralFallback
+        ? 'continue'
+        : snapshot.maneuverType,
+    maneuverModifier: policyOutput.isNeutralFallback
+        ? 'straight'
+        : snapshot.maneuverModifier,
+    roadName: snapshot.roadName,
+    exitNumber: snapshot.exitNumber,
+    destinationText: snapshot.destinationText,
+    roadRef: snapshot.roadRef,
+    isHighwayLike: snapshot.isHighwayLike,
+    lanes: const <DriverNavLaneGuidance>[],
+    source: snapshot.source,
+  );
+}
+
+/// NAV-R1 backward-compatible wrapper — delegates to NAV-R8 policy.
+///
+/// [routeSnappedReliable] maps to R8 [trustRouteSnap].
+NavInstructionSnapshot applyDriverNavR1InstructionSafetyFilter({
+  required NavInstructionSnapshot snapshot,
+  required bool routeSnappedReliable,
+  double? routeProgressConfidence,
+  bool routeOffRouteLikely = false,
+  bool? trustInstruction,
+  double? instructionConfidenceScore,
+  required DriverNavTranslate tr,
+  DriverNavInstructionPolicy? policy,
+  bool liveRideActive = true,
+  bool forwardProgress = true,
+  bool predictionActive = false,
+  double? speedKmh,
+}) {
+  final engine = policy ?? DriverNavInstructionPolicy();
+  return applyDriverNavInstructionPolicyFilter(
+    snapshot: snapshot,
+    policy: engine,
+    liveRideActive: liveRideActive,
+    trustRouteSnap: routeSnappedReliable,
+    trustInstruction: trustInstruction ?? true,
+    offRouteLikely: routeOffRouteLikely,
+    forwardProgress: forwardProgress,
+    predictionActive: predictionActive,
+    routeConfidence: routeProgressConfidence,
+    instructionConfidenceScore: instructionConfidenceScore,
+    speedKmh: speedKmh,
+    tr: tr,
   );
 }

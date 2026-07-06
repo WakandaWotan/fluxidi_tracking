@@ -2297,6 +2297,7 @@ class AppConfig {
   final BusinessDefaultsConfig businessDefaults;
   final String workerBaseUrl;
   final String bookingBaseUrl;
+  final String navigationWorkerBaseUrl;
   final AppLanguage defaultLanguage;
   final List<AppOption> enabledServices;
   final List<AppOption> enabledTiers;
@@ -2310,6 +2311,7 @@ class AppConfig {
     required this.businessDefaults,
     required this.workerBaseUrl,
     required this.bookingBaseUrl,
+    required this.navigationWorkerBaseUrl,
     required this.defaultLanguage,
     required this.enabledServices,
     required this.enabledTiers,
@@ -2359,6 +2361,15 @@ const String kMapboxToken = String.fromEnvironment(
   'MAPBOX_TOKEN',
   defaultValue: '',
 );
+/// CLOUD-NAV-2: Navigation Worker route proxy (disabled by default).
+const bool kUseNavigationWorker = bool.fromEnvironment(
+  'USE_NAVIGATION_WORKER',
+  defaultValue: false,
+);
+const String kNavigationWorkerBaseUrlOverride = String.fromEnvironment(
+  'NAVIGATION_WORKER_BASE_URL',
+  defaultValue: '',
+);
 // Booking.com CJ affiliate/deeplink only — not Demand API, not native inventory, no iframe.
 // Pending until CJ approves the BENELUX program and BOOKING_COM_CJ_BASE_URL is configured.
 const String kBookingComCjBaseUrl = String.fromEnvironment(
@@ -2379,6 +2390,12 @@ String get kBookingBaseUrl {
   final v = kBookingBaseUrlOverride.trim();
   if (v.isNotEmpty) return v.endsWith('/') ? v.substring(0, v.length - 1) : v;
   return appConfig.bookingBaseUrl;
+}
+
+String get kNavigationWorkerBaseUrl {
+  final v = kNavigationWorkerBaseUrlOverride.trim();
+  if (v.isNotEmpty) return v.endsWith('/') ? v.substring(0, v.length - 1) : v;
+  return appConfig.navigationWorkerBaseUrl;
 }
 
 /// True when [raw] looks like a private/local filesystem or app asset reference.
@@ -9278,6 +9295,7 @@ const AppConfig appConfig = AppConfig(
   ),
   workerBaseUrl: 'https://fluxidi-tracking-api.fluxidi.workers.dev',
   bookingBaseUrl: 'https://fluxidi-booking-api.fluxidi.workers.dev',
+  navigationWorkerBaseUrl: 'https://fluxidi-navigation-api.fluxidi.workers.dev',
   defaultLanguage: AppLanguage.en,
   enabledServices: <AppOption>[
     AppOption(

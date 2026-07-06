@@ -1,0 +1,20 @@
+name = "fluxidi-navigation-api"
+main = "fluxidi_navigation_worker.js"
+compatibility_date = "2026-04-30"
+workers_dev = true
+preview_urls = false
+
+[observability.logs]
+enabled = true
+
+# Mapbox Directions token — set via Cloudflare secret, never commit values:
+#   wrangler secret put MAPBOX_ACCESS_TOKEN
+
+# Route session metadata (trip route summary only — no marker movement, no PII).
+[[durable_objects.bindings]]
+name = "ROUTE_SESSION"
+class_name = "RouteSessionDurableObject"
+
+[[migrations]]
+tag = "route-session-v1"
+new_sqlite_classes = ["RouteSessionDurableObject"]

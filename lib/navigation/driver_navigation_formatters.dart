@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'driver_navigation_map_config.dart';
 import 'driver_navigation_models.dart';
 
 typedef DriverNavTranslate =
@@ -356,6 +357,9 @@ String driverLaneSemanticLabel(
 List<DriverNavLaneGuidance> driverNavLanesForBannerDisplay(
   List<DriverNavLaneGuidance> lanes,
 ) {
+  // TODO(NAV Engine v2): Re-enable when [kDriverNavLaneGuidanceEnabled] is true
+  // and lane reliability is validated in live testing.
+  if (!kDriverNavLaneGuidanceEnabled) return const <DriverNavLaneGuidance>[];
   if (lanes.isEmpty) return const <DriverNavLaneGuidance>[];
   final out = <DriverNavLaneGuidance>[];
   for (final lane in lanes) {

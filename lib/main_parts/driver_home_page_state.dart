@@ -206,6 +206,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _followCar = false;
   _CameraMode _cameraMode = _CameraMode.overview;
   MapThemeMode? _mapThemeOverride;
+  DriverMapVisualMode _driverMapVisualMode = DriverMapVisualMode.street;
+  double _lastMapCameraZoom = kDriverMapInitialZoom;
   bool _navigationWakelockEnabled = false;
   bool _hasSwitchedToFollow = false;
   double _lastKnownBearing = 0.0;
@@ -250,6 +252,41 @@ class _DriverHomePageState extends State<DriverHomePage>
   final Map<String, Future<_RoutePreviewData?>> _nextRidePreviewCache =
       <String, Future<_RoutePreviewData?>>{};
   final Map<String, DateTime> _lastNavDebugAt = <String, DateTime>{};
+  final DriverNavEngine _driverNavEngine = DriverNavEngine();
+  NavEngineOutput? _lastNavEngineOutput;
+  String? _lastNavEngineRefreshKey;
+  // NAV-R3: smooth visual interpolation between engine target updates.
+  bool _navR3MotionActive = false;
+  double? _navR3VisualLat;
+  double? _navR3VisualLon;
+  double _navR3VisualBearing = 0.0;
+  double _navR3FromLat = 0.0;
+  double _navR3FromLon = 0.0;
+  double _navR3ToLat = 0.0;
+  double _navR3ToLon = 0.0;
+  double _navR3FromBearing = 0.0;
+  double _navR3ToBearing = 0.0;
+  DateTime? _navR3AnimStartedAt;
+  Duration _navR3AnimDuration = const Duration(milliseconds: 1000);
+  Timer? _navR3MotionTimer;
+  final DriverNavRouteProgress _driverNavRouteProgress = DriverNavRouteProgress();
+  NavRouteProgressOutput? _lastNavRouteProgress;
+  int? _navRouteProgressRouteFingerprint;
+  final DriverNavCameraPolicy _driverNavCameraPolicy = DriverNavCameraPolicy();
+  NavCameraPolicyOutput? _lastNavCameraPolicy;
+  final DriverNavConfidenceEngine _driverNavConfidenceEngine =
+      DriverNavConfidenceEngine();
+  NavConfidenceOutput? _lastNavConfidence;
+  final DriverNavMotionPrediction _driverNavMotionPrediction =
+      DriverNavMotionPrediction();
+  NavMotionPredictionOutput? _lastNavMotionPrediction;
+  final DriverNavInstructionPolicy _driverNavInstructionPolicy =
+      DriverNavInstructionPolicy();
+  final DriverNavValidationEngine _driverNavValidationEngine =
+      DriverNavValidationEngine();
+  DateTime? _lastNavValidationSampleAt;
+  bool _navValidationPendingCameraFollowed = false;
+  String? _navValidationPendingCameraSkipReason;
   bool _offRouteLikely = false;
   int _offRouteHitCount = 0;
   bool _isRerouting = false;
@@ -259,6 +296,12 @@ class _DriverHomePageState extends State<DriverHomePage>
   static const Duration _rerouteCooldown = Duration(seconds: 25);
   static const Duration _offRouteRerouteDebounce = Duration(seconds: 4);
   int _routeCleanupEpoch = 0;
+  NavigationWorkerOfflineCorridorMetadata? _lastOfflineCorridorMetadata;
+  bool _offlineCorridorMetadataLoading = false;
+  bool _offlineCorridorMetadataError = false;
+  String? _offlineCorridorMetadataFingerprint;
+  DateTime? _offlineCorridorMetadataFetchedAt;
+  int _offlineCorridorMetadataRequestId = 0;
   int _mapRedrawCountThisMinute = 0;
   int _routeRedrawCountThisMinute = 0;
   Timer? _renderDebugWindowTimer;
@@ -292,6 +335,361 @@ class _DriverHomePageState extends State<DriverHomePage>
     _isRerouting = false;
     _rerouteReason = null;
     _offRouteRerouteDebounceStartedAt = null;
+    _driverNavEngine.reset();
+    _lastNavEngineOutput = null;
+    _lastNavEngineRefreshKey = null;
+    _resetNavR3MotionState();
+    _resetNavRouteProgressState();
+    _resetNavCameraPolicyState();
+    _resetNavConfidenceState();
+    _resetNavMotionPredictionState();
+    _resetNavInstructionPolicyState();
+    if (clearRoute) {
+      _resetOfflineCorridorMetadataState();
+      _resetNavValidationState();
+    }
+  }
+
+  void _resetNavValidationState({bool flushReport = false}) {
+    if (flushReport) {
+      _flushNavValidationReport(reason: 'tracking_stop');
+      return;
+    }
+    _driverNavValidationEngine.reset();
+    _lastNavValidationSampleAt = null;
+    _navValidationPendingCameraFollowed = false;
+    _navValidationPendingCameraSkipReason = null;
+  }
+
+  void _flushNavValidationReport({required String reason}) {
+    final report = _driverNavValidationEngine.buildReport();
+    if (report.sampleCount > 0) {
+      debugPrint(
+        '[NAV_R10_REPORT] durationSec=${report.durationSec} '
+        'samples=${report.sampleCount} '
+        'score=${report.overallDriverOsScore.toStringAsFixed(1)} '
+        'gps=${report.avgGpsScore.toStringAsFixed(1)} '
+        'route=${report.avgRouteConfidence.toStringAsFixed(1)} '
+        'confidence=${report.avgOverallConfidence.toStringAsFixed(1)} '
+        'snapAvg=${report.avgSnapDistanceM.toStringAsFixed(1)} '
+        'predictionEvents=${report.predictionEvents} '
+        'offRouteEvents=${report.offRouteEvents} '
+        'cameraSkips=${report.cameraSkipEvents} '
+        'label=${report.summaryLabel.logLabel} '
+        'reason=$reason',
+      );
+    }
+    _driverNavValidationEngine.reset();
+    _lastNavValidationSampleAt = null;
+    _navValidationPendingCameraFollowed = false;
+    _navValidationPendingCameraSkipReason = null;
+  }
+
+  void _maybeAddNavValidationSample(geo.Position pos) {
+    if (!_isActiveDriverNavEngineContext()) return;
+
+    final now = DateTime.now();
+    final lastSampleAt = _lastNavValidationSampleAt;
+    if (lastSampleAt != null &&
+        now.difference(lastSampleAt).inMilliseconds < 1000) {
+      return;
+    }
+    _lastNavValidationSampleAt = now;
+
+    final progress = _lastNavRouteProgress;
+    final confidence = _lastNavConfidence;
+    final prediction = _lastNavMotionPrediction;
+    final engineOutput = _lastNavEngineOutput;
+
+    _driverNavValidationEngine.addSample(
+      NavValidationSample(
+        timestamp: now,
+        gpsAccuracyM:
+            pos.accuracy.isFinite && pos.accuracy > 0 ? pos.accuracy : null,
+        speedKmh: _speedKmhFor(pos),
+        routeConfidence: progress?.confidence,
+        snapDistanceM: progress?.snapDistanceM,
+        overallConfidence: confidence?.overallScore,
+        cameraScore: confidence?.cameraScore,
+        instructionScore: confidence?.instructionScore,
+        predictionActive: prediction?.predictionActive ?? false,
+        offRouteLikely:
+            progress?.offRouteLikely ?? _offRouteLikely,
+        markerAnimated:
+            _navR3MotionActive || (engineOutput?.shouldAnimateMarker ?? false),
+        cameraFollowed: _navValidationPendingCameraFollowed,
+        cameraSkippedReason: _navValidationPendingCameraSkipReason,
+      ),
+    );
+  }
+
+  void _resetOfflineCorridorMetadataState() {
+    _offlineCorridorMetadataRequestId++;
+    _lastOfflineCorridorMetadata = null;
+    _offlineCorridorMetadataLoading = false;
+    _offlineCorridorMetadataError = false;
+    _offlineCorridorMetadataFingerprint = null;
+    _offlineCorridorMetadataFetchedAt = null;
+  }
+
+  String _routeGeometryFingerprint() {
+    if (_routeCoords.length < 2) return '';
+    final first = _routeCoords.first;
+    final last = _routeCoords.last;
+    return '${_routeCoords.length}|'
+        '${first.lat.toStringAsFixed(3)}|${first.lon.toStringAsFixed(3)}|'
+        '${last.lat.toStringAsFixed(3)}|${last.lon.toStringAsFixed(3)}|'
+        '${(_routeKm ?? 0).toStringAsFixed(1)}';
+  }
+
+  Map<String, dynamic> _routeGeometryGeoJson() {
+    return <String, dynamic>{
+      'type': 'LineString',
+      'coordinates': _routeCoords
+          .map((coord) => <double>[coord.lon, coord.lat])
+          .toList(growable: false),
+    };
+  }
+
+  bool _hasOfflineCorridorNavContext() {
+    return _cameraMode == _CameraMode.follow || _liveRideActive;
+  }
+
+  void _logCloudNav3({
+    required String result,
+    required String reason,
+  }) {
+    _logNavBounded(
+      'CLOUD_NAV_3',
+      'endpoint=offline result=$result reason=$reason',
+      intervalMs: 2500,
+    );
+  }
+
+  String _formatCorridorByteRange(int minBytes, int maxBytes) {
+    String one(int bytes) {
+      if (bytes < 1024) return '$bytes B';
+      if (bytes < 1024 * 1024) {
+        return '${(bytes / 1024).toStringAsFixed(0)} KB';
+      }
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+
+    return '${one(minBytes)} - ${one(maxBytes)}';
+  }
+
+  Future<void> _maybeFetchOfflineCorridorMetadata({bool force = false}) async {
+    if (!kUseNavigationWorker) {
+      _logCloudNav3(result: 'disabled', reason: 'flag_off');
+      return;
+    }
+    if (_routeCoords.length < 2) {
+      _logCloudNav3(result: 'skipped', reason: 'no_route_geometry');
+      return;
+    }
+    if (!_hasOfflineCorridorNavContext() && !force) {
+      _logCloudNav3(result: 'skipped', reason: 'no_nav_context');
+      return;
+    }
+
+    final fingerprint = _routeGeometryFingerprint();
+    if (!force &&
+        fingerprint == _offlineCorridorMetadataFingerprint &&
+        _lastOfflineCorridorMetadata != null) {
+      _logCloudNav3(result: 'ready', reason: 'cached');
+      return;
+    }
+    if (_offlineCorridorMetadataLoading &&
+        fingerprint == _offlineCorridorMetadataFingerprint) {
+      return;
+    }
+
+    if (fingerprint != _offlineCorridorMetadataFingerprint) {
+      _lastOfflineCorridorMetadata = null;
+      _offlineCorridorMetadataError = false;
+      _offlineCorridorMetadataFetchedAt = null;
+    }
+
+    final requestId = ++_offlineCorridorMetadataRequestId;
+    if (mounted) {
+      setState(() {
+        _offlineCorridorMetadataLoading = true;
+        _offlineCorridorMetadataError = false;
+      });
+    } else {
+      _offlineCorridorMetadataLoading = true;
+      _offlineCorridorMetadataError = false;
+    }
+    _logCloudNav3(result: 'loading', reason: 'fetch_start');
+
+    try {
+      final client = DriverNavigationWorkerClient(
+        baseUrl: kNavigationWorkerBaseUrl,
+      );
+      final metadata = await client.offlineCorridorMetadata(
+        geometry: _routeGeometryGeoJson(),
+        country: _navigationWorkerCountryCode(),
+        routeId: _activeTripId?.trim(),
+      );
+      if (requestId != _offlineCorridorMetadataRequestId) return;
+      if (fingerprint != _routeGeometryFingerprint()) {
+        _logCloudNav3(result: 'skipped', reason: 'stale_geometry');
+        return;
+      }
+      if (metadata == null) {
+        if (mounted) {
+          setState(() {
+            _offlineCorridorMetadataLoading = false;
+            _offlineCorridorMetadataError = true;
+          });
+        } else {
+          _offlineCorridorMetadataLoading = false;
+          _offlineCorridorMetadataError = true;
+        }
+        _logCloudNav3(result: 'error', reason: 'worker_null');
+        return;
+      }
+      if (mounted) {
+        setState(() {
+          _lastOfflineCorridorMetadata = metadata;
+          _offlineCorridorMetadataFingerprint = fingerprint;
+          _offlineCorridorMetadataFetchedAt = DateTime.now();
+          _offlineCorridorMetadataLoading = false;
+          _offlineCorridorMetadataError = false;
+        });
+      } else {
+        _lastOfflineCorridorMetadata = metadata;
+        _offlineCorridorMetadataFingerprint = fingerprint;
+        _offlineCorridorMetadataFetchedAt = DateTime.now();
+        _offlineCorridorMetadataLoading = false;
+        _offlineCorridorMetadataError = false;
+      }
+      _logCloudNav3(result: 'ready', reason: metadata.supportedStatus);
+    } catch (_) {
+      if (requestId != _offlineCorridorMetadataRequestId) return;
+      if (mounted) {
+        setState(() {
+          _offlineCorridorMetadataLoading = false;
+          _offlineCorridorMetadataError = true;
+        });
+      } else {
+        _offlineCorridorMetadataLoading = false;
+        _offlineCorridorMetadataError = true;
+      }
+      _logCloudNav3(result: 'error', reason: 'fetch_failed');
+    }
+  }
+
+  Widget _buildNavOfflineCorridorPrepPanel({required Color navText}) {
+    final style = TextStyle(
+      color: navText.withOpacity(0.72),
+      fontSize: 10.5,
+      height: 1.25,
+    );
+
+    if (!kUseNavigationWorker) {
+      return Text(
+        _tr(
+          nl:
+              'Route-corridor voorbereiding beschikbaar zodra Navigation Core actief is.',
+          en:
+              'Route corridor preparation is available when Navigation Core is active.',
+          fr:
+              'La preparation du corridor de route sera disponible quand Navigation Core sera actif.',
+          es:
+              'La preparacion del corredor de ruta estara disponible cuando Navigation Core este activo.',
+        ),
+        textAlign: TextAlign.center,
+        style: style,
+      );
+    }
+
+    if (_offlineCorridorMetadataLoading) {
+      return Text(
+        _tr(
+          nl: 'Offline route-corridor wordt berekend…',
+          en: 'Preparing offline route corridor…',
+          fr: 'Preparation du corridor de route hors ligne…',
+          es: 'Preparando corredor de ruta sin conexion…',
+        ),
+        textAlign: TextAlign.center,
+        style: style,
+      );
+    }
+
+    if (_offlineCorridorMetadataError) {
+      return Text(
+        _tr(
+          nl:
+              'Offline corridor kon niet worden voorbereid. Lokale GPS/predictie blijft actief.',
+          en:
+              'Offline corridor could not be prepared. Local GPS/prediction remains active.',
+          fr:
+              'Le corridor hors ligne n\'a pas pu etre prepare. GPS/prediction locale reste actif.',
+          es:
+              'No se pudo preparar el corredor sin conexion. GPS/prediccion local sigue activo.',
+        ),
+        textAlign: TextAlign.center,
+        style: style,
+      );
+    }
+
+    final metadata = _lastOfflineCorridorMetadata;
+    if (metadata != null) {
+      final sizeRange = _formatCorridorByteRange(
+        metadata.estimatedSizeBytesMin,
+        metadata.estimatedSizeBytesMax,
+      );
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            _tr(
+              nl:
+                  'Corridor: ${metadata.estimatedTileCountMin}-${metadata.estimatedTileCountMax} tegels · '
+                  '$sizeRange · buffer ${metadata.corridorBufferMeters} m · '
+                  'zoom ${metadata.zoomMin}-${metadata.zoomMax} · ${metadata.supportedStatus}',
+              en:
+                  'Corridor: ${metadata.estimatedTileCountMin}-${metadata.estimatedTileCountMax} tiles · '
+                  '$sizeRange · buffer ${metadata.corridorBufferMeters} m · '
+                  'zoom ${metadata.zoomMin}-${metadata.zoomMax} · ${metadata.supportedStatus}',
+              fr:
+                  'Corridor: ${metadata.estimatedTileCountMin}-${metadata.estimatedTileCountMax} tuiles · '
+                  '$sizeRange · tampon ${metadata.corridorBufferMeters} m · '
+                  'zoom ${metadata.zoomMin}-${metadata.zoomMax} · ${metadata.supportedStatus}',
+              es:
+                  'Corredor: ${metadata.estimatedTileCountMin}-${metadata.estimatedTileCountMax} teselas · '
+                  '$sizeRange · buffer ${metadata.corridorBufferMeters} m · '
+                  'zoom ${metadata.zoomMin}-${metadata.zoomMax} · ${metadata.supportedStatus}',
+            ),
+            textAlign: TextAlign.center,
+            style: style,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _tr(
+              nl: 'Dit is voorbereiding, geen volledige offline navigatie.',
+              en: 'This is preparation, not full offline navigation.',
+              fr: 'Ceci est une preparation, pas une navigation hors ligne complete.',
+              es: 'Esto es preparacion, no navegacion sin conexion completa.',
+            ),
+            textAlign: TextAlign.center,
+            style: style.copyWith(fontSize: 10, fontStyle: FontStyle.italic),
+          ),
+        ],
+      );
+    }
+
+    return Text(
+      _tr(
+        nl: 'Offline route-corridor wordt berekend…',
+        en: 'Preparing offline route corridor…',
+        fr: 'Preparation du corridor de route hors ligne…',
+        es: 'Preparando corredor de ruta sin conexion…',
+      ),
+      textAlign: TextAlign.center,
+      style: style,
+    );
   }
 
   bool _isRouteTaskStillValid({
@@ -1466,6 +1864,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     _stopBookingPolling(reason: 'dispose');
     _renderDebugWindowTimer?.cancel();
     _renderDebugWindowTimer = null;
+    _resetNavR3MotionState();
+    _resetNavCameraPolicyState();
+    _resetNavConfidenceState();
+    _resetNavMotionPredictionState();
+    _resetNavInstructionPolicyState();
     _manualFromCtrl.dispose();
     _manualToCtrl.dispose();
     _directRideDestinationText = null;
@@ -5941,11 +6344,13 @@ class _DriverHomePageState extends State<DriverHomePage>
       await _syncVisibleRouteLineWithProgress(pos);
 
       if (_mapSupported && _map != null && _driverPointManager != null) {
+        _refreshNavEngineForPosition(pos);
         await _updateDriverMarker(pos);
         if (_cameraMode == _CameraMode.follow) {
           await _followCameraTesla(pos);
         }
       }
+      _maybeAddNavValidationSample(pos);
       final uiBearing = _adaptiveBearingFor(pos, snap: _lastRouteSnap).bearing;
       if (mounted && _cameraMode == _CameraMode.follow) {
         setState(() => _uiArrowBearing = uiBearing);
@@ -5964,6 +6369,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   void _stopTrackingInternal() {
     if (_posSub == null) return;
+    _resetNavValidationState(flushReport: true);
     _posSub?.cancel();
     _posSub = null;
     _activeGeolocatorSubscriptionCount = 0;
@@ -5975,6 +6381,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     _followCameraInFlight = false;
     _gpsQualityWeak = false;
     _lastSmoothedCameraBearing = null;
+    _driverNavEngine.reset();
+    _lastNavEngineOutput = null;
+    _lastNavEngineRefreshKey = null;
+    _resetNavR3MotionState();
+    _resetNavRouteProgressState();
+    _resetNavCameraPolicyState();
+    _resetNavConfidenceState();
+    _resetNavMotionPredictionState();
+    _resetNavInstructionPolicyState();
     if (!_liveRideActive) {
       _startBookingPolling(reason: 'tracking_stopped');
     }
@@ -6395,7 +6810,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   String _styleForTheme(MapThemeMode theme) {
-    return driverMapStyleForTheme(isLightTheme: theme == MapThemeMode.light);
+    return driverMapStyleForTheme(
+      isLightTheme: theme == MapThemeMode.light,
+      visualMode: _driverMapVisualMode,
+    );
   }
 
   String _styleForMode(_CameraMode mode) {
@@ -6411,6 +6829,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
     if (_activeMapStyleUri == target) {
       debugPrint('[MAP][STYLE_SKIP] reason=already_active target=$target');
+      await applyDriverMapVisualClarity(
+        style: _map!.style,
+        visualMode: _driverMapVisualMode,
+      );
       return;
     }
     if (_pendingMapStyleUri == target) {
@@ -6424,6 +6846,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       await _map!.style.setStyleURI(target);
       _activeMapStyleUri = target;
+      await applyDriverMapVisualClarity(
+        style: _map!.style,
+        visualMode: _driverMapVisualMode,
+      );
+      _logNavMapStyle(reason: 'style_applied');
       _mapRedrawCountThisMinute += 1;
       await _syncMapboxUserLocationPuckVisibility();
       await _recreateAnnotationManagers();
@@ -6459,6 +6886,130 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (!mounted) return;
     setState(() => _mapThemeOverride = theme);
     await _applyMapStyleForMode();
+  }
+
+  void _logNavMapStyle({required String reason}) {
+    _logNavBounded(
+      'NAV_MAPSTYLE',
+      'mode=${driverMapVisualModeLogLabel(_driverMapVisualMode)} reason=$reason',
+      intervalMs: reason == 'user_toggle' ? 1 : 2500,
+    );
+  }
+
+  ({
+    NavR9OfflineUiState state,
+    String reason,
+    bool showTunnelChip,
+    bool showGpsReacquireChip,
+  })
+  _navR9OfflineReadiness() {
+    final prediction = _lastNavMotionPrediction;
+    return NavR9OfflineReadiness.derive(
+      liveRideActive: _liveRideActive,
+      followNavActive: _cameraMode == _CameraMode.follow,
+      localRouteReady: _routeCoords.length >= 2,
+      predictionActive: prediction?.predictionActive ?? false,
+      predictionConfidence: prediction?.confidence,
+      weakGps: _isWeakGpsForPrediction(_lastPos),
+    );
+  }
+
+  void _logNavR9Offline({
+    required NavR9OfflineUiState state,
+    required String reason,
+  }) {
+    _logNavBounded(
+      'NAV_R9_OFFLINE',
+      'state=${NavR9OfflineReadiness.logStateLabel(state)} reason=$reason',
+      intervalMs: 2500,
+    );
+  }
+
+  Widget _buildNavR9DataOffStatusChip({
+    required bool showTunnelChip,
+    required bool showGpsReacquireChip,
+    required Color navText,
+    required Color navSurface,
+    required Color navAccent,
+  }) {
+    if (!showTunnelChip && !showGpsReacquireChip) {
+      return const SizedBox.shrink();
+    }
+    final label = showGpsReacquireChip
+        ? _tr(
+            nl: 'GPS wordt opnieuw gezocht',
+            en: 'Reacquiring GPS',
+            fr: 'Reacquisition GPS',
+            es: 'Readquiriendo GPS',
+          )
+        : _tr(
+            nl: 'Tunnel/offline begeleiding',
+            en: 'Tunnel/offline guidance',
+            fr: 'Guidage tunnel/hors ligne',
+            es: 'Guia tunel/sin conexion',
+          );
+    final icon = showGpsReacquireChip
+        ? Icons.gps_not_fixed_rounded
+        : Icons.wifi_off_rounded;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: navSurface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: navAccent.withOpacity(0.45)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: navAccent),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: navText.withOpacity(0.92),
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _toggleDriverMapVisualMode() async {
+    if (!kDriverMapSatelliteToggleEnabled || _map == null) return;
+    final next = _driverMapVisualMode == DriverMapVisualMode.street
+        ? DriverMapVisualMode.satellite
+        : DriverMapVisualMode.street;
+    if (mounted) {
+      setState(() => _driverMapVisualMode = next);
+    } else {
+      _driverMapVisualMode = next;
+    }
+    _logNavMapStyle(reason: 'user_toggle');
+    await _applyMapStyleForMode();
+  }
+
+  double _driverTaxiIconSizeForCurrentZoom() {
+    return driverTaxiMarkerIconSizeForZoom(_lastMapCameraZoom);
+  }
+
+  Future<void> _syncDriverMarkerIconSizeForZoom() async {
+    final mgr = _driverPointManager;
+    final marker = _driverMarker;
+    if (mgr == null || marker == null) return;
+    final size = _driverMarkerUsesTaxiAsset
+        ? _driverTaxiIconSizeForCurrentZoom()
+        : driverFallbackMarkerIconSizeForZoom(_lastMapCameraZoom);
+    final current = marker.iconSize ?? 0.0;
+    if ((current - size).abs() < 0.03) return;
+    marker.iconSize = size;
+    try {
+      await mgr.update(marker);
+    } catch (_) {}
   }
 
   mb.Point _mbPoint(double lon, double lat) =>
@@ -6511,11 +7062,35 @@ class _DriverHomePageState extends State<DriverHomePage>
     return 220;
   }
 
-  ({double zoom, double pitch}) _followCameraZoomPitchFor(geo.Position pos) {
+  ({double zoom, double pitch, String reason}) _followCameraZoomPitchFor(
+    geo.Position pos,
+  ) {
     final speedKmh = _speedKmhFor(pos);
-    if (speedKmh < 4) return (zoom: 18.0, pitch: 55.0);
-    if (speedKmh < 15) return (zoom: 18.5, pitch: 62.0);
-    return (zoom: 18.9, pitch: 68.0);
+    final distanceToManeuver =
+        _navInstructionSnapshot?.distanceToManeuverMeters ??
+        _nextNavDistanceM ??
+        double.infinity;
+    final nearManeuver = distanceToManeuver.isFinite &&
+        distanceToManeuver <= kDriverNavR1NearManeuverCameraDistanceM;
+
+    if (nearManeuver) {
+      if (speedKmh < 4) {
+        return (zoom: 17.4, pitch: 56.0, reason: 'near_maneuver');
+      }
+      if (speedKmh < 15) {
+        return (zoom: 17.8, pitch: 62.0, reason: 'near_maneuver');
+      }
+      return (zoom: 18.1, pitch: 66.0, reason: 'near_maneuver');
+    }
+
+    // NAV-R1: reduced default follow zoom (was ~18.0–18.9).
+    if (speedKmh < 4) {
+      return (zoom: 16.4, pitch: 50.0, reason: 'normal_follow');
+    }
+    if (speedKmh < 15) {
+      return (zoom: 16.9, pitch: 56.0, reason: 'normal_follow');
+    }
+    return (zoom: 17.2, pitch: 60.0, reason: 'normal_follow');
   }
 
   double _normalizeBearingDeg(double bearing) {
@@ -6524,7 +7099,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     return b;
   }
 
-  double _smoothFollowCameraBearing(double target, double speedKmh) {
+  double _smoothFollowCameraBearing(
+    double target,
+    double speedKmh, {
+    double bearingModeWeight = 1.0,
+  }) {
     final normalizedTarget = _normalizeBearingDeg(target);
     final prev = _lastSmoothedCameraBearing;
     if (prev == null || !prev.isFinite) {
@@ -6534,9 +7113,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     var delta = normalizedTarget - prev;
     while (delta > 180) delta -= 360;
     while (delta < -180) delta += 360;
-    final maxStep = speedKmh < 4
-        ? 3.5
-        : (speedKmh < 20 ? 14.0 : 28.0);
+    final weight = bearingModeWeight.clamp(0.0, 1.0);
+    final maxStep = (speedKmh < 4
+            ? 3.5
+            : (speedKmh < 20 ? 14.0 : 28.0)) *
+        weight;
+    if (maxStep <= 0.01) {
+      return prev;
+    }
     if (delta.abs() <= maxStep) {
       _lastSmoothedCameraBearing = normalizedTarget;
       return normalizedTarget;
@@ -6615,11 +7199,326 @@ class _DriverHomePageState extends State<DriverHomePage>
     return driverDistanceAlongRouteForCoords(routeCoords, point);
   }
 
+  void _resetNavRouteProgressState() {
+    _driverNavRouteProgress.reset();
+    _lastNavRouteProgress = null;
+    _navRouteProgressRouteFingerprint = null;
+  }
+
+  void _resetNavCameraPolicyState() {
+    _driverNavCameraPolicy.reset();
+    _lastNavCameraPolicy = null;
+  }
+
+  void _resetNavConfidenceState() {
+    _driverNavConfidenceEngine.reset();
+    _lastNavConfidence = null;
+  }
+
+  void _resetNavMotionPredictionState() {
+    _driverNavMotionPrediction.reset();
+    _lastNavMotionPrediction = null;
+  }
+
+  void _resetNavInstructionPolicyState() {
+    _driverNavInstructionPolicy.reset();
+  }
+
+  int _gapSinceLastNavEngineMs() {
+    final output = _lastNavEngineOutput;
+    if (output == null) return 0;
+    return DateTime.now()
+        .difference(output.timestamp)
+        .inMilliseconds
+        .clamp(0, 600000);
+  }
+
+  double? _navHeadingDeltaDegFor(geo.Position pos) {
+    final rawHeading =
+        pos.heading.isFinite && pos.heading >= 0 ? pos.heading : null;
+    if (rawHeading == null) return null;
+    final progress = _lastNavRouteProgress;
+    final routeBearing = _routeBearingFromProgress(progress) ??
+        _routeBearingAtSnap(_lastRouteSnap);
+    if (routeBearing == null || !routeBearing.isFinite) return null;
+    var delta = (rawHeading - routeBearing) % 360.0;
+    if (delta > 180.0) delta -= 360.0;
+    if (delta < -180.0) delta += 360.0;
+    return delta.abs();
+  }
+
+  NavConfidenceInput _buildNavConfidenceInput(geo.Position pos) {
+    final progress = _lastNavRouteProgress;
+    return NavConfidenceInput(
+      timestamp: pos.timestamp,
+      gpsAccuracyM: pos.accuracy.isFinite && pos.accuracy > 0
+          ? pos.accuracy
+          : null,
+      speedKmh: _speedKmhFor(pos),
+      routeConfidence: progress?.confidence,
+      snapDistanceM: progress?.snapDistanceM,
+      hasReliableSnap: progress?.hasReliableSnap ?? false,
+      offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
+      forwardProgress: progress?.forwardProgress ?? true,
+      headingDeltaDeg: _navHeadingDeltaDegFor(pos),
+      liveRideActive: _liveRideActive,
+    );
+  }
+
+  void _updateNavConfidenceForPosition(geo.Position pos) {
+    if (!_isActiveDriverNavEngineContext()) {
+      _lastNavConfidence = null;
+      return;
+    }
+    try {
+      final output = _driverNavConfidenceEngine.update(
+        _buildNavConfidenceInput(pos),
+      );
+      _lastNavConfidence = output;
+      _logNavBounded(
+        'NAV_R6_CONFIDENCE',
+        'overall=${output.overallScore.round()} '
+        'gps=${output.gpsScore.round()} '
+        'route=${output.routeScore.round()} '
+        'heading=${output.headingScore.round()} '
+        'motion=${output.motionScore.round()} '
+        'camera=${output.cameraScore.round()} '
+        'instruction=${output.instructionScore.round()} '
+        'trustSnap=${output.trustRouteSnap} '
+        'trustBearing=${output.trustBearing} '
+        'trustInstruction=${output.trustInstruction} '
+        'reason=${output.reason}',
+        intervalMs: 1500,
+      );
+    } catch (_) {
+      _lastNavConfidence = null;
+    }
+  }
+
+  NavCameraPolicyInput _buildNavCameraPolicyInput(
+    geo.Position pos, {
+    required bool manualRecenter,
+  }) {
+    final distanceToManeuver =
+        _navInstructionSnapshot?.distanceToManeuverMeters ??
+        _nextNavDistanceM;
+    final nearManeuver =
+        distanceToManeuver != null &&
+        distanceToManeuver.isFinite &&
+        distanceToManeuver <= kDriverNavR1NearManeuverCameraDistanceM;
+    final progress = _lastNavRouteProgress;
+    final confidence = _lastNavConfidence;
+    final activeNav = _isActiveDriverNavEngineContext();
+    final hasReliableSnap = activeNav && confidence != null
+        ? confidence.trustRouteSnap
+        : (progress?.hasReliableSnap ?? _useMatchedVisual);
+    return NavCameraPolicyInput(
+      timestamp: DateTime.now(),
+      liveRideActive: _liveRideActive,
+      cameraFollowMode: _cameraMode == _CameraMode.follow,
+      manualRecenter: manualRecenter,
+      speedKmh: _speedKmhFor(pos),
+      accuracyM: pos.accuracy.isFinite && pos.accuracy > 0
+          ? pos.accuracy
+          : null,
+      routeConfidence: progress?.confidence,
+      offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
+      distanceToManeuverM: distanceToManeuver,
+      nearManeuver: nearManeuver,
+      waitingMode: _isWaiting,
+      hasReliableSnap: hasReliableSnap,
+    );
+  }
+
+  ({
+    bool shouldFollow,
+    double zoom,
+    double tilt,
+    double bearingModeWeight,
+    String reason,
+  })
+  _resolveNavCameraPolicy(
+    geo.Position pos, {
+    required bool manualRecenter,
+  }) {
+    final input = _buildNavCameraPolicyInput(
+      pos,
+      manualRecenter: manualRecenter,
+    );
+    try {
+      final output = _driverNavCameraPolicy.update(input);
+      _lastNavCameraPolicy = output;
+      var shouldFollow = output.shouldFollow;
+      var zoom = output.zoom;
+      var tilt = output.tilt;
+      var bearingModeWeight = output.bearingModeWeight;
+      var reason = output.reason;
+      final confidence = _lastNavConfidence;
+      if (confidence != null && _isActiveDriverNavEngineContext()) {
+        if (!confidence.allowCameraAggression && !manualRecenter) {
+          zoom = (zoom - 0.35).clamp(14.5, 18.5);
+          tilt = (tilt - 2.0).clamp(44.0, 66.0);
+          bearingModeWeight = (bearingModeWeight *
+                  (confidence.trustBearing ? 0.65 : 0.35))
+              .clamp(0.1, 1.0);
+          reason = '${reason}_r6_cautious';
+        }
+        if (confidence.cameraScore < 45.0 && !manualRecenter) {
+          shouldFollow = false;
+          reason = 'r6_low_camera_confidence';
+        }
+      }
+      _logNavBounded(
+        'NAV_R5_CAMERA_POLICY',
+        'zoom=${zoom.toStringAsFixed(1)} '
+        'tilt=${tilt.toStringAsFixed(1)} '
+        'follow=$shouldFollow reason=$reason',
+        intervalMs: 2000,
+      );
+      return (
+        shouldFollow: shouldFollow,
+        zoom: zoom,
+        tilt: tilt,
+        bearingModeWeight: bearingModeWeight,
+        reason: reason,
+      );
+    } catch (_) {
+      final fallback = _followCameraZoomPitchFor(pos);
+      return (
+        shouldFollow: true,
+        zoom: fallback.zoom,
+        tilt: fallback.pitch,
+        bearingModeWeight: 1.0,
+        reason: fallback.reason,
+      );
+    }
+  }
+
+  int _navRouteProgressRouteFingerprintFor() {
+    if (_routeCoords.length < 2) return 0;
+    final first = _routeCoords.first;
+    final last = _routeCoords.last;
+    return Object.hash(
+      _routeCoords.length,
+      first.lat,
+      first.lon,
+      last.lat,
+      last.lon,
+    );
+  }
+
+  void _ensureNavRouteProgressRouteFresh() {
+    final fingerprint = _navRouteProgressRouteFingerprintFor();
+    if (fingerprint != _navRouteProgressRouteFingerprint) {
+      _navRouteProgressRouteFingerprint = fingerprint;
+      _driverNavRouteProgress.reset();
+      _lastNavRouteProgress = null;
+      _resetNavCameraPolicyState();
+      _resetNavConfidenceState();
+      _resetNavMotionPredictionState();
+      _resetNavInstructionPolicyState();
+    }
+  }
+
+  List<NavRoutePoint> _navRoutePointsFromCoords() {
+    return _routeCoords
+        .map(
+          (p) => NavRoutePoint(latitude: p.lat, longitude: p.lon),
+        )
+        .toList(growable: false);
+  }
+
+  NavRouteProgressOutput? _updateNavRouteProgressForPosition(geo.Position pos) {
+    if (!_isActiveDriverNavEngineContext()) {
+      return null;
+    }
+    if (_routeCoords.length < 2) {
+      return null;
+    }
+
+    _ensureNavRouteProgressRouteFresh();
+    try {
+      final output = _driverNavRouteProgress.update(
+        NavRouteProgressInput(
+          timestamp: pos.timestamp,
+          rawLatitude: pos.latitude,
+          rawLongitude: pos.longitude,
+          rawHeading: pos.heading.isFinite && pos.heading >= 0
+              ? pos.heading
+              : null,
+          speedKmh: _speedKmhFor(pos),
+          accuracyM: pos.accuracy.isFinite && pos.accuracy > 0
+              ? pos.accuracy
+              : null,
+          routePoints: _navRoutePointsFromCoords(),
+        ),
+      );
+      _lastNavRouteProgress = output;
+      _logNavBounded(
+        'NAV_R4_PROGRESS',
+        'segment=${output.segmentIndex ?? -1} '
+        'confidence=${output.confidence.round()} '
+        'snapDistM=${output.snapDistanceM.toStringAsFixed(1)} '
+        'forward=${output.forwardProgress} '
+        'offRoute=${output.offRouteLikely} '
+        'reason=${output.reason}',
+        intervalMs: 1500,
+      );
+      return output;
+    } catch (_) {
+      _lastNavRouteProgress = null;
+      return null;
+    }
+  }
+
+  _RouteSnap? _routeSnapFromProgressOrFallback(_LonLat rawPoint) {
+    final progress = _lastNavRouteProgress;
+    if (_isActiveDriverNavEngineContext() &&
+        progress != null &&
+        progress.snappedLatitude != null &&
+        progress.snappedLongitude != null &&
+        progress.segmentIndex != null) {
+      return DriverRouteSnap(
+        point: _LonLat(progress.snappedLongitude!, progress.snappedLatitude!),
+        distanceFromRouteM: progress.snapDistanceM,
+        distanceAlongRouteM: progress.distanceAlongRouteM ?? 0.0,
+        segmentIndex: progress.segmentIndex!,
+        segmentT: 0.0,
+      );
+    }
+    return _snapToRoute(rawPoint);
+  }
+
+  double? _routeBearingFromProgress(NavRouteProgressOutput? progress) {
+    if (progress == null ||
+        progress.segmentIndex == null ||
+        _routeCoords.length < 2) {
+      return null;
+    }
+    final i = progress.segmentIndex!.clamp(0, _routeCoords.length - 2);
+    final a = _routeCoords[i];
+    final b = _routeCoords[i + 1];
+    return driverBearingFromPoints(a.lat, a.lon, b.lat, b.lon);
+  }
+
+  bool _routeProgressMatchedVisual(NavRouteProgressOutput? progress) {
+    return progress != null &&
+        progress.hasReliableSnap &&
+        progress.forwardProgress &&
+        !progress.offRouteLikely;
+  }
+
   void _updateRouteSnapState(geo.Position pos) {
     final rawPoint = _LonLat(pos.longitude, pos.latitude);
-    final snap = _snapToRoute(rawPoint);
+    final progress = _updateNavRouteProgressForPosition(pos);
+    _updateNavConfidenceForPosition(pos);
+    final snap = _routeSnapFromProgressOrFallback(rawPoint);
     _lastRouteSnap = snap;
-    final bool canUseMatched = _canSnapToRoute(pos, snap);
+    final bool canUseMatched = _isActiveDriverNavEngineContext() &&
+            progress != null
+        ? _routeProgressMatchedVisual(progress) &&
+            (_lastNavConfidence?.trustRouteSnap ?? true)
+        : _canSnapToRoute(pos, snap);
     if (canUseMatched) {
       _matchEnterHits += 1;
       _matchExitHits = 0;
@@ -6639,7 +7538,17 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     final offRouteThreshold = math.max(70.0, _snapThresholdFor(pos) + 25.0);
     final snapDistance = snap?.distanceFromRouteM ?? double.infinity;
-    if (snapDistance > offRouteThreshold) {
+    if (_isActiveDriverNavEngineContext() && progress != null) {
+      if (progress.offRouteLikely) {
+        _offRouteHitCount += 1;
+      } else if (progress.hasReliableSnap) {
+        _offRouteHitCount = 0;
+      } else if (snapDistance > offRouteThreshold) {
+        _offRouteHitCount += 1;
+      } else {
+        _offRouteHitCount = 0;
+      }
+    } else if (snapDistance > offRouteThreshold) {
       _offRouteHitCount += 1;
     } else {
       _offRouteHitCount = 0;
@@ -6812,6 +7721,31 @@ class _DriverHomePageState extends State<DriverHomePage>
         _liveRideActive &&
         _routeCoords.length >= 2;
 
+    if (activeNav) {
+      final progress = _lastNavRouteProgress;
+      final confidence = _lastNavConfidence;
+      if (_routeProgressMatchedVisual(progress) &&
+          (confidence?.trustRouteSnap ?? true) &&
+          progress!.snappedLatitude != null &&
+          progress.snappedLongitude != null) {
+        return (
+          point: _LonLat(
+            progress.snappedLongitude!,
+            progress.snappedLatitude!,
+          ),
+          source: 'route_snap',
+          snapDistM: progress.snapDistanceM,
+        );
+      }
+      if (progress?.offRouteLikely == true) {
+        return (
+          point: raw,
+          source: 'raw',
+          snapDistM: progress?.snapDistanceM ?? snap?.distanceFromRouteM,
+        );
+      }
+    }
+
     if (!activeNav) {
       if (_useMatchedVisual && snap != null) {
         return (
@@ -6852,6 +7786,12 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   double? _effectiveRouteProgressM(geo.Position pos) {
+    final progress = _lastNavRouteProgress;
+    if (_isActiveDriverNavEngineContext() &&
+        _routeProgressMatchedVisual(progress) &&
+        progress?.distanceAlongRouteM != null) {
+      return progress!.distanceAlongRouteM;
+    }
     final snap =
         _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
     if (_useMatchedVisual && snap != null) return snap.distanceAlongRouteM;
@@ -6920,6 +7860,516 @@ class _DriverHomePageState extends State<DriverHomePage>
     return driverRouteBearingAtSnap(_routeCoords, snap);
   }
 
+  bool _isActiveDriverNavEngineContext() {
+    return _cameraMode == _CameraMode.follow &&
+        _liveRideActive &&
+        _routeCoords.length >= 2;
+  }
+
+  NavEngineInput _buildNavEngineInput(geo.Position pos, _RouteSnap? snap) {
+    final markerDisplay = _driverMarkerDisplayFor(pos);
+    final progress = _lastNavRouteProgress;
+    final confidence = _lastNavConfidence;
+    final activeNav = _isActiveDriverNavEngineContext();
+    final progressReliable = activeNav && progress != null
+        ? progress.hasReliableSnap
+        : markerDisplay.source == 'route_snap';
+    final hasReliableSnap = progressReliable &&
+        (!activeNav || confidence == null || confidence.trustRouteSnap);
+    final snappedLat = hasReliableSnap
+        ? (progress?.snappedLatitude ?? snap?.point.lat)
+        : null;
+    final snappedLon = hasReliableSnap
+        ? (progress?.snappedLongitude ?? snap?.point.lon)
+        : null;
+    final routeBearing =
+        _routeBearingFromProgress(progress) ?? _routeBearingAtSnap(snap);
+    return NavEngineInput(
+      timestamp: DateTime.now(),
+      rawLatitude: pos.latitude,
+      rawLongitude: pos.longitude,
+      snappedLatitude: snappedLat,
+      snappedLongitude: snappedLon,
+      hasReliableSnap: hasReliableSnap,
+      rawHeading: pos.heading.isFinite && pos.heading >= 0 ? pos.heading : null,
+      routeBearing: routeBearing,
+      speedKmh: _speedKmhFor(pos),
+      accuracyM: pos.accuracy.isFinite && pos.accuracy > 0
+          ? pos.accuracy
+          : null,
+      cameraFollowMode: _cameraMode == _CameraMode.follow,
+      liveRideActive: _liveRideActive,
+    );
+  }
+
+  String _navEngineRefreshKeyFor(geo.Position pos) {
+    return '${pos.timestamp.millisecondsSinceEpoch}|'
+        '${pos.latitude.toStringAsFixed(6)}|'
+        '${pos.longitude.toStringAsFixed(6)}';
+  }
+
+  void _refreshNavEngineForPosition(geo.Position pos) {
+    final key = _navEngineRefreshKeyFor(pos);
+    if (_lastNavEngineRefreshKey == key) return;
+    _lastNavEngineRefreshKey = key;
+
+    if (!_isActiveDriverNavEngineContext()) {
+      _driverNavEngine.reset();
+      _lastNavEngineOutput = null;
+      _resetNavR3MotionState();
+      _resetNavMotionPredictionState();
+      _lastNavConfidence = null;
+      return;
+    }
+
+    final snap =
+        _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
+    final priorOutput = _lastNavEngineOutput;
+    final fromVisual = _navR3CaptureVisual(priorOutput);
+    try {
+      final output = _driverNavEngine.update(_buildNavEngineInput(pos, snap));
+      _lastNavEngineOutput = output;
+      _applyNavEngineMotionTarget(
+        output,
+        fromVisual: fromVisual,
+        priorOutput: priorOutput,
+      );
+      final progress = _lastNavRouteProgress;
+      _driverNavMotionPrediction.noteEngineUpdate(
+        timestamp: output.timestamp,
+        displayLatitude: output.displayLatitude,
+        displayLongitude: output.displayLongitude,
+        bearing: output.bearing,
+        trustRouteSnap: _lastNavConfidence?.trustRouteSnap ??
+            progress?.hasReliableSnap ??
+            false,
+      );
+      _lastNavMotionPrediction = null;
+      _startNavMotionTimerIfNeeded();
+      _logNavBounded(
+        'NAV_ENGINE_OUT',
+        'source=${output.markerSource} animate=${output.shouldAnimateMarker} '
+        'bearing=${output.bearing.toStringAsFixed(1)} '
+        'speedKmh=${output.speedKmh?.toStringAsFixed(1) ?? 'na'} '
+        'accuracyM=${output.accuracyM?.toStringAsFixed(1) ?? 'na'} '
+        'cameraReason=${output.cameraReason}',
+        intervalMs: 2000,
+      );
+    } catch (_) {
+      _driverNavEngine.reset();
+      _lastNavEngineOutput = null;
+      _resetNavR3MotionState();
+    }
+  }
+
+  void _logNavR3Motion({
+    required String state,
+    required int durationMs,
+    required double progress,
+    required bool animate,
+  }) {
+    _logNavBounded(
+      'NAV_R3_MOTION',
+      'state=$state durationMs=$durationMs '
+      'progress=${progress.toStringAsFixed(2)} animate=$animate',
+      intervalMs: state == 'tick' ? 1200 : 1,
+    );
+  }
+
+  void _stopNavR3MotionTimer() {
+    _navR3MotionTimer?.cancel();
+    _navR3MotionTimer = null;
+  }
+
+  void _resetNavR3MotionState() {
+    _stopNavR3MotionTimer();
+    if (_navR3MotionActive || _navR3VisualLat != null) {
+      _logNavR3Motion(
+        state: 'reset',
+        durationMs: 0,
+        progress: 0.0,
+        animate: false,
+      );
+    }
+    _navR3MotionActive = false;
+    _navR3VisualLat = null;
+    _navR3VisualLon = null;
+    _navR3VisualBearing = 0.0;
+    _navR3AnimStartedAt = null;
+    _navR3AnimDuration = const Duration(milliseconds: 1000);
+    _lastNavMotionPrediction = null;
+  }
+
+  bool _isWeakGpsForPrediction(geo.Position? pos) {
+    if (pos == null) return true;
+    if (!_isGpsQualityAcceptableForCamera(pos)) return true;
+    final accuracy = pos.accuracy;
+    return accuracy.isFinite && accuracy > 28.0;
+  }
+
+  NavMotionPredictionInput _buildNavMotionPredictionInput() {
+    final output = _lastNavEngineOutput!;
+    final confidence = _lastNavConfidence;
+    final progress = _lastNavRouteProgress;
+    final pos = _lastPos;
+    final trustRouteSnap = confidence?.trustRouteSnap ?? false;
+    final trustBearing = confidence?.trustBearing ?? false;
+    return NavMotionPredictionInput(
+      timestamp: DateTime.now(),
+      lastDisplayLatitude: _navR3VisualLat ?? output.displayLatitude,
+      lastDisplayLongitude: _navR3VisualLon ?? output.displayLongitude,
+      lastReliableLatitude: trustRouteSnap
+          ? (progress?.snappedLatitude ?? output.displayLatitude)
+          : null,
+      lastReliableLongitude: trustRouteSnap
+          ? (progress?.snappedLongitude ?? output.displayLongitude)
+          : null,
+      bearing: _navR3VisualBearing,
+      speedKmh: output.speedKmh ?? (pos != null ? _speedKmhFor(pos) : null),
+      routeBearing: _routeBearingFromProgress(progress) ??
+          _routeBearingAtSnap(_lastRouteSnap),
+      trustRouteSnap: trustRouteSnap,
+      trustBearing: trustBearing,
+      offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
+      gpsAccuracyM: output.accuracyM ??
+          (pos != null && pos.accuracy.isFinite && pos.accuracy > 0
+              ? pos.accuracy
+              : null),
+      liveRideActive: _liveRideActive,
+      gapSinceLastEngineMs: _gapSinceLastNavEngineMs(),
+      weakGps: _isWeakGpsForPrediction(pos),
+    );
+  }
+
+  NavMotionPredictionOutput? _updateNavMotionPrediction() {
+    if (!_isActiveDriverNavEngineContext() || _lastNavEngineOutput == null) {
+      _lastNavMotionPrediction = null;
+      return null;
+    }
+    try {
+      final result = _driverNavMotionPrediction.update(
+        _buildNavMotionPredictionInput(),
+      );
+      _lastNavMotionPrediction = result;
+      _logNavBounded(
+        'NAV_R7_PREDICTION',
+        'active=${result.predictionActive} '
+        'durationMs=${_gapSinceLastNavEngineMs()} '
+        'confidence=${result.confidence.round()} '
+        'reason=${result.reason}',
+        intervalMs: 1200,
+      );
+      return result;
+    } catch (_) {
+      _lastNavMotionPrediction = null;
+      return null;
+    }
+  }
+
+  void _startNavMotionTimerIfNeeded() {
+    if (!_isActiveDriverNavEngineContext()) return;
+    if (_navR3MotionTimer != null) return;
+    _navR3MotionTimer = Timer.periodic(const Duration(milliseconds: 33), (_) {
+      _navR3MotionTick();
+    });
+  }
+
+  ({double lat, double lon, double bearing})? _navR3CaptureVisual(
+    NavEngineOutput? priorOutput,
+  ) {
+    if (_navR3VisualLat != null && _navR3VisualLon != null) {
+      return (
+        lat: _navR3VisualLat!,
+        lon: _navR3VisualLon!,
+        bearing: _navR3VisualBearing,
+      );
+    }
+    if (priorOutput != null) {
+      return (
+        lat: priorOutput.displayLatitude,
+        lon: priorOutput.displayLongitude,
+        bearing: priorOutput.bearing,
+      );
+    }
+    return null;
+  }
+
+  Duration _navR3DurationFor(
+    NavEngineOutput output,
+    NavEngineOutput? priorOutput,
+  ) {
+    var intervalMs = 1000;
+    if (priorOutput != null) {
+      intervalMs = output.timestamp
+          .difference(priorOutput.timestamp)
+          .inMilliseconds;
+    }
+    intervalMs = intervalMs.clamp(400, 4000);
+    final intervalT = (intervalMs - 400) / 3600.0;
+    var durationMs = (800 + intervalT * 400).round();
+    final speed = output.speedKmh ?? 0.0;
+    if (speed > 35) durationMs -= 80;
+    if (speed < 8) durationMs += 60;
+    return Duration(milliseconds: durationMs.clamp(800, 1200));
+  }
+
+  static double _shortestBearingDelta(double from, double to) {
+    var delta = (to - from) % 360.0;
+    if (delta > 180.0) delta -= 360.0;
+    if (delta < -180.0) delta += 360.0;
+    return delta;
+  }
+
+  static double _lerpBearingShortest(double from, double to, double t) {
+    final delta = _shortestBearingDelta(from, to);
+    var bearing = from + delta * t;
+    bearing %= 360.0;
+    if (bearing < 0) bearing += 360.0;
+    return bearing;
+  }
+
+  void _applyNavEngineMotionTarget(
+    NavEngineOutput output, {
+    required ({double lat, double lon, double bearing})? fromVisual,
+    required NavEngineOutput? priorOutput,
+  }) {
+    if (!_isActiveDriverNavEngineContext()) {
+      _resetNavR3MotionState();
+      return;
+    }
+
+    final toLat = output.displayLatitude;
+    final toLon = output.displayLongitude;
+    final speed = output.speedKmh ?? 0.0;
+    final fromLat = fromVisual?.lat ?? toLat;
+    final fromLon = fromVisual?.lon ?? toLon;
+    final fromBearing = fromVisual?.bearing ?? output.bearing;
+    final toBearing = speed < 3.0 ? fromBearing : output.bearing;
+
+    if (!output.shouldAnimateMarker) {
+      _navR3VisualLat = toLat;
+      _navR3VisualLon = toLon;
+      _navR3VisualBearing = toBearing;
+      _navR3MotionActive = false;
+      _navR3AnimStartedAt = null;
+      _stopNavR3MotionTimer();
+      _logNavR3Motion(
+        state: 'jump',
+        durationMs: 0,
+        progress: 1.0,
+        animate: false,
+      );
+      _startNavMotionTimerIfNeeded();
+      return;
+    }
+
+    _navR3FromLat = fromLat;
+    _navR3FromLon = fromLon;
+    _navR3ToLat = toLat;
+    _navR3ToLon = toLon;
+    _navR3FromBearing = fromBearing;
+    _navR3ToBearing = toBearing;
+    _navR3VisualLat = fromLat;
+    _navR3VisualLon = fromLon;
+    _navR3VisualBearing = fromBearing;
+    _navR3AnimStartedAt = DateTime.now();
+    _navR3AnimDuration = _navR3DurationFor(output, priorOutput);
+    _navR3MotionActive = true;
+    _logNavR3Motion(
+      state: 'start',
+      durationMs: _navR3AnimDuration.inMilliseconds,
+      progress: 0.0,
+      animate: true,
+    );
+    _startNavMotionTimerIfNeeded();
+  }
+
+  void _startNavR3MotionTimer() {
+    _startNavMotionTimerIfNeeded();
+  }
+
+  double _navR3MotionProgress() {
+    final startedAt = _navR3AnimStartedAt;
+    if (!_navR3MotionActive || startedAt == null) return 1.0;
+    final durationMs = _navR3AnimDuration.inMilliseconds;
+    if (durationMs <= 0) return 1.0;
+    final elapsedMs = DateTime.now().difference(startedAt).inMilliseconds;
+    return (elapsedMs / durationMs).clamp(0.0, 1.0);
+  }
+
+  ({double lat, double lon, double bearing}) _navR3InterpolatedVisual(
+    NavEngineOutput output,
+  ) {
+    if (!_navR3MotionActive) {
+      if (_navR3VisualLat != null && _navR3VisualLon != null) {
+        return (
+          lat: _navR3VisualLat!,
+          lon: _navR3VisualLon!,
+          bearing: _navR3VisualBearing,
+        );
+      }
+      return (
+        lat: output.displayLatitude,
+        lon: output.displayLongitude,
+        bearing: output.bearing,
+      );
+    }
+
+    final progress = _navR3MotionProgress();
+    final t = progress;
+    final lat = _navR3FromLat + (_navR3ToLat - _navR3FromLat) * t;
+    final lon = _navR3FromLon + (_navR3ToLon - _navR3FromLon) * t;
+    final speed = output.speedKmh ?? 0.0;
+    final bearing = speed < 3.0
+        ? _navR3FromBearing
+        : _lerpBearingShortest(_navR3FromBearing, _navR3ToBearing, t);
+    return (lat: lat, lon: lon, bearing: bearing);
+  }
+
+  void _navR3MotionTick() {
+    if (!mounted) {
+      _resetNavR3MotionState();
+      _resetNavMotionPredictionState();
+      return;
+    }
+    if (!_isActiveDriverNavEngineContext() ||
+        _map == null ||
+        _driverPointManager == null ||
+        _driverMarker == null) {
+      _resetNavR3MotionState();
+      _resetNavMotionPredictionState();
+      return;
+    }
+
+    final output = _lastNavEngineOutput;
+    if (output == null) {
+      _resetNavR3MotionState();
+      _resetNavMotionPredictionState();
+      return;
+    }
+
+    if (_navR3MotionActive) {
+      final progress = _navR3MotionProgress();
+      final visual = _navR3InterpolatedVisual(output);
+      _navR3VisualLat = visual.lat;
+      _navR3VisualLon = visual.lon;
+      _navR3VisualBearing = visual.bearing;
+      _logNavR3Motion(
+        state: 'tick',
+        durationMs: _navR3AnimDuration.inMilliseconds,
+        progress: progress,
+        animate: true,
+      );
+      unawaited(
+        _applyDriverMarkerVisualOnly(
+          visual.lat,
+          visual.lon,
+          visual.bearing,
+        ),
+      );
+      if (progress < 1.0) return;
+
+      _navR3VisualLat = _navR3ToLat;
+      _navR3VisualLon = _navR3ToLon;
+      _navR3VisualBearing = _navR3ToBearing;
+      _navR3MotionActive = false;
+      _navR3AnimStartedAt = null;
+    }
+
+    final prediction = _updateNavMotionPrediction();
+    if (prediction?.predictionActive == true) {
+      _navR3VisualLat = prediction!.predictedLatitude;
+      _navR3VisualLon = prediction.predictedLongitude;
+      _navR3VisualBearing = prediction.predictedBearing;
+      unawaited(
+        _applyDriverMarkerVisualOnly(
+          prediction.predictedLatitude,
+          prediction.predictedLongitude,
+          prediction.predictedBearing,
+        ),
+      );
+      return;
+    }
+
+    _lastNavMotionPrediction = null;
+    final gapMs = _gapSinceLastNavEngineMs();
+    final weakGps = _isWeakGpsForPrediction(_lastPos);
+    if (gapMs < 450 && !weakGps) {
+      _stopNavR3MotionTimer();
+    }
+  }
+
+  Future<void> _applyDriverMarkerVisualOnly(
+    double lat,
+    double lon,
+    double bearing,
+  ) async {
+    final mgr = _driverPointManager;
+    final marker = _driverMarker;
+    if (mgr == null || marker == null) return;
+    final p = _mbPoint(lon, lat);
+    marker.geometry = p;
+    marker.iconRotate = bearing;
+    try {
+      await mgr.update(marker);
+    } catch (_) {}
+  }
+
+  ({_LonLat point, double bearing}) _resolveNavVisualForLiveNav(
+    geo.Position pos,
+    _RouteSnap? snap, {
+    bool allowPrediction = true,
+  }) {
+    final output = _lastNavEngineOutput;
+    if (output != null && _isActiveDriverNavEngineContext()) {
+      if (_navR3MotionActive) {
+        final visual = _navR3InterpolatedVisual(output);
+        _navR3VisualLat = visual.lat;
+        _navR3VisualLon = visual.lon;
+        _navR3VisualBearing = visual.bearing;
+        return (
+          point: _LonLat(visual.lon, visual.lat),
+          bearing: visual.bearing,
+        );
+      }
+      final prediction = _lastNavMotionPrediction;
+      if (allowPrediction &&
+          prediction != null &&
+          prediction.predictionActive) {
+        _navR3VisualLat = prediction.predictedLatitude;
+        _navR3VisualLon = prediction.predictedLongitude;
+        _navR3VisualBearing = prediction.predictedBearing;
+        return (
+          point: _LonLat(
+            prediction.predictedLongitude,
+            prediction.predictedLatitude,
+          ),
+          bearing: prediction.predictedBearing,
+        );
+      }
+      final visual = _navR3InterpolatedVisual(output);
+      _navR3VisualLat = visual.lat;
+      _navR3VisualLon = visual.lon;
+      _navR3VisualBearing = visual.bearing;
+      return (
+        point: _LonLat(visual.lon, visual.lat),
+        bearing: visual.bearing,
+      );
+    }
+    final markerDisplay = _driverMarkerDisplayFor(pos);
+    return (
+      point: markerDisplay.point,
+      bearing: _markerBearingFor(pos, snap),
+    );
+  }
+
+  ({_LonLat point, double bearing}) _resolveNavVisualForMarker(
+    geo.Position pos,
+    _RouteSnap? snap,
+  ) {
+    return _resolveNavVisualForLiveNav(pos, snap);
+  }
+
   Future<bool> _ensureDriverTaxiMarkerBytes() async {
     if (_driverTaxiMarkerLoadAttempted) return _driverTaxiMarkerAvailable;
     _driverTaxiMarkerLoadAttempted = true;
@@ -6961,7 +8411,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             geometry: geometry,
             image: taxiBytes,
             iconAnchor: mb.IconAnchor.CENTER,
-            iconSize: kDriverTaxiMarkerIconSize,
+            iconSize: _driverTaxiIconSizeForCurrentZoom(),
             iconRotate: markerBearing,
           ),
         );
@@ -6982,7 +8432,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           geometry: geometry,
           iconImage: _driverMarkerIcon,
           iconColor: 0xFFFFD21F,
-          iconSize: 1.5,
+          iconSize: driverFallbackMarkerIconSizeForZoom(_lastMapCameraZoom),
           iconRotate: markerBearing,
         ),
       );
@@ -6993,7 +8443,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           geometry: geometry,
           iconImage: _driverMarkerIcon,
           iconColor: 0xFFFFD21F,
-          iconSize: 1.7,
+          iconSize: driverFallbackMarkerIconSizeForZoom(_lastMapCameraZoom),
           iconRotate: markerBearing,
         ),
       );
@@ -7009,14 +8459,17 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     final snap =
         _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
-    final markerDisplay = _driverMarkerDisplayFor(pos);
-    final displayPoint = markerDisplay.point;
-    final p = _mbPoint(displayPoint.lon, displayPoint.lat);
-    final markerBearing = _markerBearingFor(pos, snap);
-    _logNavBounded(
-      'NAV_MARKER',
-      'source=${markerDisplay.source} snapDistM=${markerDisplay.snapDistM?.round() ?? -1}',
-    );
+    _refreshNavEngineForPosition(pos);
+    final visual = _resolveNavVisualForMarker(pos, snap);
+    if (_lastNavEngineOutput == null) {
+      final markerDisplay = _driverMarkerDisplayFor(pos);
+      _logNavBounded(
+        'NAV_MARKER',
+        'source=${markerDisplay.source} snapDistM=${markerDisplay.snapDistM?.round() ?? -1}',
+      );
+    }
+    final p = _mbPoint(visual.point.lon, visual.point.lat);
+    final markerBearing = visual.bearing;
     final taxiReady = await _ensureDriverTaxiMarkerBytes();
     final wantsTaxi = taxiReady && _driverTaxiMarkerBytes != null;
 
@@ -7041,6 +8494,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       _driverMarker!.iconRotate = markerBearing;
       await mgr.update(_driverMarker!);
     }
+    await _syncDriverMarkerIconSizeForZoom();
     await _syncMapboxUserLocationPuckVisibility();
 
     if (moveCamera && _cameraMode != _CameraMode.follow) {
@@ -7054,9 +8508,32 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _followCameraTesla(
     geo.Position pos, {
     bool force = false,
+    String cameraReason = 'normal_follow',
   }) async {
+    _navValidationPendingCameraFollowed = false;
+    _navValidationPendingCameraSkipReason = null;
+
+    final manualRecenter =
+        force || cameraReason == 'manual_recenter';
+    final policy = _resolveNavCameraPolicy(
+      pos,
+      manualRecenter: manualRecenter,
+    );
+    if (!policy.shouldFollow && !manualRecenter) {
+      _navValidationPendingCameraSkipReason = policy.reason;
+      _logNavBounded(
+        'NAV_R5_CAMERA_POLICY',
+        'zoom=${policy.zoom.toStringAsFixed(1)} '
+        'tilt=${policy.tilt.toStringAsFixed(1)} '
+        'follow=false reason=${policy.reason}',
+        intervalMs: 2000,
+      );
+      return;
+    }
+
     if (!force && !_isGpsQualityAcceptableForCamera(pos)) {
       _gpsQualityWeak = true;
+      _navValidationPendingCameraSkipReason = 'gps_weak';
       final ageSec = _gpsFixAgeSec(pos);
       final acc = pos.accuracy.isFinite ? pos.accuracy : -1.0;
       _logNavBounded(
@@ -7073,28 +8550,54 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (!force &&
         last != null &&
         now.difference(last).inMilliseconds < throttleMs) {
+      _navValidationPendingCameraSkipReason = 'throttled';
       return;
     }
-    if (!force && _followCameraInFlight) return;
+    if (!force && _followCameraInFlight) {
+      _navValidationPendingCameraSkipReason = 'in_flight';
+      return;
+    }
     _lastFollowCameraAt = now;
     _followCameraInFlight = true;
     final snap =
         _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
-    final displayPoint = _displayRoutePointFor(pos);
-    final p = _mbPoint(displayPoint.lon, displayPoint.lat);
     final speedKmh = _speedKmhFor(pos);
-    final rawHeading = _adaptiveBearingFor(pos, snap: snap).bearing;
-    final heading = _smoothFollowCameraBearing(rawHeading, speedKmh);
-    final zoomPitch = _followCameraZoomPitchFor(pos);
+    final visual = _isActiveDriverNavEngineContext() &&
+            _lastNavEngineOutput != null
+        ? _resolveNavVisualForLiveNav(
+            pos,
+            snap,
+            allowPrediction:
+                (_lastNavConfidence?.cameraScore ?? 0.0) >= 45.0 &&
+                !(_lastNavRouteProgress?.offRouteLikely ?? _offRouteLikely),
+          )
+        : (
+            point: _displayRoutePointFor(pos),
+            bearing: _adaptiveBearingFor(pos, snap: snap).bearing,
+          );
+    final heading = _smoothFollowCameraBearing(
+      visual.bearing,
+      speedKmh,
+      bearingModeWeight: policy.bearingModeWeight,
+    );
+    final p = _mbPoint(visual.point.lon, visual.point.lat);
+    final resolvedReason = manualRecenter ? 'manual_recenter' : policy.reason;
+    _lastMapCameraZoom = policy.zoom;
+    unawaited(_syncDriverMarkerIconSizeForZoom());
+    _logNavBounded(
+      'NAV_R1_CAMERA',
+      'zoom=${policy.zoom.toStringAsFixed(1)} reason=$resolvedReason',
+      intervalMs: 2500,
+    );
     final animMs = force ? 220 : _followCameraAnimMsFor(pos);
 
     try {
       await _map?.flyTo(
         mb.CameraOptions(
           center: p,
-          zoom: zoomPitch.zoom,
+          zoom: policy.zoom,
           bearing: heading,
-          pitch: zoomPitch.pitch,
+          pitch: policy.tilt,
           padding: mb.MbxEdgeInsets(
             top:
                 MediaQuery.of(context).padding.top +
@@ -7112,6 +8615,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         ),
         mb.MapAnimationOptions(duration: animMs),
       );
+      _navValidationPendingCameraFollowed = true;
+      _navValidationPendingCameraSkipReason = null;
     } finally {
       _followCameraInFlight = false;
     }
@@ -7438,6 +8943,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     _updateRouteSnapState(pos);
     await _syncVisibleRouteLineWithProgress(pos);
+    _refreshNavEngineForPosition(pos);
     await _followCameraTesla(pos, force: true);
   }
 
@@ -7676,13 +9182,17 @@ class _DriverHomePageState extends State<DriverHomePage>
       _updateRouteSnapState(pos);
       await _syncVisibleRouteLineWithProgress(pos);
       await _syncMapboxUserLocationPuckVisibility();
-      await _followCameraTesla(pos, force: true);
+      await _followCameraTesla(pos, force: true, cameraReason: 'manual_recenter');
       debugPrint('[GPS][RECENTER][FOLLOW_RESTORED]');
       return;
     }
 
     if (_cameraMode == _CameraMode.follow) {
-      await _followCameraTesla(pos, force: true);
+      await _followCameraTesla(
+        pos,
+        force: true,
+        cameraReason: 'manual_recenter',
+      );
       return;
     }
 
@@ -7819,14 +9329,24 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  Widget _buildExternalNavButtons({bool inlineLandscape = false}) {
-    if (_resolveExternalNavTarget() == null) return const SizedBox.shrink();
+  Widget _buildNavQuickActionButtons({bool inlineLandscape = false}) {
+    final hasExternal = _resolveExternalNavTarget() != null;
+    final showNavMapTools =
+        _cameraMode == _CameraMode.follow || _routeCoords.length >= 2;
+    final showMapStyleToggle =
+        kDriverMapSatelliteToggleEnabled && showNavMapTools;
+    final showOffline = showNavMapTools;
+    if (!hasExternal && !showOffline && !showMapStyleToggle) {
+      return const SizedBox.shrink();
+    }
+
     final isTablet = MediaQuery.of(context).size.width >= 600;
     final isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
+    final inFollowNav = _cameraMode == _CameraMode.follow;
     final chipHeight = isLandscape
         ? (isTablet ? 44.0 : 40.0)
-        : (isTablet ? 48.0 : 44.0);
+        : (isTablet ? 48.0 : (inFollowNav ? 46.0 : 44.0));
     final isMidnightBlue =
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
@@ -7840,52 +9360,188 @@ class _DriverHomePageState extends State<DriverHomePage>
     final navSurface = isMidnightBlue
         ? const Color(0xCC07111F)
         : (isMiddayGold ? const Color(0xCC2C2113) : const Color(0xCC0B1326));
+
+    final r9 = _navR9OfflineReadiness();
+    _logNavR9Offline(state: r9.state, reason: r9.reason);
+    if (inFollowNav && showOffline && kUseNavigationWorker && _routeCoords.length >= 2) {
+      unawaited(_maybeFetchOfflineCorridorMetadata());
+    }
+
+    final chips = <Widget>[];
+    if (showMapStyleToggle) {
+      final isSatellite = _driverMapVisualMode == DriverMapVisualMode.satellite;
+      chips.add(
+        _buildExternalNavChip(
+          height: chipHeight,
+          icon: isSatellite ? Icons.map_outlined : Icons.satellite_alt_outlined,
+          label: isSatellite
+              ? _tr(
+                  nl: 'Kaart',
+                  en: 'Map',
+                  fr: 'Carte',
+                  es: 'Mapa',
+                )
+              : _tr(
+                  nl: 'Satelliet',
+                  en: 'Satellite',
+                  fr: 'Satellite',
+                  es: 'Satélite',
+                ),
+          tooltip: isSatellite
+              ? _tr(
+                  nl: 'Terug naar kaartweergave',
+                  en: 'Back to map view',
+                  fr: 'Retour à la carte',
+                  es: 'Volver al mapa',
+                )
+              : _tr(
+                  nl: 'Satellietweergave',
+                  en: 'Satellite view',
+                  fr: 'Vue satellite',
+                  es: 'Vista satélite',
+                ),
+          onPressed: _toggleDriverMapVisualMode,
+          navAccent: navAccent,
+          navText: navText,
+          navSurface: navSurface,
+        ),
+      );
+    }
+    if (showOffline) {
+      if (chips.isNotEmpty) chips.add(const SizedBox(width: 8));
+      chips.add(
+        _buildExternalNavChip(
+          height: chipHeight,
+          icon: Icons.wifi_off_rounded,
+          label: _tr(
+            nl: 'Offline kaarten',
+            en: 'Offline maps',
+            fr: 'Cartes hors ligne',
+            es: 'Mapas sin conexión',
+          ),
+          tooltip: _tr(
+            nl:
+                'Offline kaarten — basistegels (voorbereiding Driver OS, geen volledige offline navigatie)',
+            en:
+                'Offline maps — basemap tiles (Driver OS preparation, not full offline navigation)',
+            fr:
+                'Cartes hors ligne — tuiles (preparation Driver OS)',
+            es:
+                'Mapas sin conexion — teselas (preparacion Driver OS)',
+          ),
+          onPressed: _openOfflineMaps,
+          navAccent: navAccent,
+          navText: navText,
+          navSurface: navSurface,
+        ),
+      );
+    }
+    if (hasExternal) {
+      if (chips.isNotEmpty) chips.add(const SizedBox(width: 8));
+      chips.add(
+        _buildExternalNavChip(
+          height: chipHeight,
+          icon: Icons.map,
+          label: _tr(
+            nl: 'Google',
+            en: 'Google',
+            fr: 'Google',
+            es: 'Google',
+          ),
+          tooltip: _tr(
+            nl: 'Openen in Google Maps',
+            en: 'Open in Google Maps',
+            fr: 'Ouvrir dans Google Maps',
+            es: 'Abrir en Google Maps',
+          ),
+          onPressed: _openInGoogleMaps,
+          navAccent: navAccent,
+          navText: navText,
+          navSurface: navSurface,
+        ),
+      );
+      chips.add(const SizedBox(width: 8));
+      chips.add(
+        _buildExternalNavChip(
+          height: chipHeight,
+          icon: Icons.alt_route,
+          label: _tr(
+            nl: 'Waze',
+            en: 'Waze',
+            fr: 'Waze',
+            es: 'Waze',
+          ),
+          tooltip: _tr(
+            nl: 'Openen in Waze',
+            en: 'Open in Waze',
+            fr: 'Ouvrir dans Waze',
+            es: 'Abrir en Waze',
+          ),
+          onPressed: _openInWaze,
+          navAccent: navAccent,
+          navText: navText,
+          navSurface: navSurface,
+        ),
+      );
+    }
+
     return Padding(
       padding: EdgeInsets.only(top: inlineLandscape ? 0 : 6),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
+      child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _buildExternalNavChip(
-            height: chipHeight,
-            icon: Icons.map,
-            label: _tr(
-              nl: 'Google',
-              en: 'Google',
-              fr: 'Google',
-              es: 'Google',
+          if (inFollowNav)
+            _buildNavR9DataOffStatusChip(
+              showTunnelChip: r9.showTunnelChip,
+              showGpsReacquireChip: r9.showGpsReacquireChip,
+              navText: navText,
+              navSurface: navSurface,
+              navAccent: navAccent,
             ),
-            tooltip: _tr(
-              nl: 'Openen in Google Maps',
-              en: 'Open in Google Maps',
-              fr: 'Ouvrir dans Google Maps',
-              es: 'Abrir en Google Maps',
+          if (inFollowNav && showOffline)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: _buildNavOfflineCorridorPrepPanel(navText: navText),
             ),
-            onPressed: _openInGoogleMaps,
-            navAccent: navAccent,
-            navText: navText,
-            navSurface: navSurface,
-          ),
-          const SizedBox(width: 8),
-          _buildExternalNavChip(
-            height: chipHeight,
-            icon: Icons.alt_route,
-            label: _tr(
-              nl: 'Waze',
-              en: 'Waze',
-              fr: 'Waze',
-              es: 'Waze',
+          if (inFollowNav && hasExternal)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                _tr(
+                  nl: 'Externe navigatie',
+                  en: 'External navigation',
+                  fr: 'Navigation externe',
+                  es: 'Navegación externa',
+                ),
+                style: TextStyle(
+                  color: navText.withOpacity(0.78),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
-            tooltip: _tr(
-              nl: 'Openen in Waze',
-              en: 'Open in Waze',
-              fr: 'Ouvrir dans Waze',
-              es: 'Abrir en Waze',
+          if (inFollowNav && hasExternal)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                _tr(
+                  nl: 'Google Maps / Waze vereisen internet op dit toestel.',
+                  en: 'Google Maps / Waze require internet on this device.',
+                  fr: 'Google Maps / Waze necessitent Internet sur cet appareil.',
+                  es: 'Google Maps / Waze requieren internet en este dispositivo.',
+                ),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: navText.withOpacity(0.62),
+                  fontSize: 10,
+                  height: 1.2,
+                ),
+              ),
             ),
-            onPressed: _openInWaze,
-            navAccent: navAccent,
-            navText: navText,
-            navSurface: navSurface,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: chips,
           ),
         ],
       ),
@@ -8134,6 +9790,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     _LonLat from,
     _LonLat to,
   ) async {
+    final workerParsed = await _tryNavigationWorkerDirectionsRoute(from, to);
+    if (workerParsed != null) {
+      _applyParsedNavRouteSteps(workerParsed);
+      return (
+        workerParsed.coords,
+        workerParsed.distanceMeters,
+        workerParsed.durationSeconds,
+      );
+    }
+
     final lang = _mapboxDirectionsLanguageCode();
     final uri = buildDriverDirectionsUri(
       from: from,
@@ -8155,7 +9821,122 @@ class _DriverHomePageState extends State<DriverHomePage>
       localizeInstruction: _localizeNavInstructionMvp,
       distanceAlongRouteForCoords: _distanceAlongRouteForCoords,
     );
-    final out = parsed.coords;
+    _applyParsedNavRouteSteps(parsed);
+    return (parsed.coords, parsed.distanceMeters, parsed.durationSeconds);
+  }
+
+  String _mapboxDirectionsLanguageCode() {
+    final lang = appConfig.currentLanguage;
+    if (lang == AppLanguage.fr) return 'fr';
+    if (lang == AppLanguage.es) return 'es';
+    if (lang == AppLanguage.en) return 'en';
+    return 'nl';
+  }
+
+  String _navigationWorkerCountryCode() {
+    const allowed = {'BE', 'NL', 'FR', 'ES', 'PT'};
+    String? normalize(dynamic raw) {
+      final text = raw?.toString().trim().toUpperCase();
+      if (text == null || text.isEmpty) return null;
+      if (allowed.contains(text)) return text;
+      if (text.length >= 2) {
+        final short = text.substring(0, 2);
+        if (allowed.contains(short)) return short;
+      }
+      return null;
+    }
+
+    final booking = _activeBooking;
+    if (booking != null) {
+      final details = booking.details;
+      final paths = <List<String>>[
+        ['quote', 'inputs', 'country'],
+        ['quote', 'country'],
+        ['booking', 'country'],
+        ['customer_country'],
+        ['country'],
+        ['record', 'payload', 'country'],
+      ];
+      for (final path in paths) {
+        dynamic current = details;
+        for (final key in path) {
+          if (current is Map && current.containsKey(key)) {
+            current = current[key];
+          } else {
+            current = null;
+            break;
+          }
+        }
+        final code = normalize(current);
+        if (code != null) return code;
+      }
+    }
+    return 'BE';
+  }
+
+  Future<DriverRouteParseResult?> _tryNavigationWorkerDirectionsRoute(
+    _LonLat from,
+    _LonLat to,
+  ) async {
+    if (!kUseNavigationWorker) return null;
+    final baseUrl = kNavigationWorkerBaseUrl.trim();
+    if (baseUrl.isEmpty) return null;
+
+    final client = DriverNavigationWorkerClient(baseUrl: baseUrl);
+    final country = _navigationWorkerCountryCode();
+    final tripId = _activeTripId?.trim();
+
+    NavigationWorkerRouteResult? workerResult;
+    try {
+      if (_isRerouting) {
+        workerResult = await client.reroute(
+          current: from,
+          destination: to,
+          country: country,
+          tripId: tripId,
+          reason: _rerouteReason ?? 'unknown',
+        );
+      } else {
+        workerResult = await client.route(
+          origin: from,
+          destination: to,
+          country: country,
+          tripId: tripId,
+        );
+      }
+    } catch (_) {
+      debugPrint(
+        '[CLOUD_NAV_2] endpoint=${_isRerouting ? 'reroute' : 'route'} '
+        'result=fallback reason=worker_exception country=$country',
+      );
+      return null;
+    }
+
+    if (workerResult == null || !workerResult.isValid) {
+      debugPrint(
+        '[CLOUD_NAV_2] endpoint=${_isRerouting ? 'reroute' : 'route'} '
+        'result=fallback reason=invalid_worker_payload country=$country',
+      );
+      return null;
+    }
+
+    final parsed = parseDriverDirectionsResponse(
+      response: workerResult.toMapboxDirectionsShape(),
+      localizeInstruction: _localizeNavInstructionMvp,
+      distanceAlongRouteForCoords: _distanceAlongRouteForCoords,
+    );
+    if (parsed.coords.length < 2) {
+      debugPrint(
+        '[CLOUD_NAV_2] endpoint=${_isRerouting ? 'reroute' : 'route'} '
+        'result=fallback reason=parse_empty country=$country',
+      );
+      return null;
+    }
+
+    return parsed;
+  }
+
+  void _applyParsedNavRouteSteps(DriverRouteParseResult parsed) {
     final navSteps = parsed.navSteps;
     _routeSteps = navSteps;
     _nextStepIndex = 0;
@@ -8175,17 +9956,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       _navInstructionSnapshot = NavInstructionSnapshot.none;
     }
     debugPrint(
-      '[NAV_E1] steps=${navSteps.length} bannerSteps=${parsed.stepsWithBannerCount} laneSteps=${parsed.stepsWithLaneGuidanceCount}',
+      '[NAV_E1] steps=${navSteps.length} bannerSteps=${parsed.stepsWithBannerCount} '
+      'laneSteps=${parsed.stepsWithLaneGuidanceCount}',
     );
-    return (out, parsed.distanceMeters, parsed.durationSeconds);
-  }
-
-  String _mapboxDirectionsLanguageCode() {
-    final lang = appConfig.currentLanguage;
-    if (lang == AppLanguage.fr) return 'fr';
-    if (lang == AppLanguage.es) return 'es';
-    if (lang == AppLanguage.en) return 'en';
-    return 'nl';
   }
 
   String _localizeNavInstructionMvp(String raw) {
@@ -8749,23 +10522,22 @@ class _DriverHomePageState extends State<DriverHomePage>
       coordinates: coords.map((c) => mb.Position(c.lon, c.lat)).toList(),
     );
 
-    // Dark underlay for contrast on light/dark roads.
+    // Dark underlay for contrast on light navigation / satellite maps.
     _routeLineOutline = await mgr.create(
       mb.PolylineAnnotationOptions(
         geometry: geometry,
-        lineWidth: 18.0,
-        lineOpacity: 0.74,
-        lineColor: 0xDD0B1220,
+        lineWidth: kDriverRouteLineOutlineWidth,
+        lineOpacity: kDriverRouteLineOutlineOpacity,
+        lineColor: kDriverRouteLineOutlineColor,
       ),
     );
 
-    // Bright active route shown above the outline.
     _routeLine = await mgr.create(
       mb.PolylineAnnotationOptions(
         geometry: geometry,
-        lineWidth: 13.5,
-        lineOpacity: 1.0,
-        lineColor: 0xFF3B9EFF,
+        lineWidth: kDriverRouteLineWidth,
+        lineOpacity: kDriverRouteLineOpacity,
+        lineColor: kDriverRouteLineColor,
       ),
     );
   }
@@ -13939,48 +15711,71 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   NavInstructionSnapshot _effectiveNavInstructionSnapshot() {
+    NavInstructionSnapshot result;
     final snap = _navInstructionSnapshot;
     if (snap != null && snap.hasInstruction) {
       if (_nextStepIndex >= 0 && _nextStepIndex < _routeSteps.length) {
-        return applyDriverNavInstructionDisplayLines(
+        result = applyDriverNavInstructionDisplayLines(
           snapshot: snap,
           step: _routeSteps[_nextStepIndex],
         );
+      } else {
+        result = snap;
       }
-      return snap;
+    } else {
+      final instruction = (_nextNavInstruction ?? '').trim();
+      final street = (_nextNavStreet ?? '').trim();
+      if (instruction.isEmpty && street.isEmpty) {
+        return snap ?? NavInstructionSnapshot.none;
+      }
+      final pseudoStep = DriverNavStep(
+        lat: 0,
+        lon: 0,
+        instruction: instruction,
+        street: street,
+        type: _nextNavType ?? '',
+        modifier: _nextNavModifier ?? '',
+        distanceAlongRouteM: 0,
+      );
+      final rawPrimary = instruction.isNotEmpty
+          ? instruction
+          : _shortNavAction(instruction, _nextNavType, _nextNavModifier);
+      final normalized = normalizeDriverInstructionDisplayLines(
+        rawPrimary: rawPrimary,
+        rawSecondary: street,
+        step: pseudoStep,
+      );
+      result = NavInstructionSnapshot(
+        distanceToManeuverMeters: _nextNavDistanceM ?? 0,
+        primaryText: normalized.primary.isNotEmpty ? normalized.primary : street,
+        secondaryText: normalized.secondary,
+        maneuverType: _nextNavType ?? '',
+        maneuverModifier: _nextNavModifier ?? '',
+        roadName: street,
+        isHighwayLike: false,
+        lanes: const <DriverNavLaneGuidance>[],
+        source: NavInstructionSource.step,
+      );
     }
-    final instruction = (_nextNavInstruction ?? '').trim();
-    final street = (_nextNavStreet ?? '').trim();
-    if (instruction.isEmpty && street.isEmpty) {
-      return snap ?? NavInstructionSnapshot.none;
-    }
-    final pseudoStep = DriverNavStep(
-      lat: 0,
-      lon: 0,
-      instruction: instruction,
-      street: street,
-      type: _nextNavType ?? '',
-      modifier: _nextNavModifier ?? '',
-      distanceAlongRouteM: 0,
-    );
-    final rawPrimary = instruction.isNotEmpty
-        ? instruction
-        : _shortNavAction(instruction, _nextNavType, _nextNavModifier);
-    final normalized = normalizeDriverInstructionDisplayLines(
-      rawPrimary: rawPrimary,
-      rawSecondary: street,
-      step: pseudoStep,
-    );
-    return NavInstructionSnapshot(
-      distanceToManeuverMeters: _nextNavDistanceM ?? 0,
-      primaryText: normalized.primary.isNotEmpty ? normalized.primary : street,
-      secondaryText: normalized.secondary,
-      maneuverType: _nextNavType ?? '',
-      maneuverModifier: _nextNavModifier ?? '',
-      roadName: street,
-      isHighwayLike: false,
-      lanes: const <DriverNavLaneGuidance>[],
-      source: NavInstructionSource.step,
+
+    return applyDriverNavInstructionPolicyFilter(
+      snapshot: result,
+      policy: _driverNavInstructionPolicy,
+      liveRideActive: _liveRideActive,
+      trustRouteSnap: _isActiveDriverNavEngineContext()
+          ? (_lastNavConfidence?.trustRouteSnap ??
+                _lastNavRouteProgress?.hasReliableSnap ??
+                false)
+          : _useMatchedVisual,
+      trustInstruction: _lastNavConfidence?.trustInstruction ?? true,
+      offRouteLikely:
+          _lastNavRouteProgress?.offRouteLikely ?? _offRouteLikely,
+      forwardProgress: _lastNavRouteProgress?.forwardProgress ?? true,
+      predictionActive: _lastNavMotionPrediction?.predictionActive ?? false,
+      routeConfidence: _lastNavRouteProgress?.confidence,
+      instructionConfidenceScore: _lastNavConfidence?.instructionScore,
+      speedKmh: _lastPos != null ? _speedKmhFor(_lastPos!) : null,
+      tr: _tr,
     );
   }
 
@@ -14269,8 +16064,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         ? 2
         : ((hasSelection || hasDirectDraft) ? 1 : 0);
     final bool showCockpit = liveActive || hasSelection || hasDirectDraft;
-    final bool showExternalNavButtons =
-        showCockpit && _resolveExternalNavTarget() != null;
+    final bool showNavQuickActions =
+        showCockpit &&
+        (_cameraMode == _CameraMode.follow ||
+            _resolveExternalNavTarget() != null ||
+            _routeCoords.length >= 2);
+    final bool showExternalNavButtons = showNavQuickActions;
     final screenH = MediaQuery.of(context).size.height;
     final screenW = MediaQuery.of(context).size.width;
     final bool isLandscape =
@@ -14505,7 +16304,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                                 ),
                                 if (showExternalNavButtons) ...[
                                   const SizedBox(width: 8),
-                                  _buildExternalNavButtons(
+                                  _buildNavQuickActionButtons(
                                     inlineLandscape: true,
                                   ),
                                 ],
@@ -14545,7 +16344,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                                 ),
                                 _buildDirectRideEstimatePanel(),
                                 if (showExternalNavButtons)
-                                  _buildExternalNavButtons(),
+                                  _buildNavQuickActionButtons(),
                               ],
                             ),
                           ),
@@ -17044,15 +18843,27 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   void _openOfflineMaps() {
     if (!_canAccessDriverOpsScreens()) {
-      Navigator.pop(context);
+      if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
+        Navigator.pop(context);
+      }
       _denyRoleAccess();
       return;
     }
-    Navigator.pop(context);
+    if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
+      Navigator.pop(context);
+    }
+    if (_routeCoords.length >= 2 && kUseNavigationWorker) {
+      unawaited(
+        _maybeFetchOfflineCorridorMetadata(
+          force: _hasOfflineCorridorNavContext(),
+        ),
+      );
+    }
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => DriverOfflineMapsPage(
           themeListenable: _activeDriverThemeListenable,
+          routeCorridorMetadata: _lastOfflineCorridorMetadata,
         ),
       ),
     );
