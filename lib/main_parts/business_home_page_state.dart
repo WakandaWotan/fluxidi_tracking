@@ -2639,7 +2639,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 9 : 12,
-        vertical: compact ? 8 : 11,
+        vertical: compact ? 7 : 11,
       ),
       decoration: BoxDecoration(
         color: palette.surface,
@@ -2654,6 +2654,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         ],
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
             width: compact ? 28 : 34,
@@ -2668,6 +2669,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           SizedBox(width: compact ? 7 : 10),
           Expanded(
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
@@ -2676,11 +2678,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: palette.textPrimary,
-                    fontSize: compact ? 11.6 : 13.2,
+                    fontSize: compact ? 11.4 : 13.2,
                     fontWeight: FontWeight.w700,
+                    height: 1.1,
                   ),
                 ),
-                SizedBox(height: compact ? 1 : 2),
+                SizedBox(height: compact ? 0 : 2),
                 Text(
                   subtitle,
                   maxLines: 1,
@@ -2689,8 +2692,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     color: palette.textSecondary.withOpacity(
                       palette.isDark ? 0.84 : 1,
                     ),
-                    fontSize: compact ? 10.0 : 11.2,
+                    fontSize: compact ? 9.8 : 11.2,
                     fontWeight: FontWeight.w500,
+                    height: 1.1,
                   ),
                 ),
               ],
@@ -2702,7 +2706,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             style: TextStyle(
               color: palette.textPrimary,
               fontWeight: FontWeight.w900,
-              fontSize: compact ? 19 : 24,
+              fontSize: compact ? 18 : 24,
+              height: 1.0,
             ),
           ),
         ],
@@ -2749,35 +2754,92 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     final subtitleColor = isCleanProfessional && hasImageBackground
         ? Colors.white.withOpacity(active ? 0.86 : 0.78)
         : palette.textMuted.withOpacity(active ? 0.94 : 0.76);
-    EdgeInsets cardPaddingFor(bool isTightHeight) => EdgeInsets.fromLTRB(
-      compact ? 8 : 12,
-      (compact ? 8 : 12) - (isTightHeight ? 2 : 0),
-      compact ? 8 : 12,
-      (compact ? 6 : 10) - (isTightHeight ? 2 : 0),
-    );
-    Widget cardContent(bool isTightHeight) {
-      final iconCircleSize = compact
-          ? (isTightHeight ? 34.0 : 36.0)
+    EdgeInsets cardPaddingFor(bool isTightHeight, bool isVeryTight) =>
+        EdgeInsets.fromLTRB(
+          compact ? 8 : 12,
+          (compact ? 8 : 12) - (isVeryTight ? 3 : (isTightHeight ? 2 : 0)),
+          compact ? 8 : 12,
+          (compact ? 6 : 10) - (isVeryTight ? 3 : (isTightHeight ? 2 : 0)),
+        );
+    Widget cardContent(BoxConstraints constraints) {
+      final maxHeight = constraints.maxHeight;
+      final isBounded = maxHeight.isFinite && maxHeight > 0;
+      final isVeryTight = isBounded && maxHeight < 108;
+      final isTightHeight = isBounded && maxHeight < 126;
+      final useCompactLayout = compact || isTightHeight;
+      final iconCircleSize = useCompactLayout
+          ? (isVeryTight ? 32.0 : 34.0)
           : (isTightHeight ? 40.0 : 44.0);
-      final iconGlyphSize = compact
-          ? (isTightHeight ? 20.0 : 22.0)
+      final iconGlyphSize = useCompactLayout
+          ? (isVeryTight ? 18.0 : 20.0)
           : (isTightHeight ? 26.0 : 29.0);
-      final titleGap = compact
-          ? (isTightHeight ? 4.0 : 5.0)
-          : (isTightHeight ? 6.0 : 9.0);
-      final titleFontSize =
-          (compact ? 12.5 : 14.3) - (isTightHeight ? 0.9 : 0.0);
-      final subtitleFontSize =
-          (compact ? 10.0 : 11.4) - (isTightHeight ? 0.8 : 0.0);
-      final subtitleGap = isTightHeight ? 3.0 : 4.0;
-      final chevronSize = compact
-          ? (isTightHeight ? 13.0 : 14.0)
+      final titleGap = useCompactLayout
+          ? (isVeryTight ? 3.0 : 4.0)
+          : (isTightHeight ? 6.0 : 8.0);
+      final titleFontSize = (useCompactLayout ? 12.2 : 14.0) -
+          (isVeryTight ? 1.0 : (isTightHeight ? 0.6 : 0.0));
+      final subtitleFontSize = (useCompactLayout ? 9.8 : 11.2) -
+          (isVeryTight ? 0.8 : (isTightHeight ? 0.5 : 0.0));
+      final subtitleGap = isVeryTight ? 2.0 : (isTightHeight ? 3.0 : 4.0);
+      final chevronSize = useCompactLayout
+          ? (isVeryTight ? 12.0 : 13.0)
           : (isTightHeight ? 16.0 : 17.0);
-      final lockSize = compact
-          ? (isTightHeight ? 12.0 : 13.0)
+      final lockSize = useCompactLayout
+          ? (isVeryTight ? 11.0 : 12.0)
           : (isTightHeight ? 14.5 : 15.5);
+      final textBlock = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: titleColor,
+              fontWeight: FontWeight.w800,
+              fontSize: titleFontSize,
+              height: 1.1,
+              shadows: hasImageBackground
+                  ? [
+                      Shadow(
+                        color: Colors.black.withOpacity(
+                          isCleanProfessional ? 0.76 : 0.62,
+                        ),
+                        blurRadius: 6,
+                        offset: const Offset(0, 1.2),
+                      ),
+                    ]
+                  : null,
+            ),
+          ),
+          SizedBox(height: subtitleGap),
+          Text(
+            subtitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: subtitleColor,
+              fontSize: subtitleFontSize,
+              height: 1.1,
+              shadows: hasImageBackground
+                  ? [
+                      Shadow(
+                        color: Colors.black.withOpacity(
+                          isCleanProfessional ? 0.68 : 0.54,
+                        ),
+                        blurRadius: 5,
+                        offset: const Offset(0, 1.1),
+                      ),
+                    ]
+                  : null,
+            ),
+          ),
+        ],
+      );
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.max,
         children: [
           Row(
             children: [
@@ -2813,8 +2875,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               if ((futureBadge ?? '').trim().isNotEmpty)
                 Container(
                   padding: EdgeInsets.symmetric(
-                    horizontal: compact ? 7 : 8,
-                    vertical: compact ? 2 : 3,
+                    horizontal: useCompactLayout ? 7 : 8,
+                    vertical: useCompactLayout ? 2 : 3,
                   ),
                   decoration: BoxDecoration(
                     color: palette.surfaceAlt,
@@ -2823,10 +2885,13 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   ),
                   child: Text(
                     futureBadge!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: palette.textSecondary,
-                      fontSize: compact ? 9.5 : 10.3,
+                      fontSize: useCompactLayout ? 9.2 : 10.3,
                       fontWeight: FontWeight.w700,
+                      height: 1.0,
                     ),
                   ),
                 ),
@@ -2834,8 +2899,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   (statusBadge ?? '').trim().isNotEmpty)
                 Container(
                   padding: EdgeInsets.symmetric(
-                    horizontal: compact ? 7 : 8,
-                    vertical: compact ? 2 : 3,
+                    horizontal: useCompactLayout ? 7 : 8,
+                    vertical: useCompactLayout ? 2 : 3,
                   ),
                   decoration: BoxDecoration(
                     color: warningBadgeBg,
@@ -2846,63 +2911,28 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   ),
                   child: Text(
                     statusBadge!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: isExecutiveGold
                           ? palette.textOnWarning
                           : (isCleanProfessional
                                 ? palette.textPrimary
                                 : palette.textSecondary),
-                      fontSize: compact ? 9.5 : 10.3,
+                      fontSize: useCompactLayout ? 9.2 : 10.3,
                       fontWeight: FontWeight.w700,
+                      height: 1.0,
                     ),
                   ),
                 ),
             ],
           ),
           SizedBox(height: titleGap),
-          Text(
-            title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: titleColor,
-              fontWeight: FontWeight.w800,
-              fontSize: titleFontSize,
-              shadows: hasImageBackground
-                  ? [
-                      Shadow(
-                        color: Colors.black.withOpacity(
-                          isCleanProfessional ? 0.76 : 0.62,
-                        ),
-                        blurRadius: 6,
-                        offset: const Offset(0, 1.2),
-                      ),
-                    ]
-                  : null,
-            ),
-          ),
-          SizedBox(height: subtitleGap),
-          Text(
-            subtitle,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: subtitleColor,
-              fontSize: subtitleFontSize,
-              shadows: hasImageBackground
-                  ? [
-                      Shadow(
-                        color: Colors.black.withOpacity(
-                          isCleanProfessional ? 0.68 : 0.54,
-                        ),
-                        blurRadius: 5,
-                        offset: const Offset(0, 1.1),
-                      ),
-                    ]
-                  : null,
-            ),
-          ),
-          const Spacer(),
+          if (isBounded)
+            Expanded(child: textBlock)
+          else
+            textBlock,
+          SizedBox(height: isVeryTight ? 0 : 2),
           Align(
             alignment: Alignment.bottomRight,
             child: active
@@ -2927,9 +2957,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         onTap: active ? onTap : null,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final isTightHeight = constraints.maxHeight < 126;
+            final isTightHeight =
+                constraints.maxHeight.isFinite && constraints.maxHeight < 126;
+            final isVeryTight =
+                constraints.maxHeight.isFinite && constraints.maxHeight < 108;
             return Container(
-              padding: cardPaddingFor(isTightHeight),
+              height:
+                  constraints.maxHeight.isFinite ? constraints.maxHeight : null,
+              padding: cardPaddingFor(isTightHeight, isVeryTight),
               decoration: BoxDecoration(
                 color: palette.surface,
                 borderRadius: BorderRadius.circular(16),
@@ -2944,7 +2979,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   ),
                 ],
               ),
-              child: cardContent(isTightHeight),
+              child: cardContent(constraints),
             );
           },
         ),
@@ -2955,8 +2990,13 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       onTap: active ? onTap : null,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final isTightHeight = constraints.maxHeight < 126;
+          final isTightHeight =
+              constraints.maxHeight.isFinite && constraints.maxHeight < 126;
+          final isVeryTight =
+              constraints.maxHeight.isFinite && constraints.maxHeight < 108;
           return Container(
+            height:
+                constraints.maxHeight.isFinite ? constraints.maxHeight : null,
             decoration: BoxDecoration(
               color: palette.surface,
               borderRadius: BorderRadius.circular(16),
@@ -3008,8 +3048,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     ),
                   ),
                   Padding(
-                    padding: cardPaddingFor(isTightHeight),
-                    child: cardContent(isTightHeight),
+                    padding: cardPaddingFor(isTightHeight, isVeryTight),
+                    child: cardContent(constraints),
                   ),
                 ],
               ),
