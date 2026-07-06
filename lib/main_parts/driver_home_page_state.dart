@@ -6744,6 +6744,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _offRouteRerouteDebounceStartedAt = null;
     final phaseLabel = _reroutePhaseLabel();
     debugPrint('[NAV_REROUTE] phase=$phaseLabel reason=$reason start=1');
+    if (kDebugMode) {
+      debugPrint('[NAV_REROUTE] ui=loading reason=rerouting');
+    }
     if (mounted) setState(() {});
 
     var ok = false;
@@ -13991,6 +13994,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   bool _showNavInstructionBanner() {
     if (_cameraMode != _CameraMode.follow) return false;
+    if (_isRerouting) return false;
     final snap = _navInstructionSnapshot;
     if (snap != null && snap.hasInstruction) return true;
     return (_nextNavInstruction ?? '').trim().isNotEmpty;
@@ -14044,10 +14048,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   }) {
     final text = _isRerouting
         ? _tr(
-            nl: 'Nieuwe route berekenen…',
-            en: 'Calculating new route…',
-            fr: 'Calcul de la nouvelle route…',
-            es: 'Calculando nueva ruta…',
+            nl: 'Route herberekenen…',
+            en: 'Recalculating route…',
+            fr: 'Recalcul de l\'itinéraire…',
+            es: 'Recalculando ruta…',
           )
         : _tr(
             nl: 'Route-instructies worden geladen…',
