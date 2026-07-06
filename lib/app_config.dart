@@ -2370,6 +2370,16 @@ const String kNavigationWorkerBaseUrlOverride = String.fromEnvironment(
   'NAVIGATION_WORKER_BASE_URL',
   defaultValue: '',
 );
+/// CLOUD-AI-2: Dispatch Intelligence advice client (disabled by default,
+/// advice-only — never mutates bookings or assignment decisions).
+const bool kUseDispatchIntelligenceWorker = bool.fromEnvironment(
+  'USE_DISPATCH_INTELLIGENCE_WORKER',
+  defaultValue: false,
+);
+const String kDispatchIntelligenceWorkerBaseUrl = String.fromEnvironment(
+  'DISPATCH_INTELLIGENCE_WORKER_BASE_URL',
+  defaultValue: 'https://fluxidi-dispatch-intelligence-api.fluxidi.workers.dev',
+);
 // Booking.com CJ affiliate/deeplink only — not Demand API, not native inventory, no iframe.
 // Pending until CJ approves the BENELUX program and BOOKING_COM_CJ_BASE_URL is configured.
 const String kBookingComCjBaseUrl = String.fromEnvironment(
