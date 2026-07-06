@@ -96,6 +96,7 @@ import 'navigation/driver_offline_nav_readiness.dart';
 import 'navigation/driver_navigation_models.dart';
 import 'navigation/driver_navigation_route_parser.dart';
 import 'navigation/nav_backend/driver_navigation_worker_client.dart';
+import 'navigation/nav_engine/nav_bearing_smoother.dart';
 import 'navigation/nav_engine/driver_nav_engine.dart';
 import 'navigation/nav_engine/nav_engine_input.dart';
 import 'navigation/nav_engine/nav_engine_output.dart';
@@ -105,6 +106,7 @@ import 'navigation/nav_engine/nav_confidence_engine.dart';
 import 'navigation/nav_engine/nav_motion_prediction.dart';
 import 'navigation/nav_engine/nav_instruction_policy.dart';
 import 'navigation/nav_engine/nav_validation_engine.dart';
+import 'navigation/nav_diagnostics_recorder.dart';
 
 import 'widgets/cockpit_widget.dart';
 import 'widgets/direct_ride_destination_dialog.dart';

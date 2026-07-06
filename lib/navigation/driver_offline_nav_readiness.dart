@@ -16,6 +16,7 @@ enum NavR9OfflineUiState {
 /// Derives UI state from local nav readiness only (no network detection).
 class NavR9OfflineReadiness {
   static const double _predictionLowConfidence = 55.0;
+  static const int _minGapForChipMs = 320;
 
   static ({
     NavR9OfflineUiState state,
@@ -29,6 +30,7 @@ class NavR9OfflineReadiness {
     required bool predictionActive,
     required double? predictionConfidence,
     required bool weakGps,
+    int gapSinceLastEngineMs = 0,
   }) {
     if (!liveRideActive || !followNavActive) {
       return (
@@ -40,8 +42,25 @@ class NavR9OfflineReadiness {
     }
 
     if (predictionActive) {
+      // Only surface chips when GPS/route trust is degraded — not during good GPS.
+      if (!weakGps) {
+        return (
+          state: NavR9OfflineUiState.prediction,
+          reason: 'r7_gap_bridge_good_gps',
+          showTunnelChip: false,
+          showGpsReacquireChip: false,
+        );
+      }
+      if (gapSinceLastEngineMs < _minGapForChipMs) {
+        return (
+          state: NavR9OfflineUiState.ready,
+          reason: 'r7_gap_too_short',
+          showTunnelChip: false,
+          showGpsReacquireChip: false,
+        );
+      }
       final lowConfidence =
-          (predictionConfidence ?? 0.0) < _predictionLowConfidence || weakGps;
+          (predictionConfidence ?? 0.0) < _predictionLowConfidence;
       if (lowConfidence) {
         return (
           state: NavR9OfflineUiState.gpsReacquire,
@@ -52,7 +71,7 @@ class NavR9OfflineReadiness {
       }
       return (
         state: NavR9OfflineUiState.prediction,
-        reason: 'r7_prediction_active',
+        reason: 'r7_tunnel_or_weak_gps',
         showTunnelChip: true,
         showGpsReacquireChip: false,
       );

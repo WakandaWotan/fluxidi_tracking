@@ -82,7 +82,7 @@ class _ProjectionCandidate {
 /// Stateful route progress tracker with segment-window projection and confidence.
 class DriverNavRouteProgress {
   static const int _segmentWindow = 25;
-  static const int _lowConfidenceOffRouteThreshold = 3;
+  static const int _lowConfidenceOffRouteThreshold = 2;
 
   int? _previousSegmentIndex;
   int? _lastReliableSegmentIndex;
@@ -180,13 +180,13 @@ class DriverNavRouteProgress {
 
     _previousSegmentIndex = candidate.segmentIndex;
 
-    if (candidate.snapDistanceM > 70.0 || confidence < 35.0) {
+    if (candidate.snapDistanceM > 58.0 || confidence < 40.0) {
       _lowConfidenceStreak += 1;
     } else {
       _lowConfidenceStreak = 0;
     }
     final offRouteLikely =
-        candidate.snapDistanceM > 70.0 ||
+        candidate.snapDistanceM > 58.0 ||
         _lowConfidenceStreak >= _lowConfidenceOffRouteThreshold;
 
     final reason = _reasonFor(

@@ -182,6 +182,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   mb.PointAnnotation? _dropoffPin;
   mb.PolylineAnnotation? _routeLineOutline;
   mb.PolylineAnnotation? _routeLine;
+  // NAV-OS-R2: muted grey polyline for the already-driven route section.
+  mb.PolylineAnnotation? _routeLineCompleted;
   String _driverMarkerIcon = 'triangle-15';
   Uint8List? _driverTaxiMarkerBytes;
   bool _driverTaxiMarkerLoadAttempted = false;
@@ -199,6 +201,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   // be recreated immediately after style load without waiting for GPS.
   ({double lat, double lon, double bearing, String source})?
       _taxiVisualSnapshotForStyleSwap;
+  // NAV-OS-R2: last forward-bearing guard state for diagnostics.
+  bool _lastR2ReversedGuard = false;
+  double? _lastR2BearingDeltaDeg;
   DateTime? _lastMapWidgetBuildLogAt;
   DateTime? _lastDriverBuildLogAt;
 
@@ -744,9 +749,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         if (_routeLine != null) {
           await _routeLineManager!.delete(_routeLine!);
         }
+        if (_routeLineCompleted != null) {
+          await _routeLineManager!.delete(_routeLineCompleted!);
+        }
       }
       _routeLineOutline = null;
       _routeLine = null;
+      _routeLineCompleted = null;
 
       if (_pinsPointManager != null) {
         if (_pickupPin != null) {
@@ -6982,6 +6991,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       _dropoffPin = null;
       _routeLine = null;
       _routeLineOutline = null;
+      _routeLineCompleted = null;
       // Managers are ready again: unblock marker updates BEFORE the restore,
       // otherwise the restore is a no-op and the taxi vanishes until the next
       // GPS callback (NAV-UI-R6E root cause).
@@ -7061,7 +7071,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (_lastPos != null) {
       try {
         _updateRouteSnapState(_lastPos!);
-        await _syncVisibleRouteLineWithProgress(_lastPos!);
+        await _syncVisibleRouteLineWithProgress(
+          _lastPos!,
+          reason: 'style_restore',
+        );
       } catch (_) {}
     }
 
@@ -8013,6 +8026,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     return _snapToRoute(rawPoint);
   }
 
+  /// NAV-OS-R2: forward-looking route bearing from progress. Walks the
+  /// polyline ahead of the snapped point, so it can never return a
+  /// previous/backward segment bearing.
   double? _routeBearingFromProgress(NavRouteProgressOutput? progress) {
     if (progress == null ||
         progress.segmentIndex == null ||
@@ -8020,9 +8036,85 @@ class _DriverHomePageState extends State<DriverHomePage>
       return null;
     }
     final i = progress.segmentIndex!.clamp(0, _routeCoords.length - 2);
-    final a = _routeCoords[i];
-    final b = _routeCoords[i + 1];
-    return driverBearingFromPoints(a.lat, a.lon, b.lat, b.lon);
+    final speedKmh = _lastPos != null ? _speedKmhFor(_lastPos!) : 0.0;
+    final lookaheadM = (speedKmh / 3.6 * 1.2).clamp(8.0, 30.0);
+    return driverForwardRouteBearing(
+      _routeCoords,
+      segmentIndex: i,
+      snappedLat: progress.snappedLatitude ?? _routeCoords[i].lat,
+      snappedLon: progress.snappedLongitude ?? _routeCoords[i].lon,
+      lookaheadM: lookaheadM,
+    );
+  }
+
+  /// NAV-OS-R2: forward route bearing with an anti-reverse guard. If the
+  /// candidate bearing is ~180° off the movement/GPS direction (snap landed on
+  /// an anti-parallel segment), it looks further ahead along the route; if
+  /// that still disagrees, returns null so callers fall back to GPS heading.
+  double? _resolveForwardRouteBearing(geo.Position pos, {_RouteSnap? snap}) {
+    final progress = _lastNavRouteProgress;
+
+    double? bearingAt(double lookaheadM) {
+      if (_routeCoords.length < 2) return null;
+      if (progress != null && progress.segmentIndex != null) {
+        final i = progress.segmentIndex!.clamp(0, _routeCoords.length - 2);
+        return driverForwardRouteBearing(
+          _routeCoords,
+          segmentIndex: i,
+          snappedLat: progress.snappedLatitude ?? _routeCoords[i].lat,
+          snappedLon: progress.snappedLongitude ?? _routeCoords[i].lon,
+          lookaheadM: lookaheadM,
+        );
+      }
+      if (snap != null) {
+        return driverForwardRouteBearing(
+          _routeCoords,
+          segmentIndex: snap.segmentIndex,
+          snappedLat: snap.point.lat,
+          snappedLon: snap.point.lon,
+          lookaheadM: lookaheadM,
+        );
+      }
+      return null;
+    }
+
+    final speedKmh = _speedKmhFor(pos);
+    final baseLookaheadM = (speedKmh / 3.6 * 1.2).clamp(8.0, 30.0);
+    var bearing = bearingAt(baseLookaheadM);
+    var reversedGuard = false;
+    final gpsHeading = pos.heading.isFinite && pos.heading >= 0
+        ? pos.heading
+        : null;
+    final reference =
+        speedKmh >= 6.0 ? (_lastMovementBearing ?? gpsHeading) : null;
+    double? delta;
+    if (bearing != null && reference != null) {
+      delta = NavBearingSmoother.bearingDelta(reference, bearing);
+      if (delta.abs() > 150.0) {
+        reversedGuard = true;
+        // Prefer the next forward segment further along the route.
+        final ahead = bearingAt(baseLookaheadM + 35.0);
+        final aheadDelta = ahead == null
+            ? null
+            : NavBearingSmoother.bearingDelta(reference, ahead);
+        if (ahead != null && aheadDelta != null && aheadDelta.abs() <= 150.0) {
+          bearing = ahead;
+          delta = aheadDelta;
+        } else {
+          bearing = null;
+        }
+      }
+    }
+    _lastR2ReversedGuard = reversedGuard;
+    _lastR2BearingDeltaDeg = delta;
+    return bearing;
+  }
+
+  static String _r2BearingSourceLabel(String source) {
+    if (source.startsWith('route_segment')) return 'forward_route';
+    if (source == 'gps_heading' || source == 'movement') return 'gps';
+    if (source.startsWith('last_stable')) return 'hold';
+    return 'fallback';
   }
 
   bool _routeProgressMatchedVisual(NavRouteProgressOutput? progress) {
@@ -8362,7 +8454,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     return driverRouteCoordsFromSnap(_routeCoords, snap);
   }
 
-  Future<void> _syncVisibleRouteLineWithProgress(geo.Position pos) async {
+  Future<void> _syncVisibleRouteLineWithProgress(
+    geo.Position pos, {
+    String reason = 'progress_update',
+  }) async {
     if (_routeCoords.length < 2 || _routeLineManager == null) return;
     final snap =
         _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
@@ -8373,6 +8468,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         _routeLineProgressTrimmed = false;
         _lastRouteLineTrimProgressM = 0.0;
         await _drawRouteLine(_routeCoords, force: true);
+        _logNavBounded(
+          'NAV_OS_R2_ROUTE_PROGRESS_LINE',
+          'completedM=0 remainingM=${driverRouteLengthMeters(_routeCoords).toStringAsFixed(0)} reason=reset_full',
+        );
       }
       return;
     }
@@ -8382,6 +8481,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         _routeLineProgressTrimmed = false;
         _lastRouteLineTrimProgressM = 0.0;
         await _drawRouteLine(_routeCoords, force: true);
+        _logNavBounded(
+          'NAV_OS_R2_ROUTE_PROGRESS_LINE',
+          'completedM=0 remainingM=${driverRouteLengthMeters(_routeCoords).toStringAsFixed(0)} reason=reset_no_snap',
+        );
       }
       _logNavBounded(
         'NAV_PROGRESS',
@@ -8390,6 +8493,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
 
+    // NAV-OS-R2: throttle split-line redraws (>=12m progress or >=320ms).
     final now = DateTime.now();
     final deltaM = (progressM - _lastRouteLineTrimProgressM).abs();
     final recentDraw =
@@ -8403,16 +8507,29 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
 
-    final trimmed = _routeCoordsFromSnap(snap);
-    if (trimmed.length >= 2) {
+    // NAV-OS-R2: split geometry — muted grey behind the taxi, blue ahead.
+    final remaining = _routeCoordsFromSnap(snap);
+    final completed = driverRouteCoordsUpToSnap(_routeCoords, snap);
+    if (remaining.length >= 2) {
       _routeLineProgressTrimmed = true;
       _lastRouteLineTrimProgressM = progressM;
       _lastRouteLineTrimAt = now;
-      await _drawRouteLine(trimmed, force: true);
+      await _drawRouteLine(
+        remaining,
+        force: true,
+        completedCoords: completed,
+      );
+      final totalM = driverRouteLengthMeters(_routeCoords);
+      final remainingM = (totalM - progressM).clamp(0.0, totalM);
+      _logNavBounded(
+        'NAV_OS_R2_ROUTE_PROGRESS_LINE',
+        'completedM=${progressM.toStringAsFixed(0)} '
+        'remainingM=${remainingM.toStringAsFixed(0)} reason=$reason',
+      );
     }
     _logNavBounded(
       'NAV_PROGRESS',
-      'progressM=${progressM.toStringAsFixed(1)} routeLineTrimmed=${trimmed.length >= 2} markerLagM=${_lastMarkerLagM.toStringAsFixed(1)}',
+      'progressM=${progressM.toStringAsFixed(1)} routeLineTrimmed=${remaining.length >= 2} markerLagM=${_lastMarkerLagM.toStringAsFixed(1)}',
     );
   }
 
@@ -8442,8 +8559,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final snappedLon = hasReliableSnap
         ? (progress?.snappedLongitude ?? snap?.point.lon)
         : null;
-    final routeBearing =
-        _routeBearingFromProgress(progress) ?? _routeBearingAtSnap(snap);
+    final routeBearing = _resolveForwardRouteBearing(pos, snap: snap);
     return NavEngineInput(
       timestamp: DateTime.now(),
       rawLatitude: pos.latitude,
@@ -8514,6 +8630,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         'speedKmh=${output.speedKmh?.toStringAsFixed(1) ?? 'na'} '
         'accuracyM=${output.accuracyM?.toStringAsFixed(1) ?? 'na'} '
         'cameraReason=${output.cameraReason}',
+        intervalMs: 2000,
+      );
+      _logNavBounded(
+        'NAV_OS_R2_BEARING',
+        'source=${_r2BearingSourceLabel(_driverNavEngine.lastBearingSource)} '
+        'delta=${_lastR2BearingDeltaDeg?.toStringAsFixed(1) ?? 'na'} '
+        'reversedGuard=$_lastR2ReversedGuard',
         intervalMs: 2000,
       );
       unawaited(
@@ -9515,7 +9638,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (_lastPos != null) {
         _updateRouteSnapState(_lastPos!);
         _updateNextNavInstruction(_lastPos!);
-        await _syncVisibleRouteLineWithProgress(_lastPos!);
+        await _syncVisibleRouteLineWithProgress(
+          _lastPos!,
+          reason: 'route_rebuilt',
+        );
       }
       await _drawPins(fromLL, toLL);
       await _drawRouteLine(coords);
@@ -9585,7 +9711,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (_lastPos != null) {
         _updateRouteSnapState(_lastPos!);
         _updateNextNavInstruction(_lastPos!);
-        await _syncVisibleRouteLineWithProgress(_lastPos!);
+        await _syncVisibleRouteLineWithProgress(
+          _lastPos!,
+          reason: 'route_rebuilt',
+        );
       }
       await _drawPins(fromLL, toLL);
       await _drawRouteLine(coords);
@@ -9647,7 +9776,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (_lastPos != null) {
         _updateRouteSnapState(_lastPos!);
         _updateNextNavInstruction(_lastPos!);
-        await _syncVisibleRouteLineWithProgress(_lastPos!);
+        await _syncVisibleRouteLineWithProgress(
+          _lastPos!,
+          reason: 'route_rebuilt',
+        );
       }
       await _drawPins(fromLL, toLL);
       await _drawRouteLine(coords);
@@ -9725,8 +9857,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         ? pos.heading
         : null;
     final movementBearing = _lastMovementBearing;
-    final routeBearing = _routeBearingFromProgress(_lastNavRouteProgress) ??
-        _routeBearingAtSnap(snap);
+    final routeBearing = _resolveForwardRouteBearing(pos, snap: snap);
     final reliableSnap = _hasReliableRouteSnapForBearing();
 
     double bearing;
@@ -9789,6 +9920,12 @@ class _DriverHomePageState extends State<DriverHomePage>
           'routeBearing=${routeBearing?.toStringAsFixed(1) ?? 'na'} '
           'usedBearing=${bearing.toStringAsFixed(1)} source=$source '
           'deltaDeg=${bearingDeltaDeg?.toStringAsFixed(1) ?? 'na'}',
+    );
+    _logNavBounded(
+      'NAV_OS_R2_BEARING',
+      'source=${_r2BearingSourceLabel(source)} '
+          'delta=${(_lastR2BearingDeltaDeg ?? bearingDeltaDeg)?.toStringAsFixed(1) ?? 'na'} '
+          'reversedGuard=$_lastR2ReversedGuard',
     );
     return (
       bearing: bearing,
@@ -11194,6 +11331,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _drawRouteLine(
     List<_LonLat> coords, {
     bool force = false,
+    List<_LonLat>? completedCoords,
   }) async {
     final mgr = _routeLineManager;
     if (mgr == null) return;
@@ -11217,11 +11355,29 @@ class _DriverHomePageState extends State<DriverHomePage>
     try {
       if (_routeLineOutline != null) await mgr.delete(_routeLineOutline!);
       if (_routeLine != null) await mgr.delete(_routeLine!);
+      if (_routeLineCompleted != null) await mgr.delete(_routeLineCompleted!);
     } catch (_) {}
+    _routeLineCompleted = null;
 
     final geometry = mb.LineString(
       coordinates: coords.map((c) => mb.Position(c.lon, c.lat)).toList(),
     );
+
+    // NAV-OS-R2: muted grey line for the already-driven section behind the taxi.
+    if (completedCoords != null && completedCoords.length >= 2) {
+      _routeLineCompleted = await mgr.create(
+        mb.PolylineAnnotationOptions(
+          geometry: mb.LineString(
+            coordinates: completedCoords
+                .map((c) => mb.Position(c.lon, c.lat))
+                .toList(),
+          ),
+          lineWidth: kDriverRouteLineCompletedWidth,
+          lineOpacity: kDriverRouteLineCompletedOpacity,
+          lineColor: kDriverRouteLineCompletedColor,
+        ),
+      );
+    }
 
     // Dark underlay for contrast on light navigation / satellite maps.
     _routeLineOutline = await mgr.create(

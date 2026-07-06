@@ -62,7 +62,7 @@ class NavMotionPredictionOutput {
 class DriverNavMotionPrediction {
   static const int _normalMaxPredictionMs = 2500;
   static const int _tunnelMaxPredictionMs = 6000;
-  static const int _minGapMs = 450;
+  static const int _minGapMs = 300;
 
   DateTime? _lastEngineTimestamp;
   bool _hadReliableSnapBeforeGap = false;

@@ -83,6 +83,80 @@ List<DriverLonLat> driverRouteCoordsFromSnap(
   return out;
 }
 
+/// NAV-OS-R2: completed route geometry from route start up to the snap point.
+List<DriverLonLat> driverRouteCoordsUpToSnap(
+  List<DriverLonLat> routeCoords,
+  DriverRouteSnap snap,
+) {
+  if (routeCoords.length < 2) return const <DriverLonLat>[];
+  final i = snap.segmentIndex.clamp(0, routeCoords.length - 2);
+  final out = <DriverLonLat>[...routeCoords.sublist(0, i + 1), snap.point];
+  if (out.length < 2) return const <DriverLonLat>[];
+  return out;
+}
+
+/// NAV-OS-R2: total polyline length in meters.
+double driverRouteLengthMeters(List<DriverLonLat> routeCoords) {
+  var total = 0.0;
+  for (var i = 0; i < routeCoords.length - 1; i++) {
+    total += driverMetersBetween(routeCoords[i], routeCoords[i + 1]);
+  }
+  return total;
+}
+
+/// NAV-OS-R2: forward-looking route bearing from the snapped position toward
+/// a point [lookaheadM] meters ahead along the polyline. Walking strictly in
+/// the direction of increasing distance-along-route guarantees the bearing can
+/// never point down a previous/backward segment.
+double? driverForwardRouteBearing(
+  List<DriverLonLat> routeCoords, {
+  required int segmentIndex,
+  required double snappedLat,
+  required double snappedLon,
+  double lookaheadM = 12.0,
+}) {
+  if (routeCoords.length < 2) return null;
+  final i = segmentIndex.clamp(0, routeCoords.length - 2);
+
+  var curLat = snappedLat;
+  var curLon = snappedLon;
+  var need = lookaheadM;
+  for (var k = i + 1; k < routeCoords.length; k++) {
+    final next = routeCoords[k];
+    final d = driverMetersBetween(
+      DriverLonLat(curLon, curLat),
+      DriverLonLat(next.lon, next.lat),
+    );
+    if (d >= need && d > 0.5) {
+      final t = need / d;
+      final targetLat = curLat + (next.lat - curLat) * t;
+      final targetLon = curLon + (next.lon - curLon) * t;
+      final fromTarget = driverBearingFromPoints(
+        snappedLat,
+        snappedLon,
+        targetLat,
+        targetLon,
+      );
+      if (fromTarget != null) return fromTarget;
+      return driverBearingFromPoints(curLat, curLon, next.lat, next.lon);
+    }
+    need -= d;
+    curLat = next.lat;
+    curLon = next.lon;
+  }
+  // Near route end: bearing toward the final point if it is meaningful.
+  final last = routeCoords.last;
+  final distToEnd = driverMetersBetween(
+    DriverLonLat(snappedLon, snappedLat),
+    DriverLonLat(last.lon, last.lat),
+  );
+  if (distToEnd > 1.0) {
+    return driverBearingFromPoints(snappedLat, snappedLon, last.lat, last.lon);
+  }
+  final a = routeCoords[routeCoords.length - 2];
+  return driverBearingFromPoints(a.lat, a.lon, last.lat, last.lon);
+}
+
 double? driverBearingFromPoints(
   double lat1,
   double lon1,

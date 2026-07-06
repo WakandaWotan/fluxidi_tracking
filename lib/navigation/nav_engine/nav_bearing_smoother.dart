@@ -1,10 +1,15 @@
 /// Smooths heading/bearing with correct 0..360 wrap-around.
 class NavBearingSmoother {
   double? _lastBearing;
+  String _lastSource = 'unknown';
 
   void reset() {
     _lastBearing = null;
+    _lastSource = 'unknown';
   }
+
+  /// Source of the most recent [smooth] target before easing.
+  String get lastSource => _lastSource;
 
   /// Normalizes degrees to \[0, 360).
   static double normalizeBearing(double degrees) {
@@ -26,24 +31,34 @@ class NavBearingSmoother {
     required double? rawHeading,
     required double? routeBearing,
     required double? speedKmh,
+    bool hasReliableSnap = false,
   }) {
     final speed = speedKmh ?? 0.0;
+
+    if (speed < 3.5 && _lastBearing != null && _lastBearing!.isFinite) {
+      _lastSource = 'last_stable_low_speed';
+      return _lastBearing!;
+    }
+
     double? target;
 
-    // Prefer route segment bearing when moving fast enough.
-    if (speed >= 5.0 &&
+    if (hasReliableSnap &&
         routeBearing != null &&
         routeBearing.isFinite &&
         routeBearing >= 0) {
       target = normalizeBearing(routeBearing);
+      _lastSource = 'route_segment';
     } else if (rawHeading != null &&
         rawHeading.isFinite &&
         rawHeading >= 0) {
       target = normalizeBearing(rawHeading);
+      _lastSource = 'gps_heading';
     } else if (_lastBearing != null && _lastBearing!.isFinite) {
       target = _lastBearing!;
+      _lastSource = 'last_stable';
     } else {
       target = 0.0;
+      _lastSource = 'fallback';
     }
 
     final previous = _lastBearing;

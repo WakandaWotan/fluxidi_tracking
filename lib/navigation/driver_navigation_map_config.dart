@@ -43,6 +43,12 @@ const double kDriverRouteLineOutlineOpacity = 0.72;
 const int kDriverRouteLineColor = 0xFF2B6CB0;
 const int kDriverRouteLineOutlineColor = 0xCC0F172A;
 
+/// NAV-OS-R2: completed (already driven) route section is muted grey so the
+/// remaining route ahead of the taxi stays visually dominant.
+const double kDriverRouteLineCompletedWidth = 7.0;
+const double kDriverRouteLineCompletedOpacity = 0.45;
+const int kDriverRouteLineCompletedColor = 0xFF94A3B8;
+
 /// NAV-MAPSTYLE: try hiding non-essential POI layers on navigation street styles.
 const bool kDriverMapClutterReductionEnabled = true;
 const List<String> kDriverMapClutterLayerIds = <String>[
