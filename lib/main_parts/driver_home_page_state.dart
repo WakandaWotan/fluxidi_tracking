@@ -200,7 +200,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   // NAV-UI-R6E: taxi visual captured just before setStyleURI so the marker can
   // be recreated immediately after style load without waiting for GPS.
   ({double lat, double lon, double bearing, String source})?
-      _taxiVisualSnapshotForStyleSwap;
+  _taxiVisualSnapshotForStyleSwap;
   // NAV-OS-R2: last forward-bearing guard state for diagnostics.
   bool _lastR2ReversedGuard = false;
   double? _lastR2BearingDeltaDeg;
@@ -281,7 +281,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   DateTime? _navR3AnimStartedAt;
   Duration _navR3AnimDuration = const Duration(milliseconds: 1000);
   Timer? _navR3MotionTimer;
-  final DriverNavRouteProgress _driverNavRouteProgress = DriverNavRouteProgress();
+  final DriverNavRouteProgress _driverNavRouteProgress =
+      DriverNavRouteProgress();
   NavRouteProgressOutput? _lastNavRouteProgress;
   int? _navRouteProgressRouteFingerprint;
   final DriverNavCameraPolicy _driverNavCameraPolicy = DriverNavCameraPolicy();
@@ -305,11 +306,21 @@ class _DriverHomePageState extends State<DriverHomePage>
   DateTime? _lastNavDiagR9EnteredAt;
   bool _offRouteLikely = false;
   int _offRouteHitCount = 0;
+  String? _lastNavR12OffRouteSignature;
+  // NAV-R12-B: why the route-adaptation state is active — 'none'
+  // | 'opposite_direction' | 'opposite_direction_strong'
+  // | 'backward_progress' | 'snap_distance'.
+  String _offRouteReason = 'none';
   bool _isRerouting = false;
   DateTime? _lastRerouteAt;
+  bool _lastRerouteFailed = false;
   String? _rerouteReason;
   DateTime? _offRouteRerouteDebounceStartedAt;
   static const Duration _rerouteCooldown = Duration(seconds: 25);
+  // NAV-R12-B: route-deviation off-route must correct fast, and a failed
+  // reroute retries on a short backoff instead of the full cooldown.
+  static const Duration _rerouteCooldownRouteDeviation = Duration(seconds: 8);
+  static const Duration _rerouteFailedRetryBackoff = Duration(seconds: 3);
   int _routeCleanupEpoch = 0;
   NavigationWorkerOfflineCorridorMetadata? _lastOfflineCorridorMetadata;
   bool _offlineCorridorMetadataLoading = false;
@@ -347,7 +358,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _lastMarkerLagM = 0.0;
     _offRouteHitCount = 0;
     _offRouteLikely = false;
+    _offRouteReason = 'none';
     _isRerouting = false;
+    _lastRerouteFailed = false;
     _rerouteReason = null;
     _offRouteRerouteDebounceStartedAt = null;
     _driverNavEngine.reset();
@@ -438,8 +451,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _driverNavValidationEngine.addSample(
       NavValidationSample(
         timestamp: now,
-        gpsAccuracyM:
-            pos.accuracy.isFinite && pos.accuracy > 0 ? pos.accuracy : null,
+        gpsAccuracyM: pos.accuracy.isFinite && pos.accuracy > 0
+            ? pos.accuracy
+            : null,
         speedKmh: _speedKmhFor(pos),
         routeConfidence: progress?.confidence,
         snapDistanceM: progress?.snapDistanceM,
@@ -447,8 +461,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         cameraScore: confidence?.cameraScore,
         instructionScore: confidence?.instructionScore,
         predictionActive: prediction?.predictionActive ?? false,
-        offRouteLikely:
-            progress?.offRouteLikely ?? _offRouteLikely,
+        offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
         markerAnimated:
             _navR3MotionActive || (engineOutput?.shouldAnimateMarker ?? false),
         cameraFollowed: _navValidationPendingCameraFollowed,
@@ -489,10 +502,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     return _cameraMode == _CameraMode.follow || _liveRideActive;
   }
 
-  void _logCloudNav3({
-    required String result,
-    required String reason,
-  }) {
+  void _logCloudNav3({required String result, required String reason}) {
     _logNavBounded(
       'CLOUD_NAV_3',
       'endpoint=offline result=$result reason=$reason',
@@ -624,14 +634,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (!kUseNavigationWorker) {
       return Text(
         _tr(
-          nl:
-              'Route-corridor voorbereiding beschikbaar zodra Navigation Core actief is.',
-          en:
-              'Route corridor preparation is available when Navigation Core is active.',
-          fr:
-              'La preparation du corridor de route sera disponible quand Navigation Core sera actif.',
-          es:
-              'La preparacion del corredor de ruta estara disponible cuando Navigation Core este activo.',
+          nl: 'Route-corridor voorbereiding beschikbaar zodra Navigation Core actief is.',
+          en: 'Route corridor preparation is available when Navigation Core is active.',
+          fr: 'La preparation du corridor de route sera disponible quand Navigation Core sera actif.',
+          es: 'La preparacion del corredor de ruta estara disponible cuando Navigation Core este activo.',
         ),
         textAlign: TextAlign.center,
         style: style,
@@ -654,14 +660,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (_offlineCorridorMetadataError) {
       return Text(
         _tr(
-          nl:
-              'Offline corridor kon niet worden voorbereid. Lokale GPS/predictie blijft actief.',
-          en:
-              'Offline corridor could not be prepared. Local GPS/prediction remains active.',
-          fr:
-              'Le corridor hors ligne n\'a pas pu etre prepare. GPS/prediction locale reste actif.',
-          es:
-              'No se pudo preparar el corredor sin conexion. GPS/prediccion local sigue activo.',
+          nl: 'Offline corridor kon niet worden voorbereid. Lokale GPS/predictie blijft actief.',
+          en: 'Offline corridor could not be prepared. Local GPS/prediction remains active.',
+          fr: 'Le corridor hors ligne n\'a pas pu etre prepare. GPS/prediction locale reste actif.',
+          es: 'No se pudo preparar el corredor sin conexion. GPS/prediccion local sigue activo.',
         ),
         textAlign: TextAlign.center,
         style: style,
@@ -6385,14 +6387,18 @@ class _DriverHomePageState extends State<DriverHomePage>
       _evaluateOffRouteReroute();
       await _syncVisibleRouteLineWithProgress(pos);
       _syncNavDiagSession();
-      _recordNavDiagGpsUpdate(pos, prev, metersFromPrev: prev != null
-          ? geo.Geolocator.distanceBetween(
-              prev.latitude,
-              prev.longitude,
-              pos.latitude,
-              pos.longitude,
-            )
-          : null);
+      _recordNavDiagGpsUpdate(
+        pos,
+        prev,
+        metersFromPrev: prev != null
+            ? geo.Geolocator.distanceBetween(
+                prev.latitude,
+                prev.longitude,
+                pos.latitude,
+                pos.longitude,
+              )
+            : null,
+      );
 
       if (_mapSupported &&
           _map != null &&
@@ -7111,7 +7117,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       _taxiVisualSnapshotForStyleSwap = (
         lat: coords.lat.toDouble(),
         lon: coords.lng.toDouble(),
-        bearing: marker.iconRotate ??
+        bearing:
+            marker.iconRotate ??
             (_lastKnownBearing.isFinite ? _lastKnownBearing : 0.0),
         source: 'snapshot',
       );
@@ -7123,7 +7130,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   /// Best-effort taxi visual for restore: style-swap snapshot > live nav
   /// visual > last GPS fix > route start.
   ({double lat, double lon, double bearing, String source})?
-      _lastKnownTaxiVisualForRestore() {
+  _lastKnownTaxiVisualForRestore() {
     final snapshot = _taxiVisualSnapshotForStyleSwap;
     if (snapshot != null) return snapshot;
     if (_navR3VisualLat != null && _navR3VisualLon != null) {
@@ -7169,8 +7176,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (visual != null && _map != null && !_mapStyleChanging) {
       try {
         var mgr = _driverPointManager;
-        mgr ??= _driverPointManager =
-            await _map!.annotations.createPointAnnotationManager();
+        mgr ??= _driverPointManager = await _map!.annotations
+            .createPointAnnotationManager();
         _driverMarker = await _createDriverMarkerAnnotation(
           mgr: mgr,
           geometry: _mbPoint(visual.lon, visual.lat),
@@ -7228,7 +7235,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     final marker = _driverMarker;
     if (mgr == null || marker == null) return;
     final geometry = marker.geometry;
-    final bearing = marker.iconRotate ??
+    final bearing =
+        marker.iconRotate ??
         (_lastKnownBearing.isFinite ? _lastKnownBearing : 0.0);
     try {
       await mgr.delete(marker);
@@ -7437,7 +7445,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         _navInstructionSnapshot?.distanceToManeuverMeters ??
         _nextNavDistanceM ??
         double.infinity;
-    final nearManeuver = distanceToManeuver.isFinite &&
+    final nearManeuver =
+        distanceToManeuver.isFinite &&
         distanceToManeuver <= kDriverNavR1NearManeuverCameraDistanceM;
 
     if (nearManeuver) {
@@ -7481,10 +7490,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     while (delta > 180) delta -= 360;
     while (delta < -180) delta += 360;
     final weight = bearingModeWeight.clamp(0.0, 1.0);
-    final maxStep = (speedKmh < 4
-            ? 3.5
-            : (speedKmh < 20 ? 14.0 : 28.0)) *
-        weight;
+    final maxStep =
+        (speedKmh < 4 ? 3.5 : (speedKmh < 20 ? 14.0 : 28.0)) * weight;
     if (maxStep <= 0.01) {
       return prev;
     }
@@ -7729,11 +7736,13 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   double? _navHeadingDeltaDegFor(geo.Position pos) {
-    final rawHeading =
-        pos.heading.isFinite && pos.heading >= 0 ? pos.heading : null;
+    final rawHeading = pos.heading.isFinite && pos.heading >= 0
+        ? pos.heading
+        : null;
     if (rawHeading == null) return null;
     final progress = _lastNavRouteProgress;
-    final routeBearing = _routeBearingFromProgress(progress) ??
+    final routeBearing =
+        _routeBearingFromProgress(progress) ??
         _routeBearingAtSnap(_lastRouteSnap);
     if (routeBearing == null || !routeBearing.isFinite) return null;
     var delta = (rawHeading - routeBearing) % 360.0;
@@ -7773,16 +7782,16 @@ class _DriverHomePageState extends State<DriverHomePage>
       _logNavBounded(
         'NAV_R6_CONFIDENCE',
         'overall=${output.overallScore.round()} '
-        'gps=${output.gpsScore.round()} '
-        'route=${output.routeScore.round()} '
-        'heading=${output.headingScore.round()} '
-        'motion=${output.motionScore.round()} '
-        'camera=${output.cameraScore.round()} '
-        'instruction=${output.instructionScore.round()} '
-        'trustSnap=${output.trustRouteSnap} '
-        'trustBearing=${output.trustBearing} '
-        'trustInstruction=${output.trustInstruction} '
-        'reason=${output.reason}',
+            'gps=${output.gpsScore.round()} '
+            'route=${output.routeScore.round()} '
+            'heading=${output.headingScore.round()} '
+            'motion=${output.motionScore.round()} '
+            'camera=${output.cameraScore.round()} '
+            'instruction=${output.instructionScore.round()} '
+            'trustSnap=${output.trustRouteSnap} '
+            'trustBearing=${output.trustBearing} '
+            'trustInstruction=${output.trustInstruction} '
+            'reason=${output.reason}',
         intervalMs: 1500,
       );
       unawaited(
@@ -7813,8 +7822,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     required bool manualRecenter,
   }) {
     final distanceToManeuver =
-        _navInstructionSnapshot?.distanceToManeuverMeters ??
-        _nextNavDistanceM;
+        _navInstructionSnapshot?.distanceToManeuverMeters ?? _nextNavDistanceM;
     final nearManeuver =
         distanceToManeuver != null &&
         distanceToManeuver.isFinite &&
@@ -7850,10 +7858,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     double bearingModeWeight,
     String reason,
   })
-  _resolveNavCameraPolicy(
-    geo.Position pos, {
-    required bool manualRecenter,
-  }) {
+  _resolveNavCameraPolicy(geo.Position pos, {required bool manualRecenter}) {
     final input = _buildNavCameraPolicyInput(
       pos,
       manualRecenter: manualRecenter,
@@ -7871,9 +7876,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         if (!confidence.allowCameraAggression && !manualRecenter) {
           zoom = (zoom - 0.35).clamp(14.5, 18.5);
           tilt = (tilt - 2.0).clamp(44.0, 66.0);
-          bearingModeWeight = (bearingModeWeight *
-                  (confidence.trustBearing ? 0.65 : 0.35))
-              .clamp(0.1, 1.0);
+          bearingModeWeight =
+              (bearingModeWeight * (confidence.trustBearing ? 0.65 : 0.35))
+                  .clamp(0.1, 1.0);
           reason = '${reason}_r6_cautious';
         }
         if (confidence.cameraScore < 45.0 && !manualRecenter) {
@@ -7884,8 +7889,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       _logNavBounded(
         'NAV_R5_CAMERA_POLICY',
         'zoom=${zoom.toStringAsFixed(1)} '
-        'tilt=${tilt.toStringAsFixed(1)} '
-        'follow=$shouldFollow reason=$reason',
+            'tilt=${tilt.toStringAsFixed(1)} '
+            'follow=$shouldFollow reason=$reason',
         intervalMs: 2000,
       );
       unawaited(
@@ -7946,9 +7951,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   List<NavRoutePoint> _navRoutePointsFromCoords() {
     return _routeCoords
-        .map(
-          (p) => NavRoutePoint(latitude: p.lat, longitude: p.lon),
-        )
+        .map((p) => NavRoutePoint(latitude: p.lat, longitude: p.lon))
         .toList(growable: false);
   }
 
@@ -7981,11 +7984,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       _logNavBounded(
         'NAV_R4_PROGRESS',
         'segment=${output.segmentIndex ?? -1} '
-        'confidence=${output.confidence.round()} '
-        'snapDistM=${output.snapDistanceM.toStringAsFixed(1)} '
-        'forward=${output.forwardProgress} '
-        'offRoute=${output.offRouteLikely} '
-        'reason=${output.reason}',
+            'confidence=${output.confidence.round()} '
+            'snapDistM=${output.snapDistanceM.toStringAsFixed(1)} '
+            'forward=${output.forwardProgress} '
+            'offRoute=${output.offRouteLikely} '
+            'reason=${output.reason}',
         intervalMs: 1500,
       );
       unawaited(
@@ -8085,8 +8088,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     final gpsHeading = pos.heading.isFinite && pos.heading >= 0
         ? pos.heading
         : null;
-    final reference =
-        speedKmh >= 6.0 ? (_lastMovementBearing ?? gpsHeading) : null;
+    final reference = speedKmh >= 6.0
+        ? (_lastMovementBearing ?? gpsHeading)
+        : null;
     double? delta;
     if (bearing != null && reference != null) {
       delta = NavBearingSmoother.bearingDelta(reference, bearing);
@@ -8143,10 +8147,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     _updateNavConfidenceForPosition(pos);
     final snap = _routeSnapFromProgressOrFallback(rawPoint);
     _lastRouteSnap = snap;
-    final bool canUseMatched = _isActiveDriverNavEngineContext() &&
-            progress != null
+    final bool canUseMatched =
+        _isActiveDriverNavEngineContext() && progress != null
         ? _routeProgressMatchedVisual(progress) &&
-            (_lastNavConfidence?.trustRouteSnap ?? true)
+              (_lastNavConfidence?.trustRouteSnap ?? true)
         : _canSnapToRoute(pos, snap);
     if (canUseMatched) {
       _matchEnterHits += 1;
@@ -8182,15 +8186,50 @@ class _DriverHomePageState extends State<DriverHomePage>
     } else {
       _offRouteHitCount = 0;
     }
-    final offRouteHitsRequired =
-        (progress?.offRouteLikely == true || snapDistance > 55.0) ? 2 : 3;
+    // NAV-R12-B: route deviation (opposite direction / backward progress)
+    // confirms off-route much faster than the plain snap-distance path.
+    final oppositeDirection = progress?.oppositeDirectionLikely ?? false;
+    final strongOppositeDirection =
+        progress?.routeDeviationReason == 'opposite_heading_strong';
+    final backwardProgress = progress?.backwardProgressLikely ?? false;
+    final routeDeviation = progress?.routeDeviationLikely ?? false;
+    final int offRouteHitsRequired;
+    if (strongOppositeDirection) {
+      offRouteHitsRequired = 1;
+    } else if (routeDeviation) {
+      offRouteHitsRequired = 2;
+    } else if (progress?.offRouteLikely == true || snapDistance > 55.0) {
+      offRouteHitsRequired = 2;
+    } else {
+      offRouteHitsRequired = 3;
+    }
     final offRoute = _offRouteHitCount >= offRouteHitsRequired;
+    if (offRoute) {
+      _offRouteReason = oppositeDirection
+          ? (strongOppositeDirection
+                ? 'opposite_direction_strong'
+                : 'opposite_direction')
+          : (backwardProgress ? 'backward_progress' : 'snap_distance');
+    } else {
+      _offRouteReason = 'none';
+    }
     if (offRoute != _offRouteLikely) {
       _offRouteLikely = offRoute;
       if (!offRoute) {
         _offRouteRerouteDebounceStartedAt = null;
       }
+      // NAV-R12-B: rebuild immediately so the route-adaptation banner state
+      // shows on the same fix, not only once a route fetch starts.
+      if (mounted) setState(() {});
     }
+    _logNavR12RouteDeviation(
+      pos: pos,
+      progress: progress,
+      snapDistance: snapDistance,
+      routeDeviation: routeDeviation,
+      oppositeDirection: oppositeDirection,
+      backwardProgress: backwardProgress,
+    );
 
     final displayPoint = (_useMatchedVisual && snap != null)
         ? snap.point
@@ -8211,16 +8250,81 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  /// NAV-R12-B: bounded, PII-safe route-deviation diagnostics (no lat/lng).
+  void _logNavR12RouteDeviation({
+    required geo.Position pos,
+    required NavRouteProgressOutput? progress,
+    required double snapDistance,
+    required bool routeDeviation,
+    required bool oppositeDirection,
+    required bool backwardProgress,
+  }) {
+    final rerouteEligible = _canAttemptOffRouteReroute();
+    final signature =
+        '$_offRouteReason|$routeDeviation|$oppositeDirection|'
+        '$backwardProgress|$_offRouteLikely|$rerouteEligible';
+    final changed = signature != _lastNavR12OffRouteSignature;
+    _lastNavR12OffRouteSignature = signature;
+    final headingDelta = progress?.headingDeltaDeg;
+    _logNavBounded(
+      'NAV_R12_ROUTE_DEVIATION',
+      'reason=$_offRouteReason '
+          'speedKmh=${_speedKmhFor(pos).toStringAsFixed(1)} '
+          'snapDistM=${snapDistance.isFinite ? snapDistance.toStringAsFixed(1) : 'inf'} '
+          'headingDeltaDeg=${headingDelta?.toStringAsFixed(0) ?? 'na'} '
+          'routeDeviationLikely=$routeDeviation '
+          'oppositeDirectionLikely=$oppositeDirection '
+          'backwardProgressLikely=$backwardProgress '
+          'offRouteLikely=$_offRouteLikely '
+          'rerouteEligible=$rerouteEligible',
+      intervalMs: changed ? 1 : 2000,
+    );
+    if (changed) {
+      unawaited(
+        NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+          tag: 'NAV_R12_ROUTE_DEVIATION',
+          fields: <String, dynamic>{
+            'reason': _offRouteReason,
+            'speedKmh': _speedKmhFor(pos).round(),
+            'snapDistM': snapDistance.isFinite ? snapDistance.round() : -1,
+            'headingDeltaDeg': headingDelta?.round() ?? -1,
+            'routeDeviationLikely': routeDeviation,
+            'oppositeDirectionLikely': oppositeDirection,
+            'backwardProgressLikely': backwardProgress,
+            'offRouteLikely': _offRouteLikely,
+            'rerouteEligible': rerouteEligible,
+          },
+        ),
+      );
+    }
+  }
+
+  bool _isRouteDeviationOffRouteReason() {
+    return _offRouteReason == 'opposite_direction' ||
+        _offRouteReason == 'opposite_direction_strong' ||
+        _offRouteReason == 'backward_progress';
+  }
+
+  Duration _rerouteCooldownFor() {
+    // NAV-R12-B: a failed reroute retries on a short backoff; route-deviation
+    // off-route corrects on a short cooldown. Camera follow mode no longer
+    // gates detection/eligibility — it only affects camera behavior.
+    if (_lastRerouteFailed) return _rerouteFailedRetryBackoff;
+    if (_isRouteDeviationOffRouteReason()) {
+      return _rerouteCooldownRouteDeviation;
+    }
+    return _rerouteCooldown;
+  }
+
   bool _canAttemptOffRouteReroute() {
     if (!_liveRideActive || _isWaiting) return false;
-    if (_cameraMode != _CameraMode.follow) return false;
     if (_lastPos == null || _isRerouting) return false;
     if (_routeCoords.length < 2) return false;
     if (!_offRouteLikely) return false;
 
     final lastReroute = _lastRerouteAt;
     if (lastReroute != null &&
-        DateTime.now().difference(lastReroute) < _rerouteCooldown) {
+        DateTime.now().difference(lastReroute) < _rerouteCooldownFor()) {
       return false;
     }
 
@@ -8239,6 +8343,14 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Duration _offRouteRerouteDebounceFor() {
+    // NAV-R12-B: confirmed route deviation must start the reroute on the
+    // next fix, not seconds later.
+    if (_offRouteReason == 'opposite_direction_strong') {
+      return const Duration(milliseconds: 500);
+    }
+    if (_isRouteDeviationOffRouteReason()) {
+      return const Duration(milliseconds: 800);
+    }
     final progress = _lastNavRouteProgress;
     if (progress != null && progress.offRouteLikely) {
       final snapDist = progress.snapDistanceM;
@@ -8265,16 +8377,24 @@ class _DriverHomePageState extends State<DriverHomePage>
       _offRouteRerouteDebounceStartedAt = DateTime.now();
       return;
     }
-    if (DateTime.now().difference(debounceStart) < _offRouteRerouteDebounceFor()) {
+    if (DateTime.now().difference(debounceStart) <
+        _offRouteRerouteDebounceFor()) {
       return;
     }
 
-    unawaited(_triggerOffRouteReroute(reason: 'off_route'));
+    unawaited(
+      _triggerOffRouteReroute(
+        reason: _isRouteDeviationOffRouteReason()
+            ? _offRouteReason
+            : 'off_route',
+      ),
+    );
   }
 
   void _resetOffRouteStateAfterReroute() {
     _offRouteHitCount = 0;
     _offRouteLikely = false;
+    _offRouteReason = 'none';
     _offRouteRerouteDebounceStartedAt = null;
     _matchEnterHits = 0;
     _matchExitHits = 0;
@@ -8339,6 +8459,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (ok) {
         _resetOffRouteStateAfterReroute();
       }
+      // NAV-R12-B: failed reroutes retry on a short backoff instead of the
+      // full cooldown (see _rerouteCooldownFor).
+      _lastRerouteFailed = !ok;
       _isRerouting = false;
       _rerouteReason = null;
       debugPrint(
@@ -8394,10 +8517,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           progress!.snappedLatitude != null &&
           progress.snappedLongitude != null) {
         return (
-          point: _LonLat(
-            progress.snappedLongitude!,
-            progress.snappedLatitude!,
-          ),
+          point: _LonLat(progress.snappedLongitude!, progress.snappedLatitude!),
           source: 'route_snap',
           snapDistM: progress.snapDistanceM,
         );
@@ -8419,7 +8539,11 @@ class _DriverHomePageState extends State<DriverHomePage>
           snapDistM: snap.distanceFromRouteM,
         );
       }
-      return (point: raw, source: 'fallback', snapDistM: snap?.distanceFromRouteM);
+      return (
+        point: raw,
+        source: 'fallback',
+        snapDistM: snap?.distanceFromRouteM,
+      );
     }
 
     if (snap == null) {
@@ -8427,11 +8551,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     if (_offRouteLikely) {
-      return (
-        point: raw,
-        source: 'raw',
-        snapDistM: snap.distanceFromRouteM,
-      );
+      return (point: raw, source: 'raw', snapDistM: snap.distanceFromRouteM);
     }
 
     final markerSnapThresholdM = math.max(45.0, _snapThresholdFor(pos));
@@ -8443,11 +8563,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
     }
 
-    return (
-      point: raw,
-      source: 'raw',
-      snapDistM: snap.distanceFromRouteM,
-    );
+    return (point: raw, source: 'raw', snapDistM: snap.distanceFromRouteM);
   }
 
   double? _effectiveRouteProgressM(geo.Position pos) {
@@ -8527,17 +8643,13 @@ class _DriverHomePageState extends State<DriverHomePage>
       _routeLineProgressTrimmed = true;
       _lastRouteLineTrimProgressM = progressM;
       _lastRouteLineTrimAt = now;
-      await _drawRouteLine(
-        remaining,
-        force: true,
-        completedCoords: completed,
-      );
+      await _drawRouteLine(remaining, force: true, completedCoords: completed);
       final totalM = driverRouteLengthMeters(_routeCoords);
       final remainingM = (totalM - progressM).clamp(0.0, totalM);
       _logNavBounded(
         'NAV_OS_R2_ROUTE_PROGRESS_LINE',
         'completedM=${progressM.toStringAsFixed(0)} '
-        'remainingM=${remainingM.toStringAsFixed(0)} reason=$reason',
+            'remainingM=${remainingM.toStringAsFixed(0)} reason=$reason',
       );
     }
     _logNavBounded(
@@ -8564,7 +8676,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     final progressReliable = activeNav && progress != null
         ? progress.hasReliableSnap
         : markerDisplay.source == 'route_snap';
-    final hasReliableSnap = progressReliable &&
+    final hasReliableSnap =
+        progressReliable &&
         (!activeNav || confidence == null || confidence.trustRouteSnap);
     final snappedLat = hasReliableSnap
         ? (progress?.snappedLatitude ?? snap?.point.lat)
@@ -8633,7 +8746,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         displayLatitude: output.displayLatitude,
         displayLongitude: output.displayLongitude,
         bearing: output.bearing,
-        trustRouteSnap: _lastNavConfidence?.trustRouteSnap ??
+        trustRouteSnap:
+            _lastNavConfidence?.trustRouteSnap ??
             progress?.hasReliableSnap ??
             false,
       );
@@ -8701,7 +8815,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _logNavBounded(
       'NAV_R3_MOTION',
       'state=$state durationMs=$durationMs '
-      'progress=${progress.toStringAsFixed(2)} animate=$animate',
+          'progress=${progress.toStringAsFixed(2)} animate=$animate',
       intervalMs: state == 'tick' ? 1200 : 1,
     );
   }
@@ -8756,12 +8870,14 @@ class _DriverHomePageState extends State<DriverHomePage>
           : null,
       bearing: _navR3VisualBearing,
       speedKmh: output.speedKmh ?? (pos != null ? _speedKmhFor(pos) : null),
-      routeBearing: _routeBearingFromProgress(progress) ??
+      routeBearing:
+          _routeBearingFromProgress(progress) ??
           _routeBearingAtSnap(_lastRouteSnap),
       trustRouteSnap: trustRouteSnap,
       trustBearing: trustBearing,
       offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
-      gpsAccuracyM: output.accuracyM ??
+      gpsAccuracyM:
+          output.accuracyM ??
           (pos != null && pos.accuracy.isFinite && pos.accuracy > 0
               ? pos.accuracy
               : null),
@@ -8784,9 +8900,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       _logNavBounded(
         'NAV_R7_PREDICTION',
         'active=${result.predictionActive} '
-        'durationMs=${_gapSinceLastNavEngineMs()} '
-        'confidence=${result.confidence.round()} '
-        'reason=${result.reason}',
+            'durationMs=${_gapSinceLastNavEngineMs()} '
+            'confidence=${result.confidence.round()} '
+            'reason=${result.reason}',
         intervalMs: 1200,
       );
       unawaited(
@@ -9031,11 +9147,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         animate: true,
       );
       unawaited(
-        _applyDriverMarkerVisualOnly(
-          visual.lat,
-          visual.lon,
-          visual.bearing,
-        ),
+        _applyDriverMarkerVisualOnly(visual.lat, visual.lon, visual.bearing),
       );
       if (progress < 1.0) return;
 
@@ -9126,16 +9238,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       _navR3VisualLat = visual.lat;
       _navR3VisualLon = visual.lon;
       _navR3VisualBearing = visual.bearing;
-      return (
-        point: _LonLat(visual.lon, visual.lat),
-        bearing: visual.bearing,
-      );
+      return (point: _LonLat(visual.lon, visual.lat), bearing: visual.bearing);
     }
     final markerDisplay = _driverMarkerDisplayFor(pos);
-    return (
-      point: markerDisplay.point,
-      bearing: _markerBearingFor(pos, snap),
-    );
+    return (point: markerDisplay.point, bearing: _markerBearingFor(pos, snap));
   }
 
   ({_LonLat point, double bearing}) _resolveNavVisualForMarker(
@@ -9386,19 +9492,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     _navValidationPendingCameraFollowed = false;
     _navValidationPendingCameraSkipReason = null;
 
-    final manualRecenter =
-        force || cameraReason == 'manual_recenter';
-    final policy = _resolveNavCameraPolicy(
-      pos,
-      manualRecenter: manualRecenter,
-    );
+    final manualRecenter = force || cameraReason == 'manual_recenter';
+    final policy = _resolveNavCameraPolicy(pos, manualRecenter: manualRecenter);
     if (!policy.shouldFollow && !manualRecenter) {
       _navValidationPendingCameraSkipReason = policy.reason;
       _logNavBounded(
         'NAV_R5_CAMERA_POLICY',
         'zoom=${policy.zoom.toStringAsFixed(1)} '
-        'tilt=${policy.tilt.toStringAsFixed(1)} '
-        'follow=false reason=${policy.reason}',
+            'tilt=${policy.tilt.toStringAsFixed(1)} '
+            'follow=false reason=${policy.reason}',
         intervalMs: 2000,
       );
       _recordNavDiagCameraUpdate(
@@ -9459,8 +9561,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     final snap =
         _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
     final speedKmh = _speedKmhFor(pos);
-    final visual = _isActiveDriverNavEngineContext() &&
-            _lastNavEngineOutput != null
+    final visual =
+        _isActiveDriverNavEngineContext() && _lastNavEngineOutput != null
         ? _resolveNavVisualForLiveNav(
             pos,
             snap,
@@ -9603,7 +9705,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           step: step,
         );
         final swapped =
-            rawPrimary.isNotEmpty && displaySnap.primaryText.trim() != rawPrimary;
+            rawPrimary.isNotEmpty &&
+            displaySnap.primaryText.trim() != rawPrimary;
         final primaryKind = driverNavBannerPrimaryKind(
           primaryText: displaySnap.primaryText,
           step: step,
@@ -10099,7 +10202,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       _updateRouteSnapState(pos);
       await _syncVisibleRouteLineWithProgress(pos);
       await _syncMapboxUserLocationPuckVisibility();
-      await _followCameraTesla(pos, force: true, cameraReason: 'manual_recenter');
+      await _followCameraTesla(
+        pos,
+        force: true,
+        cameraReason: 'manual_recenter',
+      );
       debugPrint('[GPS][RECENTER][FOLLOW_RESTORED]');
       return;
     }
@@ -16668,7 +16775,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       result = NavInstructionSnapshot(
         distanceToManeuverMeters: _nextNavDistanceM ?? 0,
-        primaryText: normalized.primary.isNotEmpty ? normalized.primary : street,
+        primaryText: normalized.primary.isNotEmpty
+            ? normalized.primary
+            : street,
         secondaryText: normalized.secondary,
         maneuverType: _nextNavType ?? '',
         maneuverModifier: _nextNavModifier ?? '',
@@ -16689,8 +16798,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 false)
           : _useMatchedVisual,
       trustInstruction: _lastNavConfidence?.trustInstruction ?? true,
-      offRouteLikely:
-          _lastNavRouteProgress?.offRouteLikely ?? _offRouteLikely,
+      offRouteLikely: _lastNavRouteProgress?.offRouteLikely ?? _offRouteLikely,
       forwardProgress: _lastNavRouteProgress?.forwardProgress ?? true,
       predictionActive: _lastNavMotionPrediction?.predictionActive ?? false,
       routeConfidence: _lastNavRouteProgress?.confidence,
@@ -16727,12 +16835,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
     final primaryText = snapshot.primaryText.trim();
     final secondaryText = _navBannerSecondaryFromSnapshot(snapshot);
-    final distancePrefix = _tr(
-      nl: 'Over',
-      en: 'In',
-      fr: 'Dans',
-      es: 'En',
-    );
+    final distancePrefix = _tr(nl: 'Over', en: 'In', fr: 'Dans', es: 'En');
     final isArrival = driverNavTypeIsArrival(snapshot.maneuverType);
     final icon = driverManeuverIconData(
       snapshot.maneuverType,
@@ -16842,9 +16945,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           decoration: BoxDecoration(
             color: Colors.black.withOpacity(0.26),
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: Colors.white.withOpacity(0.14),
-            ),
+            border: Border.all(color: Colors.white.withOpacity(0.14)),
           ),
           child: IconButton(
             tooltip: 'Menu',
@@ -16867,10 +16968,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       child: Container(
         width: logoWidth,
         height: logoHeight,
-        padding: const EdgeInsets.symmetric(
-          horizontal: 10,
-          vertical: 6,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: Colors.black.withOpacity(0.38),
           borderRadius: BorderRadius.circular(14),
@@ -17013,8 +17111,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final bool collapsedNavHeader =
         collapseTopBarInLandscapeNav || collapseTopBarInPortraitNav;
     final double navBannerTop =
-        MediaQuery.of(context).padding.top +
-        (collapsedNavHeader ? 58 : 74);
+        MediaQuery.of(context).padding.top + (collapsedNavHeader ? 58 : 74);
     final bool hideMapUserPuck = _shouldHideMapboxUserLocationPuck();
     return Scaffold(
       key: _scaffoldKey,
@@ -17046,7 +17143,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           if (showCockpit &&
               (collapseTopBarInLandscapeNav || collapseTopBarInPortraitNav))
             Positioned(
-              top: MediaQuery.of(context).padding.top +
+              top:
+                  MediaQuery.of(context).padding.top +
                   (collapseTopBarInLandscapeNav ? 6 : 8),
               left: 10,
               right: collapseTopBarInLandscapeNav ? 10 : null,

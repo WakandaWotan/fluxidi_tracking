@@ -5,10 +5,7 @@ class NavRoutePoint {
   final double latitude;
   final double longitude;
 
-  const NavRoutePoint({
-    required this.latitude,
-    required this.longitude,
-  });
+  const NavRoutePoint({required this.latitude, required this.longitude});
 }
 
 /// Raw GPS + route geometry for route-progress evaluation.
@@ -43,6 +40,28 @@ class NavRouteProgressOutput {
   final double? distanceAlongRouteM;
   final bool forwardProgress;
   final bool offRouteLikely;
+
+  /// NAV-R12-B: true when the current route no longer matches actual
+  /// movement (opposite direction or backward progress) even though the
+  /// vehicle may still be close to the old route line.
+  final bool routeDeviationLikely;
+
+  /// NAV-R12-B: true when the vehicle is reliably moving opposite to the
+  /// matched route segment (deviation on the same street).
+  final bool oppositeDirectionLikely;
+
+  /// NAV-R12-B: 'none' | 'opposite_heading' | 'opposite_heading_strong'
+  /// | 'backward_progress'.
+  final String routeDeviationReason;
+
+  /// NAV-R12-B: absolute delta (0..180) between GPS heading and the matched
+  /// route segment bearing, when both were available on this fix.
+  final double? headingDeltaDeg;
+
+  /// NAV-R12-B: true when route progress moved backwards across consecutive
+  /// reliable moving fixes.
+  final bool backwardProgressLikely;
+
   final String reason;
 
   const NavRouteProgressOutput({
@@ -55,6 +74,11 @@ class NavRouteProgressOutput {
     this.distanceAlongRouteM,
     required this.forwardProgress,
     required this.offRouteLikely,
+    this.routeDeviationLikely = false,
+    this.oppositeDirectionLikely = false,
+    this.routeDeviationReason = 'none',
+    this.headingDeltaDeg,
+    this.backwardProgressLikely = false,
     required this.reason,
   });
 }
@@ -84,10 +108,21 @@ class DriverNavRouteProgress {
   static const int _segmentWindow = 25;
   static const int _lowConfidenceOffRouteThreshold = 2;
 
+  // NAV-R12-B: route deviation (opposite direction / backward progress)
+  // detection thresholds.
+  static const double _deviationMinSpeedKmh = 8.0;
+  static const double _deviationMaxAccuracyM = 50.0;
+  static const double _oppositeHeadingDeltaDeg = 120.0;
+  static const double _strongOppositeHeadingDeltaDeg = 140.0;
+  static const int _oppositeHeadingStreakThreshold = 2;
+  static const int _backwardProgressStreakThreshold = 2;
+
   int? _previousSegmentIndex;
   int? _lastReliableSegmentIndex;
   double? _lastDistanceAlongRouteM;
   int _lowConfidenceStreak = 0;
+  int _oppositeHeadingStreak = 0;
+  int _backwardProgressStreak = 0;
   bool _routeWasReset = true;
 
   void reset() {
@@ -95,6 +130,8 @@ class DriverNavRouteProgress {
     _lastReliableSegmentIndex = null;
     _lastDistanceAlongRouteM = null;
     _lowConfidenceStreak = 0;
+    _oppositeHeadingStreak = 0;
+    _backwardProgressStreak = 0;
     _routeWasReset = true;
   }
 
@@ -162,14 +199,70 @@ class DriverNavRouteProgress {
       confidence = (confidence - 20.0).clamp(0.0, 100.0);
     }
 
+    // NAV-R12-B: explicit opposite-direction detection. Snap distance can
+    // stay near 0 while the route no longer matches actual movement, so
+    // heading vs matched segment bearing must be decisive.
+    final headingDeltaDeg = _headingDeltaDegFor(
+      rawHeading: input.rawHeading,
+      segmentBearing: candidate.segmentBearing,
+    );
+    final movingReliably =
+        speedKmh >= _deviationMinSpeedKmh &&
+        (accuracyM == null ||
+            !accuracyM.isFinite ||
+            accuracyM <= _deviationMaxAccuracyM);
+    var oppositeDirectionLikely = false;
+    var routeDeviationReason = 'none';
+    if (movingReliably && headingDeltaDeg != null) {
+      if (headingDeltaDeg > _oppositeHeadingDeltaDeg) {
+        _oppositeHeadingStreak += 1;
+        if (headingDeltaDeg > _strongOppositeHeadingDeltaDeg) {
+          oppositeDirectionLikely = true;
+          routeDeviationReason = 'opposite_heading_strong';
+        } else if (_oppositeHeadingStreak >= _oppositeHeadingStreakThreshold) {
+          oppositeDirectionLikely = true;
+          routeDeviationReason = 'opposite_heading';
+        }
+      } else {
+        _oppositeHeadingStreak = 0;
+      }
+    } else {
+      // Stopped, creeping, poor accuracy, or no usable heading: streaks
+      // require consecutive reliable moving fixes, so start over.
+      _oppositeHeadingStreak = 0;
+    }
+
+    // NAV-R12-B: sustained backward route progress invalidates the current
+    // route, not just a confidence penalty.
+    if (!forwardProgress && speedKmh >= _deviationMinSpeedKmh) {
+      _backwardProgressStreak += 1;
+    } else if (forwardProgress) {
+      _backwardProgressStreak = 0;
+    }
+    final backwardProgressLikely =
+        _backwardProgressStreak >= _backwardProgressStreakThreshold;
+    final routeDeviationLikely =
+        oppositeDirectionLikely || backwardProgressLikely;
+    if (routeDeviationReason == 'none' && backwardProgressLikely) {
+      routeDeviationReason = 'backward_progress';
+    }
+
     final maxSnapDist = _maxReliableSnapDistanceM(accuracyM);
-    var hasReliableSnap = confidence >= 55.0 &&
+    var hasReliableSnap =
+        confidence >= 55.0 &&
         candidate.snapDistanceM <= maxSnapDist &&
         forwardProgress &&
         (!largeBackwardTeleport || allowBackwardException);
 
     if (_routeWasReset && candidate.snapDistanceM <= maxSnapDist + 10.0) {
-      hasReliableSnap = confidence >= 50.0 && candidate.snapDistanceM <= maxSnapDist;
+      hasReliableSnap =
+          confidence >= 50.0 && candidate.snapDistanceM <= maxSnapDist;
+    }
+
+    // NAV-R12-B: route deviation must release the snap immediately — high
+    // snap confidence may not hide opposite-direction driving.
+    if (routeDeviationLikely) {
+      hasReliableSnap = false;
     }
 
     if (hasReliableSnap) {
@@ -187,7 +280,8 @@ class DriverNavRouteProgress {
     }
     final offRouteLikely =
         candidate.snapDistanceM > 58.0 ||
-        _lowConfidenceStreak >= _lowConfidenceOffRouteThreshold;
+        _lowConfidenceStreak >= _lowConfidenceOffRouteThreshold ||
+        routeDeviationLikely;
 
     final reason = _reasonFor(
       hasReliableSnap: hasReliableSnap,
@@ -196,6 +290,7 @@ class DriverNavRouteProgress {
       forwardProgress: forwardProgress,
       offRouteLikely: offRouteLikely,
       largeBackwardTeleport: largeBackwardTeleport,
+      routeDeviationReason: routeDeviationReason,
     );
 
     return NavRouteProgressOutput(
@@ -208,8 +303,26 @@ class DriverNavRouteProgress {
       distanceAlongRouteM: candidate.distanceAlongRouteM,
       forwardProgress: forwardProgress,
       offRouteLikely: offRouteLikely,
+      routeDeviationLikely: routeDeviationLikely,
+      oppositeDirectionLikely: oppositeDirectionLikely,
+      routeDeviationReason: routeDeviationReason,
+      headingDeltaDeg: headingDeltaDeg,
+      backwardProgressLikely: backwardProgressLikely,
       reason: reason,
     );
+  }
+
+  static double? _headingDeltaDegFor({
+    required double? rawHeading,
+    required double? segmentBearing,
+  }) {
+    if (rawHeading == null ||
+        segmentBearing == null ||
+        !rawHeading.isFinite ||
+        !segmentBearing.isFinite) {
+      return null;
+    }
+    return _bearingDiff(rawHeading, segmentBearing).abs();
   }
 
   static double _maxReliableSnapDistanceM(double? accuracyM) {
@@ -272,8 +385,10 @@ class DriverNavRouteProgress {
   }) {
     final refLatRad = rawLat * math.pi / 180.0;
     const metersPerDegLat = 111320.0;
-    final metersPerDegLon =
-        math.max(1.0, metersPerDegLat * math.cos(refLatRad));
+    final metersPerDegLon = math.max(
+      1.0,
+      metersPerDegLat * math.cos(refLatRad),
+    );
 
     var bestDistance = double.infinity;
     var bestAlong = 0.0;
@@ -302,7 +417,9 @@ class DriverNavRouteProgress {
         final vx = bx - ax;
         final vy = by - ay;
         final len2 = vx * vx + vy * vy;
-        final t = len2 <= 0 ? 0.0 : ((-ax * vx - ay * vy) / len2).clamp(0.0, 1.0);
+        final t = len2 <= 0
+            ? 0.0
+            : ((-ax * vx - ay * vy) / len2).clamp(0.0, 1.0);
         final px = ax + vx * t;
         final py = ay + vy * t;
         final approxDistance = math.sqrt(px * px + py * py);
@@ -350,7 +467,8 @@ class DriverNavRouteProgress {
     final phi2 = lat2 * math.pi / 180.0;
     final dPhi = (lat2 - lat1) * math.pi / 180.0;
     final dLambda = (lon2 - lon1) * math.pi / 180.0;
-    final a = math.sin(dPhi / 2) * math.sin(dPhi / 2) +
+    final a =
+        math.sin(dPhi / 2) * math.sin(dPhi / 2) +
         math.cos(phi1) *
             math.cos(phi2) *
             math.sin(dLambda / 2) *
@@ -369,7 +487,8 @@ class DriverNavRouteProgress {
     const radToDeg = 180.0 / math.pi;
     final dLon = (lon2 - lon1) * degToRad;
     final y = math.sin(dLon) * math.cos(lat2 * degToRad);
-    final x = math.cos(lat1 * degToRad) * math.sin(lat2 * degToRad) -
+    final x =
+        math.cos(lat1 * degToRad) * math.sin(lat2 * degToRad) -
         math.sin(lat1 * degToRad) * math.cos(lat2 * degToRad) * math.cos(dLon);
     if (!x.isFinite || !y.isFinite) return null;
     final brng = math.atan2(y, x) * radToDeg;
@@ -441,11 +560,8 @@ class DriverNavRouteProgress {
     return 10.0;
   }
 
-  ({
-    bool forwardProgress,
-    bool largeBackwardTeleport,
-    double confidenceAdjust,
-  }) _evaluateForwardProgress({
+  ({bool forwardProgress, bool largeBackwardTeleport, double confidenceAdjust})
+  _evaluateForwardProgress({
     required _ProjectionCandidate candidate,
     required double speedKmh,
   }) {
@@ -512,8 +628,10 @@ class DriverNavRouteProgress {
     required bool forwardProgress,
     required bool offRouteLikely,
     required bool largeBackwardTeleport,
+    required String routeDeviationReason,
   }) {
     if (hasReliableSnap) return 'reliable_snap';
+    if (routeDeviationReason != 'none') return routeDeviationReason;
     if (offRouteLikely) return 'off_route_likely';
     if (largeBackwardTeleport) return 'backward_teleport';
     if (!forwardProgress) return 'backward_progress';

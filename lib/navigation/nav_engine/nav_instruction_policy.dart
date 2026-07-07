@@ -67,7 +67,9 @@ class DriverNavInstructionPolicy {
   NavInstructionPolicyOutput update(NavInstructionPolicyInput input) {
     final raw = (input.rawInstructionText ?? '').trim();
     const neutralFollowEn = 'Follow the route';
-    const checkingRouteEn = 'Checking route';
+    // NAV-R12-B product wording: neutral route adaptation, never blame the
+    // driver for a deviation.
+    const checkingRouteEn = 'Adapting route…';
     const tunnelFollowEn = 'Keep following the route';
 
     if (!input.liveRideActive || raw.isEmpty) {
@@ -241,7 +243,8 @@ String navInstructionPolicyLocalizedText({
     required String en,
     required String fr,
     required String es,
-  }) tr,
+  })
+  tr,
 }) {
   if (policy.showOriginalInstruction) {
     final trimmed = originalText.trim();
@@ -250,10 +253,10 @@ String navInstructionPolicyLocalizedText({
   switch (policy.reason) {
     case 'off_route_checking':
       return tr(
-        nl: 'Route wordt gecontroleerd',
-        en: 'Checking route',
-        fr: 'Verification de l\'itineraire',
-        es: 'Comprobando ruta',
+        nl: 'Route wordt aangepast…',
+        en: 'Adapting route…',
+        fr: 'Adaptation de l\'itinéraire…',
+        es: 'Ajustando la ruta…',
       );
     case 'tunnel_low_confidence':
       return tr(
