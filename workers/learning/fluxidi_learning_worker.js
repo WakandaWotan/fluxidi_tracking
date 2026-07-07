@@ -55,6 +55,17 @@
 //   GET  /health                (public)
 //   POST /ride-lessons/ingest   (service auth required)
 //   POST /insights/summary      (service auth required)
+//   POST   /admin/nav-complexity-events/ingest-dry-run  (service auth, NAV-AI-3)
+//   GET    /admin/nav-complexity-events/recent          (service auth, NAV-AI-3)
+//   DELETE /admin/nav-complexity-events/test-data       (service auth, NAV-AI-3)
+
+import {
+  validateNavComplexityIngestRequest,
+  navComplexityEventToDbRow,
+  publicNavComplexityRow,
+} from "./nav_complexity_event_schema.js";
+
+const NAV_COMPLEXITY_DIAG_TAG = "NAV_AI_3";
 
 const SERVICE_NAME = "fluxidi-learning";
 const SERVICE_VERSION = "cloud-learn-1";
@@ -223,7 +234,7 @@ function findPiiViolation(node, depth = 0) {
 function corsHeaders() {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
   };
 }
@@ -256,6 +267,15 @@ function logCloudLearn(endpoint, { result = "ok", country = "na", reason = "na" 
   const safeReason = safeToken(reason, 48) || "na";
   console.log(
     `[${DIAG_TAG}] endpoint=${safeEndpoint} result=${safeResult} country=${safeCountry} reason=${safeReason}`,
+  );
+}
+
+function logNavComplexity(endpoint, { result = "ok", reason = "na" } = {}) {
+  const safeEndpoint = safeToken(endpoint, 24) || "unknown";
+  const safeResult = safeToken(result, 16) || "na";
+  const safeReason = safeToken(reason, 48) || "na";
+  console.log(
+    `[${NAV_COMPLEXITY_DIAG_TAG}] endpoint=${safeEndpoint} result=${safeResult} reason=${safeReason}`,
   );
 }
 
@@ -823,6 +843,175 @@ async function handleInsightsSummary(request, env) {
 }
 
 // ---------------------------------------------------------------------------
+// NAV-AI-3: admin dry-run nav complexity ingest (sanitized events only)
+// ---------------------------------------------------------------------------
+
+async function storeNavComplexityEvent(env, row) {
+  if (storageMode(env) !== "d1") {
+    return { ok: true, storage: "dry_run", dry_run_storage: true };
+  }
+  try {
+    await env.LEARNING_DB.prepare(
+      `INSERT INTO nav_complexity_events (
+         id, created_at, reason_code, severity, confidence_bucket,
+         snap_dist_bucket, speed_bucket, maneuver_type, maneuver_modifier,
+         prediction_repeated, trust_bearing, trust_instruction,
+         dry_run, source, raw_json
+       ) VALUES (
+         ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15
+       )`,
+    )
+      .bind(
+        row.id,
+        row.created_at,
+        row.reason_code,
+        row.severity,
+        row.confidence_bucket,
+        row.snap_dist_bucket,
+        row.speed_bucket,
+        row.maneuver_type,
+        row.maneuver_modifier,
+        row.prediction_repeated,
+        row.trust_bearing,
+        row.trust_instruction,
+        row.dry_run,
+        row.source,
+        row.raw_json,
+      )
+      .run();
+    return { ok: true, storage: "d1", dry_run_storage: false };
+  } catch (_) {
+    return { ok: false, storage: "d1", error: "d1_insert_failed" };
+  }
+}
+
+async function handleNavComplexityIngestDryRun(request, env) {
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) {
+    logNavComplexity("ingest-dry-run", { result: "error", reason: "invalid_body" });
+    return jsonResponse({ ok: false, error: parsed.error }, parsed.status || 400);
+  }
+
+  const built = validateNavComplexityIngestRequest(parsed.body);
+  if (!built.ok) {
+    logNavComplexity("ingest-dry-run", { result: "error", reason: built.reason });
+    return jsonResponse({ ok: false, error: built.error, reason: built.reason }, 400);
+  }
+
+  if (!built.dryRunStore) {
+    logNavComplexity("ingest-dry-run", { result: "ok", reason: "validate_only" });
+    return jsonResponse({
+      ok: true,
+      advisoryOnly: true,
+      validated: true,
+      stored: false,
+      dryRunStore: false,
+      storage: "validate_only",
+      reason_code: built.sanitized.reasonCode,
+    });
+  }
+
+  const row = navComplexityEventToDbRow(built.sanitized, {
+    source: built.source,
+    dryRun: true,
+  });
+
+  const stored = await storeNavComplexityEvent(env, row);
+  if (!stored.ok) {
+    logNavComplexity("ingest-dry-run", { result: "error", reason: stored.error });
+    return jsonResponse({ ok: false, error: "Failed to store nav complexity event" }, 500);
+  }
+
+  logNavComplexity("ingest-dry-run", {
+    result: "ok",
+    reason: `stored_${stored.storage}`,
+  });
+
+  return jsonResponse({
+    ok: true,
+    advisoryOnly: true,
+    validated: true,
+    stored: true,
+    dryRunStore: true,
+    storage: stored.storage,
+    event_id: row.id,
+    dry_run: true,
+    source: built.source,
+    reason_code: row.reason_code,
+  });
+}
+
+async function handleNavComplexityRecent(_request, env) {
+  if (storageMode(env) !== "d1") {
+    logNavComplexity("recent", { result: "ok", reason: "learning_store_not_connected" });
+    return jsonResponse({
+      ok: true,
+      advisoryOnly: true,
+      count: 0,
+      storage: "dry_run",
+      events: [],
+    });
+  }
+
+  try {
+    const result = await env.LEARNING_DB.prepare(
+      `SELECT
+         id, created_at, reason_code, severity, confidence_bucket,
+         snap_dist_bucket, speed_bucket, maneuver_type, maneuver_modifier,
+         prediction_repeated, trust_bearing, trust_instruction,
+         dry_run, source, raw_json
+       FROM nav_complexity_events
+       ORDER BY created_at DESC
+       LIMIT 20`,
+    ).all();
+
+    const rows = Array.isArray(result?.results) ? result.results : [];
+    logNavComplexity("recent", { result: "ok", reason: `rows_${rows.length}` });
+    return jsonResponse({
+      ok: true,
+      advisoryOnly: true,
+      count: rows.length,
+      storage: "d1",
+      events: rows.map((row) => publicNavComplexityRow(row)),
+    });
+  } catch (_) {
+    logNavComplexity("recent", { result: "error", reason: "d1_query_failed" });
+    return jsonResponse({ ok: false, error: "Failed to query nav complexity events" }, 500);
+  }
+}
+
+async function handleNavComplexityDeleteTestData(_request, env) {
+  if (storageMode(env) !== "d1") {
+    logNavComplexity("delete-test", { result: "ok", reason: "learning_store_not_connected" });
+    return jsonResponse({
+      ok: true,
+      advisoryOnly: true,
+      deleted: 0,
+      storage: "dry_run",
+    });
+  }
+
+  try {
+    const result = await env.LEARNING_DB.prepare(
+      `DELETE FROM nav_complexity_events
+       WHERE dry_run = 1
+          OR source IN ('test', 'dry_run', 'manual_test')`,
+    ).run();
+    const deleted = Number(result?.meta?.changes) || 0;
+    logNavComplexity("delete-test", { result: "ok", reason: `deleted_${deleted}` });
+    return jsonResponse({
+      ok: true,
+      advisoryOnly: true,
+      deleted,
+      storage: "d1",
+    });
+  } catch (_) {
+    logNavComplexity("delete-test", { result: "error", reason: "d1_delete_failed" });
+    return jsonResponse({ ok: false, error: "Failed to delete test nav complexity data" }, 500);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -866,6 +1055,42 @@ export default {
           return jsonResponse({ ok: false, error: auth.error }, auth.status);
         }
         return await handleInsightsSummary(request, env);
+      }
+
+      if (url.pathname === "/admin/nav-complexity-events/ingest-dry-run") {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405);
+        }
+        const auth = requireServiceAuth(request, env);
+        if (!auth.ok) {
+          logNavComplexity("ingest-dry-run", { result: "error", reason: auth.reason });
+          return jsonResponse({ ok: false, error: auth.error }, auth.status);
+        }
+        return await handleNavComplexityIngestDryRun(request, env);
+      }
+
+      if (url.pathname === "/admin/nav-complexity-events/recent") {
+        if (request.method !== "GET") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405);
+        }
+        const auth = requireServiceAuth(request, env);
+        if (!auth.ok) {
+          logNavComplexity("recent", { result: "error", reason: auth.reason });
+          return jsonResponse({ ok: false, error: auth.error }, auth.status);
+        }
+        return await handleNavComplexityRecent(request, env);
+      }
+
+      if (url.pathname === "/admin/nav-complexity-events/test-data") {
+        if (request.method !== "DELETE") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405);
+        }
+        const auth = requireServiceAuth(request, env);
+        if (!auth.ok) {
+          logNavComplexity("delete-test", { result: "error", reason: auth.reason });
+          return jsonResponse({ ok: false, error: auth.error }, auth.status);
+        }
+        return await handleNavComplexityDeleteTestData(request, env);
       }
 
       return jsonResponse({ ok: false, error: "Not Found", path: url.pathname }, 404);

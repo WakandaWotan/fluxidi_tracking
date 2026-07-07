@@ -83,38 +83,18 @@ No raw lat/lng, no addresses, no customer/driver identity, no booking id
 - `heading_route_conflict`
 - `dense_maneuver_area`
 
-## Planned worker endpoint (NOT implemented yet)
+## Admin dry-run ingest (NAV-AI-3 — implemented, not live from Flutter)
+
+Protected admin-only endpoints in `fluxidi_learning_worker.js`:
 
 ```
-POST /nav-complexity-events/ingest
+POST   /admin/nav-complexity-events/ingest-dry-run
+GET    /admin/nav-complexity-events/recent
+DELETE /admin/nav-complexity-events/test-data
 Authorization: Bearer <LEARNING_SERVICE_TOKEN>
-Content-Type: application/json
 ```
 
-Behavior (future):
-
-1. Validate against the schema above (reject unknown keys / PII fragments)
-2. Dry-run mode until D1 table exists
-3. Store aggregated counters by `(reasonCode, confidenceBucket, snapDistBucket, speedBucket, maneuverType, hour_bucket)` — no per-event coordinates
-
-Suggested D1 table (future):
-
-```sql
-CREATE TABLE IF NOT EXISTS nav_complexity_patterns (
-  id TEXT PRIMARY KEY,
-  created_at TEXT NOT NULL,
-  reason_code TEXT NOT NULL,
-  severity TEXT NOT NULL,
-  confidence_bucket TEXT NOT NULL,
-  snap_dist_bucket TEXT NOT NULL,
-  speed_bucket TEXT NOT NULL,
-  maneuver_type TEXT NOT NULL,
-  maneuver_modifier TEXT NOT NULL,
-  prediction_repeated INTEGER NOT NULL,
-  hour_bucket INTEGER NOT NULL,
-  sample_count INTEGER NOT NULL DEFAULT 1
-);
-```
+See `NAV_AI_3_ADMIN_DRY_RUN_INGEST.md`. Flutter cloud upload remains disabled.
 
 ## Integration with existing Learning Worker
 

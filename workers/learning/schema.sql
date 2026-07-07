@@ -34,3 +34,29 @@ CREATE TABLE IF NOT EXISTS ride_lessons (
 CREATE INDEX IF NOT EXISTS idx_ride_lessons_scope_lookup
   ON ride_lessons (tenant_scope_hash, company_scope_hash, country,
                    ride_type, airport_code, weekday, hour_bucket);
+
+-- NAV-AI-3: sanitized navigation complexity events (admin dry-run ingest only).
+-- Advisory/learning data only — no coordinates, addresses, or identity.
+CREATE TABLE IF NOT EXISTS nav_complexity_events (
+  id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  reason_code TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  confidence_bucket TEXT NOT NULL,
+  snap_dist_bucket TEXT NOT NULL,
+  speed_bucket TEXT NOT NULL,
+  maneuver_type TEXT NOT NULL,
+  maneuver_modifier TEXT NOT NULL,
+  prediction_repeated INTEGER NOT NULL,
+  trust_bearing INTEGER NOT NULL,
+  trust_instruction INTEGER NOT NULL,
+  dry_run INTEGER NOT NULL DEFAULT 1,
+  source TEXT NOT NULL,
+  raw_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_nav_complexity_events_created
+  ON nav_complexity_events (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_nav_complexity_events_test_cleanup
+  ON nav_complexity_events (source, dry_run);
