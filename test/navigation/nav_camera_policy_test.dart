@@ -47,14 +47,19 @@ void main() {
       expect(out.targetZoom, inInclusiveRange(16.5, 17.0));
     });
 
-    test('medium speed widens the view (15.2–16.2)', () {
-      final out = DriverNavCameraPolicy().update(_input(speedKmh: 45.0));
-      expect(out.targetZoom, inInclusiveRange(15.2, 16.2));
+    test('NAV-R13: ~30 km/h gives a moderate overview (15.4–15.8)', () {
+      final out = DriverNavCameraPolicy().update(_input(speedKmh: 30.0));
+      expect(out.targetZoom, inInclusiveRange(15.4, 15.8));
     });
 
-    test('fast driving widens further (14.2–15.0)', () {
+    test('NAV-R13: ~50 km/h shows a top-down overview (14.8–15.1)', () {
+      final out = DriverNavCameraPolicy().update(_input(speedKmh: 50.0));
+      expect(out.targetZoom, inInclusiveRange(14.8, 15.1));
+    });
+
+    test('fast driving widens further (14.0–14.6)', () {
       final out = DriverNavCameraPolicy().update(_input(speedKmh: 80.0));
-      expect(out.targetZoom, inInclusiveRange(14.2, 15.0));
+      expect(out.targetZoom, inInclusiveRange(14.0, 14.6));
     });
 
     test('highway speed shows the most road ahead (13.5–14.2)', () {
@@ -92,27 +97,38 @@ void main() {
   });
 
   group('NAV-R12-H dynamic zoom: maneuver proximity', () {
-    test('very close maneuver zooms in toward 17.0 at city speed', () {
+    test('very close maneuver (<=80 m) zooms in toward 16.6 at city speed', () {
       final out = DriverNavCameraPolicy().update(
         _input(speedKmh: 40.0, nearManeuver: true, distanceToManeuverM: 60.0),
       );
       expect(out.zoomReason, 'maneuver');
-      expect(out.targetZoom, 17.0);
+      expect(out.targetZoom, 16.6);
     });
 
-    test('near maneuver zooms in moderately', () {
+    test('near maneuver (<=120 m) zooms in moderately', () {
       final out = DriverNavCameraPolicy().update(
-        _input(speedKmh: 40.0, nearManeuver: true, distanceToManeuverM: 200.0),
+        _input(speedKmh: 40.0, nearManeuver: true, distanceToManeuverM: 100.0),
       );
       expect(out.zoomReason, 'maneuver');
-      expect(out.targetZoom, 16.4);
+      expect(out.targetZoom, 16.0);
+    });
+
+    test('NAV-R13: a maneuver beyond 120 m keeps the speed overview', () {
+      final out = DriverNavCameraPolicy().update(
+        _input(speedKmh: 50.0, nearManeuver: true, distanceToManeuverM: 200.0),
+      );
+      expect(out.zoomReason, 'speed');
+      expect(
+        out.targetZoom,
+        closeTo(DriverNavCameraPolicy.speedZoomFor(50.0), 1e-9),
+      );
     });
 
     test('high speed keeps a wider view even close to the maneuver', () {
       final out = DriverNavCameraPolicy().update(
         _input(speedKmh: 90.0, nearManeuver: true, distanceToManeuverM: 60.0),
       );
-      expect(out.targetZoom, 16.2);
+      expect(out.targetZoom, 15.8);
     });
 
     test('after the maneuver passes, zoom returns to the speed band', () {
@@ -206,6 +222,25 @@ void main() {
       for (final speed in const <double>[0, 5, 20, 50, 80, 120, 200]) {
         final out = policy.update(_input(speedKmh: speed));
         expect(out.zoom, inInclusiveRange(13.0, 18.5));
+      }
+    });
+
+    test('NAV-R13: tilt never exceeds 58° in any follow context', () {
+      for (final speed in const <double>[0, 5, 20, 50, 80, 120]) {
+        for (final distance in const <double?>[null, 60.0, 100.0, 500.0]) {
+          final out = DriverNavCameraPolicy().update(
+            _input(
+              speedKmh: speed,
+              nearManeuver: distance != null,
+              distanceToManeuverM: distance,
+            ),
+          );
+          expect(
+            out.tilt,
+            lessThanOrEqualTo(DriverNavCameraPolicy.maxTiltDeg),
+            reason: 'speed=$speed maneuverDistance=$distance',
+          );
+        }
       }
     });
   });

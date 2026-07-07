@@ -7106,10 +7106,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     debugPrint('[NAV_MARKER] lifecycle=driver_manager_disposed');
   }
 
-  /// NAV-R12-I-A: the taxi sprite must lie flat on the map and rotate with
-  /// compass bearings. Mapbox's default `auto` alignment resolves to
-  /// viewport for point annotations, which makes the nose wrong under a
-  /// bearing-rotated camera and looks pasted on the road under pitch.
+  /// NAV-R12-I-A / NAV-R13: rotation alignment stays MAP so the taxi nose
+  /// follows compass bearings/road direction (Mapbox's default `auto`
+  /// resolves to viewport for point annotations, which broke the nose under
+  /// a bearing-rotated camera). Pitch alignment is VIEWPORT so the sprite
+  /// keeps its on-screen size instead of foreshortening/shrinking under the
+  /// pitched follow camera (field feedback NAV-R13).
   /// Applies to the driver/taxi manager only; pins keep plugin defaults.
   Future<void> _configureDriverPointManagerForTaxiMarker(
     mb.PointAnnotationManager mgr,
@@ -7118,24 +7120,24 @@ class _DriverHomePageState extends State<DriverHomePage>
     String? failReason;
     try {
       await mgr.setIconRotationAlignment(mb.IconRotationAlignment.MAP);
-      await mgr.setIconPitchAlignment(mb.IconPitchAlignment.MAP);
+      await mgr.setIconPitchAlignment(mb.IconPitchAlignment.VIEWPORT);
     } catch (e) {
       event = 'manager_config_failed';
       failReason = e.runtimeType.toString();
     }
     _logNavBounded(
-      'NAV_R12_MARKER',
-      'markerUpdate=$event rotationAlignment=map pitchAlignment=map'
+      'NAV_R13_MARKER_VISUAL',
+      'markerUpdate=$event rotationAlignment=map pitchAlignment=viewport'
           '${failReason != null ? ' reason=$failReason' : ''}',
       intervalMs: 1,
     );
     unawaited(
       NavDiagnosticsRecorder.instance.recordNavEngineEvent(
-        tag: 'NAV_R12_MARKER',
+        tag: 'NAV_R13_MARKER_VISUAL',
         fields: <String, dynamic>{
           'event': event,
           'rotationAlignment': 'map',
-          'pitchAlignment': 'map',
+          'pitchAlignment': 'viewport',
           if (failReason != null) 'reason': failReason,
         },
       ),

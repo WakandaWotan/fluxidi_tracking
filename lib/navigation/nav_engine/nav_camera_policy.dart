@@ -81,7 +81,9 @@ class NavCameraPolicyOutput {
 /// near maneuvers, capped wider during route adaptation, and always ramped
 /// through a max-step smoother so the camera never jumps.
 class DriverNavCameraPolicy {
-  static const double _nearManeuverDistanceM = 250.0;
+  // NAV-R13: only genuinely close maneuvers may override the speed-based
+  // overview zoom.
+  static const double _nearManeuverDistanceM = 120.0;
   static const double _veryNearManeuverDistanceM = 80.0;
 
   // NAV-R12-H zoom constants.
@@ -91,6 +93,10 @@ class DriverNavCameraPolicy {
   static const double maxTiltStepPerUpdate = 3.0;
   static const double minZoom = 13.0;
   static const double maxZoom = 18.5;
+
+  // NAV-R13: cap tilt to reduce marker perspective distortion; 64° made the
+  // viewport-anchored taxi sprite look flattened during angled follow.
+  static const double maxTiltDeg = 58.0;
 
   double? _lastZoom;
   double? _lastTilt;
@@ -102,6 +108,8 @@ class DriverNavCameraPolicy {
 
   /// NAV-R12-H: speed-band zoom, interpolated inside each band so the
   /// target changes continuously with speed.
+  /// NAV-R13: medium/fast bands widened for a more top-down overview —
+  /// ~30 km/h lands near 15.7, ~50 km/h near 15.0.
   static double speedZoomFor(double speedKmh) {
     if (speedKmh <= 3.0) return stoppedZoom;
     if (speedKmh <= 25.0) {
@@ -110,18 +118,20 @@ class DriverNavCameraPolicy {
     }
     if (speedKmh <= 60.0) {
       final t = (speedKmh - 25.0) / 35.0;
-      return 16.2 - t * 1.0; // medium: 16.2 -> 15.2
+      return 15.9 - t * 1.2; // medium: 15.9 -> 14.7
     }
     if (speedKmh <= 95.0) {
       final t = (speedKmh - 60.0) / 35.0;
-      return 15.0 - t * 0.8; // fast: 15.0 -> 14.2
+      return 14.6 - t * 0.6; // fast: 14.6 -> 14.0
     }
     final t = math.min(1.0, (speedKmh - 95.0) / 35.0);
-    return 14.2 - t * 0.7; // highway: 14.2 -> 13.5
+    return 14.0 - t * 0.5; // highway: 14.0 -> 13.5
   }
 
   /// NAV-R12-H: temporary zoom-in near a maneuver; high speed keeps a wider
   /// view so the zoom-in never hides the road ahead.
+  /// NAV-R13: boost softened and limited to genuinely close maneuvers
+  /// (<=80 m strong, <=120 m moderate) so the speed overview stays dominant.
   static double? maneuverZoomFor({
     required double speedKmh,
     required double? distanceToManeuverM,
@@ -130,10 +140,10 @@ class DriverNavCameraPolicy {
     final distance = distanceToManeuverM;
     if (!nearManeuver || distance == null || !distance.isFinite) return null;
     if (distance <= _veryNearManeuverDistanceM) {
-      return speedKmh >= 60.0 ? 16.2 : 17.0;
+      return speedKmh >= 60.0 ? 15.8 : 16.6;
     }
     if (distance <= _nearManeuverDistanceM) {
-      return speedKmh >= 60.0 ? 15.6 : 16.4;
+      return speedKmh >= 60.0 ? 15.2 : 16.0;
     }
     return null;
   }
@@ -186,26 +196,26 @@ class DriverNavCameraPolicy {
     final lowConfidence =
         confidence < 55.0 || (!input.hasReliableSnap && confidence > 0);
 
-    // Tilt + reason keep the pre-NAV-R12-H branch behavior (stable in the
-    // field); only zoom selection is dynamic now.
+    // NAV-R13: tilt capped at [maxTiltDeg] (58°) everywhere — 62-64° pitch
+    // visibly flattened the taxi sprite and hid context.
     double tilt;
     String reason;
     if (veryNearManeuver) {
       if (speedKmh < 4.0) {
-        tilt = 56.0;
+        tilt = 54.0;
       } else if (speedKmh < 15.0) {
-        tilt = 62.0;
+        tilt = 57.0;
       } else {
-        tilt = 64.0;
+        tilt = 58.0;
       }
       reason = 'very_near_maneuver';
     } else if (nearManeuver) {
       if (speedKmh < 4.0) {
-        tilt = 54.0;
+        tilt = 52.0;
       } else if (speedKmh < 15.0) {
-        tilt = 58.0;
+        tilt = 56.0;
       } else {
-        tilt = 62.0;
+        tilt = 58.0;
       }
       reason = 'near_maneuver';
     } else if (input.waitingMode || speedKmh < 3.0) {
@@ -214,18 +224,19 @@ class DriverNavCameraPolicy {
       reason = input.waitingMode ? 'waiting' : 'low_speed';
     } else if (speedKmh > 70.0) {
       final t = math.min(1.0, (speedKmh - 70.0) / 40.0);
-      tilt = 58.0 + t * 4.0;
+      tilt = 56.0 + t * 2.0;
       reason = 'high_speed';
     } else {
       if (speedKmh < 15.0) {
         final t = speedKmh / 15.0;
-        tilt = 52.0 + t * 4.0;
+        tilt = 50.0 + t * 4.0;
       } else {
         final t = math.min(1.0, (speedKmh - 15.0) / 55.0);
-        tilt = 56.0 + t * 4.0;
+        tilt = 54.0 + t * 4.0;
       }
       reason = 'normal_follow';
     }
+    tilt = math.min(tilt, maxTiltDeg);
 
     // --- NAV-R12-H dynamic zoom -------------------------------------------
     double targetZoom;
