@@ -197,6 +197,12 @@ class _DriverHomePageState extends State<DriverHomePage>
   int _consecutiveMarkerUpdateFailures = 0;
   DateTime? _lastMarkerAuxSyncAt;
   String? _lastNavR12MarkerSignature;
+  // NAV-R12-E1: last-wins pending camera target while an animation is in
+  // flight or the follow throttle is active (fresh target decision comes
+  // from NavCameraTargetPolicy).
+  geo.Position? _pendingFollowCameraPos;
+  Timer? _pendingFollowCameraTimer;
+  String? _lastNavR12CameraSignature;
   bool _mapboxLocationPuckRestoreEnabled = false;
   bool _mapboxLocationPuckSuppressedForNav = false;
   bool? _lastSyncedMapboxPuckHidden;
@@ -1888,6 +1894,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     debugPrint('[MAP][DISPOSE] mounted=$mounted style=$_activeMapStyleUri');
     _markerSelfHealTimer?.cancel();
     _markerSelfHealTimer = null;
+    _resetPendingFollowCamera();
     _setNavigationWakelock(false);
     appLanguageNotifier.removeListener(_onAppLanguageChanged);
     _activeDriverThemeListenable.removeListener(_onDriverThemeSourceChanged);
@@ -6404,6 +6411,13 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (canDriveMap) {
         _refreshNavEngineForPosition(pos);
         _scheduleDriverMarkerFastUpdate(pos);
+        // NAV-R12-E1: camera follow schedules on the fresh fix too, not
+        // behind the awaited route-line/diagnostics work. Throttle,
+        // in-flight, and GPS-quality gates live inside _followCameraTesla;
+        // queued targets use last-wins semantics.
+        if (_cameraMode == _CameraMode.follow) {
+          unawaited(_followCameraTesla(pos));
+        }
       }
 
       await _syncVisibleRouteLineWithProgress(pos);
@@ -6420,10 +6434,6 @@ class _DriverHomePageState extends State<DriverHomePage>
               )
             : null,
       );
-
-      if (canDriveMap && _cameraMode == _CameraMode.follow) {
-        await _followCameraTesla(pos);
-      }
       _maybeAddNavValidationSample(pos);
       final uiBearing = _adaptiveBearingFor(pos, snap: _lastRouteSnap).bearing;
       if (mounted && _cameraMode == _CameraMode.follow) {
@@ -6461,6 +6471,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     _pendingMarkerUpdatePos = null;
     _consecutiveMarkerUpdateFailures = 0;
     _markerLifecycle.reset();
+    // NAV-R12-E1: drop any queued camera target.
+    _resetPendingFollowCamera();
     _driverNavEngine.reset();
     _lastNavEngineOutput = null;
     _lastNavEngineRefreshKey = null;
@@ -9702,6 +9714,80 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  /// NAV-R12-E1: bounded, PII-safe camera decision diagnostics (no lat/lng).
+  void _logNavR12Camera({
+    required String animation,
+    String? targetSource,
+    String? skipReason,
+    int? targetAgeMs,
+  }) {
+    final progress = _lastNavRouteProgress;
+    final signature =
+        '$animation|${targetSource ?? ''}|${skipReason ?? ''}|'
+        '${progress?.routeDeviationLikely ?? false}|'
+        '${progress?.offRouteLikely ?? _offRouteLikely}';
+    final changed = signature != _lastNavR12CameraSignature;
+    _lastNavR12CameraSignature = signature;
+    _logNavBounded(
+      'NAV_R12_CAMERA',
+      'cameraAnimation=$animation '
+          'cameraTargetSource=${targetSource ?? 'na'} '
+          'cameraSkippedReason=${skipReason ?? 'none'} '
+          'routeDeviationLikely=${progress?.routeDeviationLikely ?? false} '
+          'oppositeDirectionLikely=${progress?.oppositeDirectionLikely ?? false} '
+          'backwardProgressLikely=${progress?.backwardProgressLikely ?? false} '
+          'offRouteLikely=${progress?.offRouteLikely ?? _offRouteLikely} '
+          'predictionActive=${_lastNavMotionPrediction?.predictionActive ?? false} '
+          'targetAgeMs=${targetAgeMs ?? -1} '
+          'followMode=${_cameraMode == _CameraMode.follow} '
+          'animationInFlight=$_followCameraInFlight '
+          'pendingCameraUpdate=${_pendingFollowCameraPos != null}',
+      intervalMs: changed ? 1 : 2000,
+    );
+  }
+
+  /// NAV-R12-E1: remember the newest camera target (last-wins) instead of
+  /// dropping the fix when the camera is throttled or animating.
+  void _queuePendingFollowCamera(
+    geo.Position pos, {
+    required String skipReason,
+    int? retryDelayMs,
+  }) {
+    _pendingFollowCameraPos = pos;
+    _logNavR12Camera(animation: 'queued_latest', skipReason: skipReason);
+    if (retryDelayMs != null) {
+      _armPendingFollowCameraTimer(retryDelayMs);
+    }
+  }
+
+  void _armPendingFollowCameraTimer(int delayMs) {
+    if (_pendingFollowCameraTimer?.isActive ?? false) return;
+    _pendingFollowCameraTimer = Timer(
+      Duration(milliseconds: delayMs.clamp(16, 1000)),
+      () {
+        _pendingFollowCameraTimer = null;
+        _runPendingFollowCamera();
+      },
+    );
+  }
+
+  void _runPendingFollowCamera() {
+    final pos = _pendingFollowCameraPos;
+    _pendingFollowCameraPos = null;
+    if (pos == null || !mounted) return;
+    // Manual pan/zoom wins: no forced recenter outside follow mode.
+    if (_cameraMode != _CameraMode.follow) return;
+    if (_map == null || _mapStyleChanging || _posSub == null) return;
+    _logNavR12Camera(animation: 'applied_pending');
+    unawaited(_followCameraTesla(pos, cameraReason: 'pending_latest'));
+  }
+
+  void _resetPendingFollowCamera() {
+    _pendingFollowCameraTimer?.cancel();
+    _pendingFollowCameraTimer = null;
+    _pendingFollowCameraPos = null;
+  }
+
   Future<void> _followCameraTesla(
     geo.Position pos, {
     bool force = false,
@@ -9770,6 +9856,14 @@ class _DriverHomePageState extends State<DriverHomePage>
         zoom: policy.zoom,
         tilt: policy.tilt,
       );
+      // NAV-R12-E1: last-wins — retry with the newest target once the
+      // throttle window has passed instead of dropping this fix.
+      final elapsedMs = now.difference(last).inMilliseconds;
+      _queuePendingFollowCamera(
+        pos,
+        skipReason: 'throttled',
+        retryDelayMs: throttleMs - elapsedMs + 8,
+      );
       return;
     }
     if (!force && _followCameraInFlight) {
@@ -9780,6 +9874,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         zoom: policy.zoom,
         tilt: policy.tilt,
       );
+      // NAV-R12-E1: the running animation's completion applies this target.
+      _queuePendingFollowCamera(pos, skipReason: 'in_flight');
       return;
     }
     _lastFollowCameraAt = now;
@@ -9787,19 +9883,60 @@ class _DriverHomePageState extends State<DriverHomePage>
     final snap =
         _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
     final speedKmh = _speedKmhFor(pos);
-    final visual =
+
+    // NAV-R12-E1: pure target decision — deviation prefers the freshest
+    // raw/live position, prediction only when confident and fresh.
+    final progress = _lastNavRouteProgress;
+    final targetDecision = NavCameraTargetPolicy.resolve(
+      NavCameraTargetInput(
+        followMode: _cameraMode == _CameraMode.follow,
+        manualRecenter: manualRecenter,
+        routeDeviationLikely: progress?.routeDeviationLikely ?? false,
+        oppositeDirectionLikely: progress?.oppositeDirectionLikely ?? false,
+        backwardProgressLikely: progress?.backwardProgressLikely ?? false,
+        offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
+        hasReliableSnap: progress?.hasReliableSnap ?? false,
+        predictionActive: _lastNavMotionPrediction?.predictionActive ?? false,
+        predictionAgeMs: _gapSinceLastNavEngineMs(),
+        cameraScore: _lastNavConfidence?.cameraScore ?? 0.0,
+      ),
+    );
+    if (targetDecision.source == NavCameraTargetSource.skipped) {
+      _followCameraInFlight = false;
+      _navValidationPendingCameraSkipReason = targetDecision.reason;
+      _logNavR12Camera(
+        animation: 'skipped_manual',
+        targetSource: targetDecision.sourceLabel,
+        skipReason: targetDecision.reason,
+      );
+      _recordNavDiagCameraUpdate(
+        follow: false,
+        skippedReason: targetDecision.reason,
+        zoom: policy.zoom,
+        tilt: policy.tilt,
+      );
+      return;
+    }
+    var visual =
         _isActiveDriverNavEngineContext() && _lastNavEngineOutput != null
         ? _resolveNavVisualForLiveNav(
             pos,
             snap,
             allowPrediction:
-                (_lastNavConfidence?.cameraScore ?? 0.0) >= 45.0 &&
-                !(_lastNavRouteProgress?.offRouteLikely ?? _offRouteLikely),
+                targetDecision.source == NavCameraTargetSource.prediction,
           )
         : (
             point: _displayRoutePointFor(pos),
             bearing: _adaptiveBearingFor(pos, snap: snap).bearing,
           );
+    if (targetDecision.forceRawTarget) {
+      // Route is adapting: aim at the live driver position, keep the
+      // already-resolved display bearing (NAV-R12-C output).
+      visual = (
+        point: _LonLat(pos.longitude, pos.latitude),
+        bearing: visual.bearing,
+      );
+    }
     final heading = _smoothFollowCameraBearing(
       visual.bearing,
       speedKmh,
@@ -9815,6 +9952,12 @@ class _DriverHomePageState extends State<DriverHomePage>
       intervalMs: 2500,
     );
     final animMs = force ? 220 : _followCameraAnimMsFor(pos);
+    final fixAgeSec = _gpsFixAgeSec(pos);
+    _logNavR12Camera(
+      animation: 'started',
+      targetSource: targetDecision.sourceLabel,
+      targetAgeMs: fixAgeSec != null ? (fixAgeSec * 1000).round() : null,
+    );
 
     try {
       await _map?.flyTo(
@@ -9850,6 +9993,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
     } finally {
       _followCameraInFlight = false;
+      // NAV-R12-E1: apply the newest queued target now that the animation
+      // is done (throttle inside _followCameraTesla still applies).
+      if (_pendingFollowCameraPos != null) {
+        _armPendingFollowCameraTimer(16);
+      }
     }
   }
 
