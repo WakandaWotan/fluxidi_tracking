@@ -55,7 +55,12 @@ export const ALLOWED_INGEST_WRAPPER_KEYS = new Set([
   "event",
 ]);
 
-export const ALLOWED_SOURCES = new Set(["test", "manual_test", "dry_run"]);
+export const ALLOWED_SOURCES = new Set([
+  "test",
+  "manual_test",
+  "dry_run",
+  "flutter_manual_test",
+]);
 
 export const ALLOWED_REASON_CODES = new Set([
   "low_confidence",

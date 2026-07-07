@@ -1,13 +1,19 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'nav_complexity_guard.dart';
+import 'nav_complexity_learning_uploader.dart';
 
 /// NAV-AI-1: local export enabled; cloud upload disabled until worker ingest
 /// is approved and feature-flagged in production builds.
 const bool kNavComplexityIntelligenceLocalExportEnabled = true;
 
-/// NAV-AI-1: off by default — realtime safety never depends on this flag.
-const bool kNavComplexityIntelligenceCloudUploadEnabled = false;
+/// NAV-AI-1 / NAV-AI-4A: off by default — enable only for manual staging tests:
+/// `--dart-define=NAV_COMPLEXITY_CLOUD_UPLOAD=true`
+const bool kNavComplexityIntelligenceCloudUploadEnabled = bool.fromEnvironment(
+  'NAV_COMPLEXITY_CLOUD_UPLOAD',
+  defaultValue: false,
+);
 
 /// Sanitized navigation complexity event for future AI/learning ingestion.
 ///
@@ -162,12 +168,18 @@ class NavComplexityIntelligenceBuilder {
   }
 }
 
-/// NAV-AI-1: records sanitized events locally; cloud upload is stubbed/off.
+/// NAV-AI-1: records sanitized events locally; optional cloud dry-run upload
+/// when [kNavComplexityIntelligenceCloudUploadEnabled] is true (NAV-AI-4A).
 class NavComplexityIntelligenceExporter {
-  const NavComplexityIntelligenceExporter();
+  const NavComplexityIntelligenceExporter({
+    NavComplexityLearningUploader? learningUploader,
+  }) : _learningUploader =
+           learningUploader ?? const NavComplexityLearningUploader();
 
-  /// Returns JSON line for local persistence. Cloud path is a no-op unless
-  /// [kNavComplexityIntelligenceCloudUploadEnabled] is true (future worker).
+  final NavComplexityLearningUploader _learningUploader;
+
+  /// Returns JSON line for local persistence. Cloud upload is best-effort and
+  /// never blocks local export when enabled for manual testing.
   Future<void> exportEvent(
     NavComplexityIntelligenceEvent event, {
     required Future<void> Function(Map<String, dynamic> payload) recordLocally,
@@ -175,20 +187,7 @@ class NavComplexityIntelligenceExporter {
     if (!kNavComplexityIntelligenceLocalExportEnabled) return;
     await recordLocally(event.toJson());
     if (kNavComplexityIntelligenceCloudUploadEnabled) {
-      await _uploadToWorkerStub(event);
+      unawaited(_learningUploader.uploadDryRunEvent(event));
     }
-  }
-
-  Future<void> _uploadToWorkerStub(NavComplexityIntelligenceEvent event) async {
-    // NAV-AI-1 foundation: cloud ingest not wired yet — see
-    // workers/learning/NAV_AI_1_NAV_COMPLEXITY.md for the planned endpoint.
-    assert(() {
-      // ignore: avoid_print
-      print(
-        '[NAV_AI_1] cloud_upload_stub reason=${event.reasonCode} '
-        'severity=${event.severity}',
-      );
-      return true;
-    }());
   }
 }

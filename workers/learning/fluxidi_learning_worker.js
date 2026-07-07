@@ -995,7 +995,7 @@ async function handleNavComplexityDeleteTestData(_request, env) {
     const result = await env.LEARNING_DB.prepare(
       `DELETE FROM nav_complexity_events
        WHERE dry_run = 1
-          OR source IN ('test', 'dry_run', 'manual_test')`,
+          OR source IN ('test', 'dry_run', 'manual_test', 'flutter_manual_test')`,
     ).run();
     const deleted = Number(result?.meta?.changes) || 0;
     logNavComplexity("delete-test", { result: "ok", reason: `deleted_${deleted}` });
