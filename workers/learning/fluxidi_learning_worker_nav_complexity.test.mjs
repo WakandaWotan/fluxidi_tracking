@@ -56,7 +56,8 @@ function createMockD1() {
           row.dry_run === 1 ||
           row.source === "test" ||
           row.source === "dry_run" ||
-          row.source === "manual_test"
+          row.source === "manual_test" ||
+          row.source === "flutter_manual_test"
         ) {
           rows.splice(i, 1);
         }
