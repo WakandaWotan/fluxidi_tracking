@@ -8705,6 +8705,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
       trustBearing: confidence?.trustBearing ?? true,
       routeConfidence: progress?.confidence ?? confidence?.routeScore,
+      routeDeviationLikely: progress?.routeDeviationLikely ?? false,
+      oppositeDirectionLikely: progress?.oppositeDirectionLikely ?? false,
+      backwardProgressLikely: progress?.backwardProgressLikely ?? false,
+      headingDeltaDeg: progress?.headingDeltaDeg,
+      forwardProgress: progress?.forwardProgress ?? true,
     );
   }
 
@@ -8784,6 +8789,16 @@ class _DriverHomePageState extends State<DriverHomePage>
             : null,
         appliedDeg: output.bearing,
         reason: _driverNavEngine.lastBearingReason,
+        headingDeltaDeg: _lastNavRouteProgress?.headingDeltaDeg,
+        routeDeviationLikely:
+            _lastNavRouteProgress?.routeDeviationLikely ?? false,
+        oppositeDirectionLikely:
+            _lastNavRouteProgress?.oppositeDirectionLikely ?? false,
+        backwardProgressLikely:
+            _lastNavRouteProgress?.backwardProgressLikely ?? false,
+        offRouteLikely:
+            _lastNavRouteProgress?.offRouteLikely ?? _offRouteLikely,
+        routeBearingAllowed: _driverNavEngine.lastRouteBearingAllowed,
       );
       unawaited(
         NavDiagnosticsRecorder.instance.recordNavEngineEvent(
@@ -10000,6 +10015,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     double? deltaDeg,
     required double appliedDeg,
     required String reason,
+    double? headingDeltaDeg,
+    bool routeDeviationLikely = false,
+    bool oppositeDirectionLikely = false,
+    bool backwardProgressLikely = false,
+    bool offRouteLikely = false,
+    bool routeBearingAllowed = false,
   }) {
     if (!_isActiveDriverNavEngineContext()) return;
     _logNavBounded(
@@ -10009,7 +10030,13 @@ class _DriverHomePageState extends State<DriverHomePage>
           'accuracyM=${accuracyM?.toStringAsFixed(1) ?? 'na'} '
           'confidence=${confidence?.toStringAsFixed(0) ?? 'na'} '
           'deltaDeg=${deltaDeg?.toStringAsFixed(1) ?? 'na'} '
-          'appliedDeg=${appliedDeg.toStringAsFixed(1)} '
+          'headingDeltaDeg=${headingDeltaDeg?.toStringAsFixed(0) ?? 'na'} '
+          'routeDeviationLikely=$routeDeviationLikely '
+          'oppositeDirectionLikely=$oppositeDirectionLikely '
+          'backwardProgressLikely=$backwardProgressLikely '
+          'offRouteLikely=$offRouteLikely '
+          'routeBearingAllowed=$routeBearingAllowed '
+          'displayBearing=${appliedDeg.toStringAsFixed(1)} '
           'reason=$reason',
       intervalMs: 1200,
     );
@@ -10051,6 +10078,11 @@ class _DriverHomePageState extends State<DriverHomePage>
         offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
         trustBearing: confidence?.trustBearing ?? true,
         trustRouteSnap: reliableSnap,
+        routeDeviationLikely: progress?.routeDeviationLikely ?? false,
+        oppositeDirectionLikely: progress?.oppositeDirectionLikely ?? false,
+        backwardProgressLikely: progress?.backwardProgressLikely ?? false,
+        headingDeltaDeg: progress?.headingDeltaDeg,
+        forwardProgress: progress?.forwardProgress ?? true,
       ),
     );
 
@@ -10078,6 +10110,12 @@ class _DriverHomePageState extends State<DriverHomePage>
       deltaDeg: appliedDelta,
       appliedDeg: bearing,
       reason: policy.reason,
+      headingDeltaDeg: progress?.headingDeltaDeg,
+      routeDeviationLikely: progress?.routeDeviationLikely ?? false,
+      oppositeDirectionLikely: progress?.oppositeDirectionLikely ?? false,
+      backwardProgressLikely: progress?.backwardProgressLikely ?? false,
+      offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
+      routeBearingAllowed: policy.routeBearingAllowed,
     );
     _logNavBounded(
       'NAV_BEARING',

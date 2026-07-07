@@ -5,6 +5,8 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:fluxidi_tracking/navigation/nav_engine/nav_bearing_smoother.dart';
+
 import 'nav_replay_fixtures.dart';
 import 'nav_replay_harness.dart';
 import 'nav_replay_sample.dart';
@@ -60,6 +62,41 @@ void main() {
               'sample ${r.index}: route segment bearing must not drive '
               'the taxi nose while route deviation is active',
         );
+      }
+    });
+
+    test('NAV-R12-C: bearing source switches to GPS/course within max '
+        '1 sample', () {
+      final firstGps = report.results.indexWhere(
+        (r) => r.bearingSource == 'gps',
+      );
+      expect(firstGps, isNonNegative);
+      expect(
+        firstGps,
+        lessThanOrEqualTo(1),
+        reason: 'real course must take over immediately on deviation',
+      );
+    });
+
+    test('NAV-R12-C: displayBearing converges to actual course (~180°) '
+        'within 2 samples', () {
+      final idx = report.firstBearingWithin(
+        targetDeg: 180.0,
+        toleranceDeg: 15.0,
+      );
+      expect(idx, isNotNull);
+      expect(
+        idx!,
+        lessThanOrEqualTo(2),
+        reason:
+            'taxi nose must reflect the southbound course within ~2 seconds',
+      );
+    });
+
+    test('NAV-R12-C: route bearing is never allowed while deviating', () {
+      final first = report.firstRouteDeviationIndex!;
+      for (final r in report.results.skip(first)) {
+        expect(r.routeBearingAllowed, isFalse, reason: 'sample ${r.index}');
       }
     });
 
@@ -120,6 +157,33 @@ void main() {
         expect(r.predictionActive, isFalse, reason: 'sample ${r.index}');
       }
     });
+
+    test('NAV-R12-C: route bearing may still win on-route', () {
+      // Skip warmup sample 0; from then on route bearing stays eligible
+      // and the nose stays on the northbound course despite heading jitter.
+      for (final r in report.results.skip(1)) {
+        expect(r.routeBearingAllowed, isTrue, reason: 'sample ${r.index}');
+      }
+      final routeDriven = report.results
+          .skip(1)
+          .where((r) => r.bearingSource == 'route');
+      expect(
+        routeDriven,
+        isNotEmpty,
+        reason: 'reliable on-route driving should use route segment bearing',
+      );
+      for (final r in report.results.skip(1)) {
+        final deltaFromNorth = NavBearingSmoother.bearingDelta(
+          r.displayBearing,
+          0.0,
+        ).abs();
+        expect(
+          deltaFromNorth,
+          lessThanOrEqualTo(10.0),
+          reason: 'sample ${r.index}: no jitter-induced nose wobble',
+        );
+      }
+    });
   });
 
   group('NAV-R12-F replay: C U-turn/backtrack', () {
@@ -152,6 +216,23 @@ void main() {
         );
       }
     });
+
+    test('NAV-R12-C: nose converges to the new southbound course within '
+        '~2 samples of deviation detection', () {
+      final first = report.firstRouteDeviationIndex;
+      expect(first, isNotNull);
+      final idx = report.firstBearingWithin(
+        targetDeg: 180.0,
+        toleranceDeg: 20.0,
+        fromIndex: first!,
+      );
+      expect(idx, isNotNull);
+      expect(
+        idx! - first,
+        lessThanOrEqualTo(2),
+        reason: 'the old 150° flip guard must not block the U-turn correction',
+      );
+    });
   });
 
   group('NAV-R12-F replay: D side-street departure', () {
@@ -179,6 +260,21 @@ void main() {
       for (final r in report.results.where((r) => r.offRouteLikely)) {
         expect(r.showOriginalInstruction, isFalse, reason: 'sample ${r.index}');
       }
+    });
+
+    test('NAV-R12-C: GPS/course drives the nose once route is unreliable', () {
+      final first = report.firstOffRouteIndex!;
+      for (final r in report.results.skip(first)) {
+        expect(r.bearingSource, 'gps', reason: 'sample ${r.index}');
+        expect(r.routeBearingAllowed, isFalse, reason: 'sample ${r.index}');
+      }
+      final idx = report.firstBearingWithin(
+        targetDeg: 90.0,
+        toleranceDeg: 20.0,
+        fromIndex: first,
+      );
+      expect(idx, isNotNull);
+      expect(idx! - first, lessThanOrEqualTo(2));
     });
   });
 

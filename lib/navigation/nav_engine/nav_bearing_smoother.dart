@@ -5,11 +5,13 @@ class NavBearingSmoother {
   double? _lastBearing;
   String _lastSource = 'unknown';
   String _lastReason = 'unknown';
+  bool _lastRouteBearingAllowed = false;
 
   void reset() {
     _lastBearing = null;
     _lastSource = 'unknown';
     _lastReason = 'unknown';
+    _lastRouteBearingAllowed = false;
   }
 
   /// Source of the most recent [smooth] target before easing.
@@ -17,6 +19,9 @@ class NavBearingSmoother {
 
   /// Bounded reason token from the last [smooth] call.
   String get lastReason => _lastReason;
+
+  /// NAV-R12-C: whether route bearing was eligible on the last [smooth] call.
+  bool get lastRouteBearingAllowed => _lastRouteBearingAllowed;
 
   /// Normalizes degrees to \[0, 360).
   static double normalizeBearing(double degrees) {
@@ -45,6 +50,11 @@ class NavBearingSmoother {
     bool offRouteLikely = false,
     bool trustBearing = true,
     bool trustRouteSnap = false,
+    bool routeDeviationLikely = false,
+    bool oppositeDirectionLikely = false,
+    bool backwardProgressLikely = false,
+    double? headingDeltaDeg,
+    bool forwardProgress = true,
   }) {
     final policy = NavBearingPolicy.resolve(
       NavBearingPolicyInput(
@@ -59,11 +69,17 @@ class NavBearingSmoother {
         offRouteLikely: offRouteLikely,
         trustBearing: trustBearing,
         trustRouteSnap: trustRouteSnap,
+        routeDeviationLikely: routeDeviationLikely,
+        oppositeDirectionLikely: oppositeDirectionLikely,
+        backwardProgressLikely: backwardProgressLikely,
+        headingDeltaDeg: headingDeltaDeg,
+        forwardProgress: forwardProgress,
       ),
     );
 
     _lastSource = _legacySourceLabel(policy.source);
     _lastReason = policy.reason;
+    _lastRouteBearingAllowed = policy.routeBearingAllowed;
 
     final resolved = NavBearingPolicy.stepToward(
       previous: _lastBearing,

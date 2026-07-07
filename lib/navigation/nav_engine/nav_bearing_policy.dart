@@ -16,6 +16,18 @@ class NavBearingPolicyInput {
   final bool trustBearing;
   final bool trustRouteSnap;
 
+  /// NAV-R12-C: route-deviation signals from `DriverNavRouteProgress`.
+  final bool routeDeviationLikely;
+  final bool oppositeDirectionLikely;
+  final bool backwardProgressLikely;
+
+  /// NAV-R12-C: 0..180 delta between GPS course and matched segment bearing.
+  final double? headingDeltaDeg;
+
+  /// NAV-R12-C: forward route progress trust; route bearing may only win
+  /// while this holds.
+  final bool forwardProgress;
+
   const NavBearingPolicyInput({
     this.rawHeading,
     this.routeBearing,
@@ -28,6 +40,11 @@ class NavBearingPolicyInput {
     this.offRouteLikely = false,
     this.trustBearing = true,
     this.trustRouteSnap = false,
+    this.routeDeviationLikely = false,
+    this.oppositeDirectionLikely = false,
+    this.backwardProgressLikely = false,
+    this.headingDeltaDeg,
+    this.forwardProgress = true,
   });
 }
 
@@ -39,21 +56,36 @@ class NavBearingPolicyResult {
   final String reason;
   final double? targetDeltaDeg;
 
+  /// NAV-R12-C: whether route segment bearing was eligible to drive the
+  /// taxi nose this cycle (reliable snap, no deviation, course agreement).
+  final bool routeBearingAllowed;
+
   const NavBearingPolicyResult({
     required this.targetBearing,
     required this.source,
     required this.maxStepDeg,
     required this.reason,
     this.targetDeltaDeg,
+    this.routeBearingAllowed = false,
   });
 }
 
 /// NAV-R11-A: pure bearing policy — target selection + cautious step limits.
+/// NAV-R12-C: route deviation demotes route bearing and unlocks fast
+/// convergence toward the real GPS/course direction.
 class NavBearingPolicy {
   static const double _lowSpeedHoldKmh = 3.5;
   static const double _gpsMinSpeedKmh = 4.0;
   static const double _movementMinSpeedKmh = 8.0;
   static const double _flipGuardDeg = 150.0;
+
+  // NAV-R12-C: while the route is unreliable, the real course must win from
+  // this speed on, and the nose may swing fast enough to converge on an
+  // opposite course within ~1-2 seconds.
+  static const double _courseMinSpeedKmh = 5.0;
+  static const double _routeCourseAgreementDeg = 60.0;
+  static const double _deviationFastStepDeg = 90.0;
+  static const double _deviationSlowStepDeg = 60.0;
 
   /// Picks the next bearing target and a safe max rotation step.
   static NavBearingPolicyResult resolve(NavBearingPolicyInput input) {
@@ -64,16 +96,42 @@ class NavBearingPolicy {
     final movement = _validBearing(input.movementBearing);
     final reliableRoute = input.hasReliableSnap && input.trustRouteSnap;
 
+    // NAV-R12-C: any route-invalidating signal demotes route bearing.
+    final deviationActive =
+        input.routeDeviationLikely ||
+        input.oppositeDirectionLikely ||
+        input.backwardProgressLikely ||
+        input.offRouteLikely;
+
+    // Course-vs-route agreement (0..180). Prefer the progress engine's
+    // delta; fall back to a local computation when both bearings exist.
+    final headingDelta =
+        input.headingDeltaDeg ??
+        ((gps != null && route != null)
+            ? NavBearingSmoother.bearingDelta(gps, route).abs()
+            : null);
+
+    // Route bearing may drive the nose only with reliable snap, no
+    // deviation, trusted forward progress, and course agreement <= ~60°.
+    final routeBearingAllowed =
+        reliableRoute &&
+        route != null &&
+        !deviationActive &&
+        input.forwardProgress &&
+        (headingDelta == null || headingDelta <= _routeCourseAgreementDeg);
+
     String source;
     String reason;
     double target;
+    var fastConverge = false;
 
     if (speed < _lowSpeedHoldKmh) {
+      // Stationary/creeping: hold to avoid taxi spinning.
       if (last != null) {
         target = last;
         source = 'last';
         reason = 'low_speed_hold';
-      } else if (reliableRoute && route != null) {
+      } else if (routeBearingAllowed) {
         target = route;
         source = 'route';
         reason = 'low_speed_route';
@@ -84,38 +142,20 @@ class NavBearingPolicy {
             : (target == movement ? 'gps' : 'fallback');
         reason = 'low_speed_fallback';
       }
-    } else if (reliableRoute && route != null) {
+    } else if (deviationActive &&
+        speed >= _courseMinSpeedKmh &&
+        (gps != null || movement != null)) {
+      // NAV-R12-C: route no longer matches actual movement — the real
+      // course wins immediately, without flip guard, without holding the
+      // old route-aligned bearing.
+      target = gps ?? movement!;
+      source = 'gps';
+      reason = gps != null ? 'deviation_gps_course' : 'deviation_movement';
+      fastConverge = true;
+    } else if (routeBearingAllowed) {
       target = route;
       source = 'route';
       reason = 'route_snap';
-    } else if (input.offRouteLikely ||
-        (input.routeConfidence != null && input.routeConfidence! < 45.0)) {
-      if (last != null) {
-        target = last;
-        source = 'last';
-        reason = 'off_route_hold';
-      } else if (movement != null && speed >= _movementMinSpeedKmh) {
-        target = movement;
-        source = 'gps';
-        reason = 'off_route_movement';
-      } else if (gps != null &&
-          input.trustBearing &&
-          speed >= _gpsMinSpeedKmh &&
-          !_isFlipFrom(last, gps)) {
-        target = gps;
-        source = 'gps';
-        reason = 'off_route_gps';
-      } else {
-        target = route ?? movement ?? gps ?? last ?? 0.0;
-        source = _sourceForTarget(
-          target: target,
-          route: route,
-          gps: gps,
-          movement: movement,
-          last: last,
-        );
-        reason = 'off_route_fallback';
-      }
     } else if (gps != null &&
         input.trustBearing &&
         speed >= _gpsMinSpeedKmh &&
@@ -124,8 +164,7 @@ class NavBearingPolicy {
       source = 'gps';
       reason = 'gps_heading';
     } else if (movement != null &&
-        (speed >= _movementMinSpeedKmh ||
-            (gps == null && speed >= 5.0))) {
+        (speed >= _movementMinSpeedKmh || (gps == null && speed >= 5.0))) {
       target = movement;
       source = 'gps';
       reason = 'movement';
@@ -157,6 +196,7 @@ class NavBearingPolicy {
       trustBearing: input.trustBearing,
       deltaAbs: delta?.abs(),
       source: source,
+      fastConverge: fastConverge,
     );
 
     return NavBearingPolicyResult(
@@ -165,6 +205,7 @@ class NavBearingPolicy {
       maxStepDeg: maxStep,
       reason: reason,
       targetDeltaDeg: delta,
+      routeBearingAllowed: routeBearingAllowed,
     );
   }
 
@@ -179,7 +220,9 @@ class NavBearingPolicy {
       return normalizedTarget;
     }
     final delta = NavBearingSmoother.bearingDelta(previous, normalizedTarget);
-    final step = maxStepDeg.clamp(0.5, 36.0);
+    // NAV-R12-C: allow deviation fast-convergence steps through the easing
+    // clamp; normal cautious steps stay well below this ceiling.
+    final step = maxStepDeg.clamp(0.5, 120.0);
     if (delta.abs() <= step) {
       return normalizedTarget;
     }
@@ -194,8 +237,21 @@ class NavBearingPolicy {
     bool trustBearing = true,
     double? deltaAbs,
     String source = 'fallback',
+    bool fastConverge = false,
   }) {
     final speed = math.max(0.0, speedKmh);
+
+    // NAV-R12-C: confirmed route deviation must let the nose swing to the
+    // true course within ~1-2 seconds instead of being dampened by the
+    // off-route caution factors below. Only very poor GPS accuracy still
+    // slows the swing down.
+    if (fastConverge) {
+      final fast = speed >= 8.0 ? _deviationFastStepDeg : _deviationSlowStepDeg;
+      if (accuracyM != null && accuracyM.isFinite && accuracyM > 60.0) {
+        return fast * 0.5;
+      }
+      return fast;
+    }
     double base;
     if (speed < 3.5) {
       base = 3.5;
@@ -251,7 +307,8 @@ class NavBearingPolicy {
 
   static bool _isFlipFrom(double? last, double candidate) {
     if (last == null) return false;
-    return NavBearingSmoother.bearingDelta(last, candidate).abs() > _flipGuardDeg;
+    return NavBearingSmoother.bearingDelta(last, candidate).abs() >
+        _flipGuardDeg;
   }
 
   static String _sourceForTarget({

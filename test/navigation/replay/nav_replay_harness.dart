@@ -8,6 +8,7 @@
 import 'dart:math' as math;
 
 import 'package:fluxidi_tracking/navigation/nav_engine/nav_bearing_policy.dart';
+import 'package:fluxidi_tracking/navigation/nav_engine/nav_bearing_smoother.dart';
 import 'package:fluxidi_tracking/navigation/nav_engine/nav_confidence_engine.dart';
 import 'package:fluxidi_tracking/navigation/nav_engine/nav_instruction_policy.dart';
 import 'package:fluxidi_tracking/navigation/nav_engine/nav_motion_prediction.dart';
@@ -31,6 +32,7 @@ class NavReplaySampleResult {
   final String bearingSource;
   final String bearingReason;
   final double displayBearing;
+  final bool routeBearingAllowed;
   final bool trustSnap;
   final bool trustBearing;
   final String instructionReason;
@@ -57,6 +59,7 @@ class NavReplaySampleResult {
     required this.bearingSource,
     required this.bearingReason,
     required this.displayBearing,
+    required this.routeBearingAllowed,
     required this.trustSnap,
     required this.trustBearing,
     required this.instructionReason,
@@ -91,6 +94,24 @@ class NavReplayReport {
 
   int? get firstRerouteWouldTriggerIndex =>
       _firstIndex((r) => r.rerouteWouldTrigger);
+
+  /// NAV-R12-C: first sample index (>= [fromIndex]) where the display
+  /// bearing is within [toleranceDeg] of [targetDeg].
+  int? firstBearingWithin({
+    required double targetDeg,
+    double toleranceDeg = 20.0,
+    int fromIndex = 0,
+  }) {
+    for (final r in results) {
+      if (r.index < fromIndex) continue;
+      final delta = NavBearingSmoother.bearingDelta(
+        r.displayBearing,
+        targetDeg,
+      ).abs();
+      if (delta <= toleranceDeg) return r.index;
+    }
+    return null;
+  }
 
   double get maxHeadingDeltaDeg {
     var max = 0.0;
@@ -359,6 +380,11 @@ class NavReplayHarness {
           offRouteLikely: offRoute || progress.offRouteLikely,
           trustBearing: confidence.trustBearing,
           trustRouteSnap: confidence.trustRouteSnap,
+          routeDeviationLikely: progress.routeDeviationLikely,
+          oppositeDirectionLikely: progress.oppositeDirectionLikely,
+          backwardProgressLikely: progress.backwardProgressLikely,
+          headingDeltaDeg: progress.headingDeltaDeg,
+          forwardProgress: progress.forwardProgress,
         ),
       );
       final displayBearing = NavBearingPolicy.stepToward(
@@ -430,6 +456,7 @@ class NavReplayHarness {
           bearingSource: policy.source,
           bearingReason: policy.reason,
           displayBearing: displayBearing,
+          routeBearingAllowed: policy.routeBearingAllowed,
           trustSnap: confidence.trustRouteSnap,
           trustBearing: confidence.trustBearing,
           instructionReason: instruction.reason,

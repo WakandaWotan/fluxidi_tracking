@@ -18,6 +18,8 @@ class DriverNavEngine {
 
   String get lastBearingReason => _bearingSmoother.lastReason;
 
+  bool get lastRouteBearingAllowed => _bearingSmoother.lastRouteBearingAllowed;
+
   void reset() {
     _previousOutput = null;
     _bearingSmoother.reset();
@@ -41,6 +43,11 @@ class DriverNavEngine {
       offRouteLikely: input.offRouteLikely,
       trustBearing: input.trustBearing,
       trustRouteSnap: input.hasReliableSnap,
+      routeDeviationLikely: input.routeDeviationLikely,
+      oppositeDirectionLikely: input.oppositeDirectionLikely,
+      backwardProgressLikely: input.backwardProgressLikely,
+      headingDeltaDeg: input.headingDeltaDeg,
+      forwardProgress: input.forwardProgress,
     );
 
     final cameraReason = _cameraReasonFor(input, motion.markerSource);

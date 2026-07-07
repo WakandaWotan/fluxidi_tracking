@@ -17,6 +17,14 @@ class NavEngineInput {
   final bool trustBearing;
   final double? routeConfidence;
 
+  // NAV-R12-C: route-deviation signals so bearing selection can demote the
+  // route bearing the moment the route stops matching real movement.
+  final bool routeDeviationLikely;
+  final bool oppositeDirectionLikely;
+  final bool backwardProgressLikely;
+  final double? headingDeltaDeg;
+  final bool forwardProgress;
+
   const NavEngineInput({
     required this.timestamp,
     required this.rawLatitude,
@@ -34,5 +42,10 @@ class NavEngineInput {
     this.offRouteLikely = false,
     this.trustBearing = true,
     this.routeConfidence,
+    this.routeDeviationLikely = false,
+    this.oppositeDirectionLikely = false,
+    this.backwardProgressLikely = false,
+    this.headingDeltaDeg,
+    this.forwardProgress = true,
   });
 }
