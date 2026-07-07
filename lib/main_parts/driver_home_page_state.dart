@@ -8111,9 +8111,22 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   static String _r2BearingSourceLabel(String source) {
-    if (source.startsWith('route_segment')) return 'forward_route';
-    if (source == 'gps_heading' || source == 'movement') return 'gps';
-    if (source.startsWith('last_stable')) return 'hold';
+    if (source == 'route' || source.startsWith('route_segment')) {
+      return 'forward_route';
+    }
+    if (source == 'gps' || source == 'gps_heading' || source == 'movement') {
+      return 'gps';
+    }
+    if (source == 'last' || source.startsWith('last_stable')) return 'hold';
+    return 'fallback';
+  }
+
+  static String _navR11SourceFromEngine(String engineSource) {
+    if (engineSource.startsWith('route_segment')) return 'route';
+    if (engineSource == 'gps_heading' || engineSource == 'movement') {
+      return 'gps';
+    }
+    if (engineSource.startsWith('last_stable')) return 'last';
     return 'fallback';
   }
 
@@ -8575,6 +8588,10 @@ class _DriverHomePageState extends State<DriverHomePage>
           : null,
       cameraFollowMode: _cameraMode == _CameraMode.follow,
       liveRideActive: _liveRideActive,
+      movementBearing: _lastMovementBearing,
+      offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
+      trustBearing: confidence?.trustBearing ?? true,
+      routeConfidence: progress?.confidence ?? confidence?.routeScore,
     );
   }
 
@@ -8625,19 +8642,34 @@ class _DriverHomePageState extends State<DriverHomePage>
       _logNavBounded(
         'NAV_ENGINE_OUT',
         'source=${output.markerSource} animate=${output.shouldAnimateMarker} '
-        'bearing=${output.bearing.toStringAsFixed(1)} '
-        'bearingSource=${_driverNavEngine.lastBearingSource} '
-        'speedKmh=${output.speedKmh?.toStringAsFixed(1) ?? 'na'} '
-        'accuracyM=${output.accuracyM?.toStringAsFixed(1) ?? 'na'} '
-        'cameraReason=${output.cameraReason}',
+            'bearing=${output.bearing.toStringAsFixed(1)} '
+            'bearingSource=${_driverNavEngine.lastBearingSource} '
+            'speedKmh=${output.speedKmh?.toStringAsFixed(1) ?? 'na'} '
+            'accuracyM=${output.accuracyM?.toStringAsFixed(1) ?? 'na'} '
+            'cameraReason=${output.cameraReason}',
         intervalMs: 2000,
       );
       _logNavBounded(
         'NAV_OS_R2_BEARING',
         'source=${_r2BearingSourceLabel(_driverNavEngine.lastBearingSource)} '
-        'delta=${_lastR2BearingDeltaDeg?.toStringAsFixed(1) ?? 'na'} '
-        'reversedGuard=$_lastR2ReversedGuard',
+            'delta=${_lastR2BearingDeltaDeg?.toStringAsFixed(1) ?? 'na'} '
+            'reversedGuard=$_lastR2ReversedGuard',
         intervalMs: 2000,
+      );
+      _logNavR11Bearing(
+        source: _navR11SourceFromEngine(_driverNavEngine.lastBearingSource),
+        speedKmh: output.speedKmh ?? 0.0,
+        accuracyM: output.accuracyM,
+        confidence:
+            _lastNavRouteProgress?.confidence ?? _lastNavConfidence?.routeScore,
+        deltaDeg: priorOutput != null
+            ? NavBearingSmoother.bearingDelta(
+                priorOutput.bearing,
+                output.bearing,
+              )
+            : null,
+        appliedDeg: output.bearing,
+        reason: _driverNavEngine.lastBearingReason,
       );
       unawaited(
         NavDiagnosticsRecorder.instance.recordNavEngineEvent(
@@ -9136,8 +9168,22 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   double _markerBearingFor(geo.Position pos, _RouteSnap? snap) {
     final speedKmh = _speedKmhFor(pos);
-    final rawBearing = _adaptiveBearingFor(pos, snap: snap).bearing;
-    return _smoothFollowCameraBearing(rawBearing, speedKmh);
+    final meta = _adaptiveBearingFor(pos, snap: snap);
+    final confidence = _lastNavConfidence;
+    var bearingWeight = 1.0;
+    if (confidence != null) {
+      bearingWeight = confidence.trustBearing ? 0.9 : 0.45;
+      if (_lastNavRouteProgress?.offRouteLikely ?? _offRouteLikely) {
+        bearingWeight *= 0.35;
+      } else if (confidence.routeScore < 55.0) {
+        bearingWeight *= 0.65;
+      }
+    }
+    return _smoothFollowCameraBearing(
+      meta.bearing,
+      speedKmh,
+      bearingModeWeight: bearingWeight,
+    );
   }
 
   Future<mb.PointAnnotation?> _createDriverMarkerAnnotation({
@@ -9843,6 +9889,29 @@ class _DriverHomePageState extends State<DriverHomePage>
         (confidence?.trustRouteSnap ?? true);
   }
 
+  void _logNavR11Bearing({
+    required String source,
+    required double speedKmh,
+    double? accuracyM,
+    double? confidence,
+    double? deltaDeg,
+    required double appliedDeg,
+    required String reason,
+  }) {
+    if (!_isActiveDriverNavEngineContext()) return;
+    _logNavBounded(
+      'NAV_R11_BEARING',
+      'source=$source '
+          'speedKmh=${speedKmh.toStringAsFixed(1)} '
+          'accuracyM=${accuracyM?.toStringAsFixed(1) ?? 'na'} '
+          'confidence=${confidence?.toStringAsFixed(0) ?? 'na'} '
+          'deltaDeg=${deltaDeg?.toStringAsFixed(1) ?? 'na'} '
+          'appliedDeg=${appliedDeg.toStringAsFixed(1)} '
+          'reason=$reason',
+      intervalMs: 1200,
+    );
+  }
+
   ({
     double bearing,
     String source,
@@ -9859,81 +9928,75 @@ class _DriverHomePageState extends State<DriverHomePage>
     final movementBearing = _lastMovementBearing;
     final routeBearing = _resolveForwardRouteBearing(pos, snap: snap);
     final reliableSnap = _hasReliableRouteSnapForBearing();
+    final confidence = _lastNavConfidence;
+    final progress = _lastNavRouteProgress;
 
-    double bearing;
-    String source;
+    final policy = NavBearingPolicy.resolve(
+      NavBearingPolicyInput(
+        rawHeading: gpsHeading,
+        routeBearing: routeBearing,
+        movementBearing: movementBearing,
+        lastBearing: _lastKnownBearing.isFinite && _lastKnownBearing > 0
+            ? _lastKnownBearing
+            : null,
+        speedKmh: speedKmh,
+        accuracyM: pos.accuracy.isFinite && pos.accuracy > 0
+            ? pos.accuracy
+            : null,
+        routeConfidence: progress?.confidence ?? confidence?.routeScore,
+        hasReliableSnap: reliableSnap,
+        offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
+        trustBearing: confidence?.trustBearing ?? true,
+        trustRouteSnap: reliableSnap,
+      ),
+    );
 
-    if (speedKmh < 3.5) {
-      if (_lastKnownBearing.isFinite && _lastKnownBearing > 0) {
-        bearing = _lastKnownBearing;
-        source = 'last_stable_low_speed';
-      } else if (reliableSnap && routeBearing != null && routeBearing.isFinite) {
-        _lastKnownBearing = routeBearing;
-        bearing = routeBearing;
-        source = 'route_segment_low_speed';
-      } else {
-        bearing = routeBearing ??
-            movementBearing ??
-            gpsHeading ??
-            (_lastKnownBearing.isFinite ? _lastKnownBearing : 0.0);
-        source = 'safe_fallback';
-        _lastKnownBearing = bearing;
-      }
-    } else if (reliableSnap && routeBearing != null && routeBearing.isFinite) {
-      _lastKnownBearing = routeBearing;
-      bearing = routeBearing;
-      source = 'route_segment';
-    } else if (gpsHeading != null && speedKmh >= 4.0) {
-      _lastKnownBearing = gpsHeading;
-      bearing = gpsHeading;
-      source = 'gps_heading';
-    } else if (movementBearing != null &&
-        movementBearing.isFinite &&
-        (speedKmh >= 8.0 || (gpsHeading == null && speedKmh >= 5.0))) {
-      _lastKnownBearing = movementBearing;
-      bearing = movementBearing;
-      source = 'movement';
-    } else if (_lastKnownBearing.isFinite && _lastKnownBearing > 0) {
-      bearing = _lastKnownBearing;
-      source = 'last_stable';
-    } else {
-      bearing = routeBearing ??
-          movementBearing ??
-          gpsHeading ??
-          (_lastKnownBearing.isFinite ? _lastKnownBearing : 0.0);
-      source = 'safe_fallback';
-      _lastKnownBearing = bearing;
-    }
+    final previous = _lastKnownBearing.isFinite && _lastKnownBearing > 0
+        ? _lastKnownBearing
+        : null;
+    final bearing = NavBearingPolicy.stepToward(
+      previous: previous,
+      target: policy.targetBearing,
+      maxStepDeg: policy.maxStepDeg,
+    );
+    _lastKnownBearing = bearing;
 
-    double? bearingDeltaDeg;
-    if (gpsHeading != null &&
-        gpsHeading.isFinite &&
-        routeBearing != null &&
-        routeBearing.isFinite) {
-      bearingDeltaDeg = NavBearingSmoother.bearingDelta(gpsHeading, bearing);
-    }
+    final appliedDelta = previous == null
+        ? policy.targetDeltaDeg
+        : NavBearingSmoother.bearingDelta(previous, bearing);
 
+    _logNavR11Bearing(
+      source: policy.source,
+      speedKmh: speedKmh,
+      accuracyM: pos.accuracy.isFinite && pos.accuracy > 0
+          ? pos.accuracy
+          : null,
+      confidence: progress?.confidence ?? confidence?.routeScore,
+      deltaDeg: appliedDelta,
+      appliedDeg: bearing,
+      reason: policy.reason,
+    );
     _logNavBounded(
       'NAV_BEARING',
       'speedKmh=${speedKmh.toStringAsFixed(1)} '
           'gpsHeading=${gpsHeading?.toStringAsFixed(1) ?? 'na'} '
           'routeBearing=${routeBearing?.toStringAsFixed(1) ?? 'na'} '
-          'usedBearing=${bearing.toStringAsFixed(1)} source=$source '
-          'deltaDeg=${bearingDeltaDeg?.toStringAsFixed(1) ?? 'na'}',
+          'usedBearing=${bearing.toStringAsFixed(1)} source=${policy.source} '
+          'deltaDeg=${appliedDelta?.toStringAsFixed(1) ?? 'na'}',
     );
     _logNavBounded(
       'NAV_OS_R2_BEARING',
-      'source=${_r2BearingSourceLabel(source)} '
-          'delta=${(_lastR2BearingDeltaDeg ?? bearingDeltaDeg)?.toStringAsFixed(1) ?? 'na'} '
+      'source=${_r2BearingSourceLabel(policy.source)} '
+          'delta=${(_lastR2BearingDeltaDeg ?? policy.targetDeltaDeg)?.toStringAsFixed(1) ?? 'na'} '
           'reversedGuard=$_lastR2ReversedGuard',
     );
     return (
       bearing: bearing,
-      source: source,
+      source: policy.source,
       gpsHeading: gpsHeading,
       movementBearing: movementBearing,
       routeBearing: routeBearing,
-      bearingDeltaDeg: bearingDeltaDeg,
+      bearingDeltaDeg: appliedDelta,
     );
   }
 

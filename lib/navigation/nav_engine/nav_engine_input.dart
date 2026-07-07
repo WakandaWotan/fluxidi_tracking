@@ -12,6 +12,10 @@ class NavEngineInput {
   final double? accuracyM;
   final bool cameraFollowMode;
   final bool liveRideActive;
+  final double? movementBearing;
+  final bool offRouteLikely;
+  final bool trustBearing;
+  final double? routeConfidence;
 
   const NavEngineInput({
     required this.timestamp,
@@ -26,5 +30,9 @@ class NavEngineInput {
     this.accuracyM,
     this.cameraFollowMode = false,
     this.liveRideActive = false,
+    this.movementBearing,
+    this.offRouteLikely = false,
+    this.trustBearing = true,
+    this.routeConfidence,
   });
 }

@@ -16,6 +16,8 @@ class DriverNavEngine {
 
   String get lastBearingSource => _bearingSmoother.lastSource;
 
+  String get lastBearingReason => _bearingSmoother.lastReason;
+
   void reset() {
     _previousOutput = null;
     _bearingSmoother.reset();
@@ -33,6 +35,12 @@ class DriverNavEngine {
       routeBearing: input.routeBearing,
       speedKmh: input.speedKmh,
       hasReliableSnap: input.hasReliableSnap,
+      movementBearing: input.movementBearing,
+      accuracyM: input.accuracyM,
+      routeConfidence: input.routeConfidence,
+      offRouteLikely: input.offRouteLikely,
+      trustBearing: input.trustBearing,
+      trustRouteSnap: input.hasReliableSnap,
     );
 
     final cameraReason = _cameraReasonFor(input, motion.markerSource);

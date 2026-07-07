@@ -1,15 +1,22 @@
+import 'nav_bearing_policy.dart';
+
 /// Smooths heading/bearing with correct 0..360 wrap-around.
 class NavBearingSmoother {
   double? _lastBearing;
   String _lastSource = 'unknown';
+  String _lastReason = 'unknown';
 
   void reset() {
     _lastBearing = null;
     _lastSource = 'unknown';
+    _lastReason = 'unknown';
   }
 
   /// Source of the most recent [smooth] target before easing.
   String get lastSource => _lastSource;
+
+  /// Bounded reason token from the last [smooth] call.
+  String get lastReason => _lastReason;
 
   /// Normalizes degrees to \[0, 360).
   static double normalizeBearing(double degrees) {
@@ -26,55 +33,57 @@ class NavBearingSmoother {
     return delta;
   }
 
-  /// Picks target bearing, then eases toward it without 359°→1° backward spins.
+  /// Picks target bearing via [NavBearingPolicy], then eases toward it.
   double smooth({
     required double? rawHeading,
     required double? routeBearing,
     required double? speedKmh,
     bool hasReliableSnap = false,
+    double? movementBearing,
+    double? accuracyM,
+    double? routeConfidence,
+    bool offRouteLikely = false,
+    bool trustBearing = true,
+    bool trustRouteSnap = false,
   }) {
-    final speed = speedKmh ?? 0.0;
+    final policy = NavBearingPolicy.resolve(
+      NavBearingPolicyInput(
+        rawHeading: rawHeading,
+        routeBearing: routeBearing,
+        movementBearing: movementBearing,
+        lastBearing: _lastBearing,
+        speedKmh: speedKmh ?? 0.0,
+        accuracyM: accuracyM,
+        routeConfidence: routeConfidence,
+        hasReliableSnap: hasReliableSnap,
+        offRouteLikely: offRouteLikely,
+        trustBearing: trustBearing,
+        trustRouteSnap: trustRouteSnap,
+      ),
+    );
 
-    if (speed < 3.5 && _lastBearing != null && _lastBearing!.isFinite) {
-      _lastSource = 'last_stable_low_speed';
-      return _lastBearing!;
-    }
+    _lastSource = _legacySourceLabel(policy.source);
+    _lastReason = policy.reason;
 
-    double? target;
-
-    if (hasReliableSnap &&
-        routeBearing != null &&
-        routeBearing.isFinite &&
-        routeBearing >= 0) {
-      target = normalizeBearing(routeBearing);
-      _lastSource = 'route_segment';
-    } else if (rawHeading != null &&
-        rawHeading.isFinite &&
-        rawHeading >= 0) {
-      target = normalizeBearing(rawHeading);
-      _lastSource = 'gps_heading';
-    } else if (_lastBearing != null && _lastBearing!.isFinite) {
-      target = _lastBearing!;
-      _lastSource = 'last_stable';
-    } else {
-      target = 0.0;
-      _lastSource = 'fallback';
-    }
-
-    final previous = _lastBearing;
-    if (previous == null || !previous.isFinite) {
-      _lastBearing = target;
-      return target;
-    }
-
-    // Larger steps when moving faster; tiny steps when creeping.
-    final maxStep = speed >= 25
-        ? 28.0
-        : (speed >= 8 ? 18.0 : (speed >= 3.5 ? 10.0 : 6.0));
-    final delta = bearingDelta(previous, target);
-    final stepped = previous + delta.clamp(-maxStep, maxStep);
-    final resolved = normalizeBearing(stepped);
+    final resolved = NavBearingPolicy.stepToward(
+      previous: _lastBearing,
+      target: policy.targetBearing,
+      maxStepDeg: policy.maxStepDeg,
+    );
     _lastBearing = resolved;
     return resolved;
+  }
+
+  static String _legacySourceLabel(String source) {
+    switch (source) {
+      case 'route':
+        return 'route_segment';
+      case 'gps':
+        return 'gps_heading';
+      case 'last':
+        return 'last_stable';
+      default:
+        return 'fallback';
+    }
   }
 }
