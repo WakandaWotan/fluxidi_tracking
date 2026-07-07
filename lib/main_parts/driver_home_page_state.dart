@@ -203,6 +203,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   geo.Position? _pendingFollowCameraPos;
   Timer? _pendingFollowCameraTimer;
   String? _lastNavR12CameraSignature;
+  // NAV-R12-E2: cheap route version so banner diagnostics can show which
+  // route generation an instruction belongs to; bumped on every applied
+  // route/reroute step list.
+  int _routeStepsVersion = 0;
+  String? _lastNavR12BannerSignature;
   bool _mapboxLocationPuckRestoreEnabled = false;
   bool _mapboxLocationPuckSuppressedForNav = false;
   bool? _lastSyncedMapboxPuckHidden;
@@ -10001,6 +10006,41 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  /// NAV-R12-E2: true while the banner may not confidently show an
+  /// old-route maneuver (deviation signals from NAV-R12-B or reroute in
+  /// flight). Mirrors NavInstructionPolicyInput.routeAdaptationActive.
+  bool _navRouteAdaptationActive() {
+    final progress = _lastNavRouteProgress;
+    return _isRerouting ||
+        (progress?.offRouteLikely ?? _offRouteLikely) ||
+        (progress?.routeDeviationLikely ?? false) ||
+        (progress?.oppositeDirectionLikely ?? false) ||
+        (progress?.backwardProgressLikely ?? false);
+  }
+
+  /// NAV-R12-E2: bounded, PII-safe banner decision diagnostics (no lat/lng).
+  void _logNavR12Banner({required String state, required String reason}) {
+    final progress = _lastNavRouteProgress;
+    final signature = '$state|$reason|$_routeStepsVersion|$_nextStepIndex';
+    final changed = signature != _lastNavR12BannerSignature;
+    _lastNavR12BannerSignature = signature;
+    _logNavBounded(
+      'NAV_R12_BANNER',
+      'bannerState=$state '
+          'reason=$reason '
+          'instructionIndex=$_nextStepIndex '
+          'routeDeviationLikely=${progress?.routeDeviationLikely ?? false} '
+          'oppositeDirectionLikely=${progress?.oppositeDirectionLikely ?? false} '
+          'backwardProgressLikely=${progress?.backwardProgressLikely ?? false} '
+          'offRouteLikely=${progress?.offRouteLikely ?? _offRouteLikely} '
+          'reroutePending=$_isRerouting '
+          'routeReliable=${progress?.hasReliableSnap ?? _useMatchedVisual} '
+          'maneuverType=${(_nextNavType ?? '').isEmpty ? 'na' : _nextNavType} '
+          'routeVersion=$_routeStepsVersion',
+      intervalMs: changed ? 1 : 2000,
+    );
+  }
+
   void _updateNextNavInstruction(geo.Position pos) {
     final nextInstruction = computeDriverNextNavInstruction(
       routeSteps: _routeSteps,
@@ -10012,6 +10052,21 @@ class _DriverHomePageState extends State<DriverHomePage>
       useMatchedVisual: _useMatchedVisual,
     );
     _nextStepIndex = nextInstruction.nextStepIndex;
+    if (nextInstruction.reResolved) {
+      _logNavR12Banner(state: 're_resolved', reason: 'backtrack_re_resolve');
+    } else if (_navRouteAdaptationActive()) {
+      _logNavR12Banner(
+        state: nextInstruction.hasInstruction
+            ? 'suppressed_stale'
+            : 'route_adaptation',
+        reason: _isRerouting ? 'reroute_pending' : 'route_deviation_signals',
+      );
+    } else {
+      _logNavR12Banner(
+        state: nextInstruction.shouldClear ? 'skipped' : 'route_instruction',
+        reason: nextInstruction.progressSource,
+      );
+    }
     final snapshot = buildDriverNavInstructionSnapshot(
       routeSteps: _routeSteps,
       nextStepIndex: _nextStepIndex,
@@ -11345,6 +11400,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     final navSteps = parsed.navSteps;
     _routeSteps = navSteps;
     _nextStepIndex = 0;
+    // NAV-R12-E2: fresh route generation — the instruction re-resolves from
+    // index 0 against the new geometry on the next fix.
+    _routeStepsVersion += 1;
+    _logNavR12Banner(state: 're_resolved', reason: 'route_steps_applied');
     if (navSteps.isNotEmpty) {
       _nextNavInstruction = navSteps.first.instruction;
       _nextNavStreet = navSteps.first.street;
@@ -17196,6 +17255,14 @@ class _DriverHomePageState extends State<DriverHomePage>
           : _useMatchedVisual,
       trustInstruction: _lastNavConfidence?.trustInstruction ?? true,
       offRouteLikely: _lastNavRouteProgress?.offRouteLikely ?? _offRouteLikely,
+      // NAV-R12-E2: route adaptation signals suppress stale maneuvers.
+      routeDeviationLikely:
+          _lastNavRouteProgress?.routeDeviationLikely ?? false,
+      oppositeDirectionLikely:
+          _lastNavRouteProgress?.oppositeDirectionLikely ?? false,
+      backwardProgressLikely:
+          _lastNavRouteProgress?.backwardProgressLikely ?? false,
+      reroutePending: _isRerouting,
       forwardProgress: _lastNavRouteProgress?.forwardProgress ?? true,
       predictionActive: _lastNavMotionPrediction?.predictionActive ?? false,
       routeConfidence: _lastNavRouteProgress?.confidence,

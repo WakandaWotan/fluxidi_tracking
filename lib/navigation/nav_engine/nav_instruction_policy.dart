@@ -11,6 +11,12 @@ class NavInstructionPolicyInput {
   final bool trustInstruction;
   final bool trustRouteSnap;
   final bool offRouteLikely;
+  // NAV-R12-E2: route adaptation signals (NAV-R12-B) plus reroute-pending —
+  // any of these suppresses route-specific maneuvers.
+  final bool routeDeviationLikely;
+  final bool oppositeDirectionLikely;
+  final bool backwardProgressLikely;
+  final bool reroutePending;
   final bool forwardProgress;
   final bool predictionActive;
   final double? speedKmh;
@@ -27,10 +33,23 @@ class NavInstructionPolicyInput {
     this.trustInstruction = false,
     this.trustRouteSnap = false,
     this.offRouteLikely = false,
+    this.routeDeviationLikely = false,
+    this.oppositeDirectionLikely = false,
+    this.backwardProgressLikely = false,
+    this.reroutePending = false,
     this.forwardProgress = true,
     this.predictionActive = false,
     this.speedKmh,
   });
+
+  /// NAV-R12-E2: true while the route is adapting — old-route maneuvers may
+  /// not be shown confidently.
+  bool get routeAdaptationActive =>
+      offRouteLikely ||
+      routeDeviationLikely ||
+      oppositeDirectionLikely ||
+      backwardProgressLikely ||
+      reroutePending;
 }
 
 /// Resolved instruction text and display flags for the nav banner.
@@ -82,13 +101,16 @@ class DriverNavInstructionPolicy {
       );
     }
 
-    if (input.offRouteLikely) {
+    // NAV-R12-E2: while the route is adapting (deviation signals from
+    // NAV-R12-B or a reroute in flight) any old-route maneuver is stale —
+    // show neutral adaptation wording instead. Never blames the driver.
+    if (input.routeAdaptationActive) {
       return NavInstructionPolicyOutput(
         displayInstructionText: checkingRouteEn,
         showOriginalInstruction: false,
         showLaneGuidance: false,
         isNeutralFallback: true,
-        reason: 'off_route_checking',
+        reason: 'route_adaptation_${_adaptationTrigger(input)}',
       );
     }
 
@@ -113,10 +135,12 @@ class DriverNavInstructionPolicy {
       );
     }
 
-    final explicitUturn = _explicitUturnManeuver(
-      input.maneuverType,
-      input.maneuverModifier,
-    );
+    // NAV-R12-E2: treat instructions whose text reads like a 180°/U-turn the
+    // same as explicit U-turn maneuvers — they only show when the route is
+    // reliable, close, confident, and progressing forward.
+    final explicitUturn =
+        _explicitUturnManeuver(input.maneuverType, input.maneuverModifier) ||
+        _textLooksLikeUturn(raw);
 
     if (explicitUturn) {
       if (_uturnSafeToShow(input)) {
@@ -164,6 +188,40 @@ class DriverNavInstructionPolicy {
       return false;
     }
     return true;
+  }
+
+  /// NAV-R12-E2: bounded, deterministic trigger label for diagnostics.
+  static String _adaptationTrigger(NavInstructionPolicyInput input) {
+    if (input.reroutePending) return 'reroute_pending';
+    if (input.oppositeDirectionLikely) return 'opposite_direction';
+    if (input.backwardProgressLikely) return 'backward_progress';
+    if (input.routeDeviationLikely) return 'route_deviation';
+    return 'off_route';
+  }
+
+  /// Text-only 180°/U-turn detection (mirrors the display-side helper; the
+  /// policy cannot import it without a dependency cycle).
+  static bool _textLooksLikeUturn(String text) {
+    final lower = text.trim().toLowerCase();
+    if (lower.isEmpty) return false;
+    const markers = <String>[
+      'u-turn',
+      'uturn',
+      'u turn',
+      'turn around',
+      'turn-around',
+      'keer om',
+      'keer terug',
+      'omkeren',
+      'demi-tour',
+      'demi tour',
+      'giro en u',
+      'media vuelta',
+    ];
+    for (final marker in markers) {
+      if (lower.contains(marker)) return true;
+    }
+    return false;
   }
 
   static bool _explicitUturnManeuver(String? type, String? modifier) {
@@ -250,14 +308,17 @@ String navInstructionPolicyLocalizedText({
     final trimmed = originalText.trim();
     return trimmed.isNotEmpty ? trimmed : policy.displayInstructionText;
   }
+  // NAV-R12-E2: all route-adaptation reasons share the same neutral wording.
+  if (policy.reason == 'off_route_checking' ||
+      policy.reason.startsWith('route_adaptation')) {
+    return tr(
+      nl: 'Route wordt aangepast…',
+      en: 'Adapting route…',
+      fr: 'Adaptation de l\'itinéraire…',
+      es: 'Ajustando la ruta…',
+    );
+  }
   switch (policy.reason) {
-    case 'off_route_checking':
-      return tr(
-        nl: 'Route wordt aangepast…',
-        en: 'Adapting route…',
-        fr: 'Adaptation de l\'itinéraire…',
-        es: 'Ajustando la ruta…',
-      );
     case 'tunnel_low_confidence':
       return tr(
         nl: 'Blijf de route volgen',

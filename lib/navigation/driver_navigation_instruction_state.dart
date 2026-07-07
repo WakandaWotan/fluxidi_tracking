@@ -11,6 +11,11 @@ import 'nav_engine/nav_instruction_policy.dart';
 const double kDriverNavStepPassStraightLineMeters = 32.0;
 const double kDriverNavStepPassRouteBufferMeters = 18.0;
 
+/// NAV-R12-E2: when matched route progress falls this far behind the start
+/// of an already-passed step, the forward-only step index is stale
+/// (backtracking or a refreshed route) and is re-resolved from scratch.
+const double kDriverNavStepBacktrackResetMeters = 40.0;
+
 class DriverNavInstructionUpdate {
   final int nextStepIndex;
   final String? instruction;
@@ -23,6 +28,10 @@ class DriverNavInstructionUpdate {
   final String progressSource;
   final double logDistanceMeters;
 
+  /// NAV-R12-E2: true when the step index was re-resolved from route
+  /// progress instead of only advancing forward.
+  final bool reResolved;
+
   const DriverNavInstructionUpdate({
     required this.nextStepIndex,
     required this.instruction,
@@ -34,6 +43,7 @@ class DriverNavInstructionUpdate {
     required this.hasInstruction,
     required this.progressSource,
     required this.logDistanceMeters,
+    this.reResolved = false,
   });
 }
 
@@ -68,6 +78,25 @@ DriverNavInstructionUpdate computeDriverNextNavInstruction({
       : null;
   final progressSource = progressM == null ? 'raw_fallback' : 'matched';
   var resolvedStepIndex = nextStepIndex;
+  var reResolved = false;
+
+  // NAV-R12-E2: a stale index from a previous (longer) route never survives.
+  if (resolvedStepIndex > routeSteps.length - 1 || resolvedStepIndex < 0) {
+    resolvedStepIndex = 0;
+    reResolved = true;
+  }
+
+  // NAV-R12-E2: forward-only advancement goes stale after backtracking or a
+  // route refresh. When reliable matched progress is clearly behind the last
+  // passed step, re-resolve the index from the start of the route.
+  if (progressM != null && resolvedStepIndex > 0) {
+    final lastPassed = routeSteps[resolvedStepIndex - 1];
+    if (progressM <
+        lastPassed.distanceAlongRouteM - kDriverNavStepBacktrackResetMeters) {
+      resolvedStepIndex = 0;
+      reResolved = true;
+    }
+  }
 
   while (resolvedStepIndex < routeSteps.length - 1) {
     final current = routeSteps[resolvedStepIndex];
@@ -105,6 +134,7 @@ DriverNavInstructionUpdate computeDriverNextNavInstruction({
     hasInstruction: true,
     progressSource: progressSource,
     logDistanceMeters: distanceM,
+    reResolved: reResolved,
   );
 }
 
@@ -306,7 +336,8 @@ bool _textLooksLikeStepTargetRoad(String text, DriverNavStep step) {
   }
   if (_instructionMentionsTarget(step.instruction, t)) return true;
   final bannerSecondary = (step.banner?.secondaryText ?? '').trim();
-  if (bannerSecondary.isNotEmpty && _labelsReferToSameRoad(t, bannerSecondary)) {
+  if (bannerSecondary.isNotEmpty &&
+      _labelsReferToSameRoad(t, bannerSecondary)) {
     return true;
   }
   final destination = (step.destinationText ?? '').trim();
@@ -359,7 +390,8 @@ bool _instructionMentionsTarget(String instruction, String target) {
 
 /// Mapbox banner primary is sometimes the current road/ref; secondary is the
 /// target road. Normalize so the banner foregrounds the target road.
-({String primary, String secondary, bool swapped}) normalizeDriverInstructionDisplayLines({
+({String primary, String secondary, bool swapped})
+normalizeDriverInstructionDisplayLines({
   required String rawPrimary,
   required String rawSecondary,
   required DriverNavStep step,
@@ -694,6 +726,10 @@ NavInstructionSnapshot applyDriverNavInstructionPolicyFilter({
   required bool trustRouteSnap,
   required bool trustInstruction,
   required bool offRouteLikely,
+  bool routeDeviationLikely = false,
+  bool oppositeDirectionLikely = false,
+  bool backwardProgressLikely = false,
+  bool reroutePending = false,
   required bool forwardProgress,
   required bool predictionActive,
   double? routeConfidence,
@@ -720,6 +756,10 @@ NavInstructionSnapshot applyDriverNavInstructionPolicyFilter({
       trustInstruction: trustInstruction,
       trustRouteSnap: trustRouteSnap,
       offRouteLikely: offRouteLikely,
+      routeDeviationLikely: routeDeviationLikely,
+      oppositeDirectionLikely: oppositeDirectionLikely,
+      backwardProgressLikely: backwardProgressLikely,
+      reroutePending: reroutePending,
       forwardProgress: forwardProgress,
       predictionActive: predictionActive,
       speedKmh: speedKmh,

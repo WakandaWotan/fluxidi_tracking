@@ -107,6 +107,25 @@ void main() {
       }
     });
 
+    test('NAV-R12-E2: banner is route adaptation from first deviating '
+        'sample; never a confident old-route turn', () {
+      final first = report.firstRouteDeviationIndex!;
+      for (final r in report.results.skip(first)) {
+        expect(
+          r.showOriginalInstruction,
+          isFalse,
+          reason:
+              'sample ${r.index}: stale "Turn left" must not stay visible '
+              'while the route adapts',
+        );
+        expect(
+          r.instructionReason,
+          startsWith('route_adaptation'),
+          reason: 'sample ${r.index}',
+        );
+      }
+    });
+
     test('reroute becomes eligible and would trigger within ~1s', () {
       expect(report.firstRerouteEligibleIndex, isNotNull);
       expect(report.firstRerouteEligibleIndex!, lessThanOrEqualTo(1));
@@ -155,6 +174,18 @@ void main() {
     test('prediction never overrides fresh real movement', () {
       for (final r in report.results) {
         expect(r.predictionActive, isFalse, reason: 'sample ${r.index}');
+      }
+    });
+
+    test('NAV-R12-E2: no false route-adaptation banner on-route', () {
+      for (final r in report.results) {
+        expect(
+          r.instructionReason,
+          isNot(startsWith('route_adaptation')),
+          reason:
+              'sample ${r.index}: normal on-route driving must never show '
+              'the adaptation banner',
+        );
       }
     });
 
@@ -217,6 +248,21 @@ void main() {
       }
     });
 
+    test('NAV-R12-E2: banner switches to route adaptation while the '
+        'U-turn/backtrack deviation is active', () {
+      final deviating = report.results.where(
+        (r) => r.routeDeviationLikely || r.offRouteLikely,
+      );
+      expect(deviating, isNotEmpty);
+      for (final r in deviating) {
+        expect(
+          r.instructionReason,
+          startsWith('route_adaptation'),
+          reason: 'sample ${r.index}',
+        );
+      }
+    });
+
     test('NAV-R12-C: nose converges to the new southbound course within '
         '~2 samples of deviation detection', () {
       final first = report.firstRouteDeviationIndex;
@@ -259,6 +305,18 @@ void main() {
     test('banner falls back to neutral once the route is unreliable', () {
       for (final r in report.results.where((r) => r.offRouteLikely)) {
         expect(r.showOriginalInstruction, isFalse, reason: 'sample ${r.index}');
+      }
+    });
+
+    test('NAV-R12-E2: banner is route adaptation once offRouteLikely '
+        'starts', () {
+      final first = report.firstOffRouteIndex!;
+      for (final r in report.results.skip(first)) {
+        expect(
+          r.instructionReason,
+          startsWith('route_adaptation'),
+          reason: 'sample ${r.index}',
+        );
       }
     });
 

@@ -434,6 +434,10 @@ class NavReplayHarness {
           trustInstruction: confidence.trustInstruction,
           trustRouteSnap: confidence.trustRouteSnap,
           offRouteLikely: offRoute || progress.offRouteLikely,
+          // NAV-R12-E2: route adaptation signals suppress stale maneuvers.
+          routeDeviationLikely: progress.routeDeviationLikely,
+          oppositeDirectionLikely: progress.oppositeDirectionLikely,
+          backwardProgressLikely: progress.backwardProgressLikely,
           forwardProgress: progress.forwardProgress,
           predictionActive: prediction.predictionActive,
           speedKmh: sample.speedKmh,
