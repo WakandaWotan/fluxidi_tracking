@@ -8042,6 +8042,11 @@ class _DriverHomePageState extends State<DriverHomePage>
           : null,
       routeConfidence: progress?.confidence,
       offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
+      // NAV-R12-H: adaptation signals widen the zoom context.
+      routeDeviationLikely: progress?.routeDeviationLikely ?? false,
+      oppositeDirectionLikely: progress?.oppositeDirectionLikely ?? false,
+      backwardProgressLikely: progress?.backwardProgressLikely ?? false,
+      reroutePending: _isRerouting,
       distanceToManeuverM: distanceToManeuver,
       nearManeuver: nearManeuver,
       waitingMode: _isWaiting,
@@ -8072,7 +8077,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       final confidence = _lastNavConfidence;
       if (confidence != null && _isActiveDriverNavEngineContext()) {
         if (!confidence.allowCameraAggression && !manualRecenter) {
-          zoom = (zoom - 0.35).clamp(14.5, 18.5);
+          // NAV-R12-H: lower clamp follows the wider dynamic zoom range.
+          zoom = (zoom - 0.35).clamp(
+            DriverNavCameraPolicy.minZoom,
+            DriverNavCameraPolicy.maxZoom,
+          );
           tilt = (tilt - 2.0).clamp(44.0, 66.0);
           bearingModeWeight =
               (bearingModeWeight * (confidence.trustBearing ? 0.65 : 0.35))
@@ -8087,6 +8096,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       _logNavBounded(
         'NAV_R5_CAMERA_POLICY',
         'zoom=${zoom.toStringAsFixed(1)} '
+            'targetZoom=${output.targetZoom.toStringAsFixed(1)} '
+            'zoomReason=${output.zoomReason} '
             'tilt=${tilt.toStringAsFixed(1)} '
             'follow=$shouldFollow reason=$reason',
         intervalMs: 2000,
@@ -8096,6 +8107,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           tag: 'NAV_R5_CAMERA_POLICY',
           fields: <String, dynamic>{
             'zoom': zoom,
+            'targetZoom': output.targetZoom,
+            'zoomReason': output.zoomReason,
             'tilt': tilt,
             'follow': shouldFollow,
             'reason': reason,
@@ -9727,8 +9740,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     int? targetAgeMs,
   }) {
     final progress = _lastNavRouteProgress;
+    final cameraPolicy = _lastNavCameraPolicy;
+    final maneuverDistanceM =
+        _navInstructionSnapshot?.distanceToManeuverMeters ?? _nextNavDistanceM;
     final signature =
         '$animation|${targetSource ?? ''}|${skipReason ?? ''}|'
+        '${cameraPolicy?.zoomReason ?? ''}|'
         '${progress?.routeDeviationLikely ?? false}|'
         '${progress?.offRouteLikely ?? _offRouteLikely}';
     final changed = signature != _lastNavR12CameraSignature;
@@ -9738,10 +9755,17 @@ class _DriverHomePageState extends State<DriverHomePage>
       'cameraAnimation=$animation '
           'cameraTargetSource=${targetSource ?? 'na'} '
           'cameraSkippedReason=${skipReason ?? 'none'} '
+          'zoom=${cameraPolicy?.zoom.toStringAsFixed(1) ?? 'na'} '
+          'targetZoom=${cameraPolicy?.targetZoom.toStringAsFixed(1) ?? 'na'} '
+          'zoomReason=${cameraPolicy?.zoomReason ?? 'na'} '
+          'tilt=${cameraPolicy?.tilt.toStringAsFixed(1) ?? 'na'} '
+          'speedKmh=${_lastPos != null ? _speedKmhFor(_lastPos!).toStringAsFixed(1) : 'na'} '
+          'maneuverDistanceM=${maneuverDistanceM?.round() ?? -1} '
           'routeDeviationLikely=${progress?.routeDeviationLikely ?? false} '
           'oppositeDirectionLikely=${progress?.oppositeDirectionLikely ?? false} '
           'backwardProgressLikely=${progress?.backwardProgressLikely ?? false} '
           'offRouteLikely=${progress?.offRouteLikely ?? _offRouteLikely} '
+          'reroutePending=$_isRerouting '
           'predictionActive=${_lastNavMotionPrediction?.predictionActive ?? false} '
           'targetAgeMs=${targetAgeMs ?? -1} '
           'followMode=${_cameraMode == _CameraMode.follow} '
