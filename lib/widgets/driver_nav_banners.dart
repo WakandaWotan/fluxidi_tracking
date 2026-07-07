@@ -173,7 +173,8 @@ class DriverTurnInstructionBanner extends StatelessWidget {
             ),
             child: Container(
               constraints: BoxConstraints(
-                minHeight: _minBannerHeight +
+                minHeight:
+                    _minBannerHeight +
                     (showLaneGuidance ? (_laneRowHeight + 4) : 0),
               ),
               padding: EdgeInsets.symmetric(
@@ -181,7 +182,9 @@ class DriverTurnInstructionBanner extends StatelessWidget {
                     ? 6
                     : (_useLandscapeCompactRow
                           ? 8
-                          : (compact ? 10 : (_usePhonePortraitStack ? 12 : 14))),
+                          : (compact
+                                ? 10
+                                : (_usePhonePortraitStack ? 12 : 14))),
                 vertical: _useLandscapeTopRow
                     ? 4
                     : (_useLandscapeCompactRow
@@ -302,9 +305,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
       decoration: BoxDecoration(
         color: palette.accent.withOpacity(isHighwayLike ? 0.30 : 0.22),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: palette.textPrimary.withOpacity(0.20),
-        ),
+        border: Border.all(color: palette.textPrimary.withOpacity(0.20)),
       ),
       child: Text(
         '$distancePrefix $distanceText',
@@ -320,10 +321,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     );
   }
 
-  Widget _buildPrimaryText(
-    DriverThemePalette palette, {
-    int? maxLines,
-  }) {
+  Widget _buildPrimaryText(DriverThemePalette palette, {int? maxLines}) {
     return Text(
       primaryText,
       maxLines: maxLines ?? _primaryMaxLines,
@@ -378,9 +376,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     );
   }
 
-  Widget _buildLandscapeTopRowTextBlock({
-    required DriverThemePalette palette,
-  }) {
+  Widget _buildLandscapeTopRowTextBlock({required DriverThemePalette palette}) {
     if (isArrival) {
       return _buildPrimaryText(palette, maxLines: 1);
     }
@@ -398,8 +394,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     required String secondaryLine,
     required bool showSecondary,
   }) {
-    final showLandscapeSecondary =
-        showSecondary && secondaryLine.length <= 24;
+    final showLandscapeSecondary = showSecondary && secondaryLine.length <= 24;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisAlignment: MainAxisAlignment.center,
@@ -550,9 +545,7 @@ class _LanePill extends StatelessWidget {
     if (!hasArrow && !recommended) {
       return const SizedBox.shrink();
     }
-    final arrow = hasArrow
-        ? driverLaneIndicationArrow(indication!)
-        : '—';
+    final arrow = hasArrow ? driverLaneIndicationArrow(indication!) : '—';
     final semanticLabel = driverLaneSemanticLabel(
       lane,
       maneuverModifier: maneuverModifier,
@@ -670,6 +663,109 @@ class DriverNavLoadingBanner extends StatelessWidget {
                         fontWeight: FontWeight.w800,
                         color: palette.textPrimary.withOpacity(0.94),
                       ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// NAV-R14: calm local caution when Fluxidi OS detects a complex zone.
+class DriverNavComplexityCautionBanner extends StatelessWidget {
+  final bool compact;
+  final bool isTablet;
+  final bool topRowLandscape;
+  final String title;
+  final String body;
+  final ValueListenable<DriverThemeVariant>? themeListenable;
+
+  const DriverNavComplexityCautionBanner({
+    super.key,
+    required this.compact,
+    this.isTablet = false,
+    this.topRowLandscape = false,
+    required this.title,
+    required this.body,
+    this.themeListenable,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<DriverThemeVariant>(
+      valueListenable: themeListenable ?? driverThemeNotifier,
+      builder: (context, variant, _) {
+        final palette = paletteForDriverTheme(variant);
+        const caution = Color(0xFFFFB020);
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(compact ? 12 : 14),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(
+              sigmaX: compact ? 8 : 10,
+              sigmaY: compact ? 8 : 10,
+            ),
+            child: Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: topRowLandscape ? 8 : (compact ? 10 : 12),
+                vertical: topRowLandscape ? 5 : (compact ? 6 : 8),
+              ),
+              decoration: BoxDecoration(
+                color: palette.surface.withOpacity(
+                  palette.isDark ? 0.92 : 0.96,
+                ),
+                borderRadius: BorderRadius.circular(compact ? 12 : 14),
+                border: Border.all(
+                  color: caution.withOpacity(palette.isDark ? 0.85 : 0.95),
+                  width: 1.4,
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    size: topRowLandscape ? 18 : (compact ? 20 : 22),
+                    color: caution,
+                  ),
+                  SizedBox(width: topRowLandscape ? 6 : 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: topRowLandscape
+                                ? (isTablet ? 11 : 10)
+                                : (compact ? 12 : (isTablet ? 14 : 13)),
+                            fontWeight: FontWeight.w900,
+                            color: palette.textPrimary,
+                          ),
+                        ),
+                        if (!topRowLandscape) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            body,
+                            maxLines: compact ? 2 : 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: compact
+                                  ? (isTablet ? 11 : 10)
+                                  : (isTablet ? 12 : 11),
+                              fontWeight: FontWeight.w600,
+                              height: 1.15,
+                              color: palette.textPrimary.withOpacity(0.86),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 ],

@@ -309,6 +309,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   final DriverNavConfidenceEngine _driverNavConfidenceEngine =
       DriverNavConfidenceEngine();
   NavConfidenceOutput? _lastNavConfidence;
+  // NAV-R14: local complexity caution (offline, no cloud).
+  final NavComplexityMonitor _navComplexityMonitor = NavComplexityMonitor();
+  NavCautionState _lastNavCautionState = NavCautionState.inactive;
+  String? _lastNavR14ComplexitySignature;
   final DriverNavMotionPrediction _driverNavMotionPrediction =
       DriverNavMotionPrediction();
   NavMotionPredictionOutput? _lastNavMotionPrediction;
@@ -389,6 +393,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _resetNavRouteProgressState();
     _resetNavCameraPolicyState();
     _resetNavConfidenceState();
+    _resetNavComplexityState();
     _resetNavMotionPredictionState();
     _resetNavInstructionPolicyState();
     if (clearRoute) {
@@ -1933,6 +1938,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _resetNavR3MotionState();
     _resetNavCameraPolicyState();
     _resetNavConfidenceState();
+    _resetNavComplexityState();
     _resetNavMotionPredictionState();
     _resetNavInstructionPolicyState();
     _manualFromCtrl.dispose();
@@ -6485,6 +6491,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _resetNavRouteProgressState();
     _resetNavCameraPolicyState();
     _resetNavConfidenceState();
+    _resetNavComplexityState();
     _resetNavMotionPredictionState();
     _resetNavInstructionPolicyState();
     if (!_liveRideActive) {
@@ -7960,6 +7967,99 @@ class _DriverHomePageState extends State<DriverHomePage>
     _lastNavConfidence = null;
   }
 
+  void _resetNavComplexityState() {
+    _navComplexityMonitor.reset();
+    _lastNavCautionState = NavCautionState.inactive;
+    _lastNavR14ComplexitySignature = null;
+  }
+
+  NavComplexityMonitorInput _buildNavComplexityMonitorInput(geo.Position pos) {
+    final progress = _lastNavRouteProgress;
+    final confidence = _lastNavConfidence;
+    final prediction = _lastNavMotionPrediction;
+    return NavComplexityMonitorInput(
+      timestamp: DateTime.now(),
+      liveRideActive: _liveRideActive,
+      followMode: _cameraMode == _CameraMode.follow,
+      overallConfidence: confidence?.overallScore,
+      trustInstruction: confidence?.trustInstruction ?? true,
+      trustBearing: confidence?.trustBearing ?? true,
+      snapDistanceM: progress?.snapDistanceM,
+      offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
+      reroutePending: _isRerouting,
+      headingDeltaDeg: progress?.headingDeltaDeg ?? _navHeadingDeltaDegFor(pos),
+      predictionActive: prediction?.predictionActive ?? false,
+      gapBridgeMs: _gapSinceLastNavEngineMs(),
+      maneuverModifier: _nextNavModifier,
+      instructionStepIndex: _nextStepIndex,
+      speedKmh: _speedKmhFor(pos),
+      distanceToManeuverM:
+          _navInstructionSnapshot?.distanceToManeuverMeters ??
+          _nextNavDistanceM,
+      maneuverType: _nextNavType,
+    );
+  }
+
+  void _updateNavComplexityForPosition(geo.Position pos) {
+    if (!_isActiveDriverNavEngineContext()) {
+      final wasShowing = _lastNavCautionState.shouldShowCaution;
+      _resetNavComplexityState();
+      if (wasShowing && mounted) setState(() {});
+      return;
+    }
+    final prevShowing = _lastNavCautionState.shouldShowCaution;
+    final state = _navComplexityMonitor.update(
+      _buildNavComplexityMonitorInput(pos),
+    );
+    _lastNavCautionState = state;
+    _logNavR14Complexity(state);
+    if (prevShowing != state.shouldShowCaution && mounted) {
+      setState(() {});
+    }
+  }
+
+  void _logNavR14Complexity(NavCautionState state) {
+    final confidence = _lastNavConfidence;
+    final progress = _lastNavRouteProgress;
+    final snapBucket = NavComplexityMonitor.snapDistanceBucket(
+      progress?.snapDistanceM,
+    );
+    final signature =
+        '${state.shouldShowCaution}|${state.reasonCode}|${state.signalCount}|'
+        '${confidence?.overallScore.round() ?? -1}|$snapBucket';
+    final changed = signature != _lastNavR14ComplexitySignature;
+    _lastNavR14ComplexitySignature = signature;
+    _logNavBounded(
+      'NAV_R14_COMPLEXITY',
+      'active=${state.shouldShowCaution} '
+          'severity=${state.severity.name} '
+          'reason=${state.reasonCode} '
+          'signals=${state.signalCount} '
+          'confidence=${confidence?.overallScore.round() ?? -1} '
+          'snapDistBucket=$snapBucket '
+          'trustBearing=${confidence?.trustBearing ?? true} '
+          'trustInstruction=${confidence?.trustInstruction ?? true}',
+      intervalMs: changed ? 1 : 3000,
+    );
+    if (changed) {
+      unawaited(
+        NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+          tag: 'NAV_R14_COMPLEXITY',
+          fields: <String, dynamic>{
+            'active': state.shouldShowCaution,
+            'severity': state.severity.name,
+            'reason': state.reasonCode,
+            'confidence': confidence?.overallScore.round(),
+            'snapDistBucket': snapBucket,
+            'trustBearing': confidence?.trustBearing,
+            'trustInstruction': confidence?.trustInstruction,
+            'signals': state.signalCount,
+          },
+        ),
+      );
+    }
+  }
+
   void _resetNavMotionPredictionState() {
     _driverNavMotionPrediction.reset();
     _lastNavMotionPrediction = null;
@@ -8058,6 +8158,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     } catch (_) {
       _lastNavConfidence = null;
     }
+    _updateNavComplexityForPosition(pos);
   }
 
   NavCameraPolicyInput _buildNavCameraPolicyInput(
@@ -17357,6 +17458,48 @@ class _DriverHomePageState extends State<DriverHomePage>
     return (_nextNavInstruction ?? '').trim().isNotEmpty;
   }
 
+  bool _showNavComplexityCaution() {
+    return _cameraMode == _CameraMode.follow &&
+        _lastNavCautionState.shouldShowCaution;
+  }
+
+  Widget _buildNavComplexityCautionBanner({
+    required bool compact,
+    required bool isTablet,
+    bool topRowLandscape = false,
+  }) {
+    return DriverNavComplexityCautionBanner(
+      compact: compact,
+      isTablet: isTablet,
+      topRowLandscape: topRowLandscape,
+      title: navComplexityCautionLocalizedText(field: 'title', tr: _tr),
+      body: navComplexityCautionLocalizedText(field: 'body', tr: _tr),
+      themeListenable: _activeDriverThemeListenable,
+    );
+  }
+
+  Widget _wrapNavBannerWithComplexityCaution({
+    required Widget banner,
+    required bool compact,
+    required bool isTablet,
+    bool topRowLandscape = false,
+  }) {
+    if (!_showNavComplexityCaution()) return banner;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        banner,
+        SizedBox(height: topRowLandscape ? 4 : 6),
+        _buildNavComplexityCautionBanner(
+          compact: compact,
+          isTablet: isTablet,
+          topRowLandscape: topRowLandscape,
+        ),
+      ],
+    );
+  }
+
   Widget _buildTurnInstructionBanner({
     required bool compact,
     required bool isTablet,
@@ -17442,7 +17585,12 @@ class _DriverHomePageState extends State<DriverHomePage>
   Widget? _buildFollowNavBannerForTopRow({required bool isTablet}) {
     if (_cameraMode != _CameraMode.follow) return null;
     if (_showNavInstructionBanner()) {
-      return _buildTurnInstructionBanner(
+      return _wrapNavBannerWithComplexityCaution(
+        banner: _buildTurnInstructionBanner(
+          compact: true,
+          isTablet: isTablet,
+          topRowLandscape: true,
+        ),
         compact: true,
         isTablet: isTablet,
         topRowLandscape: true,
@@ -17451,7 +17599,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (_navStepsLoading ||
         _isRerouting ||
         _navInstructionSnapshot?.source == NavInstructionSource.loading) {
-      return _buildNavLoadingBanner(
+      return _wrapNavBannerWithComplexityCaution(
+        banner: _buildNavLoadingBanner(
+          compact: true,
+          isTablet: isTablet,
+          topRowLandscape: true,
+        ),
         compact: true,
         isTablet: isTablet,
         topRowLandscape: true,
@@ -17708,7 +17861,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                   constraints: BoxConstraints(
                     maxWidth: navBannerPortraitMaxWidth,
                   ),
-                  child: _buildTurnInstructionBanner(
+                  child: _wrapNavBannerWithComplexityCaution(
+                    banner: _buildTurnInstructionBanner(
+                      compact: false,
+                      isTablet: isTablet,
+                    ),
                     compact: false,
                     isTablet: isTablet,
                   ),
@@ -17732,7 +17889,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                   constraints: BoxConstraints(
                     maxWidth: navBannerPortraitMaxWidth,
                   ),
-                  child: _buildNavLoadingBanner(
+                  child: _wrapNavBannerWithComplexityCaution(
+                    banner: _buildNavLoadingBanner(
+                      compact: false,
+                      isTablet: isTablet,
+                    ),
                     compact: false,
                     isTablet: isTablet,
                   ),
@@ -17755,7 +17916,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                   constraints: BoxConstraints(
                     maxWidth: navBannerPortraitMaxWidth,
                   ),
-                  child: _buildNoNavInstructionsBanner(
+                  child: _wrapNavBannerWithComplexityCaution(
+                    banner: _buildNoNavInstructionsBanner(
+                      compact: false,
+                      isTablet: isTablet,
+                    ),
                     compact: false,
                     isTablet: isTablet,
                   ),
