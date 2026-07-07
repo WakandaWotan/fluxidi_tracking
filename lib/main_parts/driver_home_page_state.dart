@@ -309,10 +309,13 @@ class _DriverHomePageState extends State<DriverHomePage>
   final DriverNavConfidenceEngine _driverNavConfidenceEngine =
       DriverNavConfidenceEngine();
   NavConfidenceOutput? _lastNavConfidence;
-  // NAV-R14: local complexity caution (offline, no cloud).
-  final NavComplexityMonitor _navComplexityMonitor = NavComplexityMonitor();
-  NavCautionState _lastNavCautionState = NavCautionState.inactive;
+  // NAV-R14A: local complexity guard (offline, no cloud).
+  final NavComplexityGuard _navComplexityGuard = NavComplexityGuard();
+  NavComplexityGuardState _lastNavCautionState =
+      NavComplexityGuardState.inactive;
   String? _lastNavR14ComplexitySignature;
+  final NavComplexityIntelligenceExporter _navComplexityIntelligenceExporter =
+      const NavComplexityIntelligenceExporter();
   final DriverNavMotionPrediction _driverNavMotionPrediction =
       DriverNavMotionPrediction();
   NavMotionPredictionOutput? _lastNavMotionPrediction;
@@ -7968,16 +7971,16 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   void _resetNavComplexityState() {
-    _navComplexityMonitor.reset();
-    _lastNavCautionState = NavCautionState.inactive;
+    _navComplexityGuard.reset();
+    _lastNavCautionState = NavComplexityGuardState.inactive;
     _lastNavR14ComplexitySignature = null;
   }
 
-  NavComplexityMonitorInput _buildNavComplexityMonitorInput(geo.Position pos) {
+  NavComplexityGuardInput _buildNavComplexityGuardInput(geo.Position pos) {
     final progress = _lastNavRouteProgress;
     final confidence = _lastNavConfidence;
     final prediction = _lastNavMotionPrediction;
-    return NavComplexityMonitorInput(
+    return NavComplexityGuardInput(
       timestamp: DateTime.now(),
       liveRideActive: _liveRideActive,
       followMode: _cameraMode == _CameraMode.follow,
@@ -8002,43 +8005,66 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   void _updateNavComplexityForPosition(geo.Position pos) {
     if (!_isActiveDriverNavEngineContext()) {
-      final wasShowing = _lastNavCautionState.shouldShowCaution;
+      final wasShowing = _lastNavCautionState.active;
       _resetNavComplexityState();
       if (wasShowing && mounted) setState(() {});
       return;
     }
-    final prevShowing = _lastNavCautionState.shouldShowCaution;
-    final state = _navComplexityMonitor.update(
-      _buildNavComplexityMonitorInput(pos),
-    );
+    final input = _buildNavComplexityGuardInput(pos);
+    final prevShowing = _lastNavCautionState.active;
+    final state = _navComplexityGuard.update(input);
     _lastNavCautionState = state;
-    _logNavR14Complexity(state);
-    if (prevShowing != state.shouldShowCaution && mounted) {
+    _logNavR14Complexity(state, input: input);
+    if (!prevShowing && state.active) {
+      unawaited(_exportNavComplexityIntelligenceEvent(state, input));
+    }
+    if (prevShowing != state.active && mounted) {
       setState(() {});
     }
   }
 
-  void _logNavR14Complexity(NavCautionState state) {
+  Future<void> _exportNavComplexityIntelligenceEvent(
+    NavComplexityGuardState state,
+    NavComplexityGuardInput input,
+  ) async {
+    final event = NavComplexityIntelligenceBuilder.fromGuardContext(
+      state: state,
+      input: input,
+      diagnosticsSessionId: NavDiagnosticsRecorder.instance.activeSessionId,
+    );
+    await _navComplexityIntelligenceExporter.exportEvent(
+      event,
+      recordLocally: (payload) => NavDiagnosticsRecorder.instance
+          .recordNavComplexityIntelligenceEvent(payload),
+    );
+  }
+
+  void _logNavR14Complexity(
+    NavComplexityGuardState state, {
+    required NavComplexityGuardInput input,
+  }) {
     final confidence = _lastNavConfidence;
-    final progress = _lastNavRouteProgress;
-    final snapBucket = NavComplexityMonitor.snapDistanceBucket(
-      progress?.snapDistanceM,
+    final snapBucket = NavComplexityGuard.snapDistanceBucket(
+      input.snapDistanceM,
+    );
+    final confidenceBucket = NavComplexityGuard.confidenceBucket(
+      input.overallConfidence,
     );
     final signature =
-        '${state.shouldShowCaution}|${state.reasonCode}|${state.signalCount}|'
-        '${confidence?.overallScore.round() ?? -1}|$snapBucket';
+        '${state.active}|${state.reasonCode}|${state.signalCount}|'
+        '$confidenceBucket|$snapBucket|${state.predictionRepeated}';
     final changed = signature != _lastNavR14ComplexitySignature;
     _lastNavR14ComplexitySignature = signature;
     _logNavBounded(
       'NAV_R14_COMPLEXITY',
-      'active=${state.shouldShowCaution} '
+      'active=${state.active} '
           'severity=${state.severity.name} '
           'reason=${state.reasonCode} '
-          'signals=${state.signalCount} '
-          'confidence=${confidence?.overallScore.round() ?? -1} '
+          'confidenceBucket=$confidenceBucket '
           'snapDistBucket=$snapBucket '
-          'trustBearing=${confidence?.trustBearing ?? true} '
-          'trustInstruction=${confidence?.trustInstruction ?? true}',
+          'predictionRepeated=${state.predictionRepeated} '
+          'trustBearing=${input.trustBearing} '
+          'trustInstruction=${input.trustInstruction}',
       intervalMs: changed ? 1 : 3000,
     );
     if (changed) {
@@ -8046,13 +8072,14 @@ class _DriverHomePageState extends State<DriverHomePage>
         NavDiagnosticsRecorder.instance.recordNavEngineEvent(
           tag: 'NAV_R14_COMPLEXITY',
           fields: <String, dynamic>{
-            'active': state.shouldShowCaution,
+            'active': state.active,
             'severity': state.severity.name,
             'reason': state.reasonCode,
-            'confidence': confidence?.overallScore.round(),
+            'confidenceBucket': confidenceBucket,
             'snapDistBucket': snapBucket,
-            'trustBearing': confidence?.trustBearing,
-            'trustInstruction': confidence?.trustInstruction,
+            'predictionRepeated': state.predictionRepeated,
+            'trustBearing': input.trustBearing,
+            'trustInstruction': input.trustInstruction,
             'signals': state.signalCount,
           },
         ),
@@ -17459,8 +17486,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   bool _showNavComplexityCaution() {
-    return _cameraMode == _CameraMode.follow &&
-        _lastNavCautionState.shouldShowCaution;
+    return _cameraMode == _CameraMode.follow && _lastNavCautionState.active;
   }
 
   Widget _buildNavComplexityCautionBanner({
@@ -17472,8 +17498,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       compact: compact,
       isTablet: isTablet,
       topRowLandscape: topRowLandscape,
-      title: navComplexityCautionLocalizedText(field: 'title', tr: _tr),
-      body: navComplexityCautionLocalizedText(field: 'body', tr: _tr),
+      title: navComplexityGuardLocalizedText(field: 'title', tr: _tr),
+      body: navComplexityGuardLocalizedText(field: 'body', tr: _tr),
       themeListenable: _activeDriverThemeListenable,
     );
   }

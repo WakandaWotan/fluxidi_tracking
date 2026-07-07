@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fluxidi_tracking/navigation/nav_engine/nav_complexity_monitor.dart';
+import 'package:fluxidi_tracking/navigation/nav_engine/nav_complexity_guard.dart';
 
-NavComplexityMonitorInput _input({
+NavComplexityGuardInput _input({
   DateTime? timestamp,
   bool liveRideActive = true,
   bool followMode = true,
@@ -20,7 +20,7 @@ NavComplexityMonitorInput _input({
   double? distanceToManeuverM = 500.0,
   String? maneuverType = 'turn',
 }) {
-  return NavComplexityMonitorInput(
+  return NavComplexityGuardInput(
     timestamp: timestamp ?? DateTime(2026, 1, 1, 12),
     liveRideActive: liveRideActive,
     followMode: followMode,
@@ -42,12 +42,12 @@ NavComplexityMonitorInput _input({
 }
 
 void main() {
-  group('NAV-R14 NavComplexityMonitor', () {
+  group('NAV-R14A NavComplexityGuard', () {
     test('no popup during high-confidence normal route', () {
-      final monitor = NavComplexityMonitor();
-      NavCautionState state = NavCautionState.inactive;
+      final guard = NavComplexityGuard();
+      NavComplexityGuardState state = NavComplexityGuardState.inactive;
       for (var i = 0; i < 10; i++) {
-        state = monitor.update(
+        state = guard.update(
           _input(
             timestamp: DateTime(2026, 1, 1, 12, 0, i),
             overallConfidence: 82.0,
@@ -55,15 +55,15 @@ void main() {
           ),
         );
       }
-      expect(state.shouldShowCaution, isFalse);
+      expect(state.active, isFalse);
       expect(state.complexCandidate, isFalse);
     });
 
     test('popup after sustained low confidence + high snap distance', () {
-      final monitor = NavComplexityMonitor();
-      NavCautionState state = NavCautionState.inactive;
+      final guard = NavComplexityGuard();
+      NavComplexityGuardState state = NavComplexityGuardState.inactive;
       for (var ms = 0; ms <= 3000; ms += 500) {
-        state = monitor.update(
+        state = guard.update(
           _input(
             timestamp: DateTime(2026, 1, 1, 12, 0, 0, ms),
             overallConfidence: 48.0,
@@ -72,16 +72,16 @@ void main() {
           ),
         );
       }
-      expect(state.shouldShowCaution, isTrue);
+      expect(state.active, isTrue);
       expect(state.reasonCode, 'low_confidence');
     });
 
-    test('popup for repeated prediction / gap bridge', () {
-      final monitor = NavComplexityMonitor();
-      NavCautionState state = NavCautionState.inactive;
+    test('popup after repeated prediction / gap bridge', () {
+      final guard = NavComplexityGuard();
+      NavComplexityGuardState state = NavComplexityGuardState.inactive;
       var t = DateTime(2026, 1, 1, 12);
       for (var cycle = 0; cycle < 3; cycle++) {
-        state = monitor.update(
+        state = guard.update(
           _input(
             timestamp: t,
             overallConfidence: 50.0,
@@ -92,7 +92,7 @@ void main() {
           ),
         );
         t = t.add(const Duration(seconds: 1));
-        state = monitor.update(
+        state = guard.update(
           _input(
             timestamp: t,
             overallConfidence: 50.0,
@@ -105,7 +105,7 @@ void main() {
       }
       for (var i = 0; i <= 6; i++) {
         t = t.add(const Duration(milliseconds: 500));
-        state = monitor.update(
+        state = guard.update(
           _input(
             timestamp: t,
             overallConfidence: 50.0,
@@ -116,19 +116,19 @@ void main() {
           ),
         );
       }
-      expect(state.shouldShowCaution, isTrue);
+      expect(state.active, isTrue);
       expect(state.reasonCode, 'repeated_prediction');
+      expect(state.predictionRepeated, isTrue);
     });
 
     test('cooldown prevents spam after recovery', () {
-      final monitor = NavComplexityMonitor();
+      final guard = NavComplexityGuard();
       var t = DateTime(2026, 1, 1, 12);
+      NavComplexityGuardState state = NavComplexityGuardState.inactive;
 
-      // Trigger caution.
-      NavCautionState state = NavCautionState.inactive;
       for (var i = 0; i < 8; i++) {
         t = t.add(const Duration(milliseconds: 500));
-        state = monitor.update(
+        state = guard.update(
           _input(
             timestamp: t,
             overallConfidence: 42.0,
@@ -137,12 +137,11 @@ void main() {
           ),
         );
       }
-      expect(state.shouldShowCaution, isTrue);
+      expect(state.active, isTrue);
 
-      // Recover and hide.
       for (var i = 0; i < 12; i++) {
         t = t.add(const Duration(milliseconds: 500));
-        state = monitor.update(
+        state = guard.update(
           _input(
             timestamp: t,
             overallConfidence: 85.0,
@@ -152,12 +151,11 @@ void main() {
           ),
         );
       }
-      expect(state.shouldShowCaution, isFalse);
+      expect(state.active, isFalse);
 
-      // Complex again within cooldown — should stay hidden.
       for (var i = 0; i < 8; i++) {
         t = t.add(const Duration(milliseconds: 500));
-        state = monitor.update(
+        state = guard.update(
           _input(
             timestamp: t,
             overallConfidence: 40.0,
@@ -166,18 +164,18 @@ void main() {
           ),
         );
       }
-      expect(state.shouldShowCaution, isFalse);
+      expect(state.active, isFalse);
       expect(state.complexCandidate, isTrue);
     });
 
     test('recovery hides after stable confidence returns', () {
-      final monitor = NavComplexityMonitor();
+      final guard = NavComplexityGuard();
       var t = DateTime(2026, 1, 1, 12);
-      NavCautionState state = NavCautionState.inactive;
+      NavComplexityGuardState state = NavComplexityGuardState.inactive;
 
       for (var i = 0; i < 8; i++) {
         t = t.add(const Duration(milliseconds: 500));
-        state = monitor.update(
+        state = guard.update(
           _input(
             timestamp: t,
             overallConfidence: 44.0,
@@ -187,11 +185,11 @@ void main() {
           ),
         );
       }
-      expect(state.shouldShowCaution, isTrue);
+      expect(state.active, isTrue);
 
       for (var i = 0; i < 12; i++) {
         t = t.add(const Duration(milliseconds: 500));
-        state = monitor.update(
+        state = guard.update(
           _input(
             timestamp: t,
             overallConfidence: 88.0,
@@ -202,7 +200,15 @@ void main() {
           ),
         );
       }
-      expect(state.shouldShowCaution, isFalse);
+      expect(state.active, isFalse);
+    });
+
+    test('diagnostics buckets match NAV-AI-1 spec', () {
+      expect(NavComplexityGuard.confidenceBucket(48.0), '40-60');
+      expect(NavComplexityGuard.confidenceBucket(12.0), '0-20');
+      expect(NavComplexityGuard.snapDistanceBucket(4.0), '0-5');
+      expect(NavComplexityGuard.snapDistanceBucket(22.0), '15-30');
+      expect(NavComplexityGuard.snapDistanceBucket(55.0), '30+');
     });
   });
 }

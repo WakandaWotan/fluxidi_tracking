@@ -1,37 +1,43 @@
 import 'dart:math' as math;
 
-/// Severity for the local Fluxidi OS caution banner.
-enum NavCautionSeverity { info, warning }
+/// Severity for the local Fluxidi OS complexity caution banner.
+enum NavComplexitySeverity { info, warning }
 
-/// Snapshot of the caution UI / diagnostics state.
-class NavCautionState {
-  final bool shouldShowCaution;
-  final NavCautionSeverity severity;
+/// NAV-R14A: local guard output — offline decision only, no cloud dependency.
+class NavComplexityGuardState {
+  final bool active;
+  final NavComplexitySeverity severity;
   final String reasonCode;
   final int cooldownMs;
+  final String messageKey;
   final int signalCount;
   final bool complexCandidate;
+  final bool predictionRepeated;
 
-  const NavCautionState({
-    required this.shouldShowCaution,
+  const NavComplexityGuardState({
+    required this.active,
     required this.severity,
     required this.reasonCode,
     required this.cooldownMs,
+    this.messageKey = 'nav_complexity_caution',
     this.signalCount = 0,
     this.complexCandidate = false,
+    this.predictionRepeated = false,
   });
 
-  static const inactive = NavCautionState(
-    shouldShowCaution: false,
-    severity: NavCautionSeverity.info,
+  static const inactive = NavComplexityGuardState(
+    active: false,
+    severity: NavComplexitySeverity.info,
     reasonCode: 'none',
     cooldownMs: 0,
   );
+
+  /// Back-compat alias used by existing UI wiring.
+  bool get shouldShowCaution => active;
 }
 
-/// Inputs for local complexity detection — all derived from existing engine
-/// signals; no cloud, no coordinates.
-class NavComplexityMonitorInput {
+/// Inputs derived from existing engine/confidence/progress signals only.
+class NavComplexityGuardInput {
   final DateTime timestamp;
   final bool liveRideActive;
   final bool followMode;
@@ -50,7 +56,7 @@ class NavComplexityMonitorInput {
   final double? distanceToManeuverM;
   final String? maneuverType;
 
-  const NavComplexityMonitorInput({
+  const NavComplexityGuardInput({
     required this.timestamp,
     this.liveRideActive = false,
     this.followMode = false,
@@ -71,11 +77,8 @@ class NavComplexityMonitorInput {
   });
 }
 
-/// NAV-R14: pure local monitor for complex / low-confidence navigation zones.
-///
-/// Uses signal counting plus hysteresis so the driver sees a calm warning only
-/// after sustained complexity, and not repeatedly (cooldown).
-class NavComplexityMonitor {
+/// NAV-R14A: pure local complexity guard with hysteresis + cooldown.
+class NavComplexityGuard {
   static const int showPersistMs = 2500;
   static const int hideStableMs = 5000;
   static const int cooldownMs = 45000;
@@ -114,10 +117,10 @@ class NavComplexityMonitor {
     _predictionWasActive = false;
   }
 
-  NavCautionState update(NavComplexityMonitorInput input) {
+  NavComplexityGuardState update(NavComplexityGuardInput input) {
     if (!input.liveRideActive || !input.followMode) {
       reset();
-      return NavCautionState.inactive;
+      return NavComplexityGuardState.inactive;
     }
 
     _trackManeuverChanges(input);
@@ -126,6 +129,7 @@ class NavComplexityMonitor {
     final assessment = _assessSignals(
       input,
       stepChangesInWindow: _stepChangesInWindow,
+      predictionRepeated: _repeatedPrediction(input),
     );
     final now = input.timestamp;
 
@@ -167,17 +171,18 @@ class NavComplexityMonitor {
       }
     }
 
-    return NavCautionState(
-      shouldShowCaution: _showing,
+    return NavComplexityGuardState(
+      active: _showing,
       severity: assessment.severity,
       reasonCode: _showing ? _activeReason : 'none',
       cooldownMs: cooldownMs,
       signalCount: assessment.signalCount,
       complexCandidate: assessment.complexCandidate,
+      predictionRepeated: assessment.predictionRepeated,
     );
   }
 
-  void _trackManeuverChanges(NavComplexityMonitorInput input) {
+  void _trackManeuverChanges(NavComplexityGuardInput input) {
     final step = input.instructionStepIndex;
     if (step == null) return;
     if (_lastStepIndex != null && step != _lastStepIndex) {
@@ -194,7 +199,7 @@ class NavComplexityMonitor {
     _lastStepIndex = step;
   }
 
-  void _trackPredictionBridge(NavComplexityMonitorInput input) {
+  void _trackPredictionBridge(NavComplexityGuardInput input) {
     if (input.predictionActive) {
       _predictionActiveSince ??= input.timestamp;
       if (!_predictionWasActive && input.gapBridgeMs >= 300) {
@@ -208,8 +213,9 @@ class NavComplexityMonitor {
   }
 
   _SignalAssessment _assessSignals(
-    NavComplexityMonitorInput input, {
+    NavComplexityGuardInput input, {
     required int stepChangesInWindow,
+    required bool predictionRepeated,
   }) {
     final signals = <String>[];
 
@@ -217,9 +223,8 @@ class NavComplexityMonitor {
     if (overall != null && overall < lowConfidenceThreshold) {
       signals.add('low_confidence');
     }
-
     if (!input.trustInstruction || !input.trustBearing) {
-      signals.add('low_trust');
+      signals.add('low_confidence');
     }
 
     final snap = input.snapDistanceM;
@@ -227,12 +232,12 @@ class NavComplexityMonitor {
       signals.add('high_snap_distance');
     }
 
-    if (input.offRouteLikely) {
+    if (input.offRouteLikely || input.reroutePending) {
       signals.add('offroute_uncertain');
     }
 
-    if (_maneuverAmbiguous(input) || stepChangesInWindow >= 1) {
-      signals.add('ambiguous_maneuver');
+    if (_instructionAmbiguous(input) || stepChangesInWindow >= 1) {
+      signals.add('ambiguous_instruction');
     }
 
     final headingDelta = input.headingDeltaDeg;
@@ -241,35 +246,39 @@ class NavComplexityMonitor {
         headingDelta.isFinite &&
         headingDelta >= strongHeadingConflictDeg &&
         speed >= 5.0) {
-      signals.add('heading_conflict');
+      signals.add('heading_route_conflict');
     }
 
-    if (_repeatedPrediction(input)) {
+    if (predictionRepeated) {
       signals.add('repeated_prediction');
     }
 
     if (_denseManeuverArea(input)) {
-      signals.add('dense_junction');
+      signals.add('dense_maneuver_area');
     }
 
-    final complexCandidate = signals.length >= minSignalCount;
-    final reasonCode = complexCandidate ? _primaryReason(signals) : 'none';
+    final uniqueSignals = signals.toSet().toList();
+    final complexCandidate = uniqueSignals.length >= minSignalCount;
+    final reasonCode = complexCandidate
+        ? _primaryReason(uniqueSignals)
+        : 'none';
     final severity =
-        signals.contains('offroute_uncertain') ||
-            signals.contains('heading_conflict') ||
+        uniqueSignals.contains('offroute_uncertain') ||
+            uniqueSignals.contains('heading_route_conflict') ||
             (overall != null && overall < 40.0)
-        ? NavCautionSeverity.warning
-        : NavCautionSeverity.info;
+        ? NavComplexitySeverity.warning
+        : NavComplexitySeverity.info;
 
     return _SignalAssessment(
       complexCandidate: complexCandidate,
-      signalCount: signals.length,
+      signalCount: uniqueSignals.length,
       reasonCode: reasonCode,
       severity: severity,
+      predictionRepeated: predictionRepeated,
     );
   }
 
-  static bool _maneuverAmbiguous(NavComplexityMonitorInput input) {
+  static bool _instructionAmbiguous(NavComplexityGuardInput input) {
     final modifier = (input.maneuverModifier ?? '').trim().toLowerCase();
     if (modifier.isEmpty || modifier == 'unknown') {
       final type = (input.maneuverType ?? '').trim().toLowerCase();
@@ -283,7 +292,7 @@ class NavComplexityMonitor {
     return false;
   }
 
-  bool _repeatedPrediction(NavComplexityMonitorInput input) {
+  bool _repeatedPrediction(NavComplexityGuardInput input) {
     if (!input.predictionActive) return false;
     if (_predictionBridgeCount >= 3) return true;
     if (_predictionActiveSince == null) return false;
@@ -291,7 +300,7 @@ class NavComplexityMonitor {
         repeatedPredictionMs;
   }
 
-  static bool _denseManeuverArea(NavComplexityMonitorInput input) {
+  static bool _denseManeuverArea(NavComplexityGuardInput input) {
     final speed = input.speedKmh ?? 99.0;
     final distance = input.distanceToManeuverM;
     if (speed >= 15.0 || distance == null || !distance.isFinite) {
@@ -309,13 +318,12 @@ class NavComplexityMonitor {
   static String _primaryReason(List<String> signals) {
     const priority = <String>[
       'offroute_uncertain',
-      'heading_conflict',
+      'heading_route_conflict',
       'repeated_prediction',
-      'ambiguous_maneuver',
-      'dense_junction',
+      'ambiguous_instruction',
+      'dense_maneuver_area',
       'low_confidence',
       'high_snap_distance',
-      'low_trust',
     ];
     for (final reason in priority) {
       if (signals.contains(reason)) return reason;
@@ -323,14 +331,25 @@ class NavComplexityMonitor {
     return signals.first;
   }
 
-  /// Bounded snap-distance bucket for diagnostics (no raw meters when huge).
+  /// NAV-R14A diagnostics bucket — no raw meters.
   static String snapDistanceBucket(double? snapDistanceM) {
     final snap = snapDistanceM;
     if (snap == null || !snap.isFinite) return 'unknown';
-    if (snap <= 15.0) return '0_15';
-    if (snap <= 25.0) return '15_25';
-    if (snap <= 40.0) return '25_40';
-    return '40_plus';
+    if (snap <= 5.0) return '0-5';
+    if (snap <= 15.0) return '5-15';
+    if (snap <= 30.0) return '15-30';
+    return '30+';
+  }
+
+  /// NAV-R14A / NAV-AI-1 confidence bucket.
+  static String confidenceBucket(double? overallConfidence) {
+    final score = overallConfidence;
+    if (score == null || !score.isFinite) return 'unknown';
+    if (score < 20.0) return '0-20';
+    if (score < 40.0) return '20-40';
+    if (score < 60.0) return '40-60';
+    if (score < 80.0) return '60-80';
+    return '80-100';
   }
 }
 
@@ -338,18 +357,20 @@ class _SignalAssessment {
   final bool complexCandidate;
   final int signalCount;
   final String reasonCode;
-  final NavCautionSeverity severity;
+  final NavComplexitySeverity severity;
+  final bool predictionRepeated;
 
   const _SignalAssessment({
     required this.complexCandidate,
     required this.signalCount,
     required this.reasonCode,
     required this.severity,
+    required this.predictionRepeated,
   });
 }
 
-/// Localized caution copy for the driver banner.
-String navComplexityCautionLocalizedText({
+/// Localized caution copy for the driver banner (offline, no cloud).
+String navComplexityGuardLocalizedText({
   required String field,
   required String Function({
     required String nl,
@@ -363,18 +384,32 @@ String navComplexityCautionLocalizedText({
     case 'title':
       return tr(
         nl: 'Complexe verkeerssituatie',
-        en: 'Complex traffic situation',
-        fr: 'Situation de circulation complexe',
-        es: 'Situación de tráfico compleja',
+        en: 'Complex road situation',
+        fr: 'Situation routière complexe',
+        es: 'Situación vial compleja',
       );
     case 'body':
       return tr(
         nl: 'Fluxidi OS is minder zeker. Volg verkeersborden en wegmarkeringen.',
-        en: 'Fluxidi OS is less certain. Follow traffic signs and road markings.',
-        fr: 'Fluxidi OS est moins certain. Suivez les panneaux et marquages routiers.',
-        es: 'Fluxidi OS es menos seguro. Siga señales y marcas viales.',
+        en: 'Fluxidi OS is less certain. Follow road signs and lane markings.',
+        fr: 'Fluxidi OS est moins certain. Suivez les panneaux et le marquage au sol.',
+        es: 'Fluxidi OS tiene menos certeza. Sigue las señales y las marcas viales.',
       );
     default:
       return '';
   }
 }
+
+/// Back-compat alias for existing UI imports during NAV-R14A migration.
+typedef NavCautionState = NavComplexityGuardState;
+typedef NavCautionSeverity = NavComplexitySeverity;
+String navComplexityCautionLocalizedText({
+  required String field,
+  required String Function({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  })
+  tr,
+}) => navComplexityGuardLocalizedText(field: field, tr: tr);

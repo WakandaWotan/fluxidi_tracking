@@ -33,9 +33,7 @@ class NavDiagnosticsRecorder {
     if (_initialized) return;
     try {
       final base = await getApplicationDocumentsDirectory();
-      final root = Directory(
-        '${base.path}${Platform.pathSeparator}$_dirName',
-      );
+      final root = Directory('${base.path}${Platform.pathSeparator}$_dirName');
       if (!await root.exists()) {
         await root.create(recursive: true);
       }
@@ -48,6 +46,9 @@ class NavDiagnosticsRecorder {
   }
 
   bool get hasActiveSession => _activeSessionId != null;
+
+  /// NAV-AI-1: opaque session id for hashed export only — never log raw PII.
+  String? get activeSessionId => _activeSessionId;
 
   Future<void> beginSessionIfNeeded({required String trigger}) async {
     await ensureInitialized();
@@ -79,10 +80,7 @@ class NavDiagnosticsRecorder {
         'reason': _sanitizeToken(reason),
         'durationSec': _sessionStartedAt == null
             ? 0
-            : DateTime.now()
-                  .toUtc()
-                  .difference(_sessionStartedAt!)
-                  .inSeconds,
+            : DateTime.now().toUtc().difference(_sessionStartedAt!).inSeconds,
         'eventCount': _activeSessionEventCount,
       },
       force: true,
@@ -170,10 +168,7 @@ class NavDiagnosticsRecorder {
     String? instructionType,
     String? modifier,
   }) async {
-    if (!_shouldRecord(
-      throttleKey: 'maneuver_progress',
-      minIntervalMs: 2500,
-    )) {
+    if (!_shouldRecord(throttleKey: 'maneuver_progress', minIntervalMs: 2500)) {
       return;
     }
     await _appendEvent(
@@ -284,6 +279,25 @@ class NavDiagnosticsRecorder {
     );
   }
 
+  /// NAV-AI-1: sanitized complexity intelligence event (no coordinates/PII).
+  Future<void> recordNavComplexityIntelligenceEvent(
+    Map<String, dynamic> event,
+  ) async {
+    final safe = <String, dynamic>{};
+    for (final entry in event.entries) {
+      final key = _sanitizeToken(entry.key);
+      final value = entry.value;
+      if (value is bool) {
+        safe[key] = value;
+      } else if (value is num) {
+        safe[key] = value is int ? value : _round1(value.toDouble());
+      } else if (value != null) {
+        safe[key] = _sanitizeToken(value.toString());
+      }
+    }
+    await _appendEvent(type: 'nav_complexity_event', data: safe, force: true);
+  }
+
   Future<void> recordValidationReport({
     required int durationSec,
     required int sampleCount,
@@ -331,7 +345,9 @@ class NavDiagnosticsRecorder {
     final root = _rootDir;
     if (root == null || _sessions.isEmpty) return null;
 
-    final selected = _sessions.reversed.take(count.clamp(1, maxSessions)).toList();
+    final selected = _sessions.reversed
+        .take(count.clamp(1, maxSessions))
+        .toList();
     if (selected.isEmpty) return null;
 
     final stamp = DateTime.now().toUtc().millisecondsSinceEpoch;
@@ -347,14 +363,18 @@ class NavDiagnosticsRecorder {
         buffer.writeln('startedAt=${session.startedAt}');
         buffer.writeln('endedAt=${session.endedAt ?? ''}');
         buffer.writeln('events=${session.eventCount} bytes=${session.bytes}');
-        final file = File('${root.path}${Platform.pathSeparator}${session.fileName}');
+        final file = File(
+          '${root.path}${Platform.pathSeparator}${session.fileName}',
+        );
         if (await file.exists()) {
           final lines = await file.readAsLines();
           for (final line in lines) {
             if (line.trim().isEmpty) continue;
             try {
               final decoded = jsonDecode(line);
-              buffer.writeln(const JsonEncoder.withIndent('  ').convert(decoded));
+              buffer.writeln(
+                const JsonEncoder.withIndent('  ').convert(decoded),
+              );
             } catch (_) {
               buffer.writeln(line);
             }
@@ -371,7 +391,9 @@ class NavDiagnosticsRecorder {
       };
       for (final session in selected) {
         final events = <Map<String, dynamic>>[];
-        final file = File('${root.path}${Platform.pathSeparator}${session.fileName}');
+        final file = File(
+          '${root.path}${Platform.pathSeparator}${session.fileName}',
+        );
         if (await file.exists()) {
           final lines = await file.readAsLines();
           for (final line in lines) {
@@ -444,7 +466,10 @@ class NavDiagnosticsRecorder {
   }) async {
     if (_activeSessionId == null) return;
     if (!force && throttleKey != null && minIntervalMs > 0) {
-      if (!_shouldRecord(throttleKey: throttleKey, minIntervalMs: minIntervalMs)) {
+      if (!_shouldRecord(
+        throttleKey: throttleKey,
+        minIntervalMs: minIntervalMs,
+      )) {
         return;
       }
     }
@@ -492,7 +517,9 @@ class NavDiagnosticsRecorder {
   Future<void> _loadIndex() async {
     final root = _rootDir;
     if (root == null) return;
-    final indexFile = File('${root.path}${Platform.pathSeparator}$_indexFileName');
+    final indexFile = File(
+      '${root.path}${Platform.pathSeparator}$_indexFileName',
+    );
     if (!await indexFile.exists()) {
       _sessions = <_NavDiagSessionMeta>[];
       return;
@@ -515,7 +542,9 @@ class NavDiagnosticsRecorder {
       }
       _sessions = list
           .whereType<Map>()
-          .map((m) => _NavDiagSessionMeta.fromJson(Map<String, dynamic>.from(m)))
+          .map(
+            (m) => _NavDiagSessionMeta.fromJson(Map<String, dynamic>.from(m)),
+          )
           .toList();
     } catch (_) {
       _sessions = <_NavDiagSessionMeta>[];
@@ -531,7 +560,8 @@ class NavDiagnosticsRecorder {
       final existing = _sessions.indexWhere((s) => s.id == activeId);
       final meta = _NavDiagSessionMeta(
         id: activeId,
-        startedAt: (_sessionStartedAt ?? DateTime.now().toUtc()).toIso8601String(),
+        startedAt: (_sessionStartedAt ?? DateTime.now().toUtc())
+            .toIso8601String(),
         endedAt: null,
         fileName: '$activeId.jsonl',
         eventCount: _activeSessionEventCount,
@@ -556,7 +586,9 @@ class NavDiagnosticsRecorder {
       }
     }
 
-    final indexFile = File('${root.path}${Platform.pathSeparator}$_indexFileName');
+    final indexFile = File(
+      '${root.path}${Platform.pathSeparator}$_indexFileName',
+    );
     final payload = <String, dynamic>{
       'version': 1,
       'updatedAt': DateTime.now().toUtc().toIso8601String(),
@@ -571,7 +603,9 @@ class NavDiagnosticsRecorder {
     while (_sessions.length >= maxSessions) {
       final oldest = _sessions.first;
       _sessions.removeAt(0);
-      final file = File('${root.path}${Platform.pathSeparator}${oldest.fileName}');
+      final file = File(
+        '${root.path}${Platform.pathSeparator}${oldest.fileName}',
+      );
       if (await file.exists()) {
         try {
           await file.delete();
@@ -608,11 +642,14 @@ class NavDiagnosticsRecorder {
 
   static String _truncateStack(StackTrace stack) {
     final lines = stack.toString().split('\n');
-    final kept = lines.take(8).map((line) {
-      var trimmed = line.trim();
-      if (trimmed.length > 160) trimmed = trimmed.substring(0, 160);
-      return trimmed;
-    }).join('\n');
+    final kept = lines
+        .take(8)
+        .map((line) {
+          var trimmed = line.trim();
+          if (trimmed.length > 160) trimmed = trimmed.substring(0, 160);
+          return trimmed;
+        })
+        .join('\n');
     return kept;
   }
 }
@@ -656,11 +693,7 @@ class _NavDiagSessionMeta {
     'bytes': bytes,
   };
 
-  _NavDiagSessionMeta copyWith({
-    String? endedAt,
-    int? eventCount,
-    int? bytes,
-  }) {
+  _NavDiagSessionMeta copyWith({String? endedAt, int? eventCount, int? bytes}) {
     return _NavDiagSessionMeta(
       id: id,
       startedAt: startedAt,
