@@ -7012,8 +7012,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
     var success = false;
     try {
-      _driverPointManager ??= await _map!.annotations
-          .createPointAnnotationManager();
+      if (_driverPointManager == null) {
+        final mgr = await _map!.annotations.createPointAnnotationManager();
+        await _configureDriverPointManagerForTaxiMarker(mgr);
+        _driverPointManager = mgr;
+      }
       success = await _attemptTaxiMarkerRestore(
         attempt: attempt,
         reason: 'self_heal_$reason',
@@ -7103,6 +7106,42 @@ class _DriverHomePageState extends State<DriverHomePage>
     debugPrint('[NAV_MARKER] lifecycle=driver_manager_disposed');
   }
 
+  /// NAV-R12-I-A: the taxi sprite must lie flat on the map and rotate with
+  /// compass bearings. Mapbox's default `auto` alignment resolves to
+  /// viewport for point annotations, which makes the nose wrong under a
+  /// bearing-rotated camera and looks pasted on the road under pitch.
+  /// Applies to the driver/taxi manager only; pins keep plugin defaults.
+  Future<void> _configureDriverPointManagerForTaxiMarker(
+    mb.PointAnnotationManager mgr,
+  ) async {
+    var event = 'manager_configured';
+    String? failReason;
+    try {
+      await mgr.setIconRotationAlignment(mb.IconRotationAlignment.MAP);
+      await mgr.setIconPitchAlignment(mb.IconPitchAlignment.MAP);
+    } catch (e) {
+      event = 'manager_config_failed';
+      failReason = e.runtimeType.toString();
+    }
+    _logNavBounded(
+      'NAV_R12_MARKER',
+      'markerUpdate=$event rotationAlignment=map pitchAlignment=map'
+          '${failReason != null ? ' reason=$failReason' : ''}',
+      intervalMs: 1,
+    );
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+        tag: 'NAV_R12_MARKER',
+        fields: <String, dynamic>{
+          'event': event,
+          'rotationAlignment': 'map',
+          'pitchAlignment': 'map',
+          if (failReason != null) 'reason': failReason,
+        },
+      ),
+    );
+  }
+
   Future<void> _recreateAnnotationManagers() async {
     if (_map == null) return;
     await _syncMapboxUserLocationPuckVisibility();
@@ -7110,8 +7149,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _routeLineManager = await _map!.annotations
         .createPolylineAnnotationManager();
     _pinsPointManager = await _map!.annotations.createPointAnnotationManager();
-    _driverPointManager = await _map!.annotations
-        .createPointAnnotationManager();
+    final driverMgr = await _map!.annotations.createPointAnnotationManager();
+    await _configureDriverPointManagerForTaxiMarker(driverMgr);
+    _driverPointManager = driverMgr;
     await _syncMapboxUserLocationPuckVisibility();
   }
 
@@ -7370,8 +7410,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (visual != null && _map != null && !_mapStyleChanging) {
       try {
         var mgr = _driverPointManager;
-        mgr ??= _driverPointManager = await _map!.annotations
-            .createPointAnnotationManager();
+        if (mgr == null) {
+          mgr = await _map!.annotations.createPointAnnotationManager();
+          await _configureDriverPointManagerForTaxiMarker(mgr);
+          _driverPointManager = mgr;
+        }
         _driverMarker = await _createDriverMarkerAnnotation(
           mgr: mgr,
           geometry: _mbPoint(visual.lon, visual.lat),
