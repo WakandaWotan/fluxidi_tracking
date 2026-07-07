@@ -189,6 +189,14 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _driverTaxiMarkerLoadAttempted = false;
   bool _driverTaxiMarkerAvailable = false;
   bool _driverMarkerUsesTaxiAsset = false;
+  // NAV-R12-D: marker self-heal + update-coalescing state (pure decisions
+  // live in NavMarkerLifecycle; the widget only wires timers and Mapbox).
+  final NavMarkerLifecycle _markerLifecycle = NavMarkerLifecycle();
+  Timer? _markerSelfHealTimer;
+  geo.Position? _pendingMarkerUpdatePos;
+  int _consecutiveMarkerUpdateFailures = 0;
+  DateTime? _lastMarkerAuxSyncAt;
+  String? _lastNavR12MarkerSignature;
   bool _mapboxLocationPuckRestoreEnabled = false;
   bool _mapboxLocationPuckSuppressedForNav = false;
   bool? _lastSyncedMapboxPuckHidden;
@@ -1878,6 +1886,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   @override
   void dispose() {
     debugPrint('[MAP][DISPOSE] mounted=$mounted style=$_activeMapStyleUri');
+    _markerSelfHealTimer?.cancel();
+    _markerSelfHealTimer = null;
     _setNavigationWakelock(false);
     appLanguageNotifier.removeListener(_onAppLanguageChanged);
     _activeDriverThemeListenable.removeListener(_onDriverThemeSourceChanged);
@@ -6385,6 +6395,17 @@ class _DriverHomePageState extends State<DriverHomePage>
 
       _updateRouteSnapState(pos);
       _evaluateOffRouteReroute();
+
+      // NAV-R12-D: marker geometry/rotation updates first and without
+      // awaiting route redraw / camera / diagnostics — the taxi must move
+      // on the fresh fix, not after the heavy pipeline. Manager loss no
+      // longer blocks this path; it triggers self-heal instead.
+      final canDriveMap = _mapSupported && _map != null && !_mapStyleChanging;
+      if (canDriveMap) {
+        _refreshNavEngineForPosition(pos);
+        _scheduleDriverMarkerFastUpdate(pos);
+      }
+
       await _syncVisibleRouteLineWithProgress(pos);
       _syncNavDiagSession();
       _recordNavDiagGpsUpdate(
@@ -6400,15 +6421,8 @@ class _DriverHomePageState extends State<DriverHomePage>
             : null,
       );
 
-      if (_mapSupported &&
-          _map != null &&
-          !_mapStyleChanging &&
-          _driverPointManager != null) {
-        _refreshNavEngineForPosition(pos);
-        await _updateDriverMarker(pos);
-        if (_cameraMode == _CameraMode.follow) {
-          await _followCameraTesla(pos);
-        }
+      if (canDriveMap && _cameraMode == _CameraMode.follow) {
+        await _followCameraTesla(pos);
       }
       _maybeAddNavValidationSample(pos);
       final uiBearing = _adaptiveBearingFor(pos, snap: _lastRouteSnap).bearing;
@@ -6441,6 +6455,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     _followCameraInFlight = false;
     _gpsQualityWeak = false;
     _lastSmoothedCameraBearing = null;
+    // NAV-R12-D: active navigation stopped — reset marker self-heal state.
+    _markerSelfHealTimer?.cancel();
+    _markerSelfHealTimer = null;
+    _pendingMarkerUpdatePos = null;
+    _consecutiveMarkerUpdateFailures = 0;
+    _markerLifecycle.reset();
     _driverNavEngine.reset();
     _lastNavEngineOutput = null;
     _lastNavEngineRefreshKey = null;
@@ -6890,6 +6910,158 @@ class _DriverHomePageState extends State<DriverHomePage>
     _driverPointManager = null;
     _driverMarker = null;
     _driverMarkerUsesTaxiAsset = false;
+    // NAV-R12-D: a lost manager must not stay lost until the next style
+    // swap — mark degraded and schedule a bounded self-heal.
+    _markerLifecycle.noteFailure(reason, DateTime.now());
+    _scheduleMarkerSelfHeal(reason);
+  }
+
+  /// NAV-R12-D: bounded, PII-safe marker lifecycle diagnostics (no lat/lng).
+  void _logNavR12Marker({
+    required String event,
+    String? markerSource,
+    int? markerLagMs,
+    String? selfHealReason,
+    int? recreateAttempt,
+  }) {
+    final managerReady = _driverPointManager != null && !_mapStyleChanging;
+    final signature =
+        '$event|$managerReady|${_markerLifecycle.degraded}|'
+        '${selfHealReason ?? ''}';
+    final changed = signature != _lastNavR12MarkerSignature;
+    _lastNavR12MarkerSignature = signature;
+    _logNavBounded(
+      'NAV_R12_MARKER',
+      'markerUpdate=$event '
+          'markerSource=${markerSource ?? 'na'} '
+          'markerLagMs=${markerLagMs ?? -1} '
+          'managerReady=$managerReady '
+          'managerDegraded=${_markerLifecycle.degraded} '
+          'updateInFlight=${_markerLifecycle.updateInFlight} '
+          'pendingUpdate=${_markerLifecycle.pendingUpdate} '
+          'selfHealScheduled=${_markerSelfHealTimer?.isActive ?? false} '
+          'selfHealReason=${selfHealReason ?? _markerLifecycle.lastFailureReason} '
+          'recreateAttempt=${recreateAttempt ?? _markerLifecycle.selfHealAttempts}',
+      intervalMs: changed ? 1 : 2000,
+    );
+    if (changed && event.startsWith('self_heal')) {
+      unawaited(
+        NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+          tag: 'NAV_R12_MARKER',
+          fields: <String, dynamic>{
+            'event': event,
+            'managerReady': managerReady,
+            'managerDegraded': _markerLifecycle.degraded,
+            'selfHealReason':
+                selfHealReason ?? _markerLifecycle.lastFailureReason,
+            'recreateAttempt':
+                recreateAttempt ?? _markerLifecycle.selfHealAttempts,
+          },
+        ),
+      );
+    }
+  }
+
+  /// NAV-R12-D: schedule one self-heal attempt on the lifecycle backoff.
+  /// Idempotent — an already-armed timer wins.
+  void _scheduleMarkerSelfHeal(String reason) {
+    if (!_mapSupported || !mounted) return;
+    if (_markerSelfHealTimer?.isActive ?? false) return;
+    final delay = _markerLifecycle.selfHealDelay(DateTime.now());
+    _logNavR12Marker(event: 'self_heal_scheduled', selfHealReason: reason);
+    _markerSelfHealTimer = Timer(delay, () {
+      _markerSelfHealTimer = null;
+      unawaited(_attemptMarkerSelfHeal(reason));
+    });
+  }
+
+  /// NAV-R12-D: recreate the annotation manager and taxi marker after a
+  /// native failure. Never throws; failure re-arms the backoff timer.
+  Future<void> _attemptMarkerSelfHeal(String reason) async {
+    if (!mounted) return;
+    if (_map == null || _mapStyleChanging) {
+      // Style swap has its own recreate/restore path; check back later.
+      if (_markerLifecycle.degraded) _scheduleMarkerSelfHeal(reason);
+      return;
+    }
+    if (!_markerLifecycle.degraded && _driverMarker != null) {
+      return; // healed in the meantime (e.g. by a style-swap restore)
+    }
+    final attempt = _markerLifecycle.noteSelfHealAttemptStarted(DateTime.now());
+    _logNavR12Marker(
+      event: 'self_heal_attempt',
+      selfHealReason: reason,
+      recreateAttempt: attempt,
+    );
+    var success = false;
+    try {
+      _driverPointManager ??= await _map!.annotations
+          .createPointAnnotationManager();
+      success = await _attemptTaxiMarkerRestore(
+        attempt: attempt,
+        reason: 'self_heal_$reason',
+      );
+    } catch (_) {
+      success = false;
+    }
+    if (success) {
+      _markerLifecycle.noteSelfHealSucceeded(DateTime.now());
+      _logNavR12Marker(
+        event: 'self_heal_success',
+        selfHealReason: reason,
+        recreateAttempt: attempt,
+      );
+      await _syncMapboxUserLocationPuckVisibility();
+    } else {
+      _markerLifecycle.noteSelfHealFailed(reason, DateTime.now());
+      _logNavR12Marker(
+        event: 'self_heal_failed',
+        selfHealReason: reason,
+        recreateAttempt: attempt,
+      );
+      _scheduleMarkerSelfHeal(reason);
+    }
+  }
+
+  /// NAV-R12-D: fast, coalesced marker update on a fresh GPS fix. Never
+  /// blocks the caller; if a native update is already in flight the newest
+  /// fix simply replaces the pending one (last-wins).
+  void _scheduleDriverMarkerFastUpdate(geo.Position pos) {
+    _pendingMarkerUpdatePos = pos;
+    if (_driverPointManager == null &&
+        !(_markerSelfHealTimer?.isActive ?? false) &&
+        !_mapStyleChanging &&
+        _map != null) {
+      _markerLifecycle.noteFailure('manager_missing_on_fix', DateTime.now());
+      _scheduleMarkerSelfHeal('manager_missing_on_fix');
+    }
+    if (!_markerLifecycle.beginUpdate(DateTime.now())) {
+      _logNavR12Marker(event: 'skipped_in_flight');
+      return;
+    }
+    unawaited(_runCoalescedMarkerUpdate());
+  }
+
+  Future<void> _runCoalescedMarkerUpdate() async {
+    var runNext = true;
+    while (runNext && mounted) {
+      final pos = _pendingMarkerUpdatePos;
+      var applied = false;
+      if (pos != null) {
+        try {
+          applied = await _updateDriverMarker(pos);
+        } catch (_) {
+          applied = false;
+        }
+      }
+      runNext = _markerLifecycle.finishUpdate(
+        applied: applied,
+        now: DateTime.now(),
+      );
+      if (runNext) {
+        _markerLifecycle.beginUpdate(DateTime.now());
+      }
+    }
   }
 
   Future<void> _disposeDriverPointAnnotationManager() async {
@@ -7005,6 +7177,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       final restore = await _restoreDriverVisualsAfterStyleChange(
         reason: 'style_swap',
       );
+      // NAV-R12-D: clear degraded state only once the marker actually
+      // exists again after the style swap.
+      if (restore.taxi && _driverMarker != null) {
+        _markerLifecycle.noteSelfHealSucceeded(DateTime.now());
+      }
       _scheduleTaxiMarkerRestoreRetries(reason: 'style_swap');
       await _syncMapboxUserLocationPuckVisibility();
       debugPrint(
@@ -7184,6 +7361,10 @@ class _DriverHomePageState extends State<DriverHomePage>
           markerBearing: visual.bearing,
         );
         success = _driverMarker != null;
+        if (success) {
+          // NAV-R12-D: a freshly created marker proves the manager works.
+          _markerLifecycle.noteSelfHealSucceeded(DateTime.now());
+        }
       } catch (e) {
         if (_isMapboxAnnotationManagerLost(e)) {
           _resetDriverMarkerOnNativeError('taxi_restore_attempt$attempt');
@@ -9360,13 +9541,17 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
-  Future<void> _updateDriverMarker(
+  /// Returns true when the native marker create/update was applied.
+  Future<bool> _updateDriverMarker(
     geo.Position pos, {
     bool moveCamera = false,
   }) async {
-    if (!_canUpdateDriverMarker) return;
+    if (!_canUpdateDriverMarker) {
+      _logNavR12Marker(event: 'skipped_not_ready');
+      return false;
+    }
     final mgr = _driverPointManager;
-    if (mgr == null) return;
+    if (mgr == null) return false;
 
     final snap =
         _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
@@ -9384,7 +9569,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     // Fresh GPS-driven visual supersedes any pre-style-swap snapshot.
     _taxiVisualSnapshotForStyleSwap = null;
     final taxiReady = await _ensureDriverTaxiMarkerBytes();
-    if (!_canUpdateDriverMarker || _driverPointManager != mgr) return;
+    if (!_canUpdateDriverMarker || _driverPointManager != mgr) return false;
     final wantsTaxi = taxiReady && _driverTaxiMarkerBytes != null;
 
     if (_driverMarker != null && _driverMarkerUsesTaxiAsset != wantsTaxi) {
@@ -9393,7 +9578,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       } catch (e) {
         if (_isMapboxAnnotationManagerLost(e)) {
           _resetDriverMarkerOnNativeError('delete_for_asset_swap');
-          return;
+          return false;
         }
       }
       _driverMarker = null;
@@ -9405,7 +9590,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       } catch (e) {
         if (_isMapboxAnnotationManagerLost(e)) {
           _resetDriverMarkerOnNativeError('delete_all_before_create');
-          return;
+          return false;
         }
       }
       try {
@@ -9415,10 +9600,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           markerBearing: markerBearing,
         );
       } catch (e) {
-        if (_isMapboxAnnotationManagerLost(e)) {
-          _resetDriverMarkerOnNativeError('create_marker');
-        }
-        return;
+        _noteMarkerUpdateFailure('create_marker', e);
+        return false;
       }
     } else {
       try {
@@ -9426,14 +9609,20 @@ class _DriverHomePageState extends State<DriverHomePage>
         _driverMarker!.iconRotate = markerBearing;
         await mgr.update(_driverMarker!);
       } catch (e) {
-        if (_isMapboxAnnotationManagerLost(e)) {
-          _resetDriverMarkerOnNativeError('update_marker');
-        }
-        return;
+        _noteMarkerUpdateFailure('update_marker', e);
+        return false;
       }
     }
-    await _syncDriverMarkerIconSizeForZoom();
-    await _syncMapboxUserLocationPuckVisibility();
+    _consecutiveMarkerUpdateFailures = 0;
+    // NAV-R12-D: icon-size/puck sync are non-critical extra native round
+    // trips — throttle them off the per-fix hot path.
+    final auxNow = DateTime.now();
+    if (_lastMarkerAuxSyncAt == null ||
+        auxNow.difference(_lastMarkerAuxSyncAt!).inMilliseconds >= 1500) {
+      _lastMarkerAuxSyncAt = auxNow;
+      await _syncDriverMarkerIconSizeForZoom();
+      await _syncMapboxUserLocationPuckVisibility();
+    }
 
     final markerDisplay = _driverMarkerDisplayFor(pos);
     final markerNow = DateTime.now();
@@ -9463,12 +9652,34 @@ class _DriverHomePageState extends State<DriverHomePage>
         bearingDeltaDeg: bearingDeltaDeg,
       ),
     );
+    _logNavR12Marker(
+      event: 'applied',
+      markerSource: markerDisplay.source,
+      markerLagMs: markerLagMs,
+    );
 
     if (moveCamera && _cameraMode != _CameraMode.follow) {
       await _map?.flyTo(
         mb.CameraOptions(center: p, zoom: 13.5),
         mb.MapAnimationOptions(duration: 700),
       );
+    }
+    return true;
+  }
+
+  /// NAV-R12-D: marker create/update exception handling — a lost manager
+  /// resets immediately; other native errors degrade after two consecutive
+  /// failures (stale/detached annotation) so self-heal can recreate.
+  void _noteMarkerUpdateFailure(String reason, Object e) {
+    _logNavR12Marker(event: 'failed_$reason');
+    if (_isMapboxAnnotationManagerLost(e)) {
+      _resetDriverMarkerOnNativeError(reason);
+      return;
+    }
+    _consecutiveMarkerUpdateFailures += 1;
+    if (_consecutiveMarkerUpdateFailures >= 2) {
+      _consecutiveMarkerUpdateFailures = 0;
+      _resetDriverMarkerOnNativeError('${reason}_repeated');
     }
   }
 
