@@ -30,6 +30,9 @@ class NavigationPresentationState {
   /// NAV-PRES-2A: screen-fixed driver HUD overlay (driver mode + feature flag).
   final bool showDriverHudOverlay;
 
+  /// NAV-PRES-2B: suppress Mapbox taxi marker when HUD overlay is active.
+  final bool hideMapboxTaxiMarker;
+
   const NavigationPresentationState({
     required this.mode,
     required this.navCameraViewMode,
@@ -39,6 +42,7 @@ class NavigationPresentationState {
     required this.modeLabel,
     required this.diagnosticsLabel,
     required this.showDriverHudOverlay,
+    required this.hideMapboxTaxiMarker,
   });
 
   @override
@@ -51,7 +55,8 @@ class NavigationPresentationState {
         other.vehiclePresentation == vehiclePresentation &&
         other.modeLabel == modeLabel &&
         other.diagnosticsLabel == diagnosticsLabel &&
-        other.showDriverHudOverlay == showDriverHudOverlay;
+        other.showDriverHudOverlay == showDriverHudOverlay &&
+        other.hideMapboxTaxiMarker == hideMapboxTaxiMarker;
   }
 
   @override
@@ -64,5 +69,6 @@ class NavigationPresentationState {
         modeLabel,
         diagnosticsLabel,
         showDriverHudOverlay,
+        hideMapboxTaxiMarker,
       );
 }

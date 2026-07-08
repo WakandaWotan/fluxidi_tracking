@@ -7448,6 +7448,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           mgr: mgr,
           geometry: _mbPoint(visual.lon, visual.lat),
           markerBearing: visual.bearing,
+          iconOpacity: _mapboxTaxiMarkerIconOpacityForPresentation(),
         );
         success = _driverMarker != null;
         if (success) {
@@ -7515,6 +7516,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         mgr: mgr,
         geometry: geometry,
         markerBearing: bearing,
+        iconOpacity: _mapboxTaxiMarkerIconOpacityForPresentation(),
       );
       debugPrint(
         '[NAV_UI_R6E_TAXI_RESTORE] attempt=$attempt success=${_driverMarker != null} source=fallback reason=${reason}_asset_upgrade',
@@ -7791,6 +7793,35 @@ class _DriverHomePageState extends State<DriverHomePage>
         .resolveForNavCameraViewMode(viewMode);
   }
 
+  /// NAV-PRES-2B: Mapbox taxi opacity (0 hides visually; marker logic unchanged).
+  double _mapboxTaxiMarkerIconOpacityForPresentation() {
+    if (_cameraMode != _CameraMode.follow || !_liveRideActive) {
+      return 1.0;
+    }
+    return _navigationPresentationStateFor(_navCameraViewMode)
+            .hideMapboxTaxiMarker
+        ? 0.0
+        : 1.0;
+  }
+
+  Future<void> _applyMapboxTaxiMarkerPresentationOpacity() async {
+    if (!_canUpdateDriverMarker) return;
+    final mgr = _driverPointManager;
+    final marker = _driverMarker;
+    if (mgr == null || marker == null) return;
+    final opacity = _mapboxTaxiMarkerIconOpacityForPresentation();
+    final current = marker.iconOpacity ?? 1.0;
+    if ((current - opacity).abs() < 0.001) return;
+    marker.iconOpacity = opacity;
+    try {
+      await mgr.update(marker);
+    } catch (e) {
+      if (_isMapboxAnnotationManagerLost(e)) {
+        _resetDriverMarkerOnNativeError('sync_presentation_opacity');
+      }
+    }
+  }
+
   void _toggleNavCameraViewMode() {
     if (_cameraMode != _CameraMode.follow || !_liveRideActive) return;
     final previous = _navCameraViewMode;
@@ -7810,6 +7841,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (pos != null) {
       unawaited(_followCameraTesla(pos, force: true, cameraReason: 'view_mode'));
     }
+    unawaited(_applyMapboxTaxiMarkerPresentationOpacity());
   }
 
   void _logNavR15CameraView({
@@ -9756,6 +9788,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final p = _mbPoint(lon, lat);
     marker.geometry = p;
     marker.iconRotate = bearing;
+    marker.iconOpacity = _mapboxTaxiMarkerIconOpacityForPresentation();
     try {
       await mgr.update(marker);
     } catch (e) {
@@ -9859,6 +9892,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     required mb.PointAnnotationManager mgr,
     required mb.Point geometry,
     required double markerBearing,
+    double iconOpacity = 1.0,
   }) async {
     final taxiReady = await _ensureDriverTaxiMarkerBytes();
     final taxiBytes = _driverTaxiMarkerBytes;
@@ -9871,6 +9905,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             iconAnchor: mb.IconAnchor.CENTER,
             iconSize: _driverTaxiIconSizeForCurrentZoom(),
             iconRotate: markerBearing,
+            iconOpacity: iconOpacity,
           ),
         );
         _driverMarkerUsesTaxiAsset = true;
@@ -9892,6 +9927,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           iconColor: 0xFFFFD21F,
           iconSize: driverFallbackMarkerIconSizeForZoom(_lastMapCameraZoom),
           iconRotate: markerBearing,
+          iconOpacity: iconOpacity,
         ),
       );
     } catch (_) {
@@ -9903,6 +9939,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           iconColor: 0xFFFFD21F,
           iconSize: driverFallbackMarkerIconSizeForZoom(_lastMapCameraZoom),
           iconRotate: markerBearing,
+          iconOpacity: iconOpacity,
         ),
       );
     }
@@ -9965,6 +10002,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           mgr: mgr,
           geometry: p,
           markerBearing: markerBearing,
+          iconOpacity: _mapboxTaxiMarkerIconOpacityForPresentation(),
         );
       } catch (e) {
         _noteMarkerUpdateFailure('create_marker', e);
@@ -9974,6 +10012,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       try {
         _driverMarker!.geometry = p;
         _driverMarker!.iconRotate = markerBearing;
+        _driverMarker!.iconOpacity =
+            _mapboxTaxiMarkerIconOpacityForPresentation();
         await mgr.update(_driverMarker!);
       } catch (e) {
         _noteMarkerUpdateFailure('update_marker', e);

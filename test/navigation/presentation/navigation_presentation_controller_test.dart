@@ -9,6 +9,10 @@ void main() {
   const controllerWithHud = NavigationPresentationController(
     driverHudOverlayEnabled: true,
   );
+  const controllerWithHudAndHideMarker = NavigationPresentationController(
+    driverHudOverlayEnabled: true,
+    hideMapboxTaxiMarkerWithDriverHudEnabled: true,
+  );
 
   group('NAV-PRES-1 NavigationPresentationController', () {
     test('maps NavCameraViewMode to NavigationPresentationMode', () {
@@ -73,6 +77,7 @@ void main() {
       expect(state.markerVisible, isTrue);
       expect(state.hudVisible, isFalse);
       expect(state.showDriverHudOverlay, isFalse);
+      expect(state.hideMapboxTaxiMarker, isFalse);
       expect(
         state.vehiclePresentation,
         NavigationVehiclePresentation.mapAnnotation,
@@ -87,6 +92,7 @@ void main() {
       expect(state.markerVisible, isTrue);
       expect(state.hudVisible, isFalse);
       expect(state.showDriverHudOverlay, isFalse);
+      expect(state.hideMapboxTaxiMarker, isFalse);
       expect(
         state.vehiclePresentation,
         NavigationVehiclePresentation.mapAnnotation,
@@ -102,6 +108,7 @@ void main() {
       expect(state.markerVisible, isTrue);
       expect(state.hudVisible, isFalse);
       expect(state.showDriverHudOverlay, isFalse);
+      expect(state.hideMapboxTaxiMarker, isFalse);
       expect(
         state.vehiclePresentation,
         NavigationVehiclePresentation.mapAnnotation,
@@ -142,6 +149,7 @@ void main() {
     test('default flag false => driver mode does not show HUD', () {
       final state = controller.resolve(NavigationPresentationMode.driver);
       expect(state.showDriverHudOverlay, isFalse);
+      expect(state.hideMapboxTaxiMarker, isFalse);
     });
 
     test('flag true + driver mode => showDriverHudOverlay true', () {
@@ -149,12 +157,14 @@ void main() {
       expect(state.showDriverHudOverlay, isTrue);
       expect(state.navCameraViewMode, NavCameraViewMode.streetView);
       expect(state.markerVisible, isTrue);
+      expect(state.hideMapboxTaxiMarker, isFalse);
     });
 
     test('flag true + northUp => showDriverHudOverlay false', () {
       final state = controllerWithHud.resolve(NavigationPresentationMode.northUp);
       expect(state.showDriverHudOverlay, isFalse);
       expect(state.navCameraViewMode, NavCameraViewMode.northUp);
+      expect(state.hideMapboxTaxiMarker, isFalse);
     });
 
     test('flag true + overview => showDriverHudOverlay false', () {
@@ -162,6 +172,7 @@ void main() {
           controllerWithHud.resolve(NavigationPresentationMode.overview);
       expect(state.showDriverHudOverlay, isFalse);
       expect(state.navCameraViewMode, NavCameraViewMode.overview);
+      expect(state.hideMapboxTaxiMarker, isFalse);
     });
 
     test('switching out of driver hides HUD', () {
@@ -195,12 +206,99 @@ void main() {
         driverHudOverlayEnabled: true,
       );
       expect(enabled.showDriverHudOverlay, isTrue);
+      expect(enabled.hideMapboxTaxiMarker, isFalse);
 
       final disabled = controller.resolveForNavCameraViewMode(
         NavCameraViewMode.streetView,
         driverHudOverlayEnabled: false,
       );
       expect(disabled.showDriverHudOverlay, isFalse);
+      expect(disabled.hideMapboxTaxiMarker, isFalse);
+    });
+  });
+
+  group('NAV-PRES-2B Mapbox taxi marker suppression', () {
+    test('default flags false + driver mode', () {
+      final state = controller.resolve(NavigationPresentationMode.driver);
+      expect(state.showDriverHudOverlay, isFalse);
+      expect(state.hideMapboxTaxiMarker, isFalse);
+    });
+
+    test('HUD flag true + hide marker flag false + driver mode', () {
+      final state = controllerWithHud.resolve(NavigationPresentationMode.driver);
+      expect(state.showDriverHudOverlay, isTrue);
+      expect(state.hideMapboxTaxiMarker, isFalse);
+    });
+
+    test('HUD flag true + hide marker flag true + driver mode', () {
+      final state =
+          controllerWithHudAndHideMarker.resolve(NavigationPresentationMode.driver);
+      expect(state.showDriverHudOverlay, isTrue);
+      expect(state.hideMapboxTaxiMarker, isTrue);
+      expect(state.markerVisible, isTrue);
+    });
+
+    test('HUD flag true + hide marker flag true + northUp', () {
+      final state =
+          controllerWithHudAndHideMarker.resolve(NavigationPresentationMode.northUp);
+      expect(state.showDriverHudOverlay, isFalse);
+      expect(state.hideMapboxTaxiMarker, isFalse);
+    });
+
+    test('HUD flag true + hide marker flag true + overview', () {
+      final state = controllerWithHudAndHideMarker
+          .resolve(NavigationPresentationMode.overview);
+      expect(state.showDriverHudOverlay, isFalse);
+      expect(state.hideMapboxTaxiMarker, isFalse);
+    });
+
+    test('switching out of driver hides HUD and marker suppression', () {
+      expect(
+        controllerWithHudAndHideMarker.resolve(NavigationPresentationMode.driver)
+            .hideMapboxTaxiMarker,
+        isTrue,
+      );
+      expect(
+        controllerWithHudAndHideMarker.resolve(NavigationPresentationMode.overview)
+            .hideMapboxTaxiMarker,
+        isFalse,
+      );
+      expect(
+        controllerWithHudAndHideMarker.resolve(NavigationPresentationMode.driver)
+            .showDriverHudOverlay,
+        isTrue,
+      );
+      expect(
+        controllerWithHudAndHideMarker.resolve(NavigationPresentationMode.overview)
+            .showDriverHudOverlay,
+        isFalse,
+      );
+    });
+
+    test('hide marker flag alone does not suppress without HUD', () {
+      const hideOnly = NavigationPresentationController(
+        hideMapboxTaxiMarkerWithDriverHudEnabled: true,
+      );
+      final state = hideOnly.resolve(NavigationPresentationMode.driver);
+      expect(state.showDriverHudOverlay, isFalse);
+      expect(state.hideMapboxTaxiMarker, isFalse);
+    });
+
+    test('resolveForNavCameraViewMode accepts injectable hide-marker override',
+        () {
+      final hidden = controllerWithHud.resolveForNavCameraViewMode(
+        NavCameraViewMode.streetView,
+        hideMapboxTaxiMarkerWithDriverHudEnabled: true,
+      );
+      expect(hidden.showDriverHudOverlay, isTrue);
+      expect(hidden.hideMapboxTaxiMarker, isTrue);
+
+      final visible = controllerWithHud.resolveForNavCameraViewMode(
+        NavCameraViewMode.streetView,
+        hideMapboxTaxiMarkerWithDriverHudEnabled: false,
+      );
+      expect(visible.showDriverHudOverlay, isTrue);
+      expect(visible.hideMapboxTaxiMarker, isFalse);
     });
   });
 }

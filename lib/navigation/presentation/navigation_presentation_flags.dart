@@ -10,3 +10,18 @@ const bool kNavigationDriverHudOverlayEnabled = bool.fromEnvironment(
   kNavigationDriverHudOverlayDefineKey,
   defaultValue: false,
 );
+
+/// Dart-define key for NAV-PRES-2B Mapbox taxi suppression with driver HUD.
+const String kNavigationHideMapboxTaxiMarkerWithDriverHudDefineKey =
+    'FLUXIDI_NAV_HIDE_MAPBOX_TAXI_MARKER_WITH_DRIVER_HUD';
+
+/// NAV-PRES-2B: hide the Mapbox taxi annotation when the driver HUD overlay
+/// is active (default off; requires HUD overlay flag + driver mode).
+///
+/// Enable at build time:
+/// `--dart-define=FLUXIDI_NAV_HIDE_MAPBOX_TAXI_MARKER_WITH_DRIVER_HUD=true`
+const bool kNavigationHideMapboxTaxiMarkerWithDriverHudEnabled =
+    bool.fromEnvironment(
+  kNavigationHideMapboxTaxiMarkerWithDriverHudDefineKey,
+  defaultValue: false,
+);
