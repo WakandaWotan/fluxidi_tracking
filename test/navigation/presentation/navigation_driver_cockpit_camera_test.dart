@@ -373,7 +373,7 @@ void main() {
       expect(pitch1, inInclusiveRange(48.0, 55.0));
     });
 
-    test('level 13 anchor fraction is clearly lower-screen than level 1', () {
+    test('level 13 anchor is stable at level 7 baseline for close levels', () {
       final anchor13 = driverCockpitViewLevelTargetAnchorFraction(
         isTablet: false,
         isLandscape: false,
@@ -389,9 +389,9 @@ void main() {
         isLandscape: false,
         level: 7,
       );
-      expect(anchor13, greaterThan(anchor7 + 0.08));
+      expect(anchor13, anchor7);
       expect(anchor7, greaterThan(anchor1 + 0.05));
-      expect(anchor13, inInclusiveRange(0.80, 0.84));
+      expect(anchor13, kDriverCockpitPro2PhoneAnchorL7);
       expect(anchor1, inInclusiveRange(0.58, 0.62));
     });
 
@@ -457,29 +457,32 @@ void main() {
       expect(pitch13 - pitch12, greaterThanOrEqualTo(1.5));
     });
 
-    test('level 13 HUD size is clearly larger than level 7', () {
-      final base = driverCockpitViewLevelHudIconSize(
-        isTablet: false,
-        level: 7,
-      );
-      final high = driverCockpitViewLevelHudIconSize(
-        isTablet: false,
-        level: 13,
-      );
-      expect(high - base, greaterThanOrEqualTo(22.0));
-      expect(high, kDriverCockpitPro2HudPhoneL13);
+    test('level 5..13 HUD size stays at level 7 baseline', () {
+      for (var level = kDriverCockpitHudFixedLevelMin;
+          level <= kDriverCockpitViewLevelMax;
+          level++) {
+        expect(
+          driverCockpitViewLevelHudIconSize(isTablet: false, level: level),
+          kDriverCockpitPro2HudPhoneL7,
+        );
+        expect(
+          NavigationDriverHudOverlay.resolveIconSize(
+            screenWidth: 400,
+            cockpitBoost: true,
+            viewLevel: level,
+          ),
+          kDriverCockpitPro2HudPhoneL7,
+        );
+      }
+    });
 
-      final hud7 = NavigationDriverHudOverlay.resolveIconSize(
-        screenWidth: 400,
-        cockpitBoost: true,
-        viewLevel: 7,
-      );
-      final hud13 = NavigationDriverHudOverlay.resolveIconSize(
-        screenWidth: 400,
-        cockpitBoost: true,
-        viewLevel: 13,
-      );
-      expect(hud13 - hud7, greaterThanOrEqualTo(22.0));
+    test('overview levels 1..3 use smaller HUD than close baseline', () {
+      final hud1 = driverCockpitViewLevelHudIconSize(isTablet: false, level: 1);
+      final hud3 = driverCockpitViewLevelHudIconSize(isTablet: false, level: 3);
+      final hud7 = driverCockpitViewLevelHudIconSize(isTablet: false, level: 7);
+      expect(hud1, lessThan(hud7));
+      expect(hud3, lessThan(hud7));
+      expect(hud1, kDriverCockpitPro2HudPhoneL1);
     });
 
     test('center coordinate remains snapped vehicle across all levels', () {
@@ -515,9 +518,9 @@ void main() {
       );
       expect(level1.centerLat, level7.centerLat);
       expect(level13.centerLat, level7.centerLat);
-      expect(level13.anchorFraction, greaterThan(level7.anchorFraction));
+      expect(level13.anchorFraction, level7.anchorFraction);
       expect(level1.anchorFraction, lessThan(level7.anchorFraction));
-      expect(level13.anchorFraction, inInclusiveRange(0.80, 0.84));
+      expect(level13.anchorFraction, kDriverCockpitPro2PhoneAnchorL7);
     });
 
     test('tablet level 13 targets aggressive chase range', () {
@@ -566,11 +569,11 @@ void main() {
       );
       expect(
         output.zoom - 15.0,
-        lessThanOrEqualTo(kDriverCockpitCameraMaxZoomStep + 0.001),
+        lessThanOrEqualTo(kDriverCockpitCameraFollowMaxZoomStep + 0.001),
       );
       expect(
         output.pitch - 50.0,
-        lessThanOrEqualTo(kDriverCockpitCameraMaxPitchStep + 0.001),
+        lessThanOrEqualTo(kDriverCockpitCameraFollowMaxPitchStep + 0.001),
       );
       expect(output.zoom, lessThanOrEqualTo(kDriverCockpitCameraMaxZoom));
       expect(output.pitch, lessThanOrEqualTo(kDriverCockpitCameraMaxPitch));
@@ -599,6 +602,127 @@ void main() {
             .showDriverCockpitCameraControls,
         isFalse,
       );
+    });
+  });
+
+  group('NAV-PRES-3G real Mapbox cockpit camera', () {
+    const phoneInput = DriverCockpitCameraProfileInput(
+      currentZoom: 18.0,
+      currentPitch: 70.0,
+      isTablet: false,
+      isLandscape: false,
+      safeTop: 44.0,
+      safeBottom: 34.0,
+    );
+
+    test('cockpit smoothing accumulates from last applied not NAV policy', () {
+      const policySeed = DriverCockpitCameraProfileInput(
+        currentZoom: 17.0,
+        currentPitch: 58.0,
+        isTablet: false,
+        isLandscape: false,
+        safeTop: 44.0,
+        safeBottom: 34.0,
+      );
+      final first = resolveDriverCockpitCameraProfile(
+        policySeed,
+        viewLevel: 13,
+      );
+      final accumulated = resolveDriverCockpitCameraProfile(
+        DriverCockpitCameraProfileInput(
+          currentZoom: first.zoom,
+          currentPitch: first.pitch,
+          isTablet: false,
+          isLandscape: false,
+          safeTop: 44.0,
+          safeBottom: 34.0,
+        ),
+        viewLevel: 13,
+      );
+      expect(accumulated.zoom, greaterThan(first.zoom));
+      final resetFromPolicy = resolveDriverCockpitCameraProfile(
+        policySeed,
+        viewLevel: 13,
+      );
+      expect(resetFromPolicy.zoom, lessThan(accumulated.zoom));
+    });
+
+    test('direct adjust reaches View 13 targets in one update', () {
+      final output = resolveDriverCockpitCameraProfile(
+        phoneInput,
+        viewLevel: 13,
+        directAdjust: true,
+      );
+      expect(output.zoom, closeTo(kDriverCockpitPro2PhoneZoomL13, 0.05));
+      expect(output.pitch, closeTo(kDriverCockpitPro2PhonePitchL13, 0.05));
+      expect(output.targetZoom, kDriverCockpitPro2PhoneZoomL13);
+      expect(output.targetPitch, kDriverCockpitPro2PhonePitchL13);
+    });
+
+    test('View 13 targets exceed NAV-R12 policy caps', () {
+      expect(
+        driverCockpitViewLevelTargetZoom(
+          isTablet: false,
+          isLandscape: false,
+          level: 13,
+        ),
+        greaterThan(18.5),
+      );
+      expect(
+        driverCockpitViewLevelTargetPitch(
+          isTablet: false,
+          isLandscape: false,
+          level: 13,
+        ),
+        greaterThan(58.0),
+      );
+    });
+
+    test('two forced direct adjusts from level 7 to 13 reach chase targets', () {
+      final level7 = resolveDriverCockpitCameraProfile(
+        phoneInput,
+        viewLevel: 7,
+        directAdjust: true,
+      );
+      final level13 = resolveDriverCockpitCameraProfile(
+        DriverCockpitCameraProfileInput(
+          currentZoom: level7.zoom,
+          currentPitch: level7.pitch,
+          isTablet: false,
+          isLandscape: false,
+          safeTop: 44.0,
+          safeBottom: 34.0,
+        ),
+        viewLevel: 13,
+        directAdjust: true,
+      );
+      expect(level13.zoom, closeTo(kDriverCockpitPro2PhoneZoomL13, 0.05));
+      expect(level13.pitch, closeTo(kDriverCockpitPro2PhonePitchL13, 0.05));
+    });
+
+    test('HUD screen position inputs stay level-independent for close levels', () {
+      final anchor5 = driverCockpitViewLevelTargetAnchorFraction(
+        isTablet: false,
+        isLandscape: false,
+        level: 5,
+      );
+      final anchor13 = driverCockpitViewLevelTargetAnchorFraction(
+        isTablet: false,
+        isLandscape: false,
+        level: 13,
+      );
+      expect(anchor5, anchor13);
+    });
+
+    test('profile output exposes target and applied zoom/pitch', () {
+      final output = resolveDriverCockpitCameraProfile(
+        phoneInput,
+        viewLevel: 7,
+        directAdjust: true,
+      );
+      expect(output.zoom, output.targetZoom);
+      expect(output.pitch, output.targetPitch);
+      expect(output.reason, 'direct_adjust');
     });
   });
 }

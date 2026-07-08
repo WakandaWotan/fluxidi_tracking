@@ -244,6 +244,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   String? _lastNavPresBearingSignature;
   String? _lastNavPresControlsLayoutSignature;
   int _driverCockpitViewLevel = kDriverCockpitViewLevelDefault;
+  double? _lastDriverCockpitAppliedZoom;
+  double? _lastDriverCockpitAppliedPitch;
+  int? _lastDriverCockpitAppliedLevel;
+  String? _lastNavPresCameraTargetSignature;
+  String? _lastNavPresCameraAppliedSignature;
   bool _navPresCameraAnchorDiagEmitted = false;
   MapThemeMode? _mapThemeOverride;
   DriverMapVisualMode _driverMapVisualMode = DriverMapVisualMode.street;
@@ -7841,8 +7846,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     String reason,
   })
   _driverCockpitCameraOverrides({
-    required double currentZoom,
-    required double currentPitch,
+    required double policyZoom,
+    required double policyPitch,
     required bool isTablet,
     required bool isLandscape,
     required double safeTop,
@@ -7853,7 +7858,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     required double bearingDeg,
     required double speedKmh,
     required NavRouteProgressOutput? progress,
+    required bool directAdjust,
   }) {
+    final seedZoom = _lastDriverCockpitAppliedZoom ?? policyZoom;
+    final seedPitch = _lastDriverCockpitAppliedPitch ?? policyPitch;
+    final seedSource = _lastDriverCockpitAppliedZoom != null
+        ? 'cockpit_state'
+        : 'cold_start';
     final lookahead = DriverCockpitCameraLookaheadInput(
       vehicleLat: vehicleLat,
       vehicleLon: vehicleLon,
@@ -7867,8 +7878,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
     final profile = resolveDriverCockpitCameraProfile(
       DriverCockpitCameraProfileInput(
-        currentZoom: currentZoom,
-        currentPitch: currentPitch,
+        currentZoom: seedZoom,
+        currentPitch: seedPitch,
         isTablet: isTablet,
         isLandscape: isLandscape,
         safeTop: safeTop,
@@ -7877,6 +7888,21 @@ class _DriverHomePageState extends State<DriverHomePage>
       ),
       lookahead: lookahead,
       viewLevel: _driverCockpitViewLevel,
+      directAdjust: directAdjust,
+    );
+    _logNavPresCameraTargetIfChanged(
+      level: _driverCockpitViewLevel,
+      targetZoom: profile.targetZoom,
+      targetPitch: profile.targetPitch,
+      targetAnchor: profile.anchorFraction,
+    );
+    _logNavPresCameraAppliedIfChanged(
+      level: _driverCockpitViewLevel,
+      appliedZoom: profile.zoom,
+      appliedPitch: profile.pitch,
+      appliedAnchor: profile.anchorFraction,
+      source: directAdjust ? 'direct_adjust' : seedSource,
+      reason: profile.reason,
     );
     return (
       zoom: profile.zoom,
@@ -7892,10 +7918,24 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   void _resetDriverCockpitCameraState() {
     _driverCockpitViewLevel = kDriverCockpitViewLevelDefault;
+    _lastDriverCockpitAppliedZoom = null;
+    _lastDriverCockpitAppliedPitch = null;
+    _lastDriverCockpitAppliedLevel = null;
     _lastNavPresCameraSignature = null;
+    _lastNavPresCameraTargetSignature = null;
+    _lastNavPresCameraAppliedSignature = null;
     _lastNavPresRouteAlignSignature = null;
     _lastNavPresBearingSignature = null;
     _lastNavPresControlsLayoutSignature = null;
+  }
+
+  void _commitDriverCockpitAppliedCamera({
+    required double zoom,
+    required double pitch,
+  }) {
+    _lastDriverCockpitAppliedZoom = zoom;
+    _lastDriverCockpitAppliedPitch = pitch;
+    _lastDriverCockpitAppliedLevel = _driverCockpitViewLevel;
   }
 
   void _adjustDriverCockpitCameraViewLevel({required bool increase}) {
@@ -7925,27 +7965,46 @@ class _DriverHomePageState extends State<DriverHomePage>
     return 'View $_driverCockpitViewLevel/$kDriverCockpitViewLevelMax';
   }
 
-  /// NAV-PRES-3D-PRO2: compact field-test debug line under the view label.
+  /// NAV-PRES-3G: compact field-test debug line — applied camera values.
   String _driverCockpitViewLevelDebugLabel() {
     final isTablet = MediaQuery.sizeOf(context).width >= 600;
     final isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
-    final zoom = driverCockpitViewLevelTargetZoom(
-      isTablet: isTablet,
-      isLandscape: isLandscape,
-      level: _driverCockpitViewLevel,
-    );
-    final pitch = driverCockpitViewLevelTargetPitch(
-      isTablet: isTablet,
-      isLandscape: isLandscape,
-      level: _driverCockpitViewLevel,
-    );
+    final level = _driverCockpitViewLevel;
+    final appliedZoom = _lastDriverCockpitAppliedZoom ??
+        driverCockpitViewLevelTargetZoom(
+          isTablet: isTablet,
+          isLandscape: isLandscape,
+          level: level,
+        );
+    final appliedPitch = _lastDriverCockpitAppliedPitch ??
+        driverCockpitViewLevelTargetPitch(
+          isTablet: isTablet,
+          isLandscape: isLandscape,
+          level: level,
+        );
     final anchor = driverCockpitViewLevelTargetAnchorFraction(
       isTablet: isTablet,
       isLandscape: isLandscape,
-      level: _driverCockpitViewLevel,
+      level: level,
     );
-    return 'Z${zoom.toStringAsFixed(1)} P${pitch.round()} A${anchor.toStringAsFixed(2)}';
+    final targetZoom = driverCockpitViewLevelTargetZoom(
+      isTablet: isTablet,
+      isLandscape: isLandscape,
+      level: level,
+    );
+    final targetPitch = driverCockpitViewLevelTargetPitch(
+      isTablet: isTablet,
+      isLandscape: isLandscape,
+      level: level,
+    );
+    final applied =
+        'Z${appliedZoom.toStringAsFixed(1)} P${appliedPitch.round()} A${anchor.toStringAsFixed(2)}';
+    if ((appliedZoom - targetZoom).abs() > 0.05 ||
+        (appliedPitch - targetPitch).abs() > 0.5) {
+      return '$applied →Z${targetZoom.toStringAsFixed(1)} P${targetPitch.round()}';
+    }
+    return applied;
   }
 
   void _logNavPresCameraControl({required String action}) {
@@ -7976,15 +8035,19 @@ class _DriverHomePageState extends State<DriverHomePage>
       isTablet: isTablet,
       level: level,
     );
+    final appliedZoom = _lastDriverCockpitAppliedZoom ?? targetZoom;
+    final appliedPitch = _lastDriverCockpitAppliedPitch ?? targetPitch;
     _logNavBounded(
       'NAV_PRES_CAMERA_CONTROL',
       'action=$action '
           'level=$level '
+          'appliedZoom=${appliedZoom.toStringAsFixed(1)} '
+          'appliedPitch=${appliedPitch.toStringAsFixed(1)} '
           'targetZoom=${targetZoom.toStringAsFixed(1)} '
           'targetPitch=${targetPitch.toStringAsFixed(1)} '
           'anchor=${anchorFraction.toStringAsFixed(2)} '
           'hudSize=${hudSize.round()} '
-          'reason=view_level_pro2',
+          'reason=real_mapbox_camera',
       intervalMs: 200,
     );
     unawaited(
@@ -7993,11 +8056,81 @@ class _DriverHomePageState extends State<DriverHomePage>
         fields: <String, dynamic>{
           'action': action,
           'level': level,
+          'appliedZoom': appliedZoom,
+          'appliedPitch': appliedPitch,
           'targetZoom': targetZoom,
           'targetPitch': targetPitch,
           'anchor': anchorFraction,
           'hudSize': hudSize.round(),
-          'reason': 'view_level_pro2',
+          'reason': 'real_mapbox_camera',
+        },
+      ),
+    );
+  }
+
+  void _logNavPresCameraTargetIfChanged({
+    required int level,
+    required double targetZoom,
+    required double targetPitch,
+    required double targetAnchor,
+  }) {
+    if (!_navigationPresentationStateFor(_navCameraViewMode)
+        .useDriverCockpitCamera) {
+      return;
+    }
+    final signature =
+        '$level|${targetZoom.toStringAsFixed(1)}|'
+        '${targetPitch.toStringAsFixed(1)}|${targetAnchor.toStringAsFixed(2)}';
+    if (signature == _lastNavPresCameraTargetSignature) return;
+    _lastNavPresCameraTargetSignature = signature;
+    _logNavBounded(
+      'NAV_PRES_CAMERA_TARGET',
+      'level=$level '
+          'targetZoom=${targetZoom.toStringAsFixed(1)} '
+          'targetPitch=${targetPitch.toStringAsFixed(1)} '
+          'targetAnchor=${targetAnchor.toStringAsFixed(2)}',
+      intervalMs: 1200,
+    );
+  }
+
+  void _logNavPresCameraAppliedIfChanged({
+    required int level,
+    required double appliedZoom,
+    required double appliedPitch,
+    required double appliedAnchor,
+    required String source,
+    required String reason,
+  }) {
+    if (!_navigationPresentationStateFor(_navCameraViewMode)
+        .useDriverCockpitCamera) {
+      return;
+    }
+    final signature =
+        '$level|${appliedZoom.toStringAsFixed(1)}|'
+        '${appliedPitch.toStringAsFixed(1)}|${appliedAnchor.toStringAsFixed(2)}|'
+        '$source|$reason';
+    if (signature == _lastNavPresCameraAppliedSignature) return;
+    _lastNavPresCameraAppliedSignature = signature;
+    _logNavBounded(
+      'NAV_PRES_CAMERA_APPLIED',
+      'level=$level '
+          'appliedZoom=${appliedZoom.toStringAsFixed(1)} '
+          'appliedPitch=${appliedPitch.toStringAsFixed(1)} '
+          'appliedAnchor=${appliedAnchor.toStringAsFixed(2)} '
+          'source=$source '
+          'reason=$reason',
+      intervalMs: 1200,
+    );
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+        tag: 'NAV_PRES_CAMERA_APPLIED',
+        fields: <String, dynamic>{
+          'level': level,
+          'appliedZoom': appliedZoom,
+          'appliedPitch': appliedPitch,
+          'appliedAnchor': appliedAnchor,
+          'source': source,
+          'reason': reason,
         },
       ),
     );
@@ -10804,9 +10937,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         _liveRideActive &&
         navPresentation.useDriverCockpitCamera) {
       final isTablet = MediaQuery.sizeOf(context).width >= 600;
+      final directAdjust = force && cameraReason == 'cockpit_adjust';
       final cockpit = _driverCockpitCameraOverrides(
-        currentZoom: cameraZoom,
-        currentPitch: cameraPitch,
+        policyZoom: cameraZoom,
+        policyPitch: cameraPitch,
         isTablet: isTablet,
         isLandscape: isLandscape,
         safeTop: safeTop,
@@ -10817,6 +10951,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         bearingDeg: heading,
         speedKmh: speedKmh,
         progress: progress,
+        directAdjust: directAdjust,
       );
       cameraZoom = cockpit.zoom;
       cameraPitch = cockpit.pitch;
@@ -10824,6 +10959,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (cockpit.centerLat != null && cockpit.centerLon != null) {
         cameraCenter = _mbPoint(cockpit.centerLon!, cockpit.centerLat!);
       }
+      _commitDriverCockpitAppliedCamera(zoom: cameraZoom, pitch: cameraPitch);
       _logNavPresCameraAnchorDeferred();
       _logNavPresCamera(
         zoom: cameraZoom,
