@@ -27,6 +27,9 @@ class NavigationPresentationState {
   /// Bounded diagnostics token (`NAV_PRES_*`).
   final String diagnosticsLabel;
 
+  /// NAV-PRES-2A: screen-fixed driver HUD overlay (driver mode + feature flag).
+  final bool showDriverHudOverlay;
+
   const NavigationPresentationState({
     required this.mode,
     required this.navCameraViewMode,
@@ -35,6 +38,7 @@ class NavigationPresentationState {
     required this.vehiclePresentation,
     required this.modeLabel,
     required this.diagnosticsLabel,
+    required this.showDriverHudOverlay,
   });
 
   @override
@@ -46,7 +50,8 @@ class NavigationPresentationState {
         other.hudVisible == hudVisible &&
         other.vehiclePresentation == vehiclePresentation &&
         other.modeLabel == modeLabel &&
-        other.diagnosticsLabel == diagnosticsLabel;
+        other.diagnosticsLabel == diagnosticsLabel &&
+        other.showDriverHudOverlay == showDriverHudOverlay;
   }
 
   @override
@@ -58,5 +63,6 @@ class NavigationPresentationState {
         vehiclePresentation,
         modeLabel,
         diagnosticsLabel,
+        showDriverHudOverlay,
       );
 }

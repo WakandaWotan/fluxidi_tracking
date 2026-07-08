@@ -18056,6 +18056,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     final double navBannerTop =
         MediaQuery.of(context).padding.top + (collapsedNavHeader ? 58 : 74);
     final bool hideMapUserPuck = _shouldHideMapboxUserLocationPuck();
+    final navPresentationState = _cameraMode == _CameraMode.follow && liveActive
+        ? _navigationPresentationStateFor(_navCameraViewMode)
+        : _navigationPresentationStateFor(NavCameraViewMode.overview);
+    final double driverHudBottom = showCockpit
+        ? (isLandscape ? 112.0 : 168.0) + safeBottomInset
+        : arrowBottom;
     return Scaffold(
       key: _scaffoldKey,
       drawer: _buildDrawer(),
@@ -18228,6 +18234,19 @@ class _DriverHomePageState extends State<DriverHomePage>
               right: 14,
               bottom: recenterBottom,
               child: _buildRecenterButton(),
+            ),
+
+          // NAV-PRES-2A: optional screen-fixed driver HUD (feature-flagged).
+          if (_cameraMode == _CameraMode.follow &&
+              liveActive &&
+              navPresentationState.showDriverHudOverlay)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: driverHudBottom,
+              child: const Center(
+                child: NavigationDriverHudOverlay(),
+              ),
             ),
 
           if (!showCockpit) Positioned.fill(child: _buildHintPanel()),

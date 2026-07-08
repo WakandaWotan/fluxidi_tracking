@@ -6,6 +6,9 @@ import 'package:fluxidi_tracking/navigation/presentation/navigation_presentation
 
 void main() {
   const controller = NavigationPresentationController.instance;
+  const controllerWithHud = NavigationPresentationController(
+    driverHudOverlayEnabled: true,
+  );
 
   group('NAV-PRES-1 NavigationPresentationController', () {
     test('maps NavCameraViewMode to NavigationPresentationMode', () {
@@ -69,6 +72,7 @@ void main() {
       final state = controller.resolve(NavigationPresentationMode.northUp);
       expect(state.markerVisible, isTrue);
       expect(state.hudVisible, isFalse);
+      expect(state.showDriverHudOverlay, isFalse);
       expect(
         state.vehiclePresentation,
         NavigationVehiclePresentation.mapAnnotation,
@@ -82,6 +86,7 @@ void main() {
       final state = controller.resolve(NavigationPresentationMode.overview);
       expect(state.markerVisible, isTrue);
       expect(state.hudVisible, isFalse);
+      expect(state.showDriverHudOverlay, isFalse);
       expect(
         state.vehiclePresentation,
         NavigationVehiclePresentation.mapAnnotation,
@@ -91,10 +96,12 @@ void main() {
       expect(state.diagnosticsLabel, 'NAV_PRES_overview');
     });
 
-    test('driver delegates to streetView camera path, no HUD yet', () {
+    test('driver delegates to streetView camera path with HUD off by default',
+        () {
       final state = controller.resolve(NavigationPresentationMode.driver);
       expect(state.markerVisible, isTrue);
       expect(state.hudVisible, isFalse);
+      expect(state.showDriverHudOverlay, isFalse);
       expect(
         state.vehiclePresentation,
         NavigationVehiclePresentation.mapAnnotation,
@@ -128,6 +135,72 @@ void main() {
       expect(state.toString(), isNot(contains('zoom')));
       expect(state.toString(), isNot(contains('tilt')));
       expect(state.toString(), isNot(contains('bearing')));
+    });
+  });
+
+  group('NAV-PRES-2A driver HUD overlay visibility', () {
+    test('default flag false => driver mode does not show HUD', () {
+      final state = controller.resolve(NavigationPresentationMode.driver);
+      expect(state.showDriverHudOverlay, isFalse);
+    });
+
+    test('flag true + driver mode => showDriverHudOverlay true', () {
+      final state = controllerWithHud.resolve(NavigationPresentationMode.driver);
+      expect(state.showDriverHudOverlay, isTrue);
+      expect(state.navCameraViewMode, NavCameraViewMode.streetView);
+      expect(state.markerVisible, isTrue);
+    });
+
+    test('flag true + northUp => showDriverHudOverlay false', () {
+      final state = controllerWithHud.resolve(NavigationPresentationMode.northUp);
+      expect(state.showDriverHudOverlay, isFalse);
+      expect(state.navCameraViewMode, NavCameraViewMode.northUp);
+    });
+
+    test('flag true + overview => showDriverHudOverlay false', () {
+      final state =
+          controllerWithHud.resolve(NavigationPresentationMode.overview);
+      expect(state.showDriverHudOverlay, isFalse);
+      expect(state.navCameraViewMode, NavCameraViewMode.overview);
+    });
+
+    test('switching out of driver hides HUD', () {
+      expect(
+        controllerWithHud.resolve(NavigationPresentationMode.driver)
+            .showDriverHudOverlay,
+        isTrue,
+      );
+      expect(
+        controllerWithHud.resolve(NavigationPresentationMode.overview)
+            .showDriverHudOverlay,
+        isFalse,
+      );
+      expect(
+        controllerWithHud.resolve(NavigationPresentationMode.northUp)
+            .showDriverHudOverlay,
+        isFalse,
+      );
+    });
+
+    test('camera mode mapping unchanged when HUD flag enabled', () {
+      for (final viewMode in NavCameraViewMode.values) {
+        final state = controllerWithHud.resolveForNavCameraViewMode(viewMode);
+        expect(state.navCameraViewMode, viewMode);
+      }
+    });
+
+    test('resolveForNavCameraViewMode accepts injectable HUD flag override', () {
+      final enabled = controller.resolveForNavCameraViewMode(
+        NavCameraViewMode.streetView,
+        driverHudOverlayEnabled: true,
+      );
+      expect(enabled.showDriverHudOverlay, isTrue);
+
+      final disabled = controller.resolveForNavCameraViewMode(
+        NavCameraViewMode.streetView,
+        driverHudOverlayEnabled: false,
+      );
+      expect(disabled.showDriverHudOverlay, isFalse);
     });
   });
 }
