@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 
+import 'nav_camera_view_mode.dart';
+
 /// Signals that drive follow-camera zoom, tilt, and bearing policy.
 class NavCameraPolicyInput {
   final DateTime timestamp;
@@ -20,6 +22,9 @@ class NavCameraPolicyInput {
   final bool nearManeuver;
   final bool waitingMode;
   final bool hasReliableSnap;
+  /// NAV-R15A: overview preserves legacy behavior; street view strengthens
+  /// bearing follow and viewport anchor (camera-only).
+  final NavCameraViewMode viewMode;
 
   const NavCameraPolicyInput({
     required this.timestamp,
@@ -38,6 +43,7 @@ class NavCameraPolicyInput {
     this.nearManeuver = false,
     this.waitingMode = false,
     this.hasReliableSnap = false,
+    this.viewMode = NavCameraViewMode.overview,
   });
 
   /// NAV-R12-H: true while the route is adapting and the driver benefits
@@ -289,10 +295,25 @@ class DriverNavCameraPolicy {
 
     final bearingModeWeight = _bearingModeWeightFor(input, speedKmh: speedKmh);
 
+    var appliedZoom = _smoothZoom(targetZoom);
+    var appliedTilt = _smoothTilt(tilt);
+    if (input.viewMode == NavCameraViewMode.streetView && input.cameraFollowMode) {
+      final tuned = streetViewCameraTuning(
+        zoom: appliedZoom,
+        tilt: appliedTilt,
+        routeAdaptationActive: input.routeAdaptationActive,
+      );
+      appliedZoom = _smoothZoom(tuned.zoom);
+      appliedTilt = _smoothTilt(tuned.tilt);
+      if (!input.routeAdaptationActive) {
+        reason = '${reason}_street_view';
+      }
+    }
+
     return NavCameraPolicyOutput(
       shouldFollow: true,
-      zoom: _smoothZoom(targetZoom),
-      tilt: _smoothTilt(tilt),
+      zoom: appliedZoom,
+      tilt: appliedTilt,
       bearingModeWeight: bearingModeWeight,
       reason: reason,
       targetZoom: targetZoom,
@@ -304,6 +325,12 @@ class DriverNavCameraPolicy {
     NavCameraPolicyInput input, {
     required double speedKmh,
   }) {
+    if (input.viewMode == NavCameraViewMode.northUp) {
+      return 0.0;
+    }
+    if (input.viewMode == NavCameraViewMode.streetView) {
+      return streetViewBearingModeWeight(input);
+    }
     final confidence = input.routeConfidence ?? 0.0;
     if (speedKmh < 3.0) return 0.15;
     if (input.offRouteLikely || confidence < 45.0) return 0.25;

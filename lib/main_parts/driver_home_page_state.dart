@@ -236,6 +236,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   // UI/Camera
   bool _followCar = false;
   _CameraMode _cameraMode = _CameraMode.overview;
+  NavCameraViewMode _navCameraViewMode = NavCameraViewMode.overview;
+  String? _lastNavR15ViewModeSignature;
+  String? _lastNavR15BearingSignature;
   MapThemeMode? _mapThemeOverride;
   DriverMapVisualMode _driverMapVisualMode = DriverMapVisualMode.street;
   double _lastMapCameraZoom = kDriverMapInitialZoom;
@@ -7741,8 +7744,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     double target,
     double speedKmh, {
     double bearingModeWeight = 1.0,
+    NavCameraViewMode viewMode = NavCameraViewMode.overview,
   }) {
-    final normalizedTarget = _normalizeBearingDeg(target);
+    final bearingTarget = navCameraViewModeUsesFixedNorthBearing(viewMode)
+        ? northUpCameraBearingTarget()
+        : target;
+    final normalizedTarget = _normalizeBearingDeg(bearingTarget);
     final prev = _lastSmoothedCameraBearing;
     if (prev == null || !prev.isFinite) {
       _lastSmoothedCameraBearing = normalizedTarget;
@@ -7751,9 +7758,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     var delta = normalizedTarget - prev;
     while (delta > 180) delta -= 360;
     while (delta < -180) delta += 360;
-    final weight = bearingModeWeight.clamp(0.0, 1.0);
-    final maxStep =
-        (speedKmh < 4 ? 3.5 : (speedKmh < 20 ? 14.0 : 28.0)) * weight;
+    final maxStep = navCameraViewModeUsesFixedNorthBearing(viewMode)
+        ? northUpBearingAlignMaxStep(speedKmh)
+        : navCameraBearingMaxStep(
+            viewMode: viewMode,
+            speedKmh: speedKmh,
+            bearingModeWeight: bearingModeWeight,
+          );
     if (maxStep <= 0.01) {
       return prev;
     }
@@ -7764,6 +7775,94 @@ class _DriverHomePageState extends State<DriverHomePage>
     final next = _normalizeBearingDeg(prev + delta.sign * maxStep);
     _lastSmoothedCameraBearing = next;
     return next;
+  }
+
+  void _toggleNavCameraViewMode() {
+    if (_cameraMode != _CameraMode.follow || !_liveRideActive) return;
+    final previous = _navCameraViewMode;
+    final next = toggleNavCameraViewMode(previous);
+    setState(() => _navCameraViewMode = next);
+    _lastSmoothedCameraBearing = null;
+    _logNavR15CameraView(
+      mode: next,
+      previousMode: previous,
+      source: 'user_toggle',
+    );
+    final pos = _lastPos;
+    if (pos != null) {
+      unawaited(_followCameraTesla(pos, force: true, cameraReason: 'view_mode'));
+    }
+  }
+
+  void _logNavR15CameraView({
+    required NavCameraViewMode mode,
+    required NavCameraViewMode previousMode,
+    required String source,
+  }) {
+    final signature =
+        '${navCameraViewModeLabel(mode)}|${navCameraViewModeLabel(previousMode)}|$source';
+    if (signature == _lastNavR15ViewModeSignature) return;
+    _lastNavR15ViewModeSignature = signature;
+    _logNavBounded(
+      'NAV_R15_CAMERA_VIEW',
+      'mode=${navCameraViewModeLabel(mode)} '
+          'previousMode=${navCameraViewModeLabel(previousMode)} '
+          'source=$source',
+    );
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+        tag: 'NAV_R15_CAMERA_VIEW',
+        fields: <String, dynamic>{
+          'mode': navCameraViewModeLabel(mode),
+          'previousMode': navCameraViewModeLabel(previousMode),
+          'source': source,
+        },
+      ),
+    );
+  }
+
+  void _logNavR15CameraBearing({
+    required NavCameraViewMode mode,
+    required double speedKmh,
+    required String bearingSource,
+    required double bearingWeight,
+    required double bearingDeltaDeg,
+    required double? routeConfidence,
+  }) {
+    final signature =
+        '${navCameraViewModeLabel(mode)}|$bearingSource|'
+        '${bearingWeight.toStringAsFixed(2)}|'
+        '${navCameraBearingDeltaBucket(bearingDeltaDeg)}';
+    if (signature == _lastNavR15BearingSignature) return;
+    _lastNavR15BearingSignature = signature;
+    final speedBucket = navCameraSpeedBucketForDiagnostics(speedKmh);
+    final confidenceBucket = navCameraConfidenceBucketForDiagnostics(
+      routeConfidence,
+    );
+    final deltaBucket = navCameraBearingDeltaBucket(bearingDeltaDeg);
+    _logNavBounded(
+      'NAV_R15_CAMERA_BEARING',
+      'mode=${navCameraViewModeLabel(mode)} '
+          'speedBucket=$speedBucket '
+          'bearingSource=$bearingSource '
+          'bearingWeight=${bearingWeight.toStringAsFixed(2)} '
+          'deltaBucket=$deltaBucket '
+          'confidenceBucket=$confidenceBucket',
+      intervalMs: 1200,
+    );
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+        tag: 'NAV_R15_CAMERA_BEARING',
+        fields: <String, dynamic>{
+          'mode': navCameraViewModeLabel(mode),
+          'speedBucket': speedBucket,
+          'bearingSource': bearingSource,
+          'bearingWeight': bearingWeight,
+          'deltaBucket': deltaBucket,
+          'confidenceBucket': confidenceBucket,
+        },
+      ),
+    );
   }
 
   void _logNavBounded(String tag, String message, {int intervalMs = 900}) {
@@ -8233,6 +8332,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       nearManeuver: nearManeuver,
       waitingMode: _isWaiting,
       hasReliableSnap: hasReliableSnap,
+      viewMode: _cameraMode == _CameraMode.follow && _liveRideActive
+          ? _navCameraViewMode
+          : NavCameraViewMode.overview,
     );
   }
 
@@ -10148,10 +10250,32 @@ class _DriverHomePageState extends State<DriverHomePage>
         bearing: visual.bearing,
       );
     }
+    final viewMode = _navCameraViewMode;
+    final rawBearingTarget = visual.bearing;
+    final prevBearing = _lastSmoothedCameraBearing;
     final heading = _smoothFollowCameraBearing(
-      visual.bearing,
+      rawBearingTarget,
       speedKmh,
       bearingModeWeight: policy.bearingModeWeight,
+      viewMode: viewMode,
+    );
+    var bearingDeltaDeg = 0.0;
+    if (prevBearing != null && prevBearing.isFinite) {
+      var delta = rawBearingTarget - prevBearing;
+      while (delta > 180) delta -= 360;
+      while (delta < -180) delta += 360;
+      bearingDeltaDeg = delta;
+    }
+    final bearingSource = _isActiveDriverNavEngineContext()
+        ? _driverNavEngine.lastBearingSource
+        : _adaptiveBearingFor(pos, snap: snap).source;
+    _logNavR15CameraBearing(
+      mode: viewMode,
+      speedKmh: speedKmh,
+      bearingSource: bearingSource,
+      bearingWeight: policy.bearingModeWeight,
+      bearingDeltaDeg: bearingDeltaDeg,
+      routeConfidence: progress?.confidence,
     );
     final p = _mbPoint(visual.point.lon, visual.point.lat);
     final resolvedReason = manualRecenter ? 'manual_recenter' : policy.reason;
@@ -10170,6 +10294,15 @@ class _DriverHomePageState extends State<DriverHomePage>
       targetAgeMs: fixAgeSec != null ? (fixAgeSec * 1000).round() : null,
     );
 
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
+    final viewPadding = navCameraViewPadding(
+      mode: viewMode,
+      isLandscape: isLandscape,
+      safeTop: MediaQuery.of(context).padding.top,
+      safeBottom: MediaQuery.of(context).padding.bottom,
+    );
+
     try {
       await _map?.flyTo(
         mb.CameraOptions(
@@ -10178,18 +10311,10 @@ class _DriverHomePageState extends State<DriverHomePage>
           bearing: heading,
           pitch: policy.tilt,
           padding: mb.MbxEdgeInsets(
-            top:
-                MediaQuery.of(context).padding.top +
-                (MediaQuery.of(context).orientation == Orientation.landscape
-                    ? 56
-                    : 175),
-            left: 24,
-            bottom:
-                MediaQuery.of(context).padding.bottom +
-                (MediaQuery.of(context).orientation == Orientation.landscape
-                    ? 96
-                    : 240),
-            right: 24,
+            top: viewPadding.top,
+            left: viewPadding.left,
+            bottom: viewPadding.bottom,
+            right: viewPadding.right,
           ),
         ),
         mb.MapAnimationOptions(duration: animMs),
@@ -11061,6 +11186,50 @@ class _DriverHomePageState extends State<DriverHomePage>
         size: iconSize,
       ),
     ];
+
+    if (inFollowNav) {
+      final viewMode = _navCameraViewMode;
+      final (icon, tooltip) = switch (viewMode) {
+        NavCameraViewMode.northUp => (
+            Icons.explore_outlined,
+            _tr(
+              nl: 'Noord boven',
+              en: 'North up',
+              fr: 'Nord en haut',
+              es: 'Norte arriba',
+            ),
+          ),
+        NavCameraViewMode.overview => (
+            Icons.view_in_ar_outlined,
+            _tr(
+              nl: 'Overzicht 3D',
+              en: 'Overview 3D',
+              fr: 'Vue 3D',
+              es: 'Vista 3D',
+            ),
+          ),
+        NavCameraViewMode.streetView => (
+            Icons.navigation,
+            _tr(
+              nl: 'Straatweergave',
+              en: 'Street view',
+              fr: 'Vue conducteur',
+              es: 'Vista conductor',
+            ),
+          ),
+      };
+      chips.add(
+        _buildCompactNavIconChip(
+          icon: icon,
+          tooltip: tooltip,
+          onPressed: _toggleNavCameraViewMode,
+          navAccent: colors.accent,
+          navText: colors.text,
+          navSurface: colors.surface,
+          size: iconSize,
+        ),
+      );
+    }
 
     if (showMapStyleToggle) {
       final isSatellite = _driverMapVisualMode == DriverMapVisualMode.satellite;
