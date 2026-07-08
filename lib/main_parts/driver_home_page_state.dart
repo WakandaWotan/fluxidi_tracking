@@ -241,6 +241,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   String? _lastNavR15BearingSignature;
   String? _lastNavPresCameraSignature;
   String? _lastNavPresRouteAlignSignature;
+  String? _lastNavPresBearingSignature;
+  String? _lastNavPresControlsLayoutSignature;
   int _driverCockpitViewLevel = kDriverCockpitViewLevelDefault;
   bool _navPresCameraAnchorDiagEmitted = false;
   MapThemeMode? _mapThemeOverride;
@@ -7892,6 +7894,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     _driverCockpitViewLevel = kDriverCockpitViewLevelDefault;
     _lastNavPresCameraSignature = null;
     _lastNavPresRouteAlignSignature = null;
+    _lastNavPresBearingSignature = null;
+    _lastNavPresControlsLayoutSignature = null;
   }
 
   void _adjustDriverCockpitCameraViewLevel({required bool increase}) {
@@ -8073,6 +8077,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     required double vehicleLat,
     required double vehicleLon,
     required NavRouteProgressOutput? progress,
+    String bearingSource = 'unknown',
   }) {
     if (!_navigationPresentationStateFor(_navCameraViewMode)
         .useDriverCockpitCamera) {
@@ -8086,28 +8091,109 @@ class _DriverHomePageState extends State<DriverHomePage>
       snappedLat: progress?.snappedLatitude,
       snappedLon: progress?.snappedLongitude,
     );
+    final vehicleToRouteM = progress?.hasReliableSnap == true
+        ? progress?.snapDistanceM
+        : align.markerToRouteStartM;
     final markerM = align.markerToRouteStartM;
     final activeStartM = align.activeRouteStartDistM;
-    if (markerM == null && activeStartM == null) return;
+    if (markerM == null && activeStartM == null && vehicleToRouteM == null) {
+      return;
+    }
     final signature =
+        '${vehicleToRouteM?.toStringAsFixed(1) ?? 'na'}|'
         '${markerM?.round() ?? 'na'}|${activeStartM?.round() ?? 'na'}|'
-        '${align.snapped}';
+        '${align.snapped}|$bearingSource';
     if (signature == _lastNavPresRouteAlignSignature) return;
     _lastNavPresRouteAlignSignature = signature;
     _logNavBounded(
       'NAV_PRES_ROUTE_ALIGN',
-      'markerToRouteStartM=${markerM?.toStringAsFixed(1) ?? 'na'} '
+      'vehicleToRouteM=${vehicleToRouteM?.toStringAsFixed(1) ?? 'na'} '
+          'markerToRouteStartM=${markerM?.toStringAsFixed(1) ?? 'na'} '
           'activeRouteStartDistM=${activeStartM?.toStringAsFixed(1) ?? 'na'} '
-          'snapped=${align.snapped}',
+          'snapped=${align.snapped} '
+          'bearingSource=$bearingSource',
       intervalMs: 1500,
     );
     unawaited(
       NavDiagnosticsRecorder.instance.recordNavEngineEvent(
         tag: 'NAV_PRES_ROUTE_ALIGN',
         fields: <String, dynamic>{
+          'vehicleToRouteM': vehicleToRouteM?.round(),
           'markerToRouteStartM': markerM?.round(),
           'activeRouteStartDistM': activeStartM?.round(),
           'snapped': align.snapped,
+          'bearingSource': bearingSource,
+        },
+      ),
+    );
+  }
+
+  void _logNavPresControlsLayoutIfChanged({
+    required bool isLandscape,
+    required int level,
+    required DriverCockpitCameraControlsLayoutResult layout,
+  }) {
+    if (!_navigationPresentationStateFor(_navCameraViewMode)
+        .showDriverCockpitCameraControls) {
+      return;
+    }
+    final signature =
+        '${isLandscape ? 'landscape' : 'portrait'}|$level|'
+        '${layout.panelTop.round()}|${layout.right.round()}|'
+        '${layout.clamped}|${layout.reason}';
+    if (signature == _lastNavPresControlsLayoutSignature) return;
+    _lastNavPresControlsLayoutSignature = signature;
+    _logNavBounded(
+      'NAV_PRES_CONTROLS_LAYOUT',
+      'orientation=${isLandscape ? 'landscape' : 'portrait'} '
+          'level=$level '
+          'top=${layout.panelTop.round()} '
+          'right=${layout.right.round()} '
+          'clamped=${layout.clamped} '
+          'reason=${layout.reason}',
+      intervalMs: 1200,
+    );
+  }
+
+  void _logNavPresBearing({
+    required DriverRouteBearingOutput output,
+    required int viewLevel,
+  }) {
+    if (!_navigationPresentationStateFor(_navCameraViewMode)
+        .useDriverCockpitCamera) {
+      return;
+    }
+    final signature =
+        '${output.source}|${output.bearing.round()}|'
+        '${output.gpsBearing?.round() ?? 'na'}|'
+        '${output.deltaDeg?.toStringAsFixed(1) ?? 'na'}|'
+        '${output.confidence.round()}|$viewLevel|${output.reason}';
+    if (signature == _lastNavPresBearingSignature) return;
+    _lastNavPresBearingSignature = signature;
+    _logNavBounded(
+      'NAV_PRES_BEARING',
+      'mode=driver '
+          'source=${output.source} '
+          'bearing=${output.bearing.round()} '
+          'gpsBearing=${output.gpsBearing?.round() ?? 'na'} '
+          'delta=${output.deltaDeg?.toStringAsFixed(1) ?? 'na'} '
+          'confidence=${output.confidence.round()} '
+          'level=$viewLevel '
+          'reason=${output.reason}',
+      intervalMs: 1200,
+    );
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+        tag: 'NAV_PRES_BEARING',
+        fields: <String, dynamic>{
+          'mode': 'driver',
+          'source': output.source,
+          'bearing': output.bearing.round(),
+          'gpsBearing': output.gpsBearing?.round(),
+          'delta': output.deltaDeg,
+          'confidence': output.confidence.round(),
+          'level': viewLevel,
+          'reason': output.reason,
         },
       ),
     );
@@ -10636,14 +10722,52 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
     }
     final viewMode = _navCameraViewMode;
-    final rawBearingTarget = visual.bearing;
+    final navPresentation = _navigationPresentationStateFor(viewMode);
     final prevBearing = _lastSmoothedCameraBearing;
-    final heading = _smoothFollowCameraBearing(
-      rawBearingTarget,
-      speedKmh,
-      bearingModeWeight: policy.bearingModeWeight,
-      viewMode: viewMode,
-    );
+    late final double rawBearingTarget;
+    late final double heading;
+    late final String bearingSource;
+    if (_cameraMode == _CameraMode.follow &&
+        _liveRideActive &&
+        navPresentation.useDriverCockpitCamera) {
+      final routeLocked = resolveDriverRouteBearing(
+        DriverRouteBearingInput(
+          routeCoords: _routeCoords,
+          segmentIndex: progress?.segmentIndex,
+          snappedLat: progress?.snappedLatitude,
+          snappedLon: progress?.snappedLongitude,
+          hasReliableSnap: progress?.hasReliableSnap ?? false,
+          gpsHeadingDeg: pos.heading.isFinite && pos.heading >= 0
+              ? pos.heading
+              : null,
+          previousBearingDeg: prevBearing,
+          routeConfidence: progress?.confidence,
+          offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
+          forwardProgress: progress?.forwardProgress ?? true,
+          speedKmh: speedKmh,
+        ),
+      );
+      heading = routeLocked.bearing;
+      rawBearingTarget =
+          routeLocked.routeTangentBearing ?? routeLocked.bearing;
+      bearingSource = routeLocked.source;
+      _lastSmoothedCameraBearing = heading;
+      _logNavPresBearing(
+        output: routeLocked,
+        viewLevel: _driverCockpitViewLevel,
+      );
+    } else {
+      rawBearingTarget = visual.bearing;
+      heading = _smoothFollowCameraBearing(
+        rawBearingTarget,
+        speedKmh,
+        bearingModeWeight: policy.bearingModeWeight,
+        viewMode: viewMode,
+      );
+      bearingSource = _isActiveDriverNavEngineContext()
+          ? _driverNavEngine.lastBearingSource
+          : _adaptiveBearingFor(pos, snap: snap).source;
+    }
     var bearingDeltaDeg = 0.0;
     if (prevBearing != null && prevBearing.isFinite) {
       var delta = rawBearingTarget - prevBearing;
@@ -10651,14 +10775,13 @@ class _DriverHomePageState extends State<DriverHomePage>
       while (delta < -180) delta += 360;
       bearingDeltaDeg = delta;
     }
-    final bearingSource = _isActiveDriverNavEngineContext()
-        ? _driverNavEngine.lastBearingSource
-        : _adaptiveBearingFor(pos, snap: snap).source;
     _logNavR15CameraBearing(
       mode: viewMode,
       speedKmh: speedKmh,
       bearingSource: bearingSource,
-      bearingWeight: policy.bearingModeWeight,
+      bearingWeight: navPresentation.useDriverCockpitCamera
+          ? 1.0
+          : policy.bearingModeWeight,
       bearingDeltaDeg: bearingDeltaDeg,
       routeConfidence: progress?.confidence,
     );
@@ -10677,7 +10800,6 @@ class _DriverHomePageState extends State<DriverHomePage>
       safeTop: safeTop,
       safeBottom: safeBottom,
     );
-    final navPresentation = _navigationPresentationStateFor(viewMode);
     if (_cameraMode == _CameraMode.follow &&
         _liveRideActive &&
         navPresentation.useDriverCockpitCamera) {
@@ -10715,6 +10837,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         vehicleLat: visual.point.lat,
         vehicleLon: visual.point.lon,
         progress: progress,
+        bearingSource: bearingSource,
       );
     }
     _lastMapCameraZoom = cameraZoom;
@@ -18448,12 +18571,40 @@ class _DriverHomePageState extends State<DriverHomePage>
           )
         : 56.0;
     final navActionColors = _navActionThemeColors();
-    final double cockpitCameraControlsBottom = showCockpit
-        ? driverHudBottom +
-            (navPresentationState.showDriverHudOverlay
-                ? driverHudIconSize + 16.0
-                : 72.0)
-        : recenterBottom;
+    final bool showDriverCockpitCameraControls =
+        _cameraMode == _CameraMode.follow &&
+            liveActive &&
+            navPresentationState.showDriverCockpitCameraControls;
+    final safePadding = MediaQuery.of(context).padding;
+    final cockpitControlsPanelSize =
+        estimateDriverCockpitCameraControlsPanelSize(
+      buttonSize: 40.0,
+      hasLevelLabel: true,
+      hasDebugSubLabel: true,
+      compactLandscape: isLandscape,
+    );
+    final DriverCockpitCameraControlsLayoutResult? cockpitControlsLayout =
+        showDriverCockpitCameraControls
+            ? resolveDriverCockpitCameraControlsLayout(
+                screenHeight: screenH,
+                safeTop: safePadding.top,
+                safeBottom: safePadding.bottom,
+                safeRight: safePadding.right,
+                isLandscape: isLandscape,
+                panelHeight: cockpitControlsPanelSize.height,
+                panelWidth: cockpitControlsPanelSize.width,
+                navBannerReserve: isLandscape && collapsedNavHeader
+                    ? kDriverCockpitControlsLandscapeBannerReserve
+                    : 0.0,
+              )
+            : null;
+    if (cockpitControlsLayout != null) {
+      _logNavPresControlsLayoutIfChanged(
+        isLandscape: isLandscape,
+        level: _driverCockpitViewLevel,
+        layout: cockpitControlsLayout,
+      );
+    }
     return Scaffold(
       key: _scaffoldKey,
       drawer: _buildDrawer(),
@@ -18642,12 +18793,11 @@ class _DriverHomePageState extends State<DriverHomePage>
             ),
 
           // NAV-PRES-3C: optional live +/- cockpit camera controls.
-          if (_cameraMode == _CameraMode.follow &&
-              liveActive &&
-              navPresentationState.showDriverCockpitCameraControls)
+          if (showDriverCockpitCameraControls &&
+              cockpitControlsLayout != null)
             Positioned(
-              right: 14,
-              bottom: cockpitCameraControlsBottom,
+              right: cockpitControlsLayout.right,
+              bottom: cockpitControlsLayout.bottom,
               child: NavigationDriverCockpitCameraControls(
                 onPlus: () => _adjustDriverCockpitCameraViewLevel(increase: true),
                 onMinus: () =>
@@ -18657,6 +18807,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 surfaceColor: navActionColors.surface,
                 levelLabel: _driverCockpitViewLevelLabel(),
                 debugSubLabel: _driverCockpitViewLevelDebugLabel(),
+                compactLandscape: isLandscape,
               ),
             ),
 

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'navigation_driver_cockpit_camera_controls_layout.dart';
+
 /// NAV-PRES-3C: live +/- cockpit camera intensity controls (field test only).
 ///
 /// No Mapbox/GPS dependencies. Parent gates visibility via presentation state.
@@ -14,6 +16,7 @@ class NavigationDriverCockpitCameraControls extends StatelessWidget {
     this.buttonSize = 40.0,
     this.levelLabel,
     this.debugSubLabel,
+    this.compactLandscape = false,
   });
 
   final VoidCallback onPlus;
@@ -29,8 +32,21 @@ class NavigationDriverCockpitCameraControls extends StatelessWidget {
   /// NAV-PRES-3D-PRO2: field-test debug line (`Z21.6 P84 A0.82`).
   final String? debugSubLabel;
 
+  /// NAV-PRES-3E-FIX1: tighter label/debug typography in landscape.
+  final bool compactLandscape;
+
+  /// NAV-PRES-3E-FIX1: panel size estimate for safe viewport clamping.
+  Size get estimatedPanelSize => estimateDriverCockpitCameraControlsPanelSize(
+        buttonSize: buttonSize,
+        hasLevelLabel: levelLabel != null,
+        hasDebugSubLabel: debugSubLabel != null,
+        compactLandscape: compactLandscape,
+      );
+
   @override
   Widget build(BuildContext context) {
+    final levelFontSize = compactLandscape ? 9.0 : 10.0;
+    final debugFontSize = compactLandscape ? 7.0 : 8.0;
     return Material(
       color: surfaceColor.withValues(alpha: 0.92),
       borderRadius: BorderRadius.circular(14),
@@ -63,7 +79,7 @@ class NavigationDriverCockpitCameraControls extends StatelessWidget {
                       levelLabel!,
                       style: TextStyle(
                         color: textColor.withValues(alpha: 0.85),
-                        fontSize: 10,
+                        fontSize: levelFontSize,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -72,9 +88,9 @@ class NavigationDriverCockpitCameraControls extends StatelessWidget {
                         debugSubLabel!,
                         style: TextStyle(
                           color: textColor.withValues(alpha: 0.65),
-                          fontSize: 8,
+                          fontSize: debugFontSize,
                           fontWeight: FontWeight.w500,
-                          height: 1.1,
+                          height: 1.05,
                         ),
                       ),
                   ],
