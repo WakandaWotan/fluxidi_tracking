@@ -107,6 +107,8 @@ import 'navigation/nav_engine/nav_route_progress.dart';
 import 'navigation/nav_engine/nav_camera_policy.dart';
 import 'navigation/nav_engine/nav_camera_view_mode.dart';
 import 'navigation/nav_engine/nav_reroute_decision.dart';
+import 'navigation/presentation/navigation_presentation_controller.dart';
+import 'navigation/presentation/navigation_presentation_state.dart';
 import 'navigation/nav_engine/nav_confidence_engine.dart';
 import 'navigation/nav_engine/nav_complexity_guard.dart';
 import 'navigation/nav_engine/nav_complexity_intelligence.dart';

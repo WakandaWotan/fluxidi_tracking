@@ -7782,10 +7782,23 @@ class _DriverHomePageState extends State<DriverHomePage>
     return next;
   }
 
+  /// NAV-PRES-1: presentation boundary adapter; camera/marker paths still read
+  /// [_navCameraViewMode] directly until a later migration step.
+  NavigationPresentationState _navigationPresentationStateFor(
+    NavCameraViewMode viewMode,
+  ) {
+    return NavigationPresentationController.instance
+        .resolveForNavCameraViewMode(viewMode);
+  }
+
   void _toggleNavCameraViewMode() {
     if (_cameraMode != _CameraMode.follow || !_liveRideActive) return;
     final previous = _navCameraViewMode;
     final next = toggleNavCameraViewMode(previous);
+    assert(
+      _navigationPresentationStateFor(next).navCameraViewMode == next,
+      'NAV-PRES-1 presentation mapping must mirror NavCameraViewMode',
+    );
     setState(() => _navCameraViewMode = next);
     _lastSmoothedCameraBearing = null;
     _logNavR15CameraView(
