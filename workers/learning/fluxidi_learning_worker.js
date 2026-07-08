@@ -58,14 +58,20 @@
 //   POST   /admin/nav-complexity-events/ingest-dry-run  (service auth, NAV-AI-3)
 //   GET    /admin/nav-complexity-events/recent          (service auth, NAV-AI-3)
 //   DELETE /admin/nav-complexity-events/test-data       (service auth, NAV-AI-3)
+//   GET    /admin/nav-complexity-rules/advisory         (service auth, NAV-AI-5A)
 
 import {
   validateNavComplexityIngestRequest,
   navComplexityEventToDbRow,
   publicNavComplexityRow,
 } from "./nav_complexity_event_schema.js";
+import {
+  buildAdvisoryRulesResponse,
+  queryAdvisorySampleEvents,
+} from "./nav_complexity_advisory_rules.js";
 
 const NAV_COMPLEXITY_DIAG_TAG = "NAV_AI_3";
+const NAV_RULES_DIAG_TAG = "NAV_AI_5";
 
 const SERVICE_NAME = "fluxidi-learning";
 const SERVICE_VERSION = "cloud-learn-1";
@@ -276,6 +282,15 @@ function logNavComplexity(endpoint, { result = "ok", reason = "na" } = {}) {
   const safeReason = safeToken(reason, 48) || "na";
   console.log(
     `[${NAV_COMPLEXITY_DIAG_TAG}] endpoint=${safeEndpoint} result=${safeResult} reason=${safeReason}`,
+  );
+}
+
+function logNavRules(endpoint, { result = "ok", reason = "na" } = {}) {
+  const safeEndpoint = safeToken(endpoint, 24) || "unknown";
+  const safeResult = safeToken(result, 16) || "na";
+  const safeReason = safeToken(reason, 48) || "na";
+  console.log(
+    `[${NAV_RULES_DIAG_TAG}] endpoint=${safeEndpoint} result=${safeResult} reason=${safeReason}`,
   );
 }
 
@@ -1012,6 +1027,37 @@ async function handleNavComplexityDeleteTestData(_request, env) {
 }
 
 // ---------------------------------------------------------------------------
+// NAV-AI-5A: advisory learned rules (read-only, not applied at runtime)
+// ---------------------------------------------------------------------------
+
+async function handleNavComplexityAdvisoryRules(_request, env) {
+  if (storageMode(env) !== "d1") {
+    logNavRules("advisory", { result: "ok", reason: "learning_store_not_connected" });
+    return jsonResponse({
+      ok: true,
+      advisoryOnly: true,
+      version: 1,
+      generatedAt: new Date().toISOString(),
+      rules: [],
+      reason: "learning_store_not_connected",
+    });
+  }
+
+  try {
+    const events = await queryAdvisorySampleEvents(env.LEARNING_DB);
+    const response = buildAdvisoryRulesResponse(events);
+    logNavRules("advisory", {
+      result: "ok",
+      reason: `rules_${response.rules.length}`,
+    });
+    return jsonResponse(response);
+  } catch (_) {
+    logNavRules("advisory", { result: "error", reason: "d1_query_failed" });
+    return jsonResponse({ ok: false, error: "Failed to build advisory rules" }, 500);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -1091,6 +1137,18 @@ export default {
           return jsonResponse({ ok: false, error: auth.error }, auth.status);
         }
         return await handleNavComplexityDeleteTestData(request, env);
+      }
+
+      if (url.pathname === "/admin/nav-complexity-rules/advisory") {
+        if (request.method !== "GET") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405);
+        }
+        const auth = requireServiceAuth(request, env);
+        if (!auth.ok) {
+          logNavRules("advisory", { result: "error", reason: auth.reason });
+          return jsonResponse({ ok: false, error: auth.error }, auth.status);
+        }
+        return await handleNavComplexityAdvisoryRules(request, env);
       }
 
       return jsonResponse({ ok: false, error: "Not Found", path: url.pathname }, 404);

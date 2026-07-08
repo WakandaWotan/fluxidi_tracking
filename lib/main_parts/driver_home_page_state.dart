@@ -1602,6 +1602,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
 
     unawaited(NavDiagnosticsRecorder.instance.ensureInitialized());
+    unawaited(
+      fetchNavComplexityAdvisoryRulesIfEnabled(
+        recordDiagnostics: (summary) =>
+            NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+              tag: 'NAV_AI_5_RULES',
+              fields: summary,
+            ),
+      ),
+    );
     _bootStartedAt = DateTime.now();
     // Minimum splash duration so it feels intentional (not a flicker)
     // Christophe wants it to linger a bit longer for a more premium feel.
