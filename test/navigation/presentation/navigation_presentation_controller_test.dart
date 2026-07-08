@@ -13,6 +13,9 @@ void main() {
     driverHudOverlayEnabled: true,
     hideMapboxTaxiMarkerWithDriverHudEnabled: true,
   );
+  const controllerWithCockpitCamera = NavigationPresentationController(
+    driverCockpitCameraEnabled: true,
+  );
 
   group('NAV-PRES-1 NavigationPresentationController', () {
     test('maps NavCameraViewMode to NavigationPresentationMode', () {
@@ -78,6 +81,7 @@ void main() {
       expect(state.hudVisible, isFalse);
       expect(state.showDriverHudOverlay, isFalse);
       expect(state.hideMapboxTaxiMarker, isFalse);
+      expect(state.useDriverCockpitCamera, isFalse);
       expect(
         state.vehiclePresentation,
         NavigationVehiclePresentation.mapAnnotation,
@@ -93,6 +97,7 @@ void main() {
       expect(state.hudVisible, isFalse);
       expect(state.showDriverHudOverlay, isFalse);
       expect(state.hideMapboxTaxiMarker, isFalse);
+      expect(state.useDriverCockpitCamera, isFalse);
       expect(
         state.vehiclePresentation,
         NavigationVehiclePresentation.mapAnnotation,
@@ -109,6 +114,7 @@ void main() {
       expect(state.hudVisible, isFalse);
       expect(state.showDriverHudOverlay, isFalse);
       expect(state.hideMapboxTaxiMarker, isFalse);
+      expect(state.useDriverCockpitCamera, isFalse);
       expect(
         state.vehiclePresentation,
         NavigationVehiclePresentation.mapAnnotation,
@@ -299,6 +305,90 @@ void main() {
       );
       expect(visible.showDriverHudOverlay, isTrue);
       expect(visible.hideMapboxTaxiMarker, isFalse);
+    });
+  });
+
+  group('NAV-PRES-3A driver cockpit camera profile', () {
+    test('default flag false + driver => useDriverCockpitCamera false', () {
+      final state = controller.resolve(NavigationPresentationMode.driver);
+      expect(state.useDriverCockpitCamera, isFalse);
+      expect(state.navCameraViewMode, NavCameraViewMode.streetView);
+    });
+
+    test('cockpit flag true + driver => useDriverCockpitCamera true', () {
+      final state =
+          controllerWithCockpitCamera.resolve(NavigationPresentationMode.driver);
+      expect(state.useDriverCockpitCamera, isTrue);
+      expect(state.navCameraViewMode, NavCameraViewMode.streetView);
+    });
+
+    test('cockpit flag true + northUp => useDriverCockpitCamera false', () {
+      final state =
+          controllerWithCockpitCamera.resolve(NavigationPresentationMode.northUp);
+      expect(state.useDriverCockpitCamera, isFalse);
+      expect(state.navCameraViewMode, NavCameraViewMode.northUp);
+    });
+
+    test('cockpit flag true + overview => useDriverCockpitCamera false', () {
+      final state = controllerWithCockpitCamera
+          .resolve(NavigationPresentationMode.overview);
+      expect(state.useDriverCockpitCamera, isFalse);
+      expect(state.navCameraViewMode, NavCameraViewMode.overview);
+    });
+
+    test('switching out of driver disables cockpit camera', () {
+      expect(
+        controllerWithCockpitCamera.resolve(NavigationPresentationMode.driver)
+            .useDriverCockpitCamera,
+        isTrue,
+      );
+      expect(
+        controllerWithCockpitCamera.resolve(NavigationPresentationMode.overview)
+            .useDriverCockpitCamera,
+        isFalse,
+      );
+      expect(
+        controllerWithCockpitCamera.resolve(NavigationPresentationMode.northUp)
+            .useDriverCockpitCamera,
+        isFalse,
+      );
+    });
+
+    test('HUD and hide-marker flags remain independent from cockpit camera',
+        () {
+      const allFlags = NavigationPresentationController(
+        driverHudOverlayEnabled: true,
+        hideMapboxTaxiMarkerWithDriverHudEnabled: true,
+        driverCockpitCameraEnabled: false,
+      );
+      final driverOnlyHud = allFlags.resolve(NavigationPresentationMode.driver);
+      expect(driverOnlyHud.showDriverHudOverlay, isTrue);
+      expect(driverOnlyHud.hideMapboxTaxiMarker, isTrue);
+      expect(driverOnlyHud.useDriverCockpitCamera, isFalse);
+
+      const cockpitOnly = NavigationPresentationController(
+        driverCockpitCameraEnabled: true,
+      );
+      final driverOnlyCockpit =
+          cockpitOnly.resolve(NavigationPresentationMode.driver);
+      expect(driverOnlyCockpit.useDriverCockpitCamera, isTrue);
+      expect(driverOnlyCockpit.showDriverHudOverlay, isFalse);
+      expect(driverOnlyCockpit.hideMapboxTaxiMarker, isFalse);
+    });
+
+    test('resolveForNavCameraViewMode accepts injectable cockpit flag override',
+        () {
+      final enabled = controller.resolveForNavCameraViewMode(
+        NavCameraViewMode.streetView,
+        driverCockpitCameraEnabled: true,
+      );
+      expect(enabled.useDriverCockpitCamera, isTrue);
+
+      final disabled = controller.resolveForNavCameraViewMode(
+        NavCameraViewMode.streetView,
+        driverCockpitCameraEnabled: false,
+      );
+      expect(disabled.useDriverCockpitCamera, isFalse);
     });
   });
 }

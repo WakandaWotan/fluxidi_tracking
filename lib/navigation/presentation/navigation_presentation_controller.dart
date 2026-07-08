@@ -10,6 +10,7 @@ class NavigationPresentationController {
     this.driverHudOverlayEnabled = kNavigationDriverHudOverlayEnabled,
     this.hideMapboxTaxiMarkerWithDriverHudEnabled =
         kNavigationHideMapboxTaxiMarkerWithDriverHudEnabled,
+    this.driverCockpitCameraEnabled = kNavigationDriverCockpitCameraEnabled,
   });
 
   /// When true, [NavigationPresentationMode.driver] may show the screen-fixed
@@ -20,15 +21,14 @@ class NavigationPresentationController {
   /// be visually suppressed (NAV-PRES-2B). Injectable for tests.
   final bool hideMapboxTaxiMarkerWithDriverHudEnabled;
 
+  /// When true, [NavigationPresentationMode.driver] uses the cockpit camera
+  /// profile (NAV-PRES-3A). Injectable for tests.
+  final bool driverCockpitCameraEnabled;
+
   static const NavigationPresentationController instance =
       NavigationPresentationController();
 
   /// Resolves presentation flags for [mode].
-  ///
-  /// NAV-PRES-1: all modes keep the map annotation visible and delegate
-  /// camera behavior through [navCameraViewMode]. NAV-PRES-2A adds optional
-  /// [showDriverHudOverlay] when [driverHudOverlayEnabled] is true.
-  /// NAV-PRES-2B adds [hideMapboxTaxiMarker] only when the HUD is shown.
   NavigationPresentationState resolve(NavigationPresentationMode mode) {
     final navCameraViewMode = navCameraViewModeFromNavigationPresentationMode(
       mode,
@@ -37,6 +37,8 @@ class NavigationPresentationController {
         mode == NavigationPresentationMode.driver && driverHudOverlayEnabled;
     final hideMapboxTaxiMarker = showDriverHudOverlay &&
         hideMapboxTaxiMarkerWithDriverHudEnabled;
+    final useDriverCockpitCamera =
+        mode == NavigationPresentationMode.driver && driverCockpitCameraEnabled;
     return NavigationPresentationState(
       mode: mode,
       navCameraViewMode: navCameraViewMode,
@@ -47,6 +49,7 @@ class NavigationPresentationController {
       diagnosticsLabel: navigationPresentationDiagnosticsLabel(mode),
       showDriverHudOverlay: showDriverHudOverlay,
       hideMapboxTaxiMarker: hideMapboxTaxiMarker,
+      useDriverCockpitCamera: useDriverCockpitCamera,
     );
   }
 
@@ -55,9 +58,11 @@ class NavigationPresentationController {
     NavCameraViewMode viewMode, {
     bool? driverHudOverlayEnabled,
     bool? hideMapboxTaxiMarkerWithDriverHudEnabled,
+    bool? driverCockpitCameraEnabled,
   }) {
     if (driverHudOverlayEnabled == null &&
-        hideMapboxTaxiMarkerWithDriverHudEnabled == null) {
+        hideMapboxTaxiMarkerWithDriverHudEnabled == null &&
+        driverCockpitCameraEnabled == null) {
       return resolve(
         navigationPresentationModeFromNavCameraViewMode(viewMode),
       );
@@ -68,6 +73,8 @@ class NavigationPresentationController {
       hideMapboxTaxiMarkerWithDriverHudEnabled:
           hideMapboxTaxiMarkerWithDriverHudEnabled ??
               this.hideMapboxTaxiMarkerWithDriverHudEnabled,
+      driverCockpitCameraEnabled:
+          driverCockpitCameraEnabled ?? this.driverCockpitCameraEnabled,
     ).resolve(
       navigationPresentationModeFromNavCameraViewMode(viewMode),
     );

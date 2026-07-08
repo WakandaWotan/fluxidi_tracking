@@ -25,3 +25,16 @@ const bool kNavigationHideMapboxTaxiMarkerWithDriverHudEnabled =
   kNavigationHideMapboxTaxiMarkerWithDriverHudDefineKey,
   defaultValue: false,
 );
+
+/// Dart-define key for NAV-PRES-3A driver cockpit camera profile.
+const String kNavigationDriverCockpitCameraDefineKey =
+    'FLUXIDI_NAV_DRIVER_COCKPIT_CAMERA';
+
+/// NAV-PRES-3A: lower, forward-looking cockpit camera tuning in driver mode.
+///
+/// Enable at build time:
+/// `--dart-define=FLUXIDI_NAV_DRIVER_COCKPIT_CAMERA=true`
+const bool kNavigationDriverCockpitCameraEnabled = bool.fromEnvironment(
+  kNavigationDriverCockpitCameraDefineKey,
+  defaultValue: false,
+);

@@ -33,6 +33,9 @@ class NavigationPresentationState {
   /// NAV-PRES-2B: suppress Mapbox taxi marker when HUD overlay is active.
   final bool hideMapboxTaxiMarker;
 
+  /// NAV-PRES-3A: apply driver cockpit camera zoom/pitch/padding profile.
+  final bool useDriverCockpitCamera;
+
   const NavigationPresentationState({
     required this.mode,
     required this.navCameraViewMode,
@@ -43,6 +46,7 @@ class NavigationPresentationState {
     required this.diagnosticsLabel,
     required this.showDriverHudOverlay,
     required this.hideMapboxTaxiMarker,
+    required this.useDriverCockpitCamera,
   });
 
   @override
@@ -56,7 +60,8 @@ class NavigationPresentationState {
         other.modeLabel == modeLabel &&
         other.diagnosticsLabel == diagnosticsLabel &&
         other.showDriverHudOverlay == showDriverHudOverlay &&
-        other.hideMapboxTaxiMarker == hideMapboxTaxiMarker;
+        other.hideMapboxTaxiMarker == hideMapboxTaxiMarker &&
+        other.useDriverCockpitCamera == useDriverCockpitCamera;
   }
 
   @override
@@ -70,5 +75,6 @@ class NavigationPresentationState {
         diagnosticsLabel,
         showDriverHudOverlay,
         hideMapboxTaxiMarker,
+        useDriverCockpitCamera,
       );
 }

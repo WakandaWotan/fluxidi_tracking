@@ -239,6 +239,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   NavCameraViewMode _navCameraViewMode = NavCameraViewMode.overview;
   String? _lastNavR15ViewModeSignature;
   String? _lastNavR15BearingSignature;
+  String? _lastNavPresCameraSignature;
   MapThemeMode? _mapThemeOverride;
   DriverMapVisualMode _driverMapVisualMode = DriverMapVisualMode.street;
   double _lastMapCameraZoom = kDriverMapInitialZoom;
@@ -7822,6 +7823,78 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  /// NAV-PRES-3A: cockpit zoom/pitch/padding overrides for flagged driver mode.
+  ({
+    double zoom,
+    double pitch,
+    NavCameraViewPadding padding,
+    String reason,
+  })
+  _driverCockpitCameraOverrides({
+    required double currentZoom,
+    required double currentPitch,
+    required bool isTablet,
+    required bool isLandscape,
+    required double safeTop,
+    required double safeBottom,
+  }) {
+    final profile = resolveDriverCockpitCameraProfile(
+      DriverCockpitCameraProfileInput(
+        currentZoom: currentZoom,
+        currentPitch: currentPitch,
+        isTablet: isTablet,
+        isLandscape: isLandscape,
+        safeTop: safeTop,
+        safeBottom: safeBottom,
+      ),
+    );
+    return (
+      zoom: profile.zoom,
+      pitch: profile.pitch,
+      padding: profile.padding,
+      reason: profile.reason,
+    );
+  }
+
+  void _logNavPresCamera({
+    required double zoom,
+    required double pitch,
+    required double bearing,
+    required String reason,
+  }) {
+    if (!_navigationPresentationStateFor(_navCameraViewMode)
+        .useDriverCockpitCamera) {
+      return;
+    }
+    final signature =
+        '${zoom.toStringAsFixed(1)}|${pitch.toStringAsFixed(1)}|'
+        '${bearing.round()}|$reason';
+    if (signature == _lastNavPresCameraSignature) return;
+    _lastNavPresCameraSignature = signature;
+    _logNavBounded(
+      'NAV_PRES_CAMERA',
+      'mode=driver cockpit=true '
+          'zoom=${zoom.toStringAsFixed(1)} '
+          'pitch=${pitch.toStringAsFixed(1)} '
+          'bearing=${bearing.round()} '
+          'reason=$reason',
+      intervalMs: 1200,
+    );
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+        tag: 'NAV_PRES_CAMERA',
+        fields: <String, dynamic>{
+          'mode': 'driver',
+          'cockpit': true,
+          'zoom': zoom,
+          'pitch': pitch,
+          'bearing': bearing.round(),
+          'reason': reason,
+        },
+      ),
+    );
+  }
+
   void _toggleNavCameraViewMode() {
     if (_cameraMode != _CameraMode.follow || !_liveRideActive) return;
     final previous = _navCameraViewMode;
@@ -10372,11 +10445,46 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
     final p = _mbPoint(visual.point.lon, visual.point.lat);
     final resolvedReason = manualRecenter ? 'manual_recenter' : policy.reason;
-    _lastMapCameraZoom = policy.zoom;
+    var cameraZoom = policy.zoom;
+    var cameraPitch = policy.tilt;
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
+    final safeTop = MediaQuery.of(context).padding.top;
+    final safeBottom = MediaQuery.of(context).padding.bottom;
+    var viewPadding = navCameraViewPadding(
+      mode: viewMode,
+      isLandscape: isLandscape,
+      safeTop: safeTop,
+      safeBottom: safeBottom,
+    );
+    final navPresentation = _navigationPresentationStateFor(viewMode);
+    if (_cameraMode == _CameraMode.follow &&
+        _liveRideActive &&
+        navPresentation.useDriverCockpitCamera) {
+      final isTablet = MediaQuery.sizeOf(context).width >= 600;
+      final cockpit = _driverCockpitCameraOverrides(
+        currentZoom: cameraZoom,
+        currentPitch: cameraPitch,
+        isTablet: isTablet,
+        isLandscape: isLandscape,
+        safeTop: safeTop,
+        safeBottom: safeBottom,
+      );
+      cameraZoom = cockpit.zoom;
+      cameraPitch = cockpit.pitch;
+      viewPadding = cockpit.padding;
+      _logNavPresCamera(
+        zoom: cameraZoom,
+        pitch: cameraPitch,
+        bearing: heading,
+        reason: cockpit.reason,
+      );
+    }
+    _lastMapCameraZoom = cameraZoom;
     unawaited(_syncDriverMarkerIconSizeForZoom());
     _logNavBounded(
       'NAV_R1_CAMERA',
-      'zoom=${policy.zoom.toStringAsFixed(1)} reason=$resolvedReason',
+      'zoom=${cameraZoom.toStringAsFixed(1)} reason=$resolvedReason',
       intervalMs: 2500,
     );
     final animMs = force ? 220 : _followCameraAnimMsFor(pos);
@@ -10387,22 +10495,13 @@ class _DriverHomePageState extends State<DriverHomePage>
       targetAgeMs: fixAgeSec != null ? (fixAgeSec * 1000).round() : null,
     );
 
-    final isLandscape =
-        MediaQuery.of(context).orientation == Orientation.landscape;
-    final viewPadding = navCameraViewPadding(
-      mode: viewMode,
-      isLandscape: isLandscape,
-      safeTop: MediaQuery.of(context).padding.top,
-      safeBottom: MediaQuery.of(context).padding.bottom,
-    );
-
     try {
       await _map?.flyTo(
         mb.CameraOptions(
           center: p,
-          zoom: policy.zoom,
+          zoom: cameraZoom,
           bearing: heading,
-          pitch: policy.tilt,
+          pitch: cameraPitch,
           padding: mb.MbxEdgeInsets(
             top: viewPadding.top,
             left: viewPadding.left,
@@ -10416,8 +10515,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       _navValidationPendingCameraSkipReason = null;
       _recordNavDiagCameraUpdate(
         follow: true,
-        zoom: policy.zoom,
-        tilt: policy.tilt,
+        zoom: cameraZoom,
+        tilt: cameraPitch,
         bearing: heading,
       );
     } finally {

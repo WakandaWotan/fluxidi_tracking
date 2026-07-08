@@ -109,6 +109,7 @@ import 'navigation/nav_engine/nav_camera_view_mode.dart';
 import 'navigation/nav_engine/nav_reroute_decision.dart';
 import 'navigation/presentation/navigation_presentation_controller.dart';
 import 'navigation/presentation/navigation_presentation_state.dart';
+import 'navigation/presentation/navigation_driver_cockpit_camera.dart';
 import 'navigation/widgets/navigation_driver_hud_overlay.dart';
 import 'navigation/nav_engine/nav_confidence_engine.dart';
 import 'navigation/nav_engine/nav_complexity_guard.dart';
