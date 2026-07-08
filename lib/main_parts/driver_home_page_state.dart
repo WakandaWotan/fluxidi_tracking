@@ -240,6 +240,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   String? _lastNavR15ViewModeSignature;
   String? _lastNavR15BearingSignature;
   String? _lastNavPresCameraSignature;
+  String? _lastNavPresRouteAlignSignature;
+  double? _lastCockpitCameraCenterLat;
+  double? _lastCockpitCameraCenterLon;
   MapThemeMode? _mapThemeOverride;
   DriverMapVisualMode _driverMapVisualMode = DriverMapVisualMode.street;
   double _lastMapCameraZoom = kDriverMapInitialZoom;
@@ -7823,11 +7826,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
-  /// NAV-PRES-3A: cockpit zoom/pitch/padding overrides for flagged driver mode.
+  /// NAV-PRES-3B: chase-camera zoom/pitch/padding/lookahead for flagged driver mode.
   ({
     double zoom,
     double pitch,
     NavCameraViewPadding padding,
+    double? centerLat,
+    double? centerLon,
+    double lookaheadM,
     String reason,
   })
   _driverCockpitCameraOverrides({
@@ -7837,7 +7843,25 @@ class _DriverHomePageState extends State<DriverHomePage>
     required bool isLandscape,
     required double safeTop,
     required double safeBottom,
+    required double vehicleLat,
+    required double vehicleLon,
+    required double bearingDeg,
+    required double speedKmh,
+    required NavRouteProgressOutput? progress,
   }) {
+    final lookahead = DriverCockpitCameraLookaheadInput(
+      vehicleLat: vehicleLat,
+      vehicleLon: vehicleLon,
+      bearingDeg: bearingDeg,
+      speedKmh: speedKmh,
+      routeCoords: _routeCoords,
+      segmentIndex: progress?.segmentIndex,
+      snappedLat: progress?.snappedLatitude,
+      snappedLon: progress?.snappedLongitude,
+      hasReliableSnap: progress?.hasReliableSnap ?? false,
+      previousCenterLat: _lastCockpitCameraCenterLat,
+      previousCenterLon: _lastCockpitCameraCenterLon,
+    );
     final profile = resolveDriverCockpitCameraProfile(
       DriverCockpitCameraProfileInput(
         currentZoom: currentZoom,
@@ -7847,19 +7871,36 @@ class _DriverHomePageState extends State<DriverHomePage>
         safeTop: safeTop,
         safeBottom: safeBottom,
       ),
+      lookahead: lookahead,
     );
+    if (profile.centerLat != null && profile.centerLon != null) {
+      _lastCockpitCameraCenterLat = profile.centerLat;
+      _lastCockpitCameraCenterLon = profile.centerLon;
+    }
     return (
       zoom: profile.zoom,
       pitch: profile.pitch,
       padding: profile.padding,
+      centerLat: profile.centerLat,
+      centerLon: profile.centerLon,
+      lookaheadM: profile.lookaheadM,
       reason: profile.reason,
     );
+  }
+
+  void _resetDriverCockpitCameraState() {
+    _lastCockpitCameraCenterLat = null;
+    _lastCockpitCameraCenterLon = null;
+    _lastNavPresCameraSignature = null;
+    _lastNavPresRouteAlignSignature = null;
   }
 
   void _logNavPresCamera({
     required double zoom,
     required double pitch,
     required double bearing,
+    required double bottomPadding,
+    required double lookaheadM,
     required String reason,
   }) {
     if (!_navigationPresentationStateFor(_navCameraViewMode)
@@ -7868,7 +7909,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     final signature =
         '${zoom.toStringAsFixed(1)}|${pitch.toStringAsFixed(1)}|'
-        '${bearing.round()}|$reason';
+        '${bearing.round()}|${bottomPadding.round()}|'
+        '${lookaheadM.round()}|$reason';
     if (signature == _lastNavPresCameraSignature) return;
     _lastNavPresCameraSignature = signature;
     _logNavBounded(
@@ -7877,6 +7919,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           'zoom=${zoom.toStringAsFixed(1)} '
           'pitch=${pitch.toStringAsFixed(1)} '
           'bearing=${bearing.round()} '
+          'bottomPadding=${bottomPadding.round()} '
+          'lookahead=${lookaheadM.round()} '
           'reason=$reason',
       intervalMs: 1200,
     );
@@ -7889,7 +7933,53 @@ class _DriverHomePageState extends State<DriverHomePage>
           'zoom': zoom,
           'pitch': pitch,
           'bearing': bearing.round(),
+          'bottomPadding': bottomPadding.round(),
+          'lookaheadM': lookaheadM.round(),
           'reason': reason,
+        },
+      ),
+    );
+  }
+
+  void _logNavPresRouteAlign({
+    required double vehicleLat,
+    required double vehicleLon,
+    required NavRouteProgressOutput? progress,
+  }) {
+    if (!_navigationPresentationStateFor(_navCameraViewMode)
+        .useDriverCockpitCamera) {
+      return;
+    }
+    final align = resolveDriverCockpitRouteAlignDiagnostics(
+      vehicleLat: vehicleLat,
+      vehicleLon: vehicleLon,
+      routeCoords: _routeCoords,
+      hasReliableSnap: progress?.hasReliableSnap ?? false,
+      snappedLat: progress?.snappedLatitude,
+      snappedLon: progress?.snappedLongitude,
+    );
+    final markerM = align.markerToRouteStartM;
+    final activeStartM = align.activeRouteStartDistM;
+    if (markerM == null && activeStartM == null) return;
+    final signature =
+        '${markerM?.round() ?? 'na'}|${activeStartM?.round() ?? 'na'}|'
+        '${align.snapped}';
+    if (signature == _lastNavPresRouteAlignSignature) return;
+    _lastNavPresRouteAlignSignature = signature;
+    _logNavBounded(
+      'NAV_PRES_ROUTE_ALIGN',
+      'markerToRouteStartM=${markerM?.toStringAsFixed(1) ?? 'na'} '
+          'activeRouteStartDistM=${activeStartM?.toStringAsFixed(1) ?? 'na'} '
+          'snapped=${align.snapped}',
+      intervalMs: 1500,
+    );
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+        tag: 'NAV_PRES_ROUTE_ALIGN',
+        fields: <String, dynamic>{
+          'markerToRouteStartM': markerM?.round(),
+          'activeRouteStartDistM': activeStartM?.round(),
+          'snapped': align.snapped,
         },
       ),
     );
@@ -7905,6 +7995,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
     setState(() => _navCameraViewMode = next);
     _lastSmoothedCameraBearing = null;
+    _resetDriverCockpitCameraState();
     _logNavR15CameraView(
       mode: next,
       previousMode: previous,
@@ -10444,6 +10535,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       routeConfidence: progress?.confidence,
     );
     final p = _mbPoint(visual.point.lon, visual.point.lat);
+    var cameraCenter = p;
     final resolvedReason = manualRecenter ? 'manual_recenter' : policy.reason;
     var cameraZoom = policy.zoom;
     var cameraPitch = policy.tilt;
@@ -10469,15 +10561,30 @@ class _DriverHomePageState extends State<DriverHomePage>
         isLandscape: isLandscape,
         safeTop: safeTop,
         safeBottom: safeBottom,
+        vehicleLat: visual.point.lat,
+        vehicleLon: visual.point.lon,
+        bearingDeg: heading,
+        speedKmh: speedKmh,
+        progress: progress,
       );
       cameraZoom = cockpit.zoom;
       cameraPitch = cockpit.pitch;
       viewPadding = cockpit.padding;
+      if (cockpit.centerLat != null && cockpit.centerLon != null) {
+        cameraCenter = _mbPoint(cockpit.centerLon!, cockpit.centerLat!);
+      }
       _logNavPresCamera(
         zoom: cameraZoom,
         pitch: cameraPitch,
         bearing: heading,
+        bottomPadding: viewPadding.bottom,
+        lookaheadM: cockpit.lookaheadM,
         reason: cockpit.reason,
+      );
+      _logNavPresRouteAlign(
+        vehicleLat: visual.point.lat,
+        vehicleLon: visual.point.lon,
+        progress: progress,
       );
     }
     _lastMapCameraZoom = cameraZoom;
@@ -10498,7 +10605,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     try {
       await _map?.flyTo(
         mb.CameraOptions(
-          center: p,
+          center: cameraCenter,
           zoom: cameraZoom,
           bearing: heading,
           pitch: cameraPitch,
@@ -18199,8 +18306,16 @@ class _DriverHomePageState extends State<DriverHomePage>
         ? _navigationPresentationStateFor(_navCameraViewMode)
         : _navigationPresentationStateFor(NavCameraViewMode.overview);
     final double driverHudBottom = showCockpit
-        ? (isLandscape ? 112.0 : 168.0) + safeBottomInset
+        ? (isLandscape ? 112.0 : 168.0) +
+            safeBottomInset +
+            (navPresentationState.useDriverCockpitCamera ? 8.0 : 0.0)
         : arrowBottom;
+    final double driverHudIconSize = navPresentationState.showDriverHudOverlay
+        ? NavigationDriverHudOverlay.resolveIconSize(
+            screenWidth: screenW,
+            cockpitBoost: navPresentationState.useDriverCockpitCamera,
+          )
+        : 56.0;
     return Scaffold(
       key: _scaffoldKey,
       drawer: _buildDrawer(),
@@ -18383,8 +18498,8 @@ class _DriverHomePageState extends State<DriverHomePage>
               left: 0,
               right: 0,
               bottom: driverHudBottom,
-              child: const Center(
-                child: NavigationDriverHudOverlay(),
+              child: Center(
+                child: NavigationDriverHudOverlay(iconSize: driverHudIconSize),
               ),
             ),
 

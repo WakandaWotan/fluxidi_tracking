@@ -157,6 +157,106 @@ double? driverForwardRouteBearing(
   return driverBearingFromPoints(a.lat, a.lon, last.lat, last.lon);
 }
 
+/// NAV-PRES-3B: geographic point [lookaheadM] meters ahead along the route
+/// polyline from the snapped position (same walk as [driverForwardRouteBearing]).
+DriverLonLat? driverForwardRouteLookaheadPoint(
+  List<DriverLonLat> routeCoords, {
+  required int segmentIndex,
+  required double snappedLat,
+  required double snappedLon,
+  double lookaheadM = 45.0,
+}) {
+  if (routeCoords.length < 2 || lookaheadM <= 0) return null;
+  final i = segmentIndex.clamp(0, routeCoords.length - 2);
+
+  var curLat = snappedLat;
+  var curLon = snappedLon;
+  var need = lookaheadM;
+  for (var k = i + 1; k < routeCoords.length; k++) {
+    final next = routeCoords[k];
+    final d = driverMetersBetween(
+      DriverLonLat(curLon, curLat),
+      DriverLonLat(next.lon, next.lat),
+    );
+    if (d >= need && d > 0.5) {
+      final t = need / d;
+      return DriverLonLat(
+        curLon + (next.lon - curLon) * t,
+        curLat + (next.lat - curLat) * t,
+      );
+    }
+    need -= d;
+    curLat = next.lat;
+    curLon = next.lon;
+  }
+  final last = routeCoords.last;
+  final distToEnd = driverMetersBetween(
+    DriverLonLat(snappedLon, snappedLat),
+    DriverLonLat(last.lon, last.lat),
+  );
+  if (distToEnd > 1.0) {
+    return last;
+  }
+  return DriverLonLat(snappedLon, snappedLat);
+}
+
+/// NAV-PRES-3B: offset a point [distanceM] along [bearingDeg] (0 = north).
+DriverLonLat driverPointAheadOnBearing({
+  required double lat,
+  required double lon,
+  required double bearingDeg,
+  required double distanceM,
+}) {
+  if (distanceM <= 0) {
+    return DriverLonLat(lon, lat);
+  }
+  const earthRadiusM = 6378137.0;
+  final bearingRad = bearingDeg * math.pi / 180.0;
+  final latRad = lat * math.pi / 180.0;
+  final lonRad = lon * math.pi / 180.0;
+  final angularDist = distanceM / earthRadiusM;
+  final lat2Rad = math.asin(
+    math.sin(latRad) * math.cos(angularDist) +
+        math.cos(latRad) * math.sin(angularDist) * math.cos(bearingRad),
+  );
+  final lon2Rad =
+      lonRad +
+      math.atan2(
+        math.sin(bearingRad) * math.sin(angularDist) * math.cos(latRad),
+        math.cos(angularDist) - math.sin(latRad) * math.sin(lat2Rad),
+      );
+  return DriverLonLat(
+    lon2Rad * 180.0 / math.pi,
+    lat2Rad * 180.0 / math.pi,
+  );
+}
+
+/// NAV-PRES-3B: move [current] toward [target] by at most [maxStepM] meters.
+DriverLonLat driverSmoothGeodesicToward({
+  required DriverLonLat current,
+  required DriverLonLat target,
+  required double maxStepM,
+}) {
+  if (maxStepM <= 0) return current;
+  final distanceM = driverMetersBetween(current, target);
+  if (!distanceM.isFinite || distanceM <= maxStepM) {
+    return target;
+  }
+  final bearing = driverBearingFromPoints(
+    current.lat,
+    current.lon,
+    target.lat,
+    target.lon,
+  );
+  if (bearing == null) return target;
+  return driverPointAheadOnBearing(
+    lat: current.lat,
+    lon: current.lon,
+    bearingDeg: bearing,
+    distanceM: maxStepM,
+  );
+}
+
 double? driverBearingFromPoints(
   double lat1,
   double lon1,

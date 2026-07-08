@@ -1,6 +1,8 @@
+import '../driver_navigation_geometry.dart';
+import '../driver_navigation_models.dart';
 import '../nav_engine/nav_camera_view_mode.dart';
 
-/// Input for NAV-PRES-3A driver cockpit camera tuning.
+/// Input for NAV-PRES-3A/3B driver cockpit camera tuning.
 class DriverCockpitCameraProfileInput {
   final double currentZoom;
   final double currentPitch;
@@ -19,35 +21,96 @@ class DriverCockpitCameraProfileInput {
   });
 }
 
-/// Resolved cockpit follow-camera parameters (zoom, pitch, padding).
+/// Input for NAV-PRES-3B chase-camera lookahead center resolution.
+class DriverCockpitCameraLookaheadInput {
+  final double vehicleLat;
+  final double vehicleLon;
+  final double bearingDeg;
+  final double speedKmh;
+  final List<DriverLonLat> routeCoords;
+  final int? segmentIndex;
+  final double? snappedLat;
+  final double? snappedLon;
+  final bool hasReliableSnap;
+  final double? previousCenterLat;
+  final double? previousCenterLon;
+
+  const DriverCockpitCameraLookaheadInput({
+    required this.vehicleLat,
+    required this.vehicleLon,
+    required this.bearingDeg,
+    required this.speedKmh,
+    this.routeCoords = const <DriverLonLat>[],
+    this.segmentIndex,
+    this.snappedLat,
+    this.snappedLon,
+    this.hasReliableSnap = false,
+    this.previousCenterLat,
+    this.previousCenterLon,
+  });
+}
+
+/// Resolved cockpit follow-camera parameters (zoom, pitch, padding, center).
 class DriverCockpitCameraProfileOutput {
   final double zoom;
   final double pitch;
   final NavCameraViewPadding padding;
+  final double? centerLat;
+  final double? centerLon;
+  final double lookaheadM;
   final String reason;
 
   const DriverCockpitCameraProfileOutput({
     required this.zoom,
     required this.pitch,
     required this.padding,
+    this.centerLat,
+    this.centerLon,
+    this.lookaheadM = 0,
     required this.reason,
   });
 }
 
-/// NAV-PRES-3A: bounded zoom/pitch step limits (aligned with NAV-R12-H policy).
+/// NAV-PRES-3B: bounded route-alignment diagnostics (no coordinates logged).
+class DriverCockpitRouteAlignDiagnostics {
+  final double? markerToRouteStartM;
+  final double? activeRouteStartDistM;
+  final bool snapped;
+
+  const DriverCockpitRouteAlignDiagnostics({
+    this.markerToRouteStartM,
+    this.activeRouteStartDistM,
+    required this.snapped,
+  });
+}
+
+/// NAV-PRES-3A/3B: bounded zoom/pitch step limits (aligned with NAV-R12-H policy).
 const double kDriverCockpitCameraMaxZoomStep = 0.35;
 const double kDriverCockpitCameraMaxPitchStep = 3.0;
+const double kDriverCockpitCameraMaxCenterStepM = 12.0;
 const double kDriverCockpitCameraMinZoom = 13.0;
-const double kDriverCockpitCameraMaxZoom = 18.8;
+const double kDriverCockpitCameraMaxZoom = 19.3;
 const double kDriverCockpitCameraMinPitch = 44.0;
-const double kDriverCockpitCameraMaxPitch = 74.0;
+const double kDriverCockpitCameraMaxPitch = 80.0;
+
+/// NAV-PRES-3A baseline targets (for tests comparing 3B increases).
+const double kDriverCockpitCamera3aPhoneZoom = 18.4;
+const double kDriverCockpitCamera3aPhonePitch = 71.0;
+const double kDriverCockpitCamera3aTabletZoom = 17.6;
+const double kDriverCockpitCamera3aTabletPitch = 69.0;
 
 double driverCockpitCameraTargetZoom({required bool isTablet}) {
-  return isTablet ? 17.6 : 18.4;
+  return isTablet ? 18.4 : 19.1;
 }
 
 double driverCockpitCameraTargetPitch({required bool isTablet}) {
-  return isTablet ? 69.0 : 71.0;
+  return isTablet ? 76.0 : 78.0;
+}
+
+/// NAV-PRES-3B: speed-scaled lookahead distance for chase-camera framing.
+double resolveDriverCockpitLookaheadMeters({required double speedKmh}) {
+  final t = (speedKmh / 80.0).clamp(0.0, 1.0);
+  return (35.0 + t * 25.0).clamp(35.0, 60.0);
 }
 
 /// Ramps [current] toward [target] by at most [maxStep].
@@ -73,26 +136,114 @@ NavCameraViewPadding driverCockpitCameraViewPadding({
 }) {
   if (isLandscape) {
     return NavCameraViewPadding(
-      top: safeTop + (isTablet ? 28.0 : 32.0),
-      bottom: safeBottom + (isTablet ? 148.0 : 156.0),
+      top: safeTop + (isTablet ? 24.0 : 28.0),
+      bottom: safeBottom + (isTablet ? 172.0 : 188.0),
     );
   }
   if (isTablet) {
     return NavCameraViewPadding(
-      top: safeTop + 72.0,
-      bottom: safeBottom + 340.0,
+      top: safeTop + 56.0,
+      bottom: safeBottom + 420.0,
     );
   }
   return NavCameraViewPadding(
-    top: safeTop + 72.0,
-    bottom: safeBottom + 368.0,
+    top: safeTop + 56.0,
+    bottom: safeBottom + 448.0,
   );
 }
 
-/// NAV-PRES-3A: lower, more forward cockpit camera profile for driver mode.
+/// NAV-PRES-3B: chase-camera center on route lookahead or bearing fallback.
+DriverCockpitCameraProfileOutput resolveDriverCockpitLookaheadCenter(
+  DriverCockpitCameraLookaheadInput input, {
+  required double lookaheadM,
+}) {
+  DriverLonLat? target;
+  var reason = 'bearing_lookahead';
+
+  if (input.hasReliableSnap &&
+      input.segmentIndex != null &&
+      input.snappedLat != null &&
+      input.snappedLon != null &&
+      input.routeCoords.length >= 2) {
+    final i = input.segmentIndex!.clamp(0, input.routeCoords.length - 2);
+    target = driverForwardRouteLookaheadPoint(
+      input.routeCoords,
+      segmentIndex: i,
+      snappedLat: input.snappedLat!,
+      snappedLon: input.snappedLon!,
+      lookaheadM: lookaheadM,
+    );
+    if (target != null) {
+      reason = 'route_lookahead';
+    }
+  }
+
+  target ??= driverPointAheadOnBearing(
+    lat: input.vehicleLat,
+    lon: input.vehicleLon,
+    bearingDeg: input.bearingDeg,
+    distanceM: lookaheadM,
+  );
+
+  var center = target;
+  if (input.previousCenterLat != null &&
+      input.previousCenterLon != null &&
+      input.previousCenterLat!.isFinite &&
+      input.previousCenterLon!.isFinite) {
+    center = driverSmoothGeodesicToward(
+      current: DriverLonLat(
+        input.previousCenterLon!,
+        input.previousCenterLat!,
+      ),
+      target: target,
+      maxStepM: kDriverCockpitCameraMaxCenterStepM,
+    );
+  }
+
+  return DriverCockpitCameraProfileOutput(
+    zoom: 0,
+    pitch: 0,
+    padding: const NavCameraViewPadding(top: 0, bottom: 0),
+    centerLat: center.lat,
+    centerLon: center.lon,
+    lookaheadM: lookaheadM,
+    reason: reason,
+  );
+}
+
+/// NAV-PRES-3B: route-line alignment diagnostics (diagnosis only).
+DriverCockpitRouteAlignDiagnostics resolveDriverCockpitRouteAlignDiagnostics({
+  required double vehicleLat,
+  required double vehicleLon,
+  required List<DriverLonLat> routeCoords,
+  required bool hasReliableSnap,
+  double? snappedLat,
+  double? snappedLon,
+}) {
+  if (routeCoords.isEmpty) {
+    return const DriverCockpitRouteAlignDiagnostics(snapped: false);
+  }
+  final vehicle = DriverLonLat(vehicleLon, vehicleLat);
+  final markerToRouteStartM = driverMetersBetween(vehicle, routeCoords.first);
+  double? activeRouteStartDistM;
+  if (hasReliableSnap && snappedLat != null && snappedLon != null) {
+    activeRouteStartDistM = driverMetersBetween(
+      vehicle,
+      DriverLonLat(snappedLon, snappedLat),
+    );
+  }
+  return DriverCockpitRouteAlignDiagnostics(
+    markerToRouteStartM: markerToRouteStartM,
+    activeRouteStartDistM: activeRouteStartDistM,
+    snapped: hasReliableSnap,
+  );
+}
+
+/// NAV-PRES-3B: lower third-person chase camera profile for driver mode.
 DriverCockpitCameraProfileOutput resolveDriverCockpitCameraProfile(
-  DriverCockpitCameraProfileInput input,
-) {
+  DriverCockpitCameraProfileInput input, {
+  DriverCockpitCameraLookaheadInput? lookahead,
+}) {
   final targetZoom = driverCockpitCameraTargetZoom(isTablet: input.isTablet);
   final targetPitch = driverCockpitCameraTargetPitch(isTablet: input.isTablet);
   final zoom = driverCockpitCameraSmoothToward(
@@ -109,15 +260,36 @@ DriverCockpitCameraProfileOutput resolveDriverCockpitCameraProfile(
     min: kDriverCockpitCameraMinPitch,
     max: kDriverCockpitCameraMaxPitch,
   );
+  final padding = driverCockpitCameraViewPadding(
+    isTablet: input.isTablet,
+    isLandscape: input.isLandscape,
+    safeTop: input.safeTop,
+    safeBottom: input.safeBottom,
+  );
+
+  if (lookahead == null) {
+    return DriverCockpitCameraProfileOutput(
+      zoom: zoom,
+      pitch: pitch,
+      padding: padding,
+      reason: 'driver_cockpit_profile',
+    );
+  }
+
+  final lookaheadM = resolveDriverCockpitLookaheadMeters(
+    speedKmh: lookahead.speedKmh,
+  );
+  final center = resolveDriverCockpitLookaheadCenter(
+    lookahead,
+    lookaheadM: lookaheadM,
+  );
   return DriverCockpitCameraProfileOutput(
     zoom: zoom,
     pitch: pitch,
-    padding: driverCockpitCameraViewPadding(
-      isTablet: input.isTablet,
-      isLandscape: input.isLandscape,
-      safeTop: input.safeTop,
-      safeBottom: input.safeBottom,
-    ),
-    reason: 'driver_cockpit_profile',
+    padding: padding,
+    centerLat: center.centerLat,
+    centerLon: center.centerLon,
+    lookaheadM: center.lookaheadM,
+    reason: center.reason,
   );
 }

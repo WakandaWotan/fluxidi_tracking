@@ -12,6 +12,18 @@ class NavigationDriverHudOverlay extends StatelessWidget {
     this.iconSize = 56.0,
   });
 
+  /// NAV-PRES-3B: responsive HUD vehicle sizing (screen-fixed, no map deps).
+  static double resolveIconSize({
+    required double screenWidth,
+    required bool cockpitBoost,
+  }) {
+    final isTablet = screenWidth >= 600;
+    if (cockpitBoost) {
+      return isTablet ? 108.0 : 94.0;
+    }
+    return isTablet ? 80.0 : 72.0;
+  }
+
   final double iconSize;
 
   @override
