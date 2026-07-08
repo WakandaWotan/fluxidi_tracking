@@ -324,59 +324,52 @@ double driverCockpitViewLevelTargetPitch({
   return raw.clamp(kDriverCockpitCameraMinPitch, kDriverCockpitCameraMaxPitch);
 }
 
-/// NAV-PRES-3G: stable anchor for close chase levels (5..13).
-double driverCockpitViewLevelTargetAnchorFraction({
+/// NAV-PRES-3H: driver cockpit HUD is locked to View 7 baseline for all levels.
+double driverCockpitFixedHudIconSize({required bool isTablet}) {
+  return isTablet ? kDriverCockpitPro2HudTabletL7 : kDriverCockpitPro2HudPhoneL7;
+}
+
+/// NAV-PRES-3H: fixed HUD bottom offset above safe inset (level-independent).
+double driverCockpitFixedHudBottomOffset({
+  required bool isLandscape,
+  required bool cockpitChaseCamera,
+}) {
+  return (isLandscape ? 112.0 : 168.0) + (cockpitChaseCamera ? 8.0 : 0.0);
+}
+
+/// NAV-PRES-3H: stable L7 anchor for all driver view levels (1..13).
+double driverCockpitFixedAnchorFraction({
   required bool isTablet,
   required bool isLandscape,
-  required int level,
 }) {
   final compact = driverCockpitUsesCompactChaseProfile(
     isTablet: isTablet,
     isLandscape: isLandscape,
   );
-  final l = clampDriverCockpitViewLevel(level);
-  final anchorL7 = compact
+  return compact
       ? kDriverCockpitPro2CompactAnchorL7
       : kDriverCockpitPro2PhoneAnchorL7;
-  final anchorL1 = compact
-      ? kDriverCockpitPro2CompactAnchorL1
-      : kDriverCockpitPro2PhoneAnchorL1;
-
-  if (l >= kDriverCockpitHudFixedLevelMin) {
-    return anchorL7;
-  }
-
-  // Levels 1..4: gentle overview ramp; close levels share the L7 anchor.
-  final t = _driverCockpitEaseInPower((l - 1) / 3.0, 1.25);
-  final raw = anchorL1 + (anchorL7 - anchorL1) * t;
-  if (compact) {
-    return raw.clamp(0.50, 0.78);
-  }
-  return raw.clamp(0.56, 0.86);
 }
 
-/// NAV-PRES-3G: fixed HUD size for close levels; smaller only for overview.
+/// NAV-PRES-3G: stable anchor for close chase levels (5..13).
+/// NAV-PRES-3H: all levels 1..13 use fixed L7 anchor in driver cockpit mode.
+double driverCockpitViewLevelTargetAnchorFraction({
+  required bool isTablet,
+  required bool isLandscape,
+  required int level,
+}) {
+  return driverCockpitFixedAnchorFraction(
+    isTablet: isTablet,
+    isLandscape: isLandscape,
+  );
+}
+
+/// NAV-PRES-3G/3H: driver cockpit HUD size — fixed at L7 baseline for all levels.
 double driverCockpitViewLevelHudIconSize({
   required bool isTablet,
   required int level,
 }) {
-  final l = clampDriverCockpitViewLevel(level);
-  final baseline =
-      isTablet ? kDriverCockpitPro2HudTabletL7 : kDriverCockpitPro2HudPhoneL7;
-  final overviewSmall =
-      isTablet ? kDriverCockpitPro2HudTabletL1 : kDriverCockpitPro2HudPhoneL1;
-
-  if (l >= kDriverCockpitHudFixedLevelMin) {
-    return baseline;
-  }
-  if (l <= kDriverCockpitHudOverviewLevelMax) {
-    final t = (l - kDriverCockpitViewLevelMin) /
-        (kDriverCockpitHudOverviewLevelMax - kDriverCockpitViewLevelMin);
-    return overviewSmall + (baseline - overviewSmall) * 0.4 * t;
-  }
-  // Level 4: transition into the fixed close baseline.
-  final level3Size = overviewSmall + (baseline - overviewSmall) * 0.4;
-  return level3Size + (baseline - level3Size) * 0.5;
+  return driverCockpitFixedHudIconSize(isTablet: isTablet);
 }
 
 /// Legacy intensity helpers (diagnostics / backward-compatible tests).

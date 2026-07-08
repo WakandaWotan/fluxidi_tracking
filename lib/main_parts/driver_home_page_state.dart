@@ -249,6 +249,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   int? _lastDriverCockpitAppliedLevel;
   String? _lastNavPresCameraTargetSignature;
   String? _lastNavPresCameraAppliedSignature;
+  String? _lastNavPresHudLockSignature;
   bool _navPresCameraAnchorDiagEmitted = false;
   MapThemeMode? _mapThemeOverride;
   DriverMapVisualMode _driverMapVisualMode = DriverMapVisualMode.street;
@@ -7924,6 +7925,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _lastNavPresCameraSignature = null;
     _lastNavPresCameraTargetSignature = null;
     _lastNavPresCameraAppliedSignature = null;
+    _lastNavPresHudLockSignature = null;
     _lastNavPresRouteAlignSignature = null;
     _lastNavPresBearingSignature = null;
     _lastNavPresControlsLayoutSignature = null;
@@ -8065,6 +8067,44 @@ class _DriverHomePageState extends State<DriverHomePage>
           'reason': 'real_mapbox_camera',
         },
       ),
+    );
+  }
+
+  void _logNavPresHudLockIfChanged({
+    required bool isLandscape,
+    required int level,
+    required double hudSize,
+    required double hudBottom,
+    required double anchor,
+  }) {
+    if (!_navigationPresentationStateFor(_navCameraViewMode)
+        .useDriverCockpitCamera) {
+      return;
+    }
+    final signature =
+        '${isLandscape ? 'landscape' : 'portrait'}|$level|'
+        '${hudSize.round()}|${hudBottom.round()}|'
+        '${anchor.toStringAsFixed(2)}';
+    if (signature == _lastNavPresHudLockSignature) return;
+    _lastNavPresHudLockSignature = signature;
+    _logNavBounded(
+      'NAV_PRES_HUD_LOCK',
+      'mode=driver '
+          'level=$level '
+          'hudSize=${hudSize.round()} '
+          'hudBottom=${hudBottom.round()} '
+          'anchor=${anchor.toStringAsFixed(2)} '
+          'reason=fixed_hud',
+      intervalMs: 1200,
+    );
+    final map3d = DriverCockpitMap3dCapability.resolve(
+      styleUri: _activeMapStyleUri,
+      visualMode: _driverMapVisualMode,
+    );
+    _logNavBounded(
+      'NAV_PRES_MAP_3D',
+      map3d.toDiagnosticLine(),
+      intervalMs: 5000,
     );
   }
 
@@ -18695,9 +18735,11 @@ class _DriverHomePageState extends State<DriverHomePage>
         ? _navigationPresentationStateFor(_navCameraViewMode)
         : _navigationPresentationStateFor(NavCameraViewMode.overview);
     final double driverHudBottom = showCockpit
-        ? (isLandscape ? 112.0 : 168.0) +
-            safeBottomInset +
-            (navPresentationState.useDriverCockpitCamera ? 8.0 : 0.0)
+        ? driverCockpitFixedHudBottomOffset(
+            isLandscape: isLandscape,
+            cockpitChaseCamera: navPresentationState.useDriverCockpitCamera,
+          ) +
+            safeBottomInset
         : arrowBottom;
     final double driverHudIconSize = navPresentationState.showDriverHudOverlay
         ? NavigationDriverHudOverlay.resolveIconSize(
@@ -18706,6 +18748,21 @@ class _DriverHomePageState extends State<DriverHomePage>
             viewLevel: _driverCockpitViewLevel,
           )
         : 56.0;
+    if (_cameraMode == _CameraMode.follow &&
+        liveActive &&
+        navPresentationState.useDriverCockpitCamera &&
+        navPresentationState.showDriverHudOverlay) {
+      _logNavPresHudLockIfChanged(
+        isLandscape: isLandscape,
+        level: _driverCockpitViewLevel,
+        hudSize: driverHudIconSize,
+        hudBottom: driverHudBottom,
+        anchor: driverCockpitFixedAnchorFraction(
+          isTablet: isTablet,
+          isLandscape: isLandscape,
+        ),
+      );
+    }
     final navActionColors = _navActionThemeColors();
     final bool showDriverCockpitCameraControls =
         _cameraMode == _CameraMode.follow &&

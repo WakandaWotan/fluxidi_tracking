@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fluxidi_tracking/navigation/driver_navigation_map_config.dart';
 import 'package:fluxidi_tracking/navigation/driver_navigation_models.dart';
 import 'package:fluxidi_tracking/navigation/nav_engine/nav_camera_view_mode.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_cockpit_camera.dart';
@@ -373,26 +374,25 @@ void main() {
       expect(pitch1, inInclusiveRange(48.0, 55.0));
     });
 
-    test('level 13 anchor is stable at level 7 baseline for close levels', () {
-      final anchor13 = driverCockpitViewLevelTargetAnchorFraction(
-        isTablet: false,
-        isLandscape: false,
-        level: 13,
-      );
-      final anchor1 = driverCockpitViewLevelTargetAnchorFraction(
-        isTablet: false,
-        isLandscape: false,
-        level: 1,
-      );
-      final anchor7 = driverCockpitViewLevelTargetAnchorFraction(
-        isTablet: false,
-        isLandscape: false,
-        level: 7,
-      );
-      expect(anchor13, anchor7);
-      expect(anchor7, greaterThan(anchor1 + 0.05));
-      expect(anchor13, kDriverCockpitPro2PhoneAnchorL7);
-      expect(anchor1, inInclusiveRange(0.58, 0.62));
+    test('level 13 anchor is fixed at level 7 baseline for all levels', () {
+      for (final level in [1, 4, 7, 13]) {
+        expect(
+          driverCockpitViewLevelTargetAnchorFraction(
+            isTablet: false,
+            isLandscape: false,
+            level: level,
+          ),
+          kDriverCockpitPro2PhoneAnchorL7,
+        );
+        expect(
+          driverCockpitViewLevelTargetAnchorFraction(
+            isTablet: false,
+            isLandscape: true,
+            level: level,
+          ),
+          kDriverCockpitPro2CompactAnchorL7,
+        );
+      }
     });
 
     test('levels 1, 7, 13 are visually distinct on phone portrait', () {
@@ -457,8 +457,8 @@ void main() {
       expect(pitch13 - pitch12, greaterThanOrEqualTo(1.5));
     });
 
-    test('level 5..13 HUD size stays at level 7 baseline', () {
-      for (var level = kDriverCockpitHudFixedLevelMin;
+    test('HUD size is fixed at level 7 baseline for View 1..13', () {
+      for (var level = kDriverCockpitViewLevelMin;
           level <= kDriverCockpitViewLevelMax;
           level++) {
         expect(
@@ -474,15 +474,6 @@ void main() {
           kDriverCockpitPro2HudPhoneL7,
         );
       }
-    });
-
-    test('overview levels 1..3 use smaller HUD than close baseline', () {
-      final hud1 = driverCockpitViewLevelHudIconSize(isTablet: false, level: 1);
-      final hud3 = driverCockpitViewLevelHudIconSize(isTablet: false, level: 3);
-      final hud7 = driverCockpitViewLevelHudIconSize(isTablet: false, level: 7);
-      expect(hud1, lessThan(hud7));
-      expect(hud3, lessThan(hud7));
-      expect(hud1, kDriverCockpitPro2HudPhoneL1);
     });
 
     test('center coordinate remains snapped vehicle across all levels', () {
@@ -519,7 +510,7 @@ void main() {
       expect(level1.centerLat, level7.centerLat);
       expect(level13.centerLat, level7.centerLat);
       expect(level13.anchorFraction, level7.anchorFraction);
-      expect(level1.anchorFraction, lessThan(level7.anchorFraction));
+      expect(level1.anchorFraction, level7.anchorFraction);
       expect(level13.anchorFraction, kDriverCockpitPro2PhoneAnchorL7);
     });
 
@@ -701,17 +692,29 @@ void main() {
     });
 
     test('HUD screen position inputs stay level-independent for close levels', () {
-      final anchor5 = driverCockpitViewLevelTargetAnchorFraction(
-        isTablet: false,
-        isLandscape: false,
-        level: 5,
-      );
-      final anchor13 = driverCockpitViewLevelTargetAnchorFraction(
-        isTablet: false,
-        isLandscape: false,
-        level: 13,
-      );
-      expect(anchor5, anchor13);
+      for (final level in [1, 7, 13]) {
+        final portrait = driverCockpitFixedHudBottomOffset(
+          isLandscape: false,
+          cockpitChaseCamera: true,
+        );
+        final landscape = driverCockpitFixedHudBottomOffset(
+          isLandscape: true,
+          cockpitChaseCamera: true,
+        );
+        expect(portrait, 168.0 + 8.0);
+        expect(landscape, 112.0 + 8.0);
+        expect(
+          driverCockpitViewLevelTargetAnchorFraction(
+            isTablet: false,
+            isLandscape: false,
+            level: level,
+          ),
+          driverCockpitFixedAnchorFraction(
+            isTablet: false,
+            isLandscape: false,
+          ),
+        );
+      }
     });
 
     test('profile output exposes target and applied zoom/pitch', () {
@@ -723,6 +726,100 @@ void main() {
       expect(output.zoom, output.targetZoom);
       expect(output.pitch, output.targetPitch);
       expect(output.reason, 'direct_adjust');
+    });
+  });
+
+  group('NAV-PRES-3H fixed HUD and 3D style capability', () {
+    test('HUD size identical for View 1, 7, and 13', () {
+      final sizes = [1, 7, 13].map(
+        (level) => driverCockpitViewLevelHudIconSize(
+          isTablet: false,
+          level: level,
+        ),
+      );
+      expect(sizes.toSet().length, 1);
+      expect(sizes.first, kDriverCockpitPro2HudPhoneL7);
+    });
+
+    test('HUD bottom offset identical for View 1, 7, and 13', () {
+      for (final level in [1, 7, 13]) {
+        expect(
+          driverCockpitFixedHudBottomOffset(
+            isLandscape: false,
+            cockpitChaseCamera: true,
+          ),
+          176.0,
+        );
+        expect(
+          driverCockpitFixedHudBottomOffset(
+            isLandscape: true,
+            cockpitChaseCamera: true,
+          ),
+          120.0,
+        );
+      }
+    });
+
+    test('anchor fraction stable across View 1, 7, and 13', () {
+      final anchors = [1, 7, 13]
+          .map(
+            (level) => driverCockpitViewLevelTargetAnchorFraction(
+              isTablet: false,
+              isLandscape: false,
+              level: level,
+            ),
+          )
+          .toSet();
+      expect(anchors.length, 1);
+      expect(anchors.first, kDriverCockpitPro2PhoneAnchorL7);
+    });
+
+    test('View 13 still applies high zoom/pitch while HUD stays fixed', () {
+      expect(
+        driverCockpitViewLevelTargetZoom(
+          isTablet: false,
+          isLandscape: false,
+          level: 13,
+        ),
+        greaterThan(
+          driverCockpitViewLevelTargetZoom(
+            isTablet: false,
+            isLandscape: false,
+            level: 1,
+          ),
+        ),
+      );
+      final applied = resolveDriverCockpitCameraProfile(
+        const DriverCockpitCameraProfileInput(
+          currentZoom: 18.0,
+          currentPitch: 70.0,
+          isTablet: false,
+          isLandscape: false,
+          safeTop: 44.0,
+          safeBottom: 34.0,
+        ),
+        viewLevel: 13,
+        directAdjust: true,
+      );
+      expect(applied.zoom, closeTo(kDriverCockpitPro2PhoneZoomL13, 0.05));
+      expect(applied.pitch, closeTo(kDriverCockpitPro2PhonePitchL13, 0.05));
+    });
+
+    test('navigation style reports flat 2D capability note', () {
+      final navDay = DriverCockpitMap3dCapability.resolve(
+        styleUri: kDriverMapStyleNavStreetLight,
+        visualMode: DriverMapVisualMode.street,
+      );
+      expect(navDay.likelyFlatNavStyle, isTrue);
+      expect(navDay.terrainLikelyAvailable, isFalse);
+      expect(navDay.note, contains('3d'));
+
+      final satellite = DriverCockpitMap3dCapability.resolve(
+        styleUri: kDriverMapStyleSatellite,
+        visualMode: DriverMapVisualMode.satellite,
+      );
+      expect(satellite.styleFamily, 'satellite-streets');
+      expect(satellite.note, contains('street_3d'));
     });
   });
 }

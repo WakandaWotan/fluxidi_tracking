@@ -86,6 +86,61 @@ double driverTaxiMarkerIconSizeForZoom(double zoom) {
   return kDriverTaxiMarkerIconSize;
 }
 
+/// NAV-PRES-3H: read-only 3D/street-level capability note for driver cockpit.
+///
+/// Current navigation-day/night and satellite-streets styles are optimized for
+/// 2D turn-by-turn. High camera pitch can tilt the raster map but does not
+/// provide true behind-the-car 3D without terrain, extruded buildings, or a
+/// dedicated 3D navigation style patch (separate from HUD/camera level tuning).
+class DriverCockpitMap3dCapability {
+  const DriverCockpitMap3dCapability({
+    required this.styleFamily,
+    required this.likelyFlatNavStyle,
+    required this.terrainLikelyAvailable,
+    required this.note,
+  });
+
+  final String styleFamily;
+  final bool likelyFlatNavStyle;
+  final bool terrainLikelyAvailable;
+  final String note;
+
+  static DriverCockpitMap3dCapability resolve({
+    required String styleUri,
+    required DriverMapVisualMode visualMode,
+  }) {
+    if (visualMode == DriverMapVisualMode.satellite ||
+        styleUri.contains('satellite')) {
+      return const DriverCockpitMap3dCapability(
+        styleFamily: 'satellite-streets',
+        likelyFlatNavStyle: true,
+        terrainLikelyAvailable: false,
+        note: 'raster_satellite_high_pitch_not_true_street_3d',
+      );
+    }
+    if (styleUri.contains('navigation-day') ||
+        styleUri.contains('navigation-night')) {
+      return const DriverCockpitMap3dCapability(
+        styleFamily: 'navigation-v1',
+        likelyFlatNavStyle: true,
+        terrainLikelyAvailable: false,
+        note: 'flat_nav_style_needs_terrain_or_3d_style_patch',
+      );
+    }
+    return const DriverCockpitMap3dCapability(
+      styleFamily: 'other',
+      likelyFlatNavStyle: true,
+      terrainLikelyAvailable: false,
+      note: 'unknown_style_assume_flat_until_3d_patch',
+    );
+  }
+
+  String toDiagnosticLine() {
+    return 'style=$styleFamily flat=$likelyFlatNavStyle '
+        'terrain=$terrainLikelyAvailable reason=$note';
+  }
+}
+
 /// Fallback triangle marker scale for non-taxi mode.
 double driverFallbackMarkerIconSizeForZoom(double zoom) {
   final taxiScale =
