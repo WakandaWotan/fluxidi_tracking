@@ -1,8 +1,10 @@
+import 'dart:math' as math;
+
 import '../driver_navigation_geometry.dart';
 import '../driver_navigation_models.dart';
 import '../nav_engine/nav_camera_view_mode.dart';
 
-/// Input for NAV-PRES-3A/3B driver cockpit camera tuning.
+/// Input for NAV-PRES-3A/3B/3D driver cockpit camera tuning.
 class DriverCockpitCameraProfileInput {
   final double currentZoom;
   final double currentPitch;
@@ -11,6 +13,10 @@ class DriverCockpitCameraProfileInput {
   final double safeTop;
   final double safeBottom;
 
+  /// NAV-PRES-3D-FIX: logical screen height used to anchor the vehicle
+  /// coordinate low on screen via viewport padding.
+  final double screenHeight;
+
   const DriverCockpitCameraProfileInput({
     required this.currentZoom,
     required this.currentPitch,
@@ -18,6 +24,7 @@ class DriverCockpitCameraProfileInput {
     required this.isLandscape,
     required this.safeTop,
     required this.safeBottom,
+    this.screenHeight = 800.0,
   });
 }
 
@@ -58,6 +65,16 @@ class DriverCockpitCameraProfileOutput {
   final double? centerLat;
   final double? centerLon;
   final double lookaheadM;
+
+  /// NAV-PRES-3D-FIX: how the camera center was resolved
+  /// (`vehicle_anchor` | `vehicle_center` | `route_lookahead` |
+  /// `zoom_pitch_only`).
+  final String centerMode;
+
+  /// NAV-PRES-3D-FIX: screen-height fraction where the vehicle coordinate is
+  /// anchored (0 when no anchoring applies).
+  final double anchorFraction;
+
   final String reason;
 
   const DriverCockpitCameraProfileOutput({
@@ -67,6 +84,8 @@ class DriverCockpitCameraProfileOutput {
     this.centerLat,
     this.centerLon,
     this.lookaheadM = 0,
+    this.centerMode = 'zoom_pitch_only',
+    this.anchorFraction = 0,
     required this.reason,
   });
 }
@@ -84,22 +103,73 @@ class DriverCockpitRouteAlignDiagnostics {
   });
 }
 
-/// NAV-PRES-3A/3B: bounded zoom/pitch step limits (aligned with NAV-R12-H policy).
-const double kDriverCockpitCameraMaxZoomStep = 0.35;
-const double kDriverCockpitCameraMaxPitchStep = 3.0;
+/// NAV-PRES-3D-PRO2: bounded zoom/pitch step limits.
+///
+/// Larger per-update steps so discrete view-level taps feel responsive while
+/// follow-camera motion stays smooth between GPS/camera ticks.
+const double kDriverCockpitCameraMaxZoomStep = 0.75;
+const double kDriverCockpitCameraMaxPitchStep = 6.5;
 const double kDriverCockpitCameraMaxCenterStepM = 12.0;
 const double kDriverCockpitCameraMinZoom = 13.0;
-const double kDriverCockpitCameraMaxZoom = 19.3;
+const double kDriverCockpitCameraMaxZoom = 21.8;
 const double kDriverCockpitCameraMinPitch = 44.0;
-const double kDriverCockpitCameraMaxPitch = 80.0;
+const double kDriverCockpitCameraMaxPitch = 84.5;
 
-/// NAV-PRES-3C: manual cockpit intensity adjustment bounds.
-const double kDriverCockpitCameraManualZoomStep = 0.25;
-const double kDriverCockpitCameraManualZoomMinOffset = -1.0;
-const double kDriverCockpitCameraManualZoomMaxOffset = 1.0;
-const double kDriverCockpitCameraManualPitchStep = 1.0;
-const double kDriverCockpitCameraManualPitchMinOffset = -4.0;
-const double kDriverCockpitCameraManualPitchMaxOffset = 4.0;
+/// NAV-PRES-3D-PRO: product-facing driver view levels (session-only).
+///
+/// Level 7 is normal cockpit. Level 13 is aggressive chase-cam; level 1 is
+/// high overview. NAV-PRES-3D-PRO2 uses non-linear curves between these
+/// anchor points so 1 / 7 / 13 are visually unmistakable.
+const int kDriverCockpitViewLevelMin = 1;
+const int kDriverCockpitViewLevelMax = 13;
+const int kDriverCockpitViewLevelDefault = 7;
+
+/// NAV-PRES-3D: normalized intensity bounds (diagnostics only).
+const double kDriverCockpitPerspectiveIntensityMin = -1.0;
+const double kDriverCockpitPerspectiveIntensityMax = 1.0;
+
+/// NAV-PRES-3D-PRO2: phone-portrait anchor/zoom/pitch at levels 1 / 7 / 13.
+const double kDriverCockpitPro2PhoneZoomL1 = 16.8;
+const double kDriverCockpitPro2PhoneZoomL7 = 19.1;
+const double kDriverCockpitPro2PhoneZoomL13 = 21.6;
+const double kDriverCockpitPro2PhonePitchL1 = 51.5;
+const double kDriverCockpitPro2PhonePitchL7 = 77.0;
+const double kDriverCockpitPro2PhonePitchL13 = 84.25;
+const double kDriverCockpitPro2PhoneAnchorL1 = 0.60;
+const double kDriverCockpitPro2PhoneAnchorL7 = 0.70;
+const double kDriverCockpitPro2PhoneAnchorL13 = 0.82;
+
+/// NAV-PRES-3D-PRO2: tablet / landscape anchor/zoom/pitch at levels 1 / 7 / 13.
+const double kDriverCockpitPro2CompactZoomL1 = 16.5;
+const double kDriverCockpitPro2CompactZoomL7 = 18.4;
+const double kDriverCockpitPro2CompactZoomL13 = 21.1;
+const double kDriverCockpitPro2CompactPitchL1 = 51.5;
+const double kDriverCockpitPro2CompactPitchL7 = 75.0;
+const double kDriverCockpitPro2CompactPitchL13 = 84.25;
+const double kDriverCockpitPro2CompactAnchorL1 = 0.55;
+const double kDriverCockpitPro2CompactAnchorL7 = 0.60;
+const double kDriverCockpitPro2CompactAnchorL13 = 0.73;
+
+/// NAV-PRES-3D-PRO2: HUD icon size at levels 1 / 7 / 13 (phone baseline 94).
+const double kDriverCockpitPro2HudPhoneL1 = 78.0;
+const double kDriverCockpitPro2HudPhoneL7 = 94.0;
+const double kDriverCockpitPro2HudPhoneL13 = 122.0;
+const double kDriverCockpitPro2HudTabletL1 = 92.0;
+const double kDriverCockpitPro2HudTabletL7 = 108.0;
+const double kDriverCockpitPro2HudTabletL13 = 142.0;
+
+/// NAV-PRES-3D-PRO2: ease exponents — high end much more aggressive.
+const double kDriverCockpitPro2LowSegmentPower = 1.35;
+const double kDriverCockpitPro2HighSegmentPower = 3.2;
+
+/// Legacy level-7 anchor labels (tests / diagnostics).
+const double kDriverCockpitVehicleAnchorFractionPortrait =
+    kDriverCockpitPro2PhoneAnchorL7;
+const double kDriverCockpitVehicleAnchorFractionLandscape =
+    kDriverCockpitPro2CompactAnchorL7;
+
+/// Legacy NAV-PRES-3B composition clamp (padding helper only).
+const double kDriverCockpitPerspectiveMinBottomPadding = 96.0;
 
 /// NAV-PRES-3A baseline targets (for tests comparing 3B increases).
 const double kDriverCockpitCamera3aPhoneZoom = 18.4;
@@ -108,77 +178,254 @@ const double kDriverCockpitCamera3aTabletZoom = 17.6;
 const double kDriverCockpitCamera3aTabletPitch = 69.0;
 
 double driverCockpitCameraTargetZoom({required bool isTablet}) {
-  return isTablet ? 18.4 : 19.1;
+  return isTablet
+      ? kDriverCockpitPro2CompactZoomL7
+      : kDriverCockpitPro2PhoneZoomL7;
 }
 
 double driverCockpitCameraTargetPitch({required bool isTablet}) {
-  return isTablet ? 76.0 : 78.0;
+  return isTablet
+      ? kDriverCockpitPro2CompactPitchL7
+      : kDriverCockpitPro2PhonePitchL7;
 }
 
-double clampDriverCockpitManualZoomOffset(double offset) {
-  return offset.clamp(
-    kDriverCockpitCameraManualZoomMinOffset,
-    kDriverCockpitCameraManualZoomMaxOffset,
+bool driverCockpitUsesCompactChaseProfile({
+  required bool isTablet,
+  required bool isLandscape,
+}) {
+  return isTablet || isLandscape;
+}
+
+double _driverCockpitEaseInPower(double t, double power) {
+  final c = t.clamp(0.0, 1.0);
+  return math.pow(c, power).toDouble();
+}
+
+/// NAV-PRES-3D-PRO2: non-linear interpolation across levels 1 / 7 / 13.
+///
+/// Overview (1..4), normal driver (5..8), aggressive chase (9..13) are spread
+/// by stronger easing on the high segment so 10..13 change quickly.
+double driverCockpitViewLevelInterp({
+  required int level,
+  required double atLevel1,
+  required double atLevel7,
+  required double atLevel13,
+  double lowSegmentPower = kDriverCockpitPro2LowSegmentPower,
+  double highSegmentPower = kDriverCockpitPro2HighSegmentPower,
+}) {
+  final l = clampDriverCockpitViewLevel(level);
+  if (l <= kDriverCockpitViewLevelDefault) {
+    final span = kDriverCockpitViewLevelDefault - kDriverCockpitViewLevelMin;
+    final t = _driverCockpitEaseInPower(
+      (l - kDriverCockpitViewLevelMin) / span,
+      lowSegmentPower,
+    );
+    return atLevel1 + (atLevel7 - atLevel1) * t;
+  }
+  final span = kDriverCockpitViewLevelMax - kDriverCockpitViewLevelDefault;
+  final t = _driverCockpitEaseInPower(
+    (l - kDriverCockpitViewLevelDefault) / span,
+    highSegmentPower,
+  );
+  return atLevel7 + (atLevel13 - atLevel7) * t;
+}
+
+double clampDriverCockpitPerspectiveIntensity(double intensity) {
+  return intensity.clamp(
+    kDriverCockpitPerspectiveIntensityMin,
+    kDriverCockpitPerspectiveIntensityMax,
   );
 }
 
-double clampDriverCockpitManualPitchOffset(double offset) {
-  return offset.clamp(
-    kDriverCockpitCameraManualPitchMinOffset,
-    kDriverCockpitCameraManualPitchMaxOffset,
+/// NAV-PRES-3D-PRO: clamp product view level.
+int clampDriverCockpitViewLevel(int level) {
+  return level.clamp(kDriverCockpitViewLevelMin, kDriverCockpitViewLevelMax);
+}
+
+/// NAV-PRES-3D-PRO: step view level on +/- tap.
+int stepDriverCockpitViewLevel(int current, {required bool increase}) {
+  return clampDriverCockpitViewLevel(current + (increase ? 1 : -1));
+}
+
+/// NAV-PRES-3D-PRO: map view level to normalized intensity.
+///
+/// Level 1 => -1.0, level 7 => 0.0, level 13 => +1.0.
+double driverCockpitViewLevelToIntensity(int level) {
+  final clamped = clampDriverCockpitViewLevel(level);
+  return (clamped - kDriverCockpitViewLevelDefault) /
+      ((kDriverCockpitViewLevelMax - kDriverCockpitViewLevelMin) / 2);
+}
+
+/// NAV-PRES-3D-PRO2: resolved zoom target for [level].
+double driverCockpitViewLevelTargetZoom({
+  required bool isTablet,
+  required bool isLandscape,
+  required int level,
+}) {
+  final compact = driverCockpitUsesCompactChaseProfile(
+    isTablet: isTablet,
+    isLandscape: isLandscape,
+  );
+  final raw = driverCockpitViewLevelInterp(
+    level: level,
+    atLevel1: compact
+        ? kDriverCockpitPro2CompactZoomL1
+        : kDriverCockpitPro2PhoneZoomL1,
+    atLevel7: compact
+        ? kDriverCockpitPro2CompactZoomL7
+        : kDriverCockpitPro2PhoneZoomL7,
+    atLevel13: compact
+        ? kDriverCockpitPro2CompactZoomL13
+        : kDriverCockpitPro2PhoneZoomL13,
+  );
+  return raw.clamp(kDriverCockpitCameraMinZoom, kDriverCockpitCameraMaxZoom);
+}
+
+/// NAV-PRES-3D-PRO2: resolved pitch target for [level].
+double driverCockpitViewLevelTargetPitch({
+  required bool isTablet,
+  required bool isLandscape,
+  required int level,
+}) {
+  final compact = driverCockpitUsesCompactChaseProfile(
+    isTablet: isTablet,
+    isLandscape: isLandscape,
+  );
+  final raw = driverCockpitViewLevelInterp(
+    level: level,
+    atLevel1: compact
+        ? kDriverCockpitPro2CompactPitchL1
+        : kDriverCockpitPro2PhonePitchL1,
+    atLevel7: compact
+        ? kDriverCockpitPro2CompactPitchL7
+        : kDriverCockpitPro2PhonePitchL7,
+    atLevel13: compact
+        ? kDriverCockpitPro2CompactPitchL13
+        : kDriverCockpitPro2PhonePitchL13,
+  );
+  return raw.clamp(kDriverCockpitCameraMinPitch, kDriverCockpitCameraMaxPitch);
+}
+
+/// NAV-PRES-3D-PRO2: resolved anchor fraction for [level].
+double driverCockpitViewLevelTargetAnchorFraction({
+  required bool isTablet,
+  required bool isLandscape,
+  required int level,
+}) {
+  final compact = driverCockpitUsesCompactChaseProfile(
+    isTablet: isTablet,
+    isLandscape: isLandscape,
+  );
+  final raw = driverCockpitViewLevelInterp(
+    level: level,
+    atLevel1: compact
+        ? kDriverCockpitPro2CompactAnchorL1
+        : kDriverCockpitPro2PhoneAnchorL1,
+    atLevel7: compact
+        ? kDriverCockpitPro2CompactAnchorL7
+        : kDriverCockpitPro2PhoneAnchorL7,
+    atLevel13: compact
+        ? kDriverCockpitPro2CompactAnchorL13
+        : kDriverCockpitPro2PhoneAnchorL13,
+    lowSegmentPower: 1.25,
+    highSegmentPower: 2.6,
+  );
+  if (compact) {
+    return raw.clamp(0.50, 0.78);
+  }
+  return raw.clamp(0.56, 0.86);
+}
+
+/// NAV-PRES-3D-PRO2: HUD vehicle icon size for [level].
+double driverCockpitViewLevelHudIconSize({
+  required bool isTablet,
+  required int level,
+}) {
+  return driverCockpitViewLevelInterp(
+    level: level,
+    atLevel1: isTablet
+        ? kDriverCockpitPro2HudTabletL1
+        : kDriverCockpitPro2HudPhoneL1,
+    atLevel7: isTablet
+        ? kDriverCockpitPro2HudTabletL7
+        : kDriverCockpitPro2HudPhoneL7,
+    atLevel13: isTablet
+        ? kDriverCockpitPro2HudTabletL13
+        : kDriverCockpitPro2HudPhoneL13,
+    lowSegmentPower: 1.2,
+    highSegmentPower: 2.8,
   );
 }
 
-/// NAV-PRES-3C: apply manual zoom offset after base target, before smoothing.
-double applyDriverCockpitManualZoomTarget({
-  required double baseTargetZoom,
-  required double manualZoomOffset,
+/// Legacy intensity helpers (diagnostics / backward-compatible tests).
+double driverCockpitPerspectiveTargetZoom({
+  required bool isTablet,
+  required double intensity,
 }) {
-  final clamped = clampDriverCockpitManualZoomOffset(manualZoomOffset);
-  return (baseTargetZoom + clamped).clamp(
-    kDriverCockpitCameraMinZoom,
-    kDriverCockpitCameraMaxZoom,
+  final level = kDriverCockpitViewLevelDefault +
+      (clampDriverCockpitPerspectiveIntensity(intensity) *
+              (kDriverCockpitViewLevelMax - kDriverCockpitViewLevelDefault))
+          .round();
+  return driverCockpitViewLevelTargetZoom(
+    isTablet: isTablet,
+    isLandscape: false,
+    level: clampDriverCockpitViewLevel(level),
   );
 }
 
-/// NAV-PRES-3C: apply manual pitch offset after base target, before smoothing.
-double applyDriverCockpitManualPitchTarget({
-  required double baseTargetPitch,
-  required double manualPitchOffset,
+double driverCockpitPerspectiveTargetPitch({
+  required bool isTablet,
+  required double intensity,
 }) {
-  final clamped = clampDriverCockpitManualPitchOffset(manualPitchOffset);
-  return (baseTargetPitch + clamped).clamp(
-    kDriverCockpitCameraMinPitch,
-    kDriverCockpitCameraMaxPitch,
+  final level = kDriverCockpitViewLevelDefault +
+      (clampDriverCockpitPerspectiveIntensity(intensity) *
+              (kDriverCockpitViewLevelMax - kDriverCockpitViewLevelDefault))
+          .round();
+  return driverCockpitViewLevelTargetPitch(
+    isTablet: isTablet,
+    isLandscape: false,
+    level: clampDriverCockpitViewLevel(level),
   );
 }
 
-/// NAV-PRES-3C: step session manual zoom offset on +/- tap.
-double stepDriverCockpitManualZoomOffset(
-  double current, {
-  required bool increase,
+double driverCockpitPerspectiveTargetAnchorFraction({
+  required bool isLandscape,
+  required double intensity,
 }) {
-  final delta = increase
-      ? kDriverCockpitCameraManualZoomStep
-      : -kDriverCockpitCameraManualZoomStep;
-  return clampDriverCockpitManualZoomOffset(current + delta);
+  final level = kDriverCockpitViewLevelDefault +
+      (clampDriverCockpitPerspectiveIntensity(intensity) *
+              (kDriverCockpitViewLevelMax - kDriverCockpitViewLevelDefault))
+          .round();
+  return driverCockpitViewLevelTargetAnchorFraction(
+    isTablet: false,
+    isLandscape: isLandscape,
+    level: clampDriverCockpitViewLevel(level),
+  );
 }
 
-/// NAV-PRES-3C: step session manual pitch offset on +/- tap.
-double stepDriverCockpitManualPitchOffset(
-  double current, {
-  required bool increase,
-}) {
-  final delta = increase
-      ? kDriverCockpitCameraManualPitchStep
-      : -kDriverCockpitCameraManualPitchStep;
-  return clampDriverCockpitManualPitchOffset(current + delta);
-}
-
-/// NAV-PRES-3B: speed-scaled lookahead distance for chase-camera framing.
+/// NAV-PRES-3B: speed-scaled lookahead distance (bearing/forward context
+/// only after NAV-PRES-3D-FIX; not used to shift the camera center).
 double resolveDriverCockpitLookaheadMeters({required double speedKmh}) {
   final t = (speedKmh / 80.0).clamp(0.0, 1.0);
   return (35.0 + t * 25.0).clamp(35.0, 60.0);
+}
+
+/// NAV-PRES-3D-FIX: viewport padding that anchors the camera-centered
+/// vehicle coordinate at [anchorFraction] of the screen height.
+///
+/// Mapbox places the camera center in the middle of the inset viewport, so
+/// pinning the vehicle low on screen requires a top-heavy inset:
+/// `top + (H - top - bottom) / 2 == anchorFraction * H`.
+NavCameraViewPadding driverCockpitVehicleAnchorPadding({
+  required double screenHeight,
+  required double safeTop,
+  required double safeBottom,
+  required double anchorFraction,
+}) {
+  final h = screenHeight <= 0 ? 800.0 : screenHeight;
+  final bottom = safeBottom + 16.0;
+  final top = (2 * anchorFraction * h - h + bottom).clamp(safeTop, h * 0.9);
+  return NavCameraViewPadding(top: top, bottom: bottom);
 }
 
 /// Ramps [current] toward [target] by at most [maxStep].
@@ -201,22 +448,25 @@ NavCameraViewPadding driverCockpitCameraViewPadding({
   required bool isLandscape,
   required double safeTop,
   required double safeBottom,
+  double bottomPaddingDelta = 0.0,
 }) {
+  final double top;
+  final double baseBottom;
   if (isLandscape) {
-    return NavCameraViewPadding(
-      top: safeTop + (isTablet ? 24.0 : 28.0),
-      bottom: safeBottom + (isTablet ? 172.0 : 188.0),
-    );
+    top = safeTop + (isTablet ? 24.0 : 28.0);
+    baseBottom = isTablet ? 172.0 : 188.0;
+  } else if (isTablet) {
+    top = safeTop + 56.0;
+    baseBottom = 420.0;
+  } else {
+    top = safeTop + 56.0;
+    baseBottom = 448.0;
   }
-  if (isTablet) {
-    return NavCameraViewPadding(
-      top: safeTop + 56.0,
-      bottom: safeBottom + 420.0,
-    );
-  }
+  final bottom = (baseBottom + bottomPaddingDelta)
+      .clamp(kDriverCockpitPerspectiveMinBottomPadding, 640.0);
   return NavCameraViewPadding(
-    top: safeTop + 56.0,
-    bottom: safeBottom + 448.0,
+    top: top,
+    bottom: safeBottom + bottom,
   );
 }
 
@@ -275,6 +525,7 @@ DriverCockpitCameraProfileOutput resolveDriverCockpitLookaheadCenter(
     centerLat: center.lat,
     centerLon: center.lon,
     lookaheadM: lookaheadM,
+    centerMode: 'route_lookahead',
     reason: reason,
   );
 }
@@ -307,22 +558,26 @@ DriverCockpitRouteAlignDiagnostics resolveDriverCockpitRouteAlignDiagnostics({
   );
 }
 
-/// NAV-PRES-3B: lower third-person chase camera profile for driver mode.
+/// NAV-PRES-3D-PRO2: lower third-person chase camera profile for driver mode.
+///
+/// [viewLevel] (1..13, default 7) drives zoom, pitch, and anchor fraction
+/// via non-linear curves. The camera centers on the snapped vehicle
+/// coordinate and anchors it low on screen via top-heavy viewport padding.
 DriverCockpitCameraProfileOutput resolveDriverCockpitCameraProfile(
   DriverCockpitCameraProfileInput input, {
   DriverCockpitCameraLookaheadInput? lookahead,
-  double manualZoomOffset = 0.0,
-  double manualPitchOffset = 0.0,
+  int viewLevel = kDriverCockpitViewLevelDefault,
 }) {
-  final baseTargetZoom = driverCockpitCameraTargetZoom(isTablet: input.isTablet);
-  final baseTargetPitch = driverCockpitCameraTargetPitch(isTablet: input.isTablet);
-  final targetZoom = applyDriverCockpitManualZoomTarget(
-    baseTargetZoom: baseTargetZoom,
-    manualZoomOffset: manualZoomOffset,
+  final level = clampDriverCockpitViewLevel(viewLevel);
+  final targetZoom = driverCockpitViewLevelTargetZoom(
+    isTablet: input.isTablet,
+    isLandscape: input.isLandscape,
+    level: level,
   );
-  final targetPitch = applyDriverCockpitManualPitchTarget(
-    baseTargetPitch: baseTargetPitch,
-    manualPitchOffset: manualPitchOffset,
+  final targetPitch = driverCockpitViewLevelTargetPitch(
+    isTablet: input.isTablet,
+    isLandscape: input.isLandscape,
+    level: level,
   );
   final zoom = driverCockpitCameraSmoothToward(
     current: input.currentZoom,
@@ -338,11 +593,16 @@ DriverCockpitCameraProfileOutput resolveDriverCockpitCameraProfile(
     min: kDriverCockpitCameraMinPitch,
     max: kDriverCockpitCameraMaxPitch,
   );
-  final padding = driverCockpitCameraViewPadding(
+  final anchorFraction = driverCockpitViewLevelTargetAnchorFraction(
     isTablet: input.isTablet,
     isLandscape: input.isLandscape,
+    level: level,
+  );
+  final padding = driverCockpitVehicleAnchorPadding(
+    screenHeight: input.screenHeight,
     safeTop: input.safeTop,
     safeBottom: input.safeBottom,
+    anchorFraction: anchorFraction,
   );
 
   if (lookahead == null) {
@@ -350,24 +610,25 @@ DriverCockpitCameraProfileOutput resolveDriverCockpitCameraProfile(
       zoom: zoom,
       pitch: pitch,
       padding: padding,
+      anchorFraction: anchorFraction,
       reason: 'driver_cockpit_profile',
     );
   }
 
-  final lookaheadM = resolveDriverCockpitLookaheadMeters(
-    speedKmh: lookahead.speedKmh,
-  );
-  final center = resolveDriverCockpitLookaheadCenter(
-    lookahead,
-    lookaheadM: lookaheadM,
-  );
+  // NAV-PRES-3D-FIX: the camera center IS the vehicle. Route lookahead is
+  // intentionally not used for centering, so +/- can never move the car
+  // away from the blue route line.
+  final hasSnap = lookahead.hasReliableSnap &&
+      lookahead.snappedLat != null &&
+      lookahead.snappedLon != null;
   return DriverCockpitCameraProfileOutput(
     zoom: zoom,
     pitch: pitch,
     padding: padding,
-    centerLat: center.centerLat,
-    centerLon: center.centerLon,
-    lookaheadM: center.lookaheadM,
-    reason: center.reason,
+    centerLat: hasSnap ? lookahead.snappedLat : lookahead.vehicleLat,
+    centerLon: hasSnap ? lookahead.snappedLon : lookahead.vehicleLon,
+    centerMode: hasSnap ? 'vehicle_anchor' : 'vehicle_center',
+    anchorFraction: anchorFraction,
+    reason: 'driver_cockpit_profile',
   );
 }

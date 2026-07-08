@@ -12,6 +12,8 @@ class NavigationDriverCockpitCameraControls extends StatelessWidget {
     required this.textColor,
     required this.surfaceColor,
     this.buttonSize = 40.0,
+    this.levelLabel,
+    this.debugSubLabel,
   });
 
   final VoidCallback onPlus;
@@ -20,6 +22,12 @@ class NavigationDriverCockpitCameraControls extends StatelessWidget {
   final Color textColor;
   final Color surfaceColor;
   final double buttonSize;
+
+  /// NAV-PRES-3D-PRO: optional compact view level indicator (`View 7/13`).
+  final String? levelLabel;
+
+  /// NAV-PRES-3D-PRO2: field-test debug line (`Z21.6 P84 A0.82`).
+  final String? debugSubLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -38,17 +46,45 @@ class NavigationDriverCockpitCameraControls extends StatelessWidget {
           children: [
             _CockpitCameraControlButton(
               icon: Icons.add,
-              tooltip: 'Closer cockpit camera',
+              tooltip: 'Closer driver perspective',
               onPressed: onPlus,
               accentColor: accentColor,
               textColor: textColor,
               surfaceColor: surfaceColor,
               size: buttonSize,
             ),
-            const SizedBox(height: 4),
+            if (levelLabel != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      levelLabel!,
+                      style: TextStyle(
+                        color: textColor.withValues(alpha: 0.85),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (debugSubLabel != null)
+                      Text(
+                        debugSubLabel!,
+                        style: TextStyle(
+                          color: textColor.withValues(alpha: 0.65),
+                          fontSize: 8,
+                          fontWeight: FontWeight.w500,
+                          height: 1.1,
+                        ),
+                      ),
+                  ],
+                ),
+              )
+            else
+              const SizedBox(height: 4),
             _CockpitCameraControlButton(
               icon: Icons.remove,
-              tooltip: 'Wider cockpit camera',
+              tooltip: 'Wider driver perspective',
               onPressed: onMinus,
               accentColor: accentColor,
               textColor: textColor,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../driver_navigation_map_config.dart';
+import '../presentation/navigation_driver_cockpit_camera.dart';
 
 /// NAV-PRES-2A: screen-fixed driver vehicle HUD (visual foundation only).
 ///
@@ -12,16 +13,20 @@ class NavigationDriverHudOverlay extends StatelessWidget {
     this.iconSize = 56.0,
   });
 
-  /// NAV-PRES-3B: responsive HUD vehicle sizing (screen-fixed, no map deps).
+  /// NAV-PRES-3D-PRO2: responsive HUD vehicle sizing (screen-fixed, no map deps).
   static double resolveIconSize({
     required double screenWidth,
     required bool cockpitBoost,
+    int viewLevel = kDriverCockpitViewLevelDefault,
   }) {
     final isTablet = screenWidth >= 600;
-    if (cockpitBoost) {
-      return isTablet ? 108.0 : 94.0;
+    if (!cockpitBoost) {
+      return isTablet ? 80.0 : 72.0;
     }
-    return isTablet ? 80.0 : 72.0;
+    return driverCockpitViewLevelHudIconSize(
+      isTablet: isTablet,
+      level: viewLevel,
+    );
   }
 
   final double iconSize;

@@ -241,10 +241,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   String? _lastNavR15BearingSignature;
   String? _lastNavPresCameraSignature;
   String? _lastNavPresRouteAlignSignature;
-  double? _lastCockpitCameraCenterLat;
-  double? _lastCockpitCameraCenterLon;
-  double _driverCockpitManualZoomOffset = 0.0;
-  double _driverCockpitManualPitchOffset = 0.0;
+  int _driverCockpitViewLevel = kDriverCockpitViewLevelDefault;
+  bool _navPresCameraAnchorDiagEmitted = false;
   MapThemeMode? _mapThemeOverride;
   DriverMapVisualMode _driverMapVisualMode = DriverMapVisualMode.street;
   double _lastMapCameraZoom = kDriverMapInitialZoom;
@@ -7828,14 +7826,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
-  /// NAV-PRES-3B: chase-camera zoom/pitch/padding/lookahead for flagged driver mode.
+  /// NAV-PRES-3D-FIX: chase-camera zoom/pitch anchored on the snapped
+  /// vehicle coordinate for flagged driver mode.
   ({
     double zoom,
     double pitch,
     NavCameraViewPadding padding,
     double? centerLat,
     double? centerLon,
-    double lookaheadM,
+    String centerMode,
+    double anchorFraction,
     String reason,
   })
   _driverCockpitCameraOverrides({
@@ -7845,6 +7845,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     required bool isLandscape,
     required double safeTop,
     required double safeBottom,
+    required double screenHeight,
     required double vehicleLat,
     required double vehicleLon,
     required double bearingDeg,
@@ -7861,8 +7862,6 @@ class _DriverHomePageState extends State<DriverHomePage>
       snappedLat: progress?.snappedLatitude,
       snappedLon: progress?.snappedLongitude,
       hasReliableSnap: progress?.hasReliableSnap ?? false,
-      previousCenterLat: _lastCockpitCameraCenterLat,
-      previousCenterLon: _lastCockpitCameraCenterLon,
     );
     final profile = resolveDriverCockpitCameraProfile(
       DriverCockpitCameraProfileInput(
@@ -7872,47 +7871,37 @@ class _DriverHomePageState extends State<DriverHomePage>
         isLandscape: isLandscape,
         safeTop: safeTop,
         safeBottom: safeBottom,
+        screenHeight: screenHeight,
       ),
       lookahead: lookahead,
-      manualZoomOffset: _driverCockpitManualZoomOffset,
-      manualPitchOffset: _driverCockpitManualPitchOffset,
+      viewLevel: _driverCockpitViewLevel,
     );
-    if (profile.centerLat != null && profile.centerLon != null) {
-      _lastCockpitCameraCenterLat = profile.centerLat;
-      _lastCockpitCameraCenterLon = profile.centerLon;
-    }
     return (
       zoom: profile.zoom,
       pitch: profile.pitch,
       padding: profile.padding,
       centerLat: profile.centerLat,
       centerLon: profile.centerLon,
-      lookaheadM: profile.lookaheadM,
+      centerMode: profile.centerMode,
+      anchorFraction: profile.anchorFraction,
       reason: profile.reason,
     );
   }
 
   void _resetDriverCockpitCameraState() {
-    _lastCockpitCameraCenterLat = null;
-    _lastCockpitCameraCenterLon = null;
-    _driverCockpitManualZoomOffset = 0.0;
-    _driverCockpitManualPitchOffset = 0.0;
+    _driverCockpitViewLevel = kDriverCockpitViewLevelDefault;
     _lastNavPresCameraSignature = null;
     _lastNavPresRouteAlignSignature = null;
   }
 
-  void _adjustDriverCockpitCameraIntensity({required bool increase}) {
+  void _adjustDriverCockpitCameraViewLevel({required bool increase}) {
     if (!_navigationPresentationStateFor(_navCameraViewMode)
         .showDriverCockpitCameraControls) {
       return;
     }
     setState(() {
-      _driverCockpitManualZoomOffset = stepDriverCockpitManualZoomOffset(
-        _driverCockpitManualZoomOffset,
-        increase: increase,
-      );
-      _driverCockpitManualPitchOffset = stepDriverCockpitManualPitchOffset(
-        _driverCockpitManualPitchOffset,
+      _driverCockpitViewLevel = stepDriverCockpitViewLevel(
+        _driverCockpitViewLevel,
         increase: increase,
       );
     });
@@ -7927,16 +7916,71 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  /// Compact view-level label for the +/- controls, e.g. `View 7/13`.
+  String _driverCockpitViewLevelLabel() {
+    return 'View $_driverCockpitViewLevel/$kDriverCockpitViewLevelMax';
+  }
+
+  /// NAV-PRES-3D-PRO2: compact field-test debug line under the view label.
+  String _driverCockpitViewLevelDebugLabel() {
+    final isTablet = MediaQuery.sizeOf(context).width >= 600;
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
+    final zoom = driverCockpitViewLevelTargetZoom(
+      isTablet: isTablet,
+      isLandscape: isLandscape,
+      level: _driverCockpitViewLevel,
+    );
+    final pitch = driverCockpitViewLevelTargetPitch(
+      isTablet: isTablet,
+      isLandscape: isLandscape,
+      level: _driverCockpitViewLevel,
+    );
+    final anchor = driverCockpitViewLevelTargetAnchorFraction(
+      isTablet: isTablet,
+      isLandscape: isLandscape,
+      level: _driverCockpitViewLevel,
+    );
+    return 'Z${zoom.toStringAsFixed(1)} P${pitch.round()} A${anchor.toStringAsFixed(2)}';
+  }
+
   void _logNavPresCameraControl({required String action}) {
     if (!_navigationPresentationStateFor(_navCameraViewMode)
         .showDriverCockpitCameraControls) {
       return;
     }
+    final isTablet = MediaQuery.sizeOf(context).width >= 600;
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
+    final level = _driverCockpitViewLevel;
+    final targetZoom = driverCockpitViewLevelTargetZoom(
+      isTablet: isTablet,
+      isLandscape: isLandscape,
+      level: level,
+    );
+    final targetPitch = driverCockpitViewLevelTargetPitch(
+      isTablet: isTablet,
+      isLandscape: isLandscape,
+      level: level,
+    );
+    final anchorFraction = driverCockpitViewLevelTargetAnchorFraction(
+      isTablet: isTablet,
+      isLandscape: isLandscape,
+      level: level,
+    );
+    final hudSize = driverCockpitViewLevelHudIconSize(
+      isTablet: isTablet,
+      level: level,
+    );
     _logNavBounded(
       'NAV_PRES_CAMERA_CONTROL',
       'action=$action '
-          'zoomOffset=${_driverCockpitManualZoomOffset.toStringAsFixed(2)} '
-          'pitchOffset=${_driverCockpitManualPitchOffset.toStringAsFixed(1)}',
+          'level=$level '
+          'targetZoom=${targetZoom.toStringAsFixed(1)} '
+          'targetPitch=${targetPitch.toStringAsFixed(1)} '
+          'anchor=${anchorFraction.toStringAsFixed(2)} '
+          'hudSize=${hudSize.round()} '
+          'reason=view_level_pro2',
       intervalMs: 200,
     );
     unawaited(
@@ -7944,8 +7988,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         tag: 'NAV_PRES_CAMERA_CONTROL',
         fields: <String, dynamic>{
           'action': action,
-          'zoomOffset': _driverCockpitManualZoomOffset,
-          'pitchOffset': _driverCockpitManualPitchOffset,
+          'level': level,
+          'targetZoom': targetZoom,
+          'targetPitch': targetPitch,
+          'anchor': anchorFraction,
+          'hudSize': hudSize.round(),
+          'reason': 'view_level_pro2',
         },
       ),
     );
@@ -7955,8 +8003,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     required double zoom,
     required double pitch,
     required double bearing,
-    required double bottomPadding,
-    required double lookaheadM,
+    required double anchorFraction,
+    required String centerMode,
     required String reason,
   }) {
     if (!_navigationPresentationStateFor(_navCameraViewMode)
@@ -7965,22 +8013,20 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     final signature =
         '${zoom.toStringAsFixed(1)}|${pitch.toStringAsFixed(1)}|'
-        '${bearing.round()}|${bottomPadding.round()}|'
-        '${lookaheadM.round()}|'
-        '${_driverCockpitManualZoomOffset.toStringAsFixed(2)}|'
-        '${_driverCockpitManualPitchOffset.toStringAsFixed(1)}|$reason';
+        '${bearing.round()}|${anchorFraction.toStringAsFixed(2)}|'
+        '$centerMode|'
+        '$_driverCockpitViewLevel|$reason';
     if (signature == _lastNavPresCameraSignature) return;
     _lastNavPresCameraSignature = signature;
     _logNavBounded(
       'NAV_PRES_CAMERA',
       'mode=driver cockpit=true '
+          'level=$_driverCockpitViewLevel '
           'zoom=${zoom.toStringAsFixed(1)} '
           'pitch=${pitch.toStringAsFixed(1)} '
           'bearing=${bearing.round()} '
-          'bottomPadding=${bottomPadding.round()} '
-          'lookahead=${lookaheadM.round()} '
-          'zoomOffset=${_driverCockpitManualZoomOffset.toStringAsFixed(2)} '
-          'pitchOffset=${_driverCockpitManualPitchOffset.toStringAsFixed(1)} '
+          'anchor=${anchorFraction.toStringAsFixed(2)} '
+          'centerMode=$centerMode '
           'reason=$reason',
       intervalMs: 1200,
     );
@@ -7990,14 +8036,34 @@ class _DriverHomePageState extends State<DriverHomePage>
         fields: <String, dynamic>{
           'mode': 'driver',
           'cockpit': true,
+          'level': _driverCockpitViewLevel,
           'zoom': zoom,
           'pitch': pitch,
           'bearing': bearing.round(),
-          'bottomPadding': bottomPadding.round(),
-          'lookaheadM': lookaheadM.round(),
-          'zoomOffset': _driverCockpitManualZoomOffset,
-          'pitchOffset': _driverCockpitManualPitchOffset,
+          'anchor': anchorFraction,
+          'centerMode': centerMode,
           'reason': reason,
+        },
+      ),
+    );
+  }
+
+  /// NAV-PRES-3D-FIX: native CameraOptions.anchor conflicts with the
+  /// existing center+padding flyTo pipeline; anchoring is done via
+  /// vehicle-centered padding instead. Logged once per session.
+  void _logNavPresCameraAnchorDeferred() {
+    if (_navPresCameraAnchorDiagEmitted) return;
+    _navPresCameraAnchorDiagEmitted = true;
+    _logNavBounded(
+      'NAV_PRES_CAMERA_ANCHOR',
+      'supported=false reason=camera_options_anchor_deferred_padding_anchor_used',
+    );
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+        tag: 'NAV_PRES_CAMERA_ANCHOR',
+        fields: <String, dynamic>{
+          'supported': false,
+          'reason': 'camera_options_anchor_deferred_padding_anchor_used',
         },
       ),
     );
@@ -10623,6 +10689,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         isLandscape: isLandscape,
         safeTop: safeTop,
         safeBottom: safeBottom,
+        screenHeight: MediaQuery.sizeOf(context).height,
         vehicleLat: visual.point.lat,
         vehicleLon: visual.point.lon,
         bearingDeg: heading,
@@ -10635,12 +10702,13 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (cockpit.centerLat != null && cockpit.centerLon != null) {
         cameraCenter = _mbPoint(cockpit.centerLon!, cockpit.centerLat!);
       }
+      _logNavPresCameraAnchorDeferred();
       _logNavPresCamera(
         zoom: cameraZoom,
         pitch: cameraPitch,
         bearing: heading,
-        bottomPadding: viewPadding.bottom,
-        lookaheadM: cockpit.lookaheadM,
+        anchorFraction: cockpit.anchorFraction,
+        centerMode: cockpit.centerMode,
         reason: cockpit.reason,
       );
       _logNavPresRouteAlign(
@@ -18376,6 +18444,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         ? NavigationDriverHudOverlay.resolveIconSize(
             screenWidth: screenW,
             cockpitBoost: navPresentationState.useDriverCockpitCamera,
+            viewLevel: _driverCockpitViewLevel,
           )
         : 56.0;
     final navActionColors = _navActionThemeColors();
@@ -18580,12 +18649,14 @@ class _DriverHomePageState extends State<DriverHomePage>
               right: 14,
               bottom: cockpitCameraControlsBottom,
               child: NavigationDriverCockpitCameraControls(
-                onPlus: () => _adjustDriverCockpitCameraIntensity(increase: true),
+                onPlus: () => _adjustDriverCockpitCameraViewLevel(increase: true),
                 onMinus: () =>
-                    _adjustDriverCockpitCameraIntensity(increase: false),
+                    _adjustDriverCockpitCameraViewLevel(increase: false),
                 accentColor: navActionColors.accent,
                 textColor: navActionColors.text,
                 surfaceColor: navActionColors.surface,
+                levelLabel: _driverCockpitViewLevelLabel(),
+                debugSubLabel: _driverCockpitViewLevelDebugLabel(),
               ),
             ),
 
