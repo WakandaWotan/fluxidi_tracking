@@ -13,6 +13,7 @@ import 'package:fluxidi_tracking/navigation/nav_engine/nav_confidence_engine.dar
 import 'package:fluxidi_tracking/navigation/nav_engine/nav_instruction_policy.dart';
 import 'package:fluxidi_tracking/navigation/nav_engine/nav_motion_prediction.dart';
 import 'package:fluxidi_tracking/navigation/nav_engine/nav_route_progress.dart';
+import 'package:fluxidi_tracking/navigation/nav_engine/nav_reroute_decision.dart';
 
 import 'nav_replay_sample.dart';
 
@@ -189,27 +190,14 @@ class NavReplayInstructionContext {
   });
 }
 
-/// Runs samples through the production nav modules and the mirrored
-/// state-level off-route/reroute gate.
+/// Runs samples through the production nav modules and the shared
+/// NAV-R17A reroute decision gate.
 class NavReplayHarness {
-  // ---------------------------------------------------------------------
-  // Mirror of driver_home_page_state.dart NAV-R12-B gating.
-  //
-  // SEAM (NAV-R12-C follow-up): these thresholds live inside the widget
-  // state in production and are duplicated here. Extracting them into a
-  // pure `NavOffRouteDecision` module would let this harness exercise the
-  // exact production object instead of a mirror.
-  // ---------------------------------------------------------------------
-  static const Duration rerouteCooldown = Duration(seconds: 25);
-  static const Duration rerouteCooldownRouteDeviation = Duration(seconds: 8);
-  static const Duration debounceStrong = Duration(milliseconds: 500);
-  static const Duration debounceRouteDeviation = Duration(milliseconds: 800);
-  static const Duration debounceDefault = Duration(milliseconds: 2500);
-
   final List<NavRoutePoint> routePoints;
   final NavReplayInstructionContext instructionContext;
 
   final DriverNavRouteProgress _routeProgress = DriverNavRouteProgress();
+  final NavRerouteDecisionTracker _rerouteDecision = NavRerouteDecisionTracker();
   final DriverNavConfidenceEngine _confidenceEngine =
       DriverNavConfidenceEngine();
   final DriverNavInstructionPolicy _instructionPolicy =
@@ -227,6 +215,7 @@ class NavReplayHarness {
     required List<NavReplaySample> samples,
   }) {
     _routeProgress.reset();
+    _rerouteDecision.reset();
     _confidenceEngine.reset();
     _instructionPolicy.reset();
     _motionPrediction.reset();
@@ -237,12 +226,9 @@ class NavReplayHarness {
     NavReplaySample? previousSample;
     double? movementBearing;
 
-    // Mirrored state-level off-route gate.
-    var offRouteHitCount = 0;
-    var offRouteLikelyState = false;
-    var offRouteReason = 'none';
-    DateTime? debounceStartedAt;
+    // Shared NAV-R17A reroute gate (same module as production).
     DateTime? lastRerouteAt;
+    var lastRerouteFailed = false;
 
     for (var i = 0; i < samples.length; i++) {
       final sample = samples[i];
@@ -292,77 +278,35 @@ class NavReplayHarness {
         ),
       );
 
-      // Mirrored off-route hit/debounce decision (NAV-R12-B behavior).
-      final snapDistance = progress.snapDistanceM;
+      // NAV-R17A reroute decision (production module).
       final offRouteThreshold = math.max(
         70.0,
         _snapThresholdFor(sample.accuracyM) + 25.0,
       );
-      if (progress.offRouteLikely) {
-        offRouteHitCount += 1;
-      } else if (progress.hasReliableSnap) {
-        offRouteHitCount = 0;
-      } else if (snapDistance > offRouteThreshold) {
-        offRouteHitCount += 1;
-      } else {
-        offRouteHitCount = 0;
-      }
-      final oppositeDirection = progress.oppositeDirectionLikely;
-      final strongOppositeDirection =
-          progress.routeDeviationReason == 'opposite_heading_strong';
-      final backwardProgress = progress.backwardProgressLikely;
-      final routeDeviation = progress.routeDeviationLikely;
-      final int hitsRequired;
-      if (strongOppositeDirection) {
-        hitsRequired = 1;
-      } else if (routeDeviation) {
-        hitsRequired = 2;
-      } else if (progress.offRouteLikely || snapDistance > 55.0) {
-        hitsRequired = 2;
-      } else {
-        hitsRequired = 3;
-      }
-      final offRoute = offRouteHitCount >= hitsRequired;
-      if (offRoute) {
-        offRouteReason = oppositeDirection
-            ? (strongOppositeDirection
-                  ? 'opposite_direction_strong'
-                  : 'opposite_direction')
-            : (backwardProgress ? 'backward_progress' : 'snap_distance');
-      } else {
-        offRouteReason = 'none';
-      }
-      if (offRoute != offRouteLikelyState) {
-        offRouteLikelyState = offRoute;
-        if (!offRoute) debounceStartedAt = null;
-      }
-
-      // Reroute eligibility mirror (cooldown; no follow-mode gate anymore).
-      final cooldown = offRouteReason == 'snap_distance' || !offRoute
-          ? rerouteCooldown
-          : rerouteCooldownRouteDeviation;
-      final cooldownOk =
-          lastRerouteAt == null ||
-          sample.timestamp.difference(lastRerouteAt) >= cooldown;
-      final rerouteEligible = offRoute && cooldownOk;
-
-      var rerouteWouldTrigger = false;
-      if (rerouteEligible) {
-        final debounceStart = debounceStartedAt ?? sample.timestamp;
-        debounceStartedAt = debounceStart;
-        final debounce = offRouteReason == 'opposite_direction_strong'
-            ? debounceStrong
-            : (offRouteReason == 'opposite_direction' ||
-                      offRouteReason == 'backward_progress'
-                  ? debounceRouteDeviation
-                  : debounceDefault);
-        if (sample.timestamp.difference(debounceStart) >= debounce) {
-          rerouteWouldTrigger = true;
-          lastRerouteAt = sample.timestamp;
-          debounceStartedAt = null;
-        }
-      } else if (!offRoute) {
-        debounceStartedAt = null;
+      final decision = _rerouteDecision.update(
+        NavRerouteDecisionTickInput(
+          progress: progress,
+          snapDistanceM: progress.snapDistanceM,
+          speedKmh: sample.speedKmh,
+          offRouteThresholdM: offRouteThreshold,
+          now: sample.timestamp,
+          lastRerouteAt: lastRerouteAt,
+          lastRerouteFailed: lastRerouteFailed,
+          allowReroutePhase: true,
+          liveRideActive: true,
+          isWaiting: false,
+          isRerouting: false,
+          hasRoute: routePoints.length >= 2,
+        ),
+      );
+      final offRoute = decision.offRouteLikely;
+      final offRouteReason = decision.offRouteReason;
+      final rerouteEligible = decision.eligible;
+      var rerouteWouldTrigger = decision.shouldTrigger;
+      if (rerouteWouldTrigger) {
+        lastRerouteAt = sample.timestamp;
+        lastRerouteFailed = false;
+        _rerouteDecision.noteRerouteApplied(sample.timestamp);
       }
 
       // Bearing policy on production module.

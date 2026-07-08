@@ -279,6 +279,21 @@ void main() {
         reason: 'the old 150° flip guard must not block the U-turn correction',
       );
     });
+
+    test('NAV-R17A: sustained backtrack becomes reroute eligible and triggers',
+        () {
+      expect(report.firstRerouteEligibleIndex, isNotNull);
+      expect(report.firstRerouteEligibleIndex!, lessThanOrEqualTo(12));
+      expect(report.firstRerouteWouldTriggerIndex, isNotNull);
+      final eligibleAt =
+          report.results[report.firstRerouteEligibleIndex!].timestamp;
+      final triggerAt =
+          report.results[report.firstRerouteWouldTriggerIndex!].timestamp;
+      expect(
+        triggerAt.difference(eligibleAt).inMilliseconds,
+        lessThanOrEqualTo(1200),
+      );
+    });
   });
 
   group('NAV-R12-F replay: D side-street departure', () {
@@ -333,6 +348,16 @@ void main() {
       );
       expect(idx, isNotNull);
       expect(idx! - first, lessThanOrEqualTo(2));
+    });
+
+    test('NAV-R17A: side-street departure triggers reroute after sustained '
+        'off-route movement', () {
+      expect(report.firstRerouteEligibleIndex, isNotNull);
+      expect(report.firstRerouteWouldTriggerIndex, isNotNull);
+      expect(
+        report.firstRerouteWouldTriggerIndex!,
+        greaterThan(report.firstRerouteEligibleIndex!),
+      );
     });
   });
 

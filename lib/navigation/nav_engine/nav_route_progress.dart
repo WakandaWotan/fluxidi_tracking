@@ -113,7 +113,7 @@ class DriverNavRouteProgress {
   static const double _deviationMinSpeedKmh = 8.0;
   static const double _deviationMaxAccuracyM = 50.0;
   static const double _oppositeHeadingDeltaDeg = 120.0;
-  static const double _strongOppositeHeadingDeltaDeg = 140.0;
+  static const double _strongOppositeHeadingDeltaDeg = 135.0;
   static const int _oppositeHeadingStreakThreshold = 2;
   static const int _backwardProgressStreakThreshold = 2;
 
@@ -219,7 +219,8 @@ class DriverNavRouteProgress {
         if (headingDeltaDeg > _strongOppositeHeadingDeltaDeg) {
           oppositeDirectionLikely = true;
           routeDeviationReason = 'opposite_heading_strong';
-        } else if (_oppositeHeadingStreak >= _oppositeHeadingStreakThreshold) {
+        } else if (_oppositeHeadingStreak >= _oppositeHeadingStreakThreshold ||
+            (headingDeltaDeg > 110.0 && !forwardProgress)) {
           oppositeDirectionLikely = true;
           routeDeviationReason = 'opposite_heading';
         }

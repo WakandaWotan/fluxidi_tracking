@@ -336,6 +336,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _offRouteLikely = false;
   int _offRouteHitCount = 0;
   String? _lastNavR12OffRouteSignature;
+  String? _lastNavR17RerouteSignature;
+  final NavRerouteDecisionTracker _rerouteDecision = NavRerouteDecisionTracker();
+  NavRerouteDecisionTickOutput? _lastRerouteDecision;
   // NAV-R12-B: why the route-adaptation state is active — 'none'
   // | 'opposite_direction' | 'opposite_direction_strong'
   // | 'backward_progress' | 'snap_distance'.
@@ -392,6 +395,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     _lastRerouteFailed = false;
     _rerouteReason = null;
     _offRouteRerouteDebounceStartedAt = null;
+    _lastRerouteDecision = null;
+    _rerouteDecision.reset();
     _driverNavEngine.reset();
     _lastNavEngineOutput = null;
     _lastNavEngineRefreshKey = null;
@@ -8665,49 +8670,43 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     final offRouteThreshold = math.max(70.0, _snapThresholdFor(pos) + 25.0);
-    final snapDistance = snap?.distanceFromRouteM ?? double.infinity;
-    if (_isActiveDriverNavEngineContext() && progress != null) {
-      if (progress.offRouteLikely) {
-        _offRouteHitCount += 1;
-      } else if (progress.hasReliableSnap) {
-        _offRouteHitCount = 0;
-      } else if (snapDistance > offRouteThreshold) {
-        _offRouteHitCount += 1;
-      } else {
-        _offRouteHitCount = 0;
-      }
-    } else if (snapDistance > offRouteThreshold) {
-      _offRouteHitCount += 1;
-    } else {
-      _offRouteHitCount = 0;
-    }
-    // NAV-R12-B: route deviation (opposite direction / backward progress)
-    // confirms off-route much faster than the plain snap-distance path.
+    final snapDistance = snap?.distanceFromRouteM ?? progress?.snapDistanceM ?? double.infinity;
+    final progressForDecision =
+        progress ??
+        NavRouteProgressOutput(
+          hasReliableSnap: false,
+          snapDistanceM: snapDistance.isFinite ? snapDistance : double.infinity,
+          confidence: 0,
+          forwardProgress: true,
+          offRouteLikely:
+              snapDistance.isFinite && snapDistance > offRouteThreshold,
+          reason: 'legacy_snap',
+        );
+    _lastRerouteDecision = _rerouteDecision.update(
+      NavRerouteDecisionTickInput(
+        progress: progressForDecision,
+        snapDistanceM: snapDistance.isFinite ? snapDistance : double.infinity,
+        speedKmh: _speedKmhFor(pos),
+        offRouteThresholdM: offRouteThreshold,
+        useProgressOffRouteHits:
+            _isActiveDriverNavEngineContext() && progress != null,
+        now: DateTime.now(),
+        lastRerouteAt: _lastRerouteAt,
+        lastRerouteFailed: _lastRerouteFailed,
+        allowReroutePhase: _reroutePhaseAllowed(),
+        liveRideActive: _liveRideActive,
+        isWaiting: _isWaiting,
+        isRerouting: _isRerouting,
+        hasRoute: _routeCoords.length >= 2,
+      ),
+    );
+    final decision = _lastRerouteDecision!;
+    _offRouteHitCount = decision.offRouteHitCount;
+    _offRouteReason = decision.offRouteReason;
+    final offRoute = decision.offRouteLikely;
     final oppositeDirection = progress?.oppositeDirectionLikely ?? false;
-    final strongOppositeDirection =
-        progress?.routeDeviationReason == 'opposite_heading_strong';
     final backwardProgress = progress?.backwardProgressLikely ?? false;
     final routeDeviation = progress?.routeDeviationLikely ?? false;
-    final int offRouteHitsRequired;
-    if (strongOppositeDirection) {
-      offRouteHitsRequired = 1;
-    } else if (routeDeviation) {
-      offRouteHitsRequired = 2;
-    } else if (progress?.offRouteLikely == true || snapDistance > 55.0) {
-      offRouteHitsRequired = 2;
-    } else {
-      offRouteHitsRequired = 3;
-    }
-    final offRoute = _offRouteHitCount >= offRouteHitsRequired;
-    if (offRoute) {
-      _offRouteReason = oppositeDirection
-          ? (strongOppositeDirection
-                ? 'opposite_direction_strong'
-                : 'opposite_direction')
-          : (backwardProgress ? 'backward_progress' : 'snap_distance');
-    } else {
-      _offRouteReason = 'none';
-    }
     if (offRoute != _offRouteLikely) {
       _offRouteLikely = offRoute;
       if (!offRoute) {
@@ -8720,10 +8719,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     _logNavR12RouteDeviation(
       pos: pos,
       progress: progress,
-      snapDistance: snapDistance,
+      snapDistance: snapDistance.isFinite ? snapDistance : double.infinity,
       routeDeviation: routeDeviation,
       oppositeDirection: oppositeDirection,
       backwardProgress: backwardProgress,
+    );
+    _logNavR17RerouteDecision(
+      pos: pos,
+      progress: progress,
+      snapDistance: snapDistance.isFinite ? snapDistance : double.infinity,
+      decision: decision,
     );
 
     final displayPoint = (_useMatchedVisual && snap != null)
@@ -8742,6 +8747,82 @@ class _DriverHomePageState extends State<DriverHomePage>
           'snapDistM=${snapDistance.isFinite ? snapDistance.toStringAsFixed(1) : 'inf'} '
           'gpsAccuracyM=${(pos.accuracy.isFinite ? pos.accuracy : -1).toStringAsFixed(1)} '
           'useMatchedVisual=$_useMatchedVisual reason=${canUseMatched ? 'confidence_ok' : 'confidence_low'}',
+    );
+  }
+
+  bool _reroutePhaseAllowed() {
+    if (_routePhase == _RideRoutePhase.toPickup) {
+      return _activeBooking != null && _activeTripId == null;
+    }
+    if (_routePhase == _RideRoutePhase.trip) {
+      final booking = _activeBooking;
+      if (booking != null && _activeTripId != null) return true;
+      if (_directRideActive &&
+          (_directRideDestinationText ?? '').trim().isNotEmpty) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _logNavR17RerouteDecision({
+    required geo.Position pos,
+    required NavRouteProgressOutput? progress,
+    required double snapDistance,
+    required NavRerouteDecisionTickOutput decision,
+  }) {
+    final signature =
+        '${decision.offRouteReason}|${decision.eligible}|'
+        '${decision.cooldownActive}|${decision.movementOk}|'
+        '${decision.samplesOffRoute}|${decision.shouldTrigger}';
+    if (signature == _lastNavR17RerouteSignature) return;
+    _lastNavR17RerouteSignature = signature;
+    final headingDelta = progress?.headingDeltaDeg;
+    _logNavBounded(
+      'NAV_R17_REROUTE_DECISION',
+      'reason=${decision.offRouteReason} '
+          'headingDeltaBucket=${navRerouteHeadingDeltaBucket(headingDelta)} '
+          'routeDistanceBucket=${navRerouteDistanceBucket(snapDistance)} '
+          'samplesOffRoute=${decision.samplesOffRoute} '
+          'movementBucket=${navRerouteMovementBucket(_speedKmhFor(pos))} '
+          'eligible=${decision.eligible} '
+          'cooldown=${decision.cooldownActive}',
+      intervalMs: 1200,
+    );
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+        tag: 'NAV_R17_REROUTE_DECISION',
+        fields: <String, dynamic>{
+          'reason': decision.offRouteReason,
+          'headingDeltaBucket': navRerouteHeadingDeltaBucket(headingDelta),
+          'routeDistanceBucket': navRerouteDistanceBucket(snapDistance),
+          'samplesOffRoute': decision.samplesOffRoute,
+          'movementBucket': navRerouteMovementBucket(_speedKmhFor(pos)),
+          'eligible': decision.eligible,
+          'cooldown': decision.cooldownActive,
+        },
+      ),
+    );
+  }
+
+  void _logNavR17RerouteApply({
+    required String result,
+    required String reason,
+    required bool routeReplaced,
+  }) {
+    _logNavBounded(
+      'NAV_R17_REROUTE_APPLY',
+      'result=$result reason=$reason routeReplaced=$routeReplaced',
+    );
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+        tag: 'NAV_R17_REROUTE_APPLY',
+        fields: <String, dynamic>{
+          'result': result,
+          'reason': reason,
+          'routeReplaced': routeReplaced,
+        },
+      ),
     );
   }
 
@@ -8795,88 +8876,22 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   bool _isRouteDeviationOffRouteReason() {
-    return _offRouteReason == 'opposite_direction' ||
-        _offRouteReason == 'opposite_direction_strong' ||
-        _offRouteReason == 'backward_progress';
+    return navRerouteIsRouteDeviationReason(_offRouteReason);
   }
 
   Duration _rerouteCooldownFor() {
-    // NAV-R12-B: a failed reroute retries on a short backoff; route-deviation
-    // off-route corrects on a short cooldown. Camera follow mode no longer
-    // gates detection/eligibility — it only affects camera behavior.
-    if (_lastRerouteFailed) return _rerouteFailedRetryBackoff;
-    if (_isRouteDeviationOffRouteReason()) {
-      return _rerouteCooldownRouteDeviation;
-    }
-    return _rerouteCooldown;
+    return navRerouteCooldownFor(
+      offRouteReason: _offRouteReason,
+      lastRerouteFailed: _lastRerouteFailed,
+    );
   }
 
   bool _canAttemptOffRouteReroute() {
-    if (!_liveRideActive || _isWaiting) return false;
-    if (_lastPos == null || _isRerouting) return false;
-    if (_routeCoords.length < 2) return false;
-    if (!_offRouteLikely) return false;
-
-    final lastReroute = _lastRerouteAt;
-    if (lastReroute != null &&
-        DateTime.now().difference(lastReroute) < _rerouteCooldownFor()) {
-      return false;
-    }
-
-    if (_routePhase == _RideRoutePhase.toPickup) {
-      return _activeBooking != null && _activeTripId == null;
-    }
-    if (_routePhase == _RideRoutePhase.trip) {
-      final booking = _activeBooking;
-      if (booking != null && _activeTripId != null) return true;
-      if (_directRideActive &&
-          (_directRideDestinationText ?? '').trim().isNotEmpty) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  Duration _offRouteRerouteDebounceFor() {
-    // NAV-R12-B: confirmed route deviation must start the reroute on the
-    // next fix, not seconds later.
-    if (_offRouteReason == 'opposite_direction_strong') {
-      return const Duration(milliseconds: 500);
-    }
-    if (_isRouteDeviationOffRouteReason()) {
-      return const Duration(milliseconds: 800);
-    }
-    final progress = _lastNavRouteProgress;
-    if (progress != null && progress.offRouteLikely) {
-      final snapDist = progress.snapDistanceM;
-      final conf = progress.confidence;
-      if (snapDist > 55.0 && conf < 45.0) {
-        return const Duration(milliseconds: 1200);
-      }
-      if (snapDist > 45.0 || conf < 55.0) {
-        return const Duration(milliseconds: 1800);
-      }
-    }
-    return const Duration(milliseconds: 2500);
+    return _lastRerouteDecision?.eligible ?? false;
   }
 
   void _evaluateOffRouteReroute() {
-    if (!_offRouteLikely) {
-      _offRouteRerouteDebounceStartedAt = null;
-      return;
-    }
-    if (!_canAttemptOffRouteReroute()) return;
-
-    final debounceStart = _offRouteRerouteDebounceStartedAt;
-    if (debounceStart == null) {
-      _offRouteRerouteDebounceStartedAt = DateTime.now();
-      return;
-    }
-    if (DateTime.now().difference(debounceStart) <
-        _offRouteRerouteDebounceFor()) {
-      return;
-    }
-
+    if (_lastRerouteDecision?.shouldTrigger != true) return;
     unawaited(
       _triggerOffRouteReroute(
         reason: _isRouteDeviationOffRouteReason()
@@ -8887,6 +8902,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   void _resetOffRouteStateAfterReroute() {
+    _rerouteDecision.noteRerouteApplied(DateTime.now());
+    _lastRerouteDecision = null;
     _offRouteHitCount = 0;
     _offRouteLikely = false;
     _offRouteReason = 'none';
@@ -8906,7 +8923,14 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _triggerOffRouteReroute({required String reason}) async {
-    if (_isRerouting || !_canAttemptOffRouteReroute()) return;
+    if (_isRerouting || !(_lastRerouteDecision?.eligible ?? false)) {
+      _logNavR17RerouteApply(
+        result: 'skipped',
+        reason: reason,
+        routeReplaced: false,
+      );
+      return;
+    }
 
     _isRerouting = true;
     _rerouteReason = reason;
@@ -8914,6 +8938,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     _offRouteRerouteDebounceStartedAt = null;
     final phaseLabel = _reroutePhaseLabel();
     final rerouteStartedAt = DateTime.now();
+    _logNavR17RerouteApply(
+      result: 'started',
+      reason: reason,
+      routeReplaced: false,
+    );
     debugPrint('[NAV_REROUTE] phase=$phaseLabel reason=$reason start=1');
     unawaited(
       NavDiagnosticsRecorder.instance.recordRerouteEvent(
@@ -8953,6 +8982,17 @@ class _DriverHomePageState extends State<DriverHomePage>
     } finally {
       if (ok) {
         _resetOffRouteStateAfterReroute();
+        _logNavR17RerouteApply(
+          result: 'success',
+          reason: reason,
+          routeReplaced: true,
+        );
+      } else {
+        _logNavR17RerouteApply(
+          result: 'failed',
+          reason: reason,
+          routeReplaced: false,
+        );
       }
       // NAV-R12-B: failed reroutes retry on a short backoff instead of the
       // full cooldown (see _rerouteCooldownFor).
