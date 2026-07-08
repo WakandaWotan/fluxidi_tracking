@@ -93,6 +93,14 @@ const double kDriverCockpitCameraMaxZoom = 19.3;
 const double kDriverCockpitCameraMinPitch = 44.0;
 const double kDriverCockpitCameraMaxPitch = 80.0;
 
+/// NAV-PRES-3C: manual cockpit intensity adjustment bounds.
+const double kDriverCockpitCameraManualZoomStep = 0.25;
+const double kDriverCockpitCameraManualZoomMinOffset = -1.0;
+const double kDriverCockpitCameraManualZoomMaxOffset = 1.0;
+const double kDriverCockpitCameraManualPitchStep = 1.0;
+const double kDriverCockpitCameraManualPitchMinOffset = -4.0;
+const double kDriverCockpitCameraManualPitchMaxOffset = 4.0;
+
 /// NAV-PRES-3A baseline targets (for tests comparing 3B increases).
 const double kDriverCockpitCamera3aPhoneZoom = 18.4;
 const double kDriverCockpitCamera3aPhonePitch = 71.0;
@@ -105,6 +113,66 @@ double driverCockpitCameraTargetZoom({required bool isTablet}) {
 
 double driverCockpitCameraTargetPitch({required bool isTablet}) {
   return isTablet ? 76.0 : 78.0;
+}
+
+double clampDriverCockpitManualZoomOffset(double offset) {
+  return offset.clamp(
+    kDriverCockpitCameraManualZoomMinOffset,
+    kDriverCockpitCameraManualZoomMaxOffset,
+  );
+}
+
+double clampDriverCockpitManualPitchOffset(double offset) {
+  return offset.clamp(
+    kDriverCockpitCameraManualPitchMinOffset,
+    kDriverCockpitCameraManualPitchMaxOffset,
+  );
+}
+
+/// NAV-PRES-3C: apply manual zoom offset after base target, before smoothing.
+double applyDriverCockpitManualZoomTarget({
+  required double baseTargetZoom,
+  required double manualZoomOffset,
+}) {
+  final clamped = clampDriverCockpitManualZoomOffset(manualZoomOffset);
+  return (baseTargetZoom + clamped).clamp(
+    kDriverCockpitCameraMinZoom,
+    kDriverCockpitCameraMaxZoom,
+  );
+}
+
+/// NAV-PRES-3C: apply manual pitch offset after base target, before smoothing.
+double applyDriverCockpitManualPitchTarget({
+  required double baseTargetPitch,
+  required double manualPitchOffset,
+}) {
+  final clamped = clampDriverCockpitManualPitchOffset(manualPitchOffset);
+  return (baseTargetPitch + clamped).clamp(
+    kDriverCockpitCameraMinPitch,
+    kDriverCockpitCameraMaxPitch,
+  );
+}
+
+/// NAV-PRES-3C: step session manual zoom offset on +/- tap.
+double stepDriverCockpitManualZoomOffset(
+  double current, {
+  required bool increase,
+}) {
+  final delta = increase
+      ? kDriverCockpitCameraManualZoomStep
+      : -kDriverCockpitCameraManualZoomStep;
+  return clampDriverCockpitManualZoomOffset(current + delta);
+}
+
+/// NAV-PRES-3C: step session manual pitch offset on +/- tap.
+double stepDriverCockpitManualPitchOffset(
+  double current, {
+  required bool increase,
+}) {
+  final delta = increase
+      ? kDriverCockpitCameraManualPitchStep
+      : -kDriverCockpitCameraManualPitchStep;
+  return clampDriverCockpitManualPitchOffset(current + delta);
 }
 
 /// NAV-PRES-3B: speed-scaled lookahead distance for chase-camera framing.
@@ -243,9 +311,19 @@ DriverCockpitRouteAlignDiagnostics resolveDriverCockpitRouteAlignDiagnostics({
 DriverCockpitCameraProfileOutput resolveDriverCockpitCameraProfile(
   DriverCockpitCameraProfileInput input, {
   DriverCockpitCameraLookaheadInput? lookahead,
+  double manualZoomOffset = 0.0,
+  double manualPitchOffset = 0.0,
 }) {
-  final targetZoom = driverCockpitCameraTargetZoom(isTablet: input.isTablet);
-  final targetPitch = driverCockpitCameraTargetPitch(isTablet: input.isTablet);
+  final baseTargetZoom = driverCockpitCameraTargetZoom(isTablet: input.isTablet);
+  final baseTargetPitch = driverCockpitCameraTargetPitch(isTablet: input.isTablet);
+  final targetZoom = applyDriverCockpitManualZoomTarget(
+    baseTargetZoom: baseTargetZoom,
+    manualZoomOffset: manualZoomOffset,
+  );
+  final targetPitch = applyDriverCockpitManualPitchTarget(
+    baseTargetPitch: baseTargetPitch,
+    manualPitchOffset: manualPitchOffset,
+  );
   final zoom = driverCockpitCameraSmoothToward(
     current: input.currentZoom,
     target: targetZoom,

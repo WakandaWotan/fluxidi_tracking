@@ -38,3 +38,16 @@ const bool kNavigationDriverCockpitCameraEnabled = bool.fromEnvironment(
   kNavigationDriverCockpitCameraDefineKey,
   defaultValue: false,
 );
+
+/// Dart-define key for NAV-PRES-3C driver cockpit camera +/- controls.
+const String kNavigationDriverCockpitCameraControlsDefineKey =
+    'FLUXIDI_NAV_DRIVER_COCKPIT_CAMERA_CONTROLS';
+
+/// NAV-PRES-3C: live +/- cockpit camera intensity controls in driver mode.
+///
+/// Requires [kNavigationDriverCockpitCameraEnabled]. Enable at build time:
+/// `--dart-define=FLUXIDI_NAV_DRIVER_COCKPIT_CAMERA_CONTROLS=true`
+const bool kNavigationDriverCockpitCameraControlsEnabled = bool.fromEnvironment(
+  kNavigationDriverCockpitCameraControlsDefineKey,
+  defaultValue: false,
+);

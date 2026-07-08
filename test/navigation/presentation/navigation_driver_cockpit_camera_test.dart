@@ -251,4 +251,101 @@ void main() {
       expect(state.useDriverCockpitCamera, isFalse);
     });
   });
+
+  group('NAV-PRES-3C manual cockpit camera offsets', () {
+    test('default offset 0 keeps NAV-PRES-3B target behavior', () {
+      const input = DriverCockpitCameraProfileInput(
+        currentZoom: 19.1,
+        currentPitch: 78.0,
+        isTablet: false,
+        isLandscape: false,
+        safeTop: 0,
+        safeBottom: 0,
+      );
+      final baseline = resolveDriverCockpitCameraProfile(input);
+      final withZeroOffsets = resolveDriverCockpitCameraProfile(
+        input,
+        manualZoomOffset: 0.0,
+        manualPitchOffset: 0.0,
+      );
+      expect(withZeroOffsets.zoom, baseline.zoom);
+      expect(withZeroOffsets.pitch, baseline.pitch);
+    });
+
+    test('plus offset increases target zoom within clamp', () {
+      final base = driverCockpitCameraTargetZoom(isTablet: false);
+      final plusTarget = applyDriverCockpitManualZoomTarget(
+        baseTargetZoom: base,
+        manualZoomOffset: 0.5,
+      );
+      expect(plusTarget, greaterThan(base));
+      expect(plusTarget, lessThanOrEqualTo(kDriverCockpitCameraMaxZoom));
+
+      final output = resolveDriverCockpitCameraProfile(
+        const DriverCockpitCameraProfileInput(
+          currentZoom: 18.0,
+          currentPitch: 70.0,
+          isTablet: false,
+          isLandscape: false,
+          safeTop: 0,
+          safeBottom: 0,
+        ),
+        manualZoomOffset: 0.5,
+      );
+      expect(output.zoom, greaterThan(18.0));
+    });
+
+    test('minus offset decreases target zoom within clamp', () {
+      final base = driverCockpitCameraTargetZoom(isTablet: false);
+      final minusTarget = applyDriverCockpitManualZoomTarget(
+        baseTargetZoom: base,
+        manualZoomOffset: -0.5,
+      );
+      expect(minusTarget, lessThan(base));
+      expect(minusTarget, greaterThanOrEqualTo(kDriverCockpitCameraMinZoom));
+    });
+
+    test('pitch offset stays bounded', () {
+      expect(
+        applyDriverCockpitManualPitchTarget(
+          baseTargetPitch: 78.0,
+          manualPitchOffset: 4.0,
+        ),
+        kDriverCockpitCameraMaxPitch,
+      );
+      expect(
+        applyDriverCockpitManualPitchTarget(
+          baseTargetPitch: 78.0,
+          manualPitchOffset: -4.0,
+        ),
+        74.0,
+      );
+      expect(
+        applyDriverCockpitManualPitchTarget(
+          baseTargetPitch: 46.0,
+          manualPitchOffset: -4.0,
+        ),
+        kDriverCockpitCameraMinPitch,
+      );
+      expect(
+        stepDriverCockpitManualPitchOffset(3.5, increase: true),
+        kDriverCockpitCameraManualPitchMaxOffset,
+      );
+      expect(
+        stepDriverCockpitManualPitchOffset(-3.5, increase: false),
+        kDriverCockpitCameraManualPitchMinOffset,
+      );
+    });
+
+    test('manual zoom offset steps clamp at +/-1.0', () {
+      expect(
+        stepDriverCockpitManualZoomOffset(0.9, increase: true),
+        kDriverCockpitCameraManualZoomMaxOffset,
+      );
+      expect(
+        stepDriverCockpitManualZoomOffset(-0.9, increase: false),
+        kDriverCockpitCameraManualZoomMinOffset,
+      );
+    });
+  });
 }

@@ -16,6 +16,10 @@ void main() {
   const controllerWithCockpitCamera = NavigationPresentationController(
     driverCockpitCameraEnabled: true,
   );
+  const controllerWithCockpitControls = NavigationPresentationController(
+    driverCockpitCameraEnabled: true,
+    driverCockpitCameraControlsEnabled: true,
+  );
 
   group('NAV-PRES-1 NavigationPresentationController', () {
     test('maps NavCameraViewMode to NavigationPresentationMode', () {
@@ -389,6 +393,71 @@ void main() {
         driverCockpitCameraEnabled: false,
       );
       expect(disabled.useDriverCockpitCamera, isFalse);
+    });
+  });
+
+  group('NAV-PRES-3C driver cockpit camera controls', () {
+    test('default controls flag false + driver => showDriverCockpitCameraControls false',
+        () {
+      final state =
+          controllerWithCockpitCamera.resolve(NavigationPresentationMode.driver);
+      expect(state.useDriverCockpitCamera, isTrue);
+      expect(state.showDriverCockpitCameraControls, isFalse);
+    });
+
+    test('controls flag true + driver + cockpit => showDriverCockpitCameraControls true',
+        () {
+      final state = controllerWithCockpitControls.resolve(
+        NavigationPresentationMode.driver,
+      );
+      expect(state.useDriverCockpitCamera, isTrue);
+      expect(state.showDriverCockpitCameraControls, isTrue);
+    });
+
+    test('controls flag true + northUp => showDriverCockpitCameraControls false',
+        () {
+      final state = controllerWithCockpitControls.resolve(
+        NavigationPresentationMode.northUp,
+      );
+      expect(state.showDriverCockpitCameraControls, isFalse);
+    });
+
+    test('controls flag alone without cockpit camera stays false', () {
+      const controlsOnly = NavigationPresentationController(
+        driverCockpitCameraControlsEnabled: true,
+      );
+      final state = controlsOnly.resolve(NavigationPresentationMode.driver);
+      expect(state.useDriverCockpitCamera, isFalse);
+      expect(state.showDriverCockpitCameraControls, isFalse);
+    });
+
+    test('controls flag independent from HUD and marker suppression', () {
+      const allFlags = NavigationPresentationController(
+        driverHudOverlayEnabled: true,
+        hideMapboxTaxiMarkerWithDriverHudEnabled: true,
+        driverCockpitCameraEnabled: true,
+        driverCockpitCameraControlsEnabled: true,
+      );
+      final state = allFlags.resolve(NavigationPresentationMode.driver);
+      expect(state.showDriverHudOverlay, isTrue);
+      expect(state.hideMapboxTaxiMarker, isTrue);
+      expect(state.useDriverCockpitCamera, isTrue);
+      expect(state.showDriverCockpitCameraControls, isTrue);
+    });
+
+    test('resolveForNavCameraViewMode accepts injectable controls flag override',
+        () {
+      final enabled = controllerWithCockpitCamera.resolveForNavCameraViewMode(
+        NavCameraViewMode.streetView,
+        driverCockpitCameraControlsEnabled: true,
+      );
+      expect(enabled.showDriverCockpitCameraControls, isTrue);
+
+      final disabled = controllerWithCockpitControls.resolveForNavCameraViewMode(
+        NavCameraViewMode.streetView,
+        driverCockpitCameraControlsEnabled: false,
+      );
+      expect(disabled.showDriverCockpitCameraControls, isFalse);
     });
   });
 }

@@ -243,6 +243,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   String? _lastNavPresRouteAlignSignature;
   double? _lastCockpitCameraCenterLat;
   double? _lastCockpitCameraCenterLon;
+  double _driverCockpitManualZoomOffset = 0.0;
+  double _driverCockpitManualPitchOffset = 0.0;
   MapThemeMode? _mapThemeOverride;
   DriverMapVisualMode _driverMapVisualMode = DriverMapVisualMode.street;
   double _lastMapCameraZoom = kDriverMapInitialZoom;
@@ -7872,6 +7874,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         safeBottom: safeBottom,
       ),
       lookahead: lookahead,
+      manualZoomOffset: _driverCockpitManualZoomOffset,
+      manualPitchOffset: _driverCockpitManualPitchOffset,
     );
     if (profile.centerLat != null && profile.centerLon != null) {
       _lastCockpitCameraCenterLat = profile.centerLat;
@@ -7891,8 +7895,60 @@ class _DriverHomePageState extends State<DriverHomePage>
   void _resetDriverCockpitCameraState() {
     _lastCockpitCameraCenterLat = null;
     _lastCockpitCameraCenterLon = null;
+    _driverCockpitManualZoomOffset = 0.0;
+    _driverCockpitManualPitchOffset = 0.0;
     _lastNavPresCameraSignature = null;
     _lastNavPresRouteAlignSignature = null;
+  }
+
+  void _adjustDriverCockpitCameraIntensity({required bool increase}) {
+    if (!_navigationPresentationStateFor(_navCameraViewMode)
+        .showDriverCockpitCameraControls) {
+      return;
+    }
+    setState(() {
+      _driverCockpitManualZoomOffset = stepDriverCockpitManualZoomOffset(
+        _driverCockpitManualZoomOffset,
+        increase: increase,
+      );
+      _driverCockpitManualPitchOffset = stepDriverCockpitManualPitchOffset(
+        _driverCockpitManualPitchOffset,
+        increase: increase,
+      );
+    });
+    _logNavPresCameraControl(action: increase ? 'plus' : 'minus');
+    final pos = _lastPos;
+    if (pos != null &&
+        _cameraMode == _CameraMode.follow &&
+        _liveRideActive) {
+      unawaited(
+        _followCameraTesla(pos, force: true, cameraReason: 'cockpit_adjust'),
+      );
+    }
+  }
+
+  void _logNavPresCameraControl({required String action}) {
+    if (!_navigationPresentationStateFor(_navCameraViewMode)
+        .showDriverCockpitCameraControls) {
+      return;
+    }
+    _logNavBounded(
+      'NAV_PRES_CAMERA_CONTROL',
+      'action=$action '
+          'zoomOffset=${_driverCockpitManualZoomOffset.toStringAsFixed(2)} '
+          'pitchOffset=${_driverCockpitManualPitchOffset.toStringAsFixed(1)}',
+      intervalMs: 200,
+    );
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordNavEngineEvent(
+        tag: 'NAV_PRES_CAMERA_CONTROL',
+        fields: <String, dynamic>{
+          'action': action,
+          'zoomOffset': _driverCockpitManualZoomOffset,
+          'pitchOffset': _driverCockpitManualPitchOffset,
+        },
+      ),
+    );
   }
 
   void _logNavPresCamera({
@@ -7910,7 +7966,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     final signature =
         '${zoom.toStringAsFixed(1)}|${pitch.toStringAsFixed(1)}|'
         '${bearing.round()}|${bottomPadding.round()}|'
-        '${lookaheadM.round()}|$reason';
+        '${lookaheadM.round()}|'
+        '${_driverCockpitManualZoomOffset.toStringAsFixed(2)}|'
+        '${_driverCockpitManualPitchOffset.toStringAsFixed(1)}|$reason';
     if (signature == _lastNavPresCameraSignature) return;
     _lastNavPresCameraSignature = signature;
     _logNavBounded(
@@ -7921,6 +7979,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           'bearing=${bearing.round()} '
           'bottomPadding=${bottomPadding.round()} '
           'lookahead=${lookaheadM.round()} '
+          'zoomOffset=${_driverCockpitManualZoomOffset.toStringAsFixed(2)} '
+          'pitchOffset=${_driverCockpitManualPitchOffset.toStringAsFixed(1)} '
           'reason=$reason',
       intervalMs: 1200,
     );
@@ -7935,6 +7995,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           'bearing': bearing.round(),
           'bottomPadding': bottomPadding.round(),
           'lookaheadM': lookaheadM.round(),
+          'zoomOffset': _driverCockpitManualZoomOffset,
+          'pitchOffset': _driverCockpitManualPitchOffset,
           'reason': reason,
         },
       ),
@@ -18316,6 +18378,13 @@ class _DriverHomePageState extends State<DriverHomePage>
             cockpitBoost: navPresentationState.useDriverCockpitCamera,
           )
         : 56.0;
+    final navActionColors = _navActionThemeColors();
+    final double cockpitCameraControlsBottom = showCockpit
+        ? driverHudBottom +
+            (navPresentationState.showDriverHudOverlay
+                ? driverHudIconSize + 16.0
+                : 72.0)
+        : recenterBottom;
     return Scaffold(
       key: _scaffoldKey,
       drawer: _buildDrawer(),
@@ -18500,6 +18569,23 @@ class _DriverHomePageState extends State<DriverHomePage>
               bottom: driverHudBottom,
               child: Center(
                 child: NavigationDriverHudOverlay(iconSize: driverHudIconSize),
+              ),
+            ),
+
+          // NAV-PRES-3C: optional live +/- cockpit camera controls.
+          if (_cameraMode == _CameraMode.follow &&
+              liveActive &&
+              navPresentationState.showDriverCockpitCameraControls)
+            Positioned(
+              right: 14,
+              bottom: cockpitCameraControlsBottom,
+              child: NavigationDriverCockpitCameraControls(
+                onPlus: () => _adjustDriverCockpitCameraIntensity(increase: true),
+                onMinus: () =>
+                    _adjustDriverCockpitCameraIntensity(increase: false),
+                accentColor: navActionColors.accent,
+                textColor: navActionColors.text,
+                surfaceColor: navActionColors.surface,
               ),
             ),
 

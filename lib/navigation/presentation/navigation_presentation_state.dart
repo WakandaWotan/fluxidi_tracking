@@ -36,6 +36,9 @@ class NavigationPresentationState {
   /// NAV-PRES-3A: apply driver cockpit camera zoom/pitch/padding profile.
   final bool useDriverCockpitCamera;
 
+  /// NAV-PRES-3C: show live +/- cockpit camera intensity controls.
+  final bool showDriverCockpitCameraControls;
+
   const NavigationPresentationState({
     required this.mode,
     required this.navCameraViewMode,
@@ -47,6 +50,7 @@ class NavigationPresentationState {
     required this.showDriverHudOverlay,
     required this.hideMapboxTaxiMarker,
     required this.useDriverCockpitCamera,
+    required this.showDriverCockpitCameraControls,
   });
 
   @override
@@ -61,7 +65,9 @@ class NavigationPresentationState {
         other.diagnosticsLabel == diagnosticsLabel &&
         other.showDriverHudOverlay == showDriverHudOverlay &&
         other.hideMapboxTaxiMarker == hideMapboxTaxiMarker &&
-        other.useDriverCockpitCamera == useDriverCockpitCamera;
+        other.useDriverCockpitCamera == useDriverCockpitCamera &&
+        other.showDriverCockpitCameraControls ==
+            showDriverCockpitCameraControls;
   }
 
   @override
@@ -76,5 +82,6 @@ class NavigationPresentationState {
         showDriverHudOverlay,
         hideMapboxTaxiMarker,
         useDriverCockpitCamera,
+        showDriverCockpitCameraControls,
       );
 }
