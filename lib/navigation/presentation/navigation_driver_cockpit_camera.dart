@@ -156,13 +156,13 @@ const double kDriverCockpitPro2CompactAnchorL1 = 0.55;
 const double kDriverCockpitPro2CompactAnchorL7 = 0.62;
 const double kDriverCockpitPro2CompactAnchorL13 = 0.73;
 
-/// NAV-PRES-3D-PRO2: HUD icon size at levels 1 / 7 / 13 (phone baseline 94).
-const double kDriverCockpitPro2HudPhoneL1 = 78.0;
-const double kDriverCockpitPro2HudPhoneL7 = 94.0;
-const double kDriverCockpitPro2HudPhoneL13 = 122.0;
-const double kDriverCockpitPro2HudTabletL1 = 92.0;
-const double kDriverCockpitPro2HudTabletL7 = 132.0;
-const double kDriverCockpitPro2HudTabletL13 = 142.0;
+/// NAV-PRES-3M: HUD icon size at levels 1 / 7 / 13 (smooth growth to streetlevel).
+const double kDriverCockpitPro2HudPhoneL1 = 94.0;
+const double kDriverCockpitPro2HudPhoneL7 = 112.0;
+const double kDriverCockpitPro2HudPhoneL13 = 135.0;
+const double kDriverCockpitPro2HudTabletL1 = 132.0;
+const double kDriverCockpitPro2HudTabletL7 = 166.0;
+const double kDriverCockpitPro2HudTabletL13 = 208.0;
 
 /// NAV-PRES-3G: overview levels may shrink the HUD; close levels keep L7 size.
 const int kDriverCockpitHudOverviewLevelMax = 3;
@@ -324,9 +324,12 @@ double driverCockpitViewLevelTargetPitch({
   return raw.clamp(kDriverCockpitCameraMinPitch, kDriverCockpitCameraMaxPitch);
 }
 
-/// NAV-PRES-3H: driver cockpit HUD is locked to View 7 baseline for all levels.
+/// NAV-PRES-3M: default HUD size when view level is unavailable (level 7).
 double driverCockpitFixedHudIconSize({required bool isTablet}) {
-  return isTablet ? kDriverCockpitPro2HudTabletL7 : kDriverCockpitPro2HudPhoneL7;
+  return driverCockpitViewLevelHudIconSize(
+    isTablet: isTablet,
+    level: kDriverCockpitViewLevelDefault,
+  );
 }
 
 /// NAV-PRES-3H/3K: fixed HUD bottom offset above safe inset (level-independent).
@@ -360,23 +363,28 @@ double driverCockpitFixedAnchorFraction({
 /// NAV-PRES-3L-A: tablet streetlevel gets a small anchor nudge at View 7+.
 const int kDriverCockpitStreetLevelAnchorNudgeMinLevel = 7;
 const double kDriverCockpitTabletStreetLevelAnchorNudge = 0.03;
+const double kDriverCockpitTabletStreetLevelAnchorNudgeHighMax = 0.07;
 
-/// NAV-PRES-3L-A: cockpit-only visual route lead-in behind snap (meters).
-const double kDriverCockpitRouteLeadInMaxM = 35.0;
+/// NAV-PRES-3M: cockpit-only visual route lead-in behind snap (meters).
+const double kDriverCockpitRouteLeadInMaxM = 120.0;
 
-/// NAV-PRES-3L-A: meters of route geometry to render behind snap for cockpit HUD alignment.
+/// NAV-PRES-3M: meters of route geometry to render behind snap for taxi-nose alignment.
 double driverCockpitRouteVisualLeadInMeters(int viewLevel) {
   final level = clampDriverCockpitViewLevel(viewLevel);
   if (level <= 3) return 0.0;
   if (level <= 6) {
     return ((level - 3) / 3.0 * 8.0).clamp(0.0, 8.0);
   }
-  if (level <= 10) {
-    final t = (level - 7) / 3.0;
-    return 12.0 + t * 8.0;
+  if (level <= 9) {
+    final t = (level - 7) / 2.0;
+    return 25.0 + t * 20.0;
   }
-  final t = (level - 11) / 2.0;
-  return (20.0 + t * 15.0).clamp(20.0, kDriverCockpitRouteLeadInMaxM);
+  if (level <= 11) {
+    final t = (level - 10) / 1.0;
+    return 45.0 + t * 30.0;
+  }
+  final t = (level - 12) / 1.0;
+  return (75.0 + t * 45.0).clamp(75.0, kDriverCockpitRouteLeadInMaxM);
 }
 
 double driverCockpitViewLevelTargetAnchorFraction({
@@ -391,15 +399,28 @@ double driverCockpitViewLevelTargetAnchorFraction({
   if (!isTablet || level < kDriverCockpitStreetLevelAnchorNudgeMinLevel) {
     return base;
   }
-  return (base + kDriverCockpitTabletStreetLevelAnchorNudge).clamp(base, 0.85);
+  var nudge = kDriverCockpitTabletStreetLevelAnchorNudge;
+  if (level >= 11) {
+    final t = ((level - 11) / 2.0).clamp(0.0, 1.0);
+    nudge += t *
+        (kDriverCockpitTabletStreetLevelAnchorNudgeHighMax -
+            kDriverCockpitTabletStreetLevelAnchorNudge);
+  }
+  return (base + nudge).clamp(base, 0.88);
 }
 
-/// NAV-PRES-3G/3H: driver cockpit HUD size — fixed at L7 baseline for all levels.
+/// NAV-PRES-3M: driver cockpit HUD size grows deterministically by view level.
 double driverCockpitViewLevelHudIconSize({
   required bool isTablet,
   required int level,
 }) {
-  return driverCockpitFixedHudIconSize(isTablet: isTablet);
+  return driverCockpitViewLevelInterp(
+    level: level,
+    atLevel1: isTablet ? kDriverCockpitPro2HudTabletL1 : kDriverCockpitPro2HudPhoneL1,
+    atLevel7: isTablet ? kDriverCockpitPro2HudTabletL7 : kDriverCockpitPro2HudPhoneL7,
+    atLevel13:
+        isTablet ? kDriverCockpitPro2HudTabletL13 : kDriverCockpitPro2HudPhoneL13,
+  );
 }
 
 /// Legacy intensity helpers (diagnostics / backward-compatible tests).

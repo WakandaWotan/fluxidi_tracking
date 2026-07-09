@@ -192,6 +192,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   Uint8List? _driverTaxiMarkerBytes;
   bool _driverTaxiMarkerLoadAttempted = false;
   bool _driverTaxiMarkerAvailable = false;
+  Uint8List? _driverFinishFlagMarkerBytes;
+  bool _driverFinishFlagMarkerLoadAttempted = false;
+  bool _driverFinishFlagMarkerAvailable = false;
   bool _driverMarkerUsesTaxiAsset = false;
   // NAV-R12-D: marker self-heal + update-coalescing state (pure decisions
   // live in NavMarkerLifecycle; the widget only wires timers and Mapbox).
@@ -258,7 +261,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   int? _lastDriverCockpitAppliedLevel;
   String? _lastNavPresCameraTargetSignature;
   String? _lastNavPresCameraAppliedSignature;
-  String? _lastNavPresHudLockSignature;
+  String? _lastNavPresHudScaleSignature;
   bool _navPresCameraAnchorDiagEmitted = false;
   MapThemeMode? _mapThemeOverride;
   DriverMapVisualMode _driverMapVisualMode = DriverMapVisualMode.street;
@@ -7580,7 +7583,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _lastNavPresDestMarkerLogSignature = signature;
     _logNavBounded(
       'NAV_PRES_DEST_MARKER',
-      'action=$action result=$result source=$source'
+      'action=$action result=$result source=$source style=finish_flag'
       '${reason != null ? ' reason=$reason' : ''}',
       intervalMs: 1200,
     );
@@ -7605,6 +7608,26 @@ class _DriverHomePageState extends State<DriverHomePage>
       source: source,
       reason: reason,
     );
+  }
+
+  Future<bool> _ensureDriverFinishFlagMarkerBytes() async {
+    if (_driverFinishFlagMarkerLoadAttempted) {
+      return _driverFinishFlagMarkerAvailable;
+    }
+    _driverFinishFlagMarkerLoadAttempted = true;
+    try {
+      final data = await rootBundle.load(kDriverFinishFlagMarkerAssetPath);
+      _driverFinishFlagMarkerBytes = data.buffer.asUint8List(
+        data.offsetInBytes,
+        data.lengthInBytes,
+      );
+      _driverFinishFlagMarkerAvailable =
+          _driverFinishFlagMarkerBytes!.isNotEmpty;
+    } catch (_) {
+      _driverFinishFlagMarkerAvailable = false;
+      _driverFinishFlagMarkerBytes = null;
+    }
+    return _driverFinishFlagMarkerAvailable;
   }
 
   Future<void> _syncNavigationDestinationMarker({required String reason}) async {
@@ -7663,23 +7686,37 @@ class _DriverHomePageState extends State<DriverHomePage>
     final iconSize = driverDestinationMarkerIconSize(isTablet: isTablet);
     final geometry = _mbPoint(resolved.lon, resolved.lat);
     final isUpdate = _destinationMarker != null;
+    final finishFlagReady = await _ensureDriverFinishFlagMarkerBytes();
+    final finishFlagBytes = _driverFinishFlagMarkerBytes;
     try {
       if (_destinationMarker != null) {
         await mgr.delete(_destinationMarker!);
         _destinationMarker = null;
       }
-      _destinationMarker = await mgr.create(
-        mb.PointAnnotationOptions(
-          geometry: geometry,
-          iconImage: kDriverDestinationMarkerIconImage,
-          iconColor: kDriverDestinationMarkerIconColor,
-          iconHaloColor: kDriverDestinationMarkerIconHaloColor,
-          iconHaloWidth: kDriverDestinationMarkerIconHaloWidth,
-          iconSize: iconSize,
-          iconAnchor: mb.IconAnchor.BOTTOM,
-          iconOpacity: 0.96,
-        ),
-      );
+      if (finishFlagReady && finishFlagBytes != null) {
+        _destinationMarker = await mgr.create(
+          mb.PointAnnotationOptions(
+            geometry: geometry,
+            image: finishFlagBytes,
+            iconAnchor: mb.IconAnchor.BOTTOM,
+            iconSize: iconSize,
+            iconOpacity: 0.98,
+          ),
+        );
+      } else {
+        _destinationMarker = await mgr.create(
+          mb.PointAnnotationOptions(
+            geometry: geometry,
+            iconImage: kDriverDestinationMarkerIconImage,
+            iconColor: kDriverDestinationMarkerIconColor,
+            iconHaloColor: kDriverDestinationMarkerIconHaloColor,
+            iconHaloWidth: kDriverDestinationMarkerIconHaloWidth,
+            iconSize: iconSize,
+            iconAnchor: mb.IconAnchor.BOTTOM,
+            iconOpacity: 0.96,
+          ),
+        );
+      }
       _lastDestinationMarkerSignature = signature;
       _logNavPresDestMarker(
         action: isUpdate ? 'update' : 'create',
@@ -8261,7 +8298,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _lastNavPresCameraSignature = null;
     _lastNavPresCameraTargetSignature = null;
     _lastNavPresCameraAppliedSignature = null;
-    _lastNavPresHudLockSignature = null;
+    _lastNavPresHudScaleSignature = null;
     _lastNavPresRouteAlignSignature = null;
     _lastNavPresRouteLeadinSignature = null;
     _lastNavPresBearingLockSignature = null;
@@ -8468,33 +8505,23 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  void _logNavPresHudLockIfChanged({
+  void _logNavPresHudScaleIfChanged({
     required bool isLandscape,
     required bool isTablet,
     required int level,
     required double hudSize,
-    required double hudBottom,
-    required double anchor,
   }) {
     if (!_navigationPresentationStateFor(_navCameraViewMode)
         .useDriverCockpitCamera) {
       return;
     }
     final device = isTablet ? 'tablet' : 'phone';
-    final signature =
-        '$device|${isLandscape ? 'landscape' : 'portrait'}|$level|'
-        '${hudSize.round()}|${hudBottom.round()}|'
-        '${anchor.toStringAsFixed(2)}';
-    if (signature == _lastNavPresHudLockSignature) return;
-    _lastNavPresHudLockSignature = signature;
+    final signature = '$device|$level|${hudSize.round()}';
+    if (signature == _lastNavPresHudScaleSignature) return;
+    _lastNavPresHudScaleSignature = signature;
     _logNavBounded(
-      'NAV_PRES_HUD_LOCK',
-      'device=$device '
-          'view=$level '
-          'hudSize=${hudSize.round()} '
-          'hudBottom=${hudBottom.round()} '
-          'anchor=${anchor.toStringAsFixed(2)} '
-          'reason=fixed_hud',
+      'NAV_PRES_HUD_SCALE',
+      'device=$device level=$level size=${hudSize.round()} result=applied',
       intervalMs: 1200,
     );
     final map3d = DriverCockpitMap3dCapability.resolve(
@@ -19380,16 +19407,11 @@ class _DriverHomePageState extends State<DriverHomePage>
         liveActive &&
         navPresentationState.useDriverCockpitCamera &&
         navPresentationState.showDriverHudOverlay) {
-      _logNavPresHudLockIfChanged(
+      _logNavPresHudScaleIfChanged(
         isLandscape: isLandscape,
         isTablet: isTablet,
         level: _driverCockpitViewLevel,
         hudSize: driverHudIconSize,
-        hudBottom: driverHudBottom,
-        anchor: driverCockpitFixedAnchorFraction(
-          isTablet: isTablet,
-          isLandscape: isLandscape,
-        ),
       );
     }
     final navActionColors = _navActionThemeColors();

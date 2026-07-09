@@ -457,47 +457,80 @@ void main() {
       expect(pitch13 - pitch12, greaterThanOrEqualTo(1.5));
     });
 
-    test('HUD size is fixed at level 7 baseline for View 1..13 on phone', () {
-      for (var level = kDriverCockpitViewLevelMin;
-          level <= kDriverCockpitViewLevelMax;
-          level++) {
-        expect(
-          driverCockpitViewLevelHudIconSize(isTablet: false, level: level),
-          kDriverCockpitPro2HudPhoneL7,
-        );
-        expect(
+    test('HUD size keeps View 1 baseline and grows to streetlevel on phone', () {
+      final size1 = driverCockpitViewLevelHudIconSize(isTablet: false, level: 1);
+      final size7 = driverCockpitViewLevelHudIconSize(isTablet: false, level: 7);
+      final size13 =
+          driverCockpitViewLevelHudIconSize(isTablet: false, level: 13);
+      expect(size1, closeTo(kDriverCockpitPro2HudPhoneL1, 0.5));
+      expect(size7, inInclusiveRange(108.0, 118.0));
+      expect(size13, inInclusiveRange(128.0, 142.0));
+      expect(size13, greaterThan(size1));
+      expect(size7, greaterThan(size1));
+      expect(
+        NavigationDriverHudOverlay.resolveIconSize(
+          screenWidth: 400,
+          cockpitBoost: true,
+          viewLevel: 1,
+        ),
+        closeTo(kDriverCockpitPro2HudPhoneL1, 0.5),
+      );
+      expect(
+        NavigationDriverHudOverlay.resolveIconSize(
+          screenWidth: 400,
+          cockpitBoost: true,
+          viewLevel: 13,
+        ),
+        greaterThan(
           NavigationDriverHudOverlay.resolveIconSize(
             screenWidth: 400,
             cockpitBoost: true,
-            viewLevel: level,
+            viewLevel: 1,
           ),
-          kDriverCockpitPro2HudPhoneL7,
-        );
+        ),
+      );
+    });
+
+    test('tablet HUD grows from View 1 baseline and is much larger at View 13', () {
+      final size1 = driverCockpitViewLevelHudIconSize(isTablet: true, level: 1);
+      final size7 = driverCockpitViewLevelHudIconSize(isTablet: true, level: 7);
+      final size13 =
+          driverCockpitViewLevelHudIconSize(isTablet: true, level: 13);
+      expect(size1, closeTo(kDriverCockpitPro2HudTabletL1, 0.5));
+      expect(size7, inInclusiveRange(158.0, 174.0));
+      expect(size13, inInclusiveRange(196.0, 220.0));
+      expect(size13, greaterThan(size1));
+      expect(size13, greaterThan(size7));
+      expect(size1, greaterThan(kDriverCockpitPro2HudPhoneL1));
+      expect(
+        NavigationDriverHudOverlay.resolveIconSize(
+          screenWidth: 800,
+          cockpitBoost: true,
+          viewLevel: 13,
+        ),
+        inInclusiveRange(196.0, 220.0),
+      );
+    });
+
+    test('HUD size is deterministic for same device and view level', () {
+      for (final isTablet in [false, true]) {
+        for (var level = kDriverCockpitViewLevelMin;
+            level <= kDriverCockpitViewLevelMax;
+            level++) {
+          final a = driverCockpitViewLevelHudIconSize(
+            isTablet: isTablet,
+            level: level,
+          );
+          final b = driverCockpitViewLevelHudIconSize(
+            isTablet: isTablet,
+            level: level,
+          );
+          expect(a, b);
+        }
       }
     });
 
-    test('tablet HUD size is fixed and larger than phone across View 1..13', () {
-      for (var level = kDriverCockpitViewLevelMin;
-          level <= kDriverCockpitViewLevelMax;
-          level++) {
-        final tabletSize = driverCockpitViewLevelHudIconSize(
-          isTablet: true,
-          level: level,
-        );
-        expect(tabletSize, kDriverCockpitPro2HudTabletL7);
-        expect(tabletSize, greaterThan(kDriverCockpitPro2HudPhoneL7));
-        expect(
-          NavigationDriverHudOverlay.resolveIconSize(
-            screenWidth: 800,
-            cockpitBoost: true,
-            viewLevel: level,
-          ),
-          kDriverCockpitPro2HudTabletL7,
-        );
-      }
-    });
-
-    test('view-level camera zoom/pitch vary but HUD size stays fixed', () {
+    test('view-level camera zoom/pitch vary and HUD grows with level', () {
       final zoom1 = driverCockpitViewLevelTargetZoom(
         isTablet: false,
         isLandscape: false,
@@ -521,8 +554,10 @@ void main() {
       expect(zoom13, greaterThan(zoom1));
       expect(pitch13, greaterThan(pitch1));
       expect(
-        driverCockpitViewLevelHudIconSize(isTablet: false, level: 1),
         driverCockpitViewLevelHudIconSize(isTablet: false, level: 13),
+        greaterThan(
+          driverCockpitViewLevelHudIconSize(isTablet: false, level: 1),
+        ),
       );
     });
 
@@ -779,33 +814,24 @@ void main() {
     });
   });
 
-  group('NAV-PRES-3H fixed HUD and 3D style capability', () {
-    test('HUD size identical for View 1, 7, and 13 on phone', () {
-      final sizes = [1, 7, 13].map(
-        (level) => driverCockpitViewLevelHudIconSize(
-          isTablet: false,
-          level: level,
-        ),
-      );
-      expect(sizes.toSet().length, 1);
-      expect(sizes.first, kDriverCockpitPro2HudPhoneL7);
+  group('NAV-PRES-3M cockpit HUD scaling and 3D style capability', () {
+    test('phone View 1 keeps overview baseline and View 13 is larger', () {
+      final size1 = driverCockpitViewLevelHudIconSize(isTablet: false, level: 1);
+      final size13 =
+          driverCockpitViewLevelHudIconSize(isTablet: false, level: 13);
+      expect(size1, closeTo(kDriverCockpitPro2HudPhoneL1, 0.5));
+      expect(size13, greaterThan(size1));
+      expect(size13, inInclusiveRange(128.0, 142.0));
     });
 
-    test('tablet HUD size identical for View 1, 7, and 13 and larger than phone', () {
-      final phoneSize = driverCockpitViewLevelHudIconSize(
-        isTablet: false,
-        level: 7,
-      );
-      final tabletSizes = [1, 7, 13].map(
-        (level) => driverCockpitViewLevelHudIconSize(
-          isTablet: true,
-          level: level,
-        ),
-      );
-      expect(tabletSizes.toSet().length, 1);
-      expect(tabletSizes.first, kDriverCockpitPro2HudTabletL7);
-      expect(tabletSizes.first, greaterThan(phoneSize));
-      expect(tabletSizes.first, inInclusiveRange(128.0, 140.0));
+    test('tablet View 1 keeps overview baseline and View 13 is significantly larger', () {
+      final size1 = driverCockpitViewLevelHudIconSize(isTablet: true, level: 1);
+      final size13 =
+          driverCockpitViewLevelHudIconSize(isTablet: true, level: 13);
+      expect(size1, closeTo(kDriverCockpitPro2HudTabletL1, 0.5));
+      expect(size13, greaterThan(size1));
+      expect(size13 - size1, greaterThan(60.0));
+      expect(size13, inInclusiveRange(196.0, 220.0));
     });
 
     test('HUD bottom offset identical for View 1, 7, and 13 on phone', () {
@@ -868,7 +894,7 @@ void main() {
       expect(anchors.first, kDriverCockpitPro2PhoneAnchorL7);
     });
 
-    test('View 13 still applies high zoom/pitch while HUD stays fixed', () {
+    test('View 13 still applies high zoom/pitch while HUD grows for streetlevel', () {
       expect(
         driverCockpitViewLevelTargetZoom(
           isTablet: false,
@@ -897,6 +923,12 @@ void main() {
       );
       expect(applied.zoom, closeTo(kDriverCockpitPro2PhoneZoomL13, 0.05));
       expect(applied.pitch, closeTo(kDriverCockpitPro2PhonePitchL13, 0.05));
+      expect(
+        driverCockpitViewLevelHudIconSize(isTablet: false, level: 13),
+        greaterThan(
+          driverCockpitViewLevelHudIconSize(isTablet: false, level: 1),
+        ),
+      );
     });
 
     test('navigation style reports flat 2D capability note', () {

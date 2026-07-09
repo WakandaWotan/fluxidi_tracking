@@ -20,13 +20,21 @@ void main() {
       segmentT: 0.5,
     );
 
-    test('lead-in meters are minimal for overview levels and larger for streetlevel', () {
+    test('lead-in meters are minimal for overview and stronger for streetlevel', () {
       expect(driverCockpitRouteVisualLeadInMeters(1), 0.0);
       expect(driverCockpitRouteVisualLeadInMeters(6), lessThanOrEqualTo(8.0));
-      expect(driverCockpitRouteVisualLeadInMeters(7), inInclusiveRange(12.0, 20.0));
-      expect(driverCockpitRouteVisualLeadInMeters(10), inInclusiveRange(12.0, 20.0));
-      expect(driverCockpitRouteVisualLeadInMeters(11), inInclusiveRange(20.0, 35.0));
-      expect(driverCockpitRouteVisualLeadInMeters(13), inInclusiveRange(20.0, 35.0));
+      expect(driverCockpitRouteVisualLeadInMeters(7), inInclusiveRange(25.0, 45.0));
+      expect(driverCockpitRouteVisualLeadInMeters(9), inInclusiveRange(25.0, 45.0));
+      expect(driverCockpitRouteVisualLeadInMeters(10), inInclusiveRange(45.0, 75.0));
+      expect(driverCockpitRouteVisualLeadInMeters(11), inInclusiveRange(45.0, 75.0));
+      expect(driverCockpitRouteVisualLeadInMeters(13), inInclusiveRange(75.0, 120.0));
+    });
+
+    test('View 13 lead-in exceeds View 7 lead-in', () {
+      expect(
+        driverCockpitRouteVisualLeadInMeters(13),
+        greaterThan(driverCockpitRouteVisualLeadInMeters(7)),
+      );
     });
 
     test('visual lead-in adds a segment before snap for high cockpit views', () {
@@ -54,7 +62,7 @@ void main() {
       final withLeadIn = driverRouteCoordsWithCockpitVisualLeadIn(
         routeCoords: route,
         snap: nearStartSnap,
-        leadInM: 35.0,
+        leadInM: 120.0,
       );
       expect(withLeadIn.first.lat, route.first.lat);
       expect(withLeadIn.first.lon, route.first.lon);

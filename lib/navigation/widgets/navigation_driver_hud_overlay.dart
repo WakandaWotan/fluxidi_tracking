@@ -23,8 +23,11 @@ class NavigationDriverHudOverlay extends StatelessWidget {
     if (!cockpitBoost) {
       return isTablet ? 80.0 : 72.0;
     }
-    // NAV-PRES-3H: fixed HUD size — view level affects map camera only.
-    return driverCockpitFixedHudIconSize(isTablet: isTablet);
+    // NAV-PRES-3M: HUD grows with cockpit view level (deterministic, no GPS scaling).
+    return driverCockpitViewLevelHudIconSize(
+      isTablet: isTablet,
+      level: viewLevel,
+    );
   }
 
   final double iconSize;

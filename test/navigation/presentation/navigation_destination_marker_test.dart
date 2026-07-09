@@ -51,7 +51,7 @@ void main() {
       );
     });
 
-    test('destination marker icon size is stable for phone and tablet', () {
+    test('destination marker icon size is clearly visible on phone and tablet', () {
       expect(
         driverDestinationMarkerIconSize(isTablet: false),
         kDriverDestinationMarkerIconSizePhone,
@@ -60,10 +60,16 @@ void main() {
         driverDestinationMarkerIconSize(isTablet: true),
         kDriverDestinationMarkerIconSizeTablet,
       );
+      expect(kDriverDestinationMarkerIconSizePhone, greaterThanOrEqualTo(1.0));
+      expect(kDriverDestinationMarkerIconSizeTablet, greaterThanOrEqualTo(1.25));
       expect(
         driverDestinationMarkerIconSize(isTablet: true),
         greaterThan(driverDestinationMarkerIconSize(isTablet: false)),
       );
+    });
+
+    test('finish flag asset path is registered for premium destination marker', () {
+      expect(kDriverFinishFlagMarkerAssetPath, contains('driver_finish_flag'));
     });
 
     test('marker signature changes only when source or coordinate changes', () {
