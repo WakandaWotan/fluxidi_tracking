@@ -180,6 +180,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   mb.PointAnnotation? _driverMarker;
   mb.PointAnnotation? _pickupPin;
   mb.PointAnnotation? _dropoffPin;
+  mb.PointAnnotationManager? _destinationMarkerManager;
+  mb.PointAnnotation? _destinationMarker;
+  String? _lastDestinationMarkerSignature;
+  String? _lastNavPresDestMarkerLogSignature;
   mb.PolylineAnnotation? _routeLineOutline;
   mb.PolylineAnnotation? _routeLine;
   // NAV-OS-R2: muted grey polyline for the already-driven route section.
@@ -244,6 +248,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   String? _lastNavR15BearingSignature;
   String? _lastNavPresCameraSignature;
   String? _lastNavPresRouteAlignSignature;
+  String? _lastNavPresRouteLeadinSignature;
+  String? _lastNavPresBearingLockSignature;
   String? _lastNavPresBearingSignature;
   String? _lastNavPresControlsLayoutSignature;
   int _driverCockpitViewLevel = kDriverCockpitViewLevelDefault;
@@ -821,6 +827,12 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       _pickupPin = null;
       _dropoffPin = null;
+      await _clearNavigationDestinationMarker(
+        action: 'clear',
+        result: 'cleared',
+        source: 'none',
+        reason: 'route_pins_cleared',
+      );
     } catch (_) {}
   }
 
@@ -6678,6 +6690,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     } else if ((_directRideDestinationText ?? '').trim().isNotEmpty) {
       await _buildDirectRouteToDestination(_directRideDestinationText!.trim());
     }
+    unawaited(_syncNavigationDestinationMarker(reason: 'nav_open'));
   }
 
   Future<void> _openDirectRideEntry() async {
@@ -7195,6 +7208,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     _routeLineManager = await _map!.annotations
         .createPolylineAnnotationManager();
     _pinsPointManager = await _map!.annotations.createPointAnnotationManager();
+    _destinationMarkerManager =
+        await _map!.annotations.createPointAnnotationManager();
+    _destinationMarker = null;
+    _lastDestinationMarkerSignature = null;
     final driverMgr = await _map!.annotations.createPointAnnotationManager();
     await _configureDriverPointManagerForTaxiMarker(driverMgr);
     _driverPointManager = driverMgr;
@@ -7314,6 +7331,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       _driverMarkerUsesTaxiAsset = false;
       _pickupPin = null;
       _dropoffPin = null;
+      _destinationMarker = null;
+      _lastDestinationMarkerSignature = null;
       _routeLine = null;
       _routeLineOutline = null;
       _routeLineCompleted = null;
@@ -7438,13 +7457,13 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   void _scheduleCockpitCameraAfterStyleSwitch() {
-    if (!_isDriverCockpit3dSceneEligible()) return;
-    final pos = _lastPos;
-    if (pos == null ||
-        _cameraMode != _CameraMode.follow ||
-        !_liveRideActive) {
+    if (_cameraMode != _CameraMode.follow || !_liveRideActive) return;
+    if (!_navigationPresentationStateFor(_navCameraViewMode)
+        .useDriverCockpitCamera) {
       return;
     }
+    final pos = _lastPos;
+    if (pos == null) return;
     unawaited(
       _followCameraTesla(pos, force: true, cameraReason: 'style_switch'),
     );
@@ -7515,6 +7534,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       } catch (_) {}
     }
 
+    await _syncNavigationDestinationMarker(reason: 'style_restore');
+
     unawaited(
       NavDiagnosticsRecorder.instance.recordNavEngineEvent(
         tag: 'NAV_UI_R6D_STYLE_RESTORE',
@@ -7528,6 +7549,155 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
 
     return (route: restoredRoute, taxi: restoredTaxi || _driverMarker != null);
+  }
+
+  bool _shouldShowNavigationDestinationMarker() {
+    return _liveRideActive &&
+        _cameraMode == _CameraMode.follow &&
+        _map != null;
+  }
+
+  _LonLat? _trustedNavigationDropoffCoordinate() {
+    final direct = _directRideDestinationPoint;
+    if (direct != null) {
+      return _usableNavLonLat(_LonLat(direct.lon, direct.lat));
+    }
+    final booking = _activeBooking;
+    if (booking != null) {
+      return _usableNavLonLat(_extractPreviewEndpoints(booking).dropoff);
+    }
+    return null;
+  }
+
+  void _logNavPresDestMarker({
+    required String action,
+    required String result,
+    required String source,
+    String? reason,
+  }) {
+    final signature = '$action|$result|$source|${reason ?? ''}';
+    if (signature == _lastNavPresDestMarkerLogSignature) return;
+    _lastNavPresDestMarkerLogSignature = signature;
+    _logNavBounded(
+      'NAV_PRES_DEST_MARKER',
+      'action=$action result=$result source=$source'
+      '${reason != null ? ' reason=$reason' : ''}',
+      intervalMs: 1200,
+    );
+  }
+
+  Future<void> _clearNavigationDestinationMarker({
+    required String action,
+    required String result,
+    required String source,
+    String? reason,
+  }) async {
+    if (_destinationMarker != null && _destinationMarkerManager != null) {
+      try {
+        await _destinationMarkerManager!.delete(_destinationMarker!);
+      } catch (_) {}
+    }
+    _destinationMarker = null;
+    _lastDestinationMarkerSignature = null;
+    _logNavPresDestMarker(
+      action: action,
+      result: result,
+      source: source,
+      reason: reason,
+    );
+  }
+
+  Future<void> _syncNavigationDestinationMarker({required String reason}) async {
+    if (_mapStyleChanging) return;
+    if (!_shouldShowNavigationDestinationMarker()) {
+      if (_destinationMarker != null) {
+        await _clearNavigationDestinationMarker(
+          action: 'clear',
+          result: 'hidden',
+          source: 'none',
+          reason: reason,
+        );
+      }
+      return;
+    }
+
+    final resolved = resolveNavigationDestinationMarkerCoordinate(
+      routeCoords: _routeCoords,
+      trustedDropoff: _trustedNavigationDropoffCoordinate(),
+    );
+    if (resolved == null) {
+      if (_destinationMarker != null) {
+        await _clearNavigationDestinationMarker(
+          action: 'clear',
+          result: 'none',
+          source: 'none',
+          reason: reason,
+        );
+      } else {
+        _logNavPresDestMarker(
+          action: 'skip',
+          result: 'none',
+          source: 'none',
+          reason: reason,
+        );
+      }
+      return;
+    }
+
+    final signature = navigationDestinationMarkerSignature(resolved);
+    if (signature == _lastDestinationMarkerSignature &&
+        _destinationMarker != null) {
+      _logNavPresDestMarker(
+        action: 'skip',
+        result: 'unchanged',
+        source: resolved.source,
+        reason: reason,
+      );
+      return;
+    }
+
+    final mgr = _destinationMarkerManager;
+    if (mgr == null) return;
+
+    final isTablet = mounted && MediaQuery.sizeOf(context).width >= 600;
+    final iconSize = driverDestinationMarkerIconSize(isTablet: isTablet);
+    final geometry = _mbPoint(resolved.lon, resolved.lat);
+    final isUpdate = _destinationMarker != null;
+    try {
+      if (_destinationMarker != null) {
+        await mgr.delete(_destinationMarker!);
+        _destinationMarker = null;
+      }
+      _destinationMarker = await mgr.create(
+        mb.PointAnnotationOptions(
+          geometry: geometry,
+          iconImage: kDriverDestinationMarkerIconImage,
+          iconColor: kDriverDestinationMarkerIconColor,
+          iconHaloColor: kDriverDestinationMarkerIconHaloColor,
+          iconHaloWidth: kDriverDestinationMarkerIconHaloWidth,
+          iconSize: iconSize,
+          iconAnchor: mb.IconAnchor.BOTTOM,
+          iconOpacity: 0.96,
+        ),
+      );
+      _lastDestinationMarkerSignature = signature;
+      _logNavPresDestMarker(
+        action: isUpdate ? 'update' : 'create',
+        result: 'applied',
+        source: resolved.source,
+        reason: reason,
+      );
+    } catch (e) {
+      _destinationMarker = null;
+      _lastDestinationMarkerSignature = null;
+      _logNavPresDestMarker(
+        action: isUpdate ? 'update' : 'create',
+        result: 'failed',
+        source: resolved.source,
+        reason: 'annotation_error',
+      );
+      debugPrint('[NAV_PRES_DEST_MARKER] annotation_error=$e');
+    }
   }
 
   /// NAV-UI-R6E: snapshot the currently visible taxi marker (interpolated
@@ -8093,6 +8263,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     _lastNavPresCameraAppliedSignature = null;
     _lastNavPresHudLockSignature = null;
     _lastNavPresRouteAlignSignature = null;
+    _lastNavPresRouteLeadinSignature = null;
+    _lastNavPresBearingLockSignature = null;
     _lastNavPresBearingSignature = null;
     _lastNavPresControlsLayoutSignature = null;
   }
@@ -8133,6 +8305,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (pos != null) {
       unawaited(
         _followCameraTesla(pos, force: true, cameraReason: 'cockpit_adjust'),
+      );
+      unawaited(
+        _syncVisibleRouteLineWithProgress(
+          pos,
+          reason: 'cockpit_adjust',
+          force: true,
+        ),
       );
     } else {
       final isTablet = MediaQuery.sizeOf(context).width >= 600;
@@ -8467,11 +8646,41 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  void _logNavPresRouteLeadin({
+    required int level,
+    required double leadInM,
+    required int points,
+    required String result,
+    String? reason,
+  }) {
+    if (!_navigationPresentationStateFor(_navCameraViewMode)
+        .useDriverCockpitCamera) {
+      return;
+    }
+    final signature =
+        '$level|${leadInM.toStringAsFixed(1)}|$points|$result|${reason ?? ''}';
+    if (signature == _lastNavPresRouteLeadinSignature) return;
+    _lastNavPresRouteLeadinSignature = signature;
+    _logNavBounded(
+      'NAV_PRES_ROUTE_LEADIN',
+      'level=$level '
+          'leadInM=${leadInM.toStringAsFixed(1)} '
+          'points=$points '
+          'result=$result'
+          '${reason != null ? ' reason=$reason' : ''}',
+      intervalMs: 1200,
+    );
+  }
+
   void _logNavPresRouteAlign({
     required double vehicleLat,
     required double vehicleLon,
     required NavRouteProgressOutput? progress,
-    String bearingSource = 'unknown',
+    double? leadInM,
+    double? hudSize,
+    double? anchor,
+    String result = 'aligned',
+    String? reason,
   }) {
     if (!_navigationPresentationStateFor(_navCameraViewMode)
         .useDriverCockpitCamera) {
@@ -8488,35 +8697,51 @@ class _DriverHomePageState extends State<DriverHomePage>
     final vehicleToRouteM = progress?.hasReliableSnap == true
         ? progress?.snapDistanceM
         : align.markerToRouteStartM;
-    final markerM = align.markerToRouteStartM;
-    final activeStartM = align.activeRouteStartDistM;
-    if (markerM == null && activeStartM == null && vehicleToRouteM == null) {
+    final level = _driverCockpitViewLevel;
+    final resolvedLeadIn = leadInM ??
+        driverCockpitRouteVisualLeadInMeters(level);
+    final isTablet = mounted && MediaQuery.sizeOf(context).width >= 600;
+    final isLandscape =
+        mounted && MediaQuery.of(context).orientation == Orientation.landscape;
+    final resolvedHudSize = hudSize ??
+        driverCockpitViewLevelHudIconSize(isTablet: isTablet, level: level);
+    final resolvedAnchor = anchor ??
+        driverCockpitViewLevelTargetAnchorFraction(
+          isTablet: isTablet,
+          isLandscape: isLandscape,
+          level: level,
+        );
+    if (vehicleToRouteM == null && result == 'aligned') {
       return;
     }
     final signature =
-        '${vehicleToRouteM?.toStringAsFixed(1) ?? 'na'}|'
-        '${markerM?.round() ?? 'na'}|${activeStartM?.round() ?? 'na'}|'
-        '${align.snapped}|$bearingSource';
+        '$level|${resolvedLeadIn.toStringAsFixed(1)}|'
+        '${resolvedHudSize.round()}|${resolvedAnchor.toStringAsFixed(2)}|'
+        '${vehicleToRouteM?.toStringAsFixed(1) ?? 'na'}|$result|${reason ?? ''}';
     if (signature == _lastNavPresRouteAlignSignature) return;
     _lastNavPresRouteAlignSignature = signature;
     _logNavBounded(
       'NAV_PRES_ROUTE_ALIGN',
-      'vehicleToRouteM=${vehicleToRouteM?.toStringAsFixed(1) ?? 'na'} '
-          'markerToRouteStartM=${markerM?.toStringAsFixed(1) ?? 'na'} '
-          'activeRouteStartDistM=${activeStartM?.toStringAsFixed(1) ?? 'na'} '
-          'snapped=${align.snapped} '
-          'bearingSource=$bearingSource',
+      'level=$level '
+          'leadInM=${resolvedLeadIn.toStringAsFixed(1)} '
+          'hudSize=${resolvedHudSize.round()} '
+          'anchor=${resolvedAnchor.toStringAsFixed(2)} '
+          'vehicleToRouteM=${vehicleToRouteM?.toStringAsFixed(1) ?? 'na'} '
+          'result=$result'
+          '${reason != null ? ' reason=$reason' : ''}',
       intervalMs: 1500,
     );
     unawaited(
       NavDiagnosticsRecorder.instance.recordNavEngineEvent(
         tag: 'NAV_PRES_ROUTE_ALIGN',
         fields: <String, dynamic>{
+          'level': level,
+          'leadInM': resolvedLeadIn.round(),
+          'hudSize': resolvedHudSize.round(),
+          'anchor': resolvedAnchor,
           'vehicleToRouteM': vehicleToRouteM?.round(),
-          'markerToRouteStartM': markerM?.round(),
-          'activeRouteStartDistM': activeStartM?.round(),
-          'snapped': align.snapped,
-          'bearingSource': bearingSource,
+          'result': result,
+          if (reason != null) 'reason': reason,
         },
       ),
     );
@@ -8590,6 +8815,36 @@ class _DriverHomePageState extends State<DriverHomePage>
           'reason': output.reason,
         },
       ),
+    );
+  }
+
+  void _logNavPresBearingLock({
+    required int level,
+    required double speedKmh,
+    required DriverCockpitStreetlevelBearingLockOutput output,
+  }) {
+    if (!_navigationPresentationStateFor(_navCameraViewMode)
+        .useDriverCockpitCamera) {
+      return;
+    }
+    final signature =
+        '$level|${speedKmh.round()}|${output.targetBearing.round()}|'
+        '${output.appliedBearing.round()}|'
+        '${output.deltaDeg.toStringAsFixed(1)}|${output.mode}|'
+        '${output.result}|${output.reason ?? ''}';
+    if (signature == _lastNavPresBearingLockSignature) return;
+    _lastNavPresBearingLockSignature = signature;
+    _logNavBounded(
+      'NAV_PRES_BEARING_LOCK',
+      'level=$level '
+          'speedKmh=${speedKmh.toStringAsFixed(1)} '
+          'targetBearing=${output.targetBearing.round()} '
+          'appliedBearing=${output.appliedBearing.round()} '
+          'deltaDeg=${output.deltaDeg.toStringAsFixed(1)} '
+          'mode=${output.mode} '
+          'result=${output.result}'
+          '${output.reason != null ? ' reason=${output.reason}' : ''}',
+      intervalMs: 1200,
     );
   }
 
@@ -9939,6 +10194,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _syncVisibleRouteLineWithProgress(
     geo.Position pos, {
     String reason = 'progress_update',
+    bool force = false,
   }) async {
     if (_routeCoords.length < 2 || _routeLineManager == null) return;
     final snap =
@@ -9981,7 +10237,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final recentDraw =
         _lastRouteLineTrimAt != null &&
         now.difference(_lastRouteLineTrimAt!).inMilliseconds < 320;
-    if (_routeLineProgressTrimmed && deltaM < 12.0 && recentDraw) {
+    if (_routeLineProgressTrimmed && deltaM < 12.0 && recentDraw && !force) {
       _logNavBounded(
         'NAV_PROGRESS',
         'progressM=${progressM.toStringAsFixed(1)} routeLineTrimmed=true markerLagM=${_lastMarkerLagM.toStringAsFixed(1)}',
@@ -9990,8 +10246,35 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     // NAV-OS-R2: split geometry — muted grey behind the taxi, blue ahead.
-    final remaining = _routeCoordsFromSnap(snap);
+    var remaining = _routeCoordsFromSnap(snap);
     final completed = driverRouteCoordsUpToSnap(_routeCoords, snap);
+    final cockpitLeadInActive = _navigationPresentationStateFor(_navCameraViewMode)
+        .useDriverCockpitCamera;
+    final leadInM = cockpitLeadInActive
+        ? driverCockpitRouteVisualLeadInMeters(_driverCockpitViewLevel)
+        : 0.0;
+    if (cockpitLeadInActive && leadInM > 0) {
+      remaining = driverRouteCoordsWithCockpitVisualLeadIn(
+        routeCoords: _routeCoords,
+        snap: snap,
+        leadInM: leadInM,
+      );
+      _logNavPresRouteLeadin(
+        level: _driverCockpitViewLevel,
+        leadInM: leadInM,
+        points: remaining.length,
+        result: 'applied',
+        reason: reason,
+      );
+    } else {
+      _logNavPresRouteLeadin(
+        level: _driverCockpitViewLevel,
+        leadInM: 0,
+        points: remaining.length,
+        result: 'skipped',
+        reason: cockpitLeadInActive ? 'lead_in_zero' : 'not_cockpit',
+      );
+    }
     if (remaining.length >= 2) {
       _routeLineProgressTrimmed = true;
       _lastRouteLineTrimProgressM = progressM;
@@ -11118,8 +11401,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     final viewMode = _navCameraViewMode;
     final navPresentation = _navigationPresentationStateFor(viewMode);
-    final instantCockpitBearing =
-        force && cameraReason == 'cockpit_adjust';
+    final instantCockpitBearing = force &&
+        (cameraReason == 'cockpit_adjust' || cameraReason == 'style_switch');
     final prevBearing = _lastSmoothedCameraBearing;
     late final double rawBearingTarget;
     late final double heading;
@@ -11147,17 +11430,34 @@ class _DriverHomePageState extends State<DriverHomePage>
               : driverRouteBearingMaxStep(speedKmh: speedKmh),
         ),
       );
-      heading = routeLocked.bearing;
-      rawBearingTarget =
-          routeLocked.routeTangentBearing ?? routeLocked.bearing;
-      bearingSource = instantCockpitBearing &&
-              routeLocked.routeTangentBearing != null
+      final bearingLock = applyDriverCockpitStreetlevelBearingLock(
+        DriverCockpitStreetlevelBearingLockInput(
+          routeBearing: routeLocked,
+          viewLevel: _driverCockpitViewLevel,
+          speedKmh: speedKmh,
+          gpsHeadingDeg:
+              pos.heading.isFinite && pos.heading >= 0 ? pos.heading : null,
+          gpsAccuracyM: pos.accuracy.isFinite && pos.accuracy > 0
+              ? pos.accuracy
+              : null,
+          previousAppliedBearingDeg: prevBearing,
+          instantApply: instantCockpitBearing,
+        ),
+      );
+      heading = bearingLock.appliedBearing;
+      rawBearingTarget = bearingLock.targetBearing;
+      bearingSource = bearingLock.mode == 'route_tangent'
           ? 'applied_route_tangent'
-          : routeLocked.source;
+          : bearingLock.mode;
       _lastSmoothedCameraBearing = heading;
       _logNavPresBearing(
         output: routeLocked,
         viewLevel: _driverCockpitViewLevel,
+      );
+      _logNavPresBearingLock(
+        level: _driverCockpitViewLevel,
+        speedKmh: speedKmh,
+        output: bearingLock,
       );
     } else {
       rawBearingTarget = visual.bearing;
@@ -11243,7 +11543,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         vehicleLat: visual.point.lat,
         vehicleLon: visual.point.lon,
         progress: progress,
-        bearingSource: bearingSource,
+        leadInM: driverCockpitRouteVisualLeadInMeters(_driverCockpitViewLevel),
+        hudSize: driverCockpitViewLevelHudIconSize(
+          isTablet: isTablet,
+          level: _driverCockpitViewLevel,
+        ),
+        anchor: cockpit.anchorFraction,
       );
       if (instantCockpitBearing) {
         _logNavPresCameraLevel(
@@ -11521,6 +11826,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       await _drawPins(fromLL, toLL);
       await _drawRouteLine(coords);
+      unawaited(_syncNavigationDestinationMarker(reason: 'nav_route_pickup'));
     } catch (_) {
       // Keep previous route if pickup route fetch fails.
     } finally {
@@ -11594,6 +11900,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       await _drawPins(fromLL, toLL);
       await _drawRouteLine(coords);
+      unawaited(_syncNavigationDestinationMarker(reason: 'nav_route_destination'));
     } catch (_) {
       // Keep previous route if destination route fetch fails.
     } finally {
@@ -11659,6 +11966,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       await _drawPins(fromLL, toLL);
       await _drawRouteLine(coords);
+      unawaited(_syncNavigationDestinationMarker(reason: 'nav_route_direct'));
       _scheduleDirectRideEstimateRefresh(reason: 'route_changed');
     } catch (e) {
       _toast('Straatrit route mislukt: $e');

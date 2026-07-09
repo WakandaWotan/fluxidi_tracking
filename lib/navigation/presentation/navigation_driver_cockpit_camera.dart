@@ -357,15 +357,41 @@ double driverCockpitFixedAnchorFraction({
 
 /// NAV-PRES-3G: stable anchor for close chase levels (5..13).
 /// NAV-PRES-3H: all levels 1..13 use fixed L7 anchor in driver cockpit mode.
+/// NAV-PRES-3L-A: tablet streetlevel gets a small anchor nudge at View 7+.
+const int kDriverCockpitStreetLevelAnchorNudgeMinLevel = 7;
+const double kDriverCockpitTabletStreetLevelAnchorNudge = 0.03;
+
+/// NAV-PRES-3L-A: cockpit-only visual route lead-in behind snap (meters).
+const double kDriverCockpitRouteLeadInMaxM = 35.0;
+
+/// NAV-PRES-3L-A: meters of route geometry to render behind snap for cockpit HUD alignment.
+double driverCockpitRouteVisualLeadInMeters(int viewLevel) {
+  final level = clampDriverCockpitViewLevel(viewLevel);
+  if (level <= 3) return 0.0;
+  if (level <= 6) {
+    return ((level - 3) / 3.0 * 8.0).clamp(0.0, 8.0);
+  }
+  if (level <= 10) {
+    final t = (level - 7) / 3.0;
+    return 12.0 + t * 8.0;
+  }
+  final t = (level - 11) / 2.0;
+  return (20.0 + t * 15.0).clamp(20.0, kDriverCockpitRouteLeadInMaxM);
+}
+
 double driverCockpitViewLevelTargetAnchorFraction({
   required bool isTablet,
   required bool isLandscape,
   required int level,
 }) {
-  return driverCockpitFixedAnchorFraction(
+  final base = driverCockpitFixedAnchorFraction(
     isTablet: isTablet,
     isLandscape: isLandscape,
   );
+  if (!isTablet || level < kDriverCockpitStreetLevelAnchorNudgeMinLevel) {
+    return base;
+  }
+  return (base + kDriverCockpitTabletStreetLevelAnchorNudge).clamp(base, 0.85);
 }
 
 /// NAV-PRES-3G/3H: driver cockpit HUD size — fixed at L7 baseline for all levels.

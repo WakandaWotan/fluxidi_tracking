@@ -14,6 +14,21 @@ const String kDriverTaxiMarkerAssetPath =
 /// Scales the taxi PNG on screen (490×490 source). Tune after field test.
 const double kDriverTaxiMarkerIconSize = 0.52;
 
+/// NAV-PRES-3L: fixed destination/arrival marker for active driver navigation.
+const String kDriverDestinationMarkerIconImage = 'marker-15';
+const int kDriverDestinationMarkerIconColor = 0xFF0B1326;
+const int kDriverDestinationMarkerIconHaloColor = 0xFFFFD21F;
+const double kDriverDestinationMarkerIconHaloWidth = 1.4;
+const double kDriverDestinationMarkerIconSizePhone = 0.82;
+const double kDriverDestinationMarkerIconSizeTablet = 0.90;
+
+/// NAV-PRES-3L: screen-fixed destination marker size (no zoom scaling).
+double driverDestinationMarkerIconSize({required bool isTablet}) {
+  return isTablet
+      ? kDriverDestinationMarkerIconSizeTablet
+      : kDriverDestinationMarkerIconSizePhone;
+}
+
 /// NAV-MAPSTYLE: driver map visual modes.
 enum DriverMapVisualMode {
   street,

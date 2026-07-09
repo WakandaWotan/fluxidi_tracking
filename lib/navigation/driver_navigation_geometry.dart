@@ -83,6 +83,69 @@ List<DriverLonLat> driverRouteCoordsFromSnap(
   return out;
 }
 
+/// NAV-PRES-3L-A: point [backwardM] meters behind the snapped position along
+/// the route polyline. Clamps at route start.
+DriverLonLat driverBackwardRoutePoint(
+  List<DriverLonLat> routeCoords, {
+  required int segmentIndex,
+  required double snappedLat,
+  required double snappedLon,
+  double backwardM = 20.0,
+}) {
+  if (routeCoords.length < 2 || backwardM <= 0) {
+    return DriverLonLat(snappedLon, snappedLat);
+  }
+  final i = segmentIndex.clamp(0, routeCoords.length - 2);
+  var fromLat = snappedLat;
+  var fromLon = snappedLon;
+  var need = backwardM;
+
+  for (var k = i; k >= 0; k--) {
+    final prev = routeCoords[k];
+    final d = driverMetersBetween(
+      DriverLonLat(fromLon, fromLat),
+      prev,
+    );
+    if (d < 0.001) {
+      fromLat = prev.lat;
+      fromLon = prev.lon;
+      continue;
+    }
+    if (d >= need) {
+      final t = need / d;
+      return DriverLonLat(
+        fromLon + (prev.lon - fromLon) * t,
+        fromLat + (prev.lat - fromLat) * t,
+      );
+    }
+    need -= d;
+    fromLat = prev.lat;
+    fromLon = prev.lon;
+  }
+  return routeCoords.first;
+}
+
+/// NAV-PRES-3L-A: presentation-only remaining route with behind-vehicle lead-in.
+List<DriverLonLat> driverRouteCoordsWithCockpitVisualLeadIn({
+  required List<DriverLonLat> routeCoords,
+  required DriverRouteSnap snap,
+  required double leadInM,
+}) {
+  final remaining = driverRouteCoordsFromSnap(routeCoords, snap);
+  if (leadInM <= 0 || remaining.length < 2) return remaining;
+
+  final leadStart = driverBackwardRoutePoint(
+    routeCoords,
+    segmentIndex: snap.segmentIndex,
+    snappedLat: snap.point.lat,
+    snappedLon: snap.point.lon,
+    backwardM: leadInM,
+  );
+  final first = remaining.first;
+  if (driverMetersBetween(leadStart, first) < 0.5) return remaining;
+  return <DriverLonLat>[leadStart, ...remaining];
+}
+
 /// NAV-OS-R2: completed route geometry from route start up to the snap point.
 List<DriverLonLat> driverRouteCoordsUpToSnap(
   List<DriverLonLat> routeCoords,
