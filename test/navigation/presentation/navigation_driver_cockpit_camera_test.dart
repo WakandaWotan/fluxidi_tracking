@@ -457,7 +457,7 @@ void main() {
       expect(pitch13 - pitch12, greaterThanOrEqualTo(1.5));
     });
 
-    test('HUD size is fixed at level 7 baseline for View 1..13', () {
+    test('HUD size is fixed at level 7 baseline for View 1..13 on phone', () {
       for (var level = kDriverCockpitViewLevelMin;
           level <= kDriverCockpitViewLevelMax;
           level++) {
@@ -474,6 +474,56 @@ void main() {
           kDriverCockpitPro2HudPhoneL7,
         );
       }
+    });
+
+    test('tablet HUD size is fixed and larger than phone across View 1..13', () {
+      for (var level = kDriverCockpitViewLevelMin;
+          level <= kDriverCockpitViewLevelMax;
+          level++) {
+        final tabletSize = driverCockpitViewLevelHudIconSize(
+          isTablet: true,
+          level: level,
+        );
+        expect(tabletSize, kDriverCockpitPro2HudTabletL7);
+        expect(tabletSize, greaterThan(kDriverCockpitPro2HudPhoneL7));
+        expect(
+          NavigationDriverHudOverlay.resolveIconSize(
+            screenWidth: 800,
+            cockpitBoost: true,
+            viewLevel: level,
+          ),
+          kDriverCockpitPro2HudTabletL7,
+        );
+      }
+    });
+
+    test('view-level camera zoom/pitch vary but HUD size stays fixed', () {
+      final zoom1 = driverCockpitViewLevelTargetZoom(
+        isTablet: false,
+        isLandscape: false,
+        level: 1,
+      );
+      final zoom13 = driverCockpitViewLevelTargetZoom(
+        isTablet: false,
+        isLandscape: false,
+        level: 13,
+      );
+      final pitch1 = driverCockpitViewLevelTargetPitch(
+        isTablet: false,
+        isLandscape: false,
+        level: 1,
+      );
+      final pitch13 = driverCockpitViewLevelTargetPitch(
+        isTablet: false,
+        isLandscape: false,
+        level: 13,
+      );
+      expect(zoom13, greaterThan(zoom1));
+      expect(pitch13, greaterThan(pitch1));
+      expect(
+        driverCockpitViewLevelHudIconSize(isTablet: false, level: 1),
+        driverCockpitViewLevelHudIconSize(isTablet: false, level: 13),
+      );
     });
 
     test('center coordinate remains snapped vehicle across all levels', () {
@@ -730,7 +780,7 @@ void main() {
   });
 
   group('NAV-PRES-3H fixed HUD and 3D style capability', () {
-    test('HUD size identical for View 1, 7, and 13', () {
+    test('HUD size identical for View 1, 7, and 13 on phone', () {
       final sizes = [1, 7, 13].map(
         (level) => driverCockpitViewLevelHudIconSize(
           isTablet: false,
@@ -741,12 +791,30 @@ void main() {
       expect(sizes.first, kDriverCockpitPro2HudPhoneL7);
     });
 
-    test('HUD bottom offset identical for View 1, 7, and 13', () {
+    test('tablet HUD size identical for View 1, 7, and 13 and larger than phone', () {
+      final phoneSize = driverCockpitViewLevelHudIconSize(
+        isTablet: false,
+        level: 7,
+      );
+      final tabletSizes = [1, 7, 13].map(
+        (level) => driverCockpitViewLevelHudIconSize(
+          isTablet: true,
+          level: level,
+        ),
+      );
+      expect(tabletSizes.toSet().length, 1);
+      expect(tabletSizes.first, kDriverCockpitPro2HudTabletL7);
+      expect(tabletSizes.first, greaterThan(phoneSize));
+      expect(tabletSizes.first, inInclusiveRange(128.0, 140.0));
+    });
+
+    test('HUD bottom offset identical for View 1, 7, and 13 on phone', () {
       for (final level in [1, 7, 13]) {
         expect(
           driverCockpitFixedHudBottomOffset(
             isLandscape: false,
             cockpitChaseCamera: true,
+            isTablet: false,
           ),
           176.0,
         );
@@ -754,10 +822,36 @@ void main() {
           driverCockpitFixedHudBottomOffset(
             isLandscape: true,
             cockpitChaseCamera: true,
+            isTablet: false,
           ),
           120.0,
         );
       }
+    });
+
+    test('tablet HUD bottom offset is larger than phone for route alignment', () {
+      expect(
+        driverCockpitFixedHudBottomOffset(
+          isLandscape: false,
+          cockpitChaseCamera: true,
+          isTablet: true,
+        ),
+        greaterThan(
+          driverCockpitFixedHudBottomOffset(
+            isLandscape: false,
+            cockpitChaseCamera: true,
+            isTablet: false,
+          ),
+        ),
+      );
+      expect(
+        driverCockpitFixedHudBottomOffset(
+          isLandscape: false,
+          cockpitChaseCamera: true,
+          isTablet: true,
+        ),
+        188.0,
+      );
     });
 
     test('anchor fraction stable across View 1, 7, and 13', () {

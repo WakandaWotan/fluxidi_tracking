@@ -51,6 +51,141 @@ void main() {
       },
     );
 
+    test(
+      'explicit light choice uses navigation-day in cockpit context',
+      () {
+        expect(
+          driverMapStyleForExplicitCockpitChoice(
+            choice: DriverCockpitMapVisualStyle.light,
+            isLightTheme: false,
+          ),
+          kDriverMapStyleNavStreetLight,
+        );
+      },
+    );
+
+    test(
+      'explicit dark choice uses navigation-night in cockpit context',
+      () {
+        expect(
+          driverMapStyleForExplicitCockpitChoice(
+            choice: DriverCockpitMapVisualStyle.dark,
+            isLightTheme: true,
+          ),
+          kDriverMapStyleNavStreetDark,
+        );
+      },
+    );
+
+    test('explicit 3D choice uses Standard when not rejected', () {
+      expect(
+        driverMapStyleForExplicitCockpitChoice(
+          choice: DriverCockpitMapVisualStyle.standard3d,
+          isLightTheme: true,
+        ),
+        kDriverMapStyleStandard,
+      );
+    });
+
+    test('explicit satellite choice uses Standard Satellite when not rejected', () {
+      expect(
+        driverMapStyleForExplicitCockpitChoice(
+          choice: DriverCockpitMapVisualStyle.satellite,
+          isLightTheme: true,
+        ),
+        kDriverMapStyleStandardSatellite,
+      );
+    });
+
+    test('explicit 3D rejected Standard falls back to navigation-day', () {
+      expect(
+        driverMapStyleForExplicitCockpitChoice(
+          choice: DriverCockpitMapVisualStyle.standard3d,
+          isLightTheme: true,
+          rejectedExperimentalUris: {kDriverMapStyleStandard},
+        ),
+        kDriverMapStyleNavStreetLight,
+      );
+    });
+
+    test('explicit 3D rejected Standard falls back to navigation-night', () {
+      expect(
+        driverMapStyleForExplicitCockpitChoice(
+          choice: DriverCockpitMapVisualStyle.standard3d,
+          isLightTheme: false,
+          rejectedExperimentalUris: {kDriverMapStyleStandard},
+        ),
+        kDriverMapStyleNavStreetDark,
+      );
+    });
+
+    test('explicit satellite rejected Standard Satellite falls back to satellite-streets', () {
+      expect(
+        driverMapStyleForExplicitCockpitChoice(
+          choice: DriverCockpitMapVisualStyle.satellite,
+          isLightTheme: true,
+          rejectedExperimentalUris: {kDriverMapStyleStandardSatellite},
+        ),
+        kDriverMapStyleSatellite,
+      );
+    });
+
+    test('resolve with explicit 3D choice uses Standard when cockpit active', () {
+      expect(
+        resolveDriverMapStyleUri(
+          isLightTheme: true,
+          visualMode: DriverMapVisualMode.street,
+          cockpit3dSceneActive: true,
+          cockpitVisualStyle: DriverCockpitMapVisualStyle.standard3d,
+        ),
+        kNavigation3dCockpitSceneEnabled
+            ? kDriverMapStyleStandard
+            : kDriverMapStyleNavStreetLight,
+      );
+    });
+
+    test('resolve with explicit satellite choice uses Standard Satellite when cockpit active', () {
+      expect(
+        resolveDriverMapStyleUri(
+          isLightTheme: true,
+          visualMode: DriverMapVisualMode.satellite,
+          cockpit3dSceneActive: true,
+          cockpitVisualStyle: DriverCockpitMapVisualStyle.satellite,
+        ),
+        kNavigation3dCockpitSceneEnabled
+            ? kDriverMapStyleStandardSatellite
+            : kDriverMapStyleSatellite,
+      );
+    });
+
+    test('resolve with explicit light switches away from 3D', () {
+      expect(
+        resolveDriverMapStyleUri(
+          isLightTheme: true,
+          visualMode: DriverMapVisualMode.street,
+          cockpit3dSceneActive: true,
+          cockpitVisualStyle: DriverCockpitMapVisualStyle.light,
+        ),
+        kNavigation3dCockpitSceneEnabled
+            ? kDriverMapStyleNavStreetLight
+            : kDriverMapStyleNavStreetLight,
+      );
+    });
+
+    test('resolve with explicit dark switches away from 3D when flag enabled', () {
+      expect(
+        resolveDriverMapStyleUri(
+          isLightTheme: true,
+          visualMode: DriverMapVisualMode.street,
+          cockpit3dSceneActive: true,
+          cockpitVisualStyle: DriverCockpitMapVisualStyle.dark,
+        ),
+        kNavigation3dCockpitSceneEnabled
+            ? kDriverMapStyleNavStreetDark
+            : kDriverMapStyleNavStreetLight,
+      );
+    });
+
     test('driverMapStyleForCockpit3d prefers Standard for street cockpit', () {
       expect(
         driverMapStyleForCockpit3d(

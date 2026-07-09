@@ -256,6 +256,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _navPresCameraAnchorDiagEmitted = false;
   MapThemeMode? _mapThemeOverride;
   DriverMapVisualMode _driverMapVisualMode = DriverMapVisualMode.street;
+  DriverCockpitMapVisualStyle _driverCockpitMapVisualStyle =
+      DriverCockpitMapVisualStyle.light;
   double _lastMapCameraZoom = kDriverMapInitialZoom;
   bool _navigationWakelockEnabled = false;
   bool _hasSwitchedToFollow = false;
@@ -7209,6 +7211,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       isLightTheme: theme == MapThemeMode.light,
       visualMode: _driverMapVisualMode,
       cockpit3dSceneActive: _isDriverCockpit3dSceneEligible(),
+      cockpitVisualStyle: kNavigation3dCockpitSceneEnabled
+          ? _driverCockpitMapVisualStyle
+          : null,
       rejectedExperimentalUris: _rejectedCockpit3dStyleUris,
     );
   }
@@ -7227,12 +7232,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     String? reason,
   }) {
     if (!kNavigation3dCockpitSceneEnabled) return;
-    final signature = '$result|$target|$previous|${reason ?? ''}';
+    final choice =
+        driverCockpitMapVisualStyleLogLabel(_driverCockpitMapVisualStyle);
+    final signature = '$result|$choice|$target|$previous|${reason ?? ''}';
     if (signature == _lastNavPres3dStyleSignature) return;
     _lastNavPres3dStyleSignature = signature;
     _logNavBounded(
       'NAV_PRES_3D_STYLE',
-      'enabled=true target=$target previous=$previous result=$result'
+      'enabled=true choice=$choice target=$target previous=$previous result=$result'
       '${reason != null ? ' reason=$reason' : ''}',
       intervalMs: 1200,
     );
@@ -7338,6 +7345,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         '[MAP_THEME] redraw route=${restore.route} marker=${restore.taxi} pins=${_routeCoords.length >= 2}',
       );
       debugPrint('[MAP][STYLE_DONE] target=$target');
+      _scheduleCockpitCameraAfterStyleSwitch();
     } catch (e) {
       debugPrint('[MAP][STYLE_SKIP] reason=error target=$target error=$e');
       if (isExperimentalCockpit3dMapStyleUri(target)) {
@@ -7352,6 +7360,9 @@ class _DriverHomePageState extends State<DriverHomePage>
           isLightTheme: theme == MapThemeMode.light,
           visualMode: _driverMapVisualMode,
           cockpit3dSceneActive: _isDriverCockpit3dSceneEligible(),
+          cockpitVisualStyle: kNavigation3dCockpitSceneEnabled
+              ? _driverCockpitMapVisualStyle
+              : null,
           rejectedExperimentalUris: _rejectedCockpit3dStyleUris,
         );
         if (fallback != target && _activeMapStyleUri != fallback) {
@@ -7390,8 +7401,84 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _setMapTheme(MapThemeMode theme) async {
     if (!mounted) return;
+    if (kNavigation3dCockpitSceneEnabled) {
+      await _setDriverCockpitMapVisualStyle(
+        theme == MapThemeMode.light
+            ? DriverCockpitMapVisualStyle.light
+            : DriverCockpitMapVisualStyle.dark,
+      );
+      return;
+    }
     setState(() => _mapThemeOverride = theme);
     await _applyMapStyleForMode();
+  }
+
+  Future<void> _setDriverCockpitMapVisualStyle(
+    DriverCockpitMapVisualStyle style,
+  ) async {
+    if (!mounted) return;
+    setState(() {
+      _driverCockpitMapVisualStyle = style;
+      switch (style) {
+        case DriverCockpitMapVisualStyle.light:
+          _mapThemeOverride = MapThemeMode.light;
+          _driverMapVisualMode = DriverMapVisualMode.street;
+        case DriverCockpitMapVisualStyle.dark:
+          _mapThemeOverride = MapThemeMode.dark;
+          _driverMapVisualMode = DriverMapVisualMode.street;
+        case DriverCockpitMapVisualStyle.standard3d:
+          _driverMapVisualMode = DriverMapVisualMode.street;
+        case DriverCockpitMapVisualStyle.satellite:
+          _driverMapVisualMode = DriverMapVisualMode.satellite;
+      }
+    });
+    _logNavMapStyle(reason: 'cockpit_style_choice');
+    await _applyMapStyleForMode();
+    _scheduleCockpitCameraAfterStyleSwitch();
+  }
+
+  void _scheduleCockpitCameraAfterStyleSwitch() {
+    if (!_isDriverCockpit3dSceneEligible()) return;
+    final pos = _lastPos;
+    if (pos == null ||
+        _cameraMode != _CameraMode.follow ||
+        !_liveRideActive) {
+      return;
+    }
+    unawaited(
+      _followCameraTesla(pos, force: true, cameraReason: 'style_switch'),
+    );
+  }
+
+  String _driverCockpitMapVisualStyleLabel(DriverCockpitMapVisualStyle style) {
+    switch (style) {
+      case DriverCockpitMapVisualStyle.light:
+        return _tr(nl: 'Licht', en: 'Light', fr: 'Clair', es: 'Claro');
+      case DriverCockpitMapVisualStyle.dark:
+        return _tr(nl: 'Donker', en: 'Dark', fr: 'Sombre', es: 'Oscuro');
+      case DriverCockpitMapVisualStyle.standard3d:
+        return _tr(nl: '3D', en: '3D', fr: '3D', es: '3D');
+      case DriverCockpitMapVisualStyle.satellite:
+        return _tr(
+          nl: 'Satelliet',
+          en: 'Satellite',
+          fr: 'Satellite',
+          es: 'Satélite',
+        );
+    }
+  }
+
+  IconData _driverCockpitMapVisualStyleIcon(DriverCockpitMapVisualStyle style) {
+    switch (style) {
+      case DriverCockpitMapVisualStyle.light:
+        return Icons.light_mode_outlined;
+      case DriverCockpitMapVisualStyle.dark:
+        return Icons.dark_mode_outlined;
+      case DriverCockpitMapVisualStyle.standard3d:
+        return Icons.view_in_ar_outlined;
+      case DriverCockpitMapVisualStyle.satellite:
+        return Icons.satellite_alt_outlined;
+    }
   }
 
   /// Restore route line + taxi marker immediately after a style change or
@@ -7704,6 +7791,16 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _toggleDriverMapVisualMode() async {
     if (!kDriverMapSatelliteToggleEnabled || _map == null) return;
+    if (kNavigation3dCockpitSceneEnabled) {
+      final next = _driverCockpitMapVisualStyle ==
+              DriverCockpitMapVisualStyle.satellite
+          ? (_effectiveMapThemeFor(_cameraMode) == MapThemeMode.dark
+              ? DriverCockpitMapVisualStyle.dark
+              : DriverCockpitMapVisualStyle.light)
+          : DriverCockpitMapVisualStyle.satellite;
+      await _setDriverCockpitMapVisualStyle(next);
+      return;
+    }
     final next = _driverMapVisualMode == DriverMapVisualMode.street
         ? DriverMapVisualMode.satellite
         : DriverMapVisualMode.street;
@@ -8021,14 +8118,67 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
     });
     _logNavPresCameraControl(action: increase ? 'plus' : 'minus');
+    if (_cameraMode != _CameraMode.follow || !_liveRideActive) {
+      _logNavPresCameraLevel(
+        level: _driverCockpitViewLevel,
+        zoom: _lastDriverCockpitAppliedZoom ?? 0,
+        pitch: _lastDriverCockpitAppliedPitch ?? 0,
+        bearingSource: 'applied_route_tangent',
+        result: 'skipped',
+        reason: 'not_in_follow_nav',
+      );
+      return;
+    }
     final pos = _lastPos;
-    if (pos != null &&
-        _cameraMode == _CameraMode.follow &&
-        _liveRideActive) {
+    if (pos != null) {
       unawaited(
         _followCameraTesla(pos, force: true, cameraReason: 'cockpit_adjust'),
       );
+    } else {
+      final isTablet = MediaQuery.sizeOf(context).width >= 600;
+      final isLandscape =
+          MediaQuery.of(context).orientation == Orientation.landscape;
+      _logNavPresCameraLevel(
+        level: _driverCockpitViewLevel,
+        zoom: driverCockpitViewLevelTargetZoom(
+          isTablet: isTablet,
+          isLandscape: isLandscape,
+          level: _driverCockpitViewLevel,
+        ),
+        pitch: driverCockpitViewLevelTargetPitch(
+          isTablet: isTablet,
+          isLandscape: isLandscape,
+          level: _driverCockpitViewLevel,
+        ),
+        bearingSource: 'applied_route_tangent',
+        result: 'skipped',
+        reason: 'no_last_position',
+      );
     }
+  }
+
+  void _logNavPresCameraLevel({
+    required int level,
+    required double zoom,
+    required double pitch,
+    required String bearingSource,
+    required String result,
+    String? reason,
+  }) {
+    if (!_navigationPresentationStateFor(_navCameraViewMode)
+        .useDriverCockpitCamera) {
+      return;
+    }
+    _logNavBounded(
+      'NAV_PRES_CAMERA_LEVEL',
+      'level=$level '
+          'zoom=${zoom.toStringAsFixed(1)} '
+          'pitch=${pitch.round()} '
+          'bearingSource=$bearingSource '
+          'result=$result'
+          '${reason != null ? ' reason=$reason' : ''}',
+      intervalMs: 200,
+    );
   }
 
   /// Compact view-level label for the +/- controls, e.g. `View 7/13`.
@@ -8141,6 +8291,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   void _logNavPresHudLockIfChanged({
     required bool isLandscape,
+    required bool isTablet,
     required int level,
     required double hudSize,
     required double hudBottom,
@@ -8150,16 +8301,17 @@ class _DriverHomePageState extends State<DriverHomePage>
         .useDriverCockpitCamera) {
       return;
     }
+    final device = isTablet ? 'tablet' : 'phone';
     final signature =
-        '${isLandscape ? 'landscape' : 'portrait'}|$level|'
+        '$device|${isLandscape ? 'landscape' : 'portrait'}|$level|'
         '${hudSize.round()}|${hudBottom.round()}|'
         '${anchor.toStringAsFixed(2)}';
     if (signature == _lastNavPresHudLockSignature) return;
     _lastNavPresHudLockSignature = signature;
     _logNavBounded(
       'NAV_PRES_HUD_LOCK',
-      'mode=driver '
-          'level=$level '
+      'device=$device '
+          'view=$level '
           'hudSize=${hudSize.round()} '
           'hudBottom=${hudBottom.round()} '
           'anchor=${anchor.toStringAsFixed(2)} '
@@ -10966,6 +11118,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     final viewMode = _navCameraViewMode;
     final navPresentation = _navigationPresentationStateFor(viewMode);
+    final instantCockpitBearing =
+        force && cameraReason == 'cockpit_adjust';
     final prevBearing = _lastSmoothedCameraBearing;
     late final double rawBearingTarget;
     late final double heading;
@@ -10988,12 +11142,18 @@ class _DriverHomePageState extends State<DriverHomePage>
           offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
           forwardProgress: progress?.forwardProgress ?? true,
           speedKmh: speedKmh,
+          maxStepDeg: instantCockpitBearing
+              ? 0.0
+              : driverRouteBearingMaxStep(speedKmh: speedKmh),
         ),
       );
       heading = routeLocked.bearing;
       rawBearingTarget =
           routeLocked.routeTangentBearing ?? routeLocked.bearing;
-      bearingSource = routeLocked.source;
+      bearingSource = instantCockpitBearing &&
+              routeLocked.routeTangentBearing != null
+          ? 'applied_route_tangent'
+          : routeLocked.source;
       _lastSmoothedCameraBearing = heading;
       _logNavPresBearing(
         output: routeLocked,
@@ -11085,6 +11245,15 @@ class _DriverHomePageState extends State<DriverHomePage>
         progress: progress,
         bearingSource: bearingSource,
       );
+      if (instantCockpitBearing) {
+        _logNavPresCameraLevel(
+          level: _driverCockpitViewLevel,
+          zoom: cameraZoom,
+          pitch: cameraPitch,
+          bearingSource: bearingSource,
+          result: 'applied',
+        );
+      }
     }
     _lastMapCameraZoom = cameraZoom;
     unawaited(_syncDriverMarkerIconSizeForZoom());
@@ -12030,30 +12199,40 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     if (showMapStyleToggle) {
-      final isSatellite = _driverMapVisualMode == DriverMapVisualMode.satellite;
-      chips.add(
-        _buildCompactNavIconChip(
-          icon: isSatellite ? Icons.map_outlined : Icons.satellite_alt_outlined,
-          tooltip: isSatellite
-              ? _tr(
-                  nl: 'Terug naar kaartweergave',
-                  en: 'Back to map view',
-                  fr: 'Retour à la carte',
-                  es: 'Volver al mapa',
-                )
-              : _tr(
-                  nl: 'Satellietweergave',
-                  en: 'Satellite view',
-                  fr: 'Vue satellite',
-                  es: 'Vista satélite',
-                ),
-          onPressed: _toggleDriverMapVisualMode,
-          navAccent: colors.accent,
-          navText: colors.text,
-          navSurface: colors.surface,
-          size: iconSize,
-        ),
-      );
+      if (kNavigation3dCockpitSceneEnabled) {
+        chips.add(
+          _buildDriverCockpitMapStyleMenuChip(
+            colors: colors,
+            iconSize: iconSize,
+          ),
+        );
+      } else {
+        final isSatellite =
+            _driverMapVisualMode == DriverMapVisualMode.satellite;
+        chips.add(
+          _buildCompactNavIconChip(
+            icon: isSatellite ? Icons.map_outlined : Icons.satellite_alt_outlined,
+            tooltip: isSatellite
+                ? _tr(
+                    nl: 'Terug naar kaartweergave',
+                    en: 'Back to map view',
+                    fr: 'Retour à la carte',
+                    es: 'Volver al mapa',
+                  )
+                : _tr(
+                    nl: 'Satellietweergave',
+                    en: 'Satellite view',
+                    fr: 'Vue satellite',
+                    es: 'Vista satélite',
+                  ),
+            onPressed: _toggleDriverMapVisualMode,
+            navAccent: colors.accent,
+            navText: colors.text,
+            navSurface: colors.surface,
+            size: iconSize,
+          ),
+        );
+      }
     }
     if (showOffline) {
       chips.add(
@@ -12160,6 +12339,76 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
     }
     return chips;
+  }
+
+  Widget _buildDriverCockpitMapStyleMenuChip({
+    required ({Color accent, Color text, Color surface}) colors,
+    required double iconSize,
+  }) {
+    final currentStyle = _driverCockpitMapVisualStyle;
+    return PopupMenuButton<DriverCockpitMapVisualStyle>(
+      tooltip: _tr(
+        nl: 'Kaartstijl',
+        en: 'Map style',
+        fr: 'Style de carte',
+        es: 'Estilo de mapa',
+      ),
+      color: colors.surface,
+      onSelected: _setDriverCockpitMapVisualStyle,
+      itemBuilder: (context) {
+        return DriverCockpitMapVisualStyle.values.map((style) {
+          return PopupMenuItem<DriverCockpitMapVisualStyle>(
+            value: style,
+            child: Row(
+              children: [
+                Icon(
+                  _driverCockpitMapVisualStyleIcon(style),
+                  size: 18,
+                  color: style == currentStyle ? colors.accent : colors.text,
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  _driverCockpitMapVisualStyleLabel(style),
+                  style: TextStyle(
+                    color: style == currentStyle ? colors.accent : colors.text,
+                    fontWeight:
+                        style == currentStyle ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }).toList();
+      },
+      child: Tooltip(
+        message: _tr(
+          nl: 'Kaartstijl',
+          en: 'Map style',
+          fr: 'Style de carte',
+          es: 'Estilo de mapa',
+        ),
+        child: Material(
+          color: colors.surface,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            width: iconSize,
+            height: iconSize,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: colors.accent.withOpacity(0.72),
+                width: 1.1,
+              ),
+            ),
+            child: Icon(
+              _driverCockpitMapVisualStyleIcon(currentStyle),
+              size: 18,
+              color: colors.text,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   /// NAV-UI-R6F: R9 tunnel / GPS-reacquire status chip shown centered above
@@ -18808,6 +19057,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         ? driverCockpitFixedHudBottomOffset(
             isLandscape: isLandscape,
             cockpitChaseCamera: navPresentationState.useDriverCockpitCamera,
+            isTablet: isTablet,
           ) +
             safeBottomInset
         : arrowBottom;
@@ -18824,6 +19074,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         navPresentationState.showDriverHudOverlay) {
       _logNavPresHudLockIfChanged(
         isLandscape: isLandscape,
+        isTablet: isTablet,
         level: _driverCockpitViewLevel,
         hudSize: driverHudIconSize,
         hudBottom: driverHudBottom,
@@ -22086,45 +22337,72 @@ class _DriverHomePageState extends State<DriverHomePage>
                           _tr(nl: 'Kaart', en: 'Map', fr: 'Carte', es: 'Mapa'),
                         ),
                         const SizedBox(height: 5),
-                        DropdownButtonFormField<MapThemeMode>(
-                          value: _effectiveMapThemeFor(_cameraMode),
-                          items: [
-                            DropdownMenuItem(
-                              value: MapThemeMode.light,
-                              child: Text(
-                                _tr(
-                                  nl: 'Licht',
-                                  en: 'Light',
-                                  fr: 'Clair',
-                                  es: 'Claro',
+                        if (kNavigation3dCockpitSceneEnabled)
+                          DropdownButtonFormField<DriverCockpitMapVisualStyle>(
+                            value: _driverCockpitMapVisualStyle,
+                            items: DriverCockpitMapVisualStyle.values
+                                .map(
+                                  (style) => DropdownMenuItem(
+                                    value: style,
+                                    child: Text(
+                                      _driverCockpitMapVisualStyleLabel(style),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (v) {
+                              if (v == null) return;
+                              _setDriverCockpitMapVisualStyle(v);
+                            },
+                            dropdownColor: cardBg,
+                            decoration: compactSelectDecoration(),
+                            style: TextStyle(
+                              color: sidebarTextPrimary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            iconEnabledColor: sidebarAccent,
+                          )
+                        else
+                          DropdownButtonFormField<MapThemeMode>(
+                            value: _effectiveMapThemeFor(_cameraMode),
+                            items: [
+                              DropdownMenuItem(
+                                value: MapThemeMode.light,
+                                child: Text(
+                                  _tr(
+                                    nl: 'Licht',
+                                    en: 'Light',
+                                    fr: 'Clair',
+                                    es: 'Claro',
+                                  ),
                                 ),
                               ),
-                            ),
-                            DropdownMenuItem(
-                              value: MapThemeMode.dark,
-                              child: Text(
-                                _tr(
-                                  nl: 'Donker',
-                                  en: 'Dark',
-                                  fr: 'Sombre',
-                                  es: 'Oscuro',
+                              DropdownMenuItem(
+                                value: MapThemeMode.dark,
+                                child: Text(
+                                  _tr(
+                                    nl: 'Donker',
+                                    en: 'Dark',
+                                    fr: 'Sombre',
+                                    es: 'Oscuro',
+                                  ),
                                 ),
                               ),
+                            ],
+                            onChanged: (v) {
+                              if (v == null) return;
+                              _setMapTheme(v);
+                            },
+                            dropdownColor: cardBg,
+                            decoration: compactSelectDecoration(),
+                            style: TextStyle(
+                              color: sidebarTextPrimary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
                             ),
-                          ],
-                          onChanged: (v) {
-                            if (v == null) return;
-                            _setMapTheme(v);
-                          },
-                          dropdownColor: cardBg,
-                          decoration: compactSelectDecoration(),
-                          style: TextStyle(
-                            color: sidebarTextPrimary,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                            iconEnabledColor: sidebarAccent,
                           ),
-                          iconEnabledColor: sidebarAccent,
-                        ),
                       ],
                     ),
                   ),

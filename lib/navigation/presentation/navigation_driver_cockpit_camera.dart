@@ -153,7 +153,7 @@ const double kDriverCockpitPro2CompactPitchL1 = 51.5;
 const double kDriverCockpitPro2CompactPitchL7 = 75.0;
 const double kDriverCockpitPro2CompactPitchL13 = 84.25;
 const double kDriverCockpitPro2CompactAnchorL1 = 0.55;
-const double kDriverCockpitPro2CompactAnchorL7 = 0.60;
+const double kDriverCockpitPro2CompactAnchorL7 = 0.62;
 const double kDriverCockpitPro2CompactAnchorL13 = 0.73;
 
 /// NAV-PRES-3D-PRO2: HUD icon size at levels 1 / 7 / 13 (phone baseline 94).
@@ -161,7 +161,7 @@ const double kDriverCockpitPro2HudPhoneL1 = 78.0;
 const double kDriverCockpitPro2HudPhoneL7 = 94.0;
 const double kDriverCockpitPro2HudPhoneL13 = 122.0;
 const double kDriverCockpitPro2HudTabletL1 = 92.0;
-const double kDriverCockpitPro2HudTabletL7 = 108.0;
+const double kDriverCockpitPro2HudTabletL7 = 132.0;
 const double kDriverCockpitPro2HudTabletL13 = 142.0;
 
 /// NAV-PRES-3G: overview levels may shrink the HUD; close levels keep L7 size.
@@ -329,12 +329,16 @@ double driverCockpitFixedHudIconSize({required bool isTablet}) {
   return isTablet ? kDriverCockpitPro2HudTabletL7 : kDriverCockpitPro2HudPhoneL7;
 }
 
-/// NAV-PRES-3H: fixed HUD bottom offset above safe inset (level-independent).
+/// NAV-PRES-3H/3K: fixed HUD bottom offset above safe inset (level-independent).
 double driverCockpitFixedHudBottomOffset({
   required bool isLandscape,
   required bool cockpitChaseCamera,
+  bool isTablet = false,
 }) {
-  return (isLandscape ? 112.0 : 168.0) + (cockpitChaseCamera ? 8.0 : 0.0);
+  final base = isLandscape
+      ? (isTablet ? 116.0 : 112.0)
+      : (isTablet ? 180.0 : 168.0);
+  return base + (cockpitChaseCamera ? 8.0 : 0.0);
 }
 
 /// NAV-PRES-3H: stable L7 anchor for all driver view levels (1..13).

@@ -20,6 +20,14 @@ enum DriverMapVisualMode {
   satellite,
 }
 
+/// NAV-PRES-3K: explicit driver cockpit map style choice (flagged builds only).
+enum DriverCockpitMapVisualStyle {
+  light,
+  dark,
+  standard3d,
+  satellite,
+}
+
 /// Safe to toggle at runtime via [StyleManager.setStyleURI] + annotation redraw.
 const bool kDriverMapSatelliteToggleEnabled = true;
 
@@ -101,6 +109,50 @@ bool isExperimentalCockpit3dMapStyleUri(String styleUri) {
       styleUri == kDriverMapStyleStandardSatellite;
 }
 
+/// NAV-PRES-3K: diagnostic label for explicit cockpit style choice.
+String driverCockpitMapVisualStyleLogLabel(DriverCockpitMapVisualStyle style) {
+  switch (style) {
+    case DriverCockpitMapVisualStyle.light:
+      return 'light';
+    case DriverCockpitMapVisualStyle.dark:
+      return 'dark';
+    case DriverCockpitMapVisualStyle.standard3d:
+      return '3d';
+    case DriverCockpitMapVisualStyle.satellite:
+      return 'satellite';
+  }
+}
+
+/// NAV-PRES-3K: resolves style URI from an explicit driver cockpit choice.
+///
+/// Light/dark always use navigation-day/night. Standard / Standard Satellite
+/// are used only when not present in [rejectedExperimentalUris]; rejected
+/// experimental styles fall back to the safe baseline for that choice.
+String driverMapStyleForExplicitCockpitChoice({
+  required DriverCockpitMapVisualStyle choice,
+  required bool isLightTheme,
+  Set<String> rejectedExperimentalUris = const {},
+}) {
+  switch (choice) {
+    case DriverCockpitMapVisualStyle.light:
+      return kDriverMapStyleNavStreetLight;
+    case DriverCockpitMapVisualStyle.dark:
+      return kDriverMapStyleNavStreetDark;
+    case DriverCockpitMapVisualStyle.standard3d:
+      if (!rejectedExperimentalUris.contains(kDriverMapStyleStandard)) {
+        return kDriverMapStyleStandard;
+      }
+      return isLightTheme
+          ? kDriverMapStyleNavStreetLight
+          : kDriverMapStyleNavStreetDark;
+    case DriverCockpitMapVisualStyle.satellite:
+      if (!rejectedExperimentalUris.contains(kDriverMapStyleStandardSatellite)) {
+        return kDriverMapStyleStandardSatellite;
+      }
+      return kDriverMapStyleSatellite;
+  }
+}
+
 /// NAV-PRES-3I: preferred 3D-capable style for driver cockpit (pure resolver).
 ///
 /// When [rejectedExperimentalUris] contains the primary candidate, falls back
@@ -124,14 +176,19 @@ String driverMapStyleForCockpit3d({
   );
 }
 
-/// NAV-PRES-3I: resolves the active driver map style URI.
+/// NAV-PRES-3I/3K: resolves the active driver map style URI.
 ///
 /// When the 3D cockpit scene flag is off or [cockpit3dSceneActive] is false,
 /// returns the same URI as [driverMapStyleForTheme].
+///
+/// When the flag is on and [cockpitVisualStyle] is provided, uses the explicit
+/// driver choice (light / dark / 3D / satellite) instead of inferring 3D from
+/// street/satellite mode.
 String resolveDriverMapStyleUri({
   required bool isLightTheme,
   required DriverMapVisualMode visualMode,
   required bool cockpit3dSceneActive,
+  DriverCockpitMapVisualStyle? cockpitVisualStyle,
   Set<String> rejectedExperimentalUris = const {},
 }) {
   final baseline = driverMapStyleForTheme(
@@ -140,6 +197,13 @@ String resolveDriverMapStyleUri({
   );
   if (!kNavigation3dCockpitSceneEnabled || !cockpit3dSceneActive) {
     return baseline;
+  }
+  if (cockpitVisualStyle != null) {
+    return driverMapStyleForExplicitCockpitChoice(
+      choice: cockpitVisualStyle,
+      isLightTheme: isLightTheme,
+      rejectedExperimentalUris: rejectedExperimentalUris,
+    );
   }
   return driverMapStyleForCockpit3d(
     preferSatellite: visualMode == DriverMapVisualMode.satellite,
