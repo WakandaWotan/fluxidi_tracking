@@ -262,6 +262,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   String? _lastNavPresCameraTargetSignature;
   String? _lastNavPresCameraAppliedSignature;
   String? _lastNavPresHudScaleSignature;
+  String? _lastNavPresNoseAnchorSignature;
   bool _navPresCameraAnchorDiagEmitted = false;
   MapThemeMode? _mapThemeOverride;
   DriverMapVisualMode _driverMapVisualMode = DriverMapVisualMode.street;
@@ -8250,6 +8251,16 @@ class _DriverHomePageState extends State<DriverHomePage>
       snappedLon: progress?.snappedLongitude,
       hasReliableSnap: progress?.hasReliableSnap ?? false,
     );
+    final hudSize = driverCockpitViewLevelHudIconSize(
+      isTablet: isTablet,
+      level: _driverCockpitViewLevel,
+    );
+    final bottomHud = driverCockpitFixedHudBottomOffset(
+          isLandscape: isLandscape,
+          cockpitChaseCamera: true,
+          isTablet: isTablet,
+        ) +
+        safeBottom;
     final profile = resolveDriverCockpitCameraProfile(
       DriverCockpitCameraProfileInput(
         currentZoom: seedZoom,
@@ -8259,10 +8270,32 @@ class _DriverHomePageState extends State<DriverHomePage>
         safeTop: safeTop,
         safeBottom: safeBottom,
         screenHeight: screenHeight,
+        hudVehicleSizePx: hudSize,
+        bottomHudHeightPx: bottomHud,
       ),
       lookahead: lookahead,
       viewLevel: _driverCockpitViewLevel,
       directAdjust: directAdjust,
+    );
+    final noseAnchor = resolveDriverCockpitNoseAnchorFraction(
+      isTablet: isTablet,
+      isLandscape: isLandscape,
+      viewLevel: _driverCockpitViewLevel,
+      appliedZoom: profile.zoom,
+      appliedPitch: profile.pitch,
+      hudVehicleSizePx: hudSize,
+      viewportHeightPx: screenHeight,
+      bottomHudHeightPx: bottomHud,
+    );
+    _logNavPresNoseAnchor(
+      isTablet: isTablet,
+      level: _driverCockpitViewLevel,
+      zoom: profile.zoom,
+      pitch: profile.pitch,
+      hudSize: hudSize,
+      anchor: noseAnchor.anchorFraction,
+      result: noseAnchor.result,
+      reason: noseAnchor.reason,
     );
     _logNavPresCameraTargetIfChanged(
       level: _driverCockpitViewLevel,
@@ -8299,6 +8332,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _lastNavPresCameraTargetSignature = null;
     _lastNavPresCameraAppliedSignature = null;
     _lastNavPresHudScaleSignature = null;
+    _lastNavPresNoseAnchorSignature = null;
     _lastNavPresRouteAlignSignature = null;
     _lastNavPresRouteLeadinSignature = null;
     _lastNavPresBearingLockSignature = null;
@@ -8502,6 +8536,37 @@ class _DriverHomePageState extends State<DriverHomePage>
           'reason': 'real_mapbox_camera',
         },
       ),
+    );
+  }
+
+  void _logNavPresNoseAnchor({
+    required bool isTablet,
+    required int level,
+    required double zoom,
+    required double pitch,
+    required double hudSize,
+    required double anchor,
+    required String result,
+    String? reason,
+  }) {
+    if (!_navigationPresentationStateFor(_navCameraViewMode)
+        .useDriverCockpitCamera) {
+      return;
+    }
+    final device = isTablet ? 'tablet' : 'phone';
+    final signature =
+        '$device|$level|${zoom.toStringAsFixed(1)}|${pitch.round()}|'
+        '${hudSize.round()}|${anchor.toStringAsFixed(2)}|$result|${reason ?? ''}';
+    if (signature == _lastNavPresNoseAnchorSignature) return;
+    _lastNavPresNoseAnchorSignature = signature;
+    _logNavBounded(
+      'NAV_PRES_NOSE_ANCHOR',
+      'device=$device level=$level '
+          'zoom=${zoom.toStringAsFixed(1)} pitch=${pitch.round()} '
+          'hudSize=${hudSize.round()} anchor=${anchor.toStringAsFixed(2)} '
+          'result=$result'
+          '${reason != null ? ' reason=$reason' : ''}',
+      intervalMs: 1200,
     );
   }
 

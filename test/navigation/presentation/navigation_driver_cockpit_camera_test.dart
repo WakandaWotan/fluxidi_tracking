@@ -125,7 +125,13 @@ void main() {
       expect(output.centerLat, 50.0001);
       expect(output.centerLon, 4.0001);
       expect(output.centerMode, 'vehicle_anchor');
-      expect(output.anchorFraction, kDriverCockpitVehicleAnchorFractionPortrait);
+      expect(
+        output.anchorFraction,
+        inInclusiveRange(
+          kDriverCockpitNoseAnchorMinPhone,
+          kDriverCockpitNoseAnchorMaxPhone,
+        ),
+      );
     });
 
     test('NAV-PRES-3D-FIX: raw vehicle center when route snap unavailable', () {
@@ -338,7 +344,7 @@ void main() {
           isLandscape: false,
           level: 7,
         ),
-        kDriverCockpitPro2PhoneAnchorL7,
+        closeTo(kDriverCockpitPro2PhoneAnchorL7, 0.08),
       );
     });
 
@@ -374,25 +380,26 @@ void main() {
       expect(pitch1, inInclusiveRange(48.0, 55.0));
     });
 
-    test('level 13 anchor is fixed at level 7 baseline for all levels', () {
-      for (final level in [1, 4, 7, 13]) {
-        expect(
-          driverCockpitViewLevelTargetAnchorFraction(
-            isTablet: false,
-            isLandscape: false,
-            level: level,
-          ),
-          kDriverCockpitPro2PhoneAnchorL7,
-        );
-        expect(
-          driverCockpitViewLevelTargetAnchorFraction(
-            isTablet: false,
-            isLandscape: true,
-            level: level,
-          ),
-          kDriverCockpitPro2CompactAnchorL7,
-        );
-      }
+    test('level 7 phone anchor stays near professional baseline', () {
+      expect(
+        driverCockpitViewLevelTargetAnchorFraction(
+          isTablet: false,
+          isLandscape: false,
+          level: 7,
+        ),
+        closeTo(kDriverCockpitPro2PhoneAnchorL7, 0.08),
+      );
+      expect(
+        driverCockpitViewLevelTargetAnchorFraction(
+          isTablet: false,
+          isLandscape: true,
+          level: 7,
+        ),
+        inInclusiveRange(
+          kDriverCockpitNoseAnchorMinPhone,
+          kDriverCockpitNoseAnchorMaxPhone,
+        ),
+      );
     });
 
     test('levels 1, 7, 13 are visually distinct on phone portrait', () {
@@ -576,7 +583,7 @@ void main() {
       }
     });
 
-    test('route alignment invariant remains preserved across levels', () {
+    test('dynamic nose anchor varies across view levels on phone', () {
       final level1 = resolveDriverCockpitCameraProfile(
         phoneInput,
         lookahead: alignedLookahead,
@@ -594,9 +601,8 @@ void main() {
       );
       expect(level1.centerLat, level7.centerLat);
       expect(level13.centerLat, level7.centerLat);
-      expect(level13.anchorFraction, level7.anchorFraction);
-      expect(level1.anchorFraction, level7.anchorFraction);
-      expect(level13.anchorFraction, kDriverCockpitPro2PhoneAnchorL7);
+      expect(level1.anchorFraction, isNot(level13.anchorFraction));
+      expect(level1.anchorFraction, greaterThan(level13.anchorFraction));
     });
 
     test('tablet level 13 targets aggressive chase range', () {
@@ -776,7 +782,7 @@ void main() {
       expect(level13.pitch, closeTo(kDriverCockpitPro2PhonePitchL13, 0.05));
     });
 
-    test('HUD screen position inputs stay level-independent for close levels', () {
+    test('HUD screen position inputs use dynamic nose anchor at close levels', () {
       for (final level in [1, 7, 13]) {
         final portrait = driverCockpitFixedHudBottomOffset(
           isLandscape: false,
@@ -788,15 +794,16 @@ void main() {
         );
         expect(portrait, 168.0 + 8.0);
         expect(landscape, 112.0 + 8.0);
+        final anchor = driverCockpitViewLevelTargetAnchorFraction(
+          isTablet: false,
+          isLandscape: false,
+          level: level,
+        );
         expect(
-          driverCockpitViewLevelTargetAnchorFraction(
-            isTablet: false,
-            isLandscape: false,
-            level: level,
-          ),
-          driverCockpitFixedAnchorFraction(
-            isTablet: false,
-            isLandscape: false,
+          anchor,
+          inInclusiveRange(
+            kDriverCockpitNoseAnchorMinPhone,
+            kDriverCockpitNoseAnchorMaxPhone,
           ),
         );
       }
@@ -880,7 +887,7 @@ void main() {
       );
     });
 
-    test('anchor fraction stable across View 1, 7, and 13', () {
+    test('phone anchor varies across View 1, 7, and 13 with safe clamp', () {
       final anchors = [1, 7, 13]
           .map(
             (level) => driverCockpitViewLevelTargetAnchorFraction(
@@ -889,9 +896,18 @@ void main() {
               level: level,
             ),
           )
-          .toSet();
-      expect(anchors.length, 1);
-      expect(anchors.first, kDriverCockpitPro2PhoneAnchorL7);
+          .toList();
+      expect(anchors.toSet().length, greaterThan(1));
+      for (final anchor in anchors) {
+        expect(
+          anchor,
+          inInclusiveRange(
+            kDriverCockpitNoseAnchorMinPhone,
+            kDriverCockpitNoseAnchorMaxPhone,
+          ),
+        );
+      }
+      expect(anchors.first, greaterThan(anchors.last));
     });
 
     test('View 13 still applies high zoom/pitch while HUD grows for streetlevel', () {

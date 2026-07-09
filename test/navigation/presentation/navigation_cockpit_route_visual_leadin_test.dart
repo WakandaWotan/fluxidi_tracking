@@ -94,7 +94,7 @@ void main() {
       expect(completed.last.lon, snap.point.lon);
     });
 
-    test('tablet anchor nudges only for View 7+', () {
+    test('tablet dynamic nose anchor increases for overview and stays clamped', () {
       final phoneL7 = driverCockpitViewLevelTargetAnchorFraction(
         isTablet: false,
         isLandscape: false,
@@ -110,9 +110,21 @@ void main() {
         isLandscape: false,
         level: 13,
       );
-      expect(phoneL7, kDriverCockpitPro2PhoneAnchorL7);
-      expect(tabletL6, kDriverCockpitPro2CompactAnchorL7);
-      expect(tabletL13, greaterThan(kDriverCockpitPro2CompactAnchorL7));
+      final tabletL1 = driverCockpitViewLevelTargetAnchorFraction(
+        isTablet: true,
+        isLandscape: false,
+        level: 1,
+      );
+      expect(phoneL7, closeTo(kDriverCockpitPro2PhoneAnchorL7, 0.10));
+      expect(tabletL1, greaterThan(tabletL13));
+      expect(tabletL13, greaterThan(tabletL6 * 0.9));
+      expect(
+        tabletL13,
+        inInclusiveRange(
+          kDriverCockpitNoseAnchorMinTablet,
+          kDriverCockpitNoseAnchorMaxTablet,
+        ),
+      );
     });
 
     test('destination marker coordinate ignores visual lead-in', () {

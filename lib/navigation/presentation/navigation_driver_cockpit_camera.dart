@@ -17,6 +17,12 @@ class DriverCockpitCameraProfileInput {
   /// coordinate low on screen via viewport padding.
   final double screenHeight;
 
+  /// NAV-PRES-3N: HUD taxi size in logical px (0 = resolve from [viewLevel]).
+  final double hudVehicleSizePx;
+
+  /// NAV-PRES-3N: bottom inset to HUD taxi bottom edge (0 = resolve from layout).
+  final double bottomHudHeightPx;
+
   const DriverCockpitCameraProfileInput({
     required this.currentZoom,
     required this.currentPitch,
@@ -25,6 +31,21 @@ class DriverCockpitCameraProfileInput {
     required this.safeTop,
     required this.safeBottom,
     this.screenHeight = 800.0,
+    this.hudVehicleSizePx = 0.0,
+    this.bottomHudHeightPx = 0.0,
+  });
+}
+
+/// NAV-PRES-3N: resolved nose-anchor calibration for cockpit follow camera.
+class DriverCockpitNoseAnchorResult {
+  final double anchorFraction;
+  final String result;
+  final String? reason;
+
+  const DriverCockpitNoseAnchorResult({
+    required this.anchorFraction,
+    required this.result,
+    this.reason,
   });
 }
 
@@ -358,12 +379,14 @@ double driverCockpitFixedAnchorFraction({
       : kDriverCockpitPro2PhoneAnchorL7;
 }
 
-/// NAV-PRES-3G: stable anchor for close chase levels (5..13).
-/// NAV-PRES-3H: all levels 1..13 use fixed L7 anchor in driver cockpit mode.
-/// NAV-PRES-3L-A: tablet streetlevel gets a small anchor nudge at View 7+.
-const int kDriverCockpitStreetLevelAnchorNudgeMinLevel = 7;
-const double kDriverCockpitTabletStreetLevelAnchorNudge = 0.03;
-const double kDriverCockpitTabletStreetLevelAnchorNudgeHighMax = 0.07;
+/// NAV-PRES-3N: screen fraction from taxi bottom to nose tip on HUD bitmap.
+const double kDriverCockpitHudNoseScreenFraction = 0.88;
+
+/// NAV-PRES-3N: safe nose-anchor clamp range (prevents wild camera jumps).
+const double kDriverCockpitNoseAnchorMinPhone = 0.56;
+const double kDriverCockpitNoseAnchorMaxPhone = 0.88;
+const double kDriverCockpitNoseAnchorMinTablet = 0.54;
+const double kDriverCockpitNoseAnchorMaxTablet = 0.90;
 
 /// NAV-PRES-3M: cockpit-only visual route lead-in behind snap (meters).
 const double kDriverCockpitRouteLeadInMaxM = 120.0;
@@ -387,26 +410,123 @@ double driverCockpitRouteVisualLeadInMeters(int viewLevel) {
   return (75.0 + t * 45.0).clamp(75.0, kDriverCockpitRouteLeadInMaxM);
 }
 
+/// NAV-PRES-3N: dynamic nose-anchor from applied camera + HUD geometry.
+DriverCockpitNoseAnchorResult resolveDriverCockpitNoseAnchorFraction({
+  required bool isTablet,
+  required bool isLandscape,
+  required int viewLevel,
+  required double appliedZoom,
+  required double appliedPitch,
+  required double hudVehicleSizePx,
+  required double viewportHeightPx,
+  required double bottomHudHeightPx,
+}) {
+  final compact = driverCockpitUsesCompactChaseProfile(
+    isTablet: isTablet,
+    isLandscape: isLandscape,
+  );
+  final level = clampDriverCockpitViewLevel(viewLevel);
+  final baseline = driverCockpitViewLevelInterp(
+    level: level,
+    atLevel1: compact
+        ? kDriverCockpitPro2CompactAnchorL1
+        : kDriverCockpitPro2PhoneAnchorL1,
+    atLevel7: compact
+        ? kDriverCockpitPro2CompactAnchorL7
+        : kDriverCockpitPro2PhoneAnchorL7,
+    atLevel13: compact
+        ? kDriverCockpitPro2CompactAnchorL13
+        : kDriverCockpitPro2PhoneAnchorL13,
+  );
+  if (viewportHeightPx <= 0 ||
+      hudVehicleSizePx <= 0 ||
+      !appliedZoom.isFinite ||
+      !appliedPitch.isFinite) {
+    return DriverCockpitNoseAnchorResult(
+      anchorFraction: baseline,
+      result: 'skipped',
+      reason: 'invalid_inputs',
+    );
+  }
+
+  final viewport = viewportHeightPx;
+  final hudBottom = bottomHudHeightPx.clamp(0.0, viewport * 0.48);
+  final hudNoseY = viewport -
+      hudBottom -
+      hudVehicleSizePx * kDriverCockpitHudNoseScreenFraction;
+  final hudNoseFraction =
+      (hudNoseY / viewport).clamp(0.42, kDriverCockpitNoseAnchorMaxTablet);
+
+  final pitchSpan =
+      kDriverCockpitCameraMaxPitch - kDriverCockpitCameraMinPitch;
+  final zoomSpan = kDriverCockpitCameraMaxZoom - kDriverCockpitCameraMinZoom;
+  final pitchT = pitchSpan <= 0
+      ? 0.0
+      : ((appliedPitch - kDriverCockpitCameraMinPitch) / pitchSpan)
+          .clamp(0.0, 1.0);
+  final zoomT = zoomSpan <= 0
+      ? 0.0
+      : ((kDriverCockpitCameraMaxZoom - appliedZoom) / zoomSpan)
+          .clamp(0.0, 1.0);
+
+  final pitchComp = pitchT * (isTablet ? 0.10 : 0.08);
+  final zoomComp = zoomT * (isTablet ? 0.22 : 0.18);
+
+  final rawAnchor = hudNoseFraction + pitchComp + zoomComp;
+  final baselineWeight = level <= 4 ? 0.15 : 0.22;
+  var anchor =
+      baseline * baselineWeight + rawAnchor * (1.0 - baselineWeight);
+
+  final minAnchor =
+      isTablet ? kDriverCockpitNoseAnchorMinTablet : kDriverCockpitNoseAnchorMinPhone;
+  final maxAnchor =
+      isTablet ? kDriverCockpitNoseAnchorMaxTablet : kDriverCockpitNoseAnchorMaxPhone;
+  final clamped = anchor.clamp(minAnchor, maxAnchor);
+  return DriverCockpitNoseAnchorResult(
+    anchorFraction: clamped,
+    result: clamped == anchor ? 'applied' : 'clamped',
+    reason: clamped == anchor ? null : 'safe_range',
+  );
+}
+
 double driverCockpitViewLevelTargetAnchorFraction({
   required bool isTablet,
   required bool isLandscape,
   required int level,
+  double viewportHeightPx = 0.0,
+  double bottomHudHeightPx = 0.0,
 }) {
-  final base = driverCockpitFixedAnchorFraction(
+  final viewport = viewportHeightPx > 0
+      ? viewportHeightPx
+      : (isTablet ? 1100.0 : 800.0);
+  final bottomHud = bottomHudHeightPx > 0
+      ? bottomHudHeightPx
+      : driverCockpitFixedHudBottomOffset(
+          isLandscape: isLandscape,
+          cockpitChaseCamera: true,
+          isTablet: isTablet,
+        );
+  return resolveDriverCockpitNoseAnchorFraction(
     isTablet: isTablet,
     isLandscape: isLandscape,
-  );
-  if (!isTablet || level < kDriverCockpitStreetLevelAnchorNudgeMinLevel) {
-    return base;
-  }
-  var nudge = kDriverCockpitTabletStreetLevelAnchorNudge;
-  if (level >= 11) {
-    final t = ((level - 11) / 2.0).clamp(0.0, 1.0);
-    nudge += t *
-        (kDriverCockpitTabletStreetLevelAnchorNudgeHighMax -
-            kDriverCockpitTabletStreetLevelAnchorNudge);
-  }
-  return (base + nudge).clamp(base, 0.88);
+    viewLevel: level,
+    appliedZoom: driverCockpitViewLevelTargetZoom(
+      isTablet: isTablet,
+      isLandscape: isLandscape,
+      level: level,
+    ),
+    appliedPitch: driverCockpitViewLevelTargetPitch(
+      isTablet: isTablet,
+      isLandscape: isLandscape,
+      level: level,
+    ),
+    hudVehicleSizePx: driverCockpitViewLevelHudIconSize(
+      isTablet: isTablet,
+      level: level,
+    ),
+    viewportHeightPx: viewport,
+    bottomHudHeightPx: bottomHud,
+  ).anchorFraction;
 }
 
 /// NAV-PRES-3M: driver cockpit HUD size grows deterministically by view level.
@@ -670,11 +790,31 @@ DriverCockpitCameraProfileOutput resolveDriverCockpitCameraProfile(
   );
   final appliedReason =
       directAdjust ? 'direct_adjust' : 'cockpit_state';
-  final anchorFraction = driverCockpitViewLevelTargetAnchorFraction(
+  final hudSize = input.hudVehicleSizePx > 0
+      ? input.hudVehicleSizePx
+      : driverCockpitViewLevelHudIconSize(
+          isTablet: input.isTablet,
+          level: level,
+        );
+  final bottomHud = input.bottomHudHeightPx > 0
+      ? input.bottomHudHeightPx
+      : driverCockpitFixedHudBottomOffset(
+          isLandscape: input.isLandscape,
+          cockpitChaseCamera: true,
+          isTablet: input.isTablet,
+        ) +
+          input.safeBottom;
+  final noseAnchor = resolveDriverCockpitNoseAnchorFraction(
     isTablet: input.isTablet,
     isLandscape: input.isLandscape,
-    level: level,
+    viewLevel: level,
+    appliedZoom: zoom,
+    appliedPitch: pitch,
+    hudVehicleSizePx: hudSize,
+    viewportHeightPx: input.screenHeight,
+    bottomHudHeightPx: bottomHud,
   );
+  final anchorFraction = noseAnchor.anchorFraction;
   final padding = driverCockpitVehicleAnchorPadding(
     screenHeight: input.screenHeight,
     safeTop: input.safeTop,
