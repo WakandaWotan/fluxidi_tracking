@@ -214,6 +214,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   late final Widget _stableMapWidget;
   String? _pendingMapStyleUri;
   bool _mapStyleChanging = false;
+  // NAV-PRES-3I: session-scoped rejection of unsupported experimental 3D styles.
+  final Set<String> _rejectedCockpit3dStyleUris = <String>{};
+  String? _lastNavPres3dStyleSignature;
   // NAV-UI-R6D: compact expandable "more" chip for portrait nav quick actions.
   bool _navQuickActionsMoreExpanded = false;
   // NAV-UI-R6E: taxi visual captured just before setStyleURI so the marker can
@@ -7202,9 +7205,36 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   String _styleForTheme(MapThemeMode theme) {
-    return driverMapStyleForTheme(
+    return resolveDriverMapStyleUri(
       isLightTheme: theme == MapThemeMode.light,
       visualMode: _driverMapVisualMode,
+      cockpit3dSceneActive: _isDriverCockpit3dSceneEligible(),
+      rejectedExperimentalUris: _rejectedCockpit3dStyleUris,
+    );
+  }
+
+  bool _isDriverCockpit3dSceneEligible() {
+    if (!kNavigation3dCockpitSceneEnabled) return false;
+    if (_cameraMode != _CameraMode.follow || !_liveRideActive) return false;
+    return _navigationPresentationStateFor(_navCameraViewMode)
+        .useDriverCockpitCamera;
+  }
+
+  void _logNavPres3dStyleIfChanged({
+    required String target,
+    required String previous,
+    required String result,
+    String? reason,
+  }) {
+    if (!kNavigation3dCockpitSceneEnabled) return;
+    final signature = '$result|$target|$previous|${reason ?? ''}';
+    if (signature == _lastNavPres3dStyleSignature) return;
+    _lastNavPres3dStyleSignature = signature;
+    _logNavBounded(
+      'NAV_PRES_3D_STYLE',
+      'enabled=true target=$target previous=$previous result=$result'
+      '${reason != null ? ' reason=$reason' : ''}',
+      intervalMs: 1200,
     );
   }
 
@@ -7216,10 +7246,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (_map == null) return;
     final theme = _effectiveMapThemeFor(_cameraMode);
     final target = _styleForMode(_cameraMode);
+    final previousStyle = _activeMapStyleUri;
     debugPrint(
       '[MAP][STYLE_REQ] theme=${theme == MapThemeMode.light ? 'light' : 'dark'} target=$target active=$_activeMapStyleUri pending=${_pendingMapStyleUri ?? ''}',
     );
     if (_activeMapStyleUri == target) {
+      _logNavPres3dStyleIfChanged(
+        target: target,
+        previous: previousStyle,
+        result: 'already',
+      );
       debugPrint('[MAP][STYLE_SKIP] reason=already_active target=$target');
       await applyDriverMapVisualClarity(
         style: _map!.style,
@@ -7243,6 +7279,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         phase: 'started',
       ),
     );
+    var scheduleCockpit3dFallback = false;
     try {
       // NAV-UI-R6E: capture last taxi visual BEFORE the style swap and keep
       // the visible marker alive until the style itself replaces it; the
@@ -7253,6 +7290,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       await _map!.style.setStyleURI(target);
       _activeMapStyleUri = target;
+      _logNavPres3dStyleIfChanged(
+        target: target,
+        previous: previousStyle,
+        result: 'switch',
+      );
       await _disposeDriverPointAnnotationManager();
       await applyDriverMapVisualClarity(
         style: _map!.style,
@@ -7298,6 +7340,30 @@ class _DriverHomePageState extends State<DriverHomePage>
       debugPrint('[MAP][STYLE_DONE] target=$target');
     } catch (e) {
       debugPrint('[MAP][STYLE_SKIP] reason=error target=$target error=$e');
+      if (isExperimentalCockpit3dMapStyleUri(target)) {
+        _rejectedCockpit3dStyleUris.add(target);
+        _logNavPres3dStyleIfChanged(
+          target: target,
+          previous: previousStyle,
+          result: 'failed',
+          reason: 'setStyleURI_error',
+        );
+        final fallback = resolveDriverMapStyleUri(
+          isLightTheme: theme == MapThemeMode.light,
+          visualMode: _driverMapVisualMode,
+          cockpit3dSceneActive: _isDriverCockpit3dSceneEligible(),
+          rejectedExperimentalUris: _rejectedCockpit3dStyleUris,
+        );
+        if (fallback != target && _activeMapStyleUri != fallback) {
+          _logNavPres3dStyleIfChanged(
+            target: fallback,
+            previous: target,
+            result: 'fallback',
+            reason: 'experimental_unsupported',
+          );
+          scheduleCockpit3dFallback = true;
+        }
+      }
       unawaited(
         NavDiagnosticsRecorder.instance.recordMapStyleChange(
           mode: driverMapVisualModeLogLabel(_driverMapVisualMode),
@@ -7316,6 +7382,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (_pendingMapStyleUri == target) {
         _pendingMapStyleUri = null;
       }
+    }
+    if (scheduleCockpit3dFallback && mounted) {
+      unawaited(_applyMapStyleForMode());
     }
   }
 
@@ -8383,6 +8452,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     setState(() => _navCameraViewMode = next);
     _lastSmoothedCameraBearing = null;
     _resetDriverCockpitCameraState();
+    unawaited(_applyMapStyleForMode());
     _logNavR15CameraView(
       mode: next,
       previousMode: previous,

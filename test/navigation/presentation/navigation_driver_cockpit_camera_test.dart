@@ -811,6 +811,7 @@ void main() {
         visualMode: DriverMapVisualMode.street,
       );
       expect(navDay.likelyFlatNavStyle, isTrue);
+      expect(navDay.is3dCandidate, isFalse);
       expect(navDay.terrainLikelyAvailable, isFalse);
       expect(navDay.note, contains('3d'));
 
@@ -819,7 +820,8 @@ void main() {
         visualMode: DriverMapVisualMode.satellite,
       );
       expect(satellite.styleFamily, 'satellite-streets');
-      expect(satellite.note, contains('street_3d'));
+      expect(satellite.is3dCandidate, isFalse);
+      expect(satellite.note, contains('raster_satellite'));
     });
   });
 }

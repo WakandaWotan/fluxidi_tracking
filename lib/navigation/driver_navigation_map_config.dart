@@ -31,6 +31,24 @@ const String kDriverMapStyleNavStreetDark =
 const String kDriverMapStyleSatellite =
     'mapbox://styles/mapbox/satellite-streets-v12';
 
+/// NAV-PRES-3I: experimental Mapbox Standard styles for flagged 3D cockpit scene.
+const String kDriverMapStyleStandard = 'mapbox://styles/mapbox/standard';
+const String kDriverMapStyleStandardSatellite =
+    'mapbox://styles/mapbox/standard-satellite';
+
+/// Dart-define key for NAV-PRES-3I flagged 3D cockpit map style experiment.
+const String kNavigation3dCockpitSceneDefineKey = 'FLUXIDI_NAV_3D_COCKPIT_SCENE';
+
+/// NAV-PRES-3I: use Mapbox Standard / Standard Satellite in driver cockpit
+/// when supported (default off; compile-time only).
+///
+/// Enable at build time:
+/// `--dart-define=FLUXIDI_NAV_3D_COCKPIT_SCENE=true`
+const bool kNavigation3dCockpitSceneEnabled = bool.fromEnvironment(
+  kNavigation3dCockpitSceneDefineKey,
+  defaultValue: false,
+);
+
 /// Legacy alias kept for offline tile packs and existing imports.
 const String kDriverMapStyleLight = kDriverMapStyleNavStreetLight;
 const String kDriverMapStyleDark = kDriverMapStyleNavStreetDark;
@@ -77,6 +95,59 @@ String driverMapStyleForTheme({
   return isLightTheme ? kDriverMapStyleNavStreetLight : kDriverMapStyleNavStreetDark;
 }
 
+/// Returns true for experimental 3D cockpit style URIs (Standard family).
+bool isExperimentalCockpit3dMapStyleUri(String styleUri) {
+  return styleUri == kDriverMapStyleStandard ||
+      styleUri == kDriverMapStyleStandardSatellite;
+}
+
+/// NAV-PRES-3I: preferred 3D-capable style for driver cockpit (pure resolver).
+///
+/// When [rejectedExperimentalUris] contains the primary candidate, falls back
+/// to the existing navigation-day/night or satellite-streets styles.
+String driverMapStyleForCockpit3d({
+  required bool preferSatellite,
+  required bool isLightTheme,
+  Set<String> rejectedExperimentalUris = const {},
+}) {
+  final experimental = preferSatellite
+      ? kDriverMapStyleStandardSatellite
+      : kDriverMapStyleStandard;
+  if (!rejectedExperimentalUris.contains(experimental)) {
+    return experimental;
+  }
+  return driverMapStyleForTheme(
+    isLightTheme: isLightTheme,
+    visualMode: preferSatellite
+        ? DriverMapVisualMode.satellite
+        : DriverMapVisualMode.street,
+  );
+}
+
+/// NAV-PRES-3I: resolves the active driver map style URI.
+///
+/// When the 3D cockpit scene flag is off or [cockpit3dSceneActive] is false,
+/// returns the same URI as [driverMapStyleForTheme].
+String resolveDriverMapStyleUri({
+  required bool isLightTheme,
+  required DriverMapVisualMode visualMode,
+  required bool cockpit3dSceneActive,
+  Set<String> rejectedExperimentalUris = const {},
+}) {
+  final baseline = driverMapStyleForTheme(
+    isLightTheme: isLightTheme,
+    visualMode: visualMode,
+  );
+  if (!kNavigation3dCockpitSceneEnabled || !cockpit3dSceneActive) {
+    return baseline;
+  }
+  return driverMapStyleForCockpit3d(
+    preferSatellite: visualMode == DriverMapVisualMode.satellite,
+    isLightTheme: isLightTheme,
+    rejectedExperimentalUris: rejectedExperimentalUris,
+  );
+}
+
 /// Scales taxi marker down when zoomed out so it does not dominate the map.
 double driverTaxiMarkerIconSizeForZoom(double zoom) {
   final z = zoom.isFinite ? zoom : kDriverMapInitialZoom;
@@ -96,12 +167,14 @@ class DriverCockpitMap3dCapability {
   const DriverCockpitMap3dCapability({
     required this.styleFamily,
     required this.likelyFlatNavStyle,
+    required this.is3dCandidate,
     required this.terrainLikelyAvailable,
     required this.note,
   });
 
   final String styleFamily;
   final bool likelyFlatNavStyle;
+  final bool is3dCandidate;
   final bool terrainLikelyAvailable;
   final String note;
 
@@ -109,11 +182,29 @@ class DriverCockpitMap3dCapability {
     required String styleUri,
     required DriverMapVisualMode visualMode,
   }) {
-    if (visualMode == DriverMapVisualMode.satellite ||
-        styleUri.contains('satellite')) {
+    if (styleUri.contains('/standard-satellite')) {
+      return const DriverCockpitMap3dCapability(
+        styleFamily: 'standard-satellite',
+        likelyFlatNavStyle: false,
+        is3dCandidate: true,
+        terrainLikelyAvailable: false,
+        note: 'experimental_3d_candidate_no_terrain_enabled',
+      );
+    }
+    if (styleUri.contains('/standard')) {
+      return const DriverCockpitMap3dCapability(
+        styleFamily: 'standard',
+        likelyFlatNavStyle: false,
+        is3dCandidate: true,
+        terrainLikelyAvailable: false,
+        note: 'experimental_3d_candidate_no_terrain_enabled',
+      );
+    }
+    if (styleUri.contains('satellite-streets')) {
       return const DriverCockpitMap3dCapability(
         styleFamily: 'satellite-streets',
         likelyFlatNavStyle: true,
+        is3dCandidate: false,
         terrainLikelyAvailable: false,
         note: 'raster_satellite_high_pitch_not_true_street_3d',
       );
@@ -123,6 +214,7 @@ class DriverCockpitMap3dCapability {
       return const DriverCockpitMap3dCapability(
         styleFamily: 'navigation-v1',
         likelyFlatNavStyle: true,
+        is3dCandidate: false,
         terrainLikelyAvailable: false,
         note: 'flat_nav_style_needs_terrain_or_3d_style_patch',
       );
@@ -130,6 +222,7 @@ class DriverCockpitMap3dCapability {
     return const DriverCockpitMap3dCapability(
       styleFamily: 'other',
       likelyFlatNavStyle: true,
+      is3dCandidate: false,
       terrainLikelyAvailable: false,
       note: 'unknown_style_assume_flat_until_3d_patch',
     );
@@ -137,7 +230,8 @@ class DriverCockpitMap3dCapability {
 
   String toDiagnosticLine() {
     return 'style=$styleFamily flat=$likelyFlatNavStyle '
-        'terrain=$terrainLikelyAvailable reason=$note';
+        '3dCandidate=$is3dCandidate terrain=$terrainLikelyAvailable '
+        'reason=$note';
   }
 }
 
