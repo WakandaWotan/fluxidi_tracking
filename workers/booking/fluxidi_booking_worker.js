@@ -182,6 +182,17 @@ import {
   bookingMatchesRequiredTenantCompanyScope,
 } from "./modules/auth_scope.js";
 import {
+  STREET_BUSINESS_INVOICE_INTENT,
+  STREET_INVOICE_REQUEST_SOURCE,
+  evaluateStreetInvoiceEligibility,
+  streetRidePaymentStatus,
+  shouldRejectForBillingReadiness,
+  buildStreetBillingCustomerSnapshot,
+  resolveBusinessInvoiceRetryDecision,
+  streetRideInvoiceIdempotencyKey,
+  buildBusinessInvoiceResponse,
+} from "./modules/street_business_invoice.js";
+import {
   customerScopedBookingsIndexKey,
   driverScopedBookingsIndexKey,
   vehicleScopedBookingsIndexKey,
@@ -30794,6 +30805,44 @@ export default {
         }
       }
 
+      // POST /company/bookings/:bookingId/request-business-invoice
+      // Phase STREET-RIDE-BUSINESS-INVOICE-A1: admin token OR company session
+      // for the exact tenant/company scope (DRIVER UI AUTH DEFERRED) requests
+      // exactly one Document Core business invoice for a COMPLETED street_
+      // booking, then ensures one Billit SANDBOX order. NEVER auto-sends Peppol,
+      // NEVER supports production. See handleCompanyBookingRequestBusinessInvoice.
+      if (
+        request.method === "POST" &&
+        url.pathname.startsWith("/company/bookings/") &&
+        url.pathname.endsWith("/request-business-invoice")
+      ) {
+        const businessInvoiceSegments = url.pathname.split("/").filter(Boolean);
+        // Only the exact shape:
+        //   ["company","bookings","<bookingId>","request-business-invoice"].
+        if (
+          businessInvoiceSegments.length === 4 &&
+          businessInvoiceSegments[0] === "company" &&
+          businessInvoiceSegments[1] === "bookings" &&
+          businessInvoiceSegments[3] === "request-business-invoice"
+        ) {
+          try {
+            const bookingId =
+              safeStr(decodeURIComponent(businessInvoiceSegments[2]), 200) || "";
+            return await handleCompanyBookingRequestBusinessInvoice({
+              request,
+              url,
+              env,
+              bookingId,
+            });
+          } catch (err) {
+            console.log(
+              `[BUSINESS_INVOICE][ERROR] ${safeStr(err?.message, 160) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+      }
+
       // GET /company/documents/:documentId/billit-payload-preview
       // B12-G1: COMPANY-authenticated (company session OR admin token),
       // READ-ONLY Peppol readiness preview for ONE issued document. Company
@@ -60473,6 +60522,350 @@ async function finalizeDirectRideBookingBestEffort(
     );
   }
   return result;
+}
+
+/* POST /company/bookings/:bookingId/request-business-invoice
+ * Phase STREET-RIDE-BUSINESS-INVOICE-A1 (BACKEND FOUNDATION ONLY).
+ *
+ * Lets an authenticated admin OR company session (for the exact tenant/company
+ * scope) request exactly ONE business invoice for a COMPLETED street_ booking.
+ * Driver authorization is intentionally NOT wired here (DRIVER UI AUTH
+ * DEFERRED). The route:
+ *   1. enforces explicit tenant/company scope + booking scope match (403),
+ *   2. requires a canonical street/direct COMPLETED booking (not cancelled /
+ *      refunded / credited),
+ *   3. validates buyer billing identity via the existing normalizer + readiness
+ *      helpers (payment/pricing state from the body is ignored),
+ *   4. persists billing_customer_snapshot + business-invoice intent,
+ *   5. issues exactly one Document Core invoice via the existing engine
+ *      (deterministic idempotency key -> at-most-one invoice per booking),
+ *   6. ensures ONE Billit SANDBOX order via the existing helper (which mirrors
+ *      paid-state for a paid booking and leaves a pay-later order unpaid).
+ *
+ * It NEVER auto-sends Peppol, NEVER supports production, NEVER adds revenue at
+ * invoice issue, and NEVER returns tokens / PII snapshots. */
+async function handleCompanyBookingRequestBusinessInvoice({
+  request,
+  url,
+  env,
+  bookingId,
+}) {
+  const routeLabel = "BUSINESS_INVOICE";
+  let body = null;
+  try {
+    body = await request.json();
+  } catch (_) {
+    body = null;
+  }
+
+  const auth = await _requireAdminOrCompanySessionForExplicitScope({
+    request,
+    url,
+    env,
+    body,
+    routeLabel,
+  });
+  if (!auth.ok) return auth.response;
+  const actorRole =
+    auth.auth_mode === "admin_token"
+      ? "admin_business_invoice"
+      : "company_business_invoice";
+  const scope = {
+    tenant_id: auth.explicitScope.tenant_id,
+    company_id: auth.explicitScope.company_id,
+  };
+  const matchScope = {
+    tenant_id: scope.tenant_id,
+    company_id: scope.company_id,
+    hasScope: true,
+  };
+
+  const safeBookingId = safeStr(bookingId, 200) || "";
+  const bookingMask = _bookingIntentMask(safeBookingId);
+  if (!safeBookingId) {
+    return json({ ok: false, error: "missing_source_booking_id" }, 400);
+  }
+  if (!env?.BOOKING_KV) {
+    return json({ ok: false, error: "missing_binding" }, 503);
+  }
+  console.log(
+    `[BUSINESS_INVOICE][REQUEST] booking=${bookingMask} actor=${actorRole}`,
+  );
+
+  // 1. Load booking (read-only for eligibility + scope match).
+  let rec = null;
+  try {
+    rec = await env.BOOKING_KV.get(`booking:${safeBookingId}`, { type: "json" });
+  } catch (_) {
+    rec = null;
+  }
+  if (!rec || typeof rec !== "object" || Array.isArray(rec)) {
+    return json({ ok: false, error: "source_booking_not_found" }, 404);
+  }
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, matchScope)) {
+    console.log(
+      `[BUSINESS_INVOICE][CONFLICT] booking=${bookingMask} reason=not_in_scope`,
+    );
+    return json({ ok: false, error: "not_in_scope" }, 403);
+  }
+
+  // 2. Street/direct + COMPLETED + not cancelled/refunded/credited.
+  const eligibility = evaluateStreetInvoiceEligibility({
+    bookingId: safeBookingId,
+    record: rec,
+  });
+  if (!eligibility.ok) {
+    const status = eligibility.reason === "source_booking_not_found" ? 404 : 409;
+    console.log(
+      `[BUSINESS_INVOICE][CONFLICT] booking=${bookingMask} reason=${eligibility.reason}`,
+    );
+    return json({ ok: false, error: eligibility.reason }, status);
+  }
+
+  // 3. Buyer billing identity (payment/pricing state from body is ignored).
+  const normalized = normalizeBillingCustomerIdentityInput(body || {});
+  const readiness = buildBillingCustomerIdentityReadiness(normalized);
+  const readinessGate = shouldRejectForBillingReadiness(readiness);
+  if (readinessGate.reject) {
+    console.log(
+      `[BUSINESS_INVOICE][CONFLICT] booking=${bookingMask} reason=billing_customer_not_ready`,
+    );
+    return json(
+      {
+        ok: false,
+        error: "billing_customer_not_ready",
+        missing_fields: readinessGate.missing_fields,
+      },
+      422,
+    );
+  }
+  const nowIso = new Date().toISOString();
+  const requestedSnapshot = buildStreetBillingCustomerSnapshot({
+    normalized,
+    actorRole,
+    nowIso,
+  });
+
+  // 4. Existing invoice + stored snapshot -> retry decision.
+  const existingInvoice = await findExistingInvoiceDocumentForBooking(
+    env,
+    scope,
+    safeBookingId,
+  );
+  const existingSnapshot =
+    (rec.billing_customer_snapshot ?? rec.billingCustomerSnapshot) ||
+    (rec.booking && typeof rec.booking === "object"
+      ? (rec.booking.billing_customer_snapshot ??
+        rec.booking.billingCustomerSnapshot)
+      : null) ||
+    null;
+  const decision = resolveBusinessInvoiceRetryDecision({
+    existingInvoice,
+    existingSnapshot,
+    requestedSnapshot,
+  });
+  if (decision.action === "conflict") {
+    console.log(
+      `[BUSINESS_INVOICE][CONFLICT] booking=${bookingMask} reason=billing_identity_conflict`,
+    );
+    return json({ ok: false, error: "billing_identity_conflict" }, 409);
+  }
+
+  const paymentStatus = streetRidePaymentStatus(rec);
+  let documentId = null;
+  let invoiceReference = null;
+  let reused = false;
+  const warnings = [];
+
+  if (decision.action === "reuse") {
+    // Identical retry: reuse the already-issued document; never re-issue and
+    // never overwrite the issued buyer snapshot.
+    documentId = safeStr(existingInvoice?.document_id, 200) || null;
+    invoiceReference = safeStr(existingInvoice?.document_number, 80) || null;
+    reused = true;
+    if (!documentId) {
+      return json({ ok: false, error: "invoice_reuse_no_document_id" }, 500);
+    }
+    console.log(
+      `[BUSINESS_INVOICE][REUSED] booking=${bookingMask} doc=${documentId.slice(0, 8)}`,
+    );
+  } else {
+    // 5. Persist snapshot + business-invoice intent (never mutate passenger
+    //    fields). Only on first issue; the reuse path above skips this write.
+    try {
+      rec.billing_customer_snapshot = requestedSnapshot;
+      rec.invoice_intent = STREET_BUSINESS_INVOICE_INTENT;
+      rec.invoice_requested = true;
+      rec.invoice_requested_at = nowIso;
+      rec.invoice_request_source = STREET_INVOICE_REQUEST_SOURCE;
+      rec.invoice_request_actor_role = actorRole;
+      rec.updated_at = nowIso;
+      rec.updatedAt = nowIso;
+      const b =
+        rec.booking && typeof rec.booking === "object" && !Array.isArray(rec.booking)
+          ? rec.booking
+          : null;
+      if (b) {
+        b.billing_customer_snapshot = requestedSnapshot;
+        b.invoice_intent = STREET_BUSINESS_INVOICE_INTENT;
+        b.invoice_requested = true;
+      }
+      await env.BOOKING_KV.put(`booking:${safeBookingId}`, JSON.stringify(rec));
+    } catch (err) {
+      console.log(
+        `[BUSINESS_INVOICE][ERROR] booking=${bookingMask} reason=snapshot_persist_failed`,
+      );
+      return json({ ok: false, error: "snapshot_persist_failed" }, 500);
+    }
+
+    // 6. Issue exactly one invoice through the existing engine (idempotent).
+    let serverPricingProfile = null;
+    try {
+      serverPricingProfile = await _loadTenantPricingProfile(env, scope, {
+        allowTenantLegacyFallback: true,
+      });
+    } catch (_) {
+      serverPricingProfile = null;
+    }
+    const built = buildAutoInvoiceIssueBodyFromBooking({
+      scope,
+      booking: rec,
+      bookingId: safeBookingId,
+      serverPricingProfile,
+    });
+    if (!built.ok) {
+      console.log(
+        `[BUSINESS_INVOICE][ERROR] booking=${bookingMask} reason=${safeStr(built.error, 60) || "totals_unavailable"}`,
+      );
+      return json(
+        { ok: false, error: built.error || "invoice_totals_unavailable" },
+        409,
+      );
+    }
+    const issueBody = {
+      ...built.body,
+      idempotency_key: streetRideInvoiceIdempotencyKey({
+        tenantId: scope.tenant_id,
+        companyId: scope.company_id,
+        bookingId: safeBookingId,
+      }),
+    };
+    const issueResp = await _issueInvoiceCore({
+      env,
+      body: issueBody,
+      scope,
+      scopeForBookingMatch: matchScope,
+      createdByRoleOverride: actorRole,
+      routeLabel,
+    });
+    let issueData = null;
+    try {
+      issueData = await issueResp.json();
+    } catch (_) {
+      issueData = null;
+    }
+    if (!issueResp.ok || !issueData || issueData.ok !== true) {
+      const status = issueResp.status || 500;
+      console.log(
+        `[BUSINESS_INVOICE][ERROR] booking=${bookingMask} reason=issue_failed status=${status}`,
+      );
+      return json(
+        { ok: false, error: safeStr(issueData?.error, 80) || "invoice_issue_failed" },
+        status,
+      );
+    }
+    documentId = safeStr(issueData.document_id, 200) || null;
+    invoiceReference = safeStr(issueData.document_number, 80) || null;
+    reused = issueData.idempotent_replay === true;
+    if (Array.isArray(issueData.warnings)) {
+      for (const w of issueData.warnings) {
+        const t = safeStr(w, 80);
+        if (t) warnings.push(t);
+      }
+    }
+    if (!documentId) {
+      console.log(
+        `[BUSINESS_INVOICE][ERROR] booking=${bookingMask} reason=no_document_id`,
+      );
+      return json({ ok: false, error: "invoice_issue_no_document_id" }, 500);
+    }
+    console.log(
+      reused
+        ? `[BUSINESS_INVOICE][REUSED] booking=${bookingMask} doc=${documentId.slice(0, 8)}`
+        : `[BUSINESS_INVOICE][ISSUED] booking=${bookingMask} doc=${documentId.slice(0, 8)} paid=${paymentStatus === "paid"}`,
+    );
+  }
+
+  // 7. Ensure ONE Billit SANDBOX order (create/reuse). Non-fatal on failure:
+  //    the invoice document already exists. The helper mirrors paid-state for a
+  //    paid booking and leaves a pay-later order unpaid. NEVER Peppol-sends.
+  let billitOrderId = null;
+  let billitOrderReused = false;
+  let billitPaymentSyncStatus = null;
+  const billitEnvironment = "sandbox";
+  try {
+    const record = await loadIssuedDocumentRegistryRecordById(
+      env,
+      scope,
+      documentId,
+    );
+    if (!record) {
+      warnings.push("billit_registry_miss");
+    } else {
+      const config = resolveBillitOAuthConfig(env);
+      const configEnv = safeStr(config?.environment, 24).toLowerCase();
+      if (!config || config.configured !== true || configEnv !== "sandbox") {
+        warnings.push("billit_not_configured_sandbox");
+      } else {
+        const billit = await ensureBillitSandboxOrderForIssuedInvoice(
+          env,
+          scope,
+          config,
+          record,
+          { documentId, documentNumber: invoiceReference },
+        );
+        if (billit && billit.ok) {
+          billitOrderId = safeStr(billit.billit_order_id, 120) || null;
+          billitOrderReused = billit.already_created === true;
+          billitPaymentSyncStatus =
+            safeStr(billit.billit_export?.billit_payment_sync_status, 40) || null;
+          for (const w of billit.warnings || []) {
+            const t = safeStr(w, 80);
+            if (t) warnings.push(t);
+          }
+          console.log(
+            `[BUSINESS_INVOICE][BILLIT_ORDER] booking=${bookingMask} order=${billitOrderId ? "yes" : "no"} reused=${billitOrderReused}`,
+          );
+          if (paymentStatus === "paid") {
+            console.log(
+              `[BUSINESS_INVOICE][PAID_SYNC] booking=${bookingMask} status=${billitPaymentSyncStatus || "-"}`,
+            );
+          }
+        } else {
+          warnings.push(safeStr(billit?.error, 80) || "billit_order_unavailable");
+        }
+      }
+    }
+  } catch (_) {
+    warnings.push("billit_order_error");
+  }
+
+  return json(
+    buildBusinessInvoiceResponse({
+      bookingId: safeBookingId,
+      documentId,
+      invoiceReference,
+      reused,
+      paymentStatus,
+      billitEnvironment,
+      billitOrderId,
+      billitOrderReused,
+      billitPaymentSyncStatus,
+      paymentReconciliation:
+        paymentStatus === "paid" ? null : "pending_external_payment",
+      warnings: Array.from(new Set(warnings)).slice(0, 20),
+    }),
+  );
 }
 
 async function repairBookingCompletionFromStoppedPlannedTripsBestEffort(
