@@ -39402,6 +39402,81 @@ export default {
         );
       }
 
+      // STREET-RIDE-BOOKING-LIFECYCLE (staging-validate): create the lightweight
+      // street-ride booking at direct-trip START. Called backend-to-backend by
+      // the tracking worker's /trip/start-direct. Idempotent by direct_ride_key.
+      if (
+        url.pathname === "/track/booking/create-direct" &&
+        request.method === "POST"
+      ) {
+        _requireAdmin(request, url, env);
+        const body = await safeJson(request);
+        const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+        if (!scopedRoute.ok) return scopedRoute.response;
+        const tenantScope = scopedRoute.scope;
+        const out = await createDirectRideBookingBestEffort(env, tenantScope, {
+          directRideKey:
+            safeStr(body?.direct_ride_key ?? body?.directRideKey, 200) || "",
+          driverId: safeStr(body?.driver_id ?? body?.driverId, 96) || "",
+          vehicleId: safeStr(body?.vehicle_id ?? body?.vehicleId, 128) || "",
+          tripId: safeStr(body?.trip_id ?? body?.tripId, 160) || "",
+          origin: body?.origin ?? null,
+          destination: body?.destination ?? null,
+          startedAt:
+            safeStr(body?.started_at ?? body?.client_started_at, 80) || "",
+          currency: safeStr(body?.currency, 8) || "EUR",
+          pricingSnapshot: body?.pricing_snapshot ?? null,
+        });
+        return json(
+          out,
+          out?.error === "missing_tenant_scope"
+            ? 400
+            : out?.error === "forbidden"
+              ? 403
+              : out?.ok
+                ? 200
+                : 400,
+        );
+      }
+
+      // STREET-RIDE-BOOKING-LIFECYCLE (staging-validate): finalize the
+      // street-ride booking at direct-trip STOP (fare/payment + COMPLETED).
+      // Called backend-to-backend by the tracking worker's /trip/stop.
+      if (
+        url.pathname === "/track/booking/finalize-direct" &&
+        request.method === "POST"
+      ) {
+        _requireAdmin(request, url, env);
+        const body = await safeJson(request);
+        const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+        if (!scopedRoute.ok) return scopedRoute.response;
+        const tenantScope = scopedRoute.scope;
+        const out = await finalizeDirectRideBookingBestEffort(env, tenantScope, {
+          bookingId: safeStr(body?.booking_id ?? body?.bookingId, 160) || "",
+          tripId: safeStr(body?.trip_id ?? body?.tripId, 160) || null,
+          stoppedAt: safeStr(body?.stopped_at ?? body?.stoppedAt, 80) || null,
+          totalEur: body?.total_eur ?? body?.totalEur ?? null,
+          priceExVat: body?.price_ex_vat ?? body?.priceExVat ?? null,
+          priceVat: body?.price_vat ?? body?.priceVat ?? null,
+          vatRatePercent: body?.vat_rate_percent ?? body?.vatRatePercent ?? null,
+          currency: safeStr(body?.currency, 8) || null,
+          paymentStatus:
+            safeStr(body?.payment_status ?? body?.paymentStatus, 40) || null,
+        });
+        return json(
+          out,
+          out?.error === "missing_tenant_scope"
+            ? 400
+            : out?.error === "forbidden"
+              ? 403
+              : out?.error === "booking_not_found"
+                ? 404
+                : out?.ok
+                  ? 200
+                  : 400,
+        );
+      }
+
       if (url.pathname === "/track/booking/delete" && request.method === "POST") {
         _requireAdmin(request, url, env);
         const body = await safeJson(request);
@@ -60124,6 +60199,280 @@ async function applyBookingCompletionFromPlannedTripStopBestEffort(
     `[BOOKING][PLANNED_TRIP_COMPLETION] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeLegId)} trip=${_bookingIntentMask(safeTripId)} status=COMPLETED scope=parent source=${safeSourceLabel}`,
   );
   return { ok: true, booking_id: safeBookingId, status: "COMPLETED", scope: "parent" };
+}
+
+// ============================================================================
+// STREET-RIDE-BOOKING-LIFECYCLE (staging-validate)
+// ----------------------------------------------------------------------------
+// Lightweight booking creation + finalization for driver-started street /
+// direct rides. Additive: mirrors the persist(`booking:{id}`) + index
+// (`upsertCompanyBookingsListIndexBestEffort`) pattern used throughout this
+// worker, and reuses `updateBookingStatusAuthoritative` for completion. Does
+// NOT touch the Mollie / invoicing / dispatch pipeline (`handleBooking`).
+//
+// NOTE: this worker has no runnable in-repo test harness; validate on staging.
+// ============================================================================
+
+// Idempotency KV key: one street-ride booking per (tenant, company,
+// direct_ride_key). A retried POST /trip/start-direct with the same key never
+// creates a duplicate booking.
+function _directRideIdempotencyKey(scope, directRideKey) {
+  const tenant = _trackingMappingSafePart(scope?.tenant_id ?? scope?.tenantId, 80);
+  const company = _trackingMappingSafePart(scope?.company_id ?? scope?.companyId, 80);
+  const key = _trackingMappingSafePart(directRideKey, 200);
+  if (!tenant || !company || !key) return "";
+  return `tenant:${tenant}:company:${company}:direct_ride_key:${key}:booking:v1`;
+}
+
+// Non-UUID booking id so `_companyBookingsListShouldEmitRow` never classifies
+// the record as a payment shadow (UUID-shaped id + missing route). The
+// `street_` prefix is intentionally not UUID-like.
+function _makeStreetRideBookingId(nowMs) {
+  const ms = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const rand = Math.random().toString(36).slice(2, 10);
+  return `street_${ms}_${rand}`;
+}
+
+async function createDirectRideBookingBestEffort(
+  env,
+  tenantScope,
+  {
+    directRideKey = "",
+    driverId = "",
+    vehicleId = "",
+    tripId = "",
+    origin = null,
+    destination = null,
+    startedAt = "",
+    currency = "EUR",
+    pricingSnapshot = null,
+  } = {},
+) {
+  if (!tenantScope?.hasScope) return missingTenantScopeError();
+  if (!env?.BOOKING_KV) return { ok: false, error: "booking_kv_unavailable" };
+  const safeDriverId = safeStr(driverId, 96) || "";
+  if (!safeDriverId) return { ok: false, error: "driver_id is required" };
+  const tenant_id = safeStr(tenantScope.tenant_id, 80) || "";
+  const company_id = safeStr(tenantScope.company_id, 80) || "";
+  const safeVehicleId = safeStr(vehicleId, 128) || null;
+  const safeTripId = safeStr(tripId, 160) || null;
+  const safeKey = safeStr(directRideKey, 200) || "";
+  const nowIsoStr = new Date().toISOString();
+  const startedIso = safeStr(startedAt, 80) || nowIsoStr;
+  const cur = (safeStr(currency, 8) || "EUR").toUpperCase();
+
+  // Idempotency: reuse an existing booking for the same direct_ride_key.
+  const idemKey = _directRideIdempotencyKey(tenantScope, safeKey);
+  if (idemKey) {
+    try {
+      const existing = await env.BOOKING_KV.get(idemKey, { type: "json" });
+      const existingId = safeStr(existing?.booking_id ?? existing?.bookingId, 160);
+      if (existingId) {
+        if (safeTripId) {
+          await _upsertTrackingBookingMappingBestEffort(env, tenantScope, {
+            bookingId: existingId,
+            tripId: safeTripId,
+            reason: "street_ride_create_retry",
+          });
+        }
+        console.log(
+          `[BOOKING][STREET_RIDE_CREATE] booking=${_bookingIntentMask(existingId)} reused=true reason=idempotent_direct_ride_key`,
+        );
+        return { ok: true, booking_id: existingId, reused: true };
+      }
+    } catch (_) {
+      // fall through to fresh create
+    }
+  }
+
+  const originLabel =
+    safeStr(origin?.label ?? origin?.address ?? origin?.name, 320) || "";
+  const destLabel =
+    safeStr(destination?.label ?? destination?.address ?? destination?.name, 320) || "";
+  // Always emit a non-empty route so the row is never dropped by the
+  // payment-shadow guard, even if the id were ever classified UUID-like.
+  const fromText = originLabel || "Straatrit";
+  const toText = destLabel || "Straatrit";
+  const bookingId = _makeStreetRideBookingId(Date.now());
+
+  const rec = {
+    booking_id: bookingId,
+    bookingId,
+    tenant_id,
+    company_id,
+    tenantId: tenant_id,
+    companyId: company_id,
+    source: "street_ride",
+    booking_source: "street_ride",
+    ride_type: "direct",
+    status: "IN_PROGRESS",
+    stage: "IN_PROGRESS",
+    assigned_driver_id: safeDriverId,
+    assignedDriverId: safeDriverId,
+    ...(safeVehicleId
+      ? { assigned_vehicle_id: safeVehicleId, assignedVehicleId: safeVehicleId }
+      : {}),
+    tracking_trip_id: safeTripId,
+    trackingTripId: safeTripId,
+    direct_ride_key: safeKey || null,
+    currency: cur,
+    created_at: nowIsoStr,
+    createdAt: nowIsoStr,
+    updated_at: nowIsoStr,
+    updatedAt: nowIsoStr,
+    booking: {
+      tenant_id,
+      company_id,
+      source: "street_ride",
+      ride_type: "direct",
+      status: "IN_PROGRESS",
+      from: fromText,
+      to: toText,
+      pickup_iso: startedIso,
+      pickupStartIso: startedIso,
+      createdAt: startedIso,
+      currency: cur,
+      assigned_driver_id: safeDriverId,
+      ...(safeVehicleId ? { assigned_vehicle_id: safeVehicleId } : {}),
+      customer_name: "Straatrit",
+    },
+    quote: {
+      from: fromText,
+      to: toText,
+      pickup_iso: startedIso,
+      pricing: {},
+      ...(pricingSnapshot && typeof pricingSnapshot === "object"
+        ? { pricing_snapshot: pricingSnapshot }
+        : {}),
+    },
+  };
+
+  try {
+    await env.BOOKING_KV.put(`booking:${bookingId}`, JSON.stringify(rec));
+    if (idemKey) {
+      await env.BOOKING_KV.put(
+        idemKey,
+        JSON.stringify({ booking_id: bookingId, updated_at: nowIsoStr }),
+      );
+    }
+    await upsertCompanyBookingsListIndexBestEffort(env, bookingId, rec, tenantScope);
+    if (safeTripId) {
+      await _upsertTrackingBookingMappingBestEffort(env, tenantScope, {
+        bookingId,
+        tripId: safeTripId,
+        reason: "street_ride_create",
+      });
+    }
+    console.log(
+      `[BOOKING][STREET_RIDE_CREATE] booking=${_bookingIntentMask(bookingId)} trip=${_bookingIntentMask(safeTripId)} driver=${_maskPublicDriverLoginValue(safeDriverId)} status=IN_PROGRESS reused=false`,
+    );
+    return { ok: true, booking_id: bookingId, reused: false };
+  } catch (err) {
+    return {
+      ok: false,
+      error: safeStr(err?.message || err, 160) || "street_ride_create_failed",
+    };
+  }
+}
+
+async function finalizeDirectRideBookingBestEffort(
+  env,
+  tenantScope,
+  {
+    bookingId = "",
+    tripId = null,
+    stoppedAt = null,
+    totalEur = null,
+    priceExVat = null,
+    priceVat = null,
+    vatRatePercent = null,
+    currency = null,
+    paymentStatus = null,
+  } = {},
+) {
+  const safeBookingId = safeStr(bookingId, 160);
+  if (!safeBookingId) return { ok: false, error: "booking_id is required" };
+  if (!tenantScope?.hasScope) return missingTenantScopeError();
+  let loaded;
+  try {
+    loaded = await loadBookingRecord(env, safeBookingId);
+  } catch (_) {
+    return { ok: false, error: "booking_not_found" };
+  }
+  const rec = loaded.rec;
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
+
+  // Stamp fare / payment fields BEFORE flipping to COMPLETED so the
+  // subsequent updateBookingStatusAuthoritative re-index carries them.
+  const nowIsoStr = new Date().toISOString();
+  const cur = (safeStr(currency, 8) || safeStr(rec?.currency, 8) || "EUR").toUpperCase();
+  const total = Number(totalEur);
+  const exVat = Number(priceExVat);
+  const vat = Number(priceVat);
+  const vatRate = Number(vatRatePercent);
+  const b =
+    rec.booking && typeof rec.booking === "object" ? rec.booking : (rec.booking = {});
+  if (Number.isFinite(total)) {
+    rec.price_incl_vat = total;
+    b.price_incl_vat = total;
+    b.price = total;
+  }
+  if (Number.isFinite(exVat)) {
+    rec.price_ex_vat = exVat;
+    b.price_ex_vat = exVat;
+  }
+  if (Number.isFinite(vat)) {
+    rec.price_vat = vat;
+    b.price_vat = vat;
+  }
+  if (Number.isFinite(vatRate)) {
+    rec.vat_rate_percent = vatRate;
+    b.vat_rate_percent = vatRate;
+  }
+  rec.currency = cur;
+  b.currency = cur;
+  const payStatus = safeStr(paymentStatus, 40);
+  if (payStatus) {
+    rec.payment_status = payStatus;
+    rec.paymentStatus = payStatus;
+    b.payment_status = payStatus;
+  }
+  const safeTripId = safeStr(tripId, 160);
+  if (safeTripId) {
+    rec.tracking_trip_id = safeTripId;
+    rec.trackingTripId = safeTripId;
+  }
+  const safeStoppedAt = safeStr(stoppedAt, 80) || nowIsoStr;
+  rec.completed_at = safeStr(rec?.completed_at, 80) || safeStoppedAt;
+  rec.completedAt = rec.completed_at;
+  rec.updated_at = nowIsoStr;
+  rec.updatedAt = nowIsoStr;
+  try {
+    await env.BOOKING_KV.put(loaded.key, JSON.stringify(rec));
+  } catch (_) {
+    // best-effort fare stamp; status update below is authoritative
+  }
+
+  const result = await updateBookingStatusAuthoritative(
+    safeBookingId,
+    "COMPLETED",
+    env,
+    tenantScope,
+    {
+      actor_role: "system",
+      source_endpoint: "/track/booking/finalize-direct",
+      bypass_future_pickup_guard: true,
+      bypass_operational_leg_completion_guard: true,
+    },
+  );
+  if (result?.ok === true) {
+    console.log(
+      `[BOOKING][STREET_RIDE_FINALIZE] booking=${_bookingIntentMask(safeBookingId)} trip=${_bookingIntentMask(safeTripId)} status=COMPLETED`,
+    );
+  }
+  return result;
 }
 
 async function repairBookingCompletionFromStoppedPlannedTripsBestEffort(

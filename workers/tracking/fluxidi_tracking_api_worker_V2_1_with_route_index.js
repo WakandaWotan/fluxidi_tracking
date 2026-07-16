@@ -4234,6 +4234,46 @@ async function handleStartDirectTrip(req, url, env, origin) {
   const startedAt = safeStr(body["client_started_at"], 64) ?? createdAt;
   const trip_id = makeTripId();
 
+  // STREET-RIDE-BOOKING-LIFECYCLE (staging-validate): backend-owned booking
+  // creation. Booking-first: the booking is the durable, company-visible
+  // record (goal = appear under Open/gepland), so we create it before
+  // persisting the trip and embed the returned booking_id on the trip. The
+  // direct_ride_key makes the create idempotent so a retried /trip/start-direct
+  // never duplicates the booking. If booking creation fails, the ride still
+  // proceeds trip-only with booking_link_state=pending (no orphan booking is
+  // created; the trip carries direct_ride_key for later reconciliation).
+  const directRideKey =
+    safeStr(body["direct_ride_key"] ?? body["directRideKey"], 200) ||
+    `direct_${trip_id}`;
+  let booking_id = null;
+  let booking_link_state = "pending";
+  const bookingCreateRes = await _callBookingWorkerJson(
+    env,
+    "/track/booking/create-direct",
+    {
+      tenant_id,
+      company_id,
+      direct_ride_key: directRideKey,
+      driver_id,
+      vehicle_id,
+      trip_id,
+      origin: originData,
+      destination,
+      started_at: startedAt,
+      currency: safeStr(pricing_snapshot?.currency, 8) || "EUR",
+      pricing_snapshot,
+    },
+    { timeoutMs: 4000 },
+  );
+  if (bookingCreateRes?.ok === true && safeStr(bookingCreateRes?.booking_id, 160)) {
+    booking_id = safeStr(bookingCreateRes.booking_id, 160);
+    booking_link_state = "linked";
+  } else {
+    console.log(
+      `[DIRECT_TRIP][BOOKING_CREATE][WARN] trip=${trip_id} link_state=pending reason=${safeStr(bookingCreateRes?.error, 120) || "unknown"}`,
+    );
+  }
+
   const startEvent = {
     type: "start",
     ts: startedAt,
@@ -4246,6 +4286,11 @@ async function handleStartDirectTrip(req, url, env, origin) {
     tenant_id,
     driver_id,
     vehicle_id,
+    booking_id,
+    bookingId: booking_id,
+    direct_ride_key: directRideKey,
+    booking_link_state,
+    source: "street_ride",
     origin: originData,
     destination,
     pricing_snapshot,
@@ -4290,6 +4335,8 @@ async function handleStartDirectTrip(req, url, env, origin) {
       {
         ok: true,
         trip_id,
+        booking_id,
+        booking_link_state,
         kind: "direct",
         tenant_id,
         company_id,
@@ -4303,6 +4350,67 @@ async function handleStartDirectTrip(req, url, env, origin) {
     ),
     origin
   );
+}
+
+// STREET-RIDE-BOOKING-LIFECYCLE (staging-validate): generic backend-to-backend
+// call into the Booking Worker. Prefers the service binding (env.BOOKING_API),
+// falls back to HTTP (env.BOOKING_API_URL). Returns the decoded JSON body or a
+// { ok:false, error } shape; never throws. Mirrors the auth + target
+// resolution used by _notifyBookingWorkerPlannedTripCompletionBestEffort.
+async function _callBookingWorkerJson(env, path, payload, { timeoutMs = 4000 } = {}) {
+  const adminToken = safeStr(env?.ADMIN_TOKEN, 512);
+  if (!adminToken) return { ok: false, error: "missing_admin_token" };
+  const requestInit = {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${adminToken}`,
+    },
+    body: JSON.stringify(payload || {}),
+  };
+  const serviceBinding = env?.BOOKING_API;
+  const baseUrl = safeStr(env?.BOOKING_API_URL, 200)?.replace(/\/+$/, "");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    let res;
+    if (serviceBinding && typeof serviceBinding.fetch === "function") {
+      res = await serviceBinding.fetch(
+        new Request(`https://booking.internal${path}`, {
+          ...requestInit,
+          signal: controller.signal,
+        }),
+      );
+    } else if (baseUrl) {
+      res = await fetch(`${baseUrl}${path}`, {
+        ...requestInit,
+        signal: controller.signal,
+      });
+    } else {
+      return { ok: false, error: "missing_booking_api_target" };
+    }
+    const text = await res.text().catch(() => "");
+    let decoded = null;
+    try {
+      decoded = text ? JSON.parse(text) : null;
+    } catch (_) {
+      decoded = null;
+    }
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: safeStr(decoded?.error, 120) || `http_${res.status}`,
+      };
+    }
+    return decoded && typeof decoded === "object" ? decoded : { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: safeStr(err?.message || err, 120) || "booking_worker_call_failed",
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function _notifyBookingWorkerPlannedTripCompletionBestEffort(env, scope, trip, ctx) {
@@ -4805,11 +4913,57 @@ async function handleStopTrip(req, url, env, origin, ctx) {
     }
   }
 
+  // STREET-RIDE-BOOKING-LIFECYCLE (staging-validate): finalize the linked
+  // street-ride booking (fare/payment + COMPLETED) so it moves from
+  // Open/gepland to Afgerond/voltooid in the company Bookings screen. The
+  // finalize endpoint is idempotent (COMPLETED is terminal); a transient
+  // failure here leaves the booking IN_PROGRESS and reconcilable — no data
+  // loss (the trip is stopped and the compliance ledger carries booking_id).
+  const directBookingId = safeStr(
+    trip?.booking_id ?? trip?.bookingId ?? body["booking_id"] ?? body["bookingId"],
+    160,
+  );
+  if (directBookingId) {
+    const finalizePayload = {
+      tenant_id: scope.tenant_id,
+      company_id: scope.company_id,
+      booking_id: directBookingId,
+      trip_id,
+      stopped_at: stoppedAt,
+      total_eur: totals.total_eur ?? totals.price_incl_vat ?? null,
+      price_ex_vat: totals.price_ex_vat ?? null,
+      price_vat: totals.price_vat ?? null,
+      vat_rate_percent: totals.vat_rate ?? null,
+      currency:
+        safeStr(trip?.currency ?? trip?.pricing_snapshot?.currency, 8) || "EUR",
+      source: "street_ride_stop",
+    };
+    const finalizeTask = (async () => {
+      const res = await _callBookingWorkerJson(
+        env,
+        "/track/booking/finalize-direct",
+        finalizePayload,
+        { timeoutMs: 4000 },
+      );
+      if (res?.ok !== true) {
+        console.log(
+          `[DIRECT_TRIP][BOOKING_FINALIZE][WARN] booking=${directBookingId} trip=${trip_id} reason=${safeStr(res?.error, 120) || "unknown"}`,
+        );
+      }
+    })();
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(finalizeTask);
+    } else {
+      await finalizeTask;
+    }
+  }
+
   return withCors(
     json(
       {
         ok: true,
         trip_id,
+        booking_id: directBookingId || null,
         status: "stopped",
         stopped_at: stoppedAt,
         totals,
