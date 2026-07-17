@@ -13167,6 +13167,8 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     final client = DriverNavigationWorkerClient(baseUrl: baseUrl);
     final country = _navigationWorkerCountryCode();
+    // NAV-SIGNAL-P0A1: same UI language as direct Mapbox Directions path.
+    final language = _mapboxDirectionsLanguageCode();
     final tripId = _activeTripId?.trim();
 
     NavigationWorkerRouteResult? workerResult;
@@ -13178,6 +13180,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           country: country,
           tripId: tripId,
           reason: _rerouteReason ?? 'unknown',
+          language: language,
         );
       } else {
         workerResult = await client.route(
@@ -13185,6 +13188,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           destination: to,
           country: country,
           tripId: tripId,
+          language: language,
         );
       }
     } catch (_) {
@@ -13203,8 +13207,16 @@ class _DriverHomePageState extends State<DriverHomePage>
       return null;
     }
 
+    final mapboxShape = workerResult.toMapboxDirectionsShape();
+    // NAV-SIGNAL-P0A: bounded non-PII signaling counts (no coords/text).
+    logNavSignalResponseSummary(
+      summarizeNavSignalResponse(
+        source: _isRerouting ? 'worker_reroute' : 'worker',
+        mapboxShape: mapboxShape,
+      ),
+    );
     final parsed = parseDriverDirectionsResponse(
-      response: workerResult.toMapboxDirectionsShape(),
+      response: mapboxShape,
       localizeInstruction: _localizeNavInstructionMvp,
       distanceAlongRouteForCoords: _distanceAlongRouteForCoords,
     );

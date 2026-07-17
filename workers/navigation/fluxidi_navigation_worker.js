@@ -11,9 +11,21 @@
 //   POST /reroute
 //   POST /offline-corridor/metadata
 
+import {
+  buildMapboxDirectionsSearchParams,
+  buildRouteCacheKeyMaterial,
+  extractManeuvers,
+  preserveRouteLegs,
+  resolveMapboxDirectionsLanguage,
+  summarizeSignalCounts,
+  formatNavSignalResponseLog,
+} from "./nav_signal_parity.js";
+
 const SERVICE_NAME = "fluxidi-navigation-core";
-const SERVICE_VERSION = "cloud-nav-1";
+const SERVICE_VERSION = "cloud-nav-1-signal-p0a";
 const DIAG_TAG = "CLOUD_NAV_1";
+/** Cache namespace bump so thin pre-parity payloads are not reused. */
+const ROUTE_CACHE_PATH_PREFIX = "/route/v2/";
 
 const MAX_BODY_BYTES = 24 * 1024;
 const COORD_DECIMALS = 4;
@@ -263,21 +275,28 @@ async function buildRouteCacheKey({
   destLat,
   destLng,
   avoid,
+  language,
 }) {
-  const payload = [
+  // NAV-SIGNAL-P0A1: language is part of the key so NL/EN localized banners
+  // cannot share a cache entry for the same geometry/country.
+  const payload = buildRouteCacheKeyMaterial({
     kind,
     country,
     profile,
-    roundCoord(originLat),
-    roundCoord(originLng),
-    roundCoord(destLat),
-    roundCoord(destLng),
-    stableAvoidKey(avoid),
-  ].join("|");
-  const hash = await sha256Hex(payload);
+    originLat: roundCoord(originLat),
+    originLng: roundCoord(originLng),
+    destLat: roundCoord(destLat),
+    destLng: roundCoord(destLng),
+    avoidKey: stableAvoidKey(avoid),
+    language,
+  });
+  const hash = await sha256Hex(`signal-p0a|${payload}`);
   return {
     hash: hash.slice(0, 32),
-    request: new Request(`${CACHE_HOST}/route/v1/${hash.slice(0, 32)}`, { method: "GET" }),
+    request: new Request(
+      `${CACHE_HOST}${ROUTE_CACHE_PATH_PREFIX}${hash.slice(0, 32)}`,
+      { method: "GET" },
+    ),
   };
 }
 
@@ -322,17 +341,14 @@ async function fetchMapboxDirections({
   avoid,
 }) {
   const coords = `${origin.lng},${origin.lat};${destination.lng},${destination.lat}`;
-  const params = new URLSearchParams({
-    geometries: "geojson",
-    overview: "full",
-    steps: "true",
-    language: language || "en",
-    access_token: token,
-  });
   const avoidKey = stableAvoidKey(avoid);
-  if (avoidKey) {
-    params.set("exclude", avoidKey);
-  }
+  // NAV-SIGNAL-P0A-WORKER-PARITY-1: match Flutter direct live Directions params
+  // (banner_instructions + roundabout_exits). Voice intentionally omitted.
+  const params = buildMapboxDirectionsSearchParams({
+    language,
+    accessToken: token,
+    avoidKey,
+  });
 
   const url =
     `https://api.mapbox.com/directions/v5/mapbox/${profile}/${coords}` +
@@ -359,41 +375,18 @@ async function fetchMapboxDirections({
     return { ok: false, error: "Mapbox directions returned no route", status: 404 };
   }
 
+  const legs = preserveRouteLegs(route);
   return {
     ok: true,
     route,
     distance_m: Number(route.distance) || 0,
     duration_s: Number(route.duration) || 0,
     geometry: route.geometry,
+    // Full Mapbox legs (banners, lanes, exit, ref, destinations, …).
+    legs,
+    // Compact list kept for older Flutter clients.
     maneuvers: extractManeuvers(route),
   };
-}
-
-function extractManeuvers(route) {
-  const out = [];
-  const legs = Array.isArray(route?.legs) ? route.legs : [];
-  for (const leg of legs) {
-    const steps = Array.isArray(leg?.steps) ? leg.steps : [];
-    for (const step of steps) {
-      const maneuver = step?.maneuver;
-      if (!maneuver || typeof maneuver !== "object") continue;
-      const location = Array.isArray(maneuver.location)
-        ? { lng: Number(maneuver.location[0]), lat: Number(maneuver.location[1]) }
-        : null;
-      out.push({
-        type: safeToken(maneuver.type, 32) || "unknown",
-        modifier: safeToken(maneuver.modifier, 32) || null,
-        instruction:
-          safeToken(maneuver.instruction, 256) ||
-          safeToken(step.name, 256) ||
-          null,
-        location,
-        distance_m: Number(step.distance) || 0,
-        duration_s: Number(step.duration) || 0,
-      });
-    }
-  }
-  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -523,6 +516,12 @@ async function handleRoute(request, env, { kind = "route" } = {}) {
   const tripId = safeToken(body.trip_id, 64) || null;
   const avoid = Array.isArray(body.avoid) ? body.avoid : [];
   const countryProfile = COUNTRY_PROFILES[country];
+  // NAV-SIGNAL-P0A1: UI/navigation language (body.language) beats country hint.
+  // Country profile is unchanged — language and country remain separate inputs.
+  const navigationLanguage = resolveMapboxDirectionsLanguage({
+    bodyLanguage: body.language,
+    countryLanguageHint: countryProfile.maneuverLanguageHint,
+  });
 
   let rerouteReason = null;
   if (kind === "reroute") {
@@ -554,6 +553,7 @@ async function handleRoute(request, env, { kind = "route" } = {}) {
     destLat: destParsed.lat,
     destLng: destParsed.lng,
     avoid,
+    language: navigationLanguage,
   });
 
   const bypassCache = kind === "reroute" && (rerouteReason === "off_route" || rerouteReason === "traffic");
@@ -574,7 +574,7 @@ async function handleRoute(request, env, { kind = "route" } = {}) {
       origin: { lat: originParsed.lat, lng: originParsed.lng },
       destination: { lat: destParsed.lat, lng: destParsed.lng },
       profile,
-      language: countryProfile.maneuverLanguageHint,
+      language: navigationLanguage,
       avoid,
     });
 
@@ -587,6 +587,7 @@ async function handleRoute(request, env, { kind = "route" } = {}) {
       distance_m: mapbox.distance_m,
       duration_s: mapbox.duration_s,
       geometry: mapbox.geometry,
+      legs: mapbox.legs || [],
       maneuvers: mapbox.maneuvers,
     };
 
@@ -600,6 +601,10 @@ async function handleRoute(request, env, { kind = "route" } = {}) {
   }
 
   logCloudNav(kind, { country, cache: cacheStatus, reason: kind === "reroute" ? rerouteReason : "ok" });
+
+  const legsForClient = Array.isArray(routePayload.legs) ? routePayload.legs : [];
+  const signalSummary = summarizeSignalCounts(legsForClient);
+  console.log(formatNavSignalResponseLog(signalSummary, "worker"));
 
   if (tripId) {
     await persistRouteSessionSummary(env, {
@@ -623,6 +628,9 @@ async function handleRoute(request, env, { kind = "route" } = {}) {
     distance_m: routePayload.distance_m,
     duration_s: routePayload.duration_s,
     geometry: routePayload.geometry,
+    // NAV-SIGNAL-P0A: lossless Mapbox legs for Flutter parser parity.
+    legs: legsForClient,
+    // Backward-compatible compact maneuvers for older clients.
     maneuvers: routePayload.maneuvers || [],
     country_profile: publicCountryProfile(country),
   };

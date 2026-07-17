@@ -14,6 +14,28 @@ const Set<String> _allowedRerouteReasons = {
   'unknown',
 };
 
+/// Fluxidi UI / Mapbox navigation languages (never country codes).
+const Set<String> kNavigationWorkerLanguageAllowlist = {
+  'nl',
+  'fr',
+  'en',
+  'es',
+  'pt',
+};
+
+/// Normalize a navigation language for the worker body / Mapbox query.
+///
+/// Accepts plain codes and locale forms like `en-BE` / `fr_FR`. Returns null
+/// when unsupported so older callers can omit `language` entirely.
+String? normalizeNavigationWorkerLanguage(String? raw) {
+  if (raw == null) return null;
+  final text = raw.trim().toLowerCase();
+  if (text.isEmpty) return null;
+  final base = text.split(RegExp(r'[-_]')).first;
+  if (!kNavigationWorkerLanguageAllowlist.contains(base)) return null;
+  return base;
+}
+
 String _safeToken(dynamic value, int maxLen) {
   if (value == null) return '';
   final text = value.toString().trim();
@@ -72,6 +94,11 @@ class NavigationWorkerRouteResult {
   final int durationSeconds;
   final List<DriverLonLat> coords;
   final List<Map<String, dynamic>> maneuvers;
+
+  /// NAV-SIGNAL-P0A: Mapbox-shaped legs when the worker preserves signaling.
+  /// Absent on older worker payloads — [toMapboxDirectionsShape] then falls
+  /// back to compact [maneuvers].
+  final List<Map<String, dynamic>> legs;
   final String cache;
   final String? routeHash;
   final NavigationWorkerCountryProfile? countryProfile;
@@ -82,6 +109,7 @@ class NavigationWorkerRouteResult {
     required this.durationSeconds,
     required this.coords,
     required this.maneuvers,
+    this.legs = const <Map<String, dynamic>>[],
     required this.cache,
     this.routeHash,
     this.countryProfile,
@@ -90,7 +118,29 @@ class NavigationWorkerRouteResult {
 
   bool get isValid => coords.length >= 2;
 
+  bool get hasPreservedLegs => legs.isNotEmpty;
+
   Map<String, dynamic> toMapboxDirectionsShape() {
+    final geometry = <String, dynamic>{
+      'type': 'LineString',
+      'coordinates': coords.map((c) => [c.lon, c.lat]).toList(growable: false),
+    };
+
+    // Prefer lossless Mapbox legs (banners, lanes, exit, ref, destinations).
+    if (hasPreservedLegs) {
+      return {
+        'routes': [
+          {
+            'distance': distanceMeters,
+            'duration': durationSeconds,
+            'geometry': geometry,
+            'legs': legs,
+          },
+        ],
+      };
+    }
+
+    // Backward-compatible reshape from compact maneuvers.
     final steps = <Map<String, dynamic>>[];
     for (final maneuver in maneuvers) {
       final location = maneuver['location'];
@@ -118,11 +168,6 @@ class NavigationWorkerRouteResult {
       });
     }
 
-    final geometry = <String, dynamic>{
-      'type': 'LineString',
-      'coordinates': coords.map((c) => [c.lon, c.lat]).toList(growable: false),
-    };
-
     return {
       'routes': [
         {
@@ -136,6 +181,145 @@ class NavigationWorkerRouteResult {
       ],
     };
   }
+}
+
+/// Bounded non-PII signaling counts for [NAV_SIGNAL_RESPONSE].
+class NavSignalResponseSummary {
+  final String source;
+  final int steps;
+  final int banners;
+  final int laneGroups;
+  final int refs;
+  final int destinations;
+  final int roundaboutExits;
+
+  const NavSignalResponseSummary({
+    required this.source,
+    required this.steps,
+    required this.banners,
+    required this.laneGroups,
+    required this.refs,
+    required this.destinations,
+    required this.roundaboutExits,
+  });
+
+  String get logLine =>
+      '[NAV_SIGNAL_RESPONSE] source=$source '
+      'steps=$steps '
+      'banners=$banners '
+      'laneGroups=$laneGroups '
+      'refs=$refs '
+      'destinations=$destinations '
+      'roundaboutExits=$roundaboutExits';
+}
+
+/// Counts signaling fields from a Mapbox-shaped Directions body (no PII).
+NavSignalResponseSummary summarizeNavSignalResponse({
+  required String source,
+  required Map<String, dynamic> mapboxShape,
+}) {
+  var steps = 0;
+  var banners = 0;
+  var laneGroups = 0;
+  var refs = 0;
+  var destinations = 0;
+  var roundaboutExits = 0;
+
+  final routes = mapboxShape['routes'];
+  if (routes is! List || routes.isEmpty) {
+    return NavSignalResponseSummary(
+      source: source,
+      steps: 0,
+      banners: 0,
+      laneGroups: 0,
+      refs: 0,
+      destinations: 0,
+      roundaboutExits: 0,
+    );
+  }
+  final route0 = routes.first;
+  if (route0 is! Map) {
+    return NavSignalResponseSummary(
+      source: source,
+      steps: 0,
+      banners: 0,
+      laneGroups: 0,
+      refs: 0,
+      destinations: 0,
+      roundaboutExits: 0,
+    );
+  }
+  final legs = route0['legs'];
+  if (legs is! List) {
+    return NavSignalResponseSummary(
+      source: source,
+      steps: 0,
+      banners: 0,
+      laneGroups: 0,
+      refs: 0,
+      destinations: 0,
+      roundaboutExits: 0,
+    );
+  }
+
+  for (final legAny in legs) {
+    if (legAny is! Map) continue;
+    final stepList = legAny['steps'];
+    if (stepList is! List) continue;
+    for (final stepAny in stepList) {
+      if (stepAny is! Map) continue;
+      steps += 1;
+      final bannersAny =
+          stepAny['bannerInstructions'] ?? stepAny['banner_instructions'];
+      if (bannersAny is List && bannersAny.isNotEmpty) {
+        banners += bannersAny.length;
+      }
+      final intersections = stepAny['intersections'];
+      var stepHasLanes = false;
+      if (intersections is List) {
+        for (final intersectionAny in intersections) {
+          if (intersectionAny is! Map) continue;
+          final lanes = intersectionAny['lanes'];
+          if (lanes is List && lanes.isNotEmpty) {
+            stepHasLanes = true;
+            break;
+          }
+        }
+      }
+      if (stepHasLanes) laneGroups += 1;
+      final ref = stepAny['ref']?.toString().trim() ?? '';
+      if (ref.isNotEmpty) refs += 1;
+      final dest = stepAny['destinations'];
+      if (dest is List && dest.isNotEmpty) destinations += 1;
+      final maneuver = stepAny['maneuver'];
+      if (maneuver is Map) {
+        final type = (maneuver['type']?.toString() ?? '').toLowerCase();
+        final exit = maneuver['exit']?.toString().trim() ?? '';
+        if (exit.isNotEmpty &&
+            (type.contains('roundabout') || type.contains('rotary'))) {
+          roundaboutExits += 1;
+        }
+      }
+    }
+  }
+
+  return NavSignalResponseSummary(
+    source: source,
+    steps: steps,
+    banners: banners,
+    laneGroups: laneGroups,
+    refs: refs,
+    destinations: destinations,
+    roundaboutExits: roundaboutExits,
+  );
+}
+
+String? _lastNavSignalResponseLogSignature;
+
+void logNavSignalResponseSummary(NavSignalResponseSummary summary) {
+  if (summary.logLine == _lastNavSignalResponseLogSignature) return;
+  _lastNavSignalResponseLogSignature = summary.logLine;
+  debugPrint(summary.logLine);
 }
 
 /// Offline corridor metadata response (estimates only).
@@ -366,13 +550,16 @@ class DriverNavigationWorkerClient {
     required String country,
     String profile = 'driving',
     String? tripId,
+    String? language,
   }) async {
     final countryCode = _normalizeCountry(country);
+    final navigationLanguage = normalizeNavigationWorkerLanguage(language);
     final body = <String, dynamic>{
       'origin': {'lat': origin.lat, 'lng': origin.lon},
       'destination': {'lat': destination.lat, 'lng': destination.lon},
       'country': countryCode,
       'profile': profile,
+      if (navigationLanguage != null) 'language': navigationLanguage,
       if (tripId != null && tripId.trim().isNotEmpty) 'trip_id': tripId.trim(),
     };
     final json = await _postJson(
@@ -411,8 +598,10 @@ class DriverNavigationWorkerClient {
     String profile = 'driving',
     String? tripId,
     String reason = 'unknown',
+    String? language,
   }) async {
     final countryCode = _normalizeCountry(country);
+    final navigationLanguage = normalizeNavigationWorkerLanguage(language);
     final rerouteReason = _allowedRerouteReasons.contains(reason)
         ? reason
         : 'unknown';
@@ -422,6 +611,7 @@ class DriverNavigationWorkerClient {
       'country': countryCode,
       'profile': profile,
       'reason': rerouteReason,
+      if (navigationLanguage != null) 'language': navigationLanguage,
       if (tripId != null && tripId.trim().isNotEmpty) 'trip_id': tripId.trim(),
     };
     final json = await _postJson(
@@ -464,9 +654,11 @@ class DriverNavigationWorkerClient {
     final countryCode = _normalizeCountry(country);
     final body = <String, dynamic>{
       'country': countryCode,
-      if (routeId != null && routeId.trim().isNotEmpty) 'route_id': routeId.trim(),
+      if (routeId != null && routeId.trim().isNotEmpty)
+        'route_id': routeId.trim(),
       if (geometry != null) 'geometry': geometry,
-      if (polyline != null && polyline.trim().isNotEmpty) 'polyline': polyline.trim(),
+      if (polyline != null && polyline.trim().isNotEmpty)
+        'polyline': polyline.trim(),
       if (zoomMin != null) 'zoom_min': zoomMin,
       if (zoomMax != null) 'zoom_max': zoomMax,
     };
@@ -532,11 +724,24 @@ class DriverNavigationWorkerClient {
       }
     }
 
+    final legsRaw = json['legs'];
+    final legs = <Map<String, dynamic>>[];
+    if (legsRaw is List) {
+      for (final item in legsRaw) {
+        if (item is Map<String, dynamic>) {
+          legs.add(item);
+        } else if (item is Map) {
+          legs.add(Map<String, dynamic>.from(item));
+        }
+      }
+    }
+
     return NavigationWorkerRouteResult(
       distanceMeters: _safeDouble(json['distance_m']) ?? 0,
       durationSeconds: _safeInt(json['duration_s']) ?? 0,
       coords: coords,
       maneuvers: maneuvers,
+      legs: legs,
       cache: _safeToken(json['cache'], 12),
       routeHash: _safeToken(json['route_hash'], 64).isEmpty
           ? null
