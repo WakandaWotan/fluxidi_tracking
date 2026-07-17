@@ -1,3 +1,4 @@
+import '../driver_navigation_map_config.dart';
 import '../driver_navigation_models.dart';
 import 'nav_banner_resolver.dart';
 
@@ -188,8 +189,9 @@ DriverLaneAvailability _intersectionAvailability({
   return DriverLaneAvailability.unknown;
 }
 
+/// Banner-component `active` proves usable-for-maneuver, not preference.
 DriverLaneAvailability _bannerAvailability({required bool? active}) {
-  if (active == true) return DriverLaneAvailability.preferred;
+  if (active == true) return DriverLaneAvailability.usable;
   if (active == false) return DriverLaneAvailability.unavailable;
   return DriverLaneAvailability.unknown;
 }
@@ -535,7 +537,12 @@ DriverResolvedLaneGuidance resolveDriverLaneGuidance(
   );
 }
 
-String formatNavLaneResolveDiag(DriverResolvedLaneGuidance guidance) {
+String formatNavLaneResolveDiag(
+  DriverResolvedLaneGuidance guidance, {
+  bool? featureEnabled,
+  bool? policyAllowed,
+  int? displayCount,
+}) {
   final bannerPart = guidance.bannerIndex == null
       ? 'bannerIndex=none'
       : 'bannerIndex=${guidance.bannerIndex}';
@@ -547,6 +554,13 @@ String formatNavLaneResolveDiag(DriverResolvedLaneGuidance guidance) {
   final intersectionPart = guidance.sourceIntersectionIndex == null
       ? 'intersectionIndex=none'
       : 'intersectionIndex=${guidance.sourceIntersectionIndex}';
+  final feature = featureEnabled ?? driverNavLaneGuidanceFeatureEnabled;
+  final policyPart = policyAllowed == null
+      ? 'policyAllowed=n/a'
+      : 'policyAllowed=$policyAllowed';
+  final displayPart = displayCount == null
+      ? 'displayCount=n/a'
+      : 'displayCount=$displayCount';
   return '[NAV_LANE_RESOLVE] '
       'routeVersion=${guidance.routeVersion} '
       'traversalStep=${guidance.traversalStepIndex} '
@@ -555,9 +569,13 @@ String formatNavLaneResolveDiag(DriverResolvedLaneGuidance guidance) {
       'source=$sourcePart '
       '$intersectionPart '
       'laneCount=${guidance.lanes.length} '
+      'resolvedCount=${guidance.lanes.length} '
       'usableCount=${guidance.usableCount} '
       'preferredCount=${guidance.preferredCount} '
       'visible=${guidance.visible} '
+      'featureEnabled=$feature '
+      '$policyPart '
+      '$displayPart '
       'reason=${_reasonToken(guidance.hiddenReason)}';
 }
 

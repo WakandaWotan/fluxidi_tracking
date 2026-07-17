@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mb;
 
 const bool kDriverMapTextureView = true;
@@ -103,8 +104,22 @@ const List<String> kDriverMapClutterLayerIds = <String>[
   'natural-point-label',
 ];
 
-/// NAV-R1: lane row hidden until NAV Engine v2 validates lane reliability.
-const bool kDriverNavLaneGuidanceEnabled = false;
+/// NAV-SIGNAL-P2C: compile-time opt-in for live lane guidance.
+///
+/// Default remains disabled. Field builds may enable with:
+/// `--dart-define=FLUXIDI_NAV_LANE_GUIDANCE=true`
+const bool kDriverNavLaneGuidanceEnabled = bool.fromEnvironment(
+  'FLUXIDI_NAV_LANE_GUIDANCE',
+  defaultValue: false,
+);
+
+/// Test-only override for [kDriverNavLaneGuidanceEnabled]. Production ignores.
+@visibleForTesting
+bool? debugDriverNavLaneGuidanceOverride;
+
+/// Effective master lane-guidance gate (compile-time flag + optional test override).
+bool get driverNavLaneGuidanceFeatureEnabled =>
+    debugDriverNavLaneGuidanceOverride ?? kDriverNavLaneGuidanceEnabled;
 
 /// NAV-R1: max distance (m) to show explicit U-turn / turn-around instructions.
 const double kDriverNavR1UturnMaxDisplayDistanceM = 300.0;

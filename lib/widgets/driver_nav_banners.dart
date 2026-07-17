@@ -501,6 +501,7 @@ class _LaneGuidanceRow extends StatelessWidget {
         separatorBuilder: (_, __) => SizedBox(width: compact ? 4 : 5),
         itemBuilder: (context, index) {
           return _LanePill(
+            key: ValueKey<String>('nav_lane_column_$index'),
             lane: lanes[index],
             palette: palette,
             isHighwayLike: isHighwayLike,
@@ -517,6 +518,7 @@ class _LaneGuidanceRow extends StatelessWidget {
 
 class _LanePill extends StatelessWidget {
   const _LanePill({
+    super.key,
     required this.lane,
     required this.palette,
     required this.isHighwayLike,
@@ -536,28 +538,56 @@ class _LanePill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final recommended = driverLaneIsRecommended(lane);
+    // NAV-SIGNAL-P2C: one visible column per resolved lane — never shrink.
+    final kind = driverLaneDisplayKind(lane);
     final indication = driverLaneIndicationForDisplay(
       lane,
       maneuverModifier: maneuverModifier,
     );
-    final hasArrow = (indication ?? '').trim().isNotEmpty;
-    if (!hasArrow && !recommended) {
-      return const SizedBox.shrink();
-    }
-    final arrow = hasArrow ? driverLaneIndicationArrow(indication!) : '—';
+    final indicationText = (indication ?? '').trim();
+    // Unsupported/empty → neutral glyph; never invent a directional arrow.
+    final arrow = indicationText.isEmpty
+        ? '·'
+        : driverLaneIndicationArrow(indicationText);
     final semanticLabel = driverLaneSemanticLabel(
       lane,
       maneuverModifier: maneuverModifier,
     );
     final accent = isHighwayLike ? const Color(0xFFFFD36A) : palette.accent;
-    final bgOpacity = recommended
-        ? (palette.isDark ? 0.34 : 0.28)
+    final isPreferred = kind == DriverLaneDisplayKind.preferred;
+    final isUsable = kind == DriverLaneDisplayKind.usable;
+    final isUnavailable = kind == DriverLaneDisplayKind.unavailable;
+    final bgOpacity = isPreferred
+        ? (palette.isDark ? 0.36 : 0.30)
+        : isUsable
+        ? (palette.isDark ? 0.20 : 0.16)
+        : isUnavailable
+        ? (palette.isDark ? 0.06 : 0.04)
         : (palette.isDark ? 0.10 : 0.08);
-    final borderOpacity = recommended
-        ? (isHighwayLike ? 0.92 : 0.78)
-        : (palette.isDark ? 0.22 : 0.18);
-    final textOpacity = recommended ? 0.98 : 0.42;
+    final borderOpacity = isPreferred
+        ? (isHighwayLike ? 0.95 : 0.84)
+        : isUsable
+        ? (palette.isDark ? 0.48 : 0.42)
+        : isUnavailable
+        ? (palette.isDark ? 0.16 : 0.14)
+        : (palette.isDark ? 0.28 : 0.22);
+    final textOpacity = isPreferred
+        ? 0.98
+        : isUsable
+        ? 0.78
+        : isUnavailable
+        ? 0.34
+        : 0.52;
+    final borderWidth = isPreferred
+        ? 1.6
+        : isUsable
+        ? 1.2
+        : 1.0;
+    final weight = isPreferred
+        ? FontWeight.w900
+        : isUsable
+        ? FontWeight.w700
+        : FontWeight.w500;
 
     return Semantics(
       label: semanticLabel,
@@ -572,7 +602,7 @@ class _LanePill extends StatelessWidget {
           borderRadius: BorderRadius.circular(compact ? 6 : 7),
           border: Border.all(
             color: accent.withOpacity(borderOpacity),
-            width: recommended ? 1.4 : 1.0,
+            width: borderWidth,
           ),
         ),
         alignment: Alignment.center,
@@ -580,7 +610,7 @@ class _LanePill extends StatelessWidget {
           arrow,
           style: TextStyle(
             fontSize: arrowFontSize,
-            fontWeight: recommended ? FontWeight.w900 : FontWeight.w600,
+            fontWeight: weight,
             color: palette.textPrimary.withOpacity(textOpacity),
             height: 1.0,
           ),

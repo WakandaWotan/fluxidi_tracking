@@ -272,11 +272,38 @@ String driverLaneIndicationLabel(String indication) {
   return lower;
 }
 
-bool driverLaneIsRecommended(DriverNavLaneGuidance lane) {
-  if (lane.valid == true) return true;
-  if (lane.active == true) return true;
-  return false;
+/// Display-kind decoded from resolver→snapshot mapping.
+///
+/// Mapping contract ([mapResolvedLanesForDisplay]):
+/// - preferred → valid=true, active=true
+/// - usable → valid=true, active=null
+/// - unavailable → valid=false
+/// - unknown → valid=null
+enum DriverLaneDisplayKind { unavailable, usable, preferred, unknown }
+
+DriverLaneDisplayKind driverLaneDisplayKind(DriverNavLaneGuidance lane) {
+  if (lane.valid == false) return DriverLaneDisplayKind.unavailable;
+  if (lane.valid == true && lane.active == true) {
+    return DriverLaneDisplayKind.preferred;
+  }
+  if (lane.valid == true) return DriverLaneDisplayKind.usable;
+  return DriverLaneDisplayKind.unknown;
 }
+
+/// True only for explicitly preferred lanes (not every usable lane).
+bool driverLaneIsPreferred(DriverNavLaneGuidance lane) =>
+    driverLaneDisplayKind(lane) == DriverLaneDisplayKind.preferred;
+
+/// True when the lane is usable or preferred for the current maneuver.
+bool driverLaneIsUsableForManeuver(DriverNavLaneGuidance lane) {
+  final kind = driverLaneDisplayKind(lane);
+  return kind == DriverLaneDisplayKind.usable ||
+      kind == DriverLaneDisplayKind.preferred;
+}
+
+/// Legacy name retained for call-site compatibility — means preferred only.
+bool driverLaneIsRecommended(DriverNavLaneGuidance lane) =>
+    driverLaneIsPreferred(lane);
 
 /// Picks the lane indication glyph to show, preferring maneuver alignment.
 String? driverLaneIndicationForDisplay(
@@ -325,31 +352,28 @@ String driverLaneSemanticLabel(
     maneuverModifier: maneuverModifier,
   );
   final label = driverLaneIndicationLabel(indication ?? '');
-  if (indication == null || indication.trim().isEmpty) {
-    return driverLaneIsRecommended(lane) ? 'Recommended lane' : 'Lane';
-  }
-  return driverLaneIsRecommended(lane)
-      ? 'Recommended lane: $label'
-      : 'Lane: $label';
+  final kind = driverLaneDisplayKind(lane);
+  final prefix = switch (kind) {
+    DriverLaneDisplayKind.preferred => 'Preferred lane',
+    DriverLaneDisplayKind.usable => 'Usable lane',
+    DriverLaneDisplayKind.unavailable => 'Unavailable lane',
+    DriverLaneDisplayKind.unknown => 'Lane',
+  };
+  if (indication == null || indication.trim().isEmpty) return prefix;
+  return '$prefix: $label';
 }
 
-/// Lanes worth rendering in the navigation banner.
+/// Lanes rendered in the navigation banner.
+///
+/// When the master feature gate is on, returns the snapshot list 1:1 so
+/// displayed column count equals resolver column count. Empty/unsupported
+/// indications remain as visible neutral columns (never dropped).
 List<DriverNavLaneGuidance> driverNavLanesForBannerDisplay(
-  List<DriverNavLaneGuidance> lanes,
-) {
-  // TODO(NAV Engine v2): Re-enable when [kDriverNavLaneGuidanceEnabled] is true
-  // and lane reliability is validated in live testing.
-  if (!kDriverNavLaneGuidanceEnabled) return const <DriverNavLaneGuidance>[];
+  List<DriverNavLaneGuidance> lanes, {
+  bool? featureEnabled,
+}) {
+  final enabled = featureEnabled ?? driverNavLaneGuidanceFeatureEnabled;
+  if (!enabled) return const <DriverNavLaneGuidance>[];
   if (lanes.isEmpty) return const <DriverNavLaneGuidance>[];
-  final out = <DriverNavLaneGuidance>[];
-  for (final lane in lanes) {
-    if (lane.indications.isNotEmpty) {
-      out.add(lane);
-      continue;
-    }
-    if (lane.valid == true || lane.active == true) {
-      out.add(lane);
-    }
-  }
-  return out;
+  return List<DriverNavLaneGuidance>.unmodifiable(lanes);
 }

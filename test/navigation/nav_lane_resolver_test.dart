@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fluxidi_tracking/navigation/driver_navigation_formatters.dart';
 import 'package:fluxidi_tracking/navigation/driver_navigation_instruction_state.dart';
+import 'package:fluxidi_tracking/navigation/driver_navigation_map_config.dart';
 import 'package:fluxidi_tracking/navigation/driver_navigation_models.dart';
 import 'package:fluxidi_tracking/navigation/driver_navigation_route_parser.dart';
 import 'package:fluxidi_tracking/navigation/nav_engine/nav_banner_resolver.dart';
@@ -616,6 +618,9 @@ void main() {
       expect(g.visible, isTrue);
       expect(g.source, DriverLaneGuidanceSource.bannerComponent);
       expect(g.lanes.length, 2);
+      expect(g.lanes[0].availability, DriverLaneAvailability.unavailable);
+      expect(g.lanes[1].availability, DriverLaneAvailability.usable);
+      expect(g.preferredCount, 0);
     });
 
     test('14: banner uses sub before primary before secondary', () {
@@ -1370,7 +1375,7 @@ void main() {
     });
   });
 
-  group('NAV-SIGNAL-P2B policy lane preserve', () {
+  group('NAV-SIGNAL-P2C semantics + policy gates', () {
     String trLocal({
       required String nl,
       required String en,
@@ -1393,7 +1398,191 @@ void main() {
       source: NavInstructionSource.banner,
     );
 
-    test('31: policy disabled → lanes cleared', () {
+    tearDown(() {
+      debugDriverNavLaneGuidanceOverride = null;
+    });
+
+    test('P2C-1: banner active=true maps to usable, never preferred', () {
+      final steps = <DriverNavStep>[
+        _step(
+          banners: <DriverNavBannerStage>[
+            _stage(
+              sourceIndex: 0,
+              distance: 200,
+              primary: _view(
+                components: <DriverNavBannerComponent>[
+                  _laneComponent(
+                    directions: <String>['straight'],
+                    active: false,
+                  ),
+                  _laneComponent(directions: <String>['right'], active: true),
+                ],
+              ),
+            ),
+          ],
+        ),
+        _step(type: 'turn', modifier: 'right'),
+      ];
+      final g = _resolve(
+        steps: steps,
+        banner: _activeBanner(
+          routeVersion: 1,
+          traversal: 0,
+          maneuver: 1,
+          bannerIndex: 0,
+        ),
+      );
+      expect(g.lanes[1].availability, DriverLaneAvailability.usable);
+      expect(g.preferredCount, 0);
+      final mapped = mapResolvedLanesForDisplay(g);
+      expect(driverLaneDisplayKind(mapped[1]), DriverLaneDisplayKind.usable);
+      expect(driverLaneIsPreferred(mapped[1]), isFalse);
+    });
+
+    test('P2C-2: banner active=false maps to unavailable', () {
+      final steps = <DriverNavStep>[
+        _step(
+          banners: <DriverNavBannerStage>[
+            _stage(
+              sourceIndex: 0,
+              distance: 200,
+              primary: _view(
+                components: <DriverNavBannerComponent>[
+                  _laneComponent(
+                    directions: <String>['straight'],
+                    active: false,
+                  ),
+                  _laneComponent(directions: <String>['right'], active: true),
+                ],
+              ),
+            ),
+          ],
+        ),
+        _step(type: 'turn', modifier: 'right'),
+      ];
+      final g = _resolve(
+        steps: steps,
+        banner: _activeBanner(
+          routeVersion: 1,
+          traversal: 0,
+          maneuver: 1,
+          bannerIndex: 0,
+        ),
+      );
+      expect(g.lanes[0].availability, DriverLaneAvailability.unavailable);
+    });
+
+    test('P2C-3: banner active missing maps to unknown', () {
+      final steps = <DriverNavStep>[
+        _step(
+          banners: <DriverNavBannerStage>[
+            _stage(
+              sourceIndex: 0,
+              distance: 200,
+              primary: _view(
+                components: <DriverNavBannerComponent>[
+                  _laneComponent(directions: <String>['straight']),
+                  _laneComponent(directions: <String>['right'], active: true),
+                ],
+              ),
+            ),
+          ],
+        ),
+        _step(type: 'turn', modifier: 'right'),
+      ];
+      final g = _resolve(
+        steps: steps,
+        banner: _activeBanner(
+          routeVersion: 1,
+          traversal: 0,
+          maneuver: 1,
+          bannerIndex: 0,
+        ),
+      );
+      expect(g.lanes[0].availability, DriverLaneAvailability.unknown);
+      expect(g.lanes[1].availability, DriverLaneAvailability.usable);
+    });
+
+    test('P2C-4/5: intersection valid→usable; valid+active→preferred', () {
+      final steps = <DriverNavStep>[
+        _step(
+          intersections: <DriverNavIntersection>[
+            _intersection(
+              sourceIndex: 0,
+              lanes: <DriverNavLaneGuidance>[
+                _lane(indications: <String>['straight'], valid: true),
+                _lane(
+                  indications: <String>['right'],
+                  valid: true,
+                  active: true,
+                ),
+              ],
+            ),
+          ],
+        ),
+        _step(type: 'turn', modifier: 'right'),
+      ];
+      final g = _resolve(
+        steps: steps,
+        banner: _activeBanner(
+          routeVersion: 1,
+          traversal: 0,
+          maneuver: 1,
+          source: NavBannerResolveSource.maneuverInstruction,
+        ),
+      );
+      expect(g.lanes[0].availability, DriverLaneAvailability.usable);
+      expect(g.lanes[1].availability, DriverLaneAvailability.preferred);
+      final mapped = mapResolvedLanesForDisplay(g);
+      expect(driverLaneDisplayKind(mapped[0]), DriverLaneDisplayKind.usable);
+      expect(driverLaneDisplayKind(mapped[1]), DriverLaneDisplayKind.preferred);
+      expect(driverLaneIsPreferred(mapped[0]), isFalse);
+      expect(driverLaneIsPreferred(mapped[1]), isTrue);
+    });
+
+    test('P2C-8: unknown is never preferred', () {
+      final unknown = const DriverNavLaneGuidance(
+        indications: <String>['left'],
+      );
+      expect(driverLaneDisplayKind(unknown), DriverLaneDisplayKind.unknown);
+      expect(driverLaneIsPreferred(unknown), isFalse);
+      expect(driverLaneSemanticLabel(unknown), isNot(contains('Preferred')));
+    });
+
+    test('P2C-12/13: empty/unsupported indication keep display columns', () {
+      final lanes = <DriverNavLaneGuidance>[
+        const DriverNavLaneGuidance(indications: <String>[], valid: false),
+        const DriverNavLaneGuidance(
+          indications: <String>['warp-drive'],
+          valid: true,
+        ),
+        const DriverNavLaneGuidance(
+          indications: <String>['right'],
+          valid: true,
+          active: true,
+        ),
+      ];
+      final shown = driverNavLanesForBannerDisplay(lanes, featureEnabled: true);
+      expect(shown.length, 3);
+      expect(driverLaneIndicationArrow('warp-drive'), '·');
+      expect(driverLaneIndicationArrow('right'), isNot('·'));
+    });
+
+    test('P2C-16: master flag false → zero displayed lanes', () {
+      debugDriverNavLaneGuidanceOverride = false;
+      final shown = driverNavLanesForBannerDisplay(
+        const <DriverNavLaneGuidance>[
+          DriverNavLaneGuidance(indications: <String>['right'], valid: true),
+          DriverNavLaneGuidance(
+            indications: <String>['straight'],
+            valid: false,
+          ),
+        ],
+      );
+      expect(shown, isEmpty);
+    });
+
+    test('31: master flag false → policy clears lanes', () {
       final out = applyDriverNavInstructionPolicyFilter(
         snapshot: snapWithLanes,
         policy: DriverNavInstructionPolicy(),
@@ -1408,9 +1597,62 @@ void main() {
         laneGuidanceEnabled: false,
       );
       expect(out.lanes, isEmpty);
+      final allowed = DriverNavInstructionPolicy().update(
+        NavInstructionPolicyInput(
+          timestamp: DateTime.now(),
+          liveRideActive: true,
+          rawInstructionText: 'Turn right',
+          maneuverType: 'turn',
+          maneuverModifier: 'right',
+          distanceToManeuverM: 120,
+          trustInstruction: true,
+          trustRouteSnap: true,
+          offRouteLikely: false,
+          forwardProgress: true,
+          predictionActive: false,
+          routeConfidence: 90,
+        ),
+      );
+      expect(allowed.showLaneGuidance, isTrue);
     });
 
-    test('32: policy enabled + permitted instruction → lanes preserved', () {
+    test('17: master true + policy false → zero lanes', () {
+      final out = applyDriverNavInstructionPolicyFilter(
+        snapshot: snapWithLanes,
+        policy: DriverNavInstructionPolicy(),
+        liveRideActive: true,
+        trustRouteSnap: true,
+        trustInstruction: true,
+        offRouteLikely: true,
+        routeDeviationLikely: true,
+        forwardProgress: true,
+        predictionActive: false,
+        routeConfidence: 20,
+        tr: trLocal,
+        laneGuidanceEnabled: true,
+      );
+      expect(out.lanes, isEmpty);
+      final denied = DriverNavInstructionPolicy().update(
+        NavInstructionPolicyInput(
+          timestamp: DateTime.now(),
+          liveRideActive: true,
+          rawInstructionText: 'Turn right',
+          maneuverType: 'turn',
+          maneuverModifier: 'right',
+          distanceToManeuverM: 120,
+          trustInstruction: true,
+          trustRouteSnap: true,
+          offRouteLikely: true,
+          routeDeviationLikely: true,
+          forwardProgress: true,
+          predictionActive: false,
+          routeConfidence: 20,
+        ),
+      );
+      expect(denied.showLaneGuidance, isFalse);
+    });
+
+    test('18: master true + policy true + visible guidance → preserved', () {
       final out = applyDriverNavInstructionPolicyFilter(
         snapshot: snapWithLanes,
         policy: DriverNavInstructionPolicy(),
@@ -1428,7 +1670,7 @@ void main() {
       expect(out.lanes.length, 2);
     });
 
-    test('33: policy neutral fallback → lanes cleared', () {
+    test('19/33: neutral instruction clears lanes', () {
       final out = applyDriverNavInstructionPolicyFilter(
         snapshot: snapWithLanes,
         policy: DriverNavInstructionPolicy(),
@@ -1445,6 +1687,42 @@ void main() {
       );
       expect(out.lanes, isEmpty);
       expect(out.primaryText, isNot('Turn right'));
+    });
+
+    test('P2C diag includes feature gate fields without PII', () {
+      final g = DriverResolvedLaneGuidance(
+        routeVersion: 2,
+        traversalStepIndex: 0,
+        describedManeuverStepIndex: 1,
+        bannerIndex: 0,
+        source: DriverLaneGuidanceSource.bannerComponent,
+        sourceIntersectionIndex: null,
+        lanes: const <DriverResolvedLaneColumn>[
+          DriverResolvedLaneColumn(
+            directions: <String>['right'],
+            availability: DriverLaneAvailability.usable,
+            sourceIndex: 0,
+          ),
+          DriverResolvedLaneColumn(
+            directions: <String>['straight'],
+            availability: DriverLaneAvailability.unavailable,
+            sourceIndex: 1,
+          ),
+        ],
+        visible: true,
+        hiddenReason: DriverLaneHiddenReason.none,
+      );
+      final line = formatNavLaneResolveDiag(
+        g,
+        featureEnabled: true,
+        policyAllowed: true,
+        displayCount: 2,
+      );
+      expect(line, contains('featureEnabled=true'));
+      expect(line, contains('policyAllowed=true'));
+      expect(line, contains('displayCount=2'));
+      expect(line, contains('resolvedCount=2'));
+      expect(line, isNot(contains('Turn')));
     });
   });
 }

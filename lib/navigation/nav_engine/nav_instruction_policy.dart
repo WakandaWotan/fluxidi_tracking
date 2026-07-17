@@ -78,9 +78,6 @@ class DriverNavInstructionPolicy {
   static const double _predictionHighRouteConfidence = 55.0;
   static const double _maxReasonableManeuverDistanceM = 10000.0;
 
-  // TODO(NAV Engine v2): Re-enable lane row only after lane confidence model exists.
-  static const bool _laneGuidanceEnabled = false;
-
   void reset() {}
 
   NavInstructionPolicyOutput update(NavInstructionPolicyInput input) {
@@ -147,7 +144,8 @@ class DriverNavInstructionPolicy {
         return NavInstructionPolicyOutput(
           displayInstructionText: raw,
           showOriginalInstruction: true,
-          showLaneGuidance: _laneGuidanceEnabled,
+          // Policy permits lanes for this instruction; master flag gates display.
+          showLaneGuidance: true,
           isNeutralFallback: false,
           reason: 'uturn_allowed',
         );
@@ -165,7 +163,8 @@ class DriverNavInstructionPolicy {
       return NavInstructionPolicyOutput(
         displayInstructionText: raw,
         showOriginalInstruction: true,
-        showLaneGuidance: _laneGuidanceEnabled,
+        // Policy permits lanes for this instruction; master flag gates display.
+        showLaneGuidance: true,
         isNeutralFallback: false,
         reason: 'maneuver_allowed',
       );

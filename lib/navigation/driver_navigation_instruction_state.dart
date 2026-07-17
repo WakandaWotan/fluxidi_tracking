@@ -567,7 +567,8 @@ buildDriverNavInstructionPresentation({
           routeSteps: routeSteps,
           activeBanner: null,
           featureEnabledForEvaluation:
-              laneGuidanceEnabledForEvaluation ?? kDriverNavLaneGuidanceEnabled,
+              laneGuidanceEnabledForEvaluation ??
+              driverNavLaneGuidanceFeatureEnabled,
           previous: previousLaneGuidance,
           clearBanners: true,
         ),
@@ -610,7 +611,8 @@ buildDriverNavInstructionPresentation({
       routeSteps: routeSteps,
       activeBanner: active,
       featureEnabledForEvaluation:
-          laneGuidanceEnabledForEvaluation ?? kDriverNavLaneGuidanceEnabled,
+          laneGuidanceEnabledForEvaluation ??
+          driverNavLaneGuidanceFeatureEnabled,
       previous: previousLaneGuidance,
     ),
   );
@@ -857,7 +859,8 @@ NavInstructionSnapshot applyDriverNavInstructionPolicyFilter({
   final primary = snapshot.primaryText.trim();
   final secondary = snapshot.secondaryText.trim();
   final rawInstruction = primary.isNotEmpty ? primary : secondary;
-  final lanesEnabled = laneGuidanceEnabled ?? kDriverNavLaneGuidanceEnabled;
+  final lanesEnabled =
+      laneGuidanceEnabled ?? driverNavLaneGuidanceFeatureEnabled;
 
   final policyOutput = policy.update(
     NavInstructionPolicyInput(
@@ -898,8 +901,10 @@ NavInstructionSnapshot applyDriverNavInstructionPolicyFilter({
   }
 
   // Preserve resolver-owned lanes only; never rebuild ownership here.
+  // Requires master flag + policy showLaneGuidance + non-neutral instruction.
   final preservedLanes =
       policyOutput.showOriginalInstruction &&
+          policyOutput.showLaneGuidance &&
           lanesEnabled &&
           snapshot.lanes.isNotEmpty
       ? snapshot.lanes
