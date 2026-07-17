@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
+
 /// Severity for the local Fluxidi OS complexity caution banner.
 enum NavComplexitySeverity { info, warning }
 
@@ -13,6 +15,7 @@ class NavComplexityGuardState {
   final int signalCount;
   final bool complexCandidate;
   final bool predictionRepeated;
+  final NavComplexityDecisionSnapshot decision;
 
   const NavComplexityGuardState({
     required this.active,
@@ -23,6 +26,7 @@ class NavComplexityGuardState {
     this.signalCount = 0,
     this.complexCandidate = false,
     this.predictionRepeated = false,
+    this.decision = NavComplexityDecisionSnapshot.inactive,
   });
 
   static const inactive = NavComplexityGuardState(
@@ -34,6 +38,81 @@ class NavComplexityGuardState {
 
   /// Back-compat alias used by existing UI wiring.
   bool get shouldShowCaution => active;
+}
+
+/// NAV-R14-COMPLEXITY-GATE-2: final advisory decision snapshot.
+class NavComplexityDecisionSnapshot {
+  const NavComplexityDecisionSnapshot({
+    required this.show,
+    required this.score,
+    required this.threshold,
+    required this.triggerRules,
+    required this.qualityRules,
+    required this.maneuverCount,
+    required this.branchCount,
+    required this.bearingAmbiguity,
+    required this.routeConfidence,
+    required this.mapMatchConfidence,
+    required this.offRoute,
+    required this.rerouteState,
+    required this.reason,
+    this.rawScore = 0,
+    this.effectiveScore = 0,
+    this.candidateReason = 'none',
+    this.visible = false,
+    this.positiveStreak = 0,
+    this.negativeStreak = 0,
+    this.transition = 'none',
+    this.suppressionReason = 'none',
+    this.predictionSupportingOnly = false,
+    this.structuralComplexityPresent = false,
+  });
+
+  final bool show;
+  final int score;
+  final int threshold;
+  final List<String> triggerRules;
+  final List<String> qualityRules;
+  final int maneuverCount;
+  final int branchCount;
+  final double? bearingAmbiguity;
+  final double? routeConfidence;
+  final double? mapMatchConfidence;
+  final bool offRoute;
+  final bool rerouteState;
+  final String reason;
+  final int rawScore;
+  final int effectiveScore;
+  final String candidateReason;
+  final bool visible;
+  final int positiveStreak;
+  final int negativeStreak;
+  final String transition;
+  final String suppressionReason;
+  final bool predictionSupportingOnly;
+  final bool structuralComplexityPresent;
+
+  static const inactive = NavComplexityDecisionSnapshot(
+    show: false,
+    score: 0,
+    threshold: 1,
+    triggerRules: [],
+    qualityRules: [],
+    maneuverCount: 0,
+    branchCount: 0,
+    bearingAmbiguity: null,
+    routeConfidence: null,
+    mapMatchConfidence: null,
+    offRoute: false,
+    rerouteState: false,
+    reason: 'none',
+  );
+
+  String get diagnosticSignature =>
+      '$show|$rawScore|$effectiveScore|$threshold|'
+      '${triggerRules.join('+')}|${qualityRules.join('+')}|$reason|'
+      '$transition|$suppressionReason|$positiveStreak|$negativeStreak|'
+      '$predictionSupportingOnly|$structuralComplexityPresent';
 }
 
 /// Inputs derived from existing engine/confidence/progress signals only.
@@ -55,6 +134,7 @@ class NavComplexityGuardInput {
   final double? speedKmh;
   final double? distanceToManeuverM;
   final String? maneuverType;
+  final int routeVersion;
 
   const NavComplexityGuardInput({
     required this.timestamp,
@@ -74,26 +154,40 @@ class NavComplexityGuardInput {
     this.speedKmh,
     this.distanceToManeuverM,
     this.maneuverType,
+    this.routeVersion = 0,
   });
 }
 
-/// NAV-R14A: pure local complexity guard with hysteresis + cooldown.
+/// NAV-R14A / NAV-R14-COMPLEXITY-GATE-2: local complexity guard.
 class NavComplexityGuard {
-  static const int showPersistMs = 2500;
-  static const int hideStableMs = 5000;
+  /// Ordinary non-critical complexity needs this many consecutive positives.
+  static const int requiredPositiveStreak = 2;
+
+  /// Trusted negatives needed before an ordinary clear.
+  static const int requiredNegativeStreak = 2;
   static const int cooldownMs = 45000;
-  static const int minSignalCount = 2;
+
+  /// Complexity-only (structural) signals required; quality/prediction alone
+  /// must not warn.
+  static const int minComplexitySignalCount = 1;
   static const double lowConfidenceThreshold = 55.0;
   static const double highSnapThresholdM = 25.0;
   static const double strongHeadingConflictDeg = 70.0;
   static const int repeatedPredictionMs = 4000;
   static const int maneuverChangeWindowMs = 10000;
 
+  /// Normal junction step advance is one change; churn needs repeated churn.
+  static const int rapidInstructionChurnThreshold = 2;
+
+  /// Prediction-only activity is ignored as a sole trigger during warm-up.
+  static const int startupWarmupMs = 8000;
+
   bool _showing = false;
-  DateTime? _complexSince;
-  DateTime? _stableSince;
   DateTime? _lastDismissedAt;
   String _activeReason = 'none';
+  int _positiveStreak = 0;
+  int _negativeStreak = 0;
+  String _lastTransition = 'none';
 
   int? _lastStepIndex;
   DateTime? _lastStepChangeAt;
@@ -103,24 +197,86 @@ class NavComplexityGuard {
   int _predictionBridgeCount = 0;
   bool _predictionWasActive = false;
 
+  DateTime? _sessionStartedAt;
+  int? _lastRouteVersion;
+
   void reset() {
     _showing = false;
-    _complexSince = null;
-    _stableSince = null;
     _lastDismissedAt = null;
     _activeReason = 'none';
+    _positiveStreak = 0;
+    _negativeStreak = 0;
+    _lastTransition = 'none';
     _lastStepIndex = null;
     _lastStepChangeAt = null;
     _stepChangesInWindow = 0;
     _predictionActiveSince = null;
     _predictionBridgeCount = 0;
     _predictionWasActive = false;
+    _sessionStartedAt = null;
+    _lastRouteVersion = null;
   }
 
   NavComplexityGuardState update(NavComplexityGuardInput input) {
     if (!input.liveRideActive || !input.followMode) {
+      final wasShowing = _showing;
       reset();
-      return NavComplexityGuardState.inactive;
+      _lastTransition = wasShowing ? 'terminal_clear' : 'none';
+      return NavComplexityGuardState.inactive.copyWithDecision(
+        NavComplexityDecisionSnapshot.inactive.copyWith(
+          transition: _lastTransition,
+          suppressionReason: 'no_active_session',
+        ),
+      );
+    }
+
+    if (_lastRouteVersion != null && input.routeVersion != _lastRouteVersion) {
+      // Route / route-version replacement — drop stale evidence immediately.
+      final keptRouteVersion = input.routeVersion;
+      reset();
+      _lastRouteVersion = keptRouteVersion;
+      _sessionStartedAt = input.timestamp;
+      _lastTransition = 'terminal_clear';
+    } else {
+      _lastRouteVersion = input.routeVersion;
+      _sessionStartedAt ??= input.timestamp;
+    }
+
+    if (_isTerminalGuidance(input.maneuverType)) {
+      _clearVisibleImmediate(reason: 'none');
+      _lastTransition = 'terminal_clear';
+      final decision = NavComplexityDecisionSnapshot(
+        show: false,
+        score: 0,
+        threshold: minComplexitySignalCount,
+        triggerRules: const [],
+        qualityRules: const [],
+        maneuverCount: _stepChangesInWindow,
+        branchCount: inferBranchCount(input),
+        bearingAmbiguity: input.headingDeltaDeg,
+        routeConfidence: input.overallConfidence,
+        mapMatchConfidence: resolveMapMatchConfidence(input),
+        offRoute: input.offRouteLikely,
+        rerouteState: input.reroutePending,
+        reason: 'none',
+        rawScore: 0,
+        effectiveScore: 0,
+        candidateReason: 'none',
+        visible: false,
+        positiveStreak: _positiveStreak,
+        negativeStreak: _negativeStreak,
+        transition: 'terminal_clear',
+        suppressionReason: _terminalSuppressionReason(input.maneuverType),
+        predictionSupportingOnly: false,
+        structuralComplexityPresent: false,
+      );
+      return NavComplexityGuardState(
+        active: false,
+        severity: NavComplexitySeverity.info,
+        reasonCode: 'none',
+        cooldownMs: cooldownMs,
+        decision: decision,
+      );
     }
 
     _trackManeuverChanges(input);
@@ -132,54 +288,140 @@ class NavComplexityGuard {
       predictionRepeated: _repeatedPrediction(input),
     );
     final now = input.timestamp;
+    final inStartupWarmup =
+        _sessionStartedAt != null &&
+        now.difference(_sessionStartedAt!).inMilliseconds < startupWarmupMs;
 
-    if (assessment.complexCandidate) {
-      _complexSince ??= now;
-      _stableSince = null;
-    } else {
-      _complexSince = null;
-      _stableSince ??= now;
+    var complexCandidate =
+        assessment.structuralComplexityPresent &&
+        assessment.effectiveScore >= minComplexitySignalCount;
+    var suppressionReason = 'none';
+    var transition = 'none';
+
+    // Prediction may support structural complexity, but never activate alone —
+    // including during startup warm-up.
+    if (!assessment.structuralComplexityPresent &&
+        assessment.predictionRepeated) {
+      complexCandidate = false;
+      suppressionReason = inStartupWarmup
+          ? 'startup_prediction_only'
+          : 'prediction_supporting_only';
+      if (inStartupWarmup) {
+        transition = 'startup_prediction_suppressed';
+      }
     }
 
     final inCooldown =
         _lastDismissedAt != null &&
         now.difference(_lastDismissedAt!).inMilliseconds < cooldownMs;
 
-    if (!_showing) {
-      final persistedMs = _complexSince == null
-          ? 0
-          : now.difference(_complexSince!).inMilliseconds;
-      if (!inCooldown &&
-          assessment.complexCandidate &&
-          persistedMs >= showPersistMs) {
-        _showing = true;
+    if (complexCandidate) {
+      _positiveStreak += 1;
+      _negativeStreak = 0;
+      if (!_showing) {
+        if (!inCooldown && _positiveStreak >= requiredPositiveStreak) {
+          _showing = true;
+          _activeReason = assessment.reasonCode;
+          transition = 'shown';
+        } else if (!inCooldown) {
+          transition = transition == 'none' ? 'pending_show' : transition;
+        }
+      } else {
         _activeReason = assessment.reasonCode;
-        _stableSince = null;
+        transition = 'none';
       }
     } else {
-      final stableMs = _stableSince == null
-          ? 0
-          : now.difference(_stableSince!).inMilliseconds;
-      if (!assessment.complexCandidate && stableMs >= hideStableMs) {
-        _showing = false;
-        _lastDismissedAt = now;
-        _activeReason = 'none';
-        _complexSince = null;
-      } else if (assessment.complexCandidate) {
-        _activeReason = assessment.reasonCode;
-        _stableSince = null;
+      final trustedNegative = _isTrustedNegative(input, assessment);
+      if (trustedNegative) {
+        _negativeStreak += 1;
+        _positiveStreak = 0;
+      } else {
+        // Untrusted / noisy negative — do not advance clear streak, but also
+        // do not keep building a stale positive streak.
+        _positiveStreak = 0;
+      }
+
+      if (_showing) {
+        if (trustedNegative && _negativeStreak >= requiredNegativeStreak) {
+          _showing = false;
+          _lastDismissedAt = now;
+          _activeReason = 'none';
+          transition = 'cleared';
+        } else if (trustedNegative) {
+          transition = 'pending_clear';
+        }
+      } else if (transition == 'none' &&
+          suppressionReason == 'startup_prediction_only') {
+        transition = 'startup_prediction_suppressed';
       }
     }
+
+    _lastTransition = transition;
+
+    final decision = assessment.decision.copyWith(
+      show: _showing,
+      visible: _showing,
+      score: assessment.effectiveScore,
+      effectiveScore: assessment.effectiveScore,
+      rawScore: assessment.rawScore,
+      // Current-tick reason (may be none while visible is still clearing).
+      reason: assessment.reasonCode,
+      candidateReason: assessment.reasonCode,
+      positiveStreak: _positiveStreak,
+      negativeStreak: _negativeStreak,
+      transition: transition,
+      suppressionReason: suppressionReason,
+      predictionSupportingOnly: assessment.predictionSupportingOnly,
+      structuralComplexityPresent: assessment.structuralComplexityPresent,
+    );
 
     return NavComplexityGuardState(
       active: _showing,
       severity: assessment.severity,
       reasonCode: _showing ? _activeReason : 'none',
       cooldownMs: cooldownMs,
-      signalCount: assessment.signalCount,
-      complexCandidate: assessment.complexCandidate,
+      signalCount: assessment.structuralSignals.length,
+      complexCandidate: complexCandidate,
       predictionRepeated: assessment.predictionRepeated,
+      decision: decision,
     );
+  }
+
+  void _clearVisibleImmediate({required String reason}) {
+    _showing = false;
+    _activeReason = reason;
+    _positiveStreak = 0;
+    _negativeStreak = 0;
+    _lastDismissedAt = null;
+  }
+
+  static bool _isTrustedNegative(
+    NavComplexityGuardInput input,
+    _SignalAssessment assessment,
+  ) {
+    if (assessment.structuralComplexityPresent) return false;
+    if (assessment.effectiveScore > 0) return false;
+    // Ordinary clear path: no structural complexity and reason/score are none.
+    // Trust flags reinforce that the negative evaluation is reliable.
+    if (!input.trustBearing || !input.trustInstruction) {
+      // Still allow clear when confidence is clearly healthy.
+      final overall = input.overallConfidence;
+      if (overall == null || overall < 70.0) return false;
+    }
+    return true;
+  }
+
+  static bool _isTerminalGuidance(String? maneuverType) {
+    final type = (maneuverType ?? '').trim().toLowerCase();
+    if (type.isEmpty) return false;
+    return type.contains('arrive') || type.contains('destination');
+  }
+
+  static String _terminalSuppressionReason(String? maneuverType) {
+    final type = (maneuverType ?? '').trim().toLowerCase();
+    if (type.contains('destination')) return 'destination_reached';
+    if (type.contains('arrive')) return 'arrive';
+    return 'terminal_guidance';
   }
 
   void _trackManeuverChanges(NavComplexityGuardInput input) {
@@ -217,27 +459,31 @@ class NavComplexityGuard {
     required int stepChangesInWindow,
     required bool predictionRepeated,
   }) {
-    final signals = <String>[];
+    final structuralSignals = <String>[];
+    final qualitySignals = <String>[];
 
     final overall = input.overallConfidence;
     if (overall != null && overall < lowConfidenceThreshold) {
-      signals.add('low_confidence');
+      qualitySignals.add('low_confidence');
     }
     if (!input.trustInstruction || !input.trustBearing) {
-      signals.add('low_confidence');
+      qualitySignals.add('low_confidence');
     }
 
     final snap = input.snapDistanceM;
     if (snap != null && snap.isFinite && snap > highSnapThresholdM) {
-      signals.add('high_snap_distance');
+      qualitySignals.add('high_snap_distance');
     }
 
     if (input.offRouteLikely || input.reroutePending) {
-      signals.add('offroute_uncertain');
+      qualitySignals.add('offroute_uncertain');
     }
 
-    if (_instructionAmbiguous(input) || stepChangesInWindow >= 1) {
-      signals.add('ambiguous_instruction');
+    if (_instructionAmbiguous(input)) {
+      structuralSignals.add('ambiguous_instruction');
+    }
+    if (stepChangesInWindow >= rapidInstructionChurnThreshold) {
+      structuralSignals.add('rapid_instruction_churn');
     }
 
     final headingDelta = input.headingDeltaDeg;
@@ -246,35 +492,69 @@ class NavComplexityGuard {
         headingDelta.isFinite &&
         headingDelta >= strongHeadingConflictDeg &&
         speed >= 5.0) {
-      signals.add('heading_route_conflict');
+      structuralSignals.add('heading_route_conflict');
     }
 
+    // Prediction is a supporting quality signal only — never a structural
+    // trigger on its own.
     if (predictionRepeated) {
-      signals.add('repeated_prediction');
+      qualitySignals.add('repeated_prediction');
     }
 
     if (_denseManeuverArea(input)) {
-      signals.add('dense_maneuver_area');
+      structuralSignals.add('dense_maneuver_area');
     }
 
-    final uniqueSignals = signals.toSet().toList();
-    final complexCandidate = uniqueSignals.length >= minSignalCount;
-    final reasonCode = complexCandidate
-        ? _primaryReason(uniqueSignals)
+    final uniqueStructural = structuralSignals.toSet().toList();
+    final uniqueQuality = qualitySignals.toSet().toList();
+    final structuralPresent = uniqueStructural.isNotEmpty;
+    final rawScore = uniqueStructural.length;
+    // Prediction may reinforce when structural complexity is already present,
+    // but never creates effective score by itself.
+    final effectiveScore = structuralPresent ? rawScore : 0;
+    final reasonCode = structuralPresent
+        ? _primaryReason(uniqueStructural)
         : 'none';
     final severity =
-        uniqueSignals.contains('offroute_uncertain') ||
-            uniqueSignals.contains('heading_route_conflict') ||
-            (overall != null && overall < 40.0)
+        uniqueStructural.contains('heading_route_conflict') ||
+            uniqueStructural.contains('rapid_instruction_churn') ||
+            (overall != null && overall < 40.0 && structuralPresent)
         ? NavComplexitySeverity.warning
         : NavComplexitySeverity.info;
 
+    final decision = NavComplexityDecisionSnapshot(
+      show: false,
+      score: effectiveScore,
+      threshold: minComplexitySignalCount,
+      triggerRules: uniqueStructural,
+      qualityRules: uniqueQuality,
+      maneuverCount: stepChangesInWindow,
+      branchCount: inferBranchCount(input),
+      bearingAmbiguity: headingDelta,
+      routeConfidence: overall,
+      mapMatchConfidence: resolveMapMatchConfidence(input),
+      offRoute: input.offRouteLikely,
+      rerouteState: input.reroutePending,
+      reason: reasonCode,
+      rawScore: rawScore,
+      effectiveScore: effectiveScore,
+      candidateReason: reasonCode,
+      visible: false,
+      predictionSupportingOnly: predictionRepeated && !structuralPresent,
+      structuralComplexityPresent: structuralPresent,
+    );
+
     return _SignalAssessment(
-      complexCandidate: complexCandidate,
-      signalCount: uniqueSignals.length,
+      structuralComplexityPresent: structuralPresent,
+      structuralSignals: uniqueStructural,
+      qualitySignals: uniqueQuality,
       reasonCode: reasonCode,
       severity: severity,
       predictionRepeated: predictionRepeated,
+      predictionSupportingOnly: predictionRepeated && !structuralPresent,
+      rawScore: rawScore,
+      effectiveScore: effectiveScore,
+      decision: decision,
     );
   }
 
@@ -317,18 +597,36 @@ class NavComplexityGuard {
 
   static String _primaryReason(List<String> signals) {
     const priority = <String>[
-      'offroute_uncertain',
       'heading_route_conflict',
-      'repeated_prediction',
+      'rapid_instruction_churn',
       'ambiguous_instruction',
       'dense_maneuver_area',
-      'low_confidence',
-      'high_snap_distance',
     ];
     for (final reason in priority) {
       if (signals.contains(reason)) return reason;
     }
     return signals.first;
+  }
+
+  /// Estimated branch count from maneuver geometry (not GPS quality).
+  static int inferBranchCount(NavComplexityGuardInput input) {
+    final type = (input.maneuverType ?? '').trim().toLowerCase();
+    if (type.contains('fork')) return 2;
+    if (type.contains('merge')) return 2;
+    if (type.contains('roundabout') || type.contains('rotary')) return 3;
+    return 0;
+  }
+
+  /// Map-match quality proxy for diagnostics (higher = better match).
+  static double? resolveMapMatchConfidence(NavComplexityGuardInput input) {
+    final snap = input.snapDistanceM;
+    if (snap == null || !snap.isFinite) return null;
+    final snapScore =
+        (1.0 - (snap / highSnapThresholdM).clamp(0.0, 1.0)) * 100.0;
+    var score = snapScore;
+    if (input.trustInstruction) score += 10.0;
+    if (input.trustBearing) score += 10.0;
+    return score.clamp(0.0, 100.0);
   }
 
   /// NAV-R14A diagnostics bucket — no raw meters.
@@ -354,19 +652,139 @@ class NavComplexityGuard {
 }
 
 class _SignalAssessment {
-  final bool complexCandidate;
-  final int signalCount;
+  final bool structuralComplexityPresent;
+  final List<String> structuralSignals;
+  final List<String> qualitySignals;
   final String reasonCode;
   final NavComplexitySeverity severity;
   final bool predictionRepeated;
+  final bool predictionSupportingOnly;
+  final int rawScore;
+  final int effectiveScore;
+  final NavComplexityDecisionSnapshot decision;
 
   const _SignalAssessment({
-    required this.complexCandidate,
-    required this.signalCount,
+    required this.structuralComplexityPresent,
+    required this.structuralSignals,
+    required this.qualitySignals,
     required this.reasonCode,
     required this.severity,
     required this.predictionRepeated,
+    required this.predictionSupportingOnly,
+    required this.rawScore,
+    required this.effectiveScore,
+    required this.decision,
   });
+}
+
+extension on NavComplexityGuardState {
+  NavComplexityGuardState copyWithDecision(
+    NavComplexityDecisionSnapshot decision,
+  ) {
+    return NavComplexityGuardState(
+      active: active,
+      severity: severity,
+      reasonCode: reasonCode,
+      cooldownMs: cooldownMs,
+      messageKey: messageKey,
+      signalCount: signalCount,
+      complexCandidate: complexCandidate,
+      predictionRepeated: predictionRepeated,
+      decision: decision,
+    );
+  }
+}
+
+extension on NavComplexityDecisionSnapshot {
+  NavComplexityDecisionSnapshot copyWith({
+    bool? show,
+    int? score,
+    int? threshold,
+    List<String>? triggerRules,
+    List<String>? qualityRules,
+    int? maneuverCount,
+    int? branchCount,
+    double? bearingAmbiguity,
+    double? routeConfidence,
+    double? mapMatchConfidence,
+    bool? offRoute,
+    bool? rerouteState,
+    String? reason,
+    int? rawScore,
+    int? effectiveScore,
+    String? candidateReason,
+    bool? visible,
+    int? positiveStreak,
+    int? negativeStreak,
+    String? transition,
+    String? suppressionReason,
+    bool? predictionSupportingOnly,
+    bool? structuralComplexityPresent,
+  }) {
+    return NavComplexityDecisionSnapshot(
+      show: show ?? this.show,
+      score: score ?? this.score,
+      threshold: threshold ?? this.threshold,
+      triggerRules: triggerRules ?? this.triggerRules,
+      qualityRules: qualityRules ?? this.qualityRules,
+      maneuverCount: maneuverCount ?? this.maneuverCount,
+      branchCount: branchCount ?? this.branchCount,
+      bearingAmbiguity: bearingAmbiguity ?? this.bearingAmbiguity,
+      routeConfidence: routeConfidence ?? this.routeConfidence,
+      mapMatchConfidence: mapMatchConfidence ?? this.mapMatchConfidence,
+      offRoute: offRoute ?? this.offRoute,
+      rerouteState: rerouteState ?? this.rerouteState,
+      reason: reason ?? this.reason,
+      rawScore: rawScore ?? this.rawScore,
+      effectiveScore: effectiveScore ?? this.effectiveScore,
+      candidateReason: candidateReason ?? this.candidateReason,
+      visible: visible ?? this.visible,
+      positiveStreak: positiveStreak ?? this.positiveStreak,
+      negativeStreak: negativeStreak ?? this.negativeStreak,
+      transition: transition ?? this.transition,
+      suppressionReason: suppressionReason ?? this.suppressionReason,
+      predictionSupportingOnly:
+          predictionSupportingOnly ?? this.predictionSupportingOnly,
+      structuralComplexityPresent:
+          structuralComplexityPresent ?? this.structuralComplexityPresent,
+    );
+  }
+}
+
+String? _lastNavComplexityDecisionLogSignature;
+
+/// NAV-R14-COMPLEXITY-GATE-2: bounded final advisory diagnostics.
+void logNavComplexityDecision(NavComplexityDecisionSnapshot decision) {
+  if (decision.diagnosticSignature == _lastNavComplexityDecisionLogSignature) {
+    return;
+  }
+  _lastNavComplexityDecisionLogSignature = decision.diagnosticSignature;
+  debugPrint(
+    '[NAV_COMPLEXITY_DECISION] '
+    'rawScore=${decision.rawScore} '
+    'effectiveScore=${decision.effectiveScore} '
+    'threshold=${decision.threshold} '
+    'candidateReason=${decision.candidateReason} '
+    'visible=${decision.visible} '
+    'positiveStreak=${decision.positiveStreak} '
+    'negativeStreak=${decision.negativeStreak} '
+    'transition=${decision.transition} '
+    'suppressionReason=${decision.suppressionReason} '
+    'predictionSupportingOnly=${decision.predictionSupportingOnly} '
+    'structuralComplexityPresent=${decision.structuralComplexityPresent} '
+    'show=${decision.show} '
+    'score=${decision.score} '
+    'triggerRules=${decision.triggerRules.join(",")} '
+    'maneuverCount=${decision.maneuverCount} '
+    'branchCount=${decision.branchCount} '
+    'bearingAmbiguity=${decision.bearingAmbiguity?.toStringAsFixed(1) ?? "null"} '
+    'routeConfidence=${decision.routeConfidence?.toStringAsFixed(1) ?? "null"} '
+    'mapMatchConfidence=${decision.mapMatchConfidence?.toStringAsFixed(1) ?? "null"} '
+    'offRoute=${decision.offRoute} '
+    'rerouteState=${decision.rerouteState} '
+    'reason=${decision.reason} '
+    'qualityRules=${decision.qualityRules.join(",")}',
+  );
 }
 
 /// Localized caution copy for the driver banner (offline, no cloud).

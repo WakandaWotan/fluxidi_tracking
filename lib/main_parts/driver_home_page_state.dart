@@ -9278,6 +9278,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           _navInstructionSnapshot?.distanceToManeuverMeters ??
           _nextNavDistanceM,
       maneuverType: _nextNavType,
+      routeVersion: _routeStepsVersion,
     );
   }
 
@@ -13225,6 +13226,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     // NAV-R12-E2: fresh route generation — the instruction re-resolves from
     // index 0 against the new geometry on the next fix.
     _routeStepsVersion += 1;
+    // NAV-R14-COMPLEXITY-GATE-2: drop complexity evidence from the prior route
+    // version so streaks / visible state never carry across replacements.
+    _resetNavComplexityState();
     _logNavR12Banner(state: 're_resolved', reason: 'route_steps_applied');
     if (navSteps.isNotEmpty) {
       _nextNavInstruction = navSteps.first.instruction;
