@@ -96,6 +96,7 @@ import 'navigation/driver_offline_nav_readiness.dart';
 import 'navigation/driver_navigation_models.dart';
 import 'navigation/driver_navigation_route_parser.dart';
 import 'navigation/nav_backend/driver_navigation_worker_client.dart';
+import 'navigation/nav_backend/driver_route_apply.dart';
 import 'navigation/nav_engine/nav_bearing_smoother.dart';
 import 'navigation/nav_engine/nav_bearing_policy.dart';
 import 'navigation/nav_engine/nav_camera_target_policy.dart';

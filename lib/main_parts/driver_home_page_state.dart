@@ -213,7 +213,12 @@ class _DriverHomePageState extends State<DriverHomePage>
   // NAV-R12-E2: cheap route version so banner diagnostics can show which
   // route generation an instruction belongs to; bumped on every applied
   // route/reroute step list.
+  // NAV-R12-E2 / NAV-SIGNAL-P0B2: accepted route-content generation only.
+  // Bumped solely inside guarded package activation — never on hard clear.
   int _routeStepsVersion = 0;
+  // NAV-SIGNAL-P0B2: async Mapbox route-render ownership epoch. Bumped on
+  // accepted activation and on hard-clear render invalidation.
+  int _routeRenderEpoch = 0;
   String? _lastNavR12BannerSignature;
   bool _mapboxLocationPuckRestoreEnabled = false;
   bool _mapboxLocationPuckSuppressedForNav = false;
@@ -381,6 +386,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   static const Duration _rerouteCooldownRouteDeviation = Duration(seconds: 8);
   static const Duration _rerouteFailedRetryBackoff = Duration(seconds: 3);
   int _routeCleanupEpoch = 0;
+  // NAV-SIGNAL-P0B: network request generation (not applied route version).
+  final DriverRouteRequestGenerationClock _routeRequestGeneration =
+      DriverRouteRequestGenerationClock();
   NavigationWorkerOfflineCorridorMetadata? _lastOfflineCorridorMetadata;
   bool _offlineCorridorMetadataLoading = false;
   bool _offlineCorridorMetadataError = false;
@@ -391,7 +399,23 @@ class _DriverHomePageState extends State<DriverHomePage>
   int _routeRedrawCountThisMinute = 0;
   Timer? _renderDebugWindowTimer;
 
-  void _resetNavProgressState({bool clearRoute = false}) {
+  void _invalidateRouteRenderEpoch({required String reason}) {
+    _routeRenderEpoch += 1;
+    debugPrint(
+      formatNavRouteRenderDiag(
+        action: 'invalidate',
+        reason: reason,
+        renderEpoch: _routeRenderEpoch,
+        activeRouteVersion: _routeStepsVersion,
+      ),
+    );
+  }
+
+  void _resetNavProgressState({
+    bool clearRoute = false,
+    String renderInvalidateReason = 'hard_clear',
+    bool renderAlreadyInvalidated = false,
+  }) {
     if (clearRoute) {
       _routeCoords = [];
       _routeKm = null;
@@ -435,6 +459,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     _resetNavMotionPredictionState();
     _resetNavInstructionPolicyState();
     if (clearRoute) {
+      // NAV-SIGNAL-P0B2: invalidate in-flight builders + render epoch only.
+      if (!renderAlreadyInvalidated) {
+        _invalidateRouteRenderEpoch(reason: renderInvalidateReason);
+      }
+      _routeRequestGeneration.invalidateAll();
       _resetOfflineCorridorMetadataState();
       _resetNavValidationState();
     }
@@ -804,6 +833,132 @@ class _DriverHomePageState extends State<DriverHomePage>
     return true;
   }
 
+  DriverRouteAcceptanceSnapshot _driverRouteAcceptanceSnapshot() {
+    return DriverRouteAcceptanceSnapshot(
+      mounted: mounted,
+      latestRequestGeneration: _routeRequestGeneration.latest,
+      cleanupEpoch: _routeCleanupEpoch,
+      activeBookingId: _activeBooking?.bookingId,
+      activeTripId: _activeTripId?.trim().isEmpty == true
+          ? null
+          : _activeTripId?.trim(),
+      directRideActive: _directRideActive,
+      liveRideActive: _liveRideActive,
+    );
+  }
+
+  DriverRouteRequestContext _beginDriverRouteRequest({
+    required DriverRouteApplyPurpose purpose,
+    String? expectedBookingId,
+    bool requireDirectRide = false,
+    String? expectedTripId,
+    bool expectDirectRideActive = false,
+  }) {
+    final effectivePurpose = _isRerouting
+        ? DriverRouteApplyPurpose.reroute
+        : purpose;
+    return DriverRouteRequestContext(
+      requestGeneration: _routeRequestGeneration.begin(),
+      cleanupEpoch: _routeCleanupEpoch,
+      purpose: effectivePurpose,
+      expectedBookingId: expectedBookingId,
+      requireDirectRide: requireDirectRide,
+      expectedTripId: expectedTripId?.trim().isEmpty == true
+          ? null
+          : expectedTripId?.trim(),
+      expectDirectRideActive: expectDirectRideActive || requireDirectRide,
+    );
+  }
+
+  bool _tryActivatePreparedDriverRoute({
+    required DriverRouteRequestContext context,
+    required DriverPreparedRoutePackage package,
+  }) {
+    final decision = evaluateDriverRouteAcceptance(
+      context: context,
+      snapshot: _driverRouteAcceptanceSnapshot(),
+      package: package,
+    );
+    if (!decision.accepted) {
+      debugPrint(
+        formatNavRouteApplyDiag(
+          requestGeneration: context.requestGeneration,
+          latestGeneration: _routeRequestGeneration.latest,
+          accepted: false,
+          reason: decision.reason,
+        ),
+      );
+      return false;
+    }
+
+    // NAV-SIGNAL-P0B2: content version and render epoch advance together on
+    // accept, but remain distinct concepts (values need not stay equal forever).
+    _routeStepsVersion += 1;
+    _routeRenderEpoch += 1;
+    final appliedVersion = _routeStepsVersion;
+    final renderEpoch = _routeRenderEpoch;
+
+    _resetNavComplexityState();
+    _driverNavRouteProgress.reset();
+    _lastNavRouteProgress = null;
+    _navRouteProgressRouteFingerprint = package.geometryFingerprint;
+    _resetNavCameraPolicyState();
+    _resetNavConfidenceState();
+    _resetNavMotionPredictionState();
+    _resetNavInstructionPolicyState();
+    _lastRouteSnap = null;
+    _lastVisualProgressM = null;
+    _routeLineProgressTrimmed = false;
+    _lastRouteLineTrimProgressM = 0.0;
+    _lastRouteLineTrimAt = null;
+
+    _routeCoords = List<_LonLat>.from(package.coords);
+    _routeKm = package.distanceMeters / 1000.0;
+    _routeDurationSec = package.durationSeconds;
+
+    final navSteps = package.navSteps;
+    _routeSteps = navSteps;
+    _nextStepIndex = 0;
+    if (navSteps.isNotEmpty) {
+      _nextNavInstruction = navSteps.first.instruction;
+      _nextNavStreet = navSteps.first.street;
+      _nextNavDistanceM = null;
+      _nextNavType = navSteps.first.type;
+      _nextNavModifier = navSteps.first.modifier;
+      _navInstructionSnapshot = null;
+    } else {
+      _nextNavInstruction = null;
+      _nextNavStreet = null;
+      _nextNavDistanceM = null;
+      _nextNavType = null;
+      _nextNavModifier = null;
+      _navInstructionSnapshot = NavInstructionSnapshot.none;
+    }
+
+    _logNavR12Banner(state: 're_resolved', reason: 'route_steps_applied');
+    debugPrint(
+      formatNavRouteApplyDiag(
+        requestGeneration: context.requestGeneration,
+        latestGeneration: _routeRequestGeneration.latest,
+        accepted: true,
+        routeVersion: appliedVersion,
+        renderEpoch: renderEpoch,
+      ),
+    );
+    debugPrint(
+      '[NAV_E1] steps=${navSteps.length} bannerSteps=${package.stepsWithBannerCount} '
+      'laneSteps=${package.stepsWithLaneGuidanceCount}',
+    );
+    return true;
+  }
+
+  bool _isCurrentRouteRenderEpoch(int routeRenderEpoch) {
+    return !shouldIgnoreStaleRouteDraw(
+      drawAppliedRouteVersion: routeRenderEpoch,
+      currentAppliedRouteVersion: _routeRenderEpoch,
+    );
+  }
+
   Future<void> _clearRouteAndPinAnnotationsOnly() async {
     try {
       if (_routeLineManager != null) {
@@ -856,12 +1011,26 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
 
-    await _clearRouteAndPinAnnotationsOnly();
+    // NAV-SIGNAL-P0B2: logically deactivate BEFORE awaiting Mapbox deletes so
+    // GPS/UI never observe a bumped render epoch while the old session is
+    // still eligible for reroute/follow processing. `_routeStepsVersion` is
+    // intentionally unchanged (not a new accepted route).
+    final renderReason = reason.trim().isEmpty
+        ? 'hard_clear'
+        : (reason == 'stop'
+              ? 'stop'
+              : (reason == 'manual_clear_selection' || reason == 'delete'
+                    ? 'hard_clear'
+                    : reason));
 
-    if (!mounted) return;
-    setState(() {
+    void deactivateLogically() {
       _routeCleanupEpoch++;
-      _resetNavProgressState(clearRoute: true);
+      _invalidateRouteRenderEpoch(reason: renderReason);
+      _resetNavProgressState(
+        clearRoute: true,
+        renderInvalidateReason: renderReason,
+        renderAlreadyInvalidated: true,
+      );
       _routePhase = _RideRoutePhase.trip;
       _navStepsLoading = false;
       _cameraMode = _CameraMode.overview;
@@ -871,6 +1040,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (clearActiveSelection) {
         _activeTripId = null;
         _activeDirectTripId = null;
+        _activeDirectBookingId = null;
+        _directRideKey = null;
         _activeBooking = null;
         _directRideActive = false;
         _directRideDestinationText = null;
@@ -890,7 +1061,16 @@ class _DriverHomePageState extends State<DriverHomePage>
         _waitStartedAt = null;
         _waitElapsed = Duration.zero;
       }
-    });
+    }
+
+    if (mounted) {
+      setState(deactivateLogically);
+    } else {
+      deactivateLogically();
+    }
+
+    await _clearRouteAndPinAnnotationsOnly();
+    if (!mounted) return;
     _setNavigationWakelock(false);
     await _applyMapStyleForMode();
     if (!_liveRideActive) {
@@ -7512,12 +7692,35 @@ class _DriverHomePageState extends State<DriverHomePage>
     required String reason,
   }) async {
     var restoredRoute = false;
+    // NAV-SIGNAL-P0B2: style restore is owned by render epoch + accepted content.
+    final restoreRenderEpoch = _routeRenderEpoch;
+    final restoreRouteStepsVersion = _routeStepsVersion;
+    final mayRestore = mayRestoreRouteRender(
+      routeCoordCount: _routeCoords.length,
+      capturedRenderEpoch: restoreRenderEpoch,
+      currentRenderEpoch: _routeRenderEpoch,
+      capturedRouteStepsVersion: restoreRouteStepsVersion,
+      currentRouteStepsVersion: _routeStepsVersion,
+    );
 
-    if (_routeCoords.length >= 2) {
+    if (mayRestore) {
       try {
-        await _drawRouteLine(_routeCoords, force: true);
-        await _drawPins(_routeCoords.first, _routeCoords.last);
-        restoredRoute = true;
+        await _drawRouteLine(
+          _routeCoords,
+          force: true,
+          routeRenderEpoch: restoreRenderEpoch,
+        );
+        if (_isCurrentRouteRenderEpoch(restoreRenderEpoch) &&
+            _routeCoords.length >= 2) {
+          await _drawPins(
+            _routeCoords.first,
+            _routeCoords.last,
+            routeRenderEpoch: restoreRenderEpoch,
+          );
+        }
+        restoredRoute =
+            _isCurrentRouteRenderEpoch(restoreRenderEpoch) &&
+            _routeCoords.length >= 2;
       } catch (_) {
         restoredRoute = false;
       }
@@ -7528,17 +7731,23 @@ class _DriverHomePageState extends State<DriverHomePage>
       reason: reason,
     );
 
-    if (_lastPos != null) {
+    if (_lastPos != null && _isCurrentRouteRenderEpoch(restoreRenderEpoch)) {
       try {
         _updateRouteSnapState(_lastPos!);
         await _syncVisibleRouteLineWithProgress(
           _lastPos!,
           reason: 'style_restore',
+          routeRenderEpoch: restoreRenderEpoch,
         );
       } catch (_) {}
     }
 
-    await _syncNavigationDestinationMarker(reason: 'style_restore');
+    if (_isCurrentRouteRenderEpoch(restoreRenderEpoch)) {
+      await _syncNavigationDestinationMarker(
+        reason: 'style_restore',
+        routeRenderEpoch: restoreRenderEpoch,
+      );
+    }
 
     unawaited(
       NavDiagnosticsRecorder.instance.recordNavEngineEvent(
@@ -7631,9 +7840,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     return _driverFinishFlagMarkerAvailable;
   }
 
-  Future<void> _syncNavigationDestinationMarker({required String reason}) async {
+  Future<void> _syncNavigationDestinationMarker({
+    required String reason,
+    int? routeRenderEpoch,
+  }) async {
+    final drawEpoch = routeRenderEpoch ?? _routeRenderEpoch;
     if (_mapStyleChanging) return;
+    if (!_isCurrentRouteRenderEpoch(drawEpoch)) return;
     if (!_shouldShowNavigationDestinationMarker()) {
+      if (!_isCurrentRouteRenderEpoch(drawEpoch)) return;
       if (_destinationMarker != null) {
         await _clearNavigationDestinationMarker(
           action: 'clear',
@@ -7650,6 +7865,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       trustedDropoff: _trustedNavigationDropoffCoordinate(),
     );
     if (resolved == null) {
+      if (!_isCurrentRouteRenderEpoch(drawEpoch)) return;
       if (_destinationMarker != null) {
         await _clearNavigationDestinationMarker(
           action: 'clear',
@@ -7686,16 +7902,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     final isTablet = mounted && MediaQuery.sizeOf(context).width >= 600;
     final iconSize = driverDestinationMarkerIconSize(isTablet: isTablet);
     final geometry = _mbPoint(resolved.lon, resolved.lat);
-    final isUpdate = _destinationMarker != null;
+    final previousMarker = _destinationMarker;
+    final isUpdate = previousMarker != null;
     final finishFlagReady = await _ensureDriverFinishFlagMarkerBytes();
+    if (!_isCurrentRouteRenderEpoch(drawEpoch)) return;
     final finishFlagBytes = _driverFinishFlagMarkerBytes;
     try {
-      if (_destinationMarker != null) {
-        await mgr.delete(_destinationMarker!);
-        _destinationMarker = null;
-      }
+      // NAV-SIGNAL-P0B1: create locally; never delete shared refs until commit.
+      late final mb.PointAnnotation created;
       if (finishFlagReady && finishFlagBytes != null) {
-        _destinationMarker = await mgr.create(
+        created = await mgr.create(
           mb.PointAnnotationOptions(
             geometry: geometry,
             image: finishFlagBytes,
@@ -7705,7 +7921,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
         );
       } else {
-        _destinationMarker = await mgr.create(
+        created = await mgr.create(
           mb.PointAnnotationOptions(
             geometry: geometry,
             iconImage: kDriverDestinationMarkerIconImage,
@@ -7718,7 +7934,23 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
         );
       }
+      final commit = evaluateRouteAnnotationCommit(
+        capturedRenderEpoch: drawEpoch,
+        currentRenderEpoch: _routeRenderEpoch,
+      );
+      if (commit.shouldDeleteLocalOrphansOnly) {
+        try {
+          await mgr.delete(created);
+        } catch (_) {}
+        return;
+      }
+      _destinationMarker = created;
       _lastDestinationMarkerSignature = signature;
+      if (previousMarker != null && !identical(previousMarker, created)) {
+        try {
+          await mgr.delete(previousMarker);
+        } catch (_) {}
+      }
       _logNavPresDestMarker(
         action: isUpdate ? 'update' : 'create',
         result: 'applied',
@@ -7726,8 +7958,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         reason: reason,
       );
     } catch (e) {
-      _destinationMarker = null;
-      _lastDestinationMarkerSignature = null;
+      if (_isCurrentRouteRenderEpoch(drawEpoch)) {
+        _destinationMarker = null;
+        _lastDestinationMarkerSignature = null;
+      }
       _logNavPresDestMarker(
         action: isUpdate ? 'update' : 'create',
         result: 'failed',
@@ -10127,19 +10361,17 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (_routePhase == _RideRoutePhase.toPickup) {
         final booking = _activeBooking;
         if (booking != null) {
-          await _buildNavRouteToPickup(booking);
-          ok = _routeCoords.length >= 2;
+          // NAV-SIGNAL-P0B: success is activation, not leftover prior coords.
+          ok = await _buildNavRouteToPickup(booking);
         }
       } else {
         final booking = _activeBooking;
         if (booking != null && _activeTripId != null) {
-          await _buildNavRouteToDestination(booking);
-          ok = _routeCoords.length >= 2;
+          ok = await _buildNavRouteToDestination(booking);
         } else if (_directRideActive) {
           final destination = (_directRideDestinationText ?? '').trim();
           if (destination.isNotEmpty) {
-            await _buildDirectRouteToDestination(destination);
-            ok = _routeCoords.length >= 2;
+            ok = await _buildDirectRouteToDestination(destination);
           }
         }
       }
@@ -10288,8 +10520,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     geo.Position pos, {
     String reason = 'progress_update',
     bool force = false,
+    int? routeRenderEpoch,
   }) async {
+    final drawEpoch = routeRenderEpoch ?? _routeRenderEpoch;
     if (_routeCoords.length < 2 || _routeLineManager == null) return;
+    if (!_isCurrentRouteRenderEpoch(drawEpoch)) return;
     final snap =
         _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
     final progressM = _effectiveRouteProgressM(pos);
@@ -10298,7 +10533,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (_routeLineProgressTrimmed) {
         _routeLineProgressTrimmed = false;
         _lastRouteLineTrimProgressM = 0.0;
-        await _drawRouteLine(_routeCoords, force: true);
+        await _drawRouteLine(
+          _routeCoords,
+          force: true,
+          routeRenderEpoch: drawEpoch,
+        );
         _logNavBounded(
           'NAV_OS_R2_ROUTE_PROGRESS_LINE',
           'completedM=0 remainingM=${driverRouteLengthMeters(_routeCoords).toStringAsFixed(0)} reason=reset_full',
@@ -10311,7 +10550,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (_routeLineProgressTrimmed) {
         _routeLineProgressTrimmed = false;
         _lastRouteLineTrimProgressM = 0.0;
-        await _drawRouteLine(_routeCoords, force: true);
+        await _drawRouteLine(
+          _routeCoords,
+          force: true,
+          routeRenderEpoch: drawEpoch,
+        );
         _logNavBounded(
           'NAV_OS_R2_ROUTE_PROGRESS_LINE',
           'completedM=0 remainingM=${driverRouteLengthMeters(_routeCoords).toStringAsFixed(0)} reason=reset_no_snap',
@@ -10341,8 +10584,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     // NAV-OS-R2: split geometry — muted grey behind the taxi, blue ahead.
     var remaining = _routeCoordsFromSnap(snap);
     final completed = driverRouteCoordsUpToSnap(_routeCoords, snap);
-    final cockpitLeadInActive = _navigationPresentationStateFor(_navCameraViewMode)
-        .useDriverCockpitCamera;
+    final cockpitLeadInActive = _navigationPresentationStateFor(
+      _navCameraViewMode,
+    ).useDriverCockpitCamera;
     final leadInM = cockpitLeadInActive
         ? driverCockpitRouteVisualLeadInMeters(_driverCockpitViewLevel)
         : 0.0;
@@ -10369,10 +10613,16 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
     }
     if (remaining.length >= 2) {
+      if (!_isCurrentRouteRenderEpoch(drawEpoch)) return;
       _routeLineProgressTrimmed = true;
       _lastRouteLineTrimProgressM = progressM;
       _lastRouteLineTrimAt = now;
-      await _drawRouteLine(remaining, force: true, completedCoords: completed);
+      await _drawRouteLine(
+        remaining,
+        force: true,
+        completedCoords: completed,
+        routeRenderEpoch: drawEpoch,
+      );
       final totalM = driverRouteLengthMeters(_routeCoords);
       final remainingM = (totalM - progressM).clamp(0.0, totalM);
       _logNavBounded(
@@ -11862,20 +12112,24 @@ class _DriverHomePageState extends State<DriverHomePage>
     });
   }
 
-  Future<void> _buildNavRouteToPickup(BookingItem b) async {
+  Future<bool> _buildNavRouteToPickup(BookingItem b) async {
     final epoch = _routeCleanupEpoch;
     final expectedBookingId = b.bookingId;
     if (!_isRouteTaskStillValid(
       epoch: epoch,
       expectedBookingId: expectedBookingId,
     )) {
-      return;
+      return false;
     }
-    if (_lastPos == null) return;
+    if (_lastPos == null) return false;
     final pickupText = (b.from ?? '').trim();
     final hasStoredPickup =
         _usableNavLonLat(_extractPreviewEndpoints(b).pickup) != null;
-    if (pickupText.isEmpty && !hasStoredPickup) return;
+    if (pickupText.isEmpty && !hasStoredPickup) return false;
+    final request = _beginDriverRouteRequest(
+      purpose: DriverRouteApplyPurpose.pickup,
+      expectedBookingId: expectedBookingId,
+    );
     if (mounted) {
       setState(() {
         _routePhase = _RideRoutePhase.toPickup;
@@ -11889,39 +12143,39 @@ class _DriverHomePageState extends State<DriverHomePage>
     try {
       final fromLL = _LonLat(_lastPos!.longitude, _lastPos!.latitude);
       final toLL = await _resolvePickupLonLat(b);
-      final route = await _directionsRoute(fromLL, toLL);
-      final coords = route.$1;
-      if (coords.length < 2) return;
-      if (!_isRouteTaskStillValid(
-        epoch: epoch,
-        expectedBookingId: expectedBookingId,
+      final package = await _directionsRoute(fromLL, toLL);
+      if (!_tryActivatePreparedDriverRoute(
+        context: request,
+        package: package,
       )) {
-        return;
+        return false;
       }
-      if (mounted) {
-        setState(() {
-          _routeCoords = coords;
-          _routeKm = route.$2 / 1000.0;
-          _routeDurationSec = route.$3;
-        });
-      } else {
-        _routeCoords = coords;
-        _routeKm = route.$2 / 1000.0;
-        _routeDurationSec = route.$3;
-      }
+      final renderEpoch = _routeRenderEpoch;
+      if (mounted) setState(() {});
       if (_lastPos != null) {
         _updateRouteSnapState(_lastPos!);
         _updateNextNavInstruction(_lastPos!);
         await _syncVisibleRouteLineWithProgress(
           _lastPos!,
           reason: 'route_rebuilt',
+          routeRenderEpoch: renderEpoch,
         );
       }
-      await _drawPins(fromLL, toLL);
-      await _drawRouteLine(coords);
-      unawaited(_syncNavigationDestinationMarker(reason: 'nav_route_pickup'));
+      await _drawPins(fromLL, toLL, routeRenderEpoch: renderEpoch);
+      await _drawRouteLine(
+        _routeCoords,
+        routeRenderEpoch: renderEpoch,
+      );
+      unawaited(
+        _syncNavigationDestinationMarker(
+          reason: 'nav_route_pickup',
+          routeRenderEpoch: renderEpoch,
+        ),
+      );
+      return true;
     } catch (_) {
       // Keep previous route if pickup route fetch fails.
+      return false;
     } finally {
       if (_isRouteTaskStillValid(
         epoch: epoch,
@@ -11936,20 +12190,25 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
-  Future<void> _buildNavRouteToDestination(BookingItem b) async {
+  Future<bool> _buildNavRouteToDestination(BookingItem b) async {
     final epoch = _routeCleanupEpoch;
     final expectedBookingId = b.bookingId;
     if (!_isRouteTaskStillValid(
       epoch: epoch,
       expectedBookingId: expectedBookingId,
     )) {
-      return;
+      return false;
     }
-    if (_lastPos == null) return;
+    if (_lastPos == null) return false;
     final dropoffText = (b.to ?? '').trim();
     final hasStoredDropoff =
         _usableNavLonLat(_extractPreviewEndpoints(b).dropoff) != null;
-    if (dropoffText.isEmpty && !hasStoredDropoff) return;
+    if (dropoffText.isEmpty && !hasStoredDropoff) return false;
+    final request = _beginDriverRouteRequest(
+      purpose: DriverRouteApplyPurpose.destination,
+      expectedBookingId: expectedBookingId,
+      expectedTripId: _activeTripId,
+    );
     if (mounted) {
       setState(() {
         _routePhase = _RideRoutePhase.trip;
@@ -11963,39 +12222,39 @@ class _DriverHomePageState extends State<DriverHomePage>
     try {
       final fromLL = _LonLat(_lastPos!.longitude, _lastPos!.latitude);
       final toLL = await _resolveDropoffLonLat(b);
-      final route = await _directionsRoute(fromLL, toLL);
-      final coords = route.$1;
-      if (coords.length < 2) return;
-      if (!_isRouteTaskStillValid(
-        epoch: epoch,
-        expectedBookingId: expectedBookingId,
+      final package = await _directionsRoute(fromLL, toLL);
+      if (!_tryActivatePreparedDriverRoute(
+        context: request,
+        package: package,
       )) {
-        return;
+        return false;
       }
-      if (mounted) {
-        setState(() {
-          _routeCoords = coords;
-          _routeKm = route.$2 / 1000.0;
-          _routeDurationSec = route.$3;
-        });
-      } else {
-        _routeCoords = coords;
-        _routeKm = route.$2 / 1000.0;
-        _routeDurationSec = route.$3;
-      }
+      final renderEpoch = _routeRenderEpoch;
+      if (mounted) setState(() {});
       if (_lastPos != null) {
         _updateRouteSnapState(_lastPos!);
         _updateNextNavInstruction(_lastPos!);
         await _syncVisibleRouteLineWithProgress(
           _lastPos!,
           reason: 'route_rebuilt',
+          routeRenderEpoch: renderEpoch,
         );
       }
-      await _drawPins(fromLL, toLL);
-      await _drawRouteLine(coords);
-      unawaited(_syncNavigationDestinationMarker(reason: 'nav_route_destination'));
+      await _drawPins(fromLL, toLL, routeRenderEpoch: renderEpoch);
+      await _drawRouteLine(
+        _routeCoords,
+        routeRenderEpoch: renderEpoch,
+      );
+      unawaited(
+        _syncNavigationDestinationMarker(
+          reason: 'nav_route_destination',
+          routeRenderEpoch: renderEpoch,
+        ),
+      );
+      return true;
     } catch (_) {
       // Keep previous route if destination route fetch fails.
+      return false;
     } finally {
       if (_isRouteTaskStillValid(
         epoch: epoch,
@@ -12010,14 +12269,19 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
-  Future<void> _buildDirectRouteToDestination(String destinationText) async {
+  Future<bool> _buildDirectRouteToDestination(String destinationText) async {
     final epoch = _routeCleanupEpoch;
     if (!_isRouteTaskStillValid(epoch: epoch, requireDirectRide: true)) {
-      return;
+      return false;
     }
-    if (_lastPos == null) return;
+    if (_lastPos == null) return false;
     final dropoffText = destinationText.trim();
-    if (dropoffText.isEmpty) return;
+    if (dropoffText.isEmpty) return false;
+    final request = _beginDriverRouteRequest(
+      purpose: DriverRouteApplyPurpose.direct,
+      requireDirectRide: true,
+      expectDirectRideActive: true,
+    );
     if (mounted) {
       setState(() {
         _routePhase = _RideRoutePhase.trip;
@@ -12032,37 +12296,40 @@ class _DriverHomePageState extends State<DriverHomePage>
       final fromLL = _LonLat(_lastPos!.longitude, _lastPos!.latitude);
       final toLL =
           _directRideDestinationPoint ?? await _geocodeOne(dropoffText);
-      final route = await _directionsRoute(fromLL, toLL);
-      final coords = route.$1;
-      if (coords.length < 2) return;
-      if (!_isRouteTaskStillValid(epoch: epoch, requireDirectRide: true)) {
-        return;
+      final package = await _directionsRoute(fromLL, toLL);
+      if (!_tryActivatePreparedDriverRoute(
+        context: request,
+        package: package,
+      )) {
+        return false;
       }
-      if (mounted) {
-        setState(() {
-          _routeCoords = coords;
-          _routeKm = route.$2 / 1000.0;
-          _routeDurationSec = route.$3;
-        });
-      } else {
-        _routeCoords = coords;
-        _routeKm = route.$2 / 1000.0;
-        _routeDurationSec = route.$3;
-      }
+      final renderEpoch = _routeRenderEpoch;
+      if (mounted) setState(() {});
       if (_lastPos != null) {
         _updateRouteSnapState(_lastPos!);
         _updateNextNavInstruction(_lastPos!);
         await _syncVisibleRouteLineWithProgress(
           _lastPos!,
           reason: 'route_rebuilt',
+          routeRenderEpoch: renderEpoch,
         );
       }
-      await _drawPins(fromLL, toLL);
-      await _drawRouteLine(coords);
-      unawaited(_syncNavigationDestinationMarker(reason: 'nav_route_direct'));
+      await _drawPins(fromLL, toLL, routeRenderEpoch: renderEpoch);
+      await _drawRouteLine(
+        _routeCoords,
+        routeRenderEpoch: renderEpoch,
+      );
+      unawaited(
+        _syncNavigationDestinationMarker(
+          reason: 'nav_route_direct',
+          routeRenderEpoch: renderEpoch,
+        ),
+      );
       _scheduleDirectRideEstimateRefresh(reason: 'route_changed');
+      return true;
     } catch (e) {
       _toast('Straatrit route mislukt: $e');
+      return false;
     } finally {
       if (_isRouteTaskStillValid(epoch: epoch, requireDirectRide: true)) {
         if (mounted) {
@@ -12861,34 +13128,52 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
 
+    final request = _beginDriverRouteRequest(
+      purpose: DriverRouteApplyPurpose.overview,
+      expectedBookingId: expectedBookingId,
+    );
+
     try {
-      // Preview must always represent booked ride path: pickup -> destination.
-      // Never use current GPS here.
-      await _clearRouteAndPinAnnotationsOnly();
+      // NAV-SIGNAL-P0B1: never clear annotations for an active live route.
+      // Prefer keeping the prior overview until a replacement activates.
+      if (!mayClearOverviewAnnotations(liveRideActive: _liveRideActive)) {
+        debugPrint(
+          formatNavRouteApplyDiag(
+            requestGeneration: request.requestGeneration,
+            latestGeneration: _routeRequestGeneration.latest,
+            accepted: false,
+            reason: DriverRouteRejectReason.phaseChanged,
+          ),
+        );
+        return;
+      }
 
       if (storedPickup != null && storedDropoff != null) {
         debugPrint('[NAV_COORD] overview=stored_both');
-        final route = await _directionsRoute(storedPickup, storedDropoff);
-        final coords = route.$1;
-        if (coords.length >= 2 &&
-            _isRouteTaskStillValid(
-              epoch: epoch,
-              expectedBookingId: expectedBookingId,
-            )) {
+        final package = await _directionsRoute(storedPickup, storedDropoff);
+        if (_tryActivatePreparedDriverRoute(
+          context: request,
+          package: package,
+        )) {
+          final renderEpoch = _routeRenderEpoch;
           setState(() {
-            _routeCoords = coords;
-            _routeKm = route.$2 / 1000.0;
-            _routeDurationSec = route.$3;
             _routePhase = _RideRoutePhase.trip;
           });
-          await _drawPins(storedPickup, storedDropoff);
-          await _drawRouteLine(coords);
+          await _drawPins(
+            storedPickup,
+            storedDropoff,
+            routeRenderEpoch: renderEpoch,
+          );
+          await _drawRouteLine(
+            _routeCoords,
+            routeRenderEpoch: renderEpoch,
+          );
           final allowFit =
               _allowOverviewCamera &&
               _cameraMode == _CameraMode.overview &&
               _activeTripId == null;
-          if (allowFit) {
-            await _fitBoundsToRoute(coords);
+          if (allowFit && _isCurrentRouteRenderEpoch(renderEpoch)) {
+            await _fitBoundsToRoute(_routeCoords);
           }
           return;
         }
@@ -12900,6 +13185,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         toText: dropoffText,
         epoch: epoch,
         expectedBookingId: expectedBookingId,
+        request: request,
       );
       if (_routeCoords.length >= 2) return;
 
@@ -12910,6 +13196,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           toText: dropoffText,
           epoch: epoch,
           expectedBookingId: expectedBookingId,
+          request: request,
         );
         return;
       }
@@ -12917,33 +13204,28 @@ class _DriverHomePageState extends State<DriverHomePage>
       final fromLL = await _resolvePickupLonLat(b);
       final toLL = await _resolveDropoffLonLat(b);
 
-      final route = await _directionsRoute(fromLL, toLL);
-      final coords = route.$1;
-      final distanceMeters = route.$2;
-      final durationSec = route.$3;
-
-      if (coords.length < 2) return;
-      if (!_isRouteTaskStillValid(
-        epoch: epoch,
-        expectedBookingId: expectedBookingId,
+      final package = await _directionsRoute(fromLL, toLL);
+      if (!_tryActivatePreparedDriverRoute(
+        context: request,
+        package: package,
       )) {
         return;
       }
-
+      final renderEpoch = _routeRenderEpoch;
       setState(() {
-        _routeCoords = coords;
-        _routeKm = distanceMeters / 1000.0;
-        _routeDurationSec = durationSec;
         _routePhase = _RideRoutePhase.trip;
       });
-      await _drawPins(fromLL, toLL);
-      await _drawRouteLine(coords);
+      await _drawPins(fromLL, toLL, routeRenderEpoch: renderEpoch);
+      await _drawRouteLine(
+        _routeCoords,
+        routeRenderEpoch: renderEpoch,
+      );
       final allowFit =
           _allowOverviewCamera &&
           _cameraMode == _CameraMode.overview &&
           _activeTripId == null;
-      if (allowFit) {
-        await _fitBoundsToRoute(coords);
+      if (allowFit && _isCurrentRouteRenderEpoch(renderEpoch)) {
+        await _fitBoundsToRoute(_routeCoords);
       }
     } on _UnauthorizedMapbox catch (_) {
       _toast('Mapbox REST token refused (401) — using Worker route instead.');
@@ -12952,6 +13234,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         toText: b.to!,
         epoch: epoch,
         expectedBookingId: expectedBookingId,
+        request: request,
       );
     } catch (e) {
       _toast('Route overview failed: $e');
@@ -12960,6 +13243,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         toText: b.to!,
         epoch: epoch,
         expectedBookingId: expectedBookingId,
+        request: request,
       );
     }
   }
@@ -12969,6 +13253,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     required String toText,
     required int epoch,
     required String expectedBookingId,
+    required DriverRouteRequestContext request,
   }) async {
     try {
       final uri = Uri.parse('$kWorkerBaseUrl$kWorkerRoutePath');
@@ -13022,22 +13307,36 @@ class _DriverHomePageState extends State<DriverHomePage>
       final dur =
           (j['duration_s'] ?? j['durationSec'] ?? j['duration'] ?? 0) as num;
 
+      // NAV-SIGNAL-P0B1: booking-worker fallback uses the same prepared-package
+      // + atomic activation path (overview empty-steps only).
+      final package = prepareBookingWorkerOverviewPackage(
+        coords: out,
+        distanceMeters: dist.toDouble(),
+        durationSeconds: dur.toInt(),
+      );
+      if (!_tryActivatePreparedDriverRoute(
+        context: request,
+        package: package,
+      )) {
+        return;
+      }
+      final renderEpoch = _routeRenderEpoch;
+      if (mounted) {
+        setState(() {
+          _routePhase = _RideRoutePhase.trip;
+        });
+      } else {
+        _routePhase = _RideRoutePhase.trip;
+      }
       final fromLL = out.first;
       final toLL = out.last;
-
-      setState(() {
-        _routeCoords = out;
-        _routeKm = dist.toDouble() / 1000.0;
-        _routeDurationSec = dur.toInt();
-        _routePhase = _RideRoutePhase.trip;
-      });
-      await _drawPins(fromLL, toLL);
-      await _drawRouteLine(out);
+      await _drawPins(fromLL, toLL, routeRenderEpoch: renderEpoch);
+      await _drawRouteLine(out, routeRenderEpoch: renderEpoch);
       final allowFit =
           _allowOverviewCamera &&
           _cameraMode == _CameraMode.overview &&
           _activeTripId == null;
-      if (allowFit) {
+      if (allowFit && _isCurrentRouteRenderEpoch(renderEpoch)) {
         await _fitBoundsToRoute(out);
       }
     } catch (e) {
@@ -13069,17 +13368,17 @@ class _DriverHomePageState extends State<DriverHomePage>
     return _LonLat(lon, lat);
   }
 
-  Future<(List<_LonLat>, double, int)> _directionsRoute(
+  Future<DriverPreparedRoutePackage> _directionsRoute(
     _LonLat from,
     _LonLat to,
   ) async {
     final workerParsed = await _tryNavigationWorkerDirectionsRoute(from, to);
     if (workerParsed != null) {
-      _applyParsedNavRouteSteps(workerParsed);
-      return (
-        workerParsed.coords,
-        workerParsed.distanceMeters,
-        workerParsed.durationSeconds,
+      return prepareDriverRoutePackage(
+        parsed: workerParsed,
+        source: _isRerouting
+            ? DriverRouteResponseSource.workerReroute
+            : DriverRouteResponseSource.worker,
       );
     }
 
@@ -13104,8 +13403,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       localizeInstruction: _localizeNavInstructionMvp,
       distanceAlongRouteForCoords: _distanceAlongRouteForCoords,
     );
-    _applyParsedNavRouteSteps(parsed);
-    return (parsed.coords, parsed.distanceMeters, parsed.durationSeconds);
+    return prepareDriverRoutePackage(
+      parsed: parsed,
+      source: DriverRouteResponseSource.mapboxDirect,
+    );
   }
 
   String _mapboxDirectionsLanguageCode() {
@@ -13231,37 +13532,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     return parsed;
   }
 
-  void _applyParsedNavRouteSteps(DriverRouteParseResult parsed) {
-    final navSteps = parsed.navSteps;
-    _routeSteps = navSteps;
-    _nextStepIndex = 0;
-    // NAV-R12-E2: fresh route generation — the instruction re-resolves from
-    // index 0 against the new geometry on the next fix.
-    _routeStepsVersion += 1;
-    // NAV-R14-COMPLEXITY-GATE-2: drop complexity evidence from the prior route
-    // version so streaks / visible state never carry across replacements.
-    _resetNavComplexityState();
-    _logNavR12Banner(state: 're_resolved', reason: 'route_steps_applied');
-    if (navSteps.isNotEmpty) {
-      _nextNavInstruction = navSteps.first.instruction;
-      _nextNavStreet = navSteps.first.street;
-      _nextNavDistanceM = null;
-      _nextNavType = navSteps.first.type;
-      _nextNavModifier = navSteps.first.modifier;
-      _navInstructionSnapshot = null;
-    } else {
-      _nextNavInstruction = null;
-      _nextNavStreet = null;
-      _nextNavDistanceM = null;
-      _nextNavType = null;
-      _nextNavModifier = null;
-      _navInstructionSnapshot = NavInstructionSnapshot.none;
-    }
-    debugPrint(
-      '[NAV_E1] steps=${navSteps.length} bannerSteps=${parsed.stepsWithBannerCount} '
-      'laneSteps=${parsed.stepsWithLaneGuidanceCount}',
-    );
-  }
+  // NAV-SIGNAL-P0B: early _applyParsedNavRouteSteps removed — geometry/steps
+  // activate only via _tryActivatePreparedDriverRoute after the final guard.
 
   String _localizeNavInstructionMvp(String raw) {
     return localizeDriverNavInstructionMvp(
@@ -13755,9 +14027,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     return driverManeuverIconData(type, modifier, instruction);
   }
 
-  Future<void> _drawPins(_LonLat pickup, _LonLat dropoff) async {
+  Future<void> _drawPins(
+    _LonLat pickup,
+    _LonLat dropoff, {
+    int? routeRenderEpoch,
+  }) async {
+    final drawEpoch = routeRenderEpoch ?? _routeRenderEpoch;
     final mgr = _pinsPointManager;
     if (mgr == null) return;
+    if (!_isCurrentRouteRenderEpoch(drawEpoch)) return;
     final now = DateTime.now();
     final signature = driverPinsDrawSignature(pickup: pickup, dropoff: dropoff);
     if (driverShouldSkipDraw(
@@ -13769,37 +14047,59 @@ class _DriverHomePageState extends State<DriverHomePage>
     )) {
       return;
     }
-    _lastPinsDrawSignature = signature;
-    _lastPinsDrawAt = now;
 
-    try {
-      if (_pickupPin != null) await mgr.delete(_pickupPin!);
-      if (_dropoffPin != null) await mgr.delete(_dropoffPin!);
-    } catch (_) {}
+    // Capture previous shared refs; do not delete until commit.
+    final previousPickup = _pickupPin;
+    final previousDropoff = _dropoffPin;
 
-    _pickupPin = await mgr.create(
+    final pickupPin = await mgr.create(
       mb.PointAnnotationOptions(
         geometry: _mbPoint(pickup.lon, pickup.lat),
         iconSize: 1.1,
       ),
     );
-
-    _dropoffPin = await mgr.create(
+    final dropoffPin = await mgr.create(
       mb.PointAnnotationOptions(
         geometry: _mbPoint(dropoff.lon, dropoff.lat),
         iconSize: 1.1,
       ),
     );
+    final commit = evaluateRouteAnnotationCommit(
+      capturedRenderEpoch: drawEpoch,
+      currentRenderEpoch: _routeRenderEpoch,
+    );
+    if (commit.shouldDeleteLocalOrphansOnly) {
+      try {
+        await mgr.delete(pickupPin);
+        await mgr.delete(dropoffPin);
+      } catch (_) {}
+      return;
+    }
+    _pickupPin = pickupPin;
+    _dropoffPin = dropoffPin;
+    _lastPinsDrawSignature = signature;
+    _lastPinsDrawAt = now;
+    try {
+      if (previousPickup != null && !identical(previousPickup, pickupPin)) {
+        await mgr.delete(previousPickup);
+      }
+      if (previousDropoff != null && !identical(previousDropoff, dropoffPin)) {
+        await mgr.delete(previousDropoff);
+      }
+    } catch (_) {}
   }
 
   Future<void> _drawRouteLine(
     List<_LonLat> coords, {
     bool force = false,
     List<_LonLat>? completedCoords,
+    int? routeRenderEpoch,
   }) async {
+    final drawEpoch = routeRenderEpoch ?? _routeRenderEpoch;
     final mgr = _routeLineManager;
     if (mgr == null) return;
     if (coords.length < 2) return;
+    if (!_isCurrentRouteRenderEpoch(drawEpoch)) return;
     final now = DateTime.now();
     final signature = driverRouteDrawSignature(coords);
     if (driverShouldSkipDraw(
@@ -13812,24 +14112,20 @@ class _DriverHomePageState extends State<DriverHomePage>
     )) {
       return;
     }
-    _lastRouteDrawSignature = signature;
-    _lastRouteDrawAt = now;
-    _routeRedrawCountThisMinute += 1;
 
-    try {
-      if (_routeLineOutline != null) await mgr.delete(_routeLineOutline!);
-      if (_routeLine != null) await mgr.delete(_routeLine!);
-      if (_routeLineCompleted != null) await mgr.delete(_routeLineCompleted!);
-    } catch (_) {}
-    _routeLineCompleted = null;
+    // NAV-SIGNAL-P0B1: operation-owned creates; shared refs untouched until commit.
+    final previousOutline = _routeLineOutline;
+    final previousLine = _routeLine;
+    final previousCompleted = _routeLineCompleted;
 
     final geometry = mb.LineString(
       coordinates: coords.map((c) => mb.Position(c.lon, c.lat)).toList(),
     );
 
     // NAV-OS-R2: muted grey line for the already-driven section behind the taxi.
+    mb.PolylineAnnotation? completedLine;
     if (completedCoords != null && completedCoords.length >= 2) {
-      _routeLineCompleted = await mgr.create(
+      completedLine = await mgr.create(
         mb.PolylineAnnotationOptions(
           geometry: mb.LineString(
             coordinates: completedCoords
@@ -13844,7 +14140,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     // Dark underlay for contrast on light navigation / satellite maps.
-    _routeLineOutline = await mgr.create(
+    final outline = await mgr.create(
       mb.PolylineAnnotationOptions(
         geometry: geometry,
         lineWidth: kDriverRouteLineOutlineWidth,
@@ -13853,7 +14149,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       ),
     );
 
-    _routeLine = await mgr.create(
+    final line = await mgr.create(
       mb.PolylineAnnotationOptions(
         geometry: geometry,
         lineWidth: kDriverRouteLineWidth,
@@ -13861,6 +14157,36 @@ class _DriverHomePageState extends State<DriverHomePage>
         lineColor: kDriverRouteLineColor,
       ),
     );
+    final commit = evaluateRouteAnnotationCommit(
+      capturedRenderEpoch: drawEpoch,
+      currentRenderEpoch: _routeRenderEpoch,
+    );
+    if (commit.shouldDeleteLocalOrphansOnly) {
+      try {
+        if (completedLine != null) await mgr.delete(completedLine);
+        await mgr.delete(outline);
+        await mgr.delete(line);
+      } catch (_) {}
+      return;
+    }
+    _routeLineCompleted = completedLine;
+    _routeLineOutline = outline;
+    _routeLine = line;
+    _lastRouteDrawSignature = signature;
+    _lastRouteDrawAt = now;
+    _routeRedrawCountThisMinute += 1;
+    try {
+      if (previousOutline != null && !identical(previousOutline, outline)) {
+        await mgr.delete(previousOutline);
+      }
+      if (previousLine != null && !identical(previousLine, line)) {
+        await mgr.delete(previousLine);
+      }
+      if (previousCompleted != null &&
+          !identical(previousCompleted, completedLine)) {
+        await mgr.delete(previousCompleted);
+      }
+    } catch (_) {}
     await _syncMapboxUserLocationPuckVisibility();
   }
 
