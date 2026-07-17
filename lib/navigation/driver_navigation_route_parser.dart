@@ -54,32 +54,131 @@ String? _bannerComponentText(dynamic raw) {
   return _trimmedString(raw);
 }
 
-DriverNavBannerInstruction? _parseStepBannerInstruction(
+double? _parseBannerDistanceAlongGeometry(Map<String, dynamic> banner) {
+  final raw =
+      banner['distanceAlongGeometry'] ?? banner['distance_along_geometry'];
+  if (raw is num) {
+    final value = raw.toDouble();
+    if (value.isFinite && value >= 0) return value;
+    return null;
+  }
+  if (raw is String) {
+    final value = double.tryParse(raw.trim());
+    if (value != null && value.isFinite && value >= 0) return value;
+  }
+  return null;
+}
+
+List<String> _parseBannerDirections(dynamic raw) {
+  if (raw is! List<dynamic>) return const <String>[];
+  final out = <String>[];
+  for (final item in raw) {
+    final text = _trimmedString(item);
+    if (text != null) out.add(text);
+  }
+  return out;
+}
+
+DriverNavBannerComponent? _parseBannerComponent(dynamic raw) {
+  if (raw is! Map<String, dynamic>) return null;
+  final text = _trimmedString(raw['text']) ?? '';
+  final type = _trimmedString(raw['type']);
+  final imageBaseURL = _trimmedString(
+    raw['imageBaseURL'] ?? raw['image_base_url'],
+  );
+  final abbr = _trimmedString(raw['abbr']);
+  final abbrPriorityRaw = raw['abbr_priority'] ?? raw['abbrPriority'];
+  final abbrPriority = abbrPriorityRaw is num ? abbrPriorityRaw.toInt() : null;
+  final directions = _parseBannerDirections(raw['directions']);
+  final activeRaw = raw['active'];
+  final active = activeRaw is bool ? activeRaw : null;
+  final activeDirection = _trimmedString(
+    raw['active_direction'] ?? raw['activeDirection'],
+  );
+  // Skip completely empty components (no text, type, lanes, or shield URL).
+  if (text.isEmpty &&
+      type == null &&
+      imageBaseURL == null &&
+      abbr == null &&
+      directions.isEmpty &&
+      active == null &&
+      activeDirection == null) {
+    return null;
+  }
+  return DriverNavBannerComponent(
+    type: type,
+    text: text,
+    imageBaseURL: imageBaseURL,
+    abbr: abbr,
+    abbrPriority: abbrPriority,
+    directions: directions,
+    active: active,
+    activeDirection: activeDirection,
+  );
+}
+
+DriverNavBannerView? _parseBannerView(dynamic raw) {
+  if (raw == null) return null;
+  if (raw is String) {
+    final text = raw.trim();
+    if (text.isEmpty) return null;
+    return DriverNavBannerView(text: text);
+  }
+  if (raw is! Map<String, dynamic>) return null;
+  final text = _trimmedString(raw['text']);
+  final componentsRaw = raw['components'];
+  final components = <DriverNavBannerComponent>[];
+  if (componentsRaw is List<dynamic>) {
+    for (final item in componentsRaw) {
+      final component = _parseBannerComponent(item);
+      if (component != null) components.add(component);
+    }
+  }
+  if ((text == null || text.isEmpty) && components.isEmpty) return null;
+  return DriverNavBannerView(text: text, components: components);
+}
+
+/// NAV-SIGNAL-P1: parse every usable banner stage; skip malformed entries.
+List<DriverNavBannerStage> _parseStepBannerInstructions(
   Map<String, dynamic> step,
 ) {
   final bannersAny = step['bannerInstructions'] ?? step['banner_instructions'];
-  if (bannersAny is! List<dynamic> || bannersAny.isEmpty) return null;
-
-  String? primaryText;
-  String? secondaryText;
-  String? subText;
-
-  for (final bannerAny in bannersAny) {
-    if (bannerAny is! Map<String, dynamic>) continue;
-    primaryText ??= _bannerComponentText(bannerAny['primary']);
-    secondaryText ??= _bannerComponentText(bannerAny['secondary']);
-    subText ??= _bannerComponentText(bannerAny['sub']);
-    if (primaryText != null || secondaryText != null || subText != null) {
-      break;
-    }
+  if (bannersAny is! List<dynamic> || bannersAny.isEmpty) {
+    return const <DriverNavBannerStage>[];
   }
 
-  final banner = DriverNavBannerInstruction(
-    primaryText: primaryText,
-    secondaryText: secondaryText,
-    subText: subText,
-  );
-  return banner.hasContent ? banner : null;
+  final out = <DriverNavBannerStage>[];
+  for (var i = 0; i < bannersAny.length; i++) {
+    final bannerAny = bannersAny[i];
+    if (bannerAny is! Map<String, dynamic>) continue;
+    final distance = _parseBannerDistanceAlongGeometry(bannerAny);
+    if (distance == null) continue;
+    final primary = _parseBannerView(bannerAny['primary']);
+    final secondary = _parseBannerView(bannerAny['secondary']);
+    final sub = _parseBannerView(bannerAny['sub']);
+    // A stage must have usable primary display text (no blank primary banner).
+    if (primary == null || !primary.hasDisplayText) continue;
+    out.add(
+      DriverNavBannerStage(
+        sourceIndex: i,
+        distanceAlongGeometry: distance,
+        primary: primary,
+        secondary: secondary,
+        sub: sub,
+      ),
+    );
+  }
+  return out;
+}
+
+DriverNavBannerInstruction? _legacyBannerFromStages(
+  List<DriverNavBannerStage> stages,
+) {
+  for (final stage in stages) {
+    final legacy = stage.asLegacyInstruction;
+    if (legacy.hasContent) return legacy;
+  }
+  return null;
 }
 
 String? _parseExitNumber(Map<String, dynamic> maneuver) {
@@ -118,7 +217,8 @@ List<String> _parseLaneIndications(dynamic raw) {
 
 List<DriverNavLaneGuidance> _parseStepLaneGuidance(Map<String, dynamic> step) {
   final intersectionsAny = step['intersections'];
-  if (intersectionsAny is! List<dynamic>) return const <DriverNavLaneGuidance>[];
+  if (intersectionsAny is! List<dynamic>)
+    return const <DriverNavLaneGuidance>[];
 
   final out = <DriverNavLaneGuidance>[];
   for (final intersectionAny in intersectionsAny) {
@@ -197,13 +297,16 @@ DriverRouteParseResult parseDriverDirectionsResponse({
       final modifier = (maneuver['modifier'] ?? '').toString().trim();
       final stepDistance = (step['distance'] as num?)?.toDouble();
       final stepDuration = (step['duration'] as num?)?.toInt();
-      final banner = _parseStepBannerInstruction(step);
+      final bannerInstructions = _parseStepBannerInstructions(step);
+      final banner = _legacyBannerFromStages(bannerInstructions);
       final exitNumber = _parseExitNumber(maneuver);
       final destinationText = _parseDestinationText(step['destinations']);
       final roadRef = _trimmedString(step['ref']);
-      final drivingSide = _trimmedString(step['driving_side'] ?? step['drivingSide']);
+      final drivingSide = _trimmedString(
+        step['driving_side'] ?? step['drivingSide'],
+      );
       final lanes = _parseStepLaneGuidance(step);
-      if (banner != null) stepsWithBannerCount += 1;
+      if (bannerInstructions.isNotEmpty) stepsWithBannerCount += 1;
       if (lanes.isNotEmpty) stepsWithLaneGuidanceCount += 1;
       if (instruction.isEmpty && street.isEmpty) continue;
       navSteps.add(
@@ -221,6 +324,7 @@ DriverRouteParseResult parseDriverDirectionsResponse({
           distanceM: stepDistance,
           durationSec: stepDuration,
           banner: banner,
+          bannerInstructions: bannerInstructions,
           exitNumber: exitNumber,
           destinationText: destinationText,
           roadRef: roadRef,

@@ -29,25 +29,6 @@ bool _looksLikeDriverHighwayRef(String? raw) {
   return _driverHighwayRefPattern.hasMatch(text.toUpperCase());
 }
 
-bool _bannerSecondarySuggestsHighway(String? raw) {
-  final lower = (raw ?? '').trim().toLowerCase();
-  if (lower.isEmpty) return false;
-  const markers = <String>[
-    'afrit',
-    'exit',
-    'sortie',
-    'toward',
-    'richting',
-    'direction',
-    'vers ',
-    'hacia ',
-  ];
-  for (final marker in markers) {
-    if (lower.contains(marker)) return true;
-  }
-  return false;
-}
-
 bool isDriverHighwayLikeStep(DriverNavStep step) {
   final type = step.type.toLowerCase();
   if (type.contains('off ramp') ||
@@ -59,7 +40,8 @@ bool isDriverHighwayLikeStep(DriverNavStep step) {
   if ((step.destinationText ?? '').trim().isNotEmpty) return true;
   if (_looksLikeDriverHighwayRef(step.roadRef)) return true;
   if (_looksLikeDriverHighwayRef(step.street)) return true;
-  if (_bannerSecondarySuggestsHighway(step.banner?.secondaryText)) return true;
+  // NAV-SIGNAL-P1B: do not read legacy step.banner for live highway-like
+  // classification (banner text may describe a different maneuver).
   return false;
 }
 
@@ -344,9 +326,7 @@ String driverLaneSemanticLabel(
   );
   final label = driverLaneIndicationLabel(indication ?? '');
   if (indication == null || indication.trim().isEmpty) {
-    return driverLaneIsRecommended(lane)
-        ? 'Recommended lane'
-        : 'Lane';
+    return driverLaneIsRecommended(lane) ? 'Recommended lane' : 'Lane';
   }
   return driverLaneIsRecommended(lane)
       ? 'Recommended lane: $label'

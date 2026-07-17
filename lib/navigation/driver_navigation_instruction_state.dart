@@ -6,6 +6,7 @@ import 'package:geolocator/geolocator.dart' as geo;
 import 'driver_navigation_formatters.dart';
 import 'driver_navigation_geometry.dart';
 import 'driver_navigation_models.dart';
+import 'nav_engine/nav_banner_resolver.dart';
 import 'nav_engine/nav_instruction_policy.dart';
 
 const double kDriverNavStepPassStraightLineMeters = 32.0;
@@ -300,29 +301,32 @@ bool driverNavStepIsTurnLike(DriverNavStep step) {
   return false;
 }
 
-/// Best-effort maneuver target label from banner secondary, instruction, or
-/// destination. Does not invent names beyond parsed step data.
+/// Best-effort maneuver target from non-banner step metadata only.
+///
+/// NAV-SIGNAL-P1B: live ownership must not read `DriverNavStep.banner` (legacy
+/// first-stage field may describe a different maneuver than the step index).
 String? driverStepManeuverTargetLabel(DriverNavStep step) {
-  final bannerSecondary = (step.banner?.secondaryText ?? '').trim();
-  if (bannerSecondary.isNotEmpty &&
-      !driverTextLooksLikeManeuverAction(bannerSecondary)) {
-    return bannerSecondary;
-  }
   final fromInstruction = _parseManeuverTargetFromInstruction(step.instruction);
   if (fromInstruction != null && fromInstruction.isNotEmpty) {
     return _augmentTargetLabelWithRef(fromInstruction, step);
   }
+  final street = step.street.trim();
+  if (street.isNotEmpty && !driverTextLooksLikeManeuverAction(street)) {
+    return _augmentTargetLabelWithRef(street, step);
+  }
+  final ref = (step.roadRef ?? '').trim();
+  if (ref.isNotEmpty) return ref;
   final destination = (step.destinationText ?? '').trim();
   if (destination.isNotEmpty) return destination;
   return null;
 }
 
 String driverNavManeuverTargetSource(DriverNavStep step) {
-  final bannerSecondary = (step.banner?.secondaryText ?? '').trim();
-  if (bannerSecondary.isNotEmpty) return 'banner';
   if (_parseManeuverTargetFromInstruction(step.instruction) != null) {
     return 'instruction';
   }
+  if (step.street.trim().isNotEmpty) return 'name';
+  if ((step.roadRef ?? '').trim().isNotEmpty) return 'ref';
   if ((step.destinationText ?? '').trim().isNotEmpty) return 'destination';
   return 'none';
 }
@@ -335,9 +339,12 @@ bool _textLooksLikeStepTargetRoad(String text, DriverNavStep step) {
     return true;
   }
   if (_instructionMentionsTarget(step.instruction, t)) return true;
-  final bannerSecondary = (step.banner?.secondaryText ?? '').trim();
-  if (bannerSecondary.isNotEmpty &&
-      _labelsReferToSameRoad(t, bannerSecondary)) {
+  final street = step.street.trim();
+  if (street.isNotEmpty && _labelsReferToSameRoad(t, street)) {
+    return true;
+  }
+  final ref = (step.roadRef ?? '').trim();
+  if (ref.isNotEmpty && _labelsReferToSameRoad(t, ref)) {
     return true;
   }
   final destination = (step.destinationText ?? '').trim();
@@ -495,7 +502,18 @@ normalizeDriverInstructionDisplayLines({
   );
 }
 
-NavInstructionSnapshot buildDriverNavInstructionSnapshot({
+/// NAV-SIGNAL-P1B: resolve banner ownership + snapshot together.
+///
+/// [displayDistanceToUpcomingManeuverM] may use approximate GPS distance for
+/// UI. [bannerRemainingAlongRouteM] is trusted along-route remaining to the
+/// ownership distance target only (null when progress is unavailable).
+({
+  NavInstructionSnapshot snapshot,
+  DriverActiveBanner? activeBanner,
+  double? bannerRemainingAlongRouteM,
+  double displayDistanceToUpcomingManeuverM,
+})
+buildDriverNavInstructionPresentation({
   required List<DriverNavStep> routeSteps,
   required int nextStepIndex,
   required double posLat,
@@ -504,12 +522,20 @@ NavInstructionSnapshot buildDriverNavInstructionSnapshot({
   required List<DriverLonLat> routeCoords,
   required bool useMatchedVisual,
   required DriverNavTranslate tr,
+  int routeVersion = 0,
+  DriverActiveBanner? previousActiveBanner,
   bool navStepsLoading = false,
 }) {
   if (routeSteps.isEmpty) {
-    return navStepsLoading
+    final empty = navStepsLoading
         ? NavInstructionSnapshot.loading
         : NavInstructionSnapshot.none;
+    return (
+      snapshot: empty,
+      activeBanner: null,
+      bannerRemainingAlongRouteM: null,
+      displayDistanceToUpcomingManeuverM: 0.0,
+    );
   }
 
   final update = computeDriverNextNavInstruction(
@@ -523,115 +549,170 @@ NavInstructionSnapshot buildDriverNavInstructionSnapshot({
   );
 
   if (update.shouldClear) {
-    return navStepsLoading
+    final empty = navStepsLoading
         ? NavInstructionSnapshot.loading
         : NavInstructionSnapshot.none;
-  }
-
-  final step = routeSteps[update.nextStepIndex];
-  final distanceM = update.distanceMeters ?? 0.0;
-  final banner = step.banner;
-  final bannerPrimary = (banner?.primaryText ?? '').trim();
-
-  late final NavInstructionSource source;
-  late final String rawPrimary;
-  var rawSecondary = '';
-
-  if (bannerPrimary.isNotEmpty) {
-    source = NavInstructionSource.banner;
-    rawPrimary = bannerPrimary;
-    rawSecondary = (banner?.secondaryText ?? '').trim();
-  } else {
-    final instruction = step.instruction.trim();
-    final shortAction = driverShortNavAction(
-      instruction,
-      step.type,
-      step.modifier,
-      tr: tr,
+    return (
+      snapshot: empty,
+      activeBanner: null,
+      bannerRemainingAlongRouteM: null,
+      displayDistanceToUpcomingManeuverM: 0.0,
     );
-    if (instruction.isNotEmpty) {
-      source = NavInstructionSource.step;
-      rawPrimary = instruction;
-      rawSecondary = step.street.trim();
-    } else if (shortAction.trim().isNotEmpty) {
-      source = NavInstructionSource.fallback;
-      rawPrimary = shortAction.trim();
-      rawSecondary = step.street.trim();
-    } else {
-      source = NavInstructionSource.fallback;
-      rawPrimary = '';
-      rawSecondary = step.street.trim();
-    }
   }
 
+  final displayDistanceM = update.distanceMeters ?? 0.0;
+  final ownership = resolveDriverBannerOwnership(
+    upcomingManeuverStepIndex: update.nextStepIndex,
+    routeStepCount: routeSteps.length,
+  );
+  final posPoint = DriverLonLat(posLon, posLat);
+  final snap = lastRouteSnap ?? driverSnapToRouteOn(routeCoords, posPoint);
+  final trustedProgressM = (useMatchedVisual && snap != null)
+      ? snap.distanceAlongRouteM
+      : null;
+  final bannerRemainingAlongRouteM = computeBannerRemainingAlongRouteM(
+    routeSteps: routeSteps,
+    ownership: ownership,
+    trustedRouteProgressM: trustedProgressM,
+  );
+
+  final active = resolveDriverActiveBanner(
+    DriverBannerResolveInput(
+      routeSteps: routeSteps,
+      upcomingManeuverStepIndex: update.nextStepIndex,
+      bannerRemainingAlongRouteM: bannerRemainingAlongRouteM,
+      routeVersion: routeVersion,
+      previous: previousActiveBanner,
+      tr: tr,
+    ),
+  );
+
+  final maneuverStep = routeSteps[active.maneuverStepIndex];
+  final rawPrimary = active.primaryText.trim();
+  final rawSecondary = active.secondaryText.trim();
   final normalized = normalizeDriverInstructionDisplayLines(
     rawPrimary: rawPrimary,
     rawSecondary: rawSecondary,
-    step: step,
+    step: maneuverStep,
   );
   var primaryText = normalized.primary;
   var secondaryText = normalized.secondary;
-  final subText = _trimmedOrNull(banner?.subText);
+  final subText = _trimmedOrNull(active.subText);
 
   if (primaryText.isEmpty) {
-    final fallbackInstruction = step.instruction.trim();
-    final fallbackAction = driverShortNavAction(
-      fallbackInstruction,
-      step.type,
-      step.modifier,
-      tr: tr,
-    );
-    primaryText = fallbackAction.isNotEmpty
-        ? fallbackAction
-        : _snapshotSecondaryFromStep(step);
+    primaryText = _primaryFromManeuverStep(maneuverStep, tr);
     secondaryText = '';
   } else if (secondaryText.isEmpty) {
-    final maneuverTarget = driverStepManeuverTargetLabel(step);
+    final maneuverTarget = driverStepManeuverTargetLabel(maneuverStep);
     if (maneuverTarget != null &&
         _labelsReferToSameRoad(primaryText, maneuverTarget)) {
-      final rawBannerPrimary = (banner?.primaryText ?? '').trim();
-      if (rawBannerPrimary.isNotEmpty &&
-          !_labelsReferToSameRoad(rawBannerPrimary, primaryText)) {
-        secondaryText = _dedupeSecondaryLine(primaryText, rawBannerPrimary);
+      if (rawPrimary.isNotEmpty &&
+          !_labelsReferToSameRoad(rawPrimary, primaryText)) {
+        secondaryText = _dedupeSecondaryLine(primaryText, rawPrimary);
       }
     }
   }
 
-  return NavInstructionSnapshot(
-    distanceToManeuverMeters: distanceM,
+  final source = switch (active.source) {
+    NavBannerResolveSource.mapboxBanner => NavInstructionSource.banner,
+    NavBannerResolveSource.maneuverInstruction => NavInstructionSource.step,
+    NavBannerResolveSource.generic => NavInstructionSource.fallback,
+  };
+
+  final snapshot = NavInstructionSnapshot(
+    distanceToManeuverMeters: displayDistanceM,
     primaryText: primaryText,
     secondaryText: secondaryText,
     subText: subText,
-    maneuverType: step.type,
-    maneuverModifier: step.modifier,
-    roadName: step.street,
-    exitNumber: _trimmedOrNull(step.exitNumber),
-    destinationText: _trimmedOrNull(step.destinationText),
-    roadRef: _trimmedOrNull(step.roadRef),
-    isHighwayLike: isDriverHighwayLikeStep(step),
-    lanes: step.lanes,
+    maneuverType: active.maneuverType,
+    maneuverModifier: active.maneuverModifier,
+    roadName: active.roadName,
+    exitNumber: active.exitNumber,
+    destinationText: active.destinationText,
+    roadRef: active.roadRef,
+    isHighwayLike: active.isHighwayLike,
+    lanes: active.lanes,
     source: source,
+  );
+  return (
+    snapshot: snapshot,
+    activeBanner: active,
+    bannerRemainingAlongRouteM: bannerRemainingAlongRouteM,
+    displayDistanceToUpcomingManeuverM: displayDistanceM,
   );
 }
 
-/// Re-apply banner/step display normalization at render time.
+String _primaryFromManeuverStep(DriverNavStep step, DriverNavTranslate tr) {
+  final instruction = step.instruction.trim();
+  if (instruction.isNotEmpty) return instruction;
+  final fallbackAction = driverShortNavAction(
+    instruction,
+    step.type,
+    step.modifier,
+    tr: tr,
+  ).trim();
+  if (fallbackAction.isNotEmpty) return fallbackAction;
+  final fromStep = _snapshotSecondaryFromStep(step);
+  if (fromStep.isNotEmpty) return fromStep;
+  return tr(
+    nl: 'Volg de route',
+    en: 'Follow the route',
+    fr: 'Suivez l’itinéraire',
+    es: 'Sigue la ruta',
+  );
+}
+
+NavInstructionSnapshot buildDriverNavInstructionSnapshot({
+  required List<DriverNavStep> routeSteps,
+  required int nextStepIndex,
+  required double posLat,
+  required double posLon,
+  required DriverRouteSnap? lastRouteSnap,
+  required List<DriverLonLat> routeCoords,
+  required bool useMatchedVisual,
+  required DriverNavTranslate tr,
+  int routeVersion = 0,
+  DriverActiveBanner? previousActiveBanner,
+  bool navStepsLoading = false,
+}) {
+  return buildDriverNavInstructionPresentation(
+    routeSteps: routeSteps,
+    nextStepIndex: nextStepIndex,
+    posLat: posLat,
+    posLon: posLon,
+    lastRouteSnap: lastRouteSnap,
+    routeCoords: routeCoords,
+    useMatchedVisual: useMatchedVisual,
+    tr: tr,
+    routeVersion: routeVersion,
+    previousActiveBanner: previousActiveBanner,
+    navStepsLoading: navStepsLoading,
+  ).snapshot;
+}
+
+/// Re-apply display normalization at render time.
+///
+/// NAV-SIGNAL-P1B: once a snapshot carries resolved primary/secondary/source/
+/// maneuver identity, live display uses those values only. Never re-reads
+/// legacy `DriverNavStep.banner`.
 NavInstructionSnapshot applyDriverNavInstructionDisplayLines({
   required NavInstructionSnapshot snapshot,
   required DriverNavStep step,
 }) {
-  final banner = step.banner;
-  final bannerPrimary = (banner?.primaryText ?? '').trim();
+  final snapshotPrimary = snapshot.primaryText.trim();
+  final snapshotSecondary = snapshot.secondaryText.trim();
+
   late final String rawPrimary;
   late final String rawSecondary;
-  if (bannerPrimary.isNotEmpty) {
-    rawPrimary = bannerPrimary;
-    rawSecondary = (banner?.secondaryText ?? '').trim();
+  if (snapshotPrimary.isNotEmpty || snapshotSecondary.isNotEmpty) {
+    rawPrimary = snapshotPrimary;
+    rawSecondary = snapshotSecondary;
   } else if (step.instruction.trim().isNotEmpty) {
+    // Unresolved / empty snapshot only: non-banner step metadata.
     rawPrimary = step.instruction.trim();
     rawSecondary = step.street.trim();
   } else {
-    rawPrimary = snapshot.primaryText.trim();
-    rawSecondary = snapshot.secondaryText.trim();
+    return snapshot;
   }
 
   final normalized = normalizeDriverInstructionDisplayLines(
@@ -648,15 +729,13 @@ NavInstructionSnapshot applyDriverNavInstructionDisplayLines({
     final maneuverTarget = driverStepManeuverTargetLabel(step);
     if (maneuverTarget != null &&
         _labelsReferToSameRoad(primaryText, maneuverTarget)) {
-      final rawBannerPrimary = bannerPrimary;
-      if (rawBannerPrimary.isNotEmpty &&
-          !_labelsReferToSameRoad(rawBannerPrimary, primaryText)) {
-        secondaryText = _dedupeSecondaryLine(primaryText, rawBannerPrimary);
+      if (snapshotPrimary.isNotEmpty &&
+          !_labelsReferToSameRoad(snapshotPrimary, primaryText)) {
+        secondaryText = _dedupeSecondaryLine(primaryText, snapshotPrimary);
       }
     }
   }
-  if (primaryText == snapshot.primaryText.trim() &&
-      secondaryText == snapshot.secondaryText.trim()) {
+  if (primaryText == snapshotPrimary && secondaryText == snapshotSecondary) {
     return snapshot;
   }
   return NavInstructionSnapshot(
@@ -664,6 +743,7 @@ NavInstructionSnapshot applyDriverNavInstructionDisplayLines({
     primaryText: primaryText,
     secondaryText: secondaryText,
     subText: snapshot.subText,
+    // Keep maneuver identity from the snapshot (ownership-resolved).
     maneuverType: snapshot.maneuverType,
     maneuverModifier: snapshot.maneuverModifier,
     roadName: snapshot.roadName,

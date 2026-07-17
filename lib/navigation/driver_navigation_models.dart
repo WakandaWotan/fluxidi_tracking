@@ -5,6 +5,7 @@ class DriverLonLat {
   const DriverLonLat(this.lon, this.lat);
 }
 
+/// Legacy flattened banner texts (first usable stage). Kept for compatibility.
 class DriverNavBannerInstruction {
   final String? primaryText;
   final String? secondaryText;
@@ -20,6 +21,85 @@ class DriverNavBannerInstruction {
       (primaryText ?? '').isNotEmpty ||
       (secondaryText ?? '').isNotEmpty ||
       (subText ?? '').isNotEmpty;
+}
+
+/// One Mapbox banner component (text / icon / lane), order preserved.
+class DriverNavBannerComponent {
+  final String? type;
+  final String text;
+  final String? imageBaseURL;
+  final String? abbr;
+  final int? abbrPriority;
+  final List<String> directions;
+  final bool? active;
+  final String? activeDirection;
+
+  const DriverNavBannerComponent({
+    this.type,
+    this.text = '',
+    this.imageBaseURL,
+    this.abbr,
+    this.abbrPriority,
+    this.directions = const <String>[],
+    this.active,
+    this.activeDirection,
+  });
+}
+
+/// Mapbox primary / secondary / sub view with optional component array.
+class DriverNavBannerView {
+  final String? text;
+  final List<DriverNavBannerComponent> components;
+
+  const DriverNavBannerView({
+    this.text,
+    this.components = const <DriverNavBannerComponent>[],
+  });
+
+  /// Displayable text: explicit text, else non-empty component texts joined.
+  String get displayText {
+    final direct = (text ?? '').trim();
+    if (direct.isNotEmpty) return direct;
+    final parts = <String>[];
+    for (final component in components) {
+      final part = component.text.trim();
+      if (part.isNotEmpty) parts.add(part);
+    }
+    return parts.join(' ').trim();
+  }
+
+  bool get hasDisplayText => displayText.isNotEmpty;
+}
+
+/// One Mapbox `bannerInstructions[]` stage (authoritative rich representation).
+class DriverNavBannerStage {
+  /// Original index in the step's `bannerInstructions` array.
+  final int sourceIndex;
+
+  /// Mapbox `distanceAlongGeometry` (meters). Compared to remaining step
+  /// distance for activation (Navigation SDK convention).
+  final double distanceAlongGeometry;
+
+  final DriverNavBannerView? primary;
+  final DriverNavBannerView? secondary;
+  final DriverNavBannerView? sub;
+
+  const DriverNavBannerStage({
+    required this.sourceIndex,
+    required this.distanceAlongGeometry,
+    this.primary,
+    this.secondary,
+    this.sub,
+  });
+
+  bool get hasUsablePrimary => primary?.hasDisplayText ?? false;
+
+  DriverNavBannerInstruction get asLegacyInstruction =>
+      DriverNavBannerInstruction(
+        primaryText: primary?.displayText,
+        secondaryText: secondary?.displayText,
+        subText: sub?.displayText,
+      );
 }
 
 class DriverNavLaneGuidance {
@@ -48,7 +128,13 @@ class DriverNavStep {
   final double distanceAlongRouteM;
   final double? distanceM;
   final int? durationSec;
+
+  /// Legacy: first usable banner stage texts (compatibility).
   final DriverNavBannerInstruction? banner;
+
+  /// Authoritative ordered Mapbox banner stages for this traversal step.
+  final List<DriverNavBannerStage> bannerInstructions;
+
   final String? exitNumber;
   final String? destinationText;
   final String? roadRef;
@@ -66,6 +152,7 @@ class DriverNavStep {
     this.distanceM,
     this.durationSec,
     this.banner,
+    this.bannerInstructions = const <DriverNavBannerStage>[],
     this.exitNumber,
     this.destinationText,
     this.roadRef,
@@ -90,13 +177,7 @@ class DriverRouteSnap {
   });
 }
 
-enum NavInstructionSource {
-  banner,
-  step,
-  fallback,
-  loading,
-  none,
-}
+enum NavInstructionSource { banner, step, fallback, loading, none }
 
 class NavInstructionSnapshot {
   final double distanceToManeuverMeters;

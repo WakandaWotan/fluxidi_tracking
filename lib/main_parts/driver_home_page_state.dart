@@ -303,6 +303,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   String? _nextNavType;
   String? _nextNavModifier;
   NavInstructionSnapshot? _navInstructionSnapshot;
+  // NAV-SIGNAL-P1: monotonic Mapbox banner-stage ownership for the accepted route.
+  DriverActiveBanner? _activeBanner;
   bool _navStepsLoading = false;
   double _uiArrowBearing = 0.0;
   _RouteSnap? _lastRouteSnap;
@@ -429,6 +431,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _nextNavType = null;
     _nextNavModifier = null;
     _navInstructionSnapshot = null;
+    _activeBanner = null;
     _lastRouteSnap = null;
     _lastMovementBearing = null;
     _useMatchedVisual = false;
@@ -919,21 +922,17 @@ class _DriverHomePageState extends State<DriverHomePage>
     final navSteps = package.navSteps;
     _routeSteps = navSteps;
     _nextStepIndex = 0;
-    if (navSteps.isNotEmpty) {
-      _nextNavInstruction = navSteps.first.instruction;
-      _nextNavStreet = navSteps.first.street;
-      _nextNavDistanceM = null;
-      _nextNavType = navSteps.first.type;
-      _nextNavModifier = navSteps.first.modifier;
-      _navInstructionSnapshot = null;
-    } else {
-      _nextNavInstruction = null;
-      _nextNavStreet = null;
-      _nextNavDistanceM = null;
-      _nextNavType = null;
-      _nextNavModifier = null;
-      _navInstructionSnapshot = NavInstructionSnapshot.none;
-    }
+    // NAV-SIGNAL-P1B: do not seed depart type + step-0 banner text that may
+    // describe maneuver 1. Wait for the first coherent presentation resolve.
+    _nextNavInstruction = null;
+    _nextNavStreet = null;
+    _nextNavDistanceM = null;
+    _nextNavType = null;
+    _nextNavModifier = null;
+    _navInstructionSnapshot = navSteps.isEmpty
+        ? NavInstructionSnapshot.none
+        : null;
+    _activeBanner = null;
 
     _logNavR12Banner(state: 're_resolved', reason: 'route_steps_applied');
     debugPrint(
@@ -12013,7 +12012,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         reason: nextInstruction.progressSource,
       );
     }
-    final snapshot = buildDriverNavInstructionSnapshot(
+    // NAV-SIGNAL-P1: distance-based banner ownership for accepted route version.
+    final presentation = buildDriverNavInstructionPresentation(
       routeSteps: _routeSteps,
       nextStepIndex: _nextStepIndex,
       posLat: pos.latitude,
@@ -12022,11 +12022,16 @@ class _DriverHomePageState extends State<DriverHomePage>
       routeCoords: _routeCoords,
       useMatchedVisual: _useMatchedVisual,
       tr: _tr,
+      routeVersion: _routeStepsVersion,
+      previousActiveBanner: _activeBanner,
       navStepsLoading: _navStepsLoading,
     );
+    final snapshot = presentation.snapshot;
     _navInstructionSnapshot = snapshot;
+    _activeBanner = presentation.activeBanner;
 
     if (nextInstruction.shouldClear) {
+      _activeBanner = null;
       if (_nextNavInstruction != null ||
           _nextNavStreet != null ||
           _nextNavDistanceM != null ||
@@ -12041,6 +12046,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             _nextNavType = null;
             _nextNavModifier = null;
             _navInstructionSnapshot = snapshot;
+            _activeBanner = null;
           });
         } else {
           _nextNavInstruction = null;
@@ -12054,6 +12060,18 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     final distanceM = nextInstruction.distanceMeters!;
+    final activeBanner = presentation.activeBanner;
+    if (activeBanner != null) {
+      _logNavBounded(
+        'NAV_BANNER_RESOLVE',
+        formatNavBannerResolveDiag(
+          banner: activeBanner,
+          upcomingIndex: _nextStepIndex,
+          remainingAlongRouteM: presentation.bannerRemainingAlongRouteM,
+        ).replaceFirst('[NAV_BANNER_RESOLVE] ', ''),
+        intervalMs: 1500,
+      );
+    }
     _logNavBounded(
       'NAV_STEP',
       'progressSource=${nextInstruction.progressSource} nextDistanceM=${distanceM.toStringAsFixed(1)}',
@@ -12061,8 +12079,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     unawaited(
       NavDiagnosticsRecorder.instance.recordManeuverProgress(
         distanceToNextM: distanceM,
-        instructionType: nextInstruction.type,
-        modifier: nextInstruction.modifier,
+        instructionType: snapshot.maneuverType,
+        modifier: snapshot.maneuverModifier,
       ),
     );
     if (snapshot.hasInstruction) {
@@ -12070,11 +12088,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         'NAV_E2',
         'source=${snapshot.source.name} highway=${snapshot.isHighwayLike} lanes=${snapshot.lanes.length}',
       );
-      if (_nextStepIndex >= 0 && _nextStepIndex < _routeSteps.length) {
-        final step = _routeSteps[_nextStepIndex];
-        final banner = step.banner;
-        final rawPrimary = (banner?.primaryText ?? '').trim();
-        final rawSecondaryLen = (banner?.secondaryText ?? '').trim().length;
+      final maneuverIndex =
+          activeBanner?.maneuverStepIndex ?? _nextStepIndex;
+      if (maneuverIndex >= 0 && maneuverIndex < _routeSteps.length) {
+        final step = _routeSteps[maneuverIndex];
+        final rawPrimary = snapshot.primaryText.trim();
+        final rawSecondaryLen = snapshot.secondaryText.trim().length;
         final displaySnap = applyDriverNavInstructionDisplayLines(
           snapshot: snapshot,
           step: step,
@@ -12094,21 +12113,35 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
     }
 
+    // Prefer ownership-resolved maneuver identity for legacy fields / icons.
+    final resolvedType = snapshot.maneuverType.isNotEmpty
+        ? snapshot.maneuverType
+        : nextInstruction.type;
+    final resolvedModifier = snapshot.maneuverModifier.isNotEmpty
+        ? snapshot.maneuverModifier
+        : nextInstruction.modifier;
+    final resolvedInstruction = snapshot.primaryText.isNotEmpty
+        ? snapshot.primaryText
+        : nextInstruction.instruction;
+    final resolvedStreet = snapshot.secondaryText.isNotEmpty
+        ? snapshot.secondaryText
+        : nextInstruction.street;
+
     if (!mounted) {
-      _nextNavInstruction = nextInstruction.instruction;
-      _nextNavStreet = nextInstruction.street;
+      _nextNavInstruction = resolvedInstruction;
+      _nextNavStreet = resolvedStreet;
       _nextNavDistanceM = distanceM;
-      _nextNavType = nextInstruction.type;
-      _nextNavModifier = nextInstruction.modifier;
+      _nextNavType = resolvedType;
+      _nextNavModifier = resolvedModifier;
       return;
     }
 
     setState(() {
-      _nextNavInstruction = nextInstruction.instruction;
-      _nextNavStreet = nextInstruction.street;
+      _nextNavInstruction = resolvedInstruction;
+      _nextNavStreet = resolvedStreet;
       _nextNavDistanceM = distanceM;
-      _nextNavType = nextInstruction.type;
-      _nextNavModifier = nextInstruction.modifier;
+      _nextNavType = resolvedType;
+      _nextNavModifier = resolvedModifier;
     });
   }
 
@@ -19362,10 +19395,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     NavInstructionSnapshot result;
     final snap = _navInstructionSnapshot;
     if (snap != null && snap.hasInstruction) {
-      if (_nextStepIndex >= 0 && _nextStepIndex < _routeSteps.length) {
+      // NAV-SIGNAL-P1: normalize against the maneuver step the banner describes.
+      final maneuverIndex =
+          _activeBanner?.maneuverStepIndex ?? _nextStepIndex;
+      if (maneuverIndex >= 0 && maneuverIndex < _routeSteps.length) {
         result = applyDriverNavInstructionDisplayLines(
           snapshot: snap,
-          step: _routeSteps[_nextStepIndex],
+          step: _routeSteps[maneuverIndex],
         );
       } else {
         result = snap;

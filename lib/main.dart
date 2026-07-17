@@ -123,6 +123,7 @@ import 'navigation/nav_engine/nav_complexity_intelligence.dart';
 import 'navigation/nav_engine/nav_complexity_advisory_rules.dart';
 import 'navigation/nav_engine/nav_motion_prediction.dart';
 import 'navigation/nav_engine/nav_instruction_policy.dart';
+import 'navigation/nav_engine/nav_banner_resolver.dart';
 import 'navigation/nav_engine/nav_validation_engine.dart';
 import 'navigation/nav_diagnostics_recorder.dart';
 
