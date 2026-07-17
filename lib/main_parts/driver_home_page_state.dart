@@ -305,6 +305,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   NavInstructionSnapshot? _navInstructionSnapshot;
   // NAV-SIGNAL-P1: monotonic Mapbox banner-stage ownership for the accepted route.
   DriverActiveBanner? _activeBanner;
+  // NAV-SIGNAL-P2B: resolved lane guidance identity (production UI still gated off).
+  DriverResolvedLaneGuidance? _activeLaneGuidance;
+  String? _lastLaneResolveDiag;
   bool _navStepsLoading = false;
   double _uiArrowBearing = 0.0;
   _RouteSnap? _lastRouteSnap;
@@ -432,6 +435,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     _nextNavModifier = null;
     _navInstructionSnapshot = null;
     _activeBanner = null;
+    _activeLaneGuidance = null;
+    _lastLaneResolveDiag = null;
     _lastRouteSnap = null;
     _lastMovementBearing = null;
     _useMatchedVisual = false;
@@ -933,6 +938,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         ? NavInstructionSnapshot.none
         : null;
     _activeBanner = null;
+    _activeLaneGuidance = null;
+    _lastLaneResolveDiag = null;
 
     _logNavR12Banner(state: 're_resolved', reason: 'route_steps_applied');
     debugPrint(
@@ -12024,14 +12031,22 @@ class _DriverHomePageState extends State<DriverHomePage>
       tr: _tr,
       routeVersion: _routeStepsVersion,
       previousActiveBanner: _activeBanner,
+      previousLaneGuidance: _activeLaneGuidance,
       navStepsLoading: _navStepsLoading,
     );
     final snapshot = presentation.snapshot;
     _navInstructionSnapshot = snapshot;
     _activeBanner = presentation.activeBanner;
+    _activeLaneGuidance = presentation.laneGuidance;
+    final laneDiag = formatNavLaneResolveDiag(presentation.laneGuidance);
+    if (_lastLaneResolveDiag != laneDiag) {
+      _lastLaneResolveDiag = laneDiag;
+      debugPrint(laneDiag);
+    }
 
     if (nextInstruction.shouldClear) {
       _activeBanner = null;
+      _activeLaneGuidance = presentation.laneGuidance;
       if (_nextNavInstruction != null ||
           _nextNavStreet != null ||
           _nextNavDistanceM != null ||
@@ -12047,6 +12062,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             _nextNavModifier = null;
             _navInstructionSnapshot = snapshot;
             _activeBanner = null;
+            _activeLaneGuidance = presentation.laneGuidance;
           });
         } else {
           _nextNavInstruction = null;

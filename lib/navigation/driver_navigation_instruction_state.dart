@@ -5,9 +5,11 @@ import 'package:geolocator/geolocator.dart' as geo;
 
 import 'driver_navigation_formatters.dart';
 import 'driver_navigation_geometry.dart';
+import 'driver_navigation_map_config.dart';
 import 'driver_navigation_models.dart';
 import 'nav_engine/nav_banner_resolver.dart';
 import 'nav_engine/nav_instruction_policy.dart';
+import 'nav_engine/nav_lane_resolver.dart';
 
 const double kDriverNavStepPassStraightLineMeters = 32.0;
 const double kDriverNavStepPassRouteBufferMeters = 18.0;
@@ -510,6 +512,7 @@ normalizeDriverInstructionDisplayLines({
 ({
   NavInstructionSnapshot snapshot,
   DriverActiveBanner? activeBanner,
+  DriverResolvedLaneGuidance laneGuidance,
   double? bannerRemainingAlongRouteM,
   double displayDistanceToUpcomingManeuverM,
 })
@@ -524,7 +527,9 @@ buildDriverNavInstructionPresentation({
   required DriverNavTranslate tr,
   int routeVersion = 0,
   DriverActiveBanner? previousActiveBanner,
+  DriverResolvedLaneGuidance? previousLaneGuidance,
   bool navStepsLoading = false,
+  bool? laneGuidanceEnabledForEvaluation,
 }) {
   if (routeSteps.isEmpty) {
     final empty = navStepsLoading
@@ -533,6 +538,7 @@ buildDriverNavInstructionPresentation({
     return (
       snapshot: empty,
       activeBanner: null,
+      laneGuidance: DriverResolvedLaneGuidance.hiddenNone,
       bannerRemainingAlongRouteM: null,
       displayDistanceToUpcomingManeuverM: 0.0,
     );
@@ -555,6 +561,17 @@ buildDriverNavInstructionPresentation({
     return (
       snapshot: empty,
       activeBanner: null,
+      laneGuidance: resolveDriverLaneGuidance(
+        DriverLaneResolveInput(
+          routeVersion: routeVersion,
+          routeSteps: routeSteps,
+          activeBanner: null,
+          featureEnabledForEvaluation:
+              laneGuidanceEnabledForEvaluation ?? kDriverNavLaneGuidanceEnabled,
+          previous: previousLaneGuidance,
+          clearBanners: true,
+        ),
+      ),
       bannerRemainingAlongRouteM: null,
       displayDistanceToUpcomingManeuverM: 0.0,
     );
@@ -584,6 +601,17 @@ buildDriverNavInstructionPresentation({
       routeVersion: routeVersion,
       previous: previousActiveBanner,
       tr: tr,
+    ),
+  );
+
+  final laneGuidance = resolveDriverLaneGuidance(
+    DriverLaneResolveInput(
+      routeVersion: routeVersion,
+      routeSteps: routeSteps,
+      activeBanner: active,
+      featureEnabledForEvaluation:
+          laneGuidanceEnabledForEvaluation ?? kDriverNavLaneGuidanceEnabled,
+      previous: previousLaneGuidance,
     ),
   );
 
@@ -631,12 +659,14 @@ buildDriverNavInstructionPresentation({
     destinationText: active.destinationText,
     roadRef: active.roadRef,
     isHighwayLike: active.isHighwayLike,
-    lanes: active.lanes,
+    // Snapshot lanes come only from resolved guidance — never flat step.lanes.
+    lanes: mapResolvedLanesForDisplay(laneGuidance),
     source: source,
   );
   return (
     snapshot: snapshot,
     activeBanner: active,
+    laneGuidance: laneGuidance,
     bannerRemainingAlongRouteM: bannerRemainingAlongRouteM,
     displayDistanceToUpcomingManeuverM: displayDistanceM,
   );
@@ -799,6 +829,10 @@ bool driverNavInstructionTextLooksLikeUturn(String text) {
 }
 
 /// NAV-R8 instruction policy filter — deterministic maneuver display safety.
+///
+/// NAV-SIGNAL-P2B: never rebuilds lane ownership. Preserves already-resolved
+/// snapshot lanes only when the instruction is allowed and lane guidance is
+/// enabled for evaluation.
 NavInstructionSnapshot applyDriverNavInstructionPolicyFilter({
   required NavInstructionSnapshot snapshot,
   required DriverNavInstructionPolicy policy,
@@ -816,12 +850,14 @@ NavInstructionSnapshot applyDriverNavInstructionPolicyFilter({
   double? instructionConfidenceScore,
   double? speedKmh,
   required DriverNavTranslate tr,
+  bool? laneGuidanceEnabled,
 }) {
   if (!snapshot.hasInstruction) return snapshot;
 
   final primary = snapshot.primaryText.trim();
   final secondary = snapshot.secondaryText.trim();
   final rawInstruction = primary.isNotEmpty ? primary : secondary;
+  final lanesEnabled = laneGuidanceEnabled ?? kDriverNavLaneGuidanceEnabled;
 
   final policyOutput = policy.update(
     NavInstructionPolicyInput(
@@ -861,6 +897,14 @@ NavInstructionSnapshot applyDriverNavInstructionPolicyFilter({
     );
   }
 
+  // Preserve resolver-owned lanes only; never rebuild ownership here.
+  final preservedLanes =
+      policyOutput.showOriginalInstruction &&
+          lanesEnabled &&
+          snapshot.lanes.isNotEmpty
+      ? snapshot.lanes
+      : const <DriverNavLaneGuidance>[];
+
   if (policyOutput.showOriginalInstruction) {
     return NavInstructionSnapshot(
       distanceToManeuverMeters: snapshot.distanceToManeuverMeters,
@@ -874,7 +918,7 @@ NavInstructionSnapshot applyDriverNavInstructionPolicyFilter({
       destinationText: snapshot.destinationText,
       roadRef: snapshot.roadRef,
       isHighwayLike: snapshot.isHighwayLike,
-      lanes: const <DriverNavLaneGuidance>[],
+      lanes: preservedLanes,
       source: snapshot.source,
     );
   }

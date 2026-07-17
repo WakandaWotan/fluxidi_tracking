@@ -215,39 +215,96 @@ List<String> _parseLaneIndications(dynamic raw) {
   return out;
 }
 
-List<DriverNavLaneGuidance> _parseStepLaneGuidance(Map<String, dynamic> step) {
-  final intersectionsAny = step['intersections'];
-  if (intersectionsAny is! List<dynamic>)
-    return const <DriverNavLaneGuidance>[];
+List<double> _parseIntersectionBearings(dynamic raw) {
+  if (raw is! List<dynamic>) return const <double>[];
+  final out = <double>[];
+  for (final item in raw) {
+    if (item is num && item.isFinite) out.add(item.toDouble());
+  }
+  return out;
+}
 
-  final out = <DriverNavLaneGuidance>[];
-  for (final intersectionAny in intersectionsAny) {
+List<bool> _parseIntersectionEntry(dynamic raw) {
+  if (raw is! List<dynamic>) return const <bool>[];
+  final out = <bool>[];
+  for (final item in raw) {
+    if (item is bool) out.add(item);
+  }
+  return out;
+}
+
+List<String> _parseIntersectionClasses(dynamic raw) {
+  if (raw is! List<dynamic>) return const <String>[];
+  final out = <String>[];
+  for (final item in raw) {
+    final text = _trimmedString(item);
+    if (text != null) out.add(text);
+  }
+  return out;
+}
+
+DriverNavLaneGuidance? _parseIntersectionLane(dynamic raw) {
+  if (raw is! Map<String, dynamic>) return null;
+  final indications = _parseLaneIndications(raw['indications']);
+  final validRaw = raw['valid'];
+  final activeRaw = raw['active'];
+  final valid = validRaw is bool ? validRaw : null;
+  final active = activeRaw is bool ? activeRaw : null;
+  var validIndication = _trimmedString(
+    raw['valid_indication'] ?? raw['validIndication'],
+  );
+  // Keep valid_indication only when it appears in indications.
+  if (validIndication != null) {
+    final lower = validIndication.toLowerCase();
+    final matches = indications.any((i) => i.toLowerCase() == lower);
+    if (!matches) validIndication = null;
+  }
+  if (indications.isEmpty &&
+      valid == null &&
+      active == null &&
+      validIndication == null) {
+    return null;
+  }
+  return DriverNavLaneGuidance(
+    indications: indications,
+    valid: valid,
+    active: active,
+    validIndication: validIndication,
+  );
+}
+
+/// NAV-SIGNAL-P2B: preserve each intersection lane group independently.
+List<DriverNavIntersection> _parseStepIntersections(Map<String, dynamic> step) {
+  final intersectionsAny = step['intersections'];
+  if (intersectionsAny is! List<dynamic>) {
+    return const <DriverNavIntersection>[];
+  }
+
+  final out = <DriverNavIntersection>[];
+  for (var i = 0; i < intersectionsAny.length; i++) {
+    final intersectionAny = intersectionsAny[i];
     if (intersectionAny is! Map<String, dynamic>) continue;
     final lanesAny = intersectionAny['lanes'];
-    if (lanesAny is! List<dynamic>) continue;
-    for (final laneAny in lanesAny) {
-      if (laneAny is! Map<String, dynamic>) continue;
-      final indications = _parseLaneIndications(laneAny['indications']);
-      final valid = laneAny['valid'];
-      final active = laneAny['active'];
-      final validIndication = _trimmedString(
-        laneAny['valid_indication'] ?? laneAny['validIndication'],
-      );
-      if (indications.isEmpty &&
-          valid == null &&
-          active == null &&
-          validIndication == null) {
-        continue;
+    final lanes = <DriverNavLaneGuidance>[];
+    if (lanesAny is List<dynamic>) {
+      for (final laneAny in lanesAny) {
+        final lane = _parseIntersectionLane(laneAny);
+        if (lane != null) lanes.add(lane);
       }
-      out.add(
-        DriverNavLaneGuidance(
-          indications: indications,
-          valid: valid is bool ? valid : null,
-          active: active is bool ? active : null,
-          validIndication: validIndication,
-        ),
-      );
     }
+    final inRaw = intersectionAny['in'] ?? intersectionAny['inIndex'];
+    final outRaw = intersectionAny['out'] ?? intersectionAny['outIndex'];
+    out.add(
+      DriverNavIntersection(
+        sourceIndex: i,
+        lanes: lanes,
+        bearings: _parseIntersectionBearings(intersectionAny['bearings']),
+        entry: _parseIntersectionEntry(intersectionAny['entry']),
+        inIndex: inRaw is num ? inRaw.toInt() : null,
+        outIndex: outRaw is num ? outRaw.toInt() : null,
+        classes: _parseIntersectionClasses(intersectionAny['classes']),
+      ),
+    );
   }
   return out;
 }
@@ -305,9 +362,10 @@ DriverRouteParseResult parseDriverDirectionsResponse({
       final drivingSide = _trimmedString(
         step['driving_side'] ?? step['drivingSide'],
       );
-      final lanes = _parseStepLaneGuidance(step);
+      final intersections = _parseStepIntersections(step);
+      final hasLaneGroup = intersections.any((i) => i.hasLanes);
       if (bannerInstructions.isNotEmpty) stepsWithBannerCount += 1;
-      if (lanes.isNotEmpty) stepsWithLaneGuidanceCount += 1;
+      if (hasLaneGroup) stepsWithLaneGuidanceCount += 1;
       if (instruction.isEmpty && street.isEmpty) continue;
       navSteps.add(
         DriverNavStep(
@@ -325,11 +383,12 @@ DriverRouteParseResult parseDriverDirectionsResponse({
           durationSec: stepDuration,
           banner: banner,
           bannerInstructions: bannerInstructions,
+          intersections: intersections,
           exitNumber: exitNumber,
           destinationText: destinationText,
           roadRef: roadRef,
           drivingSide: drivingSide,
-          lanes: lanes,
+          // Legacy DriverNavStep.lanes stays at its empty default — never concat.
         ),
       );
     }

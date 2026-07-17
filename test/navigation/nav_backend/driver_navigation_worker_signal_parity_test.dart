@@ -292,7 +292,9 @@ void main() {
       final parsed = _parseShape(shape);
       expect(parsed.navSteps, isNotEmpty);
       expect(parsed.stepsWithLaneGuidanceCount, 1);
-      final lane = parsed.navSteps.first.lanes.first;
+      // NAV-SIGNAL-P2B: lanes live on intersection groups, not flat step.lanes.
+      expect(parsed.navSteps.first.lanes, isEmpty);
+      final lane = parsed.navSteps.first.intersections.first.lanes.first;
       expect(lane.valid, isTrue);
       expect(lane.active, isNull);
       expect(lane.validIndication, isNull);
@@ -370,8 +372,12 @@ void main() {
         directParsed.navSteps[0].destinationText,
       );
       expect(
-        workerParsed.navSteps[0].lanes.length,
-        directParsed.navSteps[0].lanes.length,
+        workerParsed.navSteps[0].intersections.length,
+        directParsed.navSteps[0].intersections.length,
+      );
+      expect(
+        workerParsed.navSteps[0].intersections.first.lanes.length,
+        directParsed.navSteps[0].intersections.first.lanes.length,
       );
       expect(
         workerParsed.navSteps[1].exitNumber,

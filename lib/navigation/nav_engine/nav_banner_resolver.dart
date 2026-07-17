@@ -326,7 +326,8 @@ DriverActiveBanner _fallbackBanner({
         ? null
         : maneuverStep.roadRef!.trim(),
     isHighwayLike: isDriverHighwayLikeStep(maneuverStep),
-    lanes: maneuverStep.lanes,
+    // NAV-SIGNAL-P2B: lane presentation is owned by nav_lane_resolver.
+    lanes: const <DriverNavLaneGuidance>[],
     transition: transition,
     source: source,
     bannerCount: bannerCount,
@@ -416,7 +417,7 @@ DriverActiveBanner resolveDriverActiveBanner(DriverBannerResolveInput input) {
         destinationText: previous.destinationText,
         roadRef: previous.roadRef,
         isHighwayLike: previous.isHighwayLike,
-        lanes: previous.lanes,
+        lanes: const <DriverNavLaneGuidance>[],
         transition: NavBannerResolveTransition.none,
         source: NavBannerResolveSource.mapboxBanner,
         bannerCount: previous.bannerCount,
@@ -534,7 +535,8 @@ DriverActiveBanner resolveDriverActiveBanner(DriverBannerResolveInput input) {
         ? null
         : maneuverStep.roadRef!.trim(),
     isHighwayLike: isDriverHighwayLikeStep(maneuverStep),
-    lanes: maneuverStep.lanes,
+    // NAV-SIGNAL-P2B: lane presentation is owned by nav_lane_resolver.
+    lanes: const <DriverNavLaneGuidance>[],
     transition: transition,
     source: NavBannerResolveSource.mapboxBanner,
     bannerCount: stages.length,

@@ -102,6 +102,7 @@ class DriverNavBannerStage {
       );
 }
 
+/// One Mapbox intersection lane (raw source semantics).
 class DriverNavLaneGuidance {
   final List<String> indications;
   final bool? valid;
@@ -115,7 +116,38 @@ class DriverNavLaneGuidance {
     this.validIndication,
   });
 
-  bool get hasContent => indications.isNotEmpty;
+  bool get hasContent =>
+      indications.isNotEmpty ||
+      valid != null ||
+      active != null ||
+      (validIndication ?? '').isNotEmpty;
+}
+
+/// One Mapbox `step.intersections[]` entry with its own lane group.
+///
+/// NAV-SIGNAL-P2B: intersection identity is preserved so lanes are never
+/// concatenated across intersections.
+class DriverNavIntersection {
+  /// Original index in the step's `intersections` array.
+  final int sourceIndex;
+  final List<DriverNavLaneGuidance> lanes;
+  final List<double> bearings;
+  final List<bool> entry;
+  final int? inIndex;
+  final int? outIndex;
+  final List<String> classes;
+
+  const DriverNavIntersection({
+    required this.sourceIndex,
+    this.lanes = const <DriverNavLaneGuidance>[],
+    this.bearings = const <double>[],
+    this.entry = const <bool>[],
+    this.inIndex,
+    this.outIndex,
+    this.classes = const <String>[],
+  });
+
+  bool get hasLanes => lanes.isNotEmpty;
 }
 
 class DriverNavStep {
@@ -135,10 +167,18 @@ class DriverNavStep {
   /// Authoritative ordered Mapbox banner stages for this traversal step.
   final List<DriverNavBannerStage> bannerInstructions;
 
+  /// Authoritative ordered intersections for this step (lane groups).
+  final List<DriverNavIntersection> intersections;
+
   final String? exitNumber;
   final String? destinationText;
   final String? roadRef;
   final String? drivingSide;
+
+  /// Deprecated for live lane guidance. Always empty after P2B — use
+  /// [intersections] and [DriverResolvedLaneGuidance] instead. Never a
+  /// concatenated multi-intersection list.
+  @Deprecated('Use intersections + nav_lane_resolver; never concat groups.')
   final List<DriverNavLaneGuidance> lanes;
 
   const DriverNavStep({
@@ -153,10 +193,12 @@ class DriverNavStep {
     this.durationSec,
     this.banner,
     this.bannerInstructions = const <DriverNavBannerStage>[],
+    this.intersections = const <DriverNavIntersection>[],
     this.exitNumber,
     this.destinationText,
     this.roadRef,
     this.drivingSide,
+    @Deprecated('Use intersections + nav_lane_resolver; never concat groups.')
     this.lanes = const <DriverNavLaneGuidance>[],
   });
 }
