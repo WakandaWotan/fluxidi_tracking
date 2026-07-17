@@ -381,11 +381,22 @@ class _DriverHomePageState extends State<DriverHomePage>
   // | 'backward_progress' | 'snap_distance'.
   String _offRouteReason = 'none';
   bool _isRerouting = false;
+  /// True once an accepted package owns the new route version while the
+  /// async reroute Future may still be finishing transport cleanup.
+  bool _rerouteOwnershipAccepted = false;
   DateTime? _lastRerouteAt;
+  DateTime? _lastRerouteSuccessAt;
+  DateTime? _lastRerouteFailureAt;
+  DateTime? _routeAcceptedAt;
+  DateTime? _rerouteDecisionEligibleAt;
+  DateTime? _rerouteRequestStartedAt;
+  DateTime? _reroutePackagePreparedAt;
   bool _lastRerouteFailed = false;
   String? _rerouteReason;
   DateTime? _offRouteRerouteDebounceStartedAt;
-  static const Duration _rerouteCooldown = Duration(seconds: 25);
+  // Legacy constants retained for call-site readability; live policy lives in
+  // [NavRerouteDecisionConfig] / [navRerouteEvaluateCooldown].
+  static const Duration _rerouteCooldown = Duration(seconds: 12);
   // NAV-R12-B: route-deviation off-route must correct fast, and a failed
   // reroute retries on a short backoff instead of the full cooldown.
   static const Duration _rerouteCooldownRouteDeviation = Duration(seconds: 8);
@@ -451,6 +462,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     _offRouteLikely = false;
     _offRouteReason = 'none';
     _isRerouting = false;
+    _rerouteOwnershipAccepted = false;
+    _lastRerouteAt = null;
+    _lastRerouteSuccessAt = null;
+    _lastRerouteFailureAt = null;
+    _routeAcceptedAt = null;
+    _rerouteDecisionEligibleAt = null;
+    _rerouteRequestStartedAt = null;
+    _reroutePackagePreparedAt = null;
     _lastRerouteFailed = false;
     _rerouteReason = null;
     _offRouteRerouteDebounceStartedAt = null;
@@ -905,6 +924,36 @@ class _DriverHomePageState extends State<DriverHomePage>
     _routeRenderEpoch += 1;
     final appliedVersion = _routeStepsVersion;
     final renderEpoch = _routeRenderEpoch;
+    final acceptedAt = DateTime.now();
+    _routeAcceptedAt = acceptedAt;
+    // NAV-REROUTE-P0: accepted package ownership clears complexity/reroute
+    // warning state even if the async request Future has not finished.
+    if (_isRerouting) {
+      _rerouteOwnershipAccepted = true;
+      _lastRerouteSuccessAt = acceptedAt;
+      _lastRerouteFailed = false;
+      _rerouteDecision.noteRerouteApplied(acceptedAt);
+      _offRouteLikely = false;
+      _offRouteReason = 'none';
+      _offRouteHitCount = 0;
+      _offRouteRerouteDebounceStartedAt = null;
+      _lastRerouteDecision = null;
+      _reroutePackagePreparedAt ??= acceptedAt;
+      final requestStarted = _rerouteRequestStartedAt;
+      final eligibleAt = _rerouteDecisionEligibleAt;
+      if (requestStarted != null) {
+        _logNavBounded(
+          'NAV_R17_REROUTE_APPLY',
+          'phase=package_accepted '
+              'requestStartToPackagePreparedMs='
+              '${acceptedAt.difference(requestStarted).inMilliseconds} '
+              'decisionEligibleToRequestStartMs='
+              '${eligibleAt == null ? -1 : acceptedAt.difference(eligibleAt).inMilliseconds} '
+              'oldRouteVersion=${appliedVersion - 1} '
+              'newRouteVersion=$appliedVersion',
+        );
+      }
+    }
 
     _resetNavComplexityState();
     _driverNavRouteProgress.reset();
@@ -9507,7 +9556,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       trustBearing: confidence?.trustBearing ?? true,
       snapDistanceM: progress?.snapDistanceM,
       offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
-      reroutePending: _isRerouting,
+      // Transport cleanup must not keep complexity in reroute warning state
+      // after the accepted package already owns the new route version.
+      reroutePending: _isRerouting && !_rerouteOwnershipAccepted,
       headingDeltaDeg: progress?.headingDeltaDeg ?? _navHeadingDeltaDegFor(pos),
       predictionActive: prediction?.predictionActive ?? false,
       gapBridgeMs: _gapSinceLastNavEngineMs(),
@@ -10098,15 +10149,29 @@ class _DriverHomePageState extends State<DriverHomePage>
             _isActiveDriverNavEngineContext() && progress != null,
         now: DateTime.now(),
         lastRerouteAt: _lastRerouteAt,
+        lastRerouteSuccessAt: _lastRerouteSuccessAt,
+        lastRerouteFailureAt: _lastRerouteFailureAt,
+        routeAcceptedAt: _routeAcceptedAt,
+        accuracyM: pos.accuracy.isFinite ? pos.accuracy : null,
+        distanceToManeuverM:
+            _navInstructionSnapshot?.distanceToManeuverMeters ??
+            _nextNavDistanceM,
         lastRerouteFailed: _lastRerouteFailed,
         allowReroutePhase: _reroutePhaseAllowed(),
         liveRideActive: _liveRideActive,
         isWaiting: _isWaiting,
         isRerouting: _isRerouting,
         hasRoute: _routeCoords.length >= 2,
+        routeVersion: _routeStepsVersion,
       ),
     );
     final decision = _lastRerouteDecision!;
+    if (decision.eligible) {
+      _rerouteDecisionEligibleAt ??= DateTime.now();
+      _offRouteRerouteDebounceStartedAt ??= _rerouteDecisionEligibleAt;
+    } else if (!decision.offRouteLikely) {
+      _rerouteDecisionEligibleAt = null;
+    }
     _offRouteHitCount = decision.offRouteHitCount;
     _offRouteReason = decision.offRouteReason;
     final offRoute = decision.offRouteLikely;
@@ -10180,19 +10245,36 @@ class _DriverHomePageState extends State<DriverHomePage>
     final signature =
         '${decision.offRouteReason}|${decision.eligible}|'
         '${decision.cooldownActive}|${decision.movementOk}|'
-        '${decision.samplesOffRoute}|${decision.shouldTrigger}';
+        '${decision.samplesOffRoute}|${decision.shouldTrigger}|'
+        '${decision.cooldownKind}|${decision.blockedReason}|'
+        '${decision.strongSampleCount}|${decision.wrongStreetSampleCount}|'
+        '${decision.wrongStreetFastPath}|${decision.fastPathEligible}';
     if (signature == _lastNavR17RerouteSignature) return;
     _lastNavR17RerouteSignature = signature;
     final headingDelta = progress?.headingDeltaDeg;
+    final accuracyM = pos.accuracy.isFinite ? pos.accuracy : null;
     _logNavBounded(
       'NAV_R17_REROUTE_DECISION',
       'reason=${decision.offRouteReason} '
           'headingDeltaBucket=${navRerouteHeadingDeltaBucket(headingDelta)} '
           'routeDistanceBucket=${navRerouteDistanceBucket(snapDistance)} '
+          'snapDistanceBucket=${navRerouteDistanceBucket(snapDistance)} '
+          'accuracyBucket=${navRerouteAccuracyBucket(accuracyM)} '
           'samplesOffRoute=${decision.samplesOffRoute} '
+          'strongSampleCount=${decision.strongSampleCount} '
+          'wrongStreetSampleCount=${decision.wrongStreetSampleCount} '
+          'wrongStreetFastPath=${decision.wrongStreetFastPath} '
+          'firstStrongEvidenceAgeMs=${decision.firstStrongEvidenceAgeMs ?? -1} '
+          'strongEvidenceDurationMs=${decision.strongEvidenceDurationMs ?? -1} '
           'movementBucket=${navRerouteMovementBucket(_speedKmhFor(pos))} '
           'eligible=${decision.eligible} '
-          'cooldown=${decision.cooldownActive}',
+          'cooldown=${decision.cooldownActive} '
+          'cooldownKind=${navRerouteCooldownKindToken(decision.cooldownKind)} '
+          'cooldownRemainingMs=${decision.cooldownRemainingMs} '
+          'fastPathEligible=${decision.fastPathEligible} '
+          'blockedReason=${decision.blockedReason} '
+          'requestInFlight=${decision.requestInFlight} '
+          'routeVersion=${decision.routeVersion}',
       intervalMs: 1200,
     );
     unawaited(
@@ -10202,10 +10284,23 @@ class _DriverHomePageState extends State<DriverHomePage>
           'reason': decision.offRouteReason,
           'headingDeltaBucket': navRerouteHeadingDeltaBucket(headingDelta),
           'routeDistanceBucket': navRerouteDistanceBucket(snapDistance),
+          'snapDistanceBucket': navRerouteDistanceBucket(snapDistance),
+          'accuracyBucket': navRerouteAccuracyBucket(accuracyM),
           'samplesOffRoute': decision.samplesOffRoute,
+          'strongSampleCount': decision.strongSampleCount,
+          'wrongStreetSampleCount': decision.wrongStreetSampleCount,
+          'wrongStreetFastPath': decision.wrongStreetFastPath,
+          'firstStrongEvidenceAgeMs': decision.firstStrongEvidenceAgeMs ?? -1,
+          'strongEvidenceDurationMs': decision.strongEvidenceDurationMs ?? -1,
           'movementBucket': navRerouteMovementBucket(_speedKmhFor(pos)),
           'eligible': decision.eligible,
           'cooldown': decision.cooldownActive,
+          'cooldownKind': navRerouteCooldownKindToken(decision.cooldownKind),
+          'cooldownRemainingMs': decision.cooldownRemainingMs,
+          'fastPathEligible': decision.fastPathEligible,
+          'blockedReason': decision.blockedReason,
+          'requestInFlight': decision.requestInFlight,
+          'routeVersion': decision.routeVersion,
         },
       ),
     );
@@ -10298,13 +10393,11 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   void _evaluateOffRouteReroute() {
     if (_lastRerouteDecision?.shouldTrigger != true) return;
-    unawaited(
-      _triggerOffRouteReroute(
-        reason: _isRouteDeviationOffRouteReason()
-            ? _offRouteReason
-            : 'off_route',
-      ),
-    );
+    final reason = _isRouteDeviationOffRouteReason()
+        ? _offRouteReason
+        : 'off_route';
+    // Same location-processing cycle as shouldTrigger=true.
+    unawaited(_triggerOffRouteReroute(reason: reason));
   }
 
   void _resetOffRouteStateAfterReroute() {
@@ -10339,16 +10432,32 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     _isRerouting = true;
+    _rerouteOwnershipAccepted = false;
     _rerouteReason = reason;
     _lastRerouteAt = DateTime.now();
+    _rerouteRequestStartedAt = _lastRerouteAt;
+    _reroutePackagePreparedAt = null;
+    final rerouteCandidateAt =
+        _rerouteDecisionEligibleAt ?? _offRouteRerouteDebounceStartedAt;
+    final oldRouteVersion = _routeStepsVersion;
     _offRouteRerouteDebounceStartedAt = null;
     final phaseLabel = _reroutePhaseLabel();
     final rerouteStartedAt = DateTime.now();
+    final elapsedFromCandidateMs = rerouteCandidateAt == null
+        ? null
+        : rerouteStartedAt.difference(rerouteCandidateAt).inMilliseconds;
     _logNavR17RerouteApply(
       result: 'started',
       reason: reason,
       routeReplaced: false,
     );
+    if (elapsedFromCandidateMs != null) {
+      _logNavBounded(
+        'NAV_R17_REROUTE_APPLY',
+        'decisionEligibleToRequestStartMs=$elapsedFromCandidateMs '
+            'reason=$reason routeVersion=$oldRouteVersion',
+      );
+    }
     debugPrint('[NAV_REROUTE] phase=$phaseLabel reason=$reason start=1');
     unawaited(
       NavDiagnosticsRecorder.instance.recordRerouteEvent(
@@ -10401,8 +10510,29 @@ class _DriverHomePageState extends State<DriverHomePage>
       // NAV-R12-B: failed reroutes retry on a short backoff instead of the
       // full cooldown (see _rerouteCooldownFor).
       _lastRerouteFailed = !ok;
+      if (ok) {
+        _lastRerouteSuccessAt ??= DateTime.now();
+        final acceptedAt = _routeAcceptedAt;
+        final requestStarted = _rerouteRequestStartedAt;
+        if (acceptedAt != null && requestStarted != null) {
+          _logNavBounded(
+            'NAV_R17_REROUTE_APPLY',
+            'routeAcceptedToTransportCompleteMs='
+                '${DateTime.now().difference(acceptedAt).inMilliseconds} '
+                'requestStartToPackagePreparedMs='
+                '${(_reroutePackagePreparedAt ?? acceptedAt).difference(requestStarted).inMilliseconds} '
+                'packagePreparedToRouteAcceptedMs='
+                '${acceptedAt.difference(_reroutePackagePreparedAt ?? acceptedAt).inMilliseconds}',
+          );
+        }
+      } else {
+        _lastRerouteFailureAt = DateTime.now();
+        _rerouteOwnershipAccepted = false;
+      }
       _isRerouting = false;
+      _rerouteOwnershipAccepted = false;
       _rerouteReason = null;
+      _rerouteDecisionEligibleAt = null;
       debugPrint(
         '[NAV_REROUTE] phase=$phaseLabel reason=$reason result=${ok ? 'ok' : 'fail'}',
       );
@@ -19478,7 +19608,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           _lastNavRouteProgress?.oppositeDirectionLikely ?? false,
       backwardProgressLikely:
           _lastNavRouteProgress?.backwardProgressLikely ?? false,
-      reroutePending: _isRerouting,
+      reroutePending: _isRerouting && !_rerouteOwnershipAccepted,
       forwardProgress: _lastNavRouteProgress?.forwardProgress ?? true,
       predictionActive: _lastNavMotionPrediction?.predictionActive ?? false,
       routeConfidence: _lastNavRouteProgress?.confidence,
@@ -19498,7 +19628,9 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   bool _showNavInstructionBanner() {
     if (_cameraMode != _CameraMode.follow) return false;
-    if (_isRerouting) return false;
+    // Hide only while a reroute request is in flight without an accepted
+    // package yet; accepted ownership may re-resolve banner immediately.
+    if (_isRerouting && !_rerouteOwnershipAccepted) return false;
     final snap = _navInstructionSnapshot;
     if (snap != null && snap.hasInstruction) return true;
     return (_nextNavInstruction ?? '').trim().isNotEmpty;

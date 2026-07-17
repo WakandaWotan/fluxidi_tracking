@@ -518,7 +518,8 @@ void main() {
       expect(state.decision.visible, isTrue);
     });
 
-    test('4) score=0 reason=none clears after negative hysteresis', () {
+    test('4) score=0 reason=none clears immediately on strong reliable recovery',
+        () {
       final guard = NavComplexityGuard();
       var t = DateTime(2026, 1, 1, 12);
       NavComplexityGuardState state = NavComplexityGuardState.inactive;
@@ -552,16 +553,56 @@ void main() {
       );
       expect(state.decision.effectiveScore, 0);
       expect(state.decision.reason, 'none');
+      expect(state.active, isFalse);
+      expect(state.decision.transition, 'reliable_recovery_clear');
+      expect(state.decision.visible, isFalse);
+      expect(state.decision.staleStateClearedReason, 'reliable_recovery');
+    });
+
+    test('4b) noisy recovery still uses negative hysteresis', () {
+      final guard = NavComplexityGuard();
+      var t = DateTime(2026, 1, 1, 12);
+      NavComplexityGuardState state = NavComplexityGuardState.inactive;
+      for (var i = 0; i < 3; i++) {
+        t = t.add(const Duration(milliseconds: 500));
+        state = guard.update(
+          _input(
+            timestamp: t,
+            overallConfidence: 70.0,
+            snapDistanceM: 10.0,
+            maneuverType: 'fork',
+            maneuverModifier: '',
+            speedKmh: 12.0,
+            distanceToManeuverM: 80.0,
+          ),
+        );
+      }
+      expect(state.active, isTrue);
+
+      // Confidence recovered but snap still mediocre — not strong recovery.
+      t = t.add(const Duration(milliseconds: 500));
+      state = guard.update(
+        _input(
+          timestamp: t,
+          overallConfidence: 72.0,
+          snapDistanceM: 18.0,
+          maneuverType: 'turn',
+          maneuverModifier: 'right',
+          speedKmh: 40.0,
+          distanceToManeuverM: 400.0,
+        ),
+      );
+      expect(state.decision.effectiveScore, 0);
       expect(state.active, isTrue);
       expect(state.decision.transition, 'pending_clear');
-      expect(state.decision.negativeStreak, 1);
+      expect(state.decision.hysteresisHold, isTrue);
 
       t = t.add(const Duration(milliseconds: 500));
       state = guard.update(
         _input(
           timestamp: t,
-          overallConfidence: 96.5,
-          snapDistanceM: 3.0,
+          overallConfidence: 72.0,
+          snapDistanceM: 18.0,
           maneuverType: 'turn',
           maneuverModifier: 'right',
           speedKmh: 40.0,
@@ -570,7 +611,6 @@ void main() {
       );
       expect(state.active, isFalse);
       expect(state.decision.transition, 'cleared');
-      expect(state.decision.visible, isFalse);
     });
 
     test('5) visible warning clears immediately on arrive', () {

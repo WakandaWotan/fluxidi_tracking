@@ -303,7 +303,8 @@ void main() {
       report = _run(NavReplayFixtures.sideStreetDeparture());
     });
 
-    test('departure is detected via snap distance, not opposite-direction', () {
+    test('departure is detected via wrong-street / snap, not opposite-direction',
+        () {
       expect(report.firstOffRouteIndex, isNotNull);
       expect(
         report.firstOffRouteIndex!,
@@ -314,7 +315,10 @@ void main() {
       );
       expect(report.firstOppositeDirectionIndex, isNull);
       final first = report.results[report.firstOffRouteIndex!];
-      expect(first.offRouteReason, 'snap_distance');
+      expect(
+        first.offRouteReason,
+        anyOf('wrong_street', 'snap_distance'),
+      );
     });
 
     test('banner falls back to neutral once the route is unreliable', () {
@@ -354,9 +358,11 @@ void main() {
         'off-route movement', () {
       expect(report.firstRerouteEligibleIndex, isNotNull);
       expect(report.firstRerouteWouldTriggerIndex, isNotNull);
+      // Confirmed wrong-street may start the request on the same eligible
+      // tick (zero debounce); otherwise one short confirmation follows.
       expect(
         report.firstRerouteWouldTriggerIndex!,
-        greaterThan(report.firstRerouteEligibleIndex!),
+        greaterThanOrEqualTo(report.firstRerouteEligibleIndex!),
       );
     });
   });

@@ -66,6 +66,11 @@ class NavComplexityDecisionSnapshot {
     this.suppressionReason = 'none',
     this.predictionSupportingOnly = false,
     this.structuralComplexityPresent = false,
+    this.complexityRouteVersion = 0,
+    this.currentRouteVersion = 0,
+    this.stateOwnerMatches = true,
+    this.hysteresisHold = false,
+    this.staleStateClearedReason = 'none',
   });
 
   final bool show;
@@ -91,6 +96,11 @@ class NavComplexityDecisionSnapshot {
   final String suppressionReason;
   final bool predictionSupportingOnly;
   final bool structuralComplexityPresent;
+  final int complexityRouteVersion;
+  final int currentRouteVersion;
+  final bool stateOwnerMatches;
+  final bool hysteresisHold;
+  final String staleStateClearedReason;
 
   static const inactive = NavComplexityDecisionSnapshot(
     show: false,
@@ -112,7 +122,9 @@ class NavComplexityDecisionSnapshot {
       '$show|$rawScore|$effectiveScore|$threshold|'
       '${triggerRules.join('+')}|${qualityRules.join('+')}|$reason|'
       '$transition|$suppressionReason|$positiveStreak|$negativeStreak|'
-      '$predictionSupportingOnly|$structuralComplexityPresent';
+      '$predictionSupportingOnly|$structuralComplexityPresent|'
+      '$complexityRouteVersion|$currentRouteVersion|$stateOwnerMatches|'
+      '$hysteresisHold|$staleStateClearedReason';
 }
 
 /// Inputs derived from existing engine/confidence/progress signals only.
@@ -199,6 +211,7 @@ class NavComplexityGuard {
 
   DateTime? _sessionStartedAt;
   int? _lastRouteVersion;
+  String _staleStateClearedReason = 'none';
 
   void reset() {
     _showing = false;
@@ -215,6 +228,7 @@ class NavComplexityGuard {
     _predictionWasActive = false;
     _sessionStartedAt = null;
     _lastRouteVersion = null;
+    _staleStateClearedReason = 'none';
   }
 
   NavComplexityGuardState update(NavComplexityGuardInput input) {
@@ -226,20 +240,36 @@ class NavComplexityGuard {
         NavComplexityDecisionSnapshot.inactive.copyWith(
           transition: _lastTransition,
           suppressionReason: 'no_active_session',
+          currentRouteVersion: input.routeVersion,
+          complexityRouteVersion: input.routeVersion,
+          stateOwnerMatches: true,
+          staleStateClearedReason: wasShowing
+              ? 'session_inactive'
+              : 'none',
         ),
       );
     }
 
     if (_lastRouteVersion != null && input.routeVersion != _lastRouteVersion) {
       // Route / route-version replacement — drop stale evidence immediately.
+      // Old-route hysteresis / instruction churn must not transfer to N+1.
       final keptRouteVersion = input.routeVersion;
+      final hadStaleWarning = _showing || _positiveStreak > 0;
       reset();
       _lastRouteVersion = keptRouteVersion;
       _sessionStartedAt = input.timestamp;
       _lastTransition = 'terminal_clear';
+      _staleStateClearedReason = hadStaleWarning
+          ? 'route_version_replaced'
+          : 'route_version_replaced_clean';
     } else {
       _lastRouteVersion = input.routeVersion;
       _sessionStartedAt ??= input.timestamp;
+      if (_staleStateClearedReason.startsWith('route_version_replaced')) {
+        // One-shot diagnostic token for the first post-replace tick.
+      } else {
+        _staleStateClearedReason = 'none';
+      }
     }
 
     if (_isTerminalGuidance(input.maneuverType)) {
@@ -297,6 +327,9 @@ class NavComplexityGuard {
         assessment.effectiveScore >= minComplexitySignalCount;
     var suppressionReason = 'none';
     var transition = 'none';
+    var hysteresisHold = false;
+    final ownerVersion = _lastRouteVersion ?? input.routeVersion;
+    final stateOwnerMatches = ownerVersion == input.routeVersion;
 
     // Prediction may support structural complexity, but never activate alone —
     // including during startup warm-up.
@@ -315,6 +348,10 @@ class NavComplexityGuard {
         _lastDismissedAt != null &&
         now.difference(_lastDismissedAt!).inMilliseconds < cooldownMs;
 
+    // Strong reliable recovery (high confidence, tight snap, on-route) must
+    // clear immediately — never keep show=true from stale churn / rerouteState.
+    final strongReliableRecovery = _isStrongReliableRecovery(input, assessment);
+
     if (complexCandidate) {
       _positiveStreak += 1;
       _negativeStreak = 0;
@@ -323,6 +360,7 @@ class NavComplexityGuard {
           _showing = true;
           _activeReason = assessment.reasonCode;
           transition = 'shown';
+          _staleStateClearedReason = 'none';
         } else if (!inCooldown) {
           transition = transition == 'none' ? 'pending_show' : transition;
         }
@@ -330,6 +368,16 @@ class NavComplexityGuard {
         _activeReason = assessment.reasonCode;
         transition = 'none';
       }
+    } else if (strongReliableRecovery && _showing) {
+      // Clear immediately, but keep dismiss cooldown so the same route
+      // cannot re-spam the banner a tick later.
+      _showing = false;
+      _activeReason = 'none';
+      _positiveStreak = 0;
+      _negativeStreak = 0;
+      _lastDismissedAt = now;
+      transition = 'reliable_recovery_clear';
+      _staleStateClearedReason = 'reliable_recovery';
     } else {
       final trustedNegative = _isTrustedNegative(input, assessment);
       if (trustedNegative) {
@@ -347,13 +395,23 @@ class NavComplexityGuard {
           _lastDismissedAt = now;
           _activeReason = 'none';
           transition = 'cleared';
+          _staleStateClearedReason = 'negative_hysteresis';
         } else if (trustedNegative) {
           transition = 'pending_clear';
+          hysteresisHold = true;
+        } else {
+          hysteresisHold = true;
         }
       } else if (transition == 'none' &&
           suppressionReason == 'startup_prediction_only') {
         transition = 'startup_prediction_suppressed';
       }
+    }
+
+    // Consume one-shot route-version clear reason after packaging this tick.
+    final staleCleared = _staleStateClearedReason;
+    if (_staleStateClearedReason.startsWith('route_version_replaced')) {
+      _staleStateClearedReason = 'none';
     }
 
     _lastTransition = transition;
@@ -373,6 +431,11 @@ class NavComplexityGuard {
       suppressionReason: suppressionReason,
       predictionSupportingOnly: assessment.predictionSupportingOnly,
       structuralComplexityPresent: assessment.structuralComplexityPresent,
+      complexityRouteVersion: ownerVersion,
+      currentRouteVersion: input.routeVersion,
+      stateOwnerMatches: stateOwnerMatches,
+      hysteresisHold: hysteresisHold,
+      staleStateClearedReason: staleCleared,
     );
 
     return NavComplexityGuardState(
@@ -408,6 +471,23 @@ class NavComplexityGuard {
       final overall = input.overallConfidence;
       if (overall == null || overall < 70.0) return false;
     }
+    return true;
+  }
+
+  /// High-confidence on-route recovery must not keep a stale warning visible.
+  static bool _isStrongReliableRecovery(
+    NavComplexityGuardInput input,
+    _SignalAssessment assessment,
+  ) {
+    if (assessment.structuralComplexityPresent) return false;
+    if (assessment.effectiveScore > 0) return false;
+    if (input.offRouteLikely) return false;
+    if (input.reroutePending) return false;
+    if (!input.trustInstruction) return false;
+    final snap = input.snapDistanceM;
+    if (snap == null || !snap.isFinite || snap > 10.0) return false;
+    final overall = input.overallConfidence;
+    if (overall == null || !overall.isFinite || overall < 80.0) return false;
     return true;
   }
 
@@ -720,6 +800,11 @@ extension on NavComplexityDecisionSnapshot {
     String? suppressionReason,
     bool? predictionSupportingOnly,
     bool? structuralComplexityPresent,
+    int? complexityRouteVersion,
+    int? currentRouteVersion,
+    bool? stateOwnerMatches,
+    bool? hysteresisHold,
+    String? staleStateClearedReason,
   }) {
     return NavComplexityDecisionSnapshot(
       show: show ?? this.show,
@@ -747,6 +832,13 @@ extension on NavComplexityDecisionSnapshot {
           predictionSupportingOnly ?? this.predictionSupportingOnly,
       structuralComplexityPresent:
           structuralComplexityPresent ?? this.structuralComplexityPresent,
+      complexityRouteVersion:
+          complexityRouteVersion ?? this.complexityRouteVersion,
+      currentRouteVersion: currentRouteVersion ?? this.currentRouteVersion,
+      stateOwnerMatches: stateOwnerMatches ?? this.stateOwnerMatches,
+      hysteresisHold: hysteresisHold ?? this.hysteresisHold,
+      staleStateClearedReason:
+          staleStateClearedReason ?? this.staleStateClearedReason,
     );
   }
 }
@@ -783,7 +875,12 @@ void logNavComplexityDecision(NavComplexityDecisionSnapshot decision) {
     'offRoute=${decision.offRoute} '
     'rerouteState=${decision.rerouteState} '
     'reason=${decision.reason} '
-    'qualityRules=${decision.qualityRules.join(",")}',
+    'qualityRules=${decision.qualityRules.join(",")} '
+    'complexityRouteVersion=${decision.complexityRouteVersion} '
+    'currentRouteVersion=${decision.currentRouteVersion} '
+    'stateOwnerMatches=${decision.stateOwnerMatches} '
+    'hysteresisHold=${decision.hysteresisHold} '
+    'staleStateClearedReason=${decision.staleStateClearedReason}',
   );
 }
 
