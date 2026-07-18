@@ -43,7 +43,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   // Manual (GPS-style) mode when no booking is active
   final TextEditingController _manualFromCtrl = TextEditingController();
   final TextEditingController _manualToCtrl = TextEditingController();
-  // --- Manual A→B autocomplete (Mapbox Geocoding) ---
+  // --- Manual Aâ†’B autocomplete (Mapbox Geocoding) ---
   final FocusNode _fromFocus = FocusNode();
   final FocusNode _toFocus = FocusNode();
   Timer? _fromDebounce;
@@ -75,7 +75,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   static const double _fallbackPerKm =
       1.50; // placeholder until worker streams live rates
   static const double _fallbackWaitPerMin =
-      40.0 / 60.0; // €40/h = €0.666.../min
+      40.0 / 60.0; // â‚¬40/h = â‚¬0.666.../min
 
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
@@ -167,7 +167,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   double _kmDriven = 0.0;
 
   // Ping status
-  String _lastPing = '—';
+  String _lastPing = 'â€”';
   int _pingCount = 0;
 
   // Map controller
@@ -214,7 +214,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   // route generation an instruction belongs to; bumped on every applied
   // route/reroute step list.
   // NAV-R12-E2 / NAV-SIGNAL-P0B2: accepted route-content generation only.
-  // Bumped solely inside guarded package activation — never on hard clear.
+  // Bumped solely inside guarded package activation â€” never on hard clear.
   int _routeStepsVersion = 0;
   // NAV-SIGNAL-P0B2: async Mapbox route-render ownership epoch. Bumped on
   // accepted activation and on hard-clear render invalidation.
@@ -231,6 +231,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   String? _lastNavPres3dStyleSignature;
   // NAV-UI-R6D: compact expandable "more" chip for portrait nav quick actions.
   bool _navQuickActionsMoreExpanded = false;
+  // NAV-MOBILE-LANDSCAPE-KPI-PRIORITY-AND-FIRST-3D-CHOICE-FIX-1: after the
+  // existing X closes the phone-landscape quick-action expansion, retain only
+  // KPIs and safe ride controls in the strip. The same actions reopen via ….
+  bool _phoneLandscapeKpiPriorityCollapsed = false;
+  String? _lastNav3dFirstChoiceLogSignature;
   // NAV-UI-R6E: taxi visual captured just before setStyleURI so the marker can
   // be recreated immediately after style load without waiting for GPS.
   ({double lat, double lon, double bearing, String source})?
@@ -268,11 +273,84 @@ class _DriverHomePageState extends State<DriverHomePage>
   String? _lastNavPresCameraAppliedSignature;
   String? _lastNavPresHudScaleSignature;
   String? _lastNavPresNoseAnchorSignature;
+  String? _lastNavPres3dVehicleVisibleStateSignature;
+  String? _lastNav3dHudRenderDecisionSignature;
+  String? _lastNav3d2dSourcePresentationSignature;
+  final DriverVehicleModelLayer _driverVehicleModelLayer =
+      DriverVehicleModelLayer();
+  final NavVehicleModelSyncLifecycle _vehicleModelSyncLifecycle =
+      NavVehicleModelSyncLifecycle();
+
+  /// NAV-3D-MOVEMENT-SCHEDULER-LIVELOCK-FIX-1: single-owner finite pump.
+  late final NavVehicleModelMovementPump _vehicleModelMovementPump =
+      NavVehicleModelMovementPump(
+        performAttempt: _attemptVehicleModelMovementWrite,
+        onAbortLivelock: (iteration) {
+          logNav3dMovementPump(
+            event: 'abort_livelock',
+            running: true,
+            rerunRequested: false,
+            firstPoseRequested: _vehicleModelSyncLifecycle.firstPoseRequired,
+            generation: _vehicleMovementGeneration,
+            presetGeneration: _vehicleSwapGeneration,
+            iteration: iteration,
+          );
+        },
+        onExit: (iterations) {
+          logNav3dMovementPump(
+            event: 'exit',
+            running: false,
+            rerunRequested: false,
+            firstPoseRequested: _vehicleModelSyncLifecycle.firstPoseRequired,
+            generation: _vehicleMovementGeneration,
+            presetGeneration: _vehicleSwapGeneration,
+            iteration: iterations,
+          );
+        },
+      );
+  int _vehicleMovementGeneration = 0;
+  String? _lastNavPres3dVehicleDebugStyleContextSignature;
   bool _navPresCameraAnchorDiagEmitted = false;
   MapThemeMode? _mapThemeOverride;
   DriverMapVisualMode _driverMapVisualMode = DriverMapVisualMode.street;
   DriverCockpitMapVisualStyle _driverCockpitMapVisualStyle =
       DriverCockpitMapVisualStyle.light;
+  DriverVehicle3dPreset _driverVehicle3dPreset = kDriverVehicle3dPresetDefault;
+
+  /// NAV-3D-VEHICLE-CHOICE-3WAY-1: explicit three-way vehicle presentation
+  /// choice inside the 3D map. Defaults to the 2D taxi for every new
+  /// navigation session; never mutated by runtime fallback.
+  DriverVehiclePresentationChoice _driverVehiclePresentationChoice =
+      kDriverVehiclePresentationChoiceDefault;
+
+  /// NAV-3D-INSTANT-SWITCH-SCALE-AND-HEADING-POLISH-1: last stable canonical
+  /// travel bearing that controls model yaw. Survives style restores within
+  /// the session; reset only for a new navigation session.
+  double? _nav3dLastStableModelBearing;
+  int _vehicleSwapGeneration = 0;
+  bool _driver3dVehicleModelPoseApplied = false;
+  bool _driver3dVehicleModelActivationConfirmed = false;
+  bool _driver3dVehicleRenderCredibilityConfirmed = false;
+  int _driver3dVehicleStyleGeneration = 0;
+  int _driver3dVehicleActivationStyleGeneration = -1;
+  int _driver3dVehicleActivationPresetGeneration = -1;
+  int _driver3dVehicleLayerBoundStyleGeneration = -1;
+  int _driver3dVehicleLayerBoundPresetGeneration = -1;
+
+  /// NAV-3D-YELLOW-TAXI-FINAL-VISIBILITY-FIX-1: bounded, generation-keyed
+  /// retry budget for the activation confirmation readback plus the single
+  /// pending retry timer.
+  final Nav3dActivationConfirmRetryLifecycle _driver3dActivationConfirmRetry =
+      Nav3dActivationConfirmRetryLifecycle();
+  Timer? _driver3dActivationConfirmRetryTimer;
+
+  final Driver3dVehicleAssetLifecycle _driver3dVehicleAssetLifecycle =
+      Driver3dVehicleAssetLifecycle();
+  final Driver3dVehicleDiagnosticLogCoordinator _driver3dVehicleLogCoordinator =
+      Driver3dVehicleDiagnosticLogCoordinator();
+  final Nav3dVehicleDebugRenderProbeScheduler
+  _nav3dVehicleDebugRenderProbeScheduler =
+      Nav3dVehicleDebugRenderProbeScheduler();
   double _lastMapCameraZoom = kDriverMapInitialZoom;
   bool _navigationWakelockEnabled = false;
   bool _hasSwitchedToFollow = false;
@@ -284,6 +362,93 @@ class _DriverHomePageState extends State<DriverHomePage>
   double? _lastSmoothedCameraBearing;
   static const double _followCameraStaleGpsMaxAgeSec = 12.0;
   static const double _followCameraPoorAccuracyM = 65.0;
+
+  // NAV-STREETLEVEL-REALTIME-FOLLOW-PIPELINE-1: R3 tick is the pose producer;
+  // this bounded pump is the latest-state-wins consumer. One camera update in
+  // flight; older poses are discarded. The bearing controller is the single
+  // authoritative heading smoothing stage for streetlevel follow.
+  final NavStreetlevelFollowPump _streetlevelFollowPump =
+      NavStreetlevelFollowPump();
+  final NavStreetlevelBearingController _streetlevelBearingController =
+      NavStreetlevelBearingController();
+  Timer? _streetlevelFollowPumpTimer;
+  int _streetlevelPoseGeneration = 0;
+  int _streetlevelCameraGeneration = 0;
+  int _streetlevelVehicleGeneration = 0;
+  double? _streetlevelFollowZoom;
+  double? _streetlevelFollowPitch;
+  mb.MbxEdgeInsets? _streetlevelFollowPadding;
+  DateTime? _lastStreetlevelPumpCameraAt;
+  int? _lastStreetlevelFollowDiagAtMs;
+  // NAV-STREETLEVEL-FLUID-MOTION-1: coalesce native marker updates at frame
+  // cadence so a slow native update never queues a backlog of stale writes.
+  bool _driverMarkerVisualUpdateInFlight = false;
+
+  // NAV-STREETLEVEL-FLUID-MOTION-1: five distinct cadences, so a field log can
+  // tell raw GPS from engine anchor from visual pose from camera apply from the
+  // rendered frame. The frame / UI-build / raster stats are fed by the Flutter
+  // engine timings callback (raster ≈ Mapbox render thread where observable).
+  final NavFrameCadenceStats _navGpsCadence = NavFrameCadenceStats(
+    capacity: 60,
+  );
+  final NavFrameCadenceStats _navAnchorCadence = NavFrameCadenceStats(
+    capacity: 60,
+  );
+  final NavFrameCadenceStats _navPoseCadence = NavFrameCadenceStats(
+    capacity: 240,
+  );
+  final NavFrameCadenceStats _navCameraApplyCadence = NavFrameCadenceStats(
+    capacity: 240,
+  );
+  final NavFrameCadenceStats _navFrameCadence = NavFrameCadenceStats(
+    capacity: 240,
+  );
+  final NavFrameCadenceStats _navUiBuildStats = NavFrameCadenceStats(
+    capacity: 240,
+  );
+  final NavFrameCadenceStats _navRasterStats = NavFrameCadenceStats(
+    capacity: 240,
+  );
+  int? _lastPosePublishAtMs;
+  int? _lastCadenceDiagAtMs;
+  bool _navFrameTimingsRegistered = false;
+  TimingsCallback? _navFrameTimingsCallback;
+
+  // FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 (Phase 1 fallback, Part A):
+  // bounded adaptive-cadence controller for the Dart streetlevel-follow
+  // camera pump. Runs at 6-10 Hz, starts at 10 Hz, steps down on measured
+  // apply-latency p95 > 130 ms / frame p95 > 50 ms / >=2 freezes over 100 ms,
+  // steps up after 24 consecutive healthy ticks. The widget only consults
+  // [currentTickMs] to schedule the next single-shot pump tick.
+  final NavAdaptiveCadenceController _navAdaptiveCadence =
+      NavAdaptiveCadenceController();
+
+  // FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 (Phase 1, Part D): one-shot flag
+  // set when a background hydration / availability refresh was deferred
+  // because a live ride was in progress. The next _stopTrackingInternal call
+  // schedules a single deferred refresh so nav-critical frame budget is
+  // preserved during navigation.
+  bool _bootstrapDeferredDuringActiveNav = false;
+
+  // FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 Phase 2A: Dart-side controller for
+  // the native FollowPuck bridge (custom Mapbox LocationProvider +
+  // FollowPuckViewportState + LocationPuck3D). Lives behind
+  // [kNavigationUseNativeFollowPuckEnabled] — flag off means every reference
+  // to this controller is short-circuited and Phase 1 behavior is unchanged.
+  NativeFollowController? _nativeFollow;
+  // Bounded count of `_followCameraTesla` calls that fired with force=true
+  // while native follow was active (should stay near zero except during the
+  // rare temporary-owner transitions style_switch / view_mode / init).
+  int _nativeFollowPassiveCameraCallsCount = 0;
+  // Bounded count of `_attemptVehicleModelMovementWrite` calls short-circuited
+  // by the native-follow gate. Proves single-authority for the 3D vehicle.
+  int _nativeFollowGatedModelLayerCallsCount = 0;
+
+  // FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 (Phase 1, Part C): monotonic
+  // generation for the single active GPS subscription. Bumped every time a
+  // new stream is listened to and logged once at start, so a hot-restart /
+  // double-start leaking a second stream is trivially observable.
+  int _navGpsSubscriptionGeneration = 0;
 
   // Route stats
   List<_LonLat> _routeCoords = [];
@@ -376,7 +541,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   String? _lastNavR17RerouteSignature;
   final NavRerouteDecisionTracker _rerouteDecision = NavRerouteDecisionTracker();
   NavRerouteDecisionTickOutput? _lastRerouteDecision;
-  // NAV-R12-B: why the route-adaptation state is active — 'none'
+  // NAV-R12-B: why the route-adaptation state is active â€” 'none'
   // | 'opposite_direction' | 'opposite_direction_strong'
   // | 'backward_progress' | 'snap_distance'.
   String _offRouteReason = 'none';
@@ -765,10 +930,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (_offlineCorridorMetadataLoading) {
       return Text(
         _tr(
-          nl: 'Offline route-corridor wordt berekend…',
-          en: 'Preparing offline route corridor…',
-          fr: 'Preparation du corridor de route hors ligne…',
-          es: 'Preparando corredor de ruta sin conexion…',
+          nl: 'Offline route-corridor wordt berekendâ€¦',
+          en: 'Preparing offline route corridorâ€¦',
+          fr: 'Preparation du corridor de route hors ligneâ€¦',
+          es: 'Preparando corredor de ruta sin conexionâ€¦',
         ),
         textAlign: TextAlign.center,
         style: style,
@@ -800,21 +965,21 @@ class _DriverHomePageState extends State<DriverHomePage>
           Text(
             _tr(
               nl:
-                  'Corridor: ${metadata.estimatedTileCountMin}-${metadata.estimatedTileCountMax} tegels · '
-                  '$sizeRange · buffer ${metadata.corridorBufferMeters} m · '
-                  'zoom ${metadata.zoomMin}-${metadata.zoomMax} · ${metadata.supportedStatus}',
+                  'Corridor: ${metadata.estimatedTileCountMin}-${metadata.estimatedTileCountMax} tegels Â· '
+                  '$sizeRange Â· buffer ${metadata.corridorBufferMeters} m Â· '
+                  'zoom ${metadata.zoomMin}-${metadata.zoomMax} Â· ${metadata.supportedStatus}',
               en:
-                  'Corridor: ${metadata.estimatedTileCountMin}-${metadata.estimatedTileCountMax} tiles · '
-                  '$sizeRange · buffer ${metadata.corridorBufferMeters} m · '
-                  'zoom ${metadata.zoomMin}-${metadata.zoomMax} · ${metadata.supportedStatus}',
+                  'Corridor: ${metadata.estimatedTileCountMin}-${metadata.estimatedTileCountMax} tiles Â· '
+                  '$sizeRange Â· buffer ${metadata.corridorBufferMeters} m Â· '
+                  'zoom ${metadata.zoomMin}-${metadata.zoomMax} Â· ${metadata.supportedStatus}',
               fr:
-                  'Corridor: ${metadata.estimatedTileCountMin}-${metadata.estimatedTileCountMax} tuiles · '
-                  '$sizeRange · tampon ${metadata.corridorBufferMeters} m · '
-                  'zoom ${metadata.zoomMin}-${metadata.zoomMax} · ${metadata.supportedStatus}',
+                  'Corridor: ${metadata.estimatedTileCountMin}-${metadata.estimatedTileCountMax} tuiles Â· '
+                  '$sizeRange Â· tampon ${metadata.corridorBufferMeters} m Â· '
+                  'zoom ${metadata.zoomMin}-${metadata.zoomMax} Â· ${metadata.supportedStatus}',
               es:
-                  'Corredor: ${metadata.estimatedTileCountMin}-${metadata.estimatedTileCountMax} teselas · '
-                  '$sizeRange · buffer ${metadata.corridorBufferMeters} m · '
-                  'zoom ${metadata.zoomMin}-${metadata.zoomMax} · ${metadata.supportedStatus}',
+                  'Corredor: ${metadata.estimatedTileCountMin}-${metadata.estimatedTileCountMax} teselas Â· '
+                  '$sizeRange Â· buffer ${metadata.corridorBufferMeters} m Â· '
+                  'zoom ${metadata.zoomMin}-${metadata.zoomMax} Â· ${metadata.supportedStatus}',
             ),
             textAlign: TextAlign.center,
             style: style,
@@ -836,10 +1001,10 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     return Text(
       _tr(
-        nl: 'Offline route-corridor wordt berekend…',
-        en: 'Preparing offline route corridor…',
-        fr: 'Preparation du corridor de route hors ligne…',
-        es: 'Preparando corredor de ruta sin conexion…',
+        nl: 'Offline route-corridor wordt berekendâ€¦',
+        en: 'Preparing offline route corridorâ€¦',
+        fr: 'Preparation du corridor de route hors ligneâ€¦',
+        es: 'Preparando corredor de ruta sin conexionâ€¦',
       ),
       textAlign: TextAlign.center,
       style: style,
@@ -990,6 +1155,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _activeLaneGuidance = null;
     _lastLaneResolveDiag = null;
 
+    // Content consumers: accepted route-steps version only.
+    _streetlevelFollowPump.setExpectedRouteGeneration(appliedVersion);
+    _nativeFollow?.noteRouteGenerationApplied(appliedVersion);
     _logNavR12Banner(state: 're_resolved', reason: 'route_steps_applied');
     debugPrint(
       formatNavRouteApplyDiag(
@@ -1108,7 +1276,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         _directRideEstimateSignature = null;
         _directRideLocationRetryCount = 0;
         _directRideLocationRetryDestination = null;
-        _lastPing = '—';
+        _lastPing = 'â€”';
         _pingCount = 0;
         _kmDriven = 0.0;
         _trackingStartedAt = null;
@@ -1341,9 +1509,9 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   String _maskCompanyIdForBrandLog(String? value) {
     final text = (value ?? '').trim();
-    if (text.isEmpty) return '—';
-    if (text.length <= 6) return '…${text.substring(text.length - 1)}';
-    return '${text.substring(0, 4)}…${text.substring(text.length - 4)}';
+    if (text.isEmpty) return 'â€”';
+    if (text.length <= 6) return 'â€¦${text.substring(text.length - 1)}';
+    return '${text.substring(0, 4)}â€¦${text.substring(text.length - 4)}';
   }
 
   String _activeCompanyIdForBrand() {
@@ -2118,7 +2286,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             );
           }
         } else if (CompanySessionStore.instance.hasValidCompanyContext) {
-          // Standalone: do not re-bootstrap driver session here — that runs
+          // Standalone: do not re-bootstrap driver session here â€” that runs
           // fleet validation that can no-op block UI even if non-destructive.
           // We only need company hydration to refresh availability lookups.
           final hydrated = await _hydrateCompanyBootstrapFromActiveSession(
@@ -2192,6 +2360,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     debugPrint('[MAP][DISPOSE] mounted=$mounted style=$_activeMapStyleUri');
     _markerSelfHealTimer?.cancel();
     _markerSelfHealTimer = null;
+    _driver3dActivationConfirmRetryTimer?.cancel();
+    _driver3dActivationConfirmRetryTimer = null;
+    _navInternetStatusSubscription?.cancel();
+    _navInternetStatusSubscription = null;
     _resetPendingFollowCamera();
     _setNavigationWakelock(false);
     appLanguageNotifier.removeListener(_onAppLanguageChanged);
@@ -2226,6 +2398,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     _resetNavR3MotionState();
     _resetNavCameraPolicyState();
     _resetNavConfidenceState();
+    _resetDriverVehicleModelMovementSync();
+    final mapStyle = _map?.style;
+    if (mapStyle != null) {
+      unawaited(_teardownDriverVehicleModelLayer());
+    } else {
+      _driverVehicleModelLayer.resetRegistration();
+    }
     _resetNavComplexityState();
     _resetNavMotionPredictionState();
     _resetNavInstructionPolicyState();
@@ -2382,7 +2561,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (_bookingsRefreshInFlight != null) {
       if (force) {
         // G3-L: a forced refresh arrived while one is already running. Do not
-        // drop it — record exactly one pending follow-up trigger so the
+        // drop it â€” record exactly one pending follow-up trigger so the
         // _refreshBookings finally-block can drain it once the current run
         // settles. This is the fix for the business-preview entry race
         // where business_preview_restore (force=true) was being silently
@@ -2539,7 +2718,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         // G2-B: thread explicit tenant/company/driver/employee scope onto the
         // /driver/bookings request when the active driver session carries
         // those identifiers. Backend auth still happens via the bearer token
-        // and these params do not weaken /driver/bookings auth — they exist
+        // and these params do not weaken /driver/bookings auth â€” they exist
         // so worker-side logs and any scope-aware backend code can attribute
         // the request to the right tenant/company/driver. Only values present
         // on the live ActiveDriverSession are sent; we never invent values.
@@ -2883,7 +3062,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       // We are typically called from the Bookings Hub page.
       // UX: return to the main map/cockpit immediately.
       if (_isBusinessPreviewMode) {
-        // DriverHome sits on BusinessHome — never pop past the cockpit route.
+        // DriverHome sits on BusinessHome â€” never pop past the cockpit route.
         if (fromBookingsHub && Navigator.of(context).canPop()) {
           Navigator.of(context).pop();
         }
@@ -2913,7 +3092,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
         _kmDriven = 0.0;
         _pingCount = 0;
-        _lastPing = '—';
+        _lastPing = 'â€”';
 
         _resetNavProgressState(clearRoute: true);
 
@@ -2983,7 +3162,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           _tr(
             nl: 'Backend synchronisatie vereist een actieve bedrijfssessie. Herkoppel of herstel eerst uw bedrijf.',
             en: 'Backend synchronization requires an active company session. Relink or recover your company first.',
-            fr: 'La synchronisation backend nécessite une session entreprise active. Reliez ou récupérez d abord votre entreprise.',
+            fr: 'La synchronisation backend nÃ©cessite une session entreprise active. Reliez ou rÃ©cupÃ©rez d abord votre entreprise.',
             es: 'La sincronizacion del backend requiere una sesion activa de empresa. Vuelve a vincular o recuperar tu empresa primero.',
           ),
         ),
@@ -3038,7 +3217,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       if (mounted) setState(() => _isStartingTrip = true);
 
-      // UX rule: Start in Drawer → Drawer closes → Map becomes primary focus
+      // UX rule: Start in Drawer â†’ Drawer closes â†’ Map becomes primary focus
       if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
         Navigator.of(context).pop();
       }
@@ -3100,7 +3279,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         _kmDriven = 0.0;
         _trackingStartedAt = DateTime.now();
         _pingCount = 0;
-        _lastPing = '—';
+        _lastPing = 'â€”';
 
         _resetNavProgressState(clearRoute: true);
 
@@ -3394,7 +3573,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
       }
       _markBookingsUiDirty();
-      _toast('✅ $status: ${b.shortId}');
+      _toast('âœ… $status: ${b.shortId}');
       await _debugFetchBookingSnapshot(
         bookingId: bookingId,
         contextLabel: 'STATUS_AFTER_WRITE',
@@ -3449,7 +3628,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             }
           });
           _markBookingsUiDirty();
-          _toast('✅ $status: ${b.shortId}');
+          _toast('âœ… $status: ${b.shortId}');
           await _refreshBookings(
             force: true,
             trigger: 'status_change_verified',
@@ -3565,7 +3744,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         }
       });
       _markBookingsUiDirty();
-      _toast('✅ $status: ${b.shortId}');
+      _toast('âœ… $status: ${b.shortId}');
       final normalizedStatus = status.trim().toUpperCase();
       if (normalizedStatus == 'COMPLETED') {
         await _recordOperationalLegPlannedStopBestEffort(b);
@@ -4073,14 +4252,14 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       if (!_liveRideActive) _setNavigationWakelock(false);
       _markBookingsUiDirty();
-      _toast('🗑️ Verwijderd: ${b.shortId}');
+      _toast('ðŸ—‘ï¸� Verwijderd: ${b.shortId}');
       await _debugFetchBookingSnapshot(
         bookingId: bookingId,
         contextLabel: 'DELETE_AFTER_WRITE',
       );
       await _refreshBookings(force: true, trigger: 'delete_action');
     } catch (e) {
-      _toast('❌ Delete failed: $e');
+      _toast('â�Œ Delete failed: $e');
     } finally {
       if (mounted) {
         setState(() => _bookingActionInFlight.remove(actionKey));
@@ -4524,31 +4703,31 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   /// Price text shown in the cockpit:
-  /// - Booking selected: show fixed price if known, otherwise "€ —" (never show live meter for bookings)
+  /// - Booking selected: show fixed price if known, otherwise "â‚¬ â€”" (never show live meter for bookings)
   /// - No booking selected: show the live meter total
   String get _displayTotalText {
     if (_liveRideActive) {
       final live = _liveMeterTotalEur;
-      return '€ ${live.toStringAsFixed(2)}';
+      return 'â‚¬ ${live.toStringAsFixed(2)}';
     }
     final fixed = _fixedBookingPriceEur;
     if (_activeBooking != null) {
-      if (fixed != null && fixed > 0) return '€ ${fixed.toStringAsFixed(2)}';
-      return '€ —';
+      if (fixed != null && fixed > 0) return 'â‚¬ ${fixed.toStringAsFixed(2)}';
+      return 'â‚¬ â€”';
     }
     final live = _liveMeterTotalEur;
-    return '€ ${live.toStringAsFixed(2)}';
+    return 'â‚¬ ${live.toStringAsFixed(2)}';
   }
 
   String get _cockpitPriceText =>
-      _displayTotalText.replaceFirst('€', '').trim();
+      _displayTotalText.replaceFirst('â‚¬', '').trim();
 
   String _formatDirectRideEstimateText(double amount, String currency) {
     final normalizedCurrency = currency.trim().isEmpty
         ? kDefaultCurrency
         : currency.trim().toUpperCase();
     if (normalizedCurrency == 'EUR') {
-      return '€ ${amount.toStringAsFixed(2)}';
+      return 'â‚¬ ${amount.toStringAsFixed(2)}';
     }
     return '$normalizedCurrency ${amount.toStringAsFixed(2)}';
   }
@@ -5637,14 +5816,14 @@ class _DriverHomePageState extends State<DriverHomePage>
         ),
       if (returnPickup != null) 'return_scheduled_pickup_at': returnPickup,
       if (returnFrom != null || returnTo != null)
-        'return_route': [returnFrom, returnTo].whereType<String>().join(' → '),
+        'return_route': [returnFrom, returnTo].whereType<String>().join(' â†’ '),
       if (routeSegments.isNotEmpty) 'route_segments': routeSegments,
       if (asList(
         bookingMap['stops'] ?? inputs['stops'] ?? quote['stops'],
       ).isNotEmpty)
         'stops': asList(
           bookingMap['stops'] ?? inputs['stops'] ?? quote['stops'],
-        ).join(' → '),
+        ).join(' â†’ '),
       if (text(
             bookingMap['extra_service_label'] ?? inputs['extra_service_label'],
           ) !=
@@ -6522,7 +6701,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
     if (wasDirectRide) {
       final shownTotal = serverDirectTotal ?? finalTotal;
-      _toast('Straatrit afgerond: € ${shownTotal.toStringAsFixed(2)}');
+      _toast('Straatrit afgerond: â‚¬ ${shownTotal.toStringAsFixed(2)}');
     }
     unawaited(_refreshCompletedTodayCount(reason: 'trip_stop'));
   }
@@ -6641,7 +6820,28 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     _stopBookingPolling(reason: 'tracking_started');
 
-    final settings = buildDriverTrackingLocationSettings();
+    // FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 (Phase 1, Part C): use the
+    // active-navigation location profile (AndroidSettings.intervalDuration
+    // 500 ms + distanceFilter 0) so median GPS callback cadence is
+    // sub-second instead of the platform's ~5 s default. The idle
+    // buildDriverTrackingLocationSettings() profile is retained for
+    // non-navigation code paths that may re-use it.
+    final settings = buildDriverActiveNavigationLocationSettings();
+    _navGpsSubscriptionGeneration += 1;
+    _activeGeolocatorSubscriptionCount = 1;
+    debugPrint(
+      '[NAV_GPS_SETTINGS] platform=${Platform.operatingSystem} '
+      'intervalMs=${settings is geo.AndroidSettings ? settings.intervalDuration?.inMilliseconds ?? -1 : -1} '
+      'distanceFilter=${settings.distanceFilter} '
+      'accuracy=${settings.accuracy.name} '
+      'subscriptionGen=$_navGpsSubscriptionGeneration',
+    );
+
+    // FLUXIDI Phase 2A: flag-off is a no-op. Flag-on installs the custom
+    // Kotlin LocationProvider on the exact MapView so FollowPuck + puck-3D
+    // own the camera + vehicle rendering while this navigation session is
+    // active.
+    unawaited(_activateNativeFollowIfLiveRide());
 
     _posSub = geo.Geolocator.getPositionStream(locationSettings: settings).listen((
       pos,
@@ -6703,7 +6903,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       _evaluateOffRouteReroute();
 
       // NAV-R12-D: marker geometry/rotation updates first and without
-      // awaiting route redraw / camera / diagnostics — the taxi must move
+      // awaiting route redraw / camera / diagnostics â€” the taxi must move
       // on the fresh fix, not after the heavy pipeline. Manager loss no
       // longer blocks this path; it triggers self-heal instead.
       final canDriveMap = _mapSupported && _map != null && !_mapStyleChanging;
@@ -6764,12 +6964,20 @@ class _DriverHomePageState extends State<DriverHomePage>
     _followCameraInFlight = false;
     _gpsQualityWeak = false;
     _lastSmoothedCameraBearing = null;
+    _stopStreetlevelFollowPump();
+    // FLUXIDI Phase 2A: tear down the native FollowPuck session cleanly so
+    // the stock Mapbox location component regains ownership on the next
+    // map style / mode transition. Flag-off is a no-op.
+    if (_nativeFollow != null) {
+      unawaited(_nativeFollow!.disable());
+    }
     // NAV-R12-D: active navigation stopped — reset marker self-heal state.
     _markerSelfHealTimer?.cancel();
     _markerSelfHealTimer = null;
     _pendingMarkerUpdatePos = null;
     _consecutiveMarkerUpdateFailures = 0;
     _markerLifecycle.reset();
+    _resetDriverVehicleModelMovementSync();
     // NAV-R12-E1: drop any queued camera target.
     _resetPendingFollowCamera();
     _driverNavEngine.reset();
@@ -6844,7 +7052,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final rk = _routeKm;
     if (rk == null) return null;
 
-    // ✅ Countdown starts only once we actually move (Google Maps style).
+    // âœ… Countdown starts only once we actually move (Google Maps style).
     // Before movement, keep the full route distance as "remaining".
     if (_isTracking && !_hasSwitchedToFollow) return rk;
 
@@ -6857,7 +7065,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final rk = _routeKm;
     if (total == null || rk == null) return null;
 
-    // ✅ Countdown starts only once we actually move (Google Maps style).
+    // âœ… Countdown starts only once we actually move (Google Maps style).
     if (_isTracking && !_hasSwitchedToFollow) return total;
 
     if (rk <= 0.01) return total;
@@ -7103,6 +7311,12 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _onMapCreated(mb.MapboxMap mapboxMap) async {
     debugPrint('[MAP][CREATED] style=$_activeMapStyleUri');
     _map = mapboxMap;
+    // FLUXIDI Phase 2A: create the native-follow controller keyed by the
+    // exact plugin-owned map instance id. Behind the build-time flag; a
+    // flag-off build never enables the native session even though the
+    // controller is constructed (this preserves flag-off byte-parity with
+    // the Phase 1 fallback).
+    _initializeNativeFollowController(mapboxMap);
     await _syncMapboxUserLocationPuckVisibility();
     await _applyMapStyleForMode();
     await _recreateAnnotationManagers();
@@ -7118,6 +7332,145 @@ class _DriverHomePageState extends State<DriverHomePage>
         await _followCameraTesla(pos, force: true);
       }
     }
+  }
+
+  void _initializeNativeFollowController(mb.MapboxMap mapboxMap) {
+    if (!kNavigationUseNativeFollowPuckEnabled) return;
+    final existing = _nativeFollow;
+    if (existing != null &&
+        existing.mapInstanceId == mapboxMap.fluxidiMapInstanceId) {
+      return;
+    }
+    _nativeFollow = NativeFollowController(
+      mapInstanceId: mapboxMap.fluxidiMapInstanceId,
+    );
+    unawaited(_activateNativeFollowIfLiveRide());
+  }
+
+  Future<void> _activateNativeFollowIfLiveRide() async {
+    final controller = _nativeFollow;
+    if (controller == null) return;
+    if (!_liveRideActive) return;
+    if (!_isActiveDriverNavEngineContext()) return;
+    final ok = await controller.enable();
+    if (!ok) return;
+    _pushNativeFollowVehiclePreset();
+    _pushNativeFollowViewport();
+    // NAV-3D-P0: undo any prior Dart location-component suppression so the
+    // native LocationPuck3D remains visible after enable.
+    unawaited(_syncMapboxUserLocationPuckVisibility());
+  }
+
+  void _pushNativeFollowVehiclePreset() {
+    final controller = _nativeFollow;
+    if (controller == null) return;
+    // NAV-3D-P0: native LocationPuck3D follows the authoritative presentation
+    // choice — never install a 3D puck while the user selected taxi2d.
+    if (!driverVehiclePresentationChoiceIs3d(
+      _driverVehiclePresentationChoice,
+    )) {
+      return;
+    }
+    final preset = buildNativeVehiclePreset(
+      mapInstanceId: controller.mapInstanceId,
+      preset: _driverVehicle3dPreset,
+    );
+    if (preset == null) return;
+    // Ownership stays on HUD until the current configure generation is
+    // acknowledged — never claim native3d from requestedChoice alone.
+    unawaited(() async {
+      final ok = await controller.setVehiclePreset(preset);
+      if (!mounted || !ok) return;
+      await _syncMapboxUserLocationPuckVisibility();
+      if (!mounted) return;
+      _logNav3dOwnerTransition(
+        previousOwner: 'hud2d',
+        nextOwner: 'native3d',
+        reason: 'native_preset_acknowledged',
+        temporaryFallback: false,
+      );
+      setState(() {});
+    }());
+  }
+
+  /// Whether Native FollowPuck is the credibly active 3D vehicle renderer.
+  ///
+  /// NAV-3D-P0: requires session + acknowledged current configure generation +
+  /// live navigation + location component not suppressed. Style readiness is
+  /// applied by eligibility (`nativeOwns = this && eligible`).
+  bool _native3dRendererActiveForChoice() {
+    final controller = _nativeFollow;
+    final presetCrediblyActive =
+        controller?.isVehiclePresetCrediblyActive ?? false;
+    return resolveNative3dRendererCrediblyActive(
+      requested3d: driverVehiclePresentationChoiceIs3d(
+        _driverVehiclePresentationChoice,
+      ),
+      nativeFollowSessionActive: _nativeFollowIsActive(),
+      nativePresetConfigureAcknowledged: presetCrediblyActive,
+      nativeCommandGenerationCurrent: presetCrediblyActive,
+      navigationStoppingOrDisposing: !_liveRideActive,
+      locationComponentEnabledForNative: !_mapboxLocationPuckSuppressedForNav,
+    );
+  }
+
+  String? _lastNav3dOwnerTransitionSignature;
+
+  void _logNav3dOwnerTransition({
+    required String previousOwner,
+    required String nextOwner,
+    required String reason,
+    required bool temporaryFallback,
+  }) {
+    final signature =
+        '$previousOwner|$nextOwner|$reason|$temporaryFallback|'
+        '${_driverVehiclePresentationChoice.name}|$_driverVehicle3dPreset|'
+        '${_nativeFollowIsActive()}|$_routeStepsVersion';
+    if (signature == _lastNav3dOwnerTransitionSignature) return;
+    _lastNav3dOwnerTransitionSignature = signature;
+    debugPrint(
+      '[NAV_3D_OWNER_TRANSITION] '
+      'requestedChoice=${driverVehiclePresentationChoiceLogLabel(_driverVehiclePresentationChoice)} '
+      'preset=${driverVehicle3dPresetLogLabel(_driverVehicle3dPreset)} '
+      'previousOwner=$previousOwner '
+      'nextOwner=$nextOwner '
+      'rendererKind=${_nativeFollowIsActive() ? 'native3d' : 'model3d'} '
+      'eligibility=${_driver3dVehicleEligibility().reason} '
+      'reason=$reason '
+      'temporaryFallback=$temporaryFallback '
+      'styleFamily=${DriverCockpitMap3dCapability.resolve(styleUri: _activeMapStyleUri.trim(), visualMode: _driverMapVisualMode).styleFamily} '
+      'styleGeneration=$_driver3dVehicleStyleGeneration '
+      'ackStyleGeneration=$_driver3dVehicleActivationStyleGeneration '
+      'presetGeneration=$_vehicleSwapGeneration '
+      'ackPresetGeneration=$_driver3dVehicleActivationPresetGeneration '
+      'firstPoseApplied=$_driver3dVehicleModelPoseApplied '
+      'activationConfirmed=$_driver3dVehicleModelActivationConfirmed '
+      'nativeFollowEnabled=${_nativeFollowIsActive()} '
+      'routeVersion=$_routeStepsVersion '
+      'transitionGeneration=$_vehicleSwapGeneration',
+    );
+  }
+
+  void _pushNativeFollowViewport() {
+    final controller = _nativeFollow;
+    if (controller == null) return;
+    final zoom = _streetlevelFollowZoom;
+    final pitch = _streetlevelFollowPitch;
+    final padding = _streetlevelFollowPadding;
+    if (zoom == null || pitch == null) return;
+    unawaited(
+      controller.setViewport(
+        native_follow_wire.NativeFollowViewport(
+          mapInstanceId: controller.mapInstanceId,
+          zoom: zoom,
+          pitch: pitch,
+          paddingTop: padding?.top,
+          paddingBottom: padding?.bottom,
+          paddingLeft: padding?.left,
+          paddingRight: padding?.right,
+        ),
+      ),
+    );
   }
 
   bool _hasActiveDriverTaxiMarker() {
@@ -7136,6 +7489,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   String _puckHideReason() {
+    // NAV-3D-P0: Native FollowPuck owns LocationPuck3D through the location
+    // component — never treat that as a hideable "user location puck".
+    if (_nativeFollowIsActive()) return 'native_follow_owns_puck';
     if (_isFluxidiRoutePreviewOrNav()) return 'route_context';
     if (_hasActiveDriverTaxiMarker()) return 'has_taxi_marker';
     if (_cameraMode == _CameraMode.follow && _liveRideActive) {
@@ -7145,14 +7501,41 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   bool _shouldHideMapboxUserLocationPuck() {
-    if (_isFluxidiRoutePreviewOrNav()) return true;
-    if (_hasActiveDriverTaxiMarker()) return true;
-    return _cameraMode == _CameraMode.follow && _liveRideActive;
+    return resolveShouldHideMapboxUserLocationPuck(
+      nativeFollowActive: _nativeFollowIsActive(),
+      routePreviewOrNav: _isFluxidiRoutePreviewOrNav(),
+      hasActiveTaxiMarker: _hasActiveDriverTaxiMarker(),
+      followLiveActive: _cameraMode == _CameraMode.follow && _liveRideActive,
+    );
   }
 
   Future<void> _syncMapboxUserLocationPuckVisibility() async {
     final map = _map;
     if (map == null || !_mapSupported) return;
+
+    // NAV-3D-P0: when Native Follow owns the vehicle, undo any prior nav
+    // suppression so LocationPuck3D can stay visible across GPS/style syncs.
+    if (_nativeFollowIsActive()) {
+      final reason = _puckHideReason();
+      try {
+        if (_mapboxLocationPuckSuppressedForNav ||
+            _lastSyncedMapboxPuckHidden == true) {
+          await map.location.updateSettings(
+            mb.LocationComponentSettings(enabled: true),
+          );
+          _mapboxLocationPuckSuppressedForNav = false;
+          _lastSyncedMapboxPuckHidden = false;
+          _logNavBounded(
+            'NAV_UI_R6D_PUCK',
+            'hidden=false reason=$reason follow=${_cameraMode == _CameraMode.follow} live=$_liveRideActive',
+            intervalMs: 3000,
+          );
+        }
+      } catch (_) {
+        // Native manager still owns the puck; ignore restore races.
+      }
+      return;
+    }
 
     final hide = _shouldHideMapboxUserLocationPuck();
     final reason = _puckHideReason();
@@ -7224,7 +7607,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _driverMarker = null;
     _driverMarkerUsesTaxiAsset = false;
     // NAV-R12-D: a lost manager must not stay lost until the next style
-    // swap — mark degraded and schedule a bounded self-heal.
+    // swap â€” mark degraded and schedule a bounded self-heal.
     _markerLifecycle.noteFailure(reason, DateTime.now());
     _scheduleMarkerSelfHeal(reason);
   }
@@ -7276,7 +7659,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   /// NAV-R12-D: schedule one self-heal attempt on the lifecycle backoff.
-  /// Idempotent — an already-armed timer wins.
+  /// Idempotent â€” an already-armed timer wins.
   void _scheduleMarkerSelfHeal(String reason) {
     if (!_mapSupported || !mounted) return;
     if (_markerSelfHealTimer?.isActive ?? false) return;
@@ -7455,6 +7838,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     await _configureDriverPointManagerForTaxiMarker(driverMgr);
     _driverPointManager = driverMgr;
     await _syncMapboxUserLocationPuckVisibility();
+    await _ensureDriverVehicleModelLayer();
   }
 
   MapThemeMode _effectiveMapThemeFor(_CameraMode mode) {
@@ -7548,6 +7932,15 @@ class _DriverHomePageState extends State<DriverHomePage>
       // the visible marker alive until the style itself replaces it; the
       // manager is disposed after setStyleURI so there is no early blank gap.
       _captureTaxiVisualSnapshotForStyleSwap();
+      _driver3dVehicleStyleGeneration++;
+      _cancelDriver3dActivationConfirmRetry();
+      _driver3dVehicleAssetLifecycle.invalidateForStyleGeneration();
+      _driverVehicleModelLayer.resetRegistration();
+      _vehicleModelSyncLifecycle.clearMovementStateForStyleRestore(
+        movementGeneration: 0,
+      );
+      _resetDriver3dVehicleModelVisualHandoff();
+      _setVehicleMovementGeneration(0);
       debugPrint(
         '[MAP_THEME] selected=${theme == MapThemeMode.light ? 'light' : 'dark'} style=$target',
       );
@@ -7592,6 +7985,28 @@ class _DriverHomePageState extends State<DriverHomePage>
       debugPrint(
         '[NAV_UI_R6D_STYLE_RESTORE] route=${restore.route} taxi=${restore.taxi} reason=style_swap',
       );
+      await _ensureDriverVehicleModelLayer();
+      logNav3dVehicleSync(
+        phase: 'recovered_after_style_restore',
+        generation: _vehicleMovementGeneration,
+        preset: _driverVehicle3dPreset,
+      );
+      final pos = _lastPos;
+      if (pos != null && _isDriver3dVehicleModelEffectivelyActive()) {
+        final snap =
+            _lastRouteSnap ??
+            _snapToRoute(_LonLat(pos.longitude, pos.latitude));
+        final visual = _resolveNavVisualForMarker(pos, snap);
+        final markerDisplay = _driverMarkerDisplayFor(pos);
+        unawaited(
+          _syncDriverVehicleModelLayer(
+            lon: visual.point.lon,
+            lat: visual.point.lat,
+            bearingDeg: visual.bearing,
+            source: markerDisplay.source,
+          ),
+        );
+      }
       debugPrint('[NAV_MARKER] recreated_after_style');
       unawaited(
         NavDiagnosticsRecorder.instance.recordMapStyleChange(
@@ -7721,7 +8136,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           nl: 'Satelliet',
           en: 'Satellite',
           fr: 'Satellite',
-          es: 'Satélite',
+          es: 'SatÃ©lite',
         );
     }
   }
@@ -7742,7 +8157,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   /// Restore route line + taxi marker immediately after a style change or
   /// annotation-manager recreation. Uses the last known visual position (nav
   /// interpolator, GPS, or route start) so the driver never sees a bare map
-  /// while waiting 3–4 seconds for the next GPS callback.
+  /// while waiting 3â€“4 seconds for the next GPS callback.
   Future<({bool route, bool taxi})> _restoreDriverVisualsAfterStyleChange({
     required String reason,
   }) async {
@@ -8091,7 +8506,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   /// NAV-UI-R6E: create the taxi marker (fallback icon instantly if the PNG is
-  /// not ready — `_createDriverMarkerAnnotation` handles that swap) from the
+  /// not ready â€” `_createDriverMarkerAnnotation` handles that swap) from the
   /// best known visual, without waiting for a GPS callback.
   Future<bool> _attemptTaxiMarkerRestore({
     required int attempt,
@@ -8119,6 +8534,17 @@ class _DriverHomePageState extends State<DriverHomePage>
         if (success) {
           // NAV-R12-D: a freshly created marker proves the manager works.
           _markerLifecycle.noteSelfHealSucceeded(DateTime.now());
+          logNav3dMapbox2d(
+            event: 'create',
+            presentation3dIntent:
+                opacity == 0.0 && !_vehicleModelSyncLifecycle.sessionFallback2d,
+            explicit2dFallback: _vehicleModelSyncLifecycle.sessionFallback2d,
+            desiredOpacity: opacity,
+            pendingOpacity: _pendingMapboxTaxiMarkerOpacity,
+            markerExists: true,
+            appliedOpacity: opacity,
+            source: restoreSource,
+          );
         }
       } catch (e) {
         if (_isMapboxAnnotationManagerLost(e)) {
@@ -8186,6 +8612,19 @@ class _DriverHomePageState extends State<DriverHomePage>
       debugPrint(
         '[NAV_UI_R6E_TAXI_RESTORE] attempt=$attempt success=${_driverMarker != null} source=fallback reason=${reason}_asset_upgrade',
       );
+      if (_driverMarker != null) {
+        logNav3dMapbox2d(
+          event: 'create',
+          presentation3dIntent:
+              opacity == 0.0 && !_vehicleModelSyncLifecycle.sessionFallback2d,
+          explicit2dFallback: _vehicleModelSyncLifecycle.sessionFallback2d,
+          desiredOpacity: opacity,
+          pendingOpacity: _pendingMapboxTaxiMarkerOpacity,
+          markerExists: true,
+          appliedOpacity: opacity,
+          source: 'asset_upgrade',
+        );
+      }
     } catch (e) {
       if (_isMapboxAnnotationManagerLost(e)) {
         _resetDriverMarkerOnNativeError('taxi_asset_upgrade');
@@ -8406,7 +8845,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       return (zoom: 18.1, pitch: 66.0, reason: 'near_maneuver');
     }
 
-    // NAV-R1: reduced default follow zoom (was ~18.0–18.9).
+    // NAV-R1: reduced default follow zoom (was ~18.0â€“18.9).
     if (speedKmh < 4) {
       return (zoom: 16.4, pitch: 50.0, reason: 'normal_follow');
     }
@@ -8468,28 +8907,2058 @@ class _DriverHomePageState extends State<DriverHomePage>
         .resolveForNavCameraViewMode(viewMode);
   }
 
-  /// NAV-PRES-2B: Mapbox taxi opacity (0 hides visually; marker logic unchanged).
-  double _mapboxTaxiMarkerIconOpacityForPresentation() {
-    if (_cameraMode != _CameraMode.follow || !_liveRideActive) {
-      return 1.0;
-    }
-    return _navigationPresentationStateFor(_navCameraViewMode)
-            .hideMapboxTaxiMarker
-        ? 0.0
-        : 1.0;
+  Driver3dVehicleEligibility _driver3dVehicleEligibility({
+    bool? styleLoaded,
+    bool? styleSwapInProgress,
+    bool? modelRegistered,
+    bool? modelPoseApplied,
+    bool? modelActivationConfirmed,
+    bool? renderCredibilityConfirmed,
+    bool? assetLoaded,
+    bool? useDriverCockpitCamera,
+    NavigationPresentationMode? presentationMode,
+  }) {
+    final pres = _navigationPresentationStateFor(_navCameraViewMode);
+    final preset = _effectiveDriverVehicle3dPreset();
+    final resolvedAssetLoaded =
+        assetLoaded ??
+        resolveObservationalAssetLoaded(
+          lifecycle: _driver3dVehicleAssetLifecycle,
+          preset: preset,
+          styleGeneration: _driver3dVehicleStyleGeneration,
+          presetGeneration: _vehicleSwapGeneration,
+          modelRegistered:
+              modelRegistered ?? _driverVehicleModelLayer.isRegistered,
+        );
+    final followLiveActive =
+        _cameraMode == _CameraMode.follow && _liveRideActive;
+    final debugRenderProbeActive = _isDriver3dVehicleDebugPlacementActive();
+    return resolveDriver3dVehicleEligibility(
+      vehicleModelFlagEnabled: kNavigation3dVehicleModelEnabled,
+      cockpitSceneEnabled: kNavigation3dCockpitSceneEnabled,
+      useDriverCockpitCamera:
+          useDriverCockpitCamera ?? pres.useDriverCockpitCamera,
+      presentationMode: presentationMode ?? pres.mode,
+      liveNavigationActive: _liveRideActive,
+      followCamera: _cameraMode == _CameraMode.follow,
+      activeStyleUri: _activeMapStyleUri,
+      visualMode: _driverMapVisualMode,
+      cockpitSceneActive: _isDriverCockpit3dSceneEligible(),
+      cockpitVisualStyle: kNavigation3dCockpitSceneEnabled
+          ? _driverCockpitMapVisualStyle
+          : null,
+      sessionFallback2d: _vehicleModelSyncLifecycle.sessionFallback2d,
+      styleLoaded: styleLoaded ?? (_map?.style != null && !_mapStyleChanging),
+      styleSwapInProgress: styleSwapInProgress ?? _mapStyleChanging,
+      modelRegistered: modelRegistered ?? _driverVehicleModelLayer.isRegistered,
+      modelPoseApplied: modelPoseApplied ?? _driver3dVehicleModelPoseApplied,
+      hideHudIsolationFlagEnabled: kNavigation3dVehicleHideHudEnabled,
+      layerCreated: _driverVehicleModelLayer.layerCreated,
+      sourceGeometryValid: _driverVehicleModelLayer.sourceGeometryValid,
+      modelActivationConfirmed:
+          modelActivationConfirmed ?? _driver3dVehicleModelActivationConfirmed,
+      renderCredibilityConfirmed:
+          renderCredibilityConfirmed ??
+          _driver3dVehicleRenderCredibilityConfirmed,
+      assetLoaded: resolvedAssetLoaded,
+      debugRenderProbeActive: debugRenderProbeActive,
+      activeStyleGeneration: _driver3dVehicleStyleGeneration,
+      activePresetGeneration: _vehicleSwapGeneration,
+      confirmedStyleGeneration: _driver3dVehicleActivationStyleGeneration,
+      confirmedPresetGeneration: _driver3dVehicleActivationPresetGeneration,
+      modelLayerStyleGeneration: _driver3dVehicleLayerBoundStyleGeneration,
+      modelLayerPresetGeneration: _driver3dVehicleLayerBoundPresetGeneration,
+      followLiveActive: followLiveActive,
+      useDriver3dVehicleModel: pres.useDriver3dVehicleModel,
+      selectedVehiclePresentation: _driverVehiclePresentationChoice,
+      native3dRendererActive: _native3dRendererActiveForChoice(),
+    );
   }
 
-  Future<void> _applyMapboxTaxiMarkerPresentationOpacity() async {
-    if (!_canUpdateDriverMarker) return;
+  Nav3dVehicleHandoffSnapshot _buildDriver3dVehicleHandoffSnapshot(
+    Driver3dVehicleEligibility eligibility,
+    DriverVehicle3dPreset preset,
+  ) {
+    final spec = resolveDriverVehicle3dModelSpec(preset);
+    final applied = _driverVehicleModelLayer.appliedMovementState;
+    final appliedCamera = _driverVehicleModelAppliedCameraState();
+    final debugPlacement = _isDriver3dVehicleDebugPlacementActive();
+    final scale =
+        applied?.scale ??
+        resolveDriverVehicleModelScaleForPreset(
+          appliedZoom: appliedCamera.zoom,
+          appliedPitch: appliedCamera.pitch,
+          preset: preset,
+          debugPlacementActive: debugPlacement,
+          viewLevel: _driverCockpitViewLevel,
+        );
+    final rotation =
+        applied?.rotation ??
+        resolveDriverVehicleModelFinalRotationForPreset(
+          _lastKnownBearing,
+          preset: preset,
+          debugPlacementActive: debugPlacement,
+        );
+    final elevation = resolveDriverVehicleModelAltitudeMetersForPreset(
+      debugPlacementActive: debugPlacement,
+      preset: preset,
+    );
+    return Nav3dVehicleHandoffSnapshot(
+      preset: driverVehicle3dPresetLogLabel(preset),
+      modelRegistered: _driverVehicleModelLayer.isRegistered,
+      layerCreated: _driverVehicleModelLayer.layerCreated,
+      sourceGeometryValid: _driverVehicleModelLayer.sourceGeometryValid,
+      modelPoseApplied: _driver3dVehicleModelPoseApplied,
+      modelActivationConfirmed: _driver3dVehicleModelActivationConfirmed,
+      hudFallbackAllowedToHide: eligibility.hudFallbackAllowedToHide,
+      hudTaxiHidden: eligibility.hudTaxiHidden,
+      activeStyleGeneration: _driver3dVehicleStyleGeneration,
+      activePresetGeneration: _vehicleSwapGeneration,
+      confirmedStyleGeneration: _driver3dVehicleActivationStyleGeneration,
+      confirmedPresetGeneration: _driver3dVehicleActivationPresetGeneration,
+      styleModelId: resolveDriverVehicle3dStyleModelId(preset),
+      assetUri: spec.assetUri,
+      appliedScale: formatDriverVehicleModelScaleForLog(scale),
+      appliedRotation: formatDriverVehicleModelRotationForLog(rotation),
+      appliedElevation: elevation,
+    );
+  }
+
+  void _logDriver3dVehicleStateIfChanged({String? handoffReason}) {
+    if (!mounted) return;
+    final eligibility = _driver3dVehicleEligibility();
+    final preset = _effectiveDriverVehicle3dPreset();
+    final assetLoaded = resolveObservationalAssetLoaded(
+      lifecycle: _driver3dVehicleAssetLifecycle,
+      preset: preset,
+      styleGeneration: _driver3dVehicleStyleGeneration,
+      presetGeneration: _vehicleSwapGeneration,
+      modelRegistered: _driverVehicleModelLayer.isRegistered,
+    );
+    final diagnosticSnapshot = resolveNav3dVehicleDiagnosticSnapshot(
+      presentationActive: _isDriverCockpit3dSceneEligible(),
+      featureEnabled: kNavigation3dVehicleModelEnabled,
+      cockpitSceneEnabled: kNavigation3dCockpitSceneEnabled,
+      cockpitVisualStyle: kNavigation3dCockpitSceneEnabled
+          ? _driverCockpitMapVisualStyle
+          : null,
+      vehiclePreset: preset,
+      activeStyleUri: _activeMapStyleUri,
+      eligibility: eligibility,
+      assetLoaded: assetLoaded,
+      modelRegistered: _driverVehicleModelLayer.isRegistered,
+      layerCreated: _driverVehicleModelLayer.layerCreated,
+      modelPoseApplied: _driver3dVehicleModelPoseApplied,
+      modelActivationConfirmed: _driver3dVehicleModelActivationConfirmed,
+      renderCredibilityConfirmed: _driver3dVehicleRenderCredibilityConfirmed,
+      registerInFlight: _driverVehicleModelLayer.registerInFlight,
+      selectedVehiclePresentation: _driverVehiclePresentationChoice,
+      native3dRendererActive: _native3dRendererActiveForChoice(),
+    );
+    final handoffSnapshot = _buildDriver3dVehicleHandoffSnapshot(
+      eligibility,
+      preset,
+    );
+    _driver3dVehicleLogCoordinator.logStateIfChanged(
+      eligibility: eligibility,
+      diagnosticSnapshot: diagnosticSnapshot,
+      handoffSnapshot: handoffSnapshot,
+      handoffReason: handoffReason,
+    );
+  }
+
+  Driver3dVehicleAssetLoadContext _driver3dVehicleAssetLoadContext() {
+    final pres = _navigationPresentationStateFor(_navCameraViewMode);
+    return Driver3dVehicleAssetLoadContext(
+      vehicleModelFlagEnabled: kNavigation3dVehicleModelEnabled,
+      cockpitSceneEnabled: kNavigation3dCockpitSceneEnabled,
+      useDriverCockpitCamera: pres.useDriverCockpitCamera,
+      presentationMode: pres.mode,
+      liveNavigationActive: _liveRideActive,
+      followCamera: _cameraMode == _CameraMode.follow,
+      activeStyleUri: _activeMapStyleUri,
+      visualMode: _driverMapVisualMode,
+      cockpitSceneActive: _isDriverCockpit3dSceneEligible(),
+      cockpitVisualStyle: kNavigation3dCockpitSceneEnabled
+          ? _driverCockpitMapVisualStyle
+          : null,
+      sessionFallback2d: _vehicleModelSyncLifecycle.sessionFallback2d,
+      styleLoaded: _map?.style != null && !_mapStyleChanging,
+      styleSwapInProgress: _mapStyleChanging,
+    );
+  }
+
+  bool _isDriver3dVehicleModelPresentationActive() {
+    final pres = _navigationPresentationStateFor(_navCameraViewMode);
+    return resolveDriver3dVehicleModelPresentationActive(
+      flagEnabled: kNavigation3dVehicleModelEnabled,
+      useDriverCockpitCamera: pres.useDriverCockpitCamera,
+    );
+  }
+
+  DriverCockpitMap3dCapability _driver3dVehicleStyleCapability() {
+    return DriverCockpitMap3dCapability.resolve(
+      styleUri: _activeMapStyleUri,
+      visualMode: _driverMapVisualMode,
+    );
+  }
+
+  bool _isDriver3dVehicleModelStyleActive() {
+    return _driver3dVehicleEligibility().eligible &&
+        resolveDriver3dVehicleDedicatedStyleActive(
+          activeStyleUri: _activeMapStyleUri,
+        );
+  }
+
+  bool _isDriver3dVehicleModelFollowRuntimeActive() {
+    return resolveDriver3dVehicleModelFollowRuntimeActive(
+      presentationActive: _isDriver3dVehicleModelPresentationActive(),
+      liveRideActive: _liveRideActive,
+      followCamera: _cameraMode == _CameraMode.follow,
+    );
+  }
+
+  bool _isDriver3dVehicleModelRuntimeActive() {
+    return _driver3dVehicleEligibility().allowModelLayer;
+  }
+
+  /// NAV-ASSET-3D-SYNC-1 / MODE-GATE-1: movement sync and visible 3D handoff.
+  bool _isDriver3dVehicleModelEffectivelyActive() {
+    return _driver3dVehicleEligibility().allowMovementSync;
+  }
+
+  void _resetDriver3dVehicleModelVisualHandoff() {
+    _driver3dVehicleModelPoseApplied = false;
+    _driver3dVehicleModelActivationConfirmed = false;
+    _driver3dVehicleRenderCredibilityConfirmed = false;
+    _driver3dVehicleActivationStyleGeneration = -1;
+    _driver3dVehicleActivationPresetGeneration = -1;
+    _driver3dVehicleLayerBoundStyleGeneration = -1;
+    _driver3dVehicleLayerBoundPresetGeneration = -1;
+    _vehicleModelSyncLifecycle.markFirstPoseRequired();
+  }
+
+  /// NAV-3D-YELLOW-TAXI-FINAL-VISIBILITY-FIX-1: drop any pending activation
+  /// confirmation retry timer and reset its bounded budget.
+  void _cancelDriver3dActivationConfirmRetry() {
+    _driver3dActivationConfirmRetryTimer?.cancel();
+    _driver3dActivationConfirmRetryTimer = null;
+    _driver3dActivationConfirmRetry.reset();
+  }
+
+  void _setVehicleMovementGeneration(int generation) {
+    _vehicleMovementGeneration = generation;
+    _vehicleModelSyncLifecycle.syncMovementGeneration(generation);
+  }
+
+  void _noteDriver3dVehicleModelPoseApplied({required bool poseWritten}) {
+    if (!poseWritten) return;
+    if (_driver3dVehicleModelPoseApplied) return;
+    _driver3dVehicleModelPoseApplied = true;
+    _driver3dVehicleLayerBoundStyleGeneration = _driver3dVehicleStyleGeneration;
+    _driver3dVehicleLayerBoundPresetGeneration = _vehicleSwapGeneration;
+    _logDriver3dVehicleStateIfChanged();
+    // NAV-3D-INSTANT-SWITCH-SCALE-AND-HEADING-POLISH-1: the first valid pose
+    // flips driver3dVisualReady; rebuild now so the visual handoff never
+    // waits for an unrelated zoom/GPS/camera-triggered build.
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _logDriver3dVehicleRenderProof({
+    required String action,
+    required DriverVehicle3dPreset preset,
+    required Nav3dVehicleRenderReadback readback,
+    required bool assetLoaded,
+    double? referenceLon,
+    double? referenceLat,
+    double? debugProbeScale,
+    double? debugProbeAltitude,
+  }) async {
+    final modelId = resolveDriverVehicle3dStyleModelId(preset);
+    final presetLabel = driverVehicle3dPresetLogLabel(preset);
+    double? positionDeltaM;
+    if (referenceLon != null &&
+        referenceLat != null &&
+        readback.sourceLon != null &&
+        readback.sourceLat != null) {
+      positionDeltaM = boundedPositionDeltaM(
+        fromLon: referenceLon,
+        fromLat: referenceLat,
+        toLon: readback.sourceLon,
+        toLat: readback.sourceLat,
+      );
+    }
+    double? cameraDeltaM;
+    final map = _map;
+    if (map != null &&
+        readback.sourceLon != null &&
+        readback.sourceLat != null) {
+      try {
+        final camera = await map.getCameraState();
+        final coords = camera.center.coordinates;
+        cameraDeltaM = boundedPositionDeltaM(
+          fromLon: coords.lng.toDouble(),
+          fromLat: coords.lat.toDouble(),
+          toLon: readback.sourceLon,
+          toLat: readback.sourceLat,
+        );
+      } catch (_) {}
+    }
+    final scale = debugProbeScale ?? readback.layerScale?.first;
+    final altitude =
+        debugProbeAltitude ??
+        ((readback.layerTranslation != null &&
+                readback.layerTranslation!.length >= 3)
+            ? readback.layerTranslation![2]
+            : null);
+    final zoom = _lastMapCameraZoom;
+    logNav3dRenderProof(
+      action: action,
+      preset: presetLabel,
+      modelId: modelId,
+      layerVisible: readback.layerVisible,
+      sourceFeaturePresent: readback.sourceFeaturePresent,
+      modelIdBound: readback.modelIdBound,
+      positionDeltaM: positionDeltaM ?? cameraDeltaM,
+      scale: scale,
+      altitude: altitude,
+      zoom: zoom,
+      minZoom: readback.minZoom,
+      maxZoom: readback.maxZoom,
+      slot: readback.slot,
+      assetLoaded: assetLoaded,
+    );
+  }
+
+  Future<void> _logDriver3dVehicleRenderProofAfterMovement({
+    required DriverVehicle3dPreset preset,
+    required double poseLon,
+    required double poseLat,
+    required bool debugPlacement,
+    double? debugProbeScale,
+    double? debugProbeAltitude,
+  }) async {
+    final style = _map?.style;
+    if (style == null || _mapStyleChanging) return;
+    final assetLoaded = resolveObservationalAssetLoaded(
+      lifecycle: _driver3dVehicleAssetLifecycle,
+      preset: preset,
+      styleGeneration: _driver3dVehicleStyleGeneration,
+      presetGeneration: _vehicleSwapGeneration,
+      modelRegistered: _driverVehicleModelLayer.isRegistered,
+    );
+    final readback = await _driverVehicleModelLayer.readRenderProof(
+      style: style,
+      preset: preset,
+    );
+    final probeAction = debugPlacement && debugProbeScale != null
+        ? 'scale_probe'
+        : 'readback';
+    await _logDriver3dVehicleRenderProof(
+      action: probeAction,
+      preset: preset,
+      readback: readback,
+      assetLoaded: assetLoaded,
+      referenceLon: poseLon,
+      referenceLat: poseLat,
+      debugProbeScale: debugProbeScale,
+      debugProbeAltitude: debugProbeAltitude,
+    );
+  }
+
+  /// NAV-3D-YELLOW-TAXI-FINAL-VISIBILITY-FIX-1: schedule one bounded,
+  /// generation-keyed retry of the activation confirmation readback after a
+  /// transient failure that followed a valid pose write. Max 3 attempts per
+  /// (styleGeneration, presetGeneration); a stale retry is dropped when the
+  /// generations move on, eligibility or 3D intent is lost, the layer/source
+  /// is gone, or explicit session 2D fallback activates.
+  void _scheduleDriver3dActivationConfirmRetry({required String reason}) {
+    if (!mounted || _driver3dVehicleModelActivationConfirmed) return;
+    if (_driver3dActivationConfirmRetryTimer?.isActive ?? false) return;
+    final styleGen = _driver3dVehicleStyleGeneration;
+    final presetGen = _vehicleSwapGeneration;
+    final delay = _driver3dActivationConfirmRetry.nextDelay(
+      styleGeneration: styleGen,
+      presetGeneration: presetGen,
+    );
+    if (delay == null) {
+      if (_driver3dActivationConfirmRetry.markExhaustedOnce()) {
+        debugPrint(
+          '[NAV_3D_ACTIVATION_RETRY] exhausted reason=$reason '
+          'styleGen=$styleGen presetGen=$presetGen '
+          'attempts=${_driver3dActivationConfirmRetry.attempts} '
+          'hudFallbackRemains=true',
+        );
+      }
+      return;
+    }
+    debugPrint(
+      '[NAV_3D_ACTIVATION_RETRY] scheduled reason=$reason '
+      'attempt=${_driver3dActivationConfirmRetry.attempts} '
+      'delayMs=${delay.inMilliseconds} styleGen=$styleGen presetGen=$presetGen',
+    );
+    _driver3dActivationConfirmRetryTimer = Timer(delay, () {
+      _driver3dActivationConfirmRetryTimer = null;
+      if (!mounted) return;
+      final eligibility = _driver3dVehicleEligibility();
+      final stillValid = nav3dActivationConfirmRetryStillValid(
+        scheduledStyleGeneration: styleGen,
+        scheduledPresetGeneration: presetGen,
+        currentStyleGeneration: _driver3dVehicleStyleGeneration,
+        currentPresetGeneration: _vehicleSwapGeneration,
+        activationConfirmed: _driver3dVehicleModelActivationConfirmed,
+        eligible: eligibility.allowModelLayer,
+        presentation3dIntent: _currentNav3dPresentation3dIntent(),
+        layerCreated: _driverVehicleModelLayer.layerCreated,
+        sourceGeometryValid: _driverVehicleModelLayer.sourceGeometryValid,
+        sessionFallback2d: _vehicleModelSyncLifecycle.sessionFallback2d,
+      );
+      if (!stillValid) {
+        debugPrint(
+          '[NAV_3D_ACTIVATION_RETRY] dropped reason=$reason '
+          'styleGen=$styleGen/$_driver3dVehicleStyleGeneration '
+          'presetGen=$presetGen/$_vehicleSwapGeneration',
+        );
+        return;
+      }
+      unawaited(
+        _tryConfirmDriver3dVehicleModelActivation(
+          preset: _effectiveDriverVehicle3dPreset(),
+          movementGeneration: _vehicleMovementGeneration,
+        ),
+      );
+    });
+  }
+
+  Future<void> _tryConfirmDriver3dVehicleModelActivation({
+    required DriverVehicle3dPreset preset,
+    required int movementGeneration,
+  }) async {
+    if (!_driver3dVehicleEligibility().allowModelLayer) {
+      return;
+    }
+    if (!mounted || !_driver3dVehicleModelPoseApplied) {
+      return;
+    }
+    if (_driver3dVehicleModelActivationConfirmed) return;
+    if (!_driverVehicleModelLayer.isRegistered) return;
+    if (!_driverVehicleModelLayer.layerCreated) return;
+    if (!_driverVehicleModelLayer.sourceGeometryValid) return;
+    if (movementGeneration != _vehicleMovementGeneration) return;
+    if (preset != _effectiveDriverVehicle3dPreset()) return;
+
+    final style = _map?.style;
+    if (style == null || _mapStyleChanging) {
+      // NAV-3D-YELLOW-TAXI-FINAL-VISIBILITY-FIX-1: transient style state
+      // after a valid pose write — retry on a bounded budget.
+      _scheduleDriver3dActivationConfirmRetry(reason: 'style_transient');
+      return;
+    }
+
+    final assetLoaded = resolveObservationalAssetLoaded(
+      lifecycle: _driver3dVehicleAssetLifecycle,
+      preset: preset,
+      styleGeneration: _driver3dVehicleStyleGeneration,
+      presetGeneration: _vehicleSwapGeneration,
+      modelRegistered: _driverVehicleModelLayer.isRegistered,
+    );
+    if (!assetLoaded) {
+      _logDriver3dVehicleStateIfChanged(
+        handoffReason: 'activation_asset_missing',
+      );
+      _scheduleDriver3dActivationConfirmRetry(reason: 'asset_missing');
+      return;
+    }
+
+    final readback = await _driverVehicleModelLayer.readRenderProof(
+      style: style,
+      preset: preset,
+    );
+    final applied = _driverVehicleModelLayer.appliedMovementState;
+    await _logDriver3dVehicleRenderProof(
+      action: 'readback',
+      preset: preset,
+      readback: readback,
+      assetLoaded: assetLoaded,
+      referenceLon: applied?.lon,
+      referenceLat: applied?.lat,
+    );
+
+    final verified = await _driverVehicleModelLayer.verifyRuntimeActivation(
+      style: style,
+      preset: preset,
+      assetLoaded: assetLoaded,
+      modelPoseApplied: _driver3dVehicleModelPoseApplied,
+    );
+    if (!verified || !mounted) {
+      logNav3dRenderProof(
+        action: 'failure',
+        preset: driverVehicle3dPresetLogLabel(preset),
+        modelId: resolveDriverVehicle3dStyleModelId(preset),
+        layerVisible: readback.layerVisible,
+        sourceFeaturePresent: readback.sourceFeaturePresent,
+        modelIdBound: readback.modelIdBound,
+        assetLoaded: assetLoaded,
+        reason: 'activation_verify_failed',
+      );
+      _logDriver3dVehicleStateIfChanged(
+        handoffReason: 'activation_verify_failed',
+      );
+      // NAV-3D-YELLOW-TAXI-FINAL-VISIBILITY-FIX-1: without this bounded
+      // retry a failed readback leaves the HUD mounted indefinitely on top
+      // of an already-rendering ModelLayer.
+      _scheduleDriver3dActivationConfirmRetry(reason: 'verify_failed');
+      return;
+    }
+
+    _driver3dVehicleModelActivationConfirmed = true;
+    _driver3dVehicleRenderCredibilityConfirmed = true;
+    _driver3dVehicleActivationStyleGeneration = _driver3dVehicleStyleGeneration;
+    _driver3dVehicleActivationPresetGeneration = _vehicleSwapGeneration;
+    _cancelDriver3dActivationConfirmRetry();
+    logNav3dFirstPose(
+      action: 'verify_done',
+      reason: 'activation_confirmed',
+      preset: driverVehicle3dPresetLogLabel(preset),
+      styleGeneration: _driver3dVehicleStyleGeneration,
+      presetGeneration: _vehicleSwapGeneration,
+      inFlight: _vehicleModelSyncLifecycle.updateInFlight,
+      pending: _vehicleModelSyncLifecycle.pendingUpdate,
+      hasPosition: true,
+      hasBearing: true,
+    );
+    unawaited(
+      _applyMapboxTaxiMarkerPresentationOpacity(source: 'activation_change'),
+    );
+    _logDriver3dVehicleStateIfChanged(handoffReason: 'activation_confirmed');
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  bool _hideMapboxTaxiForHudOverlay(NavigationPresentationState pres) {
+    return pres.showDriverHudOverlay &&
+        kNavigationHideMapboxTaxiMarkerWithDriverHudEnabled;
+  }
+
+  /// NAV-3D-HUD-OWNERSHIP-FINAL-1: single final driver visual ownership decision.
+  Nav3dHudRenderDecision _resolveNav3dHudRenderDecision(
+    NavigationPresentationState presentation, {
+    required bool followLiveActive,
+  }) {
+    final eligibility = _driver3dVehicleEligibility(
+      useDriverCockpitCamera: presentation.useDriverCockpitCamera,
+      presentationMode: presentation.mode,
+    );
+    final preset = _effectiveDriverVehicle3dPreset();
+    final modelRegistered = _driverVehicleModelLayer.isRegistered;
+    final observationalAssetLoaded = resolveObservationalAssetLoaded(
+      lifecycle: _driver3dVehicleAssetLifecycle,
+      preset: preset,
+      styleGeneration: _driver3dVehicleStyleGeneration,
+      presetGeneration: _vehicleSwapGeneration,
+      modelRegistered: modelRegistered,
+    );
+    final handoffAssetLoaded = resolveNav3dHandoffAssetLoadedForRender(
+      observationalAssetLoaded: observationalAssetLoaded,
+      modelRegistered: modelRegistered,
+      modelActivationConfirmed: _driver3dVehicleModelActivationConfirmed,
+    );
+    final handoff = resolveNav3dHudHandoffForRender(
+      eligibility: eligibility,
+      useDriver3dVehicleModel: presentation.useDriver3dVehicleModel,
+      followLiveActive: followLiveActive,
+      observationalAssetLoaded: observationalAssetLoaded,
+      handoffAssetLoaded: handoffAssetLoaded,
+      modelRegistered: modelRegistered,
+      layerCreated: _driverVehicleModelLayer.layerCreated,
+      sourceGeometryValid: _driverVehicleModelLayer.sourceGeometryValid,
+      modelPoseApplied: _driver3dVehicleModelPoseApplied,
+      modelActivationConfirmed: _driver3dVehicleModelActivationConfirmed,
+      renderCredibilityConfirmed: _driver3dVehicleRenderCredibilityConfirmed,
+      activeStyleGeneration: _driver3dVehicleStyleGeneration,
+      activePresetGeneration: _vehicleSwapGeneration,
+      modelLayerStyleGeneration: _driver3dVehicleLayerBoundStyleGeneration,
+      modelLayerPresetGeneration: _driver3dVehicleLayerBoundPresetGeneration,
+      confirmedStyleGeneration: _driver3dVehicleActivationStyleGeneration,
+      confirmedPresetGeneration: _driver3dVehicleActivationPresetGeneration,
+      showDriverHudOverlay: presentation.showDriverHudOverlay,
+      hideHudFlagEnabled: kNavigation3dVehicleHideHudEnabled,
+      explicit2dFallback: _vehicleModelSyncLifecycle.sessionFallback2d,
+      debugRenderProbeActive: _isDriver3dVehicleDebugPlacementActive(),
+      selectedVehiclePresentation: _driverVehiclePresentationChoice,
+      native3dRendererActive: _native3dRendererActiveForChoice(),
+    );
+    return resolveNav3dHudRenderDecision(
+      hideHudFlagEnabled: kNavigation3dVehicleHideHudEnabled,
+      presentation3dActive: handoff.presentation3dActive,
+      driver3dVisualReady: handoff.driver3dVisualReady,
+      effectivelyActive: handoff.effectivelyActive,
+      hudFallbackAllowedToHide: handoff.hudFallbackAllowedToHide,
+      showDriverHudOverlay: presentation.showDriverHudOverlay,
+      followLiveActive: followLiveActive,
+      explicit2dFallback: _vehicleModelSyncLifecycle.sessionFallback2d,
+      ownership: handoff.ownership,
+    );
+  }
+
+  void _logNav3dHudRenderDecisionIfChanged(Nav3dHudRenderDecision decision) {
+    if (decision.diagnosticSignature == _lastNav3dHudRenderDecisionSignature) {
+      return;
+    }
+    final previousSignature = _lastNav3dHudRenderDecisionSignature;
+    final previousParts = previousSignature?.split('|');
+    final previousOwner =
+        (previousParts != null && previousParts.length > 5)
+            ? previousParts[5]
+            : 'unknown';
+    _lastNav3dHudRenderDecisionSignature = decision.diagnosticSignature;
+    logNav3dHudRenderDecision(decision);
+    _logNav3dOwnerTransition(
+      previousOwner: previousOwner,
+      nextOwner: decision.owner.name,
+      reason: decision.reason,
+      temporaryFallback: _vehicleModelSyncLifecycle.sessionFallback2d,
+    );
+  }
+
+  void _syncNav3d2dPresentationIfChanged(
+    Nav3dHudRenderDecision decision, {
+    required bool followLiveActive,
+  }) {
+    final marker = _driverMarker;
+    final signature =
+        '${decision.sourceDiagnosticSignature}|${marker != null}|'
+        '${marker?.iconOpacity?.toStringAsFixed(3) ?? 'null'}';
+    if (signature == _lastNav3d2dSourcePresentationSignature) {
+      return;
+    }
+    _lastNav3d2dSourcePresentationSignature = signature;
+    final hudMounted = followLiveActive && decision.actualHudVisible;
+    logNav3d2dSource(
+      hudMounted: hudMounted,
+      hudActualVisible: decision.actualHudVisible,
+      mapboxMarkerExists: marker != null,
+      mapboxMarkerOpacity: marker?.iconOpacity,
+      mapbox2dVisible: decision.mapbox2dVisible,
+      presentation3d: decision.presentation3d,
+      effectivelyActive: decision.effectivelyActive,
+      hudFallbackAllowedToHide: decision.hudFallbackAllowedToHide,
+      hideHudFlag: decision.hideFlag,
+      reason: decision.reason,
+    );
+    unawaited(_applyMapboxTaxiMarkerPresentationOpacity());
+  }
+
+  bool _suppressMapboxTaxiMarkerAtRuntime(NavigationPresentationState pres) {
+    return !_resolveNav3dHudRenderDecision(
+      pres,
+      followLiveActive: _cameraMode == _CameraMode.follow && _liveRideActive,
+    ).mapbox2dVisible;
+  }
+
+  bool _hideDriverHudVehicleAtRuntime(NavigationPresentationState pres) {
+    return _resolveNav3dHudRenderDecision(
+      pres,
+      followLiveActive: _cameraMode == _CameraMode.follow && _liveRideActive,
+    ).shouldHideHud;
+  }
+
+  Future<void> _handleDriver3dVehicleEligibilityBlocked() async {
+    final eligibility = _driver3dVehicleEligibility();
+    _logDriver3dVehicleStateIfChanged();
+    if (eligibility.allowModelLayer) {
+      _vehicleModelSyncLifecycle.resumeAfterEligibilityGain();
+      return;
+    }
+    if (!_isDriver3dVehicleModelFollowRuntimeActive() &&
+        !_driverVehicleModelLayer.isRegistered &&
+        !_driverVehicleModelLayer.registerInFlight) {
+      return;
+    }
+    if (!eligibility.eligible &&
+        eligibility.reason == 'not_dedicated_3d_style') {
+      final capability = _driver3dVehicleStyleCapability();
+      logNavPres3dVehicleStyleGateBlocked(styleFamily: capability.styleFamily);
+    }
+    if (_isDriver3dVehicleDebugPlacementActive()) {
+      _logNavPres3dVehicleDebugStyleContextIfChanged();
+    }
+    _vehicleModelMovementPump.reset();
+    _vehicleModelSyncLifecycle.pauseForEligibilityLoss();
+    _resetDriver3dVehicleModelVisualHandoff();
+    await _teardownDriverVehicleModelLayer();
+    unawaited(
+      _applyMapboxTaxiMarkerPresentationOpacity(source: 'presentation_change'),
+    );
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  bool _isDriver3dVehicleDebugPlacementActive() {
+    final pres = _navigationPresentationStateFor(_navCameraViewMode);
+    return resolveDriver3dVehicleDebugPlacementActive(
+      modelFlagEnabled: kNavigation3dVehicleModelEnabled,
+      debugPlacementFlagEnabled: kNavigation3dVehicleDebugPlacementEnabled,
+      useDriverCockpitCamera: pres.useDriverCockpitCamera,
+      isDriverMode: pres.useDriver3dVehicleModel,
+    );
+  }
+
+  /// NAV-PRES-3K-J: effective preset after optional register fallback.
+  DriverVehicle3dPreset _effectiveDriverVehicle3dPreset() {
+    return _driverVehicleModelLayer.registeredPreset ?? _driverVehicle3dPreset;
+  }
+
+  bool _showDriverVehicle3dPresetSelector(
+    NavigationPresentationState pres, {
+    required bool isPhone,
+  }) {
+    // NAV-MOBILE-3D-SELECTOR-SCALE-AND-BOTTOM-PRIORITY-1: on phone this is a
+    // UI capability gate, intentionally independent of visual owner, model
+    // readiness/activation and temporary 2D fallback. The compact selector
+    // must remain available to switch 2D ↔ Fluxidi ↔ Classic in 3D mode.
+    if (isPhone) {
+      return resolveShowDriverVehicle3dPhoneSelector(
+        vehicleModelFlagEnabled: kNavigation3dVehicleModelEnabled,
+        cockpitSceneEnabled: kNavigation3dCockpitSceneEnabled,
+        useDriverCockpitCamera: pres.useDriverCockpitCamera,
+        useDriver3dVehicleModel: pres.useDriver3dVehicleModel,
+        liveNavigationActive:
+            _cameraMode == _CameraMode.follow && _liveRideActive,
+        presentationMode: pres.mode,
+        followCamera: _cameraMode == _CameraMode.follow,
+        activeStyleUri: _activeMapStyleUri,
+        cockpitSceneActive: _isDriverCockpit3dSceneEligible(),
+        cockpitVisualStyle: kNavigation3dCockpitSceneEnabled
+            ? _driverCockpitMapVisualStyle
+            : null,
+      );
+    }
+    return resolveShowDriverVehicle3dPresetSelector(
+      vehicleModelFlagEnabled: kNavigation3dVehicleModelEnabled,
+      cockpitSceneEnabled: kNavigation3dCockpitSceneEnabled,
+      useDriverCockpitCamera: pres.useDriverCockpitCamera,
+      useDriver3dVehicleModel: pres.useDriver3dVehicleModel,
+      liveNavigationActive:
+          _cameraMode == _CameraMode.follow && _liveRideActive,
+      presentationMode: pres.mode,
+      followCamera: _cameraMode == _CameraMode.follow,
+      activeStyleUri: _activeMapStyleUri,
+      visualMode: _driverMapVisualMode,
+      cockpitSceneActive: _isDriverCockpit3dSceneEligible(),
+      cockpitVisualStyle: kNavigation3dCockpitSceneEnabled
+          ? _driverCockpitMapVisualStyle
+          : null,
+      sessionFallback2d: _vehicleModelSyncLifecycle.sessionFallback2d,
+      styleLoaded: _map?.style != null && !_mapStyleChanging,
+      styleSwapInProgress: _mapStyleChanging,
+    );
+  }
+
+  void _logNav3dFirstChoice({
+    required DriverVehiclePresentationChoice fromChoice,
+    required DriverVehiclePresentationChoice toChoice,
+    required bool ensureStarted,
+    required String reason,
+  }) {
+    final eligibility = _driver3dVehicleEligibility();
+    final visualReady = eligibility.driver3dVisualReady;
+    final signature =
+        '${fromChoice.name}|${toChoice.name}|$_driver3dVehicleStyleGeneration|'
+        '$_vehicleSwapGeneration|$ensureStarted|'
+        '${_driverVehicleModelLayer.isRegistered}|'
+        '${_vehicleModelSyncLifecycle.firstPoseRequired}|'
+        '$_driver3dVehicleModelPoseApplied|$visualReady|$reason';
+    if (signature == _lastNav3dFirstChoiceLogSignature) return;
+    _lastNav3dFirstChoiceLogSignature = signature;
+    debugPrint(
+      '[NAV_3D_FIRST_CHOICE] '
+      'fromChoice=${driverVehiclePresentationChoiceLogLabel(fromChoice)} '
+      'toChoice=${driverVehiclePresentationChoiceLogLabel(toChoice)} '
+      'styleGeneration=$_driver3dVehicleStyleGeneration '
+      'presetGeneration=$_vehicleSwapGeneration '
+      'ensureStarted=$ensureStarted '
+      'registered=${_driverVehicleModelLayer.isRegistered} '
+      'firstPoseRequested=${_vehicleModelSyncLifecycle.firstPoseRequired} '
+      'writeExecuted=$_driver3dVehicleModelPoseApplied '
+      'visualReady=$visualReady '
+      'reason=$reason',
+    );
+  }
+
+  /// Shared activation entry point for both first 2D → 3D selection and
+  /// 3D → 3D preset swaps. Even the default Fluxidi preset gets a fresh
+  /// generation and enters [_executeDriverVehicle3dSwap], so it cannot skip
+  /// registration, first-pose scheduling, or the movement pump.
+  Future<void> _setDriverVehicle3dPreset(DriverVehicle3dPreset preset) async {
+    final generation = ++_vehicleSwapGeneration;
+    _driver3dVehicleAssetLifecycle.invalidateForPresetGeneration();
+    if (_driverVehicle3dPreset != preset) {
+      setState(() {
+        _driverVehicle3dPreset = preset;
+      });
+    }
+    final spec = resolveDriverVehicle3dModelSpec(preset);
+    logNavPres3dVehiclePresetSelected(preset: preset, assetUri: spec.assetUri);
+    logNav3dVehicleSwap(
+      phase: 'requested',
+      preset: preset,
+      generation: generation,
+      modelId: resolveDriverVehicle3dStyleModelId(preset),
+    );
+    await _executeDriverVehicle3dSwap(generation: generation);
+  }
+
+  /// NAV-3D-VEHICLE-CHOICE-3WAY-1: explicit three-way vehicle presentation
+  /// selection. The tap itself propagates all visibility changes immediately;
+  /// no dependency on zoom, GPS callbacks, camera-scale updates or preset
+  /// swap side effects.
+  Future<void> _setDriverVehiclePresentationChoice(
+    DriverVehiclePresentationChoice choice,
+  ) async {
+    if (_driverVehiclePresentationChoice == choice) return;
+    final previous = _driverVehiclePresentationChoice;
+    final followLiveActive =
+        _cameraMode == _CameraMode.follow && _liveRideActive;
+    final pres = _navigationPresentationStateFor(_navCameraViewMode);
+    final ownerBefore = _resolveNav3dHudRenderDecision(
+      pres,
+      followLiveActive: followLiveActive,
+    ).owner;
+    // NAV-3D-INSTANT-SWITCH-SCALE-AND-HEADING-POLISH-1: the selection itself
+    // propagates ownership synchronously — the owner resolver reads the new
+    // choice in this rebuild, before any zoom/GPS/camera event.
+    setState(() {
+      _driverVehiclePresentationChoice = choice;
+    });
+    final ownerAfter = _resolveNav3dHudRenderDecision(
+      pres,
+      followLiveActive: followLiveActive,
+    ).owner;
+    final preset = driverVehicle3dPresetForPresentationChoice(choice);
+    logNav3dVehicleSwitch(
+      from: previous,
+      to: choice,
+      ownerBefore: ownerBefore.name,
+      ownerAfter: ownerAfter.name,
+      rebuildTriggered: true,
+      modelEnsureStarted: preset != null,
+      timestampMs: DateTime.now().millisecondsSinceEpoch,
+    );
+    if (preset == null) {
+      // Back to the 2D taxi: teardown 3D ownership and restore the normal
+      // 2D owner within the same selection event.
+      _nativeFollow?.invalidateVehicleCommands(
+        reason: 'explicit_user_choice_2d',
+      );
+      debugPrint(
+        '[NAV_3D_TEARDOWN] owner=${ownerBefore.name} '
+        'generation=$_vehicleSwapGeneration '
+        'trigger=explicit_user_choice_2d '
+        'requestedChoice=${driverVehiclePresentationChoiceLogLabel(choice)} '
+        'explicitUserChoiceChanged=true '
+        'styleChanged=false '
+        'navigationStopped=false '
+        'staleRequest=false',
+      );
+      await _handleDriver3dVehicleEligibilityBlocked();
+      await _applyMapboxTaxiMarkerPresentationOpacity(
+        source: 'vehicle_choice_2d',
+      );
+      return;
+    }
+    // 3D selection: suppress normal 2D ownership immediately, then
+    // register/swap the selected model through the existing lifecycle.
+    unawaited(
+      _applyMapboxTaxiMarkerPresentationOpacity(source: 'vehicle_choice_3d'),
+    );
+    // Always enter the exact same preset activation pipeline — including
+    // taxi2d → default Fluxidi. The former same-preset branch called only
+    // ensure(), skipping the swap lifecycle's generation/reset/resume +
+    // forced pose request that preset-to-preset transitions already had.
+    final first3dChoice = !driverVehiclePresentationChoiceIs3d(previous);
+    if (first3dChoice) {
+      _logNav3dFirstChoice(
+        fromChoice: previous,
+        toChoice: choice,
+        ensureStarted: true,
+        reason: 'activation_requested',
+      );
+    }
+    await _setDriverVehicle3dPreset(preset);
+    // NAV-3D-P0: when Native FollowPuck owns the vehicle, push the selected
+    // LocationPuck3D preset and keep the location component enabled.
+    if (_nativeFollowIsActive()) {
+      _pushNativeFollowVehiclePreset();
+      unawaited(_syncMapboxUserLocationPuckVisibility());
+      _logNav3dOwnerTransition(
+        previousOwner: ownerBefore.name,
+        nextOwner: 'native3d',
+        reason: 'presentation_choice_3d',
+        temporaryFallback: false,
+      );
+    }
+    if (first3dChoice) {
+      _logNav3dFirstChoice(
+        fromChoice: previous,
+        toChoice: choice,
+        ensureStarted: true,
+        reason: 'activation_dispatched',
+      );
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _executeDriverVehicle3dSwap({required int generation}) async {
+    if (shouldIgnoreStaleDriverVehicle3dSwap(
+      requestGeneration: generation,
+      currentGeneration: _vehicleSwapGeneration,
+    )) {
+      return;
+    }
+    // NAV-3D-P0: preset swaps under Native FollowPuck only reconfigure the
+    // LocationPuck3D — never tear down Dart ModelLayer activation state that
+    // would bounce ownership back to HUD for ordinary GPS/route updates.
+    if (_nativeFollowIsActive()) {
+      _pushNativeFollowVehiclePreset();
+      unawaited(_syncMapboxUserLocationPuckVisibility());
+      unawaited(
+        _applyMapboxTaxiMarkerPresentationOpacity(source: 'preset_change'),
+      );
+      return;
+    }
+    _vehicleModelSyncLifecycle.pauseForSwap();
+    _vehicleModelMovementPump.reset();
+    _cancelDriver3dActivationConfirmRetry();
+    _resetDriver3dVehicleModelVisualHandoff();
+    unawaited(
+      _applyMapboxTaxiMarkerPresentationOpacity(source: 'preset_change'),
+    );
+    if (!_isDriver3dVehicleModelRuntimeActive()) {
+      await _handleDriver3dVehicleEligibilityBlocked();
+      if (!_isDriver3dVehicleModelFollowRuntimeActive() ||
+          !_isDriver3dVehicleModelPresentationActive()) {
+        await _teardownDriverVehicleModelLayer();
+      }
+      _vehicleModelSyncLifecycle.resumeAfterSwap(
+        movementGeneration: _vehicleMovementGeneration,
+      );
+      return;
+    }
+    final map = _map;
+    final style = map?.style;
+    if (style == null || _mapStyleChanging) {
+      _vehicleModelSyncLifecycle.resumeAfterSwap(
+        movementGeneration: _vehicleMovementGeneration,
+      );
+      return;
+    }
+
+    final visual = _lastKnownDriverVehicleVisualForModelLayer();
+    if (visual == null ||
+        !_driverVehicleModelLayer.isRegistered ||
+        !_driverVehicleModelLayer.layerCreated) {
+      _setVehicleMovementGeneration(
+        _vehicleModelSyncLifecycle.bumpMovementGeneration(),
+      );
+      _vehicleModelSyncLifecycle.resumeAfterSwap(
+        movementGeneration: _vehicleMovementGeneration,
+      );
+      // A first choice has no existing ModelLayer to swap. Resume before
+      // ensure/register so its guaranteed first-pose request is accepted by
+      // the movement lifecycle (queueMovement rejects paused requests).
+      await _ensureDriverVehicleModelLayer();
+      return;
+    }
+
+    final debugPlacement = _isDriver3dVehicleDebugPlacementActive();
+    final appliedCamera = _driverVehicleModelAppliedCameraState();
+
+    final swapped = await _driverVehicleModelLayer.swapVehiclePreset(
+      style: style,
+      preset: _driverVehicle3dPreset,
+      generation: generation,
+      readCurrentGeneration: () => _vehicleSwapGeneration,
+      lon: visual.lon,
+      lat: visual.lat,
+      bearingDeg: visual.bearing,
+      source: visual.source,
+      debugPlacementActive: debugPlacement,
+      appliedZoom: appliedCamera.zoom,
+      appliedPitch: appliedCamera.pitch,
+      styleGeneration: _driver3dVehicleStyleGeneration,
+      presetGeneration: generation,
+    );
+
+    _setVehicleMovementGeneration(
+      _vehicleModelSyncLifecycle.bumpMovementGeneration(),
+    );
+    _vehicleModelSyncLifecycle.resumeAfterSwap(
+      movementGeneration: _vehicleMovementGeneration,
+    );
+
+    if (swapped) {
+      _requestDriverVehicleModelMovementSync(
+        lon: visual.lon,
+        lat: visual.lat,
+        bearingDeg: visual.bearing,
+        source: visual.source,
+        force: true,
+      );
+    }
+  }
+
+  ({double lat, double lon, double bearing, String source})?
+  _lastKnownDriverVehicleVisualForModelLayer() {
+    return _lastKnownTaxiVisualForRestore();
+  }
+
+  /// NAV-PRES-3K-H: applied cockpit zoom/pitch for adaptive 3D vehicle scale.
+  ({double zoom, double pitch}) _driverVehicleModelAppliedCameraState() {
+    final isTablet = mounted && MediaQuery.sizeOf(context).width >= 600;
+    final isLandscape =
+        mounted && MediaQuery.of(context).orientation == Orientation.landscape;
+    final level = _driverCockpitViewLevel;
+    final targetZoom = driverCockpitViewLevelTargetZoom(
+      isTablet: isTablet,
+      isLandscape: isLandscape,
+      level: level,
+    );
+    final targetPitch = driverCockpitViewLevelTargetPitch(
+      isTablet: isTablet,
+      isLandscape: isLandscape,
+      level: level,
+    );
+    return (
+      zoom: _lastDriverCockpitAppliedZoom ?? targetZoom,
+      pitch: _lastDriverCockpitAppliedPitch ?? targetPitch,
+    );
+  }
+
+  Future<void> _ensureDriverVehicleModelLayer() async {
+    if (!_isDriver3dVehicleModelRuntimeActive()) {
+      _driver3dVehicleAssetLifecycle.cancelInFlightForIneligibility(
+        reason: _driver3dVehicleEligibility().reason,
+      );
+      await _handleDriver3dVehicleEligibilityBlocked();
+      if (!_isDriver3dVehicleModelFollowRuntimeActive() ||
+          !_isDriver3dVehicleModelPresentationActive()) {
+        await _teardownDriverVehicleModelLayer();
+      }
+      return;
+    }
+    // NAV-3D-P0: Native FollowPuck owns LocationPuck3D — do not compete with
+    // a Dart ModelLayer registration/pose lifecycle while the native session
+    // is active.
+    if (_nativeFollowIsActive()) {
+      _pushNativeFollowVehiclePreset();
+      unawaited(_syncMapboxUserLocationPuckVisibility());
+      return;
+    }
+    final style = _map?.style;
+    if (style == null || _mapStyleChanging) return;
+    final preset = _driverVehicle3dPreset;
+    final presetLabel = driverVehicle3dPresetLogLabel(preset);
+    final styleGeneration = _driver3dVehicleStyleGeneration;
+    final presetGeneration = _vehicleSwapGeneration;
+
+    final loadOk = await _driver3dVehicleAssetLifecycle.ensureLoadedIfEligible(
+      context: _driver3dVehicleAssetLoadContext(),
+      preset: preset,
+      styleGeneration: styleGeneration,
+      presetGeneration: presetGeneration,
+    );
+    if (!loadOk) {
+      _logDriver3dVehicleStateIfChanged();
+      return;
+    }
+
+    final debugPlacement = _isDriver3dVehicleDebugPlacementActive();
+    final appliedCamera = _driverVehicleModelAppliedCameraState();
+    logNav3dAssetLifecycle(
+      action: 'register_start',
+      reason: 'eligible',
+      preset: presetLabel,
+      eligibility: true,
+      styleGeneration: styleGeneration,
+      presetGeneration: presetGeneration,
+    );
+    try {
+      final registered = await _driverVehicleModelLayer.ensureRegistered(
+        style,
+        debugPlacementActive: debugPlacement,
+        appliedZoom: appliedCamera.zoom,
+        appliedPitch: appliedCamera.pitch,
+        preset: preset,
+      );
+      if (!registered) {
+        logNav3dAssetLifecycle(
+          action: 'failure',
+          reason: 'register_not_ready',
+          preset: presetLabel,
+          eligibility: true,
+          styleGeneration: styleGeneration,
+          presetGeneration: presetGeneration,
+        );
+        logNav3dFirstActivation(
+          event: 'register_incomplete',
+          styleGeneration: styleGeneration,
+          presetGeneration: presetGeneration,
+          registered: _driverVehicleModelLayer.isRegistered,
+          layerCreated: _driverVehicleModelLayer.layerCreated,
+          posePending: _vehicleModelSyncLifecycle.firstPoseRequired,
+          movementQueued: _vehicleModelSyncLifecycle.pendingUpdate,
+          movementInFlight: _vehicleModelSyncLifecycle.updateInFlight,
+          movementGeneration: _vehicleMovementGeneration,
+          writeExecuted: false,
+          reason: 'register_not_ready',
+        );
+        _logDriver3dVehicleStateIfChanged();
+        return;
+      }
+      _driver3dVehicleAssetLifecycle.markRegistrationVerified(
+        preset: preset,
+        styleGeneration: styleGeneration,
+        presetGeneration: presetGeneration,
+      );
+      logNav3dAssetLifecycle(
+        action: 'register_done',
+        reason: 'eligible',
+        preset: presetLabel,
+        eligibility: true,
+        styleGeneration: styleGeneration,
+        presetGeneration: presetGeneration,
+      );
+      _vehicleModelSyncLifecycle.markFirstPoseRequired();
+      resetNav3dMovementPumpLogBudget();
+      _logDriver3dVehicleStateIfChanged();
+      logNav3dFirstActivation(
+        event: 'register_verified',
+        styleGeneration: styleGeneration,
+        presetGeneration: presetGeneration,
+        registered: true,
+        layerCreated: _driverVehicleModelLayer.layerCreated,
+        posePending: true,
+        movementQueued: false,
+        movementInFlight: _vehicleModelSyncLifecycle.updateInFlight,
+        movementGeneration: _vehicleMovementGeneration,
+        writeExecuted: false,
+        reason: 'schedule_first_pose',
+      );
+      // NAV-3D-MOVEMENT-SCHEDULER-LIVELOCK-FIX-1: enqueue the first pose
+      // directly (no microtask chain); the pump processes it, bypassing the
+      // throttle via firstPoseRequired.
+      await _scheduleGuaranteedDriver3dVehicleFirstPose(
+        reason: 'register_done',
+      );
+      return;
+    } catch (_) {
+      logNav3dAssetLifecycle(
+        action: 'failure',
+        reason: 'register_exception',
+        preset: presetLabel,
+        eligibility: true,
+        styleGeneration: styleGeneration,
+        presetGeneration: presetGeneration,
+      );
+      _logDriver3dVehicleStateIfChanged();
+      return;
+    }
+  }
+
+  Future<void> _scheduleGuaranteedDriver3dVehicleFirstPose({
+    required String reason,
+  }) async {
+    if (!mounted || !_isDriver3dVehicleModelEffectivelyActive()) {
+      logNav3dFirstPose(
+        action: 'skip',
+        reason: 'not_effectively_active',
+        preset: driverVehicle3dPresetLogLabel(
+          _effectiveDriverVehicle3dPreset(),
+        ),
+        styleGeneration: _driver3dVehicleStyleGeneration,
+        presetGeneration: _vehicleSwapGeneration,
+        inFlight: _vehicleModelSyncLifecycle.updateInFlight,
+        pending: _vehicleModelSyncLifecycle.pendingUpdate,
+        hasPosition: false,
+        hasBearing: false,
+      );
+      return;
+    }
+    final visual = _lastKnownDriverVehicleVisualForModelLayer();
+    if (visual == null) {
+      logNav3dFirstPose(
+        action: 'skip',
+        reason: 'no_position',
+        preset: driverVehicle3dPresetLogLabel(
+          _effectiveDriverVehicle3dPreset(),
+        ),
+        styleGeneration: _driver3dVehicleStyleGeneration,
+        presetGeneration: _vehicleSwapGeneration,
+        inFlight: _vehicleModelSyncLifecycle.updateInFlight,
+        pending: _vehicleModelSyncLifecycle.pendingUpdate,
+        hasPosition: false,
+        hasBearing: false,
+      );
+      return;
+    }
+    logNav3dFirstPose(
+      action: 'request',
+      reason: reason,
+      preset: driverVehicle3dPresetLogLabel(_effectiveDriverVehicle3dPreset()),
+      styleGeneration: _driver3dVehicleStyleGeneration,
+      presetGeneration: _vehicleSwapGeneration,
+      inFlight: _vehicleModelSyncLifecycle.updateInFlight,
+      pending: _vehicleModelSyncLifecycle.pendingUpdate,
+      hasPosition: visual.lat.isFinite && visual.lon.isFinite,
+      hasBearing: visual.bearing.isFinite,
+    );
+    _requestDriverVehicleModelMovementSync(
+      lon: visual.lon,
+      lat: visual.lat,
+      bearingDeg: visual.bearing,
+      source: 'first_pose_$reason',
+      force: true,
+    );
+  }
+
+  void _resetDriverVehicleModelMovementSync() {
+    _vehicleModelMovementPump.reset();
+    resetNav3dMovementPumpLogBudget();
+    // NAV-3D-MAPBOX-2D-MARKER-ISOLATION-FIX-1: fresh navigation session
+    // means fresh diagnostic budget for the 2D marker isolation trace.
+    resetNav3dMapbox2dLogBudget();
+    // NAV-3D-YELLOW-TAXI-FINAL-VISIBILITY-FIX-1: fresh session, fresh
+    // bounded activation-confirm retry budget.
+    _cancelDriver3dActivationConfirmRetry();
+    _vehicleModelSyncLifecycle.resetForNewNavigationSession();
+    _setVehicleMovementGeneration(0);
+    _resetDriver3dVehicleModelVisualHandoff();
+    // NAV-3D-VEHICLE-CHOICE-3WAY-1: every new navigation session starts with
+    // the default 2D taxi presentation; 3D is an explicit per-session choice.
+    _driverVehiclePresentationChoice = kDriverVehiclePresentationChoiceDefault;
+    // NAV-3D-INSTANT-SWITCH-SCALE-AND-HEADING-POLISH-1: fresh session, fresh
+    // canonical heading (style restores within a session preserve it).
+    _nav3dLastStableModelBearing = null;
+  }
+
+  void _requestDriverVehicleModelMovementSync({
+    required double lon,
+    required double lat,
+    required double bearingDeg,
+    required String source,
+    bool force = false,
+  }) {
+    if (!_isDriver3dVehicleModelEffectivelyActive()) return;
+    if (_mapStyleChanging || _map?.style == null) return;
+
+    // NAV-3D-INSTANT-SWITCH-SCALE-AND-HEADING-POLISH-1: single canonical
+    // heading choke point for every pose write. Camera/zoom-scale sources
+    // preserve the last stable travel bearing (camera bearing never becomes
+    // vehicle heading); untrusted course flips are rejected.
+    final preset = _effectiveDriverVehicle3dPreset();
+    final headingResolution = resolveNav3dModelHeadingForPose(
+      requestedBearingDeg: bearingDeg,
+      source: source,
+      lastStableBearingDeg: _nav3dLastStableModelBearing,
+    );
+    if (headingResolution.updatesStable) {
+      _nav3dLastStableModelBearing = headingResolution.bearingDeg;
+    }
+    final headingSpec = resolveDriverVehicle3dModelSpec(preset);
+    logNav3dHeading(
+      source: headingResolution.headingSource,
+      rawBearing: bearingDeg,
+      stableBearing: headingResolution.bearingDeg,
+      preset: preset,
+      presetOffset: headingSpec.headingOffsetDeg,
+      finalYaw: normalizeDriverVehicleModelBearingDeg(
+        headingResolution.bearingDeg + headingSpec.headingOffsetDeg,
+      ),
+      reason: headingResolution.reason,
+    );
+
+    final appliedCamera = _driverVehicleModelAppliedCameraState();
+    final pose = DriverVehicle3dMovementPose(
+      lon: lon,
+      lat: lat,
+      bearingDeg: headingResolution.bearingDeg,
+      source: source,
+      appliedZoom: appliedCamera.zoom,
+      appliedPitch: appliedCamera.pitch,
+      preset: preset,
+      movementGeneration: _vehicleMovementGeneration,
+    );
+
+    final event = _vehicleModelSyncLifecycle.queueMovement(pose);
+    if (event == 'ignored') return;
+    if (!force) {
+      logNav3dVehicleSync(
+        phase: event == 'coalesced' ? 'coalesced' : 'queued',
+        source: source,
+        generation: _vehicleMovementGeneration,
+        preset: pose.preset,
+        pending: _vehicleModelSyncLifecycle.pendingUpdate,
+      );
+    }
+    if (!_vehicleModelMovementPump.running) {
+      logNav3dMovementPump(
+        event: 'start',
+        queued: true,
+        running: false,
+        rerunRequested: true,
+        forceRequested: force,
+        firstPoseRequested: _vehicleModelSyncLifecycle.firstPoseRequired,
+        generation: _vehicleMovementGeneration,
+        presetGeneration: _vehicleSwapGeneration,
+        source: source,
+      );
+    }
+    _vehicleModelMovementPump.request(force: force);
+  }
+
+  /// NAV-3D-MOVEMENT-SCHEDULER-LIVELOCK-FIX-1: one pump iteration.
+  ///
+  /// Performs at most one native movement write. Never calls the public
+  /// request method, never schedules a microtask/timer to re-enter the pump,
+  /// and never loops by itself: the pump loops only when a new request set
+  /// [NavVehicleModelMovementPump.rerunRequested] (or one bounded internal
+  /// follow-up for a stale first pose). Returns false to stop the pump.
+  Future<bool> _attemptVehicleModelMovementWrite({
+    required bool force,
+    required int iteration,
+  }) async {
+    if (!mounted || !_isDriver3dVehicleModelEffectivelyActive()) return false;
+    // FLUXIDI Phase 2A: native LocationPuck3D owns the vehicle model when
+    // native follow is active. The custom ModelLayer path is hard-gated so
+    // the same pose is never rendered by two writers.
+    if (_nativeFollowIsActive()) {
+      _nativeFollowGatedModelLayerCallsCount += 1;
+      return false;
+    }
+
+    final bypassThrottle = resolveDriver3dVehicleFirstPoseBypassThrottle(
+      force: force,
+      firstPoseRequired: _vehicleModelSyncLifecycle.firstPoseRequired,
+    );
+    if (!bypassThrottle) {
+      final drainPending = _vehicleModelSyncLifecycle.pendingUpdate;
+      final delayMs = _vehicleModelSyncLifecycle.movementThrottleDelayMs(
+        DateTime.now(),
+        drainPending: drainPending,
+      );
+      if (delayMs > 0) {
+        logNav3dVehicleSync(
+          phase: 'skipped_throttle',
+          generation: _vehicleMovementGeneration,
+          pending: drainPending,
+          reason: 'delayMs=$delayMs',
+        );
+        // One bounded wait inside the same pump iteration; no timer re-entry.
+        await Future<void>.delayed(Duration(milliseconds: delayMs));
+        if (!mounted || !_isDriver3dVehicleModelEffectivelyActive()) {
+          return false;
+        }
+      }
+    }
+
+    final now = DateTime.now();
+    if (!_vehicleModelSyncLifecycle.beginMovementUpdate(now)) {
+      // Paused or session fallback: stop cleanly, no rescheduling.
+      return false;
+    }
+
+    final pose = _vehicleModelSyncLifecycle.consumeLatestRequest();
+    if (pose == null) {
+      _vehicleModelSyncLifecycle.cancelMovementUpdate();
+      return true;
+    }
+
+    logNav3dMovementPump(
+      event: 'write_attempt',
+      running: true,
+      rerunRequested: _vehicleModelMovementPump.rerunRequested,
+      forceRequested: force,
+      firstPoseRequested: _vehicleModelSyncLifecycle.firstPoseRequired,
+      generation: pose.movementGeneration,
+      presetGeneration: _vehicleSwapGeneration,
+      source: pose.source,
+      iteration: iteration,
+    );
+
+    if (_vehicleModelSyncLifecycle.shouldIgnoreStaleMovement(
+      pose.movementGeneration,
+    )) {
+      logNav3dVehicleSync(
+        phase: 'coalesced',
+        source: pose.source,
+        generation: pose.movementGeneration,
+        preset: pose.preset,
+        reason: 'stale_movement',
+      );
+      if (_vehicleModelSyncLifecycle.firstPoseRequired) {
+        _vehicleModelSyncLifecycle.requeuePose(
+          DriverVehicle3dMovementPose(
+            lon: pose.lon,
+            lat: pose.lat,
+            bearingDeg: pose.bearingDeg,
+            source: pose.source,
+            appliedZoom: pose.appliedZoom,
+            appliedPitch: pose.appliedPitch,
+            preset: pose.preset,
+            movementGeneration: _vehicleMovementGeneration,
+          ),
+        );
+        logNav3dFirstPose(
+          action: 'skip',
+          reason: 'stale_generation_requeued',
+          preset: driverVehicle3dPresetLogLabel(pose.preset),
+          styleGeneration: _driver3dVehicleStyleGeneration,
+          presetGeneration: _vehicleSwapGeneration,
+          inFlight: true,
+          pending: _vehicleModelSyncLifecycle.pendingUpdate,
+          hasPosition: true,
+          hasBearing: true,
+        );
+        // Bounded internal follow-up so the re-tagged first pose runs once
+        // more; the watchdog aborts if this ever stops converging.
+        _vehicleModelMovementPump.requestInternalFollowUp();
+      }
+      _vehicleModelSyncLifecycle.finishMovementUpdate(
+        applied: false,
+        now: DateTime.now(),
+        countFailure: false,
+      );
+      return true;
+    }
+
+    if (_vehicleModelSyncLifecycle.firstPoseRequired) {
+      logNav3dFirstPose(
+        action: 'run',
+        reason: 'first_pose_sync',
+        preset: driverVehicle3dPresetLogLabel(pose.preset),
+        styleGeneration: _driver3dVehicleStyleGeneration,
+        presetGeneration: _vehicleSwapGeneration,
+        inFlight: true,
+        pending: _vehicleModelSyncLifecycle.pendingUpdate,
+        hasPosition: pose.lat.isFinite && pose.lon.isFinite,
+        hasBearing: pose.bearingDeg.isFinite,
+      );
+    }
+
+    logNav3dVehicleSync(
+      phase: 'update_start',
+      source: pose.source,
+      generation: pose.movementGeneration,
+      preset: pose.preset,
+      pending: _vehicleModelSyncLifecycle.pendingUpdate,
+    );
+
+    final style = _map?.style;
+    if (style == null || _mapStyleChanging) {
+      _vehicleModelSyncLifecycle.cancelMovementUpdate();
+      return false;
+    }
+
+    if (!_driverVehicleModelLayer.isRegistered &&
+        _vehicleModelSyncLifecycle.shouldRunHealthCheck(now)) {
+      await _ensureDriverVehicleModelLayer();
+    }
+
+    if (!_driverVehicleModelLayer.isRegistered) {
+      // Keep the pose as latest request; registration completion issues a
+      // new external first-pose request that restarts the pump. No
+      // self-rerun here.
+      _vehicleModelSyncLifecycle.requeuePose(pose);
+      logNav3dFirstPose(
+        action: 'skip',
+        reason: 'not_registered_requeued',
+        preset: driverVehicle3dPresetLogLabel(pose.preset),
+        styleGeneration: _driver3dVehicleStyleGeneration,
+        presetGeneration: _vehicleSwapGeneration,
+        inFlight: false,
+        pending: _vehicleModelSyncLifecycle.pendingUpdate,
+        hasPosition: pose.lat.isFinite && pose.lon.isFinite,
+        hasBearing: pose.bearingDeg.isFinite,
+      );
+      _vehicleModelSyncLifecycle.finishMovementUpdate(
+        applied: false,
+        now: DateTime.now(),
+        countFailure: false,
+      );
+      return true;
+    }
+
+    final debugPlacement = _isDriver3dVehicleDebugPlacementActive();
+    double? debugProbeScale;
+    double? debugProbeAltitude;
+    if (debugPlacement) {
+      final probe = _nav3dVehicleDebugRenderProbeScheduler.advance();
+      debugProbeScale = probe.scale;
+      debugProbeAltitude = probe.altitude;
+    }
+    final updateStarted = DateTime.now();
+    final firstPose = _vehicleModelSyncLifecycle.firstPoseRequired;
+    if (firstPose) {
+      logNav3dFirstPose(
+        action: 'apply_start',
+        reason: pose.source,
+        preset: driverVehicle3dPresetLogLabel(pose.preset),
+        styleGeneration: _driver3dVehicleStyleGeneration,
+        presetGeneration: _vehicleSwapGeneration,
+        inFlight: true,
+        pending: _vehicleModelSyncLifecycle.pendingUpdate,
+        hasPosition: pose.lat.isFinite && pose.lon.isFinite,
+        hasBearing: pose.bearingDeg.isFinite,
+        scale: formatDriverVehicleModelScaleForLog(
+          resolveDriverVehicleModelScaleForPreset(
+            appliedZoom: pose.appliedZoom,
+            appliedPitch: pose.appliedPitch,
+            preset: pose.preset,
+            debugPlacementActive: debugPlacement,
+            viewLevel: _driverCockpitViewLevel,
+          ),
+        ),
+      );
+    }
+    DriverVehicleModelMovementOutcome outcome;
+    try {
+      outcome = await _driverVehicleModelLayer
+          .updateMovementOnly(
+            style: style,
+            lon: pose.lon,
+            lat: pose.lat,
+            bearingDeg: pose.bearingDeg,
+            source: pose.source,
+            debugPlacementActive: debugPlacement,
+            appliedZoom: pose.appliedZoom,
+            appliedPitch: pose.appliedPitch,
+            preset: pose.preset,
+            movementGeneration: pose.movementGeneration,
+            readCurrentMovementGeneration: () => _vehicleMovementGeneration,
+            force: firstPose || debugPlacement,
+            debugProbeScale: debugProbeScale,
+            debugProbeAltitude: debugProbeAltitude,
+            styleGeneration: _driver3dVehicleStyleGeneration,
+            presetGeneration: _vehicleSwapGeneration,
+          )
+          .timeout(
+            const Duration(milliseconds: kDriverVehicleModelMovementTimeoutMs),
+            onTimeout: () => const DriverVehicleModelMovementOutcome(
+              result: DriverVehicleModelMovementUpdateResult.failed,
+            ),
+          );
+    } catch (_) {
+      outcome = const DriverVehicleModelMovementOutcome(
+        result: DriverVehicleModelMovementUpdateResult.failed,
+      );
+    }
+
+    final result = outcome.result;
+    final finishedAt = DateTime.now();
+    final inFlightMs = finishedAt.difference(updateStarted).inMilliseconds;
+    final timedOut = inFlightMs > kDriverVehicleModelMovementTimeoutMs;
+    final applied = result == DriverVehicleModelMovementUpdateResult.applied;
+
+    if (result == DriverVehicleModelMovementUpdateResult.skippedUnchanged) {
+      logNav3dVehicleSync(
+        phase: 'skipped_unchanged',
+        source: pose.source,
+        inFlightMs: inFlightMs,
+        generation: pose.movementGeneration,
+        preset: pose.preset,
+      );
+      if (firstPose &&
+          resolveNav3dFirstActivationConfirmsOnSkippedUnchanged(
+            firstPoseRequired: true,
+          )) {
+        logNav3dFirstActivation(
+          event: 'first_pose_skipped_unchanged',
+          styleGeneration: _driver3dVehicleStyleGeneration,
+          presetGeneration: _vehicleSwapGeneration,
+          registered: _driverVehicleModelLayer.isRegistered,
+          layerCreated: _driverVehicleModelLayer.layerCreated,
+          posePending: false,
+          movementQueued: _vehicleModelSyncLifecycle.pendingUpdate,
+          movementInFlight: false,
+          movementGeneration: pose.movementGeneration,
+          writeExecuted: false,
+          reason: 'confirm_without_native_delta',
+        );
+        _noteDriver3dVehicleModelPoseApplied(poseWritten: true);
+        _vehicleModelSyncLifecycle.markFirstPoseSatisfied();
+        unawaited(
+          _tryConfirmDriver3dVehicleModelActivation(
+            preset: pose.preset,
+            movementGeneration: pose.movementGeneration,
+          ),
+        );
+      }
+    } else if (timedOut) {
+      logNav3dVehicleSync(
+        phase: 'timeout',
+        source: pose.source,
+        inFlightMs: inFlightMs,
+        consecutiveFailures: _vehicleModelSyncLifecycle.consecutiveFailures + 1,
+        generation: pose.movementGeneration,
+        preset: pose.preset,
+      );
+    } else if (!applied) {
+      logNav3dVehicleSync(
+        phase: result == DriverVehicleModelMovementUpdateResult.staleMovement
+            ? 'coalesced'
+            : 'failed',
+        source: pose.source,
+        inFlightMs: inFlightMs,
+        consecutiveFailures: _vehicleModelSyncLifecycle.consecutiveFailures + 1,
+        generation: pose.movementGeneration,
+        preset: pose.preset,
+        reason: result.name,
+      );
+      if (firstPose) {
+        logNav3dFirstPose(
+          action: 'failure',
+          reason: result.name,
+          preset: driverVehicle3dPresetLogLabel(pose.preset),
+          styleGeneration: _driver3dVehicleStyleGeneration,
+          presetGeneration: _vehicleSwapGeneration,
+          inFlight: false,
+          pending: _vehicleModelSyncLifecycle.pendingUpdate,
+          hasPosition: pose.lat.isFinite && pose.lon.isFinite,
+          hasBearing: pose.bearingDeg.isFinite,
+        );
+      }
+    } else {
+      logNav3dVehicleSync(
+        phase: 'update_complete',
+        source: pose.source,
+        inFlightMs: inFlightMs,
+        generation: pose.movementGeneration,
+        preset: pose.preset,
+      );
+      if (firstPose) {
+        logNav3dFirstPose(
+          action: 'apply_done',
+          reason: pose.source,
+          preset: driverVehicle3dPresetLogLabel(pose.preset),
+          styleGeneration: _driver3dVehicleStyleGeneration,
+          presetGeneration: _vehicleSwapGeneration,
+          inFlight: false,
+          pending: _vehicleModelSyncLifecycle.pendingUpdate,
+          hasPosition: true,
+          hasBearing: true,
+        );
+        logNav3dFirstActivation(
+          event: 'first_pose_write',
+          styleGeneration: _driver3dVehicleStyleGeneration,
+          presetGeneration: _vehicleSwapGeneration,
+          registered: _driverVehicleModelLayer.isRegistered,
+          layerCreated: _driverVehicleModelLayer.layerCreated,
+          posePending: false,
+          movementQueued: _vehicleModelSyncLifecycle.pendingUpdate,
+          movementInFlight: false,
+          movementGeneration: pose.movementGeneration,
+          writeExecuted: true,
+          reason: pose.source,
+        );
+      }
+      _noteDriver3dVehicleModelPoseApplied(
+        poseWritten: outcome.anyPropertyWritten || firstPose,
+      );
+      if (_driver3dVehicleModelPoseApplied) {
+        _vehicleModelSyncLifecycle.markFirstPoseSatisfied();
+      }
+      unawaited(
+        _tryConfirmDriver3dVehicleModelActivation(
+          preset: pose.preset,
+          movementGeneration: pose.movementGeneration,
+        ),
+      );
+      if (applied) {
+        unawaited(
+          _logDriver3dVehicleRenderProofAfterMovement(
+            preset: pose.preset,
+            poseLon: pose.lon,
+            poseLat: pose.lat,
+            debugPlacement: debugPlacement,
+            debugProbeScale: debugProbeScale,
+            debugProbeAltitude: debugProbeAltitude,
+          ),
+        );
+      }
+      if (debugPlacement) {
+        unawaited(_syncDriverVehicleModelDebugOverlay(pose));
+      }
+    }
+
+    // A newer request that arrived while the write was in flight was moved
+    // to latest by finishMovementUpdate; the request itself already set
+    // rerunRequested on the pump, so the pump loops at most once more.
+    // The write result itself never sets rerunRequested.
+    _vehicleModelSyncLifecycle.finishMovementUpdate(
+      applied: result == DriverVehicleModelMovementUpdateResult.applied,
+      now: finishedAt,
+      timedOut: timedOut,
+      countFailure:
+          result == DriverVehicleModelMovementUpdateResult.failed || timedOut,
+    );
+
+    if (_vehicleModelSyncLifecycle.shouldTriggerFallback(now: finishedAt)) {
+      await _applyDriverVehicle3dSessionFallback2d(
+        reason: timedOut ? 'timeout' : 'consecutive_failures',
+      );
+      return false;
+    }
+    return true;
+  }
+
+  Future<void> _applyDriverVehicle3dSessionFallback2d({
+    required String reason,
+  }) async {
+    if (_vehicleModelSyncLifecycle.sessionFallback2d) return;
+    _vehicleModelSyncLifecycle.enableSessionFallback2d();
+    _vehicleModelMovementPump.reset();
+    _cancelDriver3dActivationConfirmRetry();
+    _resetDriver3dVehicleModelVisualHandoff();
+    logNav3dVehicleSync(
+      phase: 'fallback_2d',
+      consecutiveFailures: _vehicleModelSyncLifecycle.consecutiveFailures,
+      generation: _vehicleMovementGeneration,
+      reason: reason,
+    );
+    _logDriver3dVehicleStateIfChanged();
+    await _teardownDriverVehicleModelLayer();
+    await _applyMapboxTaxiMarkerPresentationOpacity(source: 'session_fallback');
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _syncDriverVehicleModelDebugOverlay(
+    DriverVehicle3dMovementPose pose,
+  ) async {
+    if (!_isDriver3dVehicleDebugPlacementActive()) return;
+    final map = _map;
+    final style = map?.style;
+    if (style == null || _mapStyleChanging) return;
+
+    var viewportW = 0.0;
+    var viewportH = 0.0;
+    if (mounted) {
+      final size = MediaQuery.sizeOf(context);
+      viewportW = size.width;
+      viewportH = size.height;
+    }
+
+    var visualOnScreen = false;
+    if (map != null && viewportW > 0 && viewportH > 0) {
+      try {
+        final visualScreen = await map.pixelForCoordinate(
+          _mbPoint(pose.lon, pose.lat),
+        );
+        visualOnScreen = resolveDriverVehicleScreenOnViewport(
+          screenX: visualScreen.x,
+          screenY: visualScreen.y,
+          viewportWidth: viewportW,
+          viewportHeight: viewportH,
+        );
+      } catch (_) {}
+    }
+
+    double? cameraLon;
+    double? cameraLat;
+    if (map != null) {
+      try {
+        final camera = await map.getCameraState();
+        final coords = camera.center.coordinates;
+        cameraLon = coords.lng.toDouble();
+        cameraLat = coords.lat.toDouble();
+      } catch (_) {}
+    }
+
+    final placement = resolveDriverVehicleModelDebugPlacementCoordinate(
+      debugPlacementActive: true,
+      visualLon: pose.lon,
+      visualLat: pose.lat,
+      visualSource: pose.source,
+      cameraCenterLon: cameraLon,
+      cameraCenterLat: cameraLat,
+      visualOnScreen: visualOnScreen,
+    );
+
+    logNavPres3dVehiclePlacementMode(
+      debugPlacementActive: true,
+      placementSource: placement.placementSource,
+    );
+    _logNavPres3dVehicleDebugStyleContextIfChanged();
+
+    if (resolveShowDriver3dVehicleDebugStyleDot(
+      debugPlacementActive: true,
+      runtimeActive: true,
+    )) {
+      double? placementScreenX;
+      double? placementScreenY;
+      bool? placementOnScreen;
+      if (map != null && viewportW > 0 && viewportH > 0) {
+        try {
+          final placementScreen = await map.pixelForCoordinate(
+            _mbPoint(placement.lon, placement.lat),
+          );
+          placementScreenX = placementScreen.x;
+          placementScreenY = placementScreen.y;
+          placementOnScreen = resolveDriverVehicleScreenOnViewport(
+            screenX: placementScreen.x,
+            screenY: placementScreen.y,
+            viewportWidth: viewportW,
+            viewportHeight: viewportH,
+          );
+        } catch (_) {}
+      }
+      await _driverVehicleModelLayer.ensureDebugStyleDotRegistered(
+        style,
+        lon: placement.lon,
+        lat: placement.lat,
+        styleReady: !_mapStyleChanging,
+      );
+      await _driverVehicleModelLayer.updateDebugStyleDot(
+        style: style,
+        lon: placement.lon,
+        lat: placement.lat,
+        screenX: placementScreenX,
+        screenY: placementScreenY,
+        onScreen: placementOnScreen,
+      );
+    } else {
+      await _driverVehicleModelLayer.teardownDebugStyleDot(style);
+    }
+  }
+
+  Future<void> _syncDriverVehicleModelLayer({
+    required double lon,
+    required double lat,
+    required double bearingDeg,
+    required String source,
+  }) async {
+    _requestDriverVehicleModelMovementSync(
+      lon: lon,
+      lat: lat,
+      bearingDeg: bearingDeg,
+      source: source,
+    );
+  }
+
+  void _logNavPres3dVehicleDebugStyleContextIfChanged() {
+    final activeStyle = _activeMapStyleUri;
+    if (activeStyle.isEmpty) return;
+    final capability = DriverCockpitMap3dCapability.resolve(
+      styleUri: activeStyle,
+      visualMode: _driverMapVisualMode,
+    );
+    final signature =
+        '$activeStyle|${capability.styleFamily}|${capability.is3dCandidate}';
+    if (signature == _lastNavPres3dVehicleDebugStyleContextSignature) return;
+    _lastNavPres3dVehicleDebugStyleContextSignature = signature;
+    logNavPres3dVehicleDebugStyleContext(
+      activeStyleUri: activeStyle,
+      is3dCandidate: capability.is3dCandidate,
+      styleFamily: capability.styleFamily,
+    );
+  }
+
+  Future<void> _teardownDriverVehicleModelLayer() async {
+    _resetDriver3dVehicleModelVisualHandoff();
+    final style = _map?.style;
+    if (style == null) {
+      _driverVehicleModelLayer.resetRegistration();
+      return;
+    }
+    await _driverVehicleModelLayer.teardown(style);
+  }
+
+  void _logNavPres3dVehicleVisibleStateIfChanged(
+    NavigationPresentationState presentation,
+  ) {
+    final eligibility = _driver3dVehicleEligibility();
+    _logDriver3dVehicleStateIfChanged();
+    final hudVehicleHidden = _hideDriverHudVehicleAtRuntime(presentation);
+    final mapbox2dTaxiSuppressed = _suppressMapboxTaxiMarkerAtRuntime(
+      presentation,
+    );
+    if (!eligibility.modelReady &&
+        !hudVehicleHidden &&
+        !mapbox2dTaxiSuppressed) {
+      return;
+    }
+    final signature =
+        '${eligibility.modelReady}|$hudVehicleHidden|$mapbox2dTaxiSuppressed';
+    if (signature == _lastNavPres3dVehicleVisibleStateSignature) return;
+    _lastNavPres3dVehicleVisibleStateSignature = signature;
+    logNavPres3dVehicleVisibleState(
+      modelActive: eligibility.modelReady,
+      hudVehicleHidden: hudVehicleHidden,
+      mapbox2dTaxiSuppressed: mapbox2dTaxiSuppressed,
+    );
+  }
+
+  /// NAV-3D-MAPBOX-2D-MARKER-ISOLATION-FIX-1: single authoritative opacity
+  /// for the native `_driverMarker`.
+  ///
+  /// Uses the creation-time 3D isolation helper (independent of activation
+  /// confirmation and generation matches) so that any marker create,
+  /// recreate, upgrade, self-heal or retry-restore path snaps to
+  /// `iconOpacity=0` while the driver intends to be in 3D mode. Every call
+  /// updates [_pendingMapboxTaxiMarkerOpacity] so that a null-marker window
+  /// cannot silently drop the hide.
+  /// NAV-3D-YELLOW-TAXI-FINAL-VISIBILITY-FIX-1: shared live 3D presentation
+  /// intent used by both the marker opacity resolver and the activation
+  /// confirmation retry cancellation check.
+  bool _currentNav3dPresentation3dIntent() {
+    final pres = _navigationPresentationStateFor(_navCameraViewMode);
+    return resolveNav3dPresentation3dIntent(
+      vehicleModelFlagEnabled: kNavigation3dVehicleModelEnabled,
+      cockpitSceneEnabled: kNavigation3dCockpitSceneEnabled,
+      useDriverCockpitCamera: pres.useDriverCockpitCamera,
+      presentationMode: pres.mode,
+      liveNavigationActive: _liveRideActive,
+      followCamera: _cameraMode == _CameraMode.follow,
+      cockpitSceneActive: _isDriverCockpit3dSceneEligible(),
+      sessionFallback2d: _vehicleModelSyncLifecycle.sessionFallback2d,
+      cockpitVisualStyle: kNavigation3dCockpitSceneEnabled
+          ? _driverCockpitMapVisualStyle
+          : null,
+      activeStyleUri: _activeMapStyleUri,
+      selectedVehiclePresentation: _driverVehiclePresentationChoice,
+    );
+  }
+
+  double _resolveDesiredMapboxTaxiOpacity({required String source}) {
+    final followLiveActive =
+        _cameraMode == _CameraMode.follow && _liveRideActive;
+    final pres = _navigationPresentationStateFor(_navCameraViewMode);
+    final explicit2dFallback = _vehicleModelSyncLifecycle.sessionFallback2d;
+    final presentation3dIntent = _currentNav3dPresentation3dIntent();
+    final opacity = resolveNav3dMapbox2dTaxiCreateOpacity(
+      followLiveActive: followLiveActive,
+      // NAV-3D-YELLOW-TAXI-FINAL-VISIBILITY-FIX-1: when the screen-fixed HUD
+      // taxi owns the driver visual, the native marker must never be visible
+      // underneath it — in 2D follow, 3D transitions, swaps and self-heals.
+      hideForHudOverlay: _hideMapboxTaxiForHudOverlay(pres),
+      presentation3dIntent: presentation3dIntent,
+      explicit2dFallback: explicit2dFallback,
+    );
+    _pendingMapboxTaxiMarkerOpacity = opacity;
+    logNav3dMapbox2d(
+      event: 'resolve',
+      presentation3dIntent: presentation3dIntent,
+      explicit2dFallback: explicit2dFallback,
+      desiredOpacity: opacity,
+      pendingOpacity: _pendingMapboxTaxiMarkerOpacity,
+      markerExists: _driverMarker != null,
+      appliedOpacity: _driverMarker?.iconOpacity,
+      source: source,
+    );
+    return opacity;
+  }
+
+  /// NAV-PRES-2B / 3K-B/G: legacy accessor kept as thin wrapper around the
+  /// NAV-3D-MAPBOX-2D-MARKER-ISOLATION-FIX-1 authoritative resolver. Every
+  /// caller receives the same pending-aware desired opacity.
+  double _mapboxTaxiMarkerIconOpacityForPresentation({
+    String source = 'create',
+  }) {
+    return _resolveDesiredMapboxTaxiOpacity(source: source);
+  }
+
+  /// NAV-3D-MAPBOX-2D-MARKER-ISOLATION-FIX-1: apply the authoritative desired
+  /// opacity to the native marker. If the marker is currently null, the
+  /// desired value is retained in [_pendingMapboxTaxiMarkerOpacity] and will
+  /// be picked up by the next creation path — the intent is never dropped.
+  Future<void> _applyMapboxTaxiMarkerPresentationOpacity({
+    String source = 'visual_sync',
+  }) async {
+    final desired = _resolveDesiredMapboxTaxiOpacity(source: source);
+    final followLiveActive =
+        _cameraMode == _CameraMode.follow && _liveRideActive;
+    final decision = _resolveNav3dHudRenderDecision(
+      _navigationPresentationStateFor(_navCameraViewMode),
+      followLiveActive: followLiveActive,
+    );
+    _logNav3dHudRenderDecisionIfChanged(decision);
+    if (!_canUpdateDriverMarker) {
+      logNav3dMapbox2d(
+        event: 'pending',
+        presentation3dIntent:
+            desired == 0.0 && !_vehicleModelSyncLifecycle.sessionFallback2d,
+        explicit2dFallback: _vehicleModelSyncLifecycle.sessionFallback2d,
+        desiredOpacity: desired,
+        pendingOpacity: _pendingMapboxTaxiMarkerOpacity,
+        markerExists: _driverMarker != null,
+        appliedOpacity: _driverMarker?.iconOpacity,
+        source: source,
+      );
+      return;
+    }
     final mgr = _driverPointManager;
     final marker = _driverMarker;
-    if (mgr == null || marker == null) return;
-    final opacity = _mapboxTaxiMarkerIconOpacityForPresentation();
+    if (mgr == null || marker == null) {
+      logNav3dMapbox2d(
+        event: 'pending',
+        presentation3dIntent:
+            desired == 0.0 && !_vehicleModelSyncLifecycle.sessionFallback2d,
+        explicit2dFallback: _vehicleModelSyncLifecycle.sessionFallback2d,
+        desiredOpacity: desired,
+        pendingOpacity: _pendingMapboxTaxiMarkerOpacity,
+        markerExists: false,
+        appliedOpacity: null,
+        source: source,
+      );
+      return;
+    }
     final current = marker.iconOpacity ?? 1.0;
-    if ((current - opacity).abs() < 0.001) return;
-    marker.iconOpacity = opacity;
+    if ((current - desired).abs() < 0.001) {
+      logNav3dMapbox2d(
+        event: 'skipped',
+        presentation3dIntent:
+            desired == 0.0 && !_vehicleModelSyncLifecycle.sessionFallback2d,
+        explicit2dFallback: _vehicleModelSyncLifecycle.sessionFallback2d,
+        desiredOpacity: desired,
+        pendingOpacity: _pendingMapboxTaxiMarkerOpacity,
+        markerExists: true,
+        appliedOpacity: current,
+        source: source,
+      );
+      return;
+    }
+    marker.iconOpacity = desired;
     try {
       await mgr.update(marker);
+      logNav3dMapbox2d(
+        event: 'apply',
+        presentation3dIntent:
+            desired == 0.0 && !_vehicleModelSyncLifecycle.sessionFallback2d,
+        explicit2dFallback: _vehicleModelSyncLifecycle.sessionFallback2d,
+        desiredOpacity: desired,
+        pendingOpacity: _pendingMapboxTaxiMarkerOpacity,
+        markerExists: true,
+        appliedOpacity: desired,
+        source: source,
+      );
+      logNav3d2dSource(
+        hudMounted: followLiveActive && decision.actualHudVisible,
+        hudActualVisible: decision.actualHudVisible,
+        mapboxMarkerExists: true,
+        mapboxMarkerOpacity: desired,
+        mapbox2dVisible: decision.mapbox2dVisible,
+        presentation3d: decision.presentation3d,
+        effectivelyActive: decision.effectivelyActive,
+        hudFallbackAllowedToHide: decision.hudFallbackAllowedToHide,
+        hideHudFlag: decision.hideFlag,
+        reason: 'mapbox_opacity_applied',
+      );
     } catch (e) {
       if (_isMapboxAnnotationManagerLost(e)) {
         _resetDriverMarkerOnNativeError('sync_presentation_opacity');
@@ -8725,7 +11194,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     return 'View $_driverCockpitViewLevel/$kDriverCockpitViewLevelMax';
   }
 
-  /// NAV-PRES-3G: compact field-test debug line — applied camera values.
+  /// NAV-PRES-3G: compact field-test debug line â€” applied camera values.
   String _driverCockpitViewLevelDebugLabel() {
     final isTablet = MediaQuery.sizeOf(context).width >= 600;
     final isLandscape =
@@ -8762,7 +11231,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         'Z${appliedZoom.toStringAsFixed(1)} P${appliedPitch.round()} A${anchor.toStringAsFixed(2)}';
     if ((appliedZoom - targetZoom).abs() > 0.05 ||
         (appliedPitch - targetPitch).abs() > 0.5) {
-      return '$applied →Z${targetZoom.toStringAsFixed(1)} P${targetPitch.round()}';
+      return '$applied â†’Z${targetZoom.toStringAsFixed(1)} P${targetPitch.round()}';
     }
     return applied;
   }
@@ -9248,9 +11717,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
     final pos = _lastPos;
     if (pos != null) {
-      unawaited(_followCameraTesla(pos, force: true, cameraReason: 'view_mode'));
+      unawaited(
+        _followCameraTesla(pos, force: true, cameraReason: 'view_mode'),
+      );
     }
-    unawaited(_applyMapboxTaxiMarkerPresentationOpacity());
+    unawaited(
+      _applyMapboxTaxiMarkerPresentationOpacity(source: 'view_mode_change'),
+    );
+    unawaited(_ensureDriverVehicleModelLayer());
   }
 
   void _logNavR15CameraView({
@@ -10008,7 +12482,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   /// NAV-OS-R2: forward route bearing with an anti-reverse guard. If the
-  /// candidate bearing is ~180° off the movement/GPS direction (snap landed on
+  /// candidate bearing is ~180Â° off the movement/GPS direction (snap landed on
   /// an anti-parallel segment), it looks further ahead along the route; if
   /// that still disagrees, returns null so callers fall back to GPS heading.
   double? _resolveForwardRouteBearing(geo.Position pos, {_RouteSnap? snap}) {
@@ -10402,6 +12876,12 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   void _resetOffRouteStateAfterReroute() {
     _rerouteDecision.noteRerouteApplied(DateTime.now());
+    _streetlevelBearingController.reset();
+    _streetlevelFollowPump.setExpectedRouteGeneration(_routeStepsVersion);
+    // FLUXIDI Phase 2A: advance the native-side route generation so any
+    // in-flight pose belonging to the old route is rejected by the custom
+    // LocationProvider gating.
+    _nativeFollow?.noteRouteGenerationApplied(_routeStepsVersion);
     _lastRerouteDecision = null;
     _offRouteHitCount = 0;
     _offRouteLikely = false;
@@ -10717,7 +13197,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
 
-    // NAV-OS-R2: split geometry — muted grey behind the taxi, blue ahead.
+    // NAV-OS-R2: split geometry â€” muted grey behind the taxi, blue ahead.
     var remaining = _routeCoordsFromSnap(snap);
     final completed = driverRouteCoordsUpToSnap(_routeCoords, snap);
     final cockpitLeadInActive = _navigationPresentationStateFor(
@@ -11330,7 +13810,17 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (_isMapboxAnnotationManagerLost(e)) {
         _resetDriverMarkerOnNativeError('visual_only_update');
       }
+    } finally {
+      _driverMarkerVisualUpdateInFlight = false;
     }
+    unawaited(
+      _syncDriverVehicleModelLayer(
+        lon: lon,
+        lat: lat,
+        bearingDeg: bearing,
+        source: source,
+      ),
+    );
   }
 
   ({_LonLat point, double bearing}) _resolveNavVisualForLiveNav(
@@ -11539,6 +14029,20 @@ class _DriverHomePageState extends State<DriverHomePage>
           markerBearing: markerBearing,
           iconOpacity: _mapboxTaxiMarkerIconOpacityForPresentation(),
         );
+        if (_driverMarker != null) {
+          logNav3dMapbox2d(
+            event: 'create',
+            presentation3dIntent:
+                createOpacity == 0.0 &&
+                !_vehicleModelSyncLifecycle.sessionFallback2d,
+            explicit2dFallback: _vehicleModelSyncLifecycle.sessionFallback2d,
+            desiredOpacity: createOpacity,
+            pendingOpacity: _pendingMapboxTaxiMarkerOpacity,
+            markerExists: true,
+            appliedOpacity: createOpacity,
+            source: 'create',
+          );
+        }
       } catch (e) {
         _noteMarkerUpdateFailure('create_marker', e);
         return false;
@@ -11557,7 +14061,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     _consecutiveMarkerUpdateFailures = 0;
     // NAV-R12-D: icon-size/puck sync are non-critical extra native round
-    // trips — throttle them off the per-fix hot path.
+    // trips â€” throttle them off the per-fix hot path.
     final auxNow = DateTime.now();
     if (_lastMarkerAuxSyncAt == null ||
         auxNow.difference(_lastMarkerAuxSyncAt!).inMilliseconds >= 1500) {
@@ -11600,6 +14104,15 @@ class _DriverHomePageState extends State<DriverHomePage>
       markerLagMs: markerLagMs,
     );
 
+    unawaited(
+      _syncDriverVehicleModelLayer(
+        lon: visual.point.lon,
+        lat: visual.point.lat,
+        bearingDeg: markerBearing,
+        source: markerDisplay.source,
+      ),
+    );
+
     if (moveCamera && _cameraMode != _CameraMode.follow) {
       await _map?.flyTo(
         mb.CameraOptions(center: p, zoom: 13.5),
@@ -11609,7 +14122,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     return true;
   }
 
-  /// NAV-R12-D: marker create/update exception handling — a lost manager
+  /// NAV-R12-D: marker create/update exception handling â€” a lost manager
   /// resets immediately; other native errors degrade after two consecutive
   /// failures (stale/detached annotation) so self-heal can recreate.
   void _noteMarkerUpdateFailure(String reason, Object e) {
@@ -11729,11 +14242,372 @@ class _DriverHomePageState extends State<DriverHomePage>
     _pendingFollowCameraPos = null;
   }
 
+  // NAV-STREETLEVEL-REALTIME-FOLLOW-PIPELINE-1: eligibility for the bounded
+  // real-time follow pump (cockpit streetlevel follow only). When eligible the
+  // pump owns camera writes and the heavy per-fix flyTo is skipped.
+  bool _streetlevelFollowPumpEligible() {
+    // FLUXIDI Phase 2A: when native FollowPuck is active, Mapbox owns the
+    // camera. The Dart pump becomes ineligible so zero passive Dart camera
+    // writes reach the platform channel. Flag-off behavior is unchanged.
+    if (_nativeFollowIsActive()) return false;
+    if (_cameraMode != _CameraMode.follow) return false;
+    if (!_liveRideActive) return false;
+    if (!_isActiveDriverNavEngineContext()) return false;
+    if (_map == null || _mapStyleChanging) return false;
+    final navPresentation = _navigationPresentationStateFor(_navCameraViewMode);
+    if (!navPresentation.useDriverCockpitCamera) return false;
+    return driverCockpitStreetlevelBearingLockActive(_driverCockpitViewLevel);
+  }
+
+  /// FLUXIDI Phase 2A: single-source ownership gate. Returns `true` only when
+  /// the build-time flag [kNavigationUseNativeFollowPuckEnabled] is on AND the
+  /// Dart-side [NativeFollowController] has an active session (native
+  /// LocationProvider installed on the exact MapView, FollowPuck owning the
+  /// camera, LocationPuck3D rendering the vehicle). Every passive Dart
+  /// writer defers to this gate.
+  bool _nativeFollowIsActive() {
+    if (!kNavigationUseNativeFollowPuckEnabled) return false;
+    final controller = _nativeFollow;
+    if (controller == null) return false;
+    return controller.isSessionActive;
+  }
+
+  /// Forwards one authoritative pose to the native FollowPuck bridge. The
+  /// controller enforces rate limiting (5-10 Hz), single-in-flight,
+  /// generation guard and latest-wins coalescing. No queue is retained
+  /// anywhere on the Dart side.
+  void _submitPoseToNativeFollow(double lat, double lon, double bearing) {
+    final controller = _nativeFollow;
+    if (controller == null) return;
+    final pos = _lastPos;
+    final speedMps = pos?.speed ?? 0.0;
+    final accuracyM = pos?.accuracy ?? 0.0;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    unawaited(
+      controller.submitPose(
+        latitude: lat,
+        longitude: lon,
+        courseDegrees: bearing,
+        speedMetersPerSecond: speedMps.isFinite && speedMps > 0
+            ? speedMps
+            : 0.0,
+        horizontalAccuracyMeters: accuracyM.isFinite && accuracyM > 0
+            ? accuracyM
+            : 0.0,
+        timestampMillis: nowMs,
+        routeGeneration: _routeStepsVersion,
+      ),
+    );
+  }
+
+  /// Producer hook: publishes the latest authoritative visual pose (the exact
+  /// pose the 2D marker / 3D model just rendered) to the bounded camera pump so
+  /// the camera consumes the same pose generation as the vehicle (PART A / G).
+  void _publishStreetlevelFollowPose(double lat, double lon, double bearing) {
+    // FLUXIDI Phase 2A: when native FollowPuck is active, forward the same
+    // authoritative pose to the native custom LocationProvider at bounded
+    // 5-10 Hz. The Dart pump is intentionally left OFF (see the
+    // _nativeFollowIsActive guard in _streetlevelFollowPumpEligible()) so the
+    // native FollowPuckViewportState owns the camera continuously.
+    if (_nativeFollowIsActive()) {
+      _submitPoseToNativeFollow(lat, lon, bearing);
+      _stopStreetlevelFollowPump();
+      return;
+    }
+    if (!_streetlevelFollowPumpEligible()) {
+      _stopStreetlevelFollowPump();
+      return;
+    }
+    _streetlevelPoseGeneration += 1;
+    _streetlevelVehicleGeneration = _streetlevelPoseGeneration;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    // NAV-STREETLEVEL-FLUID-MOTION-1: visual-pose cadence (frame-driven).
+    if (_lastPosePublishAtMs != null) {
+      _navPoseCadence.add((nowMs - _lastPosePublishAtMs!).toDouble());
+    }
+    _lastPosePublishAtMs = nowMs;
+    _streetlevelFollowPump.submit(
+      NavStreetlevelPose(
+        lat: lat,
+        lon: lon,
+        bearingDeg: bearing,
+        headingDeg: bearing,
+        timestampMs: nowMs,
+        routeGeneration: _routeStepsVersion,
+        poseGeneration: _streetlevelPoseGeneration,
+      ),
+    );
+    _ensureStreetlevelFollowPumpRunning();
+  }
+
+  void _ensureStreetlevelFollowPumpRunning() {
+    if (_streetlevelFollowPumpTimer != null) return;
+    // FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 (Phase 1 fallback, Part A):
+    // self-rescheduling single-shot pump driven by the adaptive cadence
+    // controller. Replaces the previous 16 ms Timer.periodic + setCamera
+    // flood; runs at 6-10 Hz and adapts on measured apply-latency /
+    // frame-stats health. The primitive stays `setCamera` (instant, no
+    // animation) so no repeated `easeTo` / `flyTo` restarts are involved.
+    _scheduleNextStreetlevelFollowPumpTick();
+    _registerNavFrameTimings();
+  }
+
+  void _scheduleNextStreetlevelFollowPumpTick() {
+    if (!mounted || !_streetlevelFollowPumpEligible()) {
+      _streetlevelFollowPumpTimer = null;
+      return;
+    }
+    _streetlevelFollowPumpTimer = Timer(
+      Duration(milliseconds: _navAdaptiveCadence.currentTickMs()),
+      () {
+        _streetlevelFollowPumpTimer = null;
+        _streetlevelFollowPumpTick();
+        _scheduleNextStreetlevelFollowPumpTick();
+      },
+    );
+  }
+
+  void _stopStreetlevelFollowPump() {
+    _streetlevelFollowPumpTimer?.cancel();
+    _streetlevelFollowPumpTimer = null;
+    _streetlevelFollowPump.reset();
+    _streetlevelBearingController.reset();
+    _lastStreetlevelPumpCameraAt = null;
+    _driverMarkerVisualUpdateInFlight = false;
+    _unregisterNavFrameTimings();
+    _lastPosePublishAtMs = null;
+    _navPoseCadence.reset();
+    _navCameraApplyCadence.reset();
+    _navFrameCadence.reset();
+    _navUiBuildStats.reset();
+    _navRasterStats.reset();
+    // FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 (Phase 1 fallback): reset the
+    // adaptive cadence so a new follow session starts at max Hz.
+    _navAdaptiveCadence.reset();
+  }
+
+  /// NAV-STREETLEVEL-FLUID-MOTION-1: subscribe to Flutter engine frame timings
+  /// so the rendered-frame, UI-build and raster (render-thread) cadences can be
+  /// distinguished from the GPS / anchor / pose / camera-apply cadences.
+  void _registerNavFrameTimings() {
+    if (_navFrameTimingsRegistered) return;
+    _navFrameTimingsRegistered = true;
+    _navFrameTimingsCallback = (List<FrameTiming> timings) {
+      for (final t in timings) {
+        _navFrameCadence.add(t.totalSpan.inMicroseconds / 1000.0);
+        _navUiBuildStats.add(t.buildDuration.inMicroseconds / 1000.0);
+        _navRasterStats.add(t.rasterDuration.inMicroseconds / 1000.0);
+      }
+    };
+    WidgetsBinding.instance.addTimingsCallback(_navFrameTimingsCallback!);
+  }
+
+  void _unregisterNavFrameTimings() {
+    final cb = _navFrameTimingsCallback;
+    if (cb != null) {
+      WidgetsBinding.instance.removeTimingsCallback(cb);
+    }
+    _navFrameTimingsCallback = null;
+    _navFrameTimingsRegistered = false;
+  }
+
+  /// Emits the bounded five-cadence budget line at most every 2 s.
+  void _maybeEmitNavCadenceDiag(int nowMs) {
+    if (_lastCadenceDiagAtMs != null && nowMs - _lastCadenceDiagAtMs! < 2000) {
+      return;
+    }
+    _lastCadenceDiagAtMs = nowMs;
+    debugPrint(
+      formatNavCadenceDiag(
+        gpsMedianMs: _navGpsCadence.medianMs,
+        anchorMedianMs: _navAnchorCadence.medianMs,
+        poseMedianMs: _navPoseCadence.medianMs,
+        cameraApplyMedianMs: _navCameraApplyCadence.medianMs,
+        frameMedianMs: _navFrameCadence.medianMs,
+        frameP95Ms: _navFrameCadence.p95Ms,
+        frameFreezesOver100: _navFrameCadence.freezesOver(100.0),
+        uiBuildMedianMs: _navUiBuildStats.medianMs,
+        rasterMedianMs: _navRasterStats.medianMs,
+      ),
+    );
+  }
+
+  /// Consumer: one bounded camera update per tick, newest pose wins, a single
+  /// update in flight. Finite periodic timer — no recursion, no microtask
+  /// chain, no queue of stale camera targets.
+  void _streetlevelFollowPumpTick() {
+    if (!mounted || !_streetlevelFollowPumpEligible()) {
+      _stopStreetlevelFollowPump();
+      return;
+    }
+    // PART C single-owner: a forced legacy camera move (manual recenter, view
+    // +/-, style restore, nav start) temporarily owns the camera. The passive
+    // pump yields so two Mapbox animations never run at the same time.
+    if (_followCameraInFlight) {
+      _logNavLatencyCamera(owner: 'legacy_forced', skipReason: 'legacy_owns');
+      return;
+    }
+    final zoom = _streetlevelFollowZoom;
+    final pitch = _streetlevelFollowPitch;
+    final padding = _streetlevelFollowPadding;
+    // Wait for the first full per-fix computation to seed zoom/pitch/padding.
+    if (zoom == null || pitch == null || padding == null) return;
+    final pose = _streetlevelFollowPump.acquire();
+    if (pose == null) return;
+    unawaited(_applyStreetlevelPumpCamera(pose, zoom, pitch, padding));
+  }
+
+  int? _lastNavLatencyCameraDiagAtMs;
+
+  /// NAV-LATENCY-1 (Part C): bounded single-owner camera trace (max 1/s).
+  void _logNavLatencyCamera({
+    required String owner,
+    int targetGeneration = 0,
+    int appliedGeneration = 0,
+    int targetAgeMs = 0,
+    int requestToApplyMs = 0,
+    int applyIntervalMs = 0,
+    bool animationInFlight = false,
+    String skipReason = '',
+  }) {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (_lastNavLatencyCameraDiagAtMs != null &&
+        nowMs - _lastNavLatencyCameraDiagAtMs! < 1000) {
+      return;
+    }
+    _lastNavLatencyCameraDiagAtMs = nowMs;
+    debugPrint(
+      formatNavLatencyCameraDiag(
+        owner: owner,
+        targetGeneration: targetGeneration,
+        appliedGeneration: appliedGeneration,
+        targetAgeMs: targetAgeMs,
+        requestToApplyMs: requestToApplyMs,
+        applyIntervalMs: applyIntervalMs,
+        animationInFlight: animationInFlight,
+        coalescedCount: _streetlevelFollowPump.coalescedCount,
+        droppedCount: _streetlevelFollowPump.droppedStaleTargets,
+        skipReason: skipReason,
+      ),
+    );
+  }
+
+  Future<void> _applyStreetlevelPumpCamera(
+    NavStreetlevelPose pose,
+    double zoom,
+    double pitch,
+    mb.MbxEdgeInsets padding,
+  ) async {
+    final speedKmh = _lastPos != null ? _speedKmhFor(_lastPos!) : 0.0;
+    final now = DateTime.now();
+    final intervalMs = _lastStreetlevelPumpCameraAt == null
+        ? 0
+        : now.difference(_lastStreetlevelPumpCameraAt!).inMilliseconds;
+    // FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 (Phase 1 fallback): drive
+    // bearing at the actual measured camera-apply interval so angular
+    // velocity stays cadence-independent when the adaptive controller
+    // dynamically steps between 6 Hz and 10 Hz. First tick uses the
+    // adaptive controller's current target as the reference dt so the
+    // warm-up frame is not biased by the 16 ms pose-interpolator constant.
+    final appliedBearing = _streetlevelBearingController.follow(
+      targetBearingDeg: pose.bearingDeg,
+      speedKmh: speedKmh,
+      dtMs: intervalMs <= 0
+          ? _navAdaptiveCadence.currentTickMs().toDouble()
+          : intervalMs.toDouble(),
+    );
+    _lastStreetlevelPumpCameraAt = now;
+    _streetlevelCameraGeneration = pose.poseGeneration;
+    final nowMs = now.millisecondsSinceEpoch;
+    // NAV-STREETLEVEL-FLUID-MOTION-1: camera-apply cadence + five-cadence line.
+    if (intervalMs > 0) _navCameraApplyCadence.add(intervalMs.toDouble());
+    _maybeEmitNavCadenceDiag(nowMs);
+    // NAV-LATENCY-1 (Part C): bounded single-owner camera trace.
+    _logNavLatencyCamera(
+      owner: 'streetlevel_pump',
+      targetGeneration: _streetlevelPoseGeneration,
+      appliedGeneration: pose.poseGeneration,
+      targetAgeMs: nowMs - pose.timestampMs,
+      requestToApplyMs: nowMs - pose.timestampMs,
+      applyIntervalMs: intervalMs,
+      animationInFlight: _streetlevelFollowPump.inFlight,
+    );
+    if (_lastStreetlevelFollowDiagAtMs == null ||
+        nowMs - _lastStreetlevelFollowDiagAtMs! >= 1000) {
+      _lastStreetlevelFollowDiagAtMs = nowMs;
+      debugPrint(
+        formatNavStreetlevelFollowDiag(
+          poseGeneration: pose.poseGeneration,
+          cameraGeneration: _streetlevelCameraGeneration,
+          vehicleGeneration: _streetlevelVehicleGeneration,
+          poseAgeMs: nowMs - pose.timestampMs,
+          cameraUpdateIntervalMs: intervalMs,
+          bearingTarget: pose.bearingDeg,
+          bearingApplied: appliedBearing,
+          bearingDelta: _streetlevelBearingController.lastAppliedDeltaDeg,
+          cameraInFlight: _streetlevelFollowPump.inFlight,
+          droppedStaleTargets: _streetlevelFollowPump.droppedStaleTargets,
+          reason: 'pump_apply',
+        ),
+      );
+    }
+    // FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 (Phase 1 fallback, Part A): the
+    // primitive stays `setCamera` (instant, no animation) so consecutive
+    // writes never restart an eased animation. The adaptive cadence
+    // controller determines HOW OFTEN we get here (6-10 Hz), driven by the
+    // measured apply-latency + frame health below.
+    final applyStart = Stopwatch()..start();
+    try {
+      await _map?.setCamera(
+        mb.CameraOptions(
+          center: _mbPoint(pose.lon, pose.lat),
+          zoom: zoom,
+          bearing: appliedBearing,
+          pitch: pitch,
+          padding: padding,
+        ),
+      );
+    } catch (_) {
+      // Swallow transient camera errors; the next pose retries.
+    } finally {
+      applyStart.stop();
+      _navAdaptiveCadence.observe(
+        applyLatencyMs: applyStart.elapsedMilliseconds.toDouble(),
+        frameP95Ms: _navFrameCadence.p95Ms,
+        freezesOver100: _navFrameCadence.freezesOver(100.0),
+      );
+      _streetlevelFollowPump.complete();
+    }
+  }
+
   Future<void> _followCameraTesla(
     geo.Position pos, {
     bool force = false,
     String cameraReason = 'normal_follow',
   }) async {
+    // FLUXIDI Phase 2A: hard-gate every passive path. When native FollowPuck
+    // owns the camera, the only legitimate passive writer is the native
+    // custom LocationProvider — Dart contributes zero setCamera/easeTo/flyTo
+    // calls. Explicit one-shot temporary owners (style_switch, view_mode,
+    // pending_latest) are allowed via the `force: true` branch below, gated
+    // by a bounded diagnostic counter so the acceptance criterion "passive
+    // Dart camera calls == 0" is provable.
+    if (_nativeFollowIsActive()) {
+      if (!force) {
+        _navValidationPendingCameraSkipReason = 'native_follow_owns';
+        _recordNavDiagCameraUpdate(
+          follow: false,
+          skippedReason: 'native_follow_owns',
+        );
+        return;
+      }
+      // Explicit temporary owner. Latch native side, count the passive call
+      // for hard-acceptance diagnostics, and let the caller do its one-shot
+      // Mapbox action; a follow-up transitionToFollowPuck() returns
+      // ownership to native.
+      _nativeFollowPassiveCameraCallsCount += 1;
+      unawaited(_nativeFollow!.setOwner(NativeFollowOwnerState.temporary));
+    }
     if (_mapStyleChanging) {
       _navValidationPendingCameraSkipReason = 'style_changing';
       _recordNavDiagCameraUpdate(
@@ -11797,7 +14671,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         zoom: policy.zoom,
         tilt: policy.tilt,
       );
-      // NAV-R12-E1: last-wins — retry with the newest target once the
+      // NAV-R12-E1: last-wins â€” retry with the newest target once the
       // throttle window has passed instead of dropping this fix.
       final elapsedMs = now.difference(last).inMilliseconds;
       _queuePendingFollowCamera(
@@ -11825,7 +14699,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
     final speedKmh = _speedKmhFor(pos);
 
-    // NAV-R12-E1: pure target decision — deviation prefers the freshest
+    // NAV-R12-E1: pure target decision â€” deviation prefers the freshest
     // raw/live position, prediction only when confident and fresh.
     final progress = _lastNavRouteProgress;
     final targetDecision = NavCameraTargetPolicy.resolve(
@@ -12009,6 +14883,14 @@ class _DriverHomePageState extends State<DriverHomePage>
         cameraCenter = _mbPoint(cockpit.centerLon!, cockpit.centerLat!);
       }
       _commitDriverCockpitAppliedCamera(zoom: cameraZoom, pitch: cameraPitch);
+      if (_isDriver3dVehicleModelEffectivelyActive()) {
+        _requestDriverVehicleModelMovementSync(
+          lon: visual.point.lon,
+          lat: visual.point.lat,
+          bearingDeg: heading,
+          source: 'camera_scale_$cameraReason',
+        );
+      }
       _logNavPresCameraAnchorDeferred();
       _logNavPresCamera(
         zoom: cameraZoom,
@@ -12866,8 +15748,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           _tr(
             nl: 'Navigatie-app kon niet worden geopend.',
             en: 'Could not open navigation app.',
-            fr: 'Impossible d’ouvrir l’application de navigation.',
-            es: 'No se pudo abrir la aplicación de navegación.',
+            fr: 'Impossible dâ€™ouvrir lâ€™application de navigation.',
+            es: 'No se pudo abrir la aplicaciÃ³n de navegaciÃ³n.',
           ),
         ),
       ),
@@ -13063,14 +15945,14 @@ class _DriverHomePageState extends State<DriverHomePage>
                 ? _tr(
                     nl: 'Terug naar kaartweergave',
                     en: 'Back to map view',
-                    fr: 'Retour à la carte',
+                    fr: 'Retour Ã  la carte',
                     es: 'Volver al mapa',
                   )
                 : _tr(
                     nl: 'Satellietweergave',
                     en: 'Satellite view',
                     fr: 'Vue satellite',
-                    es: 'Vista satélite',
+                    es: 'Vista satÃ©lite',
                   ),
             onPressed: _toggleDriverMapVisualMode,
             navAccent: colors.accent,
@@ -13089,7 +15971,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             nl: 'Offline kaarten',
             en: 'Offline maps',
             fr: 'Cartes hors ligne',
-            es: 'Mapas sin conexión',
+            es: 'Mapas sin conexiÃ³n',
           ),
           onPressed: _openOfflineMaps,
           navAccent: colors.accent,
@@ -13407,7 +16289,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         await _fitBoundsToRoute(_routeCoords);
       }
     } on _UnauthorizedMapbox catch (_) {
-      _toast('Mapbox REST token refused (401) — using Worker route instead.');
+      _toast('Mapbox REST token refused (401) â€” using Worker route instead.');
       await _tryWorkerRouteFallback(
         fromText: b.from!,
         toText: b.to!,
@@ -13711,7 +16593,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     return parsed;
   }
 
-  // NAV-SIGNAL-P0B: early _applyParsedNavRouteSteps removed — geometry/steps
+  // NAV-SIGNAL-P0B: early _applyParsedNavRouteSteps removed â€” geometry/steps
   // activate only via _tryActivatePreparedDriverRoute after the final guard.
 
   String _localizeNavInstructionMvp(String raw) {
@@ -14825,7 +17707,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final hasB = to.isNotEmpty;
     final routeTextSafe = hasB
         ? routeText
-        : (routeText.isNotEmpty ? (routeText + '  ->  B: —') : 'B: —');
+        : (routeText.isNotEmpty ? (routeText + '  ->  B: â€”') : 'B: â€”');
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(26),
@@ -14867,7 +17749,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   ),
                   const SizedBox(height: 10),
 
-                  // Price orb + mode (fixed/live) — minimal, cockpit-style
+                  // Price orb + mode (fixed/live) â€” minimal, cockpit-style
                   Row(
                     children: [
                       Container(
@@ -14893,7 +17775,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                         ),
                         child: Center(
                           child: Text(
-                            liveActive ? '●' : '◐',
+                            liveActive ? 'â—�' : 'â—�',
                             style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.w900,
@@ -15026,7 +17908,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   String get _etaString {
     // ETA as countdown (remaining time), not clock-time.
     final totalSec = _routeDurationSec;
-    if (totalSec == null || totalSec <= 0) return '—';
+    if (totalSec == null || totalSec <= 0) return 'â€”';
 
     final elapsed = _activeElapsed.inSeconds;
     final remaining = math.max(0, totalSec - elapsed);
@@ -15207,7 +18089,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            'Driver • Live Tracking',
+                            'Driver â€¢ Live Tracking',
                             style: TextStyle(
                               color: Colors.white.withOpacity(0.78),
                               fontSize: 13.5,
@@ -15295,7 +18177,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   String _fmtDur(int? sec) {
-    if (sec == null) return '—';
+    if (sec == null) return 'â€”';
     final m = (sec / 60).round();
     if (m < 60) return '$m min';
     final h = (m / 60).floor();
@@ -15307,14 +18189,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     final remainingKm = (_routeKm != null)
         ? (_routeKm! - _kmDriven).clamp(0.0, 999999.0)
         : null;
-    if (remainingKm == null) return '—';
+    if (remainingKm == null) return 'â€”';
     return remainingKm.toStringAsFixed(1);
   }
 
   String _fmtPrice() {
     final b = _activeBooking;
     final amount = b == null ? null : _driverDisplayPriceForBooking(b);
-    if (amount == null) return '—';
+    if (amount == null) return 'â€”';
     return amount.toStringAsFixed(2);
   }
 
@@ -15322,7 +18204,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     // Keep it simple & predictable (no locale surprises)
     final value = amount.toDouble().toStringAsFixed(2);
     final cur = currency.toUpperCase();
-    if (cur == 'EUR' || cur == 'EURO' || cur == '€') return '€ $value';
+    if (cur == 'EUR' || cur == 'EURO' || cur == 'â‚¬') return 'â‚¬ $value';
     if (cur.length <= 3) return '$cur $value';
     return '$value';
   }
@@ -15475,8 +18357,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   // G3-L: when the user opens the My-rides segment, log the visible count and
-  // — only when we are in the business-preview entry path or the cached list
-  // is stale — force one fresh /driver/bookings fetch. The standalone driver
+  // â€” only when we are in the business-preview entry path or the cached list
+  // is stale â€” force one fresh /driver/bookings fetch. The standalone driver
   // app already gets a fresh fetch from its own polling/login flow, so it
   // does not need this extra force; we cooldown-gate so chip-tap-bouncing
   // cannot spam the backend.
@@ -15747,11 +18629,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   String _dashboardNextRideTime(BookingItem? booking) {
-    if (booking == null) return '—';
+    if (booking == null) return 'â€”';
     final raw = (booking.pickupIso ?? '').trim();
-    if (raw.isEmpty) return '—';
+    if (raw.isEmpty) return 'â€”';
     final dt = DateTime.tryParse(raw);
-    if (dt == null) return '—';
+    if (dt == null) return 'â€”';
     final local = dt.toLocal();
     String two(int v) => v.toString().padLeft(2, '0');
     return '${two(local.hour)}:${two(local.minute)}';
@@ -15797,8 +18679,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   String _completedTodayCardValue() {
-    if (_completedTodayLoading) return '—';
-    return _completedTodayCount?.toString() ?? '—';
+    if (_completedTodayLoading) return 'â€”';
+    return _completedTodayCount?.toString() ?? 'â€”';
   }
 
   Future<void> _refreshCompletedTodayCount({required String reason}) async {
@@ -16157,7 +19039,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     if (portraitUrl.isNotEmpty) {
       debugPrint(
-        '[DRIVER_SESSION][BUSINESS_PREVIEW_PHOTO] driver=${_maskBridgeDriverIdGlobal(driver.id)} photo=${portraitUrl.length <= 12 ? 'present' : '${portraitUrl.substring(0, 6)}…${portraitUrl.substring(portraitUrl.length - 4)}'}',
+        '[DRIVER_SESSION][BUSINESS_PREVIEW_PHOTO] driver=${_maskBridgeDriverIdGlobal(driver.id)} photo=${portraitUrl.length <= 12 ? 'present' : '${portraitUrl.substring(0, 6)}â€¦${portraitUrl.substring(portraitUrl.length - 4)}'}',
       );
     }
     final resolvedToken = _resolveBusinessPreviewSessionToken(
@@ -16498,8 +19380,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                           _tr(
                             nl: 'Voertuig: $vehicleLabel',
                             en: 'Vehicle: $vehicleLabel',
-                            fr: 'Véhicule : $vehicleLabel',
-                            es: 'Vehículo: $vehicleLabel',
+                            fr: 'VÃ©hicule : $vehicleLabel',
+                            es: 'VehÃ­culo: $vehicleLabel',
                           ),
                         statusLabel,
                       ];
@@ -16519,7 +19401,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                           ),
                         ),
                         subtitle: Text(
-                          subtitleParts.join(' • '),
+                          subtitleParts.join(' â€¢ '),
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.75),
                             fontSize: 12,
@@ -16585,14 +19467,14 @@ class _DriverHomePageState extends State<DriverHomePage>
             ? _tr(
                 nl: 'Geen andere chauffeur met voertuigtoewijzing beschikbaar.',
                 en: 'No other vehicle-assigned driver available.',
-                fr: 'Aucun autre chauffeur avec véhicule assigné.',
-                es: 'No hay otro conductor con vehículo asignado.',
+                fr: 'Aucun autre chauffeur avec vÃ©hicule assignÃ©.',
+                es: 'No hay otro conductor con vehÃ­culo asignado.',
               )
             : _tr(
                 nl: 'Geen beschikbare chauffeursweergave gevonden.',
                 en: 'No selectable driver view found.',
                 fr: 'Aucune vue chauffeur disponible.',
-                es: 'No se encontró vista de conductor seleccionable.',
+                es: 'No se encontrÃ³ vista de conductor seleccionable.',
               ),
       );
       return;
@@ -16745,8 +19627,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         _tr(
           nl: 'Account is inactief. Vraag je bedrijf om activatie.',
           en: 'Your account is inactive. Ask your company to reactivate it.',
-          fr: 'Votre compte est inactif. Demandez une réactivation.',
-          es: 'Tu cuenta está inactiva. Solicita reactivación.',
+          fr: 'Votre compte est inactif. Demandez une rÃ©activation.',
+          es: 'Tu cuenta estÃ¡ inactiva. Solicita reactivaciÃ³n.',
         ),
       );
       return;
@@ -16775,8 +19657,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           _tr(
             nl: 'Deze actie vereist een actieve bedrijfssessie.',
             en: 'This action requires an active company session.',
-            fr: 'Cette action nécessite une session entreprise active.',
-            es: 'Esta acción requiere una sesión de empresa activa.',
+            fr: 'Cette action nÃ©cessite une session entreprise active.',
+            es: 'Esta acciÃ³n requiere una sesiÃ³n de empresa activa.',
           ),
         );
         return;
@@ -16808,7 +19690,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             _tr(
               nl: 'Status kon niet worden opgeslagen. Probeer opnieuw.',
               en: 'Could not save status. Please try again.',
-              fr: 'Le statut n’a pas pu être enregistré.',
+              fr: 'Le statut nâ€™a pas pu Ãªtre enregistrÃ©.',
               es: 'No se pudo guardar el estado.',
             ),
           );
@@ -16893,7 +19775,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             nl: 'Chauffeurssessie ontbreekt. Log opnieuw in als chauffeur om je status te wijzigen.',
             en: 'Driver session missing. Please log in as driver again to change your status.',
             fr: 'Session chauffeur manquante. Reconnectez-vous comme chauffeur pour modifier votre statut.',
-            es: 'Falta sesión de conductor. Vuelve a iniciar sesión como conductor para cambiar tu estado.',
+            es: 'Falta sesiÃ³n de conductor. Vuelve a iniciar sesiÃ³n como conductor para cambiar tu estado.',
           ),
         );
         return;
@@ -16929,7 +19811,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           _tr(
             nl: 'Status kon niet worden opgeslagen. Probeer opnieuw.',
             en: 'Could not save status. Please try again.',
-            fr: 'Le statut n’a pas pu être enregistré.',
+            fr: 'Le statut nâ€™a pas pu Ãªtre enregistrÃ©.',
             es: 'No se pudo guardar el estado.',
           ),
         );
@@ -17462,10 +20344,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         side: BorderSide(color: const Color(0xFFFFD36A).withOpacity(0.35)),
       ),
       itemBuilder: (_) => const [
-        PopupMenuItem(value: 'nl', child: Text('🇳🇱 NL')),
-        PopupMenuItem(value: 'en', child: Text('🇬🇧 EN')),
-        PopupMenuItem(value: 'fr', child: Text('🇫🇷 FR')),
-        PopupMenuItem(value: 'es', child: Text('🇪🇸 ES')),
+        PopupMenuItem(value: 'nl', child: Text('ðŸ‡³ðŸ‡± NL')),
+        PopupMenuItem(value: 'en', child: Text('ðŸ‡¬ðŸ‡§ EN')),
+        PopupMenuItem(value: 'fr', child: Text('ðŸ‡«ðŸ‡· FR')),
+        PopupMenuItem(value: 'es', child: Text('ðŸ‡ªðŸ‡¸ ES')),
       ],
       child: Container(
         height: 30,
@@ -17944,7 +20826,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 nl: 'Haal nieuwe planning op of start een straatrit.',
                 en: 'Fetch latest planning or start a direct ride.',
                 fr: 'Actualisez le planning ou demarrez une course directe.',
-                es: 'Actualiza la planificación o inicia un viaje directo.',
+                es: 'Actualiza la planificaciÃ³n o inicia un viaje directo.',
               ),
               style: TextStyle(
                 color: isMiddayGold
@@ -18019,8 +20901,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     final pickup = _formatPickup(nextRide.pickupIso);
-    final from = (nextRide.from ?? '').trim().isNotEmpty ? nextRide.from! : '—';
-    final to = (nextRide.to ?? '').trim().isNotEmpty ? nextRide.to! : '—';
+    final from = (nextRide.from ?? '').trim().isNotEmpty ? nextRide.from! : 'â€”';
+    final to = (nextRide.to ?? '').trim().isNotEmpty ? nextRide.to! : 'â€”';
     final tier = (nextRide.tier ?? 'premium').toUpperCase();
     final details = nextRide.details;
     String? detailText(List<String> keys) {
@@ -18271,7 +21153,7 @@ class _DriverHomePageState extends State<DriverHomePage>
               ),
               metaChip(
                 icon: Icons.schedule,
-                text: pickup == '—' ? statusText : pickup,
+                text: pickup == 'â€”' ? statusText : pickup,
               ),
             ],
           ),
@@ -19500,13 +22382,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         ? _tr(
             nl: 'Geen voertuig toegewezen. Vraag je bedrijfsbeheerder om een voertuig toe te wijzen.',
             en: 'No vehicle assigned. Ask your company admin to assign a vehicle.',
-            fr: 'Aucun véhicule assigné. Demandez à votre administrateur d’assigner un véhicule.',
-            es: 'Sin vehículo asignado. Pide a tu administrador que asigne un vehículo.',
+            fr: 'Aucun vÃ©hicule assignÃ©. Demandez Ã  votre administrateur dâ€™assigner un vÃ©hicule.',
+            es: 'Sin vehÃ­culo asignado. Pide a tu administrador que asigne un vehÃ­culo.',
           )
         : _tr(
             nl: 'Chauffeurscockpit geblokkeerd. Neem contact op met je bedrijfsbeheerder.',
             en: 'Driver cockpit blocked. Contact your company admin.',
-            fr: 'Cockpit chauffeur bloqué. Contactez votre administrateur.',
+            fr: 'Cockpit chauffeur bloquÃ©. Contactez votre administrateur.',
             es: 'Cockpit bloqueado. Contacta a tu administrador.',
           );
     return Center(
@@ -19720,16 +22602,16 @@ class _DriverHomePageState extends State<DriverHomePage>
   }) {
     final text = _isRerouting
         ? _tr(
-            nl: 'Route herberekenen…',
-            en: 'Recalculating route…',
-            fr: 'Recalcul de l\'itinéraire…',
-            es: 'Recalculando ruta…',
+            nl: 'Route herberekenenâ€¦',
+            en: 'Recalculating routeâ€¦',
+            fr: 'Recalcul de l\'itinÃ©raireâ€¦',
+            es: 'Recalculando rutaâ€¦',
           )
         : _tr(
-            nl: 'Route-instructies worden geladen…',
-            en: 'Loading route instructions…',
-            fr: 'Chargement des instructions…',
-            es: 'Cargando instrucciones…',
+            nl: 'Route-instructies worden geladenâ€¦',
+            en: 'Loading route instructionsâ€¦',
+            fr: 'Chargement des instructionsâ€¦',
+            es: 'Cargando instruccionesâ€¦',
           );
     return DriverNavLoadingBanner(
       compact: compact,
@@ -19752,7 +22634,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       text: _tr(
         nl: 'Volg de route',
         en: 'Follow the route',
-        fr: 'Suivez l\'itinéraire',
+        fr: 'Suivez l\'itinÃ©raire',
         es: 'Sigue la ruta',
       ),
       themeListenable: _activeDriverThemeListenable,
@@ -20005,11 +22887,31 @@ class _DriverHomePageState extends State<DriverHomePage>
         hudSize: driverHudIconSize,
       );
     }
+    if (_cameraMode == _CameraMode.follow && liveActive) {
+      _logNavPres3dVehicleVisibleStateIfChanged(navPresentationState);
+    }
+    final followLiveActive = _cameraMode == _CameraMode.follow && liveActive;
+    final nav3dHudRenderDecision = _resolveNav3dHudRenderDecision(
+      navPresentationState,
+      followLiveActive: followLiveActive,
+    );
+    if (followLiveActive) {
+      _logNav3dHudRenderDecisionIfChanged(nav3dHudRenderDecision);
+      _syncNav3d2dPresentationIfChanged(
+        nav3dHudRenderDecision,
+        followLiveActive: followLiveActive,
+      );
+    }
     final navActionColors = _navActionThemeColors();
     final bool showDriverCockpitCameraControls =
         _cameraMode == _CameraMode.follow &&
-            liveActive &&
-            navPresentationState.showDriverCockpitCameraControls;
+        liveActive &&
+        navPresentationState.showDriverCockpitCameraControls;
+    final bool showDriverVehicle3dPresetSelector =
+        _showDriverVehicle3dPresetSelector(
+          navPresentationState,
+          isPhone: !isTablet,
+        );
     final safePadding = MediaQuery.of(context).padding;
     final cockpitControlsPanelSize =
         estimateDriverCockpitCameraControlsPanelSize(
@@ -20214,10 +23116,9 @@ class _DriverHomePageState extends State<DriverHomePage>
               child: _buildRecenterButton(),
             ),
 
-          // NAV-PRES-2A: optional screen-fixed driver HUD (feature-flagged).
-          if (_cameraMode == _CameraMode.follow &&
-              liveActive &&
-              navPresentationState.showDriverHudOverlay)
+          // NAV-PRES-2A / 3K-C / NAV-3D-HUD-ACTUAL-VISIBILITY-FIX-2:
+          // optional screen-fixed driver HUD vehicle icon.
+          if (followLiveActive && nav3dHudRenderDecision.actualHudVisible)
             Positioned(
               left: 0,
               right: 0,
@@ -20233,16 +23134,71 @@ class _DriverHomePageState extends State<DriverHomePage>
             Positioned(
               right: cockpitControlsLayout.right,
               bottom: cockpitControlsLayout.bottom,
-              child: NavigationDriverCockpitCameraControls(
-                onPlus: () => _adjustDriverCockpitCameraViewLevel(increase: true),
-                onMinus: () =>
-                    _adjustDriverCockpitCameraViewLevel(increase: false),
+              child: isTablet
+                  ? NavigationDriverCockpitCameraControls(
+                      onPlus: () =>
+                          _adjustDriverCockpitCameraViewLevel(increase: true),
+                      onMinus: () =>
+                          _adjustDriverCockpitCameraViewLevel(increase: false),
+                      accentColor: navActionColors.accent,
+                      textColor: navActionColors.text,
+                      surfaceColor: navActionColors.surface,
+                      levelLabel: _driverCockpitViewLevelLabel(),
+                      debugSubLabel: _driverCockpitViewLevelDebugLabel(),
+                      compactLandscape: isLandscape,
+                      portraitPanelLayout: viewPanelPortraitLayout,
+                    )
+                  : NavigationDriverPhoneZoomControls(
+                      onPlus: () =>
+                          _adjustDriverCockpitCameraViewLevel(increase: true),
+                      onMinus: () =>
+                          _adjustDriverCockpitCameraViewLevel(increase: false),
+                      accentColor: navActionColors.accent,
+                      textColor: navActionColors.text,
+                      surfaceColor: navActionColors.surface,
+                    ),
+            ),
+
+          // NAV-3D-VEHICLE-CHOICE-3WAY-1: tablet keeps three direct vehicle
+          // buttons [ 2D ] [ Fluxidi ] [ Classic ] above the View panel.
+          if (showDriverVehicle3dPresetSelector &&
+              cockpitControlsLayout != null &&
+              isTablet)
+            Positioned(
+              right: cockpitControlsLayout.right,
+              bottom:
+                  cockpitControlsLayout.bottom +
+                  cockpitControlsPanelSize.height +
+                  8,
+              child: NavigationDriverVehicleChoiceSelector(
+                selectedChoice: _driverVehiclePresentationChoice,
+                onSelected: (choice) =>
+                    unawaited(_setDriverVehiclePresentationChoice(choice)),
                 accentColor: navActionColors.accent,
                 textColor: navActionColors.text,
                 surfaceColor: navActionColors.surface,
                 levelLabel: _driverCockpitViewLevelLabel(),
                 debugSubLabel: _driverCockpitViewLevelDebugLabel(),
                 compactLandscape: isLandscape,
+              ),
+            ),
+
+          // NAV-MOBILE-ENTERPRISE-COCKPIT-COMPACT-CONTROLS-1: phone gets one
+          // compact vehicle icon on the left side of the map-control zone;
+          // the popup drives the same three-way choice callback.
+          if (showDriverVehicle3dPresetSelector &&
+              phoneVehicleButtonPlacement != null &&
+              !isTablet)
+            Positioned(
+              left: phoneVehicleButtonPlacement.left,
+              bottom: phoneVehicleButtonPlacement.bottom,
+              child: NavigationDriverVehicleCompactButton(
+                selectedChoice: _driverVehiclePresentationChoice,
+                onSelected: (choice) =>
+                    unawaited(_setDriverVehiclePresentationChoice(choice)),
+                accentColor: navActionColors.accent,
+                textColor: navActionColors.text,
+                surfaceColor: navActionColors.surface,
               ),
             ),
 
@@ -20390,7 +23346,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Tracking actief • Ping: $_lastPing • ETA: $eta • KM: $km',
+              'Tracking actief â€¢ Ping: $_lastPing â€¢ ETA: $eta â€¢ KM: $km',
               style: const TextStyle(fontWeight: FontWeight.w800),
               overflow: TextOverflow.ellipsis,
             ),
@@ -20495,7 +23451,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       _DriverRidesHubSegment.myRides => _tr(
         nl: 'Geen ritten klaar',
         en: 'No rides ready',
-        fr: 'Aucune course prête',
+        fr: 'Aucune course prÃªte',
         es: 'No hay viajes listos',
       ),
       _DriverRidesHubSegment.history => _tr(
@@ -20509,32 +23465,32 @@ class _DriverHomePageState extends State<DriverHomePage>
       _DriverRidesHubSegment.available => _tr(
         nl: 'Nieuwe beschikbare ritten verschijnen hier zodra ze door het systeem zijn vrijgegeven.',
         en: 'New available rides appear here once released by the system.',
-        fr: 'Les nouvelles courses disponibles apparaissent ici une fois libérées par le système.',
-        es: 'Los nuevos viajes disponibles aparecerán aquí cuando el sistema los publique.',
+        fr: 'Les nouvelles courses disponibles apparaissent ici une fois libÃ©rÃ©es par le systÃ¨me.',
+        es: 'Los nuevos viajes disponibles aparecerÃ¡n aquÃ­ cuando el sistema los publique.',
       ),
       _DriverRidesHubSegment.myRides => _tr(
         nl: 'Nieuwe boekingen verschijnen hier zodra ze aan jou of je bedrijf zijn gekoppeld.',
         en: 'New bookings appear here once they are assigned to you or your company.',
-        fr: 'Les nouvelles réservations apparaissent ici dès qu’elles sont liées à vous ou à votre entreprise.',
-        es: 'Las nuevas reservas aparecerán aquí cuando estén vinculadas a ti o a tu empresa.',
+        fr: 'Les nouvelles rÃ©servations apparaissent ici dÃ¨s quâ€™elles sont liÃ©es Ã  vous ou Ã  votre entreprise.',
+        es: 'Las nuevas reservas aparecerÃ¡n aquÃ­ cuando estÃ©n vinculadas a ti o a tu empresa.',
       ),
       _DriverRidesHubSegment.history => _tr(
         nl: 'Afgeronde ritten verschijnen hier zodra ze zijn voltooid of geannuleerd.',
         en: 'Completed rides appear here once they are finished or cancelled.',
-        fr: 'Les courses terminées apparaissent ici une fois achevées ou annulées.',
-        es: 'Los viajes completados aparecerán aquí cuando finalicen o se cancelen.',
+        fr: 'Les courses terminÃ©es apparaissent ici une fois achevÃ©es ou annulÃ©es.',
+        es: 'Los viajes completados aparecerÃ¡n aquÃ­ cuando finalicen o se cancelen.',
       ),
     };
     final emptyInfoTitle = _tr(
       nl: 'Geen rit gevonden?',
       en: 'No ride found?',
-      fr: 'Aucune course trouvée ?',
-      es: '¿No encontraste un viaje?',
+      fr: 'Aucune course trouvÃ©e ?',
+      es: 'Â¿No encontraste un viaje?',
     );
     final emptyInfoBody = _tr(
       nl: 'Er zijn momenteel geen ritten beschikbaar. Trek omlaag om te vernieuwen.',
       en: 'There are currently no rides available. Pull down to refresh.',
-      fr: 'Aucune course n’est disponible pour le moment. Tirez vers le bas pour actualiser.',
+      fr: 'Aucune course nâ€™est disponible pour le moment. Tirez vers le bas pour actualiser.',
       es: 'Actualmente no hay viajes disponibles. Desliza hacia abajo para actualizar.',
     );
     return Column(
@@ -20803,23 +23759,23 @@ class _DriverHomePageState extends State<DriverHomePage>
       label = _tr(
         nl: 'Planningnummer',
         en: 'Planning no.',
-        fr: 'N° de planning',
-        es: 'N.º de planificación',
+        fr: 'NÂ° de planning',
+        es: 'N.Âº de planificaciÃ³n',
       );
       value = planning;
     } else if (publicBooking.isNotEmpty) {
       label = _tr(
         nl: 'Boekingsnummer',
         en: 'Booking no.',
-        fr: 'N° de réservation',
-        es: 'N.º de reserva',
+        fr: 'NÂ° de rÃ©servation',
+        es: 'N.Âº de reserva',
       );
       value = publicBooking;
     } else {
       label = _tr(
         nl: 'Interne boeking',
         en: 'Internal booking',
-        fr: 'Réservation interne',
+        fr: 'RÃ©servation interne',
         es: 'Reserva interna',
       );
       value = canonicalBookingId.isEmpty ? b.shortId : canonicalBookingId;
@@ -20873,7 +23829,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     return _tr(
       nl: 'Geplande rit',
       en: 'Planned ride',
-      fr: 'Course planifiée',
+      fr: 'Course planifiÃ©e',
       es: 'Viaje planificado',
     );
   }
@@ -20957,7 +23913,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
           const SizedBox(height: 10),
           Text(
-            b.from ?? '—',
+            b.from ?? 'â€”',
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -20969,7 +23925,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
           const SizedBox(height: 8),
           Text(
-            b.to ?? '—',
+            b.to ?? 'â€”',
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -21262,7 +24218,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         final goToRideLabel = _tr(
           nl: 'Ga naar rit',
           en: 'Open ride',
-          fr: 'Aller à la course',
+          fr: 'Aller Ã  la course',
           es: 'Ir al viaje',
         );
 
@@ -21348,7 +24304,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            b.from ?? '—',
+                            b.from ?? 'â€”',
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -21360,7 +24316,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            b.to ?? '—',
+                            b.to ?? 'â€”',
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -21467,7 +24423,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                     isOperationalLeg &&
                             isRoundtripParent &&
                             parentBookingId.isNotEmpty
-                        ? '$referenceChipText · ${_tr(nl: 'Parent', en: 'Parent', fr: 'Parent', es: 'Padre')}: ${_safeRefPreview(parentBookingId)}'
+                        ? '$referenceChipText Â· ${_tr(nl: 'Parent', en: 'Parent', fr: 'Parent', es: 'Padre')}: ${_safeRefPreview(parentBookingId)}'
                         : referenceChipText,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -21571,7 +24527,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            b.from ?? '—',
+                            b.from ?? 'â€”',
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -21582,7 +24538,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            b.to ?? '—',
+                            b.to ?? 'â€”',
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -21688,7 +24644,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   isOperationalLeg &&
                           isRoundtripParent &&
                           parentBookingId.isNotEmpty
-                      ? '$referenceChipText · ${_tr(nl: 'Parent', en: 'Parent', fr: 'Parent', es: 'Padre')}: ${_safeRefPreview(parentBookingId)}'
+                      ? '$referenceChipText Â· ${_tr(nl: 'Parent', en: 'Parent', fr: 'Parent', es: 'Padre')}: ${_safeRefPreview(parentBookingId)}'
                       : referenceChipText,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -21716,11 +24672,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Widget _buildCockpitWidget() {
-    // ✅ Minimal cockpit (driving only):
+    // âœ… Minimal cockpit (driving only):
     // - Big ETA + KM remaining (countdown starts when we move)
     // - Bottom controls: NAV | START/STOP | WACHT/GA
-    final eta = _etaText.isNotEmpty ? _etaText : '—';
-    final km = _kmRemainingText.isNotEmpty ? _kmRemainingText : '—';
+    final eta = _etaText.isNotEmpty ? _etaText : 'â€”';
+    final km = _kmRemainingText.isNotEmpty ? _kmRemainingText : 'â€”';
 
     final bool tripStarted = _activeTripId != null;
     final bool waiting = _isWaiting;
@@ -21876,26 +24832,26 @@ class _DriverHomePageState extends State<DriverHomePage>
     final label = _tr(
       nl: 'Geschatte ritprijs',
       en: 'Estimated fare',
-      fr: 'Prix estimé',
+      fr: 'Prix estimÃ©',
       es: 'Precio estimado',
     );
     final note = _tr(
-      nl: 'Incl. btw • Definitieve prijs bij STOP',
-      en: 'Incl. VAT • Final price at STOP',
-      fr: 'TVA incl. • Prix final à l’arrêt',
-      es: 'IVA incl. • Precio final al finalizar',
+      nl: 'Incl. btw â€¢ Definitieve prijs bij STOP',
+      en: 'Incl. VAT â€¢ Final price at STOP',
+      fr: 'TVA incl. â€¢ Prix final Ã  lâ€™arrÃªt',
+      es: 'IVA incl. â€¢ Precio final al finalizar',
     );
     final loadingText = _tr(
-      nl: 'Prijs berekenen…',
-      en: 'Calculating fare…',
-      fr: 'Calcul du prix…',
-      es: 'Calculando precio…',
+      nl: 'Prijs berekenenâ€¦',
+      en: 'Calculating fareâ€¦',
+      fr: 'Calcul du prixâ€¦',
+      es: 'Calculando precioâ€¦',
     );
     final unavailableText = _tr(
       nl: 'Schatting niet beschikbaar. De ritmeter blijft werken.',
       en: 'Estimate unavailable. The live meter still works.',
-      fr: 'Estimation indisponible. Le taximètre reste actif.',
-      es: 'Estimación no disponible. El taxímetro sigue funcionando.',
+      fr: 'Estimation indisponible. Le taximÃ¨tre reste actif.',
+      es: 'EstimaciÃ³n no disponible. El taxÃ­metro sigue funcionando.',
     );
     return DirectRideEstimatePanel(
       themeListenable: _activeDriverThemeListenable,
@@ -22383,10 +25339,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     final b = _activeBooking;
 
     return DraggableScrollableSheet(
-      // ✅ smaller collapsed size so it doesn't hide the values
+      // âœ… smaller collapsed size so it doesn't hide the values
       initialChildSize: 0.10,
       minChildSize: 0.10,
-      // ✅ lower max so it doesn't dominate
+      // âœ… lower max so it doesn't dominate
       maxChildSize: 0.56,
       builder: (context, controller) {
         return Container(
@@ -22428,21 +25384,21 @@ class _DriverHomePageState extends State<DriverHomePage>
                 _line(
                   icon: Icons.confirmation_number,
                   title: 'Trip ID',
-                  value: _activeTripId ?? '—',
+                  value: _activeTripId ?? 'â€”',
                   maxLines: 1,
                 ),
                 const SizedBox(height: 8),
                 _line(
                   icon: Icons.radio_button_checked,
                   title: kPickupLabel,
-                  value: b.from ?? '—',
+                  value: b.from ?? 'â€”',
                   maxLines: 3,
                 ),
                 const SizedBox(height: 8),
                 _line(
                   icon: Icons.place,
                   title: kDropoffLabel,
-                  value: b.to ?? '—',
+                  value: b.to ?? 'â€”',
                   maxLines: 3,
                 ),
                 const SizedBox(height: 12),
@@ -22630,7 +25586,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 value,
                 maxLines: maxLines,
                 overflow: TextOverflow.ellipsis,
-                // ✅ FIX: w650 doesn't exist -> w600
+                // âœ… FIX: w650 doesn't exist -> w600
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
             ],
@@ -22641,7 +25597,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   String _formatPickup(String? iso) {
-    if (iso == null || iso.isEmpty) return '—';
+    if (iso == null || iso.isEmpty) return 'â€”';
     try {
       final dt = DateTime.parse(iso).toLocal();
       String two(int v) => v.toString().padLeft(2, '0');
@@ -22859,7 +25815,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             _tr(
               nl: 'Bedrijfscontext ontbreekt. Ritgeschiedenis kan niet veilig geladen worden.',
               en: 'Company context is missing. Trip history cannot be loaded safely.',
-              fr: 'Le contexte entreprise est manquant. L’historique des trajets ne peut pas être chargé en toute sécurité.',
+              fr: 'Le contexte entreprise est manquant. Lâ€™historique des trajets ne peut pas Ãªtre chargÃ© en toute sÃ©curitÃ©.',
               es: 'Falta el contexto de empresa. El historial de viajes no puede cargarse de forma segura.',
             ),
           ),
@@ -23431,7 +26387,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                         nl: 'Offline kaarten',
                         en: 'Offline maps',
                         fr: 'Cartes hors ligne',
-                        es: 'Mapas sin conexión',
+                        es: 'Mapas sin conexiÃ³n',
                       ),
                       onTap: _openOfflineMaps,
                     ),

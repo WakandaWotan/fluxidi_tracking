@@ -114,6 +114,12 @@ import 'navigation/presentation/navigation_destination_marker.dart';
 import 'navigation/presentation/navigation_driver_cockpit_camera.dart';
 import 'navigation/presentation/navigation_driver_cockpit_streetlevel_bearing_lock.dart';
 import 'navigation/presentation/navigation_driver_route_bearing.dart';
+import 'navigation/presentation/navigation_driver_vehicle_model_layer.dart';
+import 'navigation/native_follow/native_follow_controller.dart';
+import 'navigation/native_follow/native_follow_vehicle_calibration.dart';
+import 'navigation/native_follow/pigeon_native_follow.g.dart'
+    as native_follow_wire;
+import 'navigation/widgets/navigation_driver_vehicle_choice_selector.dart';
 import 'navigation/widgets/navigation_driver_hud_overlay.dart';
 import 'navigation/widgets/navigation_driver_cockpit_camera_controls.dart';
 import 'navigation/widgets/navigation_driver_cockpit_camera_controls_layout.dart';
