@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">fluxidi_tracking</string>
-    <string name="mapbox_access_token">MAPBOX_TOKEN_NOT_SET</string>
+    <!--
+        mapbox_access_token is injected at build time via resValue in
+        android/app/build.gradle.kts (single authoritative MAPBOX_TOKEN path).
+        It is intentionally NOT defined here so no placeholder token is tracked.
+    -->
+
 </resources>
 

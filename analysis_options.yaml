@@ -13,6 +13,9 @@ analyzer:
   exclude:
     - lib/_lib_old/**
     - lib/lib_old/**
+    # Local staging/temp scripts and the vendored Mapbox plugin (own analysis).
+    - tools/**
+    - third_party/**
   errors:
     deprecated_member_use: ignore
     unused_element: ignore

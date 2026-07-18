@@ -41,16 +41,33 @@ dependencies:
   # MP4 hero background silently and looped, with a same-aspect PNG
   # poster as fallback. Not used anywhere else in the app yet.
   video_player: ^2.9.1
+  internet_connection_checker_plus: ^3.1.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+  # FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 Phase 2A: typed Dart <-> Kotlin
+  # HostApi for the native FollowPuck bridge. Runtime code depends only on
+  # the generated file.
+  pigeon: ^22.7.0
+
+# FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 Phase 2A: pinned local vendor of
+# mapbox_maps_flutter 2.18.0 with a two-line MapView lifecycle exposure
+# patch (see third_party/mapbox_maps_flutter/PATCHES.md). Reversible by
+# removing this block.
+dependency_overrides:
+  mapbox_maps_flutter:
+    path: third_party/mapbox_maps_flutter
 
 flutter:
   uses-material-design: true
 
   assets:
+    # NAV-VEHICLE-MODE-CAR-ARROW-1: experimental 3D vehicle GLBs retired.
+    # assets/navigation/ still ships the 2D car marker (driver_taxi_top.png)
+    # and other navigation assets; the assets/navigation/vehicles/ folder
+    # (classic_flying_taxi.glb) is no longer bundled.
     - assets/navigation/
     - assets/fluxidi/
     - assets/fluxidi/onboarding/
