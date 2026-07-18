@@ -2077,6 +2077,26 @@ function money2Num(value) {
   return Math.round((Number(value) || 0) * 100) / 100;
 }
 
+// FARE-ROUNDING-CENTRAL-0_10-1 — canonical Fluxidi final fare rounding.
+// Mirrors workers/shared/fluxidi_fare_rounding.mjs (the documented, node-tested
+// source of truth). Inlined here because this worker is deployed as a single
+// self-contained file. Policy: round the definitive customer total to the
+// nearest €0.10, half-up at exactly €0.05, applied EXACTLY ONCE at finalization,
+// using integer cents (no floating-point drift).
+//   - 0 stays 0;
+//   - null/undefined/NaN/Infinity returns null (never silently 0);
+//   - negative amounts (refunds) are not treated as a ride price -> null.
+function roundFareCentsToNearestTenCents(rawCents) {
+  if (rawCents === null || rawCents === undefined) return null;
+  const value = Number(rawCents);
+  if (!Number.isFinite(value)) return null;
+  if (value === 0) return 0;
+  if (value < 0) return null;
+  const cents = Math.round(value);
+  if (cents === 0) return 0;
+  return Math.floor((cents + 5) / 10) * 10;
+}
+
 function normalizeDestination(v) {
   if (!v || typeof v !== "object") return null;
   const label = safeStr(v.label ?? v.address ?? v.text ?? "", 256);
@@ -2260,17 +2280,42 @@ function directTripTotals(trip, kmTotal, waitSecondsTotal) {
     }
   }
 
+  // FARE-ROUNDING-CENTRAL-0_10-1: this is the definitive street-ride
+  // finalization. Round the customer-facing total (incl VAT) to the nearest
+  // €0.10 EXACTLY ONCE here, then derive the VAT split from the rounded total
+  // so total_eur / price_incl_vat / price_ex_vat / price_vat are internally
+  // consistent and every downstream surface reads the same rounded amount.
+  const rawInclCents = Math.round(priceInclVat * 100);
+  const roundedInclCents = roundFareCentsToNearestTenCents(rawInclCents);
+  const finalInclVat =
+    roundedInclCents === null ? money2Num(priceInclVat) : roundedInclCents / 100;
+  let finalExVat;
+  let finalVat;
+  if (hasVatMeta && vatRate > 0) {
+    finalExVat = money2Num(finalInclVat / (1 + vatRate));
+    finalVat = money2Num(finalInclVat - finalExVat);
+  } else {
+    finalExVat = finalInclVat;
+    finalVat = 0;
+  }
+  console.log(
+    `[FARE_ROUNDING] phase=finalize source=street rawCents=${rawInclCents} roundedCents=${
+      roundedInclCents === null ? "null" : roundedInclCents
+    } alreadyFinalized=false`,
+  );
+
   return {
     km_total: kmTotal,
     wait_seconds_total: waitSecondsTotal,
     wait_minutes: money2Num(waitMinutes),
-    total_eur: money2Num(priceInclVat),
-    price_ex_vat: money2Num(priceExVat),
-    price_vat: money2Num(priceVat),
-    price_incl_vat: money2Num(priceInclVat),
+    total_eur: finalInclVat,
+    price_ex_vat: finalExVat,
+    price_vat: finalVat,
+    price_incl_vat: finalInclVat,
     vat_rate: vatRate,
     vat_mode: vatMode,
     currency: safeStr(pricing.currency ?? "EUR", 8) ?? "EUR",
+    fare_rounding_policy: "nearest_ten_cents_half_up",
   };
 }
 
@@ -4029,6 +4074,395 @@ async function handleDevDashboardKpisReset(req, url, env, origin, { forceDryRun 
   );
 }
 
+// STREET-RIDE-HISTORY-DUPLICATE-ZERO-BOOKING-1 / 1A / 1B
+//
+// One physical street ride can be stored as TWO trip records: a `direct` trip
+// (the ride source: real fare/distance/times) and a `planned` operational-leg
+// shadow (km 0, total_eur 0, leg_type "outbound") projected from the linked
+// direct booking. The planned shadow must not appear as a second history row
+// nor be counted again.
+//
+// WHY 1A FAILED (runtime proof rowsBefore==rowsAfter): 1A matched on a shared
+// booking_id / planned_<bookingId> name. Live data proved the shadow's
+// booking_id / parent_booking_id differ from the direct trip's booking_id
+// (pending link at start, later reconciliation, or a canonical id remap), so a
+// booking-id/name match can never see the relation.
+//
+// CANONICAL CONTRACT (1B) — the reliable relation is the TRACKING TRIP ID:
+//   * canonical_physical_ride_key: direct -> its own trip_id; planned ->
+//     linked_tracking_trip_id (explicit write-time OR BOOKING_KV-resolved),
+//     else legacy parent_booking_id/booking_id.
+//   * canonical_trip_kind: "direct" | "operational_shadow" | "planned".
+//   * is_operational_shadow: true only when a planned leg's tracking-trip link
+//     (or, legacy, its booking key) is OWNED by a direct trip.
+// Never dedupes on time / amount / address. Unresolved legacy shadows are kept.
+//
+// Mirrors the tested reference workers/tracking/modules/street_history_canonical.mjs
+// (kept inline so this worker stays a single self-contained deploy file).
+const STREET_HISTORY_CANONICAL_VERSION = "1B";
+function _streetHistoryCanonicalKind(kind) {
+  return String(kind ?? "").trim().toLowerCase();
+}
+function _streetHistoryCanonicalId(id) {
+  return String(id ?? "").trim();
+}
+function _streetHistoryBookingDetails(trip) {
+  const d = trip?.booking_details;
+  return d && typeof d === "object" && !Array.isArray(d) ? d : {};
+}
+function _streetHistoryTripIdOf(trip) {
+  return _streetHistoryCanonicalId(trip?.trip_id ?? trip?.tripId);
+}
+function _streetHistoryBookingIdOf(trip) {
+  return _streetHistoryCanonicalId(trip?.booking_id ?? trip?.bookingId);
+}
+function _streetHistoryParentBookingId(trip) {
+  const details = _streetHistoryBookingDetails(trip);
+  return _streetHistoryCanonicalId(
+    trip?.parent_booking_id ??
+      trip?.parentBookingId ??
+      details.parent_booking_id ??
+      details.parentBookingId,
+  );
+}
+function _streetHistoryLinkedTrackingTripId(trip) {
+  const details = _streetHistoryBookingDetails(trip);
+  return _streetHistoryCanonicalId(
+    trip?.linked_tracking_trip_id ??
+      trip?.linkedTrackingTripId ??
+      details.linked_tracking_trip_id ??
+      details.linkedTrackingTripId,
+  );
+}
+function _streetHistoryIsOperationalLeg(trip) {
+  const details = _streetHistoryBookingDetails(trip);
+  if (details.is_operational_leg === true || details.isOperationalLeg === true) {
+    return true;
+  }
+  if (trip?.is_operational_leg === true || trip?.isOperationalLeg === true) {
+    return true;
+  }
+  const legId = _streetHistoryCanonicalId(
+    trip?.leg_id ?? trip?.legId ?? details.leg_id ?? details.legId,
+  );
+  const legType = _streetHistoryCanonicalId(
+    trip?.leg_type ?? trip?.legType ?? details.leg_type ?? details.legType,
+  );
+  return legId !== "" || legType !== "";
+}
+function _streetHistoryCanonicalRideKey(trip, resolvedLink) {
+  if (_streetHistoryCanonicalKind(trip?.kind) === "direct") {
+    return _streetHistoryTripIdOf(trip) || _streetHistoryBookingIdOf(trip);
+  }
+  const linked =
+    _streetHistoryLinkedTrackingTripId(trip) ||
+    _streetHistoryCanonicalId(resolvedLink);
+  if (linked) return linked;
+  return _streetHistoryParentBookingId(trip) || _streetHistoryBookingIdOf(trip);
+}
+// Non-reversible short fingerprint (FNV-1a 32-bit -> base36) for SAFE
+// relational comparison in logs only. Never reversible to a raw id.
+function _streetHistoryFingerprint(value) {
+  const s = _streetHistoryCanonicalId(value);
+  if (!s) return "-";
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36).padStart(7, "0").slice(0, 8);
+}
+function _streetHistoryTripShape(trip, resolvedLink) {
+  const kind = _streetHistoryCanonicalKind(trip?.kind) || "unknown";
+  const details = _streetHistoryBookingDetails(trip);
+  const bookingId = _streetHistoryBookingIdOf(trip);
+  const parentBookingId = _streetHistoryParentBookingId(trip);
+  const tripId = _streetHistoryTripIdOf(trip);
+  const linked =
+    _streetHistoryLinkedTrackingTripId(trip) ||
+    _streetHistoryCanonicalId(resolvedLink);
+  const canonicalKey = _streetHistoryCanonicalRideKey(trip, resolvedLink);
+  const legTypeRaw = _streetHistoryCanonicalId(
+    trip?.leg_type ?? trip?.legType ?? details.leg_type ?? details.legType,
+  ).toLowerCase();
+  const legType =
+    legTypeRaw === "outbound" || legTypeRaw === "return" ? legTypeRaw : "none";
+  let tripIdShape = "other";
+  if (kind === "direct") {
+    tripIdShape = "direct";
+  } else if (
+    (bookingId && tripId === `planned_${bookingId}`) ||
+    (parentBookingId && tripId === `planned_${parentBookingId}`)
+  ) {
+    tripIdShape = "planned_exact";
+  } else if (
+    (bookingId && tripId.startsWith(`planned_${bookingId}_`)) ||
+    (parentBookingId && tripId.startsWith(`planned_${parentBookingId}_`))
+  ) {
+    tripIdShape = "planned_suffix";
+  } else if (tripId.startsWith("planned_")) {
+    tripIdShape = "planned_other";
+  }
+  const amount = Number(trip?.total_eur);
+  const amountBucket = !Number.isFinite(amount)
+    ? "missing"
+    : amount > 0
+      ? "positive"
+      : "zero";
+  const distance = Number(trip?.km_total);
+  const sourceType =
+    _streetHistoryCanonicalId(trip?.source).toLowerCase() === "street_ride"
+      ? "streetRide"
+      : kind === "planned"
+        ? "planned"
+        : kind === "direct"
+          ? "streetRide"
+          : "unknown";
+  return {
+    kind,
+    tripIdShape,
+    hasBookingId: bookingId !== "",
+    hasParentBookingId: parentBookingId !== "",
+    hasTrackingTripId: tripId !== "",
+    hasLinkedTrackingTripId: linked !== "",
+    hasCanonicalKey: canonicalKey !== "",
+    isOperationalLeg: _streetHistoryIsOperationalLeg(trip),
+    legType,
+    sourceType,
+    amountBucket,
+    hasAmount: Number.isFinite(amount) && amount > 0,
+    hasDistance: Number.isFinite(distance) && distance > 0,
+    bookingKeyHash: _streetHistoryFingerprint(bookingId),
+    parentKeyHash: _streetHistoryFingerprint(parentBookingId),
+    trackingKeyHash: _streetHistoryFingerprint(tripId),
+    canonicalKeyHash: _streetHistoryFingerprint(canonicalKey),
+  };
+}
+// FASE 1 bounded live-shape diagnostic. Logged ONLY for direct trips,
+// planned+outbound rows and operational legs (the records under investigation).
+function _streetHistoryMaybeLogLiveShape(trip, resolvedLink) {
+  const kind = _streetHistoryCanonicalKind(trip?.kind);
+  const shape = _streetHistoryTripShape(trip, resolvedLink);
+  const isPlannedOutbound = kind === "planned" && shape.legType === "outbound";
+  if (kind !== "direct" && !isPlannedOutbound && !shape.isOperationalLeg) return;
+  console.log(
+    "[STREET_HISTORY_LIVE_SHAPE] " +
+      `kind=${shape.kind} tripIdShape=${shape.tripIdShape} ` +
+      `hasBookingId=${shape.hasBookingId} hasParentBookingId=${shape.hasParentBookingId} ` +
+      `hasTrackingTripId=${shape.hasTrackingTripId} ` +
+      `hasLinkedTrackingTripId=${shape.hasLinkedTrackingTripId} ` +
+      `hasCanonicalKey=${shape.hasCanonicalKey} ` +
+      `isOperationalLeg=${shape.isOperationalLeg} legType=${shape.legType} ` +
+      `sourceType=${shape.sourceType} amountBucket=${shape.amountBucket} ` +
+      `bookingKeyHash=${shape.bookingKeyHash} parentKeyHash=${shape.parentKeyHash} ` +
+      `trackingKeyHash=${shape.trackingKeyHash} canonicalKeyHash=${shape.canonicalKeyHash}`,
+  );
+}
+function _streetHistoryDirectRideKeySet(trips) {
+  const keys = new Set();
+  for (const trip of trips) {
+    if (_streetHistoryCanonicalKind(trip?.kind) !== "direct") continue;
+    const tripId = _streetHistoryTripIdOf(trip);
+    const bookingId = _streetHistoryBookingIdOf(trip);
+    if (tripId) keys.add(tripId);
+    if (bookingId) keys.add(bookingId);
+  }
+  return keys;
+}
+function _streetHistoryIsCanonicalPlannedShadow(trip, directKeys, resolvedLink) {
+  if (_streetHistoryCanonicalKind(trip?.kind) !== "planned") return false;
+  const linked =
+    _streetHistoryLinkedTrackingTripId(trip) ||
+    _streetHistoryCanonicalId(resolvedLink);
+  if (linked && directKeys.has(linked)) return true;
+  const parent = _streetHistoryParentBookingId(trip);
+  const bookingId = _streetHistoryBookingIdOf(trip);
+  const ownedKey = [parent, bookingId].find((k) => k && directKeys.has(k));
+  if (!ownedKey) return false;
+  if (_streetHistoryIsOperationalLeg(trip)) return true;
+  const tripId = _streetHistoryTripIdOf(trip);
+  return (
+    tripId === `planned_${ownedKey}` ||
+    tripId.startsWith(`planned_${ownedKey}_`) ||
+    tripId === `planned_${bookingId}` ||
+    tripId.startsWith(`planned_${bookingId}_`)
+  );
+}
+// FASE 2 server guard predicate (pure): refuse a redundant street-ride
+// operational shadow write when the physical ride is already a direct trip.
+function _streetRideBookingBlocksShadowWrite({
+  source = "",
+  rideType = "",
+  trackingTripId = "",
+  directTripExists = false,
+} = {}) {
+  const isStreetDirect =
+    _streetHistoryCanonicalId(source).toLowerCase() === "street_ride" ||
+    _streetHistoryCanonicalId(rideType).toLowerCase() === "direct";
+  return Boolean(
+    isStreetDirect && _streetHistoryCanonicalId(trackingTripId) && directTripExists,
+  );
+}
+function dedupeCanonicalStreetHistoryTrips(trips, resolvedLinks) {
+  const list = Array.isArray(trips) ? trips : [];
+  const directKeys = _streetHistoryDirectRideKeySet(list);
+  const links = resolvedLinks instanceof Map ? resolvedLinks : new Map();
+  const linkFor = (trip) =>
+    _streetHistoryCanonicalId(
+      links.get(_streetHistoryParentBookingId(trip)) ||
+        links.get(_streetHistoryBookingIdOf(trip)) ||
+        "",
+    );
+  const kept = [];
+  let dropped = 0;
+  for (const trip of list) {
+    const kind = _streetHistoryCanonicalKind(trip?.kind);
+    const resolvedLink = kind === "planned" ? linkFor(trip) : "";
+    const rideKey = _streetHistoryCanonicalRideKey(trip, resolvedLink);
+    const shadow = _streetHistoryIsCanonicalPlannedShadow(
+      trip,
+      directKeys,
+      resolvedLink,
+    );
+    _streetHistoryMaybeLogLiveShape(trip, resolvedLink);
+    if (trip && typeof trip === "object") {
+      trip.canonical_physical_ride_key = rideKey || null;
+      trip.canonical_trip_kind =
+        kind === "direct" ? "direct" : shadow ? "operational_shadow" : "planned";
+      trip.is_operational_shadow = shadow;
+      const linked = _streetHistoryLinkedTrackingTripId(trip) || resolvedLink;
+      if (linked) trip.linked_tracking_trip_id = linked;
+    }
+    if (shadow) {
+      dropped += 1;
+      console.log(
+        "[STREET_HISTORY_CANONICAL] phase=dedupe source=tracking " +
+          "hasLinkedTrip=true hasLinkedBooking=true countContribution=0 " +
+          "reason=street_planned_leg_shadow_of_direct_trip",
+      );
+      continue;
+    }
+    console.log(
+      "[STREET_HISTORY_CANONICAL] " +
+        `phase=${kind === "planned" ? "keep_separate" : "project"} source=tracking ` +
+        `hasLinkedTrip=${kind === "direct"} hasLinkedBooking=${!!rideKey} ` +
+        `countContribution=1 reason=${
+          kind === "planned"
+            ? "planned_leg_without_direct_trip_kept"
+            : "canonical_ride_kept"
+        }`,
+    );
+    kept.push(trip);
+  }
+  return { trips: kept, dropped };
+}
+// FASE 4 read-time enrichment: for candidate legacy shadows that don't yet
+// carry a linked_tracking_trip_id and whose booking key is not already owned by
+// a direct trip, read the linked booking from BOOKING_KV (bounded + cached) and
+// resolve its tracking_trip_id. Returns Map<bookingKey, tracking_trip_id> only
+// for PROVEN links (booking scope matches AND tracking_trip_id is present).
+async function _resolveStreetHistoryTrackingLinks(env, scope, trips) {
+  const out = new Map();
+  if (!env?.BOOKING_KV) return out;
+  const directKeys = _streetHistoryDirectRideKeySet(trips);
+  const candidateIds = new Set();
+  for (const trip of trips) {
+    if (_streetHistoryCanonicalKind(trip?.kind) !== "planned") continue;
+    if (_streetHistoryLinkedTrackingTripId(trip)) continue;
+    const parent = _streetHistoryParentBookingId(trip);
+    const bookingId = _streetHistoryBookingIdOf(trip);
+    const alreadyOwned = [parent, bookingId].some((k) => k && directKeys.has(k));
+    if (alreadyOwned) continue;
+    if (parent) candidateIds.add(parent);
+    if (bookingId) candidateIds.add(bookingId);
+  }
+  const MAX_LOOKUPS = 40;
+  let used = 0;
+  const tenantId = _streetHistoryCanonicalId(scope?.tenant_id);
+  const companyId = _streetHistoryCanonicalId(scope?.company_id);
+  for (const id of candidateIds) {
+    if (used >= MAX_LOOKUPS) break;
+    used += 1;
+    let rec = null;
+    try {
+      rec = await env.BOOKING_KV.get(`booking:${id}`, { type: "json" });
+    } catch (_) {
+      rec = null;
+    }
+    if (!rec || typeof rec !== "object") continue;
+    const recTenant = _streetHistoryCanonicalId(rec.tenant_id ?? rec.tenantId);
+    const recCompany = _streetHistoryCanonicalId(rec.company_id ?? rec.companyId);
+    if (tenantId && recTenant && recTenant !== tenantId) continue;
+    if (companyId && recCompany && recCompany !== companyId) continue;
+    const trackingTripId = _streetHistoryCanonicalId(
+      rec.tracking_trip_id ?? rec.trackingTripId,
+    );
+    // Only trust the link when it points at a direct trip present in this list.
+    if (trackingTripId && directKeys.has(trackingTripId)) {
+      out.set(id, trackingTripId);
+    }
+  }
+  if (used > 0) {
+    console.log(
+      `[STREET_HISTORY_CANONICAL] phase=enrich source=booking_kv lookups=${used} resolved=${out.size}`,
+    );
+  }
+  return out;
+}
+// FASE 2 server guard: read the linked booking (bounded) to decide whether a
+// record-planned-stop is a redundant street-ride shadow of an existing direct
+// trip. Returns { block, source, rideType, trackingTripId }.
+async function _streetRideShadowWriteGuard(env, scope, bookingId, parentBookingId) {
+  const result = { block: false, source: "", rideType: "", trackingTripId: "" };
+  if (!env?.BOOKING_KV) return result;
+  const tenantId = _streetHistoryCanonicalId(scope?.tenant_id);
+  const companyId = _streetHistoryCanonicalId(scope?.company_id);
+  const ids = [
+    _streetHistoryCanonicalId(bookingId),
+    _streetHistoryCanonicalId(parentBookingId),
+  ].filter((v, i, a) => v && a.indexOf(v) === i);
+  for (const id of ids) {
+    let rec = null;
+    try {
+      rec = await env.BOOKING_KV.get(`booking:${id}`, { type: "json" });
+    } catch (_) {
+      rec = null;
+    }
+    if (!rec || typeof rec !== "object") continue;
+    const recTenant = _streetHistoryCanonicalId(rec.tenant_id ?? rec.tenantId);
+    const recCompany = _streetHistoryCanonicalId(rec.company_id ?? rec.companyId);
+    if (tenantId && recTenant && recTenant !== tenantId) continue;
+    if (companyId && recCompany && recCompany !== companyId) continue;
+    const source = _streetHistoryCanonicalId(rec.source ?? rec.booking_source);
+    const rideType = _streetHistoryCanonicalId(rec.ride_type ?? rec.rideType);
+    const trackingTripId = _streetHistoryCanonicalId(
+      rec.tracking_trip_id ?? rec.trackingTripId,
+    );
+    let directTripExists = false;
+    if (trackingTripId) {
+      try {
+        const resolved = await getScopedOrLegacyTripForScope(env, scope, trackingTripId);
+        const directTrip = resolved?.trip;
+        directTripExists =
+          !!directTrip && _streetHistoryCanonicalKind(directTrip.kind) === "direct";
+      } catch (_) {
+        directTripExists = false;
+      }
+    }
+    result.source = source;
+    result.rideType = rideType;
+    result.trackingTripId = trackingTripId;
+    result.block = _streetRideBookingBlocksShadowWrite({
+      source,
+      rideType,
+      trackingTripId,
+      directTripExists,
+    });
+    if (result.block) return result;
+  }
+  return result;
+}
+
 async function handleTripsHistory(req, url, env, origin) {
   const requiredScope = parseRequiredTenantCompanyScope(req, url, null, { returnResponse: true, origin });
   if (requiredScope instanceof Response) return requiredScope;
@@ -4079,7 +4513,12 @@ async function handleTripsHistory(req, url, env, origin) {
     if (!includeActive && trip.status === "active") continue;
     if (!includeArchived && trip.archived === true) continue;
     trips.push(summarizeTrip(trip));
-    if (trips.length >= limit) break;
+    // STREET-RIDE-HISTORY-DUPLICATE-ZERO-BOOKING-1A: intentionally NOT capped by
+    // `limit` here. The planned operational-leg shadow must be deduped against
+    // its direct trip BEFORE pagination, otherwise a shadow could survive on
+    // page 1 while its direct trip sits beyond the cap (leaving total/completed
+    // too high). The scan stays bounded by the trips index size
+    // (<= 200 driver / <= 500 company).
   }
 
   if (cleaned.length !== tripIds.length) {
@@ -4091,10 +4530,43 @@ async function handleTripsHistory(req, url, env, origin) {
     );
   }
 
-  return withCors(
-    json({ ok: true, tenant_id, company_id, driver_id: driver_id ?? null, count: trips.length, trips }, { status: 200 }),
+  // STREET-RIDE-HISTORY-DUPLICATE-ZERO-BOOKING-1B: collapse the planned
+  // operational-leg shadow of a linked street-ride direct trip so one physical
+  // ride is returned exactly once. Pipeline:
+  //   raw indexed trips -> summarize/expose relation fields
+  //   -> enrich candidate legacy shadows from BOOKING_KV (tracking_trip_id)
+  //   -> canonical annotation -> dedupe -> counts -> pagination (slice).
+  // Dedupe MUST precede the slice so a shadow can never split from its direct
+  // trip across a page boundary.
+  const resolvedLinks = await _resolveStreetHistoryTrackingLinks(env, scope, trips);
+  const canonical = dedupeCanonicalStreetHistoryTrips(trips, resolvedLinks);
+  const canonicalTrips = canonical.trips.slice(0, limit);
+  console.log(
+    `[STREET_HISTORY_RUNTIME] source=worker canonicalVersion=${STREET_HISTORY_CANONICAL_VERSION} ` +
+      `rowsBefore=${trips.length} rowsAfter=${canonical.trips.length} dropped=${canonical.dropped} returned=${canonicalTrips.length}`,
+  );
+
+  const resp = withCors(
+    json(
+      {
+        ok: true,
+        tenant_id,
+        company_id,
+        driver_id: driver_id ?? null,
+        canonical_version: STREET_HISTORY_CANONICAL_VERSION,
+        count: canonicalTrips.length,
+        trips: canonicalTrips,
+      },
+      { status: 200 }
+    ),
     origin
   );
+  try {
+    resp.headers.set("X-Fluxidi-History-Canonical", STREET_HISTORY_CANONICAL_VERSION);
+  } catch (_) {
+    // headers immutable in some runtimes; body canonical_version still proves it
+  }
+  return resp;
 }
 
 async function handleArchiveTrip(req, url, env, origin) {
@@ -4291,6 +4763,12 @@ async function handleStartDirectTrip(req, url, env, origin) {
     direct_ride_key: directRideKey,
     booking_link_state,
     source: "street_ride",
+    // STREET-RIDE-HISTORY-DUPLICATE-ZERO-BOOKING-1B: write-time canonical
+    // contract. The canonical physical ride key is the tracking trip id itself
+    // so linked operational shadows can point at it explicitly.
+    canonical_physical_ride_key: trip_id,
+    canonical_trip_kind: "direct",
+    is_operational_shadow: false,
     origin: originData,
     destination,
     pricing_snapshot,
@@ -4572,6 +5050,39 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
     `[TRACKING][PLANNED_STOP][LEG_IDENTITY] booking=${booking_id} trip=${trip_id} leg=${leg_id || row_key || "-"} type=${leg_type || "-"}`,
   );
 
+  // STREET-RIDE-HISTORY-DUPLICATE-ZERO-BOOKING-1B (FASE 2 server guard): a
+  // street-ride / direct booking's synthetic operational leg is ALREADY stored
+  // as kind=direct via /trip/stop. Refuse the redundant shadow write so it never
+  // becomes a second €0,00 Outbound history row. Real planned outbound/return
+  // bookings (ride_type=planned, not street_ride) are unaffected and still
+  // stored below.
+  const shadowGuard = await _streetRideShadowWriteGuard(
+    env,
+    scope,
+    booking_id,
+    parent_booking_id,
+  );
+  if (shadowGuard.block) {
+    console.log(
+      "[STREET_HISTORY_SHADOW_WRITE] action=skip source=streetRide " +
+        `syntheticLeg=true hasDirectTrip=true reason=street_ride_direct_trip_already_stored`,
+    );
+    return withCors(
+      json(
+        {
+          ok: true,
+          skipped: true,
+          reason: "street_ride_direct_trip_already_stored",
+          linked_tracking_trip_id: shadowGuard.trackingTripId || null,
+          canonical_physical_ride_key: shadowGuard.trackingTripId || null,
+          booking_id,
+        },
+        { status: 200 }
+      ),
+      origin
+    );
+  }
+
   const existingTripResolved = await getScopedOrLegacyTripForScope(env, scope, trip_id);
   const existingTrip = existingTripResolved.trip;
   if (existingTrip) {
@@ -4618,6 +5129,14 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
     }
   }
 
+  // STREET-RIDE-HISTORY-DUPLICATE-ZERO-BOOKING-1B (FASE 3): explicit write-time
+  // canonical relation. Reaching this point means the shadow guard did NOT block
+  // (i.e. a real planned leg, or a compat store with no proven direct trip), so
+  // this row is a first-class planned leg — not an operational shadow. If a
+  // tracking link is nonetheless known, expose it so read-time dedupe is exact.
+  const linkedTrackingTripId = safeStr(shadowGuard.trackingTripId, 160) || null;
+  const canonicalPhysicalRideKey =
+    linkedTrackingTripId || parent_booking_id || booking_id || null;
   const trip = {
     trip_id,
     kind: "planned",
@@ -4632,6 +5151,11 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
     parentBookingId: parent_booking_id,
     is_operational_leg,
     isOperationalLeg: is_operational_leg,
+    linked_tracking_trip_id: linkedTrackingTripId,
+    linkedTrackingTripId: linkedTrackingTripId,
+    canonical_physical_ride_key: canonicalPhysicalRideKey,
+    canonical_trip_kind: "planned",
+    is_operational_shadow: false,
     tenant_id,
     driver_id,
     vehicle_id,
@@ -4666,6 +5190,12 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
   };
   applyCanonicalScopeToRecord(trip, scope);
 
+  console.log(
+    "[STREET_HISTORY_SHADOW_WRITE] action=store " +
+      `source=${shadowGuard.source === "street_ride" ? "streetRide" : "planned"} ` +
+      `syntheticLeg=${is_operational_leg} hasDirectTrip=${!!linkedTrackingTripId} ` +
+      "reason=planned_leg_stored",
+  );
   await kvPutJson(env.FLUXIDI_TRACKING, scopedTripKey(scope, trip_id), trip, TTL_TRIP);
   await materializeTripDashboardKpisBestEffort(
     env,

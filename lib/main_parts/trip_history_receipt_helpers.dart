@@ -70,6 +70,64 @@ class _TripHistoryItem {
     );
   }
 
+  // STREET-RIDE-HISTORY-DUPLICATE-ZERO-BOOKING-1A: canonical relation accessors
+  // used by the defensive client-side dedupe (canonicalizeStreetHistory).
+  /// Parent booking id of an operational leg (`planned` shadow). Falls back to
+  /// the raw/booking-details variants; empty when not an operational leg.
+  String get parentBookingId {
+    return (rawSource['parent_booking_id'] ??
+            rawSource['parentBookingId'] ??
+            bookingDetails['parent_booking_id'] ??
+            bookingDetails['parentBookingId'] ??
+            '')
+        .toString()
+        .trim();
+  }
+
+  /// True when this history row is a synthesized operational leg (leg_id /
+  /// leg_type / is_operational_leg present in booking_details).
+  bool get isOperationalLeg {
+    final flag =
+        bookingDetails['is_operational_leg'] ?? bookingDetails['isOperationalLeg'];
+    if (flag == true) return true;
+    if (flag is String) {
+      final s = flag.toLowerCase();
+      if (s == 'true' || s == '1') return true;
+    }
+    final legId =
+        (bookingDetails['leg_id'] ?? bookingDetails['legId'] ?? '').toString().trim();
+    final legType =
+        (bookingDetails['leg_type'] ?? bookingDetails['legType'] ?? '')
+            .toString()
+            .trim();
+    return legId.isNotEmpty || legType.isNotEmpty;
+  }
+
+  /// Explicit/resolved tracking-trip relation (canonical contract 1B). Empty
+  /// when the worker did not expose it.
+  String get linkedTrackingTripId {
+    return (rawSource['linked_tracking_trip_id'] ??
+            rawSource['linkedTrackingTripId'] ??
+            bookingDetails['linked_tracking_trip_id'] ??
+            bookingDetails['linkedTrackingTripId'] ??
+            '')
+        .toString()
+        .trim();
+  }
+
+  /// Authoritative worker hint (canonical contract 1A/1B). Null when the worker
+  /// did not annotate the row (stale worker) — the client then re-derives.
+  bool? get workerOperationalShadowHint {
+    final v = rawSource['is_operational_shadow'];
+    if (v is bool) return v;
+    if (v is String) {
+      final s = v.toLowerCase();
+      if (s == 'true' || s == '1') return true;
+      if (s == 'false' || s == '0') return false;
+    }
+    return null;
+  }
+
   factory _TripHistoryItem.fromJson(Map<String, dynamic> json) {
     final origin = json['origin'];
     final destination = json['destination'];

@@ -481,6 +481,10 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     }
 
     late final List<_TripHistoryItem> backendItems;
+    // STREET-RIDE-HISTORY-DUPLICATE-ZERO-BOOKING-1A: worker canonical contract
+    // version, read from the `X-Fluxidi-History-Canonical` header or the
+    // `canonical_version` body field. `null` => stale worker (no dedupe at src).
+    String? workerCanonicalVersion;
     try {
       final uri = Uri.parse(
         '${widget.workerBaseUrl}$kTripsHistoryPath'
@@ -501,6 +505,14 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       if (decoded is! Map || decoded['ok'] != true) {
         throw Exception('Ongeldig antwoord van Worker');
       }
+      workerCanonicalVersion =
+          (res.headers['x-fluxidi-history-canonical'] ??
+                  decoded['canonical_version'])
+              ?.toString()
+              .trim();
+      if (workerCanonicalVersion != null && workerCanonicalVersion.isEmpty) {
+        workerCanonicalVersion = null;
+      }
       final trips = decoded['trips'];
       backendItems = trips is! List
           ? <_TripHistoryItem>[]
@@ -520,6 +532,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     }
 
     final localItems = await readLocalItems();
+    final usedLocalFallback = backendItems.isEmpty && localItems.isNotEmpty;
     final mergedByTripId = <String, _TripHistoryItem>{};
     for (final item in backendItems) {
       mergedByTripId[item.tripId.trim()] = item;
@@ -527,7 +540,31 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     for (final item in localItems) {
       mergedByTripId.putIfAbsent(item.tripId.trim(), () => item);
     }
-    final merged = mergedByTripId.values
+    final beforeItems = mergedByTripId.values.toList(growable: false);
+    // STREET-RIDE-HISTORY-DUPLICATE-ZERO-BOOKING-1A: collapse the planned
+    // operational-leg shadow of a linked street-ride direct trip so one
+    // physical ride shows exactly one canonical row. Relational-id only:
+    // honours the worker `is_operational_shadow` hint when present, otherwise
+    // re-derives from booking_id + parent_booking_id + operational-leg flags.
+    final canonical = canonicalizeStreetHistory<_TripHistoryItem>(
+      beforeItems,
+      tripId: (item) => item.tripId,
+      kind: (item) => item.kind,
+      bookingId: (item) => item.bookingId ?? '',
+      parentBookingId: (item) => item.parentBookingId,
+      linkedTrackingTripId: (item) => item.linkedTrackingTripId,
+      isOperationalLeg: (item) => item.isOperationalLeg,
+      workerShadowHint: (item) => item.workerOperationalShadowHint,
+      onLog: (log) => debugPrint(log.toLogLine()),
+    );
+    debugPrint(
+      '[STREET_HISTORY_RUNTIME] source=client '
+      'workerCanonicalVersion=${workerCanonicalVersion ?? 'absent'} '
+      'clientCanonicalVersion=$kStreetHistoryClientCanonicalVersion '
+      'rowsBefore=${beforeItems.length} rowsAfter=${canonical.length} '
+      'cacheUsed=$usedLocalFallback',
+    );
+    final merged = canonical
         .map(
           (item) => _enrichTripHistoryItemWithBusinessRefs(
             item,
