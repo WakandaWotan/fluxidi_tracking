@@ -176,6 +176,99 @@ export function evaluateStreetInvoiceEligibility({
   return { ok: true, reason: null };
 }
 
+/* Canonical street identity for the DRIVER path. STRICTER than
+ * isStreetRideBooking: ride_type == "direct" alone is NEVER sufficient. A driver
+ * may only request an invoice when the booking is unambiguously a street ride:
+ *   - booking_id starts with "street_", OR
+ *   - source == "street_ride", OR
+ *   - booking_source == "street_ride". */
+export function hasCanonicalStreetIdentity({ bookingId = "", record = null } = {}) {
+  if (_lower(bookingId).startsWith("street_")) return true;
+  const rec =
+    record && typeof record === "object" && !Array.isArray(record) ? record : {};
+  const booking =
+    rec.booking && typeof rec.booking === "object" && !Array.isArray(rec.booking)
+      ? rec.booking
+      : {};
+  if (_lower(rec.booking_id ?? rec.bookingId).startsWith("street_")) return true;
+  const tokens = [
+    rec.source,
+    rec.booking_source,
+    rec.bookingSource,
+    booking.source,
+    booking.booking_source,
+  ].map(_lower);
+  return tokens.some((t) => t === "street_ride");
+}
+
+/* Resolve the authoritative assigned-driver id from a stored booking record,
+ * reading the same field variants the booking indexes use. Never throws. */
+export function resolveAssignedDriverId(record) {
+  const rec =
+    record && typeof record === "object" && !Array.isArray(record) ? record : {};
+  const booking =
+    rec.booking && typeof rec.booking === "object" && !Array.isArray(rec.booking)
+      ? rec.booking
+      : {};
+  const assignedObj =
+    rec.assigned_driver && typeof rec.assigned_driver === "object"
+      ? rec.assigned_driver
+      : {};
+  const candidates = [
+    rec.assigned_driver_id,
+    rec.assignedDriverId,
+    assignedObj.driver_id,
+    assignedObj.driverId,
+    booking.assigned_driver_id,
+    booking.assignedDriverId,
+    rec.driver_id,
+    rec.driverId,
+    booking.driver_id,
+  ];
+  for (const c of candidates) {
+    const v = _norm(c);
+    if (v) return v;
+  }
+  return "";
+}
+
+/* Pure driver ownership decision: the authenticated driver may only invoice a
+ * booking whose authoritative assigned_driver_id equals the caller's driver id.
+ * Returns { ok, reason }. */
+export function evaluateDriverInvoiceOwnership({ record = null, driverId = "" } = {}) {
+  const caller = _norm(driverId);
+  if (!caller) return { ok: false, reason: "driver_session_required" };
+  const assigned = resolveAssignedDriverId(record);
+  if (!assigned || assigned !== caller) {
+    return { ok: false, reason: "driver_not_assigned" };
+  }
+  return { ok: true, reason: null };
+}
+
+/* Combined driver gate: canonical street identity (strict) + shared eligibility
+ * (COMPLETED, not cancelled/refunded/credited) + assigned-driver ownership.
+ * Returns { ok, reason, status } so the route can respond with a bounded error
+ * without leaking whether another company's booking exists. */
+export function evaluateDriverBusinessInvoiceGate({
+  bookingId = "",
+  record = null,
+  driverId = "",
+} = {}) {
+  if (!hasCanonicalStreetIdentity({ bookingId, record })) {
+    return { ok: false, reason: "not_a_street_booking", status: 422 };
+  }
+  const eligibility = evaluateStreetInvoiceEligibility({ bookingId, record });
+  if (!eligibility.ok) {
+    const status = eligibility.reason === "source_booking_not_found" ? 404 : 409;
+    return { ok: false, reason: eligibility.reason, status };
+  }
+  const ownership = evaluateDriverInvoiceOwnership({ record, driverId });
+  if (!ownership.ok) {
+    return { ok: false, reason: ownership.reason, status: 403 };
+  }
+  return { ok: true, reason: null, status: 200 };
+}
+
 /* Paid-now is derived ONLY from the stored booking, never the request body. */
 export function streetRidePaymentStatus(record) {
   const rec = record && typeof record === "object" ? record : {};
@@ -188,6 +281,222 @@ export function streetRidePaymentStatus(record) {
       booking.paymentStatus,
   );
   return raw === "paid" ? "paid" : "unpaid";
+}
+
+/* STREET-BUSINESS-INVOICE-PDF-PAYMENT-SYNC-1 / 1B: pure presentation of ride
+ * vs invoice payment. Priority:
+ *   1. invoicePaymentConfirmedPaid → paid
+ *   2. ridePaid && billitPaymentSyncPending → sync_in_progress
+ *   3. !ridePaid → outstanding
+ *   4. terminal sync failure → sync_failed (never outstanding)
+ * `billitPaid === false` alone must NOT become outstanding when the ride is
+ * already paid and Billit is still updating / sync-pending. */
+export function resolveStreetInvoicePaymentPresentation({
+  ridePaid = false,
+  responsePaymentPaid = false,
+  billitPaid = null,
+  billitPaymentSyncStatus = "",
+  billitUpdating = false,
+  syncPending = false,
+} = {}) {
+  const syncToken = _lower(billitPaymentSyncStatus);
+  const rideConfirmedPaid = ridePaid === true || responsePaymentPaid === true;
+  const invoicePaymentConfirmedPaid =
+    billitPaid === true || syncToken === "synced";
+  const billitSyncFailed = syncToken === "failed";
+  const billitPaymentSyncPending =
+    syncPending === true ||
+    billitUpdating === true ||
+    syncToken === "pending" ||
+    syncToken === "in_progress" ||
+    syncToken === "" ||
+    billitPaid === false ||
+    billitPaid == null;
+
+  if (invoicePaymentConfirmedPaid) {
+    return {
+      ride_payment_status: rideConfirmedPaid ? "paid" : "unpaid",
+      invoice_payment_status: "paid",
+      is_consistent: true,
+      reason: billitPaid === true ? "billit_paid" : "billit_sync_synced",
+    };
+  }
+  if (rideConfirmedPaid && billitSyncFailed) {
+    return {
+      ride_payment_status: "paid",
+      invoice_payment_status: "sync_failed",
+      is_consistent: true,
+      reason: "payment_sync_failed_retryable",
+    };
+  }
+  if (rideConfirmedPaid && billitPaymentSyncPending) {
+    return {
+      ride_payment_status: "paid",
+      invoice_payment_status: "sync_in_progress",
+      is_consistent: true,
+      reason: "payment_sync_in_progress",
+    };
+  }
+  if (rideConfirmedPaid) {
+    return {
+      ride_payment_status: "paid",
+      invoice_payment_status: "sync_in_progress",
+      is_consistent: true,
+      reason: "payment_sync_in_progress",
+    };
+  }
+  return {
+    ride_payment_status: "unpaid",
+    invoice_payment_status: "outstanding",
+    is_consistent: true,
+    reason: "invoice_outstanding",
+  };
+}
+
+/* Pure PDF readiness classifier. invoice_reference / billit_order_id alone are
+ * NEVER enough — only an explicit artifact-ready flag or a successful PDF probe
+ * status (200) proves availability. */
+export function resolveStreetInvoicePdfAvailability({
+  hasIssuedInvoice = false,
+  pdfArtifactReady = null,
+  pdfProbeStatusCode = null,
+  pdfProbeFailed = false,
+} = {}) {
+  if (!hasIssuedInvoice) {
+    return { state: "unavailable", reason: "no_invoice" };
+  }
+  if (pdfArtifactReady === true || pdfProbeStatusCode === 200) {
+    return {
+      state: "available",
+      reason: pdfArtifactReady === true ? "artifact_ready" : "pdf_endpoint_ok",
+    };
+  }
+  if (pdfProbeStatusCode === 401 || pdfProbeStatusCode === 403) {
+    return { state: "unavailable", reason: "pdf_auth_denied" };
+  }
+  if (
+    pdfProbeFailed === true ||
+    (typeof pdfProbeStatusCode === "number" &&
+      pdfProbeStatusCode >= 500 &&
+      pdfProbeStatusCode < 600)
+  ) {
+    return { state: "retryable_error", reason: "pdf_probe_failed" };
+  }
+  return {
+    state: "preparing",
+    reason:
+      pdfProbeStatusCode === 404
+        ? "pdf_not_persisted_yet"
+        : pdfArtifactReady === false
+          ? "artifact_pending"
+          : "awaiting_pdf_evidence",
+  };
+}
+
+/* Idempotent paid-sync decision for an existing street invoice. Never issues a
+ * second document/order; only reports whether a Billit paid sync should run. */
+export function resolveStreetInvoicePaidSyncDecision({
+  hasInvoice = false,
+  ridePaid = false,
+  billitPaid = null,
+  billitPaymentSyncStatus = "",
+  billitOrderId = "",
+} = {}) {
+  if (!hasInvoice) {
+    return { action: "none", reason: "no_invoice" };
+  }
+  if (!ridePaid) {
+    return { action: "none", reason: "ride_unpaid" };
+  }
+  if (billitPaid === true || _lower(billitPaymentSyncStatus) === "synced") {
+    return { action: "already_synced", reason: "already_paid" };
+  }
+  if (!_norm(billitOrderId)) {
+    return { action: "ensure_order_then_sync", reason: "missing_billit_order" };
+  }
+  return { action: "sync_paid", reason: "ride_paid_billit_pending" };
+}
+
+/* STREET-BUSINESS-INVOICE-PDF-PAYMENT-SYNC-1A — paid-lifecycle gate.
+ *
+ * The company Billit auto-create setting may ONLY gate creation of a NEW
+ * invoice / Billit order. When an issued business invoice and/or Billit order
+ * already exists for the booking, a canonical cash/card/QR payment MUST always
+ * sync that existing order to paid — independent of auto-create.
+ *
+ * Actions:
+ *   - sync_paid_existing  → run maybeSyncBillitSandboxOrderPaymentState (no create)
+ *   - already_synced      → no-op (idempotent)
+ *   - create_then_sync    → auto-create path (setting ON, no existing)
+ *   - ensure_order_then_sync → existing invoice without order; only when setting ON
+ *   - none                → setting off / unpaid / nothing to do
+ */
+export function resolveBillitPaidLifecycleGate({
+  autoCreateEnabled = false,
+  hasExistingInvoice = false,
+  hasExistingBillitOrder = false,
+  ridePaid = false,
+  billitPaid = null,
+  billitPaymentSyncStatus = "",
+  paymentMethod = "",
+} = {}) {
+  // paymentMethod is accepted for test/diagnostic parity (cash / bancontact /
+  // qr_code) — the gate itself is method-agnostic once the ride is paid.
+  void paymentMethod;
+
+  if (!ridePaid) {
+    return { action: "none", reason: "ride_unpaid", bypasses_auto_create: false };
+  }
+
+  const syncToken = _lower(billitPaymentSyncStatus);
+  const alreadyPaid =
+    billitPaid === true || syncToken === "synced";
+
+  // Existing invoice and/or Billit order: paid sync is setting-independent.
+  if (hasExistingInvoice || hasExistingBillitOrder) {
+    if (alreadyPaid) {
+      return {
+        action: "already_synced",
+        reason: "already_paid",
+        bypasses_auto_create: true,
+      };
+    }
+    if (hasExistingBillitOrder) {
+      return {
+        action: "sync_paid_existing",
+        reason: "existing_invoice_paid_sync_bypass_auto_create",
+        bypasses_auto_create: true,
+      };
+    }
+    // Invoice exists but no Billit order yet: creating an order is still a
+    // NEW Billit-order create → stays behind the auto-create gate.
+    if (autoCreateEnabled === true) {
+      return {
+        action: "ensure_order_then_sync",
+        reason: "existing_invoice_missing_order",
+        bypasses_auto_create: false,
+      };
+    }
+    return {
+      action: "none",
+      reason: "existing_invoice_no_order_auto_create_off",
+      bypasses_auto_create: false,
+    };
+  }
+
+  // No existing invoice/order: NEW create only when auto-create is ON.
+  if (autoCreateEnabled !== true) {
+    return {
+      action: "none",
+      reason: "setting_off",
+      bypasses_auto_create: false,
+    };
+  }
+  return {
+    action: "create_then_sync",
+    reason: "auto_create_enabled",
+    bypasses_auto_create: false,
+  };
 }
 
 /* Interpret the existing billing-identity readiness verdict (computed by the

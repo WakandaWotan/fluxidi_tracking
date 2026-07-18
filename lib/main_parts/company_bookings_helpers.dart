@@ -66,6 +66,15 @@ class _CompanyBookingOverviewItem {
   final num? vatAmount;
   final num? vatRatePercent;
   final String currency;
+  // True when the booking originated from a driver-started street/direct ride
+  // (source == street_ride or ride_type == direct). Drives the "Straatrit"
+  // source badge in the overview list.
+  final bool isStreetRide;
+  // True ONLY for a canonical street ride (source/booking_source == street_ride
+  // or a street_ booking id). Unlike [isStreetRide] this is NOT set by
+  // ride_type == direct alone, so it can safely gate the business-invoice
+  // action (UI-1B strictness).
+  final bool isCanonicalStreetRide;
   final _CompanyBookingsFilter bucket;
 
   const _CompanyBookingOverviewItem({
@@ -107,6 +116,8 @@ class _CompanyBookingOverviewItem {
     required this.vatAmount,
     required this.vatRatePercent,
     required this.currency,
+    required this.isStreetRide,
+    required this.isCanonicalStreetRide,
     required this.bucket,
   });
 
@@ -1709,6 +1720,46 @@ class _CompanyBookingOverviewItem {
       isPaid: isPaid,
       isCreditEligible: isPendingCredit,
     );
+    final sourceRaw = _firstText(raw, const <String>[
+      'source',
+      'booking_source',
+      'bookingSource',
+      'ride_type',
+      'rideType',
+      'booking.source',
+      'booking.booking_source',
+      'booking.ride_type',
+      'booking.rideType',
+      'record.source',
+      'record.ride_type',
+      'record.booking.source',
+      'record.booking.ride_type',
+    ]);
+    final normalizedSource = _normStatus(sourceRaw);
+    final isStreetRide =
+        normalizedSource == 'STREET_RIDE' ||
+        normalizedSource == 'STREETRIDE' ||
+        normalizedSource == 'DIRECT' ||
+        normalizedSource == 'DIRECT_RIDE';
+    // Canonical street identity excludes ride_type == direct on purpose: only a
+    // dedicated source/booking_source of street_ride, or a street_ booking id,
+    // may gate the business-invoice action (UI-1B strictness).
+    final canonicalSourceRaw = _firstText(raw, const <String>[
+      'source',
+      'booking_source',
+      'bookingSource',
+      'booking.source',
+      'booking.booking_source',
+      'booking.bookingSource',
+      'record.source',
+      'record.booking_source',
+      'record.booking.source',
+    ]);
+    final normalizedCanonicalSource = _normStatus(canonicalSourceRaw);
+    final isCanonicalStreetRide =
+        normalizedCanonicalSource == 'STREET_RIDE' ||
+        normalizedCanonicalSource == 'STREETRIDE' ||
+        bookingId.trim().toLowerCase().startsWith('street_');
     final bucket = _bucketFromStatus(statusRaw: statusRaw);
     if (isOperationalLeg) {
       debugPrint(
@@ -1755,6 +1806,8 @@ class _CompanyBookingOverviewItem {
       vatAmount: vatAmount,
       vatRatePercent: vatRatePercent,
       currency: currency,
+      isStreetRide: isStreetRide,
+      isCanonicalStreetRide: isCanonicalStreetRide,
       bucket: bucket,
     );
   }

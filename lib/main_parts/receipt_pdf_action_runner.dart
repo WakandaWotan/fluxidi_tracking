@@ -166,10 +166,49 @@ class _ReceiptPdfActionRunner {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => _ReceiptPdfPreviewPage(
-          title: _receiptText('viewPdf'),
+          // Distinct from the ride-receipt ("Bon") PDF title.
+          title: _receiptText('viewInvoicePdf'),
           bytes: bundle.bytes,
         ),
       ),
+    );
+  }
+
+  /// Shares the backend business-invoice PDF (never the ride receipt PDF).
+  static Future<void> shareInvoicePdf({
+    required BuildContext context,
+    required _TripHistoryItem item,
+  }) async {
+    final bundle = await _tryFetchBackendInvoicePdfBundle(
+      item: item,
+      source: 'driver_receipt_invoice_share',
+    );
+    if (bundle == null) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _tr(
+              nl: 'Geen factuur-PDF beschikbaar voor deze rit.',
+              en: 'No invoice PDF available for this ride.',
+              fr: 'Aucun PDF de facture disponible pour ce trajet.',
+              es: 'No hay PDF de factura disponible para este viaje.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    debugPrint('[PDF][ACTION][REGISTER_INVOICE_SHARE] hasPdf=true');
+    await Share.shareXFiles(
+      <XFile>[XFile(bundle.file.path)],
+      text: _tr(
+        nl: 'Zakelijke factuur (PDF)',
+        en: 'Business invoice (PDF)',
+        fr: 'Facture professionnelle (PDF)',
+        es: 'Factura comercial (PDF)',
+      ),
+      subject: _receiptText('shareInvoicePdf'),
     );
   }
 

@@ -112,7 +112,8 @@ class _BillitExportMetadata {
       statusCheckedAt: readAny(const ['status_checked_at', 'statusCheckedAt']),
       sendPending: json['send_pending'] == true || json['sendPending'] == true,
       peppolSendPending:
-          json['peppol_send_pending'] == true || json['peppolSendPending'] == true,
+          json['peppol_send_pending'] == true ||
+          json['peppolSendPending'] == true,
       reconcilePending:
           json['reconcile_pending'] == true || json['reconcilePending'] == true,
     );
@@ -345,6 +346,7 @@ bool _bookingDocumentMatchesLegFilter(
 class _BookingDocumentsSection extends StatefulWidget {
   final String bookingId;
   final _CompanyBookingsThemeTokens tokens;
+
   /// Optional roundtrip leg filter (outbound/return leg cards only).
   final String? sourceLegId;
   final String? sourceLegType;
@@ -401,14 +403,45 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   String get _legFilterScopeKey =>
       '${(widget.sourceLegId ?? '').trim()}::${(widget.sourceLegType ?? '').trim().toLowerCase()}';
 
-  List<_BookingDocumentMetadata> get _filteredDocuments =>
-      _documents.where((doc) {
+  List<_BookingDocumentMetadata> get _filteredDocuments => _documents
+      .where((doc) {
         return _bookingDocumentMatchesLegFilter(
           doc,
           sourceLegId: widget.sourceLegId,
           sourceLegType: widget.sourceLegType,
         );
-      }).toList(growable: false);
+      })
+      .toList(growable: false);
+
+  // UI-1B: per-booking locally-issued invoice signal. When the street
+  // business-invoice action issues an invoice, its document id is recorded here
+  // so the "Documenten" count never shows 0 while the eventually-consistent
+  // documents index is still catching up.
+  late ValueNotifier<String> _localInvoiceSignal;
+
+  bool get _hasLocalIssuedInvoice => _StreetInvoiceLocalIndex.instance
+      .issuedInvoiceDocId(widget.bookingId)
+      .isNotEmpty;
+
+  /// Display-only count that includes a locally-successful invoice until the
+  /// backend index exposes it. Never mutates [_documents].
+  int _displayedDocumentCount() {
+    final localId = _StreetInvoiceLocalIndex.instance.issuedInvoiceDocId(
+      widget.bookingId,
+    );
+    final present =
+        localId.isNotEmpty &&
+        _filteredDocuments.any((d) => d.documentId == localId);
+    return deriveDisplayedDocumentCount(
+      backendVisibleCount: _filteredDocuments.length,
+      hasLocalIssuedInvoice: localId.isNotEmpty,
+      localInvoiceInBackend: present,
+    );
+  }
+
+  void _handleLocalInvoiceChange() {
+    if (mounted) setState(() {});
+  }
 
   @override
   void initState() {
@@ -418,6 +451,10 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       widget.bookingId,
     );
     _refreshSignal.addListener(_handleExternalRefresh);
+    _localInvoiceSignal = _StreetInvoiceLocalIndex.instance.notifierFor(
+      widget.bookingId,
+    );
+    _localInvoiceSignal.addListener(_handleLocalInvoiceChange);
   }
 
   @override
@@ -427,7 +464,8 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     final nextLegFilterKey = _legFilterScopeKey;
     final oldLegFilterKey =
         '${(oldWidget.sourceLegId ?? '').trim()}::${(oldWidget.sourceLegType ?? '').trim().toLowerCase()}';
-    if (nextScopeKey == _activeScopeKey && nextLegFilterKey == oldLegFilterKey) {
+    if (nextScopeKey == _activeScopeKey &&
+        nextLegFilterKey == oldLegFilterKey) {
       return;
     }
 
@@ -448,6 +486,12 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       widget.bookingId,
     );
     _refreshSignal.addListener(_handleExternalRefresh);
+
+    _localInvoiceSignal.removeListener(_handleLocalInvoiceChange);
+    _localInvoiceSignal = _StreetInvoiceLocalIndex.instance.notifierFor(
+      widget.bookingId,
+    );
+    _localInvoiceSignal.addListener(_handleLocalInvoiceChange);
 
     final wasExpanded = _expanded;
     setState(() {
@@ -470,6 +514,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   @override
   void dispose() {
     _refreshSignal.removeListener(_handleExternalRefresh);
+    _localInvoiceSignal.removeListener(_handleLocalInvoiceChange);
     super.dispose();
   }
 
@@ -1564,7 +1609,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                if (_loaded && !_error) ...[
+                if ((_loaded && !_error) || _hasLocalIssuedInvoice) ...[
                   const SizedBox(width: 6),
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -1577,7 +1622,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
                       border: Border.all(color: tokens.accent.withOpacity(0.4)),
                     ),
                     child: Text(
-                      '${_filteredDocuments.length}',
+                      '${_displayedDocumentCount()}',
                       style: TextStyle(
                         color: tokens.accent,
                         fontSize: 10.4,
@@ -1856,7 +1901,8 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     final gate = evaluateBookingPeppolSendGate(
       _peppolReadinessFor(doc.documentId),
     );
-    final blocked = gate == BookingPeppolSendGate.blockNotReady ||
+    final blocked =
+        gate == BookingPeppolSendGate.blockNotReady ||
         gate == BookingPeppolSendGate.blockLoading;
     final Color actionColor = gate == BookingPeppolSendGate.blockNotReady
         ? tokens.textSecondary
@@ -2025,13 +2071,15 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
 
     if (primaryLabel == null) return const SizedBox.shrink();
 
-    final showReadinessChip = shouldShowBookingPeppolReadinessChip(
-      fetchEligible: _shouldFetchPeppolReadiness(doc),
-      sentViaPeppol: export.isSentViaPeppol,
-    ) && !export.isPeppolSendPending;
+    final showReadinessChip =
+        shouldShowBookingPeppolReadinessChip(
+          fetchEligible: _shouldFetchPeppolReadiness(doc),
+          sentViaPeppol: export.isSentViaPeppol,
+        ) &&
+        !export.isPeppolSendPending;
     final readiness = showReadinessChip
         ? (_peppolReadinessFor(doc.documentId) ??
-            BookingPeppolReadinessState.loading)
+              BookingPeppolReadinessState.loading)
         : null;
 
     String detailLine = '';
@@ -2096,10 +2144,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
                 padding: const EdgeInsets.only(bottom: 2),
                 child: Text(
                   '• ${_mapPeppolReadinessReason(code)}',
-                  style: TextStyle(
-                    color: tokens.textTertiary,
-                    fontSize: 9.8,
-                  ),
+                  style: TextStyle(color: tokens.textTertiary, fontSize: 9.8),
                 ),
               );
             }),

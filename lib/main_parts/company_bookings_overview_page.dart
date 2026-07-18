@@ -2749,6 +2749,32 @@ class _CompanyBookingsOverviewPageState
                     ),
                   ),
                 ),
+                if (item.isStreetRide)
+                  Container(
+                    margin: const EdgeInsets.only(left: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: tokens.accent.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: tokens.accent.withOpacity(0.4)),
+                    ),
+                    child: Text(
+                      _t(
+                        nl: 'Straatrit',
+                        en: 'Street ride',
+                        fr: 'Course directe',
+                        es: 'Viaje directo',
+                      ),
+                      style: TextStyle(
+                        color: tokens.accent.withOpacity(0.98),
+                        fontSize: 11.2,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
                 const Spacer(),
                 if (amountText.isNotEmpty)
                   Text(
@@ -3455,6 +3481,20 @@ class _CompanyBookingsOverviewPageState
                 ],
               ),
             ],
+            if (_isStreetBusinessInvoiceEligible(item)) ...[
+              const SizedBox(height: 10),
+              _StreetBusinessInvoiceAction(
+                // Keyed by the canonical street booking id so the per-booking
+                // invoice lifecycle controller (state + bounded polling)
+                // survives list rebuilds and never leaks across bookings.
+                key: ValueKey(
+                  'street-business-invoice-${_documentsBookingId(item)}',
+                ),
+                bookingId: _documentsBookingId(item),
+                isPaidBooking: _isBookingPaidForStreetInvoice(item),
+                tokens: tokens,
+              ),
+            ],
             if (_documentsBookingId(item).isNotEmpty) ...[
               const SizedBox(height: 10),
               _BookingDocumentsSection(
@@ -3492,6 +3532,37 @@ class _CompanyBookingsOverviewPageState
   /// the operational leg id).
   String _documentsBookingId(_CompanyBookingOverviewItem item) {
     return _resolveCompanyBookingDocumentsCanonicalId(item);
+  }
+
+  /// True when the company business-invoice action may be shown for [item]:
+  /// a canonical, COMPLETED street/direct ride (paid or unpaid). Planned,
+  /// customer, cancelled, refunded/credited and non-street rows resolve to a
+  /// non-completed bucket and are excluded. Delegates the street + status test
+  /// to the pure, unit-tested helper in `street_business_invoice_support.dart`.
+  bool _isStreetBusinessInvoiceEligible(_CompanyBookingOverviewItem item) {
+    // Bucket already segregates cancelled/refunded/credited/to-credit rows, so
+    // only the completed bucket reaches the strict predicate. Canonical street
+    // identity (never ride_type == direct alone) is required.
+    if (item.bucket != _CompanyBookingsFilter.completed) return false;
+    return isStreetRideBusinessInvoiceEligible(
+      bookingId: _documentsBookingId(item),
+      source: item.isCanonicalStreetRide ? kStreetRideBookingSource : null,
+      bookingSource: item.isCanonicalStreetRide
+          ? kStreetRideBookingSource
+          : null,
+      rideType: null,
+      status: 'COMPLETED',
+      isCancelled: false,
+      isRefunded: false,
+      isCredited: false,
+    );
+  }
+
+  /// Booking-level paid signal used only to tailor the invoice request copy and
+  /// the initial displayed status. The authoritative paid state always comes
+  /// from the backend response / documents (never overwritten by this hint).
+  bool _isBookingPaidForStreetInvoice(_CompanyBookingOverviewItem item) {
+    return item.paymentStatus.trim().toLowerCase() == 'paid';
   }
 
   Widget _filterChip(

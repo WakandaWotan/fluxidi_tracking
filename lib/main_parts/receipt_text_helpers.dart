@@ -462,6 +462,27 @@ String _receiptText(String key) {
         fr: 'Payé par terminal bancaire',
         es: 'Pagado con terminal de tarjeta',
       );
+    case 'businessInvoice':
+      return _tr(
+        nl: 'Zakelijke factuur',
+        en: 'Business invoice',
+        fr: 'Facture professionnelle',
+        es: 'Factura comercial',
+      );
+    case 'invoicePending':
+      return _tr(
+        nl: 'Betaling via factuur in afwachting',
+        en: 'Invoice pending',
+        fr: 'Paiement par facture en attente',
+        es: 'Pago por factura pendiente',
+      );
+    case 'invoiced':
+      return _tr(
+        nl: 'Gefactureerd',
+        en: 'Invoiced',
+        fr: 'Facturé',
+        es: 'Facturado',
+      );
     case 'confirmQrPaid':
       return _tr(
         nl: 'QR betaling bevestigd',
@@ -644,12 +665,26 @@ String _receiptText(String key) {
         fr: 'Voir PDF',
         es: 'Ver PDF',
       );
+    case 'viewInvoicePdf':
+      return _tr(
+        nl: 'Factuur-PDF bekijken',
+        en: 'View invoice PDF',
+        fr: 'Voir le PDF de la facture',
+        es: 'Ver PDF de factura',
+      );
     case 'sharePdf':
       return _tr(
         nl: 'Deel PDF',
         en: 'Share PDF',
         fr: 'Partager PDF',
         es: 'Compartir PDF',
+      );
+    case 'shareInvoicePdf':
+      return _tr(
+        nl: 'Factuur delen',
+        en: 'Share invoice',
+        fr: 'Partager la facture',
+        es: 'Compartir factura',
       );
     case 'emailPdf':
       return _tr(

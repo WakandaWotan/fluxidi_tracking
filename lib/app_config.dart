@@ -4069,6 +4069,20 @@ class CompanyOwnerAuthHeaders {
   final CompanyOwnerAuthMode mode;
 }
 
+/// True when a compile-time fleet-sync admin token is configured. Exposed for
+/// synchronous UI gates that must know whether an admin bearer is available
+/// without awaiting [resolveCompanyOwnerAuthHeaders].
+bool get hasFleetSyncAdminToken => _fleetSyncAdminToken.trim().isNotEmpty;
+
+/// Synchronous best-effort check that a company-admin / business-preview bearer
+/// is available (admin token OR a valid company session). It never creates or
+/// stores a driver session and never returns a token — only a presence flag.
+bool hasCompanyOwnerAuthContext() {
+  if (hasFleetSyncAdminToken) return true;
+  return CompanySessionStore.instance.hasValidCompanyContext &&
+      ((activeCompanySessionNotifier.value?.companyId ?? '').trim().isNotEmpty);
+}
+
 /// Resolves auth headers for company-owner calls to scoped `/admin/*` routes.
 ///
 /// Prefers compile-time admin token when present (dev/ops builds). Otherwise

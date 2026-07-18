@@ -1,7 +1,32 @@
 part of '../main.dart';
 
+/// Process-wide sticky memo of POSITIVE receipt eligibility verdicts (keyed by
+/// canonical booking id). STREET-BUSINESS-INVOICE-RECEIPT-UX-1C: the volatile
+/// `driverRideScopeActiveDriverIdOverride` (the effective/preview driver id) is
+/// cleared whenever the driver UI surface deactivates — e.g. while a form modal
+/// is pushed or after leaving the receipt — which transiently collapses the
+/// auth context in company-admin mode. Sharing one memo lets a confirmed
+/// completed street ride keep its Payment slot across form open/cancel and
+/// receipt re-entry. The memo logic lives in the pure support library.
+final StreetInvoiceEligibilityMemo _streetInvoiceEligibilityMemo =
+    StreetInvoiceEligibilityMemo();
+
 class _RideReceiptBodyState extends State<_RideReceiptBody> {
   _ReceiptPaymentStatus _paymentStatus = _ReceiptPaymentStatus.pending;
+
+  /// Set by the embedded street business-invoice action when an invoice is
+  /// known for this completed street ride. Used so Payment status does not
+  /// fall back to a misleading bare "Unpaid" while the ride is on invoice.
+  bool _hasStreetBusinessInvoice = false;
+  bool _streetBusinessInvoicePaid = false;
+
+  /// Cached Booking Worker record used to confirm street-ride identity when
+  /// Tracking `/trips/history` omitted `source` (summarizeTrip strips it).
+  Map<String, dynamic>? _streetInvoiceLookupBooking;
+  bool _streetInvoiceLookupInFlight = false;
+  bool _streetInvoiceLookupFailed = false;
+  String? _streetInvoiceLookupBookingId;
+  String? _streetInvoiceResolvedBookingId;
 
   /// Resolved chauffeur palette for the current build pass. Set inside the
   /// outer [ValueListenableBuilder] in [build] before any helper widgets that
@@ -141,6 +166,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     super.initState();
     _paymentStatus = _initialPaymentStatus();
     unawaited(_resolveReceiptPaymentStatus());
+    unawaited(_ensureStreetBusinessInvoiceEligibilityResolved());
+    _logStreetInvoiceReentry(phase: 'receipt_open');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final action = widget.initialAction;
@@ -148,6 +175,43 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         unawaited(_runInitialAction(context, action));
       }
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant _RideReceiptBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldId = (oldWidget.item.bookingId ?? '').trim();
+    final newId = (widget.item.bookingId ?? '').trim();
+    if (oldId == newId) return;
+    // Different receipt reusing the same State object: drop all stale per-
+    // booking lookup/invoice state and re-resolve from scratch. A previous
+    // receipt's false/failed lookup must never leak into the new booking.
+    _streetInvoiceLookupBooking = null;
+    _streetInvoiceLookupBookingId = null;
+    _streetInvoiceLookupInFlight = false;
+    _streetInvoiceLookupFailed = false;
+    _streetInvoiceResolvedBookingId = null;
+    _hasStreetBusinessInvoice = false;
+    _streetBusinessInvoicePaid = false;
+    unawaited(_ensureStreetBusinessInvoiceEligibilityResolved());
+    _logStreetInvoiceReentry(phase: 'receipt_reentry');
+  }
+
+  /// Bounded re-entry diagnostics (no PII / no tokens). Logged on receipt open
+  /// and when the receipt is reused for a different booking id.
+  void _logStreetInvoiceReentry({required String phase}) {
+    final e = _resolveStreetBusinessInvoiceReceiptEligibility();
+    final decision = _resolveStreetInvoiceSlotDecision();
+    debugPrint(
+      '[STREET_INVOICE_UI] phase=$phase '
+      'booking=${_safeRefPreview(e.canonicalBookingId)} '
+      'eligibility=${e.reason} '
+      'authMode=${decision.authMode.name} '
+      'loadState=${decision.kind.name} '
+      'hasExistingInvoice=$_hasStreetBusinessInvoice '
+      'visible=${decision.kind == StreetInvoiceSlotKind.available} '
+      'reason=${decision.reason}',
+    );
   }
 
   Future<void> _runInitialAction(
@@ -1852,6 +1916,12 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     // hasn't completed, or the authoritative booking-worker record still says
     // pending while compliance already marked the ride paid).
     if (_isEffectiveReceiptPaid()) return _receiptText('paid');
+    final invoiceKey = streetBusinessInvoicePaymentStatusKey(
+      hasInvoice: _hasStreetBusinessInvoice,
+      invoicePaid: _streetBusinessInvoicePaid,
+      receiptPaid: false,
+    );
+    if (invoiceKey != null) return _receiptText(invoiceKey);
     switch (_paymentStatus) {
       case _ReceiptPaymentStatus.pending:
         return _receiptText('unpaid');
@@ -1860,6 +1930,35 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       case _ReceiptPaymentStatus.paid:
         return _receiptText('paid');
     }
+  }
+
+  StreetBusinessInvoiceBuyerInput _streetBusinessInvoicePrefill() {
+    final fields = _resolvedReceiptBusinessFields();
+    return streetBusinessInvoicePrefillFromFields(
+      companyName: fields.companyName,
+      vatNumber: fields.vatNumber,
+      invoiceEmail: fields.invoiceEmail,
+      invoiceAddress: fields.invoiceAddress,
+    );
+  }
+
+  void _onStreetBusinessInvoicePresence({
+    required bool hasInvoice,
+    required bool isPaid,
+  }) {
+    if (_hasStreetBusinessInvoice == hasInvoice &&
+        _streetBusinessInvoicePaid == isPaid) {
+      return;
+    }
+    if (!mounted) {
+      _hasStreetBusinessInvoice = hasInvoice;
+      _streetBusinessInvoicePaid = isPaid;
+      return;
+    }
+    setState(() {
+      _hasStreetBusinessInvoice = hasInvoice;
+      _streetBusinessInvoicePaid = isPaid;
+    });
   }
 
   String _paymentLink() {
@@ -3396,9 +3495,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           );
         }
         if (root['ok'] != true) {
-          throw Exception(
-            (root['error'] ?? 'leg_payment_failed').toString(),
-          );
+          throw Exception((root['error'] ?? 'leg_payment_failed').toString());
         }
         final allLegsPaid = _receiptBoolish(
           root['all_legs_paid'] ?? root['allLegsPaid'],
@@ -3407,14 +3504,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           root['lifecycle_ran'] ?? root['lifecycleRan'],
         );
         final legPaymentStatus =
-            (root['leg_payment_status'] ??
-                    root['legPaymentStatus'] ??
-                    'paid')
+            (root['leg_payment_status'] ?? root['legPaymentStatus'] ?? 'paid')
                 .toString();
         final parentPaymentStatus =
-            (root['parent_payment_status'] ??
-                    root['parentPaymentStatus'] ??
-                    '')
+            (root['parent_payment_status'] ?? root['parentPaymentStatus'] ?? '')
                 .toString();
         final extracted = <String, dynamic>{
           'payment_status': legPaymentStatus,
@@ -3954,8 +4047,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
 
   String _legPaymentPartialSuccessMessage() {
     return _tr(
-      nl:
-          'Deze rit is betaald. De volledige boeking is nog niet volledig betaald.',
+      nl: 'Deze rit is betaald. De volledige boeking is nog niet volledig betaald.',
       en: 'This leg is paid. The booking is not fully paid yet.',
       fr: 'Cette course est payee. La reservation nest pas encore entierement payee.',
       es: 'Este tramo esta pagado. La reserva aun no esta totalmente pagada.',
@@ -4038,7 +4130,18 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     // card terminal` from appearing on Local Ride Register compliance-paid
     // rows whose status got temporarily downgraded by a stale booking-worker
     // record before `_resolveReceiptPaymentStatus` completed.
-    final alreadyPaid = _isEffectiveReceiptPaid();
+    // One canonical ride-payment source feeds the Payment/Betaalzone AND the
+    // business-invoice controller (1D), so the invoice can never disagree with
+    // the receipt about "Betaald".
+    final canonicalRide = resolveCanonicalReceiptRidePayment(
+      effectiveReceiptPaid: _isEffectiveReceiptPaid(),
+    );
+    final alreadyPaid = canonicalRide.isPaid;
+    logStreetInvoiceRidePayment(
+      surface: 'receipt',
+      canonical: canonicalRide,
+      bookingTag: _safeRefPreview(item.bookingId ?? ''),
+    );
     final canRequestPayment =
         !alreadyPaid && receiptTotal != null && receiptTotal > 0;
     debugPrint(
@@ -4098,9 +4201,418 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
               label: Text(_receiptText('paidByCardTerminal')),
             ),
           ],
+          // Fourth Payment action: business invoice for completed street rides.
+          // Remains available while unpaid — invoicing is a valid payment path.
+          // Mounts a loading/retry slot while Tracking history omits `source`
+          // and we confirm identity via the Booking Worker.
+          if (_shouldShowStreetInvoicePaymentSlot()) ...[
+            if (!alreadyPaid) const SizedBox(height: 8),
+            if (alreadyPaid) const SizedBox(height: 10),
+            _streetBusinessInvoicePaymentSlot(alreadyPaid: alreadyPaid),
+          ],
         ],
       ),
     );
+  }
+
+  /// Single source of truth for the Business-invoice Payment slot. Resolves
+  /// live eligibility, then falls back to a sticky positive verdict so a
+  /// transiently-cleared driver-scope override never collapses the slot.
+  StreetInvoiceSlotDecision _resolveStreetInvoiceSlotDecision() {
+    return resolveStreetInvoiceSlotDecision(
+      eligibility: _resolveStreetBusinessInvoiceReceiptEligibility(),
+      canonicalBookingId: _streetInvoiceActionBookingId(),
+      memo: _streetInvoiceEligibilityMemo,
+      hasActorContext:
+          _receiptHasDriverSessionForInvoice() ||
+          _receiptHasCompanyAdminBearerForInvoice(),
+      lookupInFlight: _streetInvoiceLookupInFlight,
+      lookupFailed: _streetInvoiceLookupFailed,
+      kindToken: item.kind,
+    );
+  }
+
+  bool _shouldShowStreetInvoicePaymentSlot() {
+    // The fourth Payment action renders for every state except `unavailable`
+    // (a genuine non-street / ineligible ride, where no action should exist).
+    return _resolveStreetInvoiceSlotDecision().kind !=
+        StreetInvoiceSlotKind.unavailable;
+  }
+
+  /// Reads a canonical street `source` / `booking_source` token from the
+  /// receipt's booking data (details first, then the raw source payload).
+  /// Also accepts Tracking trip fields that summarizeTrip may omit from the
+  /// history projection but that still exist on enriched local/compliance rows.
+  String _receiptBookingSourceToken() {
+    String read(Map<dynamic, dynamic> src) {
+      for (final k in const [
+        'source',
+        'booking_source',
+        'bookingSource',
+        'trip_source',
+        'tripSource',
+      ]) {
+        final v = (src[k] ?? '').toString().trim();
+        if (v.isNotEmpty && v.toLowerCase() != 'null') return v;
+      }
+      final b = src['booking'];
+      if (b is Map) {
+        for (final k in const ['source', 'booking_source', 'bookingSource']) {
+          final v = (b[k] ?? '').toString().trim();
+          if (v.isNotEmpty && v.toLowerCase() != 'null') return v;
+        }
+      }
+      return '';
+    }
+
+    final fromDetails = read(item.bookingDetails);
+    if (fromDetails.isNotEmpty) return fromDetails;
+    final fromRaw = read(item.rawSource);
+    if (fromRaw.isNotEmpty) return fromRaw;
+    // Looked-up Booking Worker record wins when history omitted source.
+    if (_streetInvoiceLookupBooking != null) {
+      final signals = extractStreetSignalsFromBookingRecord(
+        _streetInvoiceLookupBooking,
+      );
+      if (signals.source.isNotEmpty) return signals.source;
+      if (signals.bookingSource.isNotEmpty) return signals.bookingSource;
+    }
+    return '';
+  }
+
+  String _receiptDirectRideKey() {
+    for (final src in [item.bookingDetails, item.rawSource]) {
+      for (final k in const ['direct_ride_key', 'directRideKey']) {
+        final v = (src[k] ?? '').toString().trim();
+        if (v.isNotEmpty) return v;
+      }
+    }
+    return '';
+  }
+
+  String _receiptBookingLinkState() {
+    for (final src in [item.bookingDetails, item.rawSource]) {
+      for (final k in const ['booking_link_state', 'bookingLinkState']) {
+        final v = (src[k] ?? '').toString().trim();
+        if (v.isNotEmpty) return v;
+      }
+    }
+    return '';
+  }
+
+  bool _receiptHasDriverSessionForInvoice() {
+    final session = activeDriverSessionNotifier.value;
+    if (session == null) return false;
+    final token = (session.driverSessionToken ?? '').trim();
+    if (token.isEmpty) return false;
+    if ((session.tenantId ?? '').trim().isEmpty ||
+        (session.companyId ?? '').trim().isEmpty) {
+      return false;
+    }
+    return true;
+  }
+
+  /// True when a company-admin / business-preview bearer is available (admin
+  /// token OR a valid company session). This never fabricates a driver session.
+  bool _receiptHasCompanyAdminBearerForInvoice() =>
+      hasCompanyOwnerAuthContext();
+
+  /// Best-effort booking tenant/company scope from the receipt row. May be empty
+  /// (Tracking history often omits it); the resolver treats empty scope as
+  /// "unknown" and the Booking Worker still enforces it hard on create.
+  ({String tenantId, String companyId}) _receiptBookingScopeForInvoice() {
+    String read(List<String> keys) {
+      for (final src in [item.bookingDetails, item.rawSource]) {
+        for (final k in keys) {
+          final v = (src[k] ?? '').toString().trim();
+          if (v.isNotEmpty && v.toLowerCase() != 'null') return v;
+        }
+      }
+      return '';
+    }
+
+    return (
+      tenantId: read(const ['tenant_id', 'tenantId']),
+      companyId: read(const ['company_id', 'companyId']),
+    );
+  }
+
+  /// Central auth-context resolution for the receipt Business invoice action.
+  /// Supports both a standalone driver session and a company-admin / business
+  /// preview session — without ever requiring a standalone driver session in
+  /// company-admin mode.
+  StreetBusinessInvoiceAuthContext _resolveStreetBusinessInvoiceAuthContext() {
+    final session = activeDriverSessionNotifier.value;
+    final companyScope = _strictActiveBookingScopeQuery();
+    final bookingScope = _receiptBookingScopeForInvoice();
+    return resolveStreetBusinessInvoiceAuthContext(
+      hasDriverSession: _receiptHasDriverSessionForInvoice(),
+      driverBearer: (session?.driverSessionToken ?? '').trim(),
+      driverTenantId: (session?.tenantId ?? '').trim(),
+      driverCompanyId: (session?.companyId ?? '').trim(),
+      driverId: (session?.driverId ?? '').trim(),
+      hasCompanyAdminBearer: _receiptHasCompanyAdminBearerForInvoice(),
+      companyTenantId: (companyScope?['tenant_id'] ?? '').trim(),
+      companyCompanyId: (companyScope?['company_id'] ?? '').trim(),
+      effectiveDriverId: _resolvedActiveDriverIdForScope().trim(),
+      bookingTenantId: bookingScope.tenantId,
+      bookingCompanyId: bookingScope.companyId,
+      hasOwnership: _receiptOwnedByActiveDriverForInvoice(),
+    );
+  }
+
+  /// Ownership for the invoice gate. Uses the normal assigned-driver/vehicle
+  /// matrix, and also accepts a direct trip whose `driver_id` / `vehicle_id`
+  /// matches the active driver session (street rides often lack
+  /// `assigned_driver_id` on the history summary).
+  bool _receiptOwnedByActiveDriverForInvoice() {
+    if (_bookingBelongsToActiveDriver(_driverScopeBookingViewForReceipt())) {
+      return true;
+    }
+    final activeDriverId = _resolvedActiveDriverIdForScope().trim();
+    final tripDriver = item.driverId.trim();
+    if (activeDriverId.isNotEmpty &&
+        tripDriver.isNotEmpty &&
+        activeDriverId == tripDriver) {
+      return true;
+    }
+    final tripVehicle = (item.vehicleId ?? '').trim();
+    final sessionVehicle = _activeDriverSessionVehicleIdForScope().trim();
+    if (tripVehicle.isNotEmpty &&
+        sessionVehicle.isNotEmpty &&
+        tripVehicle == sessionVehicle) {
+      return true;
+    }
+    if (tripVehicle.isNotEmpty &&
+        _activeDriverLinkedVehicleIds().contains(tripVehicle)) {
+      return true;
+    }
+    // Tracking history rows for the driver's own street rides sometimes omit
+    // assignee fields entirely. Allow the Payment action to mount when the
+    // active driver session is present and the booking is a street_ id or a
+    // direct trip opened from this driver's history — the Booking Worker
+    // still enforces assigned-driver authorization on create.
+    final bookingId = (item.bookingId ?? '').trim().toLowerCase();
+    final kind = item.kind.trim().toLowerCase();
+    final hasActorContext =
+        _receiptHasDriverSessionForInvoice() ||
+        _receiptHasCompanyAdminBearerForInvoice();
+    if (hasActorContext &&
+        activeDriverId.isNotEmpty &&
+        (bookingId.startsWith('street_') || kind == 'direct') &&
+        tripDriver.isEmpty) {
+      return true;
+    }
+    return false;
+  }
+
+  StreetBusinessInvoiceReceiptEligibility
+  _resolveStreetBusinessInvoiceReceiptEligibility() {
+    final bookingId =
+        (_streetInvoiceResolvedBookingId ?? item.bookingId ?? '').trim();
+    final st = item.status.trim().toUpperCase().replaceAll(
+      RegExp(r'[-\s]+'),
+      '_',
+    );
+    final authContext = _resolveStreetBusinessInvoiceAuthContext();
+    return resolveStreetBusinessInvoiceReceiptEligibility(
+      bookingId: bookingId,
+      tripId: item.tripId.trim(),
+      kind: item.kind,
+      status: st,
+      source: _receiptBookingSourceToken(),
+      bookingSource: _receiptBookingSourceToken(),
+      rideType: item.kind,
+      directRideKey: _receiptDirectRideKey(),
+      bookingLinkState: _receiptBookingLinkState(),
+      isLocalOnlyFallback: item.isLocalOnlyDirectFallback,
+      hasDriverSession: _receiptHasDriverSessionForInvoice(),
+      hasOwnership: _receiptOwnedByActiveDriverForInvoice(),
+      authContext: authContext,
+      isCancelled: st.contains('CANCEL'),
+      isRefunded: st.contains('REFUND'),
+      isCredited: st.contains('CREDIT'),
+      lookedUpBooking: _streetInvoiceLookupBooking,
+    );
+  }
+
+  void _logStreetInvoiceEligibility(
+    StreetBusinessInvoiceReceiptEligibility e, {
+    required String phase,
+  }) {
+    debugPrint(
+      '[STREET_INVOICE_UI] phase=$phase '
+      'isStreetRide=${e.isStreetRide} '
+      'isCompleted=${e.isCompleted} '
+      'hasDriverSession=${e.hasDriverSession} '
+      'hasOwnership=${e.hasOwnership} '
+      'hasBookingId=${e.hasBookingId} '
+      'authMode=${e.authMode.name} '
+      'needsLookup=${e.needsBookingLookup} '
+      'lookupFailed=$_streetInvoiceLookupFailed '
+      'visible=${e.visible} '
+      'reason=${e.reason} '
+      'booking=${_safeRefPreview(e.canonicalBookingId)} '
+      'trip=${_safeRefPreview(item.tripId)} '
+      'kind=${item.kind}',
+    );
+  }
+
+  Future<Map<String, dynamic>?> _fetchStreetInvoiceBookingRecord(
+    String bookingId,
+  ) async {
+    final id = bookingId.trim();
+    if (id.isEmpty) return null;
+    try {
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/bookings/${Uri.encodeComponent(id)}',
+      );
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      };
+      final token =
+          (activeDriverSessionNotifier.value?.driverSessionToken ?? '').trim();
+      if (token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+      if (kAdminToken.trim().isNotEmpty) {
+        headers['x-admin-token'] = kAdminToken.trim();
+      }
+      final res = await http
+          .get(uri, headers: headers)
+          .timeout(const Duration(seconds: 12));
+      if (res.statusCode < 200 || res.statusCode >= 300) return null;
+      final decoded = jsonDecode(res.body);
+      if (decoded is! Map) return null;
+      return Map<String, dynamic>.from(decoded);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _ensureStreetBusinessInvoiceEligibilityResolved() async {
+    final snap = _resolveStreetBusinessInvoiceReceiptEligibility();
+    _logStreetInvoiceEligibility(snap, phase: 'eligibility');
+    if (!snap.needsBookingLookup) return;
+    final lookupId = snap.canonicalBookingId.trim().isNotEmpty
+        ? snap.canonicalBookingId.trim()
+        : (item.bookingId ?? '').trim();
+    if (lookupId.isEmpty) return;
+    if (_streetInvoiceLookupInFlight) return;
+    if (_streetInvoiceLookupBooking != null &&
+        _streetInvoiceLookupBookingId == lookupId) {
+      return;
+    }
+    _streetInvoiceLookupInFlight = true;
+    _streetInvoiceLookupFailed = false;
+    if (mounted) setState(() {});
+    debugPrint(
+      '[STREET_INVOICE_UI] phase=lookup_start '
+      'booking=${_safeRefPreview(lookupId)}',
+    );
+    final record = await _fetchStreetInvoiceBookingRecord(lookupId);
+    if (!mounted) return;
+    _streetInvoiceLookupInFlight = false;
+    _streetInvoiceLookupBookingId = lookupId;
+    if (record == null) {
+      _streetInvoiceLookupFailed = true;
+      _logStreetInvoiceEligibility(
+        _resolveStreetBusinessInvoiceReceiptEligibility(),
+        phase: 'lookup_error',
+      );
+      setState(() {});
+      return;
+    }
+    final signals = extractStreetSignalsFromBookingRecord(record);
+    _streetInvoiceLookupBooking = record;
+    _streetInvoiceLookupFailed = false;
+    if (signals.bookingId.isNotEmpty) {
+      _streetInvoiceResolvedBookingId = signals.bookingId;
+    }
+    final after = _resolveStreetBusinessInvoiceReceiptEligibility();
+    _logStreetInvoiceEligibility(after, phase: 'lookup_done');
+    setState(() {});
+  }
+
+  /// True when the driver-receipt business-invoice section must be shown.
+  bool _driverReceiptInvoiceEligible() {
+    final e = _resolveStreetBusinessInvoiceReceiptEligibility();
+    return e.visible;
+  }
+
+  String _streetInvoiceActionBookingId() {
+    final resolved = (_streetInvoiceResolvedBookingId ?? '').trim();
+    if (resolved.isNotEmpty) return resolved;
+    final fromEligibility =
+        _resolveStreetBusinessInvoiceReceiptEligibility().canonicalBookingId;
+    if (fromEligibility.trim().isNotEmpty) return fromEligibility.trim();
+    return (item.bookingId ?? '').trim();
+  }
+
+  Widget _streetBusinessInvoicePaymentSlot({required bool alreadyPaid}) {
+    final decision = _resolveStreetInvoiceSlotDecision();
+    if (decision.kind == StreetInvoiceSlotKind.available) {
+      final canonicalId = decision.canonicalBookingId.isNotEmpty
+          ? decision.canonicalBookingId
+          : _streetInvoiceActionBookingId();
+      return _DriverReceiptBusinessInvoiceAction(
+        // Stable key per canonical booking id: preserves the controller (and
+        // its loaded/issued state) across rebuilds, and forces a clean fresh
+        // controller when the receipt shows a different booking.
+        key: ValueKey<String>('street-invoice-$canonicalId'),
+        bookingId: canonicalId,
+        tripItem: item,
+        isPaidBooking: alreadyPaid,
+        palette: _palette,
+        initialBuyer: _streetBusinessInvoicePrefill(),
+        authMode: decision.authMode,
+        onInvoicePresenceChanged: _onStreetBusinessInvoicePresence,
+      );
+    }
+    if (decision.kind == StreetInvoiceSlotKind.resolving) {
+      // Short non-empty placeholder so the Payment card grows; no silent gap.
+      return OutlinedButton.icon(
+        onPressed: null,
+        icon: SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: _palette.accent,
+          ),
+        ),
+        label: Text(
+          _tr(
+            nl: 'Zakelijke factuur…',
+            en: 'Business invoice…',
+            fr: 'Facture professionnelle…',
+            es: 'Factura comercial…',
+          ),
+        ),
+      );
+    }
+    if (decision.kind == StreetInvoiceSlotKind.retryableError) {
+      return OutlinedButton.icon(
+        onPressed: () {
+          _streetInvoiceLookupBooking = null;
+          _streetInvoiceLookupBookingId = null;
+          _streetInvoiceLookupFailed = false;
+          unawaited(_ensureStreetBusinessInvoiceEligibilityResolved());
+        },
+        icon: const Icon(Icons.refresh),
+        label: Text(
+          _tr(
+            nl: 'Zakelijke factuur — opnieuw',
+            en: 'Business invoice — retry',
+            fr: 'Facture professionnelle — réessayer',
+            es: 'Factura comercial — reintentar',
+          ),
+        ),
+      );
+    }
+    return const SizedBox.shrink();
   }
 
   Widget _receiptActionsSection(BuildContext context) {
@@ -4116,6 +4628,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
+            // Ride receipt ("Bon") actions — distinct from the business invoice.
             _receiptText('receiptActions'),
             style: TextStyle(
               color: _palette.textPrimary,

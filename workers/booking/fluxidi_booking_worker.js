@@ -21,6 +21,7 @@ import {
   sha256Hex,
 } from "./modules/crypto_utils.js";
 import { corsHeaders, json, html } from "./modules/http_response.js";
+import { finalizeLegPricingInclVat } from "./modules/leg_pricing_finalize.mjs";
 import { buildBuildTagResponse, listKvKeyNames } from "./modules/diagnostics.js";
 import { BOOKING_TEST_RESET_CONFIRM_PHRASE, allowDevResetEndpoints } from "./modules/dev_reset.js";
 import {
@@ -191,6 +192,9 @@ import {
   resolveBusinessInvoiceRetryDecision,
   streetRideInvoiceIdempotencyKey,
   buildBusinessInvoiceResponse,
+  hasCanonicalStreetIdentity,
+  evaluateDriverInvoiceOwnership,
+  resolveBillitPaidLifecycleGate,
 } from "./modules/street_business_invoice.js";
 import {
   customerScopedBookingsIndexKey,
@@ -3765,23 +3769,132 @@ async function ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, op
   };
 }
 
-/* Patch B8e-B: sandbox-only, setting-gated lifecycle wrapper around the proven
- * B8c helper. Invoked from runPaidBookingAfterLifecycle AFTER Document Core
- * (payStatus, manual mark-paid, mollieWebhook paid branches).
+/* STREET-BUSINESS-INVOICE-PDF-PAYMENT-SYNC-1A: sync paid state on an already
+ * issued Document Core invoice that already carries a sandbox Billit order.
+ * NEVER creates a second invoice/order/payment event. Uses the same
+ * maybeSyncBillitSandboxOrderPaymentState path as the order-already-linked
+ * short-circuit inside ensureBillitSandboxOrderForIssuedInvoice. */
+async function syncBillitPaidForExistingIssuedInvoice(
+  env,
+  scope,
+  config,
+  documentRecord,
+  { documentId = null, documentNumber = null } = {},
+) {
+  const warnings = [];
+  const existingProjection = buildSafeBillitExportProjection(documentRecord);
+  const orderId = safeStr(existingProjection?.order_id, 120);
+  if (!orderId) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "missing_billit_export",
+      document_id: safeStr(documentId, 200) || null,
+      document_number: safeStr(documentNumber, 80) || null,
+      billit_order_id: null,
+      billit_status: null,
+      reused_existing_invoice: true,
+      billit_already_created: false,
+      sent: false,
+      peppol_sent: false,
+      warnings,
+    };
+  }
+
+  const tokenResult = await acquireBillitSandboxAccessToken(env, scope, config);
+  if (!tokenResult.ok) {
+    warnings.push("billit_payment_sync_token_unavailable");
+    return {
+      ok: false,
+      skipped: false,
+      reason: safeStr(tokenResult.error, 80) || "billit_token_unavailable",
+      document_id:
+        safeStr(documentId, 200) ||
+        safeStr(documentRecord?.document_id ?? documentRecord?.documentId, 200) ||
+        null,
+      document_number:
+        safeStr(documentNumber, 80) ||
+        safeStr(documentRecord?.document_number ?? documentRecord?.documentNumber, 80) ||
+        null,
+      billit_order_id: orderId,
+      billit_status: safeStr(existingProjection.status, 40) || "created",
+      reused_existing_invoice: true,
+      billit_already_created: true,
+      sent: false,
+      peppol_sent: false,
+      warnings,
+    };
+  }
+
+  const syncResult = await maybeSyncBillitSandboxOrderPaymentState(
+    env,
+    scope,
+    config,
+    documentRecord,
+    {
+      orderId,
+      partyId: existingProjection.party_id,
+      accessToken: tokenResult.access_token,
+      tokenRefreshed: tokenResult.refreshed === true,
+    },
+  );
+  for (const w of syncResult.warnings || []) {
+    if (w) warnings.push(safeStr(w, 80));
+  }
+  const exportProjection =
+    buildSafeBillitExportProjection(syncResult.billit_export) || existingProjection;
+  const syncReason = safeStr(syncResult.reason, 80);
+  let reason = syncReason || "payment_sync";
+  if (syncReason === "synced") reason = "paid_synced";
+  if (syncReason === "already_synced" || syncReason === "already_paid") {
+    reason = "already_synced";
+  }
+  return {
+    ok: syncResult.ok === true,
+    skipped: syncResult.skipped === true,
+    reason,
+    document_id:
+      safeStr(documentId, 200) ||
+      safeStr(documentRecord?.document_id ?? documentRecord?.documentId, 200) ||
+      null,
+    document_number:
+      safeStr(documentNumber, 80) ||
+      safeStr(documentRecord?.document_number ?? documentRecord?.documentNumber, 80) ||
+      null,
+    billit_order_id: orderId,
+    billit_status: safeStr(exportProjection?.status, 40) || "created",
+    billit_export: exportProjection,
+    reused_existing_invoice: true,
+    billit_already_created: true,
+    sent: false,
+    peppol_sent: false,
+    warnings,
+  };
+}
+
+/* Patch B8e-B + STREET-BUSINESS-INVOICE-PDF-PAYMENT-SYNC-1A: sandbox-only
+ * lifecycle wrapper around the proven B8c helper. Invoked from
+ * runPaidBookingAfterLifecycle AFTER Document Core (payStatus, manual
+ * mark-paid, mollieWebhook paid branches).
  *
- * IMPORTANT: Sandbox-only and setting-gated. Must NOT send Peppol / call
- * /v1/orders/commands/send. NEVER throws to its caller, NEVER supports
- * production, and NEVER returns or logs tokens/secrets/raw Billit responses.
+ * IMPORTANT: Sandbox-only. Must NOT send Peppol / call /v1/orders/commands/send.
+ * NEVER throws to its caller, NEVER supports production, and NEVER returns or
+ * logs tokens/secrets/raw Billit responses.
+ *
+ * Auto-create setting scope (1A):
+ *   - The company billit_auto_create_after_paid_business_invoice setting may
+ *     ONLY gate creation of a NEW invoice / Billit order.
+ *   - When an issued business invoice and/or Billit order already exists for
+ *     the booking, a canonical cash/card/QR paid state ALWAYS syncs that
+ *     existing order via maybeSyncBillitSandboxOrderPaymentState — independent
+ *     of the auto-create setting. No second invoice/order/payment event.
  *
  * B11-R parity (P1): multi-leg roundtrips iterate eligible operational legs and
  * call ensureBillitOrderForPaidBusinessBooking once per leg with sourceLegId /
  * sourceLegType so each issued per-leg INV can link its own billit_export.
  * Single-leg / no-leg records keep the original one-call path (sourceLegId
  * null). Idempotency is per document via billit_export.order_id + document-
- * scoped Idempotent-Key inside ensureBillitSandboxOrderForIssuedInvoice.
- *
- * Default behavior is OFF: a false/missing company setting skips before any
- * Billit work. */
+ * scoped Idempotent-Key inside ensureBillitSandboxOrderForIssuedInvoice. */
 async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId, options = {}) {
   const opts = options && typeof options === "object" && !Array.isArray(options) ? options : {};
   const source = safeStr(opts.source, 60) || "pay_status_paid_lifecycle";
@@ -3832,21 +3945,15 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
   };
 
   try {
-    // Setting gate (read-only; missing/legacy profile => OFF).
+    // Read auto-create setting (missing/legacy profile => OFF). CREATE of a
+    // new invoice/order stays behind this gate; paid sync of an existing
+    // invoice/order bypasses it (1A).
     const settings = await readBillitAutoCreateSettingsForScope(env, scope);
-    if (settings.billit_auto_create_after_paid_business_invoice !== true) {
-      console.log(`[BILLIT_AUTO_CREATE_LIFECYCLE] skipped setting_off booking=${maskedBooking}`);
-      return { ok: true, skipped: true, reason: "setting_off" };
-    }
-    if (settings.billit_auto_create_environment !== "sandbox") {
-      console.log(
-        `[BILLIT_AUTO_CREATE_LIFECYCLE] skipped environment_not_sandbox booking=${maskedBooking}`,
-      );
-      return { ok: true, skipped: true, reason: "environment_not_sandbox" };
-    }
+    const autoCreateEnabled =
+      settings.billit_auto_create_after_paid_business_invoice === true;
 
-    // Double sandbox gate: the Billit OAuth config must also be sandbox. Never
-    // run against production from the lifecycle path.
+    // Sandbox OAuth gate: paid sync and create both use sandbox Billit APIs.
+    // Never run against production from the lifecycle path.
     const config = resolveBillitOAuthConfig(env);
     if (config.environment !== "sandbox") {
       console.log(
@@ -3884,6 +3991,125 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
         bookingRecForLegDetection = null;
       }
     }
+
+    const paymentFields = _bookingPaymentFieldsForBillitSync(bookingRecForLegDetection);
+    const ridePaid = paymentFields?.payment_status === "paid";
+    const paymentMethod = safeStr(paymentFields?.payment_method, 40);
+
+    const inspectExistingInvoice = async (sourceLegId, sourceLegType) => {
+      const existing = await findExistingInvoiceDocumentForBooking(
+        env,
+        scope,
+        bookingId,
+        { sourceLegId, sourceLegType },
+      );
+      const record =
+        existing && existing.document_record && typeof existing.document_record === "object"
+          ? existing.document_record
+          : null;
+      const exportObj =
+        record?.billit_export &&
+        typeof record.billit_export === "object" &&
+        !Array.isArray(record.billit_export)
+          ? record.billit_export
+          : null;
+      const orderId = safeStr(exportObj?.order_id, 120);
+      let billitPaid = null;
+      if (exportObj?.billit_paid === true) billitPaid = true;
+      else if (exportObj?.billit_paid === false) billitPaid = false;
+      return {
+        existing,
+        record,
+        hasExistingInvoice: !!(existing && safeStr(existing.document_id, 200)),
+        hasExistingBillitOrder: !!orderId,
+        billitPaid,
+        billitPaymentSyncStatus: safeStr(exportObj?.billit_payment_sync_status, 40),
+        billitOrderId: orderId || null,
+      };
+    };
+
+    const runCreateThenSyncPath = async (sourceLegId, sourceLegType) => {
+      // NEW invoice/order create remains behind the auto-create environment gate.
+      if (settings.billit_auto_create_environment !== "sandbox") {
+        console.log(
+          `[BILLIT_AUTO_CREATE_LIFECYCLE] skipped environment_not_sandbox booking=${maskedBooking}`,
+        );
+        return { ok: true, skipped: true, reason: "environment_not_sandbox" };
+      }
+      const result = await ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, {
+        source: "paid_lifecycle_sandbox",
+        environment: "sandbox",
+        config,
+        confirmSandbox: true,
+        sourceLegId,
+        sourceLegType,
+        nowIso,
+        scopeForBookingMatch,
+      });
+      return billitLifecycleEnvelopeFromOrderResult(result);
+    };
+
+    const processPaidLifecycleForLeg = async (sourceLegId, sourceLegType) => {
+      const inspected = await inspectExistingInvoice(sourceLegId, sourceLegType);
+      const gate = resolveBillitPaidLifecycleGate({
+        autoCreateEnabled,
+        hasExistingInvoice: inspected.hasExistingInvoice,
+        hasExistingBillitOrder: inspected.hasExistingBillitOrder,
+        ridePaid,
+        billitPaid: inspected.billitPaid,
+        billitPaymentSyncStatus: inspected.billitPaymentSyncStatus,
+        paymentMethod,
+      });
+
+      if (gate.action === "none") {
+        console.log(
+          `[BILLIT_AUTO_CREATE_LIFECYCLE] skipped ${safeStr(gate.reason, 80) || "none"} booking=${maskedBooking}`,
+        );
+        return { ok: true, skipped: true, reason: gate.reason };
+      }
+
+      if (gate.action === "already_synced") {
+        console.log(
+          `[BILLIT_AUTO_CREATE_LIFECYCLE] already_synced booking=${maskedBooking} order=${inspected.billitOrderId || "-"}`,
+        );
+        return {
+          ok: true,
+          skipped: true,
+          reason: "already_synced",
+          document_id: safeStr(inspected.existing?.document_id, 120) || null,
+          document_number: safeStr(inspected.existing?.document_number, 120) || null,
+          billit_order_id: inspected.billitOrderId,
+          billit_status: "created",
+          reused_existing_invoice: true,
+          billit_already_created: true,
+          sent: false,
+          peppol_sent: false,
+          warnings: ["billit_payment_already_synced"],
+        };
+      }
+
+      if (gate.action === "sync_paid_existing") {
+        // Existing invoice/order paid sync — bypasses auto-create setting.
+        const syncEnvelope = await syncBillitPaidForExistingIssuedInvoice(
+          env,
+          scope,
+          config,
+          inspected.record,
+          {
+            documentId: inspected.existing?.document_id,
+            documentNumber: inspected.existing?.document_number,
+          },
+        );
+        console.log(
+          `[BILLIT_AUTO_CREATE_LIFECYCLE] paid_sync_existing booking=${maskedBooking} order=${syncEnvelope.billit_order_id ?? "-"} reason=${safeStr(syncEnvelope.reason, 80) || "-"} bypass_auto_create=true`,
+        );
+        return syncEnvelope;
+      }
+
+      // create_then_sync / ensure_order_then_sync — NEW create stays gated.
+      return runCreateThenSyncPath(sourceLegId, sourceLegType);
+    };
+
     const operationalLegs = _collectOperationalLegsForDocumentCoreInvoiceLifecycle(
       bookingRecForLegDetection,
     );
@@ -3911,22 +4137,14 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
     }
 
     console.log(
-      `[BILLIT_AUTO_CREATE_LIFECYCLE][START] booking=${maskedBooking} source=${source} legs_total=${operationalLegs.length} legs_eligible=${eligibleLegs.length} multi_leg=${isMultiLegRecord ? "true" : "false"}`,
+      `[BILLIT_AUTO_CREATE_LIFECYCLE][START] booking=${maskedBooking} source=${source} legs_total=${operationalLegs.length} legs_eligible=${eligibleLegs.length} multi_leg=${isMultiLegRecord ? "true" : "false"} auto_create=${autoCreateEnabled ? "true" : "false"}`,
     );
 
     if (!isMultiLegRecord) {
-      // Preserve B8e-B single-leg / no-leg behavior verbatim.
-      const result = await ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, {
-        source: "paid_lifecycle_sandbox",
-        environment: "sandbox",
-        config,
-        confirmSandbox: true,
-        sourceLegId: null,
-        sourceLegType: null,
-        nowIso,
-        scopeForBookingMatch,
-      });
-      const envelope = billitLifecycleEnvelopeFromOrderResult(result);
+      const envelope = await processPaidLifecycleForLeg(null, null);
+      if (envelope.skipped === true) {
+        return envelope;
+      }
       if (envelope.ok !== true) {
         console.log(
           `[BILLIT_AUTO_CREATE_LIFECYCLE] failed booking=${maskedBooking} reason=${safeStr(envelope.reason, 80) || "unknown"}`,
@@ -3934,7 +4152,7 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
         return envelope;
       }
       console.log(
-        `[BILLIT_AUTO_CREATE_LIFECYCLE] ${envelope.reason === "idempotent_replay" ? "idempotent_replay" : "succeeded"} booking=${maskedBooking} order=${envelope.billit_order_id ?? "-"} status=${safeStr(envelope.billit_status, 40) || "-"}`,
+        `[BILLIT_AUTO_CREATE_LIFECYCLE] ${envelope.reason === "idempotent_replay" || envelope.reason === "already_synced" || envelope.reason === "paid_synced" ? envelope.reason : "succeeded"} booking=${maskedBooking} order=${envelope.billit_order_id ?? "-"} status=${safeStr(envelope.billit_status, 40) || "-"}`,
       );
       return envelope;
     }
@@ -3964,6 +4182,7 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
     const legResults = [];
     let legOkCount = 0;
     let legErrorCount = 0;
+    let legSkippedCount = 0;
     let firstSuccessEnvelope = null;
     for (let idx = 0; idx < eligibleLegs.length; idx += 1) {
       const leg = eligibleLegs[idx];
@@ -3975,18 +4194,9 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
       console.log(
         `[BILLIT_AUTO_CREATE_LIFECYCLE][LEG_START] booking=${maskedBooking} leg=${legMask} leg_type=${legTypeToken} index=${positionToken} source=${source}`,
       );
-      let orderResult = null;
+      let envelope = null;
       try {
-        orderResult = await ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, {
-          source: "paid_lifecycle_sandbox",
-          environment: "sandbox",
-          config,
-          confirmSandbox: true,
-          sourceLegId: legId,
-          sourceLegType: legType || null,
-          nowIso,
-          scopeForBookingMatch,
-        });
+        envelope = await processPaidLifecycleForLeg(legId, legType || null);
       } catch (legErr) {
         legErrorCount += 1;
         const legErrReason = safeStr(legErr?.message, 120) || "exception";
@@ -4009,18 +4219,17 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
         continue;
       }
 
-      const envelope = billitLifecycleEnvelopeFromOrderResult(orderResult);
-      if (envelope.ok !== true) {
-        legErrorCount += 1;
+      if (envelope?.skipped === true) {
+        legSkippedCount += 1;
         console.log(
-          `[BILLIT_AUTO_CREATE_LIFECYCLE][LEG_ERROR] booking=${maskedBooking} leg=${legMask} leg_type=${legTypeToken} error=${safeStr(envelope.reason, 80) || "unknown"}`,
+          `[BILLIT_AUTO_CREATE_LIFECYCLE][LEG_SKIP] booking=${maskedBooking} leg=${legMask} leg_type=${legTypeToken} reason=${safeStr(envelope.reason, 80) || "skipped"}`,
         );
         legResults.push({
           source_leg_id: legId,
           source_leg_type: legType || null,
-          ok: false,
-          skipped: false,
-          reason: safeStr(envelope.reason, 80) || "billit_auto_create_failed",
+          ok: true,
+          skipped: true,
+          reason: safeStr(envelope.reason, 80) || "skipped",
           document_id: safeStr(envelope.document_id, 120) || null,
           document_number: safeStr(envelope.document_number, 120) || null,
           billit_order_id: envelope.billit_order_id ?? null,
@@ -4031,11 +4240,32 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
         continue;
       }
 
+      if (envelope?.ok !== true) {
+        legErrorCount += 1;
+        console.log(
+          `[BILLIT_AUTO_CREATE_LIFECYCLE][LEG_ERROR] booking=${maskedBooking} leg=${legMask} leg_type=${legTypeToken} error=${safeStr(envelope?.reason, 80) || "unknown"}`,
+        );
+        legResults.push({
+          source_leg_id: legId,
+          source_leg_type: legType || null,
+          ok: false,
+          skipped: false,
+          reason: safeStr(envelope?.reason, 80) || "billit_auto_create_failed",
+          document_id: safeStr(envelope?.document_id, 120) || null,
+          document_number: safeStr(envelope?.document_number, 120) || null,
+          billit_order_id: envelope?.billit_order_id ?? null,
+          billit_status: safeStr(envelope?.billit_status, 40) || null,
+          reused_existing_invoice: envelope?.reused_existing_invoice === true,
+          billit_already_created: envelope?.billit_already_created === true,
+        });
+        continue;
+      }
+
       legOkCount += 1;
       if (!firstSuccessEnvelope) firstSuccessEnvelope = envelope;
       const docIdMask = envelope.document_id ? envelope.document_id.slice(0, 8) : "-";
       console.log(
-        `[BILLIT_AUTO_CREATE_LIFECYCLE][LEG_OK] booking=${maskedBooking} leg=${legMask} leg_type=${legTypeToken} reused=${envelope.reason === "idempotent_replay" ? "true" : "false"} document_id=${docIdMask} order=${envelope.billit_order_id ?? "-"}`,
+        `[BILLIT_AUTO_CREATE_LIFECYCLE][LEG_OK] booking=${maskedBooking} leg=${legMask} leg_type=${legTypeToken} reused=${envelope.reason === "idempotent_replay" || envelope.reason === "paid_synced" || envelope.reason === "already_synced" ? "true" : "false"} document_id=${docIdMask} order=${envelope.billit_order_id ?? "-"}`,
       );
       legResults.push({
         source_leg_id: legId,
@@ -4053,9 +4283,30 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
     }
 
     const overallOk = legErrorCount === 0;
+    const allSkipped = legOkCount === 0 && legErrorCount === 0 && legSkippedCount > 0;
     console.log(
-      `[BILLIT_AUTO_CREATE_LIFECYCLE][MULTI_LEG_SUMMARY] booking=${maskedBooking} source=${source} total=${eligibleLegs.length} ok=${legOkCount} fail=${legErrorCount} cancelled_legs_ignored=${cancelledLegSkippedCount} missing_leg_id_ignored=${missingLegIdSkippedCount}`,
+      `[BILLIT_AUTO_CREATE_LIFECYCLE][MULTI_LEG_SUMMARY] booking=${maskedBooking} source=${source} total=${eligibleLegs.length} ok=${legOkCount} fail=${legErrorCount} skipped=${legSkippedCount} cancelled_legs_ignored=${cancelledLegSkippedCount} missing_leg_id_ignored=${missingLegIdSkippedCount}`,
     );
+
+    if (allSkipped) {
+      const topSkip = legResults[0] || {};
+      return {
+        ok: true,
+        skipped: true,
+        reason: safeStr(topSkip.reason, 80) || "setting_off",
+        multi_leg: true,
+        legs: legResults,
+        legs_total: eligibleLegs.length,
+        legs_ok: 0,
+        legs_error: 0,
+        legs_skipped: legSkippedCount,
+        cancelled_legs_ignored: cancelledLegSkippedCount,
+        missing_leg_id_ignored: missingLegIdSkippedCount,
+        sent: false,
+        peppol_sent: false,
+        warnings: [],
+      };
+    }
 
     const topEnvelope = firstSuccessEnvelope || {};
     return {
@@ -4067,6 +4318,7 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
       legs_total: eligibleLegs.length,
       legs_ok: legOkCount,
       legs_error: legErrorCount,
+      legs_skipped: legSkippedCount,
       cancelled_legs_ignored: cancelledLegSkippedCount,
       missing_leg_id_ignored: missingLegIdSkippedCount,
       document_id: safeStr(topEnvelope.document_id, 120) || null,
@@ -4579,8 +4831,9 @@ async function runPaidBookingAfterLifecycle(env, scope, bookingId, options = {})
       }
     }
     // Billit SECOND. Always runs regardless of Document Core outcome; the
-    // inner wrapper is setting-gated and sandbox-only and its own
-    // duplicate-guard reuses any invoice / Billit order already linked.
+    // inner wrapper is sandbox-only. NEW invoice/order create stays behind
+    // the auto-create setting; paid sync of an existing invoice/order
+    // bypasses that setting (1A). Duplicate-guard reuses linked orders.
     if (!skipBillit) {
       try {
         chainResult.billit_result = await maybeRunBillitAutoCreateAfterPaidLifecycle(
@@ -30746,7 +30999,11 @@ export default {
           companyDocsSegments[1] === "bookings" &&
           companyDocsSegments[3] === "documents"
         ) {
-          const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          // Accepts admin token OR company session (unchanged) AND, additively,
+          // an assigned driver's public session for their own completed street
+          // ride (read-only mirror; enables driver-receipt eventual-consistency
+          // polling). Driver ownership is enforced below before any list read.
+          const authScope = await _requireBusinessInvoiceActor({
             request,
             url,
             env,
@@ -30770,6 +31027,60 @@ export default {
               return json({ ok: false, error: "missing_binding" }, 503);
             }
 
+            if (authScope.auth_mode === "driver_session") {
+              let docRec = null;
+              try {
+                docRec = await env.BOOKING_KV.get(`booking:${sourceBookingId}`, {
+                  type: "json",
+                });
+              } catch (_) {
+                docRec = null;
+              }
+              if (!docRec || typeof docRec !== "object" || Array.isArray(docRec)) {
+                return json({ ok: false, error: "source_booking_not_found" }, 404);
+              }
+              if (
+                !bookingMatchesRequiredTenantCompanyScope(docRec, {
+                  tenant_id: scope.tenant_id,
+                  company_id: scope.company_id,
+                  hasScope: true,
+                })
+              ) {
+                return json({ ok: false, error: "not_in_scope" }, 403);
+              }
+              if (
+                !hasCanonicalStreetIdentity({
+                  bookingId: sourceBookingId,
+                  record: docRec,
+                })
+              ) {
+                return json({ ok: false, error: "not_a_street_booking" }, 422);
+              }
+              const docsOwnership = evaluateDriverInvoiceOwnership({
+                record: docRec,
+                driverId: authScope.driver_session.driver_id,
+              });
+              if (!docsOwnership.ok) {
+                // Ownership is checked BEFORE booking-state so a same-company,
+                // non-assigned driver learns nothing about the booking status.
+                return json({ ok: false, error: docsOwnership.reason }, 403);
+              }
+              // Same lifecycle gate as the POST path: COMPLETED + not
+              // cancelled/refunded/credited. A driver may only mirror documents
+              // for a completed, invoiceable street ride.
+              const docsEligibility = evaluateStreetInvoiceEligibility({
+                bookingId: sourceBookingId,
+                record: docRec,
+              });
+              if (!docsEligibility.ok) {
+                const st =
+                  docsEligibility.reason === "source_booking_not_found"
+                    ? 404
+                    : 409;
+                return json({ ok: false, error: docsEligibility.reason }, st);
+              }
+            }
+
             const listed = await listIssuedDocumentsForBooking(
               env,
               scope,
@@ -30785,8 +31096,32 @@ export default {
             const warnings = Array.isArray(listed.warnings)
               ? listed.warnings
               : [];
+            // Booking-level PDF artifact readiness (STREET-BUSINESS-INVOICE-
+            // PDF-PAYMENT-SYNC-1). Distinct from Document Core metadata — the
+            // View/Share PDF buttons require this (or a successful PDF GET).
+            let invoicePdf = { ready: false, exists: false };
+            try {
+              let pdfRec = null;
+              try {
+                pdfRec = await env.BOOKING_KV.get(`booking:${sourceBookingId}`, {
+                  type: "json",
+                });
+              } catch (_) {
+                pdfRec = null;
+              }
+              const meta = _invoicePdfMetadataFromRecord(pdfRec);
+              invoicePdf = {
+                ready: meta.exists === true,
+                exists: meta.exists === true,
+                generated_at: meta.generated_at || null,
+                size_bytes: meta.size_bytes || null,
+                content_type: meta.content_type || null,
+              };
+            } catch (_) {
+              invoicePdf = { ready: false, exists: false };
+            }
             console.log(
-              `[COMPANY_DOCUMENT_LIST][OK] booking=${_bookingIntentMask(sourceBookingId)} count=${documents.length} warnings=${warnings.length}`,
+              `[COMPANY_DOCUMENT_LIST][OK] booking=${_bookingIntentMask(sourceBookingId)} count=${documents.length} warnings=${warnings.length} pdf=${invoicePdf.ready ? "ready" : "pending"}`,
             );
             return json({
               ok: true,
@@ -30794,6 +31129,7 @@ export default {
               documents,
               count: documents.length,
               warnings,
+              invoice_pdf: invoicePdf,
             });
           } catch (err) {
             const message = String(err?.message || "internal_error");
@@ -60463,22 +60799,54 @@ async function finalizeDirectRideBookingBestEffort(
   const vatRate = Number(vatRatePercent);
   const b =
     rec.booking && typeof rec.booking === "object" ? rec.booking : (rec.booking = {});
-  if (Number.isFinite(total)) {
-    rec.price_incl_vat = total;
-    b.price_incl_vat = total;
-    b.price = total;
-  }
-  if (Number.isFinite(exVat)) {
-    rec.price_ex_vat = exVat;
-    b.price_ex_vat = exVat;
-  }
-  if (Number.isFinite(vat)) {
-    rec.price_vat = vat;
-    b.price_vat = vat;
-  }
-  if (Number.isFinite(vatRate)) {
-    rec.vat_rate_percent = vatRate;
-    b.vat_rate_percent = vatRate;
+
+  // FARE-ROUNDING-CENTRAL-0_10-1 (FASE 7 — idempotency/repair): once a canonical
+  // finalized fare exists, it wins. A retry / duplicate STOP / worker retry must
+  // reuse the stored amount and must never re-round or overwrite it with a
+  // different value. We only stamp the fare fields on the FIRST finalization.
+  const existingFinalCents = Number.isFinite(Number(rec?.price_incl_vat))
+    ? Math.round(Number(rec.price_incl_vat) * 100)
+    : null;
+  const incomingFinalCents = Number.isFinite(total)
+    ? Math.round(total * 100)
+    : null;
+  const alreadyFinalized =
+    rec?.street_ride_fare_finalized === true && existingFinalCents !== null;
+
+  if (alreadyFinalized) {
+    if (incomingFinalCents !== null && incomingFinalCents !== existingFinalCents) {
+      console.log(
+        `[FARE_ROUNDING] phase=conflict source=booking booking=${_bookingIntentMask(safeBookingId)} ` +
+          `rawCents=${incomingFinalCents} roundedCents=${existingFinalCents} alreadyFinalized=true ` +
+          `reason=finalize_retry_amount_mismatch_kept_existing`,
+      );
+    } else {
+      console.log(
+        `[FARE_ROUNDING] phase=reuse_existing source=booking booking=${_bookingIntentMask(safeBookingId)} ` +
+          `roundedCents=${existingFinalCents} alreadyFinalized=true`,
+      );
+    }
+    // Intentionally do NOT touch rec/b price fields: the existing finalized fare
+    // is canonical.
+  } else {
+    if (Number.isFinite(total)) {
+      rec.price_incl_vat = total;
+      b.price_incl_vat = total;
+      b.price = total;
+      rec.street_ride_fare_finalized = true;
+    }
+    if (Number.isFinite(exVat)) {
+      rec.price_ex_vat = exVat;
+      b.price_ex_vat = exVat;
+    }
+    if (Number.isFinite(vat)) {
+      rec.price_vat = vat;
+      b.price_vat = vat;
+    }
+    if (Number.isFinite(vatRate)) {
+      rec.vat_rate_percent = vatRate;
+      b.vat_rate_percent = vatRate;
+    }
   }
   rec.currency = cur;
   b.currency = cur;
@@ -60544,6 +60912,214 @@ async function finalizeDirectRideBookingBestEffort(
  *
  * It NEVER auto-sends Peppol, NEVER supports production, NEVER adds revenue at
  * invoice issue, and NEVER returns tokens / PII snapshots. */
+/* Business-invoice actor authorization.
+ *
+ * Preserves the existing admin/company gate EXACTLY, and ADDITIVELY accepts an
+ * authenticated public driver session (Authorization: Bearer) only when no
+ * admin token and no company session matched. A present-but-mismatched
+ * admin/company scope keeps its original response (403/400) and never falls
+ * through to the driver path. Driver OWNERSHIP of the specific booking
+ * (assigned_driver_id) is enforced later by the handler once the record loads.
+ *
+ * Returns the same shape as _requireAdminOrCompanySessionForExplicitScope plus
+ * an optional auth_mode: "driver_session" with driver_session attached. */
+async function _requireBusinessInvoiceActor({
+  request,
+  url,
+  env,
+  body = null,
+  routeLabel = "",
+} = {}) {
+  const adminCompany = await _requireAdminOrCompanySessionForExplicitScope({
+    request,
+    url,
+    env,
+    body,
+    routeLabel,
+  });
+  if (adminCompany.ok) return adminCompany;
+  const driverSession = await _loadPublicDriverSessionFromRequest(request, env);
+  if (!driverSession) return adminCompany;
+  const explicitScope = resolveAdminExplicitTenantCompanyScope({
+    request,
+    url,
+    body,
+  });
+  if (!explicitScope?.hasScope) {
+    return { ok: false, response: json(missingTenantScopeError(), 400) };
+  }
+  if (
+    explicitScope.tenant_id !== driverSession.tenant_id ||
+    explicitScope.company_id !== driverSession.company_id
+  ) {
+    return { ok: false, response: json({ ok: false, error: "forbidden" }, 403) };
+  }
+  if (routeLabel) {
+    console.log(`[${routeLabel}][AUTH] auth_mode=driver_session`);
+  }
+  return {
+    ok: true,
+    auth_mode: "driver_session",
+    explicitScope,
+    driver_session: driverSession,
+  };
+}
+
+/* STREET-BUSINESS-INVOICE-PDF-PAYMENT-SYNC-1: ensure a booking-level invoice
+ * PDF artifact exists after Document Core issue. Idempotent: if invoice_pdf_key
+ * is already present, returns immediately. Never emails, never issues a second
+ * Document Core invoice, never creates a second Billit order. Uses the existing
+ * generateAndSendInvoice path with skipEmailDelivery + the Document Core
+ * invoice reference as the invoice number. */
+async function ensureStreetBusinessInvoicePdfArtifact(
+  env,
+  scope,
+  bookingId,
+  rec,
+  { invoiceReference = "" } = {},
+) {
+  const safeBookingId = safeStr(bookingId, 200) || "";
+  if (!safeBookingId || !rec || typeof rec !== "object") {
+    return { ok: false, skipped: true, reason: "missing_booking" };
+  }
+  const existing = _invoicePdfMetadataFromRecord(rec);
+  if (existing.exists) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: "already_persisted",
+      key: existing.key,
+    };
+  }
+  const invoiceNumber =
+    safeStr(invoiceReference, 120) ||
+    findExistingInvoiceNumber(rec) ||
+    "";
+  if (!invoiceNumber) {
+    return { ok: false, skipped: true, reason: "missing_invoice_number" };
+  }
+  // Persist Document Core number onto the booking so findExistingInvoiceNumber
+  // and PDF filename stay aligned across retries (no second sequence allocate).
+  try {
+    const latest = await env.BOOKING_KV.get(`booking:${safeBookingId}`, {
+      type: "json",
+    });
+    if (latest && typeof latest === "object" && !Array.isArray(latest)) {
+      if (!safeStr(latest.invoice_number ?? latest.invoiceNumber, 120)) {
+        latest.invoice_number = invoiceNumber;
+        latest.invoiceNumber = invoiceNumber;
+        if (latest.booking && typeof latest.booking === "object") {
+          latest.booking.invoice_number = invoiceNumber;
+          latest.booking.invoiceNumber = invoiceNumber;
+        }
+        await env.BOOKING_KV.put(
+          `booking:${safeBookingId}`,
+          JSON.stringify(latest),
+        );
+        rec = latest;
+      }
+    }
+  } catch (_) {
+    // Non-fatal: generateAndSendInvoice can still reuse invoiceNumber via input.
+  }
+
+  const booking =
+    rec.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const parseNum = (value, fallback = 0) => {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : fallback;
+  };
+  const pickupIso = safeStr(
+    booking.pickupStartIso ||
+      booking.pickup_iso ||
+      rec.pickupStartIso ||
+      rec.scheduled_pickup_at,
+  );
+  const invoiceInput = {
+    invoice_number: invoiceNumber,
+    invoiceNumber,
+    pickupStartIso: pickupIso,
+    bookingPublicId: safeBookingId,
+    bookingId: safeBookingId,
+    tenant_id: safeStr(scope?.tenant_id ?? rec.tenant_id, 120),
+    company_id: safeStr(scope?.company_id ?? rec.company_id, 120),
+    from: safeStr(booking.from || rec.from || booking.pickup_address),
+    to: safeStr(booking.to || rec.to || booking.destination_address),
+    stops: Array.isArray(booking.stops) ? booking.stops : [],
+    paymentStatus: streetRidePaymentStatus(rec),
+    paymentMethod: safeStr(
+      rec.payment_method ?? booking.payment_method ?? rec.paymentMethod,
+    ),
+    paymentSource: safeStr(
+      rec.payment_source ?? booking.payment_source ?? rec.paymentSource,
+    ),
+    customerName: safeStr(
+      booking.customer_name || booking.custName || rec.customer_name,
+    ),
+    customerEmail: safeStr(
+      booking.customer_email || booking.custEmail || rec.customer_email,
+    ),
+    customerPhone: safeStr(
+      booking.customer_phone || booking.custPhone || rec.customer_phone,
+    ),
+    customerVat: safeStr(booking.vat_number || rec.vat_number),
+    customerCompany: safeStr(booking.company_name || rec.company_name),
+    invoiceAddress: safeStr(booking.invoice_address || rec.invoice_address),
+    vat_rate: parseNum(booking.vat_rate ?? rec.vat_rate_percent, 21) > 1
+      ? parseNum(booking.vat_rate ?? rec.vat_rate_percent, 21) / 100
+      : parseNum(booking.vat_rate ?? rec.vat_rate, 0.21),
+    subtotalEx: parseNum(
+      booking.price_ex_vat ?? rec.price_ex_vat ?? booking.subtotal_ex_vat,
+      0,
+    ),
+    vatAmount: parseNum(booking.price_vat ?? rec.price_vat, 0),
+    total: parseNum(booking.price_incl_vat ?? rec.price_incl_vat, 0),
+    billing_customer_snapshot:
+      rec.billing_customer_snapshot || booking.billing_customer_snapshot || null,
+  };
+
+  try {
+    const result = await generateAndSendInvoice({
+      env,
+      booking: invoiceInput,
+      bookingRecordInfoOverride: {
+        key: `booking:${safeBookingId}`,
+        booking_id: safeBookingId,
+        rec,
+      },
+      emailPolicy: {
+        skipEmailDelivery: true,
+        sendCustomerEmail: false,
+        requireArtifactPersistence: true,
+        customerSkipReason: "street_business_invoice_pdf_only",
+        context: "street_business_invoice_pdf_ensure",
+      },
+    });
+    const artifactOk = result?.invoice_pdf_artifact?.ok === true;
+    if (!artifactOk) {
+      return {
+        ok: false,
+        skipped: false,
+        reason:
+          safeStr(result?.invoice_pdf_artifact?.reason || result?.error, 80) ||
+          "pdf_persist_failed",
+      };
+    }
+    return {
+      ok: true,
+      skipped: false,
+      reason: "persisted",
+      key: safeStr(result?.invoice_pdf_artifact?.key, 1024) || null,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      skipped: false,
+      reason: safeStr(err?.message || err, 80) || "pdf_ensure_error",
+    };
+  }
+}
+
 async function handleCompanyBookingRequestBusinessInvoice({
   request,
   url,
@@ -60558,7 +61134,7 @@ async function handleCompanyBookingRequestBusinessInvoice({
     body = null;
   }
 
-  const auth = await _requireAdminOrCompanySessionForExplicitScope({
+  const auth = await _requireBusinessInvoiceActor({
     request,
     url,
     env,
@@ -60569,7 +61145,9 @@ async function handleCompanyBookingRequestBusinessInvoice({
   const actorRole =
     auth.auth_mode === "admin_token"
       ? "admin_business_invoice"
-      : "company_business_invoice";
+      : auth.auth_mode === "driver_session"
+        ? "driver_business_invoice"
+        : "company_business_invoice";
   const scope = {
     tenant_id: auth.explicitScope.tenant_id,
     company_id: auth.explicitScope.company_id,
@@ -60607,6 +61185,54 @@ async function handleCompanyBookingRequestBusinessInvoice({
       `[BUSINESS_INVOICE][CONFLICT] booking=${bookingMask} reason=not_in_scope`,
     );
     return json({ ok: false, error: "not_in_scope" }, 403);
+  }
+
+  // 1b. DRIVER path only: enforce strict canonical street identity (ride_type
+  // == "direct" alone is never sufficient) and authoritative ownership
+  // (booking.assigned_driver_id === authenticated driver). Admin/company actors
+  // are already scoped by tenant/company above and keep their proven behavior.
+  if (auth.auth_mode === "driver_session") {
+    if (!hasCanonicalStreetIdentity({ bookingId: safeBookingId, record: rec })) {
+      console.log(
+        `[BUSINESS_INVOICE][CONFLICT] booking=${bookingMask} reason=not_a_street_booking actor=driver`,
+      );
+      return json({ ok: false, error: "not_a_street_booking" }, 422);
+    }
+    const ownership = evaluateDriverInvoiceOwnership({
+      record: rec,
+      driverId: auth.driver_session.driver_id,
+    });
+    if (!ownership.ok) {
+      console.log(
+        `[BUSINESS_INVOICE][CONFLICT] booking=${bookingMask} reason=${ownership.reason} actor=driver`,
+      );
+      return json({ ok: false, error: ownership.reason }, 403);
+    }
+    // Best-effort: when a tracking trip mapping exists it must not map to a
+    // DIFFERENT booking. This only rejects a contradiction; it never widens
+    // scope and never blocks a validly-owned booking on lookup failure.
+    const driverTripId =
+      safeStr(rec.tracking_trip_id ?? rec.trackingTripId, 200) || "";
+    if (driverTripId) {
+      try {
+        const mapped = await env.BOOKING_KV.get(
+          trackingTripBookingMapKey(scope, driverTripId),
+          { type: "json" },
+        );
+        const mappedBookingId =
+          mapped && typeof mapped === "object"
+            ? safeStr(mapped.booking_id ?? mapped.bookingId, 200)
+            : "";
+        if (mappedBookingId && mappedBookingId !== safeBookingId) {
+          console.log(
+            `[BUSINESS_INVOICE][CONFLICT] booking=${bookingMask} reason=driver_trip_scope_mismatch`,
+          );
+          return json({ ok: false, error: "not_in_scope" }, 403);
+        }
+      } catch (_) {
+        // Non-fatal: mapping lookup failure never blocks a validly-owned booking.
+      }
+    }
   }
 
   // 2. Street/direct + COMPLETED + not cancelled/refunded/credited.
@@ -60848,6 +61474,43 @@ async function handleCompanyBookingRequestBusinessInvoice({
     }
   } catch (_) {
     warnings.push("billit_order_error");
+  }
+
+  // 8. Ensure booking-level invoice PDF artifact (idempotent, no email).
+  // Document Core issue does not persist invoice_pdf_key; View/Share PDF needs
+  // that artifact. Best-effort: failures become warnings, never roll back the
+  // issued invoice / Billit order.
+  try {
+    let pdfRec = rec;
+    try {
+      const fresh = await env.BOOKING_KV.get(`booking:${safeBookingId}`, {
+        type: "json",
+      });
+      if (fresh && typeof fresh === "object") pdfRec = fresh;
+    } catch (_) {
+      // keep original rec
+    }
+    const pdfEnsure = await ensureStreetBusinessInvoicePdfArtifact(
+      env,
+      scope,
+      safeBookingId,
+      pdfRec,
+      { invoiceReference },
+    );
+    if (pdfEnsure?.ok !== true) {
+      warnings.push(
+        safeStr(pdfEnsure?.reason, 80) || "invoice_pdf_ensure_failed",
+      );
+      console.log(
+        `[BUSINESS_INVOICE][PDF] booking=${bookingMask} ok=false reason=${safeStr(pdfEnsure?.reason, 60) || "-"}`,
+      );
+    } else if (pdfEnsure.skipped !== true) {
+      console.log(
+        `[BUSINESS_INVOICE][PDF] booking=${bookingMask} ok=true reason=persisted`,
+      );
+    }
+  } catch (_) {
+    warnings.push("invoice_pdf_ensure_error");
   }
 
   return json(
@@ -63323,12 +63986,20 @@ function _splitInclVatFromPricingProfile(priceIncl, pricingProfile, fallbackVatR
     return { price_ex_vat: to2(0), price_vat: to2(0), price_incl_vat: to2(0), vat_rate: 0, vat_mode: profile.vat_mode || "excl" };
   }
   const rate = clampNumber(profile?.vat_rate, clampNumber(fallbackVatRate, 0.06, 0, 1), 0, 1);
-  const exRaw = inclNum / (1 + rate);
-  const vatRaw = inclNum - exRaw;
+  // FARE-ROUNDING-PLANNED-QUOTE-0_10-1: airport fixed fares are also a final
+  // billable leg price. Apply the same canonical €0.10 leg finalization so every
+  // planned leg — metered or fixed-fare — follows one rule and re-derives its
+  // net + VAT from the rounded incl amount.
+  const legFinal = finalizeLegPricingInclVat({ rawInclVat: inclNum, vatRate: rate });
+  console.log(
+    `[FARE_ROUNDING] phase=planned_quote rawCents=${legFinal.rawCents} ` +
+      `roundedCents=${legFinal.roundedCents} legKind=single alreadyQuoted=false ` +
+      `reason=airport_fixed_fare`,
+  );
   return {
-    price_ex_vat: to2(exRaw),
-    price_vat: to2(vatRaw),
-    price_incl_vat: to2(inclNum),
+    price_ex_vat: legFinal.price_ex_vat,
+    price_vat: legFinal.price_vat,
+    price_incl_vat: legFinal.price_incl_vat,
     vat_rate: rate,
     vat_mode: profile.vat_mode || "excl",
   };
@@ -63580,10 +64251,29 @@ function calcPrice({
   const price_vat = vatMode === "incl" ? (price_ex_out * rate) : price_vat_raw;
   const price_incl = vatMode === "incl" ? (price_ex_out + price_vat) : (price_ex_out + price_vat);
 
+  // FARE-ROUNDING-PLANNED-QUOTE-0_10-1: this is where a planned leg's definitive
+  // incl-VAT price is calculated. Round it to the nearest €0.10 EXACTLY ONCE
+  // here (half-up), then re-derive net + VAT from the rounded incl amount so the
+  // stored/returned leg values are internally consistent. Every caller (single
+  // trip, outbound leg, return leg — quote preview AND create) flows through
+  // this return, so the rounded value is produced once and reused downstream.
+  const legFinal = finalizeLegPricingInclVat({
+    rawInclVat: price_incl,
+    vatRate: rate,
+  });
+  console.log(
+    `[FARE_ROUNDING] phase=planned_quote rawCents=${legFinal.rawCents} ` +
+      `roundedCents=${legFinal.roundedCents} legKind=${apply_return_fee ? "return" : "single"} ` +
+      `alreadyQuoted=false`,
+  );
+  const finalInclVat = legFinal.price_incl_vat;
+  const finalExVat = legFinal.price_ex_vat;
+  const finalVat = legFinal.price_vat;
+
   return {
-    price_ex_vat: to2(price_ex_out),
-    price_vat: to2(price_vat),
-    price_incl_vat: to2(price_incl),
+    price_ex_vat: finalExVat,
+    price_vat: finalVat,
+    price_incl_vat: finalInclVat,
     note: buildNote({ isNight, isWeekend, surchargeRate, tier, pax, bags, stop_count, wait_min, profile }),
     breakdown: {
       start_fee_ex: to2(startFee),
@@ -63612,10 +64302,10 @@ function calcPrice({
       tier_fee_ex: to2(tFee),
       vat_mode: vatMode,
 
-      total_ex: to2(price_ex_out),
+      total_ex: finalExVat,
       vat_rate: rate,
-      vat_amount: to2(price_vat),
-      total_incl: to2(price_incl)
+      vat_amount: finalVat,
+      total_incl: finalInclVat
     }
   };
 }
@@ -74725,6 +75415,33 @@ async function handleBookingInvoicePdfGet(request, url, env, bookingId, tenantSc
   if (!allowed) {
     const driverAccess = await _driverSessionCanAccessBookingInvoice(request, rec, env);
     allowed = !!driverAccess?.allowed;
+  }
+  // Company admin / business-preview: accept company session within the same
+  // tenant/company scope as the booking (parity with request-business-invoice).
+  if (!allowed) {
+    try {
+      const companySession = await _loadCompanySessionFromRequest(request, env);
+      if (companySession) {
+        const recordScope = resolveBookingTenantScopeFromRecord(rec);
+        const explicitScope =
+          tenantScope?.hasScope
+            ? tenantScope
+            : resolveAdminExplicitTenantCompanyScope({ request, url, body: null });
+        if (
+          recordScope?.tenant_id &&
+          recordScope?.company_id &&
+          companySession.tenant_id === recordScope.tenant_id &&
+          companySession.company_id === recordScope.company_id &&
+          (!explicitScope?.hasScope ||
+            (explicitScope.tenant_id === recordScope.tenant_id &&
+              explicitScope.company_id === recordScope.company_id))
+        ) {
+          allowed = true;
+        }
+      }
+    } catch (_) {
+      // leave allowed=false
+    }
   }
   if (!allowed) {
     return json({ ok: false, error: "forbidden" }, 403);
