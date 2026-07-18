@@ -1,42 +1,47 @@
 import 'package:flutter/material.dart';
 
-import '../presentation/navigation_driver_vehicle_model_layer.dart';
+import '../../app_strings.dart';
+import '../presentation/navigation_driver_marker_choice.dart';
 
-/// NAV-3D-VEHICLE-CHOICE-3WAY-1: tablet three-way vehicle presentation
-/// selector with direct buttons: [ 2D ] [ Fluxidi ] [ Classic ].
+/// NAV-VEHICLE-MODE-CAR-ARROW-1: tablet navigation marker selector with exactly
+/// two direct buttons — [ Auto ] [ Pijl ] (localized). It replaces the former
+/// experimental 3D vehicle selector (2D / Fluxidi / Classic).
 ///
-/// First-class selector (not a fallback control): visible only while the 3D
-/// map style is active, large enough for driving use, styled with the
-/// Fluxidi visual language (dark panel, gold border/accent, clear active
-/// state).
-class NavigationDriverVehicleChoiceSelector extends StatelessWidget {
-  const NavigationDriverVehicleChoiceSelector({
+/// This selector is independent of the map style: it is shown identically on
+/// Light, Dark, 3D-buildings and Satellite styles. Choosing a marker never
+/// changes the map style and vice versa.
+class NavigationDriverMarkerChoiceSelector extends StatelessWidget {
+  const NavigationDriverMarkerChoiceSelector({
     super.key,
     required this.selectedChoice,
     required this.onSelected,
     required this.accentColor,
     required this.textColor,
     required this.surfaceColor,
+    this.language = AppLanguage.en,
     this.compactLandscape = false,
   });
 
-  final DriverVehiclePresentationChoice selectedChoice;
-  final ValueChanged<DriverVehiclePresentationChoice> onSelected;
+  final DriverNavigationMarkerChoice selectedChoice;
+  final ValueChanged<DriverNavigationMarkerChoice> onSelected;
   final Color accentColor;
   final Color textColor;
   final Color surfaceColor;
+  final AppLanguage language;
   final bool compactLandscape;
 
-  /// Short driving-friendly button labels.
-  static String buttonLabel(DriverVehiclePresentationChoice choice) {
-    switch (choice) {
-      case DriverVehiclePresentationChoice.taxi2d:
-        return '2D';
-      case DriverVehiclePresentationChoice.fluxidi3d:
-        return 'Fluxidi';
-      case DriverVehiclePresentationChoice.classic3d:
-        return 'Classic';
-    }
+  /// Localized driving-friendly button label.
+  static String buttonLabel(
+    DriverNavigationMarkerChoice choice,
+    AppLanguage language,
+  ) {
+    return driverNavigationMarkerChoiceLabel(choice, language);
+  }
+
+  static IconData iconFor(DriverNavigationMarkerChoice choice) {
+    return choice == DriverNavigationMarkerChoice.car
+        ? Icons.local_taxi
+        : Icons.navigation;
   }
 
   @override
@@ -44,7 +49,7 @@ class NavigationDriverVehicleChoiceSelector extends StatelessWidget {
     final buttonHeight = compactLandscape ? 42.0 : 48.0;
     final buttonMinWidth = compactLandscape ? 64.0 : 78.0;
     final fontSize = compactLandscape ? 12.0 : 13.0;
-    final choices = DriverVehiclePresentationChoice.values;
+    const choices = DriverNavigationMarkerChoice.values;
     return Material(
       color: surfaceColor.withValues(alpha: 0.92),
       borderRadius: BorderRadius.circular(14),
@@ -60,9 +65,9 @@ class NavigationDriverVehicleChoiceSelector extends StatelessWidget {
           children: [
             for (var i = 0; i < choices.length; i++) ...[
               if (i > 0) const SizedBox(width: 6),
-              _VehicleChoiceButton(
+              _MarkerChoiceButton(
                 choice: choices[i],
-                label: buttonLabel(choices[i]),
+                label: buttonLabel(choices[i], language),
                 selected: choices[i] == selectedChoice,
                 onSelected: onSelected,
                 accentColor: accentColor,
@@ -79,8 +84,8 @@ class NavigationDriverVehicleChoiceSelector extends StatelessWidget {
   }
 }
 
-class _VehicleChoiceButton extends StatelessWidget {
-  const _VehicleChoiceButton({
+class _MarkerChoiceButton extends StatelessWidget {
+  const _MarkerChoiceButton({
     required this.choice,
     required this.label,
     required this.selected,
@@ -92,10 +97,10 @@ class _VehicleChoiceButton extends StatelessWidget {
     required this.fontSize,
   });
 
-  final DriverVehiclePresentationChoice choice;
+  final DriverNavigationMarkerChoice choice;
   final String label;
   final bool selected;
-  final ValueChanged<DriverVehiclePresentationChoice> onSelected;
+  final ValueChanged<DriverNavigationMarkerChoice> onSelected;
   final Color accentColor;
   final Color textColor;
   final double height;
@@ -129,13 +134,24 @@ class _VehicleChoiceButton extends StatelessWidget {
               width: selected ? 2 : 1,
             ),
           ),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: selected ? accentColor : textColor,
-              fontSize: fontSize,
-              fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-            ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                NavigationDriverMarkerChoiceSelector.iconFor(choice),
+                size: fontSize + 5,
+                color: selected ? accentColor : textColor,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: selected ? accentColor : textColor,
+                  fontSize: fontSize,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                ),
+              ),
+            ],
           ),
         ),
       ),

@@ -13,7 +13,12 @@ enum NavR9OfflineUiState {
   placeholder,
 }
 
-/// Derives UI state from local nav readiness only (no network detection).
+/// Derives local offline/tunnel readiness.
+///
+/// Tunnel/offline guidance is strictly internet-gated: local prediction,
+/// weak GPS and low confidence can describe why offline guidance would help,
+/// but they can never surface the offline/tunnel UI while usable internet is
+/// available.
 class NavR9OfflineReadiness {
   static const double _predictionLowConfidence = 55.0;
   static const int _minGapForChipMs = 320;
@@ -24,6 +29,7 @@ class NavR9OfflineReadiness {
     bool showTunnelChip,
     bool showGpsReacquireChip,
   }) derive({
+    required bool usableInternetConnection,
     required bool liveRideActive,
     required bool followNavActive,
     required bool localRouteReady,
@@ -36,6 +42,19 @@ class NavR9OfflineReadiness {
       return (
         state: NavR9OfflineUiState.placeholder,
         reason: 'inactive_nav',
+        showTunnelChip: false,
+        showGpsReacquireChip: false,
+      );
+    }
+
+    // NAV-OFFLINE-TUNNEL-GUIDANCE-NETWORK-GATE-1: an online device must
+    // never claim tunnel/offline guidance. GPS recovery remains a distinct
+    // local-status signal and is intentionally not represented as a tunnel
+    // chip.
+    if (usableInternetConnection) {
+      return (
+        state: NavR9OfflineUiState.ready,
+        reason: 'usable_internet',
         showTunnelChip: false,
         showGpsReacquireChip: false,
       );

@@ -36,6 +36,8 @@ enum NavValidationSummaryLabel {
   good,
   needsAttention,
   poor,
+  fail,
+  insufficientData,
 }
 
 extension NavValidationSummaryLabelX on NavValidationSummaryLabel {
@@ -49,6 +51,28 @@ extension NavValidationSummaryLabelX on NavValidationSummaryLabel {
         return 'needs_attention';
       case NavValidationSummaryLabel.poor:
         return 'poor';
+      case NavValidationSummaryLabel.fail:
+        return 'fail';
+      case NavValidationSummaryLabel.insufficientData:
+        return 'insufficient_data';
+    }
+  }
+}
+
+/// NAV-R10: reroute observation verdict, kept separate from the overall label
+/// so a healthy session without any reroute is never falsely reported as a
+/// reroute pass.
+enum NavRerouteObservation { notObserved, pass, fail }
+
+extension NavRerouteObservationX on NavRerouteObservation {
+  String get logLabel {
+    switch (this) {
+      case NavRerouteObservation.notObserved:
+        return 'reroute_not_observed';
+      case NavRerouteObservation.pass:
+        return 'reroute_pass';
+      case NavRerouteObservation.fail:
+        return 'reroute_fail';
     }
   }
 }
@@ -64,8 +88,22 @@ class NavValidationReport {
   final int offRouteEvents;
   final int cameraSkipEvents;
   final int lowConfidenceEvents;
+
+  /// NAV-R10 cadence / lag inputs (Part G). These are the metrics the old
+  /// score-only scoring ignored, which allowed a 2-sample / 22 s-lag session to
+  /// be labelled "excellent".
+  final int medianCallbackIntervalMs;
+  final int p95CallbackIntervalMs;
+  final int maxSourceAgeMs;
+  final int maxMarkerLagMs;
+  final int predictionGapExceededCount;
+  final int predictionGapExceededMs;
+  final int cameraStaleTargetDrops;
+  final int rerouteObservedCount;
+
   final double overallDriverOsScore;
   final NavValidationSummaryLabel summaryLabel;
+  final NavRerouteObservation rerouteObservation;
 
   const NavValidationReport({
     required this.durationSec,
@@ -78,8 +116,17 @@ class NavValidationReport {
     required this.offRouteEvents,
     required this.cameraSkipEvents,
     required this.lowConfidenceEvents,
+    this.medianCallbackIntervalMs = 0,
+    this.p95CallbackIntervalMs = 0,
+    this.maxSourceAgeMs = 0,
+    this.maxMarkerLagMs = 0,
+    this.predictionGapExceededCount = 0,
+    this.predictionGapExceededMs = 0,
+    this.cameraStaleTargetDrops = 0,
+    this.rerouteObservedCount = 0,
     required this.overallDriverOsScore,
     required this.summaryLabel,
+    this.rerouteObservation = NavRerouteObservation.notObserved,
   });
 
   static const NavValidationReport empty = NavValidationReport(
@@ -94,7 +141,8 @@ class NavValidationReport {
     cameraSkipEvents: 0,
     lowConfidenceEvents: 0,
     overallDriverOsScore: 0,
-    summaryLabel: NavValidationSummaryLabel.poor,
+    summaryLabel: NavValidationSummaryLabel.insufficientData,
+    rerouteObservation: NavRerouteObservation.notObserved,
   );
 }
 
@@ -102,14 +150,84 @@ class NavValidationReport {
 class DriverNavValidationEngine {
   static const double _lowConfidenceThreshold = 45.0;
 
+  /// A confident quality label requires enough evidence. Fewer accepted
+  /// samples or a too-short window can never be "excellent" — they are
+  /// [NavValidationSummaryLabel.insufficientData].
+  static const int _minSamplesForConfidentLabel = 5;
+  static const int _minDurationSecForConfidentLabel = 8;
+
+  /// Severe cadence / lag thresholds. A 20 s+ marker lag or source age, or a
+  /// 20 s+ p95 GPS callback interval, is a hard navigation failure.
+  static const int _severeLagMs = 20000;
+  static const int _severeCallbackIntervalMs = 20000;
+
+  /// Degraded (but not catastrophic) cadence caps the label at "poor".
+  static const int _degradedCallbackIntervalMs = 6000;
+  static const int _degradedLagMs = 6000;
+
   final List<NavValidationSample> _samples = <NavValidationSample>[];
+
+  final List<int> _callbackIntervalsMs = <int>[];
+  int _maxSourceAgeMs = 0;
+  int _maxMarkerLagMs = 0;
+  int _predictionGapExceededCount = 0;
+  int _predictionGapExceededMs = 0;
+  int _cameraStaleTargetDrops = 0;
+  int _rerouteObservedCount = 0;
+  int _rerouteFailCount = 0;
 
   void addSample(NavValidationSample sample) {
     _samples.add(sample);
   }
 
+  /// GPS callback inter-arrival at the handler (bounded, non-PII).
+  void noteCallbackIntervalMs(int dtMs) {
+    if (dtMs <= 0) return;
+    _callbackIntervalsMs.add(dtMs.clamp(0, 600000));
+  }
+
+  /// Age of the position fix that drove an accepted engine/camera update.
+  void noteSourceAgeMs(int ageMs) {
+    if (ageMs <= 0) return;
+    final v = ageMs.clamp(0, 600000);
+    if (v > _maxSourceAgeMs) _maxSourceAgeMs = v;
+  }
+
+  /// Wall-clock gap between successive marker applies.
+  void noteMarkerLagMs(int lagMs) {
+    if (lagMs <= 0) return;
+    final v = lagMs.clamp(0, 600000);
+    if (v > _maxMarkerLagMs) _maxMarkerLagMs = v;
+  }
+
+  /// Prediction disabled because the gap exceeded the defensible window.
+  void notePredictionGapExceeded(int durationMs) {
+    _predictionGapExceededCount += 1;
+    final v = durationMs.clamp(0, 600000);
+    if (v > _predictionGapExceededMs) _predictionGapExceededMs = v;
+  }
+
+  /// Latest camera stale-target drop total from the follow pump.
+  void noteCameraStaleTargetDrops(int total) {
+    if (total > _cameraStaleTargetDrops) _cameraStaleTargetDrops = total;
+  }
+
+  /// A reroute was actually observed in this session.
+  void noteRerouteObserved({required bool success}) {
+    _rerouteObservedCount += 1;
+    if (!success) _rerouteFailCount += 1;
+  }
+
   void reset() {
     _samples.clear();
+    _callbackIntervalsMs.clear();
+    _maxSourceAgeMs = 0;
+    _maxMarkerLagMs = 0;
+    _predictionGapExceededCount = 0;
+    _predictionGapExceededMs = 0;
+    _cameraStaleTargetDrops = 0;
+    _rerouteObservedCount = 0;
+    _rerouteFailCount = 0;
   }
 
   NavValidationReport buildReport() {
@@ -172,13 +290,14 @@ class DriverNavValidationEngine {
     }
 
     final avgGpsScore = gpsCount == 0 ? 0.0 : gpsTotal / gpsCount;
-    final avgRouteConfidence =
-        routeCount == 0 ? 0.0 : routeTotal / routeCount;
-    final avgOverallConfidence =
-        overallCount == 0 ? 0.0 : overallTotal / overallCount;
+    final avgRouteConfidence = routeCount == 0 ? 0.0 : routeTotal / routeCount;
+    final avgOverallConfidence = overallCount == 0
+        ? 0.0
+        : overallTotal / overallCount;
     final avgSnapDistanceM = snapCount == 0 ? 0.0 : snapTotal / snapCount;
-    final avgCameraScore =
-        cameraScoreCount == 0 ? avgOverallConfidence : cameraScoreTotal / cameraScoreCount;
+    final avgCameraScore = cameraScoreCount == 0
+        ? avgOverallConfidence
+        : cameraScoreTotal / cameraScoreCount;
 
     final overallDriverOsScore = _overallScoreFor(
       avgGpsScore: avgGpsScore,
@@ -193,6 +312,24 @@ class DriverNavValidationEngine {
       sampleCount: _samples.length,
     );
 
+    final medianCallbackIntervalMs = _percentileMs(_callbackIntervalsMs, 0.50);
+    final p95CallbackIntervalMs = _percentileMs(_callbackIntervalsMs, 0.95);
+
+    final rerouteObservation = _rerouteObservedCount == 0
+        ? NavRerouteObservation.notObserved
+        : (_rerouteFailCount > 0
+              ? NavRerouteObservation.fail
+              : NavRerouteObservation.pass);
+
+    final summaryLabel = _classifyLabel(
+      score: overallDriverOsScore,
+      sampleCount: _samples.length,
+      durationSec: durationSec,
+      maxMarkerLagMs: _maxMarkerLagMs,
+      maxSourceAgeMs: _maxSourceAgeMs,
+      p95CallbackIntervalMs: p95CallbackIntervalMs,
+    );
+
     return NavValidationReport(
       durationSec: durationSec,
       sampleCount: _samples.length,
@@ -204,9 +341,68 @@ class DriverNavValidationEngine {
       offRouteEvents: offRouteEvents,
       cameraSkipEvents: cameraSkipEvents,
       lowConfidenceEvents: lowConfidenceEvents,
+      medianCallbackIntervalMs: medianCallbackIntervalMs,
+      p95CallbackIntervalMs: p95CallbackIntervalMs,
+      maxSourceAgeMs: _maxSourceAgeMs,
+      maxMarkerLagMs: _maxMarkerLagMs,
+      predictionGapExceededCount: _predictionGapExceededCount,
+      predictionGapExceededMs: _predictionGapExceededMs,
+      cameraStaleTargetDrops: _cameraStaleTargetDrops,
+      rerouteObservedCount: _rerouteObservedCount,
       overallDriverOsScore: _round1(overallDriverOsScore),
-      summaryLabel: _labelForScore(overallDriverOsScore),
+      summaryLabel: summaryLabel,
+      rerouteObservation: rerouteObservation,
     );
+  }
+
+  static int _percentileMs(List<int> values, double p) {
+    if (values.isEmpty) return 0;
+    final sorted = List<int>.from(values)..sort();
+    final idx = ((sorted.length - 1) * p).round().clamp(0, sorted.length - 1);
+    return sorted[idx];
+  }
+
+  /// NAV-R10 corrected classification (Part G). Cadence and lag gate the label
+  /// BEFORE any confidence-based score, so severe stalls or thin sessions can
+  /// never be reported as "excellent".
+  static NavValidationSummaryLabel _classifyLabel({
+    required double score,
+    required int sampleCount,
+    required int durationSec,
+    required int maxMarkerLagMs,
+    required int maxSourceAgeMs,
+    required int p95CallbackIntervalMs,
+  }) {
+    // A single sample carries no cadence evidence at all.
+    if (sampleCount < 2) {
+      return NavValidationSummaryLabel.insufficientData;
+    }
+
+    // Hard failure: multi-tens-of-seconds stall in any cadence dimension.
+    final severeStall =
+        maxMarkerLagMs >= _severeLagMs ||
+        maxSourceAgeMs >= _severeLagMs ||
+        p95CallbackIntervalMs >= _severeCallbackIntervalMs;
+    if (severeStall) {
+      return NavValidationSummaryLabel.fail;
+    }
+
+    // Not enough evidence for a confident verdict.
+    if (sampleCount < _minSamplesForConfidentLabel ||
+        durationSec < _minDurationSecForConfidentLabel) {
+      return NavValidationSummaryLabel.insufficientData;
+    }
+
+    // Degraded cadence caps the label at "poor" regardless of confidence.
+    final degradedCadence =
+        maxMarkerLagMs >= _degradedLagMs ||
+        maxSourceAgeMs >= _degradedLagMs ||
+        p95CallbackIntervalMs >= _degradedCallbackIntervalMs;
+    if (degradedCadence) {
+      return NavValidationSummaryLabel.poor;
+    }
+
+    return _labelForScore(score);
   }
 
   static double _gpsScoreFromAccuracy(double? accuracyM) {
@@ -233,7 +429,8 @@ class DriverNavValidationEngine {
     required int lowConfidenceEvents,
     required int sampleCount,
   }) {
-    var score = avgOverallConfidence * 0.40 +
+    var score =
+        avgOverallConfidence * 0.40 +
         avgRouteConfidence * 0.25 +
         avgGpsScore * 0.20 +
         avgCameraScore * 0.15;
@@ -277,6 +474,5 @@ class DriverNavValidationEngine {
     return NavValidationSummaryLabel.poor;
   }
 
-  static double _round1(double value) =>
-      (value * 10).roundToDouble() / 10.0;
+  static double _round1(double value) => (value * 10).roundToDouble() / 10.0;
 }

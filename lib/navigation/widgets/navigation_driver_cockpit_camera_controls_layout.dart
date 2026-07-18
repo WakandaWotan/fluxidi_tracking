@@ -26,19 +26,39 @@ const double kDriverCockpitControlsLandscapeBannerReserve = 72.0;
 /// NAV-PRES-3E-FIX1: edge margin for safe viewport clamping.
 const double kDriverCockpitControlsEdgeMargin = 14.0;
 
+/// NAV-PRES-TABLET-PORTRAIT-POLISH-1: optional portrait placement overrides.
+class DriverCockpitCameraControlsPlacementHints {
+  const DriverCockpitCameraControlsPlacementHints({
+    this.portraitBottomOffset,
+    this.rightInsetExtra = 0,
+  });
+
+  final double? portraitBottomOffset;
+  final double rightInsetExtra;
+}
+
 /// NAV-PRES-3E-FIX1: estimate panel size from control chrome (not map/HUD).
 Size estimateDriverCockpitCameraControlsPanelSize({
   required double buttonSize,
   required bool hasLevelLabel,
   required bool hasDebugSubLabel,
   required bool compactLandscape,
+  double panelWidthExtra = 0,
+  double panelHorizontalPadding = 4,
+  double? levelLabelFontSize,
+  double? debugLabelFontSize,
 }) {
   final verticalPad = 8.0;
+  final levelFont = levelLabelFontSize ?? (compactLandscape ? 9.0 : 10.0);
+  final debugFont = debugLabelFontSize ?? (compactLandscape ? 7.0 : 8.0);
   final labelBlock = !hasLevelLabel
       ? 4.0
-      : (hasDebugSubLabel ? (compactLandscape ? 20.0 : 28.0) : 16.0);
-  final height = verticalPad + buttonSize + labelBlock + buttonSize + verticalPad;
-  final width = buttonSize + 8.0;
+      : (hasDebugSubLabel
+            ? (compactLandscape ? 20.0 : (6 + levelFont + debugFont + 4))
+            : (compactLandscape ? 14.0 : (6 + levelFont + 4)));
+  final height =
+      verticalPad + buttonSize + labelBlock + buttonSize + verticalPad;
+  final width = buttonSize + (panelHorizontalPadding * 2) + panelWidthExtra;
   return Size(width, height);
 }
 
@@ -58,8 +78,10 @@ resolveDriverCockpitCameraControlsLayout({
   required double panelWidth,
   double margin = kDriverCockpitControlsEdgeMargin,
   double navBannerReserve = 0.0,
+  DriverCockpitCameraControlsPlacementHints? placementHints,
 }) {
-  final right = safeRight + margin;
+  final rightInsetExtra = placementHints?.rightInsetExtra ?? 0;
+  final right = safeRight + margin + rightInsetExtra;
   final minTop = safeTop + margin + navBannerReserve;
   final maxPanelTop = screenHeight - safeBottom - margin - panelHeight;
   var clamped = false;
@@ -81,7 +103,10 @@ resolveDriverCockpitCameraControlsLayout({
     }
     panelTop = top;
   } else {
-    final desiredBottom = safeBottom + kDriverCockpitControlsPortraitBottomOffset;
+    final portraitBottomOffset =
+        placementHints?.portraitBottomOffset ??
+        kDriverCockpitControlsPortraitBottomOffset;
+    final desiredBottom = safeBottom + portraitBottomOffset;
     var top = screenHeight - desiredBottom - panelHeight;
     if (top < minTop) {
       top = minTop;

@@ -183,5 +183,32 @@ void main() {
       expect(navRerouteDistanceBucket(42.0), '30-60');
       expect(navRerouteMovementBucket(2.0), 'stopped');
     });
+
+    test(
+      'noteRerouteApplied clears lastSnapDistanceM so the new route cannot inherit old snap-distance evidence',
+      () {
+        final tracker = NavRerouteDecisionTracker();
+        final t0 = DateTime.utc(2026, 1, 1, 12, 0, 0);
+        // Seed a growing snap-distance streak on the old route.
+        tracker.update(
+          _tick(
+            progress: _progress(snapDistanceM: 30, hasReliableSnap: true),
+            now: t0,
+          ),
+        );
+        tracker.update(
+          _tick(
+            progress: _progress(snapDistanceM: 60, hasReliableSnap: true),
+            now: t0.add(const Duration(seconds: 1)),
+          ),
+        );
+        expect(tracker.snapDistanceIncreaseStreak, greaterThan(0));
+        expect(tracker.lastSnapDistanceM, isNotNull);
+
+        tracker.noteRerouteApplied(t0.add(const Duration(seconds: 2)));
+        expect(tracker.snapDistanceIncreaseStreak, 0);
+        expect(tracker.lastSnapDistanceM, isNull);
+      },
+    );
   });
 }

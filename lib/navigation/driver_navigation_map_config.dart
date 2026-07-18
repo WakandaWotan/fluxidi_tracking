@@ -35,18 +35,10 @@ double driverDestinationMarkerIconSize({required bool isTablet}) {
 }
 
 /// NAV-MAPSTYLE: driver map visual modes.
-enum DriverMapVisualMode {
-  street,
-  satellite,
-}
+enum DriverMapVisualMode { street, satellite }
 
 /// NAV-PRES-3K: explicit driver cockpit map style choice (flagged builds only).
-enum DriverCockpitMapVisualStyle {
-  light,
-  dark,
-  standard3d,
-  satellite,
-}
+enum DriverCockpitMapVisualStyle { light, dark, standard3d, satellite }
 
 /// Safe to toggle at runtime via [StyleManager.setStyleURI] + annotation redraw.
 const bool kDriverMapSatelliteToggleEnabled = true;
@@ -65,7 +57,8 @@ const String kDriverMapStyleStandardSatellite =
     'mapbox://styles/mapbox/standard-satellite';
 
 /// Dart-define key for NAV-PRES-3I flagged 3D cockpit map style experiment.
-const String kNavigation3dCockpitSceneDefineKey = 'FLUXIDI_NAV_3D_COCKPIT_SCENE';
+const String kNavigation3dCockpitSceneDefineKey =
+    'FLUXIDI_NAV_3D_COCKPIT_SCENE';
 
 /// NAV-PRES-3I: use Mapbox Standard / Standard Satellite in driver cockpit
 /// when supported (default off; compile-time only).
@@ -134,7 +127,9 @@ String driverMapStyleForTheme({
   if (visualMode == DriverMapVisualMode.satellite) {
     return kDriverMapStyleSatellite;
   }
-  return isLightTheme ? kDriverMapStyleNavStreetLight : kDriverMapStyleNavStreetDark;
+  return isLightTheme
+      ? kDriverMapStyleNavStreetLight
+      : kDriverMapStyleNavStreetDark;
 }
 
 /// Returns true for experimental 3D cockpit style URIs (Standard family).
@@ -180,7 +175,9 @@ String driverMapStyleForExplicitCockpitChoice({
           ? kDriverMapStyleNavStreetLight
           : kDriverMapStyleNavStreetDark;
     case DriverCockpitMapVisualStyle.satellite:
-      if (!rejectedExperimentalUris.contains(kDriverMapStyleStandardSatellite)) {
+      if (!rejectedExperimentalUris.contains(
+        kDriverMapStyleStandardSatellite,
+      )) {
         return kDriverMapStyleStandardSatellite;
       }
       return kDriverMapStyleSatellite;

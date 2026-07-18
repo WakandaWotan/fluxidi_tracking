@@ -6,40 +6,76 @@ import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/navigation/driver_navigation_formatters.dart';
 import 'package:fluxidi_tracking/navigation/driver_navigation_models.dart';
+import 'package:fluxidi_tracking/navigation/presentation/maneuver_presentation.dart';
+import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_tablet_portrait_nav_layout.dart';
 
 class DriverTurnInstructionBanner extends StatelessWidget {
   final bool compact;
   final bool isTablet;
   final bool topRowLandscape;
-  final bool isArrival;
-  final bool isHighwayLike;
-  final String distancePrefix;
-  final String distanceText;
-  final String primaryText;
-  final String secondaryText;
+  final bool _rawIsArrival;
+  final bool _rawIsHighwayLike;
+  final String _rawDistancePrefix;
+  final String _rawDistanceText;
+  final String _rawPrimaryText;
+  final String _rawSecondaryText;
   final String? subText;
-  final IconData icon;
+  final IconData _rawIcon;
   final List<DriverNavLaneGuidance> lanes;
-  final String maneuverModifier;
+  final String _rawManeuverModifier;
   final ValueListenable<DriverThemeVariant>? themeListenable;
+
+  /// NAV-RESPONSIVE-MANEUVER-BANNER-V1: normalized presentation model.
+  ///
+  /// When non-null, all string/icon/booleans below are derived from the model
+  /// and secondary suppression rules relax so roundabout exit lines stay
+  /// visible in landscape.
+  final ResponsiveManeuverPresentation? presentation;
 
   const DriverTurnInstructionBanner({
     super.key,
     required this.compact,
     required this.isTablet,
     this.topRowLandscape = false,
-    required this.isArrival,
-    required this.isHighwayLike,
-    required this.distancePrefix,
-    required this.distanceText,
-    required this.primaryText,
-    required this.secondaryText,
+    required bool isArrival,
+    required bool isHighwayLike,
+    required String distancePrefix,
+    required String distanceText,
+    required String primaryText,
+    required String secondaryText,
     this.subText,
-    required this.icon,
+    required IconData icon,
     this.lanes = const <DriverNavLaneGuidance>[],
-    this.maneuverModifier = '',
+    String maneuverModifier = '',
     this.themeListenable,
-  });
+    this.portraitTabletMetrics,
+    this.presentation,
+  }) : _rawIsArrival = isArrival,
+       _rawIsHighwayLike = isHighwayLike,
+       _rawDistancePrefix = distancePrefix,
+       _rawDistanceText = distanceText,
+       _rawPrimaryText = primaryText,
+       _rawSecondaryText = secondaryText,
+       _rawIcon = icon,
+       _rawManeuverModifier = maneuverModifier;
+
+  /// NAV-PRES-TABLET-PORTRAIT-POLISH-1: optional tablet portrait banner metrics.
+  final DriverNavBannerPortraitTabletLayout? portraitTabletMetrics;
+
+  bool get isArrival => presentation?.isArrival ?? _rawIsArrival;
+  bool get isHighwayLike => presentation?.isHighwayLike ?? _rawIsHighwayLike;
+  String get distancePrefix => presentation != null ? '' : _rawDistancePrefix;
+  String get distanceText => presentation?.distanceLabel ?? _rawDistanceText;
+  String get primaryText => presentation?.primaryInstruction ?? _rawPrimaryText;
+  String get secondaryText =>
+      presentation?.secondaryInstruction ?? _rawSecondaryText;
+  IconData get icon => presentation != null
+      ? driverManeuverVisualIconData(presentation!.maneuverVisual)
+      : _rawIcon;
+  String get maneuverModifier => _rawManeuverModifier;
+
+  /// True when the distance chip should be visible.
+  bool get _hasDistanceChip => distanceText.trim().isNotEmpty;
 
   bool get _usePhonePortraitStack => !compact && !isTablet;
 
@@ -47,7 +83,16 @@ class DriverTurnInstructionBanner extends StatelessWidget {
 
   bool get _useLandscapeCompactRow => compact && !topRowLandscape;
 
+  bool get _usePortraitTabletPolish =>
+      portraitTabletMetrics != null &&
+      !compact &&
+      isTablet &&
+      !_useLandscapeTopRow &&
+      !_useLandscapeCompactRow &&
+      !_usePhonePortraitStack;
+
   double get _iconBoxSize {
+    if (_usePortraitTabletPolish) return portraitTabletMetrics!.iconBoxSize;
     if (_useLandscapeTopRow) return isTablet ? 36 : 32;
     if (_useLandscapeCompactRow) return isTablet ? 44 : 40;
     if (compact) return isTablet ? 50 : 44;
@@ -56,6 +101,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
   }
 
   double get _iconSize {
+    if (_usePortraitTabletPolish) return portraitTabletMetrics!.iconSize;
     if (_useLandscapeTopRow) return isTablet ? 20 : 18;
     if (_useLandscapeCompactRow) return isTablet ? 24 : 22;
     if (compact) return isTablet ? 30 : 26;
@@ -106,6 +152,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
   }
 
   double get _minBannerHeight {
+    if (_usePortraitTabletPolish) return portraitTabletMetrics!.minHeight;
     if (_useLandscapeTopRow) return isTablet ? 60 : 52;
     if (_useLandscapeCompactRow) return isTablet ? 80 : 72;
     if (compact) return isTablet ? 88 : 80;
@@ -160,7 +207,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
           );
         }
 
-        return ClipRRect(
+        final banner = ClipRRect(
           borderRadius: BorderRadius.circular(
             _useLandscapeTopRow || _useLandscapeCompactRow
                 ? 14
@@ -184,12 +231,24 @@ class DriverTurnInstructionBanner extends StatelessWidget {
                           ? 8
                           : (compact
                                 ? 10
-                                : (_usePhonePortraitStack ? 12 : 14))),
+                                : (_usePhonePortraitStack
+                                      ? 12
+                                      : (_usePortraitTabletPolish
+                                            ? portraitTabletMetrics!
+                                                  .horizontalPadding
+                                            : 14)))),
                 vertical: _useLandscapeTopRow
                     ? 4
                     : (_useLandscapeCompactRow
                           ? 6
-                          : (compact ? 8 : (_usePhonePortraitStack ? 8 : 10))),
+                          : (compact
+                                ? 8
+                                : (_usePhonePortraitStack
+                                      ? 8
+                                      : (_usePortraitTabletPolish
+                                            ? portraitTabletMetrics!
+                                                  .verticalPadding
+                                            : 10)))),
               ),
               decoration: BoxDecoration(
                 color: palette.surface.withOpacity(
@@ -239,7 +298,11 @@ class DriverTurnInstructionBanner extends StatelessWidget {
                                 showSecondary: showSecondary,
                               )
                             : _useLandscapeTopRow
-                            ? _buildLandscapeTopRowTextBlock(palette: palette)
+                            ? _buildLandscapeTopRowTextBlock(
+                                palette: palette,
+                                secondaryLine: secondaryLine,
+                                showSecondary: showSecondary,
+                              )
                             : _useLandscapeCompactRow
                             ? _buildLandscapeCompactTextBlock(
                                 palette: palette,
@@ -272,6 +335,17 @@ class DriverTurnInstructionBanner extends StatelessWidget {
             ),
           ),
         );
+        // NAV-RESPONSIVE-MANEUVER-BANNER-V1: single announcement per banner
+        // update ("Over 400 meter de rotonde op. Neem de tweede afslag."), so
+        // TalkBack reads a complete instruction instead of each Text child.
+        final acc = presentation?.accessibilityLabel.trim() ?? '';
+        if (acc.isEmpty) return banner;
+        return Semantics(
+          container: true,
+          label: acc,
+          excludeSemantics: true,
+          child: banner,
+        );
       },
     );
   }
@@ -297,6 +371,9 @@ class DriverTurnInstructionBanner extends StatelessWidget {
   }
 
   Widget _buildDistanceChip(DriverThemePalette palette) {
+    final label = distancePrefix.trim().isEmpty
+        ? distanceText
+        : '$distancePrefix $distanceText';
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 8 : (_usePhonePortraitStack ? 9 : 10),
@@ -308,7 +385,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
         border: Border.all(color: palette.textPrimary.withOpacity(0.20)),
       ),
       child: Text(
-        '$distancePrefix $distanceText',
+        label,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
@@ -358,6 +435,26 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     required String secondaryLine,
     required bool showSecondary,
   }) {
+    // NAV-RESPONSIVE-MANEUVER-BANNER-V1: presentation-driven layout leads with
+    // the maneuver primary line (max 2). Distance chip only appears when the
+    // model exposes a standalone distance (far phase / follow-route).
+    if (presentation != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          if (_hasDistanceChip && !isArrival) ...[
+            _buildDistanceChip(palette),
+            const SizedBox(height: 4),
+          ],
+          _buildPrimaryText(palette, maxLines: 2),
+          if (showSecondary) ...[
+            const SizedBox(height: 2),
+            _buildSecondaryText(palette, secondaryLine, maxLines: 1),
+          ],
+        ],
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisAlignment: MainAxisAlignment.center,
@@ -376,9 +473,37 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     );
   }
 
-  Widget _buildLandscapeTopRowTextBlock({required DriverThemePalette palette}) {
+  Widget _buildLandscapeTopRowTextBlock({
+    required DriverThemePalette palette,
+    required String secondaryLine,
+    required bool showSecondary,
+  }) {
     if (isArrival) {
       return _buildPrimaryText(palette, maxLines: 1);
+    }
+    // NAV-RESPONSIVE-MANEUVER-BANNER-V1: presentation-driven landscape
+    // renders a 2-line compact banner so roundabout exit context and road ref
+    // remain visible. Legacy path preserves the single-line inline row.
+    if (presentation != null) {
+      final primaryRow = Row(
+        children: [
+          if (_hasDistanceChip) ...[
+            _buildDistanceChip(palette),
+            const SizedBox(width: 6),
+          ],
+          Expanded(child: _buildPrimaryText(palette, maxLines: 1)),
+        ],
+      );
+      if (!showSecondary) return primaryRow;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          primaryRow,
+          const SizedBox(height: 2),
+          _buildSecondaryText(palette, secondaryLine, maxLines: 1),
+        ],
+      );
     }
     return Row(
       children: [
@@ -394,7 +519,8 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     required String secondaryLine,
     required bool showSecondary,
   }) {
-    final showLandscapeSecondary = showSecondary && secondaryLine.length <= 24;
+    final showLandscapeSecondary =
+        showSecondary && (presentation != null || secondaryLine.length <= 24);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisAlignment: MainAxisAlignment.center,
@@ -402,8 +528,10 @@ class DriverTurnInstructionBanner extends StatelessWidget {
         if (!isArrival)
           Row(
             children: [
-              _buildDistanceChip(palette),
-              const SizedBox(width: 8),
+              if (_hasDistanceChip) ...[
+                _buildDistanceChip(palette),
+                const SizedBox(width: 8),
+              ],
               Expanded(child: _buildPrimaryText(palette, maxLines: 1)),
             ],
           )
@@ -430,8 +558,10 @@ class DriverTurnInstructionBanner extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildDistanceChip(palette),
-              SizedBox(width: compact ? 8 : 10),
+              if (_hasDistanceChip) ...[
+                _buildDistanceChip(palette),
+                SizedBox(width: compact ? 8 : 10),
+              ],
               Expanded(child: _buildPrimaryText(palette)),
             ],
           )
@@ -447,6 +577,11 @@ class DriverTurnInstructionBanner extends StatelessWidget {
 
   bool _shouldShowSecondaryLine(String secondaryLine) {
     if (secondaryLine.isEmpty) return false;
+    // NAV-RESPONSIVE-MANEUVER-BANNER-V1: normalized presentation controls
+    // wording length upstream (roundabout exit, "naar N454", etc.). Keep the
+    // line visible in every layout, including landscape, so critical
+    // WHERE-context is never dropped.
+    if (presentation != null) return true;
     if (_useLandscapeTopRow) return false;
     if (_usePhonePortraitStack || _useLandscapeCompactRow) {
       final primary = primaryText.trim();

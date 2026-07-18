@@ -1,0 +1,697 @@
+import 'package:flutter/material.dart';
+
+import '../driver_navigation_formatters.dart';
+import '../driver_navigation_models.dart';
+
+/// NAV-RESPONSIVE-MANEUVER-BANNER-V1: distance bands that drive maneuver wording.
+///
+/// Timing wording ("Over 1 km linksaf" vs "Sla nu linksaf") is chosen from the
+/// urgency phase. Distance thresholds are deterministic and centralized so the
+/// same rules can be exercised in pure tests.
+enum ManeuverUrgencyPhase { far, approaching, near, now }
+
+/// NAV-RESPONSIVE-MANEUVER-BANNER-V1: high-level visual category for the
+/// maneuver arrow icon.
+///
+/// The visual leads the banner. Left / right / roundabout are unmistakable at
+/// a glance regardless of the raw Mapbox modifier string used upstream.
+enum ManeuverVisual {
+  followRoute,
+  straight,
+  slightLeft,
+  left,
+  sharpLeft,
+  slightRight,
+  right,
+  sharpRight,
+  uTurn,
+  merge,
+  fork,
+  offRamp,
+  onRamp,
+  roundabout,
+  arrive,
+  depart,
+}
+
+/// NAV-RESPONSIVE-MANEUVER-BANNER-V1: banner phase thresholds in meters.
+///
+/// Deterministic V1 thresholds. No speed-adaptive behavior — a follow-up task
+/// can layer that on top without changing consumers.
+const double kDriverManeuverPhaseFarThresholdMeters = 1000.0;
+const double kDriverManeuverPhaseApproachingThresholdMeters = 200.0;
+const double kDriverManeuverPhaseNearThresholdMeters = 50.0;
+
+/// NAV-RESPONSIVE-MANEUVER-BANNER-V1: normalized banner presentation.
+///
+/// Pure value type. Consumers must never mutate navigation state or perform
+/// I/O when building or reading a presentation.
+class ResponsiveManeuverPresentation {
+  final ManeuverVisual maneuverVisual;
+  final String distanceLabel;
+  final String primaryInstruction;
+  final String secondaryInstruction;
+  final int? roundaboutExitNumber;
+  final ManeuverUrgencyPhase urgencyPhase;
+  final String accessibilityLabel;
+  final bool isArrival;
+  final bool isHighwayLike;
+
+  const ResponsiveManeuverPresentation({
+    required this.maneuverVisual,
+    required this.distanceLabel,
+    required this.primaryInstruction,
+    required this.secondaryInstruction,
+    required this.urgencyPhase,
+    required this.accessibilityLabel,
+    required this.isArrival,
+    required this.isHighwayLike,
+    this.roundaboutExitNumber,
+  });
+}
+
+/// NAV-RESPONSIVE-MANEUVER-BANNER-V1: maps a live snapshot to phase.
+ManeuverUrgencyPhase resolveDriverManeuverUrgencyPhase(double distanceMeters) {
+  if (!distanceMeters.isFinite || distanceMeters <= 0) {
+    return ManeuverUrgencyPhase.now;
+  }
+  if (distanceMeters <= kDriverManeuverPhaseNearThresholdMeters) {
+    return ManeuverUrgencyPhase.now;
+  }
+  if (distanceMeters <= kDriverManeuverPhaseApproachingThresholdMeters) {
+    return ManeuverUrgencyPhase.near;
+  }
+  if (distanceMeters <= kDriverManeuverPhaseFarThresholdMeters) {
+    return ManeuverUrgencyPhase.approaching;
+  }
+  return ManeuverUrgencyPhase.far;
+}
+
+/// NAV-RESPONSIVE-MANEUVER-BANNER-V1: material icon for a maneuver visual.
+IconData driverManeuverVisualIconData(ManeuverVisual visual) {
+  switch (visual) {
+    case ManeuverVisual.arrive:
+      return Icons.flag_rounded;
+    case ManeuverVisual.roundabout:
+      return Icons.roundabout_right_rounded;
+    case ManeuverVisual.depart:
+      return Icons.navigation_rounded;
+    case ManeuverVisual.merge:
+      return Icons.merge_rounded;
+    case ManeuverVisual.fork:
+      return Icons.fork_right_rounded;
+    case ManeuverVisual.offRamp:
+      return Icons.call_split_rounded;
+    case ManeuverVisual.onRamp:
+      return Icons.alt_route_rounded;
+    case ManeuverVisual.sharpLeft:
+      return Icons.turn_sharp_left_rounded;
+    case ManeuverVisual.sharpRight:
+      return Icons.turn_sharp_right_rounded;
+    case ManeuverVisual.slightLeft:
+      return Icons.turn_slight_left_rounded;
+    case ManeuverVisual.slightRight:
+      return Icons.turn_slight_right_rounded;
+    case ManeuverVisual.uTurn:
+      return Icons.u_turn_left_rounded;
+    case ManeuverVisual.left:
+      return Icons.turn_left_rounded;
+    case ManeuverVisual.right:
+      return Icons.turn_right_rounded;
+    case ManeuverVisual.straight:
+    case ManeuverVisual.followRoute:
+      return Icons.straight_rounded;
+  }
+}
+
+/// NAV-RESPONSIVE-MANEUVER-BANNER-V1: derives the maneuver visual from a
+/// snapshot without falling back to raw instruction words unless nothing else
+/// classifies.
+ManeuverVisual resolveDriverManeuverVisual(NavInstructionSnapshot snapshot) {
+  if (driverNavTypeIsArrival(snapshot.maneuverType)) {
+    return ManeuverVisual.arrive;
+  }
+  if (driverNavTypeIsRoundabout(snapshot.maneuverType)) {
+    return ManeuverVisual.roundabout;
+  }
+  final t = snapshot.maneuverType.toLowerCase();
+  final mod = snapshot.maneuverModifier.toLowerCase();
+  final hint = '${snapshot.primaryText} ${snapshot.secondaryText}'
+      .toLowerCase();
+
+  if (t.contains('depart')) return ManeuverVisual.depart;
+  if (t.contains('merge')) return ManeuverVisual.merge;
+  if (t.contains('fork')) return ManeuverVisual.fork;
+  if (t.contains('off ramp') || t.contains('off-ramp')) {
+    return ManeuverVisual.offRamp;
+  }
+  if (t.contains('on ramp') || t.contains('on-ramp')) {
+    return ManeuverVisual.onRamp;
+  }
+  if (t.contains('end of road')) return ManeuverVisual.uTurn;
+
+  if (mod.contains('sharp left')) return ManeuverVisual.sharpLeft;
+  if (mod.contains('sharp right')) return ManeuverVisual.sharpRight;
+  if (mod.contains('slight left')) return ManeuverVisual.slightLeft;
+  if (mod.contains('slight right')) return ManeuverVisual.slightRight;
+  if (mod.contains('uturn') || mod.contains('u-turn')) {
+    return ManeuverVisual.uTurn;
+  }
+  if (mod.contains('left')) return ManeuverVisual.left;
+  if (mod.contains('right')) return ManeuverVisual.right;
+  if (mod.contains('straight') || mod.contains('forward')) {
+    return ManeuverVisual.straight;
+  }
+
+  // Fall back to instruction-text hints only when the modifier is empty.
+  if (mod.isEmpty) {
+    if (hint.contains('u-turn') || hint.contains('u turn')) {
+      return ManeuverVisual.uTurn;
+    }
+    if (hint.contains('links') ||
+        hint.contains(' left') ||
+        hint.contains('gauche')) {
+      return ManeuverVisual.left;
+    }
+    if (hint.contains('rechts') ||
+        hint.contains(' right') ||
+        hint.contains('droite')) {
+      return ManeuverVisual.right;
+    }
+    if (hint.contains('rechtdoor') || hint.contains('straight')) {
+      return ManeuverVisual.straight;
+    }
+  }
+
+  return ManeuverVisual.followRoute;
+}
+
+/// NAV-RESPONSIVE-MANEUVER-BANNER-V1: parses `exitNumber` from a snapshot.
+///
+/// Returns `null` when the string is missing, blank, or non-numeric. Exit
+/// numbers must never be invented — a null result means the source data does
+/// not supply an ordinal.
+int? resolveDriverRoundaboutExitNumber(String? raw) {
+  final trimmed = (raw ?? '').trim();
+  if (trimmed.isEmpty) return null;
+  final n = int.tryParse(trimmed);
+  if (n == null || n <= 0) return null;
+  return n;
+}
+
+/// NAV-RESPONSIVE-MANEUVER-BANNER-V1: Dutch ordinal for roundabout exits.
+///
+/// 1 → 1ste, 2 → 2de, 3 → 3de, 4+ → 4de, 5de, ...
+String driverRoundaboutExitOrdinalDutch(int exit) {
+  if (exit <= 1) return '1ste';
+  return '${exit}de';
+}
+
+String _ordinalEnglish(int n) {
+  final abs = n.abs();
+  final lastTwo = abs % 100;
+  if (lastTwo >= 11 && lastTwo <= 13) return '${n}th';
+  switch (abs % 10) {
+    case 1:
+      return '${n}st';
+    case 2:
+      return '${n}nd';
+    case 3:
+      return '${n}rd';
+    default:
+      return '${n}th';
+  }
+}
+
+String _ordinalFrench(int n) => n == 1 ? '1re' : '${n}e';
+
+// NAV-RESPONSIVE-MANEUVER-BANNER-V1: `ª` is not a valid identifier char, so
+// concatenation avoids interpolation ambiguity and dart-format churn.
+String _ordinalSpanish(int n) => n.toString() + 'ª';
+
+/// NAV-RESPONSIVE-MANEUVER-BANNER-V1: localized roundabout exit ordinal.
+String driverRoundaboutExitOrdinal(int exit, DriverNavTranslate tr) {
+  return tr(
+    nl: driverRoundaboutExitOrdinalDutch(exit),
+    en: _ordinalEnglish(exit),
+    fr: _ordinalFrench(exit),
+    es: _ordinalSpanish(exit),
+  );
+}
+
+String _followRouteText(DriverNavTranslate tr) => tr(
+  nl: 'Volg de route',
+  en: 'Follow the route',
+  fr: "Suivez l'itinéraire",
+  es: 'Sigue la ruta',
+);
+
+String _towardWord(DriverNavTranslate tr) =>
+    tr(nl: 'naar', en: 'toward', fr: 'vers', es: 'hacia');
+
+String _distancePrefixWord(DriverNavTranslate tr) =>
+    tr(nl: 'Over', en: 'In', fr: 'Dans', es: 'En');
+
+String _directionActionWord({
+  required ManeuverVisual visual,
+  required DriverNavTranslate tr,
+}) {
+  switch (visual) {
+    case ManeuverVisual.left:
+      return tr(
+        nl: 'linksaf',
+        en: 'turn left',
+        fr: 'à gauche',
+        es: 'a la izquierda',
+      );
+    case ManeuverVisual.right:
+      return tr(
+        nl: 'rechtsaf',
+        en: 'turn right',
+        fr: 'à droite',
+        es: 'a la derecha',
+      );
+    case ManeuverVisual.slightLeft:
+      return tr(
+        nl: 'flauw linksaf',
+        en: 'slight left',
+        fr: 'légèrement à gauche',
+        es: 'ligeramente a la izquierda',
+      );
+    case ManeuverVisual.slightRight:
+      return tr(
+        nl: 'flauw rechtsaf',
+        en: 'slight right',
+        fr: 'légèrement à droite',
+        es: 'ligeramente a la derecha',
+      );
+    case ManeuverVisual.sharpLeft:
+      return tr(
+        nl: 'scherp linksaf',
+        en: 'sharp left',
+        fr: 'à gauche sévère',
+        es: 'brusco a la izquierda',
+      );
+    case ManeuverVisual.sharpRight:
+      return tr(
+        nl: 'scherp rechtsaf',
+        en: 'sharp right',
+        fr: 'à droite sévère',
+        es: 'brusco a la derecha',
+      );
+    case ManeuverVisual.straight:
+      return tr(
+        nl: 'rechtdoor',
+        en: 'continue straight',
+        fr: 'continuez tout droit',
+        es: 'sigue recto',
+      );
+    case ManeuverVisual.uTurn:
+      return tr(
+        nl: 'keer om',
+        en: 'make a U-turn',
+        fr: 'faites demi-tour',
+        es: 'da la vuelta',
+      );
+    case ManeuverVisual.merge:
+      return tr(
+        nl: 'voeg in',
+        en: 'merge',
+        fr: 'insérez-vous',
+        es: 'incorpórate',
+      );
+    case ManeuverVisual.fork:
+      return tr(
+        nl: 'volg de splitsing',
+        en: 'keep at the fork',
+        fr: 'suivez la fourche',
+        es: 'sigue la bifurcación',
+      );
+    case ManeuverVisual.offRamp:
+      return tr(
+        nl: 'neem de afslag',
+        en: 'take the exit',
+        fr: 'prenez la sortie',
+        es: 'toma la salida',
+      );
+    case ManeuverVisual.onRamp:
+      return tr(
+        nl: 'volg de oprit',
+        en: 'take the ramp',
+        fr: 'prenez la bretelle',
+        es: 'toma la rampa',
+      );
+    case ManeuverVisual.depart:
+      return tr(
+        nl: 'begin de rit',
+        en: 'start driving',
+        fr: 'commencez à conduire',
+        es: 'empieza a conducir',
+      );
+    case ManeuverVisual.arrive:
+      return tr(
+        nl: 'bestemming bereikt',
+        en: 'destination reached',
+        fr: 'destination atteinte',
+        es: 'destino alcanzado',
+      );
+    case ManeuverVisual.roundabout:
+    case ManeuverVisual.followRoute:
+      return _followRouteText(tr);
+  }
+}
+
+String _nowPrimary({
+  required ManeuverVisual visual,
+  required DriverNavTranslate tr,
+}) {
+  switch (visual) {
+    case ManeuverVisual.left:
+      return tr(
+        nl: 'Sla nu linksaf',
+        en: 'Turn left now',
+        fr: 'Tournez à gauche maintenant',
+        es: 'Gira a la izquierda ahora',
+      );
+    case ManeuverVisual.right:
+      return tr(
+        nl: 'Sla nu rechtsaf',
+        en: 'Turn right now',
+        fr: 'Tournez à droite maintenant',
+        es: 'Gira a la derecha ahora',
+      );
+    case ManeuverVisual.slightLeft:
+      return tr(
+        nl: 'Nu flauw linksaf',
+        en: 'Slight left now',
+        fr: 'Légèrement à gauche maintenant',
+        es: 'Ligeramente a la izquierda ahora',
+      );
+    case ManeuverVisual.slightRight:
+      return tr(
+        nl: 'Nu flauw rechtsaf',
+        en: 'Slight right now',
+        fr: 'Légèrement à droite maintenant',
+        es: 'Ligeramente a la derecha ahora',
+      );
+    case ManeuverVisual.sharpLeft:
+      return tr(
+        nl: 'Nu scherp linksaf',
+        en: 'Sharp left now',
+        fr: 'À gauche sévère maintenant',
+        es: 'Brusco a la izquierda ahora',
+      );
+    case ManeuverVisual.sharpRight:
+      return tr(
+        nl: 'Nu scherp rechtsaf',
+        en: 'Sharp right now',
+        fr: 'À droite sévère maintenant',
+        es: 'Brusco a la derecha ahora',
+      );
+    case ManeuverVisual.straight:
+      return tr(
+        nl: 'Nu rechtdoor',
+        en: 'Continue straight now',
+        fr: 'Continuez tout droit maintenant',
+        es: 'Sigue recto ahora',
+      );
+    case ManeuverVisual.uTurn:
+      return tr(
+        nl: 'Keer nu om',
+        en: 'Make a U-turn now',
+        fr: 'Faites demi-tour maintenant',
+        es: 'Da la vuelta ahora',
+      );
+    case ManeuverVisual.merge:
+      return tr(
+        nl: 'Voeg nu in',
+        en: 'Merge now',
+        fr: 'Insérez-vous maintenant',
+        es: 'Incorpórate ahora',
+      );
+    case ManeuverVisual.fork:
+      return tr(
+        nl: 'Volg nu de splitsing',
+        en: 'Keep at the fork now',
+        fr: 'Suivez la fourche maintenant',
+        es: 'Sigue la bifurcación ahora',
+      );
+    case ManeuverVisual.offRamp:
+      return tr(
+        nl: 'Neem nu de afslag',
+        en: 'Take the exit now',
+        fr: 'Prenez la sortie maintenant',
+        es: 'Toma la salida ahora',
+      );
+    case ManeuverVisual.onRamp:
+      return tr(
+        nl: 'Volg nu de oprit',
+        en: 'Take the ramp now',
+        fr: 'Prenez la bretelle maintenant',
+        es: 'Toma la rampa ahora',
+      );
+    case ManeuverVisual.roundabout:
+      return tr(
+        nl: 'Op de rotonde',
+        en: 'In the roundabout',
+        fr: 'Dans le rond-point',
+        es: 'En la rotonda',
+      );
+    case ManeuverVisual.arrive:
+      return tr(
+        nl: 'Bestemming bereikt',
+        en: 'Destination reached',
+        fr: 'Destination atteinte',
+        es: 'Destino alcanzado',
+      );
+    case ManeuverVisual.depart:
+    case ManeuverVisual.followRoute:
+      return _followRouteText(tr);
+  }
+}
+
+String _roundaboutApproachPrimary({
+  required String distanceLabel,
+  required DriverNavTranslate tr,
+}) {
+  final prefix = _distancePrefixWord(tr);
+  final entry = tr(
+    nl: 'de rotonde op',
+    en: 'enter the roundabout',
+    fr: 'entrez dans le rond-point',
+    es: 'entra en la rotonda',
+  );
+  return '$prefix $distanceLabel $entry';
+}
+
+String _turnApproachPrimary({
+  required String distanceLabel,
+  required ManeuverVisual visual,
+  required DriverNavTranslate tr,
+}) {
+  final prefix = _distancePrefixWord(tr);
+  final action = _directionActionWord(visual: visual, tr: tr);
+  return '$prefix $distanceLabel $action';
+}
+
+String _towardLabel({
+  required NavInstructionSnapshot snapshot,
+  required DriverNavTranslate tr,
+}) {
+  final ref = (snapshot.roadRef ?? '').trim();
+  final dest = (snapshot.destinationText ?? '').trim();
+  final road = snapshot.roadName.trim();
+  final target = ref.isNotEmpty
+      ? ref
+      : dest.isNotEmpty
+      ? dest
+      : road;
+  if (target.isEmpty) return '';
+  return '${_towardWord(tr)} $target';
+}
+
+String _roundaboutExitLine(int exit, DriverNavTranslate tr) {
+  final ordinal = driverRoundaboutExitOrdinal(exit, tr);
+  return tr(
+    nl: 'Neem de $ordinal afslag',
+    en: 'Take the $ordinal exit',
+    fr: 'Prenez la $ordinal sortie',
+    es: 'Toma la $ordinal salida',
+  );
+}
+
+class _ManeuverWording {
+  final String primary;
+  final String secondary;
+  final String accessibility;
+  final bool showDistanceChip;
+
+  const _ManeuverWording({
+    required this.primary,
+    required this.secondary,
+    required this.accessibility,
+    required this.showDistanceChip,
+  });
+}
+
+String _accessibilityFor({
+  required String primary,
+  required String secondary,
+  required String distanceLabel,
+  required bool showDistanceChip,
+  required DriverNavTranslate tr,
+}) {
+  final buf = StringBuffer();
+  if (showDistanceChip && distanceLabel.isNotEmpty) {
+    buf.write('${_distancePrefixWord(tr)} $distanceLabel. ');
+  }
+  buf.write(primary);
+  if (secondary.isNotEmpty) {
+    buf.write('. ');
+    buf.write(secondary);
+  }
+  buf.write('.');
+  return buf.toString();
+}
+
+/// NAV-RESPONSIVE-MANEUVER-BANNER-V1: builds a normalized presentation from a
+/// live snapshot. Pure — no I/O, no navigation-state mutation.
+ResponsiveManeuverPresentation buildResponsiveManeuverPresentation({
+  required NavInstructionSnapshot snapshot,
+  required DriverNavTranslate tr,
+}) {
+  final visual = resolveDriverManeuverVisual(snapshot);
+  final isArrival = visual == ManeuverVisual.arrive;
+  final phase = resolveDriverManeuverUrgencyPhase(
+    snapshot.distanceToManeuverMeters,
+  );
+  final distanceLabel = formatManeuverDistance(
+    snapshot.distanceToManeuverMeters,
+  );
+  final exitNumber = resolveDriverRoundaboutExitNumber(snapshot.exitNumber);
+  final isNeutralFallback = snapshot.source == NavInstructionSource.fallback;
+
+  late final _ManeuverWording wording;
+
+  if (isArrival) {
+    final txt = _nowPrimary(visual: ManeuverVisual.arrive, tr: tr);
+    wording = _ManeuverWording(
+      primary: txt,
+      secondary: '',
+      accessibility: '$txt.',
+      showDistanceChip: false,
+    );
+  } else if (isNeutralFallback ||
+      visual == ManeuverVisual.followRoute ||
+      visual == ManeuverVisual.depart) {
+    final followText = _followRouteText(tr);
+    final rawPrimary = snapshot.primaryText.trim();
+    // Neutral fallback (policy) => "Volg de route".
+    // Depart / unclassified with real text => keep raw text as safe fallback.
+    final primary = (isNeutralFallback || rawPrimary.isEmpty)
+        ? followText
+        : rawPrimary;
+    final secondary = _towardLabel(snapshot: snapshot, tr: tr);
+    final showChip =
+        phase == ManeuverUrgencyPhase.far ||
+        phase == ManeuverUrgencyPhase.approaching ||
+        phase == ManeuverUrgencyPhase.near;
+    final acc = _accessibilityFor(
+      primary: primary,
+      secondary: secondary,
+      distanceLabel: distanceLabel,
+      showDistanceChip: showChip,
+      tr: tr,
+    );
+    wording = _ManeuverWording(
+      primary: primary,
+      secondary: secondary,
+      accessibility: acc,
+      showDistanceChip: showChip,
+    );
+  } else if (visual == ManeuverVisual.roundabout) {
+    final String primary;
+    final bool showChip;
+    if (phase == ManeuverUrgencyPhase.now) {
+      primary = _nowPrimary(visual: ManeuverVisual.roundabout, tr: tr);
+      showChip = false;
+    } else if (phase == ManeuverUrgencyPhase.far) {
+      primary = _followRouteText(tr);
+      showChip = true;
+    } else {
+      primary = _roundaboutApproachPrimary(
+        distanceLabel: distanceLabel,
+        tr: tr,
+      );
+      showChip = false;
+    }
+    final String secondary;
+    if (exitNumber != null) {
+      secondary = _roundaboutExitLine(exitNumber, tr);
+    } else {
+      secondary = _towardLabel(snapshot: snapshot, tr: tr);
+    }
+    final acc = _accessibilityFor(
+      primary: primary,
+      secondary: secondary,
+      distanceLabel: distanceLabel,
+      showDistanceChip: showChip,
+      tr: tr,
+    );
+    wording = _ManeuverWording(
+      primary: primary,
+      secondary: secondary,
+      accessibility: acc,
+      showDistanceChip: showChip,
+    );
+  } else {
+    // Turn / merge / fork / ramp / U-turn / straight.
+    final String primary;
+    final bool showChip;
+    switch (phase) {
+      case ManeuverUrgencyPhase.far:
+        primary = _followRouteText(tr);
+        showChip = true;
+        break;
+      case ManeuverUrgencyPhase.approaching:
+      case ManeuverUrgencyPhase.near:
+        primary = _turnApproachPrimary(
+          distanceLabel: distanceLabel,
+          visual: visual,
+          tr: tr,
+        );
+        showChip = false;
+        break;
+      case ManeuverUrgencyPhase.now:
+        primary = _nowPrimary(visual: visual, tr: tr);
+        showChip = false;
+        break;
+    }
+    final secondary = _towardLabel(snapshot: snapshot, tr: tr);
+    final acc = _accessibilityFor(
+      primary: primary,
+      secondary: secondary,
+      distanceLabel: distanceLabel,
+      showDistanceChip: showChip,
+      tr: tr,
+    );
+    wording = _ManeuverWording(
+      primary: primary,
+      secondary: secondary,
+      accessibility: acc,
+      showDistanceChip: showChip,
+    );
+  }
+
+  return ResponsiveManeuverPresentation(
+    maneuverVisual: visual,
+    distanceLabel: wording.showDistanceChip ? distanceLabel : '',
+    primaryInstruction: wording.primary,
+    secondaryInstruction: wording.secondary,
+    roundaboutExitNumber: exitNumber,
+    urgencyPhase: phase,
+    accessibilityLabel: wording.accessibility,
+    isArrival: isArrival,
+    isHighwayLike: snapshot.isHighwayLike,
+  );
+}

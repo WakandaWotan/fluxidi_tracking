@@ -2,18 +2,33 @@ import 'package:flutter/material.dart';
 
 import '../driver_navigation_map_config.dart';
 import '../presentation/navigation_driver_cockpit_camera.dart';
+import '../presentation/navigation_driver_marker_choice.dart';
+import 'navigation_driver_arrow_marker.dart';
 
 /// NAV-PRES-2A: screen-fixed driver vehicle HUD (visual foundation only).
 ///
 /// No GPS, route, camera, or Mapbox dependencies. Parent positions this
 /// above the bottom cockpit bar inside the navigation [Stack].
+///
+/// NAV-VEHICLE-MODE-CAR-ARROW-1: this single overlay is the one visible marker
+/// owner. It renders either the 2D Car (existing yellow taxi asset) or the 2D
+/// Arrow ([NavigationDriverArrowMarker]) depending on [markerChoice] — never
+/// both. Both share the exact same screen *bottom* position and (map-driven)
+/// course. Arrow may apply a responsive [arrowScale] (phone only); Auto always
+/// uses the unscaled [iconSize] so Car ↔ Arrow never jumps the camera or the
+/// Street Level bottom anchor.
 class NavigationDriverHudOverlay extends StatelessWidget {
   const NavigationDriverHudOverlay({
     super.key,
     this.iconSize = 56.0,
+    this.markerChoice = DriverNavigationMarkerChoice.car,
+    this.arrowScale = 1.0,
   });
 
   /// NAV-PRES-3D-PRO2: responsive HUD vehicle sizing (screen-fixed, no map deps).
+  /// This is the shared base size for Auto and for the camera nose anchor.
+  /// Arrow-only responsive shrinkage lives in
+  /// [resolveDriverNavigationArrowScale] and is applied via [arrowScale].
   static double resolveIconSize({
     required double screenWidth,
     required bool cockpitBoost,
@@ -23,17 +38,25 @@ class NavigationDriverHudOverlay extends StatelessWidget {
     if (!cockpitBoost) {
       return isTablet ? 80.0 : 72.0;
     }
-    // NAV-PRES-3M: HUD grows with cockpit view level (deterministic, no GPS scaling).
-    return driverCockpitViewLevelHudIconSize(
-      isTablet: isTablet,
-      level: viewLevel,
-    );
+    // NAV-PRES-3J: fixed HUD size — view level affects map camera only.
+    return driverCockpitFixedHudIconSize(isTablet: isTablet);
   }
 
   final double iconSize;
+  final DriverNavigationMarkerChoice markerChoice;
+
+  /// NAV-MARKER-ARROW-RESPONSIVE-SCALE-1: multiplicative scale applied only to
+  /// the arrow glyph. Always 1.0 for Auto. Computed by
+  /// [resolveDriverNavigationArrowScale] — never a magic number at the call site.
+  final double arrowScale;
 
   @override
   Widget build(BuildContext context) {
+    if (markerChoice == DriverNavigationMarkerChoice.arrow) {
+      final scale = arrowScale.isFinite && arrowScale > 0 ? arrowScale : 1.0;
+      return NavigationDriverArrowMarker(size: iconSize * scale);
+    }
+    // Auto: always the unscaled shared HUD size.
     return IgnorePointer(
       child: Semantics(
         label: 'Driver navigation vehicle',

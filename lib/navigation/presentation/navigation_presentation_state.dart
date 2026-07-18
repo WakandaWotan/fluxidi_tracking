@@ -39,6 +39,12 @@ class NavigationPresentationState {
   /// NAV-PRES-3C: show live +/- cockpit camera intensity controls.
   final bool showDriverCockpitCameraControls;
 
+  /// NAV-PRES-3K-B: road-plane Mapbox ModelLayer for the driver vehicle.
+  final bool useDriver3dVehicleModel;
+
+  /// NAV-PRES-3K-C: hide HUD vehicle icon for 3D visual isolation testing.
+  final bool hideDriverHudVehicleOverlay;
+
   const NavigationPresentationState({
     required this.mode,
     required this.navCameraViewMode,
@@ -51,6 +57,8 @@ class NavigationPresentationState {
     required this.hideMapboxTaxiMarker,
     required this.useDriverCockpitCamera,
     required this.showDriverCockpitCameraControls,
+    required this.useDriver3dVehicleModel,
+    required this.hideDriverHudVehicleOverlay,
   });
 
   @override
@@ -67,7 +75,9 @@ class NavigationPresentationState {
         other.hideMapboxTaxiMarker == hideMapboxTaxiMarker &&
         other.useDriverCockpitCamera == useDriverCockpitCamera &&
         other.showDriverCockpitCameraControls ==
-            showDriverCockpitCameraControls;
+            showDriverCockpitCameraControls &&
+        other.useDriver3dVehicleModel == useDriver3dVehicleModel &&
+        other.hideDriverHudVehicleOverlay == hideDriverHudVehicleOverlay;
   }
 
   @override
@@ -83,5 +93,7 @@ class NavigationPresentationState {
         hideMapboxTaxiMarker,
         useDriverCockpitCamera,
         showDriverCockpitCameraControls,
+        useDriver3dVehicleModel,
+        hideDriverHudVehicleOverlay,
       );
 }

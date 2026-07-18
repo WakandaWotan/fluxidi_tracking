@@ -15,6 +15,16 @@ class FluxidiBreakpoints {
     if (width <= tabletMax) return FluxidiScreenClass.tablet;
     return FluxidiScreenClass.desktop;
   }
+
+  /// Classifies a physical device form factor independently from orientation.
+  ///
+  /// A phone in landscape can have a wide logical width (often >= 600), but
+  /// its shortest side remains phone-sized. Cockpit control branches must use
+  /// this method rather than [classifyWidth] so rotating a phone never turns
+  /// it into the tablet control UI.
+  static FluxidiScreenClass classifyDeviceSize(Size size) {
+    return classifyWidth(size.shortestSide);
+  }
 }
 
 class FluxidiResponsiveInfo {

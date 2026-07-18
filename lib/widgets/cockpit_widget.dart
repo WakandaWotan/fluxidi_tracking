@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
+import 'package:fluxidi_tracking/navigation/presentation/navigation_streetlevel_marker_anchor.dart';
 
 class _CockpitThemeTokens {
   const _CockpitThemeTokens({
@@ -50,6 +51,29 @@ class CockpitWidget extends StatefulWidget {
   /// diagnostics, more…) integrated into the cockpit bar during route/nav.
   final List<Widget> secondaryActions;
 
+  /// NAV-PRES-TABLET-CONTROLS-ZOOM-1: tablet-enlarged secondary row spacing.
+  final double secondaryActionGap;
+
+  /// NAV-PRES-TABLET-CONTROLS-ZOOM-1: secondary row height (touch targets).
+  final double secondaryActionRowHeight;
+
+  /// NAV-PRES-TABLET-PORTRAIT-POLISH-1: vertical gap metric row → primary row.
+  final double metricsToPrimaryGap;
+
+  /// NAV-PRES-TABLET-PORTRAIT-POLISH-1: vertical gap primary row → icon row.
+  final double primaryToSecondaryGap;
+
+  /// NAV-PRES-TABLET-PORTRAIT-POLISH-1: horizontal inset for icon row edges.
+  final double secondaryRowHorizontalInset;
+
+  /// NAV-PRES-TABLET-PORTRAIT-POLISH-1: even distribution across width.
+  final bool distributeSecondaryRowEvenly;
+
+  /// NAV-MOBILE-LANDSCAPE-KPI-PRIORITY-AND-FIRST-3D-CHOICE-FIX-1: phone
+  /// landscape collapse state. It gives ETA/KM/fare more width and retains
+  /// only stop/end + pause in the direct ride-control zone.
+  final bool landscapeKpiPriority;
+
   const CockpitWidget({
     super.key,
     required this.etaText,
@@ -66,6 +90,13 @@ class CockpitWidget extends StatefulWidget {
     this.embedded = false,
     this.themeListenable,
     this.secondaryActions = const <Widget>[],
+    this.secondaryActionGap = 6,
+    this.secondaryActionRowHeight = 44,
+    this.metricsToPrimaryGap = 4,
+    this.primaryToSecondaryGap = 4,
+    this.secondaryRowHorizontalInset = 0,
+    this.distributeSecondaryRowEvenly = false,
+    this.landscapeKpiPriority = false,
   });
 
   @override
@@ -226,10 +257,19 @@ class _CockpitWidgetState extends State<CockpitWidget>
     required String km,
     required String price,
   }) {
-    const gap = 4.0;
+    const metricTileGap = 4.0;
+    final metricsPrimaryGap = widget.metricsToPrimaryGap;
+    final primarySecondaryGap = widget.primaryToSecondaryGap;
     final hasSecondary = widget.secondaryActions.isNotEmpty;
+    final secondaryBlockHeight = hasSecondary
+        ? widget.secondaryActionRowHeight + primarySecondaryGap
+        : 0.0;
     return SizedBox(
-      height: hasSecondary ? 88 + _minTapSize + gap : 88,
+      // NAV-VEHICLE-MODE-CAR-ARROW-1: shared with the Street Level marker
+      // anchor so the marker sits just above this panel. The outer decoration
+      // border adds kCockpitPanelBorderTotal, so the rendered panel matches
+      // kCockpitPortraitBasePanelHeight (the value the anchor uses).
+      height: kCockpitPortraitBaseContentHeight + secondaryBlockHeight,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
         child: Column(
@@ -239,14 +279,14 @@ class _CockpitWidgetState extends State<CockpitWidget>
               child: Row(
                 children: [
                   _metricTile('ETA', eta),
-                  const SizedBox(width: gap),
+                  const SizedBox(width: metricTileGap),
                   _metricTile('KM', km),
-                  const SizedBox(width: gap),
+                  const SizedBox(width: metricTileGap),
                   _metricTile('€', price),
                 ],
               ),
             ),
-            const SizedBox(height: gap),
+            SizedBox(height: metricsPrimaryGap),
             Expanded(
               flex: 5,
               child: Row(
@@ -260,7 +300,7 @@ class _CockpitWidgetState extends State<CockpitWidget>
                     onTap: widget.onNav,
                     hot: widget.navActive,
                   ),
-                  const SizedBox(width: gap),
+                  const SizedBox(width: metricTileGap),
                   _iconBtn(
                     keyId: 'primary',
                     label: widget.tripStarted ? 'Stop trip' : 'Start trip',
@@ -270,12 +310,10 @@ class _CockpitWidgetState extends State<CockpitWidget>
                     onTap: widget.tripStarted ? widget.onStop : widget.onStart,
                     hot: widget.tripStarted,
                   ),
-                  const SizedBox(width: gap),
+                  const SizedBox(width: metricTileGap),
                   _iconBtn(
                     keyId: 'wait',
-                    label: widget.isWaiting
-                        ? 'Resume driving'
-                        : 'Pause / wait',
+                    label: widget.isWaiting ? 'Resume driving' : 'Pause / wait',
                     icon: widget.isWaiting ? Icons.play_arrow : Icons.pause,
                     onTap: widget.isWaiting ? widget.onGo : widget.onWait,
                     hot: widget.isWaiting,
@@ -284,9 +322,9 @@ class _CockpitWidgetState extends State<CockpitWidget>
               ),
             ),
             if (hasSecondary) ...[
-              const SizedBox(height: gap),
+              SizedBox(height: primarySecondaryGap),
               SizedBox(
-                height: _minTapSize,
+                height: widget.secondaryActionRowHeight,
                 child: _secondaryActionsRow(),
               ),
             ],
@@ -297,20 +335,32 @@ class _CockpitWidgetState extends State<CockpitWidget>
   }
 
   Widget _secondaryActionsRow() {
+    if (widget.distributeSecondaryRowEvenly) {
+      return Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: widget.secondaryRowHorizontalInset,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: widget.secondaryActions,
+        ),
+      );
+    }
     final children = <Widget>[];
+    final actionGap = widget.secondaryActionGap;
     for (final action in widget.secondaryActions) {
-      if (children.isNotEmpty) children.add(const SizedBox(width: 6));
+      if (children.isNotEmpty) children.add(SizedBox(width: actionGap));
       children.add(action);
     }
-    // Centered when it fits; scrolls if the expanded set (Google/Waze)
-    // exceeds narrow screens.
-    return Center(
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        physics: const BouncingScrollPhysics(),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: children,
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: widget.secondaryRowHorizontalInset,
+      ),
+      child: Center(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          physics: const BouncingScrollPhysics(),
+          child: Row(mainAxisSize: MainAxisSize.min, children: children),
         ),
       ),
     );
@@ -322,38 +372,58 @@ class _CockpitWidgetState extends State<CockpitWidget>
     required String price,
   }) {
     return SizedBox(
-      height: 62,
+      // NAV-VEHICLE-MODE-CAR-ARROW-1: shared with the Street Level marker
+      // anchor so the marker sits just above this panel. The outer decoration
+      // border adds kCockpitPanelBorderTotal, so the rendered strip matches
+      // kCockpitLandscapePanelHeight (the value the anchor uses).
+      height: kCockpitLandscapeContentHeight,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         child: Row(
           children: [
             Expanded(
-              flex: 6,
+              flex: widget.landscapeKpiPriority ? 8 : 6,
               child: Row(
                 children: [
-                  Expanded(child: _metricTile('ETA', eta, compact: true)),
+                  _metricTile(
+                    'ETA',
+                    eta,
+                    compact: !widget.landscapeKpiPriority,
+                  ),
                   const SizedBox(width: 4),
-                  Expanded(child: _metricTile('KM', km, compact: true)),
+                  _metricTile(
+                    'KM',
+                    km,
+                    compact: !widget.landscapeKpiPriority,
+                  ),
                   const SizedBox(width: 4),
-                  Expanded(child: _metricTile('€', price, compact: true)),
+                  _metricTile(
+                    '€',
+                    price,
+                    compact: !widget.landscapeKpiPriority,
+                  ),
                 ],
               ),
             ),
             const SizedBox(width: 4),
             Expanded(
-              flex: 5,
+              flex: widget.landscapeKpiPriority ? 4 : 5,
               child: Row(
                 children: [
-                  _iconBtn(
-                    keyId: 'nav',
-                    label: widget.navActive ? 'Navigation on' : 'Navigation',
-                    icon: widget.navActive
-                        ? Icons.navigation
-                        : Icons.navigation_outlined,
-                    onTap: widget.onNav,
-                    hot: widget.navActive,
-                  ),
-                  const SizedBox(width: 4),
+                  if (!widget.landscapeKpiPriority) ...[
+                    _iconBtn(
+                      keyId: 'nav',
+                      label: widget.navActive
+                          ? 'Navigation on'
+                          : 'Navigation',
+                      icon: widget.navActive
+                          ? Icons.navigation
+                          : Icons.navigation_outlined,
+                      onTap: widget.onNav,
+                      hot: widget.navActive,
+                    ),
+                    const SizedBox(width: 4),
+                  ],
                   _iconBtn(
                     keyId: 'primary',
                     label: widget.tripStarted ? 'Stop trip' : 'Start trip',
@@ -366,9 +436,7 @@ class _CockpitWidgetState extends State<CockpitWidget>
                   const SizedBox(width: 4),
                   _iconBtn(
                     keyId: 'wait',
-                    label: widget.isWaiting
-                        ? 'Resume driving'
-                        : 'Pause / wait',
+                    label: widget.isWaiting ? 'Resume driving' : 'Pause / wait',
                     icon: widget.isWaiting ? Icons.play_arrow : Icons.pause,
                     onTap: widget.isWaiting ? widget.onGo : widget.onWait,
                     hot: widget.isWaiting,
@@ -377,7 +445,7 @@ class _CockpitWidgetState extends State<CockpitWidget>
               ),
             ),
             if (widget.secondaryActions.isNotEmpty) ...[
-              const SizedBox(width: 6),
+              SizedBox(width: widget.secondaryActionGap),
               _secondaryActionsRow(),
             ],
           ],

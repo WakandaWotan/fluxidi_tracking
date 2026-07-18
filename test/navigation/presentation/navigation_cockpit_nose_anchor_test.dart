@@ -2,120 +2,139 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_cockpit_camera.dart';
 
 void main() {
-  group('NAV-PRES-3N cockpit nose anchor calibration', () {
-    const tabletViewport = 1100.0;
+  group('NAV-PRES-3J driver HUD nose-anchor alignment', () {
     const phoneViewport = 800.0;
-    const tabletBottomHud = 222.0;
+    const tabletViewport = 1100.0;
     const phoneBottomHud = 202.0;
+    const tabletBottomHud = 222.0;
+    const phoneIcon = kDriverCockpitPro2HudPhoneL7;
+    const tabletIcon = kDriverCockpitPro2HudTabletL7;
 
-    DriverCockpitNoseAnchorResult resolveTablet({
-      required int level,
-      required double zoom,
-      required double pitch,
-      required double hudSize,
-    }) {
-      return resolveDriverCockpitNoseAnchorFraction(
+    test('nose screen fraction is above vehicle center and below icon top', () {
+      final geometry = resolveDriverHudVehicleGeometry(
+        viewportHeightPx: phoneViewport,
+        bottomHudHeightPx: phoneBottomHud,
+        iconSizePx: phoneIcon,
+      );
+      expect(geometry.noseY, greaterThan(geometry.topY));
+      expect(geometry.noseY, lessThan(geometry.centerY));
+      expect(geometry.noseScreenFraction, greaterThan(geometry.topY / phoneViewport));
+      expect(geometry.noseScreenFraction, lessThan(geometry.centerScreenFraction));
+    });
+
+    test('calculated nose anchor differs from center anchor in expected direction', () {
+      final geometry = resolveDriverHudVehicleGeometry(
+        viewportHeightPx: tabletViewport,
+        bottomHudHeightPx: tabletBottomHud,
+        iconSizePx: tabletIcon,
+      );
+      final noseAnchor = resolveDriverCockpitNoseAnchorFraction(
         isTablet: true,
         isLandscape: false,
-        viewLevel: level,
-        appliedZoom: zoom,
-        appliedPitch: pitch,
-        hudVehicleSizePx: hudSize,
+        viewLevel: 7,
+        appliedZoom: kDriverCockpitPro2CompactZoomL7,
+        appliedPitch: kDriverCockpitPro2CompactPitchL7,
+        hudVehicleSizePx: tabletIcon,
         viewportHeightPx: tabletViewport,
         bottomHudHeightPx: tabletBottomHud,
       );
-    }
+      expect(noseAnchor.anchorFraction, lessThan(geometry.centerScreenFraction));
+      expect(noseAnchor.anchorFraction, closeTo(geometry.noseScreenFraction, 0.001));
+      expect(noseAnchor.reason, 'nose_route_anchor');
+    });
 
-    DriverCockpitNoseAnchorResult resolvePhone({
-      required int level,
-      required double zoom,
-      required double pitch,
-      required double hudSize,
-    }) {
-      return resolveDriverCockpitNoseAnchorFraction(
+    test('HUD vehicle size stays fixed across View 1, 7, and 13', () {
+      for (final isTablet in [false, true]) {
+        for (final level in [1, 7, 13]) {
+          expect(
+            driverCockpitViewLevelHudIconSize(isTablet: isTablet, level: level),
+            driverCockpitFixedHudIconSize(isTablet: isTablet),
+          );
+        }
+      }
+      expect(
+        driverCockpitFixedHudIconSize(isTablet: false),
+        kDriverCockpitPro2HudPhoneL7,
+      );
+      expect(
+        driverCockpitFixedHudIconSize(isTablet: true),
+        kDriverCockpitPro2HudTabletL7,
+      );
+    });
+
+    test('HUD vehicle bottom offset stays fixed across View 1, 7, and 13', () {
+      for (final level in [1, 7, 13]) {
+        expect(
+          driverCockpitFixedHudBottomOffset(
+            isLandscape: false,
+            cockpitChaseCamera: true,
+            isTablet: false,
+          ),
+          176.0,
+        );
+        expect(
+          driverCockpitFixedHudBottomOffset(
+            isLandscape: false,
+            cockpitChaseCamera: true,
+            isTablet: true,
+          ),
+          188.0,
+        );
+      }
+    });
+
+    test('camera anchor uses nose point not center point', () {
+      final geometry = resolveDriverHudVehicleGeometry(
+        viewportHeightPx: phoneViewport,
+        bottomHudHeightPx: phoneBottomHud,
+        iconSizePx: phoneIcon,
+      );
+      final noseAnchor = resolveDriverCockpitNoseAnchorFraction(
         isTablet: false,
         isLandscape: false,
-        viewLevel: level,
-        appliedZoom: zoom,
-        appliedPitch: pitch,
-        hudVehicleSizePx: hudSize,
+        viewLevel: 7,
+        appliedZoom: kDriverCockpitPro2PhoneZoomL7,
+        appliedPitch: kDriverCockpitPro2PhonePitchL7,
+        hudVehicleSizePx: phoneIcon,
         viewportHeightPx: phoneViewport,
         bottomHudHeightPx: phoneBottomHud,
       );
-    }
-
-    test('nose anchor changes when HUD vehicle size changes', () {
-      final smallHud = resolveTablet(
-        level: 7,
-        zoom: 18.4,
-        pitch: 75.0,
-        hudSize: 132.0,
+      final padding = driverCockpitVehicleAnchorPadding(
+        screenHeight: phoneViewport,
+        safeTop: 44.0,
+        safeBottom: 34.0,
+        anchorFraction: noseAnchor.anchorFraction,
       );
-      final largeHud = resolveTablet(
-        level: 7,
-        zoom: 18.4,
-        pitch: 75.0,
-        hudSize: 208.0,
-      );
-      expect(largeHud.anchorFraction, isNot(smallHud.anchorFraction));
-      expect(largeHud.anchorFraction, lessThan(smallHud.anchorFraction));
+      final projectedCenterY =
+          padding.top + (phoneViewport - padding.top - padding.bottom) / 2;
+      expect(projectedCenterY, closeTo(geometry.noseY, 1.0));
+      expect(projectedCenterY, isNot(closeTo(geometry.centerY, 1.0)));
     });
 
-    test('nose anchor changes when pitch changes with same zoom', () {
-      final lowPitch = resolveTablet(
-        level: 7,
-        zoom: 18.4,
-        pitch: 55.0,
-        hudSize: 166.0,
-      );
-      final highPitch = resolveTablet(
-        level: 7,
-        zoom: 18.4,
-        pitch: 84.0,
-        hudSize: 166.0,
-      );
-      expect(highPitch.anchorFraction, greaterThan(lowPitch.anchorFraction));
-    });
-
-    test('nose anchor changes when zoom changes with same pitch', () {
-      final zoomedIn = resolveTablet(
-        level: 7,
-        zoom: 21.0,
-        pitch: 75.0,
-        hudSize: 166.0,
-      );
-      final zoomedOut = resolveTablet(
-        level: 7,
-        zoom: 16.8,
-        pitch: 75.0,
-        hudSize: 166.0,
-      );
-      expect(zoomedOut.anchorFraction, greaterThan(zoomedIn.anchorFraction));
-    });
-
-    test('tablet View 13 anchor differs from tablet View 1 in expected direction', () {
-      final view1 = resolveDriverCockpitNoseAnchorFraction(
-        isTablet: true,
-        isLandscape: false,
-        viewLevel: 1,
-        appliedZoom: kDriverCockpitPro2CompactZoomL1,
-        appliedPitch: kDriverCockpitPro2CompactPitchL1,
-        hudVehicleSizePx: kDriverCockpitPro2HudTabletL1,
-        viewportHeightPx: tabletViewport,
-        bottomHudHeightPx: tabletBottomHud,
-      );
-      final view13 = resolveDriverCockpitNoseAnchorFraction(
-        isTablet: true,
-        isLandscape: false,
-        viewLevel: 13,
-        appliedZoom: kDriverCockpitPro2CompactZoomL13,
-        appliedPitch: kDriverCockpitPro2CompactPitchL13,
-        hudVehicleSizePx: kDriverCockpitPro2HudTabletL13,
-        viewportHeightPx: tabletViewport,
-        bottomHudHeightPx: tabletBottomHud,
-      );
-      expect(view1.anchorFraction, isNot(view13.anchorFraction));
-      expect(view1.anchorFraction, greaterThan(view13.anchorFraction));
+    test('nose anchor is stable across View 1, 7, and 13 with fixed HUD', () {
+      final anchors = [1, 7, 13]
+          .map(
+            (level) => resolveDriverCockpitNoseAnchorFraction(
+              isTablet: true,
+              isLandscape: false,
+              viewLevel: level,
+              appliedZoom: driverCockpitViewLevelTargetZoom(
+                isTablet: true,
+                isLandscape: false,
+                level: level,
+              ),
+              appliedPitch: driverCockpitViewLevelTargetPitch(
+                isTablet: true,
+                isLandscape: false,
+                level: level,
+              ),
+              hudVehicleSizePx: tabletIcon,
+              viewportHeightPx: tabletViewport,
+              bottomHudHeightPx: tabletBottomHud,
+            ).anchorFraction,
+          )
+          .toSet();
+      expect(anchors.length, 1);
     });
 
     test('anchor is clamped to safe range', () {
@@ -140,49 +159,57 @@ void main() {
     });
 
     test('anchor is deterministic for same inputs', () {
-      final first = resolvePhone(
-        level: 7,
-        zoom: 19.1,
-        pitch: 77.0,
-        hudSize: 112.0,
+      final first = resolveDriverCockpitNoseAnchorFraction(
+        isTablet: false,
+        isLandscape: false,
+        viewLevel: 7,
+        appliedZoom: 19.1,
+        appliedPitch: 77.0,
+        hudVehicleSizePx: phoneIcon,
+        viewportHeightPx: phoneViewport,
+        bottomHudHeightPx: phoneBottomHud,
       );
-      final second = resolvePhone(
-        level: 7,
-        zoom: 19.1,
-        pitch: 77.0,
-        hudSize: 112.0,
+      final second = resolveDriverCockpitNoseAnchorFraction(
+        isTablet: false,
+        isLandscape: false,
+        viewLevel: 7,
+        appliedZoom: 21.0,
+        appliedPitch: 84.0,
+        hudVehicleSizePx: phoneIcon,
+        viewportHeightPx: phoneViewport,
+        bottomHudHeightPx: phoneBottomHud,
       );
       expect(first.anchorFraction, second.anchorFraction);
       expect(first.result, second.result);
     });
 
-    test('phone View 7 baseline stays near professional anchor', () {
-      final phoneL7 = resolvePhone(
-        level: 7,
-        zoom: kDriverCockpitPro2PhoneZoomL7,
-        pitch: kDriverCockpitPro2PhonePitchL7,
-        hudSize: kDriverCockpitPro2HudPhoneL7,
+    test('helper Y accessors match geometry resolver', () {
+      expect(
+        hudVehicleNoseY(
+          viewportHeightPx: phoneViewport,
+          bottomHudHeightPx: phoneBottomHud,
+          iconSizePx: phoneIcon,
+        ),
+        resolveDriverHudVehicleGeometry(
+          viewportHeightPx: phoneViewport,
+          bottomHudHeightPx: phoneBottomHud,
+          iconSizePx: phoneIcon,
+        ).noseY,
       );
       expect(
-        phoneL7.anchorFraction,
-        closeTo(kDriverCockpitPro2PhoneAnchorL7, 0.08),
+        hudVehicleTailY(
+          viewportHeightPx: phoneViewport,
+          bottomHudHeightPx: phoneBottomHud,
+          iconSizePx: phoneIcon,
+        ),
+        greaterThan(
+          hudVehicleNoseY(
+            viewportHeightPx: phoneViewport,
+            bottomHudHeightPx: phoneBottomHud,
+            iconSizePx: phoneIcon,
+          ),
+        ),
       );
-    });
-
-    test('overview zoom-out shifts anchor down more than streetlevel', () {
-      final overview = resolveTablet(
-        level: 1,
-        zoom: kDriverCockpitPro2CompactZoomL1,
-        pitch: kDriverCockpitPro2CompactPitchL1,
-        hudSize: kDriverCockpitPro2HudTabletL1,
-      );
-      final street = resolveTablet(
-        level: 13,
-        zoom: kDriverCockpitPro2CompactZoomL13,
-        pitch: kDriverCockpitPro2CompactPitchL13,
-        hudSize: kDriverCockpitPro2HudTabletL13,
-      );
-      expect(overview.anchorFraction, greaterThan(street.anchorFraction));
     });
 
     test('invalid inputs fall back without throwing', () {
@@ -193,8 +220,8 @@ void main() {
         appliedZoom: 18.0,
         appliedPitch: 70.0,
         hudVehicleSizePx: 0.0,
-        viewportHeightPx: 800.0,
-        bottomHudHeightPx: 200.0,
+        viewportHeightPx: phoneViewport,
+        bottomHudHeightPx: phoneBottomHud,
       );
       expect(skipped.result, 'skipped');
       expect(skipped.anchorFraction, greaterThan(0.0));

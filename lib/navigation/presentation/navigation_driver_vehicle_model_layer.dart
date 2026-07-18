@@ -412,15 +412,11 @@ bool resolveNative3dRendererCrediblyActive({
   return true;
 }
 
-/// NAV-3D-HUD-OWNERSHIP-FINAL-1: authoritative 3D visual-ready signal.
+/// NAV-3D-ACTIVATION-BINDING-JANK-1: authoritative 3D visual-ready signal.
 ///
-/// True when the ModelLayer has valid geometry and a successfully written first
-/// pose for the active style/preset generation. Does not wait for
-/// [modelActivationConfirmed] or [renderCredibilityConfirmed].
-///
-/// NAV-3D-P0-PERSISTENT-VEHICLE-OWNERSHIP-1: when [native3dRendererActive] is
-/// true, Native FollowPuck's LocationPuck3D owns the vehicle and ModelLayer
-/// pose/registration gates are not required.
+/// True only when activation is confirmed (or Native FollowPuck owns the
+/// vehicle). Selection / registration / first-pose request alone must never
+/// make this true — that would hide the 2D HUD before 3D is proven visible.
 bool resolveDriver3dVisualReady({
   required bool followLiveActive,
   required bool presentation3dActive,
@@ -437,6 +433,8 @@ bool resolveDriver3dVisualReady({
   required bool explicit2dFallback,
   bool debugRenderProbeActive = false,
   bool native3dRendererActive = false,
+  bool modelActivationConfirmed = false,
+  bool renderCredibilityConfirmed = false,
 }) {
   if (debugRenderProbeActive) return false;
   if (!followLiveActive) return false;
@@ -445,6 +443,14 @@ bool resolveDriver3dVisualReady({
   if (!modelFeatureEnabled) return false;
   if (explicit2dFallback) return false;
   if (native3dRendererActive) return true;
+  if (!resolveIsDriver3dVehicleActivationConfirmed(
+    modelActivationConfirmed: modelActivationConfirmed,
+    renderCredibilityConfirmed: renderCredibilityConfirmed,
+    eligible: eligible,
+    explicit2dFallback: explicit2dFallback,
+  )) {
+    return false;
+  }
   if (!modelRegistered ||
       !layerCreated ||
       !sourceGeometryValid ||
@@ -458,15 +464,11 @@ bool resolveDriver3dVisualReady({
       activePresetGeneration == modelLayerPresetGeneration;
 }
 
-/// NAV-3D-VEHICLE-CHOICE-3WAY-1: single scoped visual owner resolver keyed on
-/// the explicit vehicle presentation choice plus the runtime fallback state.
+/// NAV-3D-ACTIVATION-BINDING-JANK-1: visual owner resolver.
 ///
-/// NAV-3D-INSTANT-SWITCH-SCALE-AND-HEADING-POLISH-1:
-/// [immediateModel3dOnSelection] makes an explicit 3D selection own the
-/// driver visual in the same interaction (both 2D visuals suppressed at
-/// once) instead of waiting for [driver3dVisualReady]. If the selected model
-/// then fails within the bounded activation lifecycle, the temporary 2D
-/// fallback restores a 2D owner.
+/// The 2D HUD/Mapbox taxi remains the owner until [driver3dVisualReady] is
+/// true (activation confirmed). [immediateModel3dOnSelection] is ignored for
+/// hide/ownership — selection alone must never blank the vehicle.
 DriverVisualOwner resolveDriverVisualOwnerForChoice({
   required bool followLiveActive,
   required DriverVehiclePresentationChoice selectedVehiclePresentation,
@@ -489,8 +491,9 @@ DriverVisualOwner resolveDriverVisualOwnerForChoice({
       return fallbackOwner;
     case DriverVehiclePresentationChoice.fluxidi3d:
     case DriverVehiclePresentationChoice.classic3d:
-      if (hideHudFlagEnabled &&
-          (driver3dVisualReady || immediateModel3dOnSelection)) {
+      // immediateModel3dOnSelection intentionally unused: safe handoff only
+      // after activation confirmation (driver3dVisualReady).
+      if (hideHudFlagEnabled && driver3dVisualReady) {
         return DriverVisualOwner.model3d;
       }
       return fallbackOwner;
@@ -899,6 +902,8 @@ Driver3dVehicleEligibility resolveDriver3dVehicleEligibility({
     explicit2dFallback: sessionFallback2d,
     debugRenderProbeActive: debugRenderProbeActive,
     native3dRendererActive: nativeOwns,
+    modelActivationConfirmed: modelActivationConfirmed,
+    renderCredibilityConfirmed: renderCredibilityConfirmed,
   );
   final hudTaxiHidden = resolveDriver3dVehicleHudTaxiHidden(
     driver3dVisualReady: driver3dVisualReady,
@@ -906,8 +911,9 @@ Driver3dVehicleEligibility resolveDriver3dVehicleEligibility({
     useDriverCockpitCamera: useDriverCockpitCamera,
     presentationMode: presentationMode,
   );
-  final mapbox2dTaxiHidden = !debugRenderProbeActive &&
-      (driver3dVisualReady || (eligible && !sessionFallback2d));
+  // Hide Mapbox 2D only after activation is confirmed — never on selection.
+  final mapbox2dTaxiHidden =
+      !debugRenderProbeActive && driver3dVisualReady;
 
   return Driver3dVehicleEligibility(
     eligible: eligible,
@@ -1141,10 +1147,9 @@ void logNav3dMapbox2d({
   );
 }
 
-/// NAV-3D-YELLOW-TAXI-FINAL-VISIBILITY-FIX-1: bounded retry delays for the
-/// 3D activation confirmation readback. Max 3 attempts per style/preset
-/// generation pair.
-const List<int> kNav3dActivationConfirmRetryDelaysMs = <int>[80, 180, 350];
+/// NAV-3D-ACTIVATION-BINDING-JANK-1: at most one controlled retry per
+/// style/preset generation, then fallback to 2D.
+const List<int> kNav3dActivationConfirmRetryDelaysMs = <int>[180];
 
 /// NAV-3D-YELLOW-TAXI-FINAL-VISIBILITY-FIX-1: generation-keyed retry budget
 /// for `_tryConfirmDriver3dVehicleModelActivation`.
@@ -2123,13 +2128,67 @@ const int kDriverVehicleDebugStyleDotStrokeColor = 0xFFFFFFFF;
 
 const double kDriverVehicleDebugStyleDotStrokeWidth = 5.0;
 
-/// NAV-PRES-3K-F: log label when ModelLayer uses direct asset URI (debug path).
-
+/// Legacy label retained for diagnostics/tests; product lifecycle never mixes
+/// this with [kDriverVehicleModelIdModeRegistered] for an active vehicle.
 const String kDriverVehicleModelIdModeDirectAsset = 'direct_asset';
 
-/// NAV-PRES-3K-F: log label when ModelLayer uses registered style model id.
-
+/// NAV-3D-ACTIVATION-BINDING-JANK-1: sole product model-id mode.
 const String kDriverVehicleModelIdModeRegistered = 'registered_id';
+
+/// GeoJSON feature property carrying the registered style model id.
+const String kDriverVehicleModelSourceModelIdProperty = 'model_id';
+
+/// NAV-3D-ACTIVATION-BINDING-JANK-1: one immutable binding contract for the
+/// active 3D vehicle — registration, feature property, layer model-id and
+/// movement verification all share [registeredModelId].
+@immutable
+class DriverVehicle3dBindingContract {
+  const DriverVehicle3dBindingContract({
+    required this.preset,
+    required this.registeredModelId,
+    required this.assetUri,
+    required this.sourceModelIdProperty,
+  });
+
+  final DriverVehicle3dPreset preset;
+  final String registeredModelId;
+  final String assetUri;
+  final String sourceModelIdProperty;
+
+  String get modelIdMode => kDriverVehicleModelIdModeRegistered;
+
+  /// Layer constant model-id — identical to the registered style model id.
+  String get layerModelId => registeredModelId;
+
+  /// ModelLayer reads the registered id from the GeoJSON feature property.
+  List<Object> get layerModelIdExpression => <Object>[
+        'get',
+        sourceModelIdProperty,
+      ];
+}
+
+DriverVehicle3dBindingContract resolveDriverVehicle3dBindingContract(
+  DriverVehicle3dPreset preset,
+) {
+  final spec = resolveDriverVehicle3dModelSpec(preset);
+  return DriverVehicle3dBindingContract(
+    preset: preset,
+    registeredModelId: resolveDriverVehicle3dStyleModelId(preset),
+    assetUri: spec.assetUri,
+    sourceModelIdProperty: kDriverVehicleModelSourceModelIdProperty,
+  );
+}
+
+/// NAV-3D-ACTIVATION-BINDING-JANK-1: sole gate for 3D ownership / HUD hide.
+bool resolveIsDriver3dVehicleActivationConfirmed({
+  required bool modelActivationConfirmed,
+  required bool renderCredibilityConfirmed,
+  required bool eligible,
+  required bool explicit2dFallback,
+}) {
+  if (!eligible || explicit2dFallback) return false;
+  return modelActivationConfirmed && renderCredibilityConfirmed;
+}
 
 /// NAV-PRES-3K-B: presentation-level gate (flag + cockpit camera profile).
 
@@ -2227,33 +2286,28 @@ bool resolveShowDriver3dVehicleDebugStyleDot({
   );
 }
 
-/// NAV-PRES-3K-I/J: ModelLayer binds the bundled GLB via direct asset URI.
-/// NAV-3D-REGRESSION-BISECT-LAST-WORKING-1: restored after registered-id swap regression.
+/// NAV-3D-ACTIVATION-BINDING-JANK-1: layer model-id is always the registered
+/// style model id (never the asset URI) for the active product lifecycle.
 String resolveDriverVehicleModelLayerModelId({
   required bool debugPlacementActive,
   DriverVehicle3dPreset preset = kDriverVehicle3dPresetDefault,
 }) {
-  return resolveDriverVehicle3dModelSpec(preset).assetUri;
+  return resolveDriverVehicle3dBindingContract(preset).layerModelId;
 }
 
-/// NAV-PRES-3K-I: product path uses direct asset URI on the layer (no addStyleModel).
+/// NAV-3D-ACTIVATION-BINDING-JANK-1: product lifecycle is registered_id only.
 String resolveDriverVehicleModelIdModeLabel({
   required bool debugPlacementActive,
+  DriverVehicle3dPreset preset = kDriverVehicle3dPresetDefault,
 }) {
-  if (resolveDriverVehicleModelRequiresStyleModelRegistration(
-    debugPlacementActive: debugPlacementActive,
-  )) {
-    return kDriverVehicleModelIdModeRegistered;
-  }
-
-  return kDriverVehicleModelIdModeDirectAsset;
+  return resolveDriverVehicle3dBindingContract(preset).modelIdMode;
 }
 
-/// NAV-PRES-3K-I: skip addStyleModel; Mapbox Flutter local GLBs bind via asset:// on layer.
+/// NAV-3D-ACTIVATION-BINDING-JANK-1: always register via addStyleModel.
 bool resolveDriverVehicleModelRequiresStyleModelRegistration({
   required bool debugPlacementActive,
 }) {
-  return false;
+  return true;
 }
 
 /// NAV-PRES-3K-I: placement mode label for bounded diagnostics.
@@ -2536,6 +2590,8 @@ bool resolveNav3dMapbox2dTaxiVisible({
     explicit2dFallback: explicit2dFallback,
     debugRenderProbeActive: debugRenderProbeActive,
     native3dRendererActive: nativeOwns,
+    modelActivationConfirmed: modelActivationConfirmed,
+    renderCredibilityConfirmed: renderCredibilityConfirmed,
   );
   final effectivelyActive = resolveNav3dVehicleEffectivelyActive(
     eligible: eligibility.eligible,
@@ -3451,13 +3507,24 @@ List<double> driverVehicleModelTranslation({
   ];
 }
 
-/// NAV-PRES-3K-F: GeoJSON Point matching the official Mapbox Flutter example.
-/// NAV-3D-REGRESSION-BISECT-LAST-WORKING-1: bare Point (not FeatureCollection).
+/// NAV-3D-ACTIVATION-BINDING-JANK-1: GeoJSON Feature with the registered
+/// model-id property so source readback can prove exact binding.
 String driverVehicleModelGeoJsonData({
   required double lon,
   required double lat,
+  required String modelId,
+  String modelIdProperty = kDriverVehicleModelSourceModelIdProperty,
 }) {
-  return json.encode(mb.Point(coordinates: mb.Position(lon, lat)));
+  return json.encode({
+    'type': 'Feature',
+    'geometry': {
+      'type': 'Point',
+      'coordinates': <double>[lon, lat],
+    },
+    'properties': <String, dynamic>{
+      modelIdProperty: modelId,
+    },
+  });
 }
 
 /// NAV-3D-RENDER-VISIBILITY-PROOF-1: parsed GeoJSON source snapshot.
@@ -3526,7 +3593,9 @@ Nav3dVehicleRenderSourceParse parseDriverVehicleModelSourceJson(String? raw) {
     String? sourceModelId;
     final properties = feature['properties'];
     if (properties is Map) {
-      final rawModelId = properties['model-id'] ?? properties['modelId'];
+      final rawModelId = properties[kDriverVehicleModelSourceModelIdProperty] ??
+          properties['model-id'] ??
+          properties['modelId'];
       if (rawModelId is String && rawModelId.trim().isNotEmpty) {
         sourceModelId = rawModelId.trim();
       }
@@ -3618,6 +3687,38 @@ bool resolveNav3dVehicleModelIdBound({
   return actualModelId.trim() == expectedModelId.trim();
 }
 
+/// True when the ModelLayer model-id expression reads [expectedProperty].
+bool resolveNav3dVehicleLayerModelIdExpressionBound({
+  required List<Object>? modelIdExpression,
+  required String expectedProperty,
+}) {
+  if (modelIdExpression == null || modelIdExpression.length < 2) {
+    return false;
+  }
+  return modelIdExpression[0] == 'get' &&
+      modelIdExpression[1] == expectedProperty;
+}
+
+/// Layer is bound when it references the source property or holds the exact
+/// registered model id (never an asset URI in the product lifecycle).
+bool resolveNav3dVehicleLayerModelIdBound({
+  required String? layerModelId,
+  required List<Object>? modelIdExpression,
+  required String expectedRegisteredModelId,
+  String sourceModelIdProperty = kDriverVehicleModelSourceModelIdProperty,
+}) {
+  if (resolveNav3dVehicleLayerModelIdExpressionBound(
+    modelIdExpression: modelIdExpression,
+    expectedProperty: sourceModelIdProperty,
+  )) {
+    return true;
+  }
+  return resolveNav3dVehicleModelIdBound(
+    actualModelId: layerModelId,
+    expectedModelId: expectedRegisteredModelId,
+  );
+}
+
 bool resolveNav3dVehicleRenderCredibility({
   required Nav3dVehicleRenderReadback readback,
   required bool assetLoaded,
@@ -3627,6 +3728,7 @@ bool resolveNav3dVehicleRenderCredibility({
   if (!readback.layerExists || !readback.sourceExists) return false;
   if (!readback.layerVisible) return false;
   if (!readback.modelIdBound) return false;
+  if (!readback.sourceModelIdBound) return false;
   if (!readback.sourceFeaturePresent) return false;
   if (!readback.sourceHasValidPosition) return false;
   return true;
@@ -3724,6 +3826,70 @@ class Nav3dVehicleDebugRenderProbeScheduler {
 }
 
 String? _lastNav3dRenderProofSignature;
+String? _lastNav3dBindingLogSignature;
+String? _lastNav3dActivationLogSignature;
+String? _lastNav3dAsyncLogSignature;
+
+void logNav3dBinding({
+  required String phase,
+  required int generation,
+  required String modelId,
+  required String result,
+  bool? featurePresent,
+  bool? modelIdBound,
+}) {
+  final signature =
+      '$phase|$generation|$modelId|$result|${featurePresent ?? ''}|'
+      '${modelIdBound ?? ''}';
+  if (signature == _lastNav3dBindingLogSignature) return;
+  _lastNav3dBindingLogSignature = signature;
+  final buffer = StringBuffer(
+    '[NAV_3D_BINDING] phase=$phase generation=$generation '
+    'modelId=$modelId result=$result',
+  );
+  if (featurePresent != null) {
+    buffer.write(' featurePresent=$featurePresent');
+  }
+  if (modelIdBound != null) {
+    buffer.write(' modelIdBound=$modelIdBound');
+  }
+  debugPrint(buffer.toString());
+}
+
+void logNav3dActivationState({
+  required String state,
+  required int generation,
+  String? reason,
+  int? failureCount,
+}) {
+  final signature = '$state|$generation|${reason ?? ''}|${failureCount ?? ''}';
+  if (signature == _lastNav3dActivationLogSignature) return;
+  _lastNav3dActivationLogSignature = signature;
+  final buffer = StringBuffer(
+    '[NAV_3D_ACTIVATION] state=$state generation=$generation',
+  );
+  if (reason != null && reason.isNotEmpty) {
+    buffer.write(' reason=$reason');
+  }
+  if (failureCount != null) {
+    buffer.write(' failureCount=$failureCount');
+  }
+  debugPrint(buffer.toString());
+}
+
+void logNav3dAsyncStale({
+  required String operation,
+  required int generation,
+  required String reason,
+}) {
+  final signature = '$operation|$generation|$reason';
+  if (signature == _lastNav3dAsyncLogSignature) return;
+  _lastNav3dAsyncLogSignature = signature;
+  debugPrint(
+    '[NAV_3D_ASYNC] action=stale_completion_ignored '
+    'operation=$operation generation=$generation reason=$reason',
+  );
+}
 
 void logNav3dRenderProof({
   required String action,
@@ -4555,6 +4721,12 @@ class NavVehicleModelSyncLifecycle {
 
   DateTime? _lastHealthCheckAt;
 
+  /// NAV-3D-ACTIVATION-BINDING-JANK-1: each movement op settles once.
+  final Set<String> _settledMovementOperationIds = <String>{};
+  String? _activeMovementOperationId;
+  int _movementOperationSeq = 0;
+  bool _fallbackStarted = false;
+
   bool get sessionFallback2d => _sessionFallback2d;
 
   bool get updateInFlight => _updateInFlight;
@@ -4566,6 +4738,8 @@ class NavVehicleModelSyncLifecycle {
   int get consecutiveFailures => _consecutiveFailures;
 
   int get movementGeneration => _movementGeneration;
+
+  bool get fallbackStarted => _fallbackStarted;
 
   DriverVehicle3dMovementPose? get latestRequest => _latestRequest;
 
@@ -4615,12 +4789,31 @@ class NavVehicleModelSyncLifecycle {
     if (_updateInFlight) return false;
     _updateInFlight = true;
     _updateStartedAt = now;
+    _movementOperationSeq += 1;
+    _activeMovementOperationId =
+        'mv_${_movementGeneration}_$_movementOperationSeq';
     return true;
   }
+
+  String? get activeMovementOperationId => _activeMovementOperationId;
 
   void cancelMovementUpdate() {
     _updateInFlight = false;
     _updateStartedAt = null;
+    _activeMovementOperationId = null;
+  }
+
+  /// Returns false when [operationId] was already settled (late completion).
+  bool settleMovementOperation(String? operationId) {
+    if (operationId == null || operationId.isEmpty) return true;
+    if (_settledMovementOperationIds.contains(operationId)) return false;
+    _settledMovementOperationIds.add(operationId);
+    // Bound memory: keep only recent ids.
+    if (_settledMovementOperationIds.length > 32) {
+      final drop = _settledMovementOperationIds.take(16).toList(growable: false);
+      _settledMovementOperationIds.removeAll(drop);
+    }
+    return true;
   }
 
   int movementThrottleDelayMs(DateTime now, {required bool drainPending}) {
@@ -4639,30 +4832,39 @@ class NavVehicleModelSyncLifecycle {
   }
 
   /// Completes an update. Returns true when a coalesced follow-up should run.
+  ///
+  /// NAV-3D-ACTIVATION-BINDING-JANK-1: one operation settles once; timeout and
+  /// failure are mutually exclusive single increments (never jump to max).
   bool finishMovementUpdate({
     required bool applied,
     required DateTime now,
     bool timedOut = false,
     bool countFailure = false,
+    String? operationId,
   }) {
-    final started = _updateStartedAt;
+    final opId = operationId ?? _activeMovementOperationId;
+    if (!settleMovementOperation(opId)) {
+      logNav3dAsyncStale(
+        operation: 'movement_update',
+        generation: _movementGeneration,
+        reason: 'already_settled',
+      );
+      return false;
+    }
     _updateInFlight = false;
     _updateStartedAt = null;
+    _activeMovementOperationId = null;
 
-    if (timedOut || countFailure) {
+    if (timedOut) {
+      _consecutiveFailures += 1;
+    } else if (countFailure) {
       _consecutiveFailures += 1;
     } else if (applied) {
       _consecutiveFailures = 0;
       _lastNativeUpdateAt = now;
     }
 
-    if (started != null &&
-        now.difference(started).inMilliseconds >
-            kDriverVehicleModelMovementTimeoutMs) {
-      _consecutiveFailures = kDriverVehicleModelMovementMaxConsecutiveFailures;
-    }
-
-    final rerun = _pendingRequest != null;
+    final rerun = _pendingRequest != null && !_sessionFallback2d;
     if (_pendingRequest != null) {
       _latestRequest = _pendingRequest;
       _pendingRequest = null;
@@ -4714,13 +4916,22 @@ class NavVehicleModelSyncLifecycle {
     return requestGeneration != _movementGeneration;
   }
 
-  void enableSessionFallback2d() {
+  /// Idempotent fallback latch — returns true only on the first transition.
+  bool enableSessionFallback2d() {
+    if (_sessionFallback2d || _fallbackStarted) {
+      return false;
+    }
+    _fallbackStarted = true;
     _sessionFallback2d = true;
     _movementPaused = true;
     _pendingRequest = null;
     _latestRequest = null;
     _updateInFlight = false;
     _updateStartedAt = null;
+    _activeMovementOperationId = null;
+    // Invalidate in-flight movement writers.
+    _movementGeneration += 1;
+    return true;
   }
 
   /// Clears movement sync state for style restore; session fallback persists.
@@ -4754,6 +4965,10 @@ class NavVehicleModelSyncLifecycle {
   /// Resets session fallback only for a genuinely new navigation session.
   void resetForNewNavigationSession() {
     _sessionFallback2d = false;
+    _fallbackStarted = false;
+    _settledMovementOperationIds.clear();
+    _activeMovementOperationId = null;
+    _movementOperationSeq = 0;
     clearMovementStateForStyleRestore(movementGeneration: 0);
     _lastNativeUpdateAt = null;
   }
@@ -5353,6 +5568,7 @@ class DriverVehicleModelLayer {
     var layerExists = false;
     var sourceExists = false;
     String? layerModelId;
+    List<Object>? layerModelIdExpression;
     String? layerVisibility;
     List<double>? layerScale;
     List<double>? layerTranslation;
@@ -5368,6 +5584,9 @@ class DriverVehicleModelLayer {
       layerExists = layer != null;
       if (layer is mb.ModelLayer) {
         layerModelId = layer.modelId;
+        layerModelIdExpression = layer.modelIdExpression == null
+            ? null
+            : List<Object>.from(layer.modelIdExpression!);
         layerScale = layer.modelScale == null
             ? null
             : List<double>.from(layer.modelScale!);
@@ -5410,8 +5629,13 @@ class DriverVehicleModelLayer {
       sourceParse = parseDriverVehicleModelSourceJson(rawData);
     } catch (_) {}
 
-    final modelIdBound = resolveNav3dVehicleModelIdBound(
-      actualModelId: layerModelId,
+    final modelIdBound = resolveNav3dVehicleLayerModelIdBound(
+      layerModelId: layerModelId,
+      modelIdExpression: layerModelIdExpression,
+      expectedRegisteredModelId: expectedLayerModelId,
+    );
+    final sourceModelIdBound = resolveNav3dVehicleModelIdBound(
+      actualModelId: sourceParse.sourceModelId,
       expectedModelId: expectedLayerModelId,
     );
 
@@ -5422,7 +5646,7 @@ class DriverVehicleModelLayer {
       sourceFeaturePresent: sourceParse.sourceFeaturePresent,
       sourceHasValidPosition: sourceParse.sourceHasValidPosition,
       modelIdBound: modelIdBound,
-      sourceModelIdBound: false,
+      sourceModelIdBound: sourceModelIdBound,
       layerModelId: layerModelId,
       sourceModelId: sourceParse.sourceModelId,
       layerVisibility: layerVisibility,
@@ -5620,15 +5844,8 @@ class DriverVehicleModelLayer {
 
     final styleModelId = resolveDriverVehicle3dStyleModelId(preset);
 
-    final modelIdMode = resolveDriverVehicleModelIdModeLabel(
-      debugPlacementActive: debugPlacementActive,
-    );
-
-    final layerModelId = resolveDriverVehicleModelLayerModelId(
-      debugPlacementActive: debugPlacementActive,
-
-      preset: preset,
-    );
+    final binding = resolveDriverVehicle3dBindingContract(preset);
+    final modelIdMode = binding.modelIdMode;
 
     try {
       if (resolveDriverVehicleModelRequiresStyleModelRegistration(
@@ -5641,7 +5858,11 @@ class DriverVehicleModelLayer {
         mb.GeoJsonSource(
           id: kDriverVehicleModelSourceId,
 
-          data: driverVehicleModelGeoJsonData(lon: 0, lat: 0),
+          data: driverVehicleModelGeoJsonData(
+            lon: 0,
+            lat: 0,
+            modelId: binding.registeredModelId,
+          ),
         ),
       );
 
@@ -5651,7 +5872,9 @@ class DriverVehicleModelLayer {
         sourceId: kDriverVehicleModelSourceId,
       );
 
-      layer.modelId = layerModelId;
+      // Bind via feature property so layer + source share one registered id.
+      // Do not set [modelId] to an asset URI — that would mix contracts.
+      layer.modelIdExpression = binding.layerModelIdExpression;
 
       final modelScale = resolveDriverVehicleModelScaleForPreset(
         appliedZoom: appliedZoom,
@@ -5689,6 +5912,21 @@ class DriverVehicleModelLayer {
       );
 
       _lastRegisterFailureAt = null;
+
+      logNav3dBinding(
+        phase: 'register',
+        generation: 0,
+        modelId: styleModelId,
+        result: 'ok',
+      );
+      logNav3dBinding(
+        phase: 'source_bound',
+        generation: 0,
+        modelId: styleModelId,
+        result: 'ok',
+        featurePresent: true,
+        modelIdBound: true,
+      );
 
       logNavPres3dVehicle(
         action: 'register',
@@ -6306,7 +6544,11 @@ class DriverVehicleModelLayer {
         mb.GeoJsonSource(
           id: kDriverVehicleDebugStyleDotSourceId,
 
-          data: driverVehicleModelGeoJsonData(lon: lon, lat: lat),
+          data: driverVehicleModelGeoJsonData(
+            lon: lon,
+            lat: lat,
+            modelId: 'debug_dot',
+          ),
         ),
       );
 
@@ -6389,15 +6631,25 @@ class DriverVehicleModelLayer {
     int styleGeneration = -1,
     int presetGeneration = -1,
   }) async {
+    bool stillCurrent() {
+      if (movementGeneration == null || readCurrentMovementGeneration == null) {
+        return true;
+      }
+      return movementGeneration == readCurrentMovementGeneration();
+    }
+
     if (!_registered) {
       return const DriverVehicleModelMovementOutcome(
         result: DriverVehicleModelMovementUpdateResult.notRegistered,
       );
     }
 
-    if (movementGeneration != null &&
-        readCurrentMovementGeneration != null &&
-        movementGeneration != readCurrentMovementGeneration()) {
+    if (!stillCurrent()) {
+      logNav3dAsyncStale(
+        operation: 'movement_update',
+        generation: movementGeneration ?? -1,
+        reason: 'stale_before_write',
+      );
       return const DriverVehicleModelMovementOutcome(
         result: DriverVehicleModelMovementUpdateResult.staleMovement,
       );
@@ -6463,9 +6715,24 @@ class DriverVehicleModelLayer {
       }
 
       if (plan.positionChanged) {
-        final geoJson = driverVehicleModelGeoJsonData(lon: lon, lat: lat);
+        final binding = resolveDriverVehicle3dBindingContract(preset);
+        final geoJson = driverVehicleModelGeoJsonData(
+          lon: lon,
+          lat: lat,
+          modelId: binding.registeredModelId,
+        );
 
         final sourceObj = await style.getSource(kDriverVehicleModelSourceId);
+        if (!stillCurrent()) {
+          logNav3dAsyncStale(
+            operation: 'movement_update',
+            generation: movementGeneration ?? -1,
+            reason: 'stale_after_source_read',
+          );
+          return const DriverVehicleModelMovementOutcome(
+            result: DriverVehicleModelMovementUpdateResult.staleMovement,
+          );
+        }
 
         if (sourceObj is mb.GeoJsonSource) {
           await sourceObj.updateGeoJSON(geoJson);
@@ -6478,6 +6745,16 @@ class DriverVehicleModelLayer {
             geoJson,
           );
         }
+        if (!stillCurrent()) {
+          logNav3dAsyncStale(
+            operation: 'movement_update',
+            generation: movementGeneration ?? -1,
+            reason: 'stale_after_geojson_write',
+          );
+          return const DriverVehicleModelMovementOutcome(
+            result: DriverVehicleModelMovementUpdateResult.staleMovement,
+          );
+        }
       }
 
       if (plan.rotationChanged) {
@@ -6488,6 +6765,16 @@ class DriverVehicleModelLayer {
 
           finalRotation,
         );
+        if (!stillCurrent()) {
+          logNav3dAsyncStale(
+            operation: 'movement_update',
+            generation: movementGeneration ?? -1,
+            reason: 'stale_after_rotation_write',
+          );
+          return const DriverVehicleModelMovementOutcome(
+            result: DriverVehicleModelMovementUpdateResult.staleMovement,
+          );
+        }
       }
 
       if (plan.translationChanged) {
@@ -6498,6 +6785,16 @@ class DriverVehicleModelLayer {
 
           translation,
         );
+        if (!stillCurrent()) {
+          logNav3dAsyncStale(
+            operation: 'movement_update',
+            generation: movementGeneration ?? -1,
+            reason: 'stale_after_translation_write',
+          );
+          return const DriverVehicleModelMovementOutcome(
+            result: DriverVehicleModelMovementUpdateResult.staleMovement,
+          );
+        }
       }
 
       if (plan.scaleChanged) {
@@ -6508,6 +6805,16 @@ class DriverVehicleModelLayer {
 
           modelScale,
         );
+        if (!stillCurrent()) {
+          logNav3dAsyncStale(
+            operation: 'movement_update',
+            generation: movementGeneration ?? -1,
+            reason: 'stale_after_scale_write',
+          );
+          return const DriverVehicleModelMovementOutcome(
+            result: DriverVehicleModelMovementUpdateResult.staleMovement,
+          );
+        }
 
         logNavPres3dVehicleScale(
           appliedZoom: appliedZoom,
@@ -6519,6 +6826,17 @@ class DriverVehicleModelLayer {
           preset: preset,
 
           scaleMultiplier: spec.scaleMultiplier,
+        );
+      }
+
+      if (!stillCurrent()) {
+        logNav3dAsyncStale(
+          operation: 'movement_update',
+          generation: movementGeneration ?? -1,
+          reason: 'stale_before_state_commit',
+        );
+        return const DriverVehicleModelMovementOutcome(
+          result: DriverVehicleModelMovementUpdateResult.staleMovement,
         );
       }
 
@@ -6627,8 +6945,13 @@ class DriverVehicleModelLayer {
 
     try {
       final spec = resolveDriverVehicle3dModelSpec(preset);
+      final binding = resolveDriverVehicle3dBindingContract(preset);
 
-      final geoJson = driverVehicleModelGeoJsonData(lon: lon, lat: lat);
+      final geoJson = driverVehicleModelGeoJsonData(
+        lon: lon,
+        lat: lat,
+        modelId: binding.registeredModelId,
+      );
 
       final sourceObj = await style.getSource(kDriverVehicleModelSourceId);
 
@@ -6798,7 +7121,11 @@ class DriverVehicleModelLayer {
     if (!_debugStyleDotRegistered) return false;
 
     try {
-      final geoJson = driverVehicleModelGeoJsonData(lon: lon, lat: lat);
+      final geoJson = driverVehicleModelGeoJsonData(
+        lon: lon,
+        lat: lat,
+        modelId: 'debug_dot',
+      );
 
       final sourceObj = await style.getSource(
         kDriverVehicleDebugStyleDotSourceId,

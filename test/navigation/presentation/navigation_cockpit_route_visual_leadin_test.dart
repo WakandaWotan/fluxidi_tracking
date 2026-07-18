@@ -94,7 +94,7 @@ void main() {
       expect(completed.last.lon, snap.point.lon);
     });
 
-    test('tablet dynamic nose anchor increases for overview and stays clamped', () {
+    test('tablet dynamic nose anchor stays stable with fixed HUD', () {
       final phoneL7 = driverCockpitViewLevelTargetAnchorFraction(
         isTablet: false,
         isLandscape: false,
@@ -110,14 +110,11 @@ void main() {
         isLandscape: false,
         level: 13,
       );
-      final tabletL1 = driverCockpitViewLevelTargetAnchorFraction(
-        isTablet: true,
-        isLandscape: false,
-        level: 1,
-      );
-      expect(phoneL7, closeTo(kDriverCockpitPro2PhoneAnchorL7, 0.10));
-      expect(tabletL1, greaterThan(tabletL13));
-      expect(tabletL13, greaterThan(tabletL6 * 0.9));
+      expect(phoneL7, inInclusiveRange(
+        kDriverCockpitNoseAnchorMinPhone,
+        kDriverCockpitNoseAnchorMaxPhone,
+      ));
+      expect(tabletL6, tabletL13);
       expect(
         tabletL13,
         inInclusiveRange(

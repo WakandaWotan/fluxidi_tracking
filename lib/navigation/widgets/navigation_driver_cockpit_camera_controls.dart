@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'navigation_driver_cockpit_camera_controls_layout.dart';
+import 'navigation_driver_tablet_portrait_nav_layout.dart';
 
 /// NAV-PRES-3C: live +/- cockpit camera intensity controls (field test only).
 ///
@@ -17,6 +18,7 @@ class NavigationDriverCockpitCameraControls extends StatelessWidget {
     this.levelLabel,
     this.debugSubLabel,
     this.compactLandscape = false,
+    this.portraitPanelLayout,
   });
 
   final VoidCallback onPlus;
@@ -35,18 +37,31 @@ class NavigationDriverCockpitCameraControls extends StatelessWidget {
   /// NAV-PRES-3E-FIX1: tighter label/debug typography in landscape.
   final bool compactLandscape;
 
+  /// NAV-PRES-TABLET-PORTRAIT-POLISH-1: portrait tablet panel typography/padding.
+  final DriverCockpitViewPanelPortraitLayout? portraitPanelLayout;
+
   /// NAV-PRES-3E-FIX1: panel size estimate for safe viewport clamping.
   Size get estimatedPanelSize => estimateDriverCockpitCameraControlsPanelSize(
-        buttonSize: buttonSize,
-        hasLevelLabel: levelLabel != null,
-        hasDebugSubLabel: debugSubLabel != null,
-        compactLandscape: compactLandscape,
-      );
+    buttonSize: buttonSize,
+    hasLevelLabel: levelLabel != null,
+    hasDebugSubLabel: debugSubLabel != null,
+    compactLandscape: compactLandscape,
+    panelWidthExtra: portraitPanelLayout?.panelWidthExtra ?? 0,
+    panelHorizontalPadding: portraitPanelLayout?.panelHorizontalPadding ?? 4,
+    levelLabelFontSize: portraitPanelLayout?.levelLabelFontSize,
+    debugLabelFontSize: portraitPanelLayout?.debugLabelFontSize,
+  );
 
   @override
   Widget build(BuildContext context) {
-    final levelFontSize = compactLandscape ? 9.0 : 10.0;
-    final debugFontSize = compactLandscape ? 7.0 : 8.0;
+    final levelFontSize =
+        portraitPanelLayout?.levelLabelFontSize ??
+        (compactLandscape ? 9.0 : 10.0);
+    final debugFontSize =
+        portraitPanelLayout?.debugLabelFontSize ??
+        (compactLandscape ? 7.0 : 8.0);
+    final debugOpacity = portraitPanelLayout?.debugLabelOpacity ?? 0.65;
+    final horizontalPad = portraitPanelLayout?.panelHorizontalPadding ?? 4;
     return Material(
       color: surfaceColor.withValues(alpha: 0.92),
       borderRadius: BorderRadius.circular(14),
@@ -56,7 +71,7 @@ class NavigationDriverCockpitCameraControls extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: accentColor.withValues(alpha: 0.72)),
         ),
-        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+        padding: EdgeInsets.symmetric(vertical: 4, horizontal: horizontalPad),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -87,7 +102,7 @@ class NavigationDriverCockpitCameraControls extends StatelessWidget {
                       Text(
                         debugSubLabel!,
                         style: TextStyle(
-                          color: textColor.withValues(alpha: 0.65),
+                          color: textColor.withValues(alpha: debugOpacity),
                           fontSize: debugFontSize,
                           fontWeight: FontWeight.w500,
                           height: 1.05,
