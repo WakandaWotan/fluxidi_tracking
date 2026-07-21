@@ -465,7 +465,14 @@ class _DriverHomePageState extends State<DriverHomePage>
   double _lastKnownBearing = 0.0;
   bool _allowOverviewCamera = false;
   DateTime? _lastFollowCameraAt;
-  bool _followCameraInFlight = false;
+  // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: single lifecycle owner for
+  // `_followCameraTesla`. Replaces the raw `_followCameraInFlight` bool so
+  // every camera run has a generation token and an outer try/finally clear
+  // path — no synchronous throw, async throw, timeout, or dispose can leave
+  // the in-flight flag stuck at true.
+  final NavCameraInFlightLifecycle _cameraInFlightLifecycle =
+      NavCameraInFlightLifecycle();
+  bool get _followCameraInFlight => _cameraInFlightLifecycle.inFlight;
   // NAV-LATENCY-1 (Part B): true while follow camera is waiting for a fresh
   // live fix after a stale start. Cleared on the next fresh GPS callback.
   bool _navWaitingForFreshFix = false;
@@ -2561,6 +2568,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _driver3dActivationConfirmRetryTimer = null;
     _navInternetStatusSubscription?.cancel();
     _navInternetStatusSubscription = null;
+    // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: cancel timeout timers and reject any
+    // late Mapbox completion after the State is gone.
+    _cameraInFlightLifecycle.dispose();
     _resetPendingFollowCamera();
     _stopStreetlevelFollowPump();
     _setNavigationWakelock(false);
@@ -7333,7 +7343,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     _startPos = null;
     _lastFollowCameraAt = null;
-    _followCameraInFlight = false;
+    // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: invalidate clears owner + pending and
+    // bumps the run generation so any in-flight flyTo completing after stop
+    // becomes a stale no-op.
+    _cameraInFlightLifecycle.invalidate(reason: 'navigation_stop');
     _gpsQualityWeak = false;
     _lastSmoothedCameraBearing = null;
     _stopStreetlevelFollowPump();
@@ -8324,6 +8337,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     _pendingMapStyleUri = target;
     _mapStyleChanging = true;
+    // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: style swap invalidates camera ownership
+    // so a stale Mapbox completion cannot block the restored session.
+    _cameraInFlightLifecycle.invalidate(reason: 'style_change');
+    _resetPendingFollowCamera();
     debugPrint(
       '[NAV_MAPSTYLE] switching=${driverMapVisualModeLogLabel(_driverMapVisualMode)} target=$target',
     );
@@ -11935,10 +11952,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
 
-    if (_driverCockpitViewZoomLifecycle.cameraInFlight) {
-      return;
-    }
-
+    // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: newest View +/- supersedes an older
+    // in-flight owner. Do not wait multiple seconds for an obsolete flyTo.
     if (!_driverCockpitViewZoomLifecycle.beginCamera(generation)) {
       return;
     }
@@ -11986,11 +12001,15 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
       }
     } catch (_) {
-      _driverCockpitViewZoomLifecycle.cancelCamera();
+      _driverCockpitViewZoomLifecycle.cancelCamera(
+        requestGeneration: generation,
+      );
     } finally {
       if (_driverCockpitViewZoomLifecycle.cameraInFlight &&
           _driverCockpitViewZoomLifecycle.inFlightGeneration == generation) {
-        _driverCockpitViewZoomLifecycle.cancelCamera();
+        _driverCockpitViewZoomLifecycle.cancelCamera(
+          requestGeneration: generation,
+        );
       }
       if (needsRerun && _lastPos != null) {
         unawaited(
@@ -12657,6 +12676,59 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     _lastNavDebugAt[tag] = now;
     debugPrint('[$tag] $message');
+  }
+
+  /// NAV-CAMERA-INFLIGHT-SELF-HEAL-1: PII-free bounded diagnostic for the
+  /// camera in-flight lifecycle. Rare phases (timeout/error/stale) always
+  /// print; common phases (start/complete/cleared) are throttled per-phase
+  /// so a fast follow-camera loop cannot flood logs.
+  void _logNavCameraInFlight({
+    required NavCameraInFlightPhase phase,
+    required int generation,
+    int? animMs,
+    int? ageMs,
+    bool hasPending = false,
+    String? reason,
+    String? commandKind,
+    String? event,
+  }) {
+    final line = formatNavCameraInFlightDiagnostic(
+      phase: phase,
+      generation: generation,
+      animMs: animMs,
+      ageMs: ageMs,
+      hasPending: hasPending,
+      reason: reason,
+      commandKind: commandKind,
+      event: event,
+    );
+    switch (phase) {
+      case NavCameraInFlightPhase.timeout:
+      case NavCameraInFlightPhase.error:
+      case NavCameraInFlightPhase.stale:
+        debugPrint(line);
+        return;
+      case NavCameraInFlightPhase.start:
+      case NavCameraInFlightPhase.complete:
+      case NavCameraInFlightPhase.cleared:
+        // Always emit anomaly/transition events; throttle routine GPS starts.
+        if (event == NavCameraInFlightEvent.pendingReplaced.label ||
+            event == NavCameraInFlightEvent.pendingReplayed.label ||
+            event == NavCameraInFlightEvent.ownerInvalidated.label ||
+            event == NavCameraInFlightEvent.commandTimedOut.label) {
+          debugPrint(line);
+          return;
+        }
+        final tag = 'NAV_CAMERA_INFLIGHT_${phase.label}';
+        final now = DateTime.now();
+        final last = _lastNavDebugAt[tag];
+        if (last != null && now.difference(last).inMilliseconds < 800) {
+          return;
+        }
+        _lastNavDebugAt[tag] = now;
+        debugPrint(line);
+        return;
+    }
   }
 
   void _syncNavDiagSession() {
@@ -15371,15 +15443,31 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  /// NAV-R12-E1: remember the newest camera target (last-wins) instead of
-  /// dropping the fix when the camera is throttled or animating.
+  /// NAV-R12-E1 / NAV-CAMERA-INFLIGHT-SELF-HEAL-1: remember the newest camera
+  /// target (last-wins) instead of dropping the fix when the camera is
+  /// throttled or animating. Never builds an unbounded queue.
   void _queuePendingFollowCamera(
     geo.Position pos, {
     required String skipReason,
     int? retryDelayMs,
   }) {
+    final replaced = _pendingFollowCameraPos != null;
     _pendingFollowCameraPos = pos;
+    _cameraInFlightLifecycle.setPending(
+      NavCameraCommandKind.pendingReplay,
+      pos,
+    );
     _logNavR12Camera(animation: 'queued_latest', skipReason: skipReason);
+    if (replaced) {
+      _logNavCameraInFlight(
+        phase: NavCameraInFlightPhase.start,
+        generation: _cameraInFlightLifecycle.currentGeneration,
+        hasPending: true,
+        reason: skipReason,
+        commandKind: NavCameraCommandKind.pendingReplay.label,
+        event: NavCameraInFlightEvent.pendingReplaced.label,
+      );
+    }
     if (retryDelayMs != null) {
       _armPendingFollowCameraTimer(retryDelayMs);
     }
@@ -15399,11 +15487,19 @@ class _DriverHomePageState extends State<DriverHomePage>
   void _runPendingFollowCamera() {
     final pos = _pendingFollowCameraPos;
     _pendingFollowCameraPos = null;
+    _cameraInFlightLifecycle.takePending(reportReplay: pos != null);
     if (pos == null || !mounted) return;
     // Manual pan/zoom wins: no forced recenter outside follow mode.
     if (_cameraMode != _CameraMode.follow) return;
     if (_map == null || _mapStyleChanging || _posSub == null) return;
     _logNavR12Camera(animation: 'applied_pending');
+    _logNavCameraInFlight(
+      phase: NavCameraInFlightPhase.start,
+      generation: _cameraInFlightLifecycle.currentGeneration,
+      reason: 'pending_latest',
+      commandKind: NavCameraCommandKind.pendingReplay.label,
+      event: NavCameraInFlightEvent.pendingReplayed.label,
+    );
     unawaited(_followCameraTesla(pos, cameraReason: 'pending_latest'));
   }
 
@@ -15411,6 +15507,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _pendingFollowCameraTimer?.cancel();
     _pendingFollowCameraTimer = null;
     _pendingFollowCameraPos = null;
+    _cameraInFlightLifecycle.clearPending();
   }
 
   // NAV-STREETLEVEL-REALTIME-FOLLOW-PIPELINE-1: eligibility for the bounded
@@ -15891,7 +15988,48 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
     _lastFollowCameraAt = now;
-    _followCameraInFlight = true;
+    // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: begin() sets in-flight and hands out
+    // a monotonic generation. The OUTER try/finally below guarantees that
+    // no matter what happens in the ~275 lines of synchronous work OR the
+    // Mapbox flyTo await, the in-flight flag is cleared (or explicitly kept
+    // owned by a newer run via `tryClear`'s stale check). User commands
+    // (View +/-, recenter, view_mode) supersede a passive owner immediately.
+    final commandKind = navCameraCommandKindFromReason(cameraReason);
+    final provisionalAnimMs = cameraReason == 'cockpit_adjust'
+        ? resolveDriverCockpitViewZoomAnimationMs(
+            isTablet: MediaQuery.sizeOf(context).width >= 600,
+            manualViewAdjust: true,
+          )
+        : (force ? 220 : _followCameraAnimMsFor(pos));
+    final runGen = _cameraInFlightLifecycle.begin(
+      kind: commandKind,
+      expectedDuration: Duration(milliseconds: provisionalAnimMs),
+    );
+    if (runGen == null) {
+      _navValidationPendingCameraSkipReason = 'lifecycle_disposed';
+      _recordNavDiagCameraUpdate(
+        follow: false,
+        skippedReason: 'lifecycle_disposed',
+        zoom: policy.zoom,
+        tilt: policy.tilt,
+      );
+      return;
+    }
+    final runStartAt = DateTime.now();
+    final startGpsAgeSec = _gpsFixAgeSec(pos);
+    _logNavCameraInFlight(
+      phase: NavCameraInFlightPhase.start,
+      generation: runGen,
+      animMs: provisionalAnimMs,
+      ageMs: startGpsAgeSec != null ? (startGpsAgeSec * 1000).round() : null,
+      reason: cameraReason,
+      commandKind: commandKind.label,
+      event: NavCameraInFlightEvent.commandStarted.label,
+    );
+    var flyToAnimMs = 0;
+    int elapsedMsFromStart() =>
+        DateTime.now().difference(runStartAt).inMilliseconds;
+    try {
     final snap =
         _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
     final speedKmh = _speedKmhFor(pos);
@@ -15914,7 +16052,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       ),
     );
     if (targetDecision.source == NavCameraTargetSource.skipped) {
-      _followCameraInFlight = false;
+      // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: outer finally clears in-flight.
       _navValidationPendingCameraSkipReason = targetDecision.reason;
       _logNavR12Camera(
         animation: 'skipped_manual',
@@ -16135,7 +16273,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       _ensureStreetlevelFollowPumpRunning();
       if (!force) {
-        _followCameraInFlight = false;
+        // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: outer finally clears in-flight.
         _navValidationPendingCameraFollowed = true;
         _navValidationPendingCameraSkipReason = null;
         _recordNavDiagCameraUpdate(
@@ -16159,6 +16297,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             manualViewAdjust: true,
           )
         : (force ? 220 : _followCameraAnimMsFor(pos));
+    flyToAnimMs = animMs;
     final fixAgeSec = _gpsFixAgeSec(pos);
     _logNavR12Camera(
       animation: 'started',
@@ -16166,21 +16305,46 @@ class _DriverHomePageState extends State<DriverHomePage>
       targetAgeMs: fixAgeSec != null ? (fixAgeSec * 1000).round() : null,
     );
 
-    try {
-      await _map?.flyTo(
-        mb.CameraOptions(
-          center: cameraCenter,
-          zoom: cameraZoom,
-          bearing: heading,
-          pitch: cameraPitch,
-          padding: mb.MbxEdgeInsets(
-            top: viewPadding.top,
-            left: viewPadding.left,
-            bottom: viewPadding.bottom,
-            right: viewPadding.right,
-          ),
+    // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: bounded timeout around Mapbox flyTo.
+    // A never-completing Mapbox Future used to leave `_followCameraInFlight`
+    // stuck true for ~38 s in the field test. The outer try/finally guarantees
+    // clear on every outcome; the .timeout() guarantees the await returns.
+    final flyToFuture = _map?.flyTo(
+      mb.CameraOptions(
+        center: cameraCenter,
+        zoom: cameraZoom,
+        bearing: heading,
+        pitch: cameraPitch,
+        padding: mb.MbxEdgeInsets(
+          top: viewPadding.top,
+          left: viewPadding.left,
+          bottom: viewPadding.bottom,
+          right: viewPadding.right,
         ),
-        mb.MapAnimationOptions(duration: animMs),
+      ),
+      mb.MapAnimationOptions(duration: animMs),
+    );
+    if (flyToFuture == null) {
+      _logNavCameraInFlight(
+        phase: NavCameraInFlightPhase.complete,
+        generation: runGen,
+        animMs: animMs,
+        ageMs: elapsedMsFromStart(),
+        reason: 'no_map',
+        commandKind: commandKind.label,
+        event: NavCameraInFlightEvent.commandCompleted.label,
+      );
+      return;
+    }
+    try {
+      await flyToFuture.timeout(computeNavCameraInFlightTimeout(animMs));
+      _logNavCameraInFlight(
+        phase: NavCameraInFlightPhase.complete,
+        generation: runGen,
+        animMs: animMs,
+        ageMs: elapsedMsFromStart(),
+        commandKind: commandKind.label,
+        event: NavCameraInFlightEvent.commandCompleted.label,
       );
       _navValidationPendingCameraFollowed = true;
       _navValidationPendingCameraSkipReason = null;
@@ -16190,12 +16354,71 @@ class _DriverHomePageState extends State<DriverHomePage>
         tilt: cameraPitch,
         bearing: heading,
       );
+    } on TimeoutException {
+      _logNavCameraInFlight(
+        phase: NavCameraInFlightPhase.timeout,
+        generation: runGen,
+        animMs: animMs,
+        ageMs: elapsedMsFromStart(),
+        reason: 'flyTo_no_completion',
+        commandKind: commandKind.label,
+        event: NavCameraInFlightEvent.commandTimedOut.label,
+      );
+    } catch (_) {
+      _logNavCameraInFlight(
+        phase: NavCameraInFlightPhase.error,
+        generation: runGen,
+        animMs: animMs,
+        ageMs: elapsedMsFromStart(),
+        reason: 'async_throw',
+        commandKind: commandKind.label,
+        event: NavCameraInFlightEvent.commandFailed.label,
+      );
+    }
+    } catch (_) {
+      // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: synchronous throw somewhere in the
+      // ~275 lines of prep between begin() and flyTo. The outer finally will
+      // still clear the in-flight flag and re-schedule pending updates.
+      _logNavCameraInFlight(
+        phase: NavCameraInFlightPhase.error,
+        generation: runGen,
+        animMs: flyToAnimMs > 0 ? flyToAnimMs : null,
+        ageMs: elapsedMsFromStart(),
+        reason: 'sync_throw',
+        commandKind: commandKind.label,
+        event: NavCameraInFlightEvent.commandFailed.label,
+      );
     } finally {
-      _followCameraInFlight = false;
-      // NAV-R12-E1: apply the newest queued target now that the animation
-      // is done (throttle inside _followCameraTesla still applies).
-      if (_pendingFollowCameraPos != null) {
-        _armPendingFollowCameraTimer(16);
+      // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: single-point in-flight release.
+      // `tryClear` returns false when a newer camera run already owns the
+      // state — in that case we do NOT touch pending/flags (the newer run's
+      // own finally will handle it).
+      final hasPending = _pendingFollowCameraPos != null;
+      if (_cameraInFlightLifecycle.tryClear(runGen)) {
+        _logNavCameraInFlight(
+          phase: NavCameraInFlightPhase.cleared,
+          generation: runGen,
+          animMs: flyToAnimMs > 0 ? flyToAnimMs : null,
+          ageMs: elapsedMsFromStart(),
+          hasPending: hasPending,
+          commandKind: commandKind.label,
+        );
+        // NAV-R12-E1: apply the newest queued target within ~1 frame now
+        // that the animation is done (or was timed out / errored). Throttle
+        // inside _followCameraTesla still applies.
+        if (hasPending && mounted) {
+          _armPendingFollowCameraTimer(16);
+        }
+      } else {
+        _logNavCameraInFlight(
+          phase: NavCameraInFlightPhase.stale,
+          generation: runGen,
+          animMs: flyToAnimMs > 0 ? flyToAnimMs : null,
+          ageMs: elapsedMsFromStart(),
+          reason: 'newer_run_owns',
+          commandKind: commandKind.label,
+          event: NavCameraInFlightEvent.staleCompletionIgnored.label,
+        );
       }
     }
   }

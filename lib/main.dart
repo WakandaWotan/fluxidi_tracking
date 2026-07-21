@@ -124,6 +124,7 @@ import 'navigation/presentation/navigation_presentation_flags.dart';
 import 'navigation/presentation/navigation_presentation_state.dart';
 import 'navigation/presentation/navigation_presentation_mode.dart';
 import 'navigation/presentation/navigation_destination_marker.dart';
+import 'navigation/presentation/nav_camera_inflight_lifecycle.dart';
 import 'navigation/presentation/navigation_driver_cockpit_camera.dart';
 import 'navigation/presentation/navigation_driver_cockpit_streetlevel_bearing_lock.dart';
 import 'navigation/presentation/navigation_driver_cockpit_view_zoom.dart';

@@ -12,22 +12,39 @@ void main() {
       expect(lifecycle.requestedLevel, 8);
       expect(lifecycle.beginCamera(g1), isTrue);
 
+      // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: newest View + supersedes immediately.
       final g2 = lifecycle.requestManualLevel(9, t0);
       expect(g2, 2);
-      expect(lifecycle.beginCamera(g2), isFalse);
+      expect(lifecycle.beginCamera(g2), isTrue);
+      expect(lifecycle.inFlightGeneration, g2);
 
+      // Stale finish for g1 must not wipe the superseding owner.
       expect(
         lifecycle.finishCamera(requestGeneration: g1, appliedLevel: 8, now: t0),
         isTrue,
       );
+      expect(lifecycle.cameraInFlight, isTrue);
       expect(lifecycle.appliedLevel, isNull);
 
-      expect(lifecycle.beginCamera(g2), isTrue);
       expect(
         lifecycle.finishCamera(requestGeneration: g2, appliedLevel: 9, now: t0),
         isFalse,
       );
       expect(lifecycle.appliedLevel, 9);
+      expect(lifecycle.cameraInFlight, isFalse);
+    });
+
+    test('stale cancelCamera cannot clear newer View +/- owner', () {
+      final lifecycle = DriverCockpitViewZoomLifecycle();
+      final g1 = lifecycle.requestManualLevel(8, t0);
+      expect(lifecycle.beginCamera(g1), isTrue);
+      final g2 = lifecycle.requestManualLevel(10, t0);
+      expect(lifecycle.beginCamera(g2), isTrue);
+      lifecycle.cancelCamera(requestGeneration: g1);
+      expect(lifecycle.cameraInFlight, isTrue);
+      expect(lifecycle.inFlightGeneration, g2);
+      lifecycle.cancelCamera(requestGeneration: g2);
+      expect(lifecycle.cameraInFlight, isFalse);
     });
 
     test('rapid View +/- mixed taps apply latest request', () {

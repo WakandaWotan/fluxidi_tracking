@@ -48,27 +48,42 @@ class DriverCockpitViewZoomLifecycle {
     return requestGeneration != _generation;
   }
 
+  /// Begin camera ownership for [requestGeneration].
+  ///
+  /// NAV-CAMERA-INFLIGHT-SELF-HEAL-1: a newer manual View +/- request
+  /// supersedes an older in-flight owner instead of waiting for Mapbox to
+  /// finish the obsolete animation. Stale generations are still rejected.
   bool beginCamera(int requestGeneration) {
-    if (_cameraInFlight) return false;
     if (shouldIgnoreStaleCamera(requestGeneration)) return false;
     _cameraInFlight = true;
     _inFlightGeneration = requestGeneration;
     return true;
   }
 
-  void cancelCamera() {
+  void cancelCamera({int? requestGeneration}) {
+    if (requestGeneration != null &&
+        _inFlightGeneration != null &&
+        _inFlightGeneration != requestGeneration) {
+      return;
+    }
     _cameraInFlight = false;
     _inFlightGeneration = null;
   }
 
   /// Returns true when a newer manual request should run after this flight.
+  ///
+  /// Only the matching in-flight generation may clear ownership — an older
+  /// finish must not wipe a superseding View +/- owner.
   bool finishCamera({
     required int requestGeneration,
     required int appliedLevel,
     required DateTime now,
   }) {
-    _cameraInFlight = false;
-    _inFlightGeneration = null;
+    if (_inFlightGeneration == null ||
+        _inFlightGeneration == requestGeneration) {
+      _cameraInFlight = false;
+      _inFlightGeneration = null;
+    }
     if (!shouldIgnoreStaleCamera(requestGeneration)) {
       _appliedLevel = clampDriverCockpitViewLevel(appliedLevel);
     }
