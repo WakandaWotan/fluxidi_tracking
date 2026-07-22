@@ -148,15 +148,17 @@ void main() {
       expect(polishedLayout.right, baseLayout.right + 12);
     });
 
-    test('tablet portrait banner height reduced about 10-12 percent', () {
+    test('tablet portrait banner uses content-adaptive compact floor', () {
       final banner = resolveDriverTabletPortraitNavLayout(
         screenClass: FluxidiScreenClass.tablet,
         orientation: Orientation.portrait,
       )!.banner;
-      expect(banner.minHeight, 100);
-      expect(112 - banner.minHeight, inInclusiveRange(10, 12));
-      expect(banner.iconBoxSize, 58);
-      expect(banner.iconSize, 35);
+      // NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1: soft floor only —
+      // no fixed oversized black band (legacy was 112 → 100).
+      expect(banner.minHeight, 64);
+      expect(banner.minHeight, lessThan(100));
+      expect(banner.iconBoxSize, 52);
+      expect(banner.iconSize, 30);
     });
 
     test('800x1280 portrait chrome fits without overlap', () {
