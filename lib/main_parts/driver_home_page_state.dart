@@ -325,6 +325,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   // existing X closes the phone-landscape quick-action expansion, retain only
   // KPIs and safe ride controls in the strip. The same actions reopen via ….
   bool _phoneLandscapeKpiPriorityCollapsed = false;
+  // NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1 / Commit 3:
+  // Presentation-only mode. Tellers overlays the map; navigation State,
+  // MapWidget, GPS, fare and waiting ownership stay mounted/alive.
+  final DriverNavPresentationModeController _navPresentationMode =
+      DriverNavPresentationModeController();
   String? _lastNav3dFirstChoiceLogSignature;
   // NAV-UI-R6E: taxi visual captured just before setStyleURI so the marker can
   // be recreated immediately after style load without waiting for GPS.
@@ -7528,6 +7533,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     // bumps the run generation so any in-flight flyTo completing after stop
     // becomes a stale no-op.
     _cameraInFlightLifecycle.invalidate(reason: 'navigation_stop');
+    // Tellers is presentation-only — return to Navigatie when tracking stops.
+    _navPresentationMode.reset();
     _gpsQualityWeak = false;
     _lastSmoothedCameraBearing = null;
     _stopStreetlevelFollowPump();
@@ -17588,6 +17595,149 @@ class _DriverHomePageState extends State<DriverHomePage>
     await _launchExternalNavUri(uri);
   }
 
+  DriverRideMetersSnapshot _buildDriverRideMetersSnapshot() {
+    final km = _kmDriven;
+    final distanceText = !km.isFinite
+        ? '—'
+        : (km < 0.05 ? '0.0 km' : '${km.toStringAsFixed(1)} km');
+    final remaining = _kmRemainingText.trim();
+    final remainingText = remaining.isEmpty
+        ? ''
+        : (remaining.endsWith('km') ? remaining : '$remaining km');
+    String status;
+    if (_isWaiting) {
+      status = _tr(
+        nl: 'Wachten',
+        en: 'Waiting',
+        fr: 'Attente',
+        es: 'Espera',
+      );
+    } else if (_liveRideActive) {
+      status = _tr(
+        nl: 'Rit actief',
+        en: 'Ride active',
+        fr: 'Course active',
+        es: 'Viaje activo',
+      );
+    } else if (_cameraMode == _CameraMode.follow) {
+      status = _tr(
+        nl: 'Navigatie',
+        en: 'Navigation',
+        fr: 'Navigation',
+        es: 'Navegación',
+      );
+    } else {
+      status = _tr(
+        nl: 'Stand-by',
+        en: 'Stand-by',
+        fr: 'Veille',
+        es: 'En espera',
+      );
+    }
+    return DriverRideMetersSnapshot(
+      fareText: _displayTotalText,
+      distanceTravelledText: distanceText,
+      rideDurationText: _formatHms(_activeElapsed),
+      waitingTimeText: _formatHms(_effectiveWaitElapsed),
+      statusText: status,
+      etaText: _etaText,
+      remainingDistanceText: remainingText,
+    );
+  }
+
+  void _openTellersView() {
+    if (!_navPresentationMode.showTellers()) return;
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  void _closeTellersView() {
+    if (!_navPresentationMode.showNavigation()) return;
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  Widget _buildTellersEntryChip({
+    required ({Color accent, Color text, Color surface}) colors,
+    required DriverCompactNavControlsLayout layout,
+  }) {
+    // Tablet / roomy layouts: icon + label. Constrained phone: icon + tooltip.
+    final showLabel = layout.isTablet || layout.buttonVisualSize >= 48;
+    final visual = layout.buttonVisualSize;
+    final touch = layout.minTouchTarget;
+    final label = 'Tellers';
+    if (!showLabel) {
+      return _buildCompactNavIconChip(
+        icon: Icons.speed_outlined,
+        tooltip: label,
+        onPressed: _openTellersView,
+        navAccent: colors.accent,
+        navText: colors.text,
+        navSurface: colors.surface,
+        layout: layout,
+      );
+    }
+    return SizedBox(
+      height: touch,
+      child: Tooltip(
+        message: label,
+        child: Material(
+          color: colors.surface,
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            key: const ValueKey<String>('driver_tellers_open'),
+            onTap: _openTellersView,
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.speed_outlined, size: layout.iconSize, color: colors.text),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: visual >= 52 ? 14 : 12,
+                      fontWeight: FontWeight.w800,
+                      color: colors.text,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTellersOverlay({
+    required bool isTablet,
+    required bool isLandscape,
+  }) {
+    return Positioned.fill(
+      child: DriverRideMetersView(
+        snapshot: _buildDriverRideMetersSnapshot(),
+        themeListenable: _activeDriverThemeListenable,
+        isTablet: isTablet,
+        isLandscape: isLandscape,
+        isWaiting: _isWaiting,
+        onBackToNavigation: _closeTellersView,
+        onStop: _liveRideActive ? _stopTrip : null,
+        onToggleWait: _liveRideActive
+            ? () {
+                if (_isWaiting) {
+                  _exitWaitMode();
+                } else {
+                  _enterWaitMode();
+                }
+              }
+            : null,
+      ),
+    );
+  }
+
   Widget _buildCompactNavIconChip({
     required IconData icon,
     required String tooltip,
@@ -17726,6 +17876,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         layout: compactNavLayout,
       ),
     ];
+
+    // NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1: Tellers entry point.
+    // Presentation mode only — does not touch GPS/fare/route ownership.
+    if (inFollowNav || _liveRideActive) {
+      chips.add(_buildTellersEntryChip(colors: colors, layout: compactNavLayout));
+    }
 
     if (inFollowNav) {
       final viewMode = _navCameraViewMode;
@@ -25339,6 +25495,10 @@ class _DriverHomePageState extends State<DriverHomePage>
                 ),
               ),
             ),
+          // NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1:
+          // Opaque Tellers overlay keeps MapWidget + nav State mounted below.
+          if (_navPresentationMode.isTellers)
+            _buildTellersOverlay(isTablet: isTablet, isLandscape: isLandscape),
         ],
       ),
     );
