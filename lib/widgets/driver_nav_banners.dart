@@ -7,6 +7,7 @@ import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/navigation/driver_navigation_formatters.dart';
 import 'package:fluxidi_tracking/navigation/driver_navigation_models.dart';
 import 'package:fluxidi_tracking/navigation/presentation/maneuver_presentation.dart';
+import 'package:fluxidi_tracking/navigation/presentation/navigation_lane_guidance_strip.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_tablet_portrait_nav_layout.dart';
 
 class DriverTurnInstructionBanner extends StatelessWidget {
@@ -179,24 +180,37 @@ class DriverTurnInstructionBanner extends StatelessWidget {
 
   bool get _showLaneGuidance => _displayLanes.isNotEmpty;
 
-  double get _laneRowHeight {
-    if (_useLandscapeTopRow) return isTablet ? 22 : 20;
-    if (_useLandscapeCompactRow) return isTablet ? 24 : 22;
-    if (compact) return isTablet ? 26 : 24;
-    return isTablet ? 28 : 26;
+  /// NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1 / Commit 2:
+  /// Driving-readable lane strip metrics. Tiny mini-icons are gone.
+  DriverNavLaneStripMetrics get _laneStripMetrics {
+    if (_useLandscapeTopRow) {
+      return isTablet
+          ? DriverNavLaneStripMetrics.tabletLandscape
+          : DriverNavLaneStripMetrics.phoneLandscape;
+    }
+    if (compact || _useLandscapeCompactRow) {
+      return isTablet
+          ? const DriverNavLaneStripMetrics(
+              rowHeight: 44,
+              pillMinWidth: 42,
+              arrowFontSize: 24,
+              gap: 6,
+              compact: true,
+            )
+          : const DriverNavLaneStripMetrics(
+              rowHeight: 38,
+              pillMinWidth: 36,
+              arrowFontSize: 20,
+              gap: 5,
+              compact: true,
+            );
+    }
+    return isTablet
+        ? DriverNavLaneStripMetrics.tablet
+        : DriverNavLaneStripMetrics.phone;
   }
 
-  double get _lanePillMinWidth {
-    if (_useLandscapeTopRow) return isTablet ? 24 : 22;
-    if (compact) return isTablet ? 28 : 26;
-    return isTablet ? 32 : 28;
-  }
-
-  double get _laneArrowFontSize {
-    if (_useLandscapeTopRow) return isTablet ? 13 : 12;
-    if (compact) return isTablet ? 15 : 14;
-    return isTablet ? 17 : 16;
-  }
+  double get _laneRowHeight => _laneStripMetrics.rowHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -314,16 +328,15 @@ class DriverTurnInstructionBanner extends StatelessWidget {
                     ],
                   ),
                   if (showLaneGuidance) ...[
-                    SizedBox(height: _useLandscapeTopRow ? 3 : 4),
-                    _LaneGuidanceRow(
+                    // Clearly separated row — never tiny icons inside the
+                    // maneuver text. Absent when lane data is empty/gated.
+                    SizedBox(height: _useLandscapeTopRow ? 4 : 6),
+                    DriverNavLaneGuidanceStrip(
                       lanes: displayLanes,
                       palette: palette,
+                      metrics: _laneStripMetrics,
                       isHighwayLike: isHighwayLike,
                       maneuverModifier: maneuverModifier,
-                      rowHeight: _laneRowHeight,
-                      pillMinWidth: _lanePillMinWidth,
-                      arrowFontSize: _laneArrowFontSize,
-                      compact: compact || _useLandscapeTopRow,
                     ),
                   ],
                 ],
@@ -609,160 +622,6 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     if (secondary.isNotEmpty) parts.add(secondary);
     if (sub.isNotEmpty && sub != secondary) parts.add(sub);
     return parts.join(' • ');
-  }
-}
-
-class _LaneGuidanceRow extends StatelessWidget {
-  const _LaneGuidanceRow({
-    required this.lanes,
-    required this.palette,
-    required this.isHighwayLike,
-    required this.maneuverModifier,
-    required this.rowHeight,
-    required this.pillMinWidth,
-    required this.arrowFontSize,
-    required this.compact,
-  });
-
-  final List<DriverNavLaneGuidance> lanes;
-  final DriverThemePalette palette;
-  final bool isHighwayLike;
-  final String maneuverModifier;
-  final double rowHeight;
-  final double pillMinWidth;
-  final double arrowFontSize;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: rowHeight,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        physics: lanes.length > 6
-            ? const BouncingScrollPhysics()
-            : const NeverScrollableScrollPhysics(),
-        padding: EdgeInsets.only(left: compact ? 2 : 4),
-        itemCount: lanes.length,
-        separatorBuilder: (_, __) => SizedBox(width: compact ? 4 : 5),
-        itemBuilder: (context, index) {
-          return _LanePill(
-            key: ValueKey<String>('nav_lane_column_$index'),
-            lane: lanes[index],
-            palette: palette,
-            isHighwayLike: isHighwayLike,
-            maneuverModifier: maneuverModifier,
-            minWidth: pillMinWidth,
-            arrowFontSize: arrowFontSize,
-            compact: compact,
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _LanePill extends StatelessWidget {
-  const _LanePill({
-    super.key,
-    required this.lane,
-    required this.palette,
-    required this.isHighwayLike,
-    required this.maneuverModifier,
-    required this.minWidth,
-    required this.arrowFontSize,
-    required this.compact,
-  });
-
-  final DriverNavLaneGuidance lane;
-  final DriverThemePalette palette;
-  final bool isHighwayLike;
-  final String maneuverModifier;
-  final double minWidth;
-  final double arrowFontSize;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    // NAV-SIGNAL-P2C: one visible column per resolved lane — never shrink.
-    final kind = driverLaneDisplayKind(lane);
-    final indication = driverLaneIndicationForDisplay(
-      lane,
-      maneuverModifier: maneuverModifier,
-    );
-    final indicationText = (indication ?? '').trim();
-    // Unsupported/empty → neutral glyph; never invent a directional arrow.
-    final arrow = indicationText.isEmpty
-        ? '·'
-        : driverLaneIndicationArrow(indicationText);
-    final semanticLabel = driverLaneSemanticLabel(
-      lane,
-      maneuverModifier: maneuverModifier,
-    );
-    final accent = isHighwayLike ? const Color(0xFFFFD36A) : palette.accent;
-    final isPreferred = kind == DriverLaneDisplayKind.preferred;
-    final isUsable = kind == DriverLaneDisplayKind.usable;
-    final isUnavailable = kind == DriverLaneDisplayKind.unavailable;
-    final bgOpacity = isPreferred
-        ? (palette.isDark ? 0.36 : 0.30)
-        : isUsable
-        ? (palette.isDark ? 0.20 : 0.16)
-        : isUnavailable
-        ? (palette.isDark ? 0.06 : 0.04)
-        : (palette.isDark ? 0.10 : 0.08);
-    final borderOpacity = isPreferred
-        ? (isHighwayLike ? 0.95 : 0.84)
-        : isUsable
-        ? (palette.isDark ? 0.48 : 0.42)
-        : isUnavailable
-        ? (palette.isDark ? 0.16 : 0.14)
-        : (palette.isDark ? 0.28 : 0.22);
-    final textOpacity = isPreferred
-        ? 0.98
-        : isUsable
-        ? 0.78
-        : isUnavailable
-        ? 0.34
-        : 0.52;
-    final borderWidth = isPreferred
-        ? 1.6
-        : isUsable
-        ? 1.2
-        : 1.0;
-    final weight = isPreferred
-        ? FontWeight.w900
-        : isUsable
-        ? FontWeight.w700
-        : FontWeight.w500;
-
-    return Semantics(
-      label: semanticLabel,
-      child: Container(
-        constraints: BoxConstraints(minWidth: minWidth),
-        padding: EdgeInsets.symmetric(
-          horizontal: compact ? 5 : 6,
-          vertical: compact ? 1 : 2,
-        ),
-        decoration: BoxDecoration(
-          color: accent.withOpacity(bgOpacity),
-          borderRadius: BorderRadius.circular(compact ? 6 : 7),
-          border: Border.all(
-            color: accent.withOpacity(borderOpacity),
-            width: borderWidth,
-          ),
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          arrow,
-          style: TextStyle(
-            fontSize: arrowFontSize,
-            fontWeight: weight,
-            color: palette.textPrimary.withOpacity(textOpacity),
-            height: 1.0,
-          ),
-        ),
-      ),
-    );
   }
 }
 
