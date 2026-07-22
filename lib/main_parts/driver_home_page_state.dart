@@ -2076,6 +2076,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  // NAV-PARKING-2 Commit 3: driving-readable header logo box metrics.
+  DriverNavHeaderLogoMetrics _driverNavHeaderLogoBox(bool compact) =>
+      driverNavHeaderLogoMetrics(compact: compact);
+
   String _driverAssetByTheme({
     required String defaultAsset,
     String? midnightBlueAsset,
@@ -19895,16 +19899,22 @@ class _DriverHomePageState extends State<DriverHomePage>
                             ? (pulse * 1.06)
                             : (pulse * 1.18),
                         child: ClipRect(
+                          // NAV-PARKING-2 Commit 3: larger, driving-readable
+                          // brand logo (aspect preserved via BoxFit.contain).
                           child: SizedBox(
-                            width: compactNavHeader ? 132 : 164,
-                            height: compactNavHeader ? 46 : 58,
+                            width: _driverNavHeaderLogoBox(compactNavHeader)
+                                .boxWidth,
+                            height: _driverNavHeaderLogoBox(compactNavHeader)
+                                .boxHeight,
                             child: Center(
                               child: _tenantLogo(
-                                height: compactNavHeader ? 38 : 50,
+                                height: _driverNavHeaderLogoBox(
+                                  compactNavHeader,
+                                ).logoHeight,
                                 fit: BoxFit.contain,
                                 fallback: const Icon(
                                   Icons.local_taxi,
-                                  size: 32,
+                                  size: 34,
                                   color: Colors.white70,
                                 ),
                               ),

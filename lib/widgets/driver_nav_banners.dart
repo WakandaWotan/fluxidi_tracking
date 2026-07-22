@@ -92,45 +92,50 @@ class DriverTurnInstructionBanner extends StatelessWidget {
       !_useLandscapeCompactRow &&
       !_usePhonePortraitStack;
 
+  // NAV-PARKING-2 Commit 3: larger, driving-readable maneuver icon. Height stays
+  // content-adaptive (soft floor + tight padding), so the bigger glyph improves
+  // legibility without restoring an oversized fixed band.
   double get _iconBoxSize {
     if (_usePortraitTabletPolish) return portraitTabletMetrics!.iconBoxSize;
-    if (_useLandscapeTopRow) return isTablet ? 36 : 32;
-    if (_useLandscapeCompactRow) return isTablet ? 44 : 40;
-    if (compact) return isTablet ? 50 : 44;
-    if (_usePhonePortraitStack) return 48;
-    return isTablet ? 64 : 56;
+    if (_useLandscapeTopRow) return isTablet ? 38 : 34;
+    if (_useLandscapeCompactRow) return isTablet ? 48 : 44;
+    if (compact) return isTablet ? 54 : 48;
+    if (_usePhonePortraitStack) return 52;
+    return isTablet ? 68 : 60;
   }
 
   double get _iconSize {
     if (_usePortraitTabletPolish) return portraitTabletMetrics!.iconSize;
-    if (_useLandscapeTopRow) return isTablet ? 20 : 18;
-    if (_useLandscapeCompactRow) return isTablet ? 24 : 22;
-    if (compact) return isTablet ? 30 : 26;
-    if (_usePhonePortraitStack) return 28;
-    return isTablet ? 38 : 32;
+    if (_useLandscapeTopRow) return isTablet ? 22 : 20;
+    if (_useLandscapeCompactRow) return isTablet ? 27 : 24;
+    if (compact) return isTablet ? 33 : 29;
+    if (_usePhonePortraitStack) return 31;
+    return isTablet ? 42 : 36;
   }
 
   double get _distanceFontSize {
-    if (_useLandscapeTopRow) return isTablet ? 12 : 11;
-    if (_useLandscapeCompactRow) return isTablet ? 13 : 12;
-    if (compact) return isTablet ? 14 : 13;
-    if (_usePhonePortraitStack) return 15;
-    return isTablet ? 18 : 16;
+    if (_useLandscapeTopRow) return isTablet ? 13 : 12;
+    if (_useLandscapeCompactRow) return isTablet ? 14 : 13;
+    if (compact) return isTablet ? 15 : 14;
+    if (_usePhonePortraitStack) return 16;
+    return isTablet ? 19 : 17;
   }
 
+  // NAV-PARKING-2 Commit 3: primary maneuver text enlarged for daylight-driving
+  // readability. Two-line ceiling + ellipsis keep it overflow-safe.
   double get _primaryFontSize {
-    if (_useLandscapeTopRow) return isTablet ? 14 : 13;
-    if (_useLandscapeCompactRow) return isTablet ? 16 : 15;
-    if (compact) return isTablet ? 17 : 16;
-    if (_usePhonePortraitStack) return 18;
-    return isTablet ? 22 : 20;
+    if (_useLandscapeTopRow) return isTablet ? 15 : 14;
+    if (_useLandscapeCompactRow) return isTablet ? 17 : 16;
+    if (compact) return isTablet ? 19 : 18;
+    if (_usePhonePortraitStack) return 20;
+    return isTablet ? 25 : 22;
   }
 
   double get _secondaryFontSize {
-    if (_useLandscapeCompactRow) return isTablet ? 11 : 10;
-    if (compact) return isTablet ? 13 : 12;
-    if (_usePhonePortraitStack) return 12;
-    return isTablet ? 16 : 14;
+    if (_useLandscapeCompactRow) return isTablet ? 12 : 11;
+    if (compact) return isTablet ? 14 : 13;
+    if (_usePhonePortraitStack) return 14;
+    return isTablet ? 18 : 16;
   }
 
   /// NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1:
