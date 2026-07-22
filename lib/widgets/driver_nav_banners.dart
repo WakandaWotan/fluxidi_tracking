@@ -132,32 +132,46 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     return isTablet ? 16 : 14;
   }
 
+  /// NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1:
+  /// Principal instruction/road block is at most two text lines total.
+  /// Primary takes one line when a secondary/subtitle is present; otherwise
+  /// it may wrap to two. Never shrink font to fit.
   int get _primaryMaxLines {
-    if (_usePhonePortraitStack ||
-        _useLandscapeCompactRow ||
-        _useLandscapeTopRow) {
-      return 1;
-    }
-    if (compact) return 2;
-    return isTablet ? 2 : 2;
+    final secondary = _secondaryLine();
+    if (_shouldShowSecondaryLine(secondary)) return 1;
+    return 2;
   }
 
-  int get _secondaryMaxLines {
-    if (_usePhonePortraitStack ||
-        _useLandscapeCompactRow ||
-        _useLandscapeTopRow) {
-      return 1;
+  int get _secondaryMaxLines => 1;
+
+  double get _horizontalPadding {
+    if (_useLandscapeTopRow) return 6;
+    if (_useLandscapeCompactRow) return 8;
+    if (compact) return 10;
+    if (_usePhonePortraitStack) return 12;
+    if (_usePortraitTabletPolish) {
+      return portraitTabletMetrics!.horizontalPadding;
     }
-    return compact ? 1 : 2;
+    return 12;
   }
 
+  double get _verticalPadding {
+    if (_useLandscapeTopRow) return 4;
+    if (_useLandscapeCompactRow) return 5;
+    if (compact) return 6;
+    if (_usePhonePortraitStack) return 6;
+    if (_usePortraitTabletPolish) {
+      return portraitTabletMetrics!.verticalPadding;
+    }
+    return 7;
+  }
+
+  /// NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1:
+  /// No fixed oversized band. Height hugs icon + text (+ optional lane row).
+  /// Kept only as a tiny touch-target floor for landscape top-row chrome.
   double get _minBannerHeight {
-    if (_usePortraitTabletPolish) return portraitTabletMetrics!.minHeight;
-    if (_useLandscapeTopRow) return isTablet ? 60 : 52;
-    if (_useLandscapeCompactRow) return isTablet ? 80 : 72;
-    if (compact) return isTablet ? 88 : 80;
-    if (_usePhonePortraitStack) return 76;
-    return isTablet ? 112 : 96;
+    if (_useLandscapeTopRow) return isTablet ? 40 : 36;
+    return 0;
   }
 
   List<DriverNavLaneGuidance> get _displayLanes =>
@@ -208,6 +222,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
         }
 
         final banner = ClipRRect(
+          key: const ValueKey<String>('nav_maneuver_banner'),
           borderRadius: BorderRadius.circular(
             _useLandscapeTopRow || _useLandscapeCompactRow
                 ? 14
@@ -219,36 +234,17 @@ class DriverTurnInstructionBanner extends StatelessWidget {
               sigmaY: compact ? 10 : 12,
             ),
             child: Container(
+              // NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1:
+              // Soft floor only. Height follows content; missing subtitle /
+              // lanes consume zero extra space (no fixed oversized band).
               constraints: BoxConstraints(
                 minHeight:
                     _minBannerHeight +
                     (showLaneGuidance ? (_laneRowHeight + 4) : 0),
               ),
               padding: EdgeInsets.symmetric(
-                horizontal: _useLandscapeTopRow
-                    ? 6
-                    : (_useLandscapeCompactRow
-                          ? 8
-                          : (compact
-                                ? 10
-                                : (_usePhonePortraitStack
-                                      ? 12
-                                      : (_usePortraitTabletPolish
-                                            ? portraitTabletMetrics!
-                                                  .horizontalPadding
-                                            : 14)))),
-                vertical: _useLandscapeTopRow
-                    ? 4
-                    : (_useLandscapeCompactRow
-                          ? 6
-                          : (compact
-                                ? 8
-                                : (_usePhonePortraitStack
-                                      ? 8
-                                      : (_usePortraitTabletPolish
-                                            ? portraitTabletMetrics!
-                                                  .verticalPadding
-                                            : 10)))),
+                horizontal: _horizontalPadding,
+                vertical: _verticalPadding,
               ),
               decoration: BoxDecoration(
                 color: palette.surface.withOpacity(
@@ -435,19 +431,21 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     required String secondaryLine,
     required bool showSecondary,
   }) {
-    // NAV-RESPONSIVE-MANEUVER-BANNER-V1: presentation-driven layout leads with
-    // the maneuver primary line (max 2). Distance chip only appears when the
-    // model exposes a standalone distance (far phase / follow-route).
+    // NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1:
+    // Principal block ≤ 2 lines. Missing subtitle collapses (zero height).
     if (presentation != null) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
         children: [
           if (_hasDistanceChip && !isArrival) ...[
             _buildDistanceChip(palette),
-            const SizedBox(height: 4),
+            const SizedBox(height: 3),
           ],
-          _buildPrimaryText(palette, maxLines: 2),
+          _buildPrimaryText(
+            palette,
+            maxLines: showSecondary ? 1 : 2,
+          ),
           if (showSecondary) ...[
             const SizedBox(height: 2),
             _buildSecondaryText(palette, secondaryLine, maxLines: 1),
@@ -457,13 +455,16 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
       children: [
         if (!isArrival) _buildDistanceChip(palette),
         if (isArrival) _buildPrimaryText(palette, maxLines: 2),
         if (!isArrival) ...[
-          const SizedBox(height: 4),
-          _buildPrimaryText(palette, maxLines: 1),
+          const SizedBox(height: 3),
+          _buildPrimaryText(
+            palette,
+            maxLines: showSecondary ? 1 : 2,
+          ),
         ],
         if (showSecondary) ...[
           const SizedBox(height: 2),
@@ -523,7 +524,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
         showSecondary && (presentation != null || secondaryLine.length <= 24);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
       children: [
         if (!isArrival)
           Row(
@@ -532,11 +533,16 @@ class DriverTurnInstructionBanner extends StatelessWidget {
                 _buildDistanceChip(palette),
                 const SizedBox(width: 8),
               ],
-              Expanded(child: _buildPrimaryText(palette, maxLines: 1)),
+              Expanded(
+                child: _buildPrimaryText(
+                  palette,
+                  maxLines: showLandscapeSecondary ? 1 : 2,
+                ),
+              ),
             ],
           )
         else
-          _buildPrimaryText(palette, maxLines: 1),
+          _buildPrimaryText(palette, maxLines: 2),
         if (showLandscapeSecondary) ...[
           const SizedBox(height: 2),
           _buildSecondaryText(palette, secondaryLine, maxLines: 1),
@@ -552,7 +558,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
       children: [
         if (!isArrival)
           Row(
@@ -562,14 +568,19 @@ class DriverTurnInstructionBanner extends StatelessWidget {
                 _buildDistanceChip(palette),
                 SizedBox(width: compact ? 8 : 10),
               ],
-              Expanded(child: _buildPrimaryText(palette)),
+              Expanded(
+                child: _buildPrimaryText(
+                  palette,
+                  maxLines: showSecondary ? 1 : 2,
+                ),
+              ),
             ],
           )
         else
-          _buildPrimaryText(palette),
+          _buildPrimaryText(palette, maxLines: 2),
         if (showSecondary) ...[
-          SizedBox(height: compact ? 3 : 4),
-          _buildSecondaryText(palette, secondaryLine),
+          SizedBox(height: compact ? 2 : 3),
+          _buildSecondaryText(palette, secondaryLine, maxLines: 1),
         ],
       ],
     );

@@ -71,12 +71,15 @@ kDriverCockpitViewPanelPortraitTabletLayout =
       portraitRightInsetExtra: 12,
     );
 
+// NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1 / Commit 1:
+// Content-adaptive floor — hug the icon + padding; do not reserve a tall
+// empty black band for short instructions.
 const DriverNavBannerPortraitTabletLayout kDriverNavBannerPortraitTabletLayout =
     DriverNavBannerPortraitTabletLayout(
-      minHeight: 100,
-      iconBoxSize: 58,
-      iconSize: 35,
-      verticalPadding: 8,
+      minHeight: 64,
+      iconBoxSize: 52,
+      iconSize: 30,
+      verticalPadding: 6,
       horizontalPadding: 12,
     );
 
