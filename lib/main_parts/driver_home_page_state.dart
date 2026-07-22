@@ -8482,10 +8482,42 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  // NAV-PARKING-2 Commit 2: remove the previous route/pins/destination managers
+  // before recreating them. Mapbox annotations survive a style swap, so a
+  // surviving old _routeLineManager left a second authoritative-looking blue
+  // route on the new style (most visible around roundabouts). Disposing the old
+  // managers and nulling their annotation refs before recreation guarantees
+  // exactly one route package can own the primary blue geometry. Mirrors the
+  // driver-point manager cleanup and is null-safe on first creation.
+  Future<void> _disposeRouteAndPinAnnotationManagers() async {
+    final map = _map;
+    final route = _routeLineManager;
+    final pins = _pinsPointManager;
+    final dest = _destinationMarkerManager;
+    _routeLineManager = null;
+    _routeLineOutline = null;
+    _routeLine = null;
+    _routeLineCompleted = null;
+    _pinsPointManager = null;
+    _pickupPin = null;
+    _dropoffPin = null;
+    _destinationMarkerManager = null;
+    _destinationMarker = null;
+    _lastDestinationMarkerSignature = null;
+    if (map == null) return;
+    for (final mgr in <mb.BaseAnnotationManager?>[route, pins, dest]) {
+      if (mgr == null) continue;
+      try {
+        await map.annotations.removeAnnotationManager(mgr);
+      } catch (_) {}
+    }
+  }
+
   Future<void> _recreateAnnotationManagers() async {
     if (_map == null) return;
     await _syncMapboxUserLocationPuckVisibility();
     await _disposeDriverPointAnnotationManager();
+    await _disposeRouteAndPinAnnotationManagers();
     _routeLineManager = await _map!.annotations
         .createPolylineAnnotationManager();
     _pinsPointManager = await _map!.annotations.createPointAnnotationManager();

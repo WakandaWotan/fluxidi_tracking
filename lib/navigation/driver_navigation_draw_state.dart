@@ -10,7 +10,17 @@ String driverPinsDrawSignature({
 String driverRouteDrawSignature(List<DriverLonLat> coords) {
   final first = coords.first;
   final last = coords.last;
-  return '${coords.length}:${first.lon.toStringAsFixed(5)},${first.lat.toStringAsFixed(5)}>${last.lon.toStringAsFixed(5)},${last.lat.toStringAsFixed(5)}';
+  // NAV-PARKING-2 Commit 2: include a mid-geometry sample so a reroute that
+  // reshapes the middle of the route (e.g. a different roundabout arm) while
+  // keeping the same length + endpoints produces a DIFFERENT signature. The
+  // old length+endpoints-only key could match within the draw debounce and
+  // skip the replacement draw, leaving the previous blue path visible next to
+  // the new one — a second authoritative-looking route around a roundabout.
+  final mid = coords[coords.length ~/ 2];
+  return '${coords.length}:'
+      '${first.lon.toStringAsFixed(5)},${first.lat.toStringAsFixed(5)}>'
+      '${mid.lon.toStringAsFixed(5)},${mid.lat.toStringAsFixed(5)}>'
+      '${last.lon.toStringAsFixed(5)},${last.lat.toStringAsFixed(5)}';
 }
 
 bool driverShouldSkipDraw({
