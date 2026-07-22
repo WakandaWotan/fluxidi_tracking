@@ -43,6 +43,43 @@ class DriverNavPresentationModeController {
   }
 }
 
+/// NAV-PARKING-2 Commit 4: latest-wins owner for the temporary Tellers camera
+/// viewport/padding. Pure and side-effect free — it only tracks a monotonic
+/// generation so a stale Tellers camera callback (from a viewport that has
+/// since been closed or superseded) can be rejected, and closing can never
+/// resurrect an old viewport. It does NOT create a camera/GPS owner.
+class DriverTellersViewportController {
+  int _generation = 0;
+  bool _active = false;
+
+  bool get active => _active;
+  int get generation => _generation;
+
+  /// Activate (or re-activate latest-wins) the Tellers viewport. Returns the
+  /// token the caller must present when a deferred camera callback fires.
+  int open() {
+    _generation += 1;
+    _active = true;
+    return _generation;
+  }
+
+  /// Restore normal follow presentation. Bumps the generation so any pending
+  /// Tellers viewport callback becomes stale and cannot resurrect the viewport.
+  void close() {
+    if (!_active && _generation == 0) return;
+    _generation += 1;
+    _active = false;
+  }
+
+  /// True only when [token] belongs to the current active viewport.
+  bool isCallbackValid(int token) => _active && token == _generation;
+
+  void reset() {
+    _generation += 1;
+    _active = false;
+  }
+}
+
 /// Snapshot of authoritative live values for the Tellers screen.
 ///
 /// Money is already formatted by the existing display policy; this model does
@@ -85,6 +122,7 @@ class DriverRideMetersView extends StatelessWidget {
     this.compact = false,
     this.isTablet = false,
     this.isLandscape = false,
+    this.showLiveWindow = true,
   });
 
   final DriverRideMetersSnapshot snapshot;
@@ -97,35 +135,32 @@ class DriverRideMetersView extends StatelessWidget {
   final bool isTablet;
   final bool isLandscape;
 
+  /// NAV-PARKING-2 Commit 4: when true the layout reserves a transparent
+  /// cut-out region over the retained MapWidget so the single mounted map is
+  /// the live navigation window. No second MapWidget is ever created here.
+  final bool showLiveWindow;
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<DriverThemeVariant>(
       valueListenable: themeListenable ?? driverThemeNotifier,
       builder: (context, variant, _) {
         final palette = paletteForDriverTheme(variant);
+        // NAV-PARKING-2 Commit 4: transparent root so the retained MapWidget
+        // shows through the live navigation window. Meters/status/controls sit
+        // in their own opaque panels.
         return Material(
           key: const ValueKey<String>('driver_tellers_view'),
-          color: palette.background,
+          type: MaterialType.transparency,
           child: SafeArea(
             child: Padding(
               padding: EdgeInsets.symmetric(
-                horizontal: isTablet ? 28 : 16,
-                vertical: isLandscape ? 10 : 14,
+                horizontal: isTablet ? 20 : 12,
+                vertical: isLandscape ? 8 : 12,
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildHeader(palette),
-                  SizedBox(height: isLandscape ? 10 : 16),
-                  Expanded(child: _buildMetersGrid(palette)),
-                  if (_hasSecondary(snapshot)) ...[
-                    SizedBox(height: isLandscape ? 8 : 12),
-                    _buildSecondaryRow(palette),
-                  ],
-                  SizedBox(height: isLandscape ? 8 : 12),
-                  _buildFooterActions(palette),
-                ],
-              ),
+              child: (isLandscape && showLiveWindow)
+                  ? _buildLandscapeSplit(palette)
+                  : _buildPortraitStack(palette),
             ),
           ),
         );
@@ -133,11 +168,151 @@ class DriverRideMetersView extends StatelessWidget {
     );
   }
 
-  bool _hasSecondary(DriverRideMetersSnapshot s) {
-    return s.etaText.trim().isNotEmpty ||
-        s.remainingDistanceText.trim().isNotEmpty ||
-        s.tariffName.trim().isNotEmpty ||
-        s.companyName.trim().isNotEmpty;
+  /// Tablet/phone landscape: meters panel + status + controls on the left, a
+  /// substantial live navigation window on the right.
+  Widget _buildLandscapeSplit(DriverThemePalette palette) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          flex: isTablet ? 5 : 6,
+          child: _buildMetersPanel(palette, withControls: true),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          flex: isTablet ? 6 : 5,
+          child: _buildLiveWindow(palette),
+        ),
+      ],
+    );
+  }
+
+  /// Portrait (and no-live-window): meters panel on top, live window below,
+  /// compact status + controls.
+  Widget _buildPortraitStack(DriverThemePalette palette) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildMetersPanel(palette, withControls: !showLiveWindow),
+        if (showLiveWindow) ...[
+          SizedBox(height: isLandscape ? 8 : 12),
+          Expanded(child: _buildLiveWindow(palette)),
+          SizedBox(height: isLandscape ? 8 : 12),
+          _buildFooterActions(palette),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildMetersPanel(
+    DriverThemePalette palette, {
+    required bool withControls,
+  }) {
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildHeader(palette),
+        SizedBox(height: isLandscape ? 8 : 12),
+        _buildMetersGrid(palette),
+        SizedBox(height: isLandscape ? 6 : 10),
+        _buildStatusChip(palette),
+        if (withControls) ...[
+          SizedBox(height: isLandscape ? 8 : 12),
+          _buildFooterActions(palette),
+        ],
+      ],
+    );
+    return Container(
+      key: const ValueKey<String>('driver_tellers_meters_panel'),
+      padding: EdgeInsets.all(isTablet ? 14 : 10),
+      decoration: BoxDecoration(
+        color: palette.background.withOpacity(palette.isDark ? 0.92 : 0.96),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: palette.border.withOpacity(0.5)),
+      ),
+      child: content,
+    );
+  }
+
+  /// NAV-PARKING-2 Commit 4: transparent, bordered live navigation window. The
+  /// single mounted MapWidget behind the Tellers overlay shows through here —
+  /// current marker, selected route, next maneuver and distance remain visible.
+  Widget _buildLiveWindow(DriverThemePalette palette) {
+    return Container(
+      key: const ValueKey<String>('driver_tellers_live_window'),
+      constraints: const BoxConstraints(minHeight: 120),
+      decoration: BoxDecoration(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: palette.accent.withOpacity(0.7),
+          width: 2,
+        ),
+      ),
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: palette.background.withOpacity(palette.isDark ? 0.55 : 0.7),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              'Live navigatie',
+              style: TextStyle(
+                fontSize: isTablet ? 12 : 11,
+                fontWeight: FontWeight.w700,
+                color: palette.textPrimary.withOpacity(0.85),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusChip(DriverThemePalette palette) {
+    // NAV-PARKING-2 Commit 4: status is a small secondary element, never a
+    // fifth equal meter tile.
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        key: const ValueKey<String>('driver_tellers_status'),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: palette.surface.withOpacity(palette.isDark ? 0.8 : 0.92),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: palette.border.withOpacity(0.6)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: isWaiting ? const Color(0xFFFFB020) : palette.accent,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              snapshot.statusText,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: isTablet ? 13 : 12,
+                fontWeight: FontWeight.w700,
+                color: palette.textPrimary.withOpacity(0.85),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildHeader(DriverThemePalette palette) {
@@ -173,130 +348,64 @@ class DriverRideMetersView extends StatelessWidget {
     );
   }
 
+  /// NAV-PARKING-2 Commit 4: exactly FOUR principal meter tiles in a balanced
+  /// 2x2 area (Tarief, Afstand, Ritduur, Wachttijd). Status is rendered
+  /// separately as a smaller element — never a fifth equal tile.
   Widget _buildMetersGrid(DriverThemePalette palette) {
-    final tiles = <Widget>[
-      _MeterTile(
-        key: const ValueKey('teller_fare'),
-        label: 'Tarief',
-        value: snapshot.fareText,
-        semanticLabel: 'Tarief ${snapshot.fareText}',
-        palette: palette,
-        emphasize: true,
-        isTablet: isTablet,
-        isLandscape: isLandscape,
-      ),
-      _MeterTile(
-        key: const ValueKey('teller_distance'),
-        label: 'Afstand',
-        value: snapshot.distanceTravelledText,
-        semanticLabel: 'Afstand gereden ${snapshot.distanceTravelledText}',
-        palette: palette,
-        isTablet: isTablet,
-        isLandscape: isLandscape,
-      ),
-      _MeterTile(
-        key: const ValueKey('teller_duration'),
-        label: 'Ritduur',
-        value: snapshot.rideDurationText,
-        semanticLabel: 'Ritduur ${snapshot.rideDurationText}',
-        palette: palette,
-        isTablet: isTablet,
-        isLandscape: isLandscape,
-      ),
-      _MeterTile(
-        key: const ValueKey('teller_waiting'),
-        label: 'Wachttijd',
-        value: snapshot.waitingTimeText,
-        semanticLabel: 'Wachttijd ${snapshot.waitingTimeText}',
-        palette: palette,
-        isTablet: isTablet,
-        isLandscape: isLandscape,
-      ),
-      _MeterTile(
-        key: const ValueKey('teller_status'),
-        label: 'Status',
-        value: snapshot.statusText,
-        semanticLabel: 'Status ${snapshot.statusText}',
-        palette: palette,
-        isTablet: isTablet,
-        isLandscape: isLandscape,
-      ),
-    ];
-
-    if (isLandscape && !isTablet) {
-      return Row(
-        children: [
-          for (var i = 0; i < tiles.length; i++) ...[
-            if (i > 0) const SizedBox(width: 8),
-            Expanded(child: tiles[i]),
-          ],
-        ],
-      );
-    }
-
-    if (isTablet) {
-      return GridView.count(
-        crossAxisCount: isLandscape ? 3 : 2,
-        mainAxisSpacing: 14,
-        crossAxisSpacing: 14,
-        childAspectRatio: isLandscape ? 1.55 : 1.35,
-        physics: const NeverScrollableScrollPhysics(),
-        children: tiles,
-      );
-    }
-
-    // Phone portrait: 2-column grid for the five essentials (last spans).
-    return Column(
-      children: [
-        Expanded(
-          child: Row(
-            children: [
-              Expanded(child: tiles[0]),
-              const SizedBox(width: 10),
-              Expanded(child: tiles[1]),
-            ],
-          ),
-        ),
-        const SizedBox(height: 10),
-        Expanded(
-          child: Row(
-            children: [
-              Expanded(child: tiles[2]),
-              const SizedBox(width: 10),
-              Expanded(child: tiles[3]),
-            ],
-          ),
-        ),
-        const SizedBox(height: 10),
-        Expanded(child: tiles[4]),
-      ],
+    final fare = _MeterTile(
+      key: const ValueKey('teller_fare'),
+      label: 'Tarief',
+      value: snapshot.fareText,
+      semanticLabel: 'Tarief ${snapshot.fareText}',
+      palette: palette,
+      emphasize: true,
+      isTablet: isTablet,
+      isLandscape: isLandscape,
     );
-  }
+    final distance = _MeterTile(
+      key: const ValueKey('teller_distance'),
+      label: 'Afstand',
+      value: snapshot.distanceTravelledText,
+      semanticLabel: 'Afstand gereden ${snapshot.distanceTravelledText}',
+      palette: palette,
+      isTablet: isTablet,
+      isLandscape: isLandscape,
+    );
+    final duration = _MeterTile(
+      key: const ValueKey('teller_duration'),
+      label: 'Ritduur',
+      value: snapshot.rideDurationText,
+      semanticLabel: 'Ritduur ${snapshot.rideDurationText}',
+      palette: palette,
+      isTablet: isTablet,
+      isLandscape: isLandscape,
+    );
+    final waiting = _MeterTile(
+      key: const ValueKey('teller_waiting'),
+      label: 'Wachttijd',
+      value: snapshot.waitingTimeText,
+      semanticLabel: 'Wachttijd ${snapshot.waitingTimeText}',
+      palette: palette,
+      isTablet: isTablet,
+      isLandscape: isLandscape,
+    );
 
-  Widget _buildSecondaryRow(DriverThemePalette palette) {
-    final bits = <String>[];
-    if (snapshot.etaText.trim().isNotEmpty) {
-      bits.add('ETA ${snapshot.etaText.trim()}');
-    }
-    if (snapshot.remainingDistanceText.trim().isNotEmpty) {
-      bits.add('Rest ${snapshot.remainingDistanceText.trim()}');
-    }
-    if (snapshot.tariffName.trim().isNotEmpty) {
-      bits.add(snapshot.tariffName.trim());
-    }
-    if (snapshot.companyName.trim().isNotEmpty) {
-      bits.add(snapshot.companyName.trim());
-    }
-    return Text(
-      bits.join('  ·  '),
-      maxLines: 2,
-      overflow: TextOverflow.ellipsis,
-      textAlign: TextAlign.center,
-      style: TextStyle(
-        fontSize: isTablet ? 14 : 12,
-        fontWeight: FontWeight.w600,
-        color: palette.textPrimary.withOpacity(0.72),
-      ),
+    Widget row(Widget a, Widget b) => Row(
+          children: [
+            Expanded(child: a),
+            const SizedBox(width: 10),
+            Expanded(child: b),
+          ],
+        );
+
+    // Balanced 2x2 in all layouts.
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        row(fare, distance),
+        const SizedBox(height: 10),
+        row(duration, waiting),
+      ],
     );
   }
 
@@ -385,6 +494,7 @@ class _MeterTile extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               label,

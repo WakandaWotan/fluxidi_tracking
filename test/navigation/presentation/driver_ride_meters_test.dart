@@ -23,6 +23,53 @@ void main() {
     });
   });
 
+  group('DriverTellersViewportController', () {
+    test('open activates a latest-wins viewport with a fresh token', () {
+      final c = DriverTellersViewportController();
+      expect(c.active, isFalse);
+      final t1 = c.open();
+      expect(c.active, isTrue);
+      expect(c.isCallbackValid(t1), isTrue);
+      // Re-opening (latest-wins) invalidates the previous token.
+      final t2 = c.open();
+      expect(t2, greaterThan(t1));
+      expect(c.isCallbackValid(t1), isFalse);
+      expect(c.isCallbackValid(t2), isTrue);
+    });
+
+    test('close invalidates pending callbacks and cannot resurrect', () {
+      final c = DriverTellersViewportController();
+      final t = c.open();
+      c.close();
+      expect(c.active, isFalse);
+      // A deferred callback from the open viewport is now stale.
+      expect(c.isCallbackValid(t), isFalse);
+    });
+
+    test('repeated open/close is idempotent and stays consistent', () {
+      final c = DriverTellersViewportController();
+      c.open();
+      c.open();
+      c.close();
+      c.close();
+      expect(c.active, isFalse);
+      final t = c.open();
+      expect(c.active, isTrue);
+      expect(c.isCallbackValid(t), isTrue);
+    });
+
+    test('reset drops the viewport for a clean stop/start cycle', () {
+      final c = DriverTellersViewportController();
+      final t = c.open();
+      c.reset();
+      expect(c.active, isFalse);
+      expect(c.isCallbackValid(t), isFalse);
+      // New session opens cleanly.
+      final t2 = c.open();
+      expect(c.isCallbackValid(t2), isTrue);
+    });
+  });
+
   group('DriverRideMetersView', () {
     setUp(() {
       driverThemeNotifier.value = DriverThemeVariant.midnightBlue;
@@ -198,9 +245,14 @@ void main() {
           theme: DriverThemeVariant.midnightBlue,
         ),
       );
-      final before = tester
-          .widget<Material>(find.byKey(const ValueKey('driver_tellers_view')))
-          .color;
+      Color? panelColor() {
+        final container = tester.widget<Container>(
+          find.byKey(const ValueKey('driver_tellers_meters_panel')),
+        );
+        return (container.decoration as BoxDecoration?)?.color;
+      }
+
+      final before = panelColor();
 
       await tester.pumpWidget(
         harness(
@@ -211,9 +263,7 @@ void main() {
         ),
       );
       await tester.pump();
-      final after = tester
-          .widget<Material>(find.byKey(const ValueKey('driver_tellers_view')))
-          .color;
+      final after = panelColor();
       expect(after, isNot(equals(before)));
       expect(find.text('NAV_OWNER'), findsOneWidget);
     });
@@ -252,6 +302,100 @@ void main() {
         expect(find.text('Tellers'), findsOneWidget);
       }
       addTearDown(() => tester.binding.setSurfaceSize(null));
+    });
+
+    testWidgets('exactly four principal meter tiles; status is secondary', (
+      tester,
+    ) async {
+      final mode = DriverNavPresentationModeController()..showTellers();
+      const snap = DriverRideMetersSnapshot(
+        fareText: '€ 7.20',
+        distanceTravelledText: '4.0 km',
+        rideDurationText: '00:08:30',
+        waitingTimeText: '00:00:45',
+        statusText: 'Rit gepauzeerd',
+      );
+      await tester.pumpWidget(
+        harness(
+          snapshot: snap,
+          navOwner: const SizedBox.shrink(),
+          mode: mode,
+        ),
+      );
+      await tester.pump();
+
+      // Exactly the four principal tiles.
+      expect(find.byKey(const ValueKey('teller_fare')), findsOneWidget);
+      expect(find.byKey(const ValueKey('teller_distance')), findsOneWidget);
+      expect(find.byKey(const ValueKey('teller_duration')), findsOneWidget);
+      expect(find.byKey(const ValueKey('teller_waiting')), findsOneWidget);
+      // No fifth equal status tile.
+      expect(find.byKey(const ValueKey('teller_status')), findsNothing);
+      // Status exists as a smaller secondary element and is localized (Dutch).
+      expect(find.byKey(const ValueKey('driver_tellers_status')), findsOneWidget);
+      expect(find.text('Rit gepauzeerd'), findsOneWidget);
+      expect(find.text('Ride active'), findsNothing);
+    });
+
+    testWidgets('live navigation window is present and transparent', (
+      tester,
+    ) async {
+      final mode = DriverNavPresentationModeController()..showTellers();
+      const snap = DriverRideMetersSnapshot(
+        fareText: '€ 1.00',
+        distanceTravelledText: '0.1 km',
+        rideDurationText: '00:20',
+        waitingTimeText: '00:00',
+        statusText: 'Rit actief',
+      );
+      await tester.pumpWidget(
+        harness(
+          snapshot: snap,
+          navOwner: const ColoredBox(color: Colors.green, child: Text('MAP')),
+          mode: mode,
+        ),
+      );
+      await tester.pump();
+
+      final windowFinder = find.byKey(
+        const ValueKey('driver_tellers_live_window'),
+      );
+      expect(windowFinder, findsOneWidget);
+      // The window itself paints no opaque fill — the map behind shows through.
+      final container = tester.widget<Container>(windowFinder);
+      final decoration = container.decoration as BoxDecoration?;
+      expect(decoration?.color, Colors.transparent);
+      // Retained map owner still mounted beneath.
+      expect(find.text('MAP'), findsOneWidget);
+    });
+
+    testWidgets('showLiveWindow=false reserves no live window', (tester) async {
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(size: Size(390, 844)),
+          child: MaterialApp(
+            home: Scaffold(
+              body: DriverRideMetersView(
+                snapshot: const DriverRideMetersSnapshot(
+                  fareText: '€ 1.00',
+                  distanceTravelledText: '0.1 km',
+                  rideDurationText: '00:20',
+                  waitingTimeText: '00:00',
+                  statusText: 'Rit actief',
+                ),
+                onBackToNavigation: () {},
+                showLiveWindow: false,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('driver_tellers_live_window')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('teller_fare')), findsOneWidget);
     });
 
     test('route version / GPS / fare ownership are not part of this view', () {

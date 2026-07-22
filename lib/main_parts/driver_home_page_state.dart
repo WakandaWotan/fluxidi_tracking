@@ -330,6 +330,12 @@ class _DriverHomePageState extends State<DriverHomePage>
   // MapWidget, GPS, fare and waiting ownership stay mounted/alive.
   final DriverNavPresentationModeController _navPresentationMode =
       DriverNavPresentationModeController();
+  // NAV-PARKING-2 Commit 4: latest-wins owner for the temporary Tellers camera
+  // viewport. Tracks a monotonic generation so a stale Tellers camera callback
+  // is rejected and closing can never resurrect an old viewport. It never
+  // creates a camera/GPS owner — the single mounted map remains authoritative.
+  final DriverTellersViewportController _tellersViewport =
+      DriverTellersViewportController();
   String? _lastNav3dFirstChoiceLogSignature;
   // NAV-UI-R6E: taxi visual captured just before setStyleURI so the marker can
   // be recreated immediately after style load without waiting for GPS.
@@ -7584,6 +7590,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _cameraInFlightLifecycle.invalidate(reason: 'navigation_stop');
     // Tellers is presentation-only — return to Navigatie when tracking stops.
     _navPresentationMode.reset();
+    // NAV-PARKING-2 Commit 4: drop any Tellers viewport so a new session starts
+    // clean and no stale viewport callback survives a stop/start cycle.
+    _tellersViewport.reset();
     _gpsQualityWeak = false;
     _lastSmoothedCameraBearing = null;
     _stopStreetlevelFollowPump();
@@ -17828,10 +17837,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     String status;
     if (_isWaiting) {
       status = _tr(
-        nl: 'Wachten',
-        en: 'Waiting',
-        fr: 'Attente',
-        es: 'Espera',
+        nl: 'Rit gepauzeerd',
+        en: 'Ride paused',
+        fr: 'Course en pause',
+        es: 'Viaje en pausa',
       );
     } else if (_liveRideActive) {
       status = _tr(
@@ -17868,12 +17877,29 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   void _openTellersView() {
     if (!_navPresentationMode.showTellers()) return;
+    // NAV-PARKING-2 Commit 4: activate a latest-wins Tellers viewport. The
+    // navigation session (route, GPS, fare, timers, View level) stays alive;
+    // only the presentation changes and the map becomes the live window.
+    _tellersViewport.open();
+    _logNavBounded(
+      'NAV_TELLERS',
+      'event=open viewportGeneration=${_tellersViewport.generation}',
+      intervalMs: 1,
+    );
     if (!mounted) return;
     setState(() {});
   }
 
   void _closeTellersView() {
     if (!_navPresentationMode.showNavigation()) return;
+    // NAV-PARKING-2 Commit 4: restore normal follow presentation and invalidate
+    // any pending Tellers camera callback so an old viewport cannot resurrect.
+    _tellersViewport.close();
+    _logNavBounded(
+      'NAV_TELLERS',
+      'event=close viewportGeneration=${_tellersViewport.generation}',
+      intervalMs: 1,
+    );
     if (!mounted) return;
     setState(() {});
   }
@@ -17944,6 +17970,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         isTablet: isTablet,
         isLandscape: isLandscape,
         isWaiting: _isWaiting,
+        // NAV-PARKING-2 Commit 4: reserve a transparent live-navigation window
+        // over the single mounted MapWidget. No second MapWidget is created.
+        showLiveWindow: true,
         onBackToNavigation: _closeTellersView,
         onStop: _liveRideActive ? _stopTrip : null,
         onToggleWait: _liveRideActive
