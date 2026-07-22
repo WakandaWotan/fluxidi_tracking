@@ -656,6 +656,24 @@ class _DriverHomePageState extends State<DriverHomePage>
   final NavComplexityGuard _navComplexityGuard = NavComplexityGuard();
   NavComplexityGuardState _lastNavCautionState =
       NavComplexityGuardState.inactive;
+  // NAV-PARKING-2 Commit 1: bounded startup readiness for parking/private-access
+  // departures — suppresses expected startup uncertainty (complexity / opposite
+  // reroute storms) until reliable movement/matching exists.
+  final NavStartupBootstrapGate _navStartupBootstrap = NavStartupBootstrapGate();
+  NavStartupBootstrapPhase _lastNavBootstrapPhase =
+      NavStartupBootstrapPhase.started;
+  DateTime? _navSessionStartedAt;
+  double? _navBootstrapPrevLat;
+  double? _navBootstrapPrevLon;
+  // NAV-PARKING-2 Commit 1: bounded destination-proximity arrival, so standing
+  // on a parking lot at the destination confirms arrival without one large
+  // unconditional radius. Never overwrites the original/routable destination.
+  final NavParkingArrivalEvaluator _navParkingArrival =
+      NavParkingArrivalEvaluator();
+  final NavStartupOrientationSelector _navStartupOrientation =
+      NavStartupOrientationSelector();
+  bool _navParkingArrivalConfirmed = false;
+  NavArrivalEvent? _lastNavArrivalEvent;
   String? _lastNavR14ComplexitySignature;
   final NavComplexityIntelligenceExporter _navComplexityIntelligenceExporter =
       const NavComplexityIntelligenceExporter();
@@ -913,6 +931,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     _lastLaneResolveDiag = null;
     _lastRouteSnap = null;
     _lastMovementBearing = null;
+    // NAV-PARKING-2 Commit 1: a previous ride's heading must never seed the new
+    // session's camera/marker. Clear the last GPS/course bearing at every
+    // progress reset so startup orientation starts from fresh evidence only.
+    _lastKnownBearing = 0.0;
+    _navParkingArrival.reset();
+    _navParkingArrivalConfirmed = false;
+    _lastNavArrivalEvent = null;
     _useMatchedVisual = false;
     _matchEnterHits = 0;
     _matchExitHits = 0;
@@ -7371,6 +7396,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     // buildDriverTrackingLocationSettings() profile is retained for
     // non-navigation code paths that may re-use it.
     final settings = buildDriverActiveNavigationLocationSettings();
+    // NAV-PARKING-2 Commit 1: arm the bounded startup readiness gate for this
+    // session so a parking/private-access departure does not immediately storm
+    // complexity / opposite-direction reroutes on the first unmatched samples.
+    _navSessionStartedAt = DateTime.now();
+    _navStartupBootstrap.start();
+    _lastNavBootstrapPhase = NavStartupBootstrapPhase.started;
+    _navBootstrapPrevLat = null;
+    _navBootstrapPrevLon = null;
+    _lastKnownBearing = 0.0;
+    _lastMovementBearing = null;
     _navGpsSubscriptionGeneration += 1;
     _activeGeolocatorSubscriptionCount = 1;
     debugPrint(
@@ -7529,6 +7564,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     _startPos = null;
     _lastFollowCameraAt = null;
+    // NAV-PARKING-2 Commit 1: tear down startup readiness + proximity arrival so
+    // no state (including a leaked heading) survives into the next session.
+    _navStartupBootstrap.reset();
+    _navParkingArrival.reset();
+    _navParkingArrivalConfirmed = false;
+    _lastNavArrivalEvent = null;
+    _navSessionStartedAt = null;
+    _navBootstrapPrevLat = null;
+    _navBootstrapPrevLon = null;
+    _lastKnownBearing = 0.0;
     // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: invalidate clears owner + pending and
     // bumps the run generation so any in-flight flyTo completing after stop
     // becomes a stale no-op.
@@ -13332,8 +13377,125 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  // NAV-PARKING-2 Commit 1: update the bounded startup-readiness gate and the
+  // destination-proximity arrival evaluator for this fix. Runs before the
+  // complexity/reroute decisions consume `_navStartupBootstrap.ready` and
+  // `_navParkingArrivalConfirmed`. Pure engines do the deciding; this method
+  // only feeds them live evidence and records PII-free diagnostics.
+  void _updateNavStartupAndArrival(geo.Position pos) {
+    final startedAt = _navSessionStartedAt;
+    final elapsedMs = startedAt == null
+        ? 0
+        : DateTime.now().difference(startedAt).inMilliseconds;
+    final progress = _lastNavRouteProgress;
+    final speedKmh = _speedKmhFor(pos);
+    final fixAgeMs = DateTime.now()
+        .difference(pos.timestamp)
+        .inMilliseconds
+        .abs();
+    final coherent = _navBootstrapPositionCoherent(pos);
+    final routeEntry =
+        (progress?.forwardProgress ?? false) &&
+        (progress?.snapDistanceM ?? 1e9) <= 30.0;
+    final bootstrapResult = _navStartupBootstrap.evaluate(
+      NavStartupBootstrapSample(
+        elapsedSinceStartMs: elapsedMs,
+        hasActiveSessionRoute: _routeCoords.isNotEmpty,
+        gpsFixAgeMs: fixAgeMs,
+        gpsAccuracyM: pos.accuracy,
+        speedKmh: speedKmh,
+        hasUsableCourse: pos.heading.isFinite && pos.heading >= 0 &&
+            speedKmh >= 6.0,
+        mapMatched: _useMatchedVisual,
+        routeEntryProgressing: routeEntry,
+        coherentWithPreviousSample: coherent,
+      ),
+    );
+    if (bootstrapResult.changed || bootstrapResult.phase != _lastNavBootstrapPhase) {
+      _lastNavBootstrapPhase = bootstrapResult.phase;
+      _logNavBounded(
+        'NAV_STARTUP_BOOTSTRAP',
+        'phase=${bootstrapResult.phase.label} ready=${bootstrapResult.ready}',
+        intervalMs: 1,
+      );
+    }
+    _navBootstrapPrevLat = pos.latitude;
+    _navBootstrapPrevLon = pos.longitude;
+
+    // Destination-proximity arrival only makes sense with an active route and a
+    // known original/trusted dropoff.
+    final dropoff = _trustedNavigationDropoffCoordinate();
+    if (_liveRideActive && _routeCoords.isNotEmpty && dropoff != null) {
+      final toOriginal = geo.Geolocator.distanceBetween(
+        pos.latitude,
+        pos.longitude,
+        dropoff.lat,
+        dropoff.lon,
+      );
+      final endpoint = _routeCoords.last;
+      final toEndpoint = geo.Geolocator.distanceBetween(
+        pos.latitude,
+        pos.longitude,
+        endpoint.lat,
+        endpoint.lon,
+      );
+      final totalM = (_routeKm ?? 0.0) * 1000.0;
+      final alongM = progress?.distanceAlongRouteM ?? 0.0;
+      final remainingM = (totalM - alongM).clamp(0.0, double.infinity);
+      final arrivalResult = _navParkingArrival.evaluate(
+        NavParkingArrivalInput(
+          timestampMs: DateTime.now().millisecondsSinceEpoch,
+          distanceToOriginalDestinationM: toOriginal,
+          distanceToRouteEndpointM: toEndpoint,
+          remainingRouteM: remainingM,
+          gpsAccuracyM: pos.accuracy,
+          speedKmh: speedKmh,
+          progressingTowardDestination: progress?.forwardProgress ?? false,
+        ),
+      );
+      final event = arrivalResult.event;
+      if (event != null && event != _lastNavArrivalEvent) {
+        _lastNavArrivalEvent = event;
+        _logNavBounded(
+          'NAV_ARRIVAL',
+          'event=${event.label} dwellMs=${arrivalResult.dwellMs}',
+          intervalMs: 1,
+        );
+      }
+      if (arrivalResult.arrived && !_navParkingArrivalConfirmed) {
+        // Parking-site arrival is now authoritative: clear contradictory
+        // maneuver/lane/complexity state and let the presentation declare
+        // arrival. Fare/ride ownership and trip finalization are untouched.
+        _navParkingArrivalConfirmed = true;
+        _activeLaneGuidance = null;
+        _resetNavComplexityState();
+      }
+    }
+  }
+
+  bool _navBootstrapPositionCoherent(geo.Position pos) {
+    final lat = _navBootstrapPrevLat;
+    final lon = _navBootstrapPrevLon;
+    if (lat == null || lon == null) return false;
+    final d = geo.Geolocator.distanceBetween(lat, lon, pos.latitude, pos.longitude);
+    // Reject teleports/large GPS jumps; a coherent sample is spatially close.
+    return d.isFinite && d <= 120.0;
+  }
+
   void _updateNavComplexityForPosition(geo.Position pos) {
     if (!_isActiveDriverNavEngineContext()) {
+      final wasShowing = _lastNavCautionState.active;
+      _resetNavComplexityState();
+      if (wasShowing && mounted) setState(() {});
+      return;
+    }
+    _updateNavStartupAndArrival(pos);
+    // During the bounded startup bootstrap, expected startup uncertainty (first
+    // unmatched parking samples, stale/stationary heading) must not surface as
+    // a "complex road situation". Once destination-proximity arrival is
+    // authoritative, contradictory complexity is likewise withheld. This gates
+    // evaluation only — the guard's scoring/activation logic is unchanged.
+    if (!_navStartupBootstrap.ready || _navParkingArrivalConfirmed) {
       final wasShowing = _lastNavCautionState.active;
       _resetNavComplexityState();
       if (wasShowing && mounted) setState(() {});
@@ -14212,6 +14374,28 @@ class _DriverHomePageState extends State<DriverHomePage>
     final reason = _isRouteDeviationOffRouteReason()
         ? _offRouteReason
         : 'off_route';
+    // NAV-PARKING-2 Commit 1: once bounded destination-proximity arrival is
+    // authoritative, suppress contradictory close-destination rerouting.
+    if (_navParkingArrivalConfirmed) {
+      _logNavBounded(
+        'NAV_ARRIVAL',
+        'event=close_destination_reroute_suppressed reason=$reason',
+        intervalMs: 1500,
+      );
+      return;
+    }
+    // NAV-PARKING-2 Commit 1: during the bounded startup bootstrap (departing a
+    // parking lot / private access road), the first unmatched samples and a
+    // stale/stationary heading must not storm opposite-direction / wrong-street
+    // reroutes. Genuine severe deviations resume once readiness is confirmed.
+    if (!_navStartupBootstrap.ready) {
+      _logNavBounded(
+        'NAV_STARTUP_BOOTSTRAP',
+        'phase=${_navStartupBootstrap.phase.label} reroute_suppressed reason=$reason',
+        intervalMs: 1500,
+      );
+      return;
+    }
     // FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 (Phase 1, Part F): block
     // opposite-direction / backward-progress reroutes during the post-
     // reroute stabilisation window (needs >=2 fresh in-generation samples
@@ -16778,6 +16962,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       previousActiveBanner: _activeBanner,
       previousLaneGuidance: _activeLaneGuidance,
       navStepsLoading: _navStepsLoading,
+      destinationReached: _navParkingArrivalConfirmed,
     );
     final snapshot = presentation.snapshot;
     _navInstructionSnapshot = snapshot;

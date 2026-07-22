@@ -530,6 +530,10 @@ buildDriverNavInstructionPresentation({
   DriverResolvedLaneGuidance? previousLaneGuidance,
   bool navStepsLoading = false,
   bool? laneGuidanceEnabledForEvaluation,
+  // NAV-PARKING-2 Commit 1: when bounded destination-proximity arrival is
+  // authoritative, the maneuver banner + lane strip are cleared so road
+  // guidance toward surrounding public-road segments is no longer presented.
+  bool destinationReached = false,
 }) {
   if (routeSteps.isEmpty) {
     final empty = navStepsLoading
@@ -571,6 +575,7 @@ buildDriverNavInstructionPresentation({
               driverNavLaneGuidanceFeatureEnabled,
           previous: previousLaneGuidance,
           clearBanners: true,
+          destinationReached: destinationReached,
         ),
       ),
       bannerRemainingAlongRouteM: null,
@@ -602,6 +607,7 @@ buildDriverNavInstructionPresentation({
       routeVersion: routeVersion,
       previous: previousActiveBanner,
       tr: tr,
+      destinationReached: destinationReached,
     ),
   );
 
@@ -614,6 +620,7 @@ buildDriverNavInstructionPresentation({
           laneGuidanceEnabledForEvaluation ??
           driverNavLaneGuidanceFeatureEnabled,
       previous: previousLaneGuidance,
+      destinationReached: destinationReached,
     ),
   );
 
