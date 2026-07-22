@@ -301,6 +301,14 @@ class _DriverHomePageState extends State<DriverHomePage>
   // NAV-SIGNAL-P0B2: async Mapbox route-render ownership epoch. Bumped on
   // accepted activation and on hard-clear render invalidation.
   int _routeRenderEpoch = 0;
+  // NAV-RIDE-BOUNDARY-ROUTE-OWNERSHIP-1: authoritative ride/session identity.
+  // Bumped on every ride start/stop/complete/cancel/dispose boundary so async
+  // style/route callbacks from a prior ride become no-ops.
+  int _navigationSessionGeneration = 0;
+  // NAV-RIDE-BOUNDARY: style request generation — N becomes stale when N+1 begins.
+  int _styleRequestGeneration = 0;
+  // Active route-render package owner for this session (full/completed/remaining).
+  RouteRenderOwnerPackage? _activeRouteRenderOwner;
   String? _lastNavR12BannerSignature;
   bool _mapboxLocationPuckRestoreEnabled = false;
   bool _mapboxLocationPuckSuppressedForNav = false;
@@ -718,8 +726,163 @@ class _DriverHomePageState extends State<DriverHomePage>
         reason: reason,
         renderEpoch: _routeRenderEpoch,
         activeRouteVersion: _routeStepsVersion,
+        sessionGeneration: _navigationSessionGeneration,
+        styleGeneration: _styleRequestGeneration,
       ),
     );
+  }
+
+  void _logNavRideBoundary({
+    required NavRideBoundaryEvent event,
+    String? extra,
+  }) {
+    debugPrint(
+      formatNavRideBoundaryDiag(
+        event: event,
+        sessionGeneration: _navigationSessionGeneration,
+        styleGeneration: _styleRequestGeneration,
+        routeVersion: _routeStepsVersion,
+        renderEpoch: _routeRenderEpoch,
+        extra: extra,
+      ),
+    );
+  }
+
+  void _logNavRouteRenderOwner({
+    required NavRouteRenderOwnerEvent event,
+    String? rejectionReason,
+  }) {
+    debugPrint(
+      formatNavRouteRenderOwnerDiag(
+        event: event,
+        sessionGeneration: _navigationSessionGeneration,
+        styleGeneration: _styleRequestGeneration,
+        routeVersion: _routeStepsVersion,
+        renderEpoch: _routeRenderEpoch,
+        rejectionReason: rejectionReason,
+      ),
+    );
+  }
+
+  /// Bump ride/session ownership. Prior async style/route work becomes stale.
+  int _bumpNavigationSessionGeneration({required String reason}) {
+    final prior = _navigationSessionGeneration;
+    _navigationSessionGeneration += 1;
+    if (prior > 0) {
+      _logNavRideBoundary(
+        event: NavRideBoundaryEvent.priorSessionInvalidated,
+        extra: 'reason=$reason prior=$prior',
+      );
+    }
+    return _navigationSessionGeneration;
+  }
+
+  /// Idempotent hard clear at a ride boundary. Invalidates render ownership,
+  /// clears route geometry/markers/banner/lane/progress/reroute state, and
+  /// drops pending style-restore eligibility for the prior session. Preserves
+  /// user preferences (map style choice, vehicle, View level).
+  void _hardClearAtRideBoundary({
+    required String reason,
+    bool bumpSession = false,
+    bool renderAlreadyInvalidated = false,
+  }) {
+    if (bumpSession) {
+      _bumpNavigationSessionGeneration(reason: reason);
+    }
+    // Style generation advances so in-flight style restores from the prior
+    // session cannot repaint after this boundary.
+    _styleRequestGeneration += 1;
+    if (!renderAlreadyInvalidated) {
+      _invalidateRouteRenderEpoch(reason: reason);
+    }
+    _routeCleanupEpoch++;
+    _routeRequestGeneration.invalidateAll();
+    _resetNavProgressState(
+      clearRoute: true,
+      renderInvalidateReason: reason,
+      renderAlreadyInvalidated: true,
+    );
+    _lastRouteDrawSignature = '';
+    _lastRouteDrawAt = null;
+    _lastPinsDrawSignature = '';
+    _routeLineProgressTrimmed = false;
+    _lastRouteLineTrimProgressM = 0.0;
+    _lastRouteLineTrimAt = null;
+    _activeRouteRenderOwner = RouteRenderOwnerPackage(
+      sessionGeneration: _navigationSessionGeneration,
+      styleGeneration: _styleRequestGeneration,
+      routeVersion: _routeStepsVersion,
+      renderEpoch: _routeRenderEpoch,
+    );
+    _logNavRideBoundary(
+      event: NavRideBoundaryEvent.routeStateCleared,
+      extra: 'reason=$reason',
+    );
+    _logNavRouteRenderOwner(event: NavRouteRenderOwnerEvent.cleared);
+    // Fire-and-forget Mapbox annotation deletes; shared refs are nulled first
+    // so a concurrent draw cannot orphan a prior line via shared-field races.
+    final outline = _routeLineOutline;
+    final line = _routeLine;
+    final completed = _routeLineCompleted;
+    final mgr = _routeLineManager;
+    _routeLineOutline = null;
+    _routeLine = null;
+    _routeLineCompleted = null;
+    if (mgr != null) {
+      unawaited(() async {
+        try {
+          if (outline != null) await mgr.delete(outline);
+          if (line != null) await mgr.delete(line);
+          if (completed != null) await mgr.delete(completed);
+        } catch (_) {}
+      }());
+    }
+    unawaited(
+      _clearNavigationDestinationMarker(
+        action: 'clear',
+        result: 'cleared',
+        source: 'none',
+        reason: 'ride_boundary_$reason',
+      ),
+    );
+    final pickup = _pickupPin;
+    final dropoff = _dropoffPin;
+    final pinsMgr = _pinsPointManager;
+    _pickupPin = null;
+    _dropoffPin = null;
+    if (pinsMgr != null) {
+      unawaited(() async {
+        try {
+          if (pickup != null) await pinsMgr.delete(pickup);
+          if (dropoff != null) await pinsMgr.delete(dropoff);
+        } catch (_) {}
+      }());
+    }
+  }
+
+  void _activateRouteRenderOwnerPackage() {
+    final previous = _activeRouteRenderOwner;
+    final next = RouteRenderOwnerPackage(
+      sessionGeneration: _navigationSessionGeneration,
+      styleGeneration: _styleRequestGeneration,
+      routeVersion: _routeStepsVersion,
+      renderEpoch: _routeRenderEpoch,
+      hasFullRoute: _routeCoords.length >= 2,
+      hasCompletedRoute: _routeLineCompleted != null,
+      hasRemainingRoute: _routeCoords.length >= 2,
+      hasDestinationMarker: _destinationMarker != null,
+      hasManeuverBannerState: _activeBanner != null,
+      hasLaneState: _activeLaneGuidance != null,
+    );
+    _activeRouteRenderOwner = previous == null
+        ? next
+        : previous.replacedBy(next);
+    _logNavRouteRenderOwner(
+      event: previous == null || previous.isEmpty
+          ? NavRouteRenderOwnerEvent.activated
+          : NavRouteRenderOwnerEvent.replaced,
+    );
+    _logNavRideBoundary(event: NavRideBoundaryEvent.newRouteActivated);
   }
 
   void _resetNavProgressState({
@@ -1332,6 +1495,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       '[NAV_E1] steps=${navSteps.length} bannerSteps=${package.stepsWithBannerCount} '
       'laneSteps=${package.stepsWithLaneGuidanceCount}',
     );
+    _activateRouteRenderOwnerPackage();
     return true;
   }
 
@@ -1407,12 +1571,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                     : reason));
 
     void deactivateLogically() {
-      _routeCleanupEpoch++;
-      _invalidateRouteRenderEpoch(reason: renderReason);
-      _resetNavProgressState(
-        clearRoute: true,
-        renderInvalidateReason: renderReason,
-        renderAlreadyInvalidated: true,
+      // NAV-RIDE-BOUNDARY: bump session + hard-clear route ownership before any
+      // further awaits so late style/route callbacks cannot restore this ride.
+      _hardClearAtRideBoundary(
+        reason: renderReason,
+        bumpSession: true,
+        renderAlreadyInvalidated: false,
       );
       _routePhase = _RideRoutePhase.trip;
       _navStepsLoading = false;
@@ -2562,6 +2726,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   @override
   void dispose() {
     debugPrint('[MAP][DISPOSE] mounted=$mounted style=$_activeMapStyleUri');
+    // NAV-RIDE-BOUNDARY: dispose invalidates every in-flight style/route owner.
+    _hardClearAtRideBoundary(reason: 'dispose', bumpSession: true);
     _markerSelfHealTimer?.cancel();
     _markerSelfHealTimer = null;
     _driver3dActivationConfirmRetryTimer?.cancel();
@@ -3288,6 +3454,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         Navigator.of(context).pop();
       }
 
+      // NAV-RIDE-BOUNDARY: clear prior ride ownership before this booking activates.
+      _hardClearAtRideBoundary(reason: 'booking_open', bumpSession: true);
       setState(() {
         _activeBooking = b;
         _activeTripId = null;
@@ -3304,11 +3472,6 @@ class _DriverHomePageState extends State<DriverHomePage>
         _pingCount = 0;
         _lastPing = '—';
 
-        _resetNavProgressState(
-          clearRoute: true,
-          renderInvalidateReason: 'booking_switch',
-        );
-
         _cameraMode = _CameraMode.overview;
         _hasSwitchedToFollow = false;
         _followCar = false;
@@ -3320,6 +3483,10 @@ class _DriverHomePageState extends State<DriverHomePage>
 
         _trackingStartedAt = null;
       });
+      _logNavRideBoundary(
+        event: NavRideBoundaryEvent.sessionStarted,
+        extra: 'reason=booking_open',
+      );
       _setNavigationWakelock(true);
       await _applyMapStyleForMode();
 
@@ -3481,6 +3648,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (sessionId.isEmpty)
         throw Exception('No session_id returned by Worker.');
 
+      // NAV-RIDE-BOUNDARY: planned nav start owns a fresh session before style/route.
+      _hardClearAtRideBoundary(reason: 'planned_ride_start', bumpSession: true);
       setState(() {
         _activeTripId = sessionId;
         _activeDirectTripId = null;
@@ -3496,11 +3665,6 @@ class _DriverHomePageState extends State<DriverHomePage>
         _pingCount = 0;
         _lastPing = '—';
 
-        _resetNavProgressState(
-          clearRoute: true,
-          renderInvalidateReason: 'phase_change',
-        );
-
         _cameraMode = _CameraMode.follow;
         _hasSwitchedToFollow = true;
         _followCar = true;
@@ -3510,6 +3674,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         _waitStartedAt = null;
         _waitElapsed = Duration.zero;
       });
+      _logNavRideBoundary(
+        event: NavRideBoundaryEvent.sessionStarted,
+        extra: 'reason=planned_ride_start',
+      );
       _setNavigationWakelock(true);
       await _applyMapStyleForMode();
 
@@ -6935,6 +7103,19 @@ class _DriverHomePageState extends State<DriverHomePage>
     final kmAtStop = _kmDriven;
     var plannedSessionStopOk = false;
 
+    // NAV-RIDE-BOUNDARY: invalidate route ownership BEFORE network awaits so a
+    // fast next-ride start cannot race uncleared geometry / style restores.
+    _hardClearAtRideBoundary(reason: 'stop_begin', bumpSession: true);
+    if (mounted) {
+      setState(() {
+        _directRideActive = false;
+        _activeTripId = null;
+      });
+    } else {
+      _directRideActive = false;
+      _activeTripId = null;
+    }
+
     if (_isWaiting && _waitStartedAt != null) {
       final started = _waitStartedAt!;
       _waitElapsed += DateTime.now().difference(started);
@@ -7617,6 +7798,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
 
+    // NAV-RIDE-BOUNDARY: clear prior ride geometry/style restore BEFORE this
+    // session becomes live and before style apply can repaint stale coords.
+    _hardClearAtRideBoundary(reason: 'street_ride_start', bumpSession: true);
     setState(() {
       _directRideActive = true;
       _activeTripId = null;
@@ -7639,6 +7823,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       _waitStartedAt = null;
       _waitElapsed = Duration.zero;
     });
+    _logNavRideBoundary(
+      event: NavRideBoundaryEvent.sessionStarted,
+      extra: 'reason=street_ride_start',
+    );
     _setNavigationWakelock(true);
     await _applyMapStyleForMode();
     _startTrackingInternal();
@@ -8337,6 +8525,19 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     _pendingMapStyleUri = target;
     _mapStyleChanging = true;
+    // NAV-RIDE-BOUNDARY: style request N+1 makes N stale immediately.
+    _styleRequestGeneration += 1;
+    final styleOwnershipCapture = NavRouteOwnershipCapture(
+      sessionGeneration: _navigationSessionGeneration,
+      styleGeneration: _styleRequestGeneration,
+      routeVersion: _routeStepsVersion,
+      renderEpoch: _routeRenderEpoch,
+      navigationLive: _liveRideActive,
+      routeCoordCount: _routeCoords.length,
+    );
+    // Freeze geometry for this style owner — never read mutable coords later
+    // from a stale callback.
+    final frozenRouteCoords = List<_LonLat>.from(_routeCoords);
     // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: style swap invalidates camera ownership
     // so a stale Mapbox completion cannot block the restored session.
     _cameraInFlightLifecycle.invalidate(reason: 'style_change');
@@ -8406,6 +8607,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       _mapStyleChanging = false;
       final restore = await _restoreDriverVisualsAfterStyleChange(
         reason: 'style_swap',
+        ownershipCapture: styleOwnershipCapture,
+        frozenRouteCoords: frozenRouteCoords,
       );
       visualsRestoredMs = styleSw.elapsedMilliseconds;
       // NAV-R12-D: clear degraded state only once the marker actually
@@ -8606,37 +8809,93 @@ class _DriverHomePageState extends State<DriverHomePage>
   /// while waiting 3–4 seconds for the next GPS callback.
   Future<({bool route, bool taxi})> _restoreDriverVisualsAfterStyleChange({
     required String reason,
+    NavRouteOwnershipCapture? ownershipCapture,
+    List<_LonLat>? frozenRouteCoords,
   }) async {
     var restoredRoute = false;
-    // NAV-SIGNAL-P0B2: style restore is owned by render epoch + accepted content.
-    final restoreRenderEpoch = _routeRenderEpoch;
-    final restoreRouteStepsVersion = _routeStepsVersion;
-    final mayRestore = mayRestoreRouteRender(
-      routeCoordCount: _routeCoords.length,
-      capturedRenderEpoch: restoreRenderEpoch,
-      currentRenderEpoch: _routeRenderEpoch,
-      capturedRouteStepsVersion: restoreRouteStepsVersion,
-      currentRouteStepsVersion: _routeStepsVersion,
+    // NAV-RIDE-BOUNDARY: restore only when the captured style/session/route
+    // owners remain current. Prefer frozen geometry from the style request;
+    // if route version advanced during the swap but session+style still match,
+    // rebind to the active package coords once (not the stale frozen line).
+    final capture =
+        ownershipCapture ??
+        NavRouteOwnershipCapture(
+          sessionGeneration: _navigationSessionGeneration,
+          styleGeneration: _styleRequestGeneration,
+          routeVersion: _routeStepsVersion,
+          renderEpoch: _routeRenderEpoch,
+          navigationLive: _liveRideActive,
+          routeCoordCount: _routeCoords.length,
+        );
+    final currentSnapshot = NavRouteOwnershipSnapshot(
+      sessionGeneration: _navigationSessionGeneration,
+      styleGeneration: _styleRequestGeneration,
+      routeVersion: _routeStepsVersion,
+      renderEpoch: _routeRenderEpoch,
+      navigationLive: _liveRideActive,
+      activePackageSessionGeneration:
+          _activeRouteRenderOwner?.sessionGeneration,
+      activePackageRenderEpoch: _activeRouteRenderOwner?.renderEpoch,
     );
+    final decision = evaluateStyleRouteRestore(
+      capture: capture,
+      current: currentSnapshot,
+    );
+    List<_LonLat>? restoreCoords;
+    var restoreRenderEpoch = capture.renderEpoch;
+    if (decision.allowed) {
+      restoreCoords = frozenRouteCoords != null && frozenRouteCoords.length >= 2
+          ? frozenRouteCoords
+          : (_routeCoords.length >= 2 ? List<_LonLat>.from(_routeCoords) : null);
+      _logNavRouteRenderOwner(
+        event: NavRouteRenderOwnerEvent.styleRestoreAllowed,
+      );
+    } else if ((decision.reason ==
+                StyleRestoreRejectReason.routeVersionMismatch ||
+            decision.reason ==
+                StyleRestoreRejectReason.renderEpochMismatch ||
+            decision.reason ==
+                StyleRestoreRejectReason.packageOwnerMismatch) &&
+        capture.sessionGeneration == _navigationSessionGeneration &&
+        capture.styleGeneration == _styleRequestGeneration &&
+        _liveRideActive &&
+        _routeCoords.length >= 2) {
+      // Same style/session owner, newer accepted route during swap: restore
+      // the active package once using current owners (not stale frozen geometry).
+      restoreCoords = List<_LonLat>.from(_routeCoords);
+      restoreRenderEpoch = _routeRenderEpoch;
+      _logNavRouteRenderOwner(
+        event: NavRouteRenderOwnerEvent.styleRestoreAllowed,
+      );
+    } else {
+      _logNavRouteRenderOwner(
+        event: NavRouteRenderOwnerEvent.styleRestoreRejected,
+        rejectionReason: styleRestoreRejectReasonToken(
+          decision.reason ?? StyleRestoreRejectReason.emptyGeometry,
+        ),
+      );
+    }
 
-    if (mayRestore) {
+    if (restoreCoords != null && restoreCoords.length >= 2) {
       try {
         await _drawRouteLine(
-          _routeCoords,
+          restoreCoords,
           force: true,
           routeRenderEpoch: restoreRenderEpoch,
         );
         if (_isCurrentRouteRenderEpoch(restoreRenderEpoch) &&
-            _routeCoords.length >= 2) {
+            capture.sessionGeneration == _navigationSessionGeneration &&
+            restoreCoords.length >= 2) {
           await _drawPins(
-            _routeCoords.first,
-            _routeCoords.last,
+            restoreCoords.first,
+            restoreCoords.last,
             routeRenderEpoch: restoreRenderEpoch,
           );
         }
         restoredRoute =
             _isCurrentRouteRenderEpoch(restoreRenderEpoch) &&
-            _routeCoords.length >= 2;
+            capture.sessionGeneration == _navigationSessionGeneration &&
+            restoreCoords.length >= 2;
       } catch (_) {
         restoredRoute = false;
       }
@@ -8647,7 +8906,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       reason: reason,
     );
 
-    if (_lastPos != null && _isCurrentRouteRenderEpoch(restoreRenderEpoch)) {
+    if (_lastPos != null &&
+        _isCurrentRouteRenderEpoch(restoreRenderEpoch) &&
+        capture.sessionGeneration == _navigationSessionGeneration) {
       try {
         _updateRouteSnapState(_lastPos!);
         await _syncVisibleRouteLineWithProgress(
@@ -8658,7 +8919,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       } catch (_) {}
     }
 
-    if (_isCurrentRouteRenderEpoch(restoreRenderEpoch)) {
+    if (_isCurrentRouteRenderEpoch(restoreRenderEpoch) &&
+        capture.sessionGeneration == _navigationSessionGeneration) {
       await _syncNavigationDestinationMarker(
         reason: 'style_restore',
         routeRenderEpoch: restoreRenderEpoch,
@@ -8673,6 +8935,10 @@ class _DriverHomePageState extends State<DriverHomePage>
           'taxi': restoredTaxi || _driverMarker != null,
           'reason': reason,
           'hasGps': _lastPos != null,
+          'sessionGeneration': _navigationSessionGeneration,
+          'styleGeneration': _styleRequestGeneration,
+          'routeVersion': _routeStepsVersion,
+          'renderEpoch': _routeRenderEpoch,
         },
       ),
     );
@@ -8759,6 +9025,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     int? routeRenderEpoch,
   }) async {
     final drawEpoch = routeRenderEpoch ?? _routeRenderEpoch;
+    final drawSession = _navigationSessionGeneration;
     if (_mapStyleChanging) return;
     if (!_isCurrentRouteRenderEpoch(drawEpoch)) return;
     if (!_shouldShowNavigationDestinationMarker()) {
@@ -8851,11 +9118,17 @@ class _DriverHomePageState extends State<DriverHomePage>
       final commit = evaluateRouteAnnotationCommit(
         capturedRenderEpoch: drawEpoch,
         currentRenderEpoch: _routeRenderEpoch,
+        capturedSessionGeneration: drawSession,
+        currentSessionGeneration: _navigationSessionGeneration,
       );
       if (commit.shouldDeleteLocalOrphansOnly) {
         try {
           await mgr.delete(created);
         } catch (_) {}
+        _logNavRouteRenderOwner(
+          event: NavRouteRenderOwnerEvent.staleCallbackIgnored,
+          rejectionReason: 'render_epoch_or_session_mismatch',
+        );
         return;
       }
       _destinationMarker = created;
@@ -18694,6 +18967,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     int? routeRenderEpoch,
   }) async {
     final drawEpoch = routeRenderEpoch ?? _routeRenderEpoch;
+    final drawSession = _navigationSessionGeneration;
     final mgr = _pinsPointManager;
     if (mgr == null) return;
     if (!_isCurrentRouteRenderEpoch(drawEpoch)) return;
@@ -18728,12 +19002,18 @@ class _DriverHomePageState extends State<DriverHomePage>
     final commit = evaluateRouteAnnotationCommit(
       capturedRenderEpoch: drawEpoch,
       currentRenderEpoch: _routeRenderEpoch,
+      capturedSessionGeneration: drawSession,
+      currentSessionGeneration: _navigationSessionGeneration,
     );
     if (commit.shouldDeleteLocalOrphansOnly) {
       try {
         await mgr.delete(pickupPin);
         await mgr.delete(dropoffPin);
       } catch (_) {}
+      _logNavRouteRenderOwner(
+        event: NavRouteRenderOwnerEvent.staleCallbackIgnored,
+        rejectionReason: 'render_epoch_or_session_mismatch',
+      );
       return;
     }
     _pickupPin = pickupPin;
@@ -18757,6 +19037,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     int? routeRenderEpoch,
   }) async {
     final drawEpoch = routeRenderEpoch ?? _routeRenderEpoch;
+    final drawSession = _navigationSessionGeneration;
     final mgr = _routeLineManager;
     if (mgr == null) return;
     if (coords.length < 2) return;
@@ -18821,6 +19102,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     final commit = evaluateRouteAnnotationCommit(
       capturedRenderEpoch: drawEpoch,
       currentRenderEpoch: _routeRenderEpoch,
+      capturedSessionGeneration: drawSession,
+      currentSessionGeneration: _navigationSessionGeneration,
     );
     if (commit.shouldDeleteLocalOrphansOnly) {
       try {
@@ -18828,6 +19111,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         await mgr.delete(outline);
         await mgr.delete(line);
       } catch (_) {}
+      _logNavRouteRenderOwner(
+        event: NavRouteRenderOwnerEvent.staleCallbackIgnored,
+        rejectionReason: 'render_epoch_or_session_mismatch',
+      );
       return;
     }
     _routeLineCompleted = completedLine;

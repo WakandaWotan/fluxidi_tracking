@@ -1,6 +1,8 @@
 import '../driver_navigation_models.dart';
 import '../driver_navigation_route_parser.dart';
 
+export 'nav_ride_boundary_ownership.dart';
+
 /// Where a prepared navigation route package was sourced from.
 enum DriverRouteResponseSource {
   worker,
@@ -254,7 +256,16 @@ class DriverRouteAnnotationCommitDecision {
 DriverRouteAnnotationCommitDecision evaluateRouteAnnotationCommit({
   required int capturedRenderEpoch,
   required int currentRenderEpoch,
+  int? capturedSessionGeneration,
+  int? currentSessionGeneration,
 }) {
+  if (capturedSessionGeneration != null &&
+      currentSessionGeneration != null &&
+      capturedSessionGeneration != currentSessionGeneration) {
+    return const DriverRouteAnnotationCommitDecision(
+      DriverRouteAnnotationCommitAction.abortDeleteLocalOnly,
+    );
+  }
   if (shouldIgnoreStaleRouteDraw(
     drawAppliedRouteVersion: capturedRenderEpoch,
     currentAppliedRouteVersion: currentRenderEpoch,
@@ -274,14 +285,33 @@ bool mayClearOverviewAnnotations({required bool liveRideActive}) {
 }
 
 /// Style restore may redraw only when route content and render epoch remain valid.
+///
+/// NAV-RIDE-BOUNDARY: when session/style generations are supplied they must
+/// also match, and navigation must remain live.
 bool mayRestoreRouteRender({
   required int routeCoordCount,
   required int capturedRenderEpoch,
   required int currentRenderEpoch,
   int? capturedRouteStepsVersion,
   int? currentRouteStepsVersion,
+  int? capturedSessionGeneration,
+  int? currentSessionGeneration,
+  int? capturedStyleGeneration,
+  int? currentStyleGeneration,
+  bool? navigationLive,
 }) {
   if (routeCoordCount < 2) return false;
+  if (navigationLive == false) return false;
+  if (capturedSessionGeneration != null &&
+      currentSessionGeneration != null &&
+      capturedSessionGeneration != currentSessionGeneration) {
+    return false;
+  }
+  if (capturedStyleGeneration != null &&
+      currentStyleGeneration != null &&
+      capturedStyleGeneration != currentStyleGeneration) {
+    return false;
+  }
   if (shouldIgnoreStaleRouteDraw(
     drawAppliedRouteVersion: capturedRenderEpoch,
     currentAppliedRouteVersion: currentRenderEpoch,
@@ -301,15 +331,25 @@ String formatNavRouteRenderDiag({
   required String reason,
   required int renderEpoch,
   int? activeRouteVersion,
+  int? sessionGeneration,
+  int? styleGeneration,
 }) {
   final routePart = activeRouteVersion == null
       ? ''
       : ' activeRouteVersion=$activeRouteVersion';
+  final sessionPart = sessionGeneration == null
+      ? ''
+      : ' sessionGeneration=$sessionGeneration';
+  final stylePart = styleGeneration == null
+      ? ''
+      : ' styleGeneration=$styleGeneration';
   return '[NAV_ROUTE_RENDER] '
       'action=$action '
       'reason=$reason '
       'renderEpoch=$renderEpoch'
-      '$routePart';
+      '$routePart'
+      '$sessionPart'
+      '$stylePart';
 }
 
 bool purposeStillValidForSnapshot({
