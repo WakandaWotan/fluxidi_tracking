@@ -398,6 +398,174 @@ void main() {
       expect(find.byKey(const ValueKey('teller_fare')), findsOneWidget);
     });
 
+    testWidgets(
+      'Tellers view root is not a full-screen transparent Material '
+      '(NAV-PHONE-DRIVER-VIEW-FLICKER-1)',
+      (tester) async {
+        final mode = DriverNavPresentationModeController()..showTellers();
+        const snap = DriverRideMetersSnapshot(
+          fareText: '€ 4.00',
+          distanceTravelledText: '1.5 km',
+          rideDurationText: '03:00',
+          waitingTimeText: '00:00',
+          statusText: 'Rit actief',
+        );
+        await tester.pumpWidget(
+          harness(snapshot: snap, navOwner: const SizedBox.shrink(), mode: mode),
+        );
+        await tester.pump();
+
+        // The root of the Tellers view must NOT be a Material (a full-screen
+        // transparent compositing surface over the HC map caused phone flicker).
+        final root = tester.widget(
+          find.byKey(const ValueKey('driver_tellers_view')),
+        );
+        expect(root, isA<KeyedSubtree>());
+        expect(root, isNot(isA<Material>()));
+
+        // No Material anywhere in the Tellers subtree uses transparency (which
+        // would reintroduce a repainting transparent layer over the map).
+        final materials = tester.widgetList<Material>(find.byType(Material));
+        expect(
+          materials.every((m) => m.type != MaterialType.transparency),
+          isTrue,
+        );
+      },
+    );
+
+    testWidgets('meter panel is fully opaque and repaint-isolated', (
+      tester,
+    ) async {
+      final mode = DriverNavPresentationModeController()..showTellers();
+      const snap = DriverRideMetersSnapshot(
+        fareText: '€ 4.00',
+        distanceTravelledText: '1.5 km',
+        rideDurationText: '03:00',
+        waitingTimeText: '00:00',
+        statusText: 'Rit actief',
+      );
+      await tester.pumpWidget(
+        harness(snapshot: snap, navOwner: const SizedBox.shrink(), mode: mode),
+      );
+      await tester.pump();
+
+      final panelFinder = find.byKey(
+        const ValueKey('driver_tellers_meters_panel'),
+      );
+      final container = tester.widget<Container>(panelFinder);
+      final color = (container.decoration as BoxDecoration?)?.color;
+      // Fully opaque: no per-frame alpha blend over the HC platform view.
+      expect(color, isNotNull);
+      expect(color!.alpha, 0xFF);
+
+      // Isolated in its own RepaintBoundary so ticks don't dirty the map.
+      expect(
+        find.ancestor(
+          of: panelFinder,
+          matching: find.byType(RepaintBoundary),
+        ),
+        findsWidgets,
+      );
+    });
+
+    testWidgets('live window is repaint-isolated and interior stays uncovered', (
+      tester,
+    ) async {
+      final mode = DriverNavPresentationModeController()..showTellers();
+      const snap = DriverRideMetersSnapshot(
+        fareText: '€ 4.00',
+        distanceTravelledText: '1.5 km',
+        rideDurationText: '03:00',
+        waitingTimeText: '00:00',
+        statusText: 'Rit actief',
+      );
+      await tester.pumpWidget(
+        harness(snapshot: snap, navOwner: const SizedBox.shrink(), mode: mode),
+      );
+      await tester.pump();
+
+      final windowFinder = find.byKey(
+        const ValueKey('driver_tellers_live_window'),
+      );
+      expect(
+        find.ancestor(
+          of: windowFinder,
+          matching: find.byType(RepaintBoundary),
+        ),
+        findsWidgets,
+      );
+      final container = tester.widget<Container>(windowFinder);
+      expect((container.decoration as BoxDecoration?)?.color, Colors.transparent);
+    });
+
+    testWidgets('Navigation mode has no Tellers overlay (no transparent layer)', (
+      tester,
+    ) async {
+      final mode = DriverNavPresentationModeController();
+      const snap = DriverRideMetersSnapshot(
+        fareText: '€ 4.00',
+        distanceTravelledText: '1.5 km',
+        rideDurationText: '03:00',
+        waitingTimeText: '00:00',
+        statusText: 'Rit actief',
+      );
+      await tester.pumpWidget(
+        harness(
+          snapshot: snap,
+          navOwner: const ColoredBox(color: Colors.black, child: Text('MAP')),
+          mode: mode,
+        ),
+      );
+      await tester.pump();
+      // In Navigation mode the Tellers overlay is entirely unmounted — there is
+      // no full-screen (transparent) overlay above the map.
+      expect(find.byKey(const ValueKey('driver_tellers_view')), findsNothing);
+      expect(find.text('MAP'), findsOneWidget);
+    });
+
+    testWidgets('meter/timer updates do not rebuild the navigation owner', (
+      tester,
+    ) async {
+      final mode = DriverNavPresentationModeController()..showTellers();
+      var navBuildCount = 0;
+      final navOwner = Builder(
+        builder: (_) {
+          navBuildCount += 1;
+          return const ColoredBox(color: Colors.black, child: Text('MAP'));
+        },
+      );
+      var snap = const DriverRideMetersSnapshot(
+        fareText: '€ 1.00',
+        distanceTravelledText: '0.1 km',
+        rideDurationText: '00:01',
+        waitingTimeText: '00:00',
+        statusText: 'Rit actief',
+      );
+      await tester.pumpWidget(
+        harness(snapshot: snap, navOwner: navOwner, mode: mode),
+      );
+      final afterFirst = navBuildCount;
+
+      // Simulate several fare/timer ticks by updating the snapshot only.
+      for (var i = 0; i < 5; i++) {
+        snap = DriverRideMetersSnapshot(
+          fareText: '€ ${i + 2}.00',
+          distanceTravelledText: '${i + 1}.0 km',
+          rideDurationText: '00:0${i + 2}',
+          waitingTimeText: '00:00',
+          statusText: 'Rit actief',
+        );
+        await tester.pumpWidget(
+          harness(snapshot: snap, navOwner: navOwner, mode: mode),
+        );
+        await tester.pump();
+      }
+      // The retained navigation owner (map subtree stand-in) is not rebuilt by
+      // meter updates — it is a stable child, not driven by the snapshot.
+      expect(navBuildCount, afterFirst);
+      expect(find.text('MAP'), findsOneWidget);
+    });
+
     test('route version / GPS / fare ownership are not part of this view', () {
       // Structural invariant: the view only accepts a snapshot + callbacks.
       // It cannot create a fare ticker, GPS subscription, or route version.

@@ -25414,7 +25414,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         clipBehavior: Clip.none,
         children: [
           // Map always at the back.
-          Positioned.fill(child: _buildMapLayer()),
+          // NAV-PHONE-DRIVER-VIEW-FLICKER-1: isolate the Android HC platform
+          // view in its own repaint boundary so overlay/meter/timer repaints
+          // above it never dirty the map layer (prevents phone HC flicker).
+          Positioned.fill(child: RepaintBoundary(child: _buildMapLayer())),
           if (!showCockpit)
             Positioned.fill(
               child: IgnorePointer(

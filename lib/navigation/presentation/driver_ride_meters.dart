@@ -146,12 +146,15 @@ class DriverRideMetersView extends StatelessWidget {
       valueListenable: themeListenable ?? driverThemeNotifier,
       builder: (context, variant, _) {
         final palette = paletteForDriverTheme(variant);
-        // NAV-PARKING-2 Commit 4: transparent root so the retained MapWidget
-        // shows through the live navigation window. Meters/status/controls sit
-        // in their own opaque panels.
-        return Material(
+        // NAV-PHONE-DRIVER-VIEW-FLICKER-1: NO full-screen transparent Material
+        // over the retained Android HC MapWidget. A full-screen transparent
+        // compositing layer that repaints every fare/timer tick caused HC
+        // overlay-surface churn (phone flicker). Instead the root only lays out
+        // (SafeArea/Padding do not paint); opaque meter panels cover their own
+        // regions and the live-navigation window is a genuinely uncovered
+        // region so the map shows through without a repainting overlay.
+        return KeyedSubtree(
           key: const ValueKey<String>('driver_tellers_view'),
-          type: MaterialType.transparency,
           child: SafeArea(
             child: Padding(
               padding: EdgeInsets.symmetric(
@@ -198,7 +201,20 @@ class DriverRideMetersView extends StatelessWidget {
           SizedBox(height: isLandscape ? 8 : 12),
           Expanded(child: _buildLiveWindow(palette)),
           SizedBox(height: isLandscape ? 8 : 12),
-          _buildFooterActions(palette),
+          // NAV-PHONE-DRIVER-VIEW-FLICKER-1: controls sit in their own opaque,
+          // repaint-isolated panel — no transparent controls repainting over
+          // the HC map region.
+          RepaintBoundary(
+            child: Container(
+              padding: EdgeInsets.all(isTablet ? 12 : 8),
+              decoration: BoxDecoration(
+                color: palette.background,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: palette.border.withOpacity(0.5)),
+              ),
+              child: _buildFooterActions(palette),
+            ),
+          ),
         ],
       ],
     );
@@ -223,15 +239,20 @@ class DriverRideMetersView extends StatelessWidget {
         ],
       ],
     );
-    return Container(
-      key: const ValueKey<String>('driver_tellers_meters_panel'),
-      padding: EdgeInsets.all(isTablet ? 14 : 10),
-      decoration: BoxDecoration(
-        color: palette.background.withOpacity(palette.isDark ? 0.92 : 0.96),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: palette.border.withOpacity(0.5)),
+    // NAV-PHONE-DRIVER-VIEW-FLICKER-1: fully OPAQUE panel (no per-frame alpha
+    // blending over the HC platform view) isolated in its own RepaintBoundary,
+    // so fare/timer/location ticks repaint only this panel and never the map.
+    return RepaintBoundary(
+      child: Container(
+        key: const ValueKey<String>('driver_tellers_meters_panel'),
+        padding: EdgeInsets.all(isTablet ? 14 : 10),
+        decoration: BoxDecoration(
+          color: palette.background,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: palette.border.withOpacity(0.5)),
+        ),
+        child: content,
       ),
-      child: content,
     );
   }
 
@@ -239,33 +260,39 @@ class DriverRideMetersView extends StatelessWidget {
   /// single mounted MapWidget behind the Tellers overlay shows through here —
   /// current marker, selected route, next maneuver and distance remain visible.
   Widget _buildLiveWindow(DriverThemePalette palette) {
-    return Container(
-      key: const ValueKey<String>('driver_tellers_live_window'),
-      constraints: const BoxConstraints(minHeight: 120),
-      decoration: BoxDecoration(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: palette.accent.withOpacity(0.7),
-          width: 2,
+    // NAV-PHONE-DRIVER-VIEW-FLICKER-1: the interior is genuinely uncovered (no
+    // fill, only a thin static frame) so the retained HC map shows straight
+    // through. Wrapped in a RepaintBoundary and independent of the live
+    // snapshot, so meter/timer ticks never repaint this map-overlapping region.
+    return RepaintBoundary(
+      child: Container(
+        key: const ValueKey<String>('driver_tellers_live_window'),
+        constraints: const BoxConstraints(minHeight: 120),
+        decoration: BoxDecoration(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: palette.accent.withOpacity(0.7),
+            width: 2,
+          ),
         ),
-      ),
-      child: Align(
-        alignment: Alignment.topLeft,
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: palette.background.withOpacity(palette.isDark ? 0.55 : 0.7),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(
-              'Live navigatie',
-              style: TextStyle(
-                fontSize: isTablet ? 12 : 11,
-                fontWeight: FontWeight.w700,
-                color: palette.textPrimary.withOpacity(0.85),
+        child: Align(
+          alignment: Alignment.topLeft,
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: palette.background,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                'Live navigatie',
+                style: TextStyle(
+                  fontSize: isTablet ? 12 : 11,
+                  fontWeight: FontWeight.w700,
+                  color: palette.textPrimary.withOpacity(0.85),
+                ),
               ),
             ),
           ),
@@ -283,7 +310,7 @@ class DriverRideMetersView extends StatelessWidget {
         key: const ValueKey<String>('driver_tellers_status'),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
-          color: palette.surface.withOpacity(palette.isDark ? 0.8 : 0.92),
+          color: palette.surface,
           borderRadius: BorderRadius.circular(999),
           border: Border.all(color: palette.border.withOpacity(0.6)),
         ),
