@@ -23,6 +23,64 @@ void main() {
     });
   });
 
+  group('DriverNavHudVisibility (one HUD at a time)', () {
+    test('navigation mode shows cockpit + nav overlays, no Tellers HUD', () {
+      final hud = DriverNavHudVisibility.resolve(
+        showCockpit: true,
+        cameraFollow: true,
+        tellersActive: false,
+      );
+      expect(hud.cockpitHud, isTrue);
+      expect(hud.navBannerHud, isTrue);
+      expect(hud.tellersHud, isFalse);
+    });
+
+    test('Tellers mode suppresses cockpit KPI/controls and nav overlays', () {
+      final hud = DriverNavHudVisibility.resolve(
+        showCockpit: true,
+        cameraFollow: true,
+        tellersActive: true,
+      );
+      // Normal cockpit KPI row + controls and follow-mode overlays are hidden.
+      expect(hud.cockpitHud, isFalse);
+      expect(hud.navBannerHud, isFalse);
+      // Only the Tellers HUD remains.
+      expect(hud.tellersHud, isTrue);
+    });
+
+    test('returning to Navigation restores the cockpit exactly once', () {
+      // Enter Tellers…
+      final inTellers = DriverNavHudVisibility.resolve(
+        showCockpit: true,
+        cameraFollow: true,
+        tellersActive: true,
+      );
+      expect(inTellers.cockpitHud, isFalse);
+      // …return to Navigation.
+      final back = DriverNavHudVisibility.resolve(
+        showCockpit: true,
+        cameraFollow: true,
+        tellersActive: false,
+      );
+      expect(back.cockpitHud, isTrue);
+      expect(back.tellersHud, isFalse);
+    });
+
+    test('exactly one presentation HUD is active in every mode', () {
+      for (final tellers in <bool>[false, true]) {
+        final hud = DriverNavHudVisibility.resolve(
+          showCockpit: true,
+          cameraFollow: true,
+          tellersActive: tellers,
+        );
+        // Cockpit HUD and Tellers HUD are mutually exclusive.
+        expect(hud.cockpitHud && hud.tellersHud, isFalse);
+        expect(hud.cockpitHud, tellers ? isFalse : isTrue);
+        expect(hud.tellersHud, tellers);
+      }
+    });
+  });
+
   group('DriverTellersViewportController', () {
     test('open activates a latest-wins viewport with a fresh token', () {
       final c = DriverTellersViewportController();
@@ -564,6 +622,164 @@ void main() {
       // meter updates — it is a stable child, not driven by the snapshot.
       expect(navBuildCount, afterFirst);
       expect(find.text('MAP'), findsOneWidget);
+    });
+
+    testWidgets('each principal value appears exactly once; one Pause/one Stop', (
+      tester,
+    ) async {
+      final mode = DriverNavPresentationModeController()..showTellers();
+      const snap = DriverRideMetersSnapshot(
+        fareText: '€ 13.37',
+        distanceTravelledText: '7.7 km',
+        rideDurationText: '00:11:22',
+        waitingTimeText: '00:02:33',
+        statusText: 'Rit actief',
+      );
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(size: Size(390, 844)),
+          child: MaterialApp(
+            home: Scaffold(
+              body: DriverRideMetersView(
+                snapshot: snap,
+                onBackToNavigation: () {},
+                onStop: () {},
+                onToggleWait: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // No duplication of any principal value.
+      expect(find.text('€ 13.37'), findsOneWidget);
+      expect(find.text('7.7 km'), findsOneWidget);
+      expect(find.text('00:11:22'), findsOneWidget);
+      expect(find.text('00:02:33'), findsOneWidget);
+      // Exactly one Pause action and one Stop action.
+      expect(find.byKey(const ValueKey('driver_tellers_wait')), findsOneWidget);
+      expect(find.byKey(const ValueKey('driver_tellers_stop')), findsOneWidget);
+    });
+
+    testWidgets('landscape meters column fills height (no unused spacer below)', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(1194, 834));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final mode = DriverNavPresentationModeController()..showTellers();
+      const snap = DriverRideMetersSnapshot(
+        fareText: '€ 5.00',
+        distanceTravelledText: '2.0 km',
+        rideDurationText: '00:05:00',
+        waitingTimeText: '00:00:00',
+        statusText: 'Rit actief',
+      );
+      await tester.pumpWidget(
+        harness(
+          snapshot: snap,
+          navOwner: const SizedBox.shrink(),
+          mode: mode,
+          size: const Size(1194, 834),
+          isTablet: true,
+          isLandscape: true,
+        ),
+      );
+      await tester.pump();
+
+      final panelRect = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_meters_panel')),
+      );
+      // The meters column fills the vast majority of the available height —
+      // proving the grid expanded and no large black spacer remains below it.
+      expect(panelRect.height, greaterThan(834 * 0.7));
+    });
+
+    testWidgets('landscape live window is clipped and stays right of meters', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(1194, 834));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final mode = DriverNavPresentationModeController()..showTellers();
+      const snap = DriverRideMetersSnapshot(
+        fareText: '€ 5.00',
+        distanceTravelledText: '2.0 km',
+        rideDurationText: '00:05:00',
+        waitingTimeText: '00:00:00',
+        statusText: 'Rit actief',
+      );
+      await tester.pumpWidget(
+        harness(
+          snapshot: snap,
+          navOwner: const SizedBox.shrink(),
+          mode: mode,
+          size: const Size(1194, 834),
+          isTablet: true,
+          isLandscape: true,
+        ),
+      );
+      await tester.pump();
+
+      final windowFinder = find.byKey(
+        const ValueKey('driver_tellers_live_window'),
+      );
+      // Frame is clipped exactly to its region.
+      final container = tester.widget<Container>(windowFinder);
+      expect(container.clipBehavior, Clip.antiAlias);
+
+      // Live window never crosses the meters column.
+      final panelRect = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_meters_panel')),
+      );
+      final windowRect = tester.getRect(windowFinder);
+      expect(windowRect.left, greaterThanOrEqualTo(panelRect.right - 0.5));
+      // And stays within the screen bounds.
+      expect(windowRect.right, lessThanOrEqualTo(1194 + 0.5));
+    });
+
+    testWidgets('portrait controls do not overlap the live window', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(834, 1194));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final mode = DriverNavPresentationModeController()..showTellers();
+      const snap = DriverRideMetersSnapshot(
+        fareText: '€ 5.00',
+        distanceTravelledText: '2.0 km',
+        rideDurationText: '00:05:00',
+        waitingTimeText: '00:00:00',
+        statusText: 'Rit actief',
+      );
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: MediaQuery(
+            data: const MediaQueryData(size: Size(834, 1194)),
+            child: MaterialApp(
+              home: Scaffold(
+                body: DriverRideMetersView(
+                  snapshot: snap,
+                  onBackToNavigation: () {},
+                  onStop: () {},
+                  onToggleWait: () {},
+                  isTablet: true,
+                  isLandscape: false,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final windowRect = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_live_window')),
+      );
+      final stopRect = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_stop')),
+      );
+      // Controls sit strictly below the live window — no overlap.
+      expect(stopRect.top, greaterThanOrEqualTo(windowRect.bottom - 0.5));
     });
 
     test('route version / GPS / fare ownership are not part of this view', () {

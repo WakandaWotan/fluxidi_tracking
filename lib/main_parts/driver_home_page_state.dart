@@ -16764,6 +16764,21 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
       }
     }
+    // NAV-TELLERS-COMPOSITION-CORRECTION-1: while Tellers is presented, bias the
+    // follow camera into the dedicated live-navigation window (right column in
+    // landscape, centre band in portrait) via padding only. View level, zoom,
+    // pitch and normal (non-Tellers) follow behaviour are unchanged.
+    if (_navPresentationMode.isTellers) {
+      final tellersSize = MediaQuery.sizeOf(context);
+      viewPadding = driverTellersLiveWindowCameraPadding(
+        screenWidth: tellersSize.width,
+        screenHeight: tellersSize.height,
+        isLandscape: isLandscape,
+        isTablet: tellersSize.width >= 600,
+        safeTop: safeTop,
+        safeBottom: safeBottom,
+      );
+    }
     _lastMapCameraZoom = cameraZoom;
     unawaited(_syncDriverMarkerIconSizeForZoom());
     // NAV-STREETLEVEL-REALTIME-FOLLOW-PIPELINE-1: refresh the pump's cached
@@ -25198,6 +25213,19 @@ class _DriverHomePageState extends State<DriverHomePage>
         ? 2
         : ((hasSelection || hasDirectDraft) ? 1 : 0);
     final bool showCockpit = liveActive || hasSelection || hasDirectDraft;
+    // NAV-TELLERS-COMPOSITION-CORRECTION-1: one HUD at a time. While Tellers is
+    // active the normal navigation cockpit HUD (top strip, banners, screen-fixed
+    // arrow, recenter, camera/zoom/marker controls, bottom KPI + nav controls)
+    // is fully suppressed so nothing shows through beneath the Tellers HUD. The
+    // MapWidget, GPS, route progress, camera, fare and timers stay live.
+    final bool tellersActive = _navPresentationMode.isTellers;
+    final DriverNavHudVisibility hudVisibility = DriverNavHudVisibility.resolve(
+      showCockpit: showCockpit,
+      cameraFollow: _cameraMode == _CameraMode.follow,
+      tellersActive: tellersActive,
+    );
+    final bool cockpitHudVisible = hudVisibility.cockpitHud;
+    final bool navHudVisible = hudVisibility.navBannerHud;
     final bool showNavQuickActions =
         showCockpit &&
         (_cameraMode == _CameraMode.follow ||
@@ -25428,7 +25456,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             ),
 
           // Top status / header (Fluxidi strip).
-          if (showCockpit &&
+          if (cockpitHudVisible &&
               !collapseTopBarInLandscapeNav &&
               !collapseTopBarInPortraitNav)
             Positioned(
@@ -25437,7 +25465,7 @@ class _DriverHomePageState extends State<DriverHomePage>
               right: 12,
               child: _buildStatusStrip(state),
             ),
-          if (showCockpit &&
+          if (cockpitHudVisible &&
               (collapseTopBarInLandscapeNav || collapseTopBarInPortraitNav))
             Positioned(
               top:
@@ -25459,7 +25487,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                       ],
                     ),
             ),
-          if (_cameraMode == _CameraMode.follow &&
+          if (navHudVisible &&
               _showNavInstructionBanner() &&
               !collapseTopBarInLandscapeNav)
             Positioned(
@@ -25484,7 +25512,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 ),
               ),
             ),
-          if (_cameraMode == _CameraMode.follow &&
+          if (navHudVisible &&
               !_showNavInstructionBanner() &&
               (_navStepsLoading ||
                   _isRerouting ||
@@ -25512,7 +25540,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 ),
               ),
             ),
-          if (_cameraMode == _CameraMode.follow &&
+          if (navHudVisible &&
               !_showNavInstructionBanner() &&
               !_navStepsLoading &&
               !_isRerouting &&
@@ -25539,7 +25567,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 ),
               ),
             ),
-          if (!hideMapUserPuck)
+          if (!hideMapUserPuck && !tellersActive)
             Positioned(
               left: 0,
               right: 0,
@@ -25578,7 +25606,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             ),
           // NAV-UI-R6F: map actions live inside the bottom cockpit bar during
           // route/nav context; only the idle map keeps a floating recenter.
-          if (_mapSupported && !showNavQuickActions)
+          if (_mapSupported && !showNavQuickActions && !tellersActive)
             Positioned(
               right: 14,
               bottom: recenterBottom,
@@ -25587,7 +25615,9 @@ class _DriverHomePageState extends State<DriverHomePage>
 
           // NAV-PRES-2A / 3K-C / NAV-3D-HUD-ACTUAL-VISIBILITY-FIX-2:
           // optional screen-fixed driver HUD vehicle icon.
-          if (followLiveActive && nav3dHudRenderDecision.actualHudVisible)
+          if (followLiveActive &&
+              nav3dHudRenderDecision.actualHudVisible &&
+              !tellersActive)
             Positioned(
               left: 0,
               right: 0,
@@ -25605,7 +25635,9 @@ class _DriverHomePageState extends State<DriverHomePage>
           // live +/- cockpit camera controls. Tablet keeps the existing View
           // panel (level + debug labels); phone gets two independent compact
           // buttons with no panel and no View/debug text.
-          if (showDriverCockpitCameraControls && cockpitControlsLayout != null)
+          if (showDriverCockpitCameraControls &&
+              cockpitControlsLayout != null &&
+              !tellersActive)
             Positioned(
               right: cockpitControlsLayout.right,
               bottom: cockpitControlsLayout.bottom,
@@ -25639,7 +25671,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           // style.
           if (showNavMarkerSelector &&
               cockpitControlsLayout != null &&
-              isTablet)
+              isTablet &&
+              !tellersActive)
             Positioned(
               right: cockpitControlsLayout.right,
               bottom:
@@ -25662,7 +25695,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           // same Car/Arrow callback — on every map style.
           if (showNavMarkerSelector &&
               phoneVehicleButtonPlacement != null &&
-              !isTablet)
+              !isTablet &&
+              !tellersActive)
             Positioned(
               left: phoneVehicleButtonPlacement.left,
               bottom: phoneVehicleButtonPlacement.bottom,
@@ -25679,7 +25713,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           if (!showCockpit) Positioned.fill(child: _buildHintPanel()),
 
           // Bottom overlay layer (cockpit only).
-          if (showCockpit)
+          if (cockpitHudVisible)
             Positioned.fill(
               child: AnimatedSwitcher(
                 duration: const Duration(milliseconds: 180),

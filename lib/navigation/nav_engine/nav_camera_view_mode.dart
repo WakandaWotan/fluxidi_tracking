@@ -161,6 +161,50 @@ NavCameraViewPadding navCameraViewPadding({
   );
 }
 
+/// NAV-TELLERS-COMPOSITION-CORRECTION-1: follow-camera padding that fits the map
+/// focus into the dedicated Tellers live-navigation window, matching the Tellers
+/// HUD layout. Padding only — it never changes View level, zoom, pitch or the
+/// normal (non-Tellers) follow behaviour.
+///
+/// Landscape: the live window is the right-hand column, so the left inset equals
+/// the opaque meters column (horizontal padding + meters flex share + gap).
+/// Portrait: the live window is the band between the top meters panel and the
+/// bottom controls, so the top/bottom insets reserve those regions.
+NavCameraViewPadding driverTellersLiveWindowCameraPadding({
+  required double screenWidth,
+  required double screenHeight,
+  required bool isLandscape,
+  required bool isTablet,
+  required double safeTop,
+  required double safeBottom,
+}) {
+  final hPad = isTablet ? 20.0 : 12.0;
+  final vPad = isLandscape ? 8.0 : 12.0;
+  if (isLandscape) {
+    const gap = 12.0;
+    final metersFlex = isTablet ? 5.0 : 6.0;
+    final liveFlex = isTablet ? 6.0 : 5.0;
+    final avail = math.max(0.0, screenWidth - 2 * hPad - gap);
+    final metersWidth = avail * metersFlex / (metersFlex + liveFlex);
+    return NavCameraViewPadding(
+      top: safeTop + vPad + 8.0,
+      bottom: safeBottom + vPad + 8.0,
+      left: hPad + metersWidth + gap,
+      right: hPad + 8.0,
+    );
+  }
+  // Portrait: reserve the top meters panel and the bottom controls panel so the
+  // focus sits in the live band between them.
+  final metersPanelH = isTablet ? 260.0 : 216.0;
+  final controlsH = isTablet ? 84.0 : 72.0;
+  return NavCameraViewPadding(
+    top: safeTop + vPad + metersPanelH,
+    bottom: safeBottom + vPad + controlsH,
+    left: hPad + 8.0,
+    right: hPad + 8.0,
+  );
+}
+
 /// Street-view zoom/tilt nudge for a closer forward-driving perspective.
 ({double zoom, double tilt}) streetViewCameraTuning({
   required double zoom,

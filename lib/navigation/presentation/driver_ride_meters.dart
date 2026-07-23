@@ -43,6 +43,47 @@ class DriverNavPresentationModeController {
   }
 }
 
+/// NAV-TELLERS-COMPOSITION-CORRECTION-1: one-HUD-at-a-time visibility decision
+/// for the driver surface. Exactly one presentation layer is shown at a time so
+/// the normal navigation cockpit HUD never bleeds through beneath the Tellers
+/// HUD (duplicate fare/distance, overlapping controls, stray banners/arrows).
+///
+/// The retained MapWidget is NOT a HUD and is always live; this only decides
+/// which Flutter presentation layer is mounted.
+@immutable
+class DriverNavHudVisibility {
+  /// Normal bottom cockpit (KPI row + primary nav controls) and top strip.
+  final bool cockpitHud;
+
+  /// Follow-mode navigation overlays (maneuver banner, screen-fixed arrow,
+  /// recenter, camera/zoom/marker controls).
+  final bool navBannerHud;
+
+  /// The dedicated Tellers presentation HUD.
+  final bool tellersHud;
+
+  const DriverNavHudVisibility({
+    required this.cockpitHud,
+    required this.navBannerHud,
+    required this.tellersHud,
+  });
+
+  /// While Tellers is active, both the cockpit HUD and the follow-mode nav
+  /// overlays are suppressed; only the Tellers HUD is shown. Neither GPS, route
+  /// progress, camera, fare nor timers are affected — this is presentation only.
+  factory DriverNavHudVisibility.resolve({
+    required bool showCockpit,
+    required bool cameraFollow,
+    required bool tellersActive,
+  }) {
+    return DriverNavHudVisibility(
+      cockpitHud: showCockpit && !tellersActive,
+      navBannerHud: cameraFollow && !tellersActive,
+      tellersHud: tellersActive,
+    );
+  }
+}
+
 /// NAV-PARKING-2 Commit 4: latest-wins owner for the temporary Tellers camera
 /// viewport/padding. Pure and side-effect free — it only tracks a monotonic
 /// generation so a stale Tellers camera callback (from a viewport that has
@@ -171,15 +212,20 @@ class DriverRideMetersView extends StatelessWidget {
     );
   }
 
-  /// Tablet/phone landscape: meters panel + status + controls on the left, a
-  /// substantial live navigation window on the right.
+  /// Tablet/phone landscape: meters panel + status + controls fill the left
+  /// column (no unused black area beneath the grid); a substantial live
+  /// navigation window occupies the complete remaining right-hand region.
   Widget _buildLandscapeSplit(DriverThemePalette palette) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Expanded(
           flex: isTablet ? 5 : 6,
-          child: _buildMetersPanel(palette, withControls: true),
+          child: _buildMetersPanel(
+            palette,
+            withControls: true,
+            fillHeight: true,
+          ),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -223,14 +269,21 @@ class DriverRideMetersView extends StatelessWidget {
   Widget _buildMetersPanel(
     DriverThemePalette palette, {
     required bool withControls,
+    bool fillHeight = false,
   }) {
+    // NAV-TELLERS-COMPOSITION-CORRECTION-1: when [fillHeight] the 2x2 grid grows
+    // to consume the column (taller tiles, heavier visual weight) with status +
+    // controls pinned immediately beneath — no unused black area below.
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: fillHeight ? MainAxisSize.max : MainAxisSize.min,
       children: [
         _buildHeader(palette),
         SizedBox(height: isLandscape ? 8 : 12),
-        _buildMetersGrid(palette),
+        if (fillHeight)
+          Expanded(child: _buildMetersGrid(palette, fillHeight: true))
+        else
+          _buildMetersGrid(palette),
         SizedBox(height: isLandscape ? 6 : 10),
         _buildStatusChip(palette),
         if (withControls) ...[
@@ -268,6 +321,10 @@ class DriverRideMetersView extends StatelessWidget {
       child: Container(
         key: const ValueKey<String>('driver_tellers_live_window'),
         constraints: const BoxConstraints(minHeight: 120),
+        // NAV-TELLERS-COMPOSITION-CORRECTION-1: clip the gold frame exactly to
+        // the live-navigation region so it never crosses meter tiles, Tellers
+        // controls, the hidden cockpit area or Android system navigation.
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: Colors.transparent,
           borderRadius: BorderRadius.circular(20),
@@ -378,7 +435,7 @@ class DriverRideMetersView extends StatelessWidget {
   /// NAV-PARKING-2 Commit 4: exactly FOUR principal meter tiles in a balanced
   /// 2x2 area (Tarief, Afstand, Ritduur, Wachttijd). Status is rendered
   /// separately as a smaller element — never a fifth equal tile.
-  Widget _buildMetersGrid(DriverThemePalette palette) {
+  Widget _buildMetersGrid(DriverThemePalette palette, {bool fillHeight = false}) {
     final fare = _MeterTile(
       key: const ValueKey('teller_fare'),
       label: 'Tarief',
@@ -418,6 +475,9 @@ class DriverRideMetersView extends StatelessWidget {
     );
 
     Widget row(Widget a, Widget b) => Row(
+          crossAxisAlignment: fillHeight
+              ? CrossAxisAlignment.stretch
+              : CrossAxisAlignment.center,
           children: [
             Expanded(child: a),
             const SizedBox(width: 10),
@@ -425,7 +485,17 @@ class DriverRideMetersView extends StatelessWidget {
           ],
         );
 
-    // Balanced 2x2 in all layouts.
+    // Balanced 2x2 in all layouts. When [fillHeight] the rows expand to consume
+    // the available column height (tall, high-weight tiles).
+    if (fillHeight) {
+      return Column(
+        children: [
+          Expanded(child: row(fare, distance)),
+          const SizedBox(height: 10),
+          Expanded(child: row(duration, waiting)),
+        ],
+      );
+    }
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
