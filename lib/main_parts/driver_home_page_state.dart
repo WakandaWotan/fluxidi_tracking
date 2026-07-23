@@ -353,6 +353,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   // creates a camera/GPS owner — the single mounted map remains authoritative.
   final DriverTellersViewportController _tellersViewport =
       DriverTellersViewportController();
+  // NAV-TELLERS-EXACT-LIVE-VIEWPORT-1: track orientation so portrait ↔ landscape
+  // recalculates geometry once (latest-wins viewport generation + one camera
+  // update) without recreating MapWidget / GPS / style.
+  bool? _lastTellersLandscape;
   String? _lastNav3dFirstChoiceLogSignature;
   // NAV-UI-R6E: taxi visual captured just before setStyleURI so the marker can
   // be recreated immediately after style load without waiting for GPS.
@@ -17228,14 +17232,19 @@ class _DriverHomePageState extends State<DriverHomePage>
     // landscape, centre band in portrait) via padding only. View level, zoom,
     // pitch and normal (non-Tellers) follow behaviour are unchanged.
     if (_navPresentationMode.isTellers) {
+      // NAV-TELLERS-EXACT-LIVE-VIEWPORT-1: padding from the same authoritative
+      // liveWindowRect the Tellers chrome/aperture use — never a second approx.
       final tellersSize = MediaQuery.sizeOf(context);
+      final tellersPad = MediaQuery.paddingOf(context);
       viewPadding = driverTellersLiveWindowCameraPadding(
         screenWidth: tellersSize.width,
         screenHeight: tellersSize.height,
         isLandscape: isLandscape,
         isTablet: tellersSize.width >= 600,
-        safeTop: safeTop,
-        safeBottom: safeBottom,
+        safeTop: tellersPad.top,
+        safeBottom: tellersPad.bottom,
+        safeLeft: tellersPad.left,
+        safeRight: tellersPad.right,
       );
     }
     _lastMapCameraZoom = cameraZoom;
@@ -18353,6 +18362,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     // user map-style action via _setDriverCockpitMapVisualStyle, not Tellers.
     assert(tellersPresentationMustNotChangeMapStyle());
     final viewportToken = _tellersViewport.open();
+    // Seed orientation so the first build does not treat open as a rotation.
+    if (mounted) {
+      _lastTellersLandscape =
+          MediaQuery.of(context).orientation == Orientation.landscape;
+    }
     _logNavBounded(
       'NAV_TELLERS',
       'event=open viewportGeneration=$viewportToken styleRequest=false '
@@ -18376,6 +18390,40 @@ class _DriverHomePageState extends State<DriverHomePage>
     setState(() {});
   }
 
+  /// NAV-TELLERS-EXACT-LIVE-VIEWPORT-1: on portrait ↔ landscape while Tellers
+  /// is active, bump the viewport generation once and issue one latest-wins
+  /// camera update. Never recreates MapWidget, GPS, style, route, fare or
+  /// marker choice.
+  void _syncTellersGeometryForOrientation({required bool isLandscape}) {
+    if (!_navPresentationMode.isTellers) {
+      _lastTellersLandscape = null;
+      return;
+    }
+    if (_lastTellersLandscape == isLandscape) return;
+    final previous = _lastTellersLandscape;
+    _lastTellersLandscape = isLandscape;
+    if (previous == null) return; // first paint after open — open() already ran
+    final token = _tellersViewport.open();
+    _logNavBounded(
+      'NAV_TELLERS',
+      'event=orientation_geometry viewportGeneration=$token '
+      'landscape=$isLandscape styleRequest=false',
+      intervalMs: 1,
+    );
+    final pos = _lastPos;
+    if (pos != null &&
+        _cameraMode == _CameraMode.follow &&
+        _liveRideActive) {
+      unawaited(
+        _followCameraTesla(
+          pos,
+          force: true,
+          cameraReason: 'tellers_orientation',
+        ),
+      );
+    }
+  }
+
   void _closeTellersView() {
     if (!_navPresentationMode.showNavigation()) return;
     // NAV-PARKING-2 Commit 4: restore normal follow presentation and invalidate
@@ -18384,6 +18432,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     // never a map-style request.
     assert(tellersPresentationMustNotChangeMapStyle());
     _tellersViewport.close();
+    _lastTellersLandscape = null;
     _logNavBounded(
       'NAV_TELLERS',
       'event=close viewportGeneration=${_tellersViewport.generation} '
@@ -25825,6 +25874,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         screenClass == FluxidiScreenClass.desktop;
     final bool isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
+    // NAV-TELLERS-EXACT-LIVE-VIEWPORT-1: portrait ↔ landscape recalculates the
+    // authoritative liveWindowRect once (latest-wins camera), no MapWidget/
+    // GPS/style recreation.
+    _syncTellersGeometryForOrientation(isLandscape: isLandscape);
     final bool collapseTopBarInLandscapeNav =
         isLandscape && _cameraMode == _CameraMode.follow;
     final bool collapseTopBarInPortraitNav =

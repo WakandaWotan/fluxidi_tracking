@@ -8,9 +8,12 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
+import 'package:fluxidi_tracking/navigation/presentation/driver_tellers_layout_geometry.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_marker_choice.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_hud_overlay.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_vehicle_choice_selector.dart';
+
+export 'package:fluxidi_tracking/navigation/presentation/driver_tellers_layout_geometry.dart';
 
 /// Presentation mode for the driver navigation surface.
 enum DriverNavPresentationMode {
@@ -357,81 +360,128 @@ class DriverRideMetersView extends StatelessWidget {
       valueListenable: themeListenable ?? driverThemeNotifier,
       builder: (context, variant, _) {
         final palette = paletteForDriverTheme(variant);
-        // NAV-PHONE-DRIVER-VIEW-FLICKER-1: NO full-screen transparent Material
-        // over the retained Android HC MapWidget. A full-screen transparent
-        // compositing layer that repaints every fare/timer tick caused HC
-        // overlay-surface churn (phone flicker). Instead the root only lays out
-        // (SafeArea/Padding do not paint); opaque meter panels cover their own
-        // regions and the live-navigation window is a genuinely uncovered
-        // region so the map shows through without a repainting overlay.
+        // NAV-TELLERS-EXACT-LIVE-VIEWPORT-1: one authoritative geometry drives
+        // the map aperture, opaque chrome, gold frame, marker/selector/label
+        // and (via the same resolve) camera padding. NO full-screen transparent
+        // Material / AnimatedOpacity / BackdropFilter over the HC MapWidget.
+        final media = MediaQuery.of(context);
+        final geometry = DriverTellersLayoutGeometry.resolve(
+          viewportSize: media.size,
+          safeTop: media.padding.top,
+          safeBottom: media.padding.bottom,
+          safeLeft: media.padding.left,
+          safeRight: media.padding.right,
+          isLandscape: isLandscape,
+          isTablet: isTablet,
+        );
         return KeyedSubtree(
           key: const ValueKey<String>('driver_tellers_view'),
-          child: SafeArea(
-            child: Padding(
-              padding: EdgeInsets.symmetric(
-                horizontal: isTablet ? 20 : 12,
-                vertical: isLandscape ? 8 : 12,
-              ),
-              child: (isLandscape && showLiveWindow)
-                  ? _buildLandscapeSplit(palette)
-                  : _buildPortraitStack(palette),
-            ),
-          ),
+          child: showLiveWindow
+              ? _buildExactViewportStack(palette, geometry)
+              : SafeArea(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isTablet ? 20 : 12,
+                      vertical: isLandscape ? 8 : 12,
+                    ),
+                    child: _buildMetersPanel(
+                      palette,
+                      withControls: true,
+                      fillHeight: isLandscape,
+                    ),
+                  ),
+                ),
         );
       },
     );
   }
 
-  /// Tablet/phone landscape: meters panel + status + controls fill the left
-  /// column (no unused black area beneath the grid); a substantial live
-  /// navigation window occupies the complete remaining right-hand region.
-  Widget _buildLandscapeSplit(DriverThemePalette palette) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+  /// Full-viewport Stack: opaque chrome slabs leave only [liveWindowRect]
+  /// uncovered; meters/controls panels and the gold live frame are positioned
+  /// from the same geometry.
+  Widget _buildExactViewportStack(
+    DriverThemePalette palette,
+    DriverTellersLayoutGeometry geometry,
+  ) {
+    final chrome = driverTellersOpaqueChromeRects(geometry);
+    final corners = driverTellersCornerBleedBlockers(geometry);
+    final live = geometry.liveWindowRect;
+    final meters = geometry.metersPanelRect;
+    final controls = geometry.controlsRect;
+
+    return Stack(
+      key: const ValueKey<String>('driver_tellers_geometry_stack'),
+      fit: StackFit.expand,
       children: [
-        Expanded(
-          flex: isTablet ? 5 : 6,
+        // Opaque aperture chrome — fully covers every region outside the live
+        // window (outer margins, gaps, system-inset bands, inter-panel space).
+        for (var i = 0; i < chrome.length; i++)
+          if (chrome[i].width > 0 && chrome[i].height > 0)
+            Positioned(
+              key: ValueKey<String>('driver_tellers_chrome_$i'),
+              left: chrome[i].left,
+              top: chrome[i].top,
+              width: chrome[i].width,
+              height: chrome[i].height,
+              child: RepaintBoundary(
+                child: ColoredBox(color: palette.background),
+              ),
+            ),
+        // Rounded-corner bleed blockers inside the live rect corners.
+        for (var i = 0; i < corners.length; i++)
+          Positioned(
+            key: ValueKey<String>('driver_tellers_corner_$i'),
+            left: corners[i].left,
+            top: corners[i].top,
+            width: corners[i].width,
+            height: corners[i].height,
+            child: IgnorePointer(
+              child: ColoredBox(color: palette.background),
+            ),
+          ),
+        // Opaque meters panel (landscape: left 44%; portrait: top region).
+        // Always fill the geometry band so the 2×2 grid Expanded absorbs the
+        // remaining height instead of overflowing a min-sized Column.
+        Positioned(
+          left: meters.left,
+          top: meters.top,
+          width: meters.width,
+          height: meters.height,
           child: _buildMetersPanel(
             palette,
-            withControls: true,
+            withControls: isLandscape,
             fillHeight: true,
           ),
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          flex: isTablet ? 6 : 5,
-          child: _buildLiveWindow(palette),
-        ),
-      ],
-    );
-  }
-
-  /// Portrait (and no-live-window): meters panel on top, live window below,
-  /// compact status + controls.
-  Widget _buildPortraitStack(DriverThemePalette palette) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _buildMetersPanel(palette, withControls: !showLiveWindow),
-        if (showLiveWindow) ...[
-          SizedBox(height: isLandscape ? 8 : 12),
-          Expanded(child: _buildLiveWindow(palette)),
-          SizedBox(height: isLandscape ? 8 : 12),
-          // NAV-PHONE-DRIVER-VIEW-FLICKER-1: controls sit in their own opaque,
-          // repaint-isolated panel — no transparent controls repainting over
-          // the HC map region.
-          RepaintBoundary(
-            child: Container(
-              padding: EdgeInsets.all(isTablet ? 12 : 8),
-              decoration: BoxDecoration(
-                color: palette.background,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: palette.border.withOpacity(0.5)),
+        // Portrait: dedicated bottom controls panel (landscape controls live
+        // inside the meters panel).
+        if (!isLandscape)
+          Positioned(
+            left: controls.left,
+            top: controls.top,
+            width: controls.width,
+            height: controls.height,
+            child: RepaintBoundary(
+              child: Container(
+                key: const ValueKey<String>('driver_tellers_controls_panel'),
+                padding: EdgeInsets.all(isTablet ? 12 : 8),
+                decoration: BoxDecoration(
+                  color: palette.background,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: palette.border.withOpacity(0.5)),
+                ),
+                child: _buildFooterActions(palette),
               ),
-              child: _buildFooterActions(palette),
             ),
           ),
-        ],
+        // Exact live aperture — genuinely uncovered interior + gold frame.
+        Positioned(
+          left: live.left,
+          top: live.top,
+          width: live.width,
+          height: live.height,
+          child: _buildLiveWindow(palette, geometry),
+        ),
       ],
     );
   }
@@ -469,6 +519,7 @@ class DriverRideMetersView extends StatelessWidget {
       child: Container(
         key: const ValueKey<String>('driver_tellers_meters_panel'),
         padding: EdgeInsets.all(isTablet ? 14 : 10),
+        clipBehavior: Clip.hardEdge,
         decoration: BoxDecoration(
           color: palette.background,
           borderRadius: BorderRadius.circular(20),
@@ -479,36 +530,33 @@ class DriverRideMetersView extends StatelessWidget {
     );
   }
 
-  /// NAV-PARKING-2 Commit 4: transparent, bordered live navigation window. The
-  /// single mounted MapWidget behind the Tellers overlay shows through here —
-  /// current marker, selected route, next maneuver and distance remain visible.
-  Widget _buildLiveWindow(DriverThemePalette palette) {
-    // NAV-PHONE-DRIVER-VIEW-FLICKER-1: the interior is genuinely uncovered (no
-    // fill, only a thin static frame) so the retained HC map shows straight
-    // through. Wrapped in a RepaintBoundary and independent of the live
-    // snapshot, so meter/timer ticks never repaint this map-overlapping region.
-    //
-    // NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1: the one selected vehicle marker
-    // and a compact Car/Arrow selector live inside this clipped window. The
-    // marker uses the existing NavigationDriverHudOverlay presentation (same
-    // choice state) — never a second GPS/pose/marker owner. Mapbox 2D opacity
-    // is suppressed while this Flutter owner is active.
+  /// NAV-TELLERS-EXACT-LIVE-VIEWPORT-1: live aperture whose gold frame, label,
+  /// selector and marker anchor are all positioned from [geometry]. The
+  /// interior stays genuinely uncovered so the single retained MapWidget shows
+  /// through — no second MapWidget, no full-screen transparent Material.
+  Widget _buildLiveWindow(
+    DriverThemePalette palette,
+    DriverTellersLayoutGeometry geometry,
+  ) {
     final markerSize = vehicleMarkerIconSize ??
         NavigationDriverHudOverlay.resolveIconSize(
           screenWidth: isTablet ? 800 : 390,
           cockpitBoost: true,
         );
+    final live = geometry.liveWindowRect;
+    // Convert absolute geometry rects into local coords inside this Positioned.
+    final labelLocal = geometry.labelRect.shift(-live.topLeft);
+    final selectorLocal = geometry.selectorRect.shift(-live.topLeft);
+    final markerLocal = geometry.markerAnchor - live.topLeft;
+    final liveLabel = driverTellersLiveNavigationLabel(markerLanguage);
+
     return RepaintBoundary(
       child: Container(
         key: const ValueKey<String>('driver_tellers_live_window'),
-        constraints: const BoxConstraints(minHeight: 120),
-        // NAV-TELLERS-COMPOSITION-CORRECTION-1: clip the gold frame exactly to
-        // the live-navigation region so it never crosses meter tiles, Tellers
-        // controls, the hidden cockpit area or Android system navigation.
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: Colors.transparent,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(geometry.cornerRadius),
           border: Border.all(
             color: palette.accent.withOpacity(0.7),
             width: 2,
@@ -517,18 +565,23 @@ class DriverRideMetersView extends StatelessWidget {
         child: Stack(
           clipBehavior: Clip.hardEdge,
           children: [
+            // Label / selector use geometry insets (top-left / top-right) but
+            // intrinsic width so the compact selector never overflows the
+            // reserved band on narrow phone apertures.
             Positioned(
-              top: 8,
-              left: 8,
+              left: labelLocal.left,
+              top: labelLocal.top,
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                key: const ValueKey<String>('driver_tellers_live_label'),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: palette.background,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
-                  'Live navigatie',
+                  liveLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: isTablet ? 12 : 11,
                     fontWeight: FontWeight.w700,
@@ -539,7 +592,7 @@ class DriverRideMetersView extends StatelessWidget {
             ),
             if (showMarkerSelector && onMarkerChoiceSelected != null)
               Positioned(
-                top: 8,
+                top: selectorLocal.top,
                 right: 8,
                 child: KeyedSubtree(
                   key: const ValueKey<String>('driver_tellers_marker_selector'),
@@ -555,10 +608,11 @@ class DriverRideMetersView extends StatelessWidget {
                 ),
               ),
             if (showVehicleMarker)
-              Align(
-                // Lower-central portion of the live window — camera padding
-                // keeps the forward route ahead of this anchor.
-                alignment: const Alignment(0, 0.55),
+              Positioned(
+                left: markerLocal.dx - markerSize / 2,
+                top: markerLocal.dy - markerSize / 2,
+                width: markerSize,
+                height: markerSize,
                 child: KeyedSubtree(
                   key: ValueKey<String>(
                     'driver_tellers_vehicle_marker_${markerChoice.name}',
@@ -829,6 +883,7 @@ class _MeterTile extends StatelessWidget {
           horizontal: isTablet ? 18 : 12,
           vertical: isTablet ? 16 : 10,
         ),
+        clipBehavior: Clip.hardEdge,
         decoration: BoxDecoration(
           color: palette.surface.withOpacity(palette.isDark ? 0.94 : 0.98),
           borderRadius: BorderRadius.circular(16),
@@ -839,23 +894,13 @@ class _MeterTile extends StatelessWidget {
             width: emphasize ? 1.8 : 1.1,
           ),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: isTablet ? 14 : 12,
-                fontWeight: FontWeight.w700,
-                color: palette.textPrimary.withOpacity(0.72),
-              ),
-            ),
-            const SizedBox(height: 6),
-            FittedBox(
+        // NAV-TELLERS-EXACT-LIVE-VIEWPORT-1: in Expanded geometry bands the
+        // value scales down; in unconstrained panels it sizes naturally.
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final bounded = constraints.hasBoundedHeight &&
+                constraints.maxHeight < double.infinity;
+            final valueText = FittedBox(
               fit: BoxFit.scaleDown,
               alignment: Alignment.centerLeft,
               child: Text(
@@ -868,8 +913,27 @@ class _MeterTile extends StatelessWidget {
                   height: 1.05,
                 ),
               ),
-            ),
-          ],
+            );
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: bounded ? MainAxisSize.max : MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: isTablet ? 14 : 12,
+                    fontWeight: FontWeight.w700,
+                    color: palette.textPrimary.withOpacity(0.72),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                if (bounded) Flexible(child: valueText) else valueText,
+              ],
+            );
+          },
         ),
       ),
     );

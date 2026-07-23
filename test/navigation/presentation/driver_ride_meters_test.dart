@@ -1048,8 +1048,72 @@ void main() {
     });
 
     testWidgets(
+      'geometry stack covers chrome; live aperture uncovered; no transparent Material',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(390, 844));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        const snap = DriverRideMetersSnapshot(
+          fareText: '€ 9.00',
+          distanceTravelledText: '4.0 km',
+          rideDurationText: '00:08:00',
+          waitingTimeText: '00:00:30',
+          statusText: 'Rit actief',
+        );
+        await tester.pumpWidget(
+          MediaQuery(
+            data: const MediaQueryData(size: Size(390, 844)),
+            child: MaterialApp(
+              home: Scaffold(
+                body: DriverRideMetersView(
+                  snapshot: snap,
+                  onBackToNavigation: () {},
+                  onToggleWait: () {},
+                  onRecenter: () {},
+                  onStop: () {},
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(
+          find.byKey(const ValueKey('driver_tellers_geometry_stack')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('driver_tellers_chrome_0')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('driver_tellers_live_window')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('driver_tellers_live_label')),
+          findsOneWidget,
+        );
+        // No full-screen transparent Material over the map aperture.
+        final materials = tester.widgetList<Material>(find.byType(Material));
+        for (final m in materials) {
+          expect(m.type, isNot(MaterialType.transparency));
+        }
+        // Gold frame equals the live window key region (single aperture).
+        final live = tester.getRect(
+          find.byKey(const ValueKey('driver_tellers_live_window')),
+        );
+        final label = tester.getRect(
+          find.byKey(const ValueKey('driver_tellers_live_label')),
+        );
+        expect(live.contains(label.center), isTrue);
+      },
+    );
+
+    testWidgets(
       'exactly one recenter between Pause and Stop; invokes authoritative action',
       (tester) async {
+        await tester.binding.setSurfaceSize(const Size(390, 844));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
         var recenterTaps = 0;
         const snap = DriverRideMetersSnapshot(
           fareText: '€ 9.00',
@@ -1111,6 +1175,8 @@ void main() {
     testWidgets('portrait recenter has no overlap with Pause/Stop', (
       tester,
     ) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
       const snap = DriverRideMetersSnapshot(
         fareText: '€ 9.00',
         distanceTravelledText: '4.0 km',

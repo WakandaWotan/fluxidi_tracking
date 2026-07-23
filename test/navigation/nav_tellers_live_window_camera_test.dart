@@ -1,16 +1,18 @@
 // NAV-TELLERS-COMPOSITION-CORRECTION-1
+// NAV-TELLERS-EXACT-LIVE-VIEWPORT-1
 //
-// The Tellers live-navigation window camera padding must fit the follow camera
-// into the dedicated live region: the right-hand column in landscape and the
-// band between the top meters panel and bottom controls in portrait. Padding
-// only — never View level / zoom / pitch, and never the normal follow path.
+// The Tellers live-navigation window camera padding must equal the padding
+// derived from DriverTellersLayoutGeometry.liveWindowRect. Padding only —
+// never View level / zoom / pitch, and never the normal follow path.
+
+import 'dart:ui' show Size;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fluxidi_tracking/navigation/nav_engine/nav_camera_view_mode.dart';
+import 'package:fluxidi_tracking/navigation/presentation/driver_tellers_layout_geometry.dart';
 
 void main() {
   group('driverTellersLiveWindowCameraPadding', () {
-    test('landscape reserves the left meters column (focus on right window)', () {
+    test('landscape padding matches authoritative ~44% left geometry', () {
       const w = 1194.0;
       const h = 834.0;
       final pad = driverTellersLiveWindowCameraPadding(
@@ -21,23 +23,26 @@ void main() {
         safeTop: 0,
         safeBottom: 0,
       );
-
-      // Left inset equals horizontal padding + meters flex share + gap.
-      const hPad = 20.0;
-      const gap = 12.0;
-      final avail = w - 2 * hPad - gap;
-      final metersWidth = avail * 5.0 / (5.0 + 6.0);
-      final expectedLeft = hPad + metersWidth + gap;
-      expect(pad.left, closeTo(expectedLeft, 0.5));
-
-      // The focus is biased to the right window: left inset dominates.
+      final geo = DriverTellersLayoutGeometry.resolve(
+        viewportSize: const Size(w, h),
+        safeTop: 0,
+        safeBottom: 0,
+        safeLeft: 0,
+        safeRight: 0,
+        isLandscape: true,
+        isTablet: true,
+      );
+      expect(pad.left, closeTo(geo.cameraPadding.left, 0.01));
       expect(pad.left, greaterThan(w * 0.4));
       expect(pad.right, lessThan(pad.left));
-      // Bounds stay on-screen.
       expect(pad.left + pad.right, lessThan(w));
+      expect(
+        geo.landscapeLeftWidthFraction,
+        closeTo(kTellersLandscapeLeftWidthFraction, 0.01),
+      );
     });
 
-    test('phone landscape uses larger meters flex share', () {
+    test('phone landscape uses the same 44% left share', () {
       const w = 800.0;
       final pad = driverTellersLiveWindowCameraPadding(
         screenWidth: w,
@@ -47,15 +52,20 @@ void main() {
         safeTop: 0,
         safeBottom: 0,
       );
-      const hPad = 12.0;
-      const gap = 12.0;
-      final avail = w - 2 * hPad - gap;
-      final metersWidth = avail * 6.0 / (6.0 + 5.0);
-      expect(pad.left, closeTo(hPad + metersWidth + gap, 0.5));
+      final geo = DriverTellersLayoutGeometry.resolve(
+        viewportSize: const Size(w, 380),
+        safeTop: 0,
+        safeBottom: 0,
+        safeLeft: 0,
+        safeRight: 0,
+        isLandscape: true,
+        isTablet: false,
+      );
+      expect(pad.left, closeTo(geo.cameraPadding.left, 0.01));
       expect(pad.left, greaterThan(pad.right));
     });
 
-    test('portrait reserves the top meters panel and bottom controls', () {
+    test('portrait reserves top meters and bottom controls via geometry', () {
       final pad = driverTellersLiveWindowCameraPadding(
         screenWidth: 834,
         screenHeight: 1194,
@@ -64,12 +74,18 @@ void main() {
         safeTop: 24,
         safeBottom: 16,
       );
-      // Top reserves safe area + vertical pad + meters panel; bottom reserves
-      // safe area + vertical pad + controls. Both leave a live band between.
+      final geo = DriverTellersLayoutGeometry.resolve(
+        viewportSize: const Size(834, 1194),
+        safeTop: 24,
+        safeBottom: 16,
+        safeLeft: 0,
+        safeRight: 0,
+        isLandscape: false,
+        isTablet: true,
+      );
+      expect(pad.top, closeTo(geo.cameraPadding.top, 0.01));
+      expect(pad.bottom, closeTo(geo.cameraPadding.bottom, 0.01));
       expect(pad.top, greaterThan(pad.bottom));
-      expect(pad.top, greaterThan(200));
-      expect(pad.bottom, greaterThan(0));
-      // The live band is genuinely present (insets do not consume all height).
       expect(pad.top + pad.bottom, lessThan(1194));
     });
 
