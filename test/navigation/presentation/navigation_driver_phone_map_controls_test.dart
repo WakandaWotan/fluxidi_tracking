@@ -484,17 +484,27 @@ void main() {
       }
     });
 
-    test('tablet keeps diagnostics placement unchanged', () {
-      final layout = resolveDriverCompactNavControlsLayout(
-        screenClass: FluxidiScreenClass.tablet,
-        orientation: Orientation.landscape,
-      );
-      final policy = resolveDriverCockpitSecondaryActionPolicy(
-        isTablet: layout.isTablet,
-        diagnosticsEnabled: true,
-      );
-      expect(policy.showDiagnosticsInBottomStrip, isTrue);
-      expect(policy.prioritizeExternalNavigation, isTrue);
+    // NAV-TELLERS-POSE-ANCHOR-AND-DIAGNOSTICS-UI-1: the visible diagnostics/log
+    // button is removed everywhere, so the policy must never surface it — not
+    // even on tablet, and regardless of the requested diagnosticsEnabled flag.
+    test('tablet never surfaces the diagnostics button on any orientation', () {
+      for (final orientation in [
+        Orientation.portrait,
+        Orientation.landscape,
+      ]) {
+        final layout = resolveDriverCompactNavControlsLayout(
+          screenClass: FluxidiScreenClass.tablet,
+          orientation: orientation,
+        );
+        for (final diagnosticsEnabled in [true, false]) {
+          final policy = resolveDriverCockpitSecondaryActionPolicy(
+            isTablet: layout.isTablet,
+            diagnosticsEnabled: diagnosticsEnabled,
+          );
+          expect(policy.showDiagnosticsInBottomStrip, isFalse);
+          expect(policy.prioritizeExternalNavigation, isTrue);
+        }
+      }
     });
 
     testWidgets('phone landscape collapsed state prioritizes KPIs and safe ride controls',

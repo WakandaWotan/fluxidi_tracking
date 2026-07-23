@@ -50,8 +50,13 @@ class DriverCompactNavControlsLayout {
 
 /// NAV-MOBILE-3D-SELECTOR-SCALE-AND-BOTTOM-PRIORITY-1: bottom-strip action
 /// priority. Phone diagnostics must never take a compact action slot needed
-/// by Waze/external navigation or primary ride controls; tablet preserves its
-/// existing diagnostics placement.
+/// by Waze/external navigation or primary ride controls.
+///
+/// NAV-TELLERS-POSE-ANCHOR-AND-DIAGNOSTICS-UI-1: the visible diagnostics/log
+/// button is now removed from every driver navigation toolbar on all form
+/// factors, orientations and build modes. [showDiagnosticsInBottomStrip] is
+/// therefore always `false`; internal diagnostics recording/export is kept
+/// alive through non-UI paths only.
 class DriverCockpitSecondaryActionPolicy {
   const DriverCockpitSecondaryActionPolicy({
     required this.showDiagnosticsInBottomStrip,
@@ -66,8 +71,8 @@ DriverCockpitSecondaryActionPolicy resolveDriverCockpitSecondaryActionPolicy({
   required bool isTablet,
   required bool diagnosticsEnabled,
 }) {
-  return DriverCockpitSecondaryActionPolicy(
-    showDiagnosticsInBottomStrip: isTablet && diagnosticsEnabled,
+  return const DriverCockpitSecondaryActionPolicy(
+    showDiagnosticsInBottomStrip: false,
     prioritizeExternalNavigation: true,
   );
 }

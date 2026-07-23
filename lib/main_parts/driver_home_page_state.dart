@@ -13693,6 +13693,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  // NAV-TELLERS-POSE-ANCHOR-AND-DIAGNOSTICS-UI-1: the visible driver-facing
+  // diagnostics chip was removed. This PII-safe export helper is intentionally
+  // retained (not surfaced in the toolbar) so internal/support flows can still
+  // share recorded sessions without re-introducing a navigation-toolbar button.
+  // ignore: unused_element
   Future<void> _shareNavDiagnostics() async {
     try {
       final file = await NavDiagnosticsRecorder.instance.exportLatestSessions(
@@ -18625,7 +18630,6 @@ class _DriverHomePageState extends State<DriverHomePage>
     final showMapStyleToggle =
         kDriverMapSatelliteToggleEnabled && showNavMapTools;
     final showOffline = showNavMapTools;
-    final showNavDiagExport = !kReleaseMode && showNavMapTools;
     final inFollowNav = _cameraMode == _CameraMode.follow;
 
     final colors = _navActionThemeColors();
@@ -18634,10 +18638,6 @@ class _DriverHomePageState extends State<DriverHomePage>
         MediaQuery.sizeOf(context).width,
       ),
       orientation: MediaQuery.of(context).orientation,
-    );
-    final secondaryActionPolicy = resolveDriverCockpitSecondaryActionPolicy(
-      isTablet: compactNavLayout.isTablet,
-      diagnosticsEnabled: showNavDiagExport,
     );
     final isPhoneLandscape =
         !compactNavLayout.isTablet &&
@@ -18798,28 +18798,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         ),
       );
     }
-    // NAV-MOBILE-3D-SELECTOR-SCALE-AND-BOTTOM-PRIORITY-1: diagnostics stay
-    // available through the underlying export action and retain tablet
-    // placement, but must not consume a phone bottom-strip slot that Waze or
-    // primary ride actions need.
-    if (secondaryActionPolicy.showDiagnosticsInBottomStrip) {
-      chips.add(
-        _buildCompactNavIconChip(
-          icon: Icons.bug_report_outlined,
-          tooltip: _tr(
-            nl: 'Deel navigatie-diagnose',
-            en: 'Share nav diagnostics',
-            fr: 'Partager diagnostic navigation',
-            es: 'Compartir diagnostico de navegacion',
-          ),
-          onPressed: _shareNavDiagnostics,
-          navAccent: colors.accent,
-          navText: colors.text,
-          navSurface: colors.surface,
-          layout: compactNavLayout,
-        ),
-      );
-    }
+    // NAV-TELLERS-POSE-ANCHOR-AND-DIAGNOSTICS-UI-1: the visible navigation
+    // diagnostics/log button has been removed from every driver navigation
+    // toolbar (phone/tablet, portrait/landscape, debug/profile/release).
+    // Internal diagnostics recording, PII-safe logs and the ADB/logcat output
+    // remain untouched; `_shareNavDiagnostics` stays available for internal
+    // export paths but is no longer surfaced as a driver-facing chip.
     if (hasExternal) {
       final moreExpanded = _navQuickActionsMoreExpanded;
       chips.add(
