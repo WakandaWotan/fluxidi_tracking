@@ -4,6 +4,7 @@ import '../driver_navigation_map_config.dart';
 import '../presentation/navigation_driver_cockpit_camera.dart';
 import '../presentation/navigation_driver_marker_choice.dart';
 import '../presentation/navigation_driver_marker_scale.dart';
+import '../presentation/navigation_driver_marker_visual_anchor.dart';
 import 'navigation_driver_arrow_marker.dart';
 
 /// NAV-PRES-2A: screen-fixed driver vehicle HUD (visual foundation only).
@@ -18,6 +19,12 @@ import 'navigation_driver_arrow_marker.dart';
 /// course. Arrow may apply a responsive [arrowScale] (phone only); Auto always
 /// uses the unscaled [iconSize] so Car ↔ Arrow never jumps the camera or the
 /// Street Level bottom anchor.
+///
+/// CAR VISUAL CENTERLINE: Car artwork is paint-shifted by
+/// [driverNavigationMarkerVisualPaintOffset] so the measured visual road-
+/// contact / body centreline lands on the layout centre (projected pose).
+/// Layout size and bottom edge stay unchanged — Navigation and Tellers share
+/// this path; Arrow keeps a zero offset.
 class NavigationDriverHudOverlay extends StatelessWidget {
   const NavigationDriverHudOverlay({
     super.key,
@@ -58,10 +65,27 @@ class NavigationDriverHudOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     if (markerChoice == DriverNavigationMarkerChoice.arrow) {
       final scale = arrowScale.isFinite && arrowScale > 0 ? arrowScale : 1.0;
-      return NavigationDriverArrowMarker(size: iconSize * scale);
+      final glyphSize = iconSize * scale;
+      // Arrow visual anchor is (0.5, 0.5) → paint offset is zero; still route
+      // through the same helper so Car/Arrow share one policy.
+      final paintOffset = driverNavigationMarkerVisualPaintOffset(
+        layoutSize: glyphSize,
+        visualAnchorFraction: kDriverArrowVisualAnchorFraction,
+      );
+      final arrow = NavigationDriverArrowMarker(size: glyphSize);
+      if (paintOffset == Offset.zero) return arrow;
+      return Transform.translate(
+        key: const ValueKey<String>('nav_marker_visual_anchor_paint'),
+        offset: paintOffset,
+        child: arrow,
+      );
     }
-    // Auto: always the unscaled shared HUD size.
-    return IgnorePointer(
+    // Car: unscaled shared HUD size + measured visual-centreline paint offset.
+    final paintOffset = driverNavigationMarkerVisualPaintOffset(
+      layoutSize: iconSize,
+      visualAnchorFraction: kDriverCarVisualAnchorFraction,
+    );
+    final car = IgnorePointer(
       child: Semantics(
         label: 'Driver navigation vehicle',
         child: Image.asset(
@@ -74,6 +98,12 @@ class NavigationDriverHudOverlay extends StatelessWidget {
           },
         ),
       ),
+    );
+    if (paintOffset == Offset.zero) return car;
+    return Transform.translate(
+      key: const ValueKey<String>('nav_marker_visual_anchor_paint'),
+      offset: paintOffset,
+      child: car,
     );
   }
 }

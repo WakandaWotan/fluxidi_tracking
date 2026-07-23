@@ -10,6 +10,7 @@ import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/navigation/presentation/driver_tellers_layout_geometry.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_marker_choice.dart';
+import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_marker_visual_anchor.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_hud_overlay.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_vehicle_choice_selector.dart';
 
@@ -552,6 +553,14 @@ class DriverRideMetersView extends StatelessWidget {
     final labelLocal = geometry.labelRect.shift(-live.topLeft);
     final selectorLocal = geometry.selectorRect.shift(-live.topLeft);
     final markerLocal = geometry.markerAnchor - live.topLeft;
+    // Layout box centred on the projected pose (same screen point as
+    // Navigation). Car visual centreline calibration is paint-only inside
+    // [NavigationDriverHudOverlay] via [kDriverCarVisualAnchorFraction].
+    final markerTopLeft = driverNavigationMarkerTopLeftForVisualAnchor(
+      visualAnchorScreen: markerLocal,
+      layoutSize: markerSize,
+      visualAnchorFraction: kDriverMarkerLayoutCenterFraction,
+    );
     final liveLabel = driverTellersLiveNavigationLabel(markerLanguage);
 
     return RepaintBoundary(
@@ -613,8 +622,8 @@ class DriverRideMetersView extends StatelessWidget {
               ),
             if (showVehicleMarker)
               Positioned(
-                left: markerLocal.dx - markerSize / 2,
-                top: markerLocal.dy - markerSize / 2,
+                left: markerTopLeft.dx,
+                top: markerTopLeft.dy,
                 width: markerSize,
                 height: markerSize,
                 child: KeyedSubtree(
