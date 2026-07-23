@@ -85,23 +85,50 @@ void main() {
       }
     });
 
-    test('camera padding derives from the same liveWindowRect', () {
+    test('camera padding focal point lands exactly on the marker anchor', () {
+      // NAV-TELLERS-POSE-ANCHOR-AND-DIAGNOSTICS-UI-1: the padding must place the
+      // Mapbox camera `center` on the marker anchor (lower-centre), NOT the
+      // live-window middle. Prove focal == markerAnchor == cameraTargetAnchor.
+      for (final g in [landscapeTablet(), portraitPhone()]) {
+        expect(g.cameraPaddingFocalPoint.dx, closeTo(g.markerAnchor.dx, 0.01));
+        expect(g.cameraPaddingFocalPoint.dy, closeTo(g.markerAnchor.dy, 0.01));
+        expect(
+          g.cameraTargetAnchorGlobal.dx,
+          closeTo(g.markerAnchorGlobal.dx, 0.001),
+        );
+        expect(
+          g.cameraTargetAnchorGlobal.dy,
+          closeTo(g.markerAnchorGlobal.dy, 0.001),
+        );
+        // All four insets remain valid (non-negative, on-screen).
+        expect(g.cameraPadding.left, greaterThanOrEqualTo(0));
+        expect(g.cameraPadding.right, greaterThanOrEqualTo(0));
+        expect(g.cameraPadding.top, greaterThanOrEqualTo(0));
+        expect(g.cameraPadding.bottom, greaterThanOrEqualTo(0));
+        expect(
+          g.cameraPadding.left + g.cameraPadding.right,
+          lessThan(g.viewportSize.width),
+        );
+        expect(
+          g.cameraPadding.top + g.cameraPadding.bottom,
+          lessThan(g.viewportSize.height),
+        );
+      }
+    });
+
+    test('focal point is below the live-window centre (marker Y fraction)', () {
+      // Regression guard for the field bug: the old padding centred the pose at
+      // the live-window middle; the fixed padding must sit ~0.775 down instead.
+      final g = portraitPhone();
+      expect(
+        g.cameraPaddingFocalPoint.dy,
+        greaterThan(g.liveWindowRect.center.dy),
+      );
+    });
+
+    test('public helper matches the geometry (single source of truth)', () {
       final g = landscapeTablet();
       final pad = g.cameraPadding;
-      expect(
-        pad.left,
-        closeTo(g.liveWindowRect.left + kTellersLiveWindowCameraInnerInset, 0.5),
-      );
-      expect(
-        pad.right,
-        closeTo(
-          g.viewportSize.width -
-              g.liveWindowRect.right +
-              kTellersLiveWindowCameraInnerInset,
-          0.5,
-        ),
-      );
-      // Public helper matches the geometry (single source of truth).
       final viaHelper = driverTellersLiveWindowCameraPadding(
         screenWidth: 1194,
         screenHeight: 834,
@@ -114,6 +141,16 @@ void main() {
       expect(viaHelper.top, closeTo(pad.top, 0.01));
       expect(viaHelper.right, closeTo(pad.right, 0.01));
       expect(viaHelper.bottom, closeTo(pad.bottom, 0.01));
+    });
+
+    test('global geometry values are unambiguous and self-consistent', () {
+      for (final g in [landscapeTablet(), portraitPhone()]) {
+        expect(g.liveWindowRectGlobal, g.liveWindowRect);
+        expect(g.mapViewportSize, g.viewportSize);
+        expect(g.markerAnchorGlobal, g.markerAnchor);
+        // Marker anchor lies inside the live aperture (never off-map).
+        expect(g.containsInLiveWindow(g.markerAnchorGlobal), isTrue);
+      }
     });
 
     test('camera screen anchor is normalised marker position', () {
@@ -208,6 +245,125 @@ void main() {
         driverTellersLiveNavigationLabel(AppLanguage.en),
         'Live navigation',
       );
+    });
+  });
+
+  group('NAV-TELLERS-POSE-ANCHOR-AND-DIAGNOSTICS-UI-1 anchor math', () {
+    // All four driver form factors: the focal point solved from cameraPadding
+    // must coincide with the marker anchor (project(pose) == marker) and the
+    // local→global conversion must happen exactly once (values already global).
+    final cases = <String, DriverTellersLayoutGeometry>{
+      'phone portrait': DriverTellersLayoutGeometry.resolve(
+        viewportSize: const Size(390, 844),
+        safeTop: 47,
+        safeBottom: 34,
+        safeLeft: 0,
+        safeRight: 0,
+        isLandscape: false,
+        isTablet: false,
+      ),
+      'phone landscape': DriverTellersLayoutGeometry.resolve(
+        viewportSize: const Size(844, 390),
+        safeTop: 0,
+        safeBottom: 0,
+        safeLeft: 47,
+        safeRight: 34,
+        isLandscape: true,
+        isTablet: false,
+      ),
+      'tablet portrait': DriverTellersLayoutGeometry.resolve(
+        viewportSize: const Size(834, 1194),
+        safeTop: 24,
+        safeBottom: 16,
+        safeLeft: 0,
+        safeRight: 0,
+        isLandscape: false,
+        isTablet: true,
+      ),
+      'tablet landscape': DriverTellersLayoutGeometry.resolve(
+        viewportSize: const Size(1194, 834),
+        safeTop: 0,
+        safeBottom: 0,
+        safeLeft: 0,
+        safeRight: 0,
+        isLandscape: true,
+        isTablet: true,
+      ),
+    };
+
+    cases.forEach((name, g) {
+      test('$name: focal point == marker anchor', () {
+        expect(g.cameraPaddingFocalPoint.dx, closeTo(g.markerAnchor.dx, 0.02));
+        expect(g.cameraPaddingFocalPoint.dy, closeTo(g.markerAnchor.dy, 0.02));
+        // Padding stays valid (logical px, non-negative, on-screen).
+        expect(g.cameraPadding.left, greaterThanOrEqualTo(0));
+        expect(g.cameraPadding.right, greaterThanOrEqualTo(0));
+        expect(g.cameraPadding.top, greaterThanOrEqualTo(0));
+        expect(g.cameraPadding.bottom, greaterThanOrEqualTo(0));
+      });
+    });
+
+    test('orientation flip recomputes the anchor exactly once and differs', () {
+      final port = cases['tablet portrait']!;
+      final land = cases['tablet landscape']!;
+      expect(port.markerAnchorGlobal, isNot(land.markerAnchorGlobal));
+      // Idempotent: re-resolving the same inputs yields the same anchor.
+      final again = DriverTellersLayoutGeometry.resolve(
+        viewportSize: const Size(834, 1194),
+        safeTop: 24,
+        safeBottom: 16,
+        safeLeft: 0,
+        safeRight: 0,
+        isLandscape: false,
+        isTablet: true,
+      );
+      expect(again.markerAnchorGlobal, port.markerAnchorGlobal);
+      expect(again.cameraTargetAnchorGlobal, port.cameraTargetAnchorGlobal);
+    });
+
+    test('aligned diagnostic reports aligned when pose projects on marker', () {
+      final g = cases['tablet portrait']!;
+      final line = formatNavTellersAnchorDiagnostic(
+        viewportGeneration: 3,
+        isLandscape: g.isLandscape,
+        markerAnchor: g.markerAnchorGlobal,
+        projectedPose: g.markerAnchorGlobal, // perfect projection
+        viewportSize: g.mapViewportSize,
+      );
+      expect(line, contains('gen=3'));
+      expect(line, contains('orient=port'));
+      expect(line, contains('aligned=true'));
+      expect(line, contains('dx=le6'));
+      expect(line, contains('dy=le6'));
+    });
+
+    test('diagnostic reports misalignment with bounded PII-free buckets', () {
+      final g = cases['tablet portrait']!;
+      final line = formatNavTellersAnchorDiagnostic(
+        viewportGeneration: 1,
+        isLandscape: g.isLandscape,
+        markerAnchor: g.markerAnchorGlobal,
+        // Simulate the OLD bug: pose projected ~190px above the marker.
+        projectedPose: g.markerAnchorGlobal - const Offset(0, 190),
+        viewportSize: g.mapViewportSize,
+      );
+      expect(line, contains('aligned=false'));
+      expect(line, contains('dy=ngt96'));
+      // Never leaks raw coordinates.
+      expect(line, isNot(contains('.')));
+    });
+
+    test('delta and position buckets are coarse and bounded', () {
+      expect(navTellersAnchorDeltaBucket(0), 'le6');
+      expect(navTellersAnchorDeltaBucket(6), 'le6');
+      expect(navTellersAnchorDeltaBucket(10), 'p7_16');
+      expect(navTellersAnchorDeltaBucket(-10), 'n7_16');
+      expect(navTellersAnchorDeltaBucket(500), 'pgt96');
+      expect(navTellersAnchorPositionBucket(0.1), 'lo');
+      expect(navTellersAnchorPositionBucket(0.5), 'mid');
+      expect(navTellersAnchorPositionBucket(0.9), 'hi');
+      expect(navTellersAnchorAligned(deltaX: 3, deltaY: 4), isTrue);
+      expect(navTellersAnchorAligned(deltaX: 3, deltaY: 40), isFalse);
     });
   });
 }

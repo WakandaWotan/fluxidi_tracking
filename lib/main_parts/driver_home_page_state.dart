@@ -609,6 +609,14 @@ class _DriverHomePageState extends State<DriverHomePage>
   // by the native-follow gate. Proves single-authority for the 3D vehicle.
   int _nativeFollowGatedModelLayerCallsCount = 0;
 
+  // NAV-TELLERS-POSE-ANCHOR-AND-DIAGNOSTICS-UI-1: geometry + authoritative pose
+  // captured by the most recent Tellers follow pass, consumed once the camera
+  // settles to emit the bounded PII-free [NAV_TELLERS_ANCHOR] alignment proof.
+  DriverTellersLayoutGeometry? _pendingTellersAnchorGeometry;
+  double? _pendingTellersAnchorPoseLat;
+  double? _pendingTellersAnchorPoseLon;
+  DateTime? _lastTellersAnchorDiagAt;
+
   // FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 (Phase 1, Part C): monotonic
   // generation for the single active GPS subscription. Bumped every time a
   // new stream is listened to and logged once at start, so a hot-restart /
@@ -13743,6 +13751,40 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  /// NAV-TELLERS-POSE-ANCHOR-AND-DIAGNOSTICS-UI-1: after the Tellers follow
+  /// camera settles, project the authoritative navigation pose through Mapbox
+  /// and emit a bounded, PII-free `[NAV_TELLERS_ANCHOR]` proof that the pose and
+  /// the on-screen Car/Arrow anchor converge. Buckets only — never coordinates,
+  /// addresses or GPS. Rate-limited and development-only.
+  Future<void> _logNavTellersAnchorSettledIfActive() async {
+    if (kReleaseMode) return;
+    final geometry = _pendingTellersAnchorGeometry;
+    final poseLat = _pendingTellersAnchorPoseLat;
+    final poseLon = _pendingTellersAnchorPoseLon;
+    if (geometry == null || poseLat == null || poseLon == null) return;
+    if (!_navPresentationMode.isTellers) return;
+    final map = _map;
+    if (map == null) return;
+    final now = DateTime.now();
+    final last = _lastTellersAnchorDiagAt;
+    if (last != null && now.difference(last).inMilliseconds < 2000) return;
+    _lastTellersAnchorDiagAt = now;
+    try {
+      final screen = await map.pixelForCoordinate(_mbPoint(poseLon, poseLat));
+      final line = formatNavTellersAnchorDiagnostic(
+        viewportGeneration: _tellersViewport.generation,
+        isLandscape: geometry.isLandscape,
+        markerAnchor: geometry.markerAnchorGlobal,
+        projectedPose: Offset(screen.x.toDouble(), screen.y.toDouble()),
+        viewportSize: geometry.mapViewportSize,
+      );
+      _logNavBounded('NAV_TELLERS_ANCHOR', line, intervalMs: 2000);
+    } catch (_) {
+      // Projection can throw during style/size transitions; never crash a
+      // development diagnostic.
+    }
+  }
+
   ({double enterThresholdM, double exitThresholdM}) _matchThresholdsFor(
     geo.Position pos,
   ) {
@@ -17237,20 +17279,32 @@ class _DriverHomePageState extends State<DriverHomePage>
     // landscape, centre band in portrait) via padding only. View level, zoom,
     // pitch and normal (non-Tellers) follow behaviour are unchanged.
     if (_navPresentationMode.isTellers) {
-      // NAV-TELLERS-EXACT-LIVE-VIEWPORT-1: padding from the same authoritative
-      // liveWindowRect the Tellers chrome/aperture use — never a second approx.
+      // NAV-TELLERS-EXACT-LIVE-VIEWPORT-1 / NAV-TELLERS-POSE-ANCHOR-AND-
+      // DIAGNOSTICS-UI-1: resolve the single authoritative Tellers geometry the
+      // chrome/aperture/marker all use, then wire BOTH the camera target and
+      // padding from it so the authoritative navigation pose projects onto the
+      // exact on-screen marker anchor (project(pose) == markerAnchorGlobal).
       final tellersSize = MediaQuery.sizeOf(context);
       final tellersPad = MediaQuery.paddingOf(context);
-      viewPadding = driverTellersLiveWindowCameraPadding(
-        screenWidth: tellersSize.width,
-        screenHeight: tellersSize.height,
-        isLandscape: isLandscape,
-        isTablet: tellersSize.width >= 600,
+      final tellersGeometry = DriverTellersLayoutGeometry.resolve(
+        viewportSize: tellersSize,
         safeTop: tellersPad.top,
         safeBottom: tellersPad.bottom,
         safeLeft: tellersPad.left,
         safeRight: tellersPad.right,
+        isLandscape: isLandscape,
+        isTablet: tellersSize.width >= 600,
       );
+      viewPadding = tellersGeometry.cameraPadding;
+      // Center on the SAME authoritative matched pose ordinary navigation uses
+      // for the marker/route (never the cockpit lead-in) so the padding focal
+      // point places that pose directly beneath the Car/Arrow marker.
+      cameraCenter = p;
+      _pendingTellersAnchorGeometry = tellersGeometry;
+      _pendingTellersAnchorPoseLat = visual.point.lat;
+      _pendingTellersAnchorPoseLon = visual.point.lon;
+    } else {
+      _pendingTellersAnchorGeometry = null;
     }
     _lastMapCameraZoom = cameraZoom;
     unawaited(_syncDriverMarkerIconSizeForZoom());
@@ -17351,6 +17405,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         tilt: cameraPitch,
         bearing: heading,
       );
+      unawaited(_logNavTellersAnchorSettledIfActive());
     } on TimeoutException {
       _logNavCameraInFlight(
         phase: NavCameraInFlightPhase.timeout,

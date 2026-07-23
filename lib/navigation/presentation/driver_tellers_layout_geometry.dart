@@ -210,18 +210,33 @@ class DriverTellersLayoutGeometry {
       labelH,
     );
 
-    final inset = kTellersLiveWindowCameraInnerInset;
+    // NAV-TELLERS-POSE-ANCHOR-AND-DIAGNOSTICS-UI-1: solve the camera padding so
+    // the authoritative navigation pose projects onto EXACTLY the on-screen
+    // Car/Arrow anchor (lower-centre), not the geometric live-window centre.
+    //
+    // Mapbox places the camera `center` at the geometric centre of the viewport
+    // rectangle remaining after padding (zoom is set explicitly, so padding only
+    // moves the focal point):
+    //   focalX = (padLeft + (W - padRight)) / 2
+    //   focalY = (padTop  + (H - padBottom)) / 2
+    // We want focal == markerAnchor  ⇔  project(pose) == tellersVehicleMarker.
+    // Per axis that requires  padStart - padEnd == 2*anchor - extent, which we
+    // satisfy with the minimal non-negative split below (one side collapses to
+    // 0). This is exact for any anchor in [0, extent] and never negative.
+    //
+    // The previous formula centred the pose at the live-window MIDDLE (≈0.5)
+    // while the marker sits at kTellersMarkerAnchorYFraction (≈0.775) — the
+    // downward gap seen in the field where the blue route began above the
+    // marker. The camera padding never accounted for the marker's Y fraction.
+    final padLeft = math.max(0.0, 2 * markerAnchor.dx - viewportSize.width);
+    final padRight = math.max(0.0, viewportSize.width - 2 * markerAnchor.dx);
+    final padTop = math.max(0.0, 2 * markerAnchor.dy - viewportSize.height);
+    final padBottom = math.max(0.0, viewportSize.height - 2 * markerAnchor.dy);
     final cameraPadding = NavCameraViewPadding(
-      top: math.max(0.0, liveWindowRect.top + inset),
-      bottom: math.max(
-        0.0,
-        viewportSize.height - liveWindowRect.bottom + inset,
-      ),
-      left: math.max(0.0, liveWindowRect.left + inset),
-      right: math.max(
-        0.0,
-        viewportSize.width - liveWindowRect.right + inset,
-      ),
+      top: padTop,
+      bottom: padBottom,
+      left: padLeft,
+      right: padRight,
     );
 
     final cameraScreenAnchor = Offset(
@@ -245,6 +260,34 @@ class DriverTellersLayoutGeometry {
       cornerRadius: kTellersLiveWindowCornerRadius,
     );
   }
+
+  // NAV-TELLERS-POSE-ANCHOR-AND-DIAGNOSTICS-UI-1: unambiguous, single-space
+  // camera-facing geometry. All values below are full-viewport GLOBAL logical
+  // pixels (origin = physical display top-left, including system insets). The
+  // local→global conversion happens exactly once, inside resolve().
+
+  /// On-screen anchor of the visible Car/Arrow marker (global logical pixels).
+  /// Identical to the value the Flutter marker widget is positioned at.
+  Offset get markerAnchorGlobal => markerAnchor;
+
+  /// The global screen point the authoritative navigation pose must project
+  /// onto while Tellers follow is active. Equal to [markerAnchorGlobal] by
+  /// construction, so project(authoritativeNavigationPose) lands on the marker.
+  Offset get cameraTargetAnchorGlobal => markerAnchor;
+
+  /// The live map aperture in the same global coordinate space.
+  Rect get liveWindowRectGlobal => liveWindowRect;
+
+  /// Full map viewport size (global logical pixels).
+  Size get mapViewportSize => viewportSize;
+
+  /// Focal point Mapbox will place the camera `center` at, derived purely from
+  /// [cameraPadding] and [viewportSize]. Must equal [cameraTargetAnchorGlobal]
+  /// within rounding, proving padding targets the marker (not the window mid).
+  Offset get cameraPaddingFocalPoint => Offset(
+        (cameraPadding.left + (viewportSize.width - cameraPadding.right)) / 2,
+        (cameraPadding.top + (viewportSize.height - cameraPadding.bottom)) / 2,
+      );
 
   /// True when [point] lies inside the authoritative live aperture.
   bool containsInLiveWindow(Offset point) => liveWindowRect.contains(point);
@@ -315,6 +358,80 @@ List<Rect> driverTellersOpaqueChromeRects(DriverTellersLayoutGeometry geometry) 
     // Right slab
     Rect.fromLTRB(live.right, live.top, w, live.bottom),
   ];
+}
+
+// NAV-TELLERS-POSE-ANCHOR-AND-DIAGNOSTICS-UI-1: bounded, PII-free bucketing for
+// the [NAV_TELLERS_ANCHOR] development diagnostic. These NEVER expose
+// coordinates, addresses or GPS — only coarse pixel-delta / position buckets.
+
+/// Rendering tolerance (logical px) within which the projected pose and the
+/// marker anchor are considered aligned.
+const double kTellersAnchorAlignTolerancePx = 6.0;
+
+/// Bucket a normalised (0–1) anchor position into low / mid / high thirds.
+String navTellersAnchorPositionBucket(double fraction) {
+  if (!fraction.isFinite) return 'na';
+  if (fraction < 0.34) return 'lo';
+  if (fraction < 0.67) return 'mid';
+  return 'hi';
+}
+
+/// Bucket a signed pixel delta into a coarse, bounded label (no raw value).
+String navTellersAnchorDeltaBucket(double deltaPx) {
+  if (!deltaPx.isFinite) return 'na';
+  final a = deltaPx.abs();
+  if (a <= kTellersAnchorAlignTolerancePx) return 'le6';
+  final sign = deltaPx > 0 ? 'p' : 'n';
+  if (a <= 16) return '${sign}7_16';
+  if (a <= 40) return '${sign}17_40';
+  if (a <= 96) return '${sign}41_96';
+  return '${sign}gt96';
+}
+
+/// True when the projected pose is within [kTellersAnchorAlignTolerancePx] of
+/// the marker anchor on both axes.
+bool navTellersAnchorAligned({
+  required double deltaX,
+  required double deltaY,
+}) =>
+    deltaX.isFinite &&
+    deltaY.isFinite &&
+    deltaX.abs() <= kTellersAnchorAlignTolerancePx &&
+    deltaY.abs() <= kTellersAnchorAlignTolerancePx;
+
+/// Build the bounded, PII-free `[NAV_TELLERS_ANCHOR]` diagnostic payload from
+/// the projected pose screen point and the authoritative marker anchor. The
+/// returned string contains only generation, orientation and coarse buckets.
+String formatNavTellersAnchorDiagnostic({
+  required int viewportGeneration,
+  required bool isLandscape,
+  required Offset markerAnchor,
+  required Offset projectedPose,
+  required Size viewportSize,
+}) {
+  final deltaX = projectedPose.dx - markerAnchor.dx;
+  final deltaY = projectedPose.dy - markerAnchor.dy;
+  final markerFracX =
+      viewportSize.width <= 0 ? double.nan : markerAnchor.dx / viewportSize.width;
+  final markerFracY = viewportSize.height <= 0
+      ? double.nan
+      : markerAnchor.dy / viewportSize.height;
+  final poseFracX = viewportSize.width <= 0
+      ? double.nan
+      : projectedPose.dx / viewportSize.width;
+  final poseFracY = viewportSize.height <= 0
+      ? double.nan
+      : projectedPose.dy / viewportSize.height;
+  final aligned = navTellersAnchorAligned(deltaX: deltaX, deltaY: deltaY);
+  return 'gen=$viewportGeneration '
+      'orient=${isLandscape ? 'land' : 'port'} '
+      'markerX=${navTellersAnchorPositionBucket(markerFracX)} '
+      'markerY=${navTellersAnchorPositionBucket(markerFracY)} '
+      'poseX=${navTellersAnchorPositionBucket(poseFracX)} '
+      'poseY=${navTellersAnchorPositionBucket(poseFracY)} '
+      'dx=${navTellersAnchorDeltaBucket(deltaX)} '
+      'dy=${navTellersAnchorDeltaBucket(deltaY)} '
+      'aligned=$aligned';
 }
 
 /// Small opaque blockers covering the rounded-corner wedges of the live
