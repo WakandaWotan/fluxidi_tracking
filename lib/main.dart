@@ -161,6 +161,7 @@ import 'navigation/nav_engine/nav_fresh_start_gate.dart';
 import 'navigation/nav_engine/nav_startup_bootstrap.dart';
 import 'navigation/nav_engine/nav_startup_orientation.dart';
 import 'navigation/nav_engine/nav_parking_arrival.dart';
+import 'navigation/nav_engine/nav_annotation_manager_lifecycle.dart';
 import 'navigation/nav_diagnostics_recorder.dart';
 
 import 'widgets/cockpit_widget.dart';

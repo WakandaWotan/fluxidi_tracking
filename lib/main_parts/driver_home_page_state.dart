@@ -243,6 +243,17 @@ class _DriverHomePageState extends State<DriverHomePage>
   mb.PointAnnotationManager? _driverPointManager;
   mb.PointAnnotationManager? _pinsPointManager;
   mb.PolylineAnnotationManager? _routeLineManager;
+  // NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1: one lifecycle gate per manager
+  // role. Stale delete/update against a disposed native manager crashed Android
+  // ("No manager found with id: N") — every native op must pass the gate first.
+  final NavAnnotationManagerGate _routeAnnotationGate =
+      NavAnnotationManagerGate(NavAnnotationManagerRole.route);
+  final NavAnnotationManagerGate _pinsAnnotationGate =
+      NavAnnotationManagerGate(NavAnnotationManagerRole.pins);
+  final NavAnnotationManagerGate _destinationAnnotationGate =
+      NavAnnotationManagerGate(NavAnnotationManagerRole.destination);
+  final NavAnnotationManagerGate _driverAnnotationGate =
+      NavAnnotationManagerGate(NavAnnotationManagerRole.driver);
   String _activeMapStyleUri = '';
 
   mb.PointAnnotation? _driverMarker;
@@ -850,20 +861,43 @@ class _DriverHomePageState extends State<DriverHomePage>
     _logNavRouteRenderOwner(event: NavRouteRenderOwnerEvent.cleared);
     // Fire-and-forget Mapbox annotation deletes; shared refs are nulled first
     // so a concurrent draw cannot orphan a prior line via shared-field races.
+    // NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1: capture gate ownership and
+    // re-check before every native delete. If the manager was drained/disposed
+    // (style swap), the op is a no-op — never cross the Flutter → native
+    // boundary against a removed manager id (Android fatal).
     final outline = _routeLineOutline;
     final line = _routeLine;
     final completed = _routeLineCompleted;
     final mgr = _routeLineManager;
+    final routeOwnership = _routeAnnotationGate.capture();
     _routeLineOutline = null;
     _routeLine = null;
     _routeLineCompleted = null;
     if (mgr != null) {
       unawaited(() async {
-        try {
-          if (outline != null) await mgr.delete(outline);
-          if (line != null) await mgr.delete(line);
-          if (completed != null) await mgr.delete(completed);
-        } catch (_) {}
+        Future<void> gatedDelete(mb.PolylineAnnotation? ann) async {
+          if (ann == null) return;
+          final check = _routeAnnotationGate.allow(
+            routeOwnership,
+            NavAnnotationOperationKind.delete,
+          );
+          if (!check.allowed) {
+            _logNavAnnotationManager(
+              gate: _routeAnnotationGate,
+              event: 'stale_operation_rejected',
+              operation: NavAnnotationOperationKind.delete,
+              reason: check.reason,
+            );
+            return;
+          }
+          try {
+            await mgr.delete(ann);
+          } catch (_) {}
+        }
+
+        await gatedDelete(outline);
+        await gatedDelete(line);
+        await gatedDelete(completed);
       }());
     }
     unawaited(
@@ -877,14 +911,33 @@ class _DriverHomePageState extends State<DriverHomePage>
     final pickup = _pickupPin;
     final dropoff = _dropoffPin;
     final pinsMgr = _pinsPointManager;
+    final pinsOwnership = _pinsAnnotationGate.capture();
     _pickupPin = null;
     _dropoffPin = null;
     if (pinsMgr != null) {
       unawaited(() async {
-        try {
-          if (pickup != null) await pinsMgr.delete(pickup);
-          if (dropoff != null) await pinsMgr.delete(dropoff);
-        } catch (_) {}
+        Future<void> gatedDelete(mb.PointAnnotation? ann) async {
+          if (ann == null) return;
+          final check = _pinsAnnotationGate.allow(
+            pinsOwnership,
+            NavAnnotationOperationKind.delete,
+          );
+          if (!check.allowed) {
+            _logNavAnnotationManager(
+              gate: _pinsAnnotationGate,
+              event: 'stale_operation_rejected',
+              operation: NavAnnotationOperationKind.delete,
+              reason: check.reason,
+            );
+            return;
+          }
+          try {
+            await pinsMgr.delete(ann);
+          } catch (_) {}
+        }
+
+        await gatedDelete(pickup);
+        await gatedDelete(dropoff);
       }());
     }
   }
@@ -1544,29 +1597,55 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _clearRouteAndPinAnnotationsOnly() async {
     try {
-      if (_routeLineManager != null) {
-        if (_routeLineOutline != null) {
-          await _routeLineManager!.delete(_routeLineOutline!);
+      final routeMgr = _routeLineManager;
+      final routeOwn = _routeAnnotationGate.capture();
+      Future<void> deleteRoute(mb.PolylineAnnotation? ann) async {
+        if (ann == null || routeMgr == null) return;
+        final check = _routeAnnotationGate.allow(
+          routeOwn,
+          NavAnnotationOperationKind.delete,
+        );
+        if (!check.allowed) {
+          _logNavAnnotationManager(
+            gate: _routeAnnotationGate,
+            event: 'stale_operation_rejected',
+            operation: NavAnnotationOperationKind.delete,
+            reason: check.reason,
+          );
+          return;
         }
-        if (_routeLine != null) {
-          await _routeLineManager!.delete(_routeLine!);
-        }
-        if (_routeLineCompleted != null) {
-          await _routeLineManager!.delete(_routeLineCompleted!);
-        }
+        await routeMgr.delete(ann);
       }
+
+      await deleteRoute(_routeLineOutline);
+      await deleteRoute(_routeLine);
+      await deleteRoute(_routeLineCompleted);
       _routeLineOutline = null;
       _routeLine = null;
       _routeLineCompleted = null;
 
-      if (_pinsPointManager != null) {
-        if (_pickupPin != null) {
-          await _pinsPointManager!.delete(_pickupPin!);
+      final pinsMgr = _pinsPointManager;
+      final pinsOwn = _pinsAnnotationGate.capture();
+      Future<void> deletePin(mb.PointAnnotation? ann) async {
+        if (ann == null || pinsMgr == null) return;
+        final check = _pinsAnnotationGate.allow(
+          pinsOwn,
+          NavAnnotationOperationKind.delete,
+        );
+        if (!check.allowed) {
+          _logNavAnnotationManager(
+            gate: _pinsAnnotationGate,
+            event: 'stale_operation_rejected',
+            operation: NavAnnotationOperationKind.delete,
+            reason: check.reason,
+          );
+          return;
         }
-        if (_dropoffPin != null) {
-          await _pinsPointManager!.delete(_dropoffPin!);
-        }
+        await pinsMgr.delete(ann);
       }
+
+      await deletePin(_pickupPin);
+      await deletePin(_dropoffPin);
       _pickupPin = null;
       _dropoffPin = null;
       await _clearNavigationDestinationMarker(
@@ -8258,25 +8337,41 @@ class _DriverHomePageState extends State<DriverHomePage>
     // remove the old manager (and its annotations) before clearing.
     final staleManager = _driverPointManager;
     final map = _map;
+    final ownership = _driverAnnotationGate.capture();
+    _driverAnnotationGate.beginDrain();
     _driverPointManager = null;
     _driverMarker = null;
     _driverMarkerUsesTaxiAsset = false;
     if (staleManager != null) {
       unawaited(() async {
+        final check = _driverAnnotationGate.allow(
+          ownership,
+          NavAnnotationOperationKind.dispose,
+        );
+        if (!check.allowed) {
+          _logNavAnnotationManager(
+            gate: _driverAnnotationGate,
+            event: 'stale_operation_rejected',
+            operation: NavAnnotationOperationKind.dispose,
+            reason: check.reason,
+          );
+          return;
+        }
         try {
           if (map != null) {
             await map.annotations.removeAnnotationManager(staleManager);
-          } else {
-            await staleManager.deleteAll();
           }
-        } catch (_) {
-          try {
-            await staleManager.deleteAll();
-          } catch (_) {
-            // Manager truly gone natively — nothing left to leak.
-          }
+          // Disposal removes annotations — never deleteAll afterward.
+        } catch (_) {}
+        if (_driverAnnotationGate.markDisposed()) {
+          _logNavAnnotationManager(
+            gate: _driverAnnotationGate,
+            event: 'disposed',
+          );
         }
       }());
+    } else {
+      _driverAnnotationGate.markDisposed();
     }
     // NAV-R12-D: a lost manager must not stay lost until the next style
     // swap — mark degraded and schedule a bounded self-heal.
@@ -8435,25 +8530,96 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  void _logNavAnnotationManager({
+    required NavAnnotationManagerGate gate,
+    required String event,
+    NavAnnotationOperationKind? operation,
+    NavAnnotationRejectReason? reason,
+  }) {
+    _logNavBounded(
+      'NAV_ANNOTATION_MANAGER',
+      gate.formatDiag(
+        event: event,
+        operation: operation,
+        reason: reason,
+        routeVersion: _routeStepsVersion,
+      ),
+      intervalMs: 1,
+    );
+  }
+
+  void _activateAnnotationGate(
+    NavAnnotationManagerGate gate, {
+    required String event,
+  }) {
+    gate.activate(
+      styleGeneration: _styleRequestGeneration,
+      sessionGeneration: _navigationSessionGeneration,
+      renderEpoch: _routeRenderEpoch,
+    );
+    _logNavAnnotationManager(gate: gate, event: event);
+  }
+
+  /// Drain every annotation-manager role so in-flight / queued native ops for
+  /// the outgoing generation become no-ops before disposal. Style N+1 makes N
+  /// stale immediately.
+  void _beginDrainAllAnnotationManagers({required String reason}) {
+    for (final gate in <NavAnnotationManagerGate>[
+      _routeAnnotationGate,
+      _pinsAnnotationGate,
+      _destinationAnnotationGate,
+      _driverAnnotationGate,
+    ]) {
+      if (gate.state == NavAnnotationManagerState.disposed) continue;
+      gate.beginDrain();
+      _logNavAnnotationManager(gate: gate, event: 'draining');
+    }
+    debugPrint('[NAV_ANNOTATION_MANAGER] event=drain_all reason=$reason');
+  }
+
+  /// NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1: never issue per-annotation
+  /// deletes after the manager is disposed — disposal itself removes native
+  /// annotations. A follow-up deleteAll after removeAnnotationManager was a
+  /// crash path ("No manager found with id: N").
   Future<void> _disposeDriverPointAnnotationManager() async {
     final map = _map;
     final mgr = _driverPointManager;
-    if (mgr != null) {
-      try {
-        if (map != null) {
-          await map.annotations.removeAnnotationManager(mgr);
-        } else {
-          await mgr.deleteAll();
-        }
-      } catch (_) {
-        try {
-          await mgr.deleteAll();
-        } catch (_) {}
-      }
-    }
+    final ownership = _driverAnnotationGate.capture();
+    _driverAnnotationGate.beginDrain();
+    _logNavAnnotationManager(gate: _driverAnnotationGate, event: 'draining');
     _driverPointManager = null;
     _driverMarker = null;
     _driverMarkerUsesTaxiAsset = false;
+    if (mgr != null) {
+      final disposeAllowed = _driverAnnotationGate.allow(
+        ownership,
+        NavAnnotationOperationKind.dispose,
+      );
+      if (disposeAllowed.allowed) {
+        try {
+          if (map != null) {
+            await map.annotations.removeAnnotationManager(mgr);
+          }
+          // Disposal removes annotations — do NOT call delete/deleteAll on the
+          // disposed manager (native fatal on Android).
+        } catch (_) {}
+      } else {
+        _logNavAnnotationManager(
+          gate: _driverAnnotationGate,
+          event: 'stale_operation_rejected',
+          operation: NavAnnotationOperationKind.dispose,
+          reason: disposeAllowed.reason,
+        );
+      }
+    }
+    if (_driverAnnotationGate.markDisposed()) {
+      _logNavAnnotationManager(gate: _driverAnnotationGate, event: 'disposed');
+    } else {
+      _logNavAnnotationManager(
+        gate: _driverAnnotationGate,
+        event: 'duplicate_dispose_ignored',
+      );
+    }
     debugPrint('[NAV_MARKER] lifecycle=driver_manager_disposed');
   }
 
@@ -8495,18 +8661,28 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  // NAV-PARKING-2 Commit 2: remove the previous route/pins/destination managers
-  // before recreating them. Mapbox annotations survive a style swap, so a
-  // surviving old _routeLineManager left a second authoritative-looking blue
-  // route on the new style (most visible around roundabouts). Disposing the old
-  // managers and nulling their annotation refs before recreation guarantees
-  // exactly one route package can own the primary blue geometry. Mirrors the
-  // driver-point manager cleanup and is null-safe on first creation.
+  // NAV-PARKING-2 Commit 2 + NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1:
+  // remove previous route/pins/destination managers before recreating them.
+  // Drain first so any fire-and-forget delete/update captured against the old
+  // generation becomes a no-op before removeAnnotationManager. Disposal itself
+  // clears native annotations — never issue per-annotation deletes afterward.
   Future<void> _disposeRouteAndPinAnnotationManagers() async {
     final map = _map;
     final route = _routeLineManager;
     final pins = _pinsPointManager;
     final dest = _destinationMarkerManager;
+    final routeOwn = _routeAnnotationGate.capture();
+    final pinsOwn = _pinsAnnotationGate.capture();
+    final destOwn = _destinationAnnotationGate.capture();
+    _routeAnnotationGate.beginDrain();
+    _pinsAnnotationGate.beginDrain();
+    _destinationAnnotationGate.beginDrain();
+    _logNavAnnotationManager(gate: _routeAnnotationGate, event: 'draining');
+    _logNavAnnotationManager(gate: _pinsAnnotationGate, event: 'draining');
+    _logNavAnnotationManager(
+      gate: _destinationAnnotationGate,
+      event: 'draining',
+    );
     _routeLineManager = null;
     _routeLineOutline = null;
     _routeLine = null;
@@ -8517,30 +8693,70 @@ class _DriverHomePageState extends State<DriverHomePage>
     _destinationMarkerManager = null;
     _destinationMarker = null;
     _lastDestinationMarkerSignature = null;
-    if (map == null) return;
-    for (final mgr in <mb.BaseAnnotationManager?>[route, pins, dest]) {
-      if (mgr == null) continue;
-      try {
-        await map.annotations.removeAnnotationManager(mgr);
-      } catch (_) {}
+    if (map != null) {
+      Future<void> disposeOne(
+        mb.BaseAnnotationManager? mgr,
+        NavAnnotationManagerGate gate,
+        NavAnnotationOwnership ownership,
+      ) async {
+        if (mgr == null) return;
+        final check = gate.allow(ownership, NavAnnotationOperationKind.dispose);
+        if (!check.allowed) {
+          _logNavAnnotationManager(
+            gate: gate,
+            event: 'stale_operation_rejected',
+            operation: NavAnnotationOperationKind.dispose,
+            reason: check.reason,
+          );
+          return;
+        }
+        try {
+          await map.annotations.removeAnnotationManager(mgr);
+        } catch (_) {}
+      }
+
+      await disposeOne(route, _routeAnnotationGate, routeOwn);
+      await disposeOne(pins, _pinsAnnotationGate, pinsOwn);
+      await disposeOne(dest, _destinationAnnotationGate, destOwn);
+    }
+    for (final gate in <NavAnnotationManagerGate>[
+      _routeAnnotationGate,
+      _pinsAnnotationGate,
+      _destinationAnnotationGate,
+    ]) {
+      if (gate.markDisposed()) {
+        _logNavAnnotationManager(gate: gate, event: 'disposed');
+      } else {
+        _logNavAnnotationManager(
+          gate: gate,
+          event: 'duplicate_dispose_ignored',
+        );
+      }
     }
   }
 
   Future<void> _recreateAnnotationManagers() async {
     if (_map == null) return;
     await _syncMapboxUserLocationPuckVisibility();
+    // Style replacement: drain all roles before disposing so stale queued
+    // deletes cannot reach native after removeAnnotationManager.
+    _beginDrainAllAnnotationManagers(reason: 'recreate');
     await _disposeDriverPointAnnotationManager();
     await _disposeRouteAndPinAnnotationManagers();
     _routeLineManager = await _map!.annotations
         .createPolylineAnnotationManager();
+    _activateAnnotationGate(_routeAnnotationGate, event: 'activated');
     _pinsPointManager = await _map!.annotations.createPointAnnotationManager();
+    _activateAnnotationGate(_pinsAnnotationGate, event: 'activated');
     _destinationMarkerManager = await _map!.annotations
         .createPointAnnotationManager();
+    _activateAnnotationGate(_destinationAnnotationGate, event: 'activated');
     _destinationMarker = null;
     _lastDestinationMarkerSignature = null;
     final driverMgr = await _map!.annotations.createPointAnnotationManager();
     await _configureDriverPointManagerForTaxiMarker(driverMgr);
     _driverPointManager = driverMgr;
+    _activateAnnotationGate(_driverAnnotationGate, event: 'activated');
     await _syncMapboxUserLocationPuckVisibility();
     await _ensureDriverVehicleModelLayer();
   }
@@ -8624,6 +8840,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     _mapStyleChanging = true;
     // NAV-RIDE-BOUNDARY: style request N+1 makes N stale immediately.
     _styleRequestGeneration += 1;
+    // NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1: style N+1 drains every
+    // annotation-manager generation immediately so queued deletes/updates for
+    // N cannot reach native after the managers are removed.
+    _beginDrainAllAnnotationManagers(reason: 'style_swap');
     final styleOwnershipCapture = NavRouteOwnershipCapture(
       sessionGeneration: _navigationSessionGeneration,
       styleGeneration: _styleRequestGeneration,
@@ -8938,6 +9158,40 @@ class _DriverHomePageState extends State<DriverHomePage>
       capture: capture,
       current: currentSnapshot,
     );
+    // NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1: restore only against the
+    // current active manager generation — never the drained style-N manager.
+    final routeGateOk = _routeAnnotationGate.isActive;
+    final driverGateOk = _driverAnnotationGate.isActive;
+    if (decision.allowed && routeGateOk) {
+      _logNavAnnotationManager(
+        gate: _routeAnnotationGate,
+        event: 'restore_allowed',
+        operation: NavAnnotationOperationKind.restore,
+      );
+    } else {
+      _logNavAnnotationManager(
+        gate: _routeAnnotationGate,
+        event: 'restore_rejected',
+        operation: NavAnnotationOperationKind.restore,
+        reason: routeGateOk
+            ? null
+            : NavAnnotationRejectReason.notActive,
+      );
+    }
+    if (driverGateOk) {
+      _logNavAnnotationManager(
+        gate: _driverAnnotationGate,
+        event: 'restore_allowed',
+        operation: NavAnnotationOperationKind.restore,
+      );
+    } else {
+      _logNavAnnotationManager(
+        gate: _driverAnnotationGate,
+        event: 'restore_rejected',
+        operation: NavAnnotationOperationKind.restore,
+        reason: NavAnnotationRejectReason.notActive,
+      );
+    }
     List<_LonLat>? restoreCoords;
     var restoreRenderEpoch = capture.renderEpoch;
     if (decision.allowed) {
@@ -17895,10 +18149,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     // NAV-PARKING-2 Commit 4: activate a latest-wins Tellers viewport. The
     // navigation session (route, GPS, fare, timers, View level) stays alive;
     // only the presentation changes and the map becomes the live window.
+    // NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1: Tellers must NEVER request or
+    // alter map style — viewport/HUD only. cockpit_style_choice is an explicit
+    // user map-style action via _setDriverCockpitMapVisualStyle, not Tellers.
+    assert(tellersPresentationMustNotChangeMapStyle());
     _tellersViewport.open();
     _logNavBounded(
       'NAV_TELLERS',
-      'event=open viewportGeneration=${_tellersViewport.generation}',
+      'event=open viewportGeneration=${_tellersViewport.generation} '
+      'styleRequest=false',
       intervalMs: 1,
     );
     if (!mounted) return;
@@ -17909,10 +18168,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (!_navPresentationMode.showNavigation()) return;
     // NAV-PARKING-2 Commit 4: restore normal follow presentation and invalidate
     // any pending Tellers camera callback so an old viewport cannot resurrect.
+    // NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1: closing Tellers is HUD-only —
+    // never a map-style request.
+    assert(tellersPresentationMustNotChangeMapStyle());
     _tellersViewport.close();
     _logNavBounded(
       'NAV_TELLERS',
-      'event=close viewportGeneration=${_tellersViewport.generation}',
+      'event=close viewportGeneration=${_tellersViewport.generation} '
+      'styleRequest=false',
       intervalMs: 1,
     );
     if (!mounted) return;
