@@ -26481,11 +26481,30 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     return Scaffold(
       key: _scaffoldKey,
+      // NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 1): fully
+      // opaque Fluxidi root surface. This driver page is pushed OVER the
+      // Business page (which stays mounted below in the Navigator); an opaque
+      // Scaffold background guarantees the previous route can never paint
+      // through during an orientation change or PlatformView surface delay.
+      backgroundColor: kFluxidiBlack,
       drawer: _buildDrawer(),
       body: Stack(
         clipBehavior: Clip.none,
         children: [
-          // Map always at the back.
+          // NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 1):
+          // ALWAYS-present opaque theme backing directly BELOW the retained
+          // MapWidget (independent of showCockpit). During Android
+          // portrait↔landscape rotation the Hybrid-Composition map surface is
+          // briefly unavailable; this backing makes the live-window aperture —
+          // and any transient PlatformView gap — reveal an opaque neutral map
+          // background, never the underlying Business/previous route.
+          Positioned.fill(
+            key: const ValueKey<String>('driver_root_opaque_backing'),
+            child: const IgnorePointer(
+              child: ColoredBox(color: kFluxidiMapBackdrop),
+            ),
+          ),
+          // Map always at the back (above the opaque backing).
           // NAV-PHONE-DRIVER-VIEW-FLICKER-1: isolate the Android HC platform
           // view in its own repaint boundary so overlay/meter/timer repaints
           // above it never dirty the map layer (prevents phone HC flicker).

@@ -6,10 +6,18 @@
 // Do not recalculate these independently in widgets or camera code.
 
 import 'dart:math' as math;
-import 'dart:ui' show Offset, Rect, Size;
+import 'dart:ui' show Color, Offset, Rect, Size;
 
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/navigation/nav_engine/nav_camera_view_mode.dart';
+
+/// NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 1): opaque neutral
+/// map-background fallback. Painted directly below the retained MapWidget and
+/// inside the live-window aperture when the Hybrid-Composition platform-view
+/// surface has no frame (e.g. during an orientation resize). Fully opaque so
+/// the previous Navigator route can never show through — never a transparent
+/// or screenshot copy of the map.
+const Color kFluxidiMapBackdrop = Color(0xFF0A0E14);
 
 /// Landscape left (meters/controls) share of the safe content width.
 const double kTellersLandscapeLeftWidthFraction = 0.44;
@@ -303,6 +311,29 @@ class DriverTellersLayoutGeometry {
             (liveWindowRect.left - metersPanelRect.right) +
             liveWindowRect.width);
   }
+
+  // NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 1): atomic geometry
+  // switch. A transitional orientation frame can hand us a zero/partial viewport
+  // (width/height <= 0, live window outside the viewport). Callers retain the
+  // last VALID geometry until a complete one resolves, and never install an
+  // incomplete aperture that would expose the layer beneath the map.
+
+  /// True only when every camera-facing rect is finite, positive and the live
+  /// aperture lies within the viewport. An invalid geometry must never be
+  /// committed as the active Tellers layout.
+  bool get isValid {
+    final w = viewportSize.width;
+    final h = viewportSize.height;
+    if (!w.isFinite || !h.isFinite || w <= 0 || h <= 0) return false;
+    final live = liveWindowRect;
+    if (!live.width.isFinite || !live.height.isFinite) return false;
+    if (live.width <= 0 || live.height <= 0) return false;
+    // Live window must sit within the viewport (small epsilon for rounding).
+    const eps = 0.5;
+    if (live.left < -eps || live.top < -eps) return false;
+    if (live.right > w + eps || live.bottom > h + eps) return false;
+    return true;
+  }
 }
 
 double _portraitTopRegionHeight({
@@ -315,7 +346,11 @@ double _portraitTopRegionHeight({
   // (header + 2×2 tiles + status + panel padding) that does not overflow.
   final maxTop = math.max(200.0, contentH - controlsH - 2 * gap - 120.0);
   final preferred = isTablet ? 340.0 : 310.0;
-  return preferred.clamp(220.0, maxTop);
+  // NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 1): on a
+  // transitional rotation frame contentH can be tiny, making maxTop < 220.
+  // clamp(lower, upper) requires lower <= upper, so bound the lower limit.
+  final lower = math.min(220.0, maxTop);
+  return preferred.clamp(lower, maxTop);
 }
 
 /// Follow-camera padding derived from the single authoritative

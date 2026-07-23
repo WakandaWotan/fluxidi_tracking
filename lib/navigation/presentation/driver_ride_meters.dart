@@ -298,9 +298,51 @@ class DriverTellersRecenterContract {
   }
 }
 
+/// NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 1): pure last-valid
+/// geometry latch. A transitional orientation frame can hand us a zero/partial
+/// viewport; this retains the previous COMPLETE geometry until a new valid one
+/// resolves, so the aperture is never installed with an incomplete size and the
+/// viewport generation bumps exactly once per committed layout change.
+class DriverTellersGeometryLatch {
+  DriverTellersLayoutGeometry? _lastValid;
+  int _generation = 0;
+
+  DriverTellersLayoutGeometry? get lastValid => _lastValid;
+  int get generation => _generation;
+
+  /// Returns the geometry to render. When [candidate] is valid it is latched
+  /// (and [generation] bumps once if the committed layout actually changed);
+  /// when invalid the last valid geometry is retained. Returns [candidate] only
+  /// as a last resort when nothing valid has ever been committed.
+  DriverTellersLayoutGeometry commit(DriverTellersLayoutGeometry candidate) {
+    if (!candidate.isValid) return _lastValid ?? candidate;
+    final prev = _lastValid;
+    if (prev == null || !_sameLayout(prev, candidate)) {
+      _generation += 1;
+    }
+    _lastValid = candidate;
+    return candidate;
+  }
+
+  static bool _sameLayout(
+    DriverTellersLayoutGeometry a,
+    DriverTellersLayoutGeometry b,
+  ) {
+    return a.viewportSize == b.viewportSize &&
+        a.isLandscape == b.isLandscape &&
+        a.isTablet == b.isTablet &&
+        a.liveWindowRect == b.liveWindowRect;
+  }
+}
+
 /// Large, theme-aware Tellers overlay. Opaque — does not show satellite/map
 /// behind the meters. Map style selection is unrelated to this UI theme.
-class DriverRideMetersView extends StatelessWidget {
+///
+/// NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 1): stateful only to
+/// own a [DriverTellersGeometryLatch] so the last complete geometry is retained
+/// across a transitional orientation frame. All visual composition lives in
+/// [_DriverRideMetersContent] and is driven by the single committed geometry.
+class DriverRideMetersView extends StatefulWidget {
   const DriverRideMetersView({
     super.key,
     required this.snapshot,
@@ -320,6 +362,92 @@ class DriverRideMetersView extends StatelessWidget {
     this.onMarkerChoiceSelected,
     this.markerLanguage = AppLanguage.nl,
     this.vehicleMarkerIconSize,
+  });
+
+  final DriverRideMetersSnapshot snapshot;
+  final VoidCallback onBackToNavigation;
+  final VoidCallback? onStop;
+  final VoidCallback? onToggleWait;
+  final VoidCallback? onRecenter;
+  final bool isWaiting;
+  final ValueListenable<DriverThemeVariant>? themeListenable;
+  final bool compact;
+  final bool isTablet;
+  final bool isLandscape;
+  final bool showLiveWindow;
+  final bool showVehicleMarker;
+  final bool showMarkerSelector;
+  final DriverNavigationMarkerChoice markerChoice;
+  final ValueChanged<DriverNavigationMarkerChoice>? onMarkerChoiceSelected;
+  final AppLanguage markerLanguage;
+  final double? vehicleMarkerIconSize;
+
+  @override
+  State<DriverRideMetersView> createState() => _DriverRideMetersViewState();
+}
+
+class _DriverRideMetersViewState extends State<DriverRideMetersView> {
+  final DriverTellersGeometryLatch _geometryLatch = DriverTellersGeometryLatch();
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final candidate = DriverTellersLayoutGeometry.resolve(
+      viewportSize: media.size,
+      safeTop: media.padding.top,
+      safeBottom: media.padding.bottom,
+      safeLeft: media.padding.left,
+      safeRight: media.padding.right,
+      isLandscape: widget.isLandscape,
+      isTablet: widget.isTablet,
+    );
+    // Retain the last VALID geometry until a new complete one resolves so a
+    // transitional (zero/partial) rotation frame never installs an incomplete
+    // aperture over the retained MapWidget.
+    final geometry = _geometryLatch.commit(candidate);
+    return _DriverRideMetersContent(
+      snapshot: widget.snapshot,
+      onBackToNavigation: widget.onBackToNavigation,
+      onStop: widget.onStop,
+      onToggleWait: widget.onToggleWait,
+      onRecenter: widget.onRecenter,
+      isWaiting: widget.isWaiting,
+      themeListenable: widget.themeListenable,
+      compact: widget.compact,
+      isTablet: widget.isTablet,
+      isLandscape: widget.isLandscape,
+      showLiveWindow: widget.showLiveWindow,
+      showVehicleMarker: widget.showVehicleMarker,
+      showMarkerSelector: widget.showMarkerSelector,
+      markerChoice: widget.markerChoice,
+      onMarkerChoiceSelected: widget.onMarkerChoiceSelected,
+      markerLanguage: widget.markerLanguage,
+      vehicleMarkerIconSize: widget.vehicleMarkerIconSize,
+      geometry: geometry,
+    );
+  }
+}
+
+class _DriverRideMetersContent extends StatelessWidget {
+  const _DriverRideMetersContent({
+    required this.snapshot,
+    required this.onBackToNavigation,
+    this.onStop,
+    this.onToggleWait,
+    this.onRecenter,
+    this.isWaiting = false,
+    this.themeListenable,
+    this.compact = false,
+    this.isTablet = false,
+    this.isLandscape = false,
+    this.showLiveWindow = true,
+    this.showVehicleMarker = true,
+    this.showMarkerSelector = true,
+    this.markerChoice = DriverNavigationMarkerChoice.car,
+    this.onMarkerChoiceSelected,
+    this.markerLanguage = AppLanguage.nl,
+    this.vehicleMarkerIconSize,
+    required this.geometry,
   });
 
   final DriverRideMetersSnapshot snapshot;
@@ -355,6 +483,11 @@ class DriverRideMetersView extends StatelessWidget {
   final AppLanguage markerLanguage;
   final double? vehicleMarkerIconSize;
 
+  /// The single committed (last-valid) Tellers geometry to render. Resolved and
+  /// latched by [_DriverRideMetersViewState] so an incomplete transitional
+  /// viewport never installs a partial aperture.
+  final DriverTellersLayoutGeometry geometry;
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<DriverThemeVariant>(
@@ -365,16 +498,6 @@ class DriverRideMetersView extends StatelessWidget {
         // the map aperture, opaque chrome, gold frame, marker/selector/label
         // and (via the same resolve) camera padding. NO full-screen transparent
         // Material / AnimatedOpacity / BackdropFilter over the HC MapWidget.
-        final media = MediaQuery.of(context);
-        final geometry = DriverTellersLayoutGeometry.resolve(
-          viewportSize: media.size,
-          safeTop: media.padding.top,
-          safeBottom: media.padding.bottom,
-          safeLeft: media.padding.left,
-          safeRight: media.padding.right,
-          isLandscape: isLandscape,
-          isTablet: isTablet,
-        );
         return KeyedSubtree(
           key: const ValueKey<String>('driver_tellers_view'),
           child: showLiveWindow

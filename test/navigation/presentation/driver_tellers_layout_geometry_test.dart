@@ -1,12 +1,12 @@
 // NAV-TELLERS-EXACT-LIVE-VIEWPORT-1
+// NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1
 
 import 'dart:ui' show Offset, Size;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
-import 'package:fluxidi_tracking/navigation/nav_engine/nav_camera_view_mode.dart';
+// driver_ride_meters re-exports driver_tellers_layout_geometry (all symbols).
 import 'package:fluxidi_tracking/navigation/presentation/driver_ride_meters.dart';
-import 'package:fluxidi_tracking/navigation/presentation/driver_tellers_layout_geometry.dart';
 
 void main() {
   group('DriverTellersLayoutGeometry', () {
@@ -366,4 +366,116 @@ void main() {
       expect(navTellersAnchorAligned(deltaX: 3, deltaY: 40), isFalse);
     });
   });
+
+  // ==========================================================================
+  // COMMIT 1 — opaque + atomic geometry switch
+  // ==========================================================================
+  group('NAV-TELLERS-ROTATION Commit 1: validity + atomic geometry', () {
+    DriverTellersLayoutGeometry resolve(Size size, {bool landscape = false}) =>
+        DriverTellersLayoutGeometry.resolve(
+          viewportSize: size,
+          safeTop: 0,
+          safeBottom: 0,
+          safeLeft: 0,
+          safeRight: 0,
+          isLandscape: landscape,
+          isTablet: false,
+        );
+
+    test('valid geometry is reported valid; the aperture is within the view',
+        () {
+      final g = resolve(const Size(390, 844));
+      expect(g.isValid, isTrue);
+      final live = g.liveWindowRect;
+      expect(live.left, greaterThanOrEqualTo(-0.5));
+      expect(live.top, greaterThanOrEqualTo(-0.5));
+      expect(live.right, lessThanOrEqualTo(390 + 0.5));
+      expect(live.bottom, lessThanOrEqualTo(844 + 0.5));
+    });
+
+    test('zero / degenerate viewport sizes are rejected', () {
+      expect(resolve(const Size(0, 0)).isValid, isFalse);
+      expect(resolve(const Size(390, 0)).isValid, isFalse);
+      expect(resolve(const Size(0, 844)).isValid, isFalse);
+      expect(resolve(const Size(-10, -10)).isValid, isFalse);
+    });
+
+    test('resolve never throws on a tiny transitional viewport (clamp guard)',
+        () {
+      // Before the clamp guard, a small contentH made maxTop < 220 and
+      // preferred.clamp(220, maxTop) threw during a rotation frame.
+      for (final size in const <Size>[
+        Size(390, 120),
+        Size(390, 200),
+        Size(390, 260),
+        Size(120, 390),
+      ]) {
+        expect(() => resolve(size), returnsNormally);
+      }
+    });
+
+    test('latch retains the last VALID geometry across an invalid frame', () {
+      final latch = DriverTellersGeometryLatch();
+      final portrait = resolve(const Size(390, 844));
+      final committed = latch.commit(portrait);
+      expect(committed.liveWindowRect, portrait.liveWindowRect);
+      expect(latch.generation, 1);
+
+      // A transitional (invalid) frame must NOT replace the committed geometry.
+      final invalid = resolve(const Size(390, 0));
+      final retained = latch.commit(invalid);
+      expect(retained.liveWindowRect, portrait.liveWindowRect);
+      expect(latch.lastValid!.liveWindowRect, portrait.liveWindowRect);
+      expect(latch.generation, 1, reason: 'no bump on rejected frame');
+    });
+
+    test('portrait geometry is retained until valid landscape commits', () {
+      final latch = DriverTellersGeometryLatch();
+      final portrait = latch.commit(resolve(const Size(390, 844)));
+      // Invalid intermediate frames during the resize.
+      latch.commit(resolve(const Size(844, 0)));
+      latch.commit(resolve(const Size(0, 390)));
+      expect(latch.lastValid!.liveWindowRect, portrait.liveWindowRect);
+      // Valid landscape arrives → one atomic commit, generation bumps once.
+      final landscape = latch.commit(resolve(const Size(844, 390),
+          landscape: true));
+      expect(landscape.isLandscape, isTrue);
+      expect(latch.generation, 2);
+      expect(landscape.liveWindowRect, isNot(portrait.liveWindowRect));
+    });
+
+    test('re-committing the same layout does not bump the generation', () {
+      final latch = DriverTellersGeometryLatch();
+      latch.commit(resolve(const Size(390, 844)));
+      latch.commit(resolve(const Size(390, 844)));
+      latch.commit(resolve(const Size(390, 844)));
+      expect(latch.generation, 1);
+    });
+
+    test('opaque map backdrop is fully opaque (never shows the route below)',
+        () {
+      expect(kFluxidiMapBackdrop.alpha, 0xFF);
+    });
+
+    test('chrome + corner blockers cover every region outside the aperture',
+        () {
+      final g = resolve(const Size(390, 844));
+      final chrome = driverTellersOpaqueChromeRects(g);
+      final live = g.liveWindowRect;
+      // Sample a grid; every point outside the live window must be covered by
+      // an opaque chrome slab (nothing beneath the map can leak there).
+      for (var x = 4.0; x < 390; x += 32) {
+        for (var y = 4.0; y < 844; y += 48) {
+          final p = Offset(x, y);
+          if (live.contains(p)) continue;
+          expect(
+            chrome.any((r) => r.contains(p)),
+            isTrue,
+            reason: 'point $p outside live window must be opaque',
+          );
+        }
+      }
+    });
+  });
+
 }

@@ -619,6 +619,49 @@ void main() {
       expect((container.decoration as BoxDecoration?)?.color, Colors.transparent);
     });
 
+    testWidgets(
+        'atomic geometry: an invalid transitional size retains the last valid '
+        'live-window (no partial aperture during rotation)', (tester) async {
+      // NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 1).
+      final mode = DriverNavPresentationModeController()..showTellers();
+      const snap = DriverRideMetersSnapshot(
+        fareText: '€ 4.00',
+        distanceTravelledText: '1.5 km',
+        rideDurationText: '03:00',
+        waitingTimeText: '00:00',
+        statusText: 'Rit actief',
+      );
+      final windowFinder =
+          find.byKey(const ValueKey('driver_tellers_live_window'));
+
+      // Valid portrait frame commits a complete geometry.
+      await tester.pumpWidget(
+        harness(
+          snapshot: snap,
+          navOwner: const SizedBox.shrink(),
+          mode: mode,
+          size: const Size(390, 844),
+        ),
+      );
+      await tester.pump();
+      final validSize = tester.getSize(windowFinder);
+      expect(validSize.height, greaterThan(0));
+
+      // A transitional (zero-height) rotation frame is invalid → the committed
+      // geometry must be retained (same live-window size), never a partial one.
+      await tester.pumpWidget(
+        harness(
+          snapshot: snap,
+          navOwner: const SizedBox.shrink(),
+          mode: mode,
+          size: const Size(390, 0),
+        ),
+      );
+      await tester.pump();
+      final retainedSize = tester.getSize(windowFinder);
+      expect(retainedSize, validSize);
+    });
+
     testWidgets('Navigation mode has no Tellers overlay (no transparent layer)', (
       tester,
     ) async {
