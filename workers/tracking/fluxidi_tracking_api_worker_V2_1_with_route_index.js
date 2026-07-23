@@ -2319,6 +2319,110 @@ function directTripTotals(trip, kmTotal, waitSecondsTotal) {
   };
 }
 
+// STREET-RIDE-DURABLE-COMPLETION-2: inlined mirror of the tested reference
+// workers/tracking/modules/direct_booking_finalize.mjs (single-file Cloudflare
+// deploy cannot import). If that module changes, this mirror must be updated in
+// lockstep; the module's node tests are the source of truth.
+const DIRECT_BOOKING_FINALIZE_STATE = { COMPLETED: "completed", PENDING: "pending" };
+const DIRECT_RECONCILE_REASON = {
+  REPAIRABLE: "repairable",
+  ALREADY_COMPLETED: "already_completed",
+  MISSING_TRIP: "skipped_missing_trip",
+  NOT_STREET_DIRECT: "skipped_not_street_direct",
+  MISSING_BOOKING_ID: "skipped_missing_trip",
+  NON_TERMINAL: "skipped_non_terminal",
+  MISSING_FARE: "skipped_missing_fare",
+};
+function _dbfStr(v, max = 200) {
+  if (v === null || v === undefined) return "";
+  const s = String(v).trim();
+  return max > 0 ? s.slice(0, max) : s;
+}
+function _dbfNumOrNull(v) {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+function isStreetDirectTrip(trip) {
+  if (!trip || typeof trip !== "object") return false;
+  const kind = _dbfStr(trip.kind).toLowerCase();
+  const source = _dbfStr(trip.source).toLowerCase();
+  return kind === "direct" || source === "street_ride";
+}
+function directTripIsTerminal(trip) {
+  if (!trip || typeof trip !== "object") return false;
+  const status = _dbfStr(trip.status).toLowerCase();
+  if (status === "stopped" || status === "completed" || status === "done") return true;
+  return _dbfStr(trip.stopped_at).length > 0;
+}
+function directBookingIdFromTrip(trip) {
+  if (!trip || typeof trip !== "object") return "";
+  return _dbfStr(trip.booking_id ?? trip.bookingId, 160);
+}
+function authoritativeTripFareCents(trip) {
+  if (!trip || typeof trip !== "object") return null;
+  for (const raw of [trip.price_incl_vat, trip.total_eur]) {
+    const n = _dbfNumOrNull(raw);
+    if (n !== null && n >= 0) return Math.round(n * 100);
+  }
+  return null;
+}
+function tripHasAuthoritativeFare(trip) {
+  return authoritativeTripFareCents(trip) !== null;
+}
+function tripReconcileEligibility(trip) {
+  if (!trip || typeof trip !== "object") return { ok: false, reason: DIRECT_RECONCILE_REASON.MISSING_TRIP };
+  if (!isStreetDirectTrip(trip)) return { ok: false, reason: DIRECT_RECONCILE_REASON.NOT_STREET_DIRECT };
+  if (!directBookingIdFromTrip(trip)) return { ok: false, reason: DIRECT_RECONCILE_REASON.MISSING_BOOKING_ID };
+  if (!directTripIsTerminal(trip)) return { ok: false, reason: DIRECT_RECONCILE_REASON.NON_TERMINAL };
+  if (!tripHasAuthoritativeFare(trip)) return { ok: false, reason: DIRECT_RECONCILE_REASON.MISSING_FARE };
+  return { ok: true, reason: DIRECT_RECONCILE_REASON.REPAIRABLE };
+}
+function bookingAlreadyFinalized(trip) {
+  return _dbfStr(trip?.booking_finalize_state).toLowerCase() === DIRECT_BOOKING_FINALIZE_STATE.COMPLETED;
+}
+function buildFinalizePayloadFromTrip(trip, scope) {
+  return {
+    tenant_id: _dbfStr(scope?.tenant_id, 80),
+    company_id: _dbfStr(scope?.company_id, 80),
+    booking_id: directBookingIdFromTrip(trip),
+    trip_id: _dbfStr(trip?.trip_id, 160) || null,
+    stopped_at: _dbfStr(trip?.stopped_at, 80) || null,
+    total_eur: _dbfNumOrNull(trip?.price_incl_vat ?? trip?.total_eur),
+    price_ex_vat: _dbfNumOrNull(trip?.price_ex_vat),
+    price_vat: _dbfNumOrNull(trip?.price_vat),
+    vat_rate_percent: _dbfNumOrNull(trip?.vat_rate),
+    currency: _dbfStr(trip?.currency ?? trip?.pricing_snapshot?.currency, 8) || "EUR",
+    source: "street_ride_stop",
+  };
+}
+function deriveFinalizeStateFromResult(res) {
+  return res && res.ok === true ? DIRECT_BOOKING_FINALIZE_STATE.COMPLETED : DIRECT_BOOKING_FINALIZE_STATE.PENDING;
+}
+function finalizeErrorCodeFromResult(res) {
+  if (res && res.ok === true) return null;
+  return _dbfStr(res?.error, 120) || "unknown";
+}
+function applyBookingFinalizeAttempt(trip, { state, errorCode = null, nowIso, attemptDelta = 1 } = {}) {
+  if (!trip || typeof trip !== "object") return trip;
+  const completed = DIRECT_BOOKING_FINALIZE_STATE.COMPLETED;
+  const nextState = bookingAlreadyFinalized(trip) ? completed : state;
+  trip.booking_finalize_state = nextState;
+  trip.booking_finalize_attempted_at = _dbfStr(nowIso, 80) || trip.booking_finalize_attempted_at || null;
+  const prevCount = Number(trip.booking_finalize_attempt_count);
+  trip.booking_finalize_attempt_count = (Number.isFinite(prevCount) ? prevCount : 0) + (Number(attemptDelta) || 0);
+  trip.booking_finalize_last_error_code = nextState === completed ? null : errorCode || null;
+  return trip;
+}
+function safeBookingFinalizeResponseFields(trip) {
+  const completed = bookingAlreadyFinalized(trip);
+  return {
+    booking_id: directBookingIdFromTrip(trip) || null,
+    booking_finalize_state: completed ? DIRECT_BOOKING_FINALIZE_STATE.COMPLETED : DIRECT_BOOKING_FINALIZE_STATE.PENDING,
+    booking_finalized: completed,
+  };
+}
+
 function summarizeTrip(trip) {
   const origin =
     trip?.origin && typeof trip.origin === "object"
@@ -5453,50 +5557,141 @@ async function handleStopTrip(req, url, env, origin, ctx) {
     trip?.booking_id ?? trip?.bookingId ?? body["booking_id"] ?? body["bookingId"],
     160,
   );
+  // STREET-RIDE-DURABLE-COMPLETION-2: the tracking trip is already persisted as
+  // `stopped` above (authoritative totals stored). Finalize the linked booking
+  // with a BOUNDED, AWAITED call — no longer fire-and-forget — and record the
+  // outcome durably on the trip (booking_finalize_state). A failed finalize
+  // NEVER rolls back the stopped trip; it stays `pending` and is retryable via
+  // /trip/reconcile-direct-booking (client startup recovery + batch repair).
   if (directBookingId) {
-    const finalizePayload = {
-      tenant_id: scope.tenant_id,
-      company_id: scope.company_id,
-      booking_id: directBookingId,
-      trip_id,
-      stopped_at: stoppedAt,
-      total_eur: totals.total_eur ?? totals.price_incl_vat ?? null,
-      price_ex_vat: totals.price_ex_vat ?? null,
-      price_vat: totals.price_vat ?? null,
-      vat_rate_percent: totals.vat_rate ?? null,
-      currency:
-        safeStr(trip?.currency ?? trip?.pricing_snapshot?.currency, 8) || "EUR",
-      source: "street_ride_stop",
-    };
-    const finalizeTask = (async () => {
-      const res = await _callBookingWorkerJson(
+    const finalizePayload = buildFinalizePayloadFromTrip(trip, scope);
+    let finalizeRes = null;
+    try {
+      finalizeRes = await _callBookingWorkerJson(
         env,
         "/track/booking/finalize-direct",
         finalizePayload,
         { timeoutMs: 4000 },
       );
-      if (res?.ok !== true) {
-        console.log(
-          `[DIRECT_TRIP][BOOKING_FINALIZE][WARN] booking=${directBookingId} trip=${trip_id} reason=${safeStr(res?.error, 120) || "unknown"}`,
-        );
-      }
-    })();
-    if (ctx && typeof ctx.waitUntil === "function") {
-      ctx.waitUntil(finalizeTask);
+    } catch (err) {
+      finalizeRes = { ok: false, error: safeStr(err?.message || err, 120) || "finalize_call_failed" };
+    }
+    applyBookingFinalizeAttempt(trip, {
+      state: deriveFinalizeStateFromResult(finalizeRes),
+      errorCode: finalizeErrorCodeFromResult(finalizeRes),
+      nowIso: nowIso(),
+    });
+    applyCanonicalScopeToRecord(trip, scope);
+    await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
+    if (finalizeRes?.ok !== true) {
+      console.log(
+        `[DIRECT_TRIP][BOOKING_FINALIZE][WARN] booking=${directBookingId} trip=${trip_id} state=pending reason=${finalizeErrorCodeFromResult(finalizeRes) || "unknown"} attempt=${trip.booking_finalize_attempt_count}`,
+      );
     } else {
-      await finalizeTask;
+      console.log(
+        `[DIRECT_TRIP][BOOKING_FINALIZE][OK] booking=${directBookingId} trip=${trip_id} state=completed`,
+      );
     }
   }
 
+  const stopFinalizeFields = safeBookingFinalizeResponseFields(trip);
   return withCors(
     json(
       {
         ok: true,
         trip_id,
-        booking_id: directBookingId || null,
+        booking_id: stopFinalizeFields.booking_id,
+        booking_finalize_state: stopFinalizeFields.booking_finalize_state,
+        booking_finalized: stopFinalizeFields.booking_finalized,
         status: "stopped",
         stopped_at: stoppedAt,
         totals,
+      },
+      { status: 200 }
+    ),
+    origin
+  );
+}
+
+// STREET-RIDE-DURABLE-COMPLETION-2: idempotent retry of a street/direct booking
+// finalization from the persisted tracking trip. Fare is derived EXCLUSIVELY
+// from the stored trip totals (never from request input); never creates a
+// second booking; repeated calls are safe. Returns `completed` immediately when
+// the booking is already finalized.
+async function handleReconcileDirectBooking(req, url, env, origin) {
+  requireAdmin(req, url, env);
+
+  const body = await readJson(req);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
+  const actor = resolveTrackingActorFromRequest(req, url, body);
+  const trip_id = safeStr(body["trip_id"], 128);
+  if (!trip_id) throw new Error("trip_id is required");
+
+  const tripResolved = await getScopedOrLegacyTripForScope(env, scope, trip_id);
+  const trip = tripResolved.trip;
+  if (!trip) throw new Error("Unknown trip_id");
+  if (!recordMatchesTenantCompanyScope(trip, scope)) throw new Error("invalid trip scope");
+  const key = tripResolved.key;
+  const ownershipBlock = await _assertTripOwnedByActorOrBlock({
+    trip,
+    trip_id,
+    actor,
+    error: "trip_not_assigned_to_driver",
+    origin,
+  });
+  if (ownershipBlock) return ownershipBlock;
+
+  // Already durably completed → idempotent no-op.
+  if (bookingAlreadyFinalized(trip)) {
+    const already = safeBookingFinalizeResponseFields(trip);
+    return withCors(
+      json({ ok: true, trip_id, reconciled: false, reason: DIRECT_RECONCILE_REASON.ALREADY_COMPLETED, ...already }, { status: 200 }),
+      origin,
+    );
+  }
+
+  const elig = tripReconcileEligibility(trip);
+  if (!elig.ok) {
+    return withCors(
+      json({ ok: false, trip_id, reconciled: false, reason: elig.reason, ...safeBookingFinalizeResponseFields(trip) }, { status: 409 }),
+      origin,
+    );
+  }
+
+  const finalizePayload = buildFinalizePayloadFromTrip(trip, scope);
+  let finalizeRes = null;
+  try {
+    finalizeRes = await _callBookingWorkerJson(
+      env,
+      "/track/booking/finalize-direct",
+      finalizePayload,
+      { timeoutMs: 4000 },
+    );
+  } catch (err) {
+    finalizeRes = { ok: false, error: safeStr(err?.message || err, 120) || "finalize_call_failed" };
+  }
+  applyBookingFinalizeAttempt(trip, {
+    state: deriveFinalizeStateFromResult(finalizeRes),
+    errorCode: finalizeErrorCodeFromResult(finalizeRes),
+    nowIso: nowIso(),
+  });
+  applyCanonicalScopeToRecord(trip, scope);
+  await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
+
+  const out = safeBookingFinalizeResponseFields(trip);
+  console.log(
+    `[DIRECT_TRIP][RECONCILE] trip=${trip_id} booking=${directBookingIdFromTrip(trip)} state=${out.booking_finalize_state} attempt=${trip.booking_finalize_attempt_count}`,
+  );
+  return withCors(
+    json(
+      {
+        ok: out.booking_finalized,
+        trip_id,
+        reconciled: out.booking_finalized,
+        reason: out.booking_finalized ? DIRECT_RECONCILE_REASON.REPAIRABLE : (finalizeErrorCodeFromResult(finalizeRes) || "pending"),
+        ...out,
       },
       { status: 200 }
     ),
@@ -6500,6 +6695,7 @@ export default {
       if (req.method === "POST" && url.pathname === "/trip/wait-start") return await handleWaitStartTrip(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/wait-end") return await handleWaitEndTrip(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/stop") return await handleStopTrip(req, url, env, origin, ctx);
+      if (req.method === "POST" && url.pathname === "/trip/reconcile-direct-booking") return await handleReconcileDirectBooking(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/payment") return await handleTripPayment(req, url, env, origin, ctx);
 
       // core
