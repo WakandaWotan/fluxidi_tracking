@@ -2310,6 +2310,16 @@ class _CompanyBookingsOverviewPageState
         es: 'Pendiente',
       );
     }
+    // STREET-RIDE-DURABLE-COMPLETION-2: a live street/direct ride projects as
+    // ACTIVE (not generic PENDING) so it reads as an active ride, not "pending".
+    if (normalized == 'ACTIVE' || normalized == 'IN_PROGRESS') {
+      return _t(
+        nl: 'Rit actief',
+        en: 'Ride active',
+        fr: 'Course active',
+        es: 'Viaje activo',
+      );
+    }
     if (normalized == 'COMPLETED' ||
         normalized == 'DONE' ||
         normalized == 'FINISHED') {

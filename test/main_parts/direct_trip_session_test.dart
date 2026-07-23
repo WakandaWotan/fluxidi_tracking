@@ -143,6 +143,27 @@ void main() {
     });
   });
 
+  group('company bucket for the ACTIVE projection', () {
+    test('ACTIVE street ride buckets to open (stays in Available)', () {
+      expect(streetRideCompanyBucket('ACTIVE'), StreetRideCompanyBucket.open);
+      expect(streetRideCompanyBucket('IN_PROGRESS'), StreetRideCompanyBucket.open);
+    });
+
+    test('COMPLETED street ride buckets to completed (History only)', () {
+      expect(
+        streetRideCompanyBucket('COMPLETED'),
+        StreetRideCompanyBucket.completed,
+      );
+    });
+
+    test('CANCELLED street ride buckets to cancelled', () {
+      expect(
+        streetRideCompanyBucket('CANCELLED'),
+        StreetRideCompanyBucket.cancelled,
+      );
+    });
+  });
+
   group('parseDirectRideStopResponse', () {
     test('reads totals and completed finalize state', () {
       final r = parseDirectRideStopResponse(<String, dynamic>{

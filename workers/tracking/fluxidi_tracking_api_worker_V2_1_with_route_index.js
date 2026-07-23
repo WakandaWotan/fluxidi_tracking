@@ -5699,6 +5699,117 @@ async function handleReconcileDirectBooking(req, url, env, origin) {
   );
 }
 
+// STREET-RIDE-DURABLE-COMPLETION-2: bounded, authenticated batch repair of
+// historical stuck street/direct bookings. DRY-RUN BY DEFAULT (no writes unless
+// the caller explicitly passes dry_run:false). Scans the scoped trips index,
+// classifies each street/direct trip, and reconciles only terminal trips that
+// carry a durable booking id + authoritative fare — reusing the idempotent
+// finalize-direct path. Never touches planned/customer bookings, never
+// completes an active trip, never guesses a fare. Returns summary counts only
+// (PII-free) with cursor-based continuation.
+async function handleRepairDirectBookings(req, url, env, origin) {
+  requireAdmin(req, url, env);
+
+  const body = await readJson(req);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
+
+  // Dry-run is the default: only an explicit dry_run:false performs writes.
+  const dryRun = body?.dry_run !== false && body?.dryRun !== false;
+  const limitRaw = Number(body?.limit ?? body?.batch_size);
+  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, Math.floor(limitRaw))) : 50;
+  const cursorRaw = Number(body?.cursor);
+  const cursorStart = Number.isFinite(cursorRaw) ? Math.max(0, Math.floor(cursorRaw)) : 0;
+
+  const indexKey = scopedTripsIndexKey(scope);
+  const idsRaw = (await kvGetJson(env.FLUXIDI_TRACKING, indexKey)) ?? [];
+  const tripIds = Array.isArray(idsRaw) ? idsRaw : [];
+  const slice = tripIds.slice(cursorStart, cursorStart + limit);
+
+  const summary = {
+    candidates: 0,
+    repairable: 0,
+    skipped_non_terminal: 0,
+    skipped_missing_trip: 0,
+    skipped_missing_fare: 0,
+    already_completed: 0,
+    errors: 0,
+  };
+
+  for (const rawTripId of slice) {
+    const tripId = safeStr(rawTripId, 160);
+    if (!tripId) continue;
+    try {
+      const resolved = await getScopedOrLegacyTripForScope(env, scope, tripId);
+      const trip = resolved.trip;
+      if (!trip || !recordMatchesTenantCompanyScope(trip, scope)) {
+        summary.skipped_missing_trip++;
+        continue;
+      }
+      // Only street/direct rides are candidates; planned/customer bookings are
+      // never considered here.
+      if (!isStreetDirectTrip(trip)) continue;
+      summary.candidates++;
+      if (bookingAlreadyFinalized(trip)) {
+        summary.already_completed++;
+        continue;
+      }
+      const elig = tripReconcileEligibility(trip);
+      if (!elig.ok) {
+        if (elig.reason === DIRECT_RECONCILE_REASON.NON_TERMINAL) summary.skipped_non_terminal++;
+        else if (elig.reason === DIRECT_RECONCILE_REASON.MISSING_FARE) summary.skipped_missing_fare++;
+        else summary.skipped_missing_trip++;
+        continue;
+      }
+      summary.repairable++;
+      if (!dryRun) {
+        let finalizeRes = null;
+        try {
+          finalizeRes = await _callBookingWorkerJson(
+            env,
+            "/track/booking/finalize-direct",
+            buildFinalizePayloadFromTrip(trip, scope),
+            { timeoutMs: 4000 },
+          );
+        } catch (err) {
+          finalizeRes = { ok: false, error: safeStr(err?.message || err, 120) || "finalize_call_failed" };
+        }
+        applyBookingFinalizeAttempt(trip, {
+          state: deriveFinalizeStateFromResult(finalizeRes),
+          errorCode: finalizeErrorCodeFromResult(finalizeRes),
+          nowIso: nowIso(),
+        });
+        applyCanonicalScopeToRecord(trip, scope);
+        await kvPutJson(env.FLUXIDI_TRACKING, resolved.key, trip, TTL_TRIP);
+        if (finalizeRes?.ok !== true) summary.errors++;
+      }
+    } catch (_) {
+      summary.errors++;
+    }
+  }
+
+  const nextCursor = cursorStart + slice.length;
+  const hasMore = nextCursor < tripIds.length;
+  console.log(
+    `[DIRECT_TRIP][REPAIR] dry_run=${dryRun} scanned=${slice.length} candidates=${summary.candidates} repairable=${summary.repairable} already_completed=${summary.already_completed} skipped_non_terminal=${summary.skipped_non_terminal} skipped_missing_fare=${summary.skipped_missing_fare} skipped_missing_trip=${summary.skipped_missing_trip} errors=${summary.errors}`,
+  );
+  return withCors(
+    json(
+      {
+        ok: true,
+        dry_run: dryRun,
+        summary,
+        scanned: slice.length,
+        index_size: tripIds.length,
+        cursor: hasMore ? nextCursor : null,
+      },
+      { status: 200 }
+    ),
+    origin
+  );
+}
+
 async function handleTripPayment(req, url, env, origin, ctx) {
   requireAdmin(req, url, env);
 
@@ -6696,6 +6807,7 @@ export default {
       if (req.method === "POST" && url.pathname === "/trip/wait-end") return await handleWaitEndTrip(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/stop") return await handleStopTrip(req, url, env, origin, ctx);
       if (req.method === "POST" && url.pathname === "/trip/reconcile-direct-booking") return await handleReconcileDirectBooking(req, url, env, origin);
+      if (req.method === "POST" && url.pathname === "/trip/repair-direct-bookings") return await handleRepairDirectBookings(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/payment") return await handleTripPayment(req, url, env, origin, ctx);
 
       // core

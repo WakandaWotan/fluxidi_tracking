@@ -955,13 +955,47 @@ export function _materializeOperationalLegIfMissingFromReadModel(rec, bookingId,
   return { changed: true, rec };
 }
 
+/**
+ * STREET-RIDE-DURABLE-COMPLETION-2: true when the record is a driver-started
+ * street / direct ride (source street_ride, ride_type direct, or a street_
+ * booking id). Used only to refine the ACTIVE projection; planned customer
+ * bookings are never matched here.
+ */
+export function _isStreetDirectRecord(rec) {
+  if (!rec || typeof rec !== "object") return false;
+  const source = String(
+    rec?.source ??
+      rec?.booking_source ??
+      rec?.booking?.source ??
+      rec?.booking?.booking_source ??
+      "",
+  )
+    .trim()
+    .toLowerCase();
+  const rideType = String(rec?.ride_type ?? rec?.booking?.ride_type ?? "")
+    .trim()
+    .toLowerCase();
+  const id = String(rec?.booking_id ?? rec?.bookingId ?? "").trim().toLowerCase();
+  return source === "street_ride" || rideType === "direct" || id.startsWith("street_");
+}
+
 export function _projectionLifecycleStatusFromRecord(rec, bookingId = null) {
   const parentStatus = _normLifecycleStatus(rec?.status ?? rec?.stage ?? null);
   if (parentStatus === "COMPLETED" || parentStatus === "CANCELLED") {
     return parentStatus;
   }
   const operationalLegs = _bookingOperationalLegsFromRecord(rec);
-  if (!operationalLegs.length) return parentStatus;
+  // STREET-RIDE-DURABLE-COMPLETION-2: a live street/direct ride (no operational
+  // legs, not terminal) must project as ACTIVE, not the generic PENDING that
+  // _normLifecycleStatus collapses IN_PROGRESS to. This keeps it out of the
+  // "completed" bucket (so it stays in Available while live and moves to
+  // History only when COMPLETED) and lets the UI label it "Rit actief".
+  // Planned customer bookings (which carry operational legs / are not
+  // street/direct) are unaffected.
+  if (!operationalLegs.length) {
+    if (_isStreetDirectRecord(rec)) return "ACTIVE";
+    return parentStatus;
+  }
   const legStatuses = operationalLegs.map((legEntry) =>
     _normLifecycleStatus(
       legEntry?.status ??
