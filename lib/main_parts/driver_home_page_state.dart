@@ -3536,6 +3536,29 @@ class _DriverHomePageState extends State<DriverHomePage>
         bookingId: bookingId,
       );
 
+      // DIRECT-RIDE-EXISTING-BOOKING-OWNERSHIP-1: a street/direct booking must
+      // never enter the planned lifecycle. Decide the routing BEFORE we clear
+      // any direct-ride state, so a mistaken planned Start / Stop path can
+      // never reach `/tracking/start`, `/trip/record-planned-stop` or the
+      // generic COMPLETED status endpoint for this record.
+      final routing = openExistingRideDecision(
+        bookingId: b.bookingId,
+        details: b.details,
+      );
+      if (routing.isStreetUnavailable) {
+        _logDriverNavDiag(
+          tag: 'STREET_RESUME_UNAVAILABLE',
+          action: 'open_ride',
+          bookingId: bookingId,
+        );
+        _showStreetDirectReopenUnavailableSnackbar();
+        return;
+      }
+      if (routing.isStreetResume && routing.identity != null) {
+        await _resumeStreetDirectRideFromExistingBooking(b, routing.identity!);
+        return;
+      }
+
       final fromBookingsHub = _bookingsHubVisible;
       // Prevent old bookings-hub optimized panel from flashing during
       // route pop/transition back to map/cockpit.
@@ -3634,6 +3657,119 @@ class _DriverHomePageState extends State<DriverHomePage>
     } catch (e) {
       _toast('Open ride failed: $e');
     }
+  }
+
+  /// DIRECT-RIDE-EXISTING-BOOKING-OWNERSHIP-1: bounded, localized safe-fail
+  /// UX for reopening a street/direct booking that lacks the authoritative
+  /// resume identity. The record is intentionally left unchanged; Retry only
+  /// triggers an authoritative reload of the rides list.
+  void _showStreetDirectReopenUnavailableSnackbar() {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 6),
+        content: Text(
+          _tr(
+            nl: 'Deze straatrit kan niet worden hervat. Ververs de rittenlijst.',
+            en: 'This street ride cannot be resumed. Refresh the rides list.',
+            fr: 'Cette course en rue ne peut pas être reprise. Actualisez la liste des courses.',
+            es: 'Esta carrera de calle no puede reanudarse. Actualiza la lista de viajes.',
+          ),
+        ),
+        action: SnackBarAction(
+          label: _tr(
+            nl: 'Ververs',
+            en: 'Refresh',
+            fr: 'Actualiser',
+            es: 'Actualizar',
+          ),
+          onPressed: () {
+            unawaited(
+              _refreshBookings(
+                force: true,
+                trigger: 'street_reopen_retry',
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  /// DIRECT-RIDE-EXISTING-BOOKING-OWNERSHIP-1: resume an already running
+  /// street/direct ride from the Bookings list. Restores ONLY identifiers
+  /// proven to belong to this exact booking. Never generates a new
+  /// `direct_ride_key`, never creates another `street_` booking and never
+  /// enters the planned start/stop lifecycle.
+  Future<void> _resumeStreetDirectRideFromExistingBooking(
+    BookingItem b,
+    StreetDirectResumeIdentity identity,
+  ) async {
+    final bookingId = b.bookingId.trim();
+
+    final fromBookingsHub = _bookingsHubVisible;
+    if (_bookingsHubVisible) {
+      if (mounted) {
+        setState(() => _bookingsHubVisible = false);
+      } else {
+        _bookingsHubVisible = false;
+      }
+    }
+    if (_isBusinessPreviewMode) {
+      if (fromBookingsHub && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+    } else if (Navigator.of(context).canPop()) {
+      Navigator.of(context).popUntil((r) => r.isFirst);
+    }
+    if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
+      Navigator.of(context).pop();
+    }
+
+    // Cut the previous ride, then hand the authoritative direct-ride
+    // identifiers back BEFORE any state-visible frame so no code path can see
+    // this record with `_directRideActive == false`.
+    _hardClearAtRideBoundary(
+      reason: 'street_direct_resume',
+      bumpSession: true,
+    );
+    if (mounted) {
+      setState(() {
+        _activeBooking = b;
+        _activeTripId = null;
+        _activeDirectTripId = identity.trackingTripId;
+        _activeDirectBookingId = identity.bookingId;
+        _directRideKey = identity.directRideKey;
+        _directRideActive = true;
+        _isStartingTrip = false;
+        _routePhase = _RideRoutePhase.trip;
+      });
+    } else {
+      _activeBooking = b;
+      _activeTripId = null;
+      _activeDirectTripId = identity.trackingTripId;
+      _activeDirectBookingId = identity.bookingId;
+      _directRideKey = identity.directRideKey;
+      _directRideActive = true;
+    }
+    _logDriverNavDiag(
+      tag: 'STREET_RESUME',
+      action: 'open_ride',
+      bookingId: bookingId,
+    );
+    _logNavRideBoundary(
+      event: NavRideBoundaryEvent.sessionStarted,
+      extra: 'reason=street_direct_resume',
+    );
+    _setNavigationWakelock(true);
+    await _applyMapStyleForMode();
+    await _hydrateActiveBookingDetails(bookingId);
+    await _hydrateActiveBookingPrice(bookingId);
+    await _ensureLocationPermission();
+    _startTrackingInternal();
   }
 
   void _clearActiveSelection() {

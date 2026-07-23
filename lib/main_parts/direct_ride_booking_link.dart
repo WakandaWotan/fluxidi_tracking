@@ -373,6 +373,197 @@ class DirectRideStopResult {
   final bool bookingFinalized;
 }
 
+// ===========================================================================
+// DIRECT-RIDE-EXISTING-BOOKING-OWNERSHIP-1 — reopen safety helpers.
+//
+// A booking that originated from a street/direct ride must never be routed
+// through the planned booking lifecycle when it is reopened from the Bookings
+// screen. The following pure helpers let the driver home page (and future
+// callers) make that routing decision from record fields alone, so a listing
+// row can be classified without any network IO.
+//
+// Detection uses one shared rule and is deliberately conservative:
+//   * `booking_id` starts with `street_`,           OR
+//   * `source` / `booking_source` == `street_ride`, OR
+//   * `ride_type` / `rideType` == `direct`.
+//
+// Nested `booking` and `record` maps (as returned by the booking worker's
+// `/tracking/booking` hydration and by the read-model list rows) are also
+// inspected so the helper works uniformly across every client surface.
+// ===========================================================================
+
+bool _looksLikeStreetIdRaw(String id) {
+  final trimmed = id.trim().toLowerCase();
+  return trimmed.startsWith('street_');
+}
+
+bool _isStreetRideSource(String v) => v.trim().toLowerCase() == 'street_ride';
+bool _isDirectRideType(String v) => v.trim().toLowerCase() == 'direct';
+
+/// Returns `true` when [record] represents a street/direct ride under the
+/// shared classification rule. Accepts flattened list rows, hydrated
+/// `/tracking/booking` responses (nested `booking`) and full `record` maps.
+///
+/// Pure; no IO; safe on `null`/empty input.
+bool isStreetDirectBooking(Map<String, dynamic>? record) {
+  if (record == null || record.isEmpty) return false;
+
+  String s(Object? v) => v == null ? '' : v.toString();
+
+  final bookingId = s(record['booking_id'] ?? record['bookingId']);
+  if (bookingId.isNotEmpty && _looksLikeStreetIdRaw(bookingId)) return true;
+
+  final source = s(
+    record['source'] ?? record['booking_source'] ?? record['bookingSource'],
+  );
+  if (source.trim().isNotEmpty && _isStreetRideSource(source)) return true;
+
+  final rideType = s(record['ride_type'] ?? record['rideType']);
+  if (rideType.trim().isNotEmpty && _isDirectRideType(rideType)) return true;
+
+  for (final nestedKey in const ['booking', 'record']) {
+    final nested = record[nestedKey];
+    if (nested is Map) {
+      if (isStreetDirectBooking(Map<String, dynamic>.from(nested))) return true;
+    }
+  }
+  return false;
+}
+
+/// Authoritative direct-ride identifiers required to safely resume an already
+/// running street/direct ride from a listing tap.
+///
+/// Both [trackingTripId] and [directRideKey] must be present on the record.
+/// The client MUST NOT invent, reconstruct or regenerate either value.
+class StreetDirectResumeIdentity {
+  const StreetDirectResumeIdentity({
+    required this.bookingId,
+    required this.trackingTripId,
+    required this.directRideKey,
+  });
+
+  final String bookingId;
+  final String trackingTripId;
+  final String directRideKey;
+}
+
+String _firstNonEmptyDeep(Map<String, dynamic>? record, List<String> keys) {
+  if (record == null || record.isEmpty) return '';
+  for (final k in keys) {
+    final v = record[k];
+    if (v != null) {
+      final t = v.toString().trim();
+      if (t.isNotEmpty) return t;
+    }
+  }
+  for (final nestedKey in const ['booking', 'record']) {
+    final nested = record[nestedKey];
+    if (nested is Map) {
+      final t = _firstNonEmptyDeep(
+        Map<String, dynamic>.from(nested),
+        keys,
+      );
+      if (t.isNotEmpty) return t;
+    }
+  }
+  return '';
+}
+
+/// Resolves the authoritative direct-ride identity from [record]. Returns
+/// `null` when [record] is not classified as street/direct or when the record
+/// does not carry BOTH a non-empty `tracking_trip_id` and a non-empty
+/// `direct_ride_key`.
+///
+/// A `null` result MUST be treated by the caller as "cannot resume" — the
+/// caller must not fabricate identifiers and must not enter the planned
+/// lifecycle for a street/direct record.
+StreetDirectResumeIdentity? resolveStreetDirectResumeIdentity(
+  Map<String, dynamic>? record, {
+  required String bookingId,
+}) {
+  final safeBookingId = bookingId.trim();
+  if (safeBookingId.isEmpty) return null;
+  if (!isStreetDirectBooking(record)) return null;
+
+  final trip = _firstNonEmptyDeep(record, const [
+    'tracking_trip_id',
+    'trackingTripId',
+  ]);
+  final key = _firstNonEmptyDeep(record, const [
+    'direct_ride_key',
+    'directRideKey',
+  ]);
+  if (trip.isEmpty || key.isEmpty) return null;
+
+  return StreetDirectResumeIdentity(
+    bookingId: safeBookingId,
+    trackingTripId: trip,
+    directRideKey: key,
+  );
+}
+
+/// Routing decision produced by [openExistingRideDecision]. The driver home
+/// page acts on this decision instead of duplicating the classification logic
+/// across multiple callers.
+enum OpenExistingRideDecisionKind {
+  /// Ordinary planned booking — retain the existing lifecycle unchanged.
+  planned,
+
+  /// Street/direct booking with authoritative resume identity — enter the
+  /// existing direct-ride lifecycle without generating a new key or trip id.
+  streetResume,
+
+  /// Street/direct booking without authoritative resume identity — the caller
+  /// MUST fail safely and never enter the planned lifecycle.
+  streetUnavailable,
+}
+
+class OpenExistingRideDecision {
+  const OpenExistingRideDecision._(this.kind, this.identity);
+
+  const OpenExistingRideDecision.planned()
+      : kind = OpenExistingRideDecisionKind.planned,
+        identity = null;
+
+  const OpenExistingRideDecision.streetResume(this.identity)
+      : kind = OpenExistingRideDecisionKind.streetResume;
+
+  const OpenExistingRideDecision.streetUnavailable()
+      : kind = OpenExistingRideDecisionKind.streetUnavailable,
+        identity = null;
+
+  final OpenExistingRideDecisionKind kind;
+  final StreetDirectResumeIdentity? identity;
+
+  bool get isPlanned => kind == OpenExistingRideDecisionKind.planned;
+  bool get isStreetResume => kind == OpenExistingRideDecisionKind.streetResume;
+  bool get isStreetUnavailable =>
+      kind == OpenExistingRideDecisionKind.streetUnavailable;
+}
+
+/// Decide how `_goToRide` (or any equivalent caller) should route an opened
+/// booking. Pure; unit-tested; the single source of truth for street/direct
+/// detection on the client.
+OpenExistingRideDecision openExistingRideDecision({
+  required String bookingId,
+  required Map<String, dynamic> details,
+}) {
+  final safeBookingId = bookingId.trim();
+  final record = <String, dynamic>{
+    ...details,
+    if (safeBookingId.isNotEmpty) 'booking_id': safeBookingId,
+  };
+  if (!isStreetDirectBooking(record)) {
+    return const OpenExistingRideDecision.planned();
+  }
+  final identity = resolveStreetDirectResumeIdentity(
+    record,
+    bookingId: safeBookingId,
+  );
+  if (identity == null) return const OpenExistingRideDecision.streetUnavailable();
+  return OpenExistingRideDecision.streetResume(identity);
+}
+
 DirectRideStopResult parseDirectRideStopResponse(Object? decoded) {
   if (decoded is! Map) {
     return const DirectRideStopResult(
