@@ -6934,8 +6934,8 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   /// Startup recovery: resolve any persisted direct-trip session. Non-blocking
   /// (invoked unawaited). Reconciles a stopped-but-pending booking with bounded
-  /// retry/backoff; abandons unrecoverable/stale sessions; never creates a
-  /// duplicate booking (reconcile reuses the same trip + booking id).
+  /// retry/backoff; probes server truth for persisted `active` sessions (never
+  /// resends `/trip/stop`); abandons only structurally unusable sessions.
   Future<void> _recoverPendingDirectTripSession() async {
     try {
       final scope = _complianceLedgerScopeForStop();
@@ -6947,27 +6947,147 @@ class _DriverHomePageState extends State<DriverHomePage>
         companyId: scope.companyId,
         driverId: kDriverId,
       );
+      if (session == null) return;
       final action = directTripRecoveryAction(session);
       switch (action) {
         case DirectTripRecoveryAction.none:
           return;
-        case DirectTripRecoveryAction.resumeActive:
-          // An active ride was interrupted but is still recent. We do not force
-          // the UI back into navigation; leave the record so a genuine resume
-          // or a later stop can still reconcile it.
-          return;
-        case DirectTripRecoveryAction.abandon:
-          await _DirectTripSessionStore.clear(
-            tenantId: scope.tenantId,
-            companyId: scope.companyId,
-          );
-          return;
         case DirectTripRecoveryAction.reconcilePending:
-          await _attemptDirectReconcileWithBackoff(session!, scope);
+          await _attemptDirectReconcileWithBackoff(session, scope);
+          return;
+        case DirectTripRecoveryAction.resumeActive:
+        case DirectTripRecoveryAction.abandon:
+          // DIRECT-RIDE-STOP-RECOVERY-RACE-1 Commit 2: never blindly resume or
+          // abandon an active session that still carries durable ids. Probe
+          // server truth via idempotent reconcile (never `/trip/stop`).
+          if (directTripSessionHasProbeIdentity(session)) {
+            await _probeAndRecoverActiveDirectSession(session, scope);
+            return;
+          }
+          // Structurally unusable (missing trip/booking identity): only then
+          // honor abandon. resumeActive without ids keeps the file untouched.
+          if (action == DirectTripRecoveryAction.abandon) {
+            await _DirectTripSessionStore.clear(
+              tenantId: scope.tenantId,
+              companyId: scope.companyId,
+            );
+            debugPrint(
+              '[DIRECT_TRIP_RECOVERY_PROBE] lifecycle=${session.localLifecycle} '
+              'category=unusable identity_match=false server_non_terminal=false '
+              'booking_finalized=false action=clear attempt=0',
+            );
+          }
           return;
       }
     } catch (_) {
       // Best-effort recovery; remain pending + retryable on next launch.
+    }
+  }
+
+  /// Server-truth probe for a persisted active (or stale-active) session.
+  /// Never calls `/trip/stop`. Never restores meter/navigation.
+  Future<void> _probeAndRecoverActiveDirectSession(
+    DirectTripSession session,
+    ({String tenantId, String companyId}) scope,
+  ) async {
+    final outcome = await _reconcileDirectBookingOnWorker(
+      tripId: session.tripId,
+      expectedBookingId: session.bookingId,
+    );
+    final probeAction = classifyDirectTripRecoveryProbe(
+      session: session,
+      outcome: outcome,
+    );
+    final identityMatch = (outcome.responseTripId ?? '').trim() ==
+            session.tripId.trim() &&
+        (outcome.responseBookingId ?? '').trim() == session.bookingId.trim();
+    debugPrint(
+      '[DIRECT_TRIP_RECOVERY_PROBE] lifecycle=${session.localLifecycle} '
+      'category=${probeAction.name} identity_match=$identityMatch '
+      'server_non_terminal=${outcome.isNonTerminal} '
+      'booking_finalized=${outcome.bookingFinalized} '
+      'action=${_directRecoveryProbeActionLabel(probeAction)} attempt=0',
+    );
+
+    switch (probeAction) {
+      case DirectTripRecoveryProbeAction.clearAcknowledged:
+        await _DirectTripSessionStore.clear(
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+        );
+        _clearStaleInMemoryDirectIdentityIfMatching(session);
+        unawaited(
+          _refreshBookings(
+            force: true,
+            trigger: 'street_recovery_finalize_ok',
+          ),
+        );
+        return;
+      case DirectTripRecoveryProbeAction.retainServerActive:
+        // Keep persisted active; no meter restore; no `/trip/stop`.
+        return;
+      case DirectTripRecoveryProbeAction.retainTransportUnknown:
+      case DirectTripRecoveryProbeAction.retainIdentityMismatch:
+        // Retain evidence; retry on next startup. Never abandon on unknown.
+        return;
+      case DirectTripRecoveryProbeAction.rewriteStoppedPending:
+        final rewritten = session.copyWith(
+          localLifecycle: kDirectTripLocalLifecycleStopped,
+          bookingFinalizeState: kDirectTripFinalizePending,
+        );
+        // Persist active → stopped/pending atomically before reconcile loop.
+        await _DirectTripSessionStore.save(
+          rewritten,
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+          driverId: kDriverId,
+        );
+        await _attemptDirectReconcileWithBackoff(rewritten, scope);
+        return;
+    }
+  }
+
+  String _directRecoveryProbeActionLabel(DirectTripRecoveryProbeAction a) {
+    switch (a) {
+      case DirectTripRecoveryProbeAction.clearAcknowledged:
+        return 'clear';
+      case DirectTripRecoveryProbeAction.retainServerActive:
+        return 'retain';
+      case DirectTripRecoveryProbeAction.rewriteStoppedPending:
+        return 'rewrite_pending';
+      case DirectTripRecoveryProbeAction.retainTransportUnknown:
+        return 'retry';
+      case DirectTripRecoveryProbeAction.retainIdentityMismatch:
+        return 'retain';
+    }
+  }
+
+  void _clearStaleInMemoryDirectIdentityIfMatching(DirectTripSession session) {
+    final trip = session.tripId.trim();
+    final booking = session.bookingId.trim();
+    final matchesTrip =
+        trip.isNotEmpty && (_activeDirectTripId ?? '').trim() == trip;
+    final matchesBooking =
+        booking.isNotEmpty && (_activeDirectBookingId ?? '').trim() == booking;
+    if (!matchesTrip && !matchesBooking) return;
+    if (mounted) {
+      setState(() {
+        if (matchesTrip) _activeDirectTripId = null;
+        if (matchesBooking) _activeDirectBookingId = null;
+        if ((_directRideKey ?? '').trim() == session.directRideKey.trim()) {
+          _directRideKey = null;
+        }
+        _directStopFinalizePending = false;
+        _directRideActive = false;
+      });
+    } else {
+      if (matchesTrip) _activeDirectTripId = null;
+      if (matchesBooking) _activeDirectBookingId = null;
+      if ((_directRideKey ?? '').trim() == session.directRideKey.trim()) {
+        _directRideKey = null;
+      }
+      _directStopFinalizePending = false;
+      _directRideActive = false;
     }
   }
 
@@ -6986,7 +7106,14 @@ class _DriverHomePageState extends State<DriverHomePage>
           tenantId: scope.tenantId,
           companyId: scope.companyId,
         );
+        _clearStaleInMemoryDirectIdentityIfMatching(session);
         debugPrint('[DIRECT_TRIP][RECOVERY] reconciled=completed');
+        unawaited(
+          _refreshBookings(
+            force: true,
+            trigger: 'street_recovery_reconcile_ok',
+          ),
+        );
         return;
       }
       if (attempt < maxAttempts - 1) {

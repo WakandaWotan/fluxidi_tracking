@@ -1165,4 +1165,248 @@ void main() {
       expect(mayApplyLocalCompleted(ok), isTrue);
     });
   });
+
+  // ==========================================================================
+  // DIRECT-RIDE-STOP-RECOVERY-RACE-1 Commit 2 — server-truth recovery probe.
+  // ==========================================================================
+
+  group('DIRECT-RIDE-STOP-RECOVERY-RACE-1 C2: classifyDirectTripRecoveryProbe',
+      () {
+    DirectTripSession activeSession({
+      String tripId = 'trip_abc',
+      String bookingId = 'street_1_ab',
+      String key = 'direct_1_driver',
+      String lifecycle = kDirectTripLocalLifecycleActive,
+      String finalize = kDirectTripFinalizePending,
+    }) {
+      return DirectTripSession(
+        directRideKey: key,
+        tripId: tripId,
+        bookingId: bookingId,
+        startedAtIso: '2026-07-23T10:00:00.000Z',
+        localLifecycle: lifecycle,
+        bookingFinalizeState: finalize,
+      );
+    }
+
+    DirectRideReconcileOutcome probe({
+      Object? decoded,
+      int? status = 200,
+      String reqTrip = 'trip_abc',
+      String expBooking = 'street_1_ab',
+      bool transportOk = true,
+    }) {
+      return mapDirectRideReconcileOutcome(
+        decoded: decoded,
+        httpStatus: status,
+        requestedTripId: reqTrip,
+        expectedBookingId: expBooking,
+        transportSucceeded: transportOk,
+      );
+    }
+
+    test('persisted active + acknowledged completed → clearAcknowledged '
+        '(no meter restore implied by action)', () {
+      final session = activeSession();
+      final o = probe(
+        decoded: <String, dynamic>{
+          'ok': true,
+          'trip_id': 'trip_abc',
+          'booking_id': 'street_1_ab',
+          'booking_finalize_state': 'completed',
+          'booking_finalized': true,
+          'reason': 'already_completed',
+        },
+      );
+      expect(
+        classifyDirectTripRecoveryProbe(session: session, outcome: o),
+        DirectTripRecoveryProbeAction.clearAcknowledged,
+      );
+      // Recovery must never invent a new key or call /trip/stop.
+      expect(session.directRideKey, 'direct_1_driver');
+    });
+
+    test('persisted active + non-terminal 409 → retainServerActive '
+        '(no /trip/stop)', () {
+      final o = probe(
+        status: 409,
+        decoded: <String, dynamic>{
+          'ok': false,
+          'trip_id': 'trip_abc',
+          'booking_id': 'street_1_ab',
+          'booking_finalize_state': 'pending',
+          'booking_finalized': false,
+          'reason': 'skipped_non_terminal',
+        },
+      );
+      expect(
+        classifyDirectTripRecoveryProbe(
+          session: activeSession(),
+          outcome: o,
+        ),
+        DirectTripRecoveryProbeAction.retainServerActive,
+      );
+      expect(o.isNonTerminal, isTrue);
+      expect(o.isAcknowledged, isFalse);
+    });
+
+    test('persisted active + pending finalize → rewriteStoppedPending '
+        'and preserves identity fields', () {
+      final session = activeSession();
+      final o = probe(
+        decoded: <String, dynamic>{
+          'ok': false,
+          'trip_id': 'trip_abc',
+          'booking_id': 'street_1_ab',
+          'booking_finalize_state': 'pending',
+          'booking_finalized': false,
+          'reason': 'pending',
+        },
+      );
+      expect(
+        classifyDirectTripRecoveryProbe(session: session, outcome: o),
+        DirectTripRecoveryProbeAction.rewriteStoppedPending,
+      );
+      final rewritten = session.copyWith(
+        localLifecycle: kDirectTripLocalLifecycleStopped,
+        bookingFinalizeState: kDirectTripFinalizePending,
+      );
+      expect(rewritten.tripId, session.tripId);
+      expect(rewritten.bookingId, session.bookingId);
+      expect(rewritten.directRideKey, session.directRideKey);
+      expect(rewritten.isStopped, isTrue);
+      expect(rewritten.isCompleted, isFalse);
+      // Pending rewrite must not look like local COMPLETED.
+      expect(
+        streetRideCompanyBucket(kStreetRideStatusInProgress),
+        StreetRideCompanyBucket.open,
+      );
+    });
+
+    test('transport failure retains evidence', () {
+      expect(
+        classifyDirectTripRecoveryProbe(
+          session: activeSession(),
+          outcome: probe(transportOk: false, decoded: null, status: null),
+        ),
+        DirectTripRecoveryProbeAction.retainTransportUnknown,
+      );
+    });
+
+    test('identity mismatch retains evidence', () {
+      expect(
+        classifyDirectTripRecoveryProbe(
+          session: activeSession(),
+          outcome: probe(
+            decoded: <String, dynamic>{
+              'ok': true,
+              'trip_id': 'trip_OTHER',
+              'booking_id': 'street_1_ab',
+              'booking_finalize_state': 'completed',
+              'booking_finalized': true,
+            },
+          ),
+        ),
+        DirectTripRecoveryProbeAction.retainIdentityMismatch,
+      );
+      expect(
+        classifyDirectTripRecoveryProbe(
+          session: activeSession(),
+          outcome: probe(
+            decoded: <String, dynamic>{
+              'ok': true,
+              'trip_id': 'trip_abc',
+              'booking_id': 'street_WRONG',
+              'booking_finalize_state': 'completed',
+              'booking_finalized': true,
+            },
+          ),
+        ),
+        DirectTripRecoveryProbeAction.retainIdentityMismatch,
+      );
+    });
+
+    test('stale active with ids still probes (pure action would abandon, '
+        'probe identity remains available)', () {
+      final now = DateTime.parse('2026-07-24T10:00:00.000Z');
+      final stale = activeSession().copyWith(
+        startedAtIso: '2026-07-23T10:00:00.000Z',
+        updatedAtIso: '2026-07-23T10:00:00.000Z',
+      );
+      expect(
+        directTripRecoveryAction(stale, now: now),
+        DirectTripRecoveryAction.abandon,
+      );
+      expect(directTripSessionHasProbeIdentity(stale), isTrue);
+      // With ids present, recovery orchestration must probe — not silent clear.
+      final completedProbe = probe(
+        decoded: <String, dynamic>{
+          'ok': true,
+          'trip_id': 'trip_abc',
+          'booking_id': 'street_1_ab',
+          'booking_finalize_state': 'completed',
+          'booking_finalized': true,
+          'reason': 'already_completed',
+        },
+      );
+      expect(
+        classifyDirectTripRecoveryProbe(session: stale, outcome: completedProbe),
+        DirectTripRecoveryProbeAction.clearAcknowledged,
+      );
+      final pendingProbe = probe(
+        decoded: <String, dynamic>{
+          'ok': false,
+          'trip_id': 'trip_abc',
+          'booking_id': 'street_1_ab',
+          'booking_finalize_state': 'pending',
+          'booking_finalized': false,
+        },
+      );
+      expect(
+        classifyDirectTripRecoveryProbe(session: stale, outcome: pendingProbe),
+        DirectTripRecoveryProbeAction.rewriteStoppedPending,
+      );
+      expect(
+        classifyDirectTripRecoveryProbe(
+          session: stale,
+          outcome: probe(transportOk: false, decoded: null, status: null),
+        ),
+        DirectTripRecoveryProbeAction.retainTransportUnknown,
+      );
+    });
+
+    test('structurally unusable session (no ids) cannot probe', () {
+      final unusable = activeSession(tripId: '', bookingId: '');
+      expect(directTripSessionHasProbeIdentity(unusable), isFalse);
+      expect(directTripSessionHasProbeIdentity(null), isFalse);
+    });
+
+    test('stopped/pending existing recovery decision remains reconcilePending',
+        () {
+      final stopped = activeSession(
+        lifecycle: kDirectTripLocalLifecycleStopped,
+        finalize: kDirectTripFinalizePending,
+      );
+      expect(
+        directTripRecoveryAction(stopped),
+        DirectTripRecoveryAction.reconcilePending,
+      );
+    });
+
+    test('startup recovery never implies /trip/stop or new key generation', () {
+      // Contract: every probe action is retain / rewrite / clear — never "stop".
+      const forbidden = {'stop', 'start', 'create'};
+      for (final a in DirectTripRecoveryProbeAction.values) {
+        expect(forbidden.contains(a.name), isFalse);
+      }
+      final keyBefore = 'direct_1_driver';
+      final session = activeSession(key: keyBefore);
+      final rewritten = session.copyWith(
+        localLifecycle: kDirectTripLocalLifecycleStopped,
+      );
+      expect(rewritten.directRideKey, keyBefore);
+      expect(makeDirectRideKey(driverId: 'x', startedAtMs: 1), isNot(keyBefore),
+          reason: 'rewrite must not call makeDirectRideKey');
+    });
+  });
 }

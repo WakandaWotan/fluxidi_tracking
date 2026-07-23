@@ -647,6 +647,71 @@ bool isDirectRideReconcileAcknowledged(DirectRideReconcileOutcome outcome) =>
     outcome.isAcknowledged;
 
 // ===========================================================================
+// DIRECT-RIDE-STOP-RECOVERY-RACE-1 / Commit 2 — server-truth recovery probe.
+//
+// A persisted `active` session must never be blindly resumed or abandoned after
+// process restart. Classify the reconcile probe into an explicit recovery
+// action without ever reissuing `/trip/stop`.
+// ===========================================================================
+
+/// Recovery action after probing `/trip/reconcile-direct-booking` for a
+/// persisted active (or stale-active) DirectTripSession.
+enum DirectTripRecoveryProbeAction {
+  /// Booking finalize acknowledged — clear session; no meter restore.
+  clearAcknowledged,
+
+  /// Server reports the trip is still active (HTTP 409 non-terminal).
+  retainServerActive,
+
+  /// Trip appears stopped/pending — rewrite lifecycle and reconcile.
+  rewriteStoppedPending,
+
+  /// Transport/decode failure — retain evidence for a later retry.
+  retainTransportUnknown,
+
+  /// Response identity does not match the persisted session.
+  retainIdentityMismatch,
+}
+
+/// Pure classifier for an active-session recovery probe. Unit-tested.
+DirectTripRecoveryProbeAction classifyDirectTripRecoveryProbe({
+  required DirectTripSession session,
+  required DirectRideReconcileOutcome outcome,
+}) {
+  if (outcome.isAcknowledged) {
+    return DirectTripRecoveryProbeAction.clearAcknowledged;
+  }
+  if (!outcome.transportSucceeded) {
+    return DirectTripRecoveryProbeAction.retainTransportUnknown;
+  }
+  if (outcome.isNonTerminal) {
+    return DirectTripRecoveryProbeAction.retainServerActive;
+  }
+
+  final reqTrip = session.tripId.trim();
+  final expBooking = session.bookingId.trim();
+  final respTrip = (outcome.responseTripId ?? '').trim();
+  final respBooking = (outcome.responseBookingId ?? '').trim();
+  if (respTrip.isNotEmpty && respTrip != reqTrip) {
+    return DirectTripRecoveryProbeAction.retainIdentityMismatch;
+  }
+  if (respBooking.isNotEmpty && respBooking != expBooking) {
+    return DirectTripRecoveryProbeAction.retainIdentityMismatch;
+  }
+
+  // Matching (or empty response) identities with non-acknowledged finalize →
+  // treat as stopped/pending and drive the existing reconcile backoff.
+  return DirectTripRecoveryProbeAction.rewriteStoppedPending;
+}
+
+/// True when a persisted session has the durable ids required for a server
+/// truth probe (never invent ids).
+bool directTripSessionHasProbeIdentity(DirectTripSession? session) {
+  if (session == null) return false;
+  return session.hasTripId && session.hasBookingId;
+}
+
+// ===========================================================================
 // DIRECT-RIDE-EXISTING-BOOKING-OWNERSHIP-1 — reopen safety helpers.
 //
 // A booking that originated from a street/direct ride must never be routed
