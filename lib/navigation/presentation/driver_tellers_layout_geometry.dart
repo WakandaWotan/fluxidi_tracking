@@ -318,6 +318,11 @@ class DriverTellersLayoutGeometry {
   // last VALID geometry until a complete one resolves, and never install an
   // incomplete aperture that would expose the layer beneath the map.
 
+  /// The road-contact anchor (global logical pixels) of the visible Car/Arrow
+  /// marker. Identical to [cameraTargetAnchorGlobal] by construction so the
+  /// authoritative navigation pose projects exactly onto the marker.
+  Offset get markerRoadContactAnchorGlobal => markerAnchor;
+
   /// True only when every camera-facing rect is finite, positive and the live
   /// aperture lies within the viewport. An invalid geometry must never be
   /// committed as the active Tellers layout.
@@ -460,6 +465,48 @@ String formatNavTellersAnchorDiagnostic({
   final aligned = navTellersAnchorAligned(deltaX: deltaX, deltaY: deltaY);
   return 'gen=$viewportGeneration '
       'orient=${isLandscape ? 'land' : 'port'} '
+      'markerX=${navTellersAnchorPositionBucket(markerFracX)} '
+      'markerY=${navTellersAnchorPositionBucket(markerFracY)} '
+      'poseX=${navTellersAnchorPositionBucket(poseFracX)} '
+      'poseY=${navTellersAnchorPositionBucket(poseFracY)} '
+      'dx=${navTellersAnchorDeltaBucket(deltaX)} '
+      'dy=${navTellersAnchorDeltaBucket(deltaY)} '
+      'aligned=$aligned';
+}
+
+// NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 2): bounded,
+// PII-free `[NAV_TELLERS_POSE_LOCK]` proof emitted after the Tellers follow
+// camera settles. It projects the authoritative matched pose through Mapbox and
+// reports only coarse buckets — never coordinates, addresses, GPS or trip ids.
+// It extends the earlier `[NAV_TELLERS_ANCHOR]` line with device class and the
+// active View 1–13 level so field logs prove alignment per device/orientation.
+String formatNavTellersPoseLockDiagnostic({
+  required int viewportGeneration,
+  required bool isLandscape,
+  required bool isTablet,
+  required int viewLevel,
+  required Offset markerAnchor,
+  required Offset projectedPose,
+  required Size viewportSize,
+}) {
+  final deltaX = projectedPose.dx - markerAnchor.dx;
+  final deltaY = projectedPose.dy - markerAnchor.dy;
+  final markerFracX =
+      viewportSize.width <= 0 ? double.nan : markerAnchor.dx / viewportSize.width;
+  final markerFracY = viewportSize.height <= 0
+      ? double.nan
+      : markerAnchor.dy / viewportSize.height;
+  final poseFracX = viewportSize.width <= 0
+      ? double.nan
+      : projectedPose.dx / viewportSize.width;
+  final poseFracY = viewportSize.height <= 0
+      ? double.nan
+      : projectedPose.dy / viewportSize.height;
+  final aligned = navTellersAnchorAligned(deltaX: deltaX, deltaY: deltaY);
+  return 'gen=$viewportGeneration '
+      'device=${isTablet ? 'tablet' : 'phone'} '
+      'orient=${isLandscape ? 'land' : 'port'} '
+      'view=$viewLevel '
       'markerX=${navTellersAnchorPositionBucket(markerFracX)} '
       'markerY=${navTellersAnchorPositionBucket(markerFracY)} '
       'poseX=${navTellersAnchorPositionBucket(poseFracX)} '

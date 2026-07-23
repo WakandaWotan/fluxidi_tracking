@@ -156,3 +156,15 @@ const bool kNavigationUseNativeFollowPuckEnabled = bool.fromEnvironment(
   kNavigationUseNativeFollowPuckDefineKey,
   defaultValue: false,
 );
+
+/// NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 2): development-only
+/// visual crosshair at the Tellers marker road-contact anchor to prove on-device
+/// that the projected authoritative pose lands on the marker. OFF by default and
+/// must never appear in normal profile/release builds unless explicitly enabled:
+/// `--dart-define=FLUXIDI_NAV_TELLERS_POSE_DEBUG=true`.
+const String kNavTellersPoseDebugDefineKey = 'FLUXIDI_NAV_TELLERS_POSE_DEBUG';
+
+const bool kNavTellersPoseDebugEnabled = bool.fromEnvironment(
+  kNavTellersPoseDebugDefineKey,
+  defaultValue: false,
+);

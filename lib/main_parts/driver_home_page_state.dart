@@ -13953,14 +13953,32 @@ class _DriverHomePageState extends State<DriverHomePage>
     _lastTellersAnchorDiagAt = now;
     try {
       final screen = await map.pixelForCoordinate(_mbPoint(poseLon, poseLat));
+      final projectedPose = Offset(screen.x.toDouble(), screen.y.toDouble());
       final line = formatNavTellersAnchorDiagnostic(
         viewportGeneration: _tellersViewport.generation,
         isLandscape: geometry.isLandscape,
         markerAnchor: geometry.markerAnchorGlobal,
-        projectedPose: Offset(screen.x.toDouble(), screen.y.toDouble()),
+        projectedPose: projectedPose,
         viewportSize: geometry.mapViewportSize,
       );
       _logNavBounded('NAV_TELLERS_ANCHOR', line, intervalMs: 2000);
+      // NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 2): the pose
+      // lock proof (device class + View level + alignment buckets). Marker
+      // road-contact anchor == camera target anchor by construction, so
+      // aligned=true confirms project(matchedPose) lands on the marker.
+      _logNavBounded(
+        'NAV_TELLERS_POSE_LOCK',
+        formatNavTellersPoseLockDiagnostic(
+          viewportGeneration: _tellersViewport.generation,
+          isLandscape: geometry.isLandscape,
+          isTablet: geometry.isTablet,
+          viewLevel: _driverCockpitViewLevel,
+          markerAnchor: geometry.markerRoadContactAnchorGlobal,
+          projectedPose: projectedPose,
+          viewportSize: geometry.mapViewportSize,
+        ),
+        intervalMs: 2000,
+      );
     } catch (_) {
       // Projection can throw during style/size transitions; never crash a
       // development diagnostic.
@@ -17468,6 +17486,17 @@ class _DriverHomePageState extends State<DriverHomePage>
       // exact on-screen marker anchor (project(pose) == markerAnchorGlobal).
       final tellersSize = MediaQuery.sizeOf(context);
       final tellersPad = MediaQuery.paddingOf(context);
+      // NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 2): classify
+      // form factor by the SHORTEST side, identical to the Tellers marker
+      // widget (build() line — FluxidiBreakpoints.classifyDeviceSize). Using
+      // `width >= 600` here promoted a phone in landscape (width ≥ 600) to
+      // tablet, so the camera resolved a DIFFERENT liveWindowRect/markerAnchor
+      // than the marker widget — the multi-pixel displacement seen in the field
+      // that Centreren could not correct. Both must resolve the SAME geometry so
+      // project(matchedPose) == markerRoadContactAnchorGlobal.
+      final tellersClass = FluxidiBreakpoints.classifyDeviceSize(tellersSize);
+      final tellersIsTablet = tellersClass == FluxidiScreenClass.tablet ||
+          tellersClass == FluxidiScreenClass.desktop;
       final tellersGeometry = DriverTellersLayoutGeometry.resolve(
         viewportSize: tellersSize,
         safeTop: tellersPad.top,
@@ -17475,7 +17504,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         safeLeft: tellersPad.left,
         safeRight: tellersPad.right,
         isLandscape: isLandscape,
-        isTablet: tellersSize.width >= 600,
+        isTablet: tellersIsTablet,
       );
       viewPadding = tellersGeometry.cameraPadding;
       // Center on the SAME authoritative matched pose ordinary navigation uses

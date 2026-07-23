@@ -3,13 +3,14 @@
 // Driver-facing "Tellers" presentation. Read-only view over live ride meters.
 // Does not own GPS, fare, waiting, route progress, or the Mapbox map.
 
-import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/foundation.dart' show ValueListenable, kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/navigation/presentation/driver_tellers_layout_geometry.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_marker_choice.dart';
+import 'package:fluxidi_tracking/navigation/presentation/navigation_presentation_flags.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_marker_visual_anchor.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_hud_overlay.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_vehicle_choice_selector.dart';
@@ -759,6 +760,23 @@ class _DriverRideMetersContent extends StatelessWidget {
                   ),
                 ),
               ),
+            // NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 2):
+            // development-only crosshair at the marker road-contact anchor
+            // (== camera target anchor). Never rendered in release, and only
+            // when explicitly enabled via FLUXIDI_NAV_TELLERS_POSE_DEBUG.
+            if (kNavTellersPoseDebugEnabled && !kReleaseMode)
+              Positioned(
+                left: markerLocal.dx - 12,
+                top: markerLocal.dy - 12,
+                width: 24,
+                height: 24,
+                child: const IgnorePointer(
+                  child: KeyedSubtree(
+                    key: ValueKey<String>('driver_tellers_pose_debug_crosshair'),
+                    child: _TellersPoseDebugCrosshair(),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -985,6 +1003,35 @@ class _DriverRideMetersContent extends StatelessWidget {
       children: actions,
     );
   }
+}
+
+/// NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 2): development-only
+/// crosshair drawn at the marker road-contact anchor. Enabled only behind
+/// [kNavTellersPoseDebugEnabled]; never a normal profile/release element.
+class _TellersPoseDebugCrosshair extends StatelessWidget {
+  const _TellersPoseDebugCrosshair();
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(painter: _TellersPoseDebugCrosshairPainter());
+  }
+}
+
+class _TellersPoseDebugCrosshairPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = const Color(0xFFFF00FF)
+      ..strokeWidth = 1.5;
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+    canvas.drawLine(Offset(cx, 0), Offset(cx, size.height), paint);
+    canvas.drawLine(Offset(0, cy), Offset(size.width, cy), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _TellersPoseDebugCrosshairPainter oldDelegate) =>
+      false;
 }
 
 class _MeterTile extends StatelessWidget {

@@ -5,6 +5,7 @@ import 'dart:ui' show Offset, Size;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/fluxidi_responsive.dart';
 // driver_ride_meters re-exports driver_tellers_layout_geometry (all symbols).
 import 'package:fluxidi_tracking/navigation/presentation/driver_ride_meters.dart';
 
@@ -478,4 +479,119 @@ void main() {
     });
   });
 
+  // ==========================================================================
+  // COMMIT 2 — projected-pose lock (device-class parity + diagnostic)
+  // ==========================================================================
+  group('NAV-TELLERS-ROTATION Commit 2: pose lock', () {
+    test('marker road-contact anchor equals the camera target anchor', () {
+      final g = DriverTellersLayoutGeometry.resolve(
+        viewportSize: const Size(844, 390),
+        safeTop: 0,
+        safeBottom: 0,
+        safeLeft: 0,
+        safeRight: 0,
+        isLandscape: true,
+        isTablet: false,
+      );
+      expect(g.markerRoadContactAnchorGlobal, g.cameraTargetAnchorGlobal);
+      expect(g.cameraPaddingFocalPoint.dx,
+          closeTo(g.markerRoadContactAnchorGlobal.dx, 0.02));
+      expect(g.cameraPaddingFocalPoint.dy,
+          closeTo(g.markerRoadContactAnchorGlobal.dy, 0.02));
+    });
+
+    test(
+        'phone landscape (width>=600) is classified PHONE — camera geometry '
+        'must match the marker widget (regression for the field displacement)',
+        () {
+      // Field device: a phone whose landscape WIDTH exceeds 600 but whose
+      // shortest side is < 600. The OLD camera used `width >= 600` → tablet,
+      // while the marker widget used shortestSide → phone, so their geometries
+      // (and marker anchors) diverged. Prove the divergence and that the
+      // shortest-side classifier the fix uses resolves to phone.
+      const size = Size(800, 380);
+      expect(size.shortestSide < 600, isTrue);
+      expect(size.width >= 600, isTrue, reason: 'old buggy branch would fire');
+      final cls = FluxidiBreakpoints.classifyDeviceSize(size);
+      final fixIsTablet = cls == FluxidiScreenClass.tablet ||
+          cls == FluxidiScreenClass.desktop;
+      expect(fixIsTablet, isFalse, reason: 'fix classifies as phone');
+
+      DriverTellersLayoutGeometry geo(bool isTablet) =>
+          DriverTellersLayoutGeometry.resolve(
+            viewportSize: size,
+            safeTop: 0,
+            safeBottom: 0,
+            safeLeft: 0,
+            safeRight: 0,
+            isLandscape: true,
+            isTablet: isTablet,
+          );
+      final phoneGeo = geo(false); // widget + fixed camera
+      final tabletGeo = geo(true); // old buggy camera
+      // The buggy camera anchor differed from the marker-widget anchor by a
+      // real, beyond-sub-pixel amount (the 0.500→0.501 asset calibration is
+      // only ~0.5px; this steady divergence is several pixels and Centreren —
+      // which went through the SAME buggy classification — could not fix it).
+      final dx =
+          (tabletGeo.markerAnchor.dx - phoneGeo.markerAnchor.dx).abs();
+      expect(dx, greaterThan(2.0),
+          reason: 'old width>=600 camera anchor was displaced from the marker');
+      // The FIX classifies phone → its geometry equals the marker widget's.
+      expect(phoneGeo.markerAnchor, geo(fixIsTablet).markerAnchor);
+    });
+
+    test('pose-lock diagnostic: aligned + PII-free buckets', () {
+      final g = DriverTellersLayoutGeometry.resolve(
+        viewportSize: const Size(390, 844),
+        safeTop: 47,
+        safeBottom: 34,
+        safeLeft: 0,
+        safeRight: 0,
+        isLandscape: false,
+        isTablet: false,
+      );
+      final line = formatNavTellersPoseLockDiagnostic(
+        viewportGeneration: 5,
+        isLandscape: g.isLandscape,
+        isTablet: g.isTablet,
+        viewLevel: 7,
+        markerAnchor: g.markerRoadContactAnchorGlobal,
+        projectedPose: g.markerRoadContactAnchorGlobal,
+        viewportSize: g.mapViewportSize,
+      );
+      expect(line, contains('gen=5'));
+      expect(line, contains('device=phone'));
+      expect(line, contains('orient=port'));
+      expect(line, contains('view=7'));
+      expect(line, contains('aligned=true'));
+      // No raw coordinates / decimals leak.
+      expect(line, isNot(contains('.')));
+    });
+
+    test('pose-lock diagnostic reports misalignment coarsely', () {
+      final g = DriverTellersLayoutGeometry.resolve(
+        viewportSize: const Size(1194, 834),
+        safeTop: 0,
+        safeBottom: 0,
+        safeLeft: 0,
+        safeRight: 0,
+        isLandscape: true,
+        isTablet: true,
+      );
+      final line = formatNavTellersPoseLockDiagnostic(
+        viewportGeneration: 2,
+        isLandscape: g.isLandscape,
+        isTablet: g.isTablet,
+        viewLevel: 6,
+        markerAnchor: g.markerRoadContactAnchorGlobal,
+        projectedPose: g.markerRoadContactAnchorGlobal + const Offset(120, 0),
+        viewportSize: g.mapViewportSize,
+      );
+      expect(line, contains('device=tablet'));
+      expect(line, contains('orient=land'));
+      expect(line, contains('aligned=false'));
+      expect(line, contains('dx=pgt96'));
+    });
+  });
 }
