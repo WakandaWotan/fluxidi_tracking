@@ -327,6 +327,12 @@ class _DriverHomePageState extends State<DriverHomePage>
   late final Widget _stableMapWidget;
   String? _pendingMapStyleUri;
   bool _mapStyleChanging = false;
+  // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2 / Phase 6: fail-safe
+  // product gate. While a style transaction is running, additional style taps
+  // are coalesced (latest-wins) rather than starting a concurrent swap; this
+  // flag requests one re-apply after the running swap completes.
+  bool _styleSwapRerunRequested = false;
+  bool get _styleSwapBusy => _mapStyleChanging;
   // NAV-PRES-3I: session-scoped rejection of unsupported experimental 3D styles.
   final Set<String> _rejectedCockpit3dStyleUris = <String>{};
   String? _lastNavPres3dStyleSignature;
@@ -869,36 +875,24 @@ class _DriverHomePageState extends State<DriverHomePage>
     final line = _routeLine;
     final completed = _routeLineCompleted;
     final mgr = _routeLineManager;
-    final routeOwnership = _routeAnnotationGate.capture();
     _routeLineOutline = null;
     _routeLine = null;
     _routeLineCompleted = null;
     if (mgr != null) {
-      unawaited(() async {
-        Future<void> gatedDelete(mb.PolylineAnnotation? ann) async {
-          if (ann == null) return;
-          final check = _routeAnnotationGate.allow(
-            routeOwnership,
-            NavAnnotationOperationKind.delete,
-          );
-          if (!check.allowed) {
-            _logNavAnnotationManager(
-              gate: _routeAnnotationGate,
-              event: 'stale_operation_rejected',
-              operation: NavAnnotationOperationKind.delete,
-              reason: check.reason,
-            );
-            return;
-          }
-          try {
-            await mgr.delete(ann);
-          } catch (_) {}
-        }
-
-        await gatedDelete(outline);
-        await gatedDelete(line);
-        await gatedDelete(completed);
-      }());
+      // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2: one lease covers all
+      // three deletes so disposal awaits them (no check-then-act gap between
+      // the per-annotation awaits).
+      unawaited(
+        _runAnnotationTx<void>(
+          gate: _routeAnnotationGate,
+          kind: NavAnnotationOperationKind.delete,
+          nativeOp: () async {
+            if (outline != null) await mgr.delete(outline);
+            if (line != null) await mgr.delete(line);
+            if (completed != null) await mgr.delete(completed);
+          },
+        ),
+      );
     }
     unawaited(
       _clearNavigationDestinationMarker(
@@ -911,34 +905,19 @@ class _DriverHomePageState extends State<DriverHomePage>
     final pickup = _pickupPin;
     final dropoff = _dropoffPin;
     final pinsMgr = _pinsPointManager;
-    final pinsOwnership = _pinsAnnotationGate.capture();
     _pickupPin = null;
     _dropoffPin = null;
     if (pinsMgr != null) {
-      unawaited(() async {
-        Future<void> gatedDelete(mb.PointAnnotation? ann) async {
-          if (ann == null) return;
-          final check = _pinsAnnotationGate.allow(
-            pinsOwnership,
-            NavAnnotationOperationKind.delete,
-          );
-          if (!check.allowed) {
-            _logNavAnnotationManager(
-              gate: _pinsAnnotationGate,
-              event: 'stale_operation_rejected',
-              operation: NavAnnotationOperationKind.delete,
-              reason: check.reason,
-            );
-            return;
-          }
-          try {
-            await pinsMgr.delete(ann);
-          } catch (_) {}
-        }
-
-        await gatedDelete(pickup);
-        await gatedDelete(dropoff);
-      }());
+      unawaited(
+        _runAnnotationTx<void>(
+          gate: _pinsAnnotationGate,
+          kind: NavAnnotationOperationKind.delete,
+          nativeOp: () async {
+            if (pickup != null) await pinsMgr.delete(pickup);
+            if (dropoff != null) await pinsMgr.delete(dropoff);
+          },
+        ),
+      );
     }
   }
 
@@ -1596,65 +1575,48 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _clearRouteAndPinAnnotationsOnly() async {
-    try {
-      final routeMgr = _routeLineManager;
-      final routeOwn = _routeAnnotationGate.capture();
-      Future<void> deleteRoute(mb.PolylineAnnotation? ann) async {
-        if (ann == null || routeMgr == null) return;
-        final check = _routeAnnotationGate.allow(
-          routeOwn,
-          NavAnnotationOperationKind.delete,
-        );
-        if (!check.allowed) {
-          _logNavAnnotationManager(
-            gate: _routeAnnotationGate,
-            event: 'stale_operation_rejected',
-            operation: NavAnnotationOperationKind.delete,
-            reason: check.reason,
-          );
-          return;
-        }
-        await routeMgr.delete(ann);
-      }
-
-      await deleteRoute(_routeLineOutline);
-      await deleteRoute(_routeLine);
-      await deleteRoute(_routeLineCompleted);
-      _routeLineOutline = null;
-      _routeLine = null;
-      _routeLineCompleted = null;
-
-      final pinsMgr = _pinsPointManager;
-      final pinsOwn = _pinsAnnotationGate.capture();
-      Future<void> deletePin(mb.PointAnnotation? ann) async {
-        if (ann == null || pinsMgr == null) return;
-        final check = _pinsAnnotationGate.allow(
-          pinsOwn,
-          NavAnnotationOperationKind.delete,
-        );
-        if (!check.allowed) {
-          _logNavAnnotationManager(
-            gate: _pinsAnnotationGate,
-            event: 'stale_operation_rejected',
-            operation: NavAnnotationOperationKind.delete,
-            reason: check.reason,
-          );
-          return;
-        }
-        await pinsMgr.delete(ann);
-      }
-
-      await deletePin(_pickupPin);
-      await deletePin(_dropoffPin);
-      _pickupPin = null;
-      _dropoffPin = null;
-      await _clearNavigationDestinationMarker(
-        action: 'clear',
-        result: 'cleared',
-        source: 'none',
-        reason: 'route_pins_cleared',
+    // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2: each manager's deletes
+    // run under one lease so a concurrent style-swap disposal awaits them.
+    final routeMgr = _routeLineManager;
+    final outline = _routeLineOutline;
+    final line = _routeLine;
+    final completed = _routeLineCompleted;
+    _routeLineOutline = null;
+    _routeLine = null;
+    _routeLineCompleted = null;
+    if (routeMgr != null) {
+      await _runAnnotationTx<void>(
+        gate: _routeAnnotationGate,
+        kind: NavAnnotationOperationKind.delete,
+        nativeOp: () async {
+          if (outline != null) await routeMgr.delete(outline);
+          if (line != null) await routeMgr.delete(line);
+          if (completed != null) await routeMgr.delete(completed);
+        },
       );
-    } catch (_) {}
+    }
+
+    final pinsMgr = _pinsPointManager;
+    final pickup = _pickupPin;
+    final dropoff = _dropoffPin;
+    _pickupPin = null;
+    _dropoffPin = null;
+    if (pinsMgr != null) {
+      await _runAnnotationTx<void>(
+        gate: _pinsAnnotationGate,
+        kind: NavAnnotationOperationKind.delete,
+        nativeOp: () async {
+          if (pickup != null) await pinsMgr.delete(pickup);
+          if (dropoff != null) await pinsMgr.delete(dropoff);
+        },
+      );
+    }
+    await _clearNavigationDestinationMarker(
+      action: 'clear',
+      result: 'cleared',
+      source: 'none',
+      reason: 'route_pins_cleared',
+    );
   }
 
   Future<void> _clearActiveRouteAndNavigationState({
@@ -8357,6 +8319,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           );
           return;
         }
+        // Transactional barrier: wait for in-flight leased ops before removal.
+        await _driverAnnotationGate.awaitDrained();
         try {
           if (map != null) {
             await map.annotations.removeAnnotationManager(staleManager);
@@ -8462,6 +8426,14 @@ class _DriverHomePageState extends State<DriverHomePage>
         final mgr = await _map!.annotations.createPointAnnotationManager();
         await _configureDriverPointManagerForTaxiMarker(mgr);
         _driverPointManager = mgr;
+        // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2: a self-heal that
+        // recreates the native manager MUST re-activate the executor,
+        // otherwise the gate stays disposed and every leased marker update is
+        // rejected (marker would never move again).
+        _activateAnnotationGate(
+          _driverAnnotationGate,
+          event: 'activated_self_heal',
+        );
       }
       success = await _attemptTaxiMarkerRestore(
         attempt: attempt,
@@ -8548,6 +8520,76 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  /// NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2: bounded PII-free
+  /// [NAV_ANNOTATION_TX] transaction event. Never includes coordinates or
+  /// trip/customer identifiers.
+  void _logNavAnnotationTx({
+    required NavAnnotationManagerGate gate,
+    required NavAnnotationTxEvent event,
+    NavAnnotationOperationKind? operation,
+    NavAnnotationRejectReason? reason,
+  }) {
+    _logNavBounded(
+      'NAV_ANNOTATION_TX',
+      'role=${gate.role.name} '
+          'managerGeneration=${gate.managerGeneration} '
+          'styleGeneration=${gate.styleGeneration} '
+          'sessionGeneration=${gate.sessionGeneration} '
+          'renderEpoch=${gate.renderEpoch} '
+          'routeVersion=$_routeStepsVersion '
+          'event=${navAnnotationTxEventLabel(event)}'
+          '${operation != null ? ' operation=${operation.name}' : ''}'
+          '${reason != null ? ' reason=${reason.name}' : ''}'
+          ' inFlight=${navAnnotationCountBucket(gate.activeLeases)}',
+      intervalMs: 1,
+    );
+  }
+
+  /// Run [nativeOp] through the transactional executor for [gate]. Ownership is
+  /// captured atomically (no await before the lease) so there is no
+  /// check-then-act window: a draining/disposed/stale generation NEVER lets the
+  /// native op cross the Flutter → native boundary, and while the lease is held
+  /// disposal cannot remove the manager. Returns a stale result when rejected.
+  Future<NavAnnotationRunResult<T>> _runAnnotationTx<T>({
+    required NavAnnotationManagerGate gate,
+    required NavAnnotationOperationKind kind,
+    required Future<T> Function() nativeOp,
+  }) async {
+    final ownership = gate.capture();
+    _logNavAnnotationTx(
+      gate: gate,
+      event: NavAnnotationTxEvent.queued,
+      operation: kind,
+    );
+    final result = await gate.runGuarded<T>(
+      ownership: ownership,
+      kind: kind,
+      nativeOp: () async {
+        _logNavAnnotationTx(
+          gate: gate,
+          event: NavAnnotationTxEvent.leaseAcquired,
+          operation: kind,
+        );
+        final value = await nativeOp();
+        _logNavAnnotationTx(
+          gate: gate,
+          event: NavAnnotationTxEvent.nativeCompleted,
+          operation: kind,
+        );
+        return value;
+      },
+    );
+    if (!result.ran) {
+      _logNavAnnotationTx(
+        gate: gate,
+        event: NavAnnotationTxEvent.staleBeforeStart,
+        operation: kind,
+        reason: result.rejectReason,
+      );
+    }
+    return result;
+  }
+
   void _activateAnnotationGate(
     NavAnnotationManagerGate gate, {
     required String event,
@@ -8596,9 +8638,25 @@ class _DriverHomePageState extends State<DriverHomePage>
         NavAnnotationOperationKind.dispose,
       );
       if (disposeAllowed.allowed) {
+        // Transactional barrier: block until every leased native op on this
+        // generation has finished BEFORE removing the manager. This closes the
+        // check-then-act window that let create/update reach a removed manager.
+        if (_driverAnnotationGate.activeLeases > 0) {
+          _logNavAnnotationManager(
+            gate: _driverAnnotationGate,
+            event: 'drain_waiting',
+            operation: NavAnnotationOperationKind.dispose,
+          );
+        }
+        await _driverAnnotationGate.awaitDrained();
         try {
           if (map != null) {
             await map.annotations.removeAnnotationManager(mgr);
+            _logNavAnnotationManager(
+              gate: _driverAnnotationGate,
+              event: 'manager_removed',
+              operation: NavAnnotationOperationKind.dispose,
+            );
           }
           // Disposal removes annotations — do NOT call delete/deleteAll on the
           // disposed manager (native fatal on Android).
@@ -8710,8 +8768,24 @@ class _DriverHomePageState extends State<DriverHomePage>
           );
           return;
         }
+        // Transactional barrier: wait for every leased native op on this
+        // generation to complete before removeAnnotationManager, so an
+        // in-flight create/update/delete can never race manager removal.
+        if (gate.activeLeases > 0) {
+          _logNavAnnotationManager(
+            gate: gate,
+            event: 'drain_waiting',
+            operation: NavAnnotationOperationKind.dispose,
+          );
+        }
+        await gate.awaitDrained();
         try {
           await map.annotations.removeAnnotationManager(mgr);
+          _logNavAnnotationManager(
+            gate: gate,
+            event: 'manager_removed',
+            operation: NavAnnotationOperationKind.dispose,
+          );
         } catch (_) {}
       }
 
@@ -9032,6 +9106,17 @@ class _DriverHomePageState extends State<DriverHomePage>
         _pendingMapStyleUri = null;
       }
     }
+    // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2 / Phase 6: a style tap
+    // arrived while this swap was running — apply the latest requested style
+    // exactly once now that the transaction has fully completed.
+    if (_styleSwapRerunRequested && mounted) {
+      _styleSwapRerunRequested = false;
+      unawaited(
+        _applyMapStyleForMode().then((_) {
+          if (mounted) _scheduleCockpitCameraAfterStyleSwitch();
+        }),
+      );
+    }
     if (scheduleCockpit3dFallback && mounted) {
       unawaited(_applyMapStyleForMode());
     }
@@ -9055,6 +9140,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     DriverCockpitMapVisualStyle style,
   ) async {
     if (!mounted) return;
+    // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2 / Phase 6: emergency
+    // kill-switch — never swap style during a live ride when disabled.
+    final decision = navStyleTapDecision(
+      liveRideActive: _liveRideActive,
+      styleTransactionRunning: _mapStyleChanging,
+    );
+    if (decision == NavStyleTapDecision.blocked) {
+      _logNavMapStyle(reason: 'cockpit_style_choice_blocked_active_ride');
+      return;
+    }
     setState(() {
       _driverCockpitMapVisualStyle = style;
       switch (style) {
@@ -9071,6 +9166,14 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
     });
     _logNavMapStyle(reason: 'cockpit_style_choice');
+    // Fail-safe: a swap is already running → coalesce. The state above already
+    // reflects the latest tap, so the running swap's completion re-applies it
+    // (latest-wins) instead of starting a second concurrent style swap.
+    if (decision == NavStyleTapDecision.coalesce) {
+      _styleSwapRerunRequested = true;
+      _logNavMapStyle(reason: 'cockpit_style_choice_coalesced_busy');
+      return;
+    }
     await _applyMapStyleForMode();
     _scheduleCockpitCameraAfterStyleSwitch();
   }
@@ -9336,10 +9439,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     required String source,
     String? reason,
   }) async {
-    if (_destinationMarker != null && _destinationMarkerManager != null) {
-      try {
-        await _destinationMarkerManager!.delete(_destinationMarker!);
-      } catch (_) {}
+    final mgr = _destinationMarkerManager;
+    final marker = _destinationMarker;
+    if (marker != null && mgr != null) {
+      // Delete under a lease so it cannot race manager disposal.
+      await _runAnnotationTx<void>(
+        gate: _destinationAnnotationGate,
+        kind: NavAnnotationOperationKind.delete,
+        nativeOp: () => mgr.delete(marker),
+      );
     }
     _destinationMarker = null;
     _lastDestinationMarkerSignature = null;
@@ -9439,74 +9547,84 @@ class _DriverHomePageState extends State<DriverHomePage>
     final finishFlagReady = await _ensureDriverFinishFlagMarkerBytes();
     if (!_isCurrentRouteRenderEpoch(drawEpoch)) return;
     final finishFlagBytes = _driverFinishFlagMarkerBytes;
-    try {
-      // NAV-SIGNAL-P0B1: create locally; never delete shared refs until commit.
-      late final mb.PointAnnotation created;
-      if (finishFlagReady && finishFlagBytes != null) {
-        created = await mgr.create(
-          mb.PointAnnotationOptions(
-            geometry: geometry,
-            image: finishFlagBytes,
-            iconAnchor: mb.IconAnchor.BOTTOM,
-            iconSize: iconSize,
-            iconOpacity: 0.98,
-          ),
+    // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2: destination create +
+    // orphan/previous delete under one lease; disposal awaits it before
+    // removeAnnotationManager, so no create/delete can reach a removed manager.
+    final draw = await _runAnnotationTx<bool>(
+      gate: _destinationAnnotationGate,
+      kind: NavAnnotationOperationKind.create,
+      nativeOp: () async {
+        // NAV-SIGNAL-P0B1: create locally; never delete shared refs until commit.
+        late final mb.PointAnnotation created;
+        if (finishFlagReady && finishFlagBytes != null) {
+          created = await mgr.create(
+            mb.PointAnnotationOptions(
+              geometry: geometry,
+              image: finishFlagBytes,
+              iconAnchor: mb.IconAnchor.BOTTOM,
+              iconSize: iconSize,
+              iconOpacity: 0.98,
+            ),
+          );
+        } else {
+          created = await mgr.create(
+            mb.PointAnnotationOptions(
+              geometry: geometry,
+              iconImage: kDriverDestinationMarkerIconImage,
+              iconColor: kDriverDestinationMarkerIconColor,
+              iconHaloColor: kDriverDestinationMarkerIconHaloColor,
+              iconHaloWidth: kDriverDestinationMarkerIconHaloWidth,
+              iconSize: iconSize,
+              iconAnchor: mb.IconAnchor.BOTTOM,
+              iconOpacity: 0.96,
+            ),
+          );
+        }
+        final commit = evaluateRouteAnnotationCommit(
+          capturedRenderEpoch: drawEpoch,
+          currentRenderEpoch: _routeRenderEpoch,
+          capturedSessionGeneration: drawSession,
+          currentSessionGeneration: _navigationSessionGeneration,
         );
-      } else {
-        created = await mgr.create(
-          mb.PointAnnotationOptions(
-            geometry: geometry,
-            iconImage: kDriverDestinationMarkerIconImage,
-            iconColor: kDriverDestinationMarkerIconColor,
-            iconHaloColor: kDriverDestinationMarkerIconHaloColor,
-            iconHaloWidth: kDriverDestinationMarkerIconHaloWidth,
-            iconSize: iconSize,
-            iconAnchor: mb.IconAnchor.BOTTOM,
-            iconOpacity: 0.96,
-          ),
-        );
-      }
-      final commit = evaluateRouteAnnotationCommit(
-        capturedRenderEpoch: drawEpoch,
-        currentRenderEpoch: _routeRenderEpoch,
-        capturedSessionGeneration: drawSession,
-        currentSessionGeneration: _navigationSessionGeneration,
-      );
-      if (commit.shouldDeleteLocalOrphansOnly) {
-        try {
+        if (commit.shouldDeleteLocalOrphansOnly) {
           await mgr.delete(created);
-        } catch (_) {}
-        _logNavRouteRenderOwner(
-          event: NavRouteRenderOwnerEvent.staleCallbackIgnored,
-          rejectionReason: 'render_epoch_or_session_mismatch',
+          _logNavRouteRenderOwner(
+            event: NavRouteRenderOwnerEvent.staleCallbackIgnored,
+            rejectionReason: 'render_epoch_or_session_mismatch',
+          );
+          _logNavAnnotationTx(
+            gate: _destinationAnnotationGate,
+            event: NavAnnotationTxEvent.commitRejected,
+            operation: NavAnnotationOperationKind.create,
+          );
+          return false;
+        }
+        _destinationMarker = created;
+        _lastDestinationMarkerSignature = signature;
+        _logNavAnnotationTx(
+          gate: _destinationAnnotationGate,
+          event: NavAnnotationTxEvent.commitAllowed,
+          operation: NavAnnotationOperationKind.create,
         );
-        return;
-      }
-      _destinationMarker = created;
-      _lastDestinationMarkerSignature = signature;
-      if (previousMarker != null && !identical(previousMarker, created)) {
-        try {
+        if (previousMarker != null && !identical(previousMarker, created)) {
           await mgr.delete(previousMarker);
-        } catch (_) {}
-      }
-      _logNavPresDestMarker(
-        action: isUpdate ? 'update' : 'create',
-        result: 'applied',
-        source: resolved.source,
-        reason: reason,
+        }
+        _logNavPresDestMarker(
+          action: isUpdate ? 'update' : 'create',
+          result: 'applied',
+          source: resolved.source,
+          reason: reason,
+        );
+        return true;
+      },
+    );
+    if (!draw.ran) {
+      _logNavAnnotationManager(
+        gate: _destinationAnnotationGate,
+        event: 'stale_operation_rejected',
+        operation: NavAnnotationOperationKind.create,
+        reason: draw.rejectReason,
       );
-    } catch (e) {
-      if (_isCurrentRouteRenderEpoch(drawEpoch)) {
-        _destinationMarker = null;
-        _lastDestinationMarkerSignature = null;
-      }
-      _logNavPresDestMarker(
-        action: isUpdate ? 'update' : 'create',
-        result: 'failed',
-        source: resolved.source,
-        reason: 'annotation_error',
-      );
-      debugPrint('[NAV_PRES_DEST_MARKER] annotation_error=$e');
     }
   }
 
@@ -9633,6 +9751,12 @@ class _DriverHomePageState extends State<DriverHomePage>
           mgr = await _map!.annotations.createPointAnnotationManager();
           await _configureDriverPointManagerForTaxiMarker(mgr);
           _driverPointManager = mgr;
+          // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2: re-activate the
+          // executor for the freshly created manager so leased ops resume.
+          _activateAnnotationGate(
+            _driverAnnotationGate,
+            event: 'activated_restore',
+          );
         }
         // NAV-3D-MAPBOX-2D-MARKER-ISOLATION-FIX-1: creation-time opacity
         // is snapped from the single authoritative resolver so a marker
@@ -9642,12 +9766,19 @@ class _DriverHomePageState extends State<DriverHomePage>
             ? (reason.contains('self_heal') ? 'self_heal' : 'restore')
             : 'retry_restore';
         final opacity = _resolveDesiredMapboxTaxiOpacity(source: restoreSource);
-        _driverMarker = await _createDriverMarkerAnnotation(
-          mgr: mgr,
-          geometry: _mbPoint(visual.lon, visual.lat),
-          markerBearing: visual.bearing,
-          iconOpacity: opacity,
+        // Create under a lease so it cannot race a concurrent disposal.
+        final createdMgr = mgr;
+        final leaseRun = await _driverAnnotationGate.runGuarded<mb.PointAnnotation?>(
+          ownership: _driverAnnotationGate.capture(),
+          kind: NavAnnotationOperationKind.create,
+          nativeOp: () => _createDriverMarkerAnnotation(
+            mgr: createdMgr,
+            geometry: _mbPoint(visual.lon, visual.lat),
+            markerBearing: visual.bearing,
+            iconOpacity: opacity,
+          ),
         );
+        _driverMarker = leaseRun.ran ? leaseRun.value : null;
         success = _driverMarker != null;
         if (success) {
           // NAV-R12-D: a freshly created marker proves the manager works.
@@ -9718,6 +9849,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     final bearing =
         marker.iconRotate ??
         (_lastKnownBearing.isFinite ? _lastKnownBearing : 0.0);
+    // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2: swap under one lease.
+    if (!_driverAnnotationGate.tryAcquireLease(
+      _driverAnnotationGate.capture(),
+      NavAnnotationOperationKind.update,
+    )) {
+      return;
+    }
     try {
       await mgr.delete(marker);
       _driverMarker = null;
@@ -9750,6 +9888,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (_isMapboxAnnotationManagerLost(e)) {
         _resetDriverMarkerOnNativeError('taxi_asset_upgrade');
       }
+    } finally {
+      _driverAnnotationGate.releaseLease();
     }
   }
 
@@ -9974,12 +10114,21 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (opacityDrifted) {
       marker.iconOpacity = desired;
     }
+    // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2: leased update.
+    if (!_driverAnnotationGate.tryAcquireLease(
+      _driverAnnotationGate.capture(),
+      NavAnnotationOperationKind.update,
+    )) {
+      return;
+    }
     try {
       await mgr.update(marker);
     } catch (e) {
       if (_isMapboxAnnotationManagerLost(e)) {
         _resetDriverMarkerOnNativeError('sync_icon_size');
       }
+    } finally {
+      _driverAnnotationGate.releaseLease();
     }
   }
 
@@ -12322,6 +12471,13 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
     marker.iconOpacity = desired;
+    // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2: leased opacity update.
+    if (!_driverAnnotationGate.tryAcquireLease(
+      _driverAnnotationGate.capture(),
+      NavAnnotationOperationKind.update,
+    )) {
+      return;
+    }
     try {
       await mgr.update(marker);
       logNav3dMapbox2d(
@@ -12351,6 +12507,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (_isMapboxAnnotationManagerLost(e)) {
         _resetDriverMarkerOnNativeError('sync_presentation_opacity');
       }
+    } finally {
+      _driverAnnotationGate.releaseLease();
     }
   }
 
@@ -15800,6 +15958,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     // still in flight — the next free frame applies the newest lat/lon, so the
     // marker never trails the camera by more than a frame and never queues.
     if (_driverMarkerVisualUpdateInFlight) return;
+    // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2: even the 60 fps visual
+    // update must hold a lease — a draining/disposed generation rejects it so
+    // the native update never reaches a removed manager.
+    if (!_driverAnnotationGate.tryAcquireLease(
+      _driverAnnotationGate.capture(),
+      NavAnnotationOperationKind.update,
+    )) {
+      return;
+    }
     _driverMarkerVisualUpdateInFlight = true;
     final p = _mbPoint(lon, lat);
     marker.geometry = p;
@@ -15817,6 +15984,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         _resetDriverMarkerOnNativeError('visual_only_update');
       }
     } finally {
+      _driverAnnotationGate.releaseLease();
       _driverMarkerVisualUpdateInFlight = false;
     }
     unawaited(
@@ -16007,72 +16175,97 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (!_canUpdateDriverMarker || _driverPointManager != mgr) return false;
     final wantsTaxi = taxiReady && _driverTaxiMarkerBytes != null;
 
-    if (_driverMarker != null && _driverMarkerUsesTaxiAsset != wantsTaxi) {
-      try {
-        await mgr.delete(_driverMarker!);
-      } catch (e) {
-        if (_isMapboxAnnotationManagerLost(e)) {
-          _resetDriverMarkerOnNativeError('delete_for_asset_swap');
-          return false;
-        }
-      }
-      _driverMarker = null;
+    // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2: hold a lease for the
+    // whole delete/deleteAll/create/update sequence. A draining/disposed
+    // driver generation rejects the lease (no native op crosses the boundary);
+    // while held, disposal awaits before removeAnnotationManager.
+    if (!_driverAnnotationGate.tryAcquireLease(
+      _driverAnnotationGate.capture(),
+      NavAnnotationOperationKind.update,
+    )) {
+      _logNavAnnotationManager(
+        gate: _driverAnnotationGate,
+        event: 'stale_operation_rejected',
+        operation: NavAnnotationOperationKind.update,
+        reason: _driverAnnotationGate
+            .allow(
+              _driverAnnotationGate.capture(),
+              NavAnnotationOperationKind.update,
+            )
+            .reason,
+      );
+      return false;
     }
-
-    if (_driverMarker == null) {
-      try {
-        await mgr.deleteAll();
-      } catch (e) {
-        if (_isMapboxAnnotationManagerLost(e)) {
-          _resetDriverMarkerOnNativeError('delete_all_before_create');
-          return false;
+    try {
+      if (_driverMarker != null && _driverMarkerUsesTaxiAsset != wantsTaxi) {
+        try {
+          await mgr.delete(_driverMarker!);
+        } catch (e) {
+          if (_isMapboxAnnotationManagerLost(e)) {
+            _resetDriverMarkerOnNativeError('delete_for_asset_swap');
+            return false;
+          }
         }
+        _driverMarker = null;
       }
-      try {
-        // NAV-3D-MAPBOX-2D-MARKER-ISOLATION-FIX-1: creation-time opacity
-        // is snapped from the authoritative resolver — never default 1.0.
-        final createOpacity = _resolveDesiredMapboxTaxiOpacity(
-          source: 'create',
-        );
-        _driverMarker = await _createDriverMarkerAnnotation(
-          mgr: mgr,
-          geometry: p,
-          markerBearing: markerBearing,
-          iconOpacity: createOpacity,
-        );
-        if (_driverMarker != null) {
-          logNav3dMapbox2d(
-            event: 'create',
-            presentation3dIntent:
-                createOpacity == 0.0 &&
-                !_vehicleModelSyncLifecycle.sessionFallback2d,
-            explicit2dFallback: _vehicleModelSyncLifecycle.sessionFallback2d,
-            desiredOpacity: createOpacity,
-            pendingOpacity: _pendingMapboxTaxiMarkerOpacity,
-            markerExists: true,
-            appliedOpacity: createOpacity,
+
+      if (_driverMarker == null) {
+        try {
+          await mgr.deleteAll();
+        } catch (e) {
+          if (_isMapboxAnnotationManagerLost(e)) {
+            _resetDriverMarkerOnNativeError('delete_all_before_create');
+            return false;
+          }
+        }
+        try {
+          // NAV-3D-MAPBOX-2D-MARKER-ISOLATION-FIX-1: creation-time opacity
+          // is snapped from the authoritative resolver — never default 1.0.
+          final createOpacity = _resolveDesiredMapboxTaxiOpacity(
             source: 'create',
           );
+          _driverMarker = await _createDriverMarkerAnnotation(
+            mgr: mgr,
+            geometry: p,
+            markerBearing: markerBearing,
+            iconOpacity: createOpacity,
+          );
+          if (_driverMarker != null) {
+            logNav3dMapbox2d(
+              event: 'create',
+              presentation3dIntent:
+                  createOpacity == 0.0 &&
+                  !_vehicleModelSyncLifecycle.sessionFallback2d,
+              explicit2dFallback: _vehicleModelSyncLifecycle.sessionFallback2d,
+              desiredOpacity: createOpacity,
+              pendingOpacity: _pendingMapboxTaxiMarkerOpacity,
+              markerExists: true,
+              appliedOpacity: createOpacity,
+              source: 'create',
+            );
+          }
+        } catch (e) {
+          _noteMarkerUpdateFailure('create_marker', e);
+          return false;
         }
-      } catch (e) {
-        _noteMarkerUpdateFailure('create_marker', e);
-        return false;
+      } else {
+        try {
+          // NAV-3D-MAPBOX-2D-MARKER-ISOLATION-FIX-1: geometry updates must
+          // never re-push a stale Dart-side iconOpacity to native — always
+          // rebase opacity on the authoritative pending desired value first.
+          _driverMarker!.geometry = p;
+          _driverMarker!.iconRotate = markerBearing;
+          _driverMarker!.iconOpacity = _resolveDesiredMapboxTaxiOpacity(
+            source: 'visual_sync',
+          );
+          await mgr.update(_driverMarker!);
+        } catch (e) {
+          _noteMarkerUpdateFailure('update_marker', e);
+          return false;
+        }
       }
-    } else {
-      try {
-        // NAV-3D-MAPBOX-2D-MARKER-ISOLATION-FIX-1: geometry updates must
-        // never re-push a stale Dart-side iconOpacity to native — always
-        // rebase opacity on the authoritative pending desired value first.
-        _driverMarker!.geometry = p;
-        _driverMarker!.iconRotate = markerBearing;
-        _driverMarker!.iconOpacity = _resolveDesiredMapboxTaxiOpacity(
-          source: 'visual_sync',
-        );
-        await mgr.update(_driverMarker!);
-      } catch (e) {
-        _noteMarkerUpdateFailure('update_marker', e);
-        return false;
-      }
+    } finally {
+      _driverAnnotationGate.releaseLease();
     }
     _consecutiveMarkerUpdateFailures = 0;
     // NAV-R12-D: icon-size/puck sync are non-critical extra native round
@@ -18670,6 +18863,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     required DriverCompactNavControlsLayout layout,
   }) {
     final currentStyle = _driverCockpitMapVisualStyle;
+    // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2 / Phase 6: a bounded
+    // busy state while a style transaction runs. Taps are also coalesced in
+    // _setDriverCockpitMapVisualStyle (latest-wins), so disabling here just
+    // avoids queueing visual churn.
+    final busy = _styleSwapBusy;
     return PopupMenuButton<DriverCockpitMapVisualStyle>(
       tooltip: _tr(
         nl: 'Kaartstijl',
@@ -18678,6 +18876,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         es: 'Estilo de mapa',
       ),
       color: colors.surface,
+      enabled: !busy,
       onSelected: _setDriverCockpitMapVisualStyle,
       itemBuilder: (context) {
         return DriverCockpitMapVisualStyle.values.map((style) {
@@ -18729,11 +18928,24 @@ class _DriverHomePageState extends State<DriverHomePage>
                     width: 1.1,
                   ),
                 ),
-                child: Icon(
-                  _driverCockpitMapVisualStyleIcon(currentStyle),
-                  size: layout.iconSize,
-                  color: colors.text,
-                ),
+                child: busy
+                    ? Center(
+                        child: SizedBox(
+                          width: layout.iconSize * 0.9,
+                          height: layout.iconSize * 0.9,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              colors.accent,
+                            ),
+                          ),
+                        ),
+                      )
+                    : Icon(
+                        _driverCockpitMapVisualStyleIcon(currentStyle),
+                        size: layout.iconSize,
+                        color: colors.text,
+                      ),
               ),
             ),
           ),
@@ -19717,47 +19929,71 @@ class _DriverHomePageState extends State<DriverHomePage>
     final previousPickup = _pickupPin;
     final previousDropoff = _dropoffPin;
 
-    final pickupPin = await mgr.create(
-      mb.PointAnnotationOptions(
-        geometry: _mbPoint(pickup.lon, pickup.lat),
-        iconSize: 1.1,
-      ),
+    // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2: pin creates + orphan
+    // deletes under one lease; disposal awaits it before removeAnnotationManager.
+    final draw = await _runAnnotationTx<bool>(
+      gate: _pinsAnnotationGate,
+      kind: NavAnnotationOperationKind.create,
+      nativeOp: () async {
+        final pickupPin = await mgr.create(
+          mb.PointAnnotationOptions(
+            geometry: _mbPoint(pickup.lon, pickup.lat),
+            iconSize: 1.1,
+          ),
+        );
+        final dropoffPin = await mgr.create(
+          mb.PointAnnotationOptions(
+            geometry: _mbPoint(dropoff.lon, dropoff.lat),
+            iconSize: 1.1,
+          ),
+        );
+        final commit = evaluateRouteAnnotationCommit(
+          capturedRenderEpoch: drawEpoch,
+          currentRenderEpoch: _routeRenderEpoch,
+          capturedSessionGeneration: drawSession,
+          currentSessionGeneration: _navigationSessionGeneration,
+        );
+        if (commit.shouldDeleteLocalOrphansOnly) {
+          await mgr.delete(pickupPin);
+          await mgr.delete(dropoffPin);
+          _logNavRouteRenderOwner(
+            event: NavRouteRenderOwnerEvent.staleCallbackIgnored,
+            rejectionReason: 'render_epoch_or_session_mismatch',
+          );
+          _logNavAnnotationTx(
+            gate: _pinsAnnotationGate,
+            event: NavAnnotationTxEvent.commitRejected,
+            operation: NavAnnotationOperationKind.create,
+          );
+          return false;
+        }
+        _pickupPin = pickupPin;
+        _dropoffPin = dropoffPin;
+        _lastPinsDrawSignature = signature;
+        _lastPinsDrawAt = now;
+        _logNavAnnotationTx(
+          gate: _pinsAnnotationGate,
+          event: NavAnnotationTxEvent.commitAllowed,
+          operation: NavAnnotationOperationKind.create,
+        );
+        if (previousPickup != null && !identical(previousPickup, pickupPin)) {
+          await mgr.delete(previousPickup);
+        }
+        if (previousDropoff != null &&
+            !identical(previousDropoff, dropoffPin)) {
+          await mgr.delete(previousDropoff);
+        }
+        return true;
+      },
     );
-    final dropoffPin = await mgr.create(
-      mb.PointAnnotationOptions(
-        geometry: _mbPoint(dropoff.lon, dropoff.lat),
-        iconSize: 1.1,
-      ),
-    );
-    final commit = evaluateRouteAnnotationCommit(
-      capturedRenderEpoch: drawEpoch,
-      currentRenderEpoch: _routeRenderEpoch,
-      capturedSessionGeneration: drawSession,
-      currentSessionGeneration: _navigationSessionGeneration,
-    );
-    if (commit.shouldDeleteLocalOrphansOnly) {
-      try {
-        await mgr.delete(pickupPin);
-        await mgr.delete(dropoffPin);
-      } catch (_) {}
-      _logNavRouteRenderOwner(
-        event: NavRouteRenderOwnerEvent.staleCallbackIgnored,
-        rejectionReason: 'render_epoch_or_session_mismatch',
+    if (!draw.ran) {
+      _logNavAnnotationManager(
+        gate: _pinsAnnotationGate,
+        event: 'stale_operation_rejected',
+        operation: NavAnnotationOperationKind.create,
+        reason: draw.rejectReason,
       );
-      return;
     }
-    _pickupPin = pickupPin;
-    _dropoffPin = dropoffPin;
-    _lastPinsDrawSignature = signature;
-    _lastPinsDrawAt = now;
-    try {
-      if (previousPickup != null && !identical(previousPickup, pickupPin)) {
-        await mgr.delete(previousPickup);
-      }
-      if (previousDropoff != null && !identical(previousDropoff, dropoffPin)) {
-        await mgr.delete(previousDropoff);
-      }
-    } catch (_) {}
   }
 
   Future<void> _drawRouteLine(
@@ -19794,77 +20030,107 @@ class _DriverHomePageState extends State<DriverHomePage>
       coordinates: coords.map((c) => mb.Position(c.lon, c.lat)).toList(),
     );
 
-    // NAV-OS-R2: muted grey line for the already-driven section behind the taxi.
-    mb.PolylineAnnotation? completedLine;
-    if (completedCoords != null && completedCoords.length >= 2) {
-      completedLine = await mgr.create(
-        mb.PolylineAnnotationOptions(
-          geometry: mb.LineString(
-            coordinates: completedCoords
-                .map((c) => mb.Position(c.lon, c.lat))
-                .toList(),
+    // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2: all route-line native
+    // creates AND their orphan/previous deletes run under ONE lease. Disposal
+    // (style swap) waits for this lease before removeAnnotationManager, so no
+    // create can reach a removed manager; a draining/stale generation rejects
+    // the whole block before the first native call.
+    final draw = await _runAnnotationTx<bool>(
+      gate: _routeAnnotationGate,
+      kind: NavAnnotationOperationKind.create,
+      nativeOp: () async {
+        // NAV-OS-R2: muted grey line for the already-driven section.
+        mb.PolylineAnnotation? completedLine;
+        if (completedCoords != null && completedCoords.length >= 2) {
+          completedLine = await mgr.create(
+            mb.PolylineAnnotationOptions(
+              geometry: mb.LineString(
+                coordinates: completedCoords
+                    .map((c) => mb.Position(c.lon, c.lat))
+                    .toList(),
+              ),
+              lineWidth: kDriverRouteLineCompletedWidth,
+              lineOpacity: kDriverRouteLineCompletedOpacity,
+              lineColor: kDriverRouteLineCompletedColor,
+            ),
+          );
+        }
+
+        // Dark underlay for contrast on light navigation / satellite maps.
+        final outline = await mgr.create(
+          mb.PolylineAnnotationOptions(
+            geometry: geometry,
+            lineWidth: kDriverRouteLineOutlineWidth,
+            lineOpacity: kDriverRouteLineOutlineOpacity,
+            lineColor: kDriverRouteLineOutlineColor,
           ),
-          lineWidth: kDriverRouteLineCompletedWidth,
-          lineOpacity: kDriverRouteLineCompletedOpacity,
-          lineColor: kDriverRouteLineCompletedColor,
-        ),
-      );
-    }
+        );
 
-    // Dark underlay for contrast on light navigation / satellite maps.
-    final outline = await mgr.create(
-      mb.PolylineAnnotationOptions(
-        geometry: geometry,
-        lineWidth: kDriverRouteLineOutlineWidth,
-        lineOpacity: kDriverRouteLineOutlineOpacity,
-        lineColor: kDriverRouteLineOutlineColor,
-      ),
+        final line = await mgr.create(
+          mb.PolylineAnnotationOptions(
+            geometry: geometry,
+            lineWidth: kDriverRouteLineWidth,
+            lineOpacity: kDriverRouteLineOpacity,
+            lineColor: kDriverRouteLineColor,
+          ),
+        );
+        final commit = evaluateRouteAnnotationCommit(
+          capturedRenderEpoch: drawEpoch,
+          currentRenderEpoch: _routeRenderEpoch,
+          capturedSessionGeneration: drawSession,
+          currentSessionGeneration: _navigationSessionGeneration,
+        );
+        if (commit.shouldDeleteLocalOrphansOnly) {
+          // Ownership advanced during create: never commit these handles.
+          // The manager is still alive under this lease, so removing the
+          // just-created orphans is safe (no crash) and prevents leaks.
+          if (completedLine != null) await mgr.delete(completedLine);
+          await mgr.delete(outline);
+          await mgr.delete(line);
+          _logNavRouteRenderOwner(
+            event: NavRouteRenderOwnerEvent.staleCallbackIgnored,
+            rejectionReason: 'render_epoch_or_session_mismatch',
+          );
+          _logNavAnnotationTx(
+            gate: _routeAnnotationGate,
+            event: NavAnnotationTxEvent.commitRejected,
+            operation: NavAnnotationOperationKind.create,
+          );
+          return false;
+        }
+        _routeLineCompleted = completedLine;
+        _routeLineOutline = outline;
+        _routeLine = line;
+        _lastRouteDrawSignature = signature;
+        _lastRouteDrawAt = now;
+        _routeRedrawCountThisMinute += 1;
+        _logNavAnnotationTx(
+          gate: _routeAnnotationGate,
+          event: NavAnnotationTxEvent.commitAllowed,
+          operation: NavAnnotationOperationKind.create,
+        );
+        if (previousOutline != null && !identical(previousOutline, outline)) {
+          await mgr.delete(previousOutline);
+        }
+        if (previousLine != null && !identical(previousLine, line)) {
+          await mgr.delete(previousLine);
+        }
+        if (previousCompleted != null &&
+            !identical(previousCompleted, completedLine)) {
+          await mgr.delete(previousCompleted);
+        }
+        return true;
+      },
     );
-
-    final line = await mgr.create(
-      mb.PolylineAnnotationOptions(
-        geometry: geometry,
-        lineWidth: kDriverRouteLineWidth,
-        lineOpacity: kDriverRouteLineOpacity,
-        lineColor: kDriverRouteLineColor,
-      ),
-    );
-    final commit = evaluateRouteAnnotationCommit(
-      capturedRenderEpoch: drawEpoch,
-      currentRenderEpoch: _routeRenderEpoch,
-      capturedSessionGeneration: drawSession,
-      currentSessionGeneration: _navigationSessionGeneration,
-    );
-    if (commit.shouldDeleteLocalOrphansOnly) {
-      try {
-        if (completedLine != null) await mgr.delete(completedLine);
-        await mgr.delete(outline);
-        await mgr.delete(line);
-      } catch (_) {}
-      _logNavRouteRenderOwner(
-        event: NavRouteRenderOwnerEvent.staleCallbackIgnored,
-        rejectionReason: 'render_epoch_or_session_mismatch',
+    if (!draw.ran) {
+      _logNavAnnotationManager(
+        gate: _routeAnnotationGate,
+        event: 'stale_operation_rejected',
+        operation: NavAnnotationOperationKind.create,
+        reason: draw.rejectReason,
       );
       return;
     }
-    _routeLineCompleted = completedLine;
-    _routeLineOutline = outline;
-    _routeLine = line;
-    _lastRouteDrawSignature = signature;
-    _lastRouteDrawAt = now;
-    _routeRedrawCountThisMinute += 1;
-    try {
-      if (previousOutline != null && !identical(previousOutline, outline)) {
-        await mgr.delete(previousOutline);
-      }
-      if (previousLine != null && !identical(previousLine, line)) {
-        await mgr.delete(previousLine);
-      }
-      if (previousCompleted != null &&
-          !identical(previousCompleted, completedLine)) {
-        await mgr.delete(previousCompleted);
-      }
-    } catch (_) {}
     await _syncMapboxUserLocationPuckVisibility();
   }
 

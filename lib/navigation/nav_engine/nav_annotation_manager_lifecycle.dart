@@ -1,13 +1,24 @@
 // NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1 / Commit 1
+// NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2 / Commit
 //
-// Pure, unit-testable lifecycle gate for Mapbox annotation managers.
+// Pure, unit-testable transactional executor for Mapbox annotation managers.
 //
-// Field crash (P0): after a style swap, Dart fired PolylineAnnotation.delete
-// against a manager that had already been removed natively
-// ("No manager found with id: 4"). Android terminated before Dart try/catch
-// could recover. This module guarantees every native annotation operation is
-// gated by a monotonically increasing managerGeneration and an explicit
-// active → draining → disposed lifecycle BEFORE the Flutter → native boundary.
+// Field crash (P0): after a style swap, Dart fired PolylineAnnotation.delete —
+// and then, after Commit 1, PolylineAnnotation.CREATE — against a manager that
+// had already been removed natively ("No manager found with id: 4"). Android
+// terminated before Dart try/catch could recover.
+//
+// Commit 1 gated deletes but left create/update ungated and left a
+// check-then-act window (pre-check → await → native op) during which disposal
+// could remove the manager. This module now provides a LEASE: a native op
+// acquires a lease atomically while ACTIVE (no await between the allow-check
+// and the increment, so it is race-free in single-threaded Dart); disposal
+// marks DRAINING (rejecting new ops) and then AWAITS all leases to reach zero
+// before removeAnnotationManager. No create/update/delete/deleteAll can cross
+// the Flutter → native boundary after its manager begins draining or is
+// removed.
+
+import 'dart:async';
 
 /// Semantic role of a Mapbox annotation manager owned by driver navigation.
 enum NavAnnotationManagerRole {
@@ -80,6 +91,80 @@ class NavAnnotationGateResult {
   final NavAnnotationRejectReason? reason;
 }
 
+/// Outcome of a leased native operation run through the executor.
+class NavAnnotationRunResult<T> {
+  const NavAnnotationRunResult.ran(this.value)
+      : ran = true,
+        rejectReason = null;
+
+  const NavAnnotationRunResult.stale(this.rejectReason)
+      : ran = false,
+        value = null;
+
+  /// True when the native op actually ran under a held lease.
+  final bool ran;
+
+  /// The native op's return value (only when [ran]).
+  final T? value;
+
+  /// Why the op was rejected before start (only when not [ran]).
+  final NavAnnotationRejectReason? rejectReason;
+}
+
+/// Bounded PII-free transaction event for [NAV_ANNOTATION_TX] diagnostics.
+enum NavAnnotationTxEvent {
+  queued,
+  leaseAcquired,
+  staleBeforeStart,
+  nativeStarted,
+  nativeCompleted,
+  leaseReleased,
+  drainStarted,
+  drainWaiting,
+  drainComplete,
+  managerRemoved,
+  commitAllowed,
+  commitRejected,
+}
+
+String navAnnotationTxEventLabel(NavAnnotationTxEvent event) {
+  switch (event) {
+    case NavAnnotationTxEvent.queued:
+      return 'queued';
+    case NavAnnotationTxEvent.leaseAcquired:
+      return 'lease_acquired';
+    case NavAnnotationTxEvent.staleBeforeStart:
+      return 'stale_before_start';
+    case NavAnnotationTxEvent.nativeStarted:
+      return 'native_started';
+    case NavAnnotationTxEvent.nativeCompleted:
+      return 'native_completed';
+    case NavAnnotationTxEvent.leaseReleased:
+      return 'lease_released';
+    case NavAnnotationTxEvent.drainStarted:
+      return 'drain_started';
+    case NavAnnotationTxEvent.drainWaiting:
+      return 'drain_waiting';
+    case NavAnnotationTxEvent.drainComplete:
+      return 'drain_complete';
+    case NavAnnotationTxEvent.managerRemoved:
+      return 'manager_removed';
+    case NavAnnotationTxEvent.commitAllowed:
+      return 'commit_allowed';
+    case NavAnnotationTxEvent.commitRejected:
+      return 'commit_rejected';
+  }
+}
+
+/// Coarse bucket for queue depth / in-flight counts (PII-free, low-cardinality).
+String navAnnotationCountBucket(int n) {
+  if (n <= 0) return '0';
+  if (n == 1) return '1';
+  if (n <= 3) return '2-3';
+  if (n <= 7) return '4-7';
+  return '8+';
+}
+
 /// Latest-wins lifecycle owner for one annotation-manager role.
 ///
 /// Pure: no Mapbox / platform I/O. The live app captures a token, checks
@@ -96,12 +181,19 @@ class NavAnnotationManagerGate {
   int _renderEpoch = 0;
   int _opsInFlight = 0;
 
+  // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2: lease bookkeeping. A lease
+  // is held for the FULL duration of a native op; disposal awaits leases → 0
+  // before removeAnnotationManager, so no op can race manager removal.
+  int _leases = 0;
+  Completer<void>? _drainCompleter;
+
   int get managerGeneration => _managerGeneration;
   NavAnnotationManagerState get state => _state;
   int get styleGeneration => _styleGeneration;
   int get sessionGeneration => _sessionGeneration;
   int get renderEpoch => _renderEpoch;
   int get opsInFlight => _opsInFlight;
+  int get activeLeases => _leases;
   bool get isActive => _state == NavAnnotationManagerState.active;
 
   /// Activate a new manager generation (after native create). Bumps generation
@@ -118,6 +210,8 @@ class NavAnnotationManagerGate {
     _sessionGeneration = sessionGeneration;
     _renderEpoch = renderEpoch;
     _opsInFlight = 0;
+    _leases = 0;
+    _drainCompleter = null;
     return currentOwnership();
   }
 
@@ -135,6 +229,11 @@ class NavAnnotationManagerGate {
     if (_state == NavAnnotationManagerState.disposed) return false;
     _state = NavAnnotationManagerState.disposed;
     _opsInFlight = 0;
+    _leases = 0;
+    if (_drainCompleter != null && !_drainCompleter!.isCompleted) {
+      _drainCompleter!.complete();
+    }
+    _drainCompleter = null;
     return true;
   }
 
@@ -161,6 +260,60 @@ class NavAnnotationManagerGate {
 
   void endOperation() {
     if (_opsInFlight > 0) _opsInFlight -= 1;
+  }
+
+  /// Atomically acquire a lease when [ownership] is [allow]ed. There is NO
+  /// await between the allow-check and the increment, so — in single-threaded
+  /// Dart — a lease can never be granted after [beginDrain]/[markDisposed]
+  /// runs, and disposal can never remove the manager between the check and the
+  /// native dispatch. Caller MUST pair a true result with [releaseLease] in a
+  /// finally block. Returns false (op must NOT reach native) otherwise.
+  bool tryAcquireLease(
+    NavAnnotationOwnership ownership,
+    NavAnnotationOperationKind kind,
+  ) {
+    final check = allow(ownership, kind);
+    if (!check.allowed) return false;
+    _leases += 1;
+    return true;
+  }
+
+  void releaseLease() {
+    if (_leases > 0) _leases -= 1;
+    if (_leases == 0 &&
+        _drainCompleter != null &&
+        !_drainCompleter!.isCompleted) {
+      _drainCompleter!.complete();
+    }
+  }
+
+  /// Run [nativeOp] under a held lease. When ownership is stale/draining/
+  /// disposed the native op is NEVER invoked and a stale result is returned.
+  /// The lease guarantees the manager cannot be removed for the whole op.
+  Future<NavAnnotationRunResult<T>> runGuarded<T>({
+    required NavAnnotationOwnership ownership,
+    required NavAnnotationOperationKind kind,
+    required Future<T> Function() nativeOp,
+  }) async {
+    if (!tryAcquireLease(ownership, kind)) {
+      final check = allow(ownership, kind);
+      return NavAnnotationRunResult<T>.stale(check.reason);
+    }
+    try {
+      final value = await nativeOp();
+      return NavAnnotationRunResult<T>.ran(value);
+    } finally {
+      releaseLease();
+    }
+  }
+
+  /// Await until all in-flight leases are released. Call AFTER [beginDrain]
+  /// (which rejects new leases) and BEFORE removeAnnotationManager. Completes
+  /// immediately when no lease is held.
+  Future<void> awaitDrained() {
+    if (_leases == 0) return Future<void>.value();
+    _drainCompleter ??= Completer<void>();
+    return _drainCompleter!.future;
   }
 
   /// True when the queue for [ownership.managerGeneration] has no in-flight
@@ -242,6 +395,31 @@ class NavAnnotationManagerGate {
     if (routeVersion != null) buf.write(' routeVersion=$routeVersion');
     return buf.toString();
   }
+}
+
+/// NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2 / Phase 6: central
+/// emergency kill-switch for active-ride map-style switching. Default true now
+/// that the transactional lease path is proven by deterministic race tests.
+/// Flip to false to disable style switching during a live ride independently
+/// if a field regression appears, without touching the transactional code.
+const bool kNavActiveRideStyleSwitchEnabled = true;
+
+/// Fail-safe decision (Phase 6): given whether a live ride is active and a
+/// style transaction is already running, should a new style tap begin a swap
+/// now, be coalesced (latest-wins, re-applied on completion), or be blocked by
+/// the emergency kill-switch?
+enum NavStyleTapDecision { begin, coalesce, blocked }
+
+NavStyleTapDecision navStyleTapDecision({
+  required bool liveRideActive,
+  required bool styleTransactionRunning,
+  bool activeRideStyleSwitchEnabled = kNavActiveRideStyleSwitchEnabled,
+}) {
+  if (liveRideActive && !activeRideStyleSwitchEnabled) {
+    return NavStyleTapDecision.blocked;
+  }
+  if (styleTransactionRunning) return NavStyleTapDecision.coalesce;
+  return NavStyleTapDecision.begin;
 }
 
 /// True when a Tellers presentation-mode change must NOT request a map style

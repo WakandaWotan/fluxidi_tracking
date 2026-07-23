@@ -1,7 +1,45 @@
 // NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1 / Commit 1
+// NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2 / Commit
+
+import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/navigation/nav_engine/nav_annotation_manager_lifecycle.dart';
+
+/// Phase 7 test adapter: records every native op so the race is deterministic.
+class _FakeNativeManager {
+  bool removed = false;
+  int createCalls = 0;
+  int deleteCalls = 0;
+  final List<String> log = <String>[];
+
+  /// A create controlled by an external Completer so tests can interleave a
+  /// style-swap disposal precisely mid-flight.
+  Future<void> create(Completer<void> gate) async {
+    // If this ever runs after removal, that is the field crash.
+    if (removed) {
+      throw StateError('No manager found with id: 4');
+    }
+    createCalls += 1;
+    log.add('create_start');
+    await gate.future;
+    if (removed) {
+      throw StateError('No manager found with id: 4');
+    }
+    log.add('create_done');
+  }
+
+  Future<void> delete() async {
+    if (removed) throw StateError('No manager found with id: 4');
+    deleteCalls += 1;
+    log.add('delete');
+  }
+
+  void remove() {
+    removed = true;
+    log.add('removed');
+  }
+}
 
 void main() {
   group('NavAnnotationManagerGate', () {
@@ -307,6 +345,211 @@ void main() {
       expect(line.toLowerCase(), isNot(contains('lat')));
       expect(line.toLowerCase(), isNot(contains('lon')));
       expect(line.toLowerCase(), isNot(contains('address')));
+    });
+  });
+
+  group('NavAnnotationManagerGate — transactional lease (Phase 2/3/8)', () {
+    NavAnnotationManagerGate gate() =>
+        NavAnnotationManagerGate(NavAnnotationManagerRole.route);
+
+    test('exact crash ordering: create finishes before manager removal under '
+        'lease', () async {
+      final g = gate();
+      final own = g.activate(
+        styleGeneration: 1,
+        sessionGeneration: 1,
+        renderEpoch: 1,
+      );
+      final native = _FakeNativeManager();
+      final createGate = Completer<void>();
+
+      // Route create is queued/started while manager id 4 is active.
+      final createFuture = g.runGuarded<void>(
+        ownership: own,
+        kind: NavAnnotationOperationKind.create,
+        nativeOp: () => native.create(createGate),
+      );
+      await Future<void>.value(); // let create_start run
+      expect(g.activeLeases, 1);
+      expect(native.log, ['create_start']);
+
+      // Cockpit style change → drain begins; disposal AWAITS the lease.
+      g.beginDrain();
+      var removed = false;
+      final disposeFuture = () async {
+        await g.awaitDrained();
+        native.remove();
+        removed = true;
+        g.markDisposed();
+      }();
+
+      // Disposal must NOT have removed the manager yet (create still in flight).
+      await Future<void>.value();
+      expect(removed, isFalse);
+      expect(native.removed, isFalse);
+
+      // Complete the create; only then may removal proceed.
+      createGate.complete();
+      await createFuture;
+      await disposeFuture;
+
+      expect(native.log, ['create_start', 'create_done', 'removed']);
+      expect(g.state, NavAnnotationManagerState.disposed);
+    });
+
+    test('queued create after draining never reaches native', () async {
+      final g = gate();
+      final own = g.activate(
+        styleGeneration: 1,
+        sessionGeneration: 1,
+        renderEpoch: 1,
+      );
+      g.beginDrain();
+      final native = _FakeNativeManager();
+      final res = await g.runGuarded<void>(
+        ownership: own,
+        kind: NavAnnotationOperationKind.create,
+        nativeOp: () => native.create(Completer<void>()..complete()),
+      );
+      expect(res.ran, isFalse);
+      expect(res.rejectReason, NavAnnotationRejectReason.draining);
+      expect(native.createCalls, 0);
+    });
+
+    test('create with stale style / manager / epoch generation never reaches '
+        'native', () async {
+      final g = gate();
+      g.activate(styleGeneration: 5, sessionGeneration: 6, renderEpoch: 7);
+      final native = _FakeNativeManager();
+      final staleStyle = NavAnnotationOwnership(
+        managerGeneration: g.managerGeneration,
+        styleGeneration: 4,
+        sessionGeneration: 6,
+        renderEpoch: 7,
+      );
+      final staleGen = NavAnnotationOwnership(
+        managerGeneration: g.managerGeneration - 1,
+        styleGeneration: 5,
+        sessionGeneration: 6,
+        renderEpoch: 7,
+      );
+      final staleEpoch = NavAnnotationOwnership(
+        managerGeneration: g.managerGeneration,
+        styleGeneration: 5,
+        sessionGeneration: 6,
+        renderEpoch: 6,
+      );
+      for (final own in [staleStyle, staleGen, staleEpoch]) {
+        final res = await g.runGuarded<void>(
+          ownership: own,
+          kind: NavAnnotationOperationKind.create,
+          nativeOp: () => native.create(Completer<void>()..complete()),
+        );
+        expect(res.ran, isFalse);
+      }
+      expect(native.createCalls, 0);
+      expect(g.activeLeases, 0);
+    });
+
+    test('dispose waits for in-flight create lease then removes exactly once',
+        () async {
+      final g = gate();
+      final own = g.activate(
+        styleGeneration: 1,
+        sessionGeneration: 1,
+        renderEpoch: 1,
+      );
+      final native = _FakeNativeManager();
+      final createGate = Completer<void>();
+      final createFuture = g.runGuarded<void>(
+        ownership: own,
+        kind: NavAnnotationOperationKind.create,
+        nativeOp: () => native.create(createGate),
+      );
+      await Future<void>.value();
+      g.beginDrain();
+
+      var drainResolved = false;
+      final drainFuture = g.awaitDrained().then((_) => drainResolved = true);
+      await Future<void>.value();
+      expect(drainResolved, isFalse);
+
+      createGate.complete();
+      await createFuture;
+      await drainFuture;
+      expect(drainResolved, isTrue);
+      expect(g.activeLeases, 0);
+
+      // Idempotent dispose.
+      expect(g.markDisposed(), isTrue);
+      expect(g.markDisposed(), isFalse);
+    });
+
+    test('rapid style taps coalesce → latest style wins (product gate)', () {
+      expect(
+        navStyleTapDecision(liveRideActive: true, styleTransactionRunning: false),
+        NavStyleTapDecision.begin,
+      );
+      expect(
+        navStyleTapDecision(liveRideActive: true, styleTransactionRunning: true),
+        NavStyleTapDecision.coalesce,
+      );
+      expect(
+        navStyleTapDecision(
+          liveRideActive: true,
+          styleTransactionRunning: false,
+          activeRideStyleSwitchEnabled: false,
+        ),
+        NavStyleTapDecision.blocked,
+      );
+      // Non-live ride is never blocked.
+      expect(
+        navStyleTapDecision(
+          liveRideActive: false,
+          styleTransactionRunning: false,
+          activeRideStyleSwitchEnabled: false,
+        ),
+        NavStyleTapDecision.begin,
+      );
+    });
+
+    test('lease releases on native throw (finally) — never leaks a lease',
+        () async {
+      final g = gate();
+      final own = g.activate(
+        styleGeneration: 1,
+        sessionGeneration: 1,
+        renderEpoch: 1,
+      );
+      await expectLater(
+        g.runGuarded<void>(
+          ownership: own,
+          kind: NavAnnotationOperationKind.create,
+          nativeOp: () async => throw StateError('boom'),
+        ),
+        throwsA(isA<StateError>()),
+      );
+      expect(g.activeLeases, 0);
+    });
+
+    test('awaitDrained completes immediately when no lease is held', () async {
+      final g = gate();
+      g.activate(styleGeneration: 1, sessionGeneration: 1, renderEpoch: 1);
+      var done = false;
+      await g.awaitDrained().then((_) => done = true);
+      expect(done, isTrue);
+    });
+
+    test('TX event labels and count buckets are PII-free and bounded', () {
+      expect(navAnnotationTxEventLabel(NavAnnotationTxEvent.leaseAcquired),
+          'lease_acquired');
+      expect(navAnnotationTxEventLabel(NavAnnotationTxEvent.managerRemoved),
+          'manager_removed');
+      expect(navAnnotationCountBucket(0), '0');
+      expect(navAnnotationCountBucket(1), '1');
+      expect(navAnnotationCountBucket(3), '2-3');
+      expect(navAnnotationCountBucket(7), '4-7');
+      expect(navAnnotationCountBucket(50), '8+');
     });
   });
 
