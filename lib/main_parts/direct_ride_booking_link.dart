@@ -768,20 +768,25 @@ bool isStreetDirectBooking(Map<String, dynamic>? record) {
   return false;
 }
 
-/// Authoritative direct-ride identifiers required to safely resume an already
-/// running street/direct ride from a listing tap.
+/// Authoritative direct-ride identifiers for an already-running street/direct
+/// ride.
 ///
-/// Both [trackingTripId] and [directRideKey] must be present on the record.
+/// Minimum identity is [bookingId] + [trackingTripId]. [directRideKey] is
+/// optional on reopen (create-idempotency only on the server); when present on
+/// a local record it is preserved, never synthesized.
+///
 /// The client MUST NOT invent, reconstruct or regenerate either value.
 class StreetDirectResumeIdentity {
   const StreetDirectResumeIdentity({
     required this.bookingId,
     required this.trackingTripId,
-    required this.directRideKey,
+    this.directRideKey = '',
   });
 
   final String bookingId;
   final String trackingTripId;
+
+  /// Optional. Empty when the server keeps the key private. Never invent.
   final String directRideKey;
 }
 
@@ -807,13 +812,11 @@ String _firstNonEmptyDeep(Map<String, dynamic>? record, List<String> keys) {
   return '';
 }
 
-/// Resolves the authoritative direct-ride identity from [record]. Returns
-/// `null` when [record] is not classified as street/direct or when the record
-/// does not carry BOTH a non-empty `tracking_trip_id` and a non-empty
-/// `direct_ride_key`.
+/// Resolves the minimum direct-ride identity from [record]. Returns `null`
+/// when [record] is not street/direct or when `tracking_trip_id` is missing.
 ///
-/// A `null` result MUST be treated by the caller as "cannot resume" — the
-/// caller must not fabricate identifiers and must not enter the planned
+/// `direct_ride_key` is NOT required. A `null` result MUST be treated as
+/// "cannot resume" — never fabricate identifiers and never enter the planned
 /// lifecycle for a street/direct record.
 StreetDirectResumeIdentity? resolveStreetDirectResumeIdentity(
   Map<String, dynamic>? record, {
@@ -827,17 +830,380 @@ StreetDirectResumeIdentity? resolveStreetDirectResumeIdentity(
     'tracking_trip_id',
     'trackingTripId',
   ]);
+  if (trip.isEmpty) return null;
+
   final key = _firstNonEmptyDeep(record, const [
     'direct_ride_key',
     'directRideKey',
   ]);
-  if (trip.isEmpty || key.isEmpty) return null;
 
   return StreetDirectResumeIdentity(
     bookingId: safeBookingId,
     trackingTripId: trip,
     directRideKey: key,
   );
+}
+
+// ===========================================================================
+// DIRECT-RIDE-RESUME-CONTEXT-MODEL-1 — authorized resume-context contract.
+//
+// Proposed `POST /trip/resume-context-for-booking` response shape (client
+// model only). Runtime networking / `_goToRide` wiring is intentionally NOT
+// in this commit. Until that wiring lands, [openExistingRideDecision] keeps
+// its conservative local-record gate (still requires a non-empty
+// `direct_ride_key` on the listing/hydrate record so reopen cannot proceed
+// from trip id alone without the authorized endpoint).
+// ===========================================================================
+
+/// Server-provided lifecycle mode for reopening an existing street/direct ride.
+enum DirectRideResumeMode {
+  /// Trip is active; client may enter live direct-ride driver state.
+  activeResume,
+
+  /// Trip is stopped; booking finalize is still pending — reconcile only.
+  reconcilePending,
+
+  /// Booking/trip already completed/finalized — refresh list UI only.
+  refreshOnly,
+
+  /// Hard deny (cancelled, mismatch, unauthorized linkage, etc.).
+  rejected,
+
+  /// Malformed / unrecognized mode — fail closed.
+  unknown,
+}
+
+/// Immutable parsed resume context from the proposed authorized endpoint.
+class DirectRideResumeContext {
+  const DirectRideResumeContext({
+    required this.ok,
+    required this.bookingId,
+    required this.trackingTripId,
+    required this.tripStatus,
+    required this.bookingStatus,
+    required this.bookingFinalizeState,
+    required this.bookingFinalized,
+    required this.resumeMode,
+    this.rejectReason = '',
+  });
+
+  final bool ok;
+  final String bookingId;
+  final String trackingTripId;
+  final String tripStatus;
+  final String bookingStatus;
+  final String bookingFinalizeState;
+  final bool bookingFinalized;
+  final DirectRideResumeMode resumeMode;
+  final String rejectReason;
+}
+
+/// Outcome of [validateDirectRideResumeContext].
+class DirectRideResumeContextDecision {
+  const DirectRideResumeContextDecision._({
+    required this.mode,
+    required this.context,
+    required this.rejectReason,
+  });
+
+  const DirectRideResumeContextDecision.rejected(String reason)
+      : mode = DirectRideResumeMode.rejected,
+        context = null,
+        rejectReason = reason;
+
+  const DirectRideResumeContextDecision.unknown(String reason)
+      : mode = DirectRideResumeMode.unknown,
+        context = null,
+        rejectReason = reason;
+
+  final DirectRideResumeMode mode;
+  final DirectRideResumeContext? context;
+  final String rejectReason;
+
+  /// Live `_directRideActive` / cockpit resume — active mode only.
+  bool get allowsLiveDriverState =>
+      mode == DirectRideResumeMode.activeResume && context != null;
+
+  /// May call reconcile (never `/trip/stop` invent) for stopped+pending.
+  bool get allowsReconcile =>
+      mode == DirectRideResumeMode.reconcilePending && context != null;
+
+  /// Refresh bookings list / UI only — never enter live direct state.
+  bool get isRefreshOnly => mode == DirectRideResumeMode.refreshOnly;
+
+  bool get isRejected =>
+      mode == DirectRideResumeMode.rejected ||
+      mode == DirectRideResumeMode.unknown;
+}
+
+String _normResumeToken(Object? raw) =>
+    (raw ?? '').toString().trim().toLowerCase().replaceAll('-', '_');
+
+/// Map an explicit `resume_mode` token from the proposed server response.
+DirectRideResumeMode parseDirectRideResumeModeToken(Object? raw) {
+  switch (_normResumeToken(raw)) {
+    case 'active_resume':
+    case 'activeresume':
+      return DirectRideResumeMode.activeResume;
+    case 'reconcile_pending':
+    case 'reconcilepending':
+      return DirectRideResumeMode.reconcilePending;
+    case 'refresh_only':
+    case 'refreshonly':
+      return DirectRideResumeMode.refreshOnly;
+    case 'rejected':
+      return DirectRideResumeMode.rejected;
+    case '':
+    case 'unknown':
+      return DirectRideResumeMode.unknown;
+    default:
+      return DirectRideResumeMode.unknown;
+  }
+}
+
+bool _resumeBookingFinalizationCompleted({
+  required bool bookingFinalized,
+  required String bookingFinalizeState,
+}) {
+  if (bookingFinalized) return true;
+  final state = _normResumeToken(bookingFinalizeState);
+  return state == kDirectTripFinalizeCompleted || state == 'complete';
+}
+
+bool _resumeBookingIsCancelled(String bookingStatus) =>
+    streetRideCompanyBucket(bookingStatus) == StreetRideCompanyBucket.cancelled;
+
+bool _resumeBookingIsCompleted(String bookingStatus) =>
+    streetRideCompanyBucket(bookingStatus) == StreetRideCompanyBucket.completed;
+
+/// Derive [DirectRideResumeMode] from lifecycle fields when the server omits
+/// an explicit `resume_mode` (or for pure unit mapping proofs).
+DirectRideResumeMode mapDirectRideResumeModeFromLifecycle({
+  required String tripStatus,
+  required String bookingStatus,
+  required String bookingFinalizeState,
+  required bool bookingFinalized,
+}) {
+  if (_resumeBookingIsCancelled(bookingStatus)) {
+    return DirectRideResumeMode.rejected;
+  }
+  final finalized = _resumeBookingFinalizationCompleted(
+    bookingFinalized: bookingFinalized,
+    bookingFinalizeState: bookingFinalizeState,
+  );
+  if (finalized || _resumeBookingIsCompleted(bookingStatus)) {
+    return DirectRideResumeMode.refreshOnly;
+  }
+  final trip = _normResumeToken(tripStatus);
+  if (trip == 'stopped' && !finalized) {
+    return DirectRideResumeMode.reconcilePending;
+  }
+  if (trip == 'active' && !finalized) {
+    return DirectRideResumeMode.activeResume;
+  }
+  return DirectRideResumeMode.unknown;
+}
+
+/// Pure parser for the proposed resume-context JSON body.
+///
+/// Never reads a client-invented trip id from outside [decoded]. Malformed
+/// input yields `ok: false` + [DirectRideResumeMode.unknown].
+DirectRideResumeContext parseDirectRideResumeContext(Object? decoded) {
+  if (decoded is! Map) {
+    return const DirectRideResumeContext(
+      ok: false,
+      bookingId: '',
+      trackingTripId: '',
+      tripStatus: '',
+      bookingStatus: '',
+      bookingFinalizeState: '',
+      bookingFinalized: false,
+      resumeMode: DirectRideResumeMode.unknown,
+      rejectReason: 'malformed_response',
+    );
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  final ok = map['ok'] == true;
+  final bookingId =
+      (map['booking_id'] ?? map['bookingId'] ?? '').toString().trim();
+  final trackingTripId = (map['tracking_trip_id'] ??
+          map['trackingTripId'] ??
+          map['trip_id'] ??
+          map['tripId'] ??
+          '')
+      .toString()
+      .trim();
+  final tripStatus =
+      (map['trip_status'] ?? map['tripStatus'] ?? '').toString().trim();
+  final bookingStatus =
+      (map['booking_status'] ?? map['bookingStatus'] ?? '').toString().trim();
+  final finalizeState = (map['booking_finalize_state'] ??
+          map['bookingFinalizeState'] ??
+          '')
+      .toString()
+      .trim()
+      .toLowerCase();
+  final bookingFinalized = map['booking_finalized'] == true ||
+      map['bookingFinalized'] == true ||
+      finalizeState == kDirectTripFinalizeCompleted;
+  final rejectReason =
+      (map['reject_reason'] ?? map['rejectReason'] ?? '').toString().trim();
+
+  final hasExplicitMode = map.containsKey('resume_mode') ||
+      map.containsKey('resumeMode');
+  final DirectRideResumeMode mode;
+  if (hasExplicitMode) {
+    mode = parseDirectRideResumeModeToken(
+      map['resume_mode'] ?? map['resumeMode'],
+    );
+  } else {
+    mode = mapDirectRideResumeModeFromLifecycle(
+      tripStatus: tripStatus,
+      bookingStatus: bookingStatus,
+      bookingFinalizeState: finalizeState,
+      bookingFinalized: bookingFinalized,
+    );
+  }
+
+  return DirectRideResumeContext(
+    ok: ok,
+    bookingId: bookingId,
+    trackingTripId: trackingTripId,
+    tripStatus: tripStatus,
+    bookingStatus: bookingStatus,
+    bookingFinalizeState: finalizeState,
+    bookingFinalized: bookingFinalized,
+    resumeMode: mode,
+    rejectReason: rejectReason,
+  );
+}
+
+/// Strict validation of a parsed resume context against the booking the
+/// driver tapped.
+///
+/// [clientSuppliedTripId] is accepted only to prove it cannot override the
+/// response identity — it is never used as [DirectRideResumeContext.trackingTripId].
+///
+/// [bookingClassificationRecord] should be the local list/hydrate row used for
+/// [isStreetDirectBooking] (must already be street/direct).
+DirectRideResumeContextDecision validateDirectRideResumeContext({
+  required String requestedBookingId,
+  required DirectRideResumeContext? context,
+  Map<String, dynamic>? bookingClassificationRecord,
+  String? clientSuppliedTripId,
+}) {
+  // Security: any caller-supplied trip id is discarded. Response identity
+  // alone is authoritative (never merged / never overrides).
+  final ignoredClientTripId = (clientSuppliedTripId ?? '').trim();
+  assert(ignoredClientTripId.isEmpty || ignoredClientTripId.isNotEmpty);
+
+  if (context == null) {
+    return const DirectRideResumeContextDecision.rejected('missing_context');
+  }
+  if (!context.ok) {
+    return DirectRideResumeContextDecision.rejected(
+      context.rejectReason.isEmpty ? 'not_ok' : context.rejectReason,
+    );
+  }
+
+  final requested = requestedBookingId.trim();
+  if (requested.isEmpty) {
+    return const DirectRideResumeContextDecision.rejected(
+      'missing_requested_booking_id',
+    );
+  }
+  if (context.bookingId.trim() != requested) {
+    return const DirectRideResumeContextDecision.rejected(
+      'booking_id_mismatch',
+    );
+  }
+
+  final classifyRecord = <String, dynamic>{
+    ...?bookingClassificationRecord,
+    'booking_id': requested,
+  };
+  if (!isStreetDirectBooking(classifyRecord)) {
+    return const DirectRideResumeContextDecision.rejected(
+      'not_street_direct',
+    );
+  }
+
+  if (_resumeBookingIsCancelled(context.bookingStatus)) {
+    return const DirectRideResumeContextDecision.rejected(
+      'booking_cancelled',
+    );
+  }
+
+  final tripId = context.trackingTripId.trim();
+  final tripStatus = _normResumeToken(context.tripStatus);
+  final finalized = _resumeBookingFinalizationCompleted(
+    bookingFinalized: context.bookingFinalized,
+    bookingFinalizeState: context.bookingFinalizeState,
+  );
+
+  switch (context.resumeMode) {
+    case DirectRideResumeMode.activeResume:
+      if (tripId.isEmpty) {
+        return const DirectRideResumeContextDecision.rejected(
+          'missing_tracking_trip_id',
+        );
+      }
+      if (tripStatus != 'active') {
+        return const DirectRideResumeContextDecision.rejected(
+          'active_requires_active_trip',
+        );
+      }
+      if (_resumeBookingIsCompleted(context.bookingStatus) || finalized) {
+        return const DirectRideResumeContextDecision.rejected(
+          'active_forbidden_when_completed_or_finalized',
+        );
+      }
+      return DirectRideResumeContextDecision._(
+        mode: DirectRideResumeMode.activeResume,
+        context: context,
+        rejectReason: '',
+      );
+
+    case DirectRideResumeMode.reconcilePending:
+      if (tripId.isEmpty) {
+        return const DirectRideResumeContextDecision.rejected(
+          'missing_tracking_trip_id',
+        );
+      }
+      if (tripStatus != 'stopped') {
+        return const DirectRideResumeContextDecision.rejected(
+          'reconcile_requires_stopped_trip',
+        );
+      }
+      if (finalized || _resumeBookingIsCompleted(context.bookingStatus)) {
+        return const DirectRideResumeContextDecision.rejected(
+          'reconcile_forbidden_when_finalized',
+        );
+      }
+      return DirectRideResumeContextDecision._(
+        mode: DirectRideResumeMode.reconcilePending,
+        context: context,
+        rejectReason: '',
+      );
+
+    case DirectRideResumeMode.refreshOnly:
+      // Accepted as a non-live decision only — never allowsLiveDriverState.
+      return DirectRideResumeContextDecision._(
+        mode: DirectRideResumeMode.refreshOnly,
+        context: context,
+        rejectReason: '',
+      );
+
+    case DirectRideResumeMode.rejected:
+      return DirectRideResumeContextDecision.rejected(
+        context.rejectReason.isEmpty ? 'rejected' : context.rejectReason,
+      );
+
+    case DirectRideResumeMode.unknown:
+      return DirectRideResumeContextDecision.unknown(
+        context.rejectReason.isEmpty ? 'unknown_mode' : context.rejectReason,
+      );
+  }
 }
 
 /// Routing decision produced by [openExistingRideDecision]. The driver home
@@ -988,6 +1354,13 @@ StopTripLifecycleDecision stopTripLifecycleDecision({
 /// Decide how `_goToRide` (or any equivalent caller) should route an opened
 /// booking. Pure; unit-tested; the single source of truth for street/direct
 /// detection on the client.
+///
+/// Runtime gate (until resume-context endpoint wiring): street/direct rows
+/// still require a non-empty local `direct_ride_key` in addition to
+/// `tracking_trip_id` before [streetResume]. List/hydrate paths today expose
+/// neither, so reopen remains safe-fail. Live resume without a key must go
+/// through [validateDirectRideResumeContext] once the authorized endpoint is
+/// wired — not through this helper inventing identifiers.
 OpenExistingRideDecision openExistingRideDecision({
   required String bookingId,
   required Map<String, dynamic> details,
@@ -1004,7 +1377,15 @@ OpenExistingRideDecision openExistingRideDecision({
     record,
     bookingId: safeBookingId,
   );
-  if (identity == null) return const OpenExistingRideDecision.streetUnavailable();
+  if (identity == null) {
+    return const OpenExistingRideDecision.streetUnavailable();
+  }
+  // Conservative local-record gate: do not enter live resume from a listing
+  // row that only carries a trip id. The authorized resume-context path is
+  // the sole future way to resume without a client-held direct_ride_key.
+  if (identity.directRideKey.trim().isEmpty) {
+    return const OpenExistingRideDecision.streetUnavailable();
+  }
   return OpenExistingRideDecision.streetResume(identity);
 }
 

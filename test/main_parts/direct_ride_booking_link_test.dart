@@ -228,9 +228,10 @@ void main() {
   // contract that:
   //   * every plausible street/direct signal classifies as street/direct;
   //   * ordinary planned bookings are never misclassified;
-  //   * a resume can only proceed when BOTH tracking_trip_id AND
-  //     direct_ride_key are supplied authoritatively;
-  //   * missing identity yields streetUnavailable and never planned.
+  //   * minimum identity is booking_id + tracking_trip_id (key optional);
+  //   * openExistingRideDecision still safe-fails without a local key until
+  //     the authorized resume-context endpoint is wired;
+  //   * missing trip id yields streetUnavailable and never planned.
   // ==========================================================================
 
   group('DIRECT-RIDE-EXISTING-BOOKING-OWNERSHIP-1: isStreetDirectBooking', () {
@@ -352,7 +353,8 @@ void main() {
       expect(id, isNull);
     });
 
-    test('returns null when direct_ride_key is missing', () {
+    test('returns identity when direct_ride_key is missing '
+        '(key is create-only, not required to resume)', () {
       final id = resolveStreetDirectResumeIdentity(
         <String, dynamic>{
           'booking_id': 'street_1_abc',
@@ -360,10 +362,13 @@ void main() {
         },
         bookingId: 'street_1_abc',
       );
-      expect(id, isNull);
+      expect(id, isNotNull);
+      expect(id!.bookingId, 'street_1_abc');
+      expect(id.trackingTripId, 'trip-9');
+      expect(id.directRideKey, isEmpty);
     });
 
-    test('returns null when identifiers are only empty strings', () {
+    test('returns null when tracking_trip_id is only empty / whitespace', () {
       final id = resolveStreetDirectResumeIdentity(
         <String, dynamic>{
           'booking_id': 'street_1_abc',
@@ -516,6 +521,292 @@ void main() {
         expect(d.isStreetUnavailable, isTrue,
             reason: 'without identity, must safe-fail: $v');
       }
+    });
+
+    test('805e9d2 runtime gate: trip id without local direct_ride_key still '
+        'safe-fails (resume-context endpoint not wired yet)', () {
+      final resolved = resolveStreetDirectResumeIdentity(
+        <String, dynamic>{
+          'booking_id': 'street_1721_abc',
+          'source': 'street_ride',
+          'tracking_trip_id': 'trip-11',
+        },
+        bookingId: 'street_1721_abc',
+      );
+      expect(resolved, isNotNull,
+          reason: 'pure identity no longer requires direct_ride_key');
+      final d = openExistingRideDecision(
+        bookingId: 'street_1721_abc',
+        details: <String, dynamic>{
+          'source': 'street_ride',
+          'ride_type': 'direct',
+          'tracking_trip_id': 'trip-11',
+        },
+      );
+      expect(d.isStreetUnavailable, isTrue);
+      expect(d.isStreetResume, isFalse);
+      expect(d.isPlanned, isFalse);
+    });
+  });
+
+  // ==========================================================================
+  // DIRECT-RIDE-RESUME-CONTEXT-MODEL-1 — pure resume-context parse/validate.
+  // ==========================================================================
+
+  group('DIRECT-RIDE-RESUME-CONTEXT-MODEL-1: parse + validate', () {
+    Map<String, dynamic> streetRow({
+      String bookingId = 'street_1_abc',
+    }) =>
+        <String, dynamic>{
+          'booking_id': bookingId,
+          'source': 'street_ride',
+          'ride_type': 'direct',
+          'status': 'IN_PROGRESS',
+        };
+
+    DirectRideResumeContextDecision validateDecoded(
+      Map<String, dynamic> decoded, {
+      String requested = 'street_1_abc',
+      String? clientTripId,
+    }) {
+      return validateDirectRideResumeContext(
+        requestedBookingId: requested,
+        context: parseDirectRideResumeContext(decoded),
+        bookingClassificationRecord: streetRow(bookingId: requested),
+        clientSuppliedTripId: clientTripId,
+      );
+    }
+
+    test('1. active context with booking+trip ids validates', () {
+      final d = validateDecoded(<String, dynamic>{
+        'ok': true,
+        'booking_id': 'street_1_abc',
+        'tracking_trip_id': 'trip-9',
+        'trip_status': 'active',
+        'booking_status': 'IN_PROGRESS',
+        'booking_finalize_state': 'pending',
+        'booking_finalized': false,
+        'resume_mode': 'active_resume',
+      });
+      expect(d.allowsLiveDriverState, isTrue);
+      expect(d.mode, DirectRideResumeMode.activeResume);
+      expect(d.context!.trackingTripId, 'trip-9');
+      expect(d.context!.bookingId, 'street_1_abc');
+    });
+
+    test('2. active context does not need direct_ride_key', () {
+      final decoded = <String, dynamic>{
+        'ok': true,
+        'booking_id': 'street_1_abc',
+        'tracking_trip_id': 'trip-9',
+        'trip_status': 'active',
+        'booking_status': 'IN_PROGRESS',
+        'booking_finalized': false,
+        'resume_mode': 'active_resume',
+      };
+      expect(decoded.containsKey('direct_ride_key'), isFalse);
+      final d = validateDecoded(decoded);
+      expect(d.allowsLiveDriverState, isTrue);
+    });
+
+    test('3. missing tracking trip id rejects', () {
+      final d = validateDecoded(<String, dynamic>{
+        'ok': true,
+        'booking_id': 'street_1_abc',
+        'tracking_trip_id': '',
+        'trip_status': 'active',
+        'booking_status': 'IN_PROGRESS',
+        'resume_mode': 'active_resume',
+      });
+      expect(d.isRejected, isTrue);
+      expect(d.allowsLiveDriverState, isFalse);
+      expect(d.rejectReason, 'missing_tracking_trip_id');
+    });
+
+    test('4. booking-id mismatch rejects', () {
+      final d = validateDecoded(
+        <String, dynamic>{
+          'ok': true,
+          'booking_id': 'street_OTHER',
+          'tracking_trip_id': 'trip-9',
+          'trip_status': 'active',
+          'booking_status': 'IN_PROGRESS',
+          'resume_mode': 'active_resume',
+        },
+        requested: 'street_1_abc',
+      );
+      expect(d.isRejected, isTrue);
+      expect(d.rejectReason, 'booking_id_mismatch');
+    });
+
+    test('5. active mode with stopped trip rejects', () {
+      final d = validateDecoded(<String, dynamic>{
+        'ok': true,
+        'booking_id': 'street_1_abc',
+        'tracking_trip_id': 'trip-9',
+        'trip_status': 'stopped',
+        'booking_status': 'IN_PROGRESS',
+        'resume_mode': 'active_resume',
+      });
+      expect(d.isRejected, isTrue);
+      expect(d.rejectReason, 'active_requires_active_trip');
+      expect(d.allowsLiveDriverState, isFalse);
+    });
+
+    test('6. reconcile mode with active trip rejects', () {
+      final d = validateDecoded(<String, dynamic>{
+        'ok': true,
+        'booking_id': 'street_1_abc',
+        'tracking_trip_id': 'trip-9',
+        'trip_status': 'active',
+        'booking_status': 'IN_PROGRESS',
+        'booking_finalized': false,
+        'resume_mode': 'reconcile_pending',
+      });
+      expect(d.isRejected, isTrue);
+      expect(d.rejectReason, 'reconcile_requires_stopped_trip');
+      expect(d.allowsReconcile, isFalse);
+    });
+
+    test('7. stopped+pending maps to reconcilePending', () {
+      expect(
+        mapDirectRideResumeModeFromLifecycle(
+          tripStatus: 'stopped',
+          bookingStatus: 'IN_PROGRESS',
+          bookingFinalizeState: 'pending',
+          bookingFinalized: false,
+        ),
+        DirectRideResumeMode.reconcilePending,
+      );
+      final parsed = parseDirectRideResumeContext(<String, dynamic>{
+        'ok': true,
+        'booking_id': 'street_1_abc',
+        'tracking_trip_id': 'trip-9',
+        'trip_status': 'stopped',
+        'booking_status': 'IN_PROGRESS',
+        'booking_finalize_state': 'pending',
+        'booking_finalized': false,
+        // no explicit resume_mode — derive from lifecycle
+      });
+      expect(parsed.resumeMode, DirectRideResumeMode.reconcilePending);
+      final d = validateDirectRideResumeContext(
+        requestedBookingId: 'street_1_abc',
+        context: parsed,
+        bookingClassificationRecord: streetRow(),
+      );
+      expect(d.allowsReconcile, isTrue);
+      expect(d.allowsLiveDriverState, isFalse);
+    });
+
+    test('8. completed booking maps to refreshOnly', () {
+      expect(
+        mapDirectRideResumeModeFromLifecycle(
+          tripStatus: 'stopped',
+          bookingStatus: 'COMPLETED',
+          bookingFinalizeState: 'completed',
+          bookingFinalized: true,
+        ),
+        DirectRideResumeMode.refreshOnly,
+      );
+      final d = validateDecoded(<String, dynamic>{
+        'ok': true,
+        'booking_id': 'street_1_abc',
+        'tracking_trip_id': 'trip-9',
+        'trip_status': 'stopped',
+        'booking_status': 'COMPLETED',
+        'booking_finalize_state': 'completed',
+        'booking_finalized': true,
+        'resume_mode': 'refresh_only',
+      });
+      expect(d.isRefreshOnly, isTrue);
+      expect(d.allowsLiveDriverState, isFalse);
+      expect(d.allowsReconcile, isFalse);
+    });
+
+    test('9. finalized booking cannot active-resume', () {
+      final d = validateDecoded(<String, dynamic>{
+        'ok': true,
+        'booking_id': 'street_1_abc',
+        'tracking_trip_id': 'trip-9',
+        'trip_status': 'active',
+        'booking_status': 'IN_PROGRESS',
+        'booking_finalize_state': 'completed',
+        'booking_finalized': true,
+        'resume_mode': 'active_resume',
+      });
+      expect(d.isRejected, isTrue);
+      expect(d.allowsLiveDriverState, isFalse);
+      expect(d.rejectReason, 'active_forbidden_when_completed_or_finalized');
+    });
+
+    test('10. cancelled booking rejects', () {
+      final d = validateDecoded(<String, dynamic>{
+        'ok': true,
+        'booking_id': 'street_1_abc',
+        'tracking_trip_id': 'trip-9',
+        'trip_status': 'active',
+        'booking_status': 'CANCELLED',
+        'resume_mode': 'active_resume',
+      });
+      expect(d.isRejected, isTrue);
+      expect(d.rejectReason, 'booking_cancelled');
+    });
+
+    test('11. unknown mode rejects', () {
+      final d = validateDecoded(<String, dynamic>{
+        'ok': true,
+        'booking_id': 'street_1_abc',
+        'tracking_trip_id': 'trip-9',
+        'trip_status': 'active',
+        'booking_status': 'IN_PROGRESS',
+        'resume_mode': 'not_a_real_mode',
+      });
+      expect(d.mode, DirectRideResumeMode.unknown);
+      expect(d.isRejected, isTrue);
+      expect(d.allowsLiveDriverState, isFalse);
+    });
+
+    test('12. malformed response rejects', () {
+      final parsed = parseDirectRideResumeContext('not-a-map');
+      expect(parsed.ok, isFalse);
+      expect(parsed.resumeMode, DirectRideResumeMode.unknown);
+      final d = validateDirectRideResumeContext(
+        requestedBookingId: 'street_1_abc',
+        context: parsed,
+        bookingClassificationRecord: streetRow(),
+      );
+      expect(d.isRejected, isTrue);
+      expect(d.allowsLiveDriverState, isFalse);
+    });
+
+    test('13. client-supplied trip id cannot override response identity', () {
+      final d = validateDecoded(
+        <String, dynamic>{
+          'ok': true,
+          'booking_id': 'street_1_abc',
+          'tracking_trip_id': 'trip-AUTHORITATIVE',
+          'trip_status': 'active',
+          'booking_status': 'IN_PROGRESS',
+          'resume_mode': 'active_resume',
+        },
+        clientTripId: 'trip-CLIENT-FORGED',
+      );
+      expect(d.allowsLiveDriverState, isTrue);
+      expect(d.context!.trackingTripId, 'trip-AUTHORITATIVE');
+      expect(d.context!.trackingTripId, isNot('trip-CLIENT-FORGED'));
+    });
+
+    test('14. create-direct idempotency helpers still require/use '
+        'direct_ride_key', () {
+      final key = makeDirectRideKey(driverId: 'driver-1', startedAtMs: 42);
+      expect(key, contains('direct_'));
+      expect(key, contains('driver-1'));
+      final payload = withDirectRideBookingStartFields(
+        <String, dynamic>{'driver_id': 'driver-1'},
+        directRideKey: key,
+      );
+      expect(payload['direct_ride_key'], key);
+      expect(payload.containsKey('direct_ride_key'), isTrue);
     });
   });
 
