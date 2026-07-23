@@ -5,8 +5,12 @@
 
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
+import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_marker_choice.dart';
+import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_hud_overlay.dart';
+import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_vehicle_choice_selector.dart';
 
 /// Presentation mode for the driver navigation surface.
 enum DriverNavPresentationMode {
@@ -43,43 +47,114 @@ class DriverNavPresentationModeController {
   }
 }
 
-/// NAV-TELLERS-COMPOSITION-CORRECTION-1: one-HUD-at-a-time visibility decision
-/// for the driver surface. Exactly one presentation layer is shown at a time so
-/// the normal navigation cockpit HUD never bleeds through beneath the Tellers
-/// HUD (duplicate fare/distance, overlapping controls, stray banners/arrows).
-///
-/// The retained MapWidget is NOT a HUD and is always live; this only decides
-/// which Flutter presentation layer is mounted.
+/// NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1 Commit 2: single owner of the
+/// selected vehicle marker presentation. Exactly one owner at a time — never
+/// both a Flutter HUD marker and a Mapbox annotation marker.
+enum DriverVehicleMarkerPresentationOwner {
+  /// No marker (idle / no live follow).
+  none,
+
+  /// Normal Street-Level screen-fixed HUD owns the visual; Mapbox 2D opacity 0.
+  navigationHud,
+
+  /// Native Mapbox annotation owns the visual (no Flutter HUD marker).
+  mapboxAnnotation,
+
+  /// Tellers live-window Flutter marker owns the visual; Mapbox 2D opacity 0.
+  /// Same selected Car/Arrow choice and authoritative pose — relocated into
+  /// the live-navigation window, never a second GPS/pose owner.
+  tellersLiveWindow,
+}
+
+/// Resolves the single vehicle-marker presentation owner.
+DriverVehicleMarkerPresentationOwner resolveDriverVehicleMarkerPresentationOwner({
+  required bool tellersActive,
+  required bool followLiveActive,
+  required bool showDriverHudOverlay,
+}) {
+  if (!followLiveActive) return DriverVehicleMarkerPresentationOwner.none;
+  if (tellersActive) {
+    return DriverVehicleMarkerPresentationOwner.tellersLiveWindow;
+  }
+  if (showDriverHudOverlay) {
+    return DriverVehicleMarkerPresentationOwner.navigationHud;
+  }
+  return DriverVehicleMarkerPresentationOwner.mapboxAnnotation;
+}
+
+/// True when the Mapbox 2D taxi/arrow annotation must be hidden because a
+/// Flutter presentation owner currently owns the single marker visual.
+bool driverHideMapboxMarkerForPresentationOwner(
+  DriverVehicleMarkerPresentationOwner owner,
+) {
+  return owner == DriverVehicleMarkerPresentationOwner.navigationHud ||
+      owner == DriverVehicleMarkerPresentationOwner.tellersLiveWindow;
+}
+
+/// NAV-TELLERS-COMPOSITION-CORRECTION-1 + NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1:
+/// one-HUD-at-a-time visibility decision. Separates cockpit HUD, follow overlays,
+/// vehicle-marker visibility and Tellers marker presentation so Tellers can keep
+/// exactly one vehicle marker visible without re-enabling the normal cockpit.
 @immutable
 class DriverNavHudVisibility {
   /// Normal bottom cockpit (KPI row + primary nav controls) and top strip.
   final bool cockpitHud;
 
-  /// Follow-mode navigation overlays (maneuver banner, screen-fixed arrow,
-  /// recenter, camera/zoom/marker controls).
+  /// Follow-mode navigation overlays (maneuver banner, recenter, camera/zoom
+  /// controls, normal marker selector). Does NOT gate the Tellers marker.
   final bool navBannerHud;
 
   /// The dedicated Tellers presentation HUD.
   final bool tellersHud;
 
+  /// Exactly one selected vehicle marker should be presented (Navigation or
+  /// Tellers). Never duplicates under the other mode's anchor.
+  final bool vehicleMarkerVisible;
+
+  /// Tellers live-window marker presentation (Flutter HUD clipped in window).
+  final bool tellersMarkerPresentationVisible;
+
+  /// Compact Car/Arrow selector inside the Tellers live window.
+  final bool tellersMarkerSelectorVisible;
+
+  /// Resolved single marker presentation owner.
+  final DriverVehicleMarkerPresentationOwner markerOwner;
+
   const DriverNavHudVisibility({
     required this.cockpitHud,
     required this.navBannerHud,
     required this.tellersHud,
+    required this.vehicleMarkerVisible,
+    required this.tellersMarkerPresentationVisible,
+    required this.tellersMarkerSelectorVisible,
+    required this.markerOwner,
   });
 
-  /// While Tellers is active, both the cockpit HUD and the follow-mode nav
-  /// overlays are suppressed; only the Tellers HUD is shown. Neither GPS, route
-  /// progress, camera, fare nor timers are affected — this is presentation only.
+  /// While Tellers is active, the normal cockpit HUD and follow overlays are
+  /// suppressed, but the selected vehicle marker remains visible inside the
+  /// live-navigation window. GPS/route/camera/fare/timers stay live.
   factory DriverNavHudVisibility.resolve({
     required bool showCockpit,
     required bool cameraFollow,
     required bool tellersActive,
+    bool followLiveActive = false,
+    bool showDriverHudOverlay = false,
   }) {
+    final owner = resolveDriverVehicleMarkerPresentationOwner(
+      tellersActive: tellersActive,
+      followLiveActive: followLiveActive || cameraFollow,
+      showDriverHudOverlay: showDriverHudOverlay,
+    );
     return DriverNavHudVisibility(
       cockpitHud: showCockpit && !tellersActive,
       navBannerHud: cameraFollow && !tellersActive,
       tellersHud: tellersActive,
+      vehicleMarkerVisible: owner != DriverVehicleMarkerPresentationOwner.none,
+      tellersMarkerPresentationVisible:
+          owner == DriverVehicleMarkerPresentationOwner.tellersLiveWindow,
+      tellersMarkerSelectorVisible: tellersActive &&
+          (followLiveActive || cameraFollow),
+      markerOwner: owner,
     );
   }
 }
@@ -164,6 +239,12 @@ class DriverRideMetersView extends StatelessWidget {
     this.isTablet = false,
     this.isLandscape = false,
     this.showLiveWindow = true,
+    this.showVehicleMarker = true,
+    this.showMarkerSelector = true,
+    this.markerChoice = DriverNavigationMarkerChoice.car,
+    this.onMarkerChoiceSelected,
+    this.markerLanguage = AppLanguage.nl,
+    this.vehicleMarkerIconSize,
   });
 
   final DriverRideMetersSnapshot snapshot;
@@ -180,6 +261,19 @@ class DriverRideMetersView extends StatelessWidget {
   /// cut-out region over the retained MapWidget so the single mounted map is
   /// the live navigation window. No second MapWidget is ever created here.
   final bool showLiveWindow;
+
+  /// NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1: show the one selected vehicle
+  /// marker (Car/Arrow) clipped inside the live-navigation window.
+  final bool showVehicleMarker;
+
+  /// Compact Car/Arrow selector inside the live window (uses existing choice
+  /// state — never a second owner).
+  final bool showMarkerSelector;
+
+  final DriverNavigationMarkerChoice markerChoice;
+  final ValueChanged<DriverNavigationMarkerChoice>? onMarkerChoiceSelected;
+  final AppLanguage markerLanguage;
+  final double? vehicleMarkerIconSize;
 
   @override
   Widget build(BuildContext context) {
@@ -317,6 +411,17 @@ class DriverRideMetersView extends StatelessWidget {
     // fill, only a thin static frame) so the retained HC map shows straight
     // through. Wrapped in a RepaintBoundary and independent of the live
     // snapshot, so meter/timer ticks never repaint this map-overlapping region.
+    //
+    // NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1: the one selected vehicle marker
+    // and a compact Car/Arrow selector live inside this clipped window. The
+    // marker uses the existing NavigationDriverHudOverlay presentation (same
+    // choice state) — never a second GPS/pose/marker owner. Mapbox 2D opacity
+    // is suppressed while this Flutter owner is active.
+    final markerSize = vehicleMarkerIconSize ??
+        NavigationDriverHudOverlay.resolveIconSize(
+          screenWidth: isTablet ? 800 : 390,
+          cockpitBoost: true,
+        );
     return RepaintBoundary(
       child: Container(
         key: const ValueKey<String>('driver_tellers_live_window'),
@@ -333,26 +438,62 @@ class DriverRideMetersView extends StatelessWidget {
             width: 2,
           ),
         ),
-        child: Align(
-          alignment: Alignment.topLeft,
-          child: Padding(
-            padding: const EdgeInsets.all(8),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: palette.background,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                'Live navigatie',
-                style: TextStyle(
-                  fontSize: isTablet ? 12 : 11,
-                  fontWeight: FontWeight.w700,
-                  color: palette.textPrimary.withOpacity(0.85),
+        child: Stack(
+          clipBehavior: Clip.hardEdge,
+          children: [
+            Positioned(
+              top: 8,
+              left: 8,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: palette.background,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  'Live navigatie',
+                  style: TextStyle(
+                    fontSize: isTablet ? 12 : 11,
+                    fontWeight: FontWeight.w700,
+                    color: palette.textPrimary.withOpacity(0.85),
+                  ),
                 ),
               ),
             ),
-          ),
+            if (showMarkerSelector && onMarkerChoiceSelected != null)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: KeyedSubtree(
+                  key: const ValueKey<String>('driver_tellers_marker_selector'),
+                  child: NavigationDriverMarkerChoiceSelector(
+                    selectedChoice: markerChoice,
+                    onSelected: onMarkerChoiceSelected!,
+                    accentColor: palette.accent,
+                    textColor: palette.textPrimary,
+                    surfaceColor: palette.surface,
+                    language: markerLanguage,
+                    compactLandscape: true,
+                  ),
+                ),
+              ),
+            if (showVehicleMarker)
+              Align(
+                // Lower-central portion of the live window — camera padding
+                // keeps the forward route ahead of this anchor.
+                alignment: const Alignment(0, 0.55),
+                child: KeyedSubtree(
+                  key: ValueKey<String>(
+                    'driver_tellers_vehicle_marker_${markerChoice.name}',
+                  ),
+                  child: NavigationDriverHudOverlay(
+                    iconSize: markerSize,
+                    markerChoice: markerChoice,
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );

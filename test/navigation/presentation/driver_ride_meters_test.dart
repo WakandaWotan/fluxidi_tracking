@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/navigation/presentation/driver_ride_meters.dart';
+import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_marker_choice.dart';
+import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_hud_overlay.dart';
 
 void main() {
   group('DriverNavPresentationModeController', () {
@@ -29,10 +31,17 @@ void main() {
         showCockpit: true,
         cameraFollow: true,
         tellersActive: false,
+        followLiveActive: true,
+        showDriverHudOverlay: true,
       );
       expect(hud.cockpitHud, isTrue);
       expect(hud.navBannerHud, isTrue);
       expect(hud.tellersHud, isFalse);
+      expect(hud.tellersMarkerPresentationVisible, isFalse);
+      expect(
+        hud.markerOwner,
+        DriverVehicleMarkerPresentationOwner.navigationHud,
+      );
     });
 
     test('Tellers mode suppresses cockpit KPI/controls and nav overlays', () {
@@ -40,12 +49,21 @@ void main() {
         showCockpit: true,
         cameraFollow: true,
         tellersActive: true,
+        followLiveActive: true,
+        showDriverHudOverlay: true,
       );
       // Normal cockpit KPI row + controls and follow-mode overlays are hidden.
       expect(hud.cockpitHud, isFalse);
       expect(hud.navBannerHud, isFalse);
-      // Only the Tellers HUD remains.
+      // Only the Tellers HUD remains — with its own vehicle marker.
       expect(hud.tellersHud, isTrue);
+      expect(hud.vehicleMarkerVisible, isTrue);
+      expect(hud.tellersMarkerPresentationVisible, isTrue);
+      expect(hud.tellersMarkerSelectorVisible, isTrue);
+      expect(
+        hud.markerOwner,
+        DriverVehicleMarkerPresentationOwner.tellersLiveWindow,
+      );
     });
 
     test('returning to Navigation restores the cockpit exactly once', () {
@@ -54,6 +72,8 @@ void main() {
         showCockpit: true,
         cameraFollow: true,
         tellersActive: true,
+        followLiveActive: true,
+        showDriverHudOverlay: true,
       );
       expect(inTellers.cockpitHud, isFalse);
       // …return to Navigation.
@@ -61,9 +81,16 @@ void main() {
         showCockpit: true,
         cameraFollow: true,
         tellersActive: false,
+        followLiveActive: true,
+        showDriverHudOverlay: true,
       );
       expect(back.cockpitHud, isTrue);
       expect(back.tellersHud, isFalse);
+      expect(back.tellersMarkerPresentationVisible, isFalse);
+      expect(
+        back.markerOwner,
+        DriverVehicleMarkerPresentationOwner.navigationHud,
+      );
     });
 
     test('exactly one presentation HUD is active in every mode', () {
@@ -72,12 +99,46 @@ void main() {
           showCockpit: true,
           cameraFollow: true,
           tellersActive: tellers,
+          followLiveActive: true,
+          showDriverHudOverlay: true,
         );
         // Cockpit HUD and Tellers HUD are mutually exclusive.
         expect(hud.cockpitHud && hud.tellersHud, isFalse);
         expect(hud.cockpitHud, tellers ? isFalse : isTrue);
         expect(hud.tellersHud, tellers);
+        // Exactly one marker owner — never both navigation HUD and Tellers.
+        expect(
+          driverHideMapboxMarkerForPresentationOwner(hud.markerOwner),
+          isTrue,
+        );
       }
+    });
+
+    test('marker owner is exclusive (never HUD and Tellers together)', () {
+      expect(
+        resolveDriverVehicleMarkerPresentationOwner(
+          tellersActive: true,
+          followLiveActive: true,
+          showDriverHudOverlay: true,
+        ),
+        DriverVehicleMarkerPresentationOwner.tellersLiveWindow,
+      );
+      expect(
+        resolveDriverVehicleMarkerPresentationOwner(
+          tellersActive: false,
+          followLiveActive: true,
+          showDriverHudOverlay: true,
+        ),
+        DriverVehicleMarkerPresentationOwner.navigationHud,
+      );
+      expect(
+        resolveDriverVehicleMarkerPresentationOwner(
+          tellersActive: false,
+          followLiveActive: true,
+          showDriverHudOverlay: false,
+        ),
+        DriverVehicleMarkerPresentationOwner.mapboxAnnotation,
+      );
     });
   });
 
@@ -780,6 +841,192 @@ void main() {
       );
       // Controls sit strictly below the live window — no overlap.
       expect(stopRect.top, greaterThanOrEqualTo(windowRect.bottom - 0.5));
+    });
+
+    testWidgets('selected vehicle marker is visible in Tellers (exactly one)', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(size: Size(390, 844)),
+          child: MaterialApp(
+            home: Scaffold(
+              body: DriverRideMetersView(
+                snapshot: const DriverRideMetersSnapshot(
+                  fareText: '€ 4.00',
+                  distanceTravelledText: '1.5 km',
+                  rideDurationText: '03:00',
+                  waitingTimeText: '00:00',
+                  statusText: 'Rit actief',
+                ),
+                onBackToNavigation: () {},
+                showVehicleMarker: true,
+                showMarkerSelector: true,
+                markerChoice: DriverNavigationMarkerChoice.car,
+                onMarkerChoiceSelected: (_) {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('driver_tellers_vehicle_marker_car')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('driver_tellers_vehicle_marker_arrow')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('driver_tellers_marker_selector')),
+        findsOneWidget,
+      );
+      // Status localized Dutch — never "Ride active" in Dutch UI.
+      expect(find.text('Rit actief'), findsOneWidget);
+      expect(find.text('Ride active'), findsNothing);
+    });
+
+    testWidgets('Car ↔ Arrow switch is immediate; choice keys update', (
+      tester,
+    ) async {
+      var choice = DriverNavigationMarkerChoice.car;
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(size: Size(834, 1194)),
+          child: MaterialApp(
+            home: Scaffold(
+              body: StatefulBuilder(
+                builder: (context, setState) {
+                  return DriverRideMetersView(
+                    snapshot: const DriverRideMetersSnapshot(
+                      fareText: '€ 4.00',
+                      distanceTravelledText: '1.5 km',
+                      rideDurationText: '03:00',
+                      waitingTimeText: '00:00',
+                      statusText: 'Rit actief',
+                    ),
+                    onBackToNavigation: () {},
+                    isTablet: true,
+                    showVehicleMarker: true,
+                    showMarkerSelector: true,
+                    markerChoice: choice,
+                    onMarkerChoiceSelected: (c) {
+                      setState(() => choice = c);
+                    },
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('driver_tellers_vehicle_marker_car')),
+        findsOneWidget,
+      );
+
+      // Tap the Arrow / Pijl button inside the compact selector.
+      final arrowButton = find.text('Pijl');
+      expect(arrowButton, findsOneWidget);
+      await tester.tap(arrowButton);
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('driver_tellers_vehicle_marker_arrow')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('driver_tellers_vehicle_marker_car')),
+        findsNothing,
+      );
+      // Still exactly one marker.
+      expect(find.byType(NavigationDriverHudOverlay), findsOneWidget);
+    });
+
+    testWidgets('marker stays inside portrait live-window bounds', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(size: Size(390, 844)),
+          child: MaterialApp(
+            home: Scaffold(
+              body: DriverRideMetersView(
+                snapshot: const DriverRideMetersSnapshot(
+                  fareText: '€ 4.00',
+                  distanceTravelledText: '1.5 km',
+                  rideDurationText: '03:00',
+                  waitingTimeText: '00:00',
+                  statusText: 'Rit actief',
+                ),
+                onBackToNavigation: () {},
+                showVehicleMarker: true,
+                showMarkerSelector: true,
+                markerChoice: DriverNavigationMarkerChoice.arrow,
+                onMarkerChoiceSelected: (_) {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      final window = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_live_window')),
+      );
+      final marker = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_vehicle_marker_arrow')),
+      );
+      expect(window.contains(marker.center), isTrue);
+      expect(marker.top, greaterThanOrEqualTo(window.top - 0.5));
+      expect(marker.bottom, lessThanOrEqualTo(window.bottom + 0.5));
+    });
+
+    testWidgets('marker stays inside landscape live-window bounds', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(1194, 834));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(size: Size(1194, 834)),
+          child: MaterialApp(
+            home: Scaffold(
+              body: DriverRideMetersView(
+                snapshot: const DriverRideMetersSnapshot(
+                  fareText: '€ 4.00',
+                  distanceTravelledText: '1.5 km',
+                  rideDurationText: '03:00',
+                  waitingTimeText: '00:00',
+                  statusText: 'Rit actief',
+                ),
+                onBackToNavigation: () {},
+                isTablet: true,
+                isLandscape: true,
+                showVehicleMarker: true,
+                showMarkerSelector: true,
+                markerChoice: DriverNavigationMarkerChoice.car,
+                onMarkerChoiceSelected: (_) {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      final window = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_live_window')),
+      );
+      final marker = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_vehicle_marker_car')),
+      );
+      expect(window.contains(marker.center), isTrue);
+      // Selector also inside the window.
+      final selector = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_marker_selector')),
+      );
+      expect(window.contains(selector.center), isTrue);
     });
 
     test('route version / GPS / fare ownership are not part of this view', () {

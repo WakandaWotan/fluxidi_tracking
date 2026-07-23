@@ -10681,8 +10681,20 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   bool _hideMapboxTaxiForHudOverlay(NavigationPresentationState pres) {
-    return pres.showDriverHudOverlay &&
-        kNavigationHideMapboxTaxiMarkerWithDriverHudEnabled;
+    // NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1: hide Mapbox 2D whenever a
+    // Flutter presentation owner (normal HUD or Tellers live-window marker)
+    // owns the single vehicle marker — never show both.
+    final owner = resolveDriverVehicleMarkerPresentationOwner(
+      tellersActive: _navPresentationMode.isTellers,
+      followLiveActive:
+          _cameraMode == _CameraMode.follow && _liveRideActive,
+      showDriverHudOverlay: pres.showDriverHudOverlay,
+    );
+    if (driverHideMapboxMarkerForPresentationOwner(owner)) {
+      return kNavigationHideMapboxTaxiMarkerWithDriverHudEnabled ||
+          owner == DriverVehicleMarkerPresentationOwner.tellersLiveWindow;
+    }
+    return false;
   }
 
   /// NAV-3D-HUD-OWNERSHIP-FINAL-1: single final driver visual ownership decision.
@@ -18153,13 +18165,26 @@ class _DriverHomePageState extends State<DriverHomePage>
     // alter map style — viewport/HUD only. cockpit_style_choice is an explicit
     // user map-style action via _setDriverCockpitMapVisualStyle, not Tellers.
     assert(tellersPresentationMustNotChangeMapStyle());
-    _tellersViewport.open();
+    final viewportToken = _tellersViewport.open();
     _logNavBounded(
       'NAV_TELLERS',
-      'event=open viewportGeneration=${_tellersViewport.generation} '
-      'styleRequest=false',
+      'event=open viewportGeneration=$viewportToken styleRequest=false '
+      'markerOwner=tellersLiveWindow',
       intervalMs: 1,
     );
+    // One viewport/opacity request per actual mode transition — not on every
+    // fare/timer tick. Marker choice is unchanged.
+    unawaited(
+      _applyMapboxTaxiMarkerPresentationOpacity(source: 'tellers_open'),
+    );
+    final pos = _lastPos;
+    if (pos != null &&
+        _cameraMode == _CameraMode.follow &&
+        _liveRideActive) {
+      unawaited(
+        _followCameraTesla(pos, force: true, cameraReason: 'tellers_open'),
+      );
+    }
     if (!mounted) return;
     setState(() {});
   }
@@ -18178,6 +18203,18 @@ class _DriverHomePageState extends State<DriverHomePage>
       'styleRequest=false',
       intervalMs: 1,
     );
+    // Restore normal Mapbox/HUD opacity ownership once per transition.
+    unawaited(
+      _applyMapboxTaxiMarkerPresentationOpacity(source: 'tellers_close'),
+    );
+    final pos = _lastPos;
+    if (pos != null &&
+        _cameraMode == _CameraMode.follow &&
+        _liveRideActive) {
+      unawaited(
+        _followCameraTesla(pos, force: true, cameraReason: 'tellers_close'),
+      );
+    }
     if (!mounted) return;
     setState(() {});
   }
@@ -18241,6 +18278,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     required bool isTablet,
     required bool isLandscape,
   }) {
+    final followLive = _cameraMode == _CameraMode.follow && _liveRideActive;
     return Positioned.fill(
       child: DriverRideMetersView(
         snapshot: _buildDriverRideMetersSnapshot(),
@@ -18251,6 +18289,14 @@ class _DriverHomePageState extends State<DriverHomePage>
         // NAV-PARKING-2 Commit 4: reserve a transparent live-navigation window
         // over the single mounted MapWidget. No second MapWidget is created.
         showLiveWindow: true,
+        // NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1: one selected vehicle marker
+        // + compact Car/Arrow selector inside the live window. Uses the same
+        // marker-choice state/actions as Navigation — never a second owner.
+        showVehicleMarker: followLive,
+        showMarkerSelector: followLive,
+        markerChoice: _driverNavigationMarkerChoice,
+        onMarkerChoiceSelected: _setDriverNavigationMarkerChoice,
+        markerLanguage: appLanguageNotifier.value,
         onBackToNavigation: _closeTellersView,
         onStop: _liveRideActive ? _stopTrip : null,
         onToggleWait: _liveRideActive
@@ -25482,10 +25528,17 @@ class _DriverHomePageState extends State<DriverHomePage>
     // is fully suppressed so nothing shows through beneath the Tellers HUD. The
     // MapWidget, GPS, route progress, camera, fare and timers stay live.
     final bool tellersActive = _navPresentationMode.isTellers;
+    final bool followLiveActiveForHud =
+        _cameraMode == _CameraMode.follow && _liveRideActive;
+    final navPresentationForHud = _navigationPresentationStateFor(
+      _navCameraViewMode,
+    );
     final DriverNavHudVisibility hudVisibility = DriverNavHudVisibility.resolve(
       showCockpit: showCockpit,
       cameraFollow: _cameraMode == _CameraMode.follow,
       tellersActive: tellersActive,
+      followLiveActive: followLiveActiveForHud,
+      showDriverHudOverlay: navPresentationForHud.showDriverHudOverlay,
     );
     final bool cockpitHudVisible = hudVisibility.cockpitHud;
     final bool navHudVisible = hudVisibility.navBannerHud;
