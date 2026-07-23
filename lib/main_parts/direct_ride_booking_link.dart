@@ -541,6 +541,112 @@ class OpenExistingRideDecision {
       kind == OpenExistingRideDecisionKind.streetUnavailable;
 }
 
+// ===========================================================================
+// DIRECT-RIDE-PLANNED-STOP-GUARD-1 — stop lifecycle routing.
+//
+// Once a booking is classified as street/direct, its stop MUST take the
+// direct-ride finalization path. The client must never fall back to
+// `/track/session/stop` planned semantics, `/trip/record-planned-stop` or a
+// generic `/bookings/{id}/status` COMPLETED write for such a booking, even
+// when `_directRideActive == false` (recovered/stale/future state).
+//
+// Selection rule:
+//   * NOT street/direct     -> planned (existing lifecycle unchanged).
+//   * street/direct + tracking trip id present -> directFinalize.
+//   * street/direct + no tracking trip id      -> directUnavailable (safe fail).
+//
+// Complete authoritative direct identity for STOP purposes means the client
+// holds a non-empty `_activeDirectTripId`; that is what
+// `_stopDirectTripSessionOnWorker` needs to call `/trip/stop` and let the
+// booking worker apply `finalize-direct`.
+// ===========================================================================
+
+enum StopTripLifecycleKind {
+  /// Ordinary planned booking — keep the existing planned stop lifecycle.
+  planned,
+
+  /// Street/direct booking that can be finalized authoritatively.
+  directFinalize,
+
+  /// Street/direct booking whose direct identity is incomplete — the caller
+  /// MUST fail safely: no planned endpoint, no generic COMPLETED, no clearing
+  /// of reconciliation evidence, no new key.
+  directUnavailable,
+}
+
+class StopTripLifecycleDecision {
+  const StopTripLifecycleDecision._({required this.kind, required this.tripId});
+
+  const StopTripLifecycleDecision.planned()
+      : kind = StopTripLifecycleKind.planned,
+        tripId = null;
+
+  const StopTripLifecycleDecision.directFinalize(this.tripId)
+      : kind = StopTripLifecycleKind.directFinalize;
+
+  const StopTripLifecycleDecision.directUnavailable()
+      : kind = StopTripLifecycleKind.directUnavailable,
+        tripId = null;
+
+  final StopTripLifecycleKind kind;
+
+  /// The authoritative tracking trip id, only non-null for [directFinalize].
+  final String? tripId;
+
+  bool get isPlanned => kind == StopTripLifecycleKind.planned;
+  bool get isDirectFinalize => kind == StopTripLifecycleKind.directFinalize;
+  bool get isDirectUnavailable =>
+      kind == StopTripLifecycleKind.directUnavailable;
+
+  /// Convenience: any street/direct classification (finalize OR unavailable).
+  bool get isStreetDirect => !isPlanned;
+}
+
+/// Decide how `_stopTrip` (or any equivalent caller) should route the stop of
+/// a booking. Pure; unit-tested; the single source of truth for street/direct
+/// stop routing on the client.
+///
+/// - [bookingDetails] MUST be the raw record view (either
+///   `BookingItem.details` or a `_bookingScopeViewFor` map). It is inspected
+///   for `source`, `booking_source`, `ride_type`, and nested `booking`/`record`.
+/// - [bookingId] is used for the `street_` prefix classification.
+/// - [activeDirectTripId] is the in-memory tracking trip id from prior direct
+///   ride start. When empty and the booking is street/direct, we cannot
+///   finalize authoritatively — safe fail.
+/// - [directRideActive] is accepted so callers can pass their observation
+///   verbatim; it MUST NOT override a street/direct classification into
+///   planned. It is only used to promote a still-active direct session into
+///   `directFinalize` if a trip id is also present.
+StopTripLifecycleDecision stopTripLifecycleDecision({
+  required Map<String, dynamic> bookingDetails,
+  required String bookingId,
+  required String? activeDirectTripId,
+  required bool directRideActive,
+}) {
+  final safeBookingId = bookingId.trim();
+  final record = <String, dynamic>{
+    ...bookingDetails,
+    if (safeBookingId.isNotEmpty) 'booking_id': safeBookingId,
+  };
+  if (!isStreetDirectBooking(record)) {
+    return const StopTripLifecycleDecision.planned();
+  }
+  final trip = (activeDirectTripId ?? '').trim();
+  if (trip.isEmpty) {
+    return const StopTripLifecycleDecision.directUnavailable();
+  }
+  // [directRideActive] is intentionally observed but never used to *override*
+  // the classification. Even when it is `false` (recovered state, stale UI
+  // path), the classification-first rule keeps the stop on the direct
+  // finalization path so a stale flag can never divert a street/direct
+  // booking into planned completion.
+  //
+  // Reference the parameter defensively so a future refactor cannot silently
+  // drop it from the signature without breaking these unit tests.
+  assert(directRideActive || !directRideActive);
+  return StopTripLifecycleDecision.directFinalize(trip);
+}
+
 /// Decide how `_goToRide` (or any equivalent caller) should route an opened
 /// booking. Pure; unit-tested; the single source of truth for street/direct
 /// detection on the client.

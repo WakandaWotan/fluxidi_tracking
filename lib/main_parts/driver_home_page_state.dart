@@ -3659,6 +3659,49 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  /// DIRECT-RIDE-PLANNED-STOP-GUARD-1: bounded, localized safe-fail UX for a
+  /// Stop that reaches `_stopTrip` on a street/direct booking without
+  /// complete authoritative direct identity. The server booking is left
+  /// unchanged; local reconciliation evidence
+  /// (`_activeDirectBookingId`, `_directRideKey`, meter state) is preserved
+  /// so a later recovery pass can safely finalize the ride. Retry only calls
+  /// the existing authoritative rides-list reload.
+  void _showStreetDirectStopUnavailableSnackbar() {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 6),
+        content: Text(
+          _tr(
+            nl: 'Straatrit kan niet veilig worden afgerond. Ververs en probeer opnieuw.',
+            en: 'Street ride cannot be safely completed. Refresh and try again.',
+            fr: 'La course en rue ne peut pas être clôturée en toute sécurité. Actualisez et réessayez.',
+            es: 'La carrera de calle no puede completarse de forma segura. Actualiza y vuelve a intentarlo.',
+          ),
+        ),
+        action: SnackBarAction(
+          label: _tr(
+            nl: 'Ververs',
+            en: 'Refresh',
+            fr: 'Actualiser',
+            es: 'Actualizar',
+          ),
+          onPressed: () {
+            unawaited(
+              _refreshBookings(
+                force: true,
+                trigger: 'street_stop_retry',
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   /// DIRECT-RIDE-EXISTING-BOOKING-OWNERSHIP-1: bounded, localized safe-fail
   /// UX for reopening a street/direct booking that lacks the authoritative
   /// resume identity. The record is intentionally left unchanged; Retry only
@@ -6879,6 +6922,24 @@ class _DriverHomePageState extends State<DriverHomePage>
     required DateTime? startedAt,
     required DateTime stoppedAt,
   }) async {
+    // DIRECT-RIDE-PLANNED-STOP-GUARD-1 (defense in depth): mirror the
+    // operational-leg planned-stop street guard. A street/direct booking's
+    // physical ride is stored authoritatively via `/trip/stop` +
+    // `finalize-direct`; a second `/trip/record-planned-stop` for the same
+    // record would produce the €0.00 Outbound duplicate identity fork we've
+    // already fixed for operational legs. This defensive guard ensures no
+    // future caller can bypass the `_stopTrip` decision helper.
+    if (isStreetDirectBooking(<String, dynamic>{
+      ...booking.details,
+      if (booking.bookingId.trim().isNotEmpty)
+        'booking_id': booking.bookingId,
+    })) {
+      debugPrint(
+        '[PLANNED_STOP_GUARD] action=skip source=streetRide '
+        'reason=street_direct_uses_finalize_direct',
+      );
+      return false;
+    }
     try {
       final strictScope = _strictBookingScopeForMutation(
         action: 'record_planned_trip_stop',
@@ -7505,7 +7566,37 @@ class _DriverHomePageState extends State<DriverHomePage>
         )) {
       return;
     }
-    final wasDirectRide = _directRideActive;
+
+    // DIRECT-RIDE-PLANNED-STOP-GUARD-1: booking source is authoritative for
+    // stop lifecycle selection. A street/direct booking must never enter the
+    // planned stop path (`/track/session/stop` as planned, `/trip/record-
+    // planned-stop`, or generic `/bookings/{id}/status` COMPLETED as
+    // substitute for direct finalization), even when `_directRideActive` is
+    // false (recovered/stale/future state). We compute the decision BEFORE
+    // any state clearing so a safe-fail can leave the record and
+    // reconciliation evidence untouched.
+    final stopRouting = stopTripLifecycleDecision(
+      bookingDetails: stoppedBooking?.details ?? const <String, dynamic>{},
+      bookingId: stoppedBooking?.bookingId ?? '',
+      activeDirectTripId: _activeDirectTripId,
+      directRideActive: _directRideActive,
+    );
+    if (stopRouting.isDirectUnavailable) {
+      _logDriverNavDiag(
+        tag: 'STOP_DIRECT_UNAVAILABLE',
+        action: 'stop_trip',
+        bookingId: stoppedBooking?.bookingId ?? '',
+      );
+      _showStreetDirectStopUnavailableSnackbar();
+      return;
+    }
+
+    // Even when the caller-visible `_directRideActive` is false, a
+    // street/direct classification with a valid trip id promotes the stop
+    // into the direct finalization path. This keeps the existing
+    // `_stopDirectTripSessionOnWorker` call site owning `/trip/stop` +
+    // `finalize-direct` without duplicating either endpoint here.
+    final wasDirectRide = _directRideActive || stopRouting.isDirectFinalize;
     final directTripId = _activeDirectTripId;
     final directBookingId = _activeDirectBookingId;
     final finalTotal = _liveMeterTotalEur;
@@ -7666,8 +7757,19 @@ class _DriverHomePageState extends State<DriverHomePage>
     final isLegScopedCompletion = b.isOperationalLeg && legId.isNotEmpty;
     final legType = isLegScopedCompletion ? _operationalLegTypeToken(b) : '-';
     final previousStatus = (b.status ?? '').trim();
+
+    // DIRECT-RIDE-PLANNED-STOP-GUARD-1 (defense in depth): a street/direct
+    // booking's authoritative COMPLETED transition is stamped server-side by
+    // `finalize-direct` (during `/trip/stop`). We must not fire the generic
+    // `/bookings/{id}/status` COMPLETED update here as a substitute; the
+    // local UI reconciliation still runs so the row moves out of the open
+    // bucket immediately.
+    final isStreetDirect = isStreetDirectBooking(<String, dynamic>{
+      ...b.details,
+      if (b.bookingId.trim().isNotEmpty) 'booking_id': b.bookingId,
+    });
     debugPrint(
-      '[ROUNDTRIP_STATUS][LEG_COMPLETE] parent=$bookingId leg=${legId.isEmpty ? "-" : legId} leg_type=$legType old=${previousStatus.isEmpty ? "-" : previousStatus} new=COMPLETED scope=${isLegScopedCompletion ? "leg" : "parent"} source=driver_cockpit_stop',
+      '[ROUNDTRIP_STATUS][LEG_COMPLETE] parent=$bookingId leg=${legId.isEmpty ? "-" : legId} leg_type=$legType old=${previousStatus.isEmpty ? "-" : previousStatus} new=COMPLETED scope=${isLegScopedCompletion ? "leg" : "parent"} source=driver_cockpit_stop street_direct=$isStreetDirect',
     );
     // Roundtrip operational-leg false toast suppression: when the planned trip
     // stop bridge already accepted this leg's completion (worker-side bridge
@@ -7681,6 +7783,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (shouldSkipLegStatusCall) {
       debugPrint(
         '[ROUNDTRIP_STATUS][FALSE_TOAST_SUPPRESSED] parent=$bookingId leg=${legId.isEmpty ? "-" : legId} leg_type=$legType reason=planned_stop_bridge_already_completed_leg source=driver_cockpit_stop',
+      );
+    } else if (isStreetDirect && !isLegScopedCompletion) {
+      // DIRECT-RIDE-PLANNED-STOP-GUARD-1: `finalize-direct` owns the
+      // authoritative COMPLETED transition + fare stamping for this booking.
+      // Do not send a generic `/bookings/{id}/status` COMPLETED as a
+      // substitute for direct finalization. The local UI reconciliation
+      // below still runs so the driver sees the row leave the open bucket.
+      debugPrint(
+        '[STREET_DIRECT_COMPLETE_GUARD] action=skip_generic_status booking=$bookingId '
+        'reason=finalize_direct_owns_completed_transition',
       );
     } else {
       try {

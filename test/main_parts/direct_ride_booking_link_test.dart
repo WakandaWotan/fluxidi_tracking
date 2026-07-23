@@ -518,4 +518,194 @@ void main() {
       }
     });
   });
+
+  // ==========================================================================
+  // DIRECT-RIDE-PLANNED-STOP-GUARD-1 — stop lifecycle routing.
+  //
+  // The stop lifecycle previously branched primarily on `_directRideActive`.
+  // Booking source is now authoritative: a street/direct booking must never
+  // route through the planned stop path (no `/track/session/stop` as planned,
+  // no `/trip/record-planned-stop`, no generic `/bookings/{id}/status`
+  // COMPLETED as substitute for direct finalization), regardless of how it
+  // reached driver state.
+  // ==========================================================================
+
+  group('DIRECT-RIDE-PLANNED-STOP-GUARD-1: stopTripLifecycleDecision', () {
+    test('planned booking with `_directRideActive=false` -> planned '
+        '(existing flow retained)', () {
+      final d = stopTripLifecycleDecision(
+        bookingDetails: <String, dynamic>{
+          'source': 'planned',
+          'status': 'CONFIRMED',
+        },
+        bookingId: 'BK-1234',
+        activeDirectTripId: null,
+        directRideActive: false,
+      );
+      expect(d.isPlanned, isTrue);
+      expect(d.tripId, isNull);
+    });
+
+    test('planned booking + direct identity leftover from prior state '
+        'still resolves as planned', () {
+      final d = stopTripLifecycleDecision(
+        bookingDetails: <String, dynamic>{'source': 'planned'},
+        bookingId: 'BK-9999',
+        activeDirectTripId: 'stale-trip-id',
+        directRideActive: true,
+      );
+      expect(d.isPlanned, isTrue,
+          reason: 'planned classification wins even when direct flags are set');
+    });
+
+    test('street booking with `_directRideActive=false` NEVER routes to '
+        'planned (booking source is authoritative)', () {
+      final d = stopTripLifecycleDecision(
+        bookingDetails: <String, dynamic>{
+          'source': 'street_ride',
+          'ride_type': 'direct',
+        },
+        bookingId: 'street_1721_abc',
+        activeDirectTripId: null,
+        directRideActive: false,
+      );
+      expect(d.isPlanned, isFalse);
+      expect(d.isDirectUnavailable, isTrue);
+    });
+
+    test('`source: street_ride` triggers the guard', () {
+      final d = stopTripLifecycleDecision(
+        bookingDetails: <String, dynamic>{'source': 'street_ride'},
+        bookingId: 'BK-1',
+        activeDirectTripId: null,
+        directRideActive: false,
+      );
+      expect(d.isStreetDirect, isTrue);
+      expect(d.isDirectUnavailable, isTrue);
+    });
+
+    test('`ride_type: direct` triggers the guard', () {
+      final d = stopTripLifecycleDecision(
+        bookingDetails: <String, dynamic>{'ride_type': 'direct'},
+        bookingId: 'BK-2',
+        activeDirectTripId: null,
+        directRideActive: false,
+      );
+      expect(d.isStreetDirect, isTrue);
+      expect(d.isDirectUnavailable, isTrue);
+    });
+
+    test('`street_` booking id triggers the guard', () {
+      final d = stopTripLifecycleDecision(
+        bookingDetails: <String, dynamic>{},
+        bookingId: 'street_1721_xyz',
+        activeDirectTripId: null,
+        directRideActive: false,
+      );
+      expect(d.isStreetDirect, isTrue);
+      expect(d.isDirectUnavailable, isTrue);
+    });
+
+    test('nested street/direct metadata triggers the guard', () {
+      final d1 = stopTripLifecycleDecision(
+        bookingDetails: <String, dynamic>{
+          'booking': <String, dynamic>{'source': 'street_ride'},
+        },
+        bookingId: 'BK-3',
+        activeDirectTripId: null,
+        directRideActive: false,
+      );
+      expect(d1.isStreetDirect, isTrue);
+      expect(d1.isDirectUnavailable, isTrue);
+
+      final d2 = stopTripLifecycleDecision(
+        bookingDetails: <String, dynamic>{
+          'record': <String, dynamic>{
+            'booking': <String, dynamic>{'ride_type': 'direct'},
+          },
+        },
+        bookingId: 'BK-4',
+        activeDirectTripId: null,
+        directRideActive: false,
+      );
+      expect(d2.isStreetDirect, isTrue);
+      expect(d2.isDirectUnavailable, isTrue);
+    });
+
+    test('street booking + complete authoritative identity -> directFinalize '
+        '(direct stop + finalize-direct path)', () {
+      final d = stopTripLifecycleDecision(
+        bookingDetails: <String, dynamic>{
+          'source': 'street_ride',
+          'ride_type': 'direct',
+        },
+        bookingId: 'street_1721_abc',
+        activeDirectTripId: 'trip-77',
+        directRideActive: true,
+      );
+      expect(d.isDirectFinalize, isTrue);
+      expect(d.tripId, 'trip-77');
+    });
+
+    test('street booking + incomplete direct identity fails safely, does '
+        'not fabricate a trip id', () {
+      final d = stopTripLifecycleDecision(
+        bookingDetails: <String, dynamic>{'source': 'street_ride'},
+        bookingId: 'street_2_def',
+        activeDirectTripId: '   ',
+        directRideActive: false,
+      );
+      expect(d.isDirectUnavailable, isTrue);
+      expect(d.tripId, isNull);
+    });
+
+    test('street booking is direct even when `_directRideActive == false` '
+        'as long as a trip id is present (recovered session)', () {
+      final d = stopTripLifecycleDecision(
+        bookingDetails: <String, dynamic>{
+          'booking': <String, dynamic>{'source': 'street_ride'},
+        },
+        bookingId: 'street_recovered_1',
+        activeDirectTripId: 'recovered-trip',
+        directRideActive: false,
+      );
+      expect(d.isDirectFinalize, isTrue,
+          reason:
+              'stale `_directRideActive == false` must not divert into planned');
+      expect(d.tripId, 'recovered-trip');
+    });
+
+    test('empty booking id + street identifiers still classified as direct',
+        () {
+      final d = stopTripLifecycleDecision(
+        bookingDetails: <String, dynamic>{'source': 'street_ride'},
+        bookingId: '',
+        activeDirectTripId: null,
+        directRideActive: false,
+      );
+      expect(d.isDirectUnavailable, isTrue);
+    });
+
+    test('repeated Stop taps remain idempotent (pure function returns same '
+        'decision on same input)', () {
+      Map<String, dynamic> details() => <String, dynamic>{
+            'source': 'street_ride',
+            'ride_type': 'direct',
+          };
+      final a = stopTripLifecycleDecision(
+        bookingDetails: details(),
+        bookingId: 'street_x',
+        activeDirectTripId: 'trip-1',
+        directRideActive: true,
+      );
+      final b = stopTripLifecycleDecision(
+        bookingDetails: details(),
+        bookingId: 'street_x',
+        activeDirectTripId: 'trip-1',
+        directRideActive: true,
+      );
+      expect(a.kind, b.kind);
+      expect(a.tripId, b.tripId);
+    });
+  });
 }
