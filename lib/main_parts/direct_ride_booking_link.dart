@@ -491,6 +491,162 @@ bool isDirectRideFinalizeAcknowledged({
 }
 
 // ===========================================================================
+// DIRECT-RIDE-STOP-RECOVERY-RACE-1 / Commit 1 — reconcile acknowledgement.
+//
+// `/trip/reconcile-direct-booking` does not return fare totals. Local COMPLETED
+// after reconcile therefore requires identity match + booking_finalized +
+// completed state — never HTTP 200 alone, never a bare boolean.
+// ===========================================================================
+
+/// Reason token used by the tracking worker for an active (non-terminal) trip.
+const String kDirectReconcileReasonNonTerminal = 'skipped_non_terminal';
+
+/// Immutable structured outcome of `POST /trip/reconcile-direct-booking`.
+class DirectRideReconcileOutcome {
+  const DirectRideReconcileOutcome({
+    required this.transportSucceeded,
+    required this.httpStatus,
+    required this.requestedTripId,
+    required this.responseTripId,
+    required this.expectedBookingId,
+    required this.responseBookingId,
+    required this.bookingFinalized,
+    required this.bookingFinalizeState,
+    required this.reconciled,
+    required this.reason,
+    required this.isNonTerminal,
+    required this.isAcknowledged,
+  });
+
+  final bool transportSucceeded;
+  final int? httpStatus;
+  final String requestedTripId;
+  final String? responseTripId;
+  final String expectedBookingId;
+  final String? responseBookingId;
+  final bool bookingFinalized;
+  final DirectRideFinalizeState bookingFinalizeState;
+  final bool reconciled;
+  final String? reason;
+  final bool isNonTerminal;
+
+  /// True only when identity + completed finalize state are proven.
+  final bool isAcknowledged;
+
+  /// Transport / decode failure — never treat as booking completion.
+  static DirectRideReconcileOutcome unknown({
+    required String requestedTripId,
+    required String expectedBookingId,
+    int? httpStatus,
+  }) {
+    return DirectRideReconcileOutcome(
+      transportSucceeded: false,
+      httpStatus: httpStatus,
+      requestedTripId: requestedTripId.trim(),
+      responseTripId: null,
+      expectedBookingId: expectedBookingId.trim(),
+      responseBookingId: null,
+      bookingFinalized: false,
+      bookingFinalizeState: DirectRideFinalizeState.unknown,
+      reconciled: false,
+      reason: null,
+      isNonTerminal: false,
+      isAcknowledged: false,
+    );
+  }
+}
+
+/// Pure mapper for `/trip/reconcile-direct-booking` responses.
+///
+/// Acknowledgement requires HTTP 200, matching trip + booking ids,
+/// `booking_finalized == true`, and finalize state `completed`.
+/// Totals are intentionally not required (absent from the endpoint).
+DirectRideReconcileOutcome mapDirectRideReconcileOutcome({
+  required Object? decoded,
+  required int? httpStatus,
+  required String requestedTripId,
+  required String expectedBookingId,
+  bool transportSucceeded = true,
+}) {
+  final reqTrip = requestedTripId.trim();
+  final expBooking = expectedBookingId.trim();
+  if (!transportSucceeded) {
+    return DirectRideReconcileOutcome.unknown(
+      requestedTripId: reqTrip,
+      expectedBookingId: expBooking,
+      httpStatus: httpStatus,
+    );
+  }
+  if (decoded is! Map) {
+    return DirectRideReconcileOutcome.unknown(
+      requestedTripId: reqTrip,
+      expectedBookingId: expBooking,
+      httpStatus: httpStatus,
+    );
+  }
+
+  String? s(Object? v) {
+    final t = (v ?? '').toString().trim();
+    return t.isEmpty ? null : t;
+  }
+
+  final responseTripId = s(decoded['trip_id'] ?? decoded['tripId']);
+  final responseBookingId = s(decoded['booking_id'] ?? decoded['bookingId']);
+  final reason = s(decoded['reason']);
+  final state = _finalizeStateFromToken(
+    (decoded['booking_finalize_state'] ?? decoded['bookingFinalizeState'] ?? '')
+        .toString(),
+  );
+  final bookingFinalizedFlag = decoded['booking_finalized'] == true ||
+      decoded['bookingFinalized'] == true;
+  // Preserve the worker's `reconciled` flag as-is (`already_completed` returns
+  // reconciled:false while still booking_finalized:true).
+  final reconciledFlag = decoded['reconciled'] == true;
+  final status = httpStatus;
+  final isNonTerminal = status == 409 &&
+      (reason ?? '').toLowerCase() == kDirectReconcileReasonNonTerminal;
+
+  // Identity + completed-state acknowledgement (no totals; endpoint omits them).
+  final identityMatch = reqTrip.isNotEmpty &&
+      expBooking.isNotEmpty &&
+      responseTripId != null &&
+      responseBookingId != null &&
+      responseTripId == reqTrip &&
+      responseBookingId == expBooking;
+  final completedState = state == DirectRideFinalizeState.completed &&
+      bookingFinalizedFlag;
+  final isAcknowledged = status == 200 &&
+      identityMatch &&
+      completedState &&
+      !isNonTerminal;
+
+  return DirectRideReconcileOutcome(
+    transportSucceeded: true,
+    httpStatus: status,
+    requestedTripId: reqTrip,
+    responseTripId: responseTripId,
+    expectedBookingId: expBooking,
+    responseBookingId: responseBookingId,
+    bookingFinalized: bookingFinalizedFlag &&
+        state == DirectRideFinalizeState.completed,
+    bookingFinalizeState: state == DirectRideFinalizeState.completed &&
+            bookingFinalizedFlag
+        ? DirectRideFinalizeState.completed
+        : (state == DirectRideFinalizeState.pending
+            ? DirectRideFinalizeState.pending
+            : DirectRideFinalizeState.unknown),
+    reconciled: reconciledFlag,
+    reason: reason,
+    isNonTerminal: isNonTerminal,
+    isAcknowledged: isAcknowledged,
+  );
+}
+
+/// Convenience: true when [outcome] is a strict reconcile acknowledgement.
+bool isDirectRideReconcileAcknowledged(DirectRideReconcileOutcome outcome) =>
+    outcome.isAcknowledged;
+
+// ===========================================================================
 // DIRECT-RIDE-EXISTING-BOOKING-OWNERSHIP-1 — reopen safety helpers.
 //
 // A booking that originated from a street/direct ride must never be routed

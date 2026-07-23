@@ -925,4 +925,244 @@ void main() {
       );
     });
   });
+
+  // ==========================================================================
+  // DIRECT-RIDE-STOP-RECOVERY-RACE-1 Commit 1 — reconcile acknowledgement.
+  // ==========================================================================
+
+  group('DIRECT-RIDE-STOP-RECOVERY-RACE-1 C1: DirectRideReconcileOutcome', () {
+    const trip = 'trip_abc';
+    const booking = 'street_1_ab';
+
+    DirectRideReconcileOutcome map({
+      Object? decoded,
+      int? status = 200,
+      String reqTrip = trip,
+      String expBooking = booking,
+      bool transportOk = true,
+    }) {
+      return mapDirectRideReconcileOutcome(
+        decoded: decoded,
+        httpStatus: status,
+        requestedTripId: reqTrip,
+        expectedBookingId: expBooking,
+        transportSucceeded: transportOk,
+      );
+    }
+
+    test('matching completed response is acknowledged', () {
+      final o = map(
+        decoded: <String, dynamic>{
+          'ok': true,
+          'trip_id': trip,
+          'booking_id': booking,
+          'booking_finalize_state': 'completed',
+          'booking_finalized': true,
+          'reconciled': true,
+          'reason': 'repairable',
+        },
+      );
+      expect(o.isAcknowledged, isTrue);
+      expect(isDirectRideReconcileAcknowledged(o), isTrue);
+      expect(o.bookingFinalizeState, DirectRideFinalizeState.completed);
+    });
+
+    test('`already_completed` with matching ids is acknowledged', () {
+      final o = map(
+        decoded: <String, dynamic>{
+          'ok': true,
+          'trip_id': trip,
+          'booking_id': booking,
+          'booking_finalize_state': 'completed',
+          'booking_finalized': true,
+          'reconciled': false,
+          'reason': 'already_completed',
+        },
+      );
+      expect(o.isAcknowledged, isTrue);
+      expect(o.reconciled, isFalse);
+    });
+
+    test('trip-id mismatch is rejected', () {
+      final o = map(
+        decoded: <String, dynamic>{
+          'ok': true,
+          'trip_id': 'trip_OTHER',
+          'booking_id': booking,
+          'booking_finalize_state': 'completed',
+          'booking_finalized': true,
+        },
+      );
+      expect(o.isAcknowledged, isFalse);
+    });
+
+    test('booking-id mismatch is rejected', () {
+      final o = map(
+        decoded: <String, dynamic>{
+          'ok': true,
+          'trip_id': trip,
+          'booking_id': 'street_OTHER',
+          'booking_finalize_state': 'completed',
+          'booking_finalized': true,
+        },
+      );
+      expect(o.isAcknowledged, isFalse);
+    });
+
+    test('missing trip id is rejected', () {
+      final o = map(
+        decoded: <String, dynamic>{
+          'ok': true,
+          'booking_id': booking,
+          'booking_finalize_state': 'completed',
+          'booking_finalized': true,
+        },
+      );
+      expect(o.isAcknowledged, isFalse);
+      expect(
+        map(
+          decoded: <String, dynamic>{
+            'ok': true,
+            'trip_id': trip,
+            'booking_id': booking,
+            'booking_finalize_state': 'completed',
+            'booking_finalized': true,
+          },
+          reqTrip: '',
+        ).isAcknowledged,
+        isFalse,
+      );
+    });
+
+    test('missing booking id is rejected', () {
+      final o = map(
+        decoded: <String, dynamic>{
+          'ok': true,
+          'trip_id': trip,
+          'booking_finalize_state': 'completed',
+          'booking_finalized': true,
+        },
+      );
+      expect(o.isAcknowledged, isFalse);
+      expect(
+        map(
+          decoded: <String, dynamic>{
+            'ok': true,
+            'trip_id': trip,
+            'booking_id': booking,
+            'booking_finalize_state': 'completed',
+            'booking_finalized': true,
+          },
+          expBooking: '',
+        ).isAcknowledged,
+        isFalse,
+      );
+    });
+
+    test('completed boolean with state pending is rejected', () {
+      final o = map(
+        decoded: <String, dynamic>{
+          'ok': true,
+          'trip_id': trip,
+          'booking_id': booking,
+          'booking_finalize_state': 'pending',
+          'booking_finalized': true,
+        },
+      );
+      expect(o.isAcknowledged, isFalse);
+    });
+
+    test('state completed with boolean false is rejected', () {
+      final o = map(
+        decoded: <String, dynamic>{
+          'ok': true,
+          'trip_id': trip,
+          'booking_id': booking,
+          'booking_finalize_state': 'completed',
+          'booking_finalized': false,
+        },
+      );
+      expect(o.isAcknowledged, isFalse);
+    });
+
+    test('HTTP 409 non-terminal maps explicitly', () {
+      final o = map(
+        status: 409,
+        decoded: <String, dynamic>{
+          'ok': false,
+          'trip_id': trip,
+          'booking_id': booking,
+          'booking_finalize_state': 'pending',
+          'booking_finalized': false,
+          'reconciled': false,
+          'reason': 'skipped_non_terminal',
+        },
+      );
+      expect(o.transportSucceeded, isTrue);
+      expect(o.isNonTerminal, isTrue);
+      expect(o.isAcknowledged, isFalse);
+      expect(o.reason, kDirectReconcileReasonNonTerminal);
+    });
+
+    test('HTTP 200 pending remains non-acknowledged', () {
+      final o = map(
+        decoded: <String, dynamic>{
+          'ok': false,
+          'trip_id': trip,
+          'booking_id': booking,
+          'booking_finalize_state': 'pending',
+          'booking_finalized': false,
+          'reconciled': false,
+          'reason': 'pending',
+        },
+      );
+      expect(o.transportSucceeded, isTrue);
+      expect(o.isNonTerminal, isFalse);
+      expect(o.isAcknowledged, isFalse);
+      expect(o.bookingFinalizeState, DirectRideFinalizeState.pending);
+    });
+
+    test('transport failure remains unknown', () {
+      final o = map(transportOk: false, decoded: null, status: null);
+      expect(o.transportSucceeded, isFalse);
+      expect(o.isAcknowledged, isFalse);
+      expect(o.bookingFinalizeState, DirectRideFinalizeState.unknown);
+    });
+
+    test('decode failure remains unknown', () {
+      final o = map(decoded: 'not-a-map', status: 200);
+      expect(o.transportSucceeded, isFalse);
+      expect(o.isAcknowledged, isFalse);
+    });
+
+    test('immediate reconcile cannot locally complete on identity mismatch '
+        '(shared helper is sole gate)', () {
+      // Mirrors `_stopTrip` post-stop reconcile: local COMPLETED only when
+      // isDirectRideReconcileAcknowledged(outcome).
+      bool mayApplyLocalCompleted(DirectRideReconcileOutcome o) =>
+          isDirectRideReconcileAcknowledged(o);
+
+      final mismatch = map(
+        decoded: <String, dynamic>{
+          'ok': true,
+          'trip_id': trip,
+          'booking_id': 'street_WRONG',
+          'booking_finalize_state': 'completed',
+          'booking_finalized': true,
+        },
+      );
+      expect(mayApplyLocalCompleted(mismatch), isFalse);
+
+      final ok = map(
+        decoded: <String, dynamic>{
+          'ok': true,
+          'trip_id': trip,
+          'booking_id': booking,
+          'booking_finalize_state': 'completed',
+          'booking_finalized': true,
+        },
+      );
+      expect(mayApplyLocalCompleted(ok), isTrue);
+    });
+  });
 }

@@ -6868,21 +6868,38 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   /// Idempotently retries a street/direct booking finalization from the
-  /// persisted trip. Returns true only when the server confirms `completed`.
-  Future<bool> _reconcileDirectBookingOnWorker({required String tripId}) async {
-    if (tripId.trim().isEmpty) return false;
+  /// persisted trip. Returns a structured [DirectRideReconcileOutcome]; local
+  /// COMPLETED may proceed only when [DirectRideReconcileOutcome.isAcknowledged]
+  /// is true (identity match + completed finalize state).
+  Future<DirectRideReconcileOutcome> _reconcileDirectBookingOnWorker({
+    required String tripId,
+    required String expectedBookingId,
+  }) async {
+    final reqTrip = tripId.trim();
+    final expBooking = expectedBookingId.trim();
+    if (reqTrip.isEmpty || expBooking.isEmpty) {
+      return DirectRideReconcileOutcome.unknown(
+        requestedTripId: reqTrip,
+        expectedBookingId: expBooking,
+      );
+    }
     try {
       final strictScope = _strictBookingScopeForMutation(
         action: 'reconcile_direct_booking',
         showUx: false,
       );
-      if (strictScope == null) return false;
+      if (strictScope == null) {
+        return DirectRideReconcileOutcome.unknown(
+          requestedTripId: reqTrip,
+          expectedBookingId: expBooking,
+        );
+      }
       final res = await http
           .post(
             _uriWithScope(kWorkerBaseUrl, kReconcileDirectBookingPath, strictScope),
             headers: _headers(admin: true),
             body: jsonEncode(<String, dynamic>{
-              'trip_id': tripId,
+              'trip_id': reqTrip,
               ...strictScope,
               ..._driverMutationActorFields(
                 actorVehicleId: _directRideVehicleId(),
@@ -6890,11 +6907,28 @@ class _DriverHomePageState extends State<DriverHomePage>
             }),
           )
           .timeout(const Duration(seconds: 6));
-      if (res.statusCode != 200) return false;
-      final decoded = jsonDecode(res.body);
-      return decoded is Map && decoded['booking_finalized'] == true;
+      Object? decoded;
+      try {
+        decoded = jsonDecode(res.body);
+      } catch (_) {
+        return DirectRideReconcileOutcome.unknown(
+          requestedTripId: reqTrip,
+          expectedBookingId: expBooking,
+          httpStatus: res.statusCode,
+        );
+      }
+      return mapDirectRideReconcileOutcome(
+        decoded: decoded,
+        httpStatus: res.statusCode,
+        requestedTripId: reqTrip,
+        expectedBookingId: expBooking,
+        transportSucceeded: true,
+      );
     } catch (_) {
-      return false;
+      return DirectRideReconcileOutcome.unknown(
+        requestedTripId: reqTrip,
+        expectedBookingId: expBooking,
+      );
     }
   }
 
@@ -6943,8 +6977,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   ) async {
     const maxAttempts = 4;
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
-      final ok = await _reconcileDirectBookingOnWorker(tripId: session.tripId);
-      if (ok) {
+      final outcome = await _reconcileDirectBookingOnWorker(
+        tripId: session.tripId,
+        expectedBookingId: session.bookingId,
+      );
+      if (isDirectRideReconcileAcknowledged(outcome)) {
         await _DirectTripSessionStore.clear(
           tenantId: scope.tenantId,
           companyId: scope.companyId,
@@ -7801,13 +7838,18 @@ class _DriverHomePageState extends State<DriverHomePage>
 
       if (!directFinalizeAcknowledged &&
           directTripId != null &&
-          directTripId.trim().isNotEmpty) {
+          directTripId.trim().isNotEmpty &&
+          (directBookingId ?? '').trim().isNotEmpty) {
         // Bounded single in-session reconcile — never retry via `/trip/stop`.
+        // DIRECT-RIDE-STOP-RECOVERY-RACE-1 Commit 1: local COMPLETED only when
+        // the shared reconcile acknowledgement proves matching trip/booking
+        // ids and completed finalize state (no totals; endpoint omits them).
         _directStopFinalizePending = true;
-        final reconciled = await _reconcileDirectBookingOnWorker(
+        final reconcileOutcome = await _reconcileDirectBookingOnWorker(
           tripId: directTripId,
+          expectedBookingId: directBookingId!,
         );
-        if (reconciled) {
+        if (isDirectRideReconcileAcknowledged(reconcileOutcome)) {
           directFinalizeAcknowledged = true;
           _directStopFinalizePending = false;
           unawaited(_clearDirectTripSession());
@@ -7818,6 +7860,8 @@ class _DriverHomePageState extends State<DriverHomePage>
               directFinalizeAcknowledged: true,
             );
           }
+          // Refresh authoritative booking/fare — do not invent a monetary
+          // success toast from the reconcile response (no totals there).
           unawaited(
             _refreshBookings(
               force: true,
@@ -7826,6 +7870,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           );
         } else {
           // Keep recovery identity + identifiers; leave list on server truth.
+          // Identity mismatch / pending / unknown never apply local COMPLETED.
           unawaited(_persistDirectTripSession(
             localLifecycle: kDirectTripLocalLifecycleStopped,
             bookingFinalizeState: kDirectTripFinalizePending,
