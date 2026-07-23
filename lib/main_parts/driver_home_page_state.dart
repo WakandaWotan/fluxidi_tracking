@@ -621,6 +621,14 @@ class _DriverHomePageState extends State<DriverHomePage>
   DriverTellersLayoutGeometry? _pendingTellersAnchorGeometry;
   double? _pendingTellersAnchorPoseLat;
   double? _pendingTellersAnchorPoseLon;
+  // NAV-TELLERS-ROUTE-CENTERLINE-LOCK-1: matched-route snap coordinate that
+  // owns the visible remaining-route start on the same camera pass. Captured
+  // in the Tellers follow block, consumed by _logNavTellersAnchorSettledIfActive
+  // so the pose-lock diagnostic can additionally report the marker↔route-centre
+  // delta (coarse buckets only). Null when no reliable snap was available.
+  double? _pendingTellersSnappedRouteLat;
+  double? _pendingTellersSnappedRouteLon;
+  TellersAuthoritativePoseSource? _pendingTellersPoseSource;
   DateTime? _lastTellersAnchorDiagAt;
 
   // FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 (Phase 1, Part C): monotonic
@@ -14512,6 +14520,24 @@ class _DriverHomePageState extends State<DriverHomePage>
       // lock proof (device class + View level + alignment buckets). Marker
       // road-contact anchor == camera target anchor by construction, so
       // aligned=true confirms project(matchedPose) lands on the marker.
+      //
+      // NAV-TELLERS-ROUTE-CENTERLINE-LOCK-1: also project the matched-route
+      // snap point (when captured on the same camera pass) so the diagnostic
+      // additionally reports the marker↔route-centreline delta. Coarse
+      // buckets only — no coordinates leak.
+      Offset? projectedSnap;
+      final snapLat = _pendingTellersSnappedRouteLat;
+      final snapLon = _pendingTellersSnappedRouteLon;
+      if (snapLat != null && snapLon != null) {
+        try {
+          final snapScreen =
+              await map.pixelForCoordinate(_mbPoint(snapLon, snapLat));
+          projectedSnap =
+              Offset(snapScreen.x.toDouble(), snapScreen.y.toDouble());
+        } catch (_) {
+          projectedSnap = null;
+        }
+      }
       _logNavBounded(
         'NAV_TELLERS_POSE_LOCK',
         formatNavTellersPoseLockDiagnostic(
@@ -14522,6 +14548,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           markerAnchor: geometry.markerRoadContactAnchorGlobal,
           projectedPose: projectedPose,
           viewportSize: geometry.mapViewportSize,
+          projectedSnappedRoute: projectedSnap,
+          poseSource: _pendingTellersPoseSource,
         ),
         intervalMs: 2000,
       );
@@ -18053,15 +18081,52 @@ class _DriverHomePageState extends State<DriverHomePage>
         isTablet: tellersIsTablet,
       );
       viewPadding = tellersGeometry.cameraPadding;
-      // Center on the SAME authoritative matched pose ordinary navigation uses
-      // for the marker/route (never the cockpit lead-in) so the padding focal
-      // point places that pose directly beneath the Car/Arrow marker.
-      cameraCenter = p;
+      // NAV-TELLERS-ROUTE-CENTERLINE-LOCK-1: resolve the single authoritative
+      // Tellers pose. When the snap engine + confidence engine agree on a
+      // trustworthy, on-route snap, the camera + pose-lock target follow the
+      // same snapped point that owns the visible remaining-route START. Under
+      // any deviation / off-route / no-snap signal, retain the existing visual
+      // (prediction / interpolation / raw) pose so recovery UX is unchanged.
+      final tellersProgress = _lastNavRouteProgress;
+      final tellersConfidence = _lastNavConfidence;
+      final tellersInput = TellersAuthoritativePoseInput(
+        visualLat: visual.point.lat,
+        visualLon: visual.point.lon,
+        snappedLat: tellersProgress?.snappedLatitude,
+        snappedLon: tellersProgress?.snappedLongitude,
+        hasReliableMatchedSnap: _routeProgressMatchedVisual(tellersProgress),
+        trustRouteSnap: tellersConfidence?.trustRouteSnap ?? true,
+        offRouteLikely:
+            tellersProgress?.offRouteLikely ?? _offRouteLikely,
+      );
+      final tellersPose = resolveTellersAuthoritativePose(tellersInput);
+      final tellersCenterPoint =
+          _mbPoint(tellersPose.lon, tellersPose.lat);
+      // Center on the SAME authoritative pose the visible route trim owns
+      // (matched snap when reliable; visual otherwise) so the padded focal
+      // point places that pose directly beneath the Car/Arrow marker AND
+      // over the polyline centreline.
+      cameraCenter = tellersCenterPoint;
       _pendingTellersAnchorGeometry = tellersGeometry;
-      _pendingTellersAnchorPoseLat = visual.point.lat;
-      _pendingTellersAnchorPoseLon = visual.point.lon;
+      _pendingTellersAnchorPoseLat = tellersPose.lat;
+      _pendingTellersAnchorPoseLon = tellersPose.lon;
+      _pendingTellersPoseSource = tellersPose.source;
+      if (tellersInput.hasReliableMatchedSnap &&
+          tellersInput.trustRouteSnap &&
+          !tellersInput.offRouteLikely &&
+          tellersProgress?.snappedLatitude != null &&
+          tellersProgress?.snappedLongitude != null) {
+        _pendingTellersSnappedRouteLat = tellersProgress!.snappedLatitude;
+        _pendingTellersSnappedRouteLon = tellersProgress.snappedLongitude;
+      } else {
+        _pendingTellersSnappedRouteLat = null;
+        _pendingTellersSnappedRouteLon = null;
+      }
     } else {
       _pendingTellersAnchorGeometry = null;
+      _pendingTellersSnappedRouteLat = null;
+      _pendingTellersSnappedRouteLon = null;
+      _pendingTellersPoseSource = null;
     }
     _lastMapCameraZoom = cameraZoom;
     unawaited(_syncDriverMarkerIconSizeForZoom());

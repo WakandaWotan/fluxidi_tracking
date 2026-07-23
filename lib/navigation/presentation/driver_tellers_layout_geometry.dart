@@ -488,6 +488,13 @@ String formatNavTellersPoseLockDiagnostic({
   required Offset markerAnchor,
   required Offset projectedPose,
   required Size viewportSize,
+  // NAV-TELLERS-ROUTE-CENTERLINE-LOCK-1: OPTIONAL. When the caller can also
+  // project the matched-route snap point, the diagnostic reports the extra
+  // marker↔route-centreline delta (coarse buckets only). Absent → line is
+  // byte-for-byte identical to the pre-existing pose-lock diagnostic, so
+  // downstream log parsers and unit tests remain valid.
+  Offset? projectedSnappedRoute,
+  TellersAuthoritativePoseSource? poseSource,
 }) {
   final deltaX = projectedPose.dx - markerAnchor.dx;
   final deltaY = projectedPose.dy - markerAnchor.dy;
@@ -503,7 +510,7 @@ String formatNavTellersPoseLockDiagnostic({
       ? double.nan
       : projectedPose.dy / viewportSize.height;
   final aligned = navTellersAnchorAligned(deltaX: deltaX, deltaY: deltaY);
-  return 'gen=$viewportGeneration '
+  final baseLine = 'gen=$viewportGeneration '
       'device=${isTablet ? 'tablet' : 'phone'} '
       'orient=${isLandscape ? 'land' : 'port'} '
       'view=$viewLevel '
@@ -514,6 +521,147 @@ String formatNavTellersPoseLockDiagnostic({
       'dx=${navTellersAnchorDeltaBucket(deltaX)} '
       'dy=${navTellersAnchorDeltaBucket(deltaY)} '
       'aligned=$aligned';
+  if (projectedSnappedRoute == null && poseSource == null) return baseLine;
+  final parts = <String>[baseLine];
+  if (poseSource != null) {
+    parts.add('poseSource=${poseSource == TellersAuthoritativePoseSource.snappedRoute ? 'snap' : 'visual'}');
+  }
+  if (projectedSnappedRoute != null) {
+    final snapDx = projectedSnappedRoute.dx - markerAnchor.dx;
+    final snapDy = projectedSnappedRoute.dy - markerAnchor.dy;
+    final routeAligned =
+        navTellersAnchorAligned(deltaX: snapDx, deltaY: snapDy);
+    parts.add('snapDx=${navTellersAnchorDeltaBucket(snapDx)}');
+    parts.add('snapDy=${navTellersAnchorDeltaBucket(snapDy)}');
+    parts.add('routeAligned=$routeAligned');
+  }
+  return parts.join(' ');
+}
+
+// ===========================================================================
+// NAV-TELLERS-ROUTE-CENTERLINE-LOCK-1 — one authoritative Tellers pose.
+//
+// In Tellers follow mode the on-screen Car/Arrow marker is a screen-fixed
+// Flutter widget positioned at [DriverTellersLayoutGeometry.markerAnchor], so
+// its visual relation to the blue route depends on which geographic pose the
+// follow camera projects onto that marker anchor.
+//
+// The visible remaining route always starts at the reliable, matched
+// `snap.point` (route projection of the GPS). If the follow camera projects
+// `visual.point` (prediction / R3 interpolation / forceRaw) — which may differ
+// from `snap.point` — the marker sits beside the blue route.
+//
+// This resolver is the pure, unit-testable single source of truth for the
+// Tellers-only camera / pose-lock target. Ordinary Navigation is unaffected.
+// ===========================================================================
+
+/// Source classification for the pose returned by
+/// [resolveTellersAuthoritativePose].
+enum TellersAuthoritativePoseSource {
+  /// Matched route-snap point (`progress.snappedLatitude/Longitude` or
+  /// equivalent). Used whenever the snap is trustworthy and the vehicle is
+  /// on-route.
+  snappedRoute,
+
+  /// Visual pose (prediction / interpolation / raw). Fallback used when no
+  /// reliable snap exists or the vehicle is genuinely off-route.
+  visualFallback,
+}
+
+/// Inputs consumed by [resolveTellersAuthoritativePose]. Pure data — no
+/// Mapbox, no GPS types, no side-effects.
+class TellersAuthoritativePoseInput {
+  const TellersAuthoritativePoseInput({
+    required this.visualLat,
+    required this.visualLon,
+    required this.snappedLat,
+    required this.snappedLon,
+    required this.hasReliableMatchedSnap,
+    required this.trustRouteSnap,
+    required this.offRouteLikely,
+  });
+
+  /// Current visual pose (predicted / interpolated / raw). ALWAYS provided —
+  /// this is the existing owner used when no reliable snap wins.
+  final double visualLat;
+  final double visualLon;
+
+  /// Latest matched-route snapped pose. Null when no snap is available.
+  final double? snappedLat;
+  final double? snappedLon;
+
+  /// The snap engine reports a reliable, forward-progress route snap.
+  final bool hasReliableMatchedSnap;
+
+  /// The confidence engine trusts the current route snap.
+  final bool trustRouteSnap;
+
+  /// Any deviation / off-route heuristic is active.
+  final bool offRouteLikely;
+}
+
+/// Result of [resolveTellersAuthoritativePose]. Carries the chosen lat/lon and
+/// which source won so callers can log a bounded, PII-free reason.
+class TellersAuthoritativePose {
+  const TellersAuthoritativePose({
+    required this.lat,
+    required this.lon,
+    required this.source,
+  });
+
+  final double lat;
+  final double lon;
+  final TellersAuthoritativePoseSource source;
+
+  bool get usesSnappedRoute =>
+      source == TellersAuthoritativePoseSource.snappedRoute;
+
+  bool get usesVisualFallback =>
+      source == TellersAuthoritativePoseSource.visualFallback;
+
+  /// Short PII-free tag ready for a bounded diagnostic line.
+  String get sourceTag => usesSnappedRoute ? 'snap' : 'visual';
+}
+
+bool _tellersLatLonValid(double? lat, double? lon) {
+  if (lat == null || lon == null) return false;
+  if (!lat.isFinite || !lon.isFinite) return false;
+  // Sentinel: (0, 0) is a common uninitialised default that would silently
+  // pull the camera into the Gulf of Guinea. Treat as invalid.
+  if (lat == 0.0 && lon == 0.0) return false;
+  return true;
+}
+
+/// Pure resolver for the single authoritative Tellers navigation pose.
+///
+/// Policy:
+/// A. Reliable route-follow state ([TellersAuthoritativePoseInput.hasReliableMatchedSnap]
+///    && [TellersAuthoritativePoseInput.trustRouteSnap] && ![TellersAuthoritativePoseInput.offRouteLikely]
+///    && a valid snappedLat/snappedLon) → return the snapped pose. Prediction
+///    or interpolation must NOT override this in Tellers.
+/// B. Otherwise → return the visual pose unchanged (existing behaviour). Raw
+///    GPS / forceRaw continues to flow through when the snap is not trusted
+///    or the vehicle is genuinely off-route.
+TellersAuthoritativePose resolveTellersAuthoritativePose(
+  TellersAuthoritativePoseInput input,
+) {
+  final snapValid = _tellersLatLonValid(input.snappedLat, input.snappedLon);
+  final reliable = input.hasReliableMatchedSnap &&
+      input.trustRouteSnap &&
+      !input.offRouteLikely &&
+      snapValid;
+  if (reliable) {
+    return TellersAuthoritativePose(
+      lat: input.snappedLat!,
+      lon: input.snappedLon!,
+      source: TellersAuthoritativePoseSource.snappedRoute,
+    );
+  }
+  return TellersAuthoritativePose(
+    lat: input.visualLat,
+    lon: input.visualLon,
+    source: TellersAuthoritativePoseSource.visualFallback,
+  );
 }
 
 /// Small opaque blockers covering the rounded-corner wedges of the live
