@@ -18308,20 +18308,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     final remainingText = remaining.isEmpty
         ? ''
         : (remaining.endsWith('km') ? remaining : '$remaining km');
-    String status;
-    if (_isWaiting) {
-      status = _tr(
-        nl: 'Rit gepauzeerd',
-        en: 'Ride paused',
-        fr: 'Course en pause',
-        es: 'Viaje en pausa',
-      );
-    } else if (_liveRideActive) {
-      status = _tr(
-        nl: 'Rit actief',
-        en: 'Ride active',
-        fr: 'Course active',
-        es: 'Viaje activo',
+    // NAV-TELLERS-RECENTER-CONTROL-1: status through the shared localization
+    // helper so Dutch always shows `Rit actief` / `Rit gepauzeerd` (never the
+    // English "Ride active" string in NL UI).
+    final String status;
+    if (_isWaiting || _liveRideActive) {
+      status = driverTellersStatusText(
+        language: appLanguageNotifier.value,
+        isWaiting: _isWaiting,
+        liveRideActive: _liveRideActive,
       );
     } else if (_cameraMode == _CameraMode.follow) {
       status = _tr(
@@ -18331,11 +18326,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         es: 'Navegación',
       );
     } else {
-      status = _tr(
-        nl: 'Stand-by',
-        en: 'Stand-by',
-        fr: 'Veille',
-        es: 'En espera',
+      status = driverTellersStatusText(
+        language: appLanguageNotifier.value,
+        isWaiting: false,
+        liveRideActive: false,
       );
     }
     return DriverRideMetersSnapshot(
@@ -18501,6 +18495,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                 }
               }
             : null,
+        // NAV-TELLERS-RECENTER-CONTROL-1: existing authoritative recenter/
+        // follow owner. Preserves View level + Tellers padding (applied inside
+        // _followCameraTesla while Tellers is active). Idempotent when already
+        // following. Does not leave Tellers or create a second camera/GPS owner.
+        onRecenter: _liveRideActive ? () => unawaited(_centerOnMe()) : null,
       ),
     );
   }

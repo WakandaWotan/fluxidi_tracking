@@ -1,7 +1,9 @@
 // NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1 / Commit 3
+// NAV-TELLERS-RECENTER-CONTROL-1
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/navigation/presentation/driver_ride_meters.dart';
@@ -1043,6 +1045,257 @@ void main() {
       final c = DriverNavPresentationModeController();
       expect(c.showTellers(), isTrue);
       expect(c.showNavigation(), isTrue);
+    });
+
+    testWidgets(
+      'exactly one recenter between Pause and Stop; invokes authoritative action',
+      (tester) async {
+        var recenterTaps = 0;
+        const snap = DriverRideMetersSnapshot(
+          fareText: '€ 9.00',
+          distanceTravelledText: '4.0 km',
+          rideDurationText: '00:08:00',
+          waitingTimeText: '00:00:30',
+          statusText: 'Rit actief',
+        );
+        await tester.pumpWidget(
+          MediaQuery(
+            data: const MediaQueryData(size: Size(390, 844)),
+            child: MaterialApp(
+              home: Scaffold(
+                body: DriverRideMetersView(
+                  snapshot: snap,
+                  onBackToNavigation: () {},
+                  onToggleWait: () {},
+                  onRecenter: () => recenterTaps += 1,
+                  onStop: () {},
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        final wait = find.byKey(const ValueKey('driver_tellers_wait'));
+        final recenter = find.byKey(const ValueKey('driver_tellers_recenter'));
+        final stop = find.byKey(const ValueKey('driver_tellers_stop'));
+        expect(wait, findsOneWidget);
+        expect(recenter, findsOneWidget);
+        expect(stop, findsOneWidget);
+
+        // Order: Pauze | Recenter | Stop (left → right by center.dx).
+        final waitX = tester.getCenter(wait).dx;
+        final recenterX = tester.getCenter(recenter).dx;
+        final stopX = tester.getCenter(stop).dx;
+        expect(waitX, lessThan(recenterX));
+        expect(recenterX, lessThan(stopX));
+
+        // Crosshair / current-location icon.
+        expect(
+          find.descendant(
+            of: recenter,
+            matching: find.byIcon(Icons.my_location),
+          ),
+          findsOneWidget,
+        );
+
+        // Calls the existing authoritative recenter callback (idempotent taps).
+        await tester.tap(recenter);
+        await tester.pump();
+        await tester.tap(recenter);
+        await tester.pump();
+        expect(recenterTaps, 2);
+      },
+    );
+
+    testWidgets('portrait recenter has no overlap with Pause/Stop', (
+      tester,
+    ) async {
+      const snap = DriverRideMetersSnapshot(
+        fareText: '€ 9.00',
+        distanceTravelledText: '4.0 km',
+        rideDurationText: '00:08:00',
+        waitingTimeText: '00:00:30',
+        statusText: 'Rit actief',
+      );
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(size: Size(390, 844)),
+          child: MaterialApp(
+            home: Scaffold(
+              body: DriverRideMetersView(
+                snapshot: snap,
+                onBackToNavigation: () {},
+                onToggleWait: () {},
+                onRecenter: () {},
+                onStop: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final waitRect = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_wait')),
+      );
+      final recenterRect = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_recenter')),
+      );
+      final stopRect = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_stop')),
+      );
+      expect(waitRect.overlaps(recenterRect), isFalse);
+      expect(recenterRect.overlaps(stopRect), isFalse);
+      expect(waitRect.overlaps(stopRect), isFalse);
+      // Driving min touch-target.
+      expect(recenterRect.width, greaterThanOrEqualTo(48));
+      expect(recenterRect.height, greaterThanOrEqualTo(48));
+    });
+
+    testWidgets('landscape controls stay within panel without overflow', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(1194, 834));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      const snap = DriverRideMetersSnapshot(
+        fareText: '€ 9.00',
+        distanceTravelledText: '4.0 km',
+        rideDurationText: '00:08:00',
+        waitingTimeText: '00:00:30',
+        statusText: 'Rit actief',
+      );
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(size: Size(1194, 834)),
+          child: MaterialApp(
+            home: Scaffold(
+              body: DriverRideMetersView(
+                snapshot: snap,
+                onBackToNavigation: () {},
+                isTablet: true,
+                isLandscape: true,
+                onToggleWait: () {},
+                onRecenter: () {},
+                onStop: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final panel = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_meters_panel')),
+      );
+      final controls = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_controls')),
+      );
+      expect(panel.contains(controls.topLeft), isTrue);
+      expect(panel.contains(controls.bottomRight), isTrue);
+      // Same order in landscape.
+      expect(
+        tester.getCenter(find.byKey(const ValueKey('driver_tellers_wait'))).dx,
+        lessThan(
+          tester
+              .getCenter(find.byKey(const ValueKey('driver_tellers_recenter')))
+              .dx,
+        ),
+      );
+      expect(
+        tester
+            .getCenter(find.byKey(const ValueKey('driver_tellers_recenter')))
+            .dx,
+        lessThan(
+          tester.getCenter(find.byKey(const ValueKey('driver_tellers_stop'))).dx,
+        ),
+      );
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('driverTellersStatusText localization', () {
+    test('Dutch live ride shows Rit actief — never Ride active', () {
+      expect(
+        driverTellersStatusText(
+          language: AppLanguage.nl,
+          isWaiting: false,
+          liveRideActive: true,
+        ),
+        'Rit actief',
+      );
+      expect(
+        driverTellersStatusText(
+          language: AppLanguage.nl,
+          isWaiting: true,
+          liveRideActive: true,
+        ),
+        'Rit gepauzeerd',
+      );
+    });
+
+    test('other locales keep their own wording (no Dutch hardcode)', () {
+      expect(
+        driverTellersStatusText(
+          language: AppLanguage.en,
+          isWaiting: false,
+          liveRideActive: true,
+        ),
+        'Ride active',
+      );
+      expect(
+        driverTellersStatusText(
+          language: AppLanguage.fr,
+          isWaiting: false,
+          liveRideActive: true,
+        ),
+        'Course active',
+      );
+      expect(
+        driverTellersStatusText(
+          language: AppLanguage.es,
+          isWaiting: false,
+          liveRideActive: true,
+        ),
+        'Viaje activo',
+      );
+    });
+  });
+
+  group('DriverTellersRecenterContract', () {
+    test('preserves View level, stays in Tellers, no second owners', () {
+      const contract = DriverTellersRecenterContract(
+        viewLevelBefore: 7,
+        tellersActiveBefore: true,
+      );
+      expect(contract.preservesViewLevel, isTrue);
+      expect(contract.staysInTellers, isTrue);
+      expect(contract.usesExistingCameraOwner, isTrue);
+      expect(contract.createsSecondLocationOwner, isFalse);
+      expect(
+        contract.isIdempotentAfter(viewLevelAfter: 7, tellersActiveAfter: true),
+        isTrue,
+      );
+      // Leaving Tellers or changing View level would violate the contract.
+      expect(
+        contract.isIdempotentAfter(
+          viewLevelAfter: 8,
+          tellersActiveAfter: true,
+        ),
+        isFalse,
+      );
+      expect(
+        contract.isIdempotentAfter(
+          viewLevelAfter: 7,
+          tellersActiveAfter: false,
+        ),
+        isFalse,
+      );
+    });
+
+    test('recenter label is localized (Dutch Centreren)', () {
+      expect(driverTellersRecenterLabel(AppLanguage.nl), 'Centreren');
+      expect(driverTellersRecenterLabel(AppLanguage.en), 'Recenter');
     });
   });
 }

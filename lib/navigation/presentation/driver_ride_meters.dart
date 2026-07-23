@@ -224,6 +224,76 @@ class DriverRideMetersSnapshot {
   final String companyName;
 }
 
+/// Localized Tellers status chip text. Dutch must show `Rit actief` /
+/// `Rit gepauzeerd` — never the English `Ride active` / `Ride paused`.
+String driverTellersStatusText({
+  required AppLanguage language,
+  required bool isWaiting,
+  required bool liveRideActive,
+}) {
+  if (isWaiting) {
+    return const LocalizedText(
+      nl: 'Rit gepauzeerd',
+      en: 'Ride paused',
+      fr: 'Course en pause',
+      es: 'Viaje en pausa',
+    ).of(language);
+  }
+  if (liveRideActive) {
+    return const LocalizedText(
+      nl: 'Rit actief',
+      en: 'Ride active',
+      fr: 'Course active',
+      es: 'Viaje activo',
+    ).of(language);
+  }
+  return const LocalizedText(
+    nl: 'Stand-by',
+    en: 'Stand-by',
+    fr: 'Veille',
+    es: 'En espera',
+  ).of(language);
+}
+
+/// Localized label/tooltip for the Tellers recenter control.
+String driverTellersRecenterLabel(AppLanguage language) {
+  return const LocalizedText(
+    nl: 'Centreren',
+    en: 'Recenter',
+    fr: 'Recentrer',
+    es: 'Recentrar',
+  ).of(language);
+}
+
+/// Pure contract for a Tellers recenter tap. Proves the action must keep the
+/// driver in Tellers and preserve the current View 1–13 level — never create a
+/// second camera/location owner.
+@immutable
+class DriverTellersRecenterContract {
+  const DriverTellersRecenterContract({
+    required this.viewLevelBefore,
+    required this.tellersActiveBefore,
+  });
+
+  final int viewLevelBefore;
+  final bool tellersActiveBefore;
+
+  /// Recenter restores follow via the existing camera owner; it never leaves
+  /// Tellers and never changes View level.
+  bool get staysInTellers => tellersActiveBefore;
+  bool get preservesViewLevel => true;
+  bool get usesExistingCameraOwner => true;
+  bool get createsSecondLocationOwner => false;
+
+  bool isIdempotentAfter({
+    required int viewLevelAfter,
+    required bool tellersActiveAfter,
+  }) {
+    return viewLevelAfter == viewLevelBefore &&
+        tellersActiveAfter == tellersActiveBefore;
+  }
+}
+
 /// Large, theme-aware Tellers overlay. Opaque — does not show satellite/map
 /// behind the meters. Map style selection is unrelated to this UI theme.
 class DriverRideMetersView extends StatelessWidget {
@@ -233,6 +303,7 @@ class DriverRideMetersView extends StatelessWidget {
     required this.onBackToNavigation,
     this.onStop,
     this.onToggleWait,
+    this.onRecenter,
     this.isWaiting = false,
     this.themeListenable,
     this.compact = false,
@@ -251,6 +322,11 @@ class DriverRideMetersView extends StatelessWidget {
   final VoidCallback onBackToNavigation;
   final VoidCallback? onStop;
   final VoidCallback? onToggleWait;
+
+  /// NAV-TELLERS-RECENTER-CONTROL-1: between Pauze and Stop. Invokes the
+  /// existing authoritative recenter/follow action — never a second camera or
+  /// location owner.
+  final VoidCallback? onRecenter;
   final bool isWaiting;
   final ValueListenable<DriverThemeVariant>? themeListenable;
   final bool compact;
@@ -648,6 +724,9 @@ class DriverRideMetersView extends StatelessWidget {
   }
 
   Widget _buildFooterActions(DriverThemePalette palette) {
+    // NAV-TELLERS-RECENTER-CONTROL-1: desired order Pauze | Recenter | Stop.
+    // Pauze/Stop stay large Expanded buttons; Recenter is a central icon
+    // button at the driving min touch-target (48).
     final actions = <Widget>[];
     if (onToggleWait != null) {
       actions.add(
@@ -661,6 +740,34 @@ class DriverRideMetersView extends StatelessWidget {
               minimumSize: const Size(48, 48),
             ),
             child: Text(isWaiting ? 'Hervatten' : 'Pauze'),
+          ),
+        ),
+      );
+    }
+    if (onRecenter != null) {
+      if (actions.isNotEmpty) actions.add(const SizedBox(width: 10));
+      final recenterLabel = driverTellersRecenterLabel(markerLanguage);
+      actions.add(
+        SizedBox(
+          width: 48,
+          height: 48,
+          child: Tooltip(
+            message: recenterLabel,
+            child: OutlinedButton(
+              key: const ValueKey('driver_tellers_recenter'),
+              onPressed: onRecenter,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: palette.textPrimary,
+                side: BorderSide(color: palette.border),
+                minimumSize: const Size(48, 48),
+                padding: EdgeInsets.zero,
+              ),
+              child: Semantics(
+                button: true,
+                label: recenterLabel,
+                child: const Icon(Icons.my_location, size: 22),
+              ),
+            ),
           ),
         ),
       );
@@ -683,7 +790,10 @@ class DriverRideMetersView extends StatelessWidget {
       );
     }
     if (actions.isEmpty) return const SizedBox.shrink();
-    return Row(children: actions);
+    return Row(
+      key: const ValueKey('driver_tellers_controls'),
+      children: actions,
+    );
   }
 }
 
