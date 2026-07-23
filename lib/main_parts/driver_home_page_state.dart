@@ -26344,7 +26344,10 @@ class _DriverHomePageState extends State<DriverHomePage>
             : arrowBottom);
     final double driverHudIconSize = navPresentationState.showDriverHudOverlay
         ? NavigationDriverHudOverlay.resolveIconSize(
+            // NAV-PHONE-LANDSCAPE-MARKER-SCALE-1: pass both axes so phone
+            // landscape is classified by shortestSide, not wide width.
             screenWidth: screenW,
+            screenHeight: screenH,
             cockpitBoost: navPresentationState.useDriverCockpitCamera,
             viewLevel: _driverCockpitViewLevel,
           )

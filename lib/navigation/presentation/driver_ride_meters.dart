@@ -538,9 +538,13 @@ class DriverRideMetersView extends StatelessWidget {
     DriverThemePalette palette,
     DriverTellersLayoutGeometry geometry,
   ) {
+    // NAV-PHONE-LANDSCAPE-MARKER-SCALE-1: Tellers inherits the same
+    // orientation-independent phone/tablet class as Navigation (never width
+    // alone). Synthetic portrait phone/tablet sizes keep the class stable.
     final markerSize = vehicleMarkerIconSize ??
         NavigationDriverHudOverlay.resolveIconSize(
           screenWidth: isTablet ? 800 : 390,
+          screenHeight: isTablet ? 1200 : 844,
           cockpitBoost: true,
         );
     final live = geometry.liveWindowRect;

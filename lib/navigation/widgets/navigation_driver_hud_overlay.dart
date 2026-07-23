@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../driver_navigation_map_config.dart';
 import '../presentation/navigation_driver_cockpit_camera.dart';
 import '../presentation/navigation_driver_marker_choice.dart';
+import '../presentation/navigation_driver_marker_scale.dart';
 import 'navigation_driver_arrow_marker.dart';
 
 /// NAV-PRES-2A: screen-fixed driver vehicle HUD (visual foundation only).
@@ -25,21 +26,24 @@ class NavigationDriverHudOverlay extends StatelessWidget {
     this.arrowScale = 1.0,
   });
 
-  /// NAV-PRES-3D-PRO2: responsive HUD vehicle sizing (screen-fixed, no map deps).
-  /// This is the shared base size for Auto and for the camera nose anchor.
+  /// NAV-PRES-3D-PRO2 / NAV-PHONE-LANDSCAPE-MARKER-SCALE-1: shared HUD base
+  /// size for Car and Arrow (and the camera nose-anchor baseline).
+  ///
+  /// Classifies phone/tablet from the viewport [Size] via shortest side —
+  /// never from landscape width alone. Pass both width and height.
   /// Arrow-only responsive shrinkage lives in
   /// [resolveDriverNavigationArrowScale] and is applied via [arrowScale].
   static double resolveIconSize({
     required double screenWidth,
+    required double screenHeight,
     required bool cockpitBoost,
     int viewLevel = kDriverCockpitViewLevelDefault,
   }) {
-    final isTablet = screenWidth >= 600;
-    if (!cockpitBoost) {
-      return isTablet ? 80.0 : 72.0;
-    }
-    // NAV-PRES-3J: fixed HUD size — view level affects map camera only.
-    return driverCockpitFixedHudIconSize(isTablet: isTablet);
+    // viewLevel is retained for call-site compatibility; size is level-independent.
+    return resolveDriverNavigationMarkerBaseIconSize(
+      viewportSize: Size(screenWidth, screenHeight),
+      cockpitBoost: cockpitBoost,
+    );
   }
 
   final double iconSize;

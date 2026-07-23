@@ -511,6 +511,7 @@ void main() {
         expect(
           NavigationDriverHudOverlay.resolveIconSize(
             screenWidth: 400,
+            screenHeight: 844,
             cockpitBoost: true,
             viewLevel: level,
           ),
@@ -536,6 +537,7 @@ void main() {
           expect(
             NavigationDriverHudOverlay.resolveIconSize(
               screenWidth: 800,
+              screenHeight: 1200,
               cockpitBoost: true,
               viewLevel: level,
             ),
