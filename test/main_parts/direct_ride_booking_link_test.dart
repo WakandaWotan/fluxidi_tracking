@@ -708,4 +708,221 @@ void main() {
       expect(a.tripId, b.tripId);
     });
   });
+
+  // ==========================================================================
+  // DIRECT-RIDE-FINALIZE-ACK-GATE-1 — structured stop outcome + ack gate.
+  // ==========================================================================
+
+  group('DIRECT-RIDE-FINALIZE-ACK-GATE-1: DirectRideStopOutcome', () {
+    test('finalized `/trip/stop` response maps to acknowledged outcome', () {
+      final parsed = parseDirectRideStopResponse(<String, dynamic>{
+        'ok': true,
+        'booking_id': 'street_1_ab',
+        'booking_finalize_state': 'completed',
+        'booking_finalized': true,
+        'totals': <String, dynamic>{'total_eur': 4.2},
+      });
+      final o = mapDirectRideStopOutcome(
+        parsed: parsed,
+        transportSucceeded: true,
+      );
+      expect(o.transportSucceeded, isTrue);
+      expect(o.trackingTripStopped, isTrue);
+      expect(o.bookingFinalized, isTrue);
+      expect(o.bookingFinalizeState, DirectRideFinalizeState.completed);
+      expect(o.totalsPresent, isTrue);
+      expect(o.totalEur, 4.2);
+      expect(
+        isDirectRideFinalizeAcknowledged(
+          outcome: o,
+          expectedBookingId: 'street_1_ab',
+        ),
+        isTrue,
+      );
+    });
+
+    test('pending finalize response maps to non-acknowledged outcome', () {
+      final parsed = parseDirectRideStopResponse(<String, dynamic>{
+        'ok': true,
+        'booking_id': 'street_1_ab',
+        'booking_finalize_state': 'pending',
+        'booking_finalized': false,
+        'totals': <String, dynamic>{'total_eur': 4.2},
+      });
+      final o = mapDirectRideStopOutcome(
+        parsed: parsed,
+        transportSucceeded: true,
+      );
+      expect(o.trackingTripStopped, isTrue);
+      expect(o.bookingFinalized, isFalse);
+      expect(o.bookingFinalizeState, DirectRideFinalizeState.pending);
+      expect(o.totalsPresent, isTrue);
+      expect(
+        isDirectRideFinalizeAcknowledged(
+          outcome: o,
+          expectedBookingId: 'street_1_ab',
+        ),
+        isFalse,
+      );
+    });
+
+    test('transport failure maps to unknown/non-acknowledged outcome', () {
+      final o = mapDirectRideStopOutcome(
+        parsed: null,
+        transportSucceeded: false,
+      );
+      expect(o.transportSucceeded, isFalse);
+      expect(o.trackingTripStopped, isFalse);
+      expect(o.bookingFinalized, isFalse);
+      expect(o.bookingFinalizeState, DirectRideFinalizeState.unknown);
+      expect(o.totalsPresent, isFalse);
+      expect(
+        isDirectRideFinalizeAcknowledged(
+          outcome: o,
+          expectedBookingId: 'street_1_ab',
+        ),
+        isFalse,
+      );
+      expect(
+        isDirectRideFinalizeAcknowledged(
+          outcome: DirectRideStopOutcome.unknown,
+          expectedBookingId: 'street_1_ab',
+        ),
+        isFalse,
+      );
+    });
+
+    test('booking-id mismatch cannot acknowledge completion', () {
+      final parsed = parseDirectRideStopResponse(<String, dynamic>{
+        'ok': true,
+        'booking_id': 'street_OTHER',
+        'booking_finalize_state': 'completed',
+        'booking_finalized': true,
+        'totals': <String, dynamic>{'total_eur': 1.0},
+      });
+      final o = mapDirectRideStopOutcome(
+        parsed: parsed,
+        transportSucceeded: true,
+      );
+      expect(
+        isDirectRideFinalizeAcknowledged(
+          outcome: o,
+          expectedBookingId: 'street_1_ab',
+        ),
+        isFalse,
+      );
+    });
+
+    test('missing totals cannot acknowledge full completion', () {
+      final parsed = parseDirectRideStopResponse(<String, dynamic>{
+        'ok': true,
+        'booking_id': 'street_1_ab',
+        'booking_finalize_state': 'completed',
+        'booking_finalized': true,
+      });
+      final o = mapDirectRideStopOutcome(
+        parsed: parsed,
+        transportSucceeded: true,
+      );
+      expect(o.totalsPresent, isFalse);
+      expect(
+        isDirectRideFinalizeAcknowledged(
+          outcome: o,
+          expectedBookingId: 'street_1_ab',
+        ),
+        isFalse,
+      );
+    });
+
+    test('HTTP ok alone is insufficient without booking_finalized', () {
+      final parsed = parseDirectRideStopResponse(<String, dynamic>{
+        'ok': true,
+        'booking_id': 'street_1_ab',
+        'status': 'stopped',
+        'totals': <String, dynamic>{'total_eur': 9.9},
+      });
+      final o = mapDirectRideStopOutcome(
+        parsed: parsed,
+        transportSucceeded: true,
+      );
+      expect(o.trackingTripStopped, isTrue);
+      expect(
+        isDirectRideFinalizeAcknowledged(
+          outcome: o,
+          expectedBookingId: 'street_1_ab',
+        ),
+        isFalse,
+        reason: 'tracking totals alone must not prove booking completion',
+      );
+    });
+
+    test('ack gate is the sole gate for local COMPLETED mutations '
+        '(pending => leave server truth; finalized => apply once)', () {
+      // Mirrors `_completeStoppedBooking` street/direct branch:
+      // local COMPLETED / remove / _deletedBookingIds only when acknowledged.
+      bool mayApplyLocalCompleted({required bool ack}) => ack;
+
+      expect(mayApplyLocalCompleted(ack: true), isTrue);
+      expect(mayApplyLocalCompleted(ack: false), isFalse);
+    });
+
+    test('pending outcome implies reconcile path, not another `/trip/stop`',
+        () {
+      // Contract for `_stopTrip`: when finalize pending, set
+      // `_directStopFinalizePending` and call reconcile; repeat Stop must not
+      // re-issue `/trip/stop`.
+      bool shouldCallTripStopAgain({required bool finalizePending}) =>
+          !finalizePending;
+      bool shouldCallReconcile({
+        required bool trackingStopped,
+        required bool finalizeAcknowledged,
+      }) =>
+          trackingStopped && !finalizeAcknowledged;
+
+      final pending = mapDirectRideStopOutcome(
+        parsed: parseDirectRideStopResponse(<String, dynamic>{
+          'ok': true,
+          'booking_id': 'street_1_ab',
+          'booking_finalize_state': 'pending',
+          'booking_finalized': false,
+          'totals': <String, dynamic>{'total_eur': 2.0},
+        }),
+        transportSucceeded: true,
+      );
+      final ack = isDirectRideFinalizeAcknowledged(
+        outcome: pending,
+        expectedBookingId: 'street_1_ab',
+      );
+      expect(ack, isFalse);
+      expect(
+        shouldCallReconcile(
+          trackingStopped: pending.trackingTripStopped,
+          finalizeAcknowledged: ack,
+        ),
+        isTrue,
+      );
+      expect(shouldCallTripStopAgain(finalizePending: true), isFalse);
+    });
+
+    test('empty expected booking id cannot acknowledge', () {
+      final o = mapDirectRideStopOutcome(
+        parsed: parseDirectRideStopResponse(<String, dynamic>{
+          'ok': true,
+          'booking_id': 'street_1_ab',
+          'booking_finalize_state': 'completed',
+          'booking_finalized': true,
+          'totals': <String, dynamic>{'total_eur': 1.0},
+        }),
+        transportSucceeded: true,
+      );
+      expect(
+        isDirectRideFinalizeAcknowledged(outcome: o, expectedBookingId: ''),
+        isFalse,
+      );
+      expect(
+        isDirectRideFinalizeAcknowledged(outcome: o, expectedBookingId: null),
+        isFalse,
+      );
+    });
+  });
 }

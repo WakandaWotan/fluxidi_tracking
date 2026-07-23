@@ -374,6 +374,123 @@ class DirectRideStopResult {
 }
 
 // ===========================================================================
+// DIRECT-RIDE-FINALIZE-ACK-GATE-1 — structured stop outcome + ack gate.
+//
+// HTTP 200 / `ok:true` on `/trip/stop` only proves the tracking trip stopped.
+// Local COMPLETED UI for a street/direct booking requires an explicit booking
+// finalize acknowledgement (`booking_finalized` + completed state + matching
+// booking id + totals). These pure helpers keep that distinction unit-
+// testable without the driver-home widget.
+// ===========================================================================
+
+/// Canonical booking-finalize state for a direct/street stop outcome.
+enum DirectRideFinalizeState {
+  /// Booking worker confirmed `finalize-direct` completed.
+  completed,
+
+  /// Tracking trip stopped but booking finalization is still pending.
+  pending,
+
+  /// Transport failure or unparseable finalize state — not acknowledged.
+  unknown,
+}
+
+/// Immutable structured outcome of `POST /trip/stop` for street/direct rides.
+class DirectRideStopOutcome {
+  const DirectRideStopOutcome({
+    required this.transportSucceeded,
+    required this.trackingTripStopped,
+    required this.bookingId,
+    required this.bookingFinalized,
+    required this.bookingFinalizeState,
+    required this.totalEur,
+    required this.totalsPresent,
+  });
+
+  /// HTTP layer succeeded and body parsed as an `ok` response.
+  final bool transportSucceeded;
+
+  /// Tracking worker acknowledged the trip is stopped (independent of booking).
+  final bool trackingTripStopped;
+
+  final String? bookingId;
+  final bool bookingFinalized;
+  final DirectRideFinalizeState bookingFinalizeState;
+  final double? totalEur;
+  final bool totalsPresent;
+
+  /// Transport / parse failure — never treat as booking completion.
+  static const DirectRideStopOutcome unknown = DirectRideStopOutcome(
+    transportSucceeded: false,
+    trackingTripStopped: false,
+    bookingId: null,
+    bookingFinalized: false,
+    bookingFinalizeState: DirectRideFinalizeState.unknown,
+    totalEur: null,
+    totalsPresent: false,
+  );
+}
+
+DirectRideFinalizeState _finalizeStateFromToken(String raw) {
+  final t = raw.trim().toLowerCase();
+  if (t == kDirectTripFinalizeCompleted) {
+    return DirectRideFinalizeState.completed;
+  }
+  if (t == kDirectTripFinalizePending) {
+    return DirectRideFinalizeState.pending;
+  }
+  return DirectRideFinalizeState.unknown;
+}
+
+/// Map a parsed `/trip/stop` body (or transport failure) into a structured
+/// [DirectRideStopOutcome]. Pure; unit-tested.
+DirectRideStopOutcome mapDirectRideStopOutcome({
+  required DirectRideStopResult? parsed,
+  required bool transportSucceeded,
+}) {
+  if (!transportSucceeded || parsed == null || !parsed.ok) {
+    return DirectRideStopOutcome.unknown;
+  }
+  final state = _finalizeStateFromToken(parsed.bookingFinalizeState);
+  final finalized = parsed.bookingFinalized &&
+      state == DirectRideFinalizeState.completed;
+  return DirectRideStopOutcome(
+    transportSucceeded: true,
+    // Worker contract: `ok:true` on `/trip/stop` means the trip is stopped.
+    trackingTripStopped: true,
+    bookingId: parsed.bookingId,
+    bookingFinalized: finalized,
+    bookingFinalizeState: finalized
+        ? DirectRideFinalizeState.completed
+        : (state == DirectRideFinalizeState.pending
+            ? DirectRideFinalizeState.pending
+            : DirectRideFinalizeState.unknown),
+    totalEur: parsed.totalEur,
+    totalsPresent: parsed.totalEur != null,
+  );
+}
+
+/// True only when the server has authoritatively acknowledged booking
+/// completion for the exact active direct booking. HTTP stop success alone is
+/// never sufficient.
+bool isDirectRideFinalizeAcknowledged({
+  required DirectRideStopOutcome outcome,
+  required String? expectedBookingId,
+}) {
+  final expected = (expectedBookingId ?? '').trim();
+  final got = (outcome.bookingId ?? '').trim();
+  if (!outcome.transportSucceeded) return false;
+  if (!outcome.trackingTripStopped) return false;
+  if (!outcome.bookingFinalized) return false;
+  if (outcome.bookingFinalizeState != DirectRideFinalizeState.completed) {
+    return false;
+  }
+  if (expected.isEmpty || got.isEmpty || expected != got) return false;
+  if (!outcome.totalsPresent) return false;
+  return true;
+}
+
+// ===========================================================================
 // DIRECT-RIDE-EXISTING-BOOKING-OWNERSHIP-1 — reopen safety helpers.
 //
 // A booking that originated from a street/direct ride must never be routed

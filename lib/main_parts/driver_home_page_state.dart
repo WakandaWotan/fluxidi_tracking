@@ -213,6 +213,12 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _directRideActive = false;
   bool _directTripStartWorkerOk = false;
   bool _directTripStopWorkerOk = false;
+  // DIRECT-RIDE-FINALIZE-ACK-GATE-1: tracking trip has been stopped but the
+  // booking finalize acknowledgement is still pending/unknown. Meter must stay
+  // off (`_directRideActive` remains false) while identifiers are retained for
+  // reconcile. Blocks a second `/trip/stop` until finalize is acknowledged or
+  // the ride session is fully cleared.
+  bool _directStopFinalizePending = false;
   String? _directRideDestinationText;
   _LonLat? _directRideDestinationPoint;
   double? _directRideEstimatedFare;
@@ -1694,6 +1700,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         _directRideKey = null;
         _activeBooking = null;
         _directRideActive = false;
+        _directStopFinalizePending = false;
         _directRideDestinationText = null;
         _directRideDestinationPoint = null;
         _directRideEstimatedFare = null;
@@ -3657,6 +3664,28 @@ class _DriverHomePageState extends State<DriverHomePage>
     } catch (e) {
       _toast('Open ride failed: $e');
     }
+  }
+
+  /// DIRECT-RIDE-FINALIZE-ACK-GATE-1: ride stopped but booking finalize is
+  /// still pending/unknown. No fake Completed state; server truth remains.
+  void _showStreetDirectFinalizePendingSnackbar() {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 6),
+        content: Text(
+          _tr(
+            nl: 'Rit gestopt. De afrekening wordt nog afgerond.',
+            en: 'Ride stopped. Finalization is still in progress.',
+            fr: 'Course arrêtée. La finalisation est encore en cours.',
+            es: 'Viaje detenido. La finalización sigue en curso.',
+          ),
+        ),
+      ),
+    );
   }
 
   /// DIRECT-RIDE-PLANNED-STOP-GUARD-1: bounded, localized safe-fail UX for a
@@ -6714,7 +6743,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
-  Future<double?> _stopDirectTripSessionOnWorker({
+  Future<DirectRideStopOutcome> _stopDirectTripSessionOnWorker({
     required String tripId,
     required double kmTotal,
     required int waitSecondsTotal,
@@ -6724,7 +6753,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         action: 'stop_direct_trip',
         showUx: false,
       );
-      if (strictScope == null) return null;
+      if (strictScope == null) {
+        unawaited(_persistDirectTripSession(
+          localLifecycle: kDirectTripLocalLifecycleStopped,
+          bookingFinalizeState: kDirectTripFinalizePending,
+        ));
+        return DirectRideStopOutcome.unknown;
+      }
       final payload = withDirectRideBookingStopFields(<String, dynamic>{
         'trip_id': tripId,
         ...strictScope,
@@ -6748,11 +6783,20 @@ class _DriverHomePageState extends State<DriverHomePage>
         throw Exception('Invalid direct trip stop response: ${res.body}');
       }
       _directTripStopWorkerOk = true;
-      // STREET-RIDE-DURABLE-COMPLETION-2: capture the durable finalize state so
-      // we never falsely represent booking sync as successful. A `pending`
-      // state keeps the session for startup reconciliation; `completed` clears.
+      // STREET-RIDE-DURABLE-COMPLETION-2 + DIRECT-RIDE-FINALIZE-ACK-GATE-1:
+      // preserve the full finalize acknowledgement. Cleared only when the
+      // booking is authoritatively finalized; otherwise keep stopped/pending
+      // recovery evidence (never invent a new key or booking).
       final stopResult = parseDirectRideStopResponse(decoded);
-      if (stopResult.bookingFinalized) {
+      final outcome = mapDirectRideStopOutcome(
+        parsed: stopResult,
+        transportSucceeded: true,
+      );
+      final ack = isDirectRideFinalizeAcknowledged(
+        outcome: outcome,
+        expectedBookingId: _activeDirectBookingId,
+      );
+      if (ack) {
         unawaited(_clearDirectTripSession());
       } else {
         unawaited(_persistDirectTripSession(
@@ -6760,17 +6804,17 @@ class _DriverHomePageState extends State<DriverHomePage>
           bookingFinalizeState: kDirectTripFinalizePending,
         ));
       }
-      return stopResult.totalEur;
+      return outcome;
     } catch (e) {
       _directTripStopWorkerOk = false;
-      // Stop-on-worker failed entirely: keep a stopped+pending session so the
-      // next launch can reconcile the linked booking.
+      // Transport / unknown: do not assume the tracking trip is still active,
+      // and never treat this as booking completion. Persist recovery identity.
       unawaited(_persistDirectTripSession(
         localLifecycle: kDirectTripLocalLifecycleStopped,
         bookingFinalizeState: kDirectTripFinalizePending,
       ));
-      debugPrint('[DIRECT_TRIP][STOP][WARN] using local total: $e');
-      return null;
+      debugPrint('[DIRECT_TRIP][STOP][WARN] outcome=unknown reason=$e');
+      return DirectRideStopOutcome.unknown;
     }
   }
 
@@ -7556,6 +7600,19 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _stopTrip() async {
+    // DIRECT-RIDE-FINALIZE-ACK-GATE-1: a second Stop while finalize is pending
+    // must not re-call `/trip/stop`. Meter is already off; only reconcile owns
+    // booking finalization retries.
+    if (_directStopFinalizePending) {
+      _logDriverNavDiag(
+        tag: 'STOP_FINALIZE_PENDING',
+        action: 'stop_trip',
+        bookingId: _activeDirectBookingId ?? _activeBooking?.bookingId ?? '',
+      );
+      _showStreetDirectFinalizePendingSnackbar();
+      return;
+    }
+
     final trip = _activeTripId;
     if (trip == null && !_directRideActive) return;
     final stoppedBooking = _activeBooking;
@@ -7607,6 +7664,8 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     // NAV-RIDE-BOUNDARY: invalidate route ownership BEFORE network awaits so a
     // fast next-ride start cannot race uncleared geometry / style restores.
+    // Meter stops here: `_directRideActive=false` so UI never believes the
+    // ride is still running while finalize may still be pending.
     _hardClearAtRideBoundary(reason: 'stop_begin', bumpSession: true);
     if (mounted) {
       setState(() {
@@ -7661,16 +7720,27 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
     }
 
-    double? serverDirectTotal;
+    DirectRideStopOutcome? directStopOutcome;
     if (wasDirectRide &&
         directTripId != null &&
         directTripId.trim().isNotEmpty) {
-      serverDirectTotal = await _stopDirectTripSessionOnWorker(
+      directStopOutcome = await _stopDirectTripSessionOnWorker(
         tripId: directTripId,
         kmTotal: _kmDriven,
         waitSecondsTotal: _effectiveWaitElapsed.inSeconds,
       );
     }
+
+    // DIRECT-RIDE-FINALIZE-ACK-GATE-1: local COMPLETED only after authoritative
+    // booking finalize acknowledgement (matching booking id + completed state
+    // + totals). Tracking stop alone is insufficient.
+    var directFinalizeAcknowledged = wasDirectRide &&
+        directStopOutcome != null &&
+        isDirectRideFinalizeAcknowledged(
+          outcome: directStopOutcome,
+          expectedBookingId: directBookingId,
+        );
+    final serverDirectTotal = directStopOutcome?.totalEur;
 
     _stopMeterTicker();
     _stopTrackingInternal();
@@ -7679,6 +7749,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       await _completeStoppedBooking(
         stoppedBooking,
         plannedStopBridgeAlreadyCompletedLeg: plannedTripStopBridgeOk,
+        directFinalizeAcknowledged: directFinalizeAcknowledged,
       );
     }
     if (!wasDirectRide && stoppedBooking != null) {
@@ -7727,21 +7798,67 @@ class _DriverHomePageState extends State<DriverHomePage>
           totalEur: finalDirectTotal,
         );
       }
+
+      if (!directFinalizeAcknowledged &&
+          directTripId != null &&
+          directTripId.trim().isNotEmpty) {
+        // Bounded single in-session reconcile — never retry via `/trip/stop`.
+        _directStopFinalizePending = true;
+        final reconciled = await _reconcileDirectBookingOnWorker(
+          tripId: directTripId,
+        );
+        if (reconciled) {
+          directFinalizeAcknowledged = true;
+          _directStopFinalizePending = false;
+          unawaited(_clearDirectTripSession());
+          if (stoppedBooking != null) {
+            await _completeStoppedBooking(
+              stoppedBooking,
+              plannedStopBridgeAlreadyCompletedLeg: false,
+              directFinalizeAcknowledged: true,
+            );
+          }
+          unawaited(
+            _refreshBookings(
+              force: true,
+              trigger: 'street_finalize_reconcile_ok',
+            ),
+          );
+        } else {
+          // Keep recovery identity + identifiers; leave list on server truth.
+          unawaited(_persistDirectTripSession(
+            localLifecycle: kDirectTripLocalLifecycleStopped,
+            bookingFinalizeState: kDirectTripFinalizePending,
+          ));
+          _showStreetDirectFinalizePendingSnackbar();
+        }
+      }
+
       _directTripStartWorkerOk = false;
       _directTripStopWorkerOk = false;
-      _activeDirectBookingId = null;
-      _directRideKey = null;
+      if (directFinalizeAcknowledged) {
+        _activeDirectBookingId = null;
+        _directRideKey = null;
+        _activeDirectTripId = null;
+        _directStopFinalizePending = false;
+      }
+      // When pending/unknown: retain `_activeDirectBookingId`, `_directRideKey`,
+      // `_activeDirectTripId` for reconcile — meter stays off via
+      // `_directRideActive == false`.
     }
     await _clearActiveRouteAndNavigationState(
       reason: 'stop',
       bookingId: stoppedBooking?.bookingId,
-      clearActiveSelection: true,
+      // Preserve direct identity while finalize is still pending/unknown.
+      clearActiveSelection: !wasDirectRide || directFinalizeAcknowledged,
     );
-    if (wasDirectRide) {
+    if (wasDirectRide && directFinalizeAcknowledged) {
       // Mirror the canonical finalized amount: server total wins as-is;
       // otherwise the €0.10-rounded client fallback.
       final shownTotal =
-          serverDirectTotal ?? roundFareEuroToNearestTenCents(finalTotal) ?? finalTotal;
+          serverDirectTotal ??
+              roundFareEuroToNearestTenCents(finalTotal) ??
+              finalTotal;
       _toast('Straatrit afgerond: € ${shownTotal.toStringAsFixed(2)}');
     }
     unawaited(_refreshCompletedTodayCount(reason: 'trip_stop'));
@@ -7750,6 +7867,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _completeStoppedBooking(
     BookingItem b, {
     bool plannedStopBridgeAlreadyCompletedLeg = false,
+    bool directFinalizeAcknowledged = false,
   }) async {
     final bookingId = b.bookingId;
     final rowKey = b.rowKey;
@@ -7761,16 +7879,24 @@ class _DriverHomePageState extends State<DriverHomePage>
     // DIRECT-RIDE-PLANNED-STOP-GUARD-1 (defense in depth): a street/direct
     // booking's authoritative COMPLETED transition is stamped server-side by
     // `finalize-direct` (during `/trip/stop`). We must not fire the generic
-    // `/bookings/{id}/status` COMPLETED update here as a substitute; the
-    // local UI reconciliation still runs so the row moves out of the open
-    // bucket immediately.
+    // `/bookings/{id}/status` COMPLETED update here as a substitute.
+    // DIRECT-RIDE-FINALIZE-ACK-GATE-1: local COMPLETED UI mutations require
+    // an acknowledged finalize; pending/unknown must leave server truth visible.
     final isStreetDirect = isStreetDirectBooking(<String, dynamic>{
       ...b.details,
       if (b.bookingId.trim().isNotEmpty) 'booking_id': b.bookingId,
     });
     debugPrint(
-      '[ROUNDTRIP_STATUS][LEG_COMPLETE] parent=$bookingId leg=${legId.isEmpty ? "-" : legId} leg_type=$legType old=${previousStatus.isEmpty ? "-" : previousStatus} new=COMPLETED scope=${isLegScopedCompletion ? "leg" : "parent"} source=driver_cockpit_stop street_direct=$isStreetDirect',
+      '[ROUNDTRIP_STATUS][LEG_COMPLETE] parent=$bookingId leg=${legId.isEmpty ? "-" : legId} leg_type=$legType old=${previousStatus.isEmpty ? "-" : previousStatus} new=COMPLETED scope=${isLegScopedCompletion ? "leg" : "parent"} source=driver_cockpit_stop street_direct=$isStreetDirect finalize_ack=$directFinalizeAcknowledged',
     );
+
+    if (isStreetDirect && !isLegScopedCompletion && !directFinalizeAcknowledged) {
+      debugPrint(
+        '[STREET_DIRECT_COMPLETE_GUARD] action=skip_local_completed booking=$bookingId '
+        'reason=finalize_not_acknowledged',
+      );
+      return;
+    }
     // Roundtrip operational-leg false toast suppression: when the planned trip
     // stop bridge already accepted this leg's completion (worker-side bridge
     // applies COMPLETED with bypass_future_pickup_guard), a second direct call
@@ -7788,8 +7914,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       // DIRECT-RIDE-PLANNED-STOP-GUARD-1: `finalize-direct` owns the
       // authoritative COMPLETED transition + fare stamping for this booking.
       // Do not send a generic `/bookings/{id}/status` COMPLETED as a
-      // substitute for direct finalization. The local UI reconciliation
-      // below still runs so the driver sees the row leave the open bucket.
+      // substitute for direct finalization. Local UI reconciliation below runs
+      // only because finalize was acknowledged (DIRECT-RIDE-FINALIZE-ACK-GATE-1).
       debugPrint(
         '[STREET_DIRECT_COMPLETE_GUARD] action=skip_generic_status booking=$bookingId '
         'reason=finalize_direct_owns_completed_transition',
