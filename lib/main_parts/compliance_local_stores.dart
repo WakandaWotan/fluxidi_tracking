@@ -334,6 +334,113 @@ class _LocalDirectTripHistoryStore {
   }
 }
 
+/// STREET-RIDE-DURABLE-COMPLETION-2: durable single-record store for the active
+/// / last direct-trip session so a crash or restart can resume an active ride
+/// or reconcile a stopped-but-unfinalized booking. Scoped under the same
+/// tenant/company directory as the other local stores; the record also carries
+/// driver_id so a device shared across drivers only recovers its own session.
+class _DirectTripSessionStore {
+  static const String _fileName = 'direct_trip_session_v1.json';
+
+  static Future<File> _scopedFile({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final base = await getApplicationDocumentsDirectory();
+    final scopedDir = Directory(
+      '${base.path}${Platform.pathSeparator}compliance_state${Platform.pathSeparator}tenant_${_localScopePathSegment(tenantId)}${Platform.pathSeparator}company_${_localScopePathSegment(companyId)}',
+    );
+    if (!await scopedDir.exists()) {
+      await scopedDir.create(recursive: true);
+    }
+    return File('${scopedDir.path}${Platform.pathSeparator}$_fileName');
+  }
+
+  static Future<void> save(
+    DirectTripSession session, {
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+  }) async {
+    if (kIsWeb) return;
+    final normalizedTenant = tenantId.trim();
+    final normalizedCompany = companyId.trim();
+    if (normalizedTenant.isEmpty || normalizedCompany.isEmpty) return;
+    try {
+      final file = await _scopedFile(
+        tenantId: normalizedTenant,
+        companyId: normalizedCompany,
+      );
+      final payload = session
+          .copyWith(
+            tenantId: normalizedTenant,
+            companyId: normalizedCompany,
+            driverId: driverId.trim().isEmpty ? session.driverId : driverId.trim(),
+            updatedAtIso: DateTime.now().toUtc().toIso8601String(),
+          )
+          .toJson();
+      await file.writeAsString(jsonEncode(payload), flush: true);
+    } catch (_) {
+      // Best-effort persistence; never break ride UX.
+    }
+  }
+
+  static Future<DirectTripSession?> load({
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+  }) async {
+    if (kIsWeb) return null;
+    final normalizedTenant = tenantId.trim();
+    final normalizedCompany = companyId.trim();
+    if (normalizedTenant.isEmpty || normalizedCompany.isEmpty) return null;
+    try {
+      final file = await _scopedFile(
+        tenantId: normalizedTenant,
+        companyId: normalizedCompany,
+      );
+      if (!await file.exists()) return null;
+      final raw = (await file.readAsString()).trim();
+      if (raw.isEmpty) return null;
+      final session = DirectTripSession.fromJson(jsonDecode(raw));
+      if (session == null) return null;
+      final sessionDriver = (session.driverId ?? '').trim();
+      final wantDriver = driverId.trim();
+      // Only recover a session that belongs to the current driver (or a legacy
+      // record with no driver stamp).
+      if (sessionDriver.isNotEmpty &&
+          wantDriver.isNotEmpty &&
+          sessionDriver != wantDriver) {
+        return null;
+      }
+      return session;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> clear({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    if (kIsWeb) return;
+    final normalizedTenant = tenantId.trim();
+    final normalizedCompany = companyId.trim();
+    if (normalizedTenant.isEmpty || normalizedCompany.isEmpty) return;
+    try {
+      final file = await _scopedFile(
+        tenantId: normalizedTenant,
+        companyId: normalizedCompany,
+      );
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {
+      // Best-effort clear.
+    }
+  }
+}
+
 /// ===============================
 /// BRANDING (Fluxidi Taxi UI)
 /// ===============================
