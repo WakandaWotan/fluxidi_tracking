@@ -818,6 +818,164 @@ class DriverNavComplexityCautionBanner extends StatelessWidget {
   }
 }
 
+/// NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1: compact, sanitized
+/// connectivity/retry banner shown when an initial route request failed and no
+/// valid route exists. It NEVER contains a raw exception, token, URI or
+/// coordinates — only localized copy + a manual Retry action. It deliberately
+/// replaces the generic "Follow the route" banner in the no-route failure state.
+class DriverNavRouteUnavailableBanner extends StatelessWidget {
+  final bool compact;
+  final bool isTablet;
+  final bool topRowLandscape;
+  final String message;
+  final String retryLabel;
+  final VoidCallback? onRetry;
+  final ValueListenable<DriverThemeVariant>? themeListenable;
+
+  const DriverNavRouteUnavailableBanner({
+    super.key,
+    required this.compact,
+    this.isTablet = false,
+    this.topRowLandscape = false,
+    required this.message,
+    required this.retryLabel,
+    this.onRetry,
+    this.themeListenable,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<DriverThemeVariant>(
+      valueListenable: themeListenable ?? driverThemeNotifier,
+      builder: (context, variant, _) {
+        final palette = paletteForDriverTheme(variant);
+        const warn = Color(0xFFFFB020);
+        return ClipRRect(
+          key: const ValueKey<String>('nav_route_unavailable_banner'),
+          borderRadius: BorderRadius.circular(compact ? 14 : 16),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(
+              sigmaX: compact ? 8 : 10,
+              sigmaY: compact ? 8 : 10,
+            ),
+            child: Container(
+              constraints: BoxConstraints(
+                minHeight: topRowLandscape
+                    ? (isTablet ? 56 : 52)
+                    : (compact ? 52 : (isTablet ? 64 : 56)),
+              ),
+              padding: EdgeInsets.symmetric(
+                horizontal: topRowLandscape ? 8 : (compact ? 12 : 14),
+                vertical: topRowLandscape ? 6 : (compact ? 8 : 10),
+              ),
+              decoration: BoxDecoration(
+                color: palette.surface.withOpacity(
+                  palette.isDark ? 0.92 : 0.96,
+                ),
+                borderRadius: BorderRadius.circular(compact ? 14 : 16),
+                border: Border.all(
+                  color: warn.withOpacity(palette.isDark ? 0.85 : 0.95),
+                  width: 1.4,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.wifi_off_rounded,
+                    size: topRowLandscape ? 18 : (compact ? 20 : 22),
+                    color: warn,
+                  ),
+                  SizedBox(width: topRowLandscape ? 8 : (compact ? 10 : 12)),
+                  Expanded(
+                    child: Text(
+                      message,
+                      maxLines: topRowLandscape ? 1 : 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: topRowLandscape
+                            ? (isTablet ? 12 : 11)
+                            : (compact ? 13 : (isTablet ? 16 : 14)),
+                        fontWeight: FontWeight.w800,
+                        color: palette.textPrimary.withOpacity(0.94),
+                      ),
+                    ),
+                  ),
+                  if (onRetry != null) ...[
+                    SizedBox(width: topRowLandscape ? 6 : 8),
+                    _RetryChip(
+                      label: retryLabel,
+                      palette: palette,
+                      compact: compact || topRowLandscape,
+                      onTap: onRetry!,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _RetryChip extends StatelessWidget {
+  const _RetryChip({
+    required this.label,
+    required this.palette,
+    required this.compact,
+    required this.onTap,
+  });
+  final String label;
+  final DriverThemePalette palette;
+  final bool compact;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 32),
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 10 : 12,
+            vertical: compact ? 5 : 7,
+          ),
+          decoration: BoxDecoration(
+            color: palette.accent.withOpacity(0.24),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: palette.textPrimary.withOpacity(0.20)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.refresh_rounded,
+                size: compact ? 15 : 17,
+                color: palette.textPrimary.withOpacity(0.95),
+              ),
+              SizedBox(width: compact ? 5 : 6),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: compact ? 12 : 13,
+                  fontWeight: FontWeight.w900,
+                  color: palette.textPrimary.withOpacity(0.98),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class DriverNoNavInstructionsBanner extends StatelessWidget {
   final bool compact;
   final bool isTablet;

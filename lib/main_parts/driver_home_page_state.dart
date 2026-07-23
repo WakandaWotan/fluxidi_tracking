@@ -647,6 +647,16 @@ class _DriverHomePageState extends State<DriverHomePage>
   DriverResolvedLaneGuidance? _activeLaneGuidance;
   String? _lastLaneResolveDiag;
   bool _navStepsLoading = false;
+  // NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1: bounded, PII-free route
+  // request failure state. Set only when a route request fails AND no valid
+  // route is currently applied (initial failure). A reroute failure that still
+  // has a valid current route never sets this (the old route stays authoritative).
+  NavRouteErrorKind? _navRouteFailureKind;
+  int _navRouteRetryAttempt = 0;
+  // Monotonic generation for bounded latest-wins retry scheduling: any pending
+  // retry whose generation != this is stale and must not fire.
+  int _navRouteRetryGeneration = 0;
+  Timer? _navRouteRetryTimer;
   double _uiArrowBearing = 0.0;
   _RouteSnap? _lastRouteSnap;
   double? _lastMovementBearing;
@@ -999,6 +1009,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     _offRouteHitCount = 0;
     _offRouteLikely = false;
     _offRouteReason = 'none';
+    // NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1: a full route-state teardown
+    // also clears any pending route-failure/retry so a stale connectivity banner
+    // or auto-retry can never survive into the next session.
+    _clearNavRouteFailure();
     _isRerouting = false;
     _rerouteOwnershipAccepted = false;
     _lastRerouteAt = null;
@@ -2826,6 +2840,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _hardClearAtRideBoundary(reason: 'dispose', bumpSession: true);
     _markerSelfHealTimer?.cancel();
     _markerSelfHealTimer = null;
+    // NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1: stop bounded route retries.
+    _navRouteRetryTimer?.cancel();
+    _navRouteRetryTimer = null;
     _driver3dActivationConfirmRetryTimer?.cancel();
     _driver3dActivationConfirmRetryTimer = null;
     _navInternetStatusSubscription?.cancel();
@@ -17904,9 +17921,12 @@ class _DriverHomePageState extends State<DriverHomePage>
           routeRenderEpoch: renderEpoch,
         ),
       );
+      _clearNavRouteFailure();
       return true;
-    } catch (_) {
-      // Keep previous route if pickup route fetch fails.
+    } catch (e) {
+      // NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1: sanitize (no raw
+      // exception/token/URI/coords). Keep any existing route authoritative.
+      _handleNavRouteRequestFailure(e, isReroute: _isRerouting);
       return false;
     } finally {
       if (_isRouteTaskStillValid(
@@ -17983,9 +18003,12 @@ class _DriverHomePageState extends State<DriverHomePage>
           routeRenderEpoch: renderEpoch,
         ),
       );
+      _clearNavRouteFailure();
       return true;
-    } catch (_) {
-      // Keep previous route if destination route fetch fails.
+    } catch (e) {
+      // NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1: sanitize (no raw
+      // exception/token/URI/coords). Keep any existing route authoritative.
+      _handleNavRouteRequestFailure(e, isReroute: _isRerouting);
       return false;
     } finally {
       if (_isRouteTaskStillValid(
@@ -18058,9 +18081,15 @@ class _DriverHomePageState extends State<DriverHomePage>
         ),
       );
       _scheduleDirectRideEstimateRefresh(reason: 'route_changed');
+      // NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1: a complete valid route is
+      // now applied — clear any prior connectivity-failure/retry state.
+      _clearNavRouteFailure();
       return true;
     } catch (e) {
-      _toast('Straatrit route mislukt: $e');
+      // NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1: never surface the raw
+      // exception (token/URI/coordinates). Classify + sanitize; keep the metered
+      // street ride running; enter a bounded retry state when no valid route.
+      _handleNavRouteRequestFailure(e, isReroute: _isRerouting);
       return false;
     } finally {
       if (_isRouteTaskStillValid(epoch: epoch, requireDirectRide: true)) {
@@ -19364,7 +19393,15 @@ class _DriverHomePageState extends State<DriverHomePage>
         request: request,
       );
     } catch (e) {
-      _toast('Route overview failed: $e');
+      // NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1: never toast the raw
+      // exception (it carries the Mapbox URI + token + coordinates). Log a
+      // redacted, coarse code only; the worker fallback runs next.
+      _logNavBounded(
+        'NAV_ROUTE_FAIL',
+        'stage=overview code=${navRouteErrorCode(classifyNavRouteError(e))} '
+            'detail=${redactNavRouteDiagnostic(e.toString())}',
+        intervalMs: 1500,
+      );
       await _tryWorkerRouteFallback(
         fromText: b.from!,
         toText: b.to!,
@@ -19467,7 +19504,16 @@ class _DriverHomePageState extends State<DriverHomePage>
         await _fitBoundsToRoute(out);
       }
     } catch (e) {
-      _toast('Worker route failed: $e');
+      // NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1: sanitize — no raw
+      // exception/body reaches the driver. Localized, concise copy only.
+      _logNavBounded(
+        'NAV_ROUTE_FAIL',
+        'stage=worker_fallback '
+            'code=${navRouteErrorCode(classifyNavRouteError(e))} '
+            'detail=${redactNavRouteDiagnostic(e.toString())}',
+        intervalMs: 1500,
+      );
+      _toast(navRouteErrorMessage(classifyNavRouteError(e), tr: _tr).message);
     }
   }
 
@@ -19538,11 +19584,127 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   String _mapboxDirectionsLanguageCode() {
-    final lang = appConfig.currentLanguage;
-    if (lang == AppLanguage.fr) return 'fr';
-    if (lang == AppLanguage.es) return 'es';
-    if (lang == AppLanguage.en) return 'en';
-    return 'nl';
+    // NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1: single source of truth,
+    // derived from the same active locale (`appLanguageNotifier`) the nav UI
+    // uses via `_tr`, so the Directions request language always matches the UI.
+    return mapboxDirectionsLanguageCode(appConfig.currentLanguage);
+  }
+
+  // NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1 -----------------------------
+
+  /// True when a valid route is currently applied (steps present). Distinguishes
+  /// an *initial* failure (no route) from a *reroute* failure (old route stays
+  /// authoritative).
+  bool get _hasValidActiveRoute => _routeSteps.isNotEmpty;
+
+  /// Central handler for a caught route/geocode request failure. NEVER logs or
+  /// shows the raw exception, token, URI or coordinates. Sets the initial-failure
+  /// state only when no valid route exists, and schedules bounded auto-retry.
+  void _handleNavRouteRequestFailure(
+    Object error, {
+    required bool isReroute,
+  }) {
+    final kind = classifyNavRouteError(error);
+    // Bounded, PII-free diagnostic: coarse code + redacted detail (no token,
+    // URI, host or coordinates can survive redaction).
+    _logNavBounded(
+      'NAV_ROUTE_FAIL',
+      'code=${navRouteErrorCode(kind)} reroute=$isReroute '
+          'hasRoute=$_hasValidActiveRoute '
+          'detail=${redactNavRouteDiagnostic(error.toString())}',
+      intervalMs: 1500,
+    );
+    final copy = navRouteErrorMessage(kind, tr: _tr);
+    if (isReroute && _hasValidActiveRoute) {
+      // Reroute failure with an existing valid route: the old route, its version
+      // and banner ownership remain authoritative. Only a compact, bounded,
+      // sanitized warning is surfaced — no route/banner state is cleared here.
+      _toast(copy.message);
+      return;
+    }
+    // Initial failure (no valid route): enter a sanitized connectivity/retry
+    // state instead of a fabricated maneuver / generic "Follow the route" banner.
+    if (mounted) {
+      setState(() => _navRouteFailureKind = kind);
+    } else {
+      _navRouteFailureKind = kind;
+    }
+    _toast(copy.message);
+    if (navRouteErrorIsRetryable(kind)) {
+      _scheduleNavRouteRetry();
+    }
+  }
+
+  void _clearNavRouteFailure() {
+    _cancelNavRouteRetry();
+    if (_navRouteFailureKind != null) {
+      _navRouteFailureKind = null;
+    }
+    _navRouteRetryAttempt = 0;
+  }
+
+  void _cancelNavRouteRetry() {
+    _navRouteRetryTimer?.cancel();
+    _navRouteRetryTimer = null;
+    // Invalidate any already-scheduled retry (latest-wins / stop-on-nav-end).
+    _navRouteRetryGeneration++;
+  }
+
+  /// Schedules ONE bounded, latest-wins automatic retry. Never storms: each call
+  /// cancels the prior pending retry, uses exponential backoff, and stops after
+  /// [maxAutoRouteRetryAttempts] (the manual Retry action still works).
+  void _scheduleNavRouteRetry() {
+    _navRouteRetryTimer?.cancel();
+    if (_navRouteRetryAttempt >= maxAutoRouteRetryAttempts) return;
+    final delay = navRouteRetryBackoff(_navRouteRetryAttempt);
+    final generation = ++_navRouteRetryGeneration;
+    _navRouteRetryTimer = Timer(delay, () {
+      if (!mounted) return;
+      if (generation != _navRouteRetryGeneration) return; // stale request
+      if (_navRouteFailureKind == null) return; // already recovered
+      if (!_navRetryContextActive()) {
+        _clearNavRouteFailure();
+        return;
+      }
+      _navRouteRetryAttempt++;
+      unawaited(_retryFailedNavRoute());
+    });
+  }
+
+  /// Immediate manual retry from the connectivity banner ("Opnieuw proberen").
+  Future<void> _retryFailedNavRouteManually() async {
+    _cancelNavRouteRetry();
+    _navRouteRetryAttempt = 0;
+    await _retryFailedNavRoute();
+  }
+
+  /// Re-issues the current route request for the active navigation context. The
+  /// builder's own catch re-schedules bounded auto-retry on repeated failure; a
+  /// success clears the failure state. Cancels itself once navigation ends.
+  Future<void> _retryFailedNavRoute() async {
+    if (!_navRetryContextActive()) {
+      _clearNavRouteFailure();
+      return;
+    }
+    if (_directRideActive) {
+      final destination = (_directRideDestinationText ?? '').trim();
+      if (destination.isNotEmpty) {
+        await _buildDirectRouteToDestination(destination);
+      }
+      return;
+    }
+    final booking = _activeBooking;
+    if (booking == null) return;
+    if (_routePhase == _RideRoutePhase.toPickup) {
+      await _buildNavRouteToPickup(booking);
+    } else if (_activeTripId != null) {
+      await _buildNavRouteToDestination(booking);
+    }
+  }
+
+  /// Whether a live navigation/route context still exists for retrying.
+  bool _navRetryContextActive() {
+    return _directRideActive || _activeTripId != null || _activeBooking != null;
   }
 
   String _navigationWorkerCountryCode() {
@@ -25853,6 +26015,37 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  /// NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1: compact, localized, PII-free
+  /// connectivity/retry banner shown instead of a fabricated maneuver / generic
+  /// "Follow the route" banner when an initial route request failed.
+  Widget _buildRouteUnavailableBanner({
+    required bool compact,
+    required bool isTablet,
+    bool topRowLandscape = false,
+  }) {
+    final copy = navRouteErrorMessage(
+      _navRouteFailureKind ?? NavRouteErrorKind.unknown,
+      tr: _tr,
+    );
+    return DriverNavRouteUnavailableBanner(
+      compact: compact,
+      isTablet: isTablet,
+      topRowLandscape: topRowLandscape,
+      message: copy.message,
+      retryLabel: copy.retryLabel,
+      onRetry: () => unawaited(_retryFailedNavRouteManually()),
+      themeListenable: _activeDriverThemeListenable,
+    );
+  }
+
+  /// Whether the initial route-failure (no valid route) state is active and the
+  /// sanitized connectivity banner should replace the generic follow banner.
+  bool get _showRouteUnavailableBanner =>
+      _navRouteFailureKind != null &&
+      !_navStepsLoading &&
+      !_isRerouting &&
+      _routeSteps.isEmpty;
+
   Widget? _buildFollowNavBannerForTopRow({required bool isTablet}) {
     if (_cameraMode != _CameraMode.follow) return null;
     if (_showNavInstructionBanner()) {
@@ -25882,6 +26075,16 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
     }
     if (!_navStepsLoading && !_isRerouting && _routeSteps.isEmpty) {
+      // NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1: no valid route after a
+      // failed request => sanitized connectivity/retry banner, never the generic
+      // "Follow the route" (which would imply a route exists).
+      if (_showRouteUnavailableBanner) {
+        return _buildRouteUnavailableBanner(
+          compact: true,
+          isTablet: isTablet,
+          topRowLandscape: true,
+        );
+      }
       return _buildNoNavInstructionsBanner(
         compact: true,
         isTablet: isTablet,
@@ -26395,10 +26598,18 @@ class _DriverHomePageState extends State<DriverHomePage>
                     maxWidth: navBannerPortraitMaxWidth,
                   ),
                   child: _wrapNavBannerWithComplexityCaution(
-                    banner: _buildNoNavInstructionsBanner(
-                      compact: false,
-                      isTablet: isTablet,
-                    ),
+                    // NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1: a failed
+                    // initial route shows the sanitized connectivity/retry
+                    // banner instead of the generic "Follow the route".
+                    banner: _showRouteUnavailableBanner
+                        ? _buildRouteUnavailableBanner(
+                            compact: false,
+                            isTablet: isTablet,
+                          )
+                        : _buildNoNavInstructionsBanner(
+                            compact: false,
+                            isTablet: isTablet,
+                          ),
                     compact: false,
                     isTablet: isTablet,
                   ),
