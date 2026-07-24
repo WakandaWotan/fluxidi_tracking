@@ -281,6 +281,13 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _driverFinishFlagMarkerLoadAttempted = false;
   bool _driverFinishFlagMarkerAvailable = false;
   bool _driverMarkerUsesTaxiAsset = false;
+  // NAV-TELLERS-MARKER-CHOICE-APPLY-1: rasterised Arrow glyph bytes for the
+  // single Mapbox vehicle annotation (Car uses the taxi PNG asset). Cached
+  // once; _driverMarkerAppliedChoice records which choice the live annotation
+  // currently renders so a genuine selector change forces an icon swap.
+  Uint8List? _driverArrowMarkerBytes;
+  bool _driverArrowMarkerLoadAttempted = false;
+  DriverNavigationMarkerChoice? _driverMarkerAppliedChoice;
 
   /// NAV-3D-MAPBOX-2D-MARKER-ISOLATION-FIX-1: authoritative desired opacity
   /// for the native Mapbox 2D taxi marker. Set on every visibility decision
@@ -11796,8 +11803,14 @@ class _DriverHomePageState extends State<DriverHomePage>
       source: DriverNavigationMarkerChoiceSource.user,
     );
     // Single visual owner: keep the native Mapbox puck hidden while a custom
-    // marker is active. The HUD overlay swaps Car ↔ Arrow in place.
+    // marker is active.
     unawaited(_syncMapboxUserLocationPuckVisibility());
+    // NAV-TELLERS-MARKER-CHOICE-APPLY-1: since bf23d7b the single Mapbox
+    // PointAnnotation is the only vehicle marker owner (no Flutter overlay).
+    // Apply the new Car/Arrow bitmap to that existing annotation immediately
+    // — in ordinary Navigation AND Tellers — instead of waiting for the next
+    // GPS fix, so the selector visibly switches the on-map marker at once.
+    unawaited(_applyDriverMarkerChoiceToAnnotation());
   }
 
   String _navMarkerMapStyleLabel() {
@@ -16893,6 +16906,111 @@ class _DriverHomePageState extends State<DriverHomePage>
     return _driverTaxiMarkerAvailable;
   }
 
+  /// NAV-TELLERS-MARKER-CHOICE-APPLY-1: lazily rasterise the Arrow glyph into
+  /// PNG bytes (cached). Rendered at the taxi asset's native resolution so the
+  /// same Mapbox iconSize keeps the Car/Arrow on-screen footprint identical.
+  Future<Uint8List?> _ensureDriverArrowMarkerBytes() async {
+    if (_driverArrowMarkerLoadAttempted) return _driverArrowMarkerBytes;
+    _driverArrowMarkerLoadAttempted = true;
+    try {
+      _driverArrowMarkerBytes =
+          await renderNavigationDriverArrowMarkerPngBytes();
+      if (_driverArrowMarkerBytes != null &&
+          _driverArrowMarkerBytes!.isNotEmpty) {
+        debugPrint('[NAV_MARKER] arrow_asset=rendered');
+      } else {
+        _driverArrowMarkerBytes = null;
+        debugPrint('[NAV_MARKER] arrow_asset=empty');
+      }
+    } catch (_) {
+      _driverArrowMarkerBytes = null;
+      debugPrint('[NAV_MARKER] arrow_asset=failed');
+    }
+    return _driverArrowMarkerBytes;
+  }
+
+  /// NAV-TELLERS-MARKER-CHOICE-APPLY-1: resolve the image bytes for the CURRENT
+  /// [_driverNavigationMarkerChoice]. Arrow → rasterised arrow glyph; Car (or
+  /// any Arrow rasterisation failure) → taxi PNG. Distinct byte sources mean
+  /// Car and Arrow never share a stale cached icon.
+  Future<({Uint8List? bytes, bool isArrow})>
+      _resolveDriverMarkerImageBytesForChoice() async {
+    if (_driverNavigationMarkerChoice == DriverNavigationMarkerChoice.arrow) {
+      final arrow = await _ensureDriverArrowMarkerBytes();
+      final arrowAvailable = arrow != null && arrow.isNotEmpty;
+      final source = driverNavigationMarkerIconSourceFor(
+        _driverNavigationMarkerChoice,
+        arrowAvailable: arrowAvailable,
+      );
+      if (source == DriverNavigationMarkerIconSource.arrowGlyph) {
+        return (bytes: arrow, isArrow: true);
+      }
+    }
+    final taxiReady = await _ensureDriverTaxiMarkerBytes();
+    return (
+      bytes: taxiReady ? _driverTaxiMarkerBytes : null,
+      isArrow: false,
+    );
+  }
+
+  /// NAV-TELLERS-MARKER-CHOICE-APPLY-1: immediately apply the selected marker
+  /// choice to the EXISTING single Mapbox annotation. Mapbox cannot safely swap
+  /// an annotation's bitmap image in place, so — mirroring the existing asset-
+  /// swap path — this deletes the one annotation and creates exactly one
+  /// replacement under the same annotation lifecycle gate, preserving pose,
+  /// bearing, size and opacity. If there is no live annotation yet, or the gate
+  /// is busy, the next [_updateDriverMarker] reconciles via the applied-choice
+  /// mismatch. Never creates a second annotation or a Flutter overlay.
+  Future<void> _applyDriverMarkerChoiceToAnnotation() async {
+    final mgr = _driverPointManager;
+    final marker = _driverMarker;
+    if (mgr == null || marker == null) return;
+    if (!_canUpdateDriverMarker) return;
+    if (!driverNavigationMarkerNeedsIconSwap(
+      applied: _driverMarkerAppliedChoice,
+      selected: _driverNavigationMarkerChoice,
+    )) {
+      return;
+    }
+    // Warm the target bytes before touching native so the recreate cannot lose
+    // the marker to a slow first rasterisation.
+    await _resolveDriverMarkerImageBytesForChoice();
+    if (_driverPointManager != mgr || _driverMarker != marker) return;
+    final geometry = marker.geometry;
+    final bearing = marker.iconRotate ?? 0.0;
+    final opacity = _resolveDesiredMapboxTaxiOpacity(source: 'marker_choice');
+    if (!_driverAnnotationGate.tryAcquireLease(
+      _driverAnnotationGate.capture(),
+      NavAnnotationOperationKind.update,
+    )) {
+      return;
+    }
+    try {
+      try {
+        await mgr.deleteAll();
+      } catch (e) {
+        if (_isMapboxAnnotationManagerLost(e)) {
+          _resetDriverMarkerOnNativeError('marker_choice_delete');
+          return;
+        }
+      }
+      _driverMarker = null;
+      try {
+        _driverMarker = await _createDriverMarkerAnnotation(
+          mgr: mgr,
+          geometry: geometry,
+          markerBearing: bearing,
+          iconOpacity: opacity,
+        );
+      } catch (e) {
+        _noteMarkerUpdateFailure('marker_choice_recreate', e);
+      }
+    } finally {
+      _driverAnnotationGate.releaseLease();
+    }
+    await _syncDriverMarkerIconSizeForZoom();
+  }
+
   double _markerBearingFor(geo.Position pos, _RouteSnap? snap) {
     final speedKmh = _speedKmhFor(pos);
     final meta = _adaptiveBearingFor(pos, snap: snap);
@@ -16919,14 +17037,19 @@ class _DriverHomePageState extends State<DriverHomePage>
     required double markerBearing,
     double iconOpacity = 1.0,
   }) async {
-    final taxiReady = await _ensureDriverTaxiMarkerBytes();
-    final taxiBytes = _driverTaxiMarkerBytes;
-    if (taxiReady && taxiBytes != null) {
+    // NAV-TELLERS-MARKER-CHOICE-APPLY-1: the single Mapbox annotation renders
+    // the selected Car (taxi PNG) or Arrow (rasterised glyph) bitmap. Both are
+    // zoom-scaled with the same taxi iconSize calibration so switching never
+    // changes marker size, and _driverMarkerAppliedChoice records the live
+    // choice for idempotent selector re-application.
+    final resolved = await _resolveDriverMarkerImageBytesForChoice();
+    final imageBytes = resolved.bytes;
+    if (imageBytes != null && imageBytes.isNotEmpty) {
       try {
         final marker = await mgr.create(
           mb.PointAnnotationOptions(
             geometry: geometry,
-            image: taxiBytes,
+            image: imageBytes,
             iconAnchor: mb.IconAnchor.CENTER,
             iconSize: _driverTaxiIconSizeForCurrentZoom(),
             iconRotate: markerBearing,
@@ -16934,15 +17057,18 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
         );
         _driverMarkerUsesTaxiAsset = true;
-        _driverMarkerIcon = 'fluxidi-driver-taxi';
-        debugPrint('[NAV_MARKER] mode=taxi');
+        _driverMarkerIcon =
+            resolved.isArrow ? 'fluxidi-driver-arrow' : 'fluxidi-driver-taxi';
+        _driverMarkerAppliedChoice = _driverNavigationMarkerChoice;
+        debugPrint('[NAV_MARKER] mode=${resolved.isArrow ? 'arrow' : 'taxi'}');
         return marker;
       } catch (_) {
-        debugPrint('[NAV_MARKER] mode=taxi_fallback_triangle');
+        debugPrint('[NAV_MARKER] mode=custom_fallback_triangle');
       }
     }
 
     _driverMarkerUsesTaxiAsset = false;
+    _driverMarkerAppliedChoice = _driverNavigationMarkerChoice;
     try {
       _driverMarkerIcon = 'triangle-15';
       return await mgr.create(
@@ -17026,6 +17152,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     final taxiReady = await _ensureDriverTaxiMarkerBytes();
     if (!_canUpdateDriverMarker || _driverPointManager != mgr) return false;
     final wantsTaxi = taxiReady && _driverTaxiMarkerBytes != null;
+    // NAV-TELLERS-MARKER-CHOICE-APPLY-1: a genuine Car/Arrow change means the
+    // live annotation renders the wrong bitmap; force one delete+recreate
+    // (Mapbox cannot swap an annotation image in place) so the next GPS fix
+    // reconciles even if the immediate selector apply lost the gate race.
+    final markerChoiceChanged = driverNavigationMarkerNeedsIconSwap(
+      applied: _driverMarkerAppliedChoice,
+      selected: _driverNavigationMarkerChoice,
+    );
 
     // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2: hold a lease for the
     // whole delete/deleteAll/create/update sequence. A draining/disposed
@@ -17049,7 +17183,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       return false;
     }
     try {
-      if (_driverMarker != null && _driverMarkerUsesTaxiAsset != wantsTaxi) {
+      if (_driverMarker != null &&
+          (_driverMarkerUsesTaxiAsset != wantsTaxi || markerChoiceChanged)) {
         try {
           await mgr.delete(_driverMarker!);
         } catch (e) {

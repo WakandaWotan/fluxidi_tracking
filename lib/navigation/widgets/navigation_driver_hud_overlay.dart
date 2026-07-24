@@ -6,6 +6,11 @@ import '../presentation/navigation_driver_marker_choice.dart';
 import '../presentation/navigation_driver_marker_scale.dart';
 import '../presentation/navigation_driver_marker_visual_anchor.dart';
 import 'navigation_driver_arrow_marker.dart';
+// NAV-TELLERS-MARKER-CHOICE-APPLY-1: re-export so the driver page (part of
+// main.dart, which already imports this HUD overlay) can rasterise the Arrow
+// glyph into Mapbox PointAnnotation bytes without a new main.dart import.
+export 'navigation_driver_arrow_marker.dart'
+    show renderNavigationDriverArrowMarkerPngBytes, NavigationDriverArrowMarker;
 
 /// NAV-PRES-2A: screen-fixed driver vehicle HUD (visual foundation only).
 ///

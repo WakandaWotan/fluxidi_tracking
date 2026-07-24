@@ -45,6 +45,43 @@ String driverNavigationMarkerChoiceLogLabel(
 ) =>
     driverNavigationMarkerChoiceStorageValue(choice);
 
+/// NAV-TELLERS-MARKER-CHOICE-APPLY-1: the bitmap source the single Mapbox
+/// vehicle annotation renders for a given choice.
+enum DriverNavigationMarkerIconSource {
+  /// Existing yellow top-down taxi PNG asset (the "Car" choice).
+  taxiPng,
+
+  /// Rasterised 2D navigation arrow glyph (the "Arrow" choice).
+  arrowGlyph,
+}
+
+/// Pure mapping from a marker [choice] to the Mapbox annotation icon source.
+///
+/// Arrow resolves to [DriverNavigationMarkerIconSource.arrowGlyph] only when
+/// its rasterised bytes are available; otherwise it safely falls back to the
+/// taxi PNG so the single annotation always has a valid bitmap and Car/Arrow
+/// never share the wrong cached bytes.
+DriverNavigationMarkerIconSource driverNavigationMarkerIconSourceFor(
+  DriverNavigationMarkerChoice choice, {
+  bool arrowAvailable = true,
+}) {
+  if (choice == DriverNavigationMarkerChoice.arrow && arrowAvailable) {
+    return DriverNavigationMarkerIconSource.arrowGlyph;
+  }
+  return DriverNavigationMarkerIconSource.taxiPng;
+}
+
+/// Pure decision: does the live Mapbox annotation need an icon swap (delete +
+/// recreate, since Mapbox cannot change a bitmap image in place) to reflect the
+/// currently [selected] choice? [applied] is the choice the live annotation
+/// last rendered (null when there is no live annotation yet). Idempotent:
+/// re-selecting the already-applied choice returns false → no recreation.
+bool driverNavigationMarkerNeedsIconSwap({
+  required DriverNavigationMarkerChoice? applied,
+  required DriverNavigationMarkerChoice selected,
+}) =>
+    applied != selected;
+
 /// Localized driver-facing label (NL / EN / FR / ES).
 String driverNavigationMarkerChoiceLabel(
   DriverNavigationMarkerChoice choice,
