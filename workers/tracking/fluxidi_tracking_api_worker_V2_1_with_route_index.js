@@ -2931,11 +2931,74 @@ async function _collectTripKpiDebugDetails(env, scope, month, limit = 50) {
   return out;
 }
 
+// BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1 commit 2 / 2.
+//
+// Inline copies of the pure KPI read-path helpers from
+// `workers/shared/kpi_read_path.mjs`. Kept in sync with that module — see
+// the tests there for the executable spec. Inlined rather than imported so
+// this worker file (which has no top-level imports today) does not gain a
+// new module boundary in a single-file deploy.
+const _KPI_READ_MAX_FALLBACK_SCANNED_CONTRIBS = 200;
+
+function _tripKpiGlobalStructurallyValidLocal(global) {
+  if (!global || typeof global !== 'object' || Array.isArray(global)) {
+    return false;
+  }
+  const completed = Number(global.completed_rides_count);
+  const unpaid = Number(global.unpaid_completed_rides_count);
+  return (
+    Number.isFinite(completed) &&
+    completed >= 0 &&
+    Number.isFinite(unpaid) &&
+    unpaid >= 0
+  );
+}
+
+function _tripKpiMonthStructurallyValidLocal(month) {
+  if (!month || typeof month !== 'object' || Array.isArray(month)) {
+    return false;
+  }
+  const paid = Number(month.monthly_paid_rides_count);
+  const income = Number(month.monthly_income_cents);
+  return (
+    Number.isFinite(paid) &&
+    paid >= 0 &&
+    Number.isFinite(income) &&
+    income >= 0
+  );
+}
+
+function _tripKpiAggregatesStructurallyValidLocal(global, month) {
+  return (
+    _tripKpiGlobalStructurallyValidLocal(global) &&
+    _tripKpiMonthStructurallyValidLocal(month)
+  );
+}
+
+function _formatKpiReadDiagnosticLocal({
+  endpoint,
+  source,
+  reconcile,
+  elapsedMs,
+  status,
+}) {
+  const safeElapsed = Number.isFinite(Number(elapsedMs))
+    ? Math.max(0, Math.min(60000, Math.round(Number(elapsedMs))))
+    : 0;
+  const safeStatus = Number.isFinite(Number(status))
+    ? Math.max(100, Math.min(599, Math.round(Number(status))))
+    : 500;
+  return (
+    `[KPI_READ] endpoint=${endpoint} source=${source} ` +
+    `reconcile=${reconcile} elapsed_ms=${safeElapsed} status=${safeStatus}`
+  );
+}
+
 async function _reconcileTripKpiMissingAmountForMonthBestEffort(
   env,
   scope,
   month,
-  { includeDebugRows = false, debugRowLimit = 50 } = {},
+  { includeDebugRows = false, debugRowLimit = 50, maxScanned = 0 } = {},
 ) {
   const normalizedScope = normalizeScopedKeyScope(scope);
   const safeMonth = _normalizeDashboardMonth(month);
@@ -2954,15 +3017,33 @@ async function _reconcileTripKpiMissingAmountForMonthBestEffort(
   let scanned = 0;
   let recoveredCount = 0;
   let recoveredCents = 0;
+  // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: bounded fallback cap. When called
+  // from the dashboard GET path, `maxScanned` is set to a small ceiling
+  // (see `_KPI_READ_MAX_FALLBACK_SCANNED_CONTRIBS`) so a cold tenant with
+  // many historical contributions cannot blow past the 12 s client timeout.
+  // `maxScanned <= 0` means "no cap" for legacy callers (rebuild, cron,
+  // explicit repair paths).
+  const scanCap = Number.isFinite(Number(maxScanned)) && Number(maxScanned) > 0
+    ? Math.max(1, Math.round(Number(maxScanned)))
+    : 0;
+  let scanBudgetExceeded = false;
 
   let cursor = undefined;
   do {
+    if (scanCap > 0 && scanned >= scanCap) {
+      scanBudgetExceeded = true;
+      break;
+    }
     const page = await env.FLUXIDI_TRACKING.list({
       prefix: contribPrefix,
       limit: 1000,
       cursor,
     });
     for (const keyMeta of page?.keys || []) {
+      if (scanCap > 0 && scanned >= scanCap) {
+        scanBudgetExceeded = true;
+        break;
+      }
       const contribKey = safeStr(keyMeta?.name, 280);
       if (!contribKey) continue;
       const contribRaw = await kvGetJson(env.FLUXIDI_TRACKING, contribKey);
@@ -3114,18 +3195,45 @@ async function _reconcileTripKpiMissingAmountForMonthBestEffort(
     if (page?.list_complete !== false) break;
   } while (cursor);
 
+  // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: if the bounded fallback exceeded
+  // its scan budget during the missing-amount pass, do NOT run the second
+  // full-recount pass and do NOT overwrite the persisted month aggregate
+  // with a partial recount. Return the counters observed so far so the
+  // dashboard can render `data_pending`-style diagnostics without
+  // corrupting the authoritative aggregate.
+  if (scanBudgetExceeded) {
+    return {
+      trip_kpi_reconcile_scanned: scanned,
+      trip_kpi_reconcile_recovered_missing_amount_count: recoveredCount,
+      trip_kpi_reconcile_recovered_missing_amount_cents: recoveredCents,
+      trip_kpi_reconcile_sum_cents: 0,
+      trip_kpi_reconcile_budget_exceeded: true,
+      rows,
+    };
+  }
   // Recompute month aggregate from contrib truth for idempotency.
   let sumCents = 0;
   let sumCount = 0;
   let sumMissingAmount = 0;
+  let recomputeBudgetExceeded = false;
+  let recomputeScanned = 0;
   cursor = undefined;
   do {
+    if (scanCap > 0 && recomputeScanned >= scanCap) {
+      recomputeBudgetExceeded = true;
+      break;
+    }
     const page = await env.FLUXIDI_TRACKING.list({
       prefix: contribPrefix,
       limit: 1000,
       cursor,
     });
     for (const keyMeta of page?.keys || []) {
+      if (scanCap > 0 && recomputeScanned >= scanCap) {
+        recomputeBudgetExceeded = true;
+        break;
+      }
+      recomputeScanned += 1;
       const contribKey = safeStr(keyMeta?.name, 280);
       if (!contribKey) continue;
       const contrib = _readDashboardContribShape(
@@ -3146,6 +3254,19 @@ async function _reconcileTripKpiMissingAmountForMonthBestEffort(
     cursor = page?.cursor;
     if (page?.list_complete !== false) break;
   } while (cursor);
+
+  // Same safety net for the recount pass: never overwrite the persisted
+  // month aggregate with a partial recount.
+  if (recomputeBudgetExceeded) {
+    return {
+      trip_kpi_reconcile_scanned: scanned,
+      trip_kpi_reconcile_recovered_missing_amount_count: recoveredCount,
+      trip_kpi_reconcile_recovered_missing_amount_cents: recoveredCents,
+      trip_kpi_reconcile_sum_cents: 0,
+      trip_kpi_reconcile_budget_exceeded: true,
+      rows,
+    };
+  }
 
   const monthKey = scopedDashboardTripMonthKpisKey(normalizedScope, safeMonth);
   await kvPutJson(env.FLUXIDI_TRACKING, monthKey, {
@@ -3625,23 +3746,60 @@ async function handleDashboardTripKpis(req, url, env, origin) {
     );
   }
   const normalizedScope = normalizeScopedKeyScope(scope);
-  const reconcileResult = await _reconcileTripKpiMissingAmountForMonthBestEffort(
-    env,
-    normalizedScope,
-    selectedMonth,
-    {
-      includeDebugRows: debugPaidContributorsEnabled,
-      debugRowLimit: 50,
-    },
-  );
-  const global = (await kvGetJson(
+  // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: normal GET reads the authoritative
+  // aggregates directly. Reconciliation only runs when aggregates are
+  // absent/malformed OR when the caller explicitly asks for the debug
+  // contributor rows. Bounded fallback cap keeps a cold tenant response
+  // well below the client 12 s timeout; expensive repair belongs to
+  // `/admin/dashboard/trip-kpis/reconcile`.
+  const kpiReadStartedAt = Date.now();
+  const globalPrimary = (await kvGetJson(
     env.FLUXIDI_TRACKING,
     scopedDashboardTripKpisKey(normalizedScope),
   )) ?? {};
-  const month = (await kvGetJson(
+  const monthPrimary = (await kvGetJson(
     env.FLUXIDI_TRACKING,
     scopedDashboardTripMonthKpisKey(normalizedScope, selectedMonth),
   )) ?? {};
+  const aggregatesReady = _tripKpiAggregatesStructurallyValidLocal(
+    globalPrimary,
+    monthPrimary,
+  );
+  const shouldReconcile = debugPaidContributorsEnabled || !aggregatesReady;
+  const reconcileResult = shouldReconcile
+    ? await _reconcileTripKpiMissingAmountForMonthBestEffort(
+        env,
+        normalizedScope,
+        selectedMonth,
+        {
+          includeDebugRows: debugPaidContributorsEnabled,
+          debugRowLimit: 50,
+          maxScanned: debugPaidContributorsEnabled
+            ? 0
+            : _KPI_READ_MAX_FALLBACK_SCANNED_CONTRIBS,
+        },
+      )
+    : null;
+  const kpiReadSource = aggregatesReady
+    ? 'aggregate'
+    : reconcileResult?.trip_kpi_reconcile_budget_exceeded
+      ? 'data_pending'
+      : 'bounded_fallback';
+  const kpiReadReconcile = shouldReconcile ? 'bounded' : 'skipped';
+  // Re-read month aggregate after a successful reconciliation so the
+  // response reflects the freshly-written values.
+  const global = globalPrimary && Object.keys(globalPrimary).length > 0
+    ? globalPrimary
+    : ((await kvGetJson(
+        env.FLUXIDI_TRACKING,
+        scopedDashboardTripKpisKey(normalizedScope),
+      )) ?? {});
+  const month = shouldReconcile
+    ? ((await kvGetJson(
+        env.FLUXIDI_TRACKING,
+        scopedDashboardTripMonthKpisKey(normalizedScope, selectedMonth),
+      )) ?? monthPrimary ?? {})
+    : monthPrimary;
   const financeMonth = (await kvGetJson(
     env.FLUXIDI_TRACKING,
     scopedDashboardBookingFinanceMonthKey(normalizedScope, selectedMonth),
@@ -3887,6 +4045,15 @@ async function handleDashboardTripKpis(req, url, env, origin) {
       (row) => row?.included === true,
     ).length;
   }
+  console.log(
+    _formatKpiReadDiagnosticLocal({
+      endpoint: 'trip',
+      source: kpiReadSource,
+      reconcile: kpiReadReconcile,
+      elapsedMs: Date.now() - kpiReadStartedAt,
+      status: 200,
+    }),
+  );
   return withCors(
     json(payload, { status: 200 }),
     origin,

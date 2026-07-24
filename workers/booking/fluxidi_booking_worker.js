@@ -36187,17 +36187,52 @@ export default {
         console.log(
           `[BOOKING_FINANCE_KPI][READ_KEYS] tenant=${routeScopeMask.tenant || "-"} company=${routeScopeMask.company || "-"} month=${selectedMonth} agg_key=${_bookingIntentMask(bookingFinanceMonthKey)} contrib_prefix=${_bookingIntentMask(bookingFinanceContribPrefix)}`,
         );
-        const routeReconcileFinance = await _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
-          env,
-          scopedRoute.scope,
-          selectedMonth,
-          {
-            persist: true,
-            source: "dashboard_bookings_kpis_route_read",
-            includeDebugRows: debugBookingFinance,
-            debugRowLimit: 20,
-            includeDebugItems: debugFinanceItemsEnabled,
-          },
+        // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: keep the normal GET off the
+        // reconciliation path when the authoritative aggregate is already
+        // present and structurally valid. Debug reads and cold/absent
+        // aggregates use a bounded fallback; unbounded contribution scans
+        // belong to the /admin/dashboard/bookings-kpis/rebuild path.
+        const kpiReadStartedAt = Date.now();
+        const bookingFinanceAggregateReady =
+          _bookingFinanceAggregateStructurallyValidLocal(bookingFinanceMonth);
+        const shouldReconcileBookingFinance =
+          debugBookingFinance ||
+          debugFinanceItemsEnabled ||
+          !bookingFinanceAggregateReady;
+        const routeReconcileFinance = shouldReconcileBookingFinance
+          ? await _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
+              env,
+              scopedRoute.scope,
+              selectedMonth,
+              {
+                persist: true,
+                source: "dashboard_bookings_kpis_route_read",
+                includeDebugRows: debugBookingFinance,
+                debugRowLimit: 20,
+                includeDebugItems: debugFinanceItemsEnabled,
+                maxScanned:
+                  debugBookingFinance || debugFinanceItemsEnabled
+                    ? 0
+                    : _KPI_READ_MAX_FALLBACK_SCANNED_CONTRIBS,
+              },
+            )
+          : null;
+        const kpiReadSource = bookingFinanceAggregateReady
+          ? "aggregate"
+          : routeReconcileFinance?.booking_finance_reconcile_budget_exceeded
+            ? "data_pending"
+            : "bounded_fallback";
+        const kpiReadReconcile = shouldReconcileBookingFinance
+          ? "bounded"
+          : "skipped";
+        console.log(
+          _formatKpiReadDiagnosticLocal({
+            endpoint: "bookings",
+            source: kpiReadSource,
+            reconcile: kpiReadReconcile,
+            elapsedMs: Date.now() - kpiReadStartedAt,
+            status: 200,
+          }),
         );
         if (routeReconcileFinance?.ok) {
           bookingFinanceMonthIncomeCents = Math.max(
@@ -58930,6 +58965,48 @@ async function _trackingSyncReconcileApplyAuthoritativeBookingFinanceContrib(
   }
 }
 
+// BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1 commit 2 / 2.
+//
+// Inline copies of the pure KPI read-path helpers from
+// `workers/shared/kpi_read_path.mjs`. Kept in sync with that module — see
+// the tests there for the executable spec.
+const _KPI_READ_MAX_FALLBACK_SCANNED_CONTRIBS = 200;
+
+function _bookingFinanceAggregateStructurallyValidLocal(aggregate) {
+  if (!aggregate || typeof aggregate !== 'object' || Array.isArray(aggregate)) {
+    return false;
+  }
+  const hasTimestamp =
+    typeof aggregate.updated_at === 'string' && aggregate.updated_at.length > 0;
+  const incomeCents = Number(aggregate.monthly_paid_bookings_income_cents);
+  const paidCount = Number(aggregate.monthly_paid_bookings_count);
+  const bothCountersFinite =
+    Number.isFinite(incomeCents) &&
+    Number.isFinite(paidCount) &&
+    incomeCents >= 0 &&
+    paidCount >= 0;
+  return hasTimestamp || bothCountersFinite;
+}
+
+function _formatKpiReadDiagnosticLocal({
+  endpoint,
+  source,
+  reconcile,
+  elapsedMs,
+  status,
+}) {
+  const safeElapsed = Number.isFinite(Number(elapsedMs))
+    ? Math.max(0, Math.min(60000, Math.round(Number(elapsedMs))))
+    : 0;
+  const safeStatus = Number.isFinite(Number(status))
+    ? Math.max(100, Math.min(599, Math.round(Number(status))))
+    : 500;
+  return (
+    `[KPI_READ] endpoint=${endpoint} source=${source} ` +
+    `reconcile=${reconcile} elapsed_ms=${safeElapsed} status=${safeStatus}`
+  );
+}
+
 async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
   env,
   scope,
@@ -58940,6 +59017,7 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
     includeDebugRows = false,
     debugRowLimit = 20,
     includeDebugItems = false,
+    maxScanned = 0,
   } = {},
 ) {
   const safeMonth = _trackingSyncSafeKeyPart(month, 16);
@@ -59020,7 +59098,18 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
   const maxDebugRows = Math.max(1, Math.min(100, Number(debugRowLimit) || 20));
   const debugRows = [];
   const debugItems = [];
+  // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: bounded fallback cap when called
+  // from the dashboard GET path. `maxScanned <= 0` means "no cap" for
+  // legacy callers (rebuild, cron, explicit repair paths).
+  const scanCap = Number.isFinite(Number(maxScanned)) && Number(maxScanned) > 0
+    ? Math.max(1, Math.round(Number(maxScanned)))
+    : 0;
+  let scanBudgetExceeded = false;
   do {
+    if (scanCap > 0 && scanned >= scanCap) {
+      scanBudgetExceeded = true;
+      break;
+    }
     const page = await env.FLUXIDI_TRACKING.list({
       prefix: contribPrefix,
       limit: 1000,
@@ -59028,6 +59117,10 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
     });
     const keys = Array.isArray(page?.keys) ? page.keys : [];
     for (const keyItem of keys) {
+      if (scanCap > 0 && scanned >= scanCap) {
+        scanBudgetExceeded = true;
+        break;
+      }
       const contribKey = safeStr(keyItem?.name, 320);
       if (!contribKey) continue;
       scanned += 1;
@@ -59316,7 +59409,42 @@ async function _trackingSyncReconcileBookingFinanceMonthFromContribsBestEffort(
     if (!cursor) break;
   } while (cursor);
 
+  // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: if the bounded fallback exceeded
+  // its scan budget, do NOT persist a partial recount aggregate — that
+  // would corrupt the authoritative KV state on a cold dashboard GET.
+  // Return the counters observed so far so the caller can surface a
+  // `data_pending`-style diagnostic without mutating KV.
   const monthKey = _trackingSyncScopedBookingFinanceMonthKey(scope, safeMonth);
+  if (scanBudgetExceeded) {
+    console.log(
+      `[BOOKING_FINANCE_KPI][RECONCILE_BUDGET_EXCEEDED] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} month=${safeMonth} scan_cap=${scanCap} scanned=${scanned}`,
+    );
+    return {
+      ok: false,
+      month: safeMonth,
+      monthly_paid_bookings_count: 0,
+      monthly_paid_bookings_income_cents: 0,
+      monthly_cancelled_paid_bookings_cents: 0,
+      monthly_pending_credit_cents: 0,
+      booking_finance_reconcile_scanned: scanned,
+      booking_finance_reconcile_matched_month: matchedMonth,
+      booking_finance_reconcile_sum_cents: 0,
+      booking_finance_reconcile_paid_count: 0,
+      booking_finance_reconcile_skipped_wrong_month: skippedWrongMonth,
+      booking_finance_reconcile_skipped_unpaid: skippedUnpaid,
+      booking_finance_reconcile_skipped_missing_amount: skippedMissingAmount,
+      booking_finance_reconcile_recovered_amount_count: recoveredAmountCount,
+      booking_finance_reconcile_recovered_amount_cents: recoveredAmountCentsTotal,
+      booking_finance_reconcile_skipped_missing_amount_unrecoverable:
+        skippedMissingAmountUnrecoverable,
+      booking_finance_reconcile_prefix_preview: _bookingIntentMask(contribPrefix),
+      booking_finance_reconcile_debug_rows: includeDebugRows ? debugRows : [],
+      booking_finance_debug_items: includeDebugItems ? debugItems : [],
+      booking_finance_reconcile_budget_exceeded: true,
+      reconciled: false,
+      key: monthKey || null,
+    };
+  }
   if (persist && monthKey) {
     try {
       await _trackingSyncPutJson(env, monthKey, {
