@@ -453,6 +453,192 @@ void main() {
       expect(latch.generation, 1);
     });
 
+    // ==========================================================================
+    // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1
+    // ==========================================================================
+
+    test(
+      'isValid rejects a portrait-flagged geometry with a landscape-shape '
+      'viewport (transitional post-rotation frame)',
+      () {
+        // Framework already flipped isLandscape=false but has not yet
+        // republished the size for the new orientation — the width is still
+        // wider than the height. This is exactly the transitional frame the
+        // orientation epoch guards must treat as unsettled.
+        final g = DriverTellersLayoutGeometry.resolve(
+          viewportSize: const Size(844, 390),
+          safeTop: 0,
+          safeBottom: 0,
+          safeLeft: 0,
+          safeRight: 0,
+          isLandscape: false,
+          isTablet: false,
+        );
+        expect(g.isValid, isFalse);
+      },
+    );
+
+    test(
+      'isValid rejects a landscape-flagged geometry with a portrait-shape '
+      'viewport',
+      () {
+        final g = DriverTellersLayoutGeometry.resolve(
+          viewportSize: const Size(390, 844),
+          safeTop: 0,
+          safeBottom: 0,
+          safeLeft: 0,
+          safeRight: 0,
+          isLandscape: true,
+          isTablet: false,
+        );
+        expect(g.isValid, isFalse);
+      },
+    );
+
+    test(
+      'isValid still accepts shape-consistent portrait and landscape frames',
+      () {
+        final portrait = DriverTellersLayoutGeometry.resolve(
+          viewportSize: const Size(390, 844),
+          safeTop: 0,
+          safeBottom: 0,
+          safeLeft: 0,
+          safeRight: 0,
+          isLandscape: false,
+          isTablet: false,
+        );
+        final landscape = DriverTellersLayoutGeometry.resolve(
+          viewportSize: const Size(844, 390),
+          safeTop: 0,
+          safeBottom: 0,
+          safeLeft: 0,
+          safeRight: 0,
+          isLandscape: true,
+          isTablet: false,
+        );
+        expect(portrait.isValid, isTrue);
+        expect(landscape.isValid, isTrue);
+      },
+    );
+
+    test(
+      'latch: first valid candidate at a NEW epoch is held as settling; '
+      'previously committed geometry keeps rendering',
+      () {
+        final latch = DriverTellersGeometryLatch();
+        // Epoch 1 — settle a portrait aperture.
+        final portrait = resolve(const Size(390, 844));
+        final firstCommit = latch.commit(portrait, epoch: 1);
+        expect(firstCommit.liveWindowRect, portrait.liveWindowRect);
+        expect(latch.generation, 1);
+        expect(latch.committedEpoch, 1);
+        expect(latch.isSettling, isFalse);
+
+        // Epoch 2 (portrait ↔ landscape flip) — the FIRST valid landscape
+        // candidate must NOT be treated as settled. The latch continues to
+        // render the previously committed portrait so a transitional
+        // observation never installs the wrong aperture.
+        final landscape = resolve(const Size(844, 390), landscape: true);
+        final settling = latch.commit(landscape, epoch: 2);
+        expect(settling.liveWindowRect, portrait.liveWindowRect,
+            reason: 'settling → retain previous commit');
+        expect(latch.generation, 1, reason: 'no generation bump while settling');
+        expect(latch.committedEpoch, 1, reason: 'epoch not promoted yet');
+        expect(latch.isSettling, isTrue);
+      },
+    );
+
+    test(
+      'latch: matching SECOND candidate at the same new epoch is promoted '
+      '(two-observation stability rule)',
+      () {
+        final latch = DriverTellersGeometryLatch();
+        latch.commit(resolve(const Size(390, 844)), epoch: 1);
+        final landscape = resolve(const Size(844, 390), landscape: true);
+        // First observation at epoch 2 — held.
+        latch.commit(landscape, epoch: 2);
+        // Second observation at epoch 2 with an EQUIVALENT geometry — settle.
+        final settled = latch.commit(landscape, epoch: 2);
+        expect(settled.liveWindowRect, landscape.liveWindowRect);
+        expect(latch.generation, 2, reason: 'one atomic bump on settle');
+        expect(latch.committedEpoch, 2);
+        expect(latch.isSettling, isFalse);
+      },
+    );
+
+    test(
+      'latch: NON-matching second candidate at the same new epoch keeps the '
+      'previous commit and replaces the settling candidate',
+      () {
+        final latch = DriverTellersGeometryLatch();
+        final portrait = resolve(const Size(390, 844));
+        latch.commit(portrait, epoch: 1);
+        // First landscape candidate at epoch 2 — held.
+        final first = resolve(const Size(844, 390), landscape: true);
+        latch.commit(first, epoch: 2);
+        // Second observation is a DIFFERENT landscape size — treat this as a
+        // NEW settling candidate, still keep rendering the portrait.
+        final second = resolve(const Size(820, 380), landscape: true);
+        final still = latch.commit(second, epoch: 2);
+        expect(still.liveWindowRect, portrait.liveWindowRect,
+            reason: 'still rendering the previous commit');
+        expect(latch.generation, 1);
+        expect(latch.committedEpoch, 1);
+        expect(latch.isSettling, isTrue);
+        // A third matching observation of the SECOND candidate finally settles.
+        final settled = latch.commit(second, epoch: 2);
+        expect(settled.liveWindowRect, second.liveWindowRect);
+        expect(latch.generation, 2);
+        expect(latch.committedEpoch, 2);
+      },
+    );
+
+    test(
+      'latch: invalid candidate at a new epoch does not clear a pending '
+      'settling candidate — the previous commit is retained',
+      () {
+        final latch = DriverTellersGeometryLatch();
+        latch.commit(resolve(const Size(390, 844)), epoch: 1);
+        final landscape = resolve(const Size(844, 390), landscape: true);
+        latch.commit(landscape, epoch: 2);
+        // Invalid intermediate frame (e.g. transient zero-height report).
+        final invalid = resolve(const Size(844, 0), landscape: true);
+        final retained = latch.commit(invalid, epoch: 2);
+        // The invalid frame is rejected up front; the previous portrait
+        // commit continues to render and the settling candidate remains.
+        expect(retained.viewportSize, const Size(390, 844));
+        expect(latch.isSettling, isTrue);
+      },
+    );
+
+    test(
+      'latch: when no [epoch] is provided the legacy commit path stays '
+      'unchanged (bumps generation on the first valid candidate)',
+      () {
+        final latch = DriverTellersGeometryLatch();
+        final portrait = resolve(const Size(390, 844));
+        final committed = latch.commit(portrait);
+        expect(committed.liveWindowRect, portrait.liveWindowRect);
+        expect(latch.generation, 1);
+        expect(latch.committedEpoch, isNull);
+        expect(latch.isSettling, isFalse);
+      },
+    );
+
+    test(
+      'latch: FIRST commit ever WITH an epoch is accepted immediately so the '
+      'initial paint after page open never renders empty',
+      () {
+        final latch = DriverTellersGeometryLatch();
+        final portrait = resolve(const Size(390, 844));
+        final committed = latch.commit(portrait, epoch: 7);
+        expect(committed.liveWindowRect, portrait.liveWindowRect);
+        expect(latch.generation, 1);
+        expect(latch.committedEpoch, 7);
+        expect(latch.isSettling, isFalse);
+      },
+    );
+
     test('opaque map backdrop is fully opaque (never shows the route below)',
         () {
       expect(kFluxidiMapBackdrop.alpha, 0xFF);

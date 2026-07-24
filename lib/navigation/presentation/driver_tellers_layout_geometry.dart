@@ -326,10 +326,23 @@ class DriverTellersLayoutGeometry {
   /// True only when every camera-facing rect is finite, positive and the live
   /// aperture lies within the viewport. An invalid geometry must never be
   /// committed as the active Tellers layout.
+  ///
+  /// NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: additionally require that the
+  /// declared orientation is consistent with the viewport shape (portrait ⇒
+  /// height >= width, landscape ⇒ width > height). A transitional rebuild in
+  /// which the framework already flipped [isLandscape] but has not yet
+  /// republished [viewportSize] for the new orientation therefore fails
+  /// validation and is retained by the latch as unsettled — the previous
+  /// (valid) geometry is kept until a fully consistent one arrives.
   bool get isValid {
     final w = viewportSize.width;
     final h = viewportSize.height;
     if (!w.isFinite || !h.isFinite || w <= 0 || h <= 0) return false;
+    if (isLandscape) {
+      if (!(w > h)) return false;
+    } else {
+      if (!(h >= w)) return false;
+    }
     final live = liveWindowRect;
     if (!live.width.isFinite || !live.height.isFinite) return false;
     if (live.width <= 0 || live.height <= 0) return false;

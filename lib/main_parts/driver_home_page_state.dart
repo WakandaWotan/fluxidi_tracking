@@ -80,6 +80,64 @@ String? _readLastKnownDriverPhoto(String? driverId) {
   return cached.trim().isEmpty ? null : cached;
 }
 
+/// NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: pure signature capturing the
+/// effective navigation viewport (rounded size + orientation). The rounding
+/// tolerates sub-pixel MediaQuery jitter that would otherwise trigger a
+/// spurious epoch bump every frame, while any real portrait ↔ landscape
+/// swap flips [isLandscape] and any non-trivial viewport-size change (>= 1px
+/// in either axis) rounds to a different key.
+@immutable
+class _NavViewportSignature {
+  const _NavViewportSignature({
+    required this.widthKey,
+    required this.heightKey,
+    required this.isLandscape,
+  });
+
+  factory _NavViewportSignature.fromSize({
+    required Size size,
+    required bool isLandscape,
+  }) {
+    return _NavViewportSignature(
+      widthKey: size.width.isFinite ? size.width.round() : -1,
+      heightKey: size.height.isFinite ? size.height.round() : -1,
+      isLandscape: isLandscape,
+    );
+  }
+
+  final int widthKey;
+  final int heightKey;
+  final bool isLandscape;
+
+  bool get hasFinitePositiveExtent => widthKey > 0 && heightKey > 0;
+
+  /// True when the orientation flag is consistent with the viewport shape.
+  /// A transitional frame in which the framework flipped [isLandscape] but
+  /// has not yet republished a matching size returns false and must not be
+  /// promoted to the settled signature.
+  bool get isShapeConsistent {
+    if (widthKey <= 0 || heightKey <= 0) return false;
+    if (isLandscape) return widthKey > heightKey;
+    return heightKey >= widthKey;
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is _NavViewportSignature &&
+        other.widthKey == widthKey &&
+        other.heightKey == heightKey &&
+        other.isLandscape == isLandscape;
+  }
+
+  @override
+  int get hashCode => Object.hash(widthKey, heightKey, isLandscape);
+
+  @override
+  String toString() =>
+      '_NavViewportSignature(${widthKey}x$heightKey, landscape=$isLandscape)';
+}
+
 class _DriverHomePageState extends State<DriverHomePage>
     with TickerProviderStateMixin {
   ValueListenable<DriverThemeVariant> get _activeDriverThemeListenable =>
@@ -637,6 +695,36 @@ class _DriverHomePageState extends State<DriverHomePage>
   double? _pendingTellersSnappedRouteLon;
   TellersAuthoritativePoseSource? _pendingTellersPoseSource;
   DateTime? _lastTellersAnchorDiagAt;
+
+  // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: monotonic navigation viewport
+  // epoch. Bumped whenever the effective MediaQuery viewport size or
+  // orientation changes materially. Any delayed camera/geometry/anchor
+  // operation captures this epoch and drops its result when the epoch is
+  // stale, so old-orientation camera writes cannot land after a new
+  // orientation has started rendering.
+  int _navViewportEpoch = 0;
+  // Last observed effective viewport signature (size + orientation). Compared
+  // in build() to detect a viewport change and bump _navViewportEpoch exactly
+  // once per settled transition.
+  _NavViewportSignature? _lastObservedNavViewportSignature;
+  // Signature captured when a viewport change was detected and a post-layout
+  // camera reseed is pending. Cleared once a subsequent build observes the
+  // same signature (two-observation stability) and schedules the reseed.
+  _NavViewportSignature? _pendingReseedSignature;
+  // Epoch associated with [_pendingReseedSignature] — allows the reseed guard
+  // to reject a stale pending observation from an already-superseded epoch.
+  int? _pendingReseedEpoch;
+  // Whether a post-frame rebuild has already been requested to re-observe the
+  // current viewport for the settlement check. Prevents queueing multiple
+  // rebuilds for a single unsettled epoch.
+  bool _navViewportRecheckScheduled = false;
+  // Whether a follow-camera reseed for the current viewport epoch has already
+  // been scheduled or executed. One reseed per epoch is sufficient — the
+  // subsequent streetlevel-follow pump keeps the camera in sync.
+  bool _navViewportReseedFired = false;
+  // Epoch for which [_navViewportReseedFired] was set — a fresh epoch resets
+  // the flag so the next stable viewport reseeds exactly once.
+  int? _navViewportReseedEpoch;
 
   // FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 (Phase 1, Part C): monotonic
   // generation for the single active GPS subscription. Bumped every time a
@@ -17821,6 +17909,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     String cameraReason = 'normal_follow',
     int? viewZoomGeneration,
   }) async {
+    // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: capture the current viewport
+    // epoch at entry. Any camera write, cached padding update or pending
+    // Tellers anchor commit must be dropped if the epoch has advanced by the
+    // time we reach it — a portrait ↔ landscape flip must never let an
+    // in-flight pre-rotation follow pass write stale padding or fire a stale
+    // flyTo into the newly-laid-out viewport.
+    final navViewportEpochAtStart = _navViewportEpoch;
     // FLUXIDI Phase 2A: hard-gate every passive path. When native FollowPuck
     // owns the camera, the only legitimate passive writer is the native
     // custom LocationProvider — Dart contributes zero setCamera/easeTo/flyTo
@@ -18281,20 +18376,26 @@ class _DriverHomePageState extends State<DriverHomePage>
       // point places that pose directly beneath the Car/Arrow marker AND
       // over the polyline centreline.
       cameraCenter = tellersCenterPoint;
-      _pendingTellersAnchorGeometry = tellersGeometry;
-      _pendingTellersAnchorPoseLat = tellersPose.lat;
-      _pendingTellersAnchorPoseLon = tellersPose.lon;
-      _pendingTellersPoseSource = tellersPose.source;
-      if (tellersInput.hasReliableMatchedSnap &&
-          tellersInput.trustRouteSnap &&
-          !tellersInput.offRouteLikely &&
-          tellersProgress?.snappedLatitude != null &&
-          tellersProgress?.snappedLongitude != null) {
-        _pendingTellersSnappedRouteLat = tellersProgress!.snappedLatitude;
-        _pendingTellersSnappedRouteLon = tellersProgress.snappedLongitude;
-      } else {
-        _pendingTellersSnappedRouteLat = null;
-        _pendingTellersSnappedRouteLon = null;
+      // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: only publish pending Tellers
+      // anchor state when the viewport epoch is still current. A stale pass
+      // must never resurrect a previous-epoch anchor over the newly settled
+      // viewport.
+      if (_navViewportEpoch == navViewportEpochAtStart) {
+        _pendingTellersAnchorGeometry = tellersGeometry;
+        _pendingTellersAnchorPoseLat = tellersPose.lat;
+        _pendingTellersAnchorPoseLon = tellersPose.lon;
+        _pendingTellersPoseSource = tellersPose.source;
+        if (tellersInput.hasReliableMatchedSnap &&
+            tellersInput.trustRouteSnap &&
+            !tellersInput.offRouteLikely &&
+            tellersProgress?.snappedLatitude != null &&
+            tellersProgress?.snappedLongitude != null) {
+          _pendingTellersSnappedRouteLat = tellersProgress!.snappedLatitude;
+          _pendingTellersSnappedRouteLon = tellersProgress.snappedLongitude;
+        } else {
+          _pendingTellersSnappedRouteLat = null;
+          _pendingTellersSnappedRouteLon = null;
+        }
       }
     } else {
       _pendingTellersAnchorGeometry = null;
@@ -18310,6 +18411,19 @@ class _DriverHomePageState extends State<DriverHomePage>
     // there is a single continuous camera driver. Forced/manual camera moves
     // still apply immediately below.
     if (streetlevelPump) {
+      // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: reject the pump-cache write
+      // when the viewport epoch has advanced since we entered this pass.
+      // Reseeding padding from a stale pass would immediately restart the
+      // pump with previous-orientation padding — precisely the "old
+      // landscape padding into portrait" failure mode this commit removes.
+      if (_navViewportEpoch != navViewportEpochAtStart) {
+        _navValidationPendingCameraSkipReason = 'viewport_epoch_stale';
+        _recordNavDiagCameraUpdate(
+          follow: false,
+          skippedReason: 'viewport_epoch_stale',
+        );
+        return;
+      }
       _streetlevelFollowZoom = cameraZoom;
       _streetlevelFollowPitch = cameraPitch;
       _streetlevelFollowPadding = mb.MbxEdgeInsets(
@@ -18352,6 +18466,21 @@ class _DriverHomePageState extends State<DriverHomePage>
       targetAgeMs: fixAgeSec != null ? (fixAgeSec * 1000).round() : null,
     );
 
+    // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: drop the flyTo when the
+    // viewport epoch has advanced since this pass began — the padding and
+    // center were computed against the previous-epoch viewport and applying
+    // them now would flash the wrong aperture into the new orientation
+    // until the subsequent pass corrects. The scheduled post-layout reseed
+    // (owner: 'viewport_reseed') supplies a fresh forced flyTo once the new
+    // viewport has settled.
+    if (_navViewportEpoch != navViewportEpochAtStart) {
+      _navValidationPendingCameraSkipReason = 'viewport_epoch_stale';
+      _recordNavDiagCameraUpdate(
+        follow: false,
+        skippedReason: 'viewport_epoch_stale',
+      );
+      return;
+    }
     // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: bounded timeout around Mapbox flyTo.
     // A never-completing Mapbox Future used to leave `_followCameraInFlight`
     // stuck true for ~38 s in the field test. The outer try/finally guarantees
@@ -19458,6 +19587,107 @@ class _DriverHomePageState extends State<DriverHomePage>
     setState(() {});
   }
 
+  /// NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: observe the current build-time
+  /// navigation viewport and bump [_navViewportEpoch] exactly once per
+  /// materially changed signature. Any cached camera geometry that would
+  /// otherwise carry from the previous orientation is invalidated on the
+  /// spot; a post-frame rebuild is requested so the two-observation
+  /// stability rule can settle the new epoch and schedule a single
+  /// latest-wins follow-camera reseed after the layout is stable.
+  ///
+  /// Pure widget mutation: never touches MapWidget identity/key or the
+  /// Navigator stack.
+  void _observeNavViewport({required Size size, required bool isLandscape}) {
+    final sig = _NavViewportSignature.fromSize(
+      size: size,
+      isLandscape: isLandscape,
+    );
+    final last = _lastObservedNavViewportSignature;
+    if (last == null) {
+      _lastObservedNavViewportSignature = sig;
+      _navViewportReseedEpoch = _navViewportEpoch;
+      _navViewportReseedFired = false;
+      return;
+    }
+    if (last == sig) {
+      final pending = _pendingReseedSignature;
+      if (pending == sig &&
+          _pendingReseedEpoch == _navViewportEpoch &&
+          !_navViewportReseedFired &&
+          sig.isShapeConsistent) {
+        _pendingReseedSignature = null;
+        _pendingReseedEpoch = null;
+        _navViewportReseedFired = true;
+        _navViewportReseedEpoch = _navViewportEpoch;
+        final epochAtSchedule = _navViewportEpoch;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          if (_navViewportEpoch != epochAtSchedule) return;
+          _reseedFollowCameraForCurrentViewport(
+            epochAtSchedule: epochAtSchedule,
+          );
+        });
+      }
+      return;
+    }
+    _navViewportEpoch += 1;
+    _lastObservedNavViewportSignature = sig;
+    _streetlevelFollowPadding = null;
+    _pendingTellersAnchorGeometry = null;
+    _pendingTellersAnchorPoseLat = null;
+    _pendingTellersAnchorPoseLon = null;
+    _pendingTellersSnappedRouteLat = null;
+    _pendingTellersSnappedRouteLon = null;
+    _pendingTellersPoseSource = null;
+    _pendingReseedSignature = sig;
+    _pendingReseedEpoch = _navViewportEpoch;
+    _navViewportReseedFired = false;
+    _navViewportReseedEpoch = _navViewportEpoch;
+    if (!_navViewportRecheckScheduled) {
+      _navViewportRecheckScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _navViewportRecheckScheduled = false;
+        if (!mounted) return;
+        setState(() {});
+      });
+    }
+    _logNavBounded(
+      'NAV_VIEWPORT',
+      'event=epoch_bump epoch=$_navViewportEpoch '
+          'w=${sig.widthKey} h=${sig.heightKey} '
+          'landscape=${sig.isLandscape}',
+      intervalMs: 1,
+    );
+  }
+
+  /// NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: issue exactly one forced
+  /// follow-camera application after the current viewport has been observed
+  /// stable across two consecutive builds. Runs only when the epoch is still
+  /// current and a follow-mode live ride is active — the reseed re-derives
+  /// fresh camera padding for the current viewport, unpausing the streetlevel
+  /// pump (which had paused while `_streetlevelFollowPadding` was null).
+  void _reseedFollowCameraForCurrentViewport({required int epochAtSchedule}) {
+    if (!mounted) return;
+    if (_navViewportEpoch != epochAtSchedule) return;
+    final map = _map;
+    if (map == null || _mapStyleChanging) return;
+    final pos = _lastPos;
+    if (pos == null) return;
+    if (_cameraMode != _CameraMode.follow || !_liveRideActive) return;
+    _logNavBounded(
+      'NAV_VIEWPORT',
+      'event=reseed_follow epoch=$_navViewportEpoch',
+      intervalMs: 1,
+    );
+    unawaited(
+      _followCameraTesla(
+        pos,
+        force: true,
+        cameraReason: 'viewport_reseed',
+      ),
+    );
+  }
+
   /// NAV-TELLERS-EXACT-LIVE-VIEWPORT-1: on portrait ↔ landscape while Tellers
   /// is active, bump the viewport generation once and issue one latest-wins
   /// camera update. Never recreates MapWidget, GPS, style, route, fare or
@@ -19590,6 +19820,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         isTablet: isTablet,
         isLandscape: isLandscape,
         isWaiting: _isWaiting,
+        // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: forward the current
+        // navigation viewport epoch so the DriverTellersGeometryLatch treats
+        // the FIRST valid candidate after a portrait ↔ landscape flip as
+        // unsettled — it must match a second consecutive candidate at the
+        // same epoch before promoting a new committed Tellers geometry.
+        viewportEpoch: _navViewportEpoch,
         // NAV-PARKING-2 Commit 4: reserve a transparent live-navigation window
         // over the single mounted MapWidget. No second MapWidget is created.
         showLiveWindow: true,
@@ -27098,6 +27334,15 @@ class _DriverHomePageState extends State<DriverHomePage>
         screenClass == FluxidiScreenClass.desktop;
     final bool isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
+    // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: observe the current navigation
+    // viewport before any downstream geometry/camera work so a materially
+    // changed viewport bumps [_navViewportEpoch] and invalidates cached
+    // camera state (streetlevel follow padding + pending Tellers anchor)
+    // exactly once per settled transition.
+    _observeNavViewport(
+      size: Size(screenW, screenH),
+      isLandscape: isLandscape,
+    );
     // NAV-TELLERS-EXACT-LIVE-VIEWPORT-1: portrait ↔ landscape recalculates the
     // authoritative liveWindowRect once (latest-wins camera), no MapWidget/
     // GPS/style recreation.
@@ -27305,7 +27550,17 @@ class _DriverHomePageState extends State<DriverHomePage>
       // through during an orientation change or PlatformView surface delay.
       backgroundColor: kFluxidiBlack,
       drawer: _buildDrawer(),
-      body: Stack(
+      // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: hard-clip the entire
+      // navigation composition to the current Scaffold body viewport bounds
+      // so no Positioned child computed from a previous-epoch geometry
+      // (banner, HUD, chrome, cockpit control) can ever paint outside the
+      // new viewport during a portrait ↔ landscape transition. This is a
+      // NESTED clip (wraps the body Stack) so the outer Scaffold drawer /
+      // Navigator overlay behaviour is untouched, and the inner Stack keeps
+      // its existing `Clip.none` layout semantics.
+      body: ClipRect(
+        clipBehavior: Clip.hardEdge,
+        child: Stack(
         clipBehavior: Clip.none,
         children: [
           // NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 1):
@@ -27681,6 +27936,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           if (_navPresentationMode.isTellers)
             _buildTellersOverlay(isTablet: isTablet, isLandscape: isLandscape),
         ],
+      ),
       ),
     );
   }

@@ -324,19 +324,78 @@ class DriverTellersRecenterContract {
 /// viewport; this retains the previous COMPLETE geometry until a new valid one
 /// resolves, so the aperture is never installed with an incomplete size and the
 /// viewport generation bumps exactly once per committed layout change.
+///
+/// NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: additionally accepts an optional
+/// [epoch] on each commit. When the caller reports a new viewport epoch (e.g.
+/// after a portrait ↔ landscape flip), the FIRST valid candidate at the new
+/// epoch is held as a "settling" candidate rather than committed immediately —
+/// the previous committed geometry keeps rendering. Only when a subsequent
+/// commit at the same epoch presents an equivalent candidate is that geometry
+/// promoted to the current committed layout. This prevents valid-but-
+/// transitional MediaQuery observations (interim safe insets, mid-rotation
+/// intermediate sizes) from being treated as the settled viewport.
 class DriverTellersGeometryLatch {
   DriverTellersLayoutGeometry? _lastValid;
   int _generation = 0;
+  int? _committedEpoch;
+  int? _settlingEpoch;
+  DriverTellersLayoutGeometry? _settlingCandidate;
 
   DriverTellersLayoutGeometry? get lastValid => _lastValid;
   int get generation => _generation;
+
+  /// NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: last committed epoch (null until
+  /// the first commit).
+  int? get committedEpoch => _committedEpoch;
+
+  /// NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: true when a new epoch's first
+  /// valid candidate has been observed but not yet confirmed by a second
+  /// matching observation. During settling, [commit] keeps returning the
+  /// previously committed geometry so the aperture never flashes with an
+  /// unstable transitional layout.
+  bool get isSettling => _settlingCandidate != null;
 
   /// Returns the geometry to render. When [candidate] is valid it is latched
   /// (and [generation] bumps once if the committed layout actually changed);
   /// when invalid the last valid geometry is retained. Returns [candidate] only
   /// as a last resort when nothing valid has ever been committed.
-  DriverTellersLayoutGeometry commit(DriverTellersLayoutGeometry candidate) {
+  ///
+  /// When [epoch] is provided and differs from the last committed epoch, the
+  /// first valid candidate at the new epoch is deferred until a second matching
+  /// valid candidate at the same epoch arrives (two-observation stability
+  /// rule). The initial commit (no previous [_lastValid]) is always accepted
+  /// so the first frame after page open renders correctly.
+  DriverTellersLayoutGeometry commit(
+    DriverTellersLayoutGeometry candidate, {
+    int? epoch,
+  }) {
     if (!candidate.isValid) return _lastValid ?? candidate;
+    if (epoch != null &&
+        _lastValid != null &&
+        _committedEpoch != null &&
+        epoch != _committedEpoch) {
+      final settling = _settlingCandidate;
+      if (settling != null &&
+          _settlingEpoch == epoch &&
+          _sameLayout(settling, candidate)) {
+        _committedEpoch = epoch;
+        _settlingCandidate = null;
+        _settlingEpoch = null;
+        return _acceptCommitted(candidate);
+      }
+      _settlingCandidate = candidate;
+      _settlingEpoch = epoch;
+      return _lastValid!;
+    }
+    _settlingCandidate = null;
+    _settlingEpoch = null;
+    if (epoch != null) _committedEpoch = epoch;
+    return _acceptCommitted(candidate);
+  }
+
+  DriverTellersLayoutGeometry _acceptCommitted(
+    DriverTellersLayoutGeometry candidate,
+  ) {
     final prev = _lastValid;
     if (prev == null || !_sameLayout(prev, candidate)) {
       _generation += 1;
@@ -383,6 +442,7 @@ class DriverRideMetersView extends StatefulWidget {
     this.onMarkerChoiceSelected,
     this.markerLanguage = AppLanguage.nl,
     this.vehicleMarkerIconSize,
+    this.viewportEpoch,
   });
 
   final DriverRideMetersSnapshot snapshot;
@@ -402,6 +462,14 @@ class DriverRideMetersView extends StatefulWidget {
   final ValueChanged<DriverNavigationMarkerChoice>? onMarkerChoiceSelected;
   final AppLanguage markerLanguage;
   final double? vehicleMarkerIconSize;
+
+  /// NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: monotonic viewport/orientation
+  /// epoch supplied by the driver page. When present, the internal
+  /// [DriverTellersGeometryLatch] requires two consecutive matching valid
+  /// candidates at the same epoch before promoting a new committed geometry
+  /// so a transitional post-rotation MediaQuery observation cannot become the
+  /// authoritative aperture.
+  final int? viewportEpoch;
 
   @override
   State<DriverRideMetersView> createState() => _DriverRideMetersViewState();
@@ -425,7 +493,15 @@ class _DriverRideMetersViewState extends State<DriverRideMetersView> {
     // Retain the last VALID geometry until a new complete one resolves so a
     // transitional (zero/partial) rotation frame never installs an incomplete
     // aperture over the retained MapWidget.
-    final geometry = _geometryLatch.commit(candidate);
+    //
+    // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: additionally scope commits to
+    // the driver page's viewport epoch. After a portrait ↔ landscape flip the
+    // first valid candidate is held until a second matching candidate at the
+    // same epoch confirms the settled viewport.
+    final geometry = _geometryLatch.commit(
+      candidate,
+      epoch: widget.viewportEpoch,
+    );
     return _DriverRideMetersContent(
       snapshot: widget.snapshot,
       onBackToNavigation: widget.onBackToNavigation,
@@ -554,9 +630,14 @@ class _DriverRideMetersContent extends StatelessWidget {
     final meters = geometry.metersPanelRect;
     final controls = geometry.controlsRect;
 
+    // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: explicit hard-edge clip on the
+    // Tellers exact-viewport Stack — a stale Positioned child computed from a
+    // previous-epoch geometry can never paint outside the current viewport
+    // bounds during a portrait ↔ landscape transition.
     return Stack(
       key: const ValueKey<String>('driver_tellers_geometry_stack'),
       fit: StackFit.expand,
+      clipBehavior: Clip.hardEdge,
       children: [
         // Opaque aperture chrome — fully covers every region outside the live
         // window (outer margins, gaps, system-inset bands, inter-panel space).

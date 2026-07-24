@@ -1474,4 +1474,184 @@ void main() {
       expect(driverTellersRecenterLabel(AppLanguage.en), 'Recenter');
     });
   });
+
+  // ==========================================================================
+  // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: DriverRideMetersView threads a
+  // viewport epoch into the geometry latch so a transitional (unsettled)
+  // post-rotation MediaQuery observation cannot become the authoritative
+  // Tellers geometry.
+  // ==========================================================================
+  group('DriverRideMetersView viewport epoch settling', () {
+    const snap = DriverRideMetersSnapshot(
+      fareText: '€ 5.00',
+      distanceTravelledText: '2.5 km',
+      rideDurationText: '00:05:00',
+      waitingTimeText: '00:00:15',
+      statusText: 'Rit actief',
+    );
+
+    testWidgets(
+      'renders exactly one geometry Stack (settled portrait) with an epoch',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(390, 844));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        await tester.pumpWidget(
+          MediaQuery(
+            data: const MediaQueryData(size: Size(390, 844)),
+            child: MaterialApp(
+              home: Scaffold(
+                body: DriverRideMetersView(
+                  snapshot: snap,
+                  onBackToNavigation: () {},
+                  viewportEpoch: 1,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('driver_tellers_geometry_stack')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'first post-epoch-bump landscape observation retains the previous '
+      'portrait live-window aperture (settling; retained geometry)',
+      (tester) async {
+        // Settle at epoch=1 in portrait (390 × 844).
+        await tester.binding.setSurfaceSize(const Size(390, 844));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        await tester.pumpWidget(
+          MediaQuery(
+            data: const MediaQueryData(size: Size(390, 844)),
+            child: MaterialApp(
+              home: Scaffold(
+                body: DriverRideMetersView(
+                  snapshot: snap,
+                  onBackToNavigation: () {},
+                  isLandscape: false,
+                  viewportEpoch: 1,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        final portraitLive = tester.getRect(
+          find.byKey(const ValueKey('driver_tellers_live_window')),
+        );
+
+        // Rotate: surface size flips AND epoch bumps to 2, isLandscape=true.
+        // Because it is the FIRST landscape observation at the new epoch, the
+        // latch keeps returning the previously committed portrait geometry
+        // (unsettled — one more matching observation required to promote).
+        await tester.binding.setSurfaceSize(const Size(844, 390));
+        await tester.pumpWidget(
+          MediaQuery(
+            data: const MediaQueryData(size: Size(844, 390)),
+            child: MaterialApp(
+              home: Scaffold(
+                body: DriverRideMetersView(
+                  snapshot: snap,
+                  onBackToNavigation: () {},
+                  isLandscape: true,
+                  viewportEpoch: 2,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        final duringSettling = tester.getRect(
+          find.byKey(const ValueKey('driver_tellers_live_window')),
+        );
+        expect(
+          duringSettling,
+          portraitLive,
+          reason: 'first candidate at new epoch is unsettled — keep previous',
+        );
+      },
+    );
+
+    testWidgets(
+      'second consecutive matching landscape observation at the same new '
+      'epoch is promoted (settled landscape aperture)',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(390, 844));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        await tester.pumpWidget(
+          MediaQuery(
+            data: const MediaQueryData(size: Size(390, 844)),
+            child: MaterialApp(
+              home: Scaffold(
+                body: DriverRideMetersView(
+                  snapshot: snap,
+                  onBackToNavigation: () {},
+                  isLandscape: false,
+                  viewportEpoch: 1,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        final portraitLive = tester.getRect(
+          find.byKey(const ValueKey('driver_tellers_live_window')),
+        );
+
+        // Rotate — first landscape observation (settling).
+        await tester.binding.setSurfaceSize(const Size(844, 390));
+        await tester.pumpWidget(
+          MediaQuery(
+            data: const MediaQueryData(size: Size(844, 390)),
+            child: MaterialApp(
+              home: Scaffold(
+                body: DriverRideMetersView(
+                  snapshot: snap,
+                  onBackToNavigation: () {},
+                  isLandscape: true,
+                  viewportEpoch: 2,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        // Second consecutive landscape observation at the SAME epoch — promote.
+        await tester.pumpWidget(
+          MediaQuery(
+            data: const MediaQueryData(size: Size(844, 390)),
+            child: MaterialApp(
+              home: Scaffold(
+                body: DriverRideMetersView(
+                  snapshot: snap,
+                  onBackToNavigation: () {},
+                  isLandscape: true,
+                  viewportEpoch: 2,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        final settledLandscape = tester.getRect(
+          find.byKey(const ValueKey('driver_tellers_live_window')),
+        );
+        expect(
+          settledLandscape,
+          isNot(portraitLive),
+          reason: 'settled candidate must promote landscape aperture',
+        );
+        // The geometry Stack still renders exactly once (composition intact).
+        expect(
+          find.byKey(const ValueKey('driver_tellers_geometry_stack')),
+          findsOneWidget,
+        );
+      },
+    );
+  });
 }
