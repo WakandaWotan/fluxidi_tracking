@@ -99,6 +99,101 @@ DriverVehicleMarkerPresentationOwner resolveDriverVehicleMarkerPresentationOwner
   return DriverVehicleMarkerPresentationOwner.mapboxAnnotation;
 }
 
+/// NAV-TELLERS-STREETLEVEL-SCREEN-UP-MARKER-1: rotation-alignment mode for
+/// the single Mapbox driver point annotation. Maps 1:1 onto Mapbox
+/// `IconRotationAlignment`:
+///   - [DriverMarkerRotationAlignment.map] → `IconRotationAlignment.MAP`
+///     (marker rotates with the map — pre-fix default).
+///   - [DriverMarkerRotationAlignment.viewport] →
+///     `IconRotationAlignment.VIEWPORT` (marker fixed relative to the
+///     device screen).
+enum DriverMarkerRotationAlignment { map, viewport }
+
+/// NAV-TELLERS-STREETLEVEL-SCREEN-UP-MARKER-1: resolved rotation policy for
+/// one frame of the driver marker pipeline. Pure, Mapbox-free.
+///
+/// Field-proven defect: in Tellers Streetlevel the single visible Mapbox
+/// annotation uses `IconRotationAlignment.MAP` with the raw pose bearing
+/// written into `iconRotate`, while the follow camera separately smooths
+/// its own bearing. The visible screen rotation of the marker becomes
+/// `poseBearing - smoothedCameraBearing`, which is non-zero mid-turn and
+/// shows the Car/Arrow as diagonal relative to the physical screen and the
+/// route.
+///
+/// Hard Streetlevel invariant (Car and Arrow):
+///   - marker nose always points to the physical screen top;
+///   - map + route rotate underneath the marker;
+///   - marker screen rotation is always 0°;
+///   - independent of portrait ↔ landscape, turning, Centreren,
+///     Car ↔ Arrow switching, Navigation ↔ Tellers switching.
+class DriverMarkerRotationPolicy {
+  const DriverMarkerRotationPolicy._(this.alignment, this.forceIconRotateZero);
+
+  /// Legacy behaviour: marker rotates with the map; `iconRotate` receives
+  /// the authoritative pose bearing (raw / smoothed by the surrounding
+  /// pipeline). Used in Overview / North-up, and whenever the Mapbox
+  /// annotation is not the visible owner (e.g. Flutter HUD owns).
+  static const DriverMarkerRotationPolicy mapRoadBearing =
+      DriverMarkerRotationPolicy._(DriverMarkerRotationAlignment.map, false);
+
+  /// Streetlevel screen-up: marker is fixed to the viewport top;
+  /// `iconRotate` is forced to 0 regardless of the incoming pose bearing so
+  /// the map and route rotate UNDERNEATH the marker.
+  static const DriverMarkerRotationPolicy viewportScreenUp =
+      DriverMarkerRotationPolicy._(
+    DriverMarkerRotationAlignment.viewport,
+    true,
+  );
+
+  /// Where the icon rotation is anchored.
+  final DriverMarkerRotationAlignment alignment;
+
+  /// When true, the caller must write `iconRotate = 0` regardless of any
+  /// route / GPS / pose bearing supplied. When false, the caller writes the
+  /// authoritative pose bearing unchanged.
+  final bool forceIconRotateZero;
+
+  /// Resolves the `iconRotate` value to apply to the annotation for a given
+  /// [poseBearing]. In the screen-up policy the result is always 0; in the
+  /// legacy policy the pose bearing passes through unchanged.
+  double iconRotateFor(double poseBearing) =>
+      forceIconRotateZero ? 0.0 : poseBearing;
+
+  /// Bounded, PII-free diagnostic label.
+  String get logLabel {
+    switch (alignment) {
+      case DriverMarkerRotationAlignment.map:
+        return 'map_road_bearing';
+      case DriverMarkerRotationAlignment.viewport:
+        return 'viewport_screen_up';
+    }
+  }
+}
+
+/// NAV-TELLERS-STREETLEVEL-SCREEN-UP-MARKER-1: Streetlevel + Mapbox-owned
+/// visible marker → [DriverMarkerRotationPolicy.viewportScreenUp].
+///
+/// Any other combination (Overview / North-up view, or the Mapbox
+/// annotation being HIDDEN behind the Flutter HUD in ordinary Streetlevel
+/// Navigation, or no live marker owner) preserves the legacy
+/// [DriverMarkerRotationPolicy.mapRoadBearing]. Ordinary Streetlevel with
+/// the Flutter HUD covering the (hidden) Mapbox marker is unchanged.
+///
+/// [isStreetlevel] is the driver cockpit / street-view predicate (typically
+/// `NavigationPresentationState.useDriverCockpitCamera`).
+/// [owner] is the single-owner resolution from
+/// [resolveDriverVehicleMarkerPresentationOwner].
+DriverMarkerRotationPolicy resolveDriverMarkerRotationPolicy({
+  required bool isStreetlevel,
+  required DriverVehicleMarkerPresentationOwner owner,
+}) {
+  if (isStreetlevel &&
+      owner == DriverVehicleMarkerPresentationOwner.mapboxAnnotation) {
+    return DriverMarkerRotationPolicy.viewportScreenUp;
+  }
+  return DriverMarkerRotationPolicy.mapRoadBearing;
+}
+
 /// True when the Mapbox 2D taxi/arrow annotation must be hidden because a
 /// Flutter presentation owner currently owns the single marker visual.
 bool driverHideMapboxMarkerForPresentationOwner(

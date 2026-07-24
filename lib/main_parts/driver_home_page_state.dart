@@ -9524,20 +9524,27 @@ class _DriverHomePageState extends State<DriverHomePage>
     debugPrint('[NAV_MARKER] lifecycle=driver_manager_disposed');
   }
 
-  /// NAV-R12-I-A / NAV-R13: rotation alignment stays MAP so the taxi nose
-  /// follows compass bearings/road direction (Mapbox's default `auto`
-  /// resolves to viewport for point annotations, which broke the nose under
-  /// a bearing-rotated camera). Pitch alignment is VIEWPORT so the sprite
-  /// keeps its on-screen size instead of foreshortening/shrinking under the
-  /// pitched follow camera (field feedback NAV-R13).
+  /// NAV-R12-I-A / NAV-R13 + NAV-TELLERS-STREETLEVEL-SCREEN-UP-MARKER-1:
+  /// pitch alignment is VIEWPORT so the sprite keeps its on-screen size
+  /// under the pitched follow camera (field feedback NAV-R13).
+  ///
+  /// Rotation alignment is now selected by
+  /// [_currentDriverMarkerRotationPolicy]:
+  ///   * Streetlevel + owner == mapboxAnnotation → VIEWPORT (screen-up).
+  ///     In Tellers Streetlevel the single Car/Arrow annotation stays
+  ///     upright while the map/route rotate underneath.
+  ///   * Otherwise → MAP (legacy taxi nose follows compass/road direction).
   /// Applies to the driver/taxi manager only; pins keep plugin defaults.
   Future<void> _configureDriverPointManagerForTaxiMarker(
     mb.PointAnnotationManager mgr,
   ) async {
+    final policy = _currentDriverMarkerRotationPolicy();
     var event = 'manager_configured';
     String? failReason;
     try {
-      await mgr.setIconRotationAlignment(mb.IconRotationAlignment.MAP);
+      await mgr.setIconRotationAlignment(
+        _mapboxIconRotationAlignmentFor(policy),
+      );
       await mgr.setIconPitchAlignment(mb.IconPitchAlignment.VIEWPORT);
     } catch (e) {
       event = 'manager_config_failed';
@@ -9545,7 +9552,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     _logNavBounded(
       'NAV_R13_MARKER_VISUAL',
-      'markerUpdate=$event rotationAlignment=map pitchAlignment=viewport'
+      'markerUpdate=$event rotationAlignment=${policy.logLabel} '
+          'pitchAlignment=viewport'
           '${failReason != null ? ' reason=$failReason' : ''}',
       intervalMs: 1,
     );
@@ -9554,12 +9562,99 @@ class _DriverHomePageState extends State<DriverHomePage>
         tag: 'NAV_R13_MARKER_VISUAL',
         fields: <String, dynamic>{
           'event': event,
-          'rotationAlignment': 'map',
+          'rotationAlignment': policy.logLabel,
           'pitchAlignment': 'viewport',
           if (failReason != null) 'reason': failReason,
         },
       ),
     );
+  }
+
+  /// NAV-TELLERS-STREETLEVEL-SCREEN-UP-MARKER-1: resolve the current
+  /// screen-up marker rotation policy from the live navigation state
+  /// (presentation state, follow-live gating, Tellers activity).
+  DriverMarkerRotationPolicy _currentDriverMarkerRotationPolicy() {
+    final pres = _navigationPresentationStateFor(_navCameraViewMode);
+    final followLiveActive =
+        _cameraMode == _CameraMode.follow && _liveRideActive;
+    final owner = resolveDriverVehicleMarkerPresentationOwner(
+      tellersActive: _navPresentationMode.isTellers,
+      followLiveActive: followLiveActive,
+      showDriverHudOverlay: pres.showDriverHudOverlay,
+    );
+    return resolveDriverMarkerRotationPolicy(
+      isStreetlevel: pres.useDriverCockpitCamera,
+      owner: owner,
+    );
+  }
+
+  /// NAV-TELLERS-STREETLEVEL-SCREEN-UP-MARKER-1: translate the pure policy
+  /// alignment enum into the Mapbox `IconRotationAlignment` value.
+  mb.IconRotationAlignment _mapboxIconRotationAlignmentFor(
+    DriverMarkerRotationPolicy policy,
+  ) {
+    switch (policy.alignment) {
+      case DriverMarkerRotationAlignment.map:
+        return mb.IconRotationAlignment.MAP;
+      case DriverMarkerRotationAlignment.viewport:
+        return mb.IconRotationAlignment.VIEWPORT;
+    }
+  }
+
+  /// NAV-TELLERS-STREETLEVEL-SCREEN-UP-MARKER-1: re-apply the current
+  /// screen-up policy to the live driver point-annotation manager and
+  /// marker. Called at every presentation-state transition (Tellers open /
+  /// close, camera view mode change) and after style / manager restoration
+  /// so the alignment matches the current owner without touching camera or
+  /// pose logic.
+  ///
+  /// - Sets the manager `IconRotationAlignment` to the policy value.
+  /// - If the policy forces `iconRotate = 0`, snaps the current marker's
+  ///   `iconRotate` to 0 in one bounded native update, so the very next
+  ///   frame is screen-up (no wait for the next GPS/route tick).
+  Future<void> _reapplyDriverMarkerRotationPolicy({
+    required String source,
+  }) async {
+    final mgr = _driverPointManager;
+    if (mgr == null) return;
+    final policy = _currentDriverMarkerRotationPolicy();
+    try {
+      await mgr.setIconRotationAlignment(
+        _mapboxIconRotationAlignmentFor(policy),
+      );
+    } catch (e) {
+      if (_isMapboxAnnotationManagerLost(e)) {
+        _resetDriverMarkerOnNativeError('rotation_align_$source');
+        return;
+      }
+    }
+    _logNavBounded(
+      'NAV_MARKER_ROTATION_POLICY',
+      'source=$source alignment=${policy.logLabel}',
+      intervalMs: 1,
+    );
+    if (!policy.forceIconRotateZero) return;
+    final marker = _driverMarker;
+    if (marker == null) return;
+    if (!_canUpdateDriverMarker) return;
+    final current = marker.iconRotate ?? 0.0;
+    if (current.abs() < 0.001) return;
+    if (!_driverAnnotationGate.tryAcquireLease(
+      _driverAnnotationGate.capture(),
+      NavAnnotationOperationKind.update,
+    )) {
+      return;
+    }
+    try {
+      marker.iconRotate = 0.0;
+      await mgr.update(marker);
+    } catch (e) {
+      if (_isMapboxAnnotationManagerLost(e)) {
+        _resetDriverMarkerOnNativeError('rotation_snap_$source');
+      }
+    } finally {
+      _driverAnnotationGate.releaseLease();
+    }
   }
 
   // NAV-PARKING-2 Commit 2 + NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1:
@@ -14239,6 +14334,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     unawaited(
       _applyMapboxTaxiMarkerPresentationOpacity(source: 'view_mode_change'),
     );
+    // NAV-TELLERS-STREETLEVEL-SCREEN-UP-MARKER-1: entering/leaving Streetlevel
+    // flips the required rotation policy. Re-apply immediately so the visible
+    // marker (Tellers Mapbox annotation or ordinary Streetlevel Mapbox
+    // annotation without HUD) snaps to VIEWPORT + iconRotate 0 (Streetlevel)
+    // or back to MAP + pose-bearing (Overview / North-up) without waiting
+    // for the next GPS tick.
+    unawaited(
+      _reapplyDriverMarkerRotationPolicy(source: 'view_mode_change'),
+    );
     unawaited(_ensureDriverVehicleModelLayer());
   }
 
@@ -16897,7 +17001,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     _driverMarkerVisualUpdateInFlight = true;
     final p = _mbPoint(lon, lat);
     marker.geometry = p;
-    marker.iconRotate = bearing;
+    // NAV-TELLERS-STREETLEVEL-SCREEN-UP-MARKER-1: in Tellers Streetlevel
+    // (Mapbox-owner + streetlevel view) the marker is viewport-fixed and
+    // its iconRotate is forced to 0 — the pose bearing rotates the map
+    // underneath, never the marker itself. Outside that case the
+    // authoritative pose bearing passes through unchanged.
+    marker.iconRotate =
+        _currentDriverMarkerRotationPolicy().iconRotateFor(bearing);
     // NAV-3D-MAPBOX-2D-MARKER-ISOLATION-FIX-1: rebase opacity from the
     // authoritative resolver every visual update so route_snap paths
     // never re-push a stale 1.0 during active 3D isolation.
@@ -17130,6 +17240,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     // zoom-scaled with the same taxi iconSize calibration so switching never
     // changes marker size, and _driverMarkerAppliedChoice records the live
     // choice for idempotent selector re-application.
+    //
+    // NAV-TELLERS-STREETLEVEL-SCREEN-UP-MARKER-1: creation-time iconRotate is
+    // routed through the current policy — in Tellers Streetlevel this snaps
+    // to 0 so the freshly created Car/Arrow is born upright and the
+    // map/route rotate underneath. Outside that case the pose bearing is
+    // preserved unchanged.
+    final policy = _currentDriverMarkerRotationPolicy();
+    final effectiveIconRotate = policy.iconRotateFor(markerBearing);
     final resolved = await _resolveDriverMarkerImageBytesForChoice();
     final imageBytes = resolved.bytes;
     if (imageBytes != null && imageBytes.isNotEmpty) {
@@ -17140,7 +17258,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             image: imageBytes,
             iconAnchor: mb.IconAnchor.CENTER,
             iconSize: _driverTaxiIconSizeForCurrentZoom(),
-            iconRotate: markerBearing,
+            iconRotate: effectiveIconRotate,
             iconOpacity: iconOpacity,
           ),
         );
@@ -17165,7 +17283,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           iconImage: _driverMarkerIcon,
           iconColor: 0xFFFFD21F,
           iconSize: driverFallbackMarkerIconSizeForZoom(_lastMapCameraZoom),
-          iconRotate: markerBearing,
+          iconRotate: effectiveIconRotate,
           iconOpacity: iconOpacity,
         ),
       );
@@ -17177,7 +17295,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           iconImage: _driverMarkerIcon,
           iconColor: 0xFFFFD21F,
           iconSize: driverFallbackMarkerIconSizeForZoom(_lastMapCameraZoom),
-          iconRotate: markerBearing,
+          iconRotate: effectiveIconRotate,
           iconOpacity: iconOpacity,
         ),
       );
@@ -17328,8 +17446,12 @@ class _DriverHomePageState extends State<DriverHomePage>
           // NAV-3D-MAPBOX-2D-MARKER-ISOLATION-FIX-1: geometry updates must
           // never re-push a stale Dart-side iconOpacity to native — always
           // rebase opacity on the authoritative pending desired value first.
+          // NAV-TELLERS-STREETLEVEL-SCREEN-UP-MARKER-1: in Tellers
+          // Streetlevel iconRotate is snapped to 0; the map/route rotate
+          // underneath so the Car/Arrow nose stays at physical screen top.
           _driverMarker!.geometry = p;
-          _driverMarker!.iconRotate = markerBearing;
+          _driverMarker!.iconRotate = _currentDriverMarkerRotationPolicy()
+              .iconRotateFor(markerBearing);
           _driverMarker!.iconOpacity = _resolveDesiredMapboxTaxiOpacity(
             source: 'visual_sync',
           );
@@ -19575,6 +19697,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     unawaited(
       _applyMapboxTaxiMarkerPresentationOpacity(source: 'tellers_open'),
     );
+    // NAV-TELLERS-STREETLEVEL-SCREEN-UP-MARKER-1: entering Tellers may make
+    // the Mapbox annotation the visible owner (Streetlevel) — re-apply the
+    // screen-up policy so alignment flips to VIEWPORT and any lingering
+    // pose-bearing iconRotate is snapped to 0 immediately, without waiting
+    // for the next GPS/route tick.
+    unawaited(
+      _reapplyDriverMarkerRotationPolicy(source: 'tellers_open'),
+    );
     final pos = _lastPos;
     if (pos != null &&
         _cameraMode == _CameraMode.follow &&
@@ -19740,6 +19870,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     // Restore normal Mapbox/HUD opacity ownership once per transition.
     unawaited(
       _applyMapboxTaxiMarkerPresentationOpacity(source: 'tellers_close'),
+    );
+    // NAV-TELLERS-STREETLEVEL-SCREEN-UP-MARKER-1: leaving Tellers hands the
+    // visible owner back to ordinary Navigation (Flutter HUD or hidden
+    // Mapbox marker) — restore MAP alignment so any subsequent visible
+    // Mapbox marker rotates with the road again. The next GPS tick writes
+    // the pose bearing back through the legacy policy.
+    unawaited(
+      _reapplyDriverMarkerRotationPolicy(source: 'tellers_close'),
     );
     final pos = _lastPos;
     if (pos != null &&
