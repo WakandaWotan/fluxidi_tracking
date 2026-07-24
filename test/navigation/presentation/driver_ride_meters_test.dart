@@ -57,14 +57,16 @@ void main() {
       // Normal cockpit KPI row + controls and follow-mode overlays are hidden.
       expect(hud.cockpitHud, isFalse);
       expect(hud.navBannerHud, isFalse);
-      // Only the Tellers HUD remains — with its own vehicle marker.
+      // Only the Tellers HUD remains — with a single Mapbox-owned marker.
       expect(hud.tellersHud, isTrue);
       expect(hud.vehicleMarkerVisible, isTrue);
-      expect(hud.tellersMarkerPresentationVisible, isTrue);
+      // NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1: no Flutter Car/Arrow child is
+      // painted in the live window; the Mapbox annotation is the only marker.
+      expect(hud.tellersMarkerPresentationVisible, isFalse);
       expect(hud.tellersMarkerSelectorVisible, isTrue);
       expect(
         hud.markerOwner,
-        DriverVehicleMarkerPresentationOwner.tellersLiveWindow,
+        DriverVehicleMarkerPresentationOwner.mapboxAnnotation,
       );
     });
 
@@ -108,22 +110,46 @@ void main() {
         expect(hud.cockpitHud && hud.tellersHud, isFalse);
         expect(hud.cockpitHud, tellers ? isFalse : isTrue);
         expect(hud.tellersHud, tellers);
-        // Exactly one marker owner — never both navigation HUD and Tellers.
-        expect(
-          driverHideMapboxMarkerForPresentationOwner(hud.markerOwner),
-          isTrue,
-        );
+        // NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1: exactly one marker owner in
+        // both modes. In ordinary Navigation with the driver HUD flag on the
+        // Flutter HUD owns (Mapbox hidden). In Tellers the Mapbox annotation
+        // is the ONLY owner and no Flutter Car/Arrow is painted.
+        expect(hud.vehicleMarkerVisible, isTrue);
+        if (tellers) {
+          expect(
+            hud.markerOwner,
+            DriverVehicleMarkerPresentationOwner.mapboxAnnotation,
+          );
+          expect(
+            driverHideMapboxMarkerForPresentationOwner(hud.markerOwner),
+            isFalse,
+            reason: 'Mapbox marker must remain visible in Tellers',
+          );
+          expect(hud.tellersMarkerPresentationVisible, isFalse);
+        } else {
+          expect(
+            hud.markerOwner,
+            DriverVehicleMarkerPresentationOwner.navigationHud,
+          );
+          expect(
+            driverHideMapboxMarkerForPresentationOwner(hud.markerOwner),
+            isTrue,
+          );
+        }
       }
     });
 
     test('marker owner is exclusive (never HUD and Tellers together)', () {
+      // NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1: Tellers now uses the same
+      // Mapbox annotation as ordinary Navigation. Deprecated tellersLiveWindow
+      // value is never returned by the resolver.
       expect(
         resolveDriverVehicleMarkerPresentationOwner(
           tellersActive: true,
           followLiveActive: true,
           showDriverHudOverlay: true,
         ),
-        DriverVehicleMarkerPresentationOwner.tellersLiveWindow,
+        DriverVehicleMarkerPresentationOwner.mapboxAnnotation,
       );
       expect(
         resolveDriverVehicleMarkerPresentationOwner(
@@ -141,6 +167,31 @@ void main() {
         ),
         DriverVehicleMarkerPresentationOwner.mapboxAnnotation,
       );
+      // Idle / no live follow -> no marker at all.
+      expect(
+        resolveDriverVehicleMarkerPresentationOwner(
+          tellersActive: true,
+          followLiveActive: false,
+          showDriverHudOverlay: true,
+        ),
+        DriverVehicleMarkerPresentationOwner.none,
+      );
+    });
+
+    test('Mapbox marker is NEVER hidden in Tellers (single-owner invariant)',
+        () {
+      // Regression: field-proven duplicate happened because both a Flutter
+      // Car and the Mapbox annotation were visible. The invariant must hold
+      // whether or not the (unrelated) driver HUD flag is on.
+      for (final hudFlag in <bool>[false, true]) {
+        final owner = resolveDriverVehicleMarkerPresentationOwner(
+          tellersActive: true,
+          followLiveActive: true,
+          showDriverHudOverlay: hudFlag,
+        );
+        expect(owner, DriverVehicleMarkerPresentationOwner.mapboxAnnotation);
+        expect(driverHideMapboxMarkerForPresentationOwner(owner), isFalse);
+      }
     });
   });
 
@@ -888,9 +939,14 @@ void main() {
       expect(stopRect.top, greaterThanOrEqualTo(windowRect.bottom - 0.5));
     });
 
-    testWidgets('selected vehicle marker is visible in Tellers (exactly one)', (
-      tester,
-    ) async {
+    testWidgets(
+        'no Flutter vehicle marker is painted in Tellers (Mapbox owns) — '
+        'portrait phone',
+        (tester) async {
+      // NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1: even when the widget flag is
+      // still on (defense-in-depth), the live window must NOT paint a Flutter
+      // Car/Arrow child. The one visible vehicle marker is the Mapbox
+      // annotation underneath.
       await tester.pumpWidget(
         MediaQuery(
           data: const MediaQueryData(size: Size(390, 844)),
@@ -917,12 +973,14 @@ void main() {
       await tester.pump();
       expect(
         find.byKey(const ValueKey('driver_tellers_vehicle_marker_car')),
-        findsOneWidget,
+        findsNothing,
       );
       expect(
         find.byKey(const ValueKey('driver_tellers_vehicle_marker_arrow')),
         findsNothing,
       );
+      expect(find.byType(NavigationDriverHudOverlay), findsNothing);
+      // Selector remains: it drives the same Mapbox annotation icon.
       expect(
         find.byKey(const ValueKey('driver_tellers_marker_selector')),
         findsOneWidget,
@@ -932,10 +990,14 @@ void main() {
       expect(find.text('Ride active'), findsNothing);
     });
 
-    testWidgets('Car ↔ Arrow switch is immediate; choice keys update', (
-      tester,
-    ) async {
+    testWidgets(
+        'Car ↔ Arrow selector updates the marker choice (no second owner)',
+        (tester) async {
+      // The selector must remain fully functional; its callback is what drives
+      // the single Mapbox annotation icon in the state. No Flutter marker
+      // widget is created on either side.
       var choice = DriverNavigationMarkerChoice.car;
+      final tapped = <DriverNavigationMarkerChoice>[];
       await tester.pumpWidget(
         MediaQuery(
           data: const MediaQueryData(size: Size(834, 1194)),
@@ -957,6 +1019,7 @@ void main() {
                     showMarkerSelector: true,
                     markerChoice: choice,
                     onMarkerChoiceSelected: (c) {
+                      tapped.add(c);
                       setState(() => choice = c);
                     },
                   );
@@ -967,31 +1030,35 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(
-        find.byKey(const ValueKey('driver_tellers_vehicle_marker_car')),
-        findsOneWidget,
-      );
+      expect(find.byType(NavigationDriverHudOverlay), findsNothing);
 
-      // Tap the Arrow / Pijl button inside the compact selector.
       final arrowButton = find.text('Pijl');
       expect(arrowButton, findsOneWidget);
       await tester.tap(arrowButton);
       await tester.pump();
-      expect(
-        find.byKey(const ValueKey('driver_tellers_vehicle_marker_arrow')),
-        findsOneWidget,
-      );
+      expect(choice, DriverNavigationMarkerChoice.arrow);
+      expect(tapped, contains(DriverNavigationMarkerChoice.arrow));
+
+      final carButton = find.text('Auto');
+      expect(carButton, findsOneWidget);
+      await tester.tap(carButton);
+      await tester.pump();
+      expect(choice, DriverNavigationMarkerChoice.car);
+
+      // Repeatedly switching never conjures a Flutter marker widget.
+      expect(find.byType(NavigationDriverHudOverlay), findsNothing);
       expect(
         find.byKey(const ValueKey('driver_tellers_vehicle_marker_car')),
         findsNothing,
       );
-      // Still exactly one marker.
-      expect(find.byType(NavigationDriverHudOverlay), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('driver_tellers_vehicle_marker_arrow')),
+        findsNothing,
+      );
     });
 
-    testWidgets('marker stays inside portrait live-window bounds', (
-      tester,
-    ) async {
+    testWidgets('no Flutter vehicle marker in portrait live window (single owner)',
+        (tester) async {
       await tester.binding.setSurfaceSize(const Size(390, 844));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await tester.pumpWidget(
@@ -1018,20 +1085,19 @@ void main() {
         ),
       );
       await tester.pump();
-      final window = tester.getRect(
+      expect(
         find.byKey(const ValueKey('driver_tellers_live_window')),
+        findsOneWidget,
       );
-      final marker = tester.getRect(
+      expect(find.byType(NavigationDriverHudOverlay), findsNothing);
+      expect(
         find.byKey(const ValueKey('driver_tellers_vehicle_marker_arrow')),
+        findsNothing,
       );
-      expect(window.contains(marker.center), isTrue);
-      expect(marker.top, greaterThanOrEqualTo(window.top - 0.5));
-      expect(marker.bottom, lessThanOrEqualTo(window.bottom + 0.5));
     });
 
-    testWidgets('marker stays inside landscape live-window bounds', (
-      tester,
-    ) async {
+    testWidgets('no Flutter vehicle marker in landscape live window (single owner)',
+        (tester) async {
       await tester.binding.setSurfaceSize(const Size(1194, 834));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await tester.pumpWidget(
@@ -1063,15 +1129,16 @@ void main() {
       final window = tester.getRect(
         find.byKey(const ValueKey('driver_tellers_live_window')),
       );
-      final marker = tester.getRect(
-        find.byKey(const ValueKey('driver_tellers_vehicle_marker_car')),
-      );
-      expect(window.contains(marker.center), isTrue);
-      // Selector also inside the window.
+      // Selector remains inside the window even without a Flutter marker.
       final selector = tester.getRect(
         find.byKey(const ValueKey('driver_tellers_marker_selector')),
       );
       expect(window.contains(selector.center), isTrue);
+      expect(find.byType(NavigationDriverHudOverlay), findsNothing);
+      expect(
+        find.byKey(const ValueKey('driver_tellers_vehicle_marker_car')),
+        findsNothing,
+      );
     });
 
     test('route version / GPS / fare ownership are not part of this view', () {

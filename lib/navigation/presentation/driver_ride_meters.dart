@@ -11,8 +11,6 @@ import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/navigation/presentation/driver_tellers_layout_geometry.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_marker_choice.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_presentation_flags.dart';
-import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_marker_visual_anchor.dart';
-import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_hud_overlay.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_vehicle_choice_selector.dart';
 
 export 'package:fluxidi_tracking/navigation/presentation/driver_tellers_layout_geometry.dart';
@@ -55,6 +53,13 @@ class DriverNavPresentationModeController {
 /// NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1 Commit 2: single owner of the
 /// selected vehicle marker presentation. Exactly one owner at a time — never
 /// both a Flutter HUD marker and a Mapbox annotation marker.
+///
+/// NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1: in Tellers the ONE vehicle marker is
+/// now the same native Mapbox annotation used by ordinary Navigation, projected
+/// at the Tellers marker anchor by the follow-camera padding. The screen-fixed
+/// Flutter Car/Arrow child inside the Tellers live window is no longer painted
+/// (field-proven duplicate). The legacy `tellersLiveWindow` enum value is
+/// retained for source compat but the resolver never returns it.
 enum DriverVehicleMarkerPresentationOwner {
   /// No marker (idle / no live follow).
   none,
@@ -62,12 +67,16 @@ enum DriverVehicleMarkerPresentationOwner {
   /// Normal Street-Level screen-fixed HUD owns the visual; Mapbox 2D opacity 0.
   navigationHud,
 
-  /// Native Mapbox annotation owns the visual (no Flutter HUD marker).
+  /// Native Mapbox annotation owns the visual (no Flutter HUD marker). Used by
+  /// both ordinary Navigation (no HUD overlay flag) AND by Tellers.
   mapboxAnnotation,
 
-  /// Tellers live-window Flutter marker owns the visual; Mapbox 2D opacity 0.
-  /// Same selected Car/Arrow choice and authoritative pose — relocated into
-  /// the live-navigation window, never a second GPS/pose owner.
+  /// DEPRECATED (NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1). Kept for source
+  /// compatibility; the resolver never returns it. Do not add new callers.
+  @Deprecated(
+    'Tellers now uses Mapbox annotation as the single marker owner; see '
+    'NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1.',
+  )
   tellersLiveWindow,
 }
 
@@ -78,8 +87,11 @@ DriverVehicleMarkerPresentationOwner resolveDriverVehicleMarkerPresentationOwner
   required bool showDriverHudOverlay,
 }) {
   if (!followLiveActive) return DriverVehicleMarkerPresentationOwner.none;
+  // NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1: Tellers uses the same Mapbox
+  // annotation as ordinary Navigation. Camera padding places that annotation
+  // at the Tellers marker anchor; no second Flutter Car/Arrow is painted.
   if (tellersActive) {
-    return DriverVehicleMarkerPresentationOwner.tellersLiveWindow;
+    return DriverVehicleMarkerPresentationOwner.mapboxAnnotation;
   }
   if (showDriverHudOverlay) {
     return DriverVehicleMarkerPresentationOwner.navigationHud;
@@ -92,7 +104,13 @@ DriverVehicleMarkerPresentationOwner resolveDriverVehicleMarkerPresentationOwner
 bool driverHideMapboxMarkerForPresentationOwner(
   DriverVehicleMarkerPresentationOwner owner,
 ) {
+  // NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1: [tellersLiveWindow] is deprecated
+  // and never returned by the resolver, but the check is kept as a
+  // defense-in-depth guarantee: if a stale caller ever hands us that value,
+  // hiding the Mapbox marker (behind whatever Flutter owner it implied)
+  // remains the safe fallback.
   return owner == DriverVehicleMarkerPresentationOwner.navigationHud ||
+      // ignore: deprecated_member_use_from_same_package
       owner == DriverVehicleMarkerPresentationOwner.tellersLiveWindow;
 }
 
@@ -155,8 +173,10 @@ class DriverNavHudVisibility {
       navBannerHud: cameraFollow && !tellersActive,
       tellersHud: tellersActive,
       vehicleMarkerVisible: owner != DriverVehicleMarkerPresentationOwner.none,
-      tellersMarkerPresentationVisible:
-          owner == DriverVehicleMarkerPresentationOwner.tellersLiveWindow,
+      // NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1: no Flutter Car/Arrow child is
+      // painted inside the Tellers live window; the single Mapbox annotation
+      // is projected onto the marker anchor by the follow-camera padding.
+      tellersMarkerPresentationVisible: false,
       tellersMarkerSelectorVisible: tellersActive &&
           (followLiveActive || cameraFollow),
       markerOwner: owner,
@@ -663,28 +683,18 @@ class _DriverRideMetersContent extends StatelessWidget {
     DriverThemePalette palette,
     DriverTellersLayoutGeometry geometry,
   ) {
-    // NAV-PHONE-LANDSCAPE-MARKER-SCALE-1: Tellers inherits the same
-    // orientation-independent phone/tablet class as Navigation (never width
-    // alone). Synthetic portrait phone/tablet sizes keep the class stable.
-    final markerSize = vehicleMarkerIconSize ??
-        NavigationDriverHudOverlay.resolveIconSize(
-          screenWidth: isTablet ? 800 : 390,
-          screenHeight: isTablet ? 1200 : 844,
-          cockpitBoost: true,
-        );
+    // NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1: no Flutter Car/Arrow child is
+    // painted inside the Tellers live window. The single vehicle marker is the
+    // Mapbox annotation ordinary Navigation already owns, projected at the
+    // Tellers marker anchor by the follow-camera padding (see
+    // NAV-TELLERS-ROUTE-CENTERLINE-LOCK-1). [showVehicleMarker] and
+    // [vehicleMarkerIconSize] are retained on the widget's public API for
+    // source compat but no longer control any paint here.
     final live = geometry.liveWindowRect;
     // Convert absolute geometry rects into local coords inside this Positioned.
     final labelLocal = geometry.labelRect.shift(-live.topLeft);
     final selectorLocal = geometry.selectorRect.shift(-live.topLeft);
     final markerLocal = geometry.markerAnchor - live.topLeft;
-    // Layout box centred on the projected pose (same screen point as
-    // Navigation). Car visual centreline calibration is paint-only inside
-    // [NavigationDriverHudOverlay] via [kDriverCarVisualAnchorFraction].
-    final markerTopLeft = driverNavigationMarkerTopLeftForVisualAnchor(
-      visualAnchorScreen: markerLocal,
-      layoutSize: markerSize,
-      visualAnchorFraction: kDriverMarkerLayoutCenterFraction,
-    );
     final liveLabel = driverTellersLiveNavigationLabel(markerLanguage);
 
     return RepaintBoundary(
@@ -744,22 +754,10 @@ class _DriverRideMetersContent extends StatelessWidget {
                   ),
                 ),
               ),
-            if (showVehicleMarker)
-              Positioned(
-                left: markerTopLeft.dx,
-                top: markerTopLeft.dy,
-                width: markerSize,
-                height: markerSize,
-                child: KeyedSubtree(
-                  key: ValueKey<String>(
-                    'driver_tellers_vehicle_marker_${markerChoice.name}',
-                  ),
-                  child: NavigationDriverHudOverlay(
-                    iconSize: markerSize,
-                    markerChoice: markerChoice,
-                  ),
-                ),
-              ),
+            // NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1: intentionally NO Flutter
+            // Car/Arrow child here — the single Mapbox annotation is the only
+            // vehicle marker owner in Tellers. Placing a second Flutter Car
+            // caused field-visible duplicates.
             // NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 2):
             // development-only crosshair at the marker road-contact anchor
             // (== camera target anchor). Never rendered in release, and only

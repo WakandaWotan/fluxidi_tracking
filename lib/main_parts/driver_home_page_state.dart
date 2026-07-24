@@ -11589,6 +11589,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
     if (driverHideMapboxMarkerForPresentationOwner(owner)) {
       return kNavigationHideMapboxTaxiMarkerWithDriverHudEnabled ||
+          // ignore: deprecated_member_use_from_same_package
           owner == DriverVehicleMarkerPresentationOwner.tellersLiveWindow;
     }
     return false;
@@ -16992,7 +16993,33 @@ class _DriverHomePageState extends State<DriverHomePage>
         'source=${markerDisplay.source} snapDistM=${markerDisplay.snapDistM?.round() ?? -1}',
       );
     }
-    final p = _mbPoint(visual.point.lon, visual.point.lat);
+    // NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1: in Tellers the ONE Mapbox
+    // annotation is the visible vehicle marker AND the same authoritative
+    // pose (matched snap when reliable — see NAV-TELLERS-ROUTE-CENTERLINE-
+    // LOCK-1) the follow camera projects at the Tellers marker anchor. Pin
+    // the annotation geometry to that pose so the single marker stays on
+    // the polyline centreline. Ordinary Navigation keeps the existing visual
+    // (prediction/interpolation/raw) — unchanged.
+    var markerLat = visual.point.lat;
+    var markerLon = visual.point.lon;
+    if (_navPresentationMode.isTellers) {
+      final progress = _lastNavRouteProgress;
+      final confidence = _lastNavConfidence;
+      final tellersPose = resolveTellersAuthoritativePose(
+        TellersAuthoritativePoseInput(
+          visualLat: visual.point.lat,
+          visualLon: visual.point.lon,
+          snappedLat: progress?.snappedLatitude,
+          snappedLon: progress?.snappedLongitude,
+          hasReliableMatchedSnap: _routeProgressMatchedVisual(progress),
+          trustRouteSnap: confidence?.trustRouteSnap ?? true,
+          offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
+        ),
+      );
+      markerLat = tellersPose.lat;
+      markerLon = tellersPose.lon;
+    }
+    final p = _mbPoint(markerLon, markerLat);
     final markerBearing = visual.bearing;
     // Fresh GPS-driven visual supersedes any pre-style-swap snapshot.
     _taxiVisualSnapshotForStyleSwap = null;
@@ -17138,6 +17165,18 @@ class _DriverHomePageState extends State<DriverHomePage>
       event: 'applied',
       markerSource: markerDisplay.source,
       markerLagMs: markerLagMs,
+    );
+
+    // NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1: bounded PII-free invariant proof.
+    // Exactly one visible vehicle-marker owner (the Mapbox annotation), in
+    // both navigation and tellers modes. No coordinates or trip identifiers.
+    _logNavBounded(
+      'NAV_MARKER_OWNER',
+      'mode=${_navPresentationMode.isTellers ? 'tellers' : 'navigation'} '
+          'owner=mapbox '
+          'visible_owner_count=1 '
+          'marker=${_driverNavigationMarkerChoice == DriverNavigationMarkerChoice.arrow ? 'arrow' : 'car'}',
+      intervalMs: 3000,
     );
 
     unawaited(
@@ -19419,10 +19458,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         // NAV-PARKING-2 Commit 4: reserve a transparent live-navigation window
         // over the single mounted MapWidget. No second MapWidget is created.
         showLiveWindow: true,
-        // NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1: one selected vehicle marker
-        // + compact Car/Arrow selector inside the live window. Uses the same
-        // marker-choice state/actions as Navigation — never a second owner.
-        showVehicleMarker: followLive,
+        // NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1: the single vehicle marker in
+        // Tellers is the SAME Mapbox annotation ordinary Navigation owns,
+        // projected at the Tellers marker anchor by the follow-camera padding.
+        // No Flutter Car/Arrow child is painted inside the live window; the
+        // param is retained on the widget's public API but has no visual
+        // effect here (defense-in-depth false).
+        showVehicleMarker: false,
         showMarkerSelector: followLive,
         markerChoice: _driverNavigationMarkerChoice,
         onMarkerChoiceSelected: _setDriverNavigationMarkerChoice,
