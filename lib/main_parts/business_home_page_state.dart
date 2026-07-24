@@ -57,6 +57,20 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   String? _kpiRequestCompanyId;
   int _dashboardKpiRefreshGeneration = 0;
   int _kpiSnapshotGeneration = 0;
+  // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: single-flight coordinator state.
+  //
+  // * `_kpiCycleGeneration` is monotonic per cycle for `[BUSINESS_KPI_LOAD]`
+  //   diagnostics; it does not gate any control flow. Scope-generation
+  //   rejection uses `_dashboardKpiRefreshGeneration` as before.
+  // * `_kpiAutoRetryTimer` is the pending 500 ms automatic-retry timer. At
+  //   most one automatic retry per failed cycle.
+  // * `_kpiPendingRerun*` implements latest-wins coalescing: while a cycle
+  //   is in flight, additional triggers set the queued reason instead of
+  //   spawning a second concurrent cycle.
+  int _kpiCycleGeneration = 0;
+  Timer? _kpiAutoRetryTimer;
+  bool _kpiPendingRerunQueued = false;
+  String? _kpiPendingRerunReason;
   bool _routeObserverSubscribed = false;
   bool _businessAccessGuardTriggered = false;
 
@@ -212,7 +226,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     // BUSINESS-DASHBOARD-KPI-LOADING-UX-1: show scoped cached snapshot
     // immediately (if any), then refresh in the background.
     _hydrateDashboardKpisFromScopedCache(reason: 'init');
-    unawaited(_refreshDashboardKpis(reason: 'init'));
+    // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: the first cycle only starts once
+    // company profile + session are hydrated. If scope is not ready yet the
+    // scope listener (`_onDashboardKpiScopeMaybeChanged`) fires the initial
+    // load as soon as ready. This prevents pairing a valid company-session
+    // bearer with the default `fluxidi` tenant/company fallback.
+    unawaited(
+      _refreshDashboardKpis(reason: BusinessKpiCycleReason.init),
+    );
   }
 
   void _hydrateDashboardKpisFromScopedCache({required String reason}) {
@@ -284,6 +305,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       kAppRouteObserver.unsubscribe(this);
       _routeObserverSubscribed = false;
     }
+    // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: cancel any pending automatic
+    // retry timer so it can never fire on an unmounted state.
+    _kpiAutoRetryTimer?.cancel();
+    _kpiAutoRetryTimer = null;
+    _kpiPendingRerunQueued = false;
+    _kpiPendingRerunReason = null;
     businessHomeMobileLayoutNotifier.removeListener(
       _onBusinessHomeMobileLayoutChanged,
     );
@@ -308,14 +335,18 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _guardBusinessAccessOrRedirect(reason: 'business_home_resume');
-      unawaited(_refreshDashboardKpis(reason: 'app_resume'));
+      unawaited(
+        _refreshDashboardKpis(reason: BusinessKpiCycleReason.resume),
+      );
     }
   }
 
   @override
   void didPopNext() {
     _guardBusinessAccessOrRedirect(reason: 'business_home_route_return');
-    unawaited(_refreshDashboardKpis(reason: 'route_return'));
+    unawaited(
+      _refreshDashboardKpis(reason: BusinessKpiCycleReason.routeReturn),
+    );
   }
 
   int? _asInt(dynamic value) {
@@ -387,11 +418,31 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     final scope = _activeDashboardKpiScope();
     final nextTenant = scope?.tenantId;
     final nextCompany = scope?.companyId;
-    if (nextTenant == _dashboardKpiTenantId &&
-        nextCompany == _dashboardKpiCompanyId) {
+    final scopeChanged =
+        nextTenant != _dashboardKpiTenantId ||
+        nextCompany != _dashboardKpiCompanyId;
+    if (scopeChanged) {
+      _clearDashboardKpisForScopeChange(reason: 'session_or_profile');
       return;
     }
-    _clearDashboardKpisForScopeChange(reason: 'session_or_profile');
+    // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: even when the resolved scope
+    // tokens are unchanged (i.e. still equal to the pre-hydration fallback
+    // or to the last-seen value), the underlying company profile/session
+    // notifiers may have transitioned from "not ready" to "ready". In that
+    // case the initial cycle from `initState` was skipped and we must now
+    // start the first real cycle automatically. If a snapshot is already
+    // on screen, `_refreshDashboardKpis` becomes an ordinary refresh and
+    // preserves the visible values.
+    if (_openBookingsCount == null &&
+        _completedRidesCount == null &&
+        _unpaidCompletedRidesCount == null &&
+        _monthlyIncomeCents == null &&
+        !_kpiRefreshInFlight &&
+        _kpiScopeIsReadyForRequest()) {
+      unawaited(
+        _refreshDashboardKpis(reason: BusinessKpiCycleReason.scopeReady),
+      );
+    }
   }
 
   void _clearDashboardKpisForScopeChange({required String reason}) {
@@ -427,7 +478,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       }
     });
     if (scope != null) {
-      unawaited(_refreshDashboardKpis(reason: 'scope_change:$reason'));
+      unawaited(
+        _refreshDashboardKpis(
+          reason: BusinessKpiCycleReason.scopeChangedRerun,
+        ),
+      );
     }
   }
 
@@ -492,9 +547,77 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     }
   }
 
-  Future<void> _refreshDashboardKpis({required String reason}) async {
+  // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: scope-ready gate. The initial
+  // request never fires while the resolved scope is null OR while a valid
+  // company-session bearer would be paired with the `fluxidi` fallback
+  // tenant/company (see `businessDashboardKpiScopeIsReady`).
+  bool _kpiScopeIsReadyForRequest() {
+    final scope = _activeDashboardKpiScope();
+    return businessDashboardKpiScopeIsReady(
+      profileCompanyId: companyProfileNotifier.value?.companyId,
+      sessionCompanyId: activeCompanySessionNotifier.value?.companyId,
+      scopeTenantId: scope?.tenantId,
+      scopeCompanyId: scope?.companyId,
+      hasAdminAuthShortcut: hasFleetSyncAdminToken,
+    );
+  }
+
+  String _kpiAuthModeLabel(CompanyOwnerAuthHeaders headers) {
+    return businessKpiAuthModeLabel(
+      hasAdminToken: headers.mode == CompanyOwnerAuthMode.admin,
+      hasCompanySession:
+          headers.mode == CompanyOwnerAuthMode.companySession,
+    );
+  }
+
+  // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: single-flight KPI load coordinator.
+  //
+  // Behaviour contract:
+  //   * At most one cycle is in flight at any time. Concurrent triggers
+  //     coalesce into one latest-wins queued rerun instead of spawning a
+  //     second parallel cycle.
+  //   * The initial request never fires while scope is not ready
+  //     (`_kpiScopeIsReadyForRequest`). The scope listener re-invokes this
+  //     helper as soon as profile/session hydrate.
+  //   * On combined-cycle failure the coordinator classifies each leg's
+  //     outcome and schedules exactly one bounded automatic retry (500 ms)
+  //     when the failures are transient (timeout/network/429/5xx). Auth /
+  //     scope / malformed-payload failures never auto-retry.
+  //   * Stale-response rejections do not flip the failure flag; they
+  //     schedule a fresh cycle for the current scope so the dashboard
+  //     never gets stuck in unavailable+no-retry.
+  //   * Presentation rules from `BUSINESS-DASHBOARD-KPI-LOADING-UX-1` are
+  //     preserved: last-successful snapshot stays visible during refresh,
+  //     no invented zeros, atomic apply, scope-safe cache.
+  Future<void> _refreshDashboardKpis({
+    required String reason,
+    int attempt = 1,
+  }) async {
+    // Non-manual triggers must wait for ready scope. Manual retry likewise:
+    // the button is only visible after a completed cycle, so scope is
+    // already known ready at that point; asserting it here keeps the
+    // guarantee that we never send a request with the `fluxidi` fallback
+    // paired with a foreign company-session bearer.
+    if (!_kpiScopeIsReadyForRequest()) {
+      debugPrint(
+        formatBusinessKpiLoadDiagnostic(
+          cycleGeneration: _kpiCycleGeneration,
+          reason: reason,
+          leg: BusinessKpiLegLabel.combined,
+          attempt: attempt,
+          status: BusinessKpiCombinedStatus.skippedScopeNotReady,
+          elapsedMs: 0,
+          scopeReady: false,
+          authMode: 'none',
+        ),
+      );
+      return;
+    }
+
     final requestScope = _activeDashboardKpiScope();
     if (requestScope == null) {
+      // Defensive: scope-ready implies non-null scope, but keep the
+      // legacy log for other unexpected paths.
       debugPrint(
         '[BUSINESS_DASHBOARD][KPI][WARN] reason=missing_scope trigger=$reason',
       );
@@ -503,25 +626,59 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     final requestGeneration = _dashboardKpiRefreshGeneration;
     final capturedTenantId = requestScope.tenantId;
     final capturedCompanyId = requestScope.companyId;
-    // No refresh storm: coalesce in-flight requests for the same scope.
-    if (_kpiRefreshInFlight &&
-        _kpiRequestTenantId == capturedTenantId &&
-        _kpiRequestCompanyId == capturedCompanyId) {
+
+    // Latest-wins single-flight coalescing. If a cycle is already active
+    // (any scope), queue exactly one rerun with the incoming reason so the
+    // coordinator picks it up in `finally`. Auto-retry cycles ignore this
+    // path — they are scheduled internally and always run to completion.
+    if (_kpiRefreshInFlight && reason != BusinessKpiCycleReason.autoRetry) {
+      _kpiPendingRerunQueued = true;
+      _kpiPendingRerunReason = reason;
+      debugPrint(
+        formatBusinessKpiLoadDiagnostic(
+          cycleGeneration: _kpiCycleGeneration,
+          reason: reason,
+          leg: BusinessKpiLegLabel.combined,
+          attempt: attempt,
+          status: BusinessKpiCombinedStatus.coalesced,
+          elapsedMs: 0,
+          scopeReady: true,
+          authMode: 'none',
+        ),
+      );
       return;
     }
+
+    // Cancel any pending auto-retry so that a fresh manual/scope trigger
+    // does not race against a stale scheduled retry.
+    _kpiAutoRetryTimer?.cancel();
+    _kpiAutoRetryTimer = null;
+
     _kpiRefreshInFlight = true;
     _kpiRequestTenantId = capturedTenantId;
     _kpiRequestCompanyId = capturedCompanyId;
+    if (attempt == 1) {
+      _kpiCycleGeneration += 1;
+    }
+    final cycleGeneration = _kpiCycleGeneration;
     if (mounted) setState(() {});
     final startedAt = DateTime.now();
     _logBusinessKpiLoad(
       event: BusinessKpiLoadEvent.requestStarted,
       scopeGeneration: requestGeneration,
-      detail: 'trigger=$reason',
+      detail: 'trigger=$reason attempt=$attempt cycle=$cycleGeneration',
     );
+
+    var authModeLabel = 'none';
+    var bookingsOutcome = BusinessKpiLegOutcome.network;
+    var tripOutcome = BusinessKpiLegOutcome.network;
+    var fallbackAttempted = false;
+    var fallbackOutcome = BusinessKpiLegOutcome.network;
     try {
       final month = _activeMonthToken();
-      final headers = await _companyOwnerHeaders();
+      final auth = await resolveCompanyOwnerAuthHeaders();
+      final headers = auth.headers;
+      authModeLabel = _kpiAuthModeLabel(auth);
       if (!businessDashboardKpiMayApplyResponse(
         requestGeneration: requestGeneration,
         currentGeneration: _dashboardKpiRefreshGeneration,
@@ -530,10 +687,25 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         activeTenantId: _activeDashboardKpiScope()?.tenantId,
         activeCompanyId: _activeDashboardKpiScope()?.companyId,
       )) {
+        // Stale-scope rejection is not a user-facing failure. Fresh
+        // cycle for the current scope is scheduled below via the queued
+        // rerun mechanism so the dashboard cannot get stuck in
+        // unavailable+no-retry.
+        _kpiPendingRerunQueued = true;
+        _kpiPendingRerunReason ??= BusinessKpiCycleReason.scopeChangedRerun;
+        final durationMs =
+            DateTime.now().difference(startedAt).inMilliseconds;
         debugPrint(
-          '[BUSINESS_DASHBOARD][KPI][STALE_RESPONSE_SKIP] phase=pre_fetch '
-          'trigger=$reason tenant=${_maskLocalScopeId(capturedTenantId)} '
-          'company=${_maskLocalScopeId(capturedCompanyId)}',
+          formatBusinessKpiLoadDiagnostic(
+            cycleGeneration: cycleGeneration,
+            reason: reason,
+            leg: BusinessKpiLegLabel.combined,
+            attempt: attempt,
+            status: BusinessKpiCombinedStatus.stale,
+            elapsedMs: durationMs,
+            scopeReady: true,
+            authMode: authModeLabel,
+          ),
         );
         return;
       }
@@ -555,10 +727,24 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       var bookingsKpisOk = false;
       var tripKpisOk = false;
 
+      final bookingsStartedAt = DateTime.now();
       try {
         final bookingsRes = await http
             .get(bookingsUri, headers: headers)
             .timeout(const Duration(seconds: 12));
+        final bookingsBodyIsOkMap = () {
+          if (bookingsRes.statusCode != 200) return false;
+          try {
+            final decoded = jsonDecode(bookingsRes.body);
+            return decoded is Map && decoded['ok'] == true;
+          } catch (_) {
+            return false;
+          }
+        }();
+        bookingsOutcome = classifyBusinessKpiLegHttpOutcome(
+          statusCode: bookingsRes.statusCode,
+          decodedOk: bookingsBodyIsOkMap,
+        );
         if (bookingsRes.statusCode == 200) {
           final decoded = jsonDecode(bookingsRes.body);
           if (decoded is Map && decoded['ok'] == true) {
@@ -575,25 +761,83 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           );
         }
       } catch (e) {
+        bookingsOutcome = classifyBusinessKpiLegExceptionOutcome(
+          errorRuntimeType: e.runtimeType.toString(),
+        );
         debugPrint(
           '[BUSINESS_DASHBOARD][KPI][WARN] source=bookings reason=fetch_failed trigger=$reason error=$e',
         );
       }
-      if (!bookingsKpisOk) {
-        final fallback = await _loadOpenBookingsFallbackCount(
-          headers: headers,
+      final bookingsElapsedMs = DateTime.now()
+          .difference(bookingsStartedAt)
+          .inMilliseconds;
+      debugPrint(
+        formatBusinessKpiLoadDiagnostic(
+          cycleGeneration: cycleGeneration,
           reason: reason,
-        );
-        if (fallback != null) {
-          bookingsKpisOk = true;
-          nextOpenBookings = fallback;
+          leg: BusinessKpiLegLabel.bookings,
+          attempt: attempt,
+          status: businessKpiLegOutcomeStatusLabel(bookingsOutcome),
+          elapsedMs: bookingsElapsedMs,
+          scopeReady: true,
+          authMode: authModeLabel,
+        ),
+      );
+      if (!bookingsKpisOk) {
+        fallbackAttempted = true;
+        final fallbackStartedAt = DateTime.now();
+        try {
+          final fallback = await _loadOpenBookingsFallbackCount(
+            headers: headers,
+            reason: reason,
+          );
+          if (fallback != null) {
+            bookingsKpisOk = true;
+            nextOpenBookings = fallback;
+            fallbackOutcome = BusinessKpiLegOutcome.success;
+          } else {
+            fallbackOutcome = BusinessKpiLegOutcome.invalidPayload;
+          }
+        } catch (e) {
+          fallbackOutcome = classifyBusinessKpiLegExceptionOutcome(
+            errorRuntimeType: e.runtimeType.toString(),
+          );
         }
+        final fallbackElapsedMs = DateTime.now()
+            .difference(fallbackStartedAt)
+            .inMilliseconds;
+        debugPrint(
+          formatBusinessKpiLoadDiagnostic(
+            cycleGeneration: cycleGeneration,
+            reason: reason,
+            leg: BusinessKpiLegLabel.bookingsFallback,
+            attempt: attempt,
+            status: businessKpiLegOutcomeStatusLabel(fallbackOutcome),
+            elapsedMs: fallbackElapsedMs,
+            scopeReady: true,
+            authMode: authModeLabel,
+          ),
+        );
       }
 
+      final tripStartedAt = DateTime.now();
       try {
         final tripRes = await http
             .get(tripKpisUri, headers: headers)
             .timeout(const Duration(seconds: 12));
+        final tripBodyIsOkMap = () {
+          if (tripRes.statusCode != 200) return false;
+          try {
+            final decoded = jsonDecode(tripRes.body);
+            return decoded is Map && decoded['ok'] == true;
+          } catch (_) {
+            return false;
+          }
+        }();
+        tripOutcome = classifyBusinessKpiLegHttpOutcome(
+          statusCode: tripRes.statusCode,
+          decodedOk: tripBodyIsOkMap,
+        );
         if (tripRes.statusCode == 200) {
           final decoded = jsonDecode(tripRes.body);
           if (decoded is Map && decoded['ok'] == true) {
@@ -629,10 +873,28 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           );
         }
       } catch (e) {
+        tripOutcome = classifyBusinessKpiLegExceptionOutcome(
+          errorRuntimeType: e.runtimeType.toString(),
+        );
         debugPrint(
           '[BUSINESS_DASHBOARD][KPI][WARN] source=trip_kpis reason=fetch_failed trigger=$reason error=$e',
         );
       }
+      final tripElapsedMs = DateTime.now()
+          .difference(tripStartedAt)
+          .inMilliseconds;
+      debugPrint(
+        formatBusinessKpiLoadDiagnostic(
+          cycleGeneration: cycleGeneration,
+          reason: reason,
+          leg: BusinessKpiLegLabel.trip,
+          attempt: attempt,
+          status: businessKpiLegOutcomeStatusLabel(tripOutcome),
+          elapsedMs: tripElapsedMs,
+          scopeReady: true,
+          authMode: authModeLabel,
+        ),
+      );
 
       final durationMs =
           DateTime.now().difference(startedAt).inMilliseconds;
@@ -645,18 +907,28 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         activeTenantId: _activeDashboardKpiScope()?.tenantId,
         activeCompanyId: _activeDashboardKpiScope()?.companyId,
       )) {
+        // Stale at apply time: same non-terminal recovery as pre-fetch.
+        _kpiPendingRerunQueued = true;
+        _kpiPendingRerunReason ??= BusinessKpiCycleReason.scopeChangedRerun;
         debugPrint(
-          '[BUSINESS_DASHBOARD][KPI][STALE_RESPONSE_SKIP] phase=apply '
-          'trigger=$reason tenant=${_maskLocalScopeId(capturedTenantId)} '
-          'company=${_maskLocalScopeId(capturedCompanyId)} '
-          'request_generation=$requestGeneration '
-          'current_generation=$_dashboardKpiRefreshGeneration',
+          formatBusinessKpiLoadDiagnostic(
+            cycleGeneration: cycleGeneration,
+            reason: reason,
+            leg: BusinessKpiLegLabel.combined,
+            attempt: attempt,
+            status: BusinessKpiCombinedStatus.stale,
+            elapsedMs: durationMs,
+            scopeReady: true,
+            authMode: authModeLabel,
+          ),
         );
         return;
       }
 
       // BUSINESS-DASHBOARD-KPI-LOADING-UX-1: apply only a complete response.
       // Partial/failed legs must NOT invent zeros or wipe a prior snapshot.
+      // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: on partial failure, decide
+      // whether the coordinator may schedule exactly one bounded auto-retry.
       final complete = businessDashboardKpiResponseIsComplete(
         bookingsOk: bookingsKpisOk,
         tripKpisOk: tripKpisOk,
@@ -666,12 +938,58 @@ class _BusinessHomePageState extends State<BusinessHomePage>
           nextCompletedRides == null ||
           nextUnpaidCompleted == null ||
           nextMonthlyIncomeCents == null) {
+        // If bookings primary failed transient AND fallback also failed
+        // transient, treat the combined bookings leg as transient. If the
+        // primary succeeded (rare here because we are on the failure
+        // path) fold accordingly.
+        var effectiveBookingsOutcome = bookingsOutcome;
+        if (fallbackAttempted && !bookingsKpisOk) {
+          effectiveBookingsOutcome =
+              businessKpiLegOutcomeIsTransient(bookingsOutcome) &&
+                  businessKpiLegOutcomeIsTransient(fallbackOutcome)
+              ? BusinessKpiLegOutcome.timeout
+              : fallbackOutcome;
+        }
+        final retryDecision = resolveBusinessKpiRetryDecision(
+          bookingsOutcome: effectiveBookingsOutcome,
+          tripOutcome: tripOutcome,
+          attempt: attempt,
+        );
+        if (retryDecision ==
+            BusinessKpiRetryDecision.autoRetryTransient) {
+          debugPrint(
+            formatBusinessKpiLoadDiagnostic(
+              cycleGeneration: cycleGeneration,
+              reason: reason,
+              leg: BusinessKpiLegLabel.combined,
+              attempt: attempt,
+              status: BusinessKpiCombinedStatus.transientWillRetry,
+              elapsedMs: durationMs,
+              scopeReady: true,
+              authMode: authModeLabel,
+            ),
+          );
+          _scheduleKpiAutoRetry();
+          return;
+        }
         _logBusinessKpiLoad(
           event: BusinessKpiLoadEvent.requestFailed,
           scopeGeneration: requestGeneration,
           durationMs: durationMs,
           detail:
               'trigger=$reason bookings_ok=$bookingsKpisOk trip_ok=$tripKpisOk',
+        );
+        debugPrint(
+          formatBusinessKpiLoadDiagnostic(
+            cycleGeneration: cycleGeneration,
+            reason: reason,
+            leg: BusinessKpiLegLabel.combined,
+            attempt: attempt,
+            status: BusinessKpiCombinedStatus.terminal,
+            elapsedMs: durationMs,
+            scopeReady: true,
+            authMode: authModeLabel,
+          ),
         );
         setState(() {
           _kpiLastRequestFailed = true;
@@ -705,9 +1023,24 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         durationMs: durationMs,
         detail: 'trigger=$reason response_generation=$nextGeneration',
       );
+      debugPrint(
+        formatBusinessKpiLoadDiagnostic(
+          cycleGeneration: cycleGeneration,
+          reason: reason,
+          leg: BusinessKpiLegLabel.combined,
+          attempt: attempt,
+          status: BusinessKpiCombinedStatus.success,
+          elapsedMs: durationMs,
+          scopeReady: true,
+          authMode: authModeLabel,
+        ),
+      );
     } catch (e) {
       final durationMs =
           DateTime.now().difference(startedAt).inMilliseconds;
+      final unexpectedOutcome = classifyBusinessKpiLegExceptionOutcome(
+        errorRuntimeType: e.runtimeType.toString(),
+      );
       _logBusinessKpiLoad(
         event: BusinessKpiLoadEvent.requestFailed,
         scopeGeneration: requestGeneration,
@@ -716,6 +1049,42 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       );
       debugPrint(
         '[BUSINESS_DASHBOARD][KPI][WARN] reason=fetch_failed trigger=$reason error=$e',
+      );
+      // Unexpected error in the outer scope (e.g. header resolution
+      // failure). Treat it like a full combined-cycle transient failure so
+      // the coordinator can schedule at most one bounded auto-retry.
+      final retryDecision = resolveBusinessKpiRetryDecision(
+        bookingsOutcome: unexpectedOutcome,
+        tripOutcome: unexpectedOutcome,
+        attempt: attempt,
+      );
+      if (retryDecision == BusinessKpiRetryDecision.autoRetryTransient) {
+        debugPrint(
+          formatBusinessKpiLoadDiagnostic(
+            cycleGeneration: cycleGeneration,
+            reason: reason,
+            leg: BusinessKpiLegLabel.combined,
+            attempt: attempt,
+            status: BusinessKpiCombinedStatus.transientWillRetry,
+            elapsedMs: durationMs,
+            scopeReady: true,
+            authMode: authModeLabel,
+          ),
+        );
+        _scheduleKpiAutoRetry();
+        return;
+      }
+      debugPrint(
+        formatBusinessKpiLoadDiagnostic(
+          cycleGeneration: cycleGeneration,
+          reason: reason,
+          leg: BusinessKpiLegLabel.combined,
+          attempt: attempt,
+          status: BusinessKpiCombinedStatus.terminal,
+          elapsedMs: durationMs,
+          scopeReady: true,
+          authMode: authModeLabel,
+        ),
       );
       if (mounted) {
         setState(() {
@@ -730,7 +1099,45 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         _kpiRequestCompanyId = null;
       }
       if (mounted) setState(() {});
+      // Dequeue at most one latest-wins rerun. This runs OUTSIDE the
+      // in-flight window so it cannot loop while another cycle is still
+      // executing. If the queued reason is `autoRetry` the timer already
+      // handles scheduling; anything else fires a fresh cycle synchronously.
+      _dequeueKpiPendingRerunIfAny();
     }
+  }
+
+  // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: schedule the single bounded
+  // automatic retry. Cancels any previously-scheduled retry so at most one
+  // pending timer exists at any time. Attempt 2 is not user-visible.
+  void _scheduleKpiAutoRetry() {
+    _kpiAutoRetryTimer?.cancel();
+    _kpiAutoRetryTimer = Timer(
+      const Duration(milliseconds: kBusinessKpiAutoRetryDelayMs),
+      () {
+        _kpiAutoRetryTimer = null;
+        if (!mounted) return;
+        unawaited(
+          _refreshDashboardKpis(
+            reason: BusinessKpiCycleReason.autoRetry,
+            attempt: 2,
+          ),
+        );
+      },
+    );
+  }
+
+  void _dequeueKpiPendingRerunIfAny() {
+    if (!_kpiPendingRerunQueued) return;
+    final queuedReason =
+        _kpiPendingRerunReason ?? BusinessKpiCycleReason.scopeChangedRerun;
+    _kpiPendingRerunQueued = false;
+    _kpiPendingRerunReason = null;
+    if (!mounted) return;
+    // Only run a rerun when scope is (still) ready — otherwise the scope
+    // listener owns the trigger.
+    if (!_kpiScopeIsReadyForRequest()) return;
+    unawaited(_refreshDashboardKpis(reason: queuedReason));
   }
 
   String _normalizeBridgeText(String raw) {
@@ -995,7 +1402,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       ),
     );
     if (!mounted) return;
-    unawaited(_refreshDashboardKpis(reason: 'return_from_company_bookings'));
+    unawaited(
+      _refreshDashboardKpis(reason: BusinessKpiCycleReason.routeReturn),
+    );
   }
 
   ({Color bg, Color border, Color text}) _statusColors(CompanyProfile profile) {
@@ -3633,7 +4042,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 ),
                                 TextButton(
                                   onPressed: () => unawaited(
-                                    _refreshDashboardKpis(reason: 'retry'),
+                                    _refreshDashboardKpis(
+                                      reason:
+                                          BusinessKpiCycleReason.manualRetry,
+                                    ),
                                   ),
                                   child: Text(
                                     _t(
