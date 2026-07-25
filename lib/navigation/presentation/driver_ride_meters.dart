@@ -8,10 +8,13 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
+import 'package:fluxidi_tracking/navigation/presentation/driver_tellers_guidance.dart';
 import 'package:fluxidi_tracking/navigation/presentation/driver_tellers_layout_geometry.dart';
+import 'package:fluxidi_tracking/navigation/presentation/maneuver_presentation.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_marker_choice.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_presentation_flags.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_vehicle_choice_selector.dart';
+import 'package:fluxidi_tracking/widgets/driver_nav_banners.dart';
 
 export 'package:fluxidi_tracking/navigation/presentation/driver_tellers_layout_geometry.dart';
 
@@ -538,6 +541,7 @@ class DriverRideMetersView extends StatefulWidget {
     this.markerLanguage = AppLanguage.nl,
     this.vehicleMarkerIconSize,
     this.viewportEpoch,
+    this.guidance = const DriverTellersGuidanceView.hidden(),
   });
 
   final DriverRideMetersSnapshot snapshot;
@@ -565,6 +569,15 @@ class DriverRideMetersView extends StatefulWidget {
   /// so a transitional post-rotation MediaQuery observation cannot become the
   /// authoritative aperture.
   final int? viewportEpoch;
+
+  /// TELLERS-LIVE-NAV-INSTRUCTION-OVERLAY-1: what the live map should show as
+  /// the current maneuver instruction.
+  ///
+  /// Resolved entirely by the driver page from the SAME authoritative
+  /// navigation state the main maneuver banner uses, so Tellers can never
+  /// disagree with it. This view owns no route steps, no maneuver index and no
+  /// lane resolution — it only paints what it is handed.
+  final DriverTellersGuidanceView guidance;
 
   @override
   State<DriverRideMetersView> createState() => _DriverRideMetersViewState();
@@ -615,6 +628,7 @@ class _DriverRideMetersViewState extends State<DriverRideMetersView> {
       onMarkerChoiceSelected: widget.onMarkerChoiceSelected,
       markerLanguage: widget.markerLanguage,
       vehicleMarkerIconSize: widget.vehicleMarkerIconSize,
+      guidance: widget.guidance,
       geometry: geometry,
     );
   }
@@ -639,6 +653,7 @@ class _DriverRideMetersContent extends StatelessWidget {
     this.onMarkerChoiceSelected,
     this.markerLanguage = AppLanguage.nl,
     this.vehicleMarkerIconSize,
+    this.guidance = const DriverTellersGuidanceView.hidden(),
     required this.geometry,
   });
 
@@ -675,6 +690,10 @@ class _DriverRideMetersContent extends StatelessWidget {
   final AppLanguage markerLanguage;
   final double? vehicleMarkerIconSize;
 
+  /// TELLERS-LIVE-NAV-INSTRUCTION-OVERLAY-1: authoritative maneuver guidance,
+  /// resolved by the driver page. Rendered as-is; never recomputed here.
+  final DriverTellersGuidanceView guidance;
+
   /// The single committed (last-valid) Tellers geometry to render. Resolved and
   /// latched by [_DriverRideMetersViewState] so an incomplete transitional
   /// viewport never installs a partial aperture.
@@ -709,6 +728,74 @@ class _DriverRideMetersContent extends StatelessWidget {
                 ),
         );
       },
+    );
+  }
+
+  /// TELLERS-LIVE-NAV-INSTRUCTION-OVERLAY-1: the current maneuver instruction,
+  /// painted inside the live map below the "Live navigatie" badge and the
+  /// Car/Arrow selector.
+  ///
+  /// Reuses the very widgets the main navigation screen uses — the same
+  /// [DriverTurnInstructionBanner] fed by the same authoritative
+  /// [ResponsiveManeuverPresentation], and the same [DriverNavLoadingBanner]
+  /// with the driver page's own localized copy. Nothing about the maneuver is
+  /// decided here, so the two surfaces cannot drift apart.
+  ///
+  /// Returns null when there is nothing authoritative to show, or when the
+  /// aperture is too small to carry the card (typically a phone), so a cramped
+  /// layout never gets an empty dark rectangle over its map.
+  Positioned? _buildGuidanceOverlay({
+    required DriverTellersLayoutGeometry geometry,
+    required bool selectorVisible,
+  }) {
+    if (!guidance.isVisible) return null;
+    final layout = resolveDriverTellersGuidanceLayout(
+      geometry: geometry,
+      selectorVisible: selectorVisible,
+    );
+    if (!layout.fits) return null;
+
+    final Widget card;
+    switch (guidance.phase) {
+      case DriverTellersGuidancePhase.instruction:
+        final p = guidance.presentation!;
+        card = DriverTurnInstructionBanner(
+          // Lighter and smaller than the primary navigation banner, but the
+          // same widget, the same icon resolver and the same localized text.
+          compact: true,
+          isTablet: isTablet,
+          isArrival: p.isArrival,
+          isHighwayLike: p.isHighwayLike,
+          distancePrefix: '',
+          distanceText: p.distanceLabel,
+          primaryText: p.primaryInstruction,
+          secondaryText: p.secondaryInstruction,
+          icon: driverManeuverVisualIconData(p.maneuverVisual),
+          presentation: p,
+          themeListenable: themeListenable,
+        );
+      case DriverTellersGuidancePhase.loading:
+        card = DriverNavLoadingBanner(
+          compact: true,
+          isTablet: isTablet,
+          text: guidance.loadingText,
+          themeListenable: themeListenable,
+        );
+      case DriverTellersGuidancePhase.hidden:
+        return null;
+    }
+
+    return Positioned(
+      left: layout.left,
+      top: layout.top,
+      width: layout.maxWidth,
+      child: KeyedSubtree(
+        key: const ValueKey<String>('driver_tellers_guidance'),
+        // The banner is content-aware and left-aligns itself inside this box,
+        // so a short instruction stays compact while a long one grows only to
+        // the map-pane maximum.
+        child: card,
+      ),
     );
   }
 
@@ -872,6 +959,12 @@ class _DriverRideMetersContent extends StatelessWidget {
     final selectorLocal = geometry.selectorRect.shift(-live.topLeft);
     final markerLocal = geometry.markerAnchor - live.topLeft;
     final liveLabel = driverTellersLiveNavigationLabel(markerLanguage);
+    final selectorVisible =
+        showMarkerSelector && onMarkerChoiceSelected != null;
+    final guidanceOverlay = _buildGuidanceOverlay(
+      geometry: geometry,
+      selectorVisible: selectorVisible,
+    );
 
     return RepaintBoundary(
       child: Container(
@@ -913,7 +1006,7 @@ class _DriverRideMetersContent extends StatelessWidget {
                 ),
               ),
             ),
-            if (showMarkerSelector && onMarkerChoiceSelected != null)
+            if (selectorVisible)
               Positioned(
                 top: selectorLocal.top,
                 right: 8,
@@ -930,6 +1023,7 @@ class _DriverRideMetersContent extends StatelessWidget {
                   ),
                 ),
               ),
+            if (guidanceOverlay != null) guidanceOverlay,
             // NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1: intentionally NO Flutter
             // Car/Arrow child here — the single Mapbox annotation is the only
             // vehicle marker owner in Tellers. Placing a second Flutter Car

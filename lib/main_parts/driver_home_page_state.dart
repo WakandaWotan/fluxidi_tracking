@@ -19978,6 +19978,36 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  /// TELLERS-LIVE-NAV-INSTRUCTION-OVERLAY-1: hands the Tellers live map the
+  /// already-resolved maneuver presentation.
+  ///
+  /// Every input is the authoritative value the main navigation banner uses:
+  /// `_effectiveNavInstructionSnapshot()` for the maneuver (including its
+  /// roundabout exit number, arrival flag and reroute suppression),
+  /// `_showNavInstructionBanner()` for the instruction gate, and
+  /// `_routeStepsVersion` for the accepted route generation. A new route
+  /// generation therefore replaces the whole Tellers view atomically instead
+  /// of leaving a stale maneuver on the map.
+  DriverTellersGuidanceView _resolveTellersGuidance() {
+    final showInstruction = _showNavInstructionBanner();
+    final snapshot = _effectiveNavInstructionSnapshot();
+    return resolveDriverTellersGuidance(
+      tellersActive: _navPresentationMode.isTellers,
+      followCameraActive: _cameraMode == _CameraMode.follow,
+      liveRideActive: _liveRideActive,
+      showInstructionBanner: showInstruction,
+      navStepsLoading: _navStepsLoading,
+      isRerouting: _isRerouting,
+      snapshotIsLoadingSource:
+          snapshot.source == NavInstructionSource.loading,
+      presentation: showInstruction
+          ? buildResponsiveManeuverPresentation(snapshot: snapshot, tr: _tr)
+          : null,
+      loadingText: _navLoadingBannerText(),
+      routeVersion: _routeStepsVersion,
+    );
+  }
+
   Widget _buildTellersOverlay({
     required bool isTablet,
     required bool isLandscape,
@@ -19985,6 +20015,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     final followLive = _cameraMode == _CameraMode.follow && _liveRideActive;
     return Positioned.fill(
       child: DriverRideMetersView(
+        // TELLERS-LIVE-NAV-INSTRUCTION-OVERLAY-1: the Tellers live map shows
+        // the SAME maneuver the main navigation banner shows. Both read
+        // _effectiveNavInstructionSnapshot() and the same gates in the same
+        // build, so the two surfaces cannot disagree, and Tellers keeps no
+        // route steps, maneuver index or exit number of its own.
+        guidance: _resolveTellersGuidance(),
         snapshot: _buildDriverRideMetersSnapshot(),
         themeListenable: _activeDriverThemeListenable,
         isTablet: isTablet,
@@ -27192,12 +27228,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  Widget _buildNavLoadingBanner({
-    required bool compact,
-    required bool isTablet,
-    bool topRowLandscape = false,
-  }) {
-    final text = _isRerouting
+  /// The one localized recalculation/loading copy. Shared by the main nav
+  /// banner and the Tellers guidance overlay so neither invents its own string.
+  String _navLoadingBannerText() {
+    return _isRerouting
         ? _tr(
             nl: 'Route herberekenen…',
             en: 'Recalculating route…',
@@ -27210,11 +27244,18 @@ class _DriverHomePageState extends State<DriverHomePage>
             fr: 'Chargement des instructions…',
             es: 'Cargando instrucciones…',
           );
+  }
+
+  Widget _buildNavLoadingBanner({
+    required bool compact,
+    required bool isTablet,
+    bool topRowLandscape = false,
+  }) {
     return DriverNavLoadingBanner(
       compact: compact,
       isTablet: isTablet,
       topRowLandscape: topRowLandscape,
-      text: text,
+      text: _navLoadingBannerText(),
       themeListenable: _activeDriverThemeListenable,
     );
   }
