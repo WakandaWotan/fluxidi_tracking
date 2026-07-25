@@ -183,34 +183,47 @@ IconData driverManeuverIconData(
   if (t.contains('on ramp') || t.contains('on-ramp')) {
     return Icons.alt_route_rounded;
   }
-  if (t.contains('end of road')) return Icons.u_turn_left_rounded;
-  if (mod.contains('sharp left') || combined.contains('sharp left')) {
+  // NAV-END-OF-ROAD-MANEUVER-CORRECTNESS-P0-1: `end of road` is a junction
+  // context, never a direction on its own. The direction comes strictly from
+  // the modifier below. When the modifier is absent, the code falls through
+  // to the neutral straight/follow-route default at the bottom of this
+  // function — never a false U-turn. Combined text hints must not upgrade an
+  // `end of road` step to U-turn either; only an explicit `uturn` modifier
+  // may do so.
+  final endOfRoad = t.contains('end of road');
+  if (mod.contains('sharp left') ||
+      (!endOfRoad && combined.contains('sharp left'))) {
     return Icons.turn_sharp_left_rounded;
   }
-  if (mod.contains('sharp right') || combined.contains('sharp right')) {
+  if (mod.contains('sharp right') ||
+      (!endOfRoad && combined.contains('sharp right'))) {
     return Icons.turn_sharp_right_rounded;
   }
-  if (mod.contains('slight left') || combined.contains('slight left')) {
+  if (mod.contains('slight left') ||
+      (!endOfRoad && combined.contains('slight left'))) {
     return Icons.turn_slight_left_rounded;
   }
-  if (mod.contains('slight right') || combined.contains('slight right')) {
+  if (mod.contains('slight right') ||
+      (!endOfRoad && combined.contains('slight right'))) {
     return Icons.turn_slight_right_rounded;
   }
   if (mod.contains('uturn') ||
       mod.contains('u-turn') ||
-      combined.contains('u-turn')) {
+      (!endOfRoad && combined.contains('u-turn'))) {
     return Icons.u_turn_left_rounded;
   }
   if (mod.contains('left') ||
-      combined.contains('left') ||
-      combined.contains('links') ||
-      combined.contains('gauche')) {
+      (!endOfRoad &&
+          (combined.contains('left') ||
+              combined.contains('links') ||
+              combined.contains('gauche')))) {
     return Icons.turn_left_rounded;
   }
   if (mod.contains('right') ||
-      combined.contains('right') ||
-      combined.contains('rechts') ||
-      combined.contains('droite')) {
+      (!endOfRoad &&
+          (combined.contains('right') ||
+              combined.contains('rechts') ||
+              combined.contains('droite')))) {
     return Icons.turn_right_rounded;
   }
   if (t.contains('exit') ||

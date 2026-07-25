@@ -124,6 +124,30 @@ IconData driverManeuverVisualIconData(ManeuverVisual visual) {
   }
 }
 
+/// NAV-END-OF-ROAD-MANEUVER-CORRECTNESS-P0-1: single modifier-normalization
+/// helper shared by both the `end of road` branch and the ordinary
+/// modifier-precedence flow. Returns `null` when the modifier is empty or
+/// unknown so the caller can choose a safe neutral fallback.
+///
+/// Precedence matches the existing turn/uturn ordering: sharp > slight >
+/// uturn > left/right > straight/forward. Never invents a U-turn from
+/// missing data — an unknown modifier is `null`, not `uTurn`.
+ManeuverVisual? _driverManeuverVisualFromModifier(String modLower) {
+  if (modLower.contains('sharp left')) return ManeuverVisual.sharpLeft;
+  if (modLower.contains('sharp right')) return ManeuverVisual.sharpRight;
+  if (modLower.contains('slight left')) return ManeuverVisual.slightLeft;
+  if (modLower.contains('slight right')) return ManeuverVisual.slightRight;
+  if (modLower.contains('uturn') || modLower.contains('u-turn')) {
+    return ManeuverVisual.uTurn;
+  }
+  if (modLower.contains('left')) return ManeuverVisual.left;
+  if (modLower.contains('right')) return ManeuverVisual.right;
+  if (modLower.contains('straight') || modLower.contains('forward')) {
+    return ManeuverVisual.straight;
+  }
+  return null;
+}
+
 /// NAV-RESPONSIVE-MANEUVER-BANNER-V1: derives the maneuver visual from a
 /// snapshot without falling back to raw instruction words unless nothing else
 /// classifies.
@@ -148,20 +172,19 @@ ManeuverVisual resolveDriverManeuverVisual(NavInstructionSnapshot snapshot) {
   if (t.contains('on ramp') || t.contains('on-ramp')) {
     return ManeuverVisual.onRamp;
   }
-  if (t.contains('end of road')) return ManeuverVisual.uTurn;
 
-  if (mod.contains('sharp left')) return ManeuverVisual.sharpLeft;
-  if (mod.contains('sharp right')) return ManeuverVisual.sharpRight;
-  if (mod.contains('slight left')) return ManeuverVisual.slightLeft;
-  if (mod.contains('slight right')) return ManeuverVisual.slightRight;
-  if (mod.contains('uturn') || mod.contains('u-turn')) {
-    return ManeuverVisual.uTurn;
+  // NAV-END-OF-ROAD-MANEUVER-CORRECTNESS-P0-1: `end of road` describes the
+  // junction context, not the maneuver direction. Mapbox legitimately emits
+  // `end of road` with modifier `left`, `right`, slight/sharp variants or
+  // `uturn`. The direction MUST come from the modifier — never a blanket
+  // U-turn based on the type alone. Missing/unknown modifier at an
+  // `end of road` step is treated as a safe neutral fallback.
+  if (t.contains('end of road')) {
+    return _driverManeuverVisualFromModifier(mod) ?? ManeuverVisual.followRoute;
   }
-  if (mod.contains('left')) return ManeuverVisual.left;
-  if (mod.contains('right')) return ManeuverVisual.right;
-  if (mod.contains('straight') || mod.contains('forward')) {
-    return ManeuverVisual.straight;
-  }
+
+  final fromModifier = _driverManeuverVisualFromModifier(mod);
+  if (fromModifier != null) return fromModifier;
 
   // Fall back to instruction-text hints only when the modifier is empty.
   if (mod.isEmpty) {
@@ -228,6 +251,25 @@ String _ordinalFrench(int n) => n == 1 ? '1re' : '${n}e';
 // NAV-RESPONSIVE-MANEUVER-BANNER-V1: `ª` is not a valid identifier char, so
 // concatenation avoids interpolation ambiguity and dart-format churn.
 String _ordinalSpanish(int n) => n.toString() + 'ª';
+
+/// NAV-END-OF-ROAD-MANEUVER-CORRECTNESS-P0-1: Portuguese roundabout exit
+/// ordinal. Portuguese uses the feminine ordinal marker `.ª` because the noun
+/// `saída` is feminine. `1.ª`, `2.ª`, `3.ª`, `4.ª`, … — deterministic.
+///
+/// The pure helper exists so future PT plumbing (when `AppLanguage.pt` is
+/// added) can wire it without a new localization framework. Callers today
+/// receive NL/EN/FR/ES via [driverRoundaboutExitOrdinal]; PT is only produced
+/// by explicitly calling this helper.
+// NAV-END-OF-ROAD-MANEUVER-CORRECTNESS-P0-1: `ª` is not a valid identifier
+// character, so concatenation avoids interpolation ambiguity and lint noise —
+// same rationale as `_ordinalSpanish` above.
+String driverRoundaboutExitOrdinalPortuguese(int n) => n.toString() + '.ª';
+
+/// NAV-END-OF-ROAD-MANEUVER-CORRECTNESS-P0-1: Portuguese roundabout exit
+/// sentence, deterministic and framework-free. Matches the app's terse
+/// imperative convention used across driver-facing navigation strings.
+String driverRoundaboutExitLinePortuguese(int n) =>
+    'Pegue a ${driverRoundaboutExitOrdinalPortuguese(n)} saída';
 
 /// NAV-RESPONSIVE-MANEUVER-BANNER-V1: localized roundabout exit ordinal.
 String driverRoundaboutExitOrdinal(int exit, DriverNavTranslate tr) {
