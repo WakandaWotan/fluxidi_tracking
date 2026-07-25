@@ -8843,6 +8843,18 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _onMapCreated(mb.MapboxMap mapboxMap) async {
     debugPrint('[MAP][CREATED] style=$_activeMapStyleUri');
     _map = mapboxMap;
+    // NAV-HIDE-MAPBOX-SCALEBAR-P0-1: the Mapbox measurement scale bar (a
+    // Mapbox ornament, distinct from `attribution` and `logo`) adds no value
+    // during turn-by-turn driver navigation and can compete with the top
+    // maneuver banner. Mapbox enables it by default; disable it once here.
+    //
+    // Ornament settings are map-instance state and persist across style
+    // reloads — one-shot application at map-create time is sufficient. Best
+    // effort so any plugin/channel hiccup can never break map creation.
+    //
+    // Explicitly does NOT touch `mapboxMap.attribution` or `mapboxMap.logo`
+    // — Mapbox terms compliance is preserved unchanged.
+    unawaited(_hideMapboxScaleBarBestEffort(mapboxMap));
     // FLUXIDI Phase 2A: create the native-follow controller keyed by the
     // exact plugin-owned map instance id. Behind the build-time flag; a
     // flag-off build never enables the native session even though the
@@ -8863,6 +8875,22 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (_cameraMode == _CameraMode.follow) {
         await _followCameraTesla(pos, force: true);
       }
+    }
+  }
+
+  /// NAV-HIDE-MAPBOX-SCALEBAR-P0-1: disable the Mapbox measurement scale bar
+  /// ornament on this map instance. Independent of `attribution` and `logo`
+  /// (which remain enabled at their Mapbox defaults so terms compliance is
+  /// preserved). Best effort — a channel failure must never break map
+  /// creation. PII-free bounded diagnostic on transition only.
+  Future<void> _hideMapboxScaleBarBestEffort(mb.MapboxMap mapboxMap) async {
+    try {
+      await mapboxMap.scaleBar.updateSettings(
+        mb.ScaleBarSettings(enabled: false),
+      );
+      debugPrint('[MAP][SCALEBAR] enabled=false reason=nav_hide_p0_1');
+    } catch (e) {
+      debugPrint('[MAP][SCALEBAR][WARN] failed_to_disable reason=$e');
     }
   }
 
