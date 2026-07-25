@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/foundation.dart' show ValueListenable, kDebugMode;
@@ -9,6 +10,117 @@ import 'package:fluxidi_tracking/navigation/driver_navigation_models.dart';
 import 'package:fluxidi_tracking/navigation/presentation/maneuver_presentation.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_lane_guidance_strip.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_tablet_portrait_nav_layout.dart';
+
+/// NAV-MANEUVER-BANNER-COMPACT-WIDTH-POLISH-1: content-aware width contract
+/// for the driver navigation banners.
+///
+/// The maneuver card used to have no width contract at all — it simply took
+/// whatever horizontal constraint its parent handed down. A two-word
+/// instruction such as "Over 643 m linksaf" / "naar N454" therefore still
+/// painted a near-full-width dark bar across the top of the map, which on a
+/// tablet hides considerably more road than the instruction is worth.
+///
+/// The card now hugs its content and may grow only up to a form-factor
+/// maximum. Landscape is deliberately the tightest: map height is scarcest
+/// there, so a wide banner costs the driver the most.
+class DriverNavBannerWidthPolicy {
+  const DriverNavBannerWidthPolicy._();
+
+  /// Fraction of the viewport width the card may never exceed.
+  static const double phonePortraitFraction = 0.92;
+  static const double phoneLandscapeFraction = 0.72;
+  static const double tabletPortraitFraction = 0.76;
+  static const double tabletLandscapeFraction = 0.58;
+
+  /// Absolute ceilings so a very wide display never scales the card forever.
+  /// These match the caps the driver page already applied in portrait, so no
+  /// form factor becomes wider than before.
+  static const double phoneAbsoluteMax = 700;
+  static const double tabletAbsoluteMax = 820;
+
+  /// Floors that keep the maneuver icon plus a useful amount of instruction
+  /// text on the row. Always clamped to the maximum, so a narrow viewport can
+  /// never produce an impossible `minWidth > maxWidth`.
+  static const double phoneMinWidth = 208;
+  static const double tabletMinWidth = 248;
+
+  static double fractionFor({
+    required bool isTablet,
+    required bool isLandscape,
+  }) {
+    if (isTablet) {
+      return isLandscape ? tabletLandscapeFraction : tabletPortraitFraction;
+    }
+    return isLandscape ? phoneLandscapeFraction : phonePortraitFraction;
+  }
+
+  static double minWidthFor({required bool isTablet}) =>
+      isTablet ? tabletMinWidth : phoneMinWidth;
+
+  /// Largest width the card may occupy. Degrades to the absolute ceiling when
+  /// the viewport width is unknown (zero, infinite or NaN), so a host without
+  /// a sane MediaQuery still gets a bounded banner instead of a full-bleed
+  /// bar.
+  static double maxWidthFor({
+    required double viewportWidth,
+    required bool isTablet,
+    required bool isLandscape,
+  }) {
+    final absolute = isTablet ? tabletAbsoluteMax : phoneAbsoluteMax;
+    if (!viewportWidth.isFinite || viewportWidth <= 0) return absolute;
+    final fraction = fractionFor(isTablet: isTablet, isLandscape: isLandscape);
+    return math.min(viewportWidth * fraction, absolute);
+  }
+
+  static BoxConstraints constraintsFor({
+    required double viewportWidth,
+    required bool isTablet,
+    required bool isLandscape,
+  }) {
+    final maxWidth = maxWidthFor(
+      viewportWidth: viewportWidth,
+      isTablet: isTablet,
+      isLandscape: isLandscape,
+    );
+    return BoxConstraints(
+      minWidth: math.min(minWidthFor(isTablet: isTablet), maxWidth),
+      maxWidth: maxWidth,
+    );
+  }
+}
+
+/// NAV-MANEUVER-BANNER-COMPACT-WIDTH-POLISH-1: applies the width contract to a
+/// finished banner card.
+///
+/// [Align] absorbs a tight parent constraint — the landscape top row hands the
+/// banner an `Expanded`, and the complexity-caution wrapper uses
+/// `CrossAxisAlignment.stretch` — and hands the card a loose one so it can
+/// shrink to its content. `ConstrainedBox` then also clamps the cap down to
+/// whatever the parent actually allows, because `BoxConstraints.enforce`
+/// intersects with the incoming constraints; the card can therefore never
+/// overflow its parent even on an unexpectedly narrow viewport.
+Widget _constrainNavBannerWidth({
+  required BuildContext context,
+  required bool compact,
+  required bool isTablet,
+  required Widget child,
+}) {
+  final media = MediaQuery.maybeOf(context);
+  // `compact` is only ever set by the landscape collapsed top row, so it stays
+  // a reliable landscape signal even for a host that supplies no MediaQuery.
+  final isLandscape = compact || media?.orientation == Orientation.landscape;
+  return Align(
+    alignment: AlignmentDirectional.topStart,
+    child: ConstrainedBox(
+      constraints: DriverNavBannerWidthPolicy.constraintsFor(
+        viewportWidth: media?.size.width ?? 0,
+        isTablet: isTablet,
+        isLandscape: isLandscape,
+      ),
+      child: child,
+    ),
+  );
+}
 
 class DriverTurnInstructionBanner extends StatelessWidget {
   final bool compact;
@@ -257,8 +369,12 @@ class DriverTurnInstructionBanner extends StatelessWidget {
                 vertical: _verticalPadding,
               ),
               decoration: BoxDecoration(
+                // NAV-MANEUVER-BANNER-COMPACT-WIDTH-POLISH-1: a touch less
+                // opaque in dark mode so the card reads as a panel over the
+                // map rather than a solid wall. Text/border contrast is
+                // unchanged; light mode stays at 0.96.
                 color: palette.surface.withOpacity(
-                  palette.isDark ? 0.90 : 0.96,
+                  palette.isDark ? 0.88 : 0.96,
                 ),
                 borderRadius: BorderRadius.circular(
                   _useLandscapeTopRow || _useLandscapeCompactRow
@@ -281,9 +397,16 @@ class DriverTurnInstructionBanner extends StatelessWidget {
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+                // NAV-MANEUVER-BANNER-COMPACT-WIDTH-POLISH-1: `start` instead
+                // of `stretch`. Stretch forced the column — and therefore the
+                // whole card — to the full incoming width even for a two-word
+                // instruction. The lane strip still fills the card because a
+                // horizontal ListView takes its bounded maximum, so lanes may
+                // widen the card up to the form-factor cap, never past it.
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
+                    mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       _buildManeuverIcon(palette),
@@ -296,7 +419,11 @@ class DriverTurnInstructionBanner extends StatelessWidget {
                                         ? 10
                                         : (_usePhonePortraitStack ? 10 : 12))),
                       ),
-                      Expanded(
+                      // Loose `Flexible` rather than tight `Expanded`: the
+                      // text block still receives exactly the same maxWidth,
+                      // so wrapping, ellipsis and height are unchanged, but a
+                      // short instruction no longer stretches the card.
+                      Flexible(
                         child: _usePhonePortraitStack
                             ? _buildPhonePortraitTextColumn(
                                 palette: palette,
@@ -344,12 +471,21 @@ class DriverTurnInstructionBanner extends StatelessWidget {
         // update ("Over 400 meter de rotonde op. Neem de tweede afslag."), so
         // TalkBack reads a complete instruction instead of each Text child.
         final acc = presentation?.accessibilityLabel.trim() ?? '';
-        if (acc.isEmpty) return banner;
-        return Semantics(
-          container: true,
-          label: acc,
-          excludeSemantics: true,
-          child: banner,
+        final labelled = acc.isEmpty
+            ? banner
+            : Semantics(
+                container: true,
+                label: acc,
+                excludeSemantics: true,
+                child: banner,
+              );
+        // NAV-MANEUVER-BANNER-COMPACT-WIDTH-POLISH-1: constrain outside the
+        // Semantics node so the announced region still hugs the visible card.
+        return _constrainNavBannerWidth(
+          context: context,
+          compact: compact,
+          isTablet: isTablet,
+          child: labelled,
         );
       },
     );
@@ -496,12 +632,13 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     // remain visible. Legacy path preserves the single-line inline row.
     if (presentation != null) {
       final primaryRow = Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
           if (_hasDistanceChip) ...[
             _buildDistanceChip(palette),
             const SizedBox(width: 6),
           ],
-          Expanded(child: _buildPrimaryText(palette, maxLines: 1)),
+          Flexible(child: _buildPrimaryText(palette, maxLines: 1)),
         ],
       );
       if (!showSecondary) return primaryRow;
@@ -516,10 +653,11 @@ class DriverTurnInstructionBanner extends StatelessWidget {
       );
     }
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         _buildDistanceChip(palette),
         const SizedBox(width: 6),
-        Expanded(child: _buildPrimaryText(palette, maxLines: 1)),
+        Flexible(child: _buildPrimaryText(palette, maxLines: 1)),
       ],
     );
   }
@@ -537,12 +675,13 @@ class DriverTurnInstructionBanner extends StatelessWidget {
       children: [
         if (!isArrival)
           Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
               if (_hasDistanceChip) ...[
                 _buildDistanceChip(palette),
                 const SizedBox(width: 8),
               ],
-              Expanded(
+              Flexible(
                 child: _buildPrimaryText(
                   palette,
                   maxLines: showLandscapeSecondary ? 1 : 2,
@@ -571,13 +710,14 @@ class DriverTurnInstructionBanner extends StatelessWidget {
       children: [
         if (!isArrival)
           Row(
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (_hasDistanceChip) ...[
                 _buildDistanceChip(palette),
                 SizedBox(width: compact ? 8 : 10),
               ],
-              Expanded(
+              Flexible(
                 child: _buildPrimaryText(
                   palette,
                   maxLines: showSecondary ? 1 : 2,
@@ -732,7 +872,8 @@ class DriverNavComplexityCautionBanner extends StatelessWidget {
       builder: (context, variant, _) {
         final palette = paletteForDriverTheme(variant);
         const caution = Color(0xFFFFB020);
-        return ClipRRect(
+        final card = ClipRRect(
+          key: const ValueKey<String>('nav_complexity_caution_banner'),
           borderRadius: BorderRadius.circular(compact ? 12 : 14),
           child: BackdropFilter(
             filter: ImageFilter.blur(
@@ -755,6 +896,7 @@ class DriverNavComplexityCautionBanner extends StatelessWidget {
                 ),
               ),
               child: Row(
+                mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Icon(
@@ -763,7 +905,7 @@ class DriverNavComplexityCautionBanner extends StatelessWidget {
                     color: caution,
                   ),
                   SizedBox(width: topRowLandscape ? 6 : 8),
-                  Expanded(
+                  Flexible(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
@@ -803,6 +945,16 @@ class DriverNavComplexityCautionBanner extends StatelessWidget {
               ),
             ),
           ),
+        );
+        // NAV-MANEUVER-BANNER-COMPACT-WIDTH-POLISH-1: the caution sits directly
+        // under the maneuver card in a stretching Column, so it obeys the same
+        // width contract — otherwise a compact maneuver card would sit above a
+        // full-width caution bar.
+        return _constrainNavBannerWidth(
+          context: context,
+          compact: compact,
+          isTablet: isTablet,
+          child: card,
         );
       },
     );
