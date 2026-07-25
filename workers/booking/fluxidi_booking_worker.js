@@ -13603,6 +13603,28 @@ const COMPANY_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 // ./modules/driver_ops.js (imported above).
 const PUBLIC_DRIVER_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 
+// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 1)
+// Operator-minted driver-session TTL bounds. The default (1 hour) covers a
+// normal shift-start operational hand-off; the max (24 hours) caps abuse if
+// wrangler.toml is misconfigured; the min (5 minutes) prevents accidentally
+// disabling the feature via a near-zero setting. The env var
+// `OPERATOR_MINT_TTL_SECONDS` overrides the default within these bounds.
+const OPERATOR_MINT_DEFAULT_TTL_SECONDS = 60 * 60;
+const OPERATOR_MINT_MAX_TTL_SECONDS = 24 * 60 * 60;
+const OPERATOR_MINT_MIN_TTL_SECONDS = 5 * 60;
+
+function _resolveOperatorMintTtlSeconds(env) {
+  const raw = env?.OPERATOR_MINT_TTL_SECONDS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return OPERATOR_MINT_DEFAULT_TTL_SECONDS;
+  const rounded = Math.round(parsed);
+  if (rounded <= 0) return OPERATOR_MINT_DEFAULT_TTL_SECONDS;
+  return Math.max(
+    OPERATOR_MINT_MIN_TTL_SECONDS,
+    Math.min(OPERATOR_MINT_MAX_TTL_SECONDS, rounded),
+  );
+}
+
 function normalizePublicCompanyCode(value) {
   let text = sanitizeTenantString(value, 80).trim().toUpperCase();
   if (!text) return "";
@@ -16391,6 +16413,170 @@ async function _issuePublicDriverSessionToken(env, {
     expiresAt,
     expiresInSeconds: PUBLIC_DRIVER_SESSION_TTL_SECONDS,
   };
+}
+
+// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 1)
+//
+// Operator-minted driver session for the business-preview surface. A company
+// owner authenticated with a valid company-session bearer can mint a scoped,
+// short-lived driver session for a driver that belongs to their own tenant
+// and company. The minted token is byte-compatible with a normally-issued
+// public driver session (same KV key shape via `_publicDriverSessionKey`), so
+// downstream driver-facing routes need no protocol changes. The record carries
+// `origin: "operator_mint"` and a reference to the minting company session so
+// auditability is preserved without ever exposing tokens in logs.
+//
+// Guarantees:
+//   - No ADMIN_TOKEN path. Company-session bearer is the sole credential.
+//   - Client-supplied tenant/company must either be absent or match the
+//     session-derived values exactly; conflicting values fail 403.
+//   - Target driver must exist in the session-derived company scope, be
+//     active, and not tombstoned. Otherwise 404 / 403 with no leak.
+//   - TTL is bounded by `_resolveOperatorMintTtlSeconds` regardless of any
+//     env override, defaulting to 1 hour.
+async function handleOperatorMintDriverSessionForOperator(request, env) {
+  const companySession = await _loadCompanySessionFromRequest(request, env);
+  if (!companySession) {
+    console.log("[OPERATOR_MINT][DENY] reason=unauthorized");
+    return _companyAuthFail();
+  }
+  const body = await safeJson(request);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ ok: false, error: "invalid_body" }, 400);
+  }
+  const clientTenant = sanitizeTenantString(
+    body?.tenant_id ?? body?.tenantId,
+    80,
+  );
+  const clientCompany = sanitizeTenantString(
+    body?.company_id ?? body?.companyId,
+    80,
+  );
+  if (clientTenant && clientTenant !== companySession.tenant_id) {
+    console.log(
+      `[OPERATOR_MINT][DENY] reason=tenant_mismatch tenant=${_maskPublicDriverLoginValue(companySession.tenant_id)} company=${_maskPublicDriverLoginValue(companySession.company_id)}`,
+    );
+    return json({ ok: false, error: "forbidden" }, 403);
+  }
+  if (clientCompany && clientCompany !== companySession.company_id) {
+    console.log(
+      `[OPERATOR_MINT][DENY] reason=company_mismatch tenant=${_maskPublicDriverLoginValue(companySession.tenant_id)} company=${_maskPublicDriverLoginValue(companySession.company_id)}`,
+    );
+    return json({ ok: false, error: "forbidden" }, 403);
+  }
+  const targetDriverId = sanitizeTenantString(
+    body?.target_driver_id ??
+      body?.targetDriverId ??
+      body?.driver_id ??
+      body?.driverId,
+    96,
+  );
+  if (!targetDriverId) {
+    console.log(
+      `[OPERATOR_MINT][DENY] reason=missing_driver_id company=${_maskPublicDriverLoginValue(companySession.company_id)}`,
+    );
+    return json({ ok: false, error: "invalid_driver_id" }, 400);
+  }
+  const scope = {
+    tenant_id: companySession.tenant_id,
+    company_id: companySession.company_id,
+  };
+  const index = await _loadDriverIndexRecord(env, scope);
+  const drivers = index?.drivers && typeof index.drivers === "object" ? index.drivers : {};
+  const deleted =
+    index?.deleted_drivers && typeof index.deleted_drivers === "object"
+      ? index.deleted_drivers
+      : {};
+  const driver = drivers[targetDriverId];
+  if (!driver || deleted[targetDriverId]) {
+    console.log(
+      `[OPERATOR_MINT][DENY] reason=driver_not_found tenant=${_maskPublicDriverLoginValue(companySession.tenant_id)} company=${_maskPublicDriverLoginValue(companySession.company_id)} driver=${_maskPublicDriverLoginValue(targetDriverId)}`,
+    );
+    return json({ ok: false, error: "driver_not_found" }, 404);
+  }
+  if (driver.is_active === false) {
+    console.log(
+      `[OPERATOR_MINT][DENY] reason=driver_inactive tenant=${_maskPublicDriverLoginValue(companySession.tenant_id)} company=${_maskPublicDriverLoginValue(companySession.company_id)} driver=${_maskPublicDriverLoginValue(targetDriverId)}`,
+    );
+    return json({ ok: false, error: "driver_inactive" }, 403);
+  }
+  const ttlSeconds = _resolveOperatorMintTtlSeconds(env);
+  const sessionToken = _generateOpaqueToken(32, "dst_op_");
+  const sessionTokenHash = await _hashDriverSessionToken(sessionToken);
+  const sessionKey = _publicDriverSessionKey(sessionTokenHash);
+  if (!sessionKey) {
+    return json({ ok: false, error: "session_key_invalid" }, 500);
+  }
+  const issuedAt = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+  const assignedVehicleId = sanitizeTenantString(
+    driver.assigned_vehicle_id ?? driver.assignedVehicleId,
+    96,
+  );
+  const driverDisplayName = sanitizeTenantString(driver.display_name, 160);
+  try {
+    await env.BOOKING_KV.put(
+      sessionKey,
+      JSON.stringify({
+        role: "driver",
+        tenant_id: companySession.tenant_id,
+        company_id: companySession.company_id,
+        driver_id: targetDriverId,
+        driver_name: driverDisplayName,
+        company_display_name: companySession.company_display_name || "",
+        ...(assignedVehicleId
+          ? {
+              assigned_vehicle_id: assignedVehicleId,
+              assignedVehicleId: assignedVehicleId,
+            }
+          : {}),
+        issued_at: issuedAt,
+        expires_at: expiresAt,
+        link_method: "operator_mint",
+        origin: "operator_mint",
+        minted_by_company_session_hash: companySession.token_hash,
+      }),
+      { expirationTtl: ttlSeconds },
+    );
+  } catch (err) {
+    console.log(
+      `[OPERATOR_MINT][ERR] reason=kv_put_failed tenant=${_maskPublicDriverLoginValue(companySession.tenant_id)} company=${_maskPublicDriverLoginValue(companySession.company_id)} driver=${_maskPublicDriverLoginValue(targetDriverId)}`,
+    );
+    return json({ ok: false, error: "mint_failed" }, 500);
+  }
+  console.log(
+    `[OPERATOR_MINT][OK] tenant=${_maskPublicDriverLoginValue(companySession.tenant_id)} company=${_maskPublicDriverLoginValue(companySession.company_id)} driver=${_maskPublicDriverLoginValue(targetDriverId)} ttl_seconds=${ttlSeconds}`,
+  );
+  return json(
+    {
+      ok: true,
+      driver_session_token: sessionToken,
+      driverSessionToken: sessionToken,
+      issued_at: issuedAt,
+      issuedAt: issuedAt,
+      expires_at: expiresAt,
+      driver_session_expires_at: expiresAt,
+      driverSessionExpiresAtUtc: expiresAt,
+      expires_in: ttlSeconds,
+      expiresIn: ttlSeconds,
+      origin: "operator_mint",
+      link_method: "operator_mint",
+      role: "driver",
+      tenant_id: companySession.tenant_id,
+      company_id: companySession.company_id,
+      driver: {
+        driver_id: targetDriverId,
+        driver_name: driverDisplayName,
+        ...(assignedVehicleId
+          ? {
+              assigned_vehicle_id: assignedVehicleId,
+              assignedVehicleId: assignedVehicleId,
+            }
+          : {}),
+      },
+    },
+    200,
+  );
 }
 
 // BW-M7A: _normalizeDriverAvailabilityStatus, _driverAvailabilityAllowsDispatch
@@ -36028,6 +36214,17 @@ export default {
           `[DRIVER_BOOKINGS][RES] tenant=${_maskPublicDriverLoginValue(session.tenant_id)} company=${_maskPublicDriverLoginValue(session.company_id)} driver=${_maskPublicDriverLoginValue(session.driver_id)} count=${items.length} available=${availableInRes} assigned=${assignedInRes}`,
         );
         return json({ ok: true, items, count: items.length }, 200);
+      }
+
+      // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 1):
+      // company-session-authenticated mint of a short-lived driver session for
+      // the business-preview surface. Never accepts ADMIN_TOKEN; never trusts
+      // client-supplied tenant/company/driver values.
+      if (url.pathname === "/driver/session/mint-for-operator") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        return handleOperatorMintDriverSessionForOperator(request, env);
       }
 
       if (url.pathname === "/company/bootstrap") {
