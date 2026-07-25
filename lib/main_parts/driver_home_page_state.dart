@@ -3784,6 +3784,74 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 2)
+  ///
+  /// Snackbar surfaced when a driver-lifecycle START is blocked client-side
+  /// because there is no valid driver-session token (business preview without
+  /// a minted operator session, or a session that has expired). The message
+  /// intentionally does not mention `ADMIN_TOKEN` and never exposes bearer
+  /// values.
+  void _showDriverSessionRequiredSnackbar({required String reason}) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger.hideCurrentSnackBar();
+    final message = reason == 'expired_token'
+        ? _tr(
+            nl:
+                'Chauffeurssessie verlopen. Meld de chauffeur opnieuw aan om een rit te starten.',
+            en:
+                'Driver session expired. Have the driver log in again to start a ride.',
+            fr:
+                'Session chauffeur expirée. Faites connecter le chauffeur pour démarrer une course.',
+            es:
+                'Sesión de chofer caducada. El chofer debe volver a iniciar sesión para comenzar un viaje.',
+          )
+        : _tr(
+            nl:
+                'Geen actieve chauffeurssessie. Meld de chauffeur aan om een rit te starten.',
+            en:
+                'No active driver session. Sign the driver in to start a ride.',
+            fr:
+                'Aucune session chauffeur active. Connectez le chauffeur pour démarrer une course.',
+            es:
+                'No hay sesión de chofer activa. Inicia sesión del chofer para empezar un viaje.',
+          );
+    messenger.showSnackBar(
+      SnackBar(duration: const Duration(seconds: 6), content: Text(message)),
+    );
+  }
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 2)
+  ///
+  /// Reads the current driver session and returns the guard decision. All
+  /// driver-lifecycle START call sites (`_startTrip`, `_startDirectRide`,
+  /// `_handleCockpitStart`) MUST run this check before touching meter,
+  /// tracking, wakelock, camera, or navigation state so a missing/expired
+  /// bearer can never produce a local-only ghost ride after the tracking
+  /// worker fails 401.
+  DriverRideStartAuthDecision _evaluateDriverRideStartAuthDecision() {
+    final session = activeDriverSessionNotifier.value;
+    return evaluateDriverRideStartAuth(
+      driverSessionToken: session?.driverSessionToken,
+      driverSessionExpiresAtUtc: session?.driverSessionExpiresAtUtc,
+    );
+  }
+
+  /// Convenience: run the guard, and if blocked emit the standard snackbar
+  /// plus a stable diagnostic log line. Returns `true` when the caller may
+  /// proceed. Blocked callers must return WITHOUT any state mutation.
+  bool _driverRideStartAuthAllowsOrRefuse({required String action}) {
+    final decision = _evaluateDriverRideStartAuthDecision();
+    if (decision.allow) return true;
+    debugPrint(
+      '[RIDE_START][BLOCKED] action=$action reason=${decision.reason} '
+      'business_preview=${widget.openedFromBusinessHome}',
+    );
+    _showDriverSessionRequiredSnackbar(reason: decision.reason);
+    return false;
+  }
+
   /// DIRECT-RIDE-FINALIZE-ACK-GATE-1: ride stopped but booking finalize is
   /// still pending/unknown. No fake Completed state; server truth remains.
   void _showStreetDirectFinalizePendingSnackbar() {
@@ -4028,6 +4096,13 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _startTrip(BookingItem b) async {
     try {
+      // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 2):
+      // fail closed before the ownership guard so a missing/expired driver
+      // session cannot enter the /trip/start path (which would 401) and then
+      // race the ride into the fallback code paths.
+      if (!_driverRideStartAuthAllowsOrRefuse(action: 'start_trip')) {
+        return;
+      }
       if (!_canOperateBookingWithGuard(
         _bookingScopeViewFor(b),
         action: 'start_tracking',
@@ -6858,8 +6933,95 @@ class _DriverHomePageState extends State<DriverHomePage>
         bookingFinalizeState: kDirectTripFinalizePending,
       ));
     } catch (e) {
+      // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 2):
+      // classify the failure. HTTP 401/403 means the tracking worker refused
+      // the request as unauthorised/forbidden; the ride MUST be torn down so
+      // the client never creates a misleading local ghost. Transient
+      // transport failures (timeout, DNS, connection refused, JSON parse
+      // errors) keep the existing local-only behaviour but the STOP path
+      // records `backend_confirmed=false` for truthful history.
+      final classification = classifyDirectTripStartError(e);
+      if (classification.isAuthFailure) {
+        debugPrint(
+          '[DIRECT_TRIP][START][ABORT] reason=auth_${classification.httpStatus ?? "unknown"}',
+        );
+        _abortDirectRideAfterAuthFailure(
+          httpStatus: classification.httpStatus,
+        );
+        return;
+      }
       debugPrint('[DIRECT_TRIP][START][WARN] local-only direct ride: $e');
     }
+  }
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 2)
+  ///
+  /// Deterministic teardown after `/trip/start-direct` returns HTTP 401 or
+  /// 403. Called from the catch of `_startDirectTripSessionOnWorker` only
+  /// when the classifier confirmed an auth failure. Semantics:
+  ///
+  ///   - Meter stops.
+  ///   - Tracking stops.
+  ///   - Wakelock is released.
+  ///   - Route, pins, destination and every direct-ride identity field are
+  ///     cleared via `_clearActiveRouteAndNavigationState(clearActiveSelection:
+  ///     true)` so the UI leaves the "in-flight ride" surface immediately.
+  ///   - No compliance-ledger row is written: no ride actually happened.
+  ///   - No local-only history record is appended: nothing to appear as a
+  ///     completed ride.
+  ///   - A localized session-required snackbar is shown so the operator sees
+  ///     why the ride did not start.
+  ///
+  /// This must never be called for transport errors — those keep the ride
+  /// running and let `_stopTrip` decide the truthful teardown.
+  void _abortDirectRideAfterAuthFailure({required int? httpStatus}) {
+    if (!mounted) {
+      _directRideActive = false;
+      _activeDirectTripId = null;
+      _activeDirectBookingId = null;
+      _directRideKey = null;
+      _directTripStartWorkerOk = false;
+      _directTripStopWorkerOk = false;
+      return;
+    }
+    _stopMeterTicker();
+    _stopTrackingInternal();
+    _setNavigationWakelock(false);
+    setState(() {
+      _directRideActive = false;
+      _activeDirectTripId = null;
+      _activeDirectBookingId = null;
+      _directRideKey = null;
+      _directTripStartWorkerOk = false;
+      _directTripStopWorkerOk = false;
+      _directRideDestinationText = null;
+      _directRideDestinationPoint = null;
+      _directRideEstimatedFare = null;
+      _directRideEstimateLoading = false;
+      _directRideEstimateError = null;
+      _directRideEstimateCurrency = kDefaultCurrency;
+      _directRideEstimateSignature = null;
+      _directRideLocationRetryCount = 0;
+      _directRideLocationRetryDestination = null;
+      _kmDriven = 0.0;
+      _trackingStartedAt = null;
+      _isWaiting = false;
+      _waitStartedAt = null;
+      _waitElapsed = Duration.zero;
+      _cameraMode = _CameraMode.overview;
+      _hasSwitchedToFollow = false;
+      _followCar = false;
+      _allowOverviewCamera = false;
+    });
+    unawaited(
+      _clearActiveRouteAndNavigationState(
+        reason: 'auth_failed',
+        clearActiveSelection: true,
+      ),
+    );
+    _showDriverSessionRequiredSnackbar(
+      reason: httpStatus == 403 ? 'forbidden' : 'missing_token',
+    );
   }
 
   Future<DirectRideStopOutcome> _stopDirectTripSessionOnWorker({
@@ -8741,6 +8903,15 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _startDirectRide() async {
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 2):
+    // refuse client-side when no valid driver-session bearer is available.
+    // The tracking worker would 401 the request anyway; without this guard
+    // the current code silently starts meter/tracking/nav and creates a
+    // misleading local-only ghost ride after the fire-and-forget backend
+    // call fails. State must not be mutated on the blocked path.
+    if (!_driverRideStartAuthAllowsOrRefuse(action: 'start_direct_ride')) {
+      return;
+    }
     final destination = (_directRideDestinationText ?? '').trim();
     if (destination.isEmpty) {
       await _openDirectRideEntry();
@@ -8802,6 +8973,13 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   void _handleCockpitStart() {
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 2):
+    // gate the cockpit START button so it never dispatches into a
+    // driver-lifecycle path without a valid driver-session bearer. Downstream
+    // handlers repeat the check as defence-in-depth.
+    if (!_driverRideStartAuthAllowsOrRefuse(action: 'cockpit_start')) {
+      return;
+    }
     final b = _activeBooking;
     if (b != null) {
       _startTrip(b);
