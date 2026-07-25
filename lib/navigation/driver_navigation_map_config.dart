@@ -97,13 +97,20 @@ const List<String> kDriverMapClutterLayerIds = <String>[
   'natural-point-label',
 ];
 
-/// NAV-SIGNAL-P2C: compile-time opt-in for live lane guidance.
+/// NAV-LANE-GUIDANCE-RELEASE-ENABLE-AND-READABILITY-1: release-default lane
+/// guidance. Enabled for every release build because the current lane pipeline
+/// is proven conservative: every rendered lane maps 1:1 to a lane object from
+/// the current Mapbox route response (no invention, no padding, no
+/// cross-intersection concatenation, no fixed count). Force-disable in a
+/// specific build with:
 ///
-/// Default remains disabled. Field builds may enable with:
-/// `--dart-define=FLUXIDI_NAV_LANE_GUIDANCE=true`
+/// `--dart-define=FLUXIDI_NAV_LANE_GUIDANCE=false`
+///
+/// Field scripts (phone/tablet native) still pass an explicit `true` for
+/// clarity but release safety no longer depends on those scripts.
 const bool kDriverNavLaneGuidanceEnabled = bool.fromEnvironment(
   'FLUXIDI_NAV_LANE_GUIDANCE',
-  defaultValue: false,
+  defaultValue: true,
 );
 
 /// Test-only override for [kDriverNavLaneGuidanceEnabled]. Production ignores.

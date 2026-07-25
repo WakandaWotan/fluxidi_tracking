@@ -63,41 +63,49 @@ class DriverNavLaneStripMetrics {
   final double gap;
   final bool compact;
 
+  /// NAV-LANE-GUIDANCE-RELEASE-ENABLE-AND-READABILITY-1 metric floors.
+  ///
+  /// Sizes chosen at the low end of each readable range so the lane strip fits
+  /// safely under the maneuver banner while remaining glanceable at driving
+  /// distance. Never let arrows shrink below these floors — the resolver
+  /// already prevents fabricated cells, so the display must not compensate
+  /// by inflating count or by shrinking arrows into unreadable dots.
+
   /// Phone portrait / default non-compact.
   static const DriverNavLaneStripMetrics phone = DriverNavLaneStripMetrics(
-    rowHeight: 44,
-    pillMinWidth: 40,
-    arrowFontSize: 24,
-    gap: 6,
+    rowHeight: 54,
+    pillMinWidth: 48,
+    arrowFontSize: 29,
+    gap: 8,
     compact: false,
   );
 
   /// Tablet portrait — larger, glanceable at driving distance.
   static const DriverNavLaneStripMetrics tablet = DriverNavLaneStripMetrics(
-    rowHeight: 52,
-    pillMinWidth: 48,
-    arrowFontSize: 28,
-    gap: 7,
+    rowHeight: 62,
+    pillMinWidth: 56,
+    arrowFontSize: 34,
+    gap: 9,
     compact: false,
   );
 
   /// Phone landscape top-row — still readable, not tiny mini-icons.
   static const DriverNavLaneStripMetrics phoneLandscape =
       DriverNavLaneStripMetrics(
-        rowHeight: 32,
-        pillMinWidth: 32,
-        arrowFontSize: 18,
-        gap: 5,
+        rowHeight: 42,
+        pillMinWidth: 38,
+        arrowFontSize: 23,
+        gap: 6,
         compact: true,
       );
 
   /// Tablet landscape top-row.
   static const DriverNavLaneStripMetrics tabletLandscape =
       DriverNavLaneStripMetrics(
-        rowHeight: 38,
-        pillMinWidth: 38,
-        arrowFontSize: 22,
-        gap: 6,
+        rowHeight: 48,
+        pillMinWidth: 44,
+        arrowFontSize: 27,
+        gap: 7,
         compact: true,
       );
 }
@@ -137,7 +145,7 @@ class DriverNavLaneGuidanceStrip extends StatelessWidget {
           physics: lanes.length > 6
               ? const BouncingScrollPhysics()
               : const NeverScrollableScrollPhysics(),
-          padding: EdgeInsets.only(left: metrics.compact ? 2 : 4),
+          padding: EdgeInsets.only(left: metrics.compact ? 3 : 5),
           itemCount: lanes.length,
           separatorBuilder: (_, __) => SizedBox(width: metrics.gap),
           itemBuilder: (context, index) {
@@ -188,38 +196,63 @@ class _DriverNavLaneColumn extends StatelessWidget {
     final isUsable = kind == DriverLaneDisplayKind.usable;
     final isUnavailable = kind == DriverLaneDisplayKind.unavailable;
 
-    // Recommended lanes: strong filled accent. Non-recommended: subdued.
-    // Do not rely on subtle color alone — border width + fill + weight differ.
+    // NAV-LANE-GUIDANCE-RELEASE-ENABLE-AND-READABILITY-1:
+    //
+    // Preferred lanes: strong filled accent, thicker border, subtle outer
+    // glow, high-contrast arrow. Never rely on color alone — border weight
+    // and fill also differ so preferred lanes remain unmistakable in dark
+    // mode and for colorblind drivers.
+    //
+    // Usable lanes: visible and readable, clearly weaker than preferred.
+    // Unavailable lanes: subdued but retain enough arrow contrast that the
+    // physical lane layout is still understandable.
+    // Unknown lanes: conservative neutral, never look recommended.
     final Color bg;
     final Color borderColor;
     final Color textColor;
     final double borderWidth;
     final FontWeight weight;
+    final List<BoxShadow> shadows;
 
     if (isPreferred) {
-      bg = accent.withOpacity(palette.isDark ? 0.55 : 0.42);
+      bg = accent.withOpacity(palette.isDark ? 0.66 : 0.52);
       borderColor = accent.withOpacity(0.98);
       textColor = palette.isDark ? Colors.white : palette.textPrimary;
-      borderWidth = 2.4;
+      borderWidth = 3.0;
       weight = FontWeight.w900;
+      shadows = <BoxShadow>[
+        BoxShadow(
+          color: accent.withOpacity(palette.isDark ? 0.55 : 0.42),
+          blurRadius: 10,
+          spreadRadius: 0.5,
+          offset: Offset.zero,
+        ),
+      ];
     } else if (isUsable) {
-      bg = accent.withOpacity(palette.isDark ? 0.22 : 0.16);
-      borderColor = accent.withOpacity(palette.isDark ? 0.55 : 0.48);
-      textColor = palette.textPrimary.withOpacity(0.88);
-      borderWidth = 1.5;
+      bg = accent.withOpacity(palette.isDark ? 0.24 : 0.18);
+      borderColor = accent.withOpacity(palette.isDark ? 0.60 : 0.52);
+      textColor = palette.textPrimary.withOpacity(0.94);
+      borderWidth = 1.6;
       weight = FontWeight.w700;
+      shadows = const <BoxShadow>[];
     } else if (isUnavailable) {
-      bg = palette.textPrimary.withOpacity(palette.isDark ? 0.06 : 0.04);
-      borderColor = palette.textPrimary.withOpacity(palette.isDark ? 0.18 : 0.14);
-      textColor = palette.textPrimary.withOpacity(0.36);
+      bg = palette.textPrimary.withOpacity(palette.isDark ? 0.08 : 0.05);
+      borderColor = palette.textPrimary.withOpacity(
+        palette.isDark ? 0.24 : 0.18,
+      );
+      textColor = palette.textPrimary.withOpacity(palette.isDark ? 0.52 : 0.48);
       borderWidth = 1.0;
       weight = FontWeight.w500;
+      shadows = const <BoxShadow>[];
     } else {
-      bg = palette.textPrimary.withOpacity(palette.isDark ? 0.10 : 0.07);
-      borderColor = palette.textPrimary.withOpacity(palette.isDark ? 0.28 : 0.20);
-      textColor = palette.textPrimary.withOpacity(0.55);
+      bg = palette.textPrimary.withOpacity(palette.isDark ? 0.11 : 0.08);
+      borderColor = palette.textPrimary.withOpacity(
+        palette.isDark ? 0.30 : 0.22,
+      );
+      textColor = palette.textPrimary.withOpacity(0.62);
       borderWidth = 1.1;
       weight = FontWeight.w600;
+      shadows = const <BoxShadow>[];
     }
 
     return Semantics(
@@ -230,13 +263,14 @@ class _DriverNavLaneColumn extends StatelessWidget {
           minHeight: metrics.rowHeight - 2,
         ),
         padding: EdgeInsets.symmetric(
-          horizontal: metrics.compact ? 7 : 9,
-          vertical: metrics.compact ? 3 : 5,
+          horizontal: metrics.compact ? 8 : 10,
+          vertical: metrics.compact ? 4 : 6,
         ),
         decoration: BoxDecoration(
           color: bg,
-          borderRadius: BorderRadius.circular(metrics.compact ? 8 : 10),
+          borderRadius: BorderRadius.circular(metrics.compact ? 9 : 12),
           border: Border.all(color: borderColor, width: borderWidth),
+          boxShadow: shadows,
         ),
         alignment: Alignment.center,
         child: Text(

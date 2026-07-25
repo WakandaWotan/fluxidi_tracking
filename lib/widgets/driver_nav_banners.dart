@@ -194,21 +194,12 @@ class DriverTurnInstructionBanner extends StatelessWidget {
           : DriverNavLaneStripMetrics.phoneLandscape;
     }
     if (compact || _useLandscapeCompactRow) {
+      // NAV-LANE-GUIDANCE-RELEASE-ENABLE-AND-READABILITY-1: unify the
+      // in-banner compact rows with the landscape floors so the compact
+      // path can never render smaller arrows than the readable minimum.
       return isTablet
-          ? const DriverNavLaneStripMetrics(
-              rowHeight: 44,
-              pillMinWidth: 42,
-              arrowFontSize: 24,
-              gap: 6,
-              compact: true,
-            )
-          : const DriverNavLaneStripMetrics(
-              rowHeight: 38,
-              pillMinWidth: 36,
-              arrowFontSize: 20,
-              gap: 5,
-              compact: true,
-            );
+          ? DriverNavLaneStripMetrics.tabletLandscape
+          : DriverNavLaneStripMetrics.phoneLandscape;
     }
     return isTablet
         ? DriverNavLaneStripMetrics.tablet
