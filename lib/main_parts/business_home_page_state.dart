@@ -1297,7 +1297,189 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       '[DRIVER_OWNER_BRIDGE][SELECT] driver=${_maskBridgeDriverId(driver.id)} reason=$reason',
     );
     if (!context.mounted) return;
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 3):
+    // fail-closed on operator-mint. The driver-selection record on disk is a
+    // *display* pointer only; the operational driver surface must not open
+    // without a real, scoped driver-session bearer. If the mint call fails,
+    // remain on the company screen and surface a localised error. No meter,
+    // tracking, navigation, or ride can start from this path.
+    final minted = await _mintOperatorDriverSessionForPreview(
+      context,
+      scope: scope,
+      driver: driver,
+    );
+    if (minted == null) return;
+    if (!context.mounted) return;
     await _openBusinessDriverCockpitHome(context);
+  }
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 3)
+  ///
+  /// Company-session-authenticated call to `POST /driver/session/mint-for-
+  /// operator`. Returns `null` on any failure — the caller MUST refuse to
+  /// enter the operational driver surface in that case. Success hydrates
+  /// [activeDriverSessionNotifier] in memory only (no disk persistence) via
+  /// [DriverSessionStore.setOperatorMintedDriverSessionInMemory].
+  Future<OperatorMintedDriverSession?> _mintOperatorDriverSessionForPreview(
+    BuildContext context, {
+    required ({String tenantId, String companyId}) scope,
+    required DriverProfile driver,
+  }) async {
+    final companySession = activeCompanySessionNotifier.value;
+    final companyToken = (companySession?.companySessionToken ?? '').trim();
+    if (companyToken.isEmpty) {
+      debugPrint(
+        '[OPERATOR_MINT][SKIP] reason=no_company_session driver=${_maskBridgeDriverId(driver.id)}',
+      );
+      _showOperatorMintFailureSnackbar(context, reason: 'unauthorized');
+      return null;
+    }
+    OperatorMintedDriverSession minted;
+    try {
+      minted = await mintOperatorDriverSession(
+        bookingBaseUrl: kBookingBaseUrl,
+        companySessionToken: companyToken,
+        targetDriverId: driver.id,
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+    } on OperatorMintException catch (e) {
+      debugPrint(
+        '[OPERATOR_MINT][BUSINESS_PREVIEW_ABORT] reason=${e.reason} http=${e.httpStatus ?? -1} driver=${_maskBridgeDriverId(driver.id)}',
+      );
+      if (context.mounted) {
+        _showOperatorMintFailureSnackbar(context, reason: e.reason);
+      }
+      return null;
+    } catch (e) {
+      debugPrint(
+        '[OPERATOR_MINT][BUSINESS_PREVIEW_ABORT] reason=unexpected err=${e.runtimeType} driver=${_maskBridgeDriverId(driver.id)}',
+      );
+      if (context.mounted) {
+        _showOperatorMintFailureSnackbar(context, reason: 'network');
+      }
+      return null;
+    }
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+    final session = ActiveDriverSession(
+      driverId: minted.driverId,
+      employeeNumber: driver.employeeNumber,
+      fullName: minted.driverName ?? driver.fullName,
+      phone: driver.phone,
+      loggedInAt: minted.issuedAtUtc ?? nowIso,
+      updatedAt: nowIso,
+      tenantId: minted.tenantId.isNotEmpty ? minted.tenantId : scope.tenantId,
+      companyId:
+          minted.companyId.isNotEmpty ? minted.companyId : scope.companyId,
+      companyCode: companySession?.companyCode,
+      assignedVehicleId: _resolveMintedAssignedVehicleId(minted),
+      driverPhotoUrl: driver.publicPortraitUrl,
+      driverSessionToken: minted.driverSessionToken,
+      driverSessionExpiresAtUtc: minted.driverSessionExpiresAtUtc,
+      linkMethod: kOperatorMintDriverLinkMethod,
+      expiresAt: minted.driverSessionExpiresAtUtc,
+    );
+    DriverSessionStore.instance.setOperatorMintedDriverSessionInMemory(session);
+    return minted;
+  }
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 3):
+  /// The mint response carries the server-authoritative `assigned_vehicle_id`
+  /// (or null). We do not fall back to a locally-derived value because
+  /// vehicle assignment for driver-lifecycle mutations must be the server's
+  /// decision, not the client's.
+  String? _resolveMintedAssignedVehicleId(OperatorMintedDriverSession minted) {
+    final serverValue = (minted.assignedVehicleId ?? '').trim();
+    return serverValue.isEmpty ? null : serverValue;
+  }
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 3):
+  /// Localised snackbar for operator-mint failure. Distinguishes the most
+  /// actionable classes (session expired, driver not found / inactive,
+  /// forbidden scope, network); everything else falls back to a generic
+  /// "could not open driver view" message. Bearer values are never referenced
+  /// in these strings.
+  void _showOperatorMintFailureSnackbar(
+    BuildContext context, {
+    required String reason,
+  }) {
+    if (!context.mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger.hideCurrentSnackBar();
+    String message;
+    switch (reason) {
+      case 'unauthorized':
+        message = _tr(
+          nl:
+              'Bedrijfssessie is verlopen. Meld opnieuw aan om de chauffeursweergave te openen.',
+          en:
+              'Company session expired. Sign in again to open the driver view.',
+          fr:
+              'Session entreprise expirée. Reconnectez-vous pour ouvrir la vue chauffeur.',
+          es:
+              'Sesión de empresa caducada. Inicia sesión de nuevo para abrir la vista del chofer.',
+        );
+        break;
+      case 'forbidden':
+        message = _tr(
+          nl:
+              'Toegang tot deze chauffeur geweigerd door de server. Controleer of de chauffeur bij dit bedrijf hoort.',
+          en:
+              'Server refused access to this driver. Check the driver belongs to this company.',
+          fr:
+              'Le serveur a refusé l’accès à ce chauffeur. Vérifiez que le chauffeur appartient à cette entreprise.',
+          es:
+              'El servidor denegó el acceso a este chofer. Verifica que el chofer pertenece a esta empresa.',
+        );
+        break;
+      case 'driver_not_found':
+        message = _tr(
+          nl:
+              'Chauffeur niet gevonden. Vernieuw de chauffeurslijst en probeer opnieuw.',
+          en: 'Driver not found. Refresh the driver list and try again.',
+          fr:
+              'Chauffeur introuvable. Actualisez la liste des chauffeurs et réessayez.',
+          es:
+              'Chofer no encontrado. Actualiza la lista de chóferes e inténtalo de nuevo.',
+        );
+        break;
+      case 'driver_inactive':
+        message = _tr(
+          nl:
+              'Deze chauffeur is niet actief. Activeer de chauffeur voordat u de chauffeursweergave opent.',
+          en:
+              'This driver is not active. Activate the driver before opening the driver view.',
+          fr:
+              'Ce chauffeur n’est pas actif. Activez le chauffeur avant d’ouvrir la vue chauffeur.',
+          es:
+              'Este chofer no está activo. Actívalo antes de abrir la vista del chofer.',
+        );
+        break;
+      case 'timeout':
+      case 'network':
+        message = _tr(
+          nl:
+              'Geen verbinding met de server. Controleer uw internet en probeer opnieuw.',
+          en: 'No connection to the server. Check your internet and retry.',
+          fr:
+              'Aucune connexion au serveur. Vérifiez votre connexion et réessayez.',
+          es: 'Sin conexión con el servidor. Verifica tu conexión y reintenta.',
+        );
+        break;
+      default:
+        message = _tr(
+          nl:
+              'Kan chauffeursweergave niet openen. Probeer het later opnieuw.',
+          en: 'Could not open the driver view. Please try again later.',
+          fr: 'Impossible d’ouvrir la vue chauffeur. Réessayez plus tard.',
+          es:
+              'No se pudo abrir la vista del chofer. Vuelve a intentarlo más tarde.',
+        );
+    }
+    messenger.showSnackBar(
+      SnackBar(duration: const Duration(seconds: 6), content: Text(message)),
+    );
   }
 
   Future<void> _openDriverCockpitView(BuildContext context) async {

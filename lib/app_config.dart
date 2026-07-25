@@ -6569,6 +6569,278 @@ Map<String, String> companyBearerHeaders(
   return headers;
 }
 
+// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 3)
+//
+// Client helper for `POST /driver/session/mint-for-operator` on the booking
+// worker (see companion server-side commit c2695bd). The mint route lets a
+// company owner obtain a short-lived, scoped driver-session bearer for a
+// driver in their own tenant/company so the business-preview surface can
+// perform real driver-lifecycle mutations without ADMIN_TOKEN and without
+// silently 401-ing on `/trip/start-direct` (the field failure on tablet
+// R52Y808CN2M).
+//
+// Design invariants (matched to the plan in Commit 1):
+//   - Only company-session bearer authenticates the mint request.
+//   - The client-supplied `tenant_id`/`company_id` may be omitted; when
+//     included they must match the server-derived scope or the worker
+//     returns 403.
+//   - The `target_driver_id` is required and must belong to the same scope.
+//   - The bearer itself is NEVER passed to `debugPrint`. Log lines use
+//     `_maskOperatorMintIdForLog` for driver / tenant / company only.
+//   - Response fields align 1:1 with the worker record: `driver_session_token`,
+//     `expires_at`, `expires_in`, `origin: "operator_mint"`.
+
+/// Successful outcome of [mintOperatorDriverSession].
+class OperatorMintedDriverSession {
+  const OperatorMintedDriverSession({
+    required this.driverSessionToken,
+    required this.driverSessionExpiresAtUtc,
+    required this.expiresInSeconds,
+    required this.tenantId,
+    required this.companyId,
+    required this.driverId,
+    this.driverName,
+    this.assignedVehicleId,
+    this.origin = kOperatorMintDriverLinkMethod,
+    this.linkMethod = kOperatorMintDriverLinkMethod,
+    this.issuedAtUtc,
+  });
+
+  final String driverSessionToken;
+  final String driverSessionExpiresAtUtc;
+  final int expiresInSeconds;
+  final String tenantId;
+  final String companyId;
+  final String driverId;
+  final String? driverName;
+  final String? assignedVehicleId;
+  final String origin;
+  final String linkMethod;
+  final String? issuedAtUtc;
+}
+
+/// Failure outcome of [mintOperatorDriverSession]. Wraps the underlying
+/// classification so the UI can render a specific, actionable error string
+/// without inspecting HTTP status codes or response bodies directly.
+///
+/// Values of [reason]:
+///   - `network`          — transport failure, DNS, connection refused.
+///   - `timeout`          — request timed out client-side.
+///   - `invalid_response` — non-JSON or missing required fields.
+///   - `unauthorized`     — HTTP 401. Company session is invalid/expired.
+///   - `forbidden`        — HTTP 403. Tenant/company/driver scope conflict,
+///                          or the target driver is inactive.
+///   - `driver_not_found` — HTTP 404. Target driver does not exist in scope.
+///   - `driver_inactive`  — server-supplied `error=driver_inactive`.
+///   - `mint_failed`      — server 500 or explicit `error=mint_failed`.
+///   - `invalid_body`     — client-side validation failure (bad input).
+///   - `server_error`     — any other 5xx.
+class OperatorMintException implements Exception {
+  const OperatorMintException({
+    required this.reason,
+    this.httpStatus,
+    this.errorCode,
+  });
+
+  final String reason;
+  final int? httpStatus;
+  final String? errorCode;
+
+  @override
+  String toString() =>
+      'OperatorMintException(reason=$reason, http=$httpStatus, error=$errorCode)';
+}
+
+String _maskOperatorMintIdForLog(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return '—';
+  if (trimmed.length <= 4) return '…${trimmed.substring(trimmed.length - 1)}';
+  return '${trimmed.substring(0, 2)}…${trimmed.substring(trimmed.length - 2)}';
+}
+
+/// Executes a company-session-authenticated request to
+/// `POST /driver/session/mint-for-operator` and returns a scoped, in-memory
+/// driver bearer for [targetDriverId]. Throws [OperatorMintException] on
+/// any failure — callers MUST catch this and refuse to enter the operational
+/// driver surface if a valid mint is not returned. See
+/// `_persistAndOpenBusinessDriverPreview` for the canonical call site.
+Future<OperatorMintedDriverSession> mintOperatorDriverSession({
+  required String bookingBaseUrl,
+  required String companySessionToken,
+  required String targetDriverId,
+  String? tenantId,
+  String? companyId,
+  Duration timeout = const Duration(seconds: 12),
+  http.Client? client,
+}) async {
+  final baseUrl = _trimBookingBaseUrl(bookingBaseUrl);
+  final token = companySessionToken.trim();
+  final driverId = targetDriverId.trim();
+  if (baseUrl.isEmpty) {
+    throw const OperatorMintException(reason: 'invalid_body');
+  }
+  if (token.isEmpty) {
+    throw const OperatorMintException(reason: 'unauthorized');
+  }
+  if (driverId.isEmpty) {
+    throw const OperatorMintException(reason: 'invalid_body');
+  }
+  final maskedDriver = _maskOperatorMintIdForLog(driverId);
+  final maskedTenant = _maskOperatorMintIdForLog(tenantId ?? '');
+  final maskedCompany = _maskOperatorMintIdForLog(companyId ?? '');
+  debugPrint(
+    '[OPERATOR_MINT][REQUEST] driver=$maskedDriver tenant=$maskedTenant company=$maskedCompany',
+  );
+
+  final endpoint = Uri.parse('$baseUrl/driver/session/mint-for-operator');
+  final headers = companyBearerHeaders(token, json: true);
+  final normalizedTenant = (tenantId ?? '').trim();
+  final normalizedCompany = (companyId ?? '').trim();
+  final body = <String, dynamic>{
+    'target_driver_id': driverId,
+    if (normalizedTenant.isNotEmpty) 'tenant_id': normalizedTenant,
+    if (normalizedCompany.isNotEmpty) 'company_id': normalizedCompany,
+  };
+
+  final effectiveClient = client ?? http.Client();
+  final ownsClient = client == null;
+  http.Response res;
+  try {
+    res = await effectiveClient
+        .post(endpoint, headers: headers, body: jsonEncode(body))
+        .timeout(timeout);
+  } on TimeoutException {
+    debugPrint(
+      '[OPERATOR_MINT][ERR] reason=timeout driver=$maskedDriver company=$maskedCompany',
+    );
+    throw const OperatorMintException(reason: 'timeout');
+  } catch (e) {
+    debugPrint(
+      '[OPERATOR_MINT][ERR] reason=network driver=$maskedDriver company=$maskedCompany err=${e.runtimeType}',
+    );
+    throw const OperatorMintException(reason: 'network');
+  } finally {
+    if (ownsClient) {
+      effectiveClient.close();
+    }
+  }
+
+  Map<String, dynamic>? decoded;
+  try {
+    final raw = jsonDecode(utf8.decode(res.bodyBytes));
+    if (raw is Map) decoded = Map<String, dynamic>.from(raw);
+  } catch (_) {
+    decoded = null;
+  }
+
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    final errorCode = (decoded?['error'] ?? '').toString().trim();
+    String reason;
+    if (res.statusCode == 401) {
+      reason = 'unauthorized';
+    } else if (res.statusCode == 403) {
+      reason = errorCode == 'driver_inactive' ? 'driver_inactive' : 'forbidden';
+    } else if (res.statusCode == 404) {
+      reason = 'driver_not_found';
+    } else if (res.statusCode == 400) {
+      reason = 'invalid_body';
+    } else if (res.statusCode >= 500) {
+      reason = errorCode == 'mint_failed' ? 'mint_failed' : 'server_error';
+    } else {
+      reason = 'server_error';
+    }
+    debugPrint(
+      '[OPERATOR_MINT][ERR] reason=$reason http=${res.statusCode} driver=$maskedDriver company=$maskedCompany',
+    );
+    throw OperatorMintException(
+      reason: reason,
+      httpStatus: res.statusCode,
+      errorCode: errorCode.isEmpty ? null : errorCode,
+    );
+  }
+
+  if (decoded == null || decoded['ok'] != true) {
+    debugPrint(
+      '[OPERATOR_MINT][ERR] reason=invalid_response http=${res.statusCode} driver=$maskedDriver company=$maskedCompany',
+    );
+    throw OperatorMintException(
+      reason: 'invalid_response',
+      httpStatus: res.statusCode,
+    );
+  }
+
+  final tokenOut =
+      (decoded['driver_session_token'] ??
+              decoded['driverSessionToken'] ??
+              '')
+          .toString()
+          .trim();
+  final expiresAt =
+      (decoded['driver_session_expires_at'] ??
+              decoded['driverSessionExpiresAtUtc'] ??
+              decoded['expires_at'] ??
+              '')
+          .toString()
+          .trim();
+  final expiresInRaw =
+      decoded['expires_in'] ?? decoded['expiresIn'] ?? 0;
+  final expiresIn = expiresInRaw is num ? expiresInRaw.toInt() : 0;
+  final tenantOut =
+      (decoded['tenant_id'] ?? decoded['tenantId'] ?? '').toString().trim();
+  final companyOut =
+      (decoded['company_id'] ?? decoded['companyId'] ?? '').toString().trim();
+  final driverMap = decoded['driver'];
+  final driverIdOut = driverMap is Map
+      ? (driverMap['driver_id'] ?? driverMap['driverId'] ?? '').toString().trim()
+      : driverId;
+  final driverNameOut = driverMap is Map
+      ? (driverMap['driver_name'] ?? driverMap['driverName'] ?? '')
+            .toString()
+            .trim()
+      : '';
+  final vehicleOut = driverMap is Map
+      ? (driverMap['assigned_vehicle_id'] ??
+                driverMap['assignedVehicleId'] ??
+                '')
+            .toString()
+            .trim()
+      : '';
+  final originOut =
+      (decoded['origin'] ?? kOperatorMintDriverLinkMethod).toString().trim();
+  final linkMethodOut =
+      (decoded['link_method'] ?? kOperatorMintDriverLinkMethod)
+          .toString()
+          .trim();
+  final issuedAtOut =
+      (decoded['issued_at'] ?? decoded['issuedAt'] ?? '').toString().trim();
+
+  if (tokenOut.isEmpty || expiresAt.isEmpty || driverIdOut.isEmpty) {
+    debugPrint(
+      '[OPERATOR_MINT][ERR] reason=invalid_response http=${res.statusCode} driver=$maskedDriver company=$maskedCompany missing_fields=true',
+    );
+    throw const OperatorMintException(reason: 'invalid_response');
+  }
+
+  debugPrint(
+    '[OPERATOR_MINT][OK] origin=$originOut driver=${_maskOperatorMintIdForLog(driverIdOut)} tenant=${_maskOperatorMintIdForLog(tenantOut)} company=${_maskOperatorMintIdForLog(companyOut)} expires_in=$expiresIn',
+  );
+
+  return OperatorMintedDriverSession(
+    driverSessionToken: tokenOut,
+    driverSessionExpiresAtUtc: expiresAt,
+    expiresInSeconds: expiresIn,
+    tenantId: tenantOut,
+    companyId: companyOut,
+    driverId: driverIdOut,
+    driverName: driverNameOut.isEmpty ? null : driverNameOut,
+    assignedVehicleId: vehicleOut.isEmpty ? null : vehicleOut,
+    origin: originOut.isEmpty ? kOperatorMintDriverLinkMethod : originOut,
+    linkMethod:
+        linkMethodOut.isEmpty ? kOperatorMintDriverLinkMethod : linkMethodOut,
+    issuedAtUtc: issuedAtOut.isEmpty ? null : issuedAtOut,
+  );
+}
+
 Future<Map<String, dynamic>> uploadAdminDriverDocument({
   required String bookingBaseUrl,
   required String companySessionToken,

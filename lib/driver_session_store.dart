@@ -11,6 +11,40 @@ import 'package:fluxidi_tracking/app_config.dart';
 const String kCompanyAdminDriverViewLinkMethod = 'company_admin_driver_view';
 const String kStandaloneDriverLinkMethod = 'standalone_driver';
 
+/// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 3)
+///
+/// `link_method` value for a driver session that was minted for a company
+/// owner via `POST /driver/session/mint-for-operator` on the booking worker.
+/// Mirrors the server-side record shape (see [Commit 1] worker route). Kept
+/// as a top-level constant so both the API helper and the session store can
+/// classify sessions consistently without duplicating the string literal.
+const String kOperatorMintDriverLinkMethod = 'operator_mint';
+
+/// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 3)
+///
+/// Machine-readable session provenance derived from
+/// [ActiveDriverSession.linkMethod]. Callers should prefer this getter over
+/// raw string comparisons on `linkMethod`.
+///
+///   - [standaloneLogin]         driver authenticated with their own
+///                                credentials (public login or pairing).
+///   - [companyAdminDriverView]  legacy business-preview session without
+///                                a real bearer (kept for backwards
+///                                compatibility only).
+///   - [operatorMint]            short-lived, company-owner-minted driver
+///                                session; scope is server-derived from the
+///                                minting company session (never trusted
+///                                from client input).
+///   - [unknown]                  session has no linkMethod or an
+///                                unrecognised value; downstream code should
+///                                treat this as untrusted.
+enum SessionOrigin {
+  standaloneLogin,
+  companyAdminDriverView,
+  operatorMint,
+  unknown,
+}
+
 /// Business-scoped driver cockpit preview (never used for standalone restore).
 class BusinessDriverPreviewRecord {
   const BusinessDriverPreviewRecord({
@@ -165,9 +199,36 @@ class ActiveDriverSession {
       isPublicDriverLoginSession ||
       (linkMethod ?? '').trim().toLowerCase() == 'standalone_driver';
 
-  String get sessionMode => isCompanyAdminDriverViewSession
-      ? 'business_driver_view'
-      : 'standalone_driver';
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 3):
+  /// true when this session was minted for a company owner via
+  /// `/driver/session/mint-for-operator`.
+  bool get isOperatorMintedSession =>
+      (linkMethod ?? '').trim().toLowerCase() ==
+      kOperatorMintDriverLinkMethod;
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 3):
+  /// canonical provenance for logs, diagnostics and access-control gating.
+  /// Prefer this over ad-hoc linkMethod string checks.
+  SessionOrigin get sessionOrigin {
+    if (isOperatorMintedSession) return SessionOrigin.operatorMint;
+    if (isCompanyAdminDriverViewSession) {
+      return SessionOrigin.companyAdminDriverView;
+    }
+    if (isStandaloneLoginSession) return SessionOrigin.standaloneLogin;
+    return SessionOrigin.unknown;
+  }
+
+  String get sessionMode {
+    switch (sessionOrigin) {
+      case SessionOrigin.operatorMint:
+        return 'business_driver_view_minted';
+      case SessionOrigin.companyAdminDriverView:
+        return 'business_driver_view';
+      case SessionOrigin.standaloneLogin:
+      case SessionOrigin.unknown:
+        return 'standalone_driver';
+    }
+  }
 
   DateTime? get expiresAtUtc {
     final raw = (expiresAt ?? '').trim();
@@ -912,6 +973,29 @@ class DriverSessionStore {
   void setBusinessDriverViewSessionInMemory(ActiveDriverSession session) {
     debugPrint(
       '[DRIVER_SESSION][BUSINESS_VIEW_NO_STANDALONE_PERSIST] action=memory_only driver=${_maskIdForLog(session.driverId)} tenant=${_maskIdForLog(session.tenantId ?? '')} company=${_maskIdForLog(session.companyId ?? '')}',
+    );
+    _cache = null;
+    _cacheScopeKey = '';
+    activeDriverSessionNotifier.value = session;
+  }
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 3)
+  ///
+  /// Hydrate the in-memory driver session with an operator-minted bearer.
+  /// This method deliberately never writes to disk: the minted token has a
+  /// short TTL (1h by default) and MUST NOT survive an app restart. If the
+  /// business preview is re-entered later, a fresh mint request is issued.
+  ///
+  /// The bearer value itself is never logged; only the driver id, tenant,
+  /// company, and the (stable) `origin=operator_mint` tag appear in the
+  /// diagnostic line.
+  void setOperatorMintedDriverSessionInMemory(ActiveDriverSession session) {
+    assert(
+      session.isOperatorMintedSession,
+      'setOperatorMintedDriverSessionInMemory requires linkMethod=$kOperatorMintDriverLinkMethod',
+    );
+    debugPrint(
+      '[DRIVER_SESSION][OPERATOR_MINT_HYDRATE] action=memory_only origin=operator_mint driver=${_maskIdForLog(session.driverId)} tenant=${_maskIdForLog(session.tenantId ?? '')} company=${_maskIdForLog(session.companyId ?? '')}',
     );
     _cache = null;
     _cacheScopeKey = '';
