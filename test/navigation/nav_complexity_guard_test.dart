@@ -401,14 +401,23 @@ void main() {
 
     test('decision snapshot exposes audit fields', () {
       final guard = NavComplexityGuard();
-      final state = guard.update(
-        _input(
-          overallConfidence: 48.0,
-          snapDistanceM: 40.0,
-          headingDeltaDeg: 80.0,
-          speedKmh: 25.0,
-        ),
-      );
+      // NAV-COMPLEXITY-HEADING-CONFLICT-GATE-P0-1: heading conflict is only
+      // structural after the sustained-sample gate is reached AND supporting
+      // quality is present on the same tick. Iterate to reach the gate.
+      var t = DateTime(2026, 1, 1, 12);
+      NavComplexityGuardState state = NavComplexityGuardState.inactive;
+      for (var i = 0; i < 4; i++) {
+        t = t.add(const Duration(milliseconds: 500));
+        state = guard.update(
+          _input(
+            timestamp: t,
+            overallConfidence: 48.0,
+            snapDistanceM: 40.0,
+            headingDeltaDeg: 80.0,
+            speedKmh: 25.0,
+          ),
+        );
+      }
       expect(state.decision.score, 1);
       expect(state.decision.rawScore, 1);
       expect(state.decision.effectiveScore, 1);
@@ -863,5 +872,643 @@ void main() {
         anyOf('startup_prediction_only', 'prediction_supporting_only'),
       );
     });
+  });
+
+  group('NAV-COMPLEXITY-HEADING-CONFLICT-GATE-P0-1', () {
+    NavComplexityGuardState drive(
+      NavComplexityGuard guard,
+      NavComplexityGuardInput Function(DateTime t) build, {
+      int samples = 6,
+      Duration step = const Duration(milliseconds: 500),
+      DateTime? start,
+    }) {
+      var t = start ?? DateTime(2026, 1, 1, 12);
+      NavComplexityGuardState state = NavComplexityGuardState.inactive;
+      for (var i = 0; i < samples; i++) {
+        t = t.add(step);
+        state = guard.update(build(t));
+      }
+      return state;
+    }
+
+    test('1) simple one-lane left turn at 641m => no warning', () {
+      final guard = NavComplexityGuard();
+      final state = drive(
+        guard,
+        (t) => _input(
+          timestamp: t,
+          overallConfidence: 78.0,
+          trustInstruction: true,
+          trustBearing: true,
+          snapDistanceM: 8.0,
+          maneuverType: 'turn',
+          maneuverModifier: 'left',
+          instructionStepIndex: 2,
+          speedKmh: 40.0,
+          distanceToManeuverM: 641.0,
+          headingDeltaDeg: null,
+        ),
+        samples: 20,
+      );
+      expect(state.active, isFalse);
+      expect(state.decision.triggerRules, isEmpty);
+      expect(state.decision.structuralComplexityPresent, isFalse);
+    });
+
+    test('2) simple one-lane right turn => no warning', () {
+      final guard = NavComplexityGuard();
+      final state = drive(
+        guard,
+        (t) => _input(
+          timestamp: t,
+          overallConfidence: 78.0,
+          snapDistanceM: 8.0,
+          maneuverType: 'turn',
+          maneuverModifier: 'right',
+          instructionStepIndex: 2,
+          speedKmh: 40.0,
+          distanceToManeuverM: 500.0,
+          headingDeltaDeg: null,
+        ),
+        samples: 20,
+      );
+      expect(state.active, isFalse);
+      expect(state.decision.triggerRules, isEmpty);
+    });
+
+    test('3) straight local road => no warning', () {
+      final guard = NavComplexityGuard();
+      final state = drive(
+        guard,
+        (t) => _input(
+          timestamp: t,
+          overallConfidence: 82.0,
+          snapDistanceM: 6.0,
+          maneuverType: 'continue',
+          maneuverModifier: 'straight',
+          instructionStepIndex: 1,
+          speedKmh: 55.0,
+          distanceToManeuverM: 900.0,
+          headingDeltaDeg: null,
+        ),
+        samples: 20,
+      );
+      expect(state.active, isFalse);
+      expect(state.decision.triggerRules, isEmpty);
+    });
+
+    test('4) one heading spike at 75 deg => no warning', () {
+      final guard = NavComplexityGuard();
+      final state = guard.update(
+        _input(
+          timestamp: DateTime(2026, 1, 1, 12, 0, 1),
+          overallConfidence: 78.0,
+          snapDistanceM: 8.0,
+          headingDeltaDeg: 75.0,
+          speedKmh: 20.0,
+          maneuverType: 'turn',
+          maneuverModifier: 'left',
+          distanceToManeuverM: 641.0,
+        ),
+      );
+      expect(state.active, isFalse);
+      expect(state.decision.triggerRules, isEmpty);
+      expect(state.decision.structuralComplexityPresent, isFalse);
+    });
+
+    test('5) two consecutive heading spikes => no warning', () {
+      final guard = NavComplexityGuard();
+      NavComplexityGuardState state = NavComplexityGuardState.inactive;
+      var t = DateTime(2026, 1, 1, 12);
+      for (var i = 0; i < 2; i++) {
+        t = t.add(const Duration(milliseconds: 500));
+        state = guard.update(
+          _input(
+            timestamp: t,
+            overallConfidence: 78.0,
+            snapDistanceM: 8.0,
+            headingDeltaDeg: 80.0,
+            speedKmh: 20.0,
+            maneuverType: 'turn',
+            maneuverModifier: 'left',
+            distanceToManeuverM: 641.0,
+          ),
+        );
+      }
+      expect(state.active, isFalse);
+      expect(state.decision.triggerRules, isEmpty);
+      expect(state.decision.structuralComplexityPresent, isFalse);
+    });
+
+    test('6) sustained heading conflict without supporting quality => no warning',
+        () {
+      final guard = NavComplexityGuard();
+      final state = drive(
+        guard,
+        (t) => _input(
+          timestamp: t,
+          // Healthy trust flags, good snap, healthy overall — no supporting
+          // quality signal, so a heading conflict must never activate.
+          overallConfidence: 90.0,
+          trustInstruction: true,
+          trustBearing: true,
+          snapDistanceM: 6.0,
+          headingDeltaDeg: 85.0,
+          speedKmh: 30.0,
+          maneuverType: 'turn',
+          maneuverModifier: 'left',
+          distanceToManeuverM: 641.0,
+        ),
+        samples: 12,
+      );
+      expect(state.active, isFalse);
+      expect(state.decision.triggerRules, isEmpty);
+      expect(state.decision.structuralComplexityPresent, isFalse);
+    });
+
+    test('7) alternating 75/60 curvature noise resets streak => no warning', () {
+      final guard = NavComplexityGuard();
+      var t = DateTime(2026, 1, 1, 12);
+      NavComplexityGuardState state = NavComplexityGuardState.inactive;
+      for (var i = 0; i < 20; i++) {
+        t = t.add(const Duration(milliseconds: 500));
+        final delta = i.isEven ? 75.0 : 60.0;
+        state = guard.update(
+          _input(
+            timestamp: t,
+            // Even with low confidence + high snap present as corroboration,
+            // an alternating pattern must never reach the sustained streak
+            // because the counter resets on each below-threshold sample.
+            overallConfidence: 45.0,
+            trustInstruction: false,
+            snapDistanceM: 32.0,
+            headingDeltaDeg: delta,
+            speedKmh: 25.0,
+            maneuverType: 'turn',
+            maneuverModifier: 'left',
+            distanceToManeuverM: 641.0,
+          ),
+        );
+      }
+      expect(state.active, isFalse);
+      expect(state.decision.triggerRules, isNot(contains('heading_route_conflict')));
+    });
+
+    test('8) heading conflict below 8 km/h => no warning', () {
+      final guard = NavComplexityGuard();
+      final state = drive(
+        guard,
+        (t) => _input(
+          timestamp: t,
+          overallConfidence: 45.0,
+          trustInstruction: false,
+          snapDistanceM: 32.0,
+          headingDeltaDeg: 90.0,
+          speedKmh: 6.0,
+          maneuverType: 'turn',
+          maneuverModifier: 'left',
+          distanceToManeuverM: 641.0,
+        ),
+        samples: 12,
+      );
+      expect(state.active, isFalse);
+      expect(state.decision.triggerRules, isNot(contains('heading_route_conflict')));
+    });
+
+    test(
+      '9) heading conflict for >=3 samples + low confidence => warning allowed',
+      () {
+        final guard = NavComplexityGuard();
+        NavComplexityGuardState state = NavComplexityGuardState.inactive;
+        var t = DateTime(2026, 1, 1, 12);
+        for (var i = 0; i < 8; i++) {
+          t = t.add(const Duration(milliseconds: 500));
+          state = guard.update(
+            _input(
+              timestamp: t,
+              overallConfidence: 42.0,
+              trustInstruction: false,
+              snapDistanceM: 10.0,
+              headingDeltaDeg: 85.0,
+              speedKmh: 20.0,
+              maneuverType: 'turn',
+              maneuverModifier: 'left',
+              distanceToManeuverM: 300.0,
+            ),
+          );
+        }
+        expect(state.active, isTrue);
+        expect(state.decision.triggerRules, contains('heading_route_conflict'));
+        expect(state.decision.qualityRules, contains('low_confidence'));
+      },
+    );
+
+    test(
+      '10) heading conflict for >=3 samples + high snap distance => warning allowed',
+      () {
+        final guard = NavComplexityGuard();
+        NavComplexityGuardState state = NavComplexityGuardState.inactive;
+        var t = DateTime(2026, 1, 1, 12);
+        for (var i = 0; i < 8; i++) {
+          t = t.add(const Duration(milliseconds: 500));
+          state = guard.update(
+            _input(
+              timestamp: t,
+              overallConfidence: 75.0,
+              trustInstruction: true,
+              trustBearing: true,
+              snapDistanceM: 40.0,
+              headingDeltaDeg: 85.0,
+              speedKmh: 22.0,
+              maneuverType: 'turn',
+              maneuverModifier: 'left',
+              distanceToManeuverM: 300.0,
+            ),
+          );
+        }
+        expect(state.active, isTrue);
+        expect(state.decision.triggerRules, contains('heading_route_conflict'));
+        expect(state.decision.qualityRules, contains('high_snap_distance'));
+      },
+    );
+
+    test(
+      '11) heading conflict for >=3 samples + off-route uncertainty => warning allowed',
+      () {
+        final guard = NavComplexityGuard();
+        NavComplexityGuardState state = NavComplexityGuardState.inactive;
+        var t = DateTime(2026, 1, 1, 12);
+        for (var i = 0; i < 8; i++) {
+          t = t.add(const Duration(milliseconds: 500));
+          state = guard.update(
+            _input(
+              timestamp: t,
+              overallConfidence: 75.0,
+              trustInstruction: true,
+              trustBearing: true,
+              snapDistanceM: 8.0,
+              offRouteLikely: true,
+              reroutePending: true,
+              headingDeltaDeg: 85.0,
+              speedKmh: 22.0,
+              maneuverType: 'turn',
+              maneuverModifier: 'left',
+              distanceToManeuverM: 300.0,
+            ),
+          );
+        }
+        expect(state.active, isTrue);
+        expect(state.decision.triggerRules, contains('heading_route_conflict'));
+        expect(state.decision.qualityRules, contains('offroute_uncertain'));
+      },
+    );
+
+    test('12) repeated_prediction alone remains insufficient', () {
+      final guard = NavComplexityGuard();
+      NavComplexityGuardState state = NavComplexityGuardState.inactive;
+      var t = DateTime(2026, 1, 1, 12);
+      for (var i = 0; i < 30; i++) {
+        t = t.add(const Duration(milliseconds: 500));
+        state = guard.update(
+          _input(
+            timestamp: t,
+            overallConfidence: 90.0,
+            snapDistanceM: 4.0,
+            headingDeltaDeg: 85.0,
+            speedKmh: 20.0,
+            predictionActive: true,
+            gapBridgeMs: 500,
+            maneuverType: 'turn',
+            maneuverModifier: 'left',
+          ),
+        );
+      }
+      // repeated_prediction is not a permitted corroboration for a heading
+      // conflict — must remain hidden even when both are sustained.
+      expect(state.active, isFalse);
+      expect(state.decision.triggerRules,
+          isNot(contains('heading_route_conflict')));
+    });
+
+    test('13) missing lane metadata remains irrelevant', () {
+      final guard = NavComplexityGuard();
+      final state = drive(
+        guard,
+        (t) => _input(
+          timestamp: t,
+          overallConfidence: 82.0,
+          snapDistanceM: 6.0,
+          maneuverType: 'turn',
+          maneuverModifier: 'left',
+          instructionStepIndex: 3,
+          speedKmh: 40.0,
+          distanceToManeuverM: 500.0,
+          // No lane fields exist on the guard input; verify the guard cannot
+          // activate on a normal one-lane turn regardless of upstream lanes.
+          headingDeltaDeg: null,
+        ),
+        samples: 20,
+      );
+      expect(state.active, isFalse);
+      expect(state.decision.triggerRules, isEmpty);
+    });
+
+    test('14) genuine fork/merge complexity remains allowed', () {
+      final guard = NavComplexityGuard();
+      final state = drive(
+        guard,
+        (t) => _input(
+          timestamp: t,
+          overallConfidence: 70.0,
+          snapDistanceM: 10.0,
+          maneuverType: 'fork',
+          maneuverModifier: '',
+          speedKmh: 12.0,
+          distanceToManeuverM: 80.0,
+          headingDeltaDeg: null,
+        ),
+        samples: 4,
+      );
+      expect(state.active, isTrue);
+      expect(state.decision.triggerRules, contains('ambiguous_instruction'));
+      expect(state.decision.triggerRules, contains('dense_maneuver_area'));
+    });
+
+    test('15) genuine ambiguous roundabout remains allowed', () {
+      final guard = NavComplexityGuard();
+      final state = drive(
+        guard,
+        (t) => _input(
+          timestamp: t,
+          overallConfidence: 72.0,
+          snapDistanceM: 9.0,
+          maneuverType: 'roundabout',
+          maneuverModifier: '',
+          speedKmh: 14.0,
+          distanceToManeuverM: 70.0,
+        ),
+        samples: 4,
+      );
+      expect(state.active, isTrue);
+      expect(state.decision.triggerRules, contains('ambiguous_instruction'));
+    });
+
+    test('16) route replacement resets the conflict streak', () {
+      final guard = NavComplexityGuard();
+      var t = DateTime(2026, 1, 1, 12);
+      // Build a saturated conflict streak on route version 1 (no warning
+      // shown because there is no supporting quality signal).
+      NavComplexityGuardState state = NavComplexityGuardState.inactive;
+      for (var i = 0; i < 5; i++) {
+        t = t.add(const Duration(milliseconds: 500));
+        state = guard.update(
+          _input(
+            timestamp: t,
+            overallConfidence: 90.0,
+            snapDistanceM: 6.0,
+            headingDeltaDeg: 85.0,
+            speedKmh: 25.0,
+            maneuverType: 'turn',
+            maneuverModifier: 'left',
+            routeVersion: 1,
+          ),
+        );
+      }
+      expect(state.active, isFalse);
+
+      // Route replacement to version 2: internal reset must drop the streak.
+      // Present low-quality + one conflict spike — must NOT be sufficient
+      // because the sustained gate now requires >=3 fresh samples.
+      t = t.add(const Duration(milliseconds: 500));
+      state = guard.update(
+        _input(
+          timestamp: t,
+          overallConfidence: 42.0,
+          trustInstruction: false,
+          snapDistanceM: 32.0,
+          headingDeltaDeg: 85.0,
+          speedKmh: 25.0,
+          maneuverType: 'turn',
+          maneuverModifier: 'left',
+          routeVersion: 2,
+        ),
+      );
+      expect(state.active, isFalse);
+      expect(
+        state.decision.triggerRules,
+        isNot(contains('heading_route_conflict')),
+      );
+    });
+
+    test('17) arrival resets the conflict streak and clears warning', () {
+      final guard = NavComplexityGuard();
+      var t = DateTime(2026, 1, 1, 12);
+      NavComplexityGuardState state = NavComplexityGuardState.inactive;
+      // Reach `shown` via sustained conflict + low_confidence corroboration.
+      for (var i = 0; i < 8; i++) {
+        t = t.add(const Duration(milliseconds: 500));
+        state = guard.update(
+          _input(
+            timestamp: t,
+            overallConfidence: 42.0,
+            trustInstruction: false,
+            snapDistanceM: 12.0,
+            headingDeltaDeg: 85.0,
+            speedKmh: 22.0,
+            maneuverType: 'turn',
+            maneuverModifier: 'left',
+            distanceToManeuverM: 300.0,
+          ),
+        );
+      }
+      expect(state.active, isTrue);
+
+      // Arrival — must terminate the warning and drop the streak.
+      t = t.add(const Duration(milliseconds: 500));
+      state = guard.update(
+        _input(
+          timestamp: t,
+          overallConfidence: 90.0,
+          snapDistanceM: 5.0,
+          maneuverType: 'arrive',
+          maneuverModifier: '',
+          speedKmh: 4.0,
+          distanceToManeuverM: 5.0,
+        ),
+      );
+      expect(state.active, isFalse);
+      expect(state.decision.transition, 'terminal_clear');
+
+      // After arrival, a single fresh heading spike + poor quality must not
+      // reactivate — the streak must have been reset.
+      t = t.add(const Duration(milliseconds: 500));
+      state = guard.update(
+        _input(
+          timestamp: t,
+          overallConfidence: 42.0,
+          trustInstruction: false,
+          snapDistanceM: 30.0,
+          headingDeltaDeg: 85.0,
+          speedKmh: 20.0,
+          maneuverType: 'turn',
+          maneuverModifier: 'left',
+        ),
+      );
+      expect(state.active, isFalse);
+      expect(
+        state.decision.triggerRules,
+        isNot(contains('heading_route_conflict')),
+      );
+    });
+
+    test('18) one-frame warning remains impossible', () {
+      final guard = NavComplexityGuard();
+      var t = DateTime(2026, 1, 1, 12);
+      // A single tick with worst-case supporting-quality corroboration and
+      // a huge raw delta cannot produce shown=true on the first tick, since
+      // the sustained gate demands >=3 conflict samples AND
+      // requiredPositiveStreak=2 additional guard ticks.
+      final state = guard.update(
+        _input(
+          timestamp: t,
+          overallConfidence: 20.0,
+          trustInstruction: false,
+          trustBearing: false,
+          snapDistanceM: 60.0,
+          offRouteLikely: true,
+          reroutePending: true,
+          headingDeltaDeg: 100.0,
+          speedKmh: 40.0,
+          maneuverType: 'turn',
+          maneuverModifier: 'left',
+        ),
+      );
+      expect(state.active, isFalse);
+      expect(state.decision.visible, isFalse);
+      expect(state.decision.transition, isNot('shown'));
+    });
+
+    test('19) existing hysteresis/cooldown suppression still applies', () {
+      // First reach `shown` via sustained conflict + low_confidence, then
+      // recover strongly on the very next tick — reliable_recovery clears
+      // immediately AND cooldown blocks re-activation on the following
+      // (still-poor) samples.
+      final guard = NavComplexityGuard();
+      var t = DateTime(2026, 1, 1, 12);
+      NavComplexityGuardState state = NavComplexityGuardState.inactive;
+      for (var i = 0; i < 8; i++) {
+        t = t.add(const Duration(milliseconds: 500));
+        state = guard.update(
+          _input(
+            timestamp: t,
+            overallConfidence: 42.0,
+            trustInstruction: false,
+            snapDistanceM: 12.0,
+            headingDeltaDeg: 85.0,
+            speedKmh: 22.0,
+            maneuverType: 'turn',
+            maneuverModifier: 'left',
+            distanceToManeuverM: 300.0,
+          ),
+        );
+      }
+      expect(state.active, isTrue);
+
+      // Strong reliable recovery (no structural, no offroute, good snap +
+      // overall) must clear immediately.
+      t = t.add(const Duration(milliseconds: 500));
+      state = guard.update(
+        _input(
+          timestamp: t,
+          overallConfidence: 96.0,
+          trustInstruction: true,
+          trustBearing: true,
+          snapDistanceM: 4.0,
+          headingDeltaDeg: 5.0,
+          speedKmh: 40.0,
+          maneuverType: 'turn',
+          maneuverModifier: 'left',
+          distanceToManeuverM: 400.0,
+        ),
+      );
+      expect(state.active, isFalse);
+
+      // Cooldown must prevent immediate re-activation despite renewed poor
+      // quality + sustained conflict.
+      for (var i = 0; i < 8; i++) {
+        t = t.add(const Duration(milliseconds: 500));
+        state = guard.update(
+          _input(
+            timestamp: t,
+            overallConfidence: 42.0,
+            trustInstruction: false,
+            snapDistanceM: 30.0,
+            headingDeltaDeg: 85.0,
+            speedKmh: 25.0,
+            maneuverType: 'turn',
+            maneuverModifier: 'left',
+          ),
+        );
+      }
+      expect(state.active, isFalse);
+    });
+
+    test(
+      '20) heading conflict streak resets when session becomes inactive',
+      () {
+        final guard = NavComplexityGuard();
+        var t = DateTime(2026, 1, 1, 12);
+        // Saturate the counter under corroborating quality — warning may show.
+        NavComplexityGuardState state = NavComplexityGuardState.inactive;
+        for (var i = 0; i < 8; i++) {
+          t = t.add(const Duration(milliseconds: 500));
+          state = guard.update(
+            _input(
+              timestamp: t,
+              overallConfidence: 42.0,
+              trustInstruction: false,
+              snapDistanceM: 12.0,
+              headingDeltaDeg: 85.0,
+              speedKmh: 22.0,
+              maneuverType: 'turn',
+              maneuverModifier: 'left',
+            ),
+          );
+        }
+        expect(state.active, isTrue);
+
+        // Session becomes inactive — reset should clear counter.
+        t = t.add(const Duration(milliseconds: 500));
+        state = guard.update(
+          _input(
+            timestamp: t,
+            liveRideActive: false,
+            followMode: true,
+          ),
+        );
+        expect(state.active, isFalse);
+
+        // Resume with a single conflict spike + poor quality — must NOT
+        // reactivate because the counter was reset.
+        t = t.add(const Duration(milliseconds: 500));
+        state = guard.update(
+          _input(
+            timestamp: t,
+            overallConfidence: 42.0,
+            trustInstruction: false,
+            snapDistanceM: 32.0,
+            headingDeltaDeg: 85.0,
+            speedKmh: 22.0,
+            maneuverType: 'turn',
+            maneuverModifier: 'left',
+          ),
+        );
+        expect(state.active, isFalse);
+        expect(
+          state.decision.triggerRules,
+          isNot(contains('heading_route_conflict')),
+        );
+      },
+    );
   });
 }

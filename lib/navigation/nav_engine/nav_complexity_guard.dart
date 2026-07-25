@@ -194,6 +194,18 @@ class NavComplexityGuard {
   /// Prediction-only activity is ignored as a sole trigger during warm-up.
   static const int startupWarmupMs = 8000;
 
+  /// NAV-COMPLEXITY-HEADING-CONFLICT-GATE-P0-1: consecutive raw
+  /// heading-vs-matched-segment-bearing conflict samples required before the
+  /// heading conflict may contribute as a structural complexity signal.
+  /// A single-tick GPS course spike on a curvy local road must never activate
+  /// the caution.
+  static const int sustainedHeadingConflictMinConsecutive = 3;
+
+  /// NAV-COMPLEXITY-HEADING-CONFLICT-GATE-P0-1: minimum speed at which a raw
+  /// heading conflict sample is considered meaningful. Below this speed the
+  /// GPS course is dominated by noise and cannot corroborate real complexity.
+  static const double sustainedHeadingConflictMinSpeedKmh = 8.0;
+
   bool _showing = false;
   DateTime? _lastDismissedAt;
   String _activeReason = 'none';
@@ -213,6 +225,12 @@ class NavComplexityGuard {
   int? _lastRouteVersion;
   String _staleStateClearedReason = 'none';
 
+  /// NAV-COMPLEXITY-HEADING-CONFLICT-GATE-P0-1: bounded consecutive-sample
+  /// counter for raw heading conflict. Reset by [reset],
+  /// [_clearVisibleImmediate] (arrival/destination), and whenever the
+  /// per-tick conflict predicate becomes false.
+  int _headingConflictConsecutive = 0;
+
   void reset() {
     _showing = false;
     _lastDismissedAt = null;
@@ -229,6 +247,7 @@ class NavComplexityGuard {
     _sessionStartedAt = null;
     _lastRouteVersion = null;
     _staleStateClearedReason = 'none';
+    _headingConflictConsecutive = 0;
   }
 
   NavComplexityGuardState update(NavComplexityGuardInput input) {
@@ -311,10 +330,12 @@ class NavComplexityGuard {
 
     _trackManeuverChanges(input);
     _trackPredictionBridge(input);
+    _trackHeadingConflict(input);
 
     final assessment = _assessSignals(
       input,
       stepChangesInWindow: _stepChangesInWindow,
+      headingConflictConsecutive: _headingConflictConsecutive,
       predictionRepeated: _repeatedPrediction(input),
     );
     final now = input.timestamp;
@@ -416,6 +437,20 @@ class NavComplexityGuard {
 
     _lastTransition = transition;
 
+    // NAV-COMPLEXITY-HEADING-CONFLICT-GATE-P0-1: one bounded PII-free log per
+    // `shown` transition. Bounded by hysteresis (>=2 positive ticks) and
+    // cooldown (45s), so cannot spam.
+    if (transition == 'shown') {
+      logNavComplexityTrigger(
+        triggerRules: assessment.structuralSignals,
+        qualityRules: assessment.qualitySignals,
+        headingDeltaDeg: input.headingDeltaDeg,
+        speedKmh: input.speedKmh,
+        headingConflictStreak: _headingConflictConsecutive,
+        stepChanges: _stepChangesInWindow,
+      );
+    }
+
     final decision = assessment.decision.copyWith(
       show: _showing,
       visible: _showing,
@@ -456,6 +491,9 @@ class NavComplexityGuard {
     _positiveStreak = 0;
     _negativeStreak = 0;
     _lastDismissedAt = null;
+    // NAV-COMPLEXITY-HEADING-CONFLICT-GATE-P0-1: arrival/destination clears
+    // the sustained-conflict counter so a fresh session cannot inherit it.
+    _headingConflictConsecutive = 0;
   }
 
   static bool _isTrustedNegative(
@@ -534,9 +572,35 @@ class NavComplexityGuard {
     }
   }
 
+  /// NAV-COMPLEXITY-HEADING-CONFLICT-GATE-P0-1: maintains the consecutive raw
+  /// conflict-sample counter. A sample requires
+  /// [strongHeadingConflictDeg] (>=70°) at
+  /// [sustainedHeadingConflictMinSpeedKmh] (>=8 km/h). Any break in either
+  /// condition resets the counter immediately so alternating curvature
+  /// noise (75°/60°/75°/…) cannot accumulate.
+  void _trackHeadingConflict(NavComplexityGuardInput input) {
+    final headingDelta = input.headingDeltaDeg;
+    final speed = math.max(0.0, input.speedKmh ?? 0.0);
+    final sampleIsConflict =
+        headingDelta != null &&
+        headingDelta.isFinite &&
+        headingDelta >= strongHeadingConflictDeg &&
+        speed >= sustainedHeadingConflictMinSpeedKmh;
+    if (sampleIsConflict) {
+      // Bound the counter so a very long conflict cannot grow unbounded and
+      // the diagnostic bucket stays small.
+      if (_headingConflictConsecutive < 60) {
+        _headingConflictConsecutive += 1;
+      }
+    } else {
+      _headingConflictConsecutive = 0;
+    }
+  }
+
   _SignalAssessment _assessSignals(
     NavComplexityGuardInput input, {
     required int stepChangesInWindow,
+    required int headingConflictConsecutive,
     required bool predictionRepeated,
   }) {
     final structuralSignals = <String>[];
@@ -566,17 +630,25 @@ class NavComplexityGuard {
       structuralSignals.add('rapid_instruction_churn');
     }
 
+    // NAV-COMPLEXITY-HEADING-CONFLICT-GATE-P0-1: a raw single-sample bearing
+    // spike on a curvy local road must never activate the caution. Require:
+    //   1. consecutive conflict samples >= sustainedHeadingConflictMinConsecutive
+    //   2. AND at least one independent quality signal on this same tick
+    //      (low_confidence, high_snap_distance, or offroute_uncertain).
+    // Repeated prediction is explicitly excluded as corroboration below.
     final headingDelta = input.headingDeltaDeg;
-    final speed = math.max(0.0, input.speedKmh ?? 0.0);
-    if (headingDelta != null &&
-        headingDelta.isFinite &&
-        headingDelta >= strongHeadingConflictDeg &&
-        speed >= 5.0) {
+    final headingConflictSustained =
+        headingConflictConsecutive >= sustainedHeadingConflictMinConsecutive;
+    final supportingQualityPresent =
+        qualitySignals.contains('low_confidence') ||
+        qualitySignals.contains('high_snap_distance') ||
+        qualitySignals.contains('offroute_uncertain');
+    if (headingConflictSustained && supportingQualityPresent) {
       structuralSignals.add('heading_route_conflict');
     }
 
     // Prediction is a supporting quality signal only — never a structural
-    // trigger on its own.
+    // trigger on its own and never corroboration for a heading conflict.
     if (predictionRepeated) {
       qualitySignals.add('repeated_prediction');
     }
@@ -881,6 +953,48 @@ void logNavComplexityDecision(NavComplexityDecisionSnapshot decision) {
     'stateOwnerMatches=${decision.stateOwnerMatches} '
     'hysteresisHold=${decision.hysteresisHold} '
     'staleStateClearedReason=${decision.staleStateClearedReason}',
+  );
+}
+
+/// NAV-COMPLEXITY-HEADING-CONFLICT-GATE-P0-1: bounded PII-free diagnostic
+/// emitted exactly once per `shown` transition. Buckets guarantee no raw
+/// coordinates, IDs, tokens, addresses or route data are logged.
+void logNavComplexityTrigger({
+  required List<String> triggerRules,
+  required List<String> qualityRules,
+  required double? headingDeltaDeg,
+  required double? speedKmh,
+  required int headingConflictStreak,
+  required int stepChanges,
+}) {
+  String headingBucket() {
+    final delta = headingDeltaDeg;
+    if (delta == null || !delta.isFinite || delta < 70.0) return 'lt70';
+    if (delta < 100.0) return '70_99';
+    return '100_plus';
+  }
+
+  String speedBucket() {
+    final speed = speedKmh;
+    if (speed == null || !speed.isFinite || speed < 8.0) return 'lt8';
+    if (speed < 30.0) return '8_29';
+    return '30_plus';
+  }
+
+  int clampBounded(int value) {
+    if (value < 0) return 0;
+    if (value > 20) return 20;
+    return value;
+  }
+
+  debugPrint(
+    '[NAV_COMPLEXITY_TRIGGER] '
+    'rules=${triggerRules.join(",")} '
+    'quality=${qualityRules.join(",")} '
+    'heading_bucket=${headingBucket()} '
+    'speed_bucket=${speedBucket()} '
+    'heading_streak=${clampBounded(headingConflictStreak)} '
+    'step_changes=${clampBounded(stepChanges)}',
   );
 }
 
