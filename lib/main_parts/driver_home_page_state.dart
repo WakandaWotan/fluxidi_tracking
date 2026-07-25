@@ -2500,7 +2500,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         extraQuery: <String, String>{'booking_id': bookingId},
       );
       final res = await http
-          .get(uri, headers: _headers(admin: true))
+          .get(uri, headers: _driverBearerHeaders())
           .timeout(const Duration(seconds: 15));
 
       if (res.statusCode != 200) return;
@@ -3020,12 +3020,27 @@ class _DriverHomePageState extends State<DriverHomePage>
     super.dispose();
   }
 
-  Map<String, String> _headers({bool admin = false}) {
-    final h = <String, String>{'Content-Type': 'application/json'};
-    if (admin && kAdminToken.trim().isNotEmpty) {
-      h['x-admin-token'] = kAdminToken.trim();
+  // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase C)
+  //
+  // Driver-initiated worker calls must authenticate with the driver's opaque
+  // bearer session, not the platform-wide ADMIN_TOKEN. The server derives
+  // tenant/company/driver from the KV-backed driver-session record and rejects
+  // any conflicting client-supplied scope. If the driver has no active session
+  // we intentionally send no bearer — the server will reject with 401 and the
+  // existing login/session-expired flow will re-authenticate. We never fall
+  // back to ADMIN_TOKEN, tenant "fluxidi", or a locally remembered company.
+  Map<String, String> _headers() {
+    return <String, String>{'Content-Type': 'application/json'};
+  }
+
+  Map<String, String> _driverBearerHeaders() {
+    final headers = <String, String>{'Content-Type': 'application/json'};
+    final token = (activeDriverSessionNotifier.value?.driverSessionToken ?? '')
+        .trim();
+    if (token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
     }
-    return h;
+    return headers;
   }
 
   Future<Map<String, String>> _companyOwnerHeaders() async {
@@ -3395,7 +3410,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             '[RIDES][REFRESH][MODE] source=company_bookings reason=business_preview',
           );
         } else {
-          requestHeaders = _headers(admin: true);
+          requestHeaders = _driverBearerHeaders();
           debugPrint('[RIDES][REFRESH][MODE] source=company_bookings');
         }
       }
@@ -4060,7 +4075,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       };
 
       final res = await http
-          .post(uri, headers: _headers(admin: true), body: jsonEncode(payload))
+          .post(uri, headers: _driverBearerHeaders(), body: jsonEncode(payload))
           .timeout(const Duration(seconds: 15));
 
       if (res.statusCode != 200) {
@@ -4134,7 +4149,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       final res = await http
           .post(
             uri,
-            headers: _headers(admin: true),
+            headers: _driverBearerHeaders(),
             body: jsonEncode(<String, dynamic>{
               'booking_id': bookingId,
               ..._activeBookingScopeQuery(),
@@ -4270,7 +4285,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         '$kListBookingsPath/${Uri.encodeComponent(bookingId)}',
       );
       final res = await http
-          .get(uri, headers: _headers(admin: true))
+          .get(uri, headers: _driverBearerHeaders())
           .timeout(const Duration(seconds: 12));
       if (res.statusCode < 200 || res.statusCode >= 300) return null;
       final decoded = jsonDecode(res.body);
@@ -4339,7 +4354,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         '[RIDES][STATUS][REQ] url=$uri payload=${jsonEncode(payload)}',
       );
       final res = await http
-          .post(uri, headers: _headers(admin: true), body: jsonEncode(payload))
+          .post(uri, headers: _driverBearerHeaders(), body: jsonEncode(payload))
           .timeout(const Duration(seconds: 12));
       debugPrint(
         '[RIDES][STATUS][RES] code=${res.statusCode} body=${res.body}',
@@ -4526,7 +4541,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         '[RIDES][LEG_STATUS][REQ] url=$uri payload=${jsonEncode(payload)}',
       );
       final res = await http
-          .post(uri, headers: _headers(admin: true), body: jsonEncode(payload))
+          .post(uri, headers: _driverBearerHeaders(), body: jsonEncode(payload))
           .timeout(const Duration(seconds: 12));
       debugPrint(
         '[RIDES][LEG_STATUS][RES] code=${res.statusCode} body=${res.body}',
@@ -5008,7 +5023,7 @@ class _DriverHomePageState extends State<DriverHomePage>
               kRecordPlannedTripStopPath,
               strictScope,
             ),
-            headers: _headers(admin: true),
+            headers: _driverBearerHeaders(),
             body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 10));
@@ -5071,7 +5086,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
 
       final res = await http
-          .post(uri, headers: _headers(admin: true), body: jsonEncode(payload))
+          .post(uri, headers: _driverBearerHeaders(), body: jsonEncode(payload))
           .timeout(const Duration(seconds: 15));
       debugPrint(
         '[RIDES][DELETE][RES] code=${res.statusCode} body=${res.body}',
@@ -5161,7 +5176,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         '[RIDES][STATUS->DELETE][REQ] status=$status url=$uri payload=${jsonEncode(payload)}',
       );
       final res = await http
-          .post(uri, headers: _headers(admin: true), body: jsonEncode(payload))
+          .post(uri, headers: _driverBearerHeaders(), body: jsonEncode(payload))
           .timeout(const Duration(seconds: 15));
       debugPrint(
         '[RIDES][STATUS->DELETE][RES] code=${res.statusCode} body=${res.body}',
@@ -5197,7 +5212,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         '/bookings/${Uri.encodeComponent(bookingId)}',
       );
       final res = await http
-          .get(uri, headers: _headers(admin: true))
+          .get(uri, headers: _driverBearerHeaders())
           .timeout(const Duration(seconds: 12));
       debugPrint(
         '[RIDES][$contextLabel][SNAPSHOT] url=$uri code=${res.statusCode} body=${res.body}',
@@ -5339,7 +5354,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     Future<Map<String, dynamic>> fetchAndParse(Uri uri) async {
       final res = await http
-          .get(uri, headers: _headers(admin: true))
+          .get(uri, headers: _driverBearerHeaders())
           .timeout(const Duration(seconds: 10));
       if (res.statusCode < 200 || res.statusCode >= 300)
         return <String, dynamic>{};
@@ -6032,8 +6047,9 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     try {
       final uri = _withActiveBookingScope(kBookingBaseUrl, '/quote');
+      // /quote is a public pricing endpoint — no auth header is required.
       final res = await http
-          .post(uri, headers: _headers(admin: true), body: jsonEncode(body))
+          .post(uri, headers: _headers(), body: jsonEncode(body))
           .timeout(const Duration(seconds: 12));
       if (res.statusCode < 200 || res.statusCode >= 300) {
         final bodySnippet = res.body
@@ -6109,7 +6125,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       final res = await http
           .post(
             _uriWithScope(kWorkerBaseUrl, path, strictScope),
-            headers: _headers(admin: true),
+            headers: _driverBearerHeaders(),
             body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 5));
@@ -6809,7 +6825,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       final res = await http
           .post(
             _uriWithScope(kWorkerBaseUrl, kStartDirectTripPath, strictScope),
-            headers: _headers(admin: true),
+            headers: _driverBearerHeaders(),
             body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 6));
@@ -6874,7 +6890,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       final res = await http
           .post(
             _uriWithScope(kWorkerBaseUrl, kStopDirectTripPath, strictScope),
-            headers: _headers(admin: true),
+            headers: _driverBearerHeaders(),
             body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 6));
@@ -7000,7 +7016,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       final res = await http
           .post(
             _uriWithScope(kWorkerBaseUrl, kReconcileDirectBookingPath, strictScope),
-            headers: _headers(admin: true),
+            headers: _driverBearerHeaders(),
             body: jsonEncode(<String, dynamic>{
               'trip_id': reqTrip,
               ...strictScope,
@@ -7372,7 +7388,7 @@ class _DriverHomePageState extends State<DriverHomePage>
               kRecordPlannedTripStopPath,
               strictScope,
             ),
-            headers: _headers(admin: true),
+            headers: _driverBearerHeaders(),
             body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 6));
@@ -7968,7 +7984,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         final res = await http
             .post(
               uri,
-              headers: _headers(admin: true),
+              headers: _driverBearerHeaders(),
               body: jsonEncode(payload),
             )
             .timeout(const Duration(seconds: 10));
@@ -8825,7 +8841,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       };
 
       final res = await http
-          .post(uri, headers: _headers(admin: true), body: jsonEncode(payload))
+          .post(uri, headers: _driverBearerHeaders(), body: jsonEncode(payload))
           .timeout(const Duration(seconds: 10));
 
       if (!mounted) return;
@@ -20683,7 +20699,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       final payload = {'from': fromText, 'to': toText};
 
       final res = await http
-          .post(uri, headers: _headers(admin: true), body: jsonEncode(payload))
+          .post(uri, headers: _driverBearerHeaders(), body: jsonEncode(payload))
           .timeout(const Duration(seconds: 12));
 
       if (res.statusCode == 404) {
@@ -21306,7 +21322,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       'to': toText.trim(),
     };
     final res = await http
-        .post(uri, headers: _headers(admin: true), body: jsonEncode(payload))
+        .post(uri, headers: _driverBearerHeaders(), body: jsonEncode(payload))
         .timeout(const Duration(seconds: 12));
     if (res.statusCode != 200) return const <_LonLat>[];
     final j = jsonDecode(res.body);

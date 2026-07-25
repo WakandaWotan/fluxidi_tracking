@@ -199,7 +199,6 @@ $requiredEnvironmentVariables = @(
   "MAPBOX_TOKEN",
   "WORKER_BASE_URL",
   "BOOKING_BASE_URL",
-  "ADMIN_TOKEN",
   "LEARNING_SERVICE_TOKEN"
 )
 
@@ -355,8 +354,7 @@ $flutterArguments = @(
   "--dart-define=LEARNING_SERVICE_TOKEN=$($env:LEARNING_SERVICE_TOKEN)",
   "--dart-define=MAPBOX_TOKEN=$($env:MAPBOX_TOKEN)",
   "--dart-define=WORKER_BASE_URL=$($env:WORKER_BASE_URL)",
-  "--dart-define=BOOKING_BASE_URL=$($env:BOOKING_BASE_URL)",
-  "--dart-define=ADMIN_TOKEN=$($env:ADMIN_TOKEN)"
+  "--dart-define=BOOKING_BASE_URL=$($env:BOOKING_BASE_URL)"
 )
 
 $requiredLaneArgument = "--dart-define=FLUXIDI_NAV_LANE_GUIDANCE=true"

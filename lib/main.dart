@@ -390,10 +390,15 @@ String get kDropoffLabel =>
 final String kDefaultCurrency = appConfig.defaultCurrency;
 final Color kGlow = appConfig.accentColor;
 
+// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase C): the platform ADMIN_TOKEN
+// is no longer injected into Flutter builds, so `kAdminToken` is always empty
+// and this helper returns an empty map. Retained as a stub only so the
+// unmigrated ops-only surfaces (receipt PDF, company driver management,
+// business fleet-sync) still compile; those surfaces will be migrated to
+// company-session bearers in a follow-up. Never re-introduce an admin header
+// from this helper.
 Map<String, String> _adminHeaders() {
-  final t = kAdminToken.trim();
-  if (t.isEmpty) return <String, String>{};
-  return <String, String>{'Authorization': 'Bearer $t', 'x-admin-token': t};
+  return <String, String>{};
 }
 
 String _maskScopeForLog(String value) {
@@ -1557,12 +1562,12 @@ Future<void> _runStartupDeferredWork({
 /// Tokens are never logged. The returned map contains only `Accept` when no
 /// trusted source is available, so the caller can decide to skip the GET.
 Future<Map<String, String>> _localRegisterBookingFetchHeaders() async {
+  // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase C): local-register hydration
+  // must authenticate with the active driver bearer, or fall back to the
+  // company session bearer for company-preview flows. The historical
+  // ADMIN_TOKEN branch has been removed: the platform token is no longer
+  // compiled into the client.
   final headers = <String, String>{'Accept': 'application/json'};
-  final admin = _adminHeaders();
-  if (admin.isNotEmpty) {
-    headers.addAll(admin);
-    return headers;
-  }
   final driverSessionToken =
       (activeDriverSessionNotifier.value?.driverSessionToken ?? '').trim();
   if (driverSessionToken.isNotEmpty) {
@@ -1859,8 +1864,7 @@ Future<Map<String, dynamic>> _hydrateRegisterReceiptJson(
   }
   try {
     final headers = await _localRegisterBookingFetchHeaders();
-    if (!headers.containsKey('Authorization') &&
-        !headers.containsKey('x-admin-token')) {
+    if (!headers.containsKey('Authorization')) {
       debugPrint(
         '[LOCAL_RIDE_REGISTER][HYDRATE_BOOKING] booking=$maskedBooking ok=false status=- fields=0 source=register reason=no_auth',
       );
@@ -2227,6 +2231,16 @@ Uri _withActiveBookingScope(
   return (tenantId: tenantId, companyId: companyId);
 }
 
+// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase C): the platform-wide
+// ADMIN_TOKEN is no longer injected into Flutter builds. `run_fluxidi_*.ps1`
+// no longer passes `--dart-define=ADMIN_TOKEN=...`, so this
+// `String.fromEnvironment` always returns the empty default in distributable
+// builds. Driver operations authenticate exclusively with the driver's opaque
+// session bearer, and company-owner surfaces authenticate with the company
+// session bearer. The constant is retained only as a deprecated stub so that
+// any lingering `kAdminToken.trim().isNotEmpty` guards in unmigrated ops-only
+// surfaces evaluate to false at compile time and never emit an admin header.
+// Internal server-to-server callers keep their own ADMIN_TOKEN paths.
 const String kAdminToken = String.fromEnvironment(
   'ADMIN_TOKEN',
   defaultValue: '',
@@ -2251,7 +2265,7 @@ const String kGetBookingPath =
 const String kTrackingBookingPath =
     '/tracking/booking'; // booking Worker detail endpoint
 
-// Admin endpoints (require x-admin-token if enabled in Worker)
+// Driver / company / admin endpoints (auth by driver bearer or company session)
 const String kUpdateBookingStatusPath =
     '/bookings'; // POST /bookings/:id/status
 const String kBookingCreditDecisionPath =

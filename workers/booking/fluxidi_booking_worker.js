@@ -15807,6 +15807,90 @@ async function _loadPublicDriverSessionFromRequest(request, env) {
 // BW-M7A: _readPayloadDriverIdCandidates moved to ./modules/driver_ops.js
 // (imported above).
 
+// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase B)
+// Authoritative auth for booking-worker routes reached by the Flutter driver
+// app (/tracking/booking, /bookings/:id, /bookings/:id/status,
+// /bookings/:id/legs/:legId/status, /bookings/:id/delete).
+//
+// Preferred: `Authorization: Bearer <driver session>` — the tenant/company/
+// driver are derived from the KV-backed session record and any conflicting
+// caller-supplied scope fails closed with 403.
+//
+// Dual: ADMIN_TOKEN is retained for platform / server-to-server callers and
+// keeps its historical semantics. Flutter never sends ADMIN_TOKEN after this
+// task.
+async function _requireDriverSessionOrAdmin(request, url, env, body = null) {
+  if (hasValidAdminToken(request, url, env)) {
+    return { ok: true, auth_mode: "admin_token", driver_session: null };
+  }
+  const driverSession = await _loadPublicDriverSessionFromRequest(request, env);
+  if (!driverSession) {
+    return { ok: false, response: json({ ok: false, error: "unauthorized" }, 401) };
+  }
+  const clientTenant = _scopeText(body?.tenant_id ?? body?.tenantId);
+  const clientCompany = _scopeText(body?.company_id ?? body?.companyId);
+  const clientDriver = _scopeText(
+    body?.driver_id ??
+      body?.driverId ??
+      body?.actor_driver_id ??
+      body?.actorDriverId,
+    96,
+  );
+  if (clientTenant && clientTenant !== driverSession.tenant_id) {
+    return { ok: false, response: json({ ok: false, error: "forbidden" }, 403) };
+  }
+  if (clientCompany && clientCompany !== driverSession.company_id) {
+    return { ok: false, response: json({ ok: false, error: "forbidden" }, 403) };
+  }
+  if (clientDriver && clientDriver !== driverSession.driver_id) {
+    return { ok: false, response: json({ ok: false, error: "forbidden" }, 403) };
+  }
+  return { ok: true, auth_mode: "driver_session", driver_session: driverSession };
+}
+
+// Detect any body-supplied scope/driver id that conflicts with a driver
+// session record. Returns a string reason on conflict or null when the caller
+// either omitted the value or supplied a value matching the session.
+function _driverSessionConflictsWithBody(driverSession, body) {
+  if (!driverSession || !body || typeof body !== "object" || Array.isArray(body)) {
+    return null;
+  }
+  const clientTenant = _scopeText(body.tenant_id ?? body.tenantId);
+  if (clientTenant && clientTenant !== driverSession.tenant_id) return "tenant_mismatch";
+  const clientCompany = _scopeText(body.company_id ?? body.companyId);
+  if (clientCompany && clientCompany !== driverSession.company_id) return "company_mismatch";
+  const clientDriver = _scopeText(
+    body.driver_id ??
+      body.driverId ??
+      body.actor_driver_id ??
+      body.actorDriverId,
+    96,
+  );
+  if (clientDriver && clientDriver !== driverSession.driver_id) return "driver_mismatch";
+  return null;
+}
+
+// Fold authoritative tenant/company/driver from the session into the mutable
+// request body so downstream scope resolution + ownership helpers see
+// session-derived values without route-by-route plumbing.
+function _applyDriverSessionToBookingBody(body, driverSession) {
+  if (!driverSession || !body || typeof body !== "object" || Array.isArray(body)) {
+    return body;
+  }
+  body.tenant_id = driverSession.tenant_id;
+  body.tenantId = driverSession.tenant_id;
+  body.company_id = driverSession.company_id;
+  body.companyId = driverSession.company_id;
+  body.actor_role = "driver";
+  body.actor_driver_id = driverSession.driver_id;
+  body.actorDriverId = driverSession.driver_id;
+  if (!_scopeText(body.driver_id, 96) && !_scopeText(body.driverId, 96)) {
+    body.driver_id = driverSession.driver_id;
+    body.driverId = driverSession.driver_id;
+  }
+  return body;
+}
+
 function _readPayloadAssignedVehicleId(body) {
   return safeStr(body?.assigned_vehicle_id ?? body?.assignedVehicleId, 96);
 }
@@ -38529,6 +38613,70 @@ export default {
         if (!bookingId) return json({ ok: false, error: "booking_id is required" }, 400);
 
         if (pathParts.length === 2 && request.method === "GET") {
+          // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase B): honour a driver
+          // bearer as authoritative auth. Session-derived tenant/company/driver
+          // replace any client-supplied query values; conflicts fail with 403.
+          // Falls through to admin / customer proof paths when no bearer is
+          // presented.
+          const driverAuthGet = await _loadPublicDriverSessionFromRequest(request, env);
+          if (driverAuthGet) {
+            const q = url.searchParams;
+            const clientTenant = _scopeText(q.get("tenant_id") ?? q.get("tenantId"));
+            const clientCompany = _scopeText(q.get("company_id") ?? q.get("companyId"));
+            const clientDriver = _scopeText(
+              q.get("driver_id") ?? q.get("driverId") ?? q.get("actor_driver_id"),
+              96,
+            );
+            if (
+              (clientTenant && clientTenant !== driverAuthGet.tenant_id) ||
+              (clientCompany && clientCompany !== driverAuthGet.company_id) ||
+              (clientDriver && clientDriver !== driverAuthGet.driver_id)
+            ) {
+              return json({ ok: false, error: "forbidden" }, 403);
+            }
+            const scopedRoute = requireExplicitBookingRouteScope({
+              request,
+              url,
+              body: {
+                tenant_id: driverAuthGet.tenant_id,
+                company_id: driverAuthGet.company_id,
+              },
+            });
+            if (!scopedRoute.ok) return scopedRoute.response;
+            const tenantScope = scopedRoute.scope;
+            let preloadedRec = null;
+            try {
+              const loaded = await loadBookingRecord(env, bookingId);
+              preloadedRec = loaded?.rec || null;
+            } catch (loadErr) {
+              if (String(loadErr?.message || "") === "Booking not found") {
+                return json({ ok: false, error: "booking_not_found" }, 404);
+              }
+              throw loadErr;
+            }
+            const driverOwns = await driverOwnsBookingForMutation({
+              rec: preloadedRec,
+              actorDriverId: driverAuthGet.driver_id,
+              actorVehicleId: null,
+              tenantScope,
+              env,
+            });
+            if (!driverOwns) {
+              return json({ ok: false, error: "forbidden" }, 403);
+            }
+            const out = await getBookingAuthoritative(
+              bookingId,
+              env,
+              tenantScope,
+              preloadedRec,
+            );
+            return json(
+              out,
+              out?.error === "missing_tenant_scope"
+                ? 400
+                : (out?.error === "forbidden" ? 403 : 200),
+            );
+          }
           const scopedRoute = requireExplicitBookingRouteScope({ request, url });
           if (!scopedRoute.ok) return scopedRoute.response;
           const tenantScope = scopedRoute.scope;
@@ -38784,6 +38932,15 @@ export default {
             return json({ ok: false, error: "leg_id is required" }, 400);
           }
           const body = await safeJson(request);
+          // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase B): honour a driver
+          // bearer if present. Session-derived tenant/company/driver replace
+          // any client-supplied values; conflicts fail closed with 403.
+          const driverAuth = await _loadPublicDriverSessionFromRequest(request, env);
+          if (driverAuth) {
+            const conflict = _driverSessionConflictsWithBody(driverAuth, body);
+            if (conflict) return json({ ok: false, error: "forbidden" }, 403);
+            _applyDriverSessionToBookingBody(body, driverAuth);
+          }
           const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
           if (!scopedRoute.ok) return scopedRoute.response;
           const tenantScope = scopedRoute.scope;
@@ -39075,6 +39232,18 @@ export default {
           request.method === "POST"
         ) {
           const body = await safeJson(request);
+          // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase B): if the caller
+          // authenticates with a driver bearer, force session-derived scope
+          // and actor identity onto the request body BEFORE scope resolution
+          // and ownership checks. Fails 403 on any conflict with client
+          // input. Falls through to the existing admin / customer paths when
+          // no bearer is presented.
+          const driverAuth = await _loadPublicDriverSessionFromRequest(request, env);
+          if (driverAuth) {
+            const conflict = _driverSessionConflictsWithBody(driverAuth, body);
+            if (conflict) return json({ ok: false, error: "forbidden" }, 403);
+            _applyDriverSessionToBookingBody(body, driverAuth);
+          }
           const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
           if (!scopedRoute.ok) return scopedRoute.response;
           const tenantScope = scopedRoute.scope;
@@ -39575,8 +39744,15 @@ export default {
           pathParts[2] === "delete" &&
           request.method === "POST"
         ) {
-          _requireAdmin(request, url, env);
           const body = await safeJson(request);
+          // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase B): dual auth —
+          // admin token OR driver bearer. Driver bearers force the actor
+          // identity to the session-derived driver so downstream ownership
+          // enforcement cannot be spoofed via client-supplied
+          // actor_driver_id / tenant_id / company_id.
+          const auth = await _requireDriverSessionOrAdmin(request, url, env, body);
+          if (!auth.ok) return auth.response;
+          _applyDriverSessionToBookingBody(body, auth.driver_session);
           const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
           if (!scopedRoute.ok) return scopedRoute.response;
           const tenantScope = scopedRoute.scope;
@@ -39935,6 +40111,9 @@ export default {
       // Get booking + quote/pricing for a given booking_id (used by the apps)
       if (url.pathname === "/tracking/booking" && request.method === "POST") {
         const body = await safeJson(request);
+        const auth = await _requireDriverSessionOrAdmin(request, url, env, body);
+        if (!auth.ok) return auth.response;
+        _applyDriverSessionToBookingBody(body, auth.driver_session);
         const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
         if (!scopedRoute.ok) return scopedRoute.response;
         const tenantScope = scopedRoute.scope;

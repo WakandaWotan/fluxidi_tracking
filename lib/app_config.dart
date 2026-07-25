@@ -4043,23 +4043,18 @@ Future<void> _persistLocalTenantState() async {
   }
 }
 
-const String _fleetSyncAdminToken = String.fromEnvironment(
-  'ADMIN_TOKEN',
-  defaultValue: '',
-);
+// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase C): the platform-wide
+// ADMIN_TOKEN is no longer compiled into the Flutter client. Company-owner
+// calls must authenticate with the active company-session bearer. Sync of
+// local company inventory is disabled when no company session is present
+// (previously it required the admin token being present).
 bool _companyInventorySyncInFlight = false;
 
-Map<String, String> _adminJsonHeaders() {
-  final headers = <String, String>{'Content-Type': 'application/json'};
-  final token = _fleetSyncAdminToken.trim();
-  if (token.isNotEmpty) {
-    headers['Authorization'] = 'Bearer $token';
-    headers['x-admin-token'] = token;
-  }
-  return headers;
-}
-
 /// How company-owner admin API calls authenticated.
+///
+/// The `admin` variant is retained for enum-shape backwards compatibility but
+/// is never returned by [resolveCompanyOwnerAuthHeaders] after
+/// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1.
 enum CompanyOwnerAuthMode { admin, companySession, none }
 
 class CompanyOwnerAuthHeaders {
@@ -4069,40 +4064,28 @@ class CompanyOwnerAuthHeaders {
   final CompanyOwnerAuthMode mode;
 }
 
-/// True when a compile-time fleet-sync admin token is configured. Exposed for
-/// synchronous UI gates that must know whether an admin bearer is available
-/// without awaiting [resolveCompanyOwnerAuthHeaders].
-bool get hasFleetSyncAdminToken => _fleetSyncAdminToken.trim().isNotEmpty;
+/// Deprecated: the platform-wide fleet-sync token is no longer compiled into
+/// the client. Kept as a no-op false getter to preserve call-site
+/// compatibility while the surrounding features migrate to company-session
+/// auth. Callers should use [hasCompanyOwnerAuthContext] instead.
+bool get hasFleetSyncAdminToken => false;
 
-/// Synchronous best-effort check that a company-admin / business-preview bearer
-/// is available (admin token OR a valid company session). It never creates or
-/// stores a driver session and never returns a token — only a presence flag.
+/// Synchronous best-effort check that a company-admin / business-preview
+/// bearer is available. It never creates or stores a driver session and never
+/// returns a token — only a presence flag.
 bool hasCompanyOwnerAuthContext() {
-  if (hasFleetSyncAdminToken) return true;
   return CompanySessionStore.instance.hasValidCompanyContext &&
       ((activeCompanySessionNotifier.value?.companyId ?? '').trim().isNotEmpty);
 }
 
 /// Resolves auth headers for company-owner calls to scoped `/admin/*` routes.
-///
-/// Prefers compile-time admin token when present (dev/ops builds). Otherwise
-/// falls back to the active company session bearer from local storage.
+/// Uses the active company session bearer from local storage. No platform
+/// admin token is available client-side.
 Future<CompanyOwnerAuthHeaders> resolveCompanyOwnerAuthHeaders({
   bool json = true,
 }) async {
   final headers = <String, String>{'Accept': 'application/json'};
   if (json) headers['Content-Type'] = 'application/json';
-
-  final adminToken = _fleetSyncAdminToken.trim();
-  if (adminToken.isNotEmpty) {
-    headers['Authorization'] = 'Bearer $adminToken';
-    headers['x-admin-token'] = adminToken;
-    debugPrint('[COMPANY_OWNER_AUTH][MODE] auth_mode=admin');
-    return CompanyOwnerAuthHeaders(
-      headers: headers,
-      mode: CompanyOwnerAuthMode.admin,
-    );
-  }
 
   final resolved = await CompanySessionStore.instance
       .resolveCompanyBootstrapToken();
@@ -5276,8 +5259,9 @@ Future<Map<String, dynamic>?> createDriverLinkCode({
         'expiresInSeconds': expiresInSeconds,
       },
     };
+    final companyAuth = await resolveCompanyOwnerAuthHeaders();
     final response = await http
-        .post(endpoint, headers: _adminJsonHeaders(), body: jsonEncode(payload))
+        .post(endpoint, headers: companyAuth.headers, body: jsonEncode(payload))
         .timeout(const Duration(seconds: 12));
     if (response.statusCode < 200 || response.statusCode >= 300) {
       var preview = utf8.decode(response.bodyBytes);
@@ -5364,8 +5348,13 @@ Future<void> syncLocalCompanyInventoryToBackend({
     return;
   }
   if (_companyInventorySyncInFlight) return;
-  final token = _fleetSyncAdminToken.trim();
-  if (token.isEmpty) return;
+  // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase C): fleet-sync from the
+  // client now requires a company-session bearer instead of the retired
+  // platform ADMIN_TOKEN. Skip cleanly when no company session is present.
+  if (!hasCompanyOwnerAuthContext()) {
+    debugPrint('[COMPANY_SYNC][SKIP_NO_COMPANY_SESSION] reason=$reason');
+    return;
+  }
   final resolvedTenant = (tenantId ?? '').trim();
   final resolvedCompany = (companyId ?? '').trim();
   final strictScope = _activeStrictPrivateCompanyScope();
@@ -5414,6 +5403,16 @@ Future<void> syncLocalCompanyInventoryToBackend({
   }
 
   _companyInventorySyncInFlight = true;
+  // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase C): resolve the
+  // company-session bearer once per sync run and pass those headers to every
+  // /admin/company/* POST. If the company session is not present we bail out
+  // rather than posting unauthenticated /admin/* requests.
+  final syncCompanyAuth = await resolveCompanyOwnerAuthHeaders();
+  if (syncCompanyAuth.mode == CompanyOwnerAuthMode.none) {
+    _companyInventorySyncInFlight = false;
+    debugPrint('[COMPANY_SYNC][SKIP_NO_COMPANY_SESSION] reason=$reason source=post_context');
+    return;
+  }
   debugPrint(
     '[COMPANY_SYNC][START] reason=$reason vehicles=${scopedVehicles.length} drivers=${scopedDrivers.length} company=${_maskCompanyScopeForLog(effectiveCompany)}',
   );
@@ -5550,7 +5549,7 @@ Future<void> syncLocalCompanyInventoryToBackend({
           final response = await http
               .post(
                 endpoint,
-                headers: _adminJsonHeaders(),
+                headers: syncCompanyAuth.headers,
                 body: jsonEncode(payload),
               )
               .timeout(const Duration(seconds: 12));
@@ -5836,8 +5835,9 @@ Future<BackendSubscriptionProfile> fetchBackendSubscriptionProfile({
     tenantId: tenantId,
     companyId: companyId,
   );
+  final companyAuth = await resolveCompanyOwnerAuthHeaders();
   final res = await http
-      .get(endpoint, headers: _adminJsonHeaders())
+      .get(endpoint, headers: companyAuth.headers)
       .timeout(const Duration(seconds: 12));
   if (res.statusCode < 200 || res.statusCode >= 300) {
     throw Exception('HTTP ${res.statusCode}: ${res.body}');
@@ -6417,10 +6417,11 @@ Future<BackendSubscriptionProfile> saveBackendSubscriptionProfile(
     tenantId: tenantId,
     companyId: companyId,
   );
+  final companyAuth = await resolveCompanyOwnerAuthHeaders();
   final res = await http
       .post(
         endpoint,
-        headers: _adminJsonHeaders(),
+        headers: companyAuth.headers,
         body: jsonEncode(<String, dynamic>{
           ...scope,
           'subscription_profile': profile.toJson(),

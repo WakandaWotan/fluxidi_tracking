@@ -1577,12 +1577,10 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     );
   }
 
-  // Customer-surface requests must NEVER carry the global admin token. The
-  // backend customer-cancellation policy block (paid online guard, airport
-  // 1440-min cutoff, driver-en-route block) is bypassed when adminAuthorized
-  // is true; sending kAdminToken here would silently turn every customer
-  // cancellation into an operator override. Operator surfaces (company /
-  // driver / business pages) keep their own admin-token wiring.
+  // Customer-surface requests never carry any client-side admin credentials.
+  // The backend customer-cancellation policy block (paid online guard, airport
+  // 1440-min cutoff, driver-en-route block) is bypassed for admin actors, so
+  // the customer surface always sends no auth and lets the policy run.
   Map<String, String> _cancelHeaders() {
     final headers = <String, String>{'Content-Type': 'application/json'};
     debugPrint(

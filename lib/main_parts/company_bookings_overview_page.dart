@@ -105,29 +105,25 @@ class _CompanyBookingsOverviewPageState
   bool _canApplyCreditDecisions() => _creditAuthEnabled;
 
   Future<void> _refreshCreditAuthState() async {
-    final adminToken = kAdminToken.trim().isNotEmpty;
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase C): credit-decision
+    // auth is now company-session only; the platform admin token is no
+    // longer available client-side.
     final resolved = await CompanySessionStore.instance
         .resolveBackendUsableCompanyContext();
     final companySession = resolved.ok;
-    final enabled = adminToken || companySession;
     if (!mounted) return;
     setState(() {
-      _creditAuthAdminToken = adminToken;
+      _creditAuthAdminToken = false;
       _creditAuthCompanySession = companySession;
-      _creditAuthEnabled = enabled;
+      _creditAuthEnabled = companySession;
     });
     debugPrint(
-      '[COMPANY_BOOKINGS][CREDIT_AUTH] admin_token=$adminToken company_session=$companySession enabled=$enabled',
+      '[COMPANY_BOOKINGS][CREDIT_AUTH] admin_token=false company_session=$companySession enabled=$companySession',
     );
   }
 
   Future<Map<String, String>> _creditDecisionHeaders() async {
     final headers = <String, String>{'Content-Type': 'application/json'};
-    final adminToken = kAdminToken.trim();
-    if (adminToken.isNotEmpty) {
-      headers['x-admin-token'] = adminToken;
-      return headers;
-    }
     final resolved = await CompanySessionStore.instance
         .resolveBackendUsableCompanyContext();
     if (resolved.ok) {
@@ -252,8 +248,7 @@ class _CompanyBookingsOverviewPageState
       kBookingBaseUrl,
       '$kBookingMollieRefundPath/${Uri.encodeComponent(id)}/mollie-refund',
     );
-    final useAdminToken = kAdminToken.trim().isNotEmpty;
-    final actorRole = useAdminToken ? 'admin' : 'company';
+    const actorRole = 'company';
     final payload = <String, dynamic>{
       'booking_id': id,
       'actor_role': actorRole,
@@ -372,8 +367,7 @@ class _CompanyBookingsOverviewPageState
       kBookingBaseUrl,
       '$kBookingMollieRefundStatusRefreshPath/${Uri.encodeComponent(id)}/mollie-refund/status-refresh',
     );
-    final useAdminToken = kAdminToken.trim().isNotEmpty;
-    final actorRole = useAdminToken ? 'admin' : 'company';
+    const actorRole = 'company';
     final payload = <String, dynamic>{
       'booking_id': id,
       'actor_role': actorRole,
@@ -758,8 +752,7 @@ class _CompanyBookingsOverviewPageState
       kBookingBaseUrl,
       '$kBookingMollieRefundPath/${Uri.encodeComponent(id)}/mollie-refund/status-snapshot',
     );
-    final useAdminToken = kAdminToken.trim().isNotEmpty;
-    final actorRole = useAdminToken ? 'admin' : 'company';
+    const actorRole = 'company';
     final payload = <String, dynamic>{
       'booking_id': id,
       'actor_role': actorRole,
@@ -1028,8 +1021,7 @@ class _CompanyBookingsOverviewPageState
       kBookingBaseUrl,
       '$kBookingCreditDecisionPath/${Uri.encodeComponent(id)}/credit-decision',
     );
-    final useAdminToken = kAdminToken.trim().isNotEmpty;
-    final actorRole = useAdminToken ? 'admin' : 'company';
+    const actorRole = 'company';
     final scopeToken = creditScope == _AdminCreditScope.legOnly
         ? 'leg_only'
         : 'full_parent';
@@ -1530,7 +1522,11 @@ class _CompanyBookingsOverviewPageState
     );
     try {
       final res = await http
-          .post(uri, headers: _adminHeaders(), body: jsonEncode(payload))
+          .post(
+            uri,
+            headers: await _companyOwnerHeaders(),
+            body: jsonEncode(payload),
+          )
           .timeout(const Duration(seconds: 15));
       dynamic decoded;
       try {
@@ -1753,14 +1749,9 @@ class _CompanyBookingsOverviewPageState
     );
   }
 
-  Map<String, String> _adminHeaders() {
-    final headers = <String, String>{'Content-Type': 'application/json'};
-    final token = kAdminToken.trim();
-    if (token.isNotEmpty) {
-      headers['x-admin-token'] = token;
-    }
-    return headers;
-  }
+  // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase C): _adminHeaders removed;
+  // company-owner surfaces now authenticate exclusively via the company
+  // session bearer through _companyOwnerHeaders.
 
   Future<Map<String, String>> _companyOwnerHeaders() async {
     final auth = await resolveCompanyOwnerAuthHeaders();
@@ -1792,7 +1783,11 @@ class _CompanyBookingsOverviewPageState
     };
     try {
       final res = await http
-          .post(uri, headers: _adminHeaders(), body: jsonEncode(payload))
+          .post(
+            uri,
+            headers: await _companyOwnerHeaders(),
+            body: jsonEncode(payload),
+          )
           .timeout(const Duration(seconds: 12));
       dynamic decoded;
       try {

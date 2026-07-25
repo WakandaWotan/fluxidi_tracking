@@ -558,7 +558,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       sessionCompanyId: activeCompanySessionNotifier.value?.companyId,
       scopeTenantId: scope?.tenantId,
       scopeCompanyId: scope?.companyId,
-      hasAdminAuthShortcut: hasFleetSyncAdminToken,
+      hasAdminAuthShortcut: false,
     );
   }
 
@@ -2213,8 +2213,13 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   }
 
   Future<void> _showNewDeviceActivationCodeDialog(BuildContext context) async {
-    final adminToken = kAdminToken.trim();
-    if (adminToken.isEmpty) {
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase C): the device-pairing
+    // affordance previously required the compiled-in ADMIN_TOKEN. That token
+    // no longer exists in client builds; the flow now requires a valid
+    // company-owner session and is gated to non-release builds until the
+    // server-side company-session variant of driver-link-code/create is
+    // proven end-to-end.
+    if (kReleaseMode || !hasCompanyOwnerAuthContext()) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
