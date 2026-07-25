@@ -190,6 +190,7 @@ part 'main_parts/customer_bookings_page.dart';
 part 'main_parts/customer_booking_lookup_page.dart';
 part 'main_parts/customer_booking_detail_page.dart';
 part 'main_parts/trip_history_page.dart';
+part 'main_parts/local_only_ride_presentation.dart';
 part 'main_parts/chauffeur_login_page.dart';
 part 'main_parts/receipt_text_helpers.dart';
 part 'main_parts/booking_item_model.dart';

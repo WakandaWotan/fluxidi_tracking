@@ -2219,6 +2219,17 @@ class _ReceiptPdfActionRunner {
 
   static String _legReceiptRideStatusDisplay(_TripHistoryItem item) {
     if (!_isLegReceiptItem(item)) {
+      // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix,
+      // Commit 5): a local-only / backend_confirmed=false ride carries
+      // `status='COMPLETED'` in the persisted record, which would
+      // otherwise render as "Afgerond / Completed / Terminée /
+      // Finalizada" via `_localizedRideStatus`. The truthful
+      // "Lokaal opgeslagen — niet bevestigd" family of labels takes
+      // priority so the receipt "Rit status / Ride status" row never
+      // presents an unconfirmed ride as a normal completed ride.
+      if (item.shouldRenderAsLocalOnlyUnconfirmed) {
+        return kLocalOnlyUnconfirmedBadge.of(appLanguageNotifier.value);
+      }
       return _localizedRideStatus(item.status);
     }
     return _roundtripReceiptStatusText(_legReceiptRideStatusRaw(item));

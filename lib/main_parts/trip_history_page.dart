@@ -787,7 +787,20 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
         continue;
       }
       if (_isCompletedStatus(item.status)) {
-        completed++;
+        // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix,
+        // Commit 5): a local-only / backend_confirmed=false ride carries
+        // `status='COMPLETED'` in the persisted local record but was
+        // never acknowledged by the server. It must NOT contribute to
+        // the normal "Completed / Afgerond" aggregate. The `completed`
+        // counter is the only field this presentation commit gates —
+        // the revenue accumulation retains its exact pre-Commit-5
+        // behavior below so no business-logic side-effect is
+        // introduced. The `total: items.length` count is also
+        // unchanged so the overall ride count remains truthful across
+        // all outcomes.
+        if (!item.shouldRenderAsLocalOnlyUnconfirmed) {
+          completed++;
+        }
         final payment = _normalizePaymentStatus(item);
         final canInclude = payment != 'unpaid';
         if (canInclude && item.totalEur != null) {
@@ -830,6 +843,15 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
         es: 'Cancelada',
       );
     }
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 5):
+    // a local-only / backend_confirmed=false ride must never render with the
+    // green "Voltooid/Completed" chip. The unconfirmed label takes priority
+    // over the raw `status='COMPLETED'` string persisted by the local
+    // fallback path so the driver and the company owner immediately see the
+    // ride was not confirmed by the backend.
+    if (item.shouldRenderAsLocalOnlyUnconfirmed) {
+      return kLocalOnlyUnconfirmedBadge.of(appLanguageNotifier.value);
+    }
     if (_isCompletedStatus(item.status)) {
       return _tr(
         nl: 'Voltooid',
@@ -843,6 +865,12 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
 
   Color _statusChipColor(_TripHistoryItem item) {
     if (_isCancelledStatus(item.status)) return const Color(0xFFF97373);
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 5):
+    // amber, visually distinct from the "Completed" green so an unconfirmed
+    // ride is never mistaken for a normal completed ride.
+    if (item.shouldRenderAsLocalOnlyUnconfirmed) {
+      return const Color(kLocalOnlyUnconfirmedBadgeColorArgb);
+    }
     if (_isCompletedStatus(item.status)) return const Color(0xFF4ADE80);
     return const Color(0xFFA3A3A3);
   }
@@ -1136,10 +1164,18 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                     final paymentChip = _paymentChipText(item);
                     final legBadgeText = _historyLegBadgeText(item);
                     final originText = _displayHistoryOrigin(item.origin);
+                    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure
+                    // Fix, Commit 5): the ad-hoc ' • Lokaal' Dutch-only
+                    // suffix is removed. The truthful, localized
+                    // `kLocalOnlyUnconfirmedBadge` chip (from
+                    // `_statusChipText` above) plus the descriptive
+                    // `kLocalOnlyUnconfirmedDescription` row below the
+                    // status chips already convey local/unconfirmed state
+                    // across nl/en/fr/es.
                     final kindOrCustomer =
                         (item.customerName ?? '').trim().isNotEmpty
                         ? item.customerName!.trim()
-                        : '${item.kindLabel}${item.isLocalOnlyDirectFallback ? ' • Lokaal' : ''}';
+                        : item.kindLabel;
                     return Container(
                       decoration: cardDecoration(),
                       child: InkWell(
@@ -1359,6 +1395,50 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                                           ),
                                       ],
                                     ),
+                                    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1
+                                    // (Field Failure Fix, Commit 5): render an
+                                    // explanatory info row below the status
+                                    // chips so the driver / company owner
+                                    // sees why the ride carries the
+                                    // "Lokaal opgeslagen — niet bevestigd"
+                                    // badge and that Company Bookings may
+                                    // not contain it. The row is gated on
+                                    // `shouldRenderAsLocalOnlyUnconfirmed`
+                                    // and therefore appears only for
+                                    // fallback / backend_confirmed=false
+                                    // rides.
+                                    if (item
+                                        .shouldRenderAsLocalOnlyUnconfirmed) ...[
+                                      const SizedBox(height: 8),
+                                      Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Icon(
+                                            Icons.info_outline,
+                                            size: 13.5,
+                                            color: const Color(
+                                              kLocalOnlyUnconfirmedBadgeColorArgb,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Expanded(
+                                            child: Text(
+                                              kLocalOnlyUnconfirmedDescription
+                                                  .of(
+                                                    appLanguageNotifier.value,
+                                                  ),
+                                              style: TextStyle(
+                                                color: textMuted,
+                                                fontSize: 11.2,
+                                                height: 1.35,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
                                     const SizedBox(height: 10),
                                     Align(
                                       alignment: Alignment.centerRight,

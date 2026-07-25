@@ -251,11 +251,16 @@ if (-not (Test-Path -LiteralPath $envFile)) {
 # Valideer vereiste tokens en URL's
 # ------------------------------------------------------------
 
+# SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 5):
+# LEARNING_SERVICE_TOKEN removed from the required-env list. The Learning
+# Worker service token is a privileged secret and must never be embedded
+# in a distributable APK via --dart-define. The uploader short-circuits
+# to `missing_config` when the compile-time constant resolves to '',
+# which is now the default at build time.
 $requiredEnvironmentVariables = @(
   "MAPBOX_TOKEN",
   "WORKER_BASE_URL",
-  "BOOKING_BASE_URL",
-  "LEARNING_SERVICE_TOKEN"
+  "BOOKING_BASE_URL"
 )
 
 foreach ($name in $requiredEnvironmentVariables) {
@@ -272,7 +277,23 @@ foreach ($name in $requiredEnvironmentVariables) {
 Write-Host ""
 Write-Host "Fluxidi dev environment geladen." -ForegroundColor Green
 Write-Host "MAPBOX_TOKEN length: $($env:MAPBOX_TOKEN.Length)"
-Write-Host "LEARNING_SERVICE_TOKEN length: $($env:LEARNING_SERVICE_TOKEN.Length)"
+
+# SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 5):
+# explicitly scrub LEARNING_SERVICE_TOKEN from the process environment
+# before invoking Flutter. This guarantees the Learning Worker service
+# token cannot leak into any downstream tool that inspects
+# $env:LEARNING_SERVICE_TOKEN during the build, even if the environment
+# script imported it. The scrub is idempotent; -ErrorAction
+# SilentlyContinue avoids failing when the variable is already absent.
+Remove-Item Env:LEARNING_SERVICE_TOKEN -ErrorAction SilentlyContinue
+
+if ([Environment]::GetEnvironmentVariable(
+        'LEARNING_SERVICE_TOKEN',
+        [EnvironmentVariableTarget]::Process
+    )) {
+  throw "LEARNING_SERVICE_TOKEN is nog aanwezig na scrub."
+}
+Write-Host "LEARNING_SERVICE_TOKEN scrubbed=True" -ForegroundColor Green
 
 # ------------------------------------------------------------
 # Android-device instellen
@@ -415,7 +436,12 @@ $flutterArguments = @(
   # verwijderd. Marker is de 2D HUD (Auto/Pijl); 3D-gebouwenkaart blijft.
   "--dart-define=FLUXIDI_NAV_LANE_GUIDANCE=true",
   "--dart-define=LEARNING_BASE_URL=https://fluxidi-learning-api.fluxidi.workers.dev",
-  "--dart-define=LEARNING_SERVICE_TOKEN=$($env:LEARNING_SERVICE_TOKEN)",
+  # SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 5):
+  # `--dart-define=LEARNING_SERVICE_TOKEN=...` has been removed from the
+  # Flutter build. The Learning Worker service token must never be
+  # embedded in a distributable APK; the uploader gracefully short-
+  # circuits with `missing_config` when the compile-time constant is
+  # empty.
   "--dart-define=MAPBOX_TOKEN=$($env:MAPBOX_TOKEN)",
   "--dart-define=WORKER_BASE_URL=$($env:WORKER_BASE_URL)",
   "--dart-define=BOOKING_BASE_URL=$($env:BOOKING_BASE_URL)"

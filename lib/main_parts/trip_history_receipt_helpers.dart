@@ -788,6 +788,36 @@ class _TripHistoryItem {
         detailsSource == 'local_only_direct_fallback';
   }
 
+  // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 5):
+  // explicit `backend_confirmed=false` in either the root record or the
+  // nested booking_details map. Broader safe rule approved for Commit 5 —
+  // a ride that the server did not acknowledge must never render as an
+  // ordinary Completed ride even when the fallback source marker is absent.
+  bool get isBackendConfirmedFalse {
+    bool? readBool(dynamic v) {
+      if (v is bool) return v;
+      if (v is num) return v != 0;
+      if (v is String) {
+        final s = v.trim().toLowerCase();
+        if (s == 'true' || s == '1') return true;
+        if (s == 'false' || s == '0') return false;
+      }
+      return null;
+    }
+
+    final bcRoot = readBool(rawSource['backend_confirmed']);
+    final bcDetails = readBool(bookingDetails['backend_confirmed']);
+    return bcRoot == false || bcDetails == false;
+  }
+
+  /// Truthful gate used by every UI surface (`_statusChipText`,
+  /// `_statusChipColor`, the history-tile description row and the receipt
+  /// `Rit status` row). A ride qualifies for the local/unconfirmed
+  /// presentation if EITHER the explicit fallback source marker is set OR
+  /// `backend_confirmed=false` is present.
+  bool get shouldRenderAsLocalOnlyUnconfirmed =>
+      isLocalOnlyDirectFallback || isBackendConfirmedFalse;
+
   String get receiptNumber {
     return _businessReferenceDisplayForItem(
       this,

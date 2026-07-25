@@ -177,4 +177,94 @@ void main() {
       );
     });
   }
+
+  // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 5):
+  // extend the run-script contract so the Learning Worker service token is
+  // never baked into a distributable APK. The `lib/` reference in
+  // `nav_complexity_learning_uploader.dart` stays exempt (the uploader
+  // reads `String.fromEnvironment('LEARNING_SERVICE_TOKEN')` for
+  // dev/staging bench builds) — but the production run scripts MUST both
+  // scrub the environment variable AND never pass it into
+  // `--dart-define`, so the token resolves to '' at runtime in every
+  // distributable build.
+  /// Strips PowerShell single-line `# …` comments so the security
+  /// assertions below only inspect executable lines. Preserves the
+  /// original line count so error messages stay useful.
+  String stripPowerShellComments(String source) {
+    final buffer = StringBuffer();
+    for (final line in source.split('\n')) {
+      final trimmed = line.trimLeft();
+      if (trimmed.startsWith('#')) {
+        buffer.writeln('');
+      } else {
+        final hashIdx = line.indexOf('#');
+        if (hashIdx > 0) {
+          // Best-effort: only strip a `#` that follows whitespace so we
+          // don't accidentally clip inside a `$env:foo` or a URL. This
+          // is sufficient for the run scripts because every code
+          // comment in them starts either at column 0 or after leading
+          // whitespace.
+          final priorChar = line[hashIdx - 1];
+          if (priorChar == ' ' || priorChar == '\t') {
+            buffer.writeln(line.substring(0, hashIdx));
+          } else {
+            buffer.writeln(line);
+          }
+        } else {
+          buffer.writeln(line);
+        }
+      }
+    }
+    return buffer.toString();
+  }
+
+  for (final script in const <String>[
+    'scripts/run_fluxidi_phone_native.ps1',
+    'scripts/run_fluxidi_tablet_native.ps1',
+  ]) {
+    test(
+      '$script does not inject LEARNING_SERVICE_TOKEN into the build',
+      () {
+        final file = File(script);
+        expect(
+          file.existsSync(),
+          isTrue,
+          reason:
+              'Run script $script must exist so this contract is enforced.',
+        );
+        // Strip PowerShell comments so a documentation comment that
+        // narrates the removal (e.g. `# --dart-define=... has been
+        // removed`) does not spuriously trip the assertion.
+        final code = stripPowerShellComments(file.readAsStringSync());
+        expect(
+          code.contains('--dart-define=LEARNING_SERVICE_TOKEN'),
+          isFalse,
+          reason:
+              '$script must not pass --dart-define=LEARNING_SERVICE_TOKEN=... '
+              'into the Flutter build in executable code — the Learning '
+              'Worker service token is a privileged secret and must never '
+              'be embedded in a distributable APK.',
+        );
+      },
+    );
+
+    test(
+      '$script scrubs Env:LEARNING_SERVICE_TOKEN before the Flutter build',
+      () {
+        final file = File(script);
+        expect(file.existsSync(), isTrue);
+        final code = stripPowerShellComments(file.readAsStringSync());
+        // The scripts must scrub the ambient environment variable so it
+        // cannot leak into any downstream tool that inspects
+        // `$env:LEARNING_SERVICE_TOKEN` during the build.
+        expect(
+          code.contains(RegExp(r'Remove-Item\s+(-Path\s+)?Env:LEARNING_SERVICE_TOKEN')),
+          isTrue,
+          reason:
+              '$script must contain a `Remove-Item Env:LEARNING_SERVICE_TOKEN` '
+              'call before invoking `flutter run` / `flutter build`.',
+        );
+      },
+    );
+  }
 }
