@@ -199,13 +199,25 @@ void main() {
         src,
         '  void _abortDirectRideAfterAuthFailure({required int? httpStatus}) {',
       );
-      // Meter, tracking, wakelock, route/dest cleanup, snackbar surface.
+      // Meter, tracking, wakelock, deterministic route/nav teardown, snackbar.
+      //
+      // NOTE (SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 Commit 4): the earlier
+      // Commit 2 contract required the specific helper name
+      // `_clearActiveRouteAndNavigationState(clearActiveSelection: true)`.
+      // Commit 4 replaces that helper — which suffered from an early-return
+      // when route geometry was already empty — with the stronger
+      // `_deterministicStopTeardown(outcome: authFailure)` funnel. The
+      // invariant is preserved and strengthened: state is torn down
+      // unconditionally, every live-ride timer is explicitly cancelled, and
+      // route/pin cleanup runs independent of prior geometry. The invariants
+      // enforced here still hold. Additional Commit 4 invariants are
+      // enforced by `direct_trip_stop_teardown_always_exits_nav_test.dart`.
       for (final marker in const [
         '_stopMeterTicker(',
         '_stopTrackingInternal(',
         '_setNavigationWakelock(false',
-        '_clearActiveRouteAndNavigationState(',
-        'clearActiveSelection: true',
+        '_deterministicStopTeardown(',
+        'StopTeardownOutcome.authFailure',
         '_showDriverSessionRequiredSnackbar(',
       ]) {
         expect(

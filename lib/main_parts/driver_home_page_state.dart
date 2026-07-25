@@ -153,6 +153,15 @@ class _DriverHomePageState extends State<DriverHomePage>
   DateTime? _trackingStartedAt; // tracking start timestamp
   bool _isStartingTrip = false; // UX: start button state
   Timer? _meterTicker;
+
+  // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 4)
+  // Deterministic STOP/navigation teardown re-entrancy guard. Set while
+  // `_deterministicStopTeardown` is running so a callback triggered during
+  // teardown cannot re-enter and race the state resets. Two independent
+  // user STOP taps still both execute in sequence — this only prevents
+  // in-teardown re-entry.
+  bool _stopTeardownInProgress = false;
+  int _stopTeardownGeneration = 0;
   DateTime? _lastMeterDebugAt;
   // FARE-ROUNDING-CENTRAL-0_10-1: last €0.10 preview step that was logged, so
   // the [FARE_ROUNDING] preview diagnostic only fires when the rounded step
@@ -7014,14 +7023,250 @@ class _DriverHomePageState extends State<DriverHomePage>
       _allowOverviewCamera = false;
     });
     unawaited(
-      _clearActiveRouteAndNavigationState(
-        reason: 'auth_failed',
-        clearActiveSelection: true,
+      _deterministicStopTeardown(
+        outcome: StopTeardownOutcome.authFailure,
+        preservePendingDirectIdentity: false,
       ),
     );
     _showDriverSessionRequiredSnackbar(
       reason: httpStatus == 403 ? 'forbidden' : 'missing_token',
     );
+  }
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 4)
+  ///
+  /// Deterministic STOP / navigation teardown. Called after every STOP
+  /// outcome (backend-confirmed, local-only, finalize-pending, auth-failure)
+  /// AND from the early-return guards inside `_stopTrip`.
+  ///
+  /// Live-navigation is NOT a separate route — it is `DriverHomePage`
+  /// rendered in `_liveRideActive` mode. Exiting therefore means clearing
+  /// operational ride state so `_liveRideActive` resolves `false` and the
+  /// widget rebuilds into its normal driver-home / business-preview
+  /// rendering. This helper never calls `Navigator.pop`, `popUntil`, or
+  /// `maybePop` — the invariant is enforced by
+  /// `direct_trip_stop_teardown_always_exits_nav_test.dart`.
+  ///
+  /// Contract:
+  ///   - Idempotent: re-entry during a single teardown returns immediately
+  ///     via `_stopTeardownInProgress`. Two independent user STOP taps still
+  ///     each execute a full teardown.
+  ///   - Unconditional live-ride timer/callback cancellation. Every timer
+  ///     is cancelled explicitly (not delegated to `_stopTrackingInternal`,
+  ///     which early-returns when `_posSub == null`).
+  ///   - `_activeBooking` is always cleared, including finalize-pending.
+  ///   - When `preservePendingDirectIdentity == true` (only when direct-ride
+  ///     finalize is legitimately pending), the minimum reconcile identity
+  ///     survives: `_activeDirectTripId`, `_activeDirectBookingId`,
+  ///     `_directRideKey`, `_directStopFinalizePending`.
+  ///   - Receipt / history / compliance ledger state is never touched.
+  ///   - Drawer close uses `_scaffoldKey.currentState?.closeDrawer()`
+  ///     (Scaffold-owned). Bookings-hub close flips `_bookingsHubVisible`.
+  Future<void> _deterministicStopTeardown({
+    required StopTeardownOutcome outcome,
+    bool preservePendingDirectIdentity = false,
+  }) async {
+    if (_stopTeardownInProgress) {
+      debugPrint(
+        '[STOP_TEARDOWN][REENTRY] outcome=${outcome.name} '
+        'generation=$_stopTeardownGeneration',
+      );
+      return;
+    }
+    _stopTeardownInProgress = true;
+    _stopTeardownGeneration += 1;
+    final generation = _stopTeardownGeneration;
+    try {
+      final drawerOpen =
+          _scaffoldKey.currentState?.isDrawerOpen ?? false;
+      final context = DriverStopTeardownContext(
+        outcome: outcome,
+        isMounted: mounted,
+        bookingsHubVisible: _bookingsHubVisible,
+        drawerOpen: drawerOpen,
+        preservePendingDirectIdentity: preservePendingDirectIdentity,
+      );
+      final plan = planDriverStopTeardown(context);
+
+      // ------------------------------------------------------------------
+      // Unconditional live-ride timer / callback cancellation.
+      //
+      // Every cancel below runs regardless of `_posSub` state so an already-
+      // stopped tracking session (e.g. duplicate STOP tap, dispose-race)
+      // still guarantees the timer wall is fully torn down. NEVER delegate
+      // these to a helper that early-returns on `_posSub == null`.
+      // ------------------------------------------------------------------
+      _stopMeterTicker();
+      _markerSelfHealTimer?.cancel();
+      _markerSelfHealTimer = null;
+      _navRouteRetryTimer?.cancel();
+      _navRouteRetryTimer = null;
+      _driver3dActivationConfirmRetryTimer?.cancel();
+      _driver3dActivationConfirmRetryTimer = null;
+      _directRideEstimateDebounce?.cancel();
+      _directRideEstimateDebounce = null;
+      _directRideEstimateLocationRetryTimer?.cancel();
+      _directRideEstimateLocationRetryTimer = null;
+      _resetPendingFollowCamera();
+      _stopStreetlevelFollowPump();
+      _resetNavR3MotionState();
+      _resetNavValidationState(flushReport: true);
+      _posSub?.cancel();
+      _posSub = null;
+      _activeGeolocatorSubscriptionCount = 0;
+      _pendingMarkerUpdatePos = null;
+      _consecutiveMarkerUpdateFailures = 0;
+      _markerLifecycle.reset();
+      _resetDriverVehicleModelMovementSync();
+      _cameraInFlightLifecycle.invalidate(reason: 'stop_teardown');
+      _navPresentationMode.reset();
+      _tellersViewport.reset();
+      _driverNavEngine.reset();
+      _lastNavEngineOutput = null;
+      _lastNavEngineRefreshKey = null;
+      _resetNavRouteProgressState();
+      _resetNavCameraPolicyState();
+      _resetNavConfidenceState();
+      _resetNavComplexityState();
+      _resetNavMotionPredictionState();
+      _resetNavInstructionPolicyState();
+      _navStartupBootstrap.reset();
+      _navParkingArrival.reset();
+      _navParkingArrivalConfirmed = false;
+      _lastNavArrivalEvent = null;
+      _navSessionStartedAt = null;
+      _navBootstrapPrevLat = null;
+      _navBootstrapPrevLon = null;
+      _lastKnownBearing = 0.0;
+      _startPos = null;
+      _lastFollowCameraAt = null;
+      _gpsQualityWeak = false;
+      _lastSmoothedCameraBearing = null;
+      _stopBookingPolling(reason: 'stop_teardown_${outcome.name}');
+      _setNavigationWakelock(false);
+      if (_nativeFollow != null) {
+        unawaited(_nativeFollow!.disable());
+      }
+      // Belt-and-braces: `_stopTrackingInternal` performs additional nav
+      // engine / marker / camera resets on paths that expect it. Because we
+      // just nulled `_posSub` above, its own early-return will short-circuit
+      // — that is intentional; we already ran the equivalent explicit
+      // resets. This call remains here to preserve any additional side
+      // effects future changes may add to `_stopTrackingInternal` (idempotent).
+      _stopTrackingInternal();
+
+      // ------------------------------------------------------------------
+      // Clear operational ride state.
+      //
+      // `_directRideActive = false` and `_activeTripId = null` are always
+      // cleared so `_liveRideActive` resolves false and DriverHomePage
+      // rebuilds into normal (non-live) rendering. `_activeBooking` is
+      // always cleared, including finalize-pending. Only the minimum
+      // reconcile identity survives when `preservePendingDirectIdentity`.
+      // ------------------------------------------------------------------
+      void clearOperationalRideState() {
+        _directRideActive = false;
+        _activeTripId = null;
+        _activeBooking = null;
+        _isStartingTrip = false;
+        _cameraMode = _CameraMode.overview;
+        _hasSwitchedToFollow = false;
+        _followCar = false;
+        _allowOverviewCamera = false;
+        _isWaiting = false;
+        _waitStartedAt = null;
+        _waitElapsed = Duration.zero;
+        _directRideDestinationText = null;
+        _directRideDestinationPoint = null;
+        _directRideEstimatedFare = null;
+        _directRideEstimateLoading = false;
+        _directRideEstimateError = null;
+        _directRideEstimateCurrency = kDefaultCurrency;
+        _directRideEstimateSignature = null;
+        _directRideLocationRetryCount = 0;
+        _directRideLocationRetryDestination = null;
+        _kmDriven = 0.0;
+        _trackingStartedAt = null;
+        _lastPing = '—';
+        _pingCount = 0;
+        _routePhase = _RideRoutePhase.trip;
+        _navStepsLoading = false;
+        if (!plan.preservePendingDirectIdentity) {
+          _activeDirectTripId = null;
+          _activeDirectBookingId = null;
+          _directRideKey = null;
+          _directStopFinalizePending = false;
+          _directTripStartWorkerOk = false;
+          _directTripStopWorkerOk = false;
+        }
+      }
+      if (mounted) {
+        setState(clearOperationalRideState);
+      } else {
+        clearOperationalRideState();
+      }
+
+      // ------------------------------------------------------------------
+      // Route / pin annotation cleanup.
+      //
+      // Runs regardless of whether `_routeCoords` / `_routeSteps` are
+      // empty. `_hardClearAtRideBoundary` bumps session/render generations
+      // so any in-flight style/route restore becomes a stale no-op.
+      // `_clearRouteAndPinAnnotationsOnly` performs the Mapbox annotation
+      // deletes. `_applyMapStyleForMode` refreshes the map style so no
+      // leftover live-ride style survives the rebuild.
+      // ------------------------------------------------------------------
+      _hardClearAtRideBoundary(
+        reason: 'stop_teardown_${outcome.name}',
+        bumpSession: true,
+      );
+      await _clearRouteAndPinAnnotationsOnly();
+      if (mounted) {
+        await _applyMapStyleForMode();
+      }
+
+      // ------------------------------------------------------------------
+      // Restart booking polling unconditionally.
+      //
+      // After the state clears above, `_liveRideActive` resolves false, so
+      // the polling can run without racing an active tracking session.
+      // ------------------------------------------------------------------
+      if (!_liveRideActive) {
+        _startBookingPolling(reason: 'stop_teardown_${outcome.name}');
+      }
+
+      // ------------------------------------------------------------------
+      // Non-Navigator UI closes.
+      //
+      // Drawer is closed through Scaffold-owned `closeDrawer()` (never
+      // Navigator.pop). Bookings-hub is a boolean overlay inside
+      // DriverHomePage — flipping `_bookingsHubVisible = false` rebuilds
+      // the tree without it.
+      // ------------------------------------------------------------------
+      if (plan.closeScaffoldDrawer) {
+        _scaffoldKey.currentState?.closeDrawer();
+      }
+      if (plan.hideBookingsHubPanel) {
+        if (mounted) {
+          setState(() {
+            _bookingsHubVisible = false;
+          });
+        } else {
+          _bookingsHubVisible = false;
+        }
+      }
+
+      debugPrint(
+        '[STOP_TEARDOWN][EXIT] outcome=${outcome.name} '
+        'generation=$generation '
+        'preserve_pending=${plan.preservePendingDirectIdentity} '
+        'hub_hidden=${plan.hideBookingsHubPanel} '
+        'drawer_closed=${plan.closeScaffoldDrawer} '
+        'live_ride_active_after=$_liveRideActive',
+      );
+    } finally {
+      _stopTeardownInProgress = false;
+    }
   }
 
   Future<DirectRideStopOutcome> _stopDirectTripSessionOnWorker({
@@ -8055,11 +8300,30 @@ class _DriverHomePageState extends State<DriverHomePage>
         bookingId: _activeDirectBookingId ?? _activeBooking?.bookingId ?? '',
       );
       _showStreetDirectFinalizePendingSnackbar();
+      // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 4):
+      // even on the "second STOP tap while finalize pending" branch we must
+      // force the DriverHomePage back into normal (non-live) rendering. The
+      // reconcile identifiers are preserved so the pending reconcile can
+      // retry.
+      await _deterministicStopTeardown(
+        outcome: StopTeardownOutcome.alreadyCleared,
+        preservePendingDirectIdentity: true,
+      );
       return;
     }
 
     final trip = _activeTripId;
-    if (trip == null && !_directRideActive) return;
+    if (trip == null && !_directRideActive) {
+      // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 4):
+      // nothing to stop on the worker, but the live-navigation rendering
+      // may still be stuck from a partial prior teardown or a stale flag.
+      // Force a deterministic exit.
+      await _deterministicStopTeardown(
+        outcome: StopTeardownOutcome.alreadyCleared,
+        preservePendingDirectIdentity: false,
+      );
+      return;
+    }
     final stoppedBooking = _activeBooking;
     if (stoppedBooking != null &&
         !_canOperateBookingWithGuard(
@@ -8299,11 +8563,27 @@ class _DriverHomePageState extends State<DriverHomePage>
       // `_activeDirectTripId` for reconcile — meter stays off via
       // `_directRideActive == false`.
     }
-    await _clearActiveRouteAndNavigationState(
-      reason: 'stop',
-      bookingId: stoppedBooking?.bookingId,
-      // Preserve direct identity while finalize is still pending/unknown.
-      clearActiveSelection: !wasDirectRide || directFinalizeAcknowledged,
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 4):
+    // deterministic STOP/navigation teardown. Replaces the earlier
+    // `_clearActiveRouteAndNavigationState` call so route/pin cleanup,
+    // wakelock release, camera/follow reset, native-follow disable, and
+    // booking-polling restart all run unconditionally — even when route
+    // geometry was already invalidated by `_hardClearAtRideBoundary` above
+    // (which used to cause the caller-side early-return that left the
+    // navigation surface active). `_activeBooking` is always cleared;
+    // only the minimum reconcile identity survives when finalize is still
+    // pending.
+    final StopTeardownOutcome stopOutcome;
+    if (directFinalizeAcknowledged) {
+      stopOutcome = StopTeardownOutcome.backendConfirmed;
+    } else if (wasDirectRide) {
+      stopOutcome = StopTeardownOutcome.finalizePending;
+    } else {
+      stopOutcome = StopTeardownOutcome.localOnly;
+    }
+    await _deterministicStopTeardown(
+      outcome: stopOutcome,
+      preservePendingDirectIdentity: wasDirectRide && !directFinalizeAcknowledged,
     );
     if (wasDirectRide && directFinalizeAcknowledged) {
       // Mirror the canonical finalized amount: server total wins as-is;
