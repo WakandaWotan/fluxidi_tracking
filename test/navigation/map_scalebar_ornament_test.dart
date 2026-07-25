@@ -146,6 +146,88 @@ void main() {
       );
     });
 
+    test(
+      'NAV-SCALEBAR-DIAGNOSTIC-SANITIZE-1: failure diagnostic is bounded '
+      'and never interpolates the exception payload',
+      () {
+        // The catch clause uses the wildcard pattern `catch (_)` — no named
+        // exception variable is available for interpolation.
+        expect(
+          helperBody,
+          contains('} catch (_) {'),
+          reason:
+              'Bind the caught object to `_` so no exception variable can '
+              'be interpolated into a log line.',
+        );
+
+        // The bounded warn line is a fixed string, without any $-interpolation.
+        expect(
+          helperBody,
+          contains("debugPrint('[MAP][SCALEBAR][WARN] failed_to_disable');"),
+          reason:
+              'Failure log must be a fixed, PII-free, plugin-internal-free '
+              r'string — no reason=$e, no exception details.',
+        );
+
+        // No dollar-sign interpolation anywhere inside the failure log —
+        // catches subtle regressions like `reason=$e` or `${e.toString()}`.
+        expect(
+          helperBody,
+          isNot(contains(r'reason=$')),
+          reason: 'Failure log must not carry an interpolated reason= field.',
+        );
+        expect(
+          helperBody,
+          isNot(contains(r'$e')),
+          reason: r'Failure log must never interpolate an `$e` variable.',
+        );
+        expect(
+          helperBody,
+          isNot(contains(r'${e')),
+          reason:
+              r'Failure log must never interpolate an `${e...}` expression.',
+        );
+        expect(
+          helperBody,
+          isNot(contains('stackTrace')),
+          reason:
+              'A stack-trace binding would enable payload leakage into logs.',
+        );
+        expect(
+          helperBody,
+          isNot(contains('toString()')),
+          reason:
+              'No explicit toString() on the caught object — that path is '
+              'exactly what leaks plugin internals into device logs.',
+        );
+        // Explicit exception variable bindings must not appear — enforces
+        // the `catch (_)` wildcard contract even against a subtle
+        // `catch (Exception e)` regression.
+        expect(
+          helperBody,
+          isNot(contains('catch (Exception')),
+          reason:
+              'Never bind the caught object to a named `Exception` — the '
+              'wildcard `catch (_)` guarantees payload leakage is impossible.',
+        );
+        expect(
+          helperBody,
+          isNot(contains('on Exception')),
+          reason:
+              'Do not narrow with `on Exception catch (e)` here — the '
+              'ornament channel may throw plugin-internal error types.',
+        );
+
+        // Success line remains unchanged (structured, bounded, PII-free).
+        expect(
+          helperBody,
+          contains(
+            "debugPrint('[MAP][SCALEBAR] enabled=false reason=nav_hide_p0_1');",
+          ),
+        );
+      },
+    );
+
     test('file never re-enables the scale bar anywhere', () {
       expect(
         source,

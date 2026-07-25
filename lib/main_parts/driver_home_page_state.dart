@@ -8889,8 +8889,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         mb.ScaleBarSettings(enabled: false),
       );
       debugPrint('[MAP][SCALEBAR] enabled=false reason=nav_hide_p0_1');
-    } catch (e) {
-      debugPrint('[MAP][SCALEBAR][WARN] failed_to_disable reason=$e');
+    } catch (_) {
+      // NAV-SCALEBAR-DIAGNOSTIC-SANITIZE-1: never interpolate the exception
+      // payload. Ornament failures are decorative — the fixed bounded line
+      // is enough to trace, and it can never leak PII, tokens or plugin
+      // internals through the log.
+      debugPrint('[MAP][SCALEBAR][WARN] failed_to_disable');
     }
   }
 
