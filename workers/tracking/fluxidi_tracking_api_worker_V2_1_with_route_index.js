@@ -172,6 +172,205 @@ function maskScopeForTripKpiLog(value) {
   return `${text.substring(0, 2)}…${text.substring(text.length - 2)}`;
 }
 
+// Extract a caller-supplied driver_id from body/query/header candidates.
+// Compatibility inputs only — the authoritative value is the driver-session record.
+function _extractCallerSuppliedDriverId(req, url, body = null) {
+  const search = url?.searchParams;
+  return (
+    safeStr(
+      body?.driver_id ??
+        body?.driverId ??
+        body?.actor_driver_id ??
+        body?.actorDriverId ??
+        search?.get?.("driver_id") ??
+        search?.get?.("driverId") ??
+        req?.headers?.get?.("x-fluxidi-driver-id") ??
+        req?.headers?.get?.("x-driver-id"),
+      96,
+    ) ?? ""
+  );
+}
+
+// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1
+// Authoritative auth for driver-initiated tracking operations.
+//
+// Preferred path: `Authorization: Bearer <driver session>` bound in KV under
+// `public_driver:session:{sha256(token)}:v1`. tenant/company/driver are derived
+// from that record and every caller-supplied scope field must exactly match or
+// be omitted (fail closed with 403 on conflict).
+//
+// Dual auth: `ADMIN_TOKEN` is retained for platform-operator / internal
+// server-to-server callers. Flutter must not send it after this migration.
+async function requireDriverSessionOrAdminForScope(
+  req,
+  url,
+  env,
+  { body = null, routeLabel = "" } = {},
+) {
+  const origin = getOrigin(req);
+  if (hasValidAdminToken(req, url, env)) {
+    if (routeLabel) console.log(`[${routeLabel}][AUTH] auth_mode=admin_token`);
+    return { ok: true, auth_mode: "admin_token", driver_session: null };
+  }
+  const driverSession = await loadPublicDriverSessionFromRequest(req, env);
+  if (!driverSession) {
+    if (routeLabel) console.log(`[${routeLabel}][AUTH] auth_mode=none result=unauthorized`);
+    return {
+      ok: false,
+      response: withCors(
+        json({ ok: false, error: "unauthorized" }, { status: 401 }),
+        origin,
+      ),
+    };
+  }
+  const clientScope = extractScopeFromQueryAndBody(url, body);
+  if (clientScope?.tenant_id && clientScope.tenant_id !== driverSession.tenant_id) {
+    if (routeLabel) {
+      console.log(
+        `[${routeLabel}][AUTH] auth_mode=driver_session result=forbidden reason=tenant_mismatch`,
+      );
+    }
+    return {
+      ok: false,
+      response: withCors(json({ ok: false, error: "forbidden" }, { status: 403 }), origin),
+    };
+  }
+  if (clientScope?.company_id && clientScope.company_id !== driverSession.company_id) {
+    if (routeLabel) {
+      console.log(
+        `[${routeLabel}][AUTH] auth_mode=driver_session result=forbidden reason=company_mismatch`,
+      );
+    }
+    return {
+      ok: false,
+      response: withCors(json({ ok: false, error: "forbidden" }, { status: 403 }), origin),
+    };
+  }
+  const clientDriverId = _extractCallerSuppliedDriverId(req, url, body);
+  if (clientDriverId && clientDriverId !== driverSession.driver_id) {
+    if (routeLabel) {
+      console.log(
+        `[${routeLabel}][AUTH] auth_mode=driver_session result=forbidden reason=driver_mismatch`,
+      );
+    }
+    return {
+      ok: false,
+      response: withCors(json({ ok: false, error: "forbidden" }, { status: 403 }), origin),
+    };
+  }
+  if (routeLabel) {
+    console.log(
+      `[${routeLabel}][AUTH] auth_mode=driver_session tenant=${maskScopeForTripKpiLog(driverSession.tenant_id)} company=${maskScopeForTripKpiLog(driverSession.company_id)} driver=${maskScopeForTripKpiLog(driverSession.driver_id)}`,
+    );
+  }
+  return { ok: true, auth_mode: "driver_session", driver_session: driverSession };
+}
+
+// Merge session-derived tenant/company/driver into a request body so that
+// downstream helpers (parseRequiredTenantCompanyScope, actor resolvers) see
+// authoritative values without needing bespoke plumbing.
+function applyDriverSessionToBody(body, driverSession) {
+  if (!driverSession) return body;
+  const out =
+    body && typeof body === "object" && !Array.isArray(body) ? { ...body } : {};
+  out.tenant_id = driverSession.tenant_id;
+  out.tenantId = driverSession.tenant_id;
+  out.company_id = driverSession.company_id;
+  out.companyId = driverSession.company_id;
+  if (!safeStr(out.driver_id, 96) && !safeStr(out.driverId, 96)) {
+    out.driver_id = driverSession.driver_id;
+    out.driverId = driverSession.driver_id;
+  }
+  if (!safeStr(out.actor_role, 32) && !safeStr(out.actorRole, 32)) {
+    out.actor_role = "driver";
+  }
+  if (!safeStr(out.actor_driver_id, 96) && !safeStr(out.actorDriverId, 96)) {
+    out.actor_driver_id = driverSession.driver_id;
+    out.actorDriverId = driverSession.driver_id;
+  }
+  return out;
+}
+
+// Broader helper for routes callable by driver OR company OR admin
+// (e.g. /track/booking, /track/bookings — driver in-app + company-preview UI).
+async function requireDriverOrCompanyOrAdminForScope(
+  req,
+  url,
+  env,
+  { body = null, routeLabel = "" } = {},
+) {
+  const origin = getOrigin(req);
+  if (hasValidAdminToken(req, url, env)) {
+    if (routeLabel) console.log(`[${routeLabel}][AUTH] auth_mode=admin_token`);
+    return { ok: true, auth_mode: "admin_token", driver_session: null, company_session: null };
+  }
+  const clientScope = extractScopeFromQueryAndBody(url, body);
+  const companySession = await loadCompanySessionFromRequest(req, env);
+  if (companySession) {
+    if (clientScope?.tenant_id && clientScope.tenant_id !== companySession.tenant_id) {
+      return {
+        ok: false,
+        response: withCors(json({ ok: false, error: "forbidden" }, { status: 403 }), origin),
+      };
+    }
+    if (clientScope?.company_id && clientScope.company_id !== companySession.company_id) {
+      return {
+        ok: false,
+        response: withCors(json({ ok: false, error: "forbidden" }, { status: 403 }), origin),
+      };
+    }
+    if (routeLabel) {
+      console.log(
+        `[${routeLabel}][AUTH] auth_mode=company_session tenant=${maskScopeForTripKpiLog(companySession.tenant_id)} company=${maskScopeForTripKpiLog(companySession.company_id)}`,
+      );
+    }
+    return {
+      ok: true,
+      auth_mode: "company_session",
+      driver_session: null,
+      company_session: companySession,
+    };
+  }
+  const driverSession = await loadPublicDriverSessionFromRequest(req, env);
+  if (driverSession) {
+    if (clientScope?.tenant_id && clientScope.tenant_id !== driverSession.tenant_id) {
+      return {
+        ok: false,
+        response: withCors(json({ ok: false, error: "forbidden" }, { status: 403 }), origin),
+      };
+    }
+    if (clientScope?.company_id && clientScope.company_id !== driverSession.company_id) {
+      return {
+        ok: false,
+        response: withCors(json({ ok: false, error: "forbidden" }, { status: 403 }), origin),
+      };
+    }
+    const clientDriverId = _extractCallerSuppliedDriverId(req, url, body);
+    if (clientDriverId && clientDriverId !== driverSession.driver_id) {
+      return {
+        ok: false,
+        response: withCors(json({ ok: false, error: "forbidden" }, { status: 403 }), origin),
+      };
+    }
+    if (routeLabel) {
+      console.log(
+        `[${routeLabel}][AUTH] auth_mode=driver_session tenant=${maskScopeForTripKpiLog(driverSession.tenant_id)} company=${maskScopeForTripKpiLog(driverSession.company_id)} driver=${maskScopeForTripKpiLog(driverSession.driver_id)}`,
+      );
+    }
+    return {
+      ok: true,
+      auth_mode: "driver_session",
+      driver_session: driverSession,
+      company_session: null,
+    };
+  }
+  if (routeLabel) console.log(`[${routeLabel}][AUTH] auth_mode=none result=unauthorized`);
+  return {
+    ok: false,
+    response: withCors(json({ ok: false, error: "unauthorized" }, { status: 401 }), origin),
+  };
+}
+
 function _pickFinanceMonthCents(financeMonth, ...keys) {
   const obj = financeMonth && typeof financeMonth === "object" && !Array.isArray(financeMonth) ? financeMonth : {};
   for (const key of keys) {
@@ -4884,9 +5083,13 @@ async function handleArchiveTrip(req, url, env, origin) {
 }
 
 async function handleStartDirectTrip(req, url, env, origin) {
-  requireAdmin(req, url, env);
-
-  const body = await readJson(req);
+  const rawBody = await readJson(req);
+  const auth = await requireDriverSessionOrAdminForScope(req, url, env, {
+    body: rawBody,
+    routeLabel: "TRIP_START_DIRECT",
+  });
+  if (!auth.ok) return auth.response;
+  const body = applyDriverSessionToBody(rawBody, auth.driver_session);
   const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
   if (requiredScope instanceof Response) return requiredScope;
   const scope = requiredScope;
@@ -5230,9 +5433,13 @@ async function _notifyBookingWorkerPlannedTripCompletionBestEffort(env, scope, t
 }
 
 async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
-  requireAdmin(req, url, env);
-
-  const body = await readJson(req);
+  const rawBody = await readJson(req);
+  const auth = await requireDriverSessionOrAdminForScope(req, url, env, {
+    body: rawBody,
+    routeLabel: "TRIP_RECORD_PLANNED_STOP",
+  });
+  if (!auth.ok) return auth.response;
+  const body = applyDriverSessionToBody(rawBody, auth.driver_session);
   const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
   if (requiredScope instanceof Response) return requiredScope;
   const scope = requiredScope;
@@ -5516,9 +5723,13 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
 }
 
 async function handleWaitStartTrip(req, url, env, origin) {
-  requireAdmin(req, url, env);
-
-  const body = await readJson(req);
+  const rawBody = await readJson(req);
+  const auth = await requireDriverSessionOrAdminForScope(req, url, env, {
+    body: rawBody,
+    routeLabel: "TRIP_WAIT_START",
+  });
+  if (!auth.ok) return auth.response;
+  const body = applyDriverSessionToBody(rawBody, auth.driver_session);
   const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
   if (requiredScope instanceof Response) return requiredScope;
   const scope = requiredScope;
@@ -5562,9 +5773,13 @@ async function handleWaitStartTrip(req, url, env, origin) {
 }
 
 async function handleWaitEndTrip(req, url, env, origin) {
-  requireAdmin(req, url, env);
-
-  const body = await readJson(req);
+  const rawBody = await readJson(req);
+  const auth = await requireDriverSessionOrAdminForScope(req, url, env, {
+    body: rawBody,
+    routeLabel: "TRIP_WAIT_END",
+  });
+  if (!auth.ok) return auth.response;
+  const body = applyDriverSessionToBody(rawBody, auth.driver_session);
   const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
   if (requiredScope instanceof Response) return requiredScope;
   const scope = requiredScope;
@@ -5629,9 +5844,13 @@ async function handleWaitEndTrip(req, url, env, origin) {
 }
 
 async function handleStopTrip(req, url, env, origin, ctx) {
-  requireAdmin(req, url, env);
-
-  const body = await readJson(req);
+  const rawBody = await readJson(req);
+  const auth = await requireDriverSessionOrAdminForScope(req, url, env, {
+    body: rawBody,
+    routeLabel: "TRIP_STOP",
+  });
+  if (!auth.ok) return auth.response;
+  const body = applyDriverSessionToBody(rawBody, auth.driver_session);
   const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
   if (requiredScope instanceof Response) return requiredScope;
   const scope = requiredScope;
@@ -5786,9 +6005,13 @@ async function handleStopTrip(req, url, env, origin, ctx) {
 // second booking; repeated calls are safe. Returns `completed` immediately when
 // the booking is already finalized.
 async function handleReconcileDirectBooking(req, url, env, origin) {
-  requireAdmin(req, url, env);
-
-  const body = await readJson(req);
+  const rawBody = await readJson(req);
+  const auth = await requireDriverSessionOrAdminForScope(req, url, env, {
+    body: rawBody,
+    routeLabel: "TRIP_RECONCILE_DIRECT_BOOKING",
+  });
+  if (!auth.ok) return auth.response;
+  const body = applyDriverSessionToBody(rawBody, auth.driver_session);
   const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
   if (requiredScope instanceof Response) return requiredScope;
   const scope = requiredScope;
@@ -6200,9 +6423,13 @@ async function handleTripPayment(req, url, env, origin, ctx) {
 }
 
 async function handleStart(req, url, env, origin) {
-  requireAdmin(req, url, env);
-
-  const body = await readJson(req);
+  const rawBody = await readJson(req);
+  const auth = await requireDriverSessionOrAdminForScope(req, url, env, {
+    body: rawBody,
+    routeLabel: "TRACK_SESSION_START",
+  });
+  if (!auth.ok) return auth.response;
+  const body = applyDriverSessionToBody(rawBody, auth.driver_session);
   const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
   if (requiredScope instanceof Response) return requiredScope;
   const scope = requiredScope;
@@ -6466,9 +6693,13 @@ async function handleStart(req, url, env, origin) {
 }
 
 async function handlePing(req, url, env, origin) {
-  requireAdmin(req, url, env);
-
-  const body = await readJson(req);
+  const rawBody = await readJson(req);
+  const auth = await requireDriverSessionOrAdminForScope(req, url, env, {
+    body: rawBody,
+    routeLabel: "TRACK_PING",
+  });
+  if (!auth.ok) return auth.response;
+  const body = applyDriverSessionToBody(rawBody, auth.driver_session);
   const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
   if (requiredScope instanceof Response) return requiredScope;
   const scope = requiredScope;
@@ -6517,9 +6748,13 @@ async function handlePing(req, url, env, origin) {
 }
 
 async function handleStop(req, url, env, origin) {
-  requireAdmin(req, url, env);
-
-  const body = await readJson(req);
+  const rawBody = await readJson(req);
+  const auth = await requireDriverSessionOrAdminForScope(req, url, env, {
+    body: rawBody,
+    routeLabel: "TRACK_SESSION_STOP",
+  });
+  if (!auth.ok) return auth.response;
+  const body = applyDriverSessionToBody(rawBody, auth.driver_session);
   const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
   if (requiredScope instanceof Response) return requiredScope;
   const scope = requiredScope;
@@ -6577,7 +6812,10 @@ async function resolveSessionByBookingForScope(env, scope, booking_id) {
 
 // GET /track/bookings (auto-cleans orphans)
 async function handleBookings(req, url, env, origin) {
-  requireAdmin(req, url, env);
+  const auth = await requireDriverOrCompanyOrAdminForScope(req, url, env, {
+    routeLabel: "TRACK_BOOKINGS",
+  });
+  if (!auth.ok) return auth.response;
   const requiredScope = parseRequiredTenantCompanyScope(req, url, null, { returnResponse: true, origin });
   if (requiredScope instanceof Response) return requiredScope;
   const scope = requiredScope;
@@ -6634,7 +6872,10 @@ async function handleBookings(req, url, env, origin) {
 
 // GET /track/booking?booking_id=...
 async function handleBookingDetails(req, url, env, origin) {
-  requireAdmin(req, url, env);
+  const auth = await requireDriverOrCompanyOrAdminForScope(req, url, env, {
+    routeLabel: "TRACK_BOOKING",
+  });
+  if (!auth.ok) return auth.response;
   const requiredScope = parseRequiredTenantCompanyScope(req, url, null, { returnResponse: true, origin });
   if (requiredScope instanceof Response) return requiredScope;
   const scope = requiredScope;
@@ -6669,7 +6910,10 @@ async function handleBookingDetails(req, url, env, origin) {
 
 // GET /track/live?booking_id=...&limit=...
 async function handleLive(req, url, env, origin) {
-  requireAdmin(req, url, env);
+  const auth = await requireDriverOrCompanyOrAdminForScope(req, url, env, {
+    routeLabel: "TRACK_LIVE",
+  });
+  if (!auth.ok) return auth.response;
   const requiredScope = parseRequiredTenantCompanyScope(req, url, null, { returnResponse: true, origin });
   if (requiredScope instanceof Response) return requiredScope;
   const scope = requiredScope;
@@ -6762,8 +7006,13 @@ async function handlePublicLive(req, url, env, origin) {
 }
 
 // POST /track/route  { from, to, profile? }
+// Auth: driver session OR company session OR admin — this route proxies
+// billable Mapbox and must not be reachable anonymously.
 async function handleRoute(req, url, env, origin) {
-  requireAdmin(req, url, env);
+  const auth = await requireDriverOrCompanyOrAdminForScope(req, url, env, {
+    routeLabel: "TRACK_ROUTE",
+  });
+  if (!auth.ok) return auth.response;
 
   const token = requireMapbox(env);
 
