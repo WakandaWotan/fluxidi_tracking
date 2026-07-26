@@ -21916,15 +21916,30 @@ async function handleAdminCompanyLinkIndexGet(request, url, env) {
 
 async function handleAdminCompanyLinkCodeCreate(request, url, env) {
   const body = await readAdminCompanyLinkBody(request.clone());
-  _requireAdmin(request, url, env);
   if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return json({ ok: false, error: "invalid_body" }, 400);
   }
-  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
-  if (!explicitScope?.hasScope) {
-    return json(missingTenantScopeError(), 400);
-  }
+  // FIELD-RELEASE-BLOCKER-DEVICE-ACTIVATION-AUTH-P0-2:
+  // Previously this route called the throwing legacy `_requireAdmin(...)`.
+  // Because SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 removed `ADMIN_TOKEN`
+  // from every distributable Flutter build, that throw turned every real
+  // client request into an unhandled worker exception and Cloudflare
+  // returned the generic Error 1101 "Worker threw exception" HTML page,
+  // which the Flutter client could not parse. This route now accepts either
+  // the backend admin token (kept for trusted internal tooling) or a valid
+  // company-owner session bearer, and it always returns structured
+  // JSON 400/401/403 through `_requireAdminOrCompanySessionForExplicitScope`
+  // instead of throwing.
+  const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+    request,
+    url,
+    env,
+    body,
+    routeLabel: "ADMIN_COMPANY_LINK_CODE_CREATE",
+  });
+  if (!authScope.ok) return authScope.response;
+  const explicitScope = authScope.explicitScope;
   const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
   const companyId = sanitizeTenantString(explicitScope.company_id, 80);
   if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
@@ -22572,15 +22587,26 @@ async function handleAdminCompanyDriverSessionsRevoke(request, url, env) {
 
 async function handleAdminCompanyDriverLinkCodeCreate(request, url, env) {
   const body = await readAdminCompanyLinkBody(request.clone());
-  _requireAdmin(request, url, env);
   if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return json({ ok: false, error: "invalid_body" }, 400);
   }
-  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
-  if (!explicitScope?.hasScope) {
-    return json(missingTenantScopeError(), 400);
-  }
+  // FIELD-RELEASE-BLOCKER-DEVICE-ACTIVATION-AUTH-P0-2:
+  // Same migration as `handleAdminCompanyLinkCodeCreate` — replace the
+  // throwing legacy `_requireAdmin(...)` with the existing helper that
+  // accepts either a backend admin token or a valid company-owner session
+  // bearer, enforces exact-scope match server-side, and always returns
+  // structured JSON 400/401/403 instead of throwing (which previously
+  // surfaced as Cloudflare Error 1101 in the Flutter client).
+  const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+    request,
+    url,
+    env,
+    body,
+    routeLabel: "ADMIN_COMPANY_DRIVER_LINK_CODE_CREATE",
+  });
+  if (!authScope.ok) return authScope.response;
+  const explicitScope = authScope.explicitScope;
   const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
   const companyId = sanitizeTenantString(explicitScope.company_id, 80);
   if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {

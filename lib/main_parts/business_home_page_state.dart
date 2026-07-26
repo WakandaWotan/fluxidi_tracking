@@ -2438,13 +2438,16 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   }
 
   Future<void> _showNewDeviceActivationCodeDialog(BuildContext context) async {
-    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase C): the device-pairing
-    // affordance previously required the compiled-in ADMIN_TOKEN. That token
-    // no longer exists in client builds; the flow now requires a valid
-    // company-owner session and is gated to non-release builds until the
-    // server-side company-session variant of driver-link-code/create is
-    // proven end-to-end.
-    if (kReleaseMode || !hasCompanyOwnerAuthContext()) {
+    // FIELD-RELEASE-BLOCKER-DEVICE-ACTIVATION-AUTH-P0-2: this affordance was
+    // previously blocked in release builds because it still called
+    // _adminHeaders() (an empty map after SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1)
+    // and would therefore fail every request with an unauthenticated call
+    // that the booking worker rethrew as Cloudflare Error 1101. The flow now
+    // sends the company-owner session bearer via resolveCompanyOwnerAuthHeaders()
+    // and the release-mode gate is removed. The company-owner-auth-context
+    // requirement remains so a stale/logged-out company cannot even initiate
+    // the request.
+    if (!hasCompanyOwnerAuthContext()) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -2551,26 +2554,67 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       debugPrint(
         '[PAIR_CODE_CREATE][REQ] tenant=${_maskScopeForLog(scope.tenantId)} company=${_maskScopeForLog(scope.companyId)} code=$companyCode',
       );
-      final response = await http
-          .post(
-            endpoint,
-            headers: _adminHeaders(),
-            body: jsonEncode(<String, dynamic>{
-              'tenant_id': scope.tenantId,
-              'company_id': scope.companyId,
-              'company_code': companyCode,
-            }),
-          )
-          .timeout(const Duration(seconds: 12));
-      statusCode = response.statusCode;
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-      if (decoded is Map) {
-        payload = Map<String, dynamic>.from(decoded);
+      // FIELD-RELEASE-BLOCKER-DEVICE-ACTIVATION-AUTH-P0-2: use the company-
+      // owner session bearer via resolveCompanyOwnerAuthHeaders(). That helper
+      // already sets `Authorization: Bearer <company-session>`, `Accept:
+      // application/json` and `Content-Type: application/json`; we re-assert
+      // Accept and Content-Type explicitly as a defense-in-depth guarantee.
+      // No ADMIN_TOKEN / x-admin-token header is ever attached from the client.
+      final companyAuth = await resolveCompanyOwnerAuthHeaders();
+      if (companyAuth.mode == CompanyOwnerAuthMode.none) {
+        debugPrint('[PAIR_CODE_CREATE][NO_AUTH] mode=none');
+      } else {
+        final headers = <String, String>{
+          ...companyAuth.headers,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        };
+        final response = await http
+            .post(
+              endpoint,
+              headers: headers,
+              body: jsonEncode(<String, dynamic>{
+                'tenant_id': scope.tenantId,
+                'company_id': scope.companyId,
+                'company_code': companyCode,
+              }),
+            )
+            .timeout(const Duration(seconds: 12));
+        statusCode = response.statusCode;
+        final contentType =
+            (response.headers['content-type'] ?? '').toLowerCase();
+        if (contentType.contains('application/json')) {
+          try {
+            final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+            if (decoded is Map) {
+              payload = Map<String, dynamic>.from(decoded);
+            }
+          } on FormatException {
+            debugPrint(
+              '[PAIR_CODE_CREATE][DECODE_FAIL] status=$statusCode ct=$contentType',
+            );
+          }
+        } else {
+          // Cloudflare Error 1101 or an intermediary HTML page: never try to
+          // parse it as JSON. Log only the sanitized status/content-type; do
+          // not echo body bytes because a leaked worker error page could
+          // expose internal identifiers.
+          debugPrint(
+            '[PAIR_CODE_CREATE][NON_JSON_RESPONSE] status=$statusCode ct=${contentType.isEmpty ? "-" : contentType}',
+          );
+        }
+        debugPrint(
+          '[PAIR_CODE_CREATE][RES] status=$statusCode ok=${payload['ok'] == true}',
+        );
       }
-      debugPrint(
-        '[PAIR_CODE_CREATE][RES] status=$statusCode ok=${payload['ok'] == true}',
-      );
-    } catch (_) {}
+    } on TimeoutException {
+      debugPrint('[PAIR_CODE_CREATE][TIMEOUT]');
+    } catch (error) {
+      // Redacted diagnostics equivalent to the driver-link flow: never print
+      // the raw error message (could contain URL fragments); type is enough
+      // to distinguish transport, DNS and TLS failures during triage.
+      debugPrint('[PAIR_CODE_CREATE][HTTP_FAIL] type=${error.runtimeType}');
+    }
 
     if (!context.mounted) return;
     Navigator.of(context, rootNavigator: true).pop();
