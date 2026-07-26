@@ -321,6 +321,21 @@ class ActiveDriverSession {
 final ValueNotifier<ActiveDriverSession?> activeDriverSessionNotifier =
     ValueNotifier<ActiveDriverSession?>(null);
 
+/// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix)
+///
+/// Published by `_DriverHomePageState` while an operator-minted bearer is
+/// actively required by a live ride, STOP teardown, or direct-trip
+/// finalize/reconcile. Consumed by the company-end call sites so a company
+/// logout / switch / onboarding intent refuses to run (and therefore does
+/// not clear the driver bearer) until the lifecycle operation completes.
+///
+/// The notifier defaults to `false`; it is authoritative only while
+/// `DriverHomePage` is mounted. Once the widget is disposed, the notifier
+/// is reset to `false` in `dispose()` so a subsequent company action does
+/// not appear indefinitely busy.
+final ValueNotifier<bool> operatorMintedBearerInFlightNotifier =
+    ValueNotifier<bool>(false);
+
 /// Default tracking id when no chauffeur session (e.g. company preview driver view).
 const String kFallbackDriverTrackingId = 'fluxidi_driver_01';
 
@@ -1000,6 +1015,47 @@ class DriverSessionStore {
     _cache = null;
     _cacheScopeKey = '';
     activeDriverSessionNotifier.value = session;
+  }
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix)
+  ///
+  /// Clear the in-memory driver session iff it is operator-minted. Called
+  /// from the three company-end call sites (company logout, in-app company
+  /// switch, onboarding intent) before `CompanySessionStore.instance.
+  /// clearLocalCompanyState()` runs. Standalone / pairing / public-login
+  /// sessions are untouched.
+  ///
+  /// Refuses (returns `false` without clearing) when
+  /// [operatorMintedBearerInFlightNotifier] is `true`, because a live ride,
+  /// STOP teardown, or direct-trip finalize/reconcile still needs the
+  /// bearer. Call sites are responsible for gating the company end on the
+  /// same notifier so the whole company-end operation is deferred until
+  /// the lifecycle operation completes.
+  ///
+  /// Returns `true` when the operator bearer was cleared, `false` when the
+  /// call was refused (bearer in flight) or no operator session was
+  /// present.
+  bool clearOperatorMintedSessionOnCompanyEnd({required String reason}) {
+    final current = activeDriverSessionNotifier.value;
+    if (current == null) {
+      return false;
+    }
+    if (!current.isOperatorMintedSession) {
+      return false;
+    }
+    if (operatorMintedBearerInFlightNotifier.value) {
+      debugPrint(
+        '[DRIVER_SESSION][OPERATOR_MINT_CLEAR][SKIP] reason=$reason cause=bearer_in_flight',
+      );
+      return false;
+    }
+    debugPrint(
+      '[DRIVER_SESSION][OPERATOR_MINT_CLEAR] reason=$reason driver=${_maskIdForLog(current.driverId)} tenant=${_maskIdForLog(current.tenantId ?? '')} company=${_maskIdForLog(current.companyId ?? '')}',
+    );
+    _cache = null;
+    _cacheScopeKey = '';
+    activeDriverSessionNotifier.value = null;
+    return true;
   }
 
   Future<void> clearStandaloneSessionIfScopeMismatch({

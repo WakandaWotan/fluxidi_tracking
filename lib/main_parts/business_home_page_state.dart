@@ -2259,11 +2259,54 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   }
 
   Future<void> _switchCompany(BuildContext context) async {
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+    // Refuse to switch company while a live ride, STOP teardown or
+    // direct-trip finalize/reconcile still requires the operator-minted
+    // driver bearer. `operatorMintedBearerInFlightNotifier` is authoritative
+    // for as long as the reconcile is pending; it is published false only
+    // after the reconcile completes.
+    if (operatorMintedBearerInFlightNotifier.value) {
+      debugPrint(
+        '[COMPANY_END][BLOCKED] path=switch_company cause=operator_bearer_in_flight',
+      );
+      _showCompanyEndBlockedForRideInFlight(context);
+      return;
+    }
+    // Clear the operator-minted driver session (memory-only) before the
+    // company session so no orphaned bearer remains after the switch.
+    // Standalone / pairing sessions are untouched.
+    DriverSessionStore.instance.clearOperatorMintedSessionOnCompanyEnd(
+      reason: 'business_home_switch_company',
+    );
     await CompanySessionStore.instance.clearLocalCompanyState();
     if (!context.mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute<void>(builder: (_) => const RoleEntryPage()),
       (route) => false,
+    );
+  }
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+  /// Localised snackbar shown when a company-end action (logout / switch)
+  /// is refused because the operator-minted driver bearer is still needed
+  /// by a live ride, STOP teardown or direct-trip finalize/reconcile.
+  void _showCompanyEndBlockedForRideInFlight(BuildContext context) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 4),
+        content: Text(
+          _tr(
+            nl:
+                'Rond de rit eerst af voordat u van bedrijf wisselt.',
+            en: 'Finish the ride before switching companies.',
+            fr: 'Terminez la course avant de changer d\'entreprise.',
+            es: 'Finalice el viaje antes de cambiar de empresa.',
+          ),
+        ),
+      ),
     );
   }
 

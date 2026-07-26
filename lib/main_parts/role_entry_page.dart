@@ -2222,6 +2222,41 @@ class RoleEntryPage extends StatelessWidget {
       final activationCode = await _promptCompanyActivationCode(context);
       if (!context.mounted || activationCode == null) return;
       if (activationCode == _companyPairingOnboardingIntent) {
+        // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+        // Refuse to reset the company session while an operator-minted
+        // driver bearer is still required by a live ride, STOP teardown
+        // or direct-trip finalize/reconcile. Onboarding-intent from this
+        // path is user-initiated navigation; it must respect the same
+        // blocker as the other company-end call sites.
+        if (operatorMintedBearerInFlightNotifier.value) {
+          debugPrint(
+            '[COMPANY_END][BLOCKED] path=role_entry_onboarding_intent cause=operator_bearer_in_flight',
+          );
+          final messenger = ScaffoldMessenger.maybeOf(context);
+          if (messenger != null) {
+            messenger.hideCurrentSnackBar();
+            messenger.showSnackBar(
+              SnackBar(
+                duration: const Duration(seconds: 4),
+                content: Text(
+                  _t(
+                    nl:
+                        'Rond de rit eerst af voordat u een nieuw bedrijf koppelt.',
+                    en: 'Finish the ride before pairing a new company.',
+                    fr:
+                        'Terminez la course avant d\'associer une nouvelle entreprise.',
+                    es:
+                        'Finalice el viaje antes de asociar una nueva empresa.',
+                  ),
+                ),
+              ),
+            );
+          }
+          return;
+        }
+        DriverSessionStore.instance.clearOperatorMintedSessionOnCompanyEnd(
+          reason: 'role_entry_onboarding_intent',
+        );
         await CompanySessionStore.instance.clearLocalCompanyState();
         if (!context.mounted) return;
         _openBusinessOnboarding(context);

@@ -162,6 +162,115 @@ class _DriverHomePageState extends State<DriverHomePage>
   // in-teardown re-entry.
   bool _stopTeardownInProgress = false;
   int _stopTeardownGeneration = 0;
+
+  // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix)
+  //
+  // Reference-identity ownership marker for the operator-minted
+  // `ActiveDriverSession` published by this widget instance. Set when
+  // `_hydrateBusinessPreviewDriverSession` publishes an operator-minted
+  // session, and when `_performInPageDriverSwitchMint` atomically
+  // publishes a switched B session. Consulted by
+  // `_clearOperatorMintedSessionIfOwned` so a stale widget cannot clear a
+  // newer B/C session, and by the exit guard when the widget leaves the
+  // surface.
+  ActiveDriverSession? _ownedOperatorMintedSessionRef;
+
+  // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix)
+  //
+  // Pure state machine for the in-page A → B driver-switch mint (see
+  // `lib/main_parts/driver_switch_mint_controller.dart`). Instantiated in
+  // `initState` and disposed via `invalidatePendingResponses()` in
+  // `dispose()`. Widget-layer methods (`_performInPageDriverSwitchMint`,
+  // `_attemptBusinessPreviewRouteExit`, START guard) consult this
+  // controller instead of maintaining their own generation counters.
+  late final DriverSwitchMintController _driverSwitchMintController =
+      DriverSwitchMintController(mintFn: _resolveMintFnForController());
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix v6)
+  ///
+  /// Test-only accessor for the in-page switch-mint controller so widget
+  /// integration tests can inspect `generation`, `pendingGeneration`,
+  /// `pendingDriverId`, and `isMinting` on the exact controller instance
+  /// owned by this state. Never used from production code.
+  @visibleForTesting
+  DriverSwitchMintController get debugDriverSwitchMintControllerForTest =>
+      _driverSwitchMintController;
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix v6)
+  ///
+  /// Test-only seam that lets widget integration tests drive the exact
+  /// ride/teardown/finalize flags read by
+  /// `_attemptBusinessPreviewRouteExit`. Real ride start/stop/finalize
+  /// flows would require full HTTP + platform-channel mocking to exercise
+  /// production `setState` blocks; this seam sets the same flags directly
+  /// and publishes the bearer-busy notifier through the same explicit
+  /// transition path as production (`_publishBearerBusyState`), so no
+  /// invariant is bypassed. Never used from production code.
+  @visibleForTesting
+  void debugSetRideLifecycleFlagsForTest({
+    bool? directRideActive,
+    bool? stopTeardownInProgress,
+    bool? directStopFinalizePending,
+  }) {
+    var changed = false;
+    if (directRideActive != null && _directRideActive != directRideActive) {
+      _directRideActive = directRideActive;
+      changed = true;
+    }
+    if (stopTeardownInProgress != null &&
+        _stopTeardownInProgress != stopTeardownInProgress) {
+      _stopTeardownInProgress = stopTeardownInProgress;
+      changed = true;
+    }
+    if (directStopFinalizePending != null &&
+        _directStopFinalizePending != directStopFinalizePending) {
+      _directStopFinalizePending = directStopFinalizePending;
+      changed = true;
+    }
+    if (changed) {
+      if (mounted) setState(() {});
+      _publishBearerBusyState();
+    }
+  }
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix v6)
+  ///
+  /// Test-only accessor for the owned operator-minted session ref that
+  /// tests use to seed / observe ownership without going through the full
+  /// hydration path.
+  @visibleForTesting
+  ActiveDriverSession? get debugOwnedOperatorMintedSessionRefForTest =>
+      _ownedOperatorMintedSessionRef;
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix v6)
+  ///
+  /// Test-only ownership seed. Sets `_ownedOperatorMintedSessionRef` and
+  /// `activeDriverSessionNotifier.value` to the same reference so the
+  /// exit-guard identity check passes.
+  @visibleForTesting
+  void debugSeedOwnedOperatorMintedSessionForTest(
+    ActiveDriverSession? session,
+  ) {
+    _ownedOperatorMintedSessionRef = session;
+    if (session != null) {
+      activeDriverSessionNotifier.value = session;
+    }
+  }
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix v6)
+  ///
+  /// Test-only entry point that invokes the production
+  /// `_performInPageDriverSwitchMint` code path. The mint call itself is
+  /// stubbed via `debugMintOperatorDriverSessionOverride` so no HTTP runs.
+  /// Returns the future so tests can complete the stub before or after
+  /// awaiting the widget-side resolution.
+  @visibleForTesting
+  Future<void> debugPerformInPageDriverSwitchMintForTest({
+    required DriverProfile driverB,
+  }) {
+    return _performInPageDriverSwitchMint(driverB: driverB);
+  }
+
   DateTime? _lastMeterDebugAt;
   // FARE-ROUNDING-CENTRAL-0_10-1: last €0.10 preview step that was logged, so
   // the [FARE_ROUNDING] preview diagnostic only fires when the rounded step
@@ -2955,6 +3064,44 @@ class _DriverHomePageState extends State<DriverHomePage>
   @override
   void dispose() {
     debugPrint('[MAP][DISPOSE] mounted=$mounted style=$_activeMapStyleUri');
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix v6):
+    // Detach `activeDriverSessionNotifier` FIRST — before any owned-session
+    // clear could write to it. By the time `dispose()` runs, the framework
+    // has already invoked `super.unmount()` on the enclosing Element, which
+    // flips `_lifecycleState` to `defunct`. Any listener that reacts by
+    // calling `setState(() {})` will hit the framework's
+    // `_lifecycleState != _ElementLifecycle.defunct` assertion (the
+    // `mounted` getter is still `true` inside dispose because
+    // `state._element` has not been nulled yet, so an early `mounted`
+    // guard alone is not sufficient). Removing the listener first
+    // guarantees a subsequent notifier write during dispose cannot
+    // rebuild a defunct Element.
+    if (_activeDriverSessionListener != null) {
+      activeDriverSessionNotifier
+          .removeListener(_activeDriverSessionListener!);
+      _activeDriverSessionListener = null;
+    }
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+    // Defensive-only. The primary exit path is
+    // `_attemptBusinessPreviewRouteExit` which already invalidates pending
+    // switches and clears the owned session. `dispose` re-runs the same
+    // ordering as a safety net: invalidate pending switch responses first
+    // (so any late `resolveResponse` becomes a stale-generation drop and
+    // never publishes), then attempt to clear the owned session, and only
+    // then reset the global bearer-busy notifier. A live ride, STOP
+    // teardown or direct-trip finalize still needing the bearer will
+    // cause the clear to skip, leaving the bearer available to the
+    // in-flight reconcile until the ride record is closed by the server.
+    _driverSwitchMintController.invalidatePendingResponses();
+    if (widget.openedFromBusinessHome) {
+      _clearOperatorMintedSessionIfOwned(reason: 'dispose');
+    }
+    // Only publish `false` when no lifecycle operation still needs the
+    // bearer. If a reconcile is still in flight (`_directStopFinalizePending`
+    // == true), the notifier stays true until that reconcile completes and
+    // its own finally-block publishes false. Company-end sites therefore
+    // refuse to clear the bearer while the reconcile still needs it.
+    _publishBearerBusyState();
     // NAV-RIDE-BOUNDARY: dispose invalidates every in-flight style/route owner.
     _hardClearAtRideBoundary(reason: 'dispose', bumpSession: true);
     _markerSelfHealTimer?.cancel();
@@ -2981,10 +3128,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       driversNotifier.removeListener(_driversNotifierListener!);
       _driversNotifierListener = null;
     }
-    if (_activeDriverSessionListener != null) {
-      activeDriverSessionNotifier.removeListener(_activeDriverSessionListener!);
-      _activeDriverSessionListener = null;
-    }
+    // NOTE: `_activeDriverSessionListener` is detached earlier in dispose()
+    // (before `_clearOperatorMintedSessionIfOwned`) to avoid a setState on
+    // the already-defunct Element. See the block at the top of dispose().
     _stopDriverAvailabilityPolling(reason: 'dispose');
     chauffeurShellFrameThemeNotifier.value = null;
     fluxidiPendingPaymentNotifier.removeListener(
@@ -3847,10 +3993,73 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix)
+  ///
+  /// Publishes the current widget-scoped ride/mint lifecycle state to the
+  /// global [operatorMintedBearerInFlightNotifier] so the three company-end
+  /// call sites (company logout, in-app company switch, onboarding intent)
+  /// can refuse to run while the operator-minted bearer is still required
+  /// by a live ride, STOP teardown, direct-trip finalize/reconcile, or an
+  /// in-flight driver-switch mint.
+  ///
+  /// Publishes `false` in standalone driver mode — the notifier is a
+  /// business-preview-only signal.
+  ///
+  /// Called only from explicit state transitions:
+  ///
+  ///   - `initState` (after ownership capture during hydration) — initial
+  ///     publish reflects the just-hydrated state.
+  ///   - ride START setState blocks (`_directRideActive = true` /
+  ///     `_activeTripId = <session>`).
+  ///   - `_stopDirectTrip` early meter-stop setState (covers the case where
+  ///     the reconcile branch is skipped and teardown enter is the next
+  ///     publish site).
+  ///   - `_deterministicStopTeardown` enter/finally.
+  ///   - Reconcile pending enter/exit.
+  ///   - `_performInPageDriverSwitchMint` enter (post-`beginSwitch`) and
+  ///     every exit (publish/drop/fail).
+  ///   - `dispose` (defensive final publish after ownership clear).
+  ///
+  /// It is deliberately NOT called from `build()`. `build()` must remain a
+  /// pure render function and must not mutate global `ValueNotifier` state
+  /// as a side effect of rebuild scheduling — see the corresponding tests
+  /// in `test/main_parts/business_preview_operator_mint_hydration_test.dart`
+  /// and the transition tests in
+  /// `test/main_parts/operator_mint_bearer_busy_notifier_test.dart`.
+  void _publishBearerBusyState() {
+    if (!widget.openedFromBusinessHome) {
+      if (operatorMintedBearerInFlightNotifier.value) {
+        operatorMintedBearerInFlightNotifier.value = false;
+      }
+      return;
+    }
+    final busy =
+        _liveRideActive ||
+        _stopTeardownInProgress ||
+        _directStopFinalizePending ||
+        _driverSwitchMintController.isMinting;
+    if (operatorMintedBearerInFlightNotifier.value != busy) {
+      operatorMintedBearerInFlightNotifier.value = busy;
+    }
+  }
+
   /// Convenience: run the guard, and if blocked emit the standard snackbar
   /// plus a stable diagnostic log line. Returns `true` when the caller may
   /// proceed. Blocked callers must return WITHOUT any state mutation.
   bool _driverRideStartAuthAllowsOrRefuse({required String action}) {
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+    // an in-flight driver-switch mint means the notifier still carries the
+    // OLD driver's operator-minted bearer. Allowing START here would begin
+    // a ride under the wrong driver identity — refuse until the switch
+    // settles (via `resolveResponse`) or is cancelled.
+    if (_driverSwitchMintController.isMinting) {
+      debugPrint(
+        '[RIDE_START][BLOCKED] action=$action reason=switch_mint_in_flight '
+        'business_preview=${widget.openedFromBusinessHome}',
+      );
+      _showDriverSwitchInFlightSnackbar();
+      return false;
+    }
     final decision = _evaluateDriverRideStartAuthDecision();
     if (decision.allow) return true;
     debugPrint(
@@ -3859,6 +4068,33 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
     _showDriverSessionRequiredSnackbar(reason: decision.reason);
     return false;
+  }
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+  /// Localised snackbar shown when the user taps START while an in-page
+  /// driver-switch mint is still in flight. No bearer references appear in
+  /// the message.
+  void _showDriverSwitchInFlightSnackbar() {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 4),
+        content: Text(
+          _tr(
+            nl:
+                'Chauffeurwissel is bezig. Even geduld voordat u een rit start.',
+            en: 'Driver switch in progress. Please wait before starting a ride.',
+            fr:
+                'Changement de chauffeur en cours. Veuillez patienter avant de démarrer une course.',
+            es:
+                'Cambio de conductor en curso. Espere antes de iniciar un viaje.',
+          ),
+        ),
+      ),
+    );
   }
 
   /// DIRECT-RIDE-FINALIZE-ACK-GATE-1: ride stopped but booking finalize is
@@ -4022,6 +4258,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       _directRideKey = identity.directRideKey;
       _directRideActive = true;
     }
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+    // ride START transition — publish bearer-busy=true so the three
+    // company-end call sites refuse until the ride ends.
+    _publishBearerBusyState();
     _logDriverNavDiag(
       tag: 'STREET_RESUME',
       action: 'open_ride',
@@ -4197,6 +4437,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         _waitStartedAt = null;
         _waitElapsed = Duration.zero;
       });
+      // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+      // ride START transition (planned) — publish bearer-busy=true.
+      _publishBearerBusyState();
       _logNavRideBoundary(
         event: NavRideBoundaryEvent.sessionStarted,
         extra: 'reason=planned_ride_start',
@@ -7075,6 +7318,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     _stopTeardownInProgress = true;
     _stopTeardownGeneration += 1;
+    _publishBearerBusyState();
     final generation = _stopTeardownGeneration;
     try {
       final drawerOpen =
@@ -7266,6 +7510,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
     } finally {
       _stopTeardownInProgress = false;
+      _publishBearerBusyState();
     }
   }
 
@@ -8385,6 +8630,13 @@ class _DriverHomePageState extends State<DriverHomePage>
       _directRideActive = false;
       _activeTripId = null;
     }
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+    // early STOP transition — publish bearer-busy=false if no reconcile is
+    // pending and no teardown has started yet. Covers the code path where
+    // the reconcile branch below is skipped (no direct trip id) so the
+    // notifier is not left stale between the meter stop and the deterministic
+    // teardown enter.
+    _publishBearerBusyState();
 
     if (_isWaiting && _waitStartedAt != null) {
       final started = _waitStartedAt!;
@@ -8517,6 +8769,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         // the shared reconcile acknowledgement proves matching trip/booking
         // ids and completed finalize state (no totals; endpoint omits them).
         _directStopFinalizePending = true;
+        _publishBearerBusyState();
         final reconcileOutcome = await _reconcileDirectBookingOnWorker(
           tripId: directTripId,
           expectedBookingId: directBookingId!,
@@ -8524,6 +8777,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         if (isDirectRideReconcileAcknowledged(reconcileOutcome)) {
           directFinalizeAcknowledged = true;
           _directStopFinalizePending = false;
+          _publishBearerBusyState();
           unawaited(_clearDirectTripSession());
           if (stoppedBooking != null) {
             await _completeStoppedBooking(
@@ -8558,6 +8812,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         _directRideKey = null;
         _activeDirectTripId = null;
         _directStopFinalizePending = false;
+        _publishBearerBusyState();
       }
       // When pending/unknown: retain `_activeDirectBookingId`, `_directRideKey`,
       // `_activeDirectTripId` for reconcile — meter stays off via
@@ -9239,6 +9494,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       _waitStartedAt = null;
       _waitElapsed = Duration.zero;
     });
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+    // ride START transition (street/direct) — publish bearer-busy=true.
+    _publishBearerBusyState();
     _logNavRideBoundary(
       event: NavRideBoundaryEvent.sessionStarted,
       extra: 'reason=street_ride_start',
@@ -24003,16 +24261,39 @@ class _DriverHomePageState extends State<DriverHomePage>
         (session.companyId ?? '').trim() == companyId.trim();
   }
 
-  bool _isBusinessPreviewDriverSessionTokenUsable(ActiveDriverSession session) {
+  bool _isBusinessPreviewDriverSessionTokenUsable(
+    ActiveDriverSession session, {
+    DateTime? now,
+  }) {
     final token = (session.driverSessionToken ?? '').trim();
     if (token.isEmpty) return false;
     final expiresRaw = (session.driverSessionExpiresAtUtc ?? '').trim();
     if (expiresRaw.isEmpty) return true;
     final expiresAt = DateTime.tryParse(expiresRaw)?.toUtc();
     if (expiresAt == null) return true;
-    return expiresAt.isAfter(DateTime.now().toUtc());
+    final ref = (now ?? DateTime.now()).toUtc();
+    return expiresAt.isAfter(ref);
   }
 
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix)
+  ///
+  /// Resolves the business-preview session token from active memory only.
+  /// Standalone / pairing / public-login chauffeur tokens are never
+  /// reused for business preview. Operator-minted bearers are preserved
+  /// across the preview hydration IFF ALL of the following hold on the
+  /// current `previous` (in-memory) session:
+  ///
+  ///   - `previous.isOperatorMintedSession`
+  ///   - `previous.driverSessionToken` is non-empty
+  ///   - `previous.driverSessionExpiresAtUtc` parses and is strictly in
+  ///     the future
+  ///   - `previous.driverId` matches the requested driver exactly
+  ///   - `previous.tenantId` matches the requested tenant exactly
+  ///   - `previous.companyId` matches the requested company exactly
+  ///
+  /// The `persisted` argument is deliberately ignored: operator-minted
+  /// bearers are memory-only by contract and must not acquire a future
+  /// restoration path from persistent storage.
   ({String? token, String? tokenExpiryUtc, String source})
   _resolveBusinessPreviewSessionToken({
     required DriverProfile driver,
@@ -24021,11 +24302,28 @@ class _DriverHomePageState extends State<DriverHomePage>
     ActiveDriverSession? previous,
     ActiveDriverSession? persisted,
   }) {
-    // Business preview never borrows standalone chauffeur session tokens.
     debugPrint(
       '[DRIVER_SESSION][SKIP_STANDALONE_VALIDATION] reason=business_preview action=skip_token_reuse',
     );
-    return (token: null, tokenExpiryUtc: null, source: 'none');
+    if (previous == null || !previous.isOperatorMintedSession) {
+      return (token: null, tokenExpiryUtc: null, source: 'none');
+    }
+    if (!_isBusinessPreviewDriverSessionTokenUsable(previous)) {
+      return (token: null, tokenExpiryUtc: null, source: 'none');
+    }
+    if (!_businessPreviewSessionIdentityMatches(
+      session: previous,
+      driverId: driver.id,
+      tenantId: resolvedTenantId,
+      companyId: resolvedCompanyId,
+    )) {
+      return (token: null, tokenExpiryUtc: null, source: 'none');
+    }
+    return (
+      token: previous.driverSessionToken,
+      tokenExpiryUtc: previous.driverSessionExpiresAtUtc,
+      source: 'operator_mint_preserved',
+    );
   }
 
   Future<ActiveDriverSession?> _loadPersistedDriverSessionForPreview({
@@ -24108,6 +24406,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     debugPrint(
       '[DRIVER_PREVIEW][TOKEN] reason=$reason token_present=$tokenPresent source=${resolvedToken.source}',
     );
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+    // When `_resolveBusinessPreviewSessionToken` preserved an operator-minted
+    // bearer, the rebuilt session must remain operator-minted so
+    // `isOperatorMintedSession` stays true, `_hydrateBusinessPreviewDriverSession`
+    // routes to `setOperatorMintedDriverSessionInMemory`, and downstream code
+    // (e.g. `_clearOperatorMintedSessionIfOwned`) recognises the ownership.
+    final preservedOperatorMint = resolvedToken.source == 'operator_mint_preserved';
+    final effectiveLinkMethod = preservedOperatorMint
+        ? kOperatorMintDriverLinkMethod
+        : kCompanyAdminDriverViewLinkMethod;
     return ActiveDriverSession(
       driverId: driver.id.trim(),
       employeeNumber: driver.employeeNumber.trim(),
@@ -24122,7 +24430,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       driverPhotoUrl: portraitUrl.isEmpty ? null : portraitUrl,
       driverSessionToken: resolvedToken.token,
       driverSessionExpiresAtUtc: resolvedToken.tokenExpiryUtc,
-      linkMethod: kCompanyAdminDriverViewLinkMethod,
+      linkMethod: effectiveLinkMethod,
     );
   }
 
@@ -24158,7 +24466,23 @@ class _DriverHomePageState extends State<DriverHomePage>
       reason: reason,
       photoOverride: photoOverride,
     );
-    DriverSessionStore.instance.setBusinessDriverViewSessionInMemory(built);
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+    // Route to the operator-mint setter when the built session preserved the
+    // operator-minted bearer; capture reference-identity ownership so the
+    // exit guard / dispose helper can safely clear only this widget's own
+    // session and never a newer B/C session.
+    if (built.isOperatorMintedSession) {
+      DriverSessionStore.instance.setOperatorMintedDriverSessionInMemory(built);
+      _ownedOperatorMintedSessionRef = built;
+    } else {
+      DriverSessionStore.instance.setBusinessDriverViewSessionInMemory(built);
+    }
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+    // Init/ownership-capture transition. Hydration has just captured (or
+    // released) ownership; publish the current widget-scoped ride/mint
+    // state so the notifier reflects the just-hydrated baseline (typically
+    // busy=false because no ride/teardown/finalize/mint is in flight).
+    _publishBearerBusyState();
     return built;
   }
 
@@ -24269,15 +24593,491 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   void _goBackToBusinessPageFromDashboard() {
-    setAppRole(AppRole.companyAdmin);
-    final nav = Navigator.of(context);
-    if (nav.canPop()) {
-      nav.pop();
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+    // Route the explicit "Back to Business" action through the shared exit
+    // guard so the same rules apply as for system back (`PopScope`) and the
+    // defensive `dispose` path.
+    _attemptBusinessPreviewRouteExit(source: 'back_to_business_button');
+  }
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix)
+  ///
+  /// Shared business-preview exit guard used by the explicit "Back to
+  /// Business" action and by the `PopScope` system-back callback. Consults
+  /// the DriverSwitchMintController exit-request decision so:
+  ///
+  ///   - Exit is blocked (with a localised finish-ride snackbar and no
+  ///     state mutation) while a live ride, STOP teardown, or direct-trip
+  ///     finalize is active.
+  ///   - When only an idle pending switch is in flight, the controller
+  ///     invalidates every pending response first, transitions to idle,
+  ///     and then permits the exit. The still-owned A session is cleared
+  ///     via [_clearOperatorMintedSessionIfOwned] before navigating.
+  ///   - When both the controller and the ride/teardown/finalize flags
+  ///     are idle, the owned A session is cleared and the route pops.
+  ///
+  /// Only called when `widget.openedFromBusinessHome == true`. For
+  /// standalone driver mode this is a no-op and the pop proceeds normally.
+  void _attemptBusinessPreviewRouteExit({required String source}) {
+    if (!widget.openedFromBusinessHome) {
+      final nav = Navigator.of(context);
+      if (nav.canPop()) {
+        nav.pop();
+      }
       return;
     }
-    nav.pushAndRemoveUntil(
-      MaterialPageRoute<void>(builder: (_) => const BusinessHomePage()),
-      (route) => false,
+    final decision = _driverSwitchMintController.resolveExitRequest(
+      liveRideActive: _liveRideActive,
+      stopTeardownInProgress: _stopTeardownInProgress,
+      directStopFinalizePending: _directStopFinalizePending,
+      ownsOperatorMintedSession: _ownedOperatorMintedSessionRef != null,
+    );
+    switch (decision) {
+      case BusinessPreviewExitBlocked(reason: final r):
+        debugPrint(
+          '[DRIVER_VIEW_ORIGIN][EXIT_BLOCKED] source=$source reason=${r.name}',
+        );
+        _showBusinessPreviewExitBlockedSnackbar(r);
+        return;
+      case BusinessPreviewExitAllowed(
+        invalidatedPendingSwitch: final inv,
+        shouldClearOwnedSession: final shouldClear,
+      ):
+        debugPrint(
+          '[DRIVER_VIEW_ORIGIN][EXIT_ALLOWED] source=$source '
+          'invalidated_switch=$inv clear_owned=$shouldClear',
+        );
+        if (shouldClear) {
+          _clearOperatorMintedSessionIfOwned(reason: 'route_exit');
+        }
+        setAppRole(AppRole.companyAdmin);
+        final nav = Navigator.of(context);
+        if (nav.canPop()) {
+          nav.pop();
+          return;
+        }
+        nav.pushAndRemoveUntil(
+          MaterialPageRoute<void>(builder: (_) => const BusinessHomePage()),
+          (route) => false,
+        );
+        return;
+    }
+  }
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix)
+  ///
+  /// Clears the in-memory operator-minted driver session iff this widget
+  /// still owns it — that is, `_ownedOperatorMintedSessionRef` is
+  /// reference-identical to `activeDriverSessionNotifier.value`. The
+  /// reference-identity check guarantees that a stale widget can never
+  /// clear a newer B/C session published atomically after a driver
+  /// switch.
+  ///
+  /// Refuses to clear when a lifecycle operation still needs the bearer
+  /// (`_liveRideActive`, `_stopTeardownInProgress`,
+  /// `_directStopFinalizePending`) or when the controller has not yet
+  /// been invalidated (`isMinting || pendingGeneration != 0`). Callers
+  /// (`_attemptBusinessPreviewRouteExit`, `dispose`) are responsible for
+  /// invalidating the controller first so the ordering constraint
+  /// (invalidate → idle → clear) holds.
+  ///
+  /// Standalone / pairing / public-login sessions are never touched.
+  bool _clearOperatorMintedSessionIfOwned({required String reason}) {
+    final owned = _ownedOperatorMintedSessionRef;
+    if (owned == null) return false;
+    final current = activeDriverSessionNotifier.value;
+    if (!identical(current, owned)) {
+      debugPrint(
+        '[DRIVER_SESSION][OWNED_CLEAR][SKIP] reason=$reason cause=not_owned',
+      );
+      _ownedOperatorMintedSessionRef = null;
+      return false;
+    }
+    if (!current!.isOperatorMintedSession) {
+      _ownedOperatorMintedSessionRef = null;
+      return false;
+    }
+    if (_liveRideActive ||
+        _stopTeardownInProgress ||
+        _directStopFinalizePending) {
+      debugPrint(
+        '[DRIVER_SESSION][OWNED_CLEAR][SKIP] reason=$reason cause=ride_in_flight',
+      );
+      return false;
+    }
+    if (_driverSwitchMintController.isMinting ||
+        _driverSwitchMintController.pendingGeneration != 0) {
+      debugPrint(
+        '[DRIVER_SESSION][OWNED_CLEAR][SKIP] reason=$reason cause=switch_pending',
+      );
+      return false;
+    }
+    debugPrint(
+      '[DRIVER_SESSION][OWNED_CLEAR] reason=$reason driver=${_maskBridgeDriverIdGlobal(current.driverId)}',
+    );
+    activeDriverSessionNotifier.value = null;
+    _ownedOperatorMintedSessionRef = null;
+    return true;
+  }
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+  /// Localised snackbar shown when the shared exit guard refuses a route
+  /// exit because a live ride, STOP teardown, or direct-trip finalize is
+  /// still active. No bearer references appear in the message.
+  void _showBusinessPreviewExitBlockedSnackbar(
+    BusinessPreviewExitBlockReason reason,
+  ) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger.hideCurrentSnackBar();
+    final message = switch (reason) {
+      BusinessPreviewExitBlockReason.liveRide => _tr(
+        nl: 'Rond de rit eerst af voordat u de chauffeursweergave verlaat.',
+        en: 'Finish the ride before leaving the driver view.',
+        fr: 'Terminez la course avant de quitter la vue chauffeur.',
+        es: 'Finalice el viaje antes de salir de la vista de conductor.',
+      ),
+      BusinessPreviewExitBlockReason.stopTeardown => _tr(
+        nl: 'Rit wordt afgesloten. Even geduld.',
+        en: 'Ride is closing. Please wait a moment.',
+        fr: 'La course se termine. Veuillez patienter.',
+        es: 'El viaje se está cerrando. Espere un momento.',
+      ),
+      BusinessPreviewExitBlockReason.directFinalize => _tr(
+        nl:
+            'De afrekening wordt nog afgerond. Even geduld voordat u de weergave verlaat.',
+        en: 'Finalization is still in progress. Please wait a moment.',
+        fr: 'La finalisation est encore en cours. Veuillez patienter.',
+        es: 'La finalización sigue en curso. Espere un momento.',
+      ),
+    };
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 4),
+        content: Text(message),
+      ),
+    );
+  }
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix)
+  ///
+  /// In-page A → B driver-switch mint. Preconditions:
+  ///
+  ///   - `widget.openedFromBusinessHome == true`.
+  ///   - A live company session with a non-empty bearer.
+  ///   - A resolvable business-preview scope.
+  ///
+  /// Concurrency invariants:
+  ///
+  ///   - The A session and A selection (`_businessPreviewDriverId`) remain
+  ///     paired for the entire duration of the HTTP call. No B state is
+  ///     mutated until publication.
+  ///   - Latest-wins gating via
+  ///     [DriverSwitchMintController.resolveResponse].
+  ///   - After `await`, the live company session, live scope, and
+  ///     controller generation are re-read; any divergence marks the
+  ///     response stale and retains A completely.
+  ///   - On success the transition to B is a single synchronous statement
+  ///     sequence in [_atomicallyPublishBAsCurrent] with no `await` in
+  ///     between; a persistence failure afterwards does NOT corrupt the
+  ///     valid B session.
+  Future<void> _performInPageDriverSwitchMint({
+    required DriverProfile driverB,
+  }) async {
+    if (!widget.openedFromBusinessHome) return;
+    final scope = _activeBusinessPreviewScope();
+    if (scope == null) {
+      _showOperatorMintFailureSnackbarForSwitch(reason: 'scope_unresolved');
+      return;
+    }
+    final capturedCompanySession = activeCompanySessionNotifier.value;
+    final companyToken =
+        (capturedCompanySession?.companySessionToken ?? '').trim();
+    if (capturedCompanySession == null || companyToken.isEmpty) {
+      _showOperatorMintFailureSnackbarForSwitch(reason: 'unauthorized');
+      return;
+    }
+    debugPrint(
+      '[DRIVER_SWITCH_MINT][BEGIN] driver=${_maskBridgeDriverIdGlobal(driverB.id)} tenant=${_maskBridgeDriverIdGlobal(scope.tenantId)} company=${_maskBridgeDriverIdGlobal(scope.companyId)}',
+    );
+    final begin = _driverSwitchMintController.beginSwitch(
+      driverB: driverB,
+      companySessionToken: companyToken,
+      bookingBaseUrl: kBookingBaseUrl,
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+    );
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+    // mint ENTER — publish bearer-busy=true so company-end call sites
+    // refuse until the mint settles (publish/drop/fail). The controller's
+    // `isMinting` flag is authoritative and is included in
+    // `_publishBearerBusyState`'s busy calculation.
+    if (mounted) setState(() {});
+    _publishBearerBusyState();
+    final outcome = await begin.outcomeFuture;
+    if (!mounted) {
+      // Widget disposed while the mint was in flight — nothing to publish.
+      // The controller was already invalidated by dispose(); this response
+      // is dropped without any state mutation.
+      return;
+    }
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix v6):
+    // STALE-GENERATION GATE MUST RUN FIRST — before company / scope /
+    // identity checks. A late response for a superseded generation (e.g.
+    // B settled while C is now the pending switch) must not touch pending
+    // state, must not `invalidatePendingResponses` (which would wipe C's
+    // pending slot), and must not update the notifier by way of C. C
+    // still owns the pending slot (`isMinting == true`), so
+    // `_publishBearerBusyState` continues to broadcast busy=true.
+    if (begin.capturedGeneration != _driverSwitchMintController.generation) {
+      debugPrint(
+        '[DRIVER_SWITCH_MINT][DROP] reason=stale_generation_pre_scope '
+        'captured=${begin.capturedGeneration} '
+        'current=${_driverSwitchMintController.generation}',
+      );
+      // No pending mutation; no invalidation; notifier reflects the
+      // still-pending superseding switch.
+      _publishBearerBusyState();
+      setState(() {});
+      return;
+    }
+    // Live-scope revalidation is only relevant for the CURRENT (non-stale)
+    // response. The generation gate above guarantees this response is the
+    // authoritative one for the pending switch.
+    final currentCompanySession = activeCompanySessionNotifier.value;
+    if (!identical(currentCompanySession, capturedCompanySession)) {
+      debugPrint(
+        '[DRIVER_SWITCH_MINT][DROP] reason=company_session_changed',
+      );
+      // Post-await company mismatch on the CURRENT generation: invalidate
+      // this pending switch so START is not left disabled by a stranded
+      // `isMinting` flag. Then publish bearer-busy so the notifier
+      // reflects the just-cleared mint state (busy=false unless a
+      // ride/teardown/finalize is active).
+      _driverSwitchMintController.invalidatePendingResponses();
+      _publishBearerBusyState();
+      setState(() {});
+      return;
+    }
+    final currentScope = _activeBusinessPreviewScope();
+    if (currentScope == null ||
+        currentScope.tenantId != scope.tenantId ||
+        currentScope.companyId != scope.companyId) {
+      debugPrint(
+        '[DRIVER_SWITCH_MINT][DROP] reason=scope_changed_during_mint',
+      );
+      // Post-await scope mismatch on the CURRENT generation: same
+      // invalidation as company mismatch above.
+      _driverSwitchMintController.invalidatePendingResponses();
+      _publishBearerBusyState();
+      setState(() {});
+      return;
+    }
+    final decision = _driverSwitchMintController.resolveResponse(
+      capturedGeneration: begin.capturedGeneration,
+      outcome: outcome,
+    );
+    switch (decision) {
+      case DriverSwitchMintDropStale():
+        debugPrint(
+          '[DRIVER_SWITCH_MINT][DROP] reason=stale_generation captured=${begin.capturedGeneration}',
+        );
+        // `resolveResponse` does not clear pending state on a stale drop
+        // (a superseding switch is still in flight and owns the pending
+        // slot). The notifier remains busy=true because that superseding
+        // switch's `isMinting` is now the authoritative signal.
+        _publishBearerBusyState();
+        setState(() {});
+        return;
+      case DriverSwitchMintFailed(reason: final r, httpStatus: final http):
+        debugPrint(
+          '[DRIVER_SWITCH_MINT][FAIL] reason=$r http=${http ?? -1}',
+        );
+        // `resolveResponse` already cleared pending state on failure; the
+        // notifier now sees `isMinting == false` and publishes false
+        // unless a ride/teardown/finalize is active.
+        _showOperatorMintFailureSnackbarForSwitch(reason: r);
+        _publishBearerBusyState();
+        setState(() {});
+        return;
+      case DriverSwitchMintPublish(
+        minted: final minted,
+        requestedDriverProfile: final profile,
+        requestedTenantId: final tId,
+        requestedCompanyId: final cId,
+      ):
+        // `capturedCompanySession` was non-null at request begin, and the
+        // `identical(...)` check above proves it is still current. Use the
+        // captured reference (non-null) so the compiler does not require
+        // an unnecessary null-cast on `currentCompanySession`.
+        _atomicallyPublishBAsCurrent(
+          minted: minted,
+          driverProfile: profile,
+          tenantId: tId,
+          companyId: cId,
+          companySession: capturedCompanySession,
+        );
+        // Mint EXIT (publish path) — pending state was cleared by
+        // `resolveResponse`; publish bearer-busy so notifier reflects new
+        // state (busy=false unless ride/teardown/finalize is active).
+        _publishBearerBusyState();
+        debugPrint(
+          '[DRIVER_SWITCH_MINT][PUBLISHED] driver=${_maskBridgeDriverIdGlobal(minted.driverId)}',
+        );
+    }
+    // Post-publish (best-effort) — persistence and refreshes. A failure
+    // here does NOT undo the atomic transition above.
+    final savedScope = _activeBusinessPreviewScope();
+    if (savedScope != null) {
+      try {
+        await _saveBusinessDriverPreviewFromProfileGlobal(
+          driverB,
+          tenantId: savedScope.tenantId,
+          companyId: savedScope.companyId,
+        );
+        debugPrint(
+          '[DRIVER_VIEW_ORIGIN][PREVIEW_SAVE] source=business_home driver=${_maskBridgeDriverIdGlobal(driverB.id)}',
+        );
+      } catch (e) {
+        debugPrint(
+          '[DRIVER_VIEW_ORIGIN][PREVIEW_SAVE_FAIL] driver=${_maskBridgeDriverIdGlobal(driverB.id)} err=${e.runtimeType}',
+        );
+      }
+    }
+    _logCurrentDriverOrigin(reason: 'preview_switch_published');
+    if (!mounted) return;
+    _reconcileDriverAvailability(
+      source: 'local',
+      reason: 'preview_switch',
+      incomingStatus: normalizeDriverAvailabilityState(
+        driverB.availabilityStatus,
+        fallback: 'available',
+      ),
+    );
+    unawaited(
+      _refreshDriverAvailabilityFromBackend(
+        reason: 'preview_switch',
+        force: true,
+      ),
+    );
+    _logRidesHubVisibleCounts(source: 'preview_picker_selected');
+    unawaited(
+      _refreshBookings(force: true, trigger: 'preview_picker_selected'),
+    );
+  }
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix)
+  ///
+  /// Atomic synchronous publication of a successful B mint. Runs with no
+  /// `await` between the local-selection update and the notifier
+  /// publication so no observable intermediate state exists (no
+  /// A-metadata + B-token, no B-metadata + A-token, no B-metadata + no
+  /// token). The `minted` values have already been validated by
+  /// [validateMintedScope] before this method is called; the scope tuple
+  /// is guaranteed non-empty and exactly matches the requested scope.
+  void _atomicallyPublishBAsCurrent({
+    required OperatorMintedDriverSession minted,
+    required DriverProfile driverProfile,
+    required String tenantId,
+    required String companyId,
+    required ActiveCompanySession companySession,
+  }) {
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+    final session = ActiveDriverSession(
+      driverId: minted.driverId,
+      employeeNumber: driverProfile.employeeNumber,
+      fullName: minted.driverName ?? driverProfile.fullName,
+      phone: driverProfile.phone,
+      loggedInAt: minted.issuedAtUtc ?? nowIso,
+      updatedAt: nowIso,
+      tenantId: tenantId,
+      companyId: companyId,
+      companyCode: companySession.companyCode,
+      assignedVehicleId: (minted.assignedVehicleId ?? '').trim().isEmpty
+          ? null
+          : minted.assignedVehicleId!.trim(),
+      driverPhotoUrl: driverProfile.publicPortraitUrl,
+      driverSessionToken: minted.driverSessionToken,
+      driverSessionExpiresAtUtc: minted.driverSessionExpiresAtUtc,
+      linkMethod: kOperatorMintDriverLinkMethod,
+      expiresAt: minted.driverSessionExpiresAtUtc,
+    );
+    _businessPreviewDriverId = driverProfile.id.trim();
+    DriverSessionStore.instance.setOperatorMintedDriverSessionInMemory(session);
+    _ownedOperatorMintedSessionRef = session;
+    if (mounted) setState(() {});
+  }
+
+  /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+  /// Localised snackbar shown when [_performInPageDriverSwitchMint] fails.
+  /// Distinguishes the actionable classes (unauthorized, forbidden,
+  /// driver_not_found, driver_inactive, scope_mismatch_*, empty_token,
+  /// invalid_expiry, expired_token, timeout / network). No bearer values
+  /// appear in the message.
+  void _showOperatorMintFailureSnackbarForSwitch({required String reason}) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger.hideCurrentSnackBar();
+    String message;
+    switch (reason) {
+      case 'unauthorized':
+        message = _tr(
+          nl:
+              'Bedrijfssessie is verlopen. Meld opnieuw aan om van chauffeur te wisselen.',
+          en:
+              'Company session expired. Sign in again to switch drivers.',
+          fr:
+              'Session entreprise expirée. Reconnectez-vous pour changer de chauffeur.',
+          es:
+              'La sesión de empresa ha caducado. Inicie sesión de nuevo para cambiar de conductor.',
+        );
+      case 'forbidden':
+        message = _tr(
+          nl: 'Geen toegang tot deze chauffeur voor dit bedrijf.',
+          en: 'No access to this driver for this company.',
+          fr: 'Aucun accès à ce chauffeur pour cette entreprise.',
+          es: 'Sin acceso a este conductor para esta empresa.',
+        );
+      case 'driver_not_found':
+      case 'driver_inactive':
+        message = _tr(
+          nl: 'Deze chauffeur is niet actief.',
+          en: 'This driver is not active.',
+          fr: 'Ce chauffeur n\'est pas actif.',
+          es: 'Este conductor no está activo.',
+        );
+      case 'timeout':
+      case 'network':
+        message = _tr(
+          nl: 'Geen verbinding. Probeer opnieuw.',
+          en: 'No connection. Please try again.',
+          fr: 'Pas de connexion. Veuillez réessayer.',
+          es: 'Sin conexión. Vuelva a intentarlo.',
+        );
+      case 'scope_mismatch_driver':
+      case 'scope_mismatch_tenant':
+      case 'scope_mismatch_company':
+      case 'empty_token':
+      case 'invalid_expiry':
+      case 'expired_token':
+      case 'company_session_changed':
+      case 'scope_changed_during_mint':
+      case 'scope_unresolved':
+      default:
+        message = _tr(
+          nl: 'Chauffeurweergave kon niet worden geopend.',
+          en: 'Could not open the driver view.',
+          fr: 'Impossible d\'ouvrir la vue chauffeur.',
+          es: 'No se pudo abrir la vista de conductor.',
+        );
+    }
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 4),
+        content: Text(message),
+      ),
     );
   }
 
@@ -24571,43 +25371,12 @@ class _DriverHomePageState extends State<DriverHomePage>
       '[DRIVER_OWNER_BRIDGE][SELECT] driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)} reason=manual_preview',
     );
     if (widget.openedFromBusinessHome) {
-      _businessPreviewDriverId = selectedDriver.id.trim();
-      activeDriverSessionNotifier.value =
-          await _hydrateBusinessPreviewDriverSession(
-            driver: selectedDriver,
-            reason: 'preview_switch',
-          );
-      final scope = _activeBusinessPreviewScope();
-      if (scope != null) {
-        await _saveBusinessDriverPreviewFromProfileGlobal(
-          selectedDriver,
-          tenantId: scope.tenantId,
-          companyId: scope.companyId,
-        );
-        debugPrint(
-          '[DRIVER_VIEW_ORIGIN][PREVIEW_SAVE] source=business_home driver=${_maskBridgeDriverIdGlobal(selectedDriver.id)}',
-        );
-      }
-      _logCurrentDriverOrigin(reason: 'preview_save_applied');
-      if (mounted) setState(() {});
-      _reconcileDriverAvailability(
-        source: 'local',
-        reason: 'preview_switch',
-        incomingStatus: normalizeDriverAvailabilityState(
-          selectedDriver.availabilityStatus,
-          fallback: 'available',
-        ),
-      );
-      unawaited(
-        _refreshDriverAvailabilityFromBackend(
-          reason: 'preview_switch',
-          force: true,
-        ),
-      );
-      _logRidesHubVisibleCounts(source: 'preview_picker_selected');
-      unawaited(
-        _refreshBookings(force: true, trigger: 'preview_picker_selected'),
-      );
+      // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+      // The A → B switch runs through the DriverSwitchMintController state
+      // machine so the OLD driver's bearer/selection remain paired while the
+      // mint is in flight, and B is only published atomically after strict
+      // scope/token/expiry validation plus live-company-scope revalidation.
+      await _performInPageDriverSwitchMint(driverB: selectedDriver);
       return;
     } else {
       await DriverSessionStore.instance.saveFromDriverProfile(selectedDriver);
@@ -27966,6 +28735,15 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   @override
   Widget build(BuildContext context) {
+    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+    // `build()` must NOT publish `operatorMintedBearerInFlightNotifier`.
+    // The global lifecycle notifier is updated only at explicit state
+    // transitions (initState/hydration, ride START/STOP, teardown
+    // enter/finally, reconcile enter/exit, mint enter/exit, dispose).
+    // Mutating a `ValueNotifier` from `build()` couples render scheduling
+    // to global state and can leave the notifier `true` after unmount or
+    // stale-response drops. See `_publishBearerBusyState` doc comment for
+    // the exhaustive transition list.
     final now = DateTime.now();
     final lastBuildLog = _lastDriverBuildLogAt;
     if (lastBuildLog == null || now.difference(lastBuildLog).inSeconds >= 5) {
@@ -28226,7 +29004,20 @@ class _DriverHomePageState extends State<DriverHomePage>
         layout: cockpitControlsLayout,
       );
     }
-    return Scaffold(
+    return PopScope(
+      // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+      // In business-preview mode, system back is routed through the shared
+      // exit guard so it blocks during live ride / STOP teardown / direct
+      // finalize, invalidates a pending switch before allowing the pop,
+      // and clears the owned operator-minted session before navigating.
+      // Standalone driver mode retains the default pop behaviour.
+      canPop: !widget.openedFromBusinessHome,
+      onPopInvokedWithResult: (bool didPop, Object? _) {
+        if (didPop) return;
+        if (!widget.openedFromBusinessHome) return;
+        _attemptBusinessPreviewRouteExit(source: 'pop_scope_system_back');
+      },
+      child: Scaffold(
       key: _scaffoldKey,
       // NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 1): fully
       // opaque Fluxidi root surface. This driver page is pushed OVER the
@@ -28623,6 +29414,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         ],
       ),
       ),
+    ),
     );
   }
 

@@ -207,6 +207,7 @@ part 'main_parts/ride_receipt_body_state.dart';
 part 'main_parts/business_home_page_state.dart';
 part 'main_parts/role_entry_page.dart';
 part 'main_parts/driver_home_page_state.dart';
+part 'main_parts/driver_switch_mint_controller.dart';
 part 'main_parts/company_driver_management_page_state.dart';
 part 'main_parts/customer_onboarding_page.dart';
 part 'main_parts/trip_history_receipt_helpers.dart';
@@ -1336,6 +1337,36 @@ Future<void> _runCompanyRelinkActivationFlow(BuildContext context) async {
 }
 
 Future<void> _switchCompanyFromRecoveryDialog(BuildContext context) async {
+  // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
+  // Refuse the recovery-dialog company switch while a live ride, STOP
+  // teardown or direct-trip finalize/reconcile still requires the
+  // operator-minted driver bearer.
+  if (operatorMintedBearerInFlightNotifier.value) {
+    debugPrint(
+      '[COMPANY_END][BLOCKED] path=recovery_dialog_switch cause=operator_bearer_in_flight',
+    );
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger != null) {
+      messenger.hideCurrentSnackBar();
+      final language = appLanguageNotifier.value;
+      final message = const LocalizedText(
+        nl: 'Rond de rit eerst af voordat u van bedrijf wisselt.',
+        en: 'Finish the ride before switching companies.',
+        fr: 'Terminez la course avant de changer d\'entreprise.',
+        es: 'Finalice el viaje antes de cambiar de empresa.',
+      ).of(language);
+      messenger.showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 4),
+          content: Text(message),
+        ),
+      );
+    }
+    return;
+  }
+  DriverSessionStore.instance.clearOperatorMintedSessionOnCompanyEnd(
+    reason: 'recovery_dialog_switch_company',
+  );
   await CompanySessionStore.instance.clearLocalCompanyState();
   if (!context.mounted) return;
   Navigator.of(context).pushAndRemoveUntil(
