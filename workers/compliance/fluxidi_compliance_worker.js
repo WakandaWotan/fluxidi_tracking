@@ -1148,7 +1148,27 @@ function pathValue(root, path) {
 }
 
 async function handleRecent(request, url, env, origin) {
-  const authError = ensureAuthorized(request, env);
+  /* CHIRON-P0-2A: parse tenant/company from the URL BEFORE authenticating so
+   * we can accept either a direct compliance admin bearer OR a scoped
+   * internal-proxy call from the booking worker. `ensureAuthorizedOrInternalProxy`
+   * requires the case-preserved scope (matching the booking-worker's
+   * x-fluxidi-proxy-* headers), while KV prefix reads use the lower-cased
+   * `safeSegment` value below. */
+  const tenant = parseRequiredQuerySegment(url, "tenant_id");
+  if (tenant.error) {
+    return jsonResponse({ ok: false, error: tenant.error }, 400, origin);
+  }
+  const company = parseRequiredQuerySegment(url, "company_id");
+  if (company.error) {
+    return jsonResponse({ ok: false, error: company.error }, 400, origin);
+  }
+  const tenantIdForScope = cleanText(url.searchParams.get("tenant_id"), 128);
+  const companyIdForScope = cleanText(url.searchParams.get("company_id"), 128);
+
+  const authError = ensureAuthorizedOrInternalProxy(request, env, {
+    tenantId: tenantIdForScope,
+    companyId: companyIdForScope,
+  });
   if (authError) return authError;
 
   if (!env || !env.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.list !== "function") {
@@ -1162,14 +1182,6 @@ async function handleRecent(request, url, env, origin) {
     );
   }
 
-  const tenant = parseRequiredQuerySegment(url, "tenant_id");
-  if (tenant.error) {
-    return jsonResponse({ ok: false, error: tenant.error }, 400, origin);
-  }
-  const company = parseRequiredQuerySegment(url, "company_id");
-  if (company.error) {
-    return jsonResponse({ ok: false, error: company.error }, 400, origin);
-  }
   const limit = parseRecentLimit(url);
   if (limit.error) {
     return jsonResponse({ ok: false, error: limit.error }, 400, origin);
@@ -2234,7 +2246,27 @@ async function handleChironDryrunRecent(request, url, env, origin) {
 }
 
 async function handleChironScoreSummary(request, url, env, origin) {
-  const authError = ensureAuthorized(request, env);
+  /* CHIRON-P0-2A: parse tenant/company from the URL BEFORE authenticating so
+   * ensureAuthorizedOrInternalProxy can enforce that the internal-proxy
+   * scope header matches this handler's exact scope. The auth check uses
+   * the case-preserved cleanText values (matching the booking-worker
+   * x-fluxidi-proxy-* headers); KV prefix reads below use the lower-cased
+   * segment values. */
+  const tenant = parseRequiredQuerySegment(url, "tenant_id");
+  if (tenant.error) {
+    return jsonResponse({ ok: false, error: tenant.error }, 400, origin);
+  }
+  const company = parseRequiredQuerySegment(url, "company_id");
+  if (company.error) {
+    return jsonResponse({ ok: false, error: company.error }, 400, origin);
+  }
+  const tenantIdForScope = cleanText(url.searchParams.get("tenant_id"), 128);
+  const companyIdForScope = cleanText(url.searchParams.get("company_id"), 128);
+
+  const authError = ensureAuthorizedOrInternalProxy(request, env, {
+    tenantId: tenantIdForScope,
+    companyId: companyIdForScope,
+  });
   if (authError) return authError;
 
   if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.list !== "function") {
@@ -2246,15 +2278,6 @@ async function handleChironScoreSummary(request, url, env, origin) {
       500,
       origin,
     );
-  }
-
-  const tenant = parseRequiredQuerySegment(url, "tenant_id");
-  if (tenant.error) {
-    return jsonResponse({ ok: false, error: tenant.error }, 400, origin);
-  }
-  const company = parseRequiredQuerySegment(url, "company_id");
-  if (company.error) {
-    return jsonResponse({ ok: false, error: company.error }, 400, origin);
   }
 
   const sinceParsed = parseOptionalIsoQueryMs(url, "since");
@@ -7218,24 +7241,16 @@ function _chironExtractReadinessRequestBody(method, parsedBody, url) {
 }
 
 async function handleChironReadinessReport(request, url, env, origin) {
-  const authError = ensureAuthorized(request, env);
-  if (authError) return authError;
-
   if (request.method !== "GET" && request.method !== "POST") {
     return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
   }
 
-  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.list !== "function") {
-    return jsonResponse(
-      {
-        ok: false,
-        error: "Compliance storage is not configured (missing COMPLIANCE_KV binding).",
-      },
-      500,
-      origin,
-    );
-  }
-
+  /* CHIRON-P0-2A: parse the request body / URL scope BEFORE authenticating
+   * so ensureAuthorizedOrInternalProxy can enforce that the internal-proxy
+   * scope header matches. Content-Type + body-shape validation stays where
+   * it was; only the auth call is moved. Storage-not-configured is reported
+   * only after auth so an unauthenticated caller cannot fingerprint
+   * environment health. */
   let parsedBody = null;
   if (request.method === "POST") {
     if (!requireJsonRequest(request)) {
@@ -7256,6 +7271,23 @@ async function handleChironReadinessReport(request, url, env, origin) {
   const scope = parseChironExportScopeFromBody(body);
   if (scope.error) {
     return jsonResponse({ ok: false, error: scope.error }, 400, origin);
+  }
+
+  const authError = ensureAuthorizedOrInternalProxy(request, env, {
+    tenantId: scope.tenantId,
+    companyId: scope.companyId,
+  });
+  if (authError) return authError;
+
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.list !== "function") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "Compliance storage is not configured (missing COMPLIANCE_KV binding).",
+      },
+      500,
+      origin,
+    );
   }
 
   const limitParsed = parseChironExportLimit(body.limit);

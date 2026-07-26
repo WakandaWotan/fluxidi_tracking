@@ -89,6 +89,9 @@ import {
   CHIRON_CONFIG_TEST_CREDENTIALS_PATH,
   CHIRON_CONFIG_TEST_CREDENTIALS_CLEAR_PATH,
   CHIRON_CONNECTION_TEST_PATH,
+  CHIRON_READINESS_PATH,
+  CHIRON_SCORE_SUMMARY_PATH,
+  COMPLIANCE_EVENTS_RECENT_PATH,
   CHIRON_INTERNAL_PROXY_MODE,
   _proxyChironConfigStatusToComplianceWorker,
 } from "./modules/chiron_bridge.js";
@@ -37931,6 +37934,114 @@ export default {
           body: proxyBody,
           compliancePath: CHIRON_CONNECTION_TEST_PATH,
         });
+      }
+
+      /* CHIRON-P0-2A — read-only compliance/readiness proxy routes.
+       *
+       * These three routes were previously only reachable with a direct
+       * compliance admin bearer. The booking worker now authenticates them
+       * with a company-owner session (or the legacy platform admin token for
+       * internal tooling) and forwards through the internal proxy binding
+       * with the caller's exact tenant/company scope. The compliance worker
+       * enforces the same scope on its side and filters every KV read by it.
+       *
+       * Destructive routes (reset compliance events, testflow reset) are
+       * intentionally NOT exposed to company-owner sessions here.
+       */
+
+      if (url.pathname === CHIRON_READINESS_PATH) {
+        if (request.method !== "POST" && request.method !== "GET") {
+          return json({ ok: false, error: "Method Not Allowed" }, 405);
+        }
+        const body =
+          request.method === "POST" ? await safeJson(request) : null;
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_CHIRON_READINESS_POST",
+        });
+        if (!authScope.ok) return authScope.response;
+        if (body && typeof body === "object" && !Array.isArray(body)) {
+          const bodyScopeCheck = _validateSettingsPayloadScope(
+            body,
+            authScope.explicitScope,
+          );
+          if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
+        }
+        const baseBody =
+          body && typeof body === "object" && !Array.isArray(body) ? body : {};
+        const proxyBody = {
+          ...baseBody,
+          tenant_id: authScope.explicitScope.tenant_id,
+          company_id: authScope.explicitScope.company_id,
+        };
+        return _proxyChironConfigStatusToComplianceWorker(
+          env,
+          authScope.explicitScope,
+          {
+            method: "POST",
+            body: proxyBody,
+            compliancePath: CHIRON_READINESS_PATH,
+          },
+        );
+      }
+
+      if (url.pathname === CHIRON_SCORE_SUMMARY_PATH) {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "Method Not Allowed" }, 405);
+        }
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "ADMIN_CHIRON_SCORE_SUMMARY_GET",
+        });
+        if (!authScope.ok) return authScope.response;
+        const passthroughKeys = ["limit", "since", "until", "event_type"];
+        const passthroughQuery = {};
+        for (const key of passthroughKeys) {
+          const value = url.searchParams.get(key);
+          if (value != null && value !== "") passthroughQuery[key] = value;
+        }
+        return _proxyChironConfigStatusToComplianceWorker(
+          env,
+          authScope.explicitScope,
+          {
+            method: "GET",
+            compliancePath: CHIRON_SCORE_SUMMARY_PATH,
+            query: passthroughQuery,
+          },
+        );
+      }
+
+      if (url.pathname === COMPLIANCE_EVENTS_RECENT_PATH) {
+        if (request.method !== "GET") {
+          return json({ ok: false, error: "Method Not Allowed" }, 405);
+        }
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "COMPLIANCE_EVENTS_RECENT_GET",
+        });
+        if (!authScope.ok) return authScope.response;
+        const passthroughKeys = ["limit"];
+        const passthroughQuery = {};
+        for (const key of passthroughKeys) {
+          const value = url.searchParams.get(key);
+          if (value != null && value !== "") passthroughQuery[key] = value;
+        }
+        return _proxyChironConfigStatusToComplianceWorker(
+          env,
+          authScope.explicitScope,
+          {
+            method: "GET",
+            compliancePath: COMPLIANCE_EVENTS_RECENT_PATH,
+            query: passthroughQuery,
+          },
+        );
       }
 
       if (url.pathname === "/admin/business/profile" && request.method === "POST") {

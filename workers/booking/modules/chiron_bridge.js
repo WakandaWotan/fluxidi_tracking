@@ -23,6 +23,13 @@ export const CHIRON_CONFIG_TEST_CREDENTIALS_PATH = "/admin/chiron/config/test-cr
 export const CHIRON_CONFIG_TEST_CREDENTIALS_CLEAR_PATH =
   "/admin/chiron/config/test-credentials/clear";
 export const CHIRON_CONNECTION_TEST_PATH = "/admin/chiron/connection/test";
+/* CHIRON-P0-2A: read-only paths that were previously reachable only with a
+ * direct compliance admin bearer. The booking worker now proxies these three
+ * paths behind a company-owner session (or the legacy platform admin token
+ * for internal tooling). Any other path is still rejected. */
+export const CHIRON_READINESS_PATH = "/admin/chiron/readiness";
+export const CHIRON_SCORE_SUMMARY_PATH = "/admin/chiron/score-summary";
+export const COMPLIANCE_EVENTS_RECENT_PATH = "/compliance/events/recent";
 
 /* Marker header value so the compliance worker knows this request came via the
  * booking worker's internal proxy (as opposed to a direct admin call). */
@@ -60,7 +67,10 @@ export async function _proxyChironConfigStatusToComplianceWorker(env, explicitSc
     compliancePath !== CHIRON_CONFIG_STATUS_PATH &&
     compliancePath !== CHIRON_CONFIG_TEST_CREDENTIALS_PATH &&
     compliancePath !== CHIRON_CONNECTION_TEST_PATH &&
-    compliancePath !== CHIRON_CONFIG_TEST_CREDENTIALS_CLEAR_PATH
+    compliancePath !== CHIRON_CONFIG_TEST_CREDENTIALS_CLEAR_PATH &&
+    compliancePath !== CHIRON_READINESS_PATH &&
+    compliancePath !== CHIRON_SCORE_SUMMARY_PATH &&
+    compliancePath !== COMPLIANCE_EVENTS_RECENT_PATH
   ) {
     return json({ ok: false, error: "invalid_compliance_proxy_path" }, 400);
   }
@@ -68,6 +78,21 @@ export async function _proxyChironConfigStatusToComplianceWorker(env, explicitSc
   const proxyUrl = new URL(`https://fluxidi-compliance-api.internal${compliancePath}`);
   proxyUrl.searchParams.set("tenant_id", tenantId);
   proxyUrl.searchParams.set("company_id", companyId);
+  /* CHIRON-P0-2A: read-only routes accept optional query filters (limit,
+   * since, until, event_type). The caller supplies these under
+   * options.query; we forward each entry as a URL search param after
+   * clamping the value with safeStr(...) to keep it identical to the
+   * booking worker's own sanitize contract. Never a place for tokens. */
+  const extraQuery = options?.query;
+  if (extraQuery && typeof extraQuery === "object" && !Array.isArray(extraQuery)) {
+    for (const [key, value] of Object.entries(extraQuery)) {
+      if (key === "tenant_id" || key === "company_id") continue;
+      const cleanKey = safeStr(key, 64);
+      const cleanValue = safeStr(value, 128);
+      if (!cleanKey || !cleanValue) continue;
+      proxyUrl.searchParams.set(cleanKey, cleanValue);
+    }
+  }
 
   const headers = {
     accept: "application/json",

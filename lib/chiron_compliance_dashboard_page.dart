@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/app_config.dart';
@@ -376,8 +377,10 @@ Future<_ChironReadinessResponse> _fetchChironReadinessResponse(
     );
   }
 
-  final token = _complianceAdminToken.trim();
-  if (token.isEmpty) {
+  /* CHIRON-P0-2A: readiness now goes through the booking worker's
+   * company-owner authenticated proxy at bookingBaseUrl. The direct
+   * compliance admin bearer is no longer used or shipped in the client. */
+  if (!hasCompanyOwnerAuthContext()) {
     return _ChironReadinessResponse.error(
       errorMessage: tr(
         nl: 'Niet gemachtigd om het technisch rapport te laden.',
@@ -389,16 +392,17 @@ Future<_ChironReadinessResponse> _fetchChironReadinessResponse(
     );
   }
 
-  final uri = Uri.parse('$_complianceApiBaseUrl/admin/chiron/readiness');
+  final uri = _chironBookingReadonlyEndpoint(
+    '/admin/chiron/readiness',
+    tenantId: effective.tenantId,
+    companyId: effective.companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
   try {
     final res = await http
         .post(
           uri,
-          headers: <String, String>{
-            'Authorization': 'Bearer $token',
-            'x-admin-token': token,
-            'Content-Type': 'application/json',
-          },
+          headers: auth.headers,
           body: jsonEncode(<String, dynamic>{
             'tenant_id': effective.tenantId,
             'company_id': effective.companyId,
@@ -407,11 +411,24 @@ Future<_ChironReadinessResponse> _fetchChironReadinessResponse(
           }),
         )
         .timeout(const Duration(seconds: 15));
-    final decoded = jsonDecode(res.body);
-    final payload = decoded is Map
-        ? Map<String, dynamic>.from(decoded)
-        : const <String, dynamic>{};
+    final contentType = (res.headers['content-type'] ?? '').toLowerCase();
+    Map<String, dynamic> payload = const <String, dynamic>{};
+    if (contentType.contains('application/json') && res.body.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map) {
+          payload = Map<String, dynamic>.from(decoded);
+        }
+      } catch (err) {
+        debugPrint(
+          '[$_chironBookingWorkerProxyLogTag][READINESS_TOP] json_parse_failed status=${res.statusCode} err=$err',
+        );
+      }
+    }
     if (res.statusCode == 401 || res.statusCode == 403) {
+      debugPrint(
+        '[$_chironBookingWorkerProxyLogTag][READINESS_TOP] auth_failed status=${res.statusCode}',
+      );
       return _ChironReadinessResponse.error(
         errorMessage: tr(
           nl: 'Niet gemachtigd om het technisch rapport te laden.',
@@ -423,6 +440,9 @@ Future<_ChironReadinessResponse> _fetchChironReadinessResponse(
       );
     }
     if (res.statusCode < 200 || res.statusCode >= 300) {
+      debugPrint(
+        '[$_chironBookingWorkerProxyLogTag][READINESS_TOP] non_success status=${res.statusCode}',
+      );
       return _ChironReadinessResponse.error(
         errorMessage: tr(
           nl: 'Technisch rapport kon niet geladen worden.',
@@ -433,7 +453,10 @@ Future<_ChironReadinessResponse> _fetchChironReadinessResponse(
       );
     }
     return _ChironReadinessResponse.fromJson(payload);
-  } catch (_) {
+  } catch (err) {
+    debugPrint(
+      '[$_chironBookingWorkerProxyLogTag][READINESS_TOP] request_failed err=$err',
+    );
     return _ChironReadinessResponse.error(
       errorMessage: tr(
         nl: 'Technisch rapport kon niet geladen worden.',
@@ -3351,31 +3374,35 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
             style: TextStyle(fontSize: 11, color: _chironTextMuted),
           ),
           const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton(
-              onPressed: _resettingTestflow ? null : _resetTestflow,
-              style: _chironTestAccessSecondaryButtonStyle(),
-              child: _resettingTestflow
-                  ? SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: _chironGold,
+          /* CHIRON-P0-2A: destructive Chiron testflow reset is hidden in
+           * release builds. Its underlying booking-worker proxy remains
+           * available for tooling/support usage. */
+          if (!kReleaseMode)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton(
+                onPressed: _resettingTestflow ? null : _resetTestflow,
+                style: _chironTestAccessSecondaryButtonStyle(),
+                child: _resettingTestflow
+                    ? SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: _chironGold,
+                        ),
+                      )
+                    : Text(
+                        _t(
+                          nl: 'Testflow resetten',
+                          en: 'Reset testflow',
+                          fr: 'Réinitialiser le flux de test',
+                          es: 'Reiniciar flujo de prueba',
+                        ),
+                        style: const TextStyle(fontSize: 12),
                       ),
-                    )
-                  : Text(
-                      _t(
-                        nl: 'Testflow resetten',
-                        en: 'Reset testflow',
-                        fr: 'Réinitialiser le flux de test',
-                        es: 'Reiniciar flujo de prueba',
-                      ),
-                      style: const TextStyle(fontSize: 12),
-                    ),
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -3448,8 +3475,10 @@ class _ChironScoreSummaryPanelState extends State<_ChironScoreSummaryPanel> {
       );
     }
 
-    final token = _complianceAdminToken.trim();
-    if (token.isEmpty) {
+    /* CHIRON-P0-2A: score summary routes through the booking worker with
+     * the active company-owner session bearer. The direct compliance admin
+     * bearer is no longer used or shipped in the client. */
+    if (!hasCompanyOwnerAuthContext()) {
       return _ChironScoreSummaryResponse.error(
         tenantId: effective.tenantId,
         companyId: effective.companyId,
@@ -3462,29 +3491,35 @@ class _ChironScoreSummaryPanelState extends State<_ChironScoreSummaryPanel> {
       );
     }
 
-    final uri = Uri.parse('$_complianceApiBaseUrl/admin/chiron/score-summary')
-        .replace(
-          queryParameters: <String, String>{
-            'tenant_id': effective.tenantId,
-            'company_id': effective.companyId,
-          },
-        );
+    final uri = _chironBookingReadonlyEndpoint(
+      '/admin/chiron/score-summary',
+      tenantId: effective.tenantId,
+      companyId: effective.companyId,
+    );
+    final auth = await resolveCompanyOwnerAuthHeaders(json: false);
 
     try {
       final res = await http
-          .get(
-            uri,
-            headers: <String, String>{
-              'Authorization': 'Bearer $token',
-              'x-admin-token': token,
-            },
-          )
+          .get(uri, headers: auth.headers)
           .timeout(const Duration(seconds: 10));
-      final decoded = jsonDecode(res.body);
-      final payload = decoded is Map
-          ? Map<String, dynamic>.from(decoded)
-          : const <String, dynamic>{};
+      final contentType = (res.headers['content-type'] ?? '').toLowerCase();
+      Map<String, dynamic> payload = const <String, dynamic>{};
+      if (contentType.contains('application/json') && res.body.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(res.body);
+          if (decoded is Map) {
+            payload = Map<String, dynamic>.from(decoded);
+          }
+        } catch (err) {
+          debugPrint(
+            '[$_chironBookingWorkerProxyLogTag][SCORE_SUMMARY] json_parse_failed status=${res.statusCode} err=$err',
+          );
+        }
+      }
       if (res.statusCode < 200 || res.statusCode >= 300) {
+        debugPrint(
+          '[$_chironBookingWorkerProxyLogTag][SCORE_SUMMARY] non_success status=${res.statusCode}',
+        );
         return _ChironScoreSummaryResponse.error(
           tenantId: _text(payload['tenant_id']).isEmpty
               ? effective.tenantId
@@ -3501,7 +3536,10 @@ class _ChironScoreSummaryPanelState extends State<_ChironScoreSummaryPanel> {
         );
       }
       return _ChironScoreSummaryResponse.fromJson(payload);
-    } catch (_) {
+    } catch (err) {
+      debugPrint(
+        '[$_chironBookingWorkerProxyLogTag][SCORE_SUMMARY] request_failed err=$err',
+      );
       return _ChironScoreSummaryResponse.error(
         tenantId: effective.tenantId,
         companyId: effective.companyId,
@@ -3828,8 +3866,9 @@ class _ChironReadinessPanelState extends State<_ChironReadinessPanel> {
       );
     }
 
-    final token = _complianceAdminToken.trim();
-    if (token.isEmpty) {
+    /* CHIRON-P0-2A: readiness now goes through the booking worker's
+     * company-owner authenticated proxy at bookingBaseUrl. */
+    if (!hasCompanyOwnerAuthContext()) {
       return _ChironReadinessResponse.error(
         errorMessage: _t(
           nl: 'Niet gemachtigd om Chiron-readiness te laden.',
@@ -3841,16 +3880,17 @@ class _ChironReadinessPanelState extends State<_ChironReadinessPanel> {
       );
     }
 
-    final uri = Uri.parse('$_complianceApiBaseUrl/admin/chiron/readiness');
+    final uri = _chironBookingReadonlyEndpoint(
+      '/admin/chiron/readiness',
+      tenantId: effective.tenantId,
+      companyId: effective.companyId,
+    );
+    final auth = await resolveCompanyOwnerAuthHeaders();
     try {
       final res = await http
           .post(
             uri,
-            headers: <String, String>{
-              'Authorization': 'Bearer $token',
-              'x-admin-token': token,
-              'Content-Type': 'application/json',
-            },
+            headers: auth.headers,
             body: jsonEncode(<String, dynamic>{
               'tenant_id': effective.tenantId,
               'company_id': effective.companyId,
@@ -3859,11 +3899,24 @@ class _ChironReadinessPanelState extends State<_ChironReadinessPanel> {
             }),
           )
           .timeout(const Duration(seconds: 15));
-      final decoded = jsonDecode(res.body);
-      final payload = decoded is Map
-          ? Map<String, dynamic>.from(decoded)
-          : const <String, dynamic>{};
+      final contentType = (res.headers['content-type'] ?? '').toLowerCase();
+      Map<String, dynamic> payload = const <String, dynamic>{};
+      if (contentType.contains('application/json') && res.body.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(res.body);
+          if (decoded is Map) {
+            payload = Map<String, dynamic>.from(decoded);
+          }
+        } catch (err) {
+          debugPrint(
+            '[$_chironBookingWorkerProxyLogTag][READINESS_PANEL] json_parse_failed status=${res.statusCode} err=$err',
+          );
+        }
+      }
       if (res.statusCode == 401 || res.statusCode == 403) {
+        debugPrint(
+          '[$_chironBookingWorkerProxyLogTag][READINESS_PANEL] auth_failed status=${res.statusCode}',
+        );
         return _ChironReadinessResponse.error(
           errorMessage: _t(
             nl: 'Niet gemachtigd om Chiron-readiness te laden.',
@@ -3875,6 +3928,9 @@ class _ChironReadinessPanelState extends State<_ChironReadinessPanel> {
         );
       }
       if (res.statusCode < 200 || res.statusCode >= 300) {
+        debugPrint(
+          '[$_chironBookingWorkerProxyLogTag][READINESS_PANEL] non_success status=${res.statusCode}',
+        );
         return _ChironReadinessResponse.error(
           errorMessage: _t(
             nl: 'Chiron-readiness kon niet geladen worden.',
@@ -3885,7 +3941,10 @@ class _ChironReadinessPanelState extends State<_ChironReadinessPanel> {
         );
       }
       return _ChironReadinessResponse.fromJson(payload);
-    } catch (_) {
+    } catch (err) {
+      debugPrint(
+        '[$_chironBookingWorkerProxyLogTag][READINESS_PANEL] request_failed err=$err',
+      );
       return _ChironReadinessResponse.error(
         errorMessage: _t(
           nl: 'Chiron-readiness kon niet geladen worden.',
@@ -8689,14 +8748,48 @@ class _ChironLocalLedgerPage extends StatelessWidget {
   }
 }
 
-const String _complianceApiBaseUrl = String.fromEnvironment(
-  'COMPLIANCE_API_BASE_URL',
-  defaultValue: 'https://fluxidi-compliance-api.fluxidi.workers.dev',
-);
-const String _complianceAdminToken = String.fromEnvironment(
-  'ADMIN_TOKEN',
-  defaultValue: '',
-);
+/* CHIRON-P0-2A: The former `_complianceApiBaseUrl` compile-time constant and
+ * its companion `_complianceAdminToken` have been removed. Every user-facing
+ * Chiron/compliance call now routes through the booking worker at
+ * `appConfig.bookingBaseUrl` using `resolveCompanyOwnerAuthHeaders()`. The
+ * platform admin bearer is not shipped in the client. Destructive
+ * dev-reset routes are not exposed to company-owner sessions and are hidden
+ * from the release-mode UI. */
+
+/// CHIRON-P0-2A: shared error message used by every booking-worker Chiron
+/// proxy call for a redacted "not authorized" path. Localized copy lives at
+/// the call site; this label is emitted only in debug logs and NEVER
+/// includes the raw bearer or the compliance payload body.
+const String _chironBookingWorkerProxyLogTag = 'CHIRON_COMPANY_SESSION_PROXY';
+
+/// CHIRON-P0-2A: builds a booking-worker-scoped Chiron URI. Every user-facing
+/// readiness / score-summary / recent-events call routes through the booking
+/// worker so the direct compliance admin bearer is never needed on the
+/// device. Extra query parameters (limit, since, event_type) are passed
+/// through as-is; the booking worker sanitizes them again before forwarding.
+Uri _chironBookingReadonlyEndpoint(
+  String path, {
+  required String tenantId,
+  required String companyId,
+  Map<String, String>? extraQuery,
+}) {
+  final params = <String, String>{
+    'tenant_id': tenantId,
+    'company_id': companyId,
+    'tenantId': tenantId,
+    'companyId': companyId,
+  };
+  if (extraQuery != null) {
+    for (final entry in extraQuery.entries) {
+      if (entry.key.trim().isEmpty) continue;
+      if (entry.value.trim().isEmpty) continue;
+      params[entry.key] = entry.value;
+    }
+  }
+  return Uri.parse('${appConfig.bookingBaseUrl}$path').replace(
+    queryParameters: params,
+  );
+}
 
 class _ChironScoreSummaryCounts {
   const _ChironScoreSummaryCounts({
@@ -10471,8 +10564,10 @@ class _RemoteComplianceEventsSectionState
     final effectiveTenantId = effective.tenantId;
     final effectiveCompanyId = effective.companyId;
 
-    final token = _complianceAdminToken.trim();
-    if (token.isEmpty) {
+    /* CHIRON-P0-2A: /compliance/events/recent is now routed through the
+     * booking worker with a company-owner session bearer, not the direct
+     * compliance admin bearer. */
+    if (!hasCompanyOwnerAuthContext()) {
       return RemoteComplianceEventsResponse(
         ok: false,
         tenantId: effectiveTenantId,
@@ -10482,31 +10577,24 @@ class _RemoteComplianceEventsSectionState
         malformedCount: 0,
         events: const <RemoteComplianceEvent>[],
         errorMessage: _t(
-          nl: 'Admin token ontbreekt voor backendmeldingen.',
-          en: 'Admin token is missing for remote compliance events.',
-          fr: 'Le jeton admin manque pour les événements de conformité distants.',
-          es: 'Falta el token admin para eventos remotos de cumplimiento.',
+          nl: 'Niet gemachtigd om backendmeldingen te laden.',
+          en: 'Not authorized to load remote compliance events.',
+          fr: 'Non autorisé à charger les événements de conformité distants.',
+          es: 'No autorizado para cargar los eventos de cumplimiento remotos.',
         ),
       );
     }
 
-    final uri = Uri.parse('$_complianceApiBaseUrl/compliance/events/recent')
-        .replace(
-          queryParameters: <String, String>{
-            'tenant_id': effectiveTenantId,
-            'company_id': effectiveCompanyId,
-            'limit': '100',
-          },
-        );
+    final uri = _chironBookingReadonlyEndpoint(
+      '/compliance/events/recent',
+      tenantId: effectiveTenantId,
+      companyId: effectiveCompanyId,
+      extraQuery: <String, String>{'limit': '100'},
+    );
+    final auth = await resolveCompanyOwnerAuthHeaders(json: false);
     try {
       final res = await http
-          .get(
-            uri,
-            headers: <String, String>{
-              'Authorization': 'Bearer $token',
-              'x-admin-token': token,
-            },
-          )
+          .get(uri, headers: auth.headers)
           .timeout(const Duration(seconds: 10));
 
       Map<String, dynamic> asMap(Object? value) {
@@ -10514,9 +10602,21 @@ class _RemoteComplianceEventsSectionState
         return const <String, dynamic>{};
       }
 
-      final decoded = jsonDecode(res.body);
-      final payload = asMap(decoded);
+      final contentType = (res.headers['content-type'] ?? '').toLowerCase();
+      Map<String, dynamic> payload = const <String, dynamic>{};
+      if (contentType.contains('application/json') && res.body.isNotEmpty) {
+        try {
+          payload = asMap(jsonDecode(res.body));
+        } catch (err) {
+          debugPrint(
+            '[$_chironBookingWorkerProxyLogTag][EVENTS_RECENT] json_parse_failed status=${res.statusCode} err=$err',
+          );
+        }
+      }
       if (res.statusCode < 200 || res.statusCode >= 300) {
+        debugPrint(
+          '[$_chironBookingWorkerProxyLogTag][EVENTS_RECENT] non_success status=${res.statusCode}',
+        );
         final err = _text(payload['error']);
         return RemoteComplianceEventsResponse(
           ok: false,
@@ -10570,7 +10670,10 @@ class _RemoteComplianceEventsSectionState
         events: events,
         errorMessage: '',
       );
-    } catch (_) {
+    } catch (err) {
+      debugPrint(
+        '[$_chironBookingWorkerProxyLogTag][EVENTS_RECENT] request_failed err=$err',
+      );
       return RemoteComplianceEventsResponse(
         ok: false,
         tenantId: effectiveTenantId,
@@ -10580,193 +10683,41 @@ class _RemoteComplianceEventsSectionState
         malformedCount: 0,
         events: const <RemoteComplianceEvent>[],
         errorMessage: _t(
-          nl: 'Kan backend compliance events niet laden. Controleer netwerk/token.',
-          en: 'Cannot load backend compliance events. Check network/token.',
-          fr: 'Impossible de charger les événements conformité backend. Vérifiez réseau/jeton.',
-          es: 'No se pueden cargar eventos de cumplimiento backend. Verifica red/token.',
+          nl: 'Kan backend compliance events niet laden. Controleer netwerk/verbinding.',
+          en: 'Cannot load backend compliance events. Check network/connection.',
+          fr: 'Impossible de charger les événements conformité backend. Vérifiez réseau/connexion.',
+          es: 'No se pueden cargar eventos de cumplimiento backend. Verifica red/conexión.',
         ),
       );
     }
   }
 
+  /* CHIRON-P0-2A: destructive backend-reset entrypoint. The direct compliance
+   * admin bearer is no longer shipped in the client, and P0-2A intentionally
+   * does NOT expose /admin/dev/reset-compliance-events through the booking
+   * worker's company-session proxy. In release mode the triggering IconButton
+   * is hidden entirely (see the build() gate), so this method is unreachable.
+   * Even if invoked from a non-release build the method now short-circuits:
+   * it does not attempt any network call, never references a compile-time
+   * secret, and reports "unavailable in this build" to the caller. */
   Future<void> _resetRemoteComplianceEvents() async {
     if (_isResettingRemoteEvents) return;
-    final token = _complianceAdminToken.trim();
-    if (token.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _t(
-              nl: 'Admin token ontbreekt voor backend cleanup.',
-              en: 'Admin token is missing for backend cleanup.',
-              fr: 'Le jeton admin manque pour le nettoyage backend.',
-              es: 'Falta el token admin para la limpieza del backend.',
-            ),
+    if (!mounted) return;
+    debugPrint(
+      '[CHIRON_REMOTE][RESET_UNAVAILABLE] reason=destructive_route_not_exposed_to_company_session build_mode=${kReleaseMode ? 'release' : 'debug_or_profile'}',
+    );
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _t(
+            nl: 'Backend cleanup is niet beschikbaar in deze build.',
+            en: 'Backend cleanup is not available in this build.',
+            fr: 'Le nettoyage backend n’est pas disponible dans cette version.',
+            es: 'La limpieza del backend no está disponible en esta versión.',
           ),
         ),
-      );
-      return;
-    }
-    final effective = _effectiveTenantCompanyIds();
-    if (effective == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _t(
-              nl: 'Bedrijfscontext ontbreekt. Compliancegegevens kunnen niet veilig geladen worden.',
-              en: 'Company context is missing. Compliance data cannot be loaded safely.',
-              fr: 'Le contexte entreprise est manquant. Les données de conformité ne peuvent pas être chargées en toute sécurité.',
-              es: 'Falta el contexto de empresa. Los datos de cumplimiento no pueden cargarse de forma segura.',
-            ),
-          ),
-        ),
-      );
-      debugPrint(
-        '[CHIRON_REMOTE][RESET_SKIP_SCOPE] reason=missing_explicit_tenant_company_scope',
-      );
-      return;
-    }
-    final query = <String, String>{
-      'tenant_id': effective.tenantId,
-      'company_id': effective.companyId,
-    };
-    try {
-      setState(() => _isResettingRemoteEvents = true);
-      final dryRunUri = Uri.parse(
-        '$_complianceApiBaseUrl/admin/dev/reset-compliance-events/dry-run',
-      ).replace(queryParameters: query);
-      final dryRunRes = await http
-          .get(
-            dryRunUri,
-            headers: <String, String>{
-              'Authorization': 'Bearer $token',
-              'x-admin-token': token,
-            },
-          )
-          .timeout(const Duration(seconds: 12));
-      final dryRunPayload = jsonDecode(dryRunRes.body);
-      final dryRunMap = dryRunPayload is Map
-          ? Map<String, dynamic>.from(dryRunPayload)
-          : <String, dynamic>{};
-      if (dryRunRes.statusCode < 200 || dryRunRes.statusCode >= 300) {
-        throw Exception(_text(dryRunMap['error']));
-      }
-      final dryRunCounts = dryRunMap['counts'] is Map
-          ? Map<String, dynamic>.from(dryRunMap['counts'] as Map)
-          : const <String, dynamic>{};
-      final totalCount =
-          int.tryParse(_text(dryRunMap['totalCount'])) ??
-          int.tryParse(_text(dryRunCounts['complianceEvents'])) ??
-          0;
-      if (!mounted) return;
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) {
-          final tokens = _chironTokens();
-          return AlertDialog(
-            backgroundColor: tokens.card,
-            title: Text(
-              _t(
-                nl: 'Backend test-events wissen?',
-                en: 'Clear backend test events?',
-                fr: 'Effacer les événements de test backend ?',
-                es: '¿Borrar eventos de prueba del backend?',
-              ),
-              style: TextStyle(color: tokens.textPrimary),
-            ),
-            content: Text(
-              _t(
-                nl: 'Dit verwijdert alleen compliance/backendmeldingen voor tenant/bedrijf ${effective.tenantId}. Gevonden events: $totalCount. Bedrijfsinstellingen, chauffeurs, voertuigen, prijzen en abonnement blijven behouden.',
-                en: 'This only removes compliance/backend messages for tenant/company ${effective.tenantId}. Found events: $totalCount. Company settings, drivers, vehicles, pricing and subscription remain untouched.',
-                fr: 'Cela supprime uniquement les messages de conformité/backend pour le tenant/société ${effective.tenantId}. Événements trouvés : $totalCount. Les paramètres société, chauffeurs, véhicules, tarifs et abonnement restent inchangés.',
-                es: 'Esto solo elimina mensajes de cumplimiento/backend para el tenant/empresa ${effective.tenantId}. Eventos encontrados: $totalCount. La configuración de empresa, conductores, vehículos, precios y suscripción no se modifican.',
-              ),
-              style: TextStyle(color: tokens.textSecondary),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(false),
-                style: TextButton.styleFrom(
-                  foregroundColor: tokens.textSecondary,
-                ),
-                child: Text(
-                  _t(
-                    nl: 'Annuleren',
-                    en: 'Cancel',
-                    fr: 'Annuler',
-                    es: 'Cancelar',
-                  ),
-                ),
-              ),
-              FilledButton(
-                style: FilledButton.styleFrom(
-                  backgroundColor: tokens.accent,
-                  foregroundColor: tokens.palette.textOnAccent,
-                ),
-                onPressed: () => Navigator.of(ctx).pop(true),
-                child: Text(
-                  _t(nl: 'Wissen', en: 'Clear', fr: 'Effacer', es: 'Borrar'),
-                ),
-              ),
-            ],
-          );
-        },
-      );
-      if (confirmed != true || !mounted) return;
-      final resetUri = Uri.parse(
-        '$_complianceApiBaseUrl/admin/dev/reset-compliance-events',
-      ).replace(queryParameters: query);
-      final resetRes = await http
-          .post(
-            resetUri,
-            headers: <String, String>{
-              'Authorization': 'Bearer $token',
-              'x-admin-token': token,
-            },
-          )
-          .timeout(const Duration(seconds: 12));
-      final resetPayload = jsonDecode(resetRes.body);
-      final resetMap = resetPayload is Map
-          ? Map<String, dynamic>.from(resetPayload)
-          : <String, dynamic>{};
-      if (resetRes.statusCode < 200 || resetRes.statusCode >= 300) {
-        throw Exception(_text(resetMap['error']));
-      }
-      if (!mounted) return;
-      _refresh();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _t(
-              nl: 'Backendmeldingen testdata gewist.',
-              en: 'Backend test events cleared.',
-              fr: 'Données de test backend effacées.',
-              es: 'Datos de prueba del backend borrados.',
-            ),
-          ),
-        ),
-      );
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _t(
-              nl: 'Backend cleanup mislukt. Controleer token/verbinding.',
-              en: 'Backend cleanup failed. Check token/connection.',
-              fr: 'Le nettoyage backend a échoué. Vérifiez le jeton/la connexion.',
-              es: 'Error en la limpieza del backend. Verifica token/conexión.',
-            ),
-          ),
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _isResettingRemoteEvents = false);
-      }
-    }
+      ),
+    );
   }
 
   Widget _chip(String label) {
@@ -12516,30 +12467,36 @@ class _RemoteComplianceEventsSectionState
               onPressed: _refresh,
               icon: Icon(Icons.refresh, color: _chironGold.withOpacity(0.95)),
             ),
-            IconButton(
-              tooltip: _t(
-                nl: 'Backend test-events wissen',
-                en: 'Clear backend test events',
-                fr: 'Effacer les événements de test backend',
-                es: 'Borrar eventos de prueba del backend',
-              ),
-              onPressed: _isResettingRemoteEvents
-                  ? null
-                  : _resetRemoteComplianceEvents,
-              icon: _isResettingRemoteEvents
-                  ? SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: _chironGold,
+            /* CHIRON-P0-2A: destructive backend cleanup (reset compliance
+             * events + its dry-run sibling) is hidden in release mode. The
+             * booking-worker company-session proxy intentionally does not
+             * expose these destructive routes, so the button would be a
+             * no-op there anyway. */
+            if (!kReleaseMode)
+              IconButton(
+                tooltip: _t(
+                  nl: 'Backend test-events wissen',
+                  en: 'Clear backend test events',
+                  fr: 'Effacer les événements de test backend',
+                  es: 'Borrar eventos de prueba del backend',
+                ),
+                onPressed: _isResettingRemoteEvents
+                    ? null
+                    : _resetRemoteComplianceEvents,
+                icon: _isResettingRemoteEvents
+                    ? SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: _chironGold,
+                        ),
+                      )
+                    : Icon(
+                        Icons.delete_forever,
+                        color: _chironGold.withOpacity(0.95),
                       ),
-                    )
-                  : Icon(
-                      Icons.delete_forever,
-                      color: _chironGold.withOpacity(0.95),
-                    ),
-            ),
+              ),
           ],
         ),
         // Patch 4A: search field + horizontal category chips. Both
@@ -12950,8 +12907,6 @@ class _LocalComplianceLedgerSectionState
     }
     final result = await _reader.loadRegisterGrouped(
       groupLimit: 20,
-      apiBaseUrl: _complianceApiBaseUrl,
-      adminToken: _complianceAdminToken,
       onLocalLoaded: (local) {
         if (!mounted) return;
         setState(() {

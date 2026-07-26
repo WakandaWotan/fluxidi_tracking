@@ -15,24 +15,24 @@
 //     `ADMIN_TOKEN` being absent.
 //
 // Deliberate exemptions:
-//   * `lib/chiron_compliance_dashboard_page.dart` and
-//     `lib/compliance_ledger_reader.dart` are operator-only compliance
-//     surfaces that still accept a locally-typed admin token and are outside
-//     the P0-1 scope (tracked separately as P0-2).
 //   * `lib/main_parts/ride_receipt_body_state.dart` still contains admin-
 //     header call sites in unstaged working-tree WIP; the migration of that
 //     file is deferred. The scripts + main.dart contract still keeps those
 //     call sites inert at runtime because `ADMIN_TOKEN` is never provided
 //     via `--dart-define` and their `kAdminToken.trim().isNotEmpty` guards
 //     always evaluate to `false` in production builds.
+//
+// CHIRON-P0-2A: `lib/chiron_compliance_dashboard_page.dart` and
+// `lib/compliance_ledger_reader.dart` are NO LONGER exempt. The
+// user-facing readiness / score-summary / recent-events paths now proxy
+// through the booking worker's company-owner session and the
+// `_complianceAdminToken` compile-time constant has been removed.
 
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
 const List<String> _libExemptions = <String>[
-  'lib/chiron_compliance_dashboard_page.dart',
-  'lib/compliance_ledger_reader.dart',
   'lib/main_parts/ride_receipt_body_state.dart',
 ];
 

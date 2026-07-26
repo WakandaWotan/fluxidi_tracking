@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
 import 'package:http/http.dart' as http;
@@ -1075,12 +1076,11 @@ class ComplianceLedgerReader {
     );
   }
 
+  /// CHIRON-P0-2A: backend Local Ride Register fetch. Routes through the
+  /// booking worker's company-session authenticated proxy — the client no
+  /// longer holds a direct compliance admin bearer.
   Future<({List<ComplianceLedgerEntry> entries, bool ok, String? error})>
-  fetchBackendEntries({
-    required String apiBaseUrl,
-    required String adminToken,
-    int limit = 100,
-  }) async {
+  fetchBackendEntries({int limit = 100}) async {
     final scope = _activeComplianceScope();
     if (scope == null) {
       return (
@@ -1089,11 +1089,19 @@ class ComplianceLedgerReader {
         error: 'missing_scope',
       );
     }
-    final token = adminToken.trim();
-    final base = apiBaseUrl.trim();
     debugPrint(
       '[LOCAL_RIDE_REGISTER][FETCH_BACKEND] scope=tenant:${_maskScope(scope.tenantId)} company:${_maskScope(scope.companyId)}',
     );
+
+    if (!hasCompanyOwnerAuthContext()) {
+      return (
+        entries: const <ComplianceLedgerEntry>[],
+        ok: false,
+        error: 'missing_company_session',
+      );
+    }
+
+    final base = appConfig.bookingBaseUrl.trim();
     if (base.isEmpty) {
       return (
         entries: const <ComplianceLedgerEntry>[],
@@ -1101,41 +1109,41 @@ class ComplianceLedgerReader {
         error: 'missing_api_base_url',
       );
     }
-    if (token.isEmpty) {
-      return (
-        entries: const <ComplianceLedgerEntry>[],
-        ok: false,
-        error: 'missing_admin_token',
-      );
-    }
 
     final uri = Uri.parse('$base/compliance/events/recent').replace(
       queryParameters: <String, String>{
         'tenant_id': scope.tenantId,
         'company_id': scope.companyId,
+        'tenantId': scope.tenantId,
+        'companyId': scope.companyId,
         'limit': '$limit',
       },
     );
+    final auth = await resolveCompanyOwnerAuthHeaders(json: false);
     try {
       final res = await http
-          .get(
-            uri,
-            headers: <String, String>{
-              'Authorization': 'Bearer $token',
-              'x-admin-token': token,
-            },
-          )
+          .get(uri, headers: auth.headers)
           .timeout(const Duration(seconds: 12));
       Map<String, dynamic> asMap(Object? value) {
         if (value is Map) return Map<String, dynamic>.from(value);
         return const <String, dynamic>{};
       }
 
-      final payload = asMap(jsonDecode(res.body));
+      final contentType = (res.headers['content-type'] ?? '').toLowerCase();
+      Map<String, dynamic> payload = const <String, dynamic>{};
+      if (contentType.contains('application/json') && res.body.isNotEmpty) {
+        try {
+          payload = asMap(jsonDecode(res.body));
+        } catch (err) {
+          debugPrint(
+            '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error error=json_parse_failed status_code=${res.statusCode}',
+          );
+        }
+      }
       if (res.statusCode < 200 || res.statusCode >= 300) {
         final err = (payload['error'] ?? '').toString().trim();
         debugPrint(
-          '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error error=$err',
+          '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error status_code=${res.statusCode} error=$err',
         );
         return (
           entries: const <ComplianceLedgerEntry>[],
@@ -1166,12 +1174,12 @@ class ComplianceLedgerReader {
       return (entries: parsed, ok: true, error: null);
     } catch (err) {
       debugPrint(
-        '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error error=$err',
+        '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error error=${err.runtimeType}',
       );
       return (
         entries: const <ComplianceLedgerEntry>[],
         ok: false,
-        error: err.toString(),
+        error: err.runtimeType.toString(),
       );
     }
   }
@@ -1195,10 +1203,11 @@ class ComplianceLedgerReader {
     debugPrint('[LOCAL_RIDE_REGISTER][CACHE_SAVE] count=${entries.length}');
   }
 
+  /// CHIRON-P0-2A: no more `apiBaseUrl` / `adminToken` — the backend fetch
+  /// now routes through the booking worker with the active company-owner
+  /// session bearer.
   Future<ComplianceLedgerReadResult> loadRegisterGrouped({
     required int groupLimit,
-    required String apiBaseUrl,
-    required String adminToken,
     bool allowLegacyWithoutScope = false,
     void Function(ComplianceLedgerReadResult localSnapshot)? onLocalLoaded,
   }) async {
@@ -1219,10 +1228,7 @@ class ComplianceLedgerReader {
     );
     onLocalLoaded?.call(localSnapshot);
 
-    final backend = await fetchBackendEntries(
-      apiBaseUrl: apiBaseUrl,
-      adminToken: adminToken,
-    );
+    final backend = await fetchBackendEntries();
     if (!backend.ok) {
       return localSnapshot.copyWith(
         backendFetchOk: false,
