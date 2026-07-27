@@ -405,10 +405,26 @@ export function sanitizeMollieConnectStatus(record, businessProfile) {
     })(),
     onboarding_status:
       safeStr(rec.onboardingStatus ?? rec.onboarding_status, 64) || null,
+    // MOLLIE-ONBOARDING-STATUS-P1: authoritative "can this organization
+    // receive payments right now" signal from Mollie's onboarding resource.
+    // `null` means it has never been captured (legacy record, pre-fix) —
+    // callers must treat that as "unknown", never as false.
+    can_receive_payments: (() => {
+      const raw = rec.canReceivePayments ?? rec.can_receive_payments;
+      return typeof raw === "boolean" ? raw : null;
+    })(),
     last_connected_at:
       safeStr(rec.lastConnectedAt ?? rec.last_connected_at, 64) || null,
     updated_at: safeStr(rec.updatedAt ?? rec.updated_at, 64) || null,
     last_error_code: safeStr(rec.lastErrorCode ?? rec.last_error_code, 120) || null,
+    // Diagnostics for the most recent LIVE re-verification attempt (distinct
+    // from lastErrorCode, which is about the OAuth connection itself). A
+    // transient failure here must never overwrite onboarding_status /
+    // can_receive_payments — see refreshMollieOnboardingCapabilityStatus.
+    last_status_check_error:
+      safeStr(rec.lastStatusCheckError ?? rec.last_status_check_error, 120) || null,
+    last_status_checked_at:
+      safeStr(rec.lastStatusCheckedAt ?? rec.last_status_checked_at, 64) || null,
   };
 }
 
@@ -525,6 +541,48 @@ export async function exchangeMollieConnectCodeForTokens({
   return parsed && typeof parsed === "object" ? parsed : {};
 }
 
+// MOLLIE-ONBOARDING-STATUS-P1: onboarding status + "can receive payments" are
+// NOT fields on /v2/organizations/me (that endpoint has no onboarding data at
+// all — organizations have no `status` field). The Mollie API only exposes
+// this via the dedicated Onboarding resource: GET /v2/onboarding/me, whose
+// `status` is one of `needs-data` / `in-review` / `completed`, alongside an
+// authoritative `canReceivePayments` boolean. Reading the wrong endpoint here
+// previously meant `onboardingStatus` was always null, forever, for every
+// company, and the account-level UI could never distinguish "genuinely still
+// under review" from "review complete but nothing receivable yet" from
+// "fully active" — see MOLLIE-ONBOARDING-STATUS-P1 root-cause report.
+//
+// Central capability-status adapter: keep ALL Mollie capability/onboarding
+// lookups behind this helper so a future migration is isolated here.
+// TODO(MOLLIE-ONBOARDING-STATUS-P1): Migrate onboarding capability lookup to
+// Mollie Capabilities API after its contract is stable and before the
+// Onboarding API is retired. Do not broaden call sites until then.
+export async function fetchMollieOnboardingStatus(accessToken) {
+  const token = safeStr(accessToken);
+  if (!token) {
+    return { ok: false, onboardingStatus: null, canReceivePayments: null };
+  }
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/json",
+  };
+  try {
+    const res = await fetch("https://api.mollie.com/v2/onboarding/me", { headers });
+    if (!res.ok) {
+      return { ok: false, onboardingStatus: null, canReceivePayments: null };
+    }
+    const onboarding = await res.json();
+    const onboardingStatus = safeStr(onboarding?.status, 64) || null;
+    const canReceivePaymentsRaw =
+      onboarding?.canReceivePayments ?? onboarding?.can_receive_payments;
+    const canReceivePayments =
+      typeof canReceivePaymentsRaw === "boolean" ? canReceivePaymentsRaw : null;
+    return { ok: true, onboardingStatus, canReceivePayments };
+  } catch (_) {
+    return { ok: false, onboardingStatus: null, canReceivePayments: null };
+  }
+}
+
 export async function fetchMollieConnectAccountMetadata(accessToken) {
   const token = safeStr(accessToken);
   if (!token) {
@@ -533,6 +591,7 @@ export async function fetchMollieConnectAccountMetadata(accessToken) {
       profileId: "",
       mollieMode: "unknown",
       onboardingStatus: null,
+      canReceivePayments: null,
     };
   }
   const headers = {
@@ -540,16 +599,11 @@ export async function fetchMollieConnectAccountMetadata(accessToken) {
     Accept: "application/json",
   };
   let organizationId = "";
-  let onboardingStatus = null;
   try {
     const orgRes = await fetch("https://api.mollie.com/v2/organizations/me", { headers });
     if (orgRes.ok) {
       const org = await orgRes.json();
       organizationId = safeStr(org?.id, 80);
-      onboardingStatus =
-        safeStr(org?.status, 64) ||
-        safeStr(org?.onboarding?.status ?? org?.onboardingStatus, 64) ||
-        null;
     }
   } catch (_) {
     // Best-effort metadata only.
@@ -573,7 +627,14 @@ export async function fetchMollieConnectAccountMetadata(accessToken) {
   } catch (_) {
     // Best-effort metadata only.
   }
-  return { organizationId, profileId, mollieMode, onboardingStatus };
+  const onboarding = await fetchMollieOnboardingStatus(token);
+  return {
+    organizationId,
+    profileId,
+    mollieMode,
+    onboardingStatus: onboarding.onboardingStatus,
+    canReceivePayments: onboarding.canReceivePayments,
+  };
 }
 
 /* ===================== Access token expiry + refresh ===================== */
@@ -778,6 +839,75 @@ export async function resolveCompanyMollieConnectCredentials(env, scope, _option
     mollie_profile_id:
       safeStr(workingRecord.profileId ?? workingRecord.profile_id, 80) || null,
   };
+}
+
+/* ===================== Onboarding/capability live refresh ===================== */
+
+// MOLLIE-ONBOARDING-STATUS-P1: "Refresh status" in the UI previously just
+// re-read the same cached KV record — it never asked Mollie anything, so a
+// stale/incorrect onboarding_status (e.g. captured once, wrongly, at connect
+// time) could never self-heal no matter how many times the merchant clicked
+// refresh. This performs a real, read-only re-check against Mollie's
+// Onboarding API and persists the result, WITHOUT touching credentials,
+// OAuth tokens, the webhook, or the payment flow.
+//
+// On success: persists the fresh onboarding_status/can_receive_payments and
+// clears any prior status-check error.
+// On failure (network/API error, not "not connected"): persists ONLY a
+// last_status_check_error/last_status_checked_at pair and explicitly leaves
+// onboarding_status/can_receive_payments untouched, so a transient failure
+// can never downgrade an already-confirmed active account.
+export async function refreshMollieOnboardingCapabilityStatus(env, scope) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) {
+    return { ok: false, code: "missing_tenant_scope" };
+  }
+  const scopedState = { tenant_id: tenantId, company_id: companyId };
+  const credentials = await resolveCompanyMollieConnectCredentials(env, scopedState, {
+    purpose: "onboarding_status_refresh",
+  });
+  if (!credentials?.ok) {
+    // Not connected / no usable token at all — not a "lookup failure" in the
+    // live-check sense, the caller already knows the account isn't
+    // connected from the base status record.
+    return { ok: false, code: credentials?.error || "company_mollie_credentials_unavailable" };
+  }
+  const onboarding = await fetchMollieOnboardingStatus(credentials.apiKey);
+  const nowIso = new Date().toISOString();
+  const existing = await loadScopedMollieConnectAuthRecord(env, scopedState);
+  if (!existing || typeof existing !== "object") {
+    return { ok: false, code: "company_mollie_not_connected" };
+  }
+  if (!onboarding.ok) {
+    const nextOnFailure = {
+      ...existing,
+      lastStatusCheckError: "mollie_onboarding_lookup_failed",
+      last_status_check_error: "mollie_onboarding_lookup_failed",
+      lastStatusCheckedAt: nowIso,
+      last_status_checked_at: nowIso,
+    };
+    try {
+      await saveScopedMollieConnectAuthRecord(env, scopedState, nextOnFailure);
+    } catch (_) {
+      // Best-effort persistence of the failure marker only; the in-memory
+      // record below is still returned so the caller can render truthfully.
+    }
+    return { ok: false, code: "mollie_onboarding_lookup_failed", record: nextOnFailure };
+  }
+  const nextOnSuccess = {
+    ...existing,
+    onboardingStatus: onboarding.onboardingStatus,
+    onboarding_status: onboarding.onboardingStatus,
+    canReceivePayments: onboarding.canReceivePayments,
+    can_receive_payments: onboarding.canReceivePayments,
+    lastStatusCheckError: null,
+    last_status_check_error: null,
+    lastStatusCheckedAt: nowIso,
+    last_status_checked_at: nowIso,
+  };
+  await saveScopedMollieConnectAuthRecord(env, scopedState, nextOnSuccess);
+  return { ok: true, record: nextOnSuccess };
 }
 
 /* ===================== Terminal snapshot helpers ===================== */

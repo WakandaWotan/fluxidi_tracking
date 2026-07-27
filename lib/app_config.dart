@@ -8656,9 +8656,40 @@ Map<String, dynamic> _safeMollieConnectMap(Map<dynamic, dynamic> raw) {
     return false;
   }
 
+  // MOLLIE-ONBOARDING-STATUS-P1: unlike [boolAny] above, a missing/unknown
+  // tri-state signal (e.g. a legacy record captured before this field
+  // existed) must stay `null` rather than silently collapsing to `false` —
+  // the resolver treats `null` as "unknown, fall back to legacy signals"
+  // and `false` as an authoritative "cannot receive payments right now".
+  bool? boolOrNullAny(List<String> keys) {
+    for (final key in keys) {
+      final value = raw[key];
+      if (value is bool) return value;
+      if (value is String) {
+        final token = value.trim().toLowerCase();
+        if (token == 'true') return true;
+        if (token == 'false') return false;
+      }
+    }
+    return null;
+  }
+
   return <String, dynamic>{
     'connected': boolAny(const ['connected']),
     'status': textAny(const ['status']),
+    'can_receive_payments': boolOrNullAny(const [
+      'can_receive_payments',
+      'canReceivePayments',
+    ]),
+    'canReceivePayments': boolOrNullAny(const [
+      'canReceivePayments',
+      'can_receive_payments',
+    ]),
+    'status_check': textAny(const ['status_check', 'statusCheck']),
+    'status_check_error': textAny(const [
+      'status_check_error',
+      'statusCheckError',
+    ]),
     'mollie_organization_id': textAny(const [
       'mollie_organization_id',
       'mollieOrganizationId',
@@ -8696,15 +8727,26 @@ Map<String, dynamic> _safeMollieConnectMap(Map<dynamic, dynamic> raw) {
   };
 }
 
+/// MOLLIE-ONBOARDING-STATUS-P1: [forceRefresh] triggers a real, read-only
+/// re-check against Mollie's onboarding API on the backend (`?refresh=live`)
+/// instead of a plain cached-KV read. A normal settings-page load should omit
+/// it; only an explicit user-initiated "Refresh status" action should pass
+/// `true`, since it adds one extra outbound Mollie call.
 Future<Map<String, dynamic>> fetchBackendMollieConnectStatus({
   String? tenantId,
   String? companyId,
+  bool forceRefresh = false,
 }) async {
-  final endpoint = _withAdminTenantCompanyScope(
+  var endpoint = _withAdminTenantCompanyScope(
     Uri.parse('${appConfig.bookingBaseUrl}/admin/mollie/connect/status'),
     tenantId: tenantId,
     companyId: companyId,
   );
+  if (forceRefresh) {
+    endpoint = endpoint.replace(
+      queryParameters: {...endpoint.queryParameters, 'refresh': 'live'},
+    );
+  }
   final auth = await resolveCompanyOwnerAuthHeaders();
   final res = await http
       .get(endpoint, headers: auth.headers)

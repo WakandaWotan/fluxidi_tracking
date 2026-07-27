@@ -13,6 +13,7 @@ import 'package:fluxidi_tracking/business_theme_page.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/chiron_company_connection_config.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/payment/mollie_capability_status.dart';
 import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
 import 'package:fluxidi_tracking/payment/payment_method_logo.dart';
 import 'package:fluxidi_tracking/payment/payment_method_resolver.dart';
@@ -2610,7 +2611,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     }
   }
 
-  Future<void> _loadMollieConnectStatus({bool showErrorSnack = false}) async {
+  // MOLLIE-ONBOARDING-STATUS-P1: [forceRefresh] is what the "Refresh status"
+  // button passes to actually re-verify with Mollie (?refresh=live) instead
+  // of re-reading the same cached snapshot. On ANY failure here — network,
+  // timeout, or a truthful `status_check: "failed"` from the backend — the
+  // previous [_mollieConnectStatus] is left untouched below, so a transient
+  // failure can never downgrade an already-confirmed active/complete card.
+  Future<void> _loadMollieConnectStatus({
+    bool showErrorSnack = false,
+    bool forceRefresh = false,
+  }) async {
     setState(() {
       _mollieConnectLoading = true;
       _mollieConnectStatusError = null;
@@ -2626,6 +2636,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       final data = await fetchBackendMollieConnectStatus(
         tenantId: scope.tenantId,
         companyId: scope.companyId,
+        forceRefresh: forceRefresh,
       );
       if (!mounted) return;
       setState(() {
@@ -2634,6 +2645,22 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           _mollieConnected = data['connected'] as bool;
         }
       });
+      if (showErrorSnack &&
+          forceRefresh &&
+          (data['status_check'] ?? '').toString() == 'failed') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Kon Mollie-status niet live verifiëren. De laatst bekende status wordt getoond.',
+                en: 'Could not verify the live Mollie status. Showing the last known status.',
+                fr: 'Impossible de vérifier le statut Mollie en direct. Le dernier statut connu est affiché.',
+                es: 'No se pudo verificar el estado de Mollie en vivo. Se muestra el último estado conocido.',
+              ),
+            ),
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -3700,17 +3727,137 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     );
   }
 
+  // MOLLIE-ONBOARDING-STATUS-P1
+  //
+  // ROOT CAUSE (proven): the card status below used to be a single hardcoded
+  // ternary — `mollieConnected ? _SetupStatus.activationPending : ...` — so
+  // EVERY connected Mollie account, LIVE or TEST, fully onboarded or not,
+  // unconditionally showed "Activation pending". It never looked at
+  // onboarding/capability data at all. Separately, the one signal that WAS
+  // captured (`onboarding_status`) was always null server-side because it was
+  // read from the wrong Mollie endpoint (`/v2/organizations/me`, which has no
+  // onboarding field) instead of the dedicated Onboarding API
+  // (`/v2/onboarding/me`) — see workers/booking/modules/mollie_connect.js.
+  // "Refresh status" never re-asked Mollie either, so the bug could never
+  // self-heal.
+  //
+  // Fix: account connection (this card's header chip) and online-payment-
+  // method activation (its own row below) are resolved independently via
+  // `resolveMollieAccountConnection` / `resolveOnlinePaymentMethods`, driven
+  // by the authoritative `can_receive_payments` signal now fetched from the
+  // correct Mollie endpoint (see mollie_connect.js) and — on explicit
+  // "Refresh status" — re-verified live without ever touching credentials,
+  // OAuth, the webhook, or the payment flow.
+  MollieAccountConnection _mollieAccountConnection() {
+    return resolveMollieAccountConnection(
+      connected: _mollieConnectConnected,
+      statusCode: _mollieConnectStatusCode(),
+      mollieMode: _mollieConnectStatusField('mollie_mode'),
+    );
+  }
+
+  bool? _mollieCanReceivePayments() {
+    final raw = _mollieConnectStatus?['can_receive_payments'];
+    return raw is bool ? raw : null;
+  }
+
+  bool _mollieStatusCheckFailed() {
+    return (_mollieConnectStatus?['status_check'] ?? '').toString() == 'failed';
+  }
+
+  /// Only a true "lookup failed" state (nothing authoritative to show at
+  /// all) when the latest check errored AND there is neither a
+  /// can_receive_payments signal nor an onboarding_status to fall back on.
+  /// A transient failure that still has prior good data must keep showing
+  /// that data — never downgrade to "failed".
+  bool _mollieOnlineMethodsLookupFailed() {
+    return _mollieStatusCheckFailed() &&
+        _mollieCanReceivePayments() == null &&
+        _mollieConnectStatusField('onboarding_status') == null;
+  }
+
+  OnlinePaymentMethodsStatus _onlinePaymentMethodsStatus() {
+    return resolveOnlinePaymentMethods(
+      connected: _mollieConnectConnected,
+      onboardingStatus: _mollieConnectStatusField('onboarding_status'),
+      canReceivePayments: _mollieCanReceivePayments(),
+      lookupFailed: _mollieOnlineMethodsLookupFailed(),
+    );
+  }
+
+  String _onlinePaymentMethodsLabel(OnlinePaymentMethodsStatus s) {
+    switch (s) {
+      case OnlinePaymentMethodsStatus.active:
+        return _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo');
+      case OnlinePaymentMethodsStatus.partiallyActive:
+        return _t(
+          nl: 'Gedeeltelijk actief',
+          en: 'Partially active',
+          fr: 'Partiellement actif',
+          es: 'Parcialmente activo',
+        );
+      case OnlinePaymentMethodsStatus.actionRequired:
+        return _t(
+          nl: 'Actie vereist',
+          en: 'Action required',
+          fr: 'Action requise',
+          es: 'Acción requerida',
+        );
+      case OnlinePaymentMethodsStatus.activationPending:
+        return _t(
+          nl: 'Activering volgt',
+          en: 'Activation pending',
+          fr: 'Activation à venir',
+          es: 'Activación pendiente',
+        );
+      case OnlinePaymentMethodsStatus.noneActive:
+        return _t(
+          nl: 'Geen actief',
+          en: 'None active',
+          fr: 'Aucun actif',
+          es: 'Ninguno activo',
+        );
+      case OnlinePaymentMethodsStatus.lookupFailed:
+        return _t(
+          nl: 'Status kon niet gecontroleerd worden',
+          en: 'Could not verify status',
+          fr: 'Statut non vérifiable',
+          es: 'No se pudo verificar el estado',
+        );
+    }
+  }
+
   Widget _paymentOwnershipCard() {
     final demoActive = _paymentOwnerMode == 'fluxidi_central_demo';
     final mollieConnected = _mollieConnectConnected;
-    final mollieStatusCode = _mollieConnectStatusCode();
-    final cardStatus = mollieConnected
-        ? _SetupStatus.activationPending
-        : (mollieStatusCode == 'failed' || mollieStatusCode == 'auth_required')
-        ? _SetupStatus.incomplete
-        : demoActive
-        ? _SetupStatus.attention
-        : _SetupStatus.incomplete;
+    final accountConnection = _mollieAccountConnection();
+    final onlineMethods = _onlinePaymentMethodsStatus();
+    final _SetupStatus cardStatus;
+    switch (accountConnection) {
+      case MollieAccountConnection.disconnected:
+        cardStatus = demoActive ? _SetupStatus.attention : _SetupStatus.incomplete;
+        break;
+      case MollieAccountConnection.reconnectRequired:
+        cardStatus = _SetupStatus.attention;
+        break;
+      case MollieAccountConnection.connectedLive:
+      case MollieAccountConnection.connectedTest:
+        switch (onlineMethods) {
+          case OnlinePaymentMethodsStatus.active:
+          case OnlinePaymentMethodsStatus.partiallyActive:
+            cardStatus = _SetupStatus.complete;
+            break;
+          case OnlinePaymentMethodsStatus.activationPending:
+            cardStatus = _SetupStatus.activationPending;
+            break;
+          case OnlinePaymentMethodsStatus.actionRequired:
+          case OnlinePaymentMethodsStatus.noneActive:
+          case OnlinePaymentMethodsStatus.lookupFailed:
+            cardStatus = _SetupStatus.attention;
+            break;
+        }
+        break;
+    }
     final mollieMode = _mollieConnectStatusField('mollie_mode');
     final onboardingStatus = _mollieConnectStatusField('onboarding_status');
     final lastConnectedAt = _mollieConnectStatusField('last_connected_at');
@@ -3802,6 +3949,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             _t(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado'),
             _mollieConnectStatusCode(),
           ),
+          if (mollieConnected)
+            _paymentOwnershipInfoRow(
+              _t(
+                nl: 'Online betaalmethodes',
+                en: 'Online payment methods',
+                fr: 'Moyens de paiement en ligne',
+                es: 'Métodos de pago online',
+              ),
+              _onlinePaymentMethodsLabel(onlineMethods),
+            ),
           if (mollieMode != null)
             _paymentOwnershipInfoRow(
               _t(
@@ -3854,6 +4011,22 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 : _t(nl: 'Nee', en: 'No', fr: 'Non', es: 'No'),
           ),
           const SizedBox(height: 12),
+          // MOLLIE-ONBOARDING-STATUS-P1: a failed LIVE re-verification is
+          // reported truthfully, but the status rows above already keep
+          // showing the last authoritative (never downgraded) snapshot.
+          if (_mollieStatusCheckFailed())
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                _t(
+                  nl: 'Kon de laatste Mollie-verificatie niet uitvoeren. De status hierboven is de laatst bekende, bevestigde status.',
+                  en: 'Could not complete the latest live Mollie verification. The status above is the last known, confirmed status.',
+                  fr: 'La dernière vérification Mollie en direct a échoué. Le statut ci-dessus est le dernier statut connu et confirmé.',
+                  es: 'No se pudo completar la última verificación en vivo de Mollie. El estado anterior es el último estado confirmado conocido.',
+                ),
+                style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
+              ),
+            ),
           if (_mollieConnectStatusError != null)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
@@ -3924,7 +4097,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               OutlinedButton.icon(
                 onPressed: _mollieConnectLoading
                     ? null
-                    : () => _loadMollieConnectStatus(showErrorSnack: true),
+                    : () => _loadMollieConnectStatus(
+                        showErrorSnack: true,
+                        forceRefresh: true,
+                      ),
                 icon: _mollieConnectLoading
                     ? const SizedBox(
                         width: 14,

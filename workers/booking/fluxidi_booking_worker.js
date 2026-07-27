@@ -167,6 +167,7 @@ import {
   fetchMollieConnectAccountMetadata,
   refreshMollieConnectTokens,
   resolveCompanyMollieConnectCredentials,
+  refreshMollieOnboardingCapabilityStatus,
   _sanitizeMollieTerminalForSnapshot,
   _mollieTerminalsScopeMissingFromResponse,
   _adminPosTerminalError,
@@ -6384,6 +6385,10 @@ async function mollieConnectOAuthCallback(request, env) {
       profileId: metadata.profileId || null,
       mollie_mode: metadata.mollieMode || "unknown",
       onboardingStatus: metadata.onboardingStatus || null,
+      canReceivePayments:
+        typeof metadata.canReceivePayments === "boolean"
+          ? metadata.canReceivePayments
+          : null,
       ...encryptedTokens,
       tokenRef,
       expiresAt,
@@ -29615,7 +29620,36 @@ export default {
         const businessProfile = await loadBusinessProfile(env, explicitScope, {
           allowTenantLegacyFallback: false,
         });
-        const scopedRecord = await loadScopedMollieConnectAuthRecord(env, explicitScope);
+        let scopedRecord = await loadScopedMollieConnectAuthRecord(env, explicitScope);
+        // MOLLIE-ONBOARDING-STATUS-P1: "Refresh status" in the UI now asks
+        // for ?refresh=live to trigger a real, read-only re-check against
+        // Mollie's onboarding API (never the credentials/OAuth/webhook/
+        // payment flow). A normal page load omits it and stays a cheap KV
+        // read, unchanged from prior behavior.
+        const wantsLiveRefresh =
+          safeStr(url.searchParams.get("refresh"), 16).toLowerCase() === "live";
+        let statusCheck = "skipped";
+        let statusCheckErrorCode = null;
+        if (wantsLiveRefresh && hasSuccessfulMollieConnectRecord(scopedRecord)) {
+          const refreshResult = await refreshMollieOnboardingCapabilityStatus(
+            env,
+            explicitScope,
+          );
+          if (refreshResult?.ok) {
+            scopedRecord = refreshResult.record;
+            statusCheck = "ok";
+          } else {
+            // Live lookup failed: keep showing the last authoritative
+            // snapshot (refreshResult.record, when present, is the existing
+            // record with ONLY the failure marker added — onboarding_status
+            // and can_receive_payments are untouched) and report the
+            // failure truthfully instead of silently downgrading the card.
+            if (refreshResult?.record) scopedRecord = refreshResult.record;
+            statusCheck = "failed";
+            statusCheckErrorCode =
+              refreshResult?.code || "mollie_onboarding_lookup_failed";
+          }
+        }
         const status = sanitizeMollieConnectStatus(scopedRecord, businessProfile);
         return json(
           {
@@ -29623,6 +29657,8 @@ export default {
             tenant_id: tenantId,
             company_id: companyId,
             source: scopedRecord ? "scoped" : "none",
+            status_check: statusCheck,
+            status_check_error: statusCheckErrorCode,
             ...status,
           },
           200,
