@@ -168,6 +168,7 @@ import {
   refreshMollieConnectTokens,
   resolveCompanyMollieConnectCredentials,
   refreshMollieOnboardingCapabilityStatus,
+  createMollieLiveStatusDiag,
   _sanitizeMollieTerminalForSnapshot,
   _mollieTerminalsScopeMissingFromResponse,
   _adminPosTerminalError,
@@ -29726,9 +29727,16 @@ export default {
         let statusCheck = "skipped";
         let statusCheckErrorCode = null;
         if (wantsLiveRefresh && hasSuccessfulMollieConnectRecord(scopedRecord)) {
+          // MOLLIE-LIVE-STATUS-DIAGNOSTICS-P0-1: sanitized stage events only.
+          // Does not change fail-soft HTTP 2xx + status_check semantics.
+          const liveStatusDiag = createMollieLiveStatusDiag({
+            authMode: authScope.auth_mode,
+          });
+          liveStatusDiag.emit("request_received");
           const refreshResult = await refreshMollieOnboardingCapabilityStatus(
             env,
             explicitScope,
+            { diag: liveStatusDiag },
           );
           if (refreshResult?.ok) {
             scopedRecord = refreshResult.record;

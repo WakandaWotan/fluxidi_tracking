@@ -560,7 +560,15 @@ export async function exchangeMollieConnectCodeForTokens({
 export async function fetchMollieOnboardingStatus(accessToken) {
   const token = safeStr(accessToken);
   if (!token) {
-    return { ok: false, onboardingStatus: null, canReceivePayments: null };
+    return {
+      ok: false,
+      onboardingStatus: null,
+      canReceivePayments: null,
+      upstream_http_status: null,
+      mollie_error_type: null,
+      mollie_error_code: "empty_access_token",
+      response_shape: "empty_token",
+    };
   }
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -568,18 +576,76 @@ export async function fetchMollieOnboardingStatus(accessToken) {
   };
   try {
     const res = await fetch("https://api.mollie.com/v2/onboarding/me", { headers });
+    const upstreamHttpStatus = Number(res.status) || null;
     if (!res.ok) {
-      return { ok: false, onboardingStatus: null, canReceivePayments: null };
+      let mollieErrorType = null;
+      let mollieErrorCode = null;
+      try {
+        const errBody = await res.json();
+        mollieErrorType = _sanitizeMollieLiveStatusDiagType(errBody?.type);
+        mollieErrorCode =
+          _sanitizeMollieLiveStatusDiagCode(errBody?.code) ||
+          (Number.isFinite(Number(errBody?.status))
+            ? String(Math.trunc(Number(errBody.status)))
+            : null) ||
+          (upstreamHttpStatus != null ? String(upstreamHttpStatus) : null);
+      } catch (_) {
+        mollieErrorCode =
+          upstreamHttpStatus != null ? String(upstreamHttpStatus) : null;
+      }
+      return {
+        ok: false,
+        onboardingStatus: null,
+        canReceivePayments: null,
+        upstream_http_status: upstreamHttpStatus,
+        mollie_error_type: mollieErrorType,
+        mollie_error_code: mollieErrorCode,
+        response_shape: "http_error",
+      };
     }
-    const onboarding = await res.json();
+    let onboarding = null;
+    try {
+      onboarding = await res.json();
+    } catch (_) {
+      return {
+        ok: false,
+        onboardingStatus: null,
+        canReceivePayments: null,
+        upstream_http_status: upstreamHttpStatus,
+        mollie_error_type: null,
+        mollie_error_code: "invalid_json",
+        response_shape: "json_parse_error",
+      };
+    }
     const onboardingStatus = safeStr(onboarding?.status, 64) || null;
     const canReceivePaymentsRaw =
       onboarding?.canReceivePayments ?? onboarding?.can_receive_payments;
     const canReceivePayments =
       typeof canReceivePaymentsRaw === "boolean" ? canReceivePaymentsRaw : null;
-    return { ok: true, onboardingStatus, canReceivePayments };
+    return {
+      ok: true,
+      onboardingStatus,
+      canReceivePayments,
+      upstream_http_status: upstreamHttpStatus,
+      mollie_error_type: null,
+      mollie_error_code: null,
+      response_shape: _classifyMollieOnboardingResponseShape({
+        ok: true,
+        onboardingStatus,
+        canReceivePayments,
+        upstreamHttpStatus,
+      }),
+    };
   } catch (_) {
-    return { ok: false, onboardingStatus: null, canReceivePayments: null };
+    return {
+      ok: false,
+      onboardingStatus: null,
+      canReceivePayments: null,
+      upstream_http_status: null,
+      mollie_error_type: null,
+      mollie_error_code: "network_error",
+      response_shape: "network_error",
+    };
   }
 }
 
@@ -648,24 +714,42 @@ export function _isMollieConnectAccessTokenExpired(record, nowMs = Date.now()) {
   return nowMs + MOLLIE_CONNECT_TOKEN_REFRESH_LEEWAY_MS >= t;
 }
 
-export async function refreshMollieConnectTokens(env, scope, existingRecord) {
+export async function refreshMollieConnectTokens(env, scope, existingRecord, options = {}) {
+  const diag =
+    options?.diag && typeof options.diag.emit === "function" ? options.diag : null;
+  const tokenFlags = _mollieConnectRecordTokenDiagFlags(existingRecord);
+  const fail = (code, extra = {}) => {
+    diag?.emit("token_refresh_failed", {
+      upstream_endpoint_name: "oauth2_tokens",
+      mollie_error_code: _sanitizeMollieLiveStatusDiagCode(code) || "company_mollie_token_refresh_failed",
+      token_refresh_attempted: true,
+      ...tokenFlags,
+      ...extra,
+    });
+    return { ok: false, code };
+  };
   const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
   const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
   if (!tenantId || !companyId) {
-    return { ok: false, code: "missing_tenant_scope" };
+    return fail("missing_tenant_scope");
   }
   if (!existingRecord || typeof existingRecord !== "object") {
-    return { ok: false, code: "company_mollie_token_missing" };
+    return fail("company_mollie_token_missing");
   }
+  diag?.emit("token_refresh_started", {
+    upstream_endpoint_name: "oauth2_tokens",
+    token_refresh_attempted: true,
+    ...tokenFlags,
+  });
   const clientId = safeStr(env?.MOLLIE_CONNECT_CLIENT_ID);
   const clientSecret = safeStr(env?.MOLLIE_CONNECT_CLIENT_SECRET);
   if (!clientId || !clientSecret) {
-    return { ok: false, code: "missing_mollie_connect_client_config" };
+    return fail("missing_mollie_connect_client_config");
   }
   const encryptedRefresh =
     existingRecord.refreshTokenEncrypted ?? existingRecord.refresh_token_encrypted;
   if (!encryptedRefresh || typeof encryptedRefresh !== "object") {
-    return { ok: false, code: "company_mollie_token_missing" };
+    return fail("company_mollie_token_missing");
   }
   let decrypted;
   try {
@@ -674,11 +758,11 @@ export async function refreshMollieConnectTokens(env, scope, existingRecord) {
       env,
     );
   } catch (_) {
-    return { ok: false, code: "company_mollie_token_refresh_failed" };
+    return fail("company_mollie_token_refresh_failed");
   }
   const refreshTokenPlain = safeStr(decrypted?.refresh_token);
   if (!refreshTokenPlain) {
-    return { ok: false, code: "company_mollie_token_missing" };
+    return fail("company_mollie_token_missing");
   }
   const basic = btoa(`${clientId}:${clientSecret}`);
   const form = new URLSearchParams();
@@ -695,20 +779,31 @@ export async function refreshMollieConnectTokens(env, scope, existingRecord) {
       body: form.toString(),
     });
   } catch (_) {
-    return { ok: false, code: "company_mollie_token_refresh_failed" };
+    return fail("company_mollie_token_refresh_failed", {
+      response_shape: "network_error",
+    });
   }
   if (!res.ok) {
-    return { ok: false, code: "company_mollie_token_refresh_failed" };
+    return fail("company_mollie_token_refresh_failed", {
+      upstream_http_status: Number(res.status) || undefined,
+      response_shape: "http_error",
+    });
   }
   let tokens = null;
   try {
     tokens = await res.json();
   } catch (_) {
-    return { ok: false, code: "company_mollie_token_refresh_failed" };
+    return fail("company_mollie_token_refresh_failed", {
+      upstream_http_status: Number(res.status) || undefined,
+      response_shape: "json_parse_error",
+    });
   }
   const newAccessToken = safeStr(tokens?.access_token);
   if (!newAccessToken) {
-    return { ok: false, code: "company_mollie_token_refresh_failed" };
+    return fail("company_mollie_token_refresh_failed", {
+      upstream_http_status: Number(res.status) || undefined,
+      response_shape: "token_response_empty",
+    });
   }
   const newRefreshTokenRaw = safeStr(tokens?.refresh_token);
   const newRefreshToken = newRefreshTokenRaw || refreshTokenPlain;
@@ -719,7 +814,7 @@ export async function refreshMollieConnectTokens(env, scope, existingRecord) {
       env,
     );
   } catch (_) {
-    return { ok: false, code: "company_mollie_token_refresh_failed" };
+    return fail("company_mollie_token_refresh_failed");
   }
   const expiresInSec = Number(tokens?.expires_in);
   const nowMs = Date.now();
@@ -746,8 +841,16 @@ export async function refreshMollieConnectTokens(env, scope, existingRecord) {
       updatedRecord,
     );
   } catch (_) {
-    return { ok: false, code: "company_mollie_token_refresh_failed" };
+    return fail("company_mollie_token_refresh_failed");
   }
+  diag?.emit("token_refresh_completed", {
+    upstream_endpoint_name: "oauth2_tokens",
+    upstream_http_status: Number(res.status) || 200,
+    token_refresh_attempted: true,
+    token_present: true,
+    refresh_token_present: true,
+    token_expired: false,
+  });
   return {
     ok: true,
     record: updatedRecord,
@@ -756,11 +859,27 @@ export async function refreshMollieConnectTokens(env, scope, existingRecord) {
 }
 
 export async function resolveCompanyMollieConnectCredentials(env, scope, _options = {}) {
+  const diag =
+    _options?.diag && typeof _options.diag.emit === "function" ? _options.diag : null;
+  let tokenRefreshAttempted = false;
+  const fail = (error, extra = {}) => {
+    diag?.emit("credential_resolve_failed", {
+      mollie_error_code:
+        _sanitizeMollieLiveStatusDiagCode(error) ||
+        "company_mollie_credentials_unavailable",
+      token_refresh_attempted: tokenRefreshAttempted,
+      ...extra,
+    });
+    return { ok: false, error, token_refresh_attempted: tokenRefreshAttempted };
+  };
   const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
   const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
   if (!tenantId || !companyId) {
-    return { ok: false, error: "company_mollie_credentials_unavailable" };
+    return fail("company_mollie_credentials_unavailable");
   }
+  diag?.emit("credential_resolve_started", {
+    token_refresh_attempted: false,
+  });
   const scopedState = { tenant_id: tenantId, company_id: companyId };
   let record = null;
   try {
@@ -769,11 +888,12 @@ export async function resolveCompanyMollieConnectCredentials(env, scope, _option
     record = null;
   }
   if (!record || typeof record !== "object") {
-    return { ok: false, error: "company_mollie_not_connected" };
+    return fail("company_mollie_not_connected");
   }
+  const tokenFlags = _mollieConnectRecordTokenDiagFlags(record);
   const statusLower = safeStr(record.status, 32).toLowerCase();
   if (record.connected !== true || statusLower !== "connected") {
-    return { ok: false, error: "company_mollie_not_connected" };
+    return fail("company_mollie_not_connected", tokenFlags);
   }
   const encryptedAccess = record.accessTokenEncrypted ?? record.access_token_encrypted;
   const encryptedRefresh = record.refreshTokenEncrypted ?? record.refresh_token_encrypted;
@@ -783,16 +903,21 @@ export async function resolveCompanyMollieConnectCredentials(env, scope, _option
     !encryptedRefresh ||
     typeof encryptedRefresh !== "object"
   ) {
-    return { ok: false, error: "company_mollie_token_missing" };
+    return fail("company_mollie_token_missing", tokenFlags);
   }
 
   let workingRecord = record;
   let accessTokenPlain = "";
 
   if (_isMollieConnectAccessTokenExpired(workingRecord)) {
-    const refreshed = await refreshMollieConnectTokens(env, scopedState, workingRecord);
+    tokenRefreshAttempted = true;
+    const refreshed = await refreshMollieConnectTokens(env, scopedState, workingRecord, {
+      diag,
+    });
     if (!refreshed?.ok) {
-      return { ok: false, error: "company_mollie_token_refresh_failed" };
+      return fail("company_mollie_token_refresh_failed", {
+        ..._mollieConnectRecordTokenDiagFlags(workingRecord),
+      });
     }
     workingRecord = refreshed.record;
     accessTokenPlain = safeStr(refreshed.accessToken);
@@ -807,9 +932,14 @@ export async function resolveCompanyMollieConnectCredentials(env, scope, _option
       accessTokenPlain = "";
     }
     if (!accessTokenPlain) {
-      const refreshed = await refreshMollieConnectTokens(env, scopedState, workingRecord);
+      tokenRefreshAttempted = true;
+      const refreshed = await refreshMollieConnectTokens(env, scopedState, workingRecord, {
+        diag,
+      });
       if (!refreshed?.ok) {
-        return { ok: false, error: "company_mollie_token_refresh_failed" };
+        return fail("company_mollie_token_refresh_failed", {
+          ..._mollieConnectRecordTokenDiagFlags(workingRecord),
+        });
       }
       workingRecord = refreshed.record;
       accessTokenPlain = safeStr(refreshed.accessToken);
@@ -817,7 +947,9 @@ export async function resolveCompanyMollieConnectCredentials(env, scope, _option
   }
 
   if (!accessTokenPlain) {
-    return { ok: false, error: "company_mollie_credentials_unavailable" };
+    return fail("company_mollie_credentials_unavailable", {
+      ..._mollieConnectRecordTokenDiagFlags(workingRecord),
+    });
   }
 
   const modeRaw = safeStr(
@@ -825,6 +957,12 @@ export async function resolveCompanyMollieConnectCredentials(env, scope, _option
     16,
   ).toLowerCase();
   const mode = modeRaw === "test" || modeRaw === "live" ? modeRaw : "unknown";
+  diag?.emit("credential_resolve_completed", {
+    token_present: true,
+    refresh_token_present: true,
+    token_expired: false,
+    token_refresh_attempted: tokenRefreshAttempted,
+  });
   return {
     ok: true,
     apiKey: accessTokenPlain,
@@ -834,6 +972,7 @@ export async function resolveCompanyMollieConnectCredentials(env, scope, _option
     payment_credential_source: "company_mollie",
     payment_company_id: companyId,
     payment_demo_mode: false,
+    token_refresh_attempted: tokenRefreshAttempted,
     mollie_organization_id:
       safeStr(workingRecord.organizationId ?? workingRecord.organization_id, 80) || null,
     mollie_profile_id:
@@ -842,6 +981,157 @@ export async function resolveCompanyMollieConnectCredentials(env, scope, _option
 }
 
 /* ===================== Onboarding/capability live refresh ===================== */
+
+// MOLLIE-LIVE-STATUS-DIAGNOSTICS-P0-1: structured, sanitized stage events for
+// GET /admin/mollie/connect/status?refresh=live. Never logs tokens, auth
+// headers, company/org/profile/payment IDs, or upstream bodies.
+const MOLLIE_LIVE_STATUS_DIAG_ALLOWED_KEYS = new Set([
+  "stage",
+  "auth_mode",
+  "correlation_id",
+  "upstream_endpoint_name",
+  "upstream_http_status",
+  "mollie_error_type",
+  "mollie_error_code",
+  "token_present",
+  "refresh_token_present",
+  "token_expired",
+  "token_refresh_attempted",
+  "response_shape",
+  "can_receive_payments",
+  "status_check",
+  "duration_ms",
+]);
+
+const MOLLIE_LIVE_STATUS_SANITIZED_CODE_RE = /^[a-z0-9][a-z0-9_.-]{0,79}$/i;
+
+export function _sanitizeMollieLiveStatusDiagCode(value) {
+  const raw = safeStr(value, 80).trim();
+  if (!raw) return null;
+  if (!MOLLIE_LIVE_STATUS_SANITIZED_CODE_RE.test(raw)) return null;
+  return raw.slice(0, 80);
+}
+
+export function _sanitizeMollieLiveStatusDiagType(value) {
+  const raw = safeStr(value, 200).trim();
+  if (!raw) return null;
+  // Mollie `type` is often a docs URL — keep only the last path segment.
+  const segment = raw.includes("/")
+    ? raw.split("/").filter(Boolean).pop()
+    : raw;
+  return _sanitizeMollieLiveStatusDiagCode(segment);
+}
+
+export function logMollieLiveStatusDiag(fields = {}) {
+  const src = fields && typeof fields === "object" ? fields : {};
+  const out = {};
+  for (const key of MOLLIE_LIVE_STATUS_DIAG_ALLOWED_KEYS) {
+    if (!(key in src)) continue;
+    const value = src[key];
+    if (value === undefined) continue;
+    if (
+      key === "mollie_error_type" ||
+      key === "mollie_error_code" ||
+      key === "response_shape" ||
+      key === "stage" ||
+      key === "auth_mode" ||
+      key === "correlation_id" ||
+      key === "upstream_endpoint_name" ||
+      key === "status_check"
+    ) {
+      const sanitized =
+        key === "mollie_error_type"
+          ? _sanitizeMollieLiveStatusDiagType(value)
+          : key === "mollie_error_code" || key === "response_shape" || key === "stage"
+            ? _sanitizeMollieLiveStatusDiagCode(value)
+            : safeStr(value, 80) || null;
+      if (sanitized != null && sanitized !== "") out[key] = sanitized;
+      continue;
+    }
+    if (
+      key === "token_present" ||
+      key === "refresh_token_present" ||
+      key === "token_expired" ||
+      key === "token_refresh_attempted" ||
+      key === "can_receive_payments"
+    ) {
+      if (typeof value === "boolean") out[key] = value;
+      continue;
+    }
+    if (key === "upstream_http_status" || key === "duration_ms") {
+      const n = Number(value);
+      if (Number.isFinite(n) && n >= 0) out[key] = Math.trunc(n);
+      continue;
+    }
+  }
+  if (!out.stage) return;
+  console.log(`[MOLLIE_LIVE_STATUS] ${JSON.stringify(out)}`);
+}
+
+export function createMollieLiveStatusDiag({
+  authMode = null,
+  correlationId = null,
+} = {}) {
+  const startedAt = Date.now();
+  const correlation_id =
+    safeStr(correlationId, 80) ||
+    (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `mls_${Date.now().toString(36)}`);
+  const auth_mode = safeStr(authMode, 40) || null;
+  return {
+    correlation_id,
+    auth_mode,
+    startedAt,
+    emit(stage, fields = {}) {
+      logMollieLiveStatusDiag({
+        auth_mode,
+        correlation_id,
+        ...(fields && typeof fields === "object" ? fields : {}),
+        stage,
+        duration_ms:
+          fields?.duration_ms != null
+            ? fields.duration_ms
+            : Math.max(0, Date.now() - startedAt),
+      });
+    },
+  };
+}
+
+function _mollieConnectRecordTokenDiagFlags(record) {
+  const encryptedAccess =
+    record?.accessTokenEncrypted ?? record?.access_token_encrypted;
+  const encryptedRefresh =
+    record?.refreshTokenEncrypted ?? record?.refresh_token_encrypted;
+  return {
+    token_present: !!(encryptedAccess && typeof encryptedAccess === "object"),
+    refresh_token_present: !!(
+      encryptedRefresh && typeof encryptedRefresh === "object"
+    ),
+    token_expired: _isMollieConnectAccessTokenExpired(record),
+  };
+}
+
+function _classifyMollieOnboardingResponseShape({
+  ok,
+  onboardingStatus,
+  canReceivePayments,
+  upstreamHttpStatus,
+  networkError,
+} = {}) {
+  if (networkError) return "network_error";
+  if (upstreamHttpStatus != null && upstreamHttpStatus !== 200) {
+    return "http_error";
+  }
+  if (!ok) return "lookup_failed";
+  if (typeof canReceivePayments === "boolean" && onboardingStatus) {
+    return "onboarding_me_status_bool";
+  }
+  if (onboardingStatus || typeof canReceivePayments === "boolean") {
+    return "onboarding_me_partial";
+  }
+  return "onboarding_me_empty";
+}
 
 // MOLLIE-ONBOARDING-STATUS-P1: "Refresh status" in the UI previously just
 // re-read the same cached KV record — it never asked Mollie anything, so a
@@ -857,29 +1147,66 @@ export async function resolveCompanyMollieConnectCredentials(env, scope, _option
 // last_status_check_error/last_status_checked_at pair and explicitly leaves
 // onboarding_status/can_receive_payments untouched, so a transient failure
 // can never downgrade an already-confirmed active account.
-export async function refreshMollieOnboardingCapabilityStatus(env, scope) {
+export async function refreshMollieOnboardingCapabilityStatus(env, scope, options = {}) {
+  const diag =
+    options?.diag && typeof options.diag.emit === "function" ? options.diag : null;
   const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
   const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
   if (!tenantId || !companyId) {
+    diag?.emit("live_status_failed", {
+      status_check: "failed",
+      mollie_error_code: "missing_tenant_scope",
+    });
     return { ok: false, code: "missing_tenant_scope" };
   }
   const scopedState = { tenant_id: tenantId, company_id: companyId };
   const credentials = await resolveCompanyMollieConnectCredentials(env, scopedState, {
     purpose: "onboarding_status_refresh",
+    diag,
   });
   if (!credentials?.ok) {
     // Not connected / no usable token at all — not a "lookup failure" in the
     // live-check sense, the caller already knows the account isn't
     // connected from the base status record.
-    return { ok: false, code: credentials?.error || "company_mollie_credentials_unavailable" };
+    const code =
+      _sanitizeMollieLiveStatusDiagCode(
+        credentials?.error || "company_mollie_credentials_unavailable",
+      ) || "company_mollie_credentials_unavailable";
+    diag?.emit("live_status_failed", {
+      status_check: "failed",
+      mollie_error_code: code,
+      token_refresh_attempted: !!credentials?.token_refresh_attempted,
+    });
+    return { ok: false, code };
   }
+  diag?.emit("mollie_status_request_started", {
+    upstream_endpoint_name: "onboarding_me",
+    token_present: true,
+    token_refresh_attempted: !!credentials.token_refresh_attempted,
+  });
   const onboarding = await fetchMollieOnboardingStatus(credentials.apiKey);
   const nowIso = new Date().toISOString();
   const existing = await loadScopedMollieConnectAuthRecord(env, scopedState);
   if (!existing || typeof existing !== "object") {
+    diag?.emit("live_status_failed", {
+      status_check: "failed",
+      mollie_error_code: "company_mollie_not_connected",
+      upstream_endpoint_name: "onboarding_me",
+      upstream_http_status: onboarding.upstream_http_status ?? undefined,
+      response_shape: onboarding.response_shape || undefined,
+    });
     return { ok: false, code: "company_mollie_not_connected" };
   }
   if (!onboarding.ok) {
+    diag?.emit("mollie_status_request_failed", {
+      upstream_endpoint_name: "onboarding_me",
+      upstream_http_status: onboarding.upstream_http_status ?? undefined,
+      mollie_error_type: onboarding.mollie_error_type || undefined,
+      mollie_error_code:
+        onboarding.mollie_error_code || "mollie_onboarding_lookup_failed",
+      response_shape: onboarding.response_shape || "lookup_failed",
+      token_refresh_attempted: !!credentials.token_refresh_attempted,
+    });
     const nextOnFailure = {
       ...existing,
       lastStatusCheckError: "mollie_onboarding_lookup_failed",
@@ -893,8 +1220,37 @@ export async function refreshMollieOnboardingCapabilityStatus(env, scope) {
       // Best-effort persistence of the failure marker only; the in-memory
       // record below is still returned so the caller can render truthfully.
     }
+    diag?.emit("live_status_failed", {
+      status_check: "failed",
+      mollie_error_code: "mollie_onboarding_lookup_failed",
+      upstream_endpoint_name: "onboarding_me",
+      upstream_http_status: onboarding.upstream_http_status ?? undefined,
+      mollie_error_type: onboarding.mollie_error_type || undefined,
+      response_shape: onboarding.response_shape || "lookup_failed",
+      can_receive_payments:
+        typeof existing.canReceivePayments === "boolean"
+          ? existing.canReceivePayments
+          : typeof existing.can_receive_payments === "boolean"
+            ? existing.can_receive_payments
+            : undefined,
+      token_refresh_attempted: !!credentials.token_refresh_attempted,
+    });
     return { ok: false, code: "mollie_onboarding_lookup_failed", record: nextOnFailure };
   }
+  diag?.emit("mollie_status_response_received", {
+    upstream_endpoint_name: "onboarding_me",
+    upstream_http_status: onboarding.upstream_http_status ?? 200,
+    response_shape: onboarding.response_shape || "onboarding_me_status_bool",
+    can_receive_payments:
+      typeof onboarding.canReceivePayments === "boolean"
+        ? onboarding.canReceivePayments
+        : undefined,
+    token_refresh_attempted: !!credentials.token_refresh_attempted,
+  });
+  diag?.emit("response_mapping_started", {
+    upstream_endpoint_name: "onboarding_me",
+    response_shape: onboarding.response_shape || undefined,
+  });
   const nextOnSuccess = {
     ...existing,
     onboardingStatus: onboarding.onboardingStatus,
@@ -907,6 +1263,24 @@ export async function refreshMollieOnboardingCapabilityStatus(env, scope) {
     last_status_checked_at: nowIso,
   };
   await saveScopedMollieConnectAuthRecord(env, scopedState, nextOnSuccess);
+  diag?.emit("response_mapping_completed", {
+    response_shape: onboarding.response_shape || undefined,
+    can_receive_payments:
+      typeof onboarding.canReceivePayments === "boolean"
+        ? onboarding.canReceivePayments
+        : undefined,
+  });
+  diag?.emit("live_status_succeeded", {
+    status_check: "ok",
+    upstream_endpoint_name: "onboarding_me",
+    upstream_http_status: onboarding.upstream_http_status ?? 200,
+    response_shape: onboarding.response_shape || undefined,
+    can_receive_payments:
+      typeof onboarding.canReceivePayments === "boolean"
+        ? onboarding.canReceivePayments
+        : undefined,
+    token_refresh_attempted: !!credentials.token_refresh_attempted,
+  });
   return { ok: true, record: nextOnSuccess };
 }
 
