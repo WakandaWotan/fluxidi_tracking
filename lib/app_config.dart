@@ -4108,6 +4108,61 @@ Future<CompanyOwnerAuthHeaders> resolveCompanyOwnerAuthHeaders({
   );
 }
 
+/// PAYMENT-AUTH-P0-1: how an in-car mark-paid persistence call (QR / cash /
+/// manual card terminal) authenticated against the booking-worker payment
+/// routes. `none` means no usable bearer was found ÔÇö callers must refuse to
+/// send the request rather than falling back to an unauthenticated call.
+enum InCarPaymentAuthMode { driverSession, companySession, none }
+
+class InCarPaymentAuthHeaders {
+  const InCarPaymentAuthHeaders({required this.headers, required this.mode});
+
+  final Map<String, String> headers;
+  final InCarPaymentAuthMode mode;
+}
+
+/// Auth headers for in-car payment persistence (`POST /bookings/:id/payment`
+/// and `POST /bookings/:id/legs/:legId/payment`).
+///
+/// Prefers the active driver-session bearer ÔÇö this covers both a standalone
+/// driver login AND an operator-minted driver session used during a company
+/// business preview, so the two behave identically to the backend. Falls
+/// back to the company-owner bearer (business preview surfaces that never
+/// minted a preview driver session). Never falls back to an unauthenticated
+/// request and never sends the removed platform ADMIN_TOKEN / x-admin-token.
+Future<InCarPaymentAuthHeaders> resolveInCarPaymentAuthHeaders({
+  bool json = true,
+}) async {
+  final headers = <String, String>{'Accept': 'application/json'};
+  if (json) headers['Content-Type'] = 'application/json';
+
+  final driverSessionToken =
+      (activeDriverSessionNotifier.value?.driverSessionToken ?? '').trim();
+  if (driverSessionToken.isNotEmpty) {
+    headers['Authorization'] = 'Bearer $driverSessionToken';
+    debugPrint('[IN_CAR_PAYMENT_AUTH][MODE] auth_mode=driver_session');
+    return InCarPaymentAuthHeaders(
+      headers: headers,
+      mode: InCarPaymentAuthMode.driverSession,
+    );
+  }
+
+  final companyAuth = await resolveCompanyOwnerAuthHeaders(json: json);
+  if (companyAuth.mode == CompanyOwnerAuthMode.companySession) {
+    debugPrint('[IN_CAR_PAYMENT_AUTH][MODE] auth_mode=company_session');
+    return InCarPaymentAuthHeaders(
+      headers: companyAuth.headers,
+      mode: InCarPaymentAuthMode.companySession,
+    );
+  }
+
+  debugPrint('[IN_CAR_PAYMENT_AUTH][MODE] auth_mode=none');
+  return InCarPaymentAuthHeaders(
+    headers: headers,
+    mode: InCarPaymentAuthMode.none,
+  );
+}
+
 enum TripsHistoryAuthMode { admin, companySession, driverSession, none }
 
 class TripsHistoryAuthHeaders {

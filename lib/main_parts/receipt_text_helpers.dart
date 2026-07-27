@@ -541,6 +541,20 @@ String _receiptText(String key) {
         fr: 'ID de reservation manquant.',
         es: 'Falta el ID de reserva.',
       );
+    case 'paymentAuthRequired':
+      return _tr(
+        nl: 'Log opnieuw in om de betaling te bevestigen.',
+        en: 'Sign in again to confirm this payment.',
+        fr: 'Reconnectez-vous pour confirmer ce paiement.',
+        es: 'Vuelva a iniciar sesion para confirmar este pago.',
+      );
+    case 'qrReadyToScan':
+      return _tr(
+        nl: 'QR gereed om te scannen. Bevestig hieronder na betaling.',
+        en: 'QR ready to scan. Confirm below once paid.',
+        fr: 'QR pret a scanner. Confirmez ci-dessous une fois paye.',
+        es: 'QR listo para escanear. Confirme abajo una vez pagado.',
+      );
     case 'demoPayment':
       return _tr(
         nl: 'Markeer betaald (demo)',

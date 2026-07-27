@@ -15878,6 +15878,101 @@ async function _requireDriverSessionOrAdmin(request, url, env, body = null) {
   return { ok: true, auth_mode: "driver_session", driver_session: driverSession };
 }
 
+// PAYMENT-AUTH-P0-1
+//
+// Authoritative auth for the in-car payment mark-paid routes
+// (`POST /bookings/:id/payment` and `POST /bookings/:id/legs/:legId/payment`)
+// reached by the Flutter driver app (QR / cash / manual card terminal) and by
+// the company/business-preview UI.
+//
+// Composed entirely from the existing session primitives used above
+// (`hasValidAdminToken`, `_loadCompanySessionFromRequest`,
+// `_loadPublicDriverSessionFromRequest`, `_scopeText`) - no bespoke token
+// parsing is introduced.
+//
+// Preference order:
+//   1. ADMIN_TOKEN - retained as the backward-compatible server/operator
+//      fallback. Flutter never sends this after SECURITY-REMOVE-CLIENT-
+//      ADMIN-TOKEN-P0-1 / this task.
+//   2. Company-admin session - the business-preview / company-owner bearer.
+//      Any client-supplied tenant/company in `body` must match the session
+//      or the request fails closed with 403.
+//   3. Driver session (covers BOTH a standalone driver login and an
+//      operator-minted driver session - they carry the same record shape).
+//      Any client-supplied tenant/company/driver in `body` must match the
+//      session or the request fails closed with 403.
+//   4. No usable auth ÔåÆ structured JSON 401.
+//
+// Callers MUST fold `driver_session` into the request body via
+// `_applyDriverSessionToBookingBody` before resolving tenant/company scope,
+// exactly like the existing `_requireDriverSessionOrAdmin` call sites. The
+// existing `enforceDriverOwnershipForMutation` + `bookingMatchesRequired-
+// TenantCompanyScope` checks downstream continue to enforce that a driver
+// session may only mark paid a booking assigned to that driver/company, and
+// that a company session may only mark paid a booking within its own
+// tenant/company - this helper only decides WHO is authenticated, not WHICH
+// booking they may touch.
+async function _requireDriverOrCompanySessionOrAdminForPayment(
+  request,
+  url,
+  env,
+  body = null,
+) {
+  if (hasValidAdminToken(request, url, env)) {
+    return {
+      ok: true,
+      auth_mode: "admin_token",
+      driver_session: null,
+      company_session: null,
+    };
+  }
+  const companySession = await _loadCompanySessionFromRequest(request, env);
+  if (companySession) {
+    const clientTenant = _scopeText(body?.tenant_id ?? body?.tenantId);
+    const clientCompany = _scopeText(body?.company_id ?? body?.companyId);
+    if (clientTenant && clientTenant !== companySession.tenant_id) {
+      return { ok: false, response: json({ ok: false, error: "forbidden" }, 403) };
+    }
+    if (clientCompany && clientCompany !== companySession.company_id) {
+      return { ok: false, response: json({ ok: false, error: "forbidden" }, 403) };
+    }
+    return {
+      ok: true,
+      auth_mode: "company_session",
+      driver_session: null,
+      company_session: companySession,
+    };
+  }
+  const driverSession = await _loadPublicDriverSessionFromRequest(request, env);
+  if (driverSession) {
+    const clientTenant = _scopeText(body?.tenant_id ?? body?.tenantId);
+    const clientCompany = _scopeText(body?.company_id ?? body?.companyId);
+    const clientDriver = _scopeText(
+      body?.driver_id ??
+        body?.driverId ??
+        body?.actor_driver_id ??
+        body?.actorDriverId,
+      96,
+    );
+    if (clientTenant && clientTenant !== driverSession.tenant_id) {
+      return { ok: false, response: json({ ok: false, error: "forbidden" }, 403) };
+    }
+    if (clientCompany && clientCompany !== driverSession.company_id) {
+      return { ok: false, response: json({ ok: false, error: "forbidden" }, 403) };
+    }
+    if (clientDriver && clientDriver !== driverSession.driver_id) {
+      return { ok: false, response: json({ ok: false, error: "forbidden" }, 403) };
+    }
+    return {
+      ok: true,
+      auth_mode: "driver_session",
+      driver_session: driverSession,
+      company_session: null,
+    };
+  }
+  return { ok: false, response: json({ ok: false, error: "unauthorized" }, 401) };
+}
+
 // Detect any body-supplied scope/driver id that conflicts with a driver
 // session record. Returns a string reason on conflict or null when the caller
 // either omitted the value or supplied a value matching the session.
@@ -39498,8 +39593,17 @@ export default {
           if (!legId) {
             return json({ ok: false, error: "leg_id is required" }, 400);
           }
-          _requireAdmin(request, url, env);
           const body = await safeJson(request);
+          // PAYMENT-AUTH-P0-1: driver session, company-owner session, or the
+          // legacy ADMIN_TOKEN fallback - never an unauthenticated request.
+          const legPaymentAuth = await _requireDriverOrCompanySessionOrAdminForPayment(
+            request,
+            url,
+            env,
+            body,
+          );
+          if (!legPaymentAuth.ok) return legPaymentAuth.response;
+          _applyDriverSessionToBookingBody(body, legPaymentAuth.driver_session);
           const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
           if (!scopedRoute.ok) return scopedRoute.response;
           const tenantScope = scopedRoute.scope;
@@ -39541,8 +39645,17 @@ export default {
           pathParts[2] === "payment" &&
           request.method === "POST"
         ) {
-          _requireAdmin(request, url, env);
           const body = await safeJson(request);
+          // PAYMENT-AUTH-P0-1: driver session, company-owner session, or the
+          // legacy ADMIN_TOKEN fallback - never an unauthenticated request.
+          const bookingPaymentAuth = await _requireDriverOrCompanySessionOrAdminForPayment(
+            request,
+            url,
+            env,
+            body,
+          );
+          if (!bookingPaymentAuth.ok) return bookingPaymentAuth.response;
+          _applyDriverSessionToBookingBody(body, bookingPaymentAuth.driver_session);
           const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
           if (!scopedRoute.ok) return scopedRoute.response;
           const tenantScope = scopedRoute.scope;

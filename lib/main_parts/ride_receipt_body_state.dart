@@ -1,5 +1,14 @@
 part of '../main.dart';
 
+/// PAYMENT-AUTH-P0-1: thrown by `_persistInCarPayment` when the booking
+/// worker rejects an in-car mark-paid call with HTTP 401 (missing/expired
+/// driver or company-owner session). Distinguished from other backend
+/// failures so the UI can show a truthful "sign in again" message instead of
+/// a generic payment-failed message.
+class _InCarPaymentAuthRequiredException implements Exception {
+  const _InCarPaymentAuthRequiredException();
+}
+
 /// Process-wide sticky memo of POSITIVE receipt eligibility verdicts (keyed by
 /// canonical booking id). STREET-BUSINESS-INVOICE-RECEIPT-UX-1C: the volatile
 /// `driverRideScopeActiveDriverIdOverride` (the effective/preview driver id) is
@@ -3280,7 +3289,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       return;
     }
 
-    _markPaymentRequestSent();
+    // PAYMENT-AUTH-P0-1: opening (or copying) the local EPC QR is not a
+    // payment confirmation ÔÇö it must never optimistically mark the receipt
+    // "sent"/paid. Payment state only changes after the backend confirms an
+    // authoritative mark-paid in `_persistInCarPayment`.
     final epcPayload = _bankPaymentEpcPayload(details);
     final clipboardText = _bankPaymentClipboardText(details);
     debugPrint(
@@ -3323,6 +3335,15 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
                 textAlign: TextAlign.left,
                 style: const TextStyle(fontSize: 12),
               ),
+              const SizedBox(height: 10),
+              Text(
+                _receiptText('qrReadyToScan'),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: _palette.textMuted,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
             ],
           ),
         ),
@@ -3341,7 +3362,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           FilledButton(
             onPressed: () async {
               await Clipboard.setData(ClipboardData(text: clipboardText));
-              _markPaymentRequestSent();
+              // PAYMENT-AUTH-P0-1: copying the transfer details is not a
+              // payment confirmation either ÔÇö no payment-status change here.
               if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(content: Text(_bankPaymentCopySnackText())),
@@ -3380,6 +3402,22 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       action: 'persist_in_car_payment',
     );
     if (strictScope == null) return;
+    // PAYMENT-AUTH-P0-1: resolve the driver/company-owner bearer ONCE for
+    // every in-car mark-paid path (QR, cash, manual card terminal). Never
+    // fall back to an unauthenticated request ÔÇö the booking-worker payment
+    // routes no longer accept the removed client ADMIN_TOKEN.
+    final authHeaders = await resolveInCarPaymentAuthHeaders();
+    if (authHeaders.mode == InCarPaymentAuthMode.none) {
+      debugPrint(
+        '[RECEIPT_PAYMENT][AUTH] status=missing_auth method=$method',
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_receiptText('paymentAuthRequired'))),
+      );
+      return;
+    }
+    final headers = authHeaders.headers;
     final bookingId = (item.bookingId ?? '').trim();
     final tripId = item.tripId.trim();
     final rawNormalizedMethod = method.toLowerCase().trim();
@@ -3464,10 +3502,6 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         ),
         if (amount != null) 'amount': amount,
       };
-      final headers = <String, String>{'Content-Type': 'application/json'};
-      if (kAdminToken.trim().isNotEmpty) {
-        headers['x-admin-token'] = kAdminToken.trim();
-      }
       try {
         debugPrint(
           '[RECEIPT_PAYMENT][LEG_BOOKING_PAYMENT] parentBookingId=$parentBookingId legId=$legId tripId=$tripId method=$normalizedMethod amount=${amount ?? "-"}',
@@ -3489,6 +3523,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         final root = decoded is Map
             ? Map<String, dynamic>.from(decoded)
             : <String, dynamic>{};
+        if (res.statusCode == 401) {
+          throw const _InCarPaymentAuthRequiredException();
+        }
         if (res.statusCode < 200 || res.statusCode >= 300) {
           throw Exception(
             (root['error'] ?? 'HTTP ${res.statusCode}').toString(),
@@ -3554,10 +3591,17 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           ),
         );
       } catch (err) {
+        final isAuthFailure = err is _InCarPaymentAuthRequiredException;
         debugPrint(
-          '[RECEIPT][LEG_BOOKING_PAYMENT_FAILED] parentBookingId=$parentBookingId legId=$legId method=$method err=$err',
+          '[RECEIPT][LEG_BOOKING_PAYMENT_FAILED] parentBookingId=${_safeRefPreview(parentBookingId)} legId=${_safeRefPreview(legId)} method=$method auth_failure=$isAuthFailure',
         );
         if (!context.mounted) return;
+        if (isAuthFailure) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_receiptText('paymentAuthRequired'))),
+          );
+          return;
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(_legPaymentBackendErrorMessage(err.toString())),
@@ -3603,9 +3647,18 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         ),
         if (amount != null) 'amount': amount,
       };
-      final headers = <String, String>{'Content-Type': 'application/json'};
+      // NOTE (PAYMENT-AUTH-P0-1 scope boundary): this direct-trip fallback
+      // path posts to the TRACKING worker's `/trip/payment` route, not the
+      // booking-worker payment routes this repair targets. That route still
+      // gates on `requireAdmin` server-side; migrating it is out of scope
+      // here (tracking-worker changes are explicitly excluded from this
+      // repair), so it intentionally keeps its own legacy header shape
+      // rather than the resolved driver/company `headers` used above.
+      final tripPaymentHeaders = <String, String>{
+        'Content-Type': 'application/json',
+      };
       if (kAdminToken.trim().isNotEmpty) {
-        headers['x-admin-token'] = kAdminToken.trim();
+        tripPaymentHeaders['x-admin-token'] = kAdminToken.trim();
       }
       try {
         final uri = Uri.parse(
@@ -3615,7 +3668,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           '[RECEIPT_PAYMENT][TRIP_PAYMENT] tripId=$tripId bookingId=$bookingId method=$normalizedMethod',
         );
         final res = await http
-            .post(uri, headers: headers, body: jsonEncode(payload))
+            .post(uri, headers: tripPaymentHeaders, body: jsonEncode(payload))
             .timeout(const Duration(seconds: 12));
         final resBody = utf8.decode(res.bodyBytes);
         final bodyPreview = resBody.length > 240
@@ -3708,10 +3761,6 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       ),
       if (amount != null) 'amount': amount,
     };
-    final headers = <String, String>{'Content-Type': 'application/json'};
-    if (kAdminToken.trim().isNotEmpty) {
-      headers['x-admin-token'] = kAdminToken.trim();
-    }
 
     if (isQrPayment) {
       debugPrint(
@@ -3736,6 +3785,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         debugPrint(
           '[BOOKING_PAYMENT_UPDATE][QR] status=${res.statusCode} provider=manual amount=${amount ?? "-"} booking=$maskedRef tenant=$maskedTenant company=$maskedCompany endpoint=booking_worker bodyPreview=$qrBodyPreview',
         );
+      }
+      if (res.statusCode == 401) {
+        throw const _InCarPaymentAuthRequiredException();
       }
       if (res.statusCode < 200 || res.statusCode >= 300) {
         throw Exception('HTTP ${res.statusCode}');
@@ -3790,17 +3842,24 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         SnackBar(content: Text(_receiptText('paymentMarkedPaid'))),
       );
     } catch (err) {
+      final isAuthFailure = err is _InCarPaymentAuthRequiredException;
       debugPrint(
-        '[RECEIPT][PAYMENT_MARK_FAILED] bookingId=$bookingId method=$method err=$err',
+        '[RECEIPT][PAYMENT_MARK_FAILED] booking=$maskedRef method=$method auth_failure=$isAuthFailure',
       );
       if (isQrPayment) {
         debugPrint(
-          '[BOOKING_PAYMENT_UPDATE][QR] status=error booking=$maskedRef tenant=$maskedTenant company=$maskedCompany endpoint=booking_worker err=$err',
+          '[BOOKING_PAYMENT_UPDATE][QR] status=error booking=$maskedRef tenant=$maskedTenant company=$maskedCompany endpoint=booking_worker auth_failure=$isAuthFailure',
         );
       }
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_receiptText('paymentMarkFailed'))),
+        SnackBar(
+          content: Text(
+            isAuthFailure
+                ? _receiptText('paymentAuthRequired')
+                : _receiptText('paymentMarkFailed'),
+          ),
+        ),
       );
     }
   }
