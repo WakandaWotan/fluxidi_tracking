@@ -224,8 +224,8 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
       setState(() {
         _loadingList = false;
         _inlineError = _tr(
-          nl: 'Kon offline kaarten niet laden.',
-          en: 'Could not load offline maps.',
+          nl: 'Kon gedownloade kaarttegels niet laden.',
+          en: 'Could not load downloaded map tiles.',
         );
       });
     }
@@ -377,8 +377,8 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
         SnackBar(
           content: Text(
             _tr(
-              nl: 'Offline kaart gedownload.',
-              en: 'Offline map downloaded.',
+              nl: 'Kaarttegels gedownload.',
+              en: 'Map tiles downloaded.',
             ),
           ),
         ),
@@ -441,7 +441,7 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            _tr(nl: 'Offline kaart verwijderd.', en: 'Offline map removed.'),
+            _tr(nl: 'Kaarttegels verwijderd.', en: 'Map tiles removed.'),
           ),
         ),
       );
@@ -530,8 +530,12 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
           const SizedBox(height: 6),
           Text(
             _tr(
-              nl: 'Dit is voorbereiding, geen volledige offline navigatie.',
-              en: 'This is preparation, not full offline navigation.',
+              nl:
+                  'Kaartweergave kan offline beschikbaar zijn. Routeberekening, '
+                  'zoeken, verkeersinformatie en herberekenen vereisen momenteel internet.',
+              en:
+                  'Map display can be available offline. Route calculation, search, '
+                  'traffic information and rerouting currently require internet.',
             ),
             style: TextStyle(
               color: palette.textMuted,
@@ -666,7 +670,9 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                 backgroundColor: palette.background,
                 foregroundColor: palette.textPrimary,
                 title: Text(
-                  _tr(nl: 'Offline kaarten', en: 'Offline maps'),
+                  // P0-FIELD-REPAIR-1 (C): the screen downloads basemap tiles
+                  // only. "Offline kaarten" read as full offline navigation.
+                  _tr(nl: 'Offline kaarttegels', en: 'Offline map tiles'),
                   style: TextStyle(color: palette.textPrimary),
                 ),
               ),
@@ -687,8 +693,8 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                             children: [
                               Text(
                                 _tr(
-                                  nl: 'Voorbereiding Fluxidi Driver OS',
-                                  en: 'Fluxidi Driver OS preparation',
+                                  nl: 'Gedownloade kaarten',
+                                  en: 'Downloaded maps',
                                 ),
                                 style: TextStyle(
                                   color: palette.textPrimary,
@@ -699,11 +705,11 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                               Text(
                                 _tr(
                                   nl:
-                                      'Basiskaarttegels kunnen hier worden gedownload voor zwak signaal. '
-                                      'Dit is geen volledige offline navigatie — nieuwe routes en herberekenen blijven internet nodig hebben.',
+                                      'Kaartweergave kan offline beschikbaar zijn. '
+                                      'Routeberekening, zoeken, verkeersinformatie en herberekenen vereisen momenteel internet.',
                                   en:
-                                      'Basemap tiles can be downloaded here for weak signal. '
-                                      'This is not full offline navigation — new routes and recalculation still need internet.',
+                                      'Map display can be available offline. '
+                                      'Route calculation, search, traffic information and rerouting currently require internet.',
                                 ),
                                 style: TextStyle(
                                   color: palette.textMuted,
@@ -922,8 +928,8 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                             palette: palette,
                             child: Text(
                               _tr(
-                                nl: 'Nog geen offline kaarten gedownload.',
-                                en: 'No offline maps downloaded yet.',
+                                nl: 'Nog geen kaarttegels gedownload.',
+                                en: 'No map tiles downloaded yet.',
                               ),
                               style: TextStyle(color: palette.textMuted),
                             ),

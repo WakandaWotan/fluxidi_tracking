@@ -979,6 +979,73 @@ export function _isStreetDirectRecord(rec) {
   return source === "street_ride" || rideType === "direct" || id.startsWith("street_");
 }
 
+/**
+ * P0-FIELD-REPAIR-1 (A): canonical street/direct identity fields, read from the
+ * record so a projected row can carry them for downstream consumers (driver
+ * planned/open filter + Flutter safety net). Values are echoed verbatim from
+ * the record; nothing is invented and no default is substituted.
+ */
+export function _streetDirectIdentityFieldsForRow(rec) {
+  if (!rec || typeof rec !== "object") return {};
+  const source = safeStr(rec?.source ?? rec?.booking?.source, 64);
+  const bookingSource = safeStr(
+    rec?.booking_source ?? rec?.bookingSource ?? rec?.booking?.booking_source,
+    64,
+  );
+  const rideType = safeStr(
+    rec?.ride_type ?? rec?.rideType ?? rec?.booking?.ride_type,
+    64,
+  );
+  const isStreetDirect = _isStreetDirectRecord(rec);
+  return {
+    ...(source ? { source, bookingSource: bookingSource || source } : {}),
+    ...(bookingSource ? { booking_source: bookingSource } : {}),
+    ...(rideType ? { ride_type: rideType, rideType } : {}),
+    is_street_direct: isStreetDirect,
+    isStreetDirect,
+  };
+}
+
+/**
+ * P0-FIELD-REPAIR-1 (A): row-level street/direct predicate for the driver
+ * planned/open projection.
+ *
+ * Mirrors `_isStreetDirectRecord` but reads a FLATTENED row (which carries the
+ * canonical identity fields stamped by `_streetDirectIdentityFieldsForRow`).
+ * Honours the authoritative `is_street_direct` hint first, then falls back to
+ * canonical source / booking_source / ride_type / `street_` id — never to a
+ * display label.
+ */
+export function _rowIsStreetDirectRide(row) {
+  if (!row || typeof row !== "object") return false;
+  if (row?.is_street_direct === true || row?.isStreetDirect === true) return true;
+  if (row?.is_street_direct === false && row?.isStreetDirect === false) {
+    // Explicit authoritative negative from a current worker projection.
+    return false;
+  }
+  const source = String(
+    row?.source ?? row?.booking_source ?? row?.bookingSource ?? "",
+  )
+    .trim()
+    .toLowerCase();
+  const rideType = String(row?.ride_type ?? row?.rideType ?? "")
+    .trim()
+    .toLowerCase();
+  const id = String(
+    row?.booking_id ?? row?.bookingId ?? row?.parent_booking_id ?? row?.parentBookingId ?? "",
+  )
+    .trim()
+    .toLowerCase();
+  return (
+    source === "street_ride" ||
+    source === "streetride" ||
+    source === "direct" ||
+    source === "direct_ride" ||
+    rideType === "direct" ||
+    id.startsWith("street_")
+  );
+}
+
 export function _projectionLifecycleStatusFromRecord(rec, bookingId = null) {
   const parentStatus = _normLifecycleStatus(rec?.status ?? rec?.stage ?? null);
   if (parentStatus === "COMPLETED" || parentStatus === "CANCELLED") {
@@ -1317,6 +1384,10 @@ export function _flattenBookingForRidesList(bookingId, rec) {
         }
       : {}),
     ...(parentVehicleEnrichment || {}),
+    // P0-FIELD-REPAIR-1 (A): canonical street/direct identity travels with the
+    // row so the driver planned/open filter and the Flutter safety net can
+    // decide on canonical fields instead of a display label.
+    ..._streetDirectIdentityFieldsForRow(rec),
   };
 }
 
@@ -1367,8 +1438,24 @@ export function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, op
   // outbound completed, return still open). Parent terminal lifecycle is
   // only projected when the leg itself has no status stamped (legacy /
   // pre-cascade snapshots).
+  //
+  // P0-FIELD-REPAIR-1 (A2): a street/direct booking has exactly ONE physical
+  // ride, so its single operational leg is a shadow of the parent rather than
+  // an independently dispatchable leg. Once the parent reaches a terminal
+  // status, a stale leg status (PENDING / SCHEDULED / IN_PROGRESS never
+  // cascaded at finalize time) must not resurrect the ride as an open row.
+  // Genuine roundtrip parents keep per-leg ownership untouched.
+  const isStreetDirectShadowLeg =
+    !isRoundtripParent && _isStreetDirectRecord(rec);
   let projectedStatusUpper;
-  if (legStatusRaw) {
+  if (isStreetDirectShadowLeg && isTerminalLifecycleStatus(parentStatusUpper)) {
+    projectedStatusUpper = parentStatusUpper;
+    if (legStatusRaw && legStatusUpper !== parentStatusUpper) {
+      console.log(
+        `[STREET_RIDE_SHADOW_LEG][TERMINAL_PARENT_WINS] parent=${_bookingIntentMask(parentBookingId)} leg_status=${legStatusUpper} parent_status=${parentStatusUpper}`,
+      );
+    }
+  } else if (legStatusRaw) {
     projectedStatusUpper = legStatusUpper;
   } else if (isTerminalLifecycleStatus(parentStatusUpper)) {
     projectedStatusUpper = parentStatusUpper;

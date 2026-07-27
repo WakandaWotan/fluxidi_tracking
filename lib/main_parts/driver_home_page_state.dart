@@ -1629,11 +1629,21 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
           const SizedBox(height: 4),
           Text(
+            // P0-FIELD-REPAIR-1 (C): state the actual capability boundary
+            // instead of only denying "full offline navigation".
             _tr(
-              nl: 'Dit is voorbereiding, geen volledige offline navigatie.',
-              en: 'This is preparation, not full offline navigation.',
-              fr: 'Ceci est une preparation, pas une navigation hors ligne complete.',
-              es: 'Esto es preparacion, no navegacion sin conexion completa.',
+              nl:
+                  'Kaartweergave kan offline beschikbaar zijn. Routeberekening, '
+                  'zoeken, verkeersinformatie en herberekenen vereisen momenteel internet.',
+              en:
+                  'Map display can be available offline. Route calculation, search, '
+                  'traffic information and rerouting currently require internet.',
+              fr:
+                  'L\'affichage de la carte peut etre disponible hors ligne. Le calcul '
+                  'd\'itineraire, la recherche, le trafic et le recalcul necessitent internet.',
+              es:
+                  'La vista del mapa puede estar disponible sin conexion. El calculo de '
+                  'ruta, la busqueda, el trafico y el recalculo requieren internet.',
             ),
             textAlign: TextAlign.center,
             style: style.copyWith(fontSize: 10, fontStyle: FontStyle.italic),
@@ -2083,11 +2093,37 @@ class _DriverHomePageState extends State<DriverHomePage>
     return true;
   }
 
+  /// Canonical identity view of a booking row for the street/direct decision.
+  ///
+  /// Uses the raw backend payload (`details`) plus the canonical booking id so
+  /// the filter reads `is_street_direct` / `source` / `booking_source` /
+  /// `ride_type` and never a localized display label.
+  Map<String, dynamic> _canonicalRideIdentityFor(BookingItem b) {
+    return <String, dynamic>{
+      ...b.details,
+      'booking_id': b.bookingId,
+      'bookingId': b.bookingId,
+    };
+  }
+
   List<BookingItem> _scopeFilteredOpenBookings({
     String segment = 'scope_open',
   }) {
     final enforceScope = _shouldEnforceDriverRideScopeFilter();
-    return _bookings
+    // P0-FIELD-REPAIR-1 (A): client safety net for "a street/direct ride is
+    // never planned". The booking worker already excludes these rows from the
+    // planned/open projection; this guarantees a stale worker, a cached
+    // response or a future read path cannot resurrect the ghost row under
+    // Gepland / Volgende rit. History and completed-count canonicalisation are
+    // untouched (they do not flow through this getter).
+    final withoutStreetDirect = filterPlannedRidesExcludingStreetDirect<BookingItem>(
+      _bookings,
+      canonicalFieldsOf: _canonicalRideIdentityFor,
+      statusOf: (b) => _effectiveStatusFor(b) ?? '',
+      segment: segment,
+      onLog: (log) => debugPrint(log.toLogLine()),
+    );
+    return withoutStreetDirect
         .where((b) => !_deletedBookingIds.contains(b.bookingId))
         .where((b) => !_isClosedRideStatus(_effectiveStatusFor(b)))
         .where((b) {
@@ -21024,11 +21060,14 @@ class _DriverHomePageState extends State<DriverHomePage>
       chips.add(
         _buildCompactNavIconChip(
           icon: Icons.wifi_off_rounded,
+          // P0-FIELD-REPAIR-1 (C): "Offline kaarten" implied full offline
+          // navigation. Only basemap tiles are downloadable; routing, search,
+          // traffic and rerouting still require network.
           tooltip: _tr(
-            nl: 'Offline kaarten',
-            en: 'Offline maps',
-            fr: 'Cartes hors ligne',
-            es: 'Mapas sin conexión',
+            nl: 'Offline kaarttegels',
+            en: 'Offline map tiles',
+            fr: 'Tuiles de carte hors ligne',
+            es: 'Teselas de mapa sin conexión',
           ),
           onPressed: _openOfflineMaps,
           navAccent: colors.accent,
@@ -32728,11 +32767,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                   if (canSeeDriverOps)
                     cockpitRailButton(
                       icon: Icons.wifi_off_rounded,
+                      // P0-FIELD-REPAIR-1 (C): tiles only, not offline routing.
                       semanticLabel: _tr(
-                        nl: 'Offline kaarten',
-                        en: 'Offline maps',
-                        fr: 'Cartes hors ligne',
-                        es: 'Mapas sin conexión',
+                        nl: 'Offline kaarttegels',
+                        en: 'Offline map tiles',
+                        fr: 'Tuiles de carte hors ligne',
+                        es: 'Teselas de mapa sin conexión',
                       ),
                       onTap: _openOfflineMaps,
                     ),

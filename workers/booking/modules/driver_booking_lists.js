@@ -67,6 +67,7 @@ import {
 import {
   bookingMatchesRequestedTenantScope,
   _flattenBookingForRidesListWithOperationalLegs,
+  _rowIsStreetDirectRide,
 } from "./booking_read_model.js";
 import {
   driverScopedBookingsIndexKey,
@@ -167,6 +168,38 @@ export function _dedupeBookingListRowsByCanonicalTripSignature(rows, options = {
     );
   }
   return order.map((entry) => entry.row);
+}
+
+/* ---- Street/direct planned-projection exclusion (P0-FIELD-REPAIR-1) --- */
+
+/**
+ * Removes street/direct rides from a driver PLANNED/OPEN projection.
+ *
+ * Product contract: a street/direct ride is owned by the active street-ride
+ * lifecycle while it runs and belongs to Completed/history once stopped. It is
+ * never a "planned" or "next" ride, so it must not reach the driver's
+ * planned/open list in either state. The canonical record itself is untouched —
+ * this is a read-side projection filter only, and it is never applied to the
+ * history projection (`include_history=1`) or to the company bookings list.
+ *
+ * Returns a new array; input order is preserved. Emits one bounded, masked
+ * diagnostic per excluded row.
+ */
+export function _excludeStreetDirectFromPlannedProjection(rows, options = {}) {
+  if (!Array.isArray(rows)) return [];
+  const logTag = safeStr(options?.logTag, 64) || "DRIVER_BOOKINGS";
+  const kept = [];
+  for (const row of rows) {
+    if (_rowIsStreetDirectRide(row)) {
+      const droppedId = safeStr(row?.booking_id ?? row?.bookingId, 160);
+      console.log(
+        `[${logTag}][STREET_DIRECT_NOT_PLANNED] booking=${_bookingIntentMask(droppedId)} status=${safeStr(row?.status, 40) || "-"} reason=street_direct_never_planned`,
+      );
+      continue;
+    }
+    kept.push(row);
+  }
+  return kept;
 }
 
 /* ---- Driver-facing read orchestrators -------------------------------- */
@@ -388,6 +421,18 @@ export async function listDriverBookingsAuthoritative(
       cutoffMs,
       sessionDriverId,
     });
+    // P0-FIELD-REPAIR-1 (A1): a street/direct ride is never a planned or next
+    // ride. Applied AFTER the available-pool append so it covers every source
+    // that can feed the planned/open projection (assigned index, vehicle
+    // index, dispatch pool). History (`include_history=1`) is deliberately
+    // untouched so Completed/company history keeps the canonical row.
+    const withoutStreetDirect = _excludeStreetDirectFromPlannedProjection(out, {
+      logTag: "DRIVER_BOOKINGS",
+    });
+    if (withoutStreetDirect.length !== out.length) {
+      out.length = 0;
+      for (const row of withoutStreetDirect) out.push(row);
+    }
   }
 
   // G2-D: snapshot row counts immediately after the available pool was
@@ -548,7 +593,13 @@ export async function listAdminDriverBookingsPreviewAuthoritative(
     if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) continue;
     if (_driverAvailableUnassignedRowHidden(rec)) continue;
 
-    const rows = _flattenBookingForRidesListWithOperationalLegs(bookingId, rec);
+    // P0-FIELD-REPAIR-1 (A1): this preview mirrors the driver planned/open
+    // view, so it applies the same "street/direct is never planned" contract.
+    // The canonical record stays intact for company bookings and history.
+    const rows = _excludeStreetDirectFromPlannedProjection(
+      _flattenBookingForRidesListWithOperationalLegs(bookingId, rec),
+      { logTag: "ADMIN_DRIVER_PREVIEW" },
+    );
 
     // Pass 1: include rows assigned to the requested driver / vehicle. Past
     // pickups still surface for operational visibility (admin context).
