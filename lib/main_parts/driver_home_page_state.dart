@@ -436,6 +436,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       NavAnnotationManagerGate(NavAnnotationManagerRole.destination);
   final NavAnnotationManagerGate _driverAnnotationGate =
       NavAnnotationManagerGate(NavAnnotationManagerRole.driver);
+  // NAV-ANNOTATION-LIFECYCLE-REPAIR-1: serialize/idempotent route polyline
+  // deletes so overlapping clear/replace cannot throw unhandled
+  // PlatformException through DartMessenger.
+  final NavPolylineDeleteCoordinator _routePolylineDeleteCoordinator =
+      NavPolylineDeleteCoordinator();
   String _activeMapStyleUri = '';
 
   mb.PointAnnotation? _driverMarker;
@@ -1131,15 +1136,18 @@ class _DriverHomePageState extends State<DriverHomePage>
       // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2: one lease covers all
       // three deletes so disposal awaits them (no check-then-act gap between
       // the per-annotation awaits).
+      // NAV-ANNOTATION-LIFECYCLE-REPAIR-1: each delete is idempotent / serialized
+      // and never throws — overlapping clear vs replace cannot surface
+      // unhandled PlatformException through DartMessenger.
       unawaited(
         _runAnnotationTx<void>(
           gate: _routeAnnotationGate,
           kind: NavAnnotationOperationKind.delete,
-          nativeOp: () async {
-            if (outline != null) await mgr.delete(outline);
-            if (line != null) await mgr.delete(line);
-            if (completed != null) await mgr.delete(completed);
-          },
+          nativeOp: () => _safeDeleteRoutePolylines(
+            <mb.PolylineAnnotation?>[outline, line, completed],
+            mgr: mgr,
+            reason: 'ride_boundary_$reason',
+          ),
         ),
       );
     }
@@ -1851,11 +1859,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       await _runAnnotationTx<void>(
         gate: _routeAnnotationGate,
         kind: NavAnnotationOperationKind.delete,
-        nativeOp: () async {
-          if (outline != null) await routeMgr.delete(outline);
-          if (line != null) await routeMgr.delete(line);
-          if (completed != null) await routeMgr.delete(completed);
-        },
+        nativeOp: () => _safeDeleteRoutePolylines(
+          <mb.PolylineAnnotation?>[outline, line, completed],
+          mgr: routeMgr,
+          reason: 'clear_route_pins',
+        ),
       );
     }
 
@@ -4380,12 +4388,29 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _startTrip(BookingItem b) async {
+    // NAV-ANNOTATION-LIFECYCLE-REPAIR-1: Ter plaatse / on-site start timing.
+    logNavUiInputTiming(
+      action: NavUiInputTimingAction.terPlaatse,
+      phase: NavUiInputTimingPhase.inputReceived,
+      managerGeneration: _routeAnnotationGate.managerGeneration,
+      renderEpoch: _routeRenderEpoch,
+      sessionGeneration: _navigationSessionGeneration,
+      styleGeneration: _styleRequestGeneration,
+      reason: 'start_trip',
+    );
     try {
       // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 2):
       // fail closed before the ownership guard so a missing/expired driver
       // session cannot enter the /trip/start path (which would 401) and then
       // race the ride into the fallback code paths.
       if (!_driverRideStartAuthAllowsOrRefuse(action: 'start_trip')) {
+        logNavUiInputTiming(
+          action: NavUiInputTimingAction.terPlaatse,
+          phase: NavUiInputTimingPhase.failed,
+          managerGeneration: _routeAnnotationGate.managerGeneration,
+          renderEpoch: _routeRenderEpoch,
+          reason: 'auth_refused',
+        );
         return;
       }
       if (!_canOperateBookingWithGuard(
@@ -4494,7 +4519,23 @@ class _DriverHomePageState extends State<DriverHomePage>
       await _forceFollowCameraNow(caller: 'start_trip');
       final bb = _activeBooking ?? b;
       await _buildNavRouteToDestination(bb);
+      logNavUiInputTiming(
+        action: NavUiInputTimingAction.terPlaatse,
+        phase: NavUiInputTimingPhase.completed,
+        managerGeneration: _routeAnnotationGate.managerGeneration,
+        renderEpoch: _routeRenderEpoch,
+        sessionGeneration: _navigationSessionGeneration,
+        styleGeneration: _styleRequestGeneration,
+        reason: 'start_trip_ok',
+      );
     } catch (e) {
+      logNavUiInputTiming(
+        action: NavUiInputTimingAction.terPlaatse,
+        phase: NavUiInputTimingPhase.failed,
+        managerGeneration: _routeAnnotationGate.managerGeneration,
+        renderEpoch: _routeRenderEpoch,
+        reason: 'start_trip_exception',
+      );
       if (mounted) setState(() => _isStartingTrip = false);
       _toast('Start failed: $e');
     }
@@ -9916,6 +9957,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       !_mapStyleChanging && _map != null && _driverPointManager != null;
 
   bool _isMapboxAnnotationManagerLost(Object e) {
+    if (classifyPolylineAnnotationDeleteError(e) ==
+        NavPolylineDeleteErrorClass.managerLost) {
+      return true;
+    }
     final blob = e.toString().toLowerCase();
     if (e is PlatformException) {
       final message = (e.message ?? '').toLowerCase();
@@ -9925,6 +9970,121 @@ class _DriverHomePageState extends State<DriverHomePage>
           details.contains('no manager found');
     }
     return blob.contains('no manager found');
+  }
+
+  NavPolylineDeleteOwnership _captureRoutePolylineDeleteOwnership() {
+    return NavPolylineDeleteOwnership(
+      managerGeneration: _routeAnnotationGate.managerGeneration,
+      renderEpoch: _routeRenderEpoch,
+      sessionGeneration: _navigationSessionGeneration,
+      styleGeneration: _styleRequestGeneration,
+    );
+  }
+
+  /// NAV-ANNOTATION-LIFECYCLE-REPAIR-1: idempotent serialized polyline delete.
+  /// Never throws. Never mutates `_routeLine*` (caller nulls refs first).
+  Future<NavPolylineDeleteResult> _safeDeleteRoutePolyline(
+    mb.PolylineAnnotation annotation, {
+    required mb.PolylineAnnotationManager mgr,
+    required NavPolylineDeleteOwnership ownership,
+    required String reason,
+  }) async {
+    final id = annotation.id;
+    logNavUiInputTiming(
+      action: NavUiInputTimingAction.routeAnnotationDelete,
+      phase: NavUiInputTimingPhase.deleteStart,
+      managerGeneration: ownership.managerGeneration,
+      renderEpoch: ownership.renderEpoch,
+      sessionGeneration: ownership.sessionGeneration,
+      styleGeneration: ownership.styleGeneration,
+      reason: reason,
+    );
+    final startedAt = DateTime.now();
+    final result = await _routePolylineDeleteCoordinator.delete(
+      annotationId: id,
+      ownership: ownership,
+      currentManagerGeneration: () => _routeAnnotationGate.managerGeneration,
+      currentRenderEpoch: () => _routeRenderEpoch,
+      currentSessionGeneration: () => _navigationSessionGeneration,
+      currentStyleGeneration: () => _styleRequestGeneration,
+      nativeDelete: () => mgr.delete(annotation),
+    );
+    final durationMs =
+        DateTime.now().difference(startedAt).inMilliseconds.clamp(0, 60000);
+    // Safety: never clear current route handles from delete completion.
+    assert(() {
+      // ownershipStillCurrent false ⇒ must not mutate shared route refs.
+      return true;
+    }());
+    if (result.outcome == NavPolylineDeleteOutcome.unexpectedFailure) {
+      logNavUiInputTiming(
+        action: NavUiInputTimingAction.routeAnnotationDelete,
+        phase: NavUiInputTimingPhase.deleteFailed,
+        managerGeneration: _routeAnnotationGate.managerGeneration,
+        renderEpoch: _routeRenderEpoch,
+        sessionGeneration: _navigationSessionGeneration,
+        styleGeneration: _styleRequestGeneration,
+        durationMs: durationMs,
+        reason: result.errorToken ?? 'unexpected',
+      );
+      debugPrint(
+        '[NAV_ANNOTATION_DELETE] outcome=unexpected_failure '
+        'reason=${result.errorToken ?? 'unexpected'} '
+        'managerGeneration=${_routeAnnotationGate.managerGeneration} '
+        'renderEpoch=$_routeRenderEpoch '
+        'sessionGeneration=$_navigationSessionGeneration '
+        'styleGeneration=$_styleRequestGeneration',
+      );
+      unawaited(
+        NavDiagnosticsRecorder.instance.recordException(
+          context: 'route_polyline_delete_unexpected',
+          error: StateError(result.errorToken ?? 'unexpected_failure'),
+        ),
+      );
+    } else {
+      final phase = result.outcome == NavPolylineDeleteOutcome.deleted
+          ? NavUiInputTimingPhase.deleteCompleted
+          : (result.outcome == NavPolylineDeleteOutcome.alreadyGone
+                ? NavUiInputTimingPhase.deleteCompleted
+                : NavUiInputTimingPhase.deleteCompleted);
+      logNavUiInputTiming(
+        action: NavUiInputTimingAction.routeAnnotationDelete,
+        phase: phase,
+        managerGeneration: _routeAnnotationGate.managerGeneration,
+        renderEpoch: _routeRenderEpoch,
+        sessionGeneration: _navigationSessionGeneration,
+        styleGeneration: _styleRequestGeneration,
+        durationMs: durationMs,
+        reason: result.outcome.name,
+      );
+      if (result.outcome == NavPolylineDeleteOutcome.alreadyGone ||
+          result.outcome == NavPolylineDeleteOutcome.staleSkipped) {
+        debugPrint(
+          '[NAV_ANNOTATION_DELETE] outcome=${result.outcome.name} '
+          'reason=${result.errorToken ?? result.outcome.name} '
+          'managerGeneration=${_routeAnnotationGate.managerGeneration} '
+          'renderEpoch=$_routeRenderEpoch',
+        );
+      }
+    }
+    return result;
+  }
+
+  Future<void> _safeDeleteRoutePolylines(
+    List<mb.PolylineAnnotation?> annotations, {
+    required mb.PolylineAnnotationManager mgr,
+    required String reason,
+  }) async {
+    final ownership = _captureRoutePolylineDeleteOwnership();
+    for (final ann in annotations) {
+      if (ann == null) continue;
+      await _safeDeleteRoutePolyline(
+        ann,
+        mgr: mgr,
+        ownership: ownership,
+        reason: reason,
+      );
+    }
   }
 
   void _resetDriverMarkerOnNativeError(String reason) {
@@ -10204,33 +10364,65 @@ class _DriverHomePageState extends State<DriverHomePage>
       event: NavAnnotationTxEvent.queued,
       operation: kind,
     );
-    final result = await gate.runGuarded<T>(
-      ownership: ownership,
-      kind: kind,
-      nativeOp: () async {
-        _logNavAnnotationTx(
-          gate: gate,
-          event: NavAnnotationTxEvent.leaseAcquired,
-          operation: kind,
-        );
-        final value = await nativeOp();
-        _logNavAnnotationTx(
-          gate: gate,
-          event: NavAnnotationTxEvent.nativeCompleted,
-          operation: kind,
-        );
-        return value;
-      },
-    );
-    if (!result.ran) {
-      _logNavAnnotationTx(
-        gate: gate,
-        event: NavAnnotationTxEvent.staleBeforeStart,
-        operation: kind,
-        reason: result.rejectReason,
+    try {
+      final result = await gate.runGuarded<T>(
+        ownership: ownership,
+        kind: kind,
+        nativeOp: () async {
+          _logNavAnnotationTx(
+            gate: gate,
+            event: NavAnnotationTxEvent.leaseAcquired,
+            operation: kind,
+          );
+          final value = await nativeOp();
+          _logNavAnnotationTx(
+            gate: gate,
+            event: NavAnnotationTxEvent.nativeCompleted,
+            operation: kind,
+          );
+          return value;
+        },
       );
+      if (!result.ran) {
+        _logNavAnnotationTx(
+          gate: gate,
+          event: NavAnnotationTxEvent.staleBeforeStart,
+          operation: kind,
+          reason: result.rejectReason,
+        );
+      }
+      return result;
+    } catch (e, st) {
+      // NAV-ANNOTATION-LIFECYCLE-REPAIR-1: delete/deleteAll must never escape
+      // unhandled through DartMessenger (unawaited clear/replace paths).
+      final isDelete = kind == NavAnnotationOperationKind.delete ||
+          kind == NavAnnotationOperationKind.deleteAll;
+      if (isDelete) {
+        final stale = isStalePolylineAnnotationDeleteError(e);
+        debugPrint(
+          '[NAV_ANNOTATION_TX] role=${gate.role.name} '
+          'event=${stale ? 'stale_delete_caught' : 'unexpected_delete_caught'} '
+          'reason=${navPolylineDeleteErrorToken(e)} '
+          'managerGeneration=${gate.managerGeneration} '
+          'renderEpoch=$_routeRenderEpoch',
+        );
+        if (!stale) {
+          unawaited(
+            NavDiagnosticsRecorder.instance.recordException(
+              context: 'annotation_delete_tx',
+              error: e,
+              stack: st,
+            ),
+          );
+        }
+        return NavAnnotationRunResult<T>.stale(
+          stale
+              ? NavAnnotationRejectReason.disposed
+              : NavAnnotationRejectReason.notActive,
+        );
+      }
+      rethrow;
     }
-    return result;
   }
 
   void _activateAnnotationGate(
@@ -10242,6 +10434,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       sessionGeneration: _navigationSessionGeneration,
       renderEpoch: _routeRenderEpoch,
     );
+    if (identical(gate, _routeAnnotationGate)) {
+      _routePolylineDeleteCoordinator.onManagerActivated(
+        gate.managerGeneration,
+      );
+    }
     _logNavAnnotationManager(gate: gate, event: event);
   }
 
@@ -14401,9 +14598,26 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   void _adjustDriverCockpitCameraViewLevel({required bool increase}) {
+    // NAV-ANNOTATION-LIFECYCLE-REPAIR-1: sanitized input timing for View +/-.
+    logNavUiInputTiming(
+      action: NavUiInputTimingAction.viewZoom,
+      phase: NavUiInputTimingPhase.inputReceived,
+      managerGeneration: _routeAnnotationGate.managerGeneration,
+      renderEpoch: _routeRenderEpoch,
+      sessionGeneration: _navigationSessionGeneration,
+      styleGeneration: _styleRequestGeneration,
+      reason: increase ? 'plus' : 'minus',
+    );
     if (!_navigationPresentationStateFor(
       _navCameraViewMode,
     ).showDriverCockpitCameraControls) {
+      logNavUiInputTiming(
+        action: NavUiInputTimingAction.viewZoom,
+        phase: NavUiInputTimingPhase.failed,
+        managerGeneration: _routeAnnotationGate.managerGeneration,
+        renderEpoch: _routeRenderEpoch,
+        reason: 'controls_hidden',
+      );
       return;
     }
     setState(() {
@@ -14414,6 +14628,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     });
     _logNavPresCameraControl(action: increase ? 'plus' : 'minus');
     if (_cameraMode != _CameraMode.follow || !_liveRideActive) {
+      logNavUiInputTiming(
+        action: NavUiInputTimingAction.viewZoom,
+        phase: NavUiInputTimingPhase.failed,
+        managerGeneration: _routeAnnotationGate.managerGeneration,
+        renderEpoch: _routeRenderEpoch,
+        reason: 'not_in_follow_nav',
+      );
       _logNavPresCameraLevel(
         level: _driverCockpitViewLevel,
         zoom: _lastDriverCockpitAppliedZoom ?? 0,
@@ -14447,6 +14668,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         ),
       );
     } else {
+      logNavUiInputTiming(
+        action: NavUiInputTimingAction.viewZoom,
+        phase: NavUiInputTimingPhase.failed,
+        managerGeneration: _routeAnnotationGate.managerGeneration,
+        renderEpoch: _routeRenderEpoch,
+        reason: 'no_last_position',
+      );
       final isTablet = MediaQuery.sizeOf(context).width >= 600;
       final isLandscape =
           MediaQuery.of(context).orientation == Orientation.landscape;
@@ -14540,11 +14768,28 @@ class _DriverHomePageState extends State<DriverHomePage>
           durationMs: durationMs,
           formFactor: formFactor,
         );
+        logNavUiInputTiming(
+          action: NavUiInputTimingAction.viewZoom,
+          phase: NavUiInputTimingPhase.completed,
+          managerGeneration: _routeAnnotationGate.managerGeneration,
+          renderEpoch: _routeRenderEpoch,
+          sessionGeneration: _navigationSessionGeneration,
+          styleGeneration: _styleRequestGeneration,
+          durationMs: durationMs,
+          reason: 'camera_complete',
+        );
       }
     } catch (_) {
       // NAV-ZOOM-FIELD-REPAIR-1: a timeout or platform error must self-heal.
       // Release ownership and, when a newer level was selected meanwhile,
       // still replay to it so the driver's last press is not lost.
+      logNavUiInputTiming(
+        action: NavUiInputTimingAction.viewZoom,
+        phase: NavUiInputTimingPhase.failed,
+        managerGeneration: _routeAnnotationGate.managerGeneration,
+        renderEpoch: _routeRenderEpoch,
+        reason: 'camera_exception',
+      );
       needsRerun = _driverCockpitViewZoomLifecycle.shouldIgnoreStaleCamera(
         generation,
       );
@@ -15779,9 +16024,29 @@ class _DriverHomePageState extends State<DriverHomePage>
         // Parking-site arrival is now authoritative: clear contradictory
         // maneuver/lane/complexity state and let the presentation declare
         // arrival. Fare/ride ownership and trip finalization are untouched.
+        // NAV-ANNOTATION-LIFECYCLE-REPAIR-1: field label "Ter plaatse" maps to
+        // on-site / parking arrival confirmation (no separate UI string in tree).
+        logNavUiInputTiming(
+          action: NavUiInputTimingAction.terPlaatse,
+          phase: NavUiInputTimingPhase.inputReceived,
+          managerGeneration: _routeAnnotationGate.managerGeneration,
+          renderEpoch: _routeRenderEpoch,
+          sessionGeneration: _navigationSessionGeneration,
+          styleGeneration: _styleRequestGeneration,
+          reason: 'parking_arrival',
+        );
         _navParkingArrivalConfirmed = true;
         _activeLaneGuidance = null;
         _resetNavComplexityState();
+        logNavUiInputTiming(
+          action: NavUiInputTimingAction.terPlaatse,
+          phase: NavUiInputTimingPhase.completed,
+          managerGeneration: _routeAnnotationGate.managerGeneration,
+          renderEpoch: _routeRenderEpoch,
+          sessionGeneration: _navigationSessionGeneration,
+          styleGeneration: _styleRequestGeneration,
+          reason: 'parking_arrival_confirmed',
+        );
       }
     }
   }
@@ -22541,9 +22806,12 @@ class _DriverHomePageState extends State<DriverHomePage>
           // Ownership advanced during create: never commit these handles.
           // The manager is still alive under this lease, so removing the
           // just-created orphans is safe (no crash) and prevents leaks.
-          if (completedLine != null) await mgr.delete(completedLine);
-          await mgr.delete(outline);
-          await mgr.delete(line);
+          // NAV-ANNOTATION-LIFECYCLE-REPAIR-1: idempotent deletes (never throw).
+          await _safeDeleteRoutePolylines(
+            <mb.PolylineAnnotation?>[completedLine, outline, line],
+            mgr: mgr,
+            reason: 'orphan_after_stale_commit',
+          );
           _logNavRouteRenderOwner(
             event: NavRouteRenderOwnerEvent.staleCallbackIgnored,
             rejectionReason: 'render_epoch_or_session_mismatch',
@@ -22566,15 +22834,23 @@ class _DriverHomePageState extends State<DriverHomePage>
           event: NavAnnotationTxEvent.commitAllowed,
           operation: NavAnnotationOperationKind.create,
         );
-        if (previousOutline != null && !identical(previousOutline, outline)) {
-          await mgr.delete(previousOutline);
-        }
-        if (previousLine != null && !identical(previousLine, line)) {
-          await mgr.delete(previousLine);
-        }
-        if (previousCompleted != null &&
-            !identical(previousCompleted, completedLine)) {
-          await mgr.delete(previousCompleted);
+        // Delete previous generation only — never the just-committed handles.
+        // Stale overlapping clears that already removed these ids are no-ops.
+        final previousToDelete = <mb.PolylineAnnotation?>[
+          if (previousOutline != null && !identical(previousOutline, outline))
+            previousOutline,
+          if (previousLine != null && !identical(previousLine, line))
+            previousLine,
+          if (previousCompleted != null &&
+              !identical(previousCompleted, completedLine))
+            previousCompleted,
+        ];
+        if (previousToDelete.isNotEmpty) {
+          await _safeDeleteRoutePolylines(
+            previousToDelete,
+            mgr: mgr,
+            reason: 'replace_previous_route',
+          );
         }
         return true;
       },
