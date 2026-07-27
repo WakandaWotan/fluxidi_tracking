@@ -279,6 +279,32 @@ class NavDiagnosticsRecorder {
     );
   }
 
+  /// RAPID-ZOOM-INPUT-PRESSURE-GUARD-1: persistent View +/- pressure events.
+  ///
+  /// Levels / generation / inflight / duration only — never coordinates,
+  /// route geometry, addresses, booking ids, identity or tokens.
+  Future<void> recordViewZoomPressureEvent({
+    required String event,
+    required int currentLevel,
+    required int desiredLevel,
+    required int generation,
+    required bool inflight,
+    int? durationMs,
+  }) async {
+    await _appendEvent(
+      type: 'view_zoom_pressure',
+      data: <String, dynamic>{
+        'event': _sanitizeToken(event),
+        'currentLevel': currentLevel,
+        'desiredLevel': desiredLevel,
+        'generation': generation,
+        'inflight': inflight,
+        if (durationMs != null) 'durationMs': durationMs,
+      },
+      force: true,
+    );
+  }
+
   /// NAV-AI-1: sanitized complexity intelligence event (no coordinates/PII).
   Future<void> recordNavComplexityIntelligenceEvent(
     Map<String, dynamic> event,

@@ -336,8 +336,16 @@ class _CameraHarness {
   /// The synchronous part of a View +/- press.
   void tap({required bool increase, required DateTime now}) {
     selectedLevel = stepDriverCockpitViewLevel(selectedLevel, increase: increase);
-    final generation = lifecycle.requestManualLevel(selectedLevel, now);
-    _running.add(_apply(generation, now));
+    if (lifecycle is _LegacyLifecycle) {
+      final generation = lifecycle.requestManualLevel(selectedLevel, now);
+      _running.add(_apply(generation, now));
+      return;
+    }
+    final input = lifecycle.acceptDesiredLevel(selectedLevel, now);
+    if (input.decision != DriverCockpitViewZoomInputDecision.startCamera) {
+      return;
+    }
+    _running.add(_apply(input.generation, now));
   }
 
   Future<void> _apply(int generation, DateTime now) async {
@@ -345,19 +353,21 @@ class _CameraHarness {
     if (!lifecycle.beginCamera(generation)) return;
 
     flyToCalls += 1;
-    final levelAtStart = selectedLevel;
+    final levelAtStart =
+        lifecycle.inFlightTargetLevel ?? lifecycle.requestedLevel;
     var needsRerun = false;
     try {
       await _flight();
-      appliedTargets.add(levelAtStart);
       needsRerun = lifecycle.finishCamera(
         requestGeneration: generation,
         appliedLevel: levelAtStart,
         now: now,
       );
+      if (!lifecycle.shouldIgnoreStaleCamera(generation)) {
+        appliedTargets.add(levelAtStart);
+      }
     } catch (_) {
-      needsRerun = lifecycle.shouldIgnoreStaleCamera(generation);
-      lifecycle.cancelCamera(requestGeneration: generation);
+      needsRerun = lifecycle.releaseForFailure(requestGeneration: generation);
     } finally {
       if (lifecycle.cameraInFlight &&
           lifecycle.inFlightGeneration == generation) {
@@ -413,6 +423,7 @@ class _LegacyLifecycle implements DriverCockpitViewZoomLifecycle {
   int? _appliedLevel;
   bool _cameraInFlight = false;
   int? _inFlightGeneration;
+  int? _inFlightTargetLevel;
   DateTime? _manualOwnershipUntil;
 
   @override
@@ -431,6 +442,18 @@ class _LegacyLifecycle implements DriverCockpitViewZoomLifecycle {
   int? get inFlightGeneration => _inFlightGeneration;
 
   @override
+  int? get inFlightTargetLevel => _inFlightTargetLevel;
+
+  @override
+  bool get hasPendingLatest =>
+      _cameraInFlight &&
+      _inFlightGeneration != null &&
+      _generation != _inFlightGeneration;
+
+  @override
+  bool get pendingAtCapacity => hasPendingLatest;
+
+  @override
   int requestManualLevel(int level, DateTime now) {
     _generation += 1;
     _requestedLevel = clampDriverCockpitViewLevel(level);
@@ -438,6 +461,19 @@ class _LegacyLifecycle implements DriverCockpitViewZoomLifecycle {
       const Duration(milliseconds: kDriverCockpitViewZoomManualOwnershipMs),
     );
     return _generation;
+  }
+
+  @override
+  DriverCockpitViewZoomInputResult acceptDesiredLevel(int level, DateTime now) {
+    final generation = requestManualLevel(level, now);
+    return DriverCockpitViewZoomInputResult(
+      decision: DriverCockpitViewZoomInputDecision.startCamera,
+      generation: generation,
+      currentLevel: _appliedLevel ?? _requestedLevel,
+      desiredLevel: _requestedLevel,
+      inflight: _cameraInFlight,
+      hasPendingLatest: hasPendingLatest,
+    );
   }
 
   @override
@@ -456,6 +492,7 @@ class _LegacyLifecycle implements DriverCockpitViewZoomLifecycle {
     if (shouldIgnoreStaleCamera(requestGeneration)) return false;
     _cameraInFlight = true;
     _inFlightGeneration = requestGeneration;
+    _inFlightTargetLevel = _requestedLevel;
     return true;
   }
 
@@ -471,6 +508,14 @@ class _LegacyLifecycle implements DriverCockpitViewZoomLifecycle {
     }
     _cameraInFlight = false;
     _inFlightGeneration = null;
+    _inFlightTargetLevel = null;
+  }
+
+  @override
+  bool releaseForFailure({required int requestGeneration}) {
+    final needsRerun = shouldIgnoreStaleCamera(requestGeneration);
+    cancelCamera(requestGeneration: requestGeneration);
+    return needsRerun;
   }
 
   @override
@@ -483,6 +528,7 @@ class _LegacyLifecycle implements DriverCockpitViewZoomLifecycle {
         _inFlightGeneration == requestGeneration) {
       _cameraInFlight = false;
       _inFlightGeneration = null;
+      _inFlightTargetLevel = null;
     }
     if (!shouldIgnoreStaleCamera(requestGeneration)) {
       _appliedLevel = clampDriverCockpitViewLevel(appliedLevel);
@@ -497,6 +543,7 @@ class _LegacyLifecycle implements DriverCockpitViewZoomLifecycle {
     _appliedLevel = null;
     _cameraInFlight = false;
     _inFlightGeneration = null;
+    _inFlightTargetLevel = null;
     _manualOwnershipUntil = null;
   }
 }

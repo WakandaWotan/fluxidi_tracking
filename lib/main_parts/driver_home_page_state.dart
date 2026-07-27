@@ -14620,13 +14620,56 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       return;
     }
-    setState(() {
-      _driverCockpitViewLevel = stepDriverCockpitViewLevel(
-        _driverCockpitViewLevel,
-        increase: increase,
-      );
-    });
+    final nextLevel = stepDriverCockpitViewLevel(
+      _driverCockpitViewLevel,
+      increase: increase,
+    );
+    if (nextLevel != _driverCockpitViewLevel) {
+      setState(() {
+        _driverCockpitViewLevel = nextLevel;
+      });
+    }
     _logNavPresCameraControl(action: increase ? 'plus' : 'minus');
+
+    // RAPID-ZOOM-INPUT-PRESSURE-GUARD-1: accept/clamp every tap, but never
+    // enqueue one camera op or route restore per press.
+    final input = _driverCockpitViewZoomLifecycle.acceptDesiredLevel(
+      _driverCockpitViewLevel,
+      DateTime.now(),
+    );
+    _recordViewZoomPressure(
+      event: 'zoom_input_received',
+      currentLevel: input.currentLevel,
+      desiredLevel: input.desiredLevel,
+      generation: input.generation,
+      inflight: input.inflight,
+    );
+    if (input.decision == DriverCockpitViewZoomInputDecision.coalesced) {
+      _recordViewZoomPressure(
+        event: 'input_coalesced',
+        currentLevel: input.currentLevel,
+        desiredLevel: input.desiredLevel,
+        generation: input.generation,
+        inflight: true,
+      );
+      _recordViewZoomPressure(
+        event: 'desired_level_updated',
+        currentLevel: input.currentLevel,
+        desiredLevel: input.desiredLevel,
+        generation: input.generation,
+        inflight: true,
+      );
+    } else if (input.decision ==
+        DriverCockpitViewZoomInputDecision.startCamera) {
+      _recordViewZoomPressure(
+        event: 'desired_level_updated',
+        currentLevel: input.currentLevel,
+        desiredLevel: input.desiredLevel,
+        generation: input.generation,
+        inflight: false,
+      );
+    }
+
     if (_cameraMode != _CameraMode.follow || !_liveRideActive) {
       logNavUiInputTiming(
         action: NavUiInputTimingAction.viewZoom,
@@ -14648,25 +14691,27 @@ class _DriverHomePageState extends State<DriverHomePage>
     final pos = _lastPos;
     if (pos != null) {
       final isTablet = MediaQuery.sizeOf(context).width >= 600;
-      final generation = _driverCockpitViewZoomLifecycle.requestManualLevel(
-        _driverCockpitViewLevel,
-        DateTime.now(),
-      );
       logNavPresViewZoom(
-        requestedLevel: _driverCockpitViewLevel,
+        requestedLevel: input.desiredLevel,
         appliedLevel: _driverCockpitViewZoomLifecycle.appliedLevel,
-        generation: generation,
-        phase: 'requested',
+        generation: input.generation,
+        phase: input.decision == DriverCockpitViewZoomInputDecision.coalesced
+            ? 'coalesced'
+            : input.decision == DriverCockpitViewZoomInputDecision.unchanged
+            ? 'unchanged'
+            : 'requested',
         formFactor: driverCockpitViewZoomFormFactorLabel(isTablet: isTablet),
       );
-      unawaited(_applyDriverCockpitViewZoomCamera(pos, generation: generation));
-      unawaited(
-        _syncVisibleRouteLineWithProgress(
-          pos,
-          reason: 'cockpit_adjust',
-          force: true,
-        ),
-      );
+      // Only the pressure-guard owner may start camera work. Coalesced taps
+      // update desired level only; route restore runs after an applied camera.
+      if (input.decision == DriverCockpitViewZoomInputDecision.startCamera) {
+        unawaited(
+          _applyDriverCockpitViewZoomCamera(
+            pos,
+            generation: input.generation,
+          ),
+        );
+      }
     } else {
       logNavUiInputTiming(
         action: NavUiInputTimingAction.viewZoom,
@@ -14697,9 +14742,39 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  void _recordViewZoomPressure({
+    required String event,
+    required int currentLevel,
+    required int desiredLevel,
+    required int generation,
+    required bool inflight,
+    int? durationMs,
+  }) {
+    logViewZoomPressure(
+      event: event,
+      currentLevel: currentLevel,
+      desiredLevel: desiredLevel,
+      generation: generation,
+      inflight: inflight,
+      durationMs: durationMs,
+    );
+    if (!NavDiagnosticsRecorder.instance.hasActiveSession) return;
+    unawaited(
+      NavDiagnosticsRecorder.instance.recordViewZoomPressureEvent(
+        event: event,
+        currentLevel: currentLevel,
+        desiredLevel: desiredLevel,
+        generation: generation,
+        inflight: inflight,
+        durationMs: durationMs,
+      ),
+    );
+  }
+
   Future<void> _applyDriverCockpitViewZoomCamera(
     geo.Position pos, {
     required int generation,
+    bool pendingLatest = false,
   }) async {
     if (!mounted) return;
     if (_cameraMode != _CameraMode.follow || !_liveRideActive) return;
@@ -14719,16 +14794,25 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
 
-    // NAV-ZOOM-FIELD-REPAIR-1: at most one active manual camera request. A
-    // rejected start is not a dropped tap — the level is already committed in
-    // state and the in-flight owner replays to the newest generation when it
-    // completes.
+    // RAPID-ZOOM-INPUT-PRESSURE-GUARD-1: at most one active manual camera
+    // request. A rejected start is not a dropped tap — desired level is
+    // already committed and the in-flight owner replays when it completes.
     if (!_driverCockpitViewZoomLifecycle.beginCamera(generation)) {
       return;
     }
 
+    final targetLevel =
+        _driverCockpitViewZoomLifecycle.inFlightTargetLevel ??
+        _driverCockpitViewZoomLifecycle.requestedLevel;
+    _recordViewZoomPressure(
+      event: pendingLatest ? 'pending_latest_started' : 'camera_started',
+      currentLevel: _driverCockpitViewZoomLifecycle.appliedLevel ?? targetLevel,
+      desiredLevel: targetLevel,
+      generation: generation,
+      inflight: true,
+    );
     logNavPresViewZoom(
-      requestedLevel: _driverCockpitViewZoomLifecycle.requestedLevel,
+      requestedLevel: targetLevel,
       appliedLevel: _driverCockpitViewZoomLifecycle.appliedLevel,
       generation: generation,
       phase: 'camera_start',
@@ -14737,6 +14821,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     final started = DateTime.now();
     var needsRerun = false;
+    var appliedThisFlight = false;
     try {
       await _followCameraTesla(
         pos,
@@ -14747,7 +14832,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       final durationMs = DateTime.now().difference(started).inMilliseconds;
       needsRerun = _driverCockpitViewZoomLifecycle.finishCamera(
         requestGeneration: generation,
-        appliedLevel: _driverCockpitViewLevel,
+        appliedLevel: targetLevel,
         now: DateTime.now(),
       );
       if (_driverCockpitViewZoomLifecycle.shouldIgnoreStaleCamera(generation)) {
@@ -14760,9 +14845,18 @@ class _DriverHomePageState extends State<DriverHomePage>
           formFactor: formFactor,
         );
       } else {
+        appliedThisFlight = true;
+        _recordViewZoomPressure(
+          event: 'camera_completed',
+          currentLevel: targetLevel,
+          desiredLevel: _driverCockpitViewZoomLifecycle.requestedLevel,
+          generation: generation,
+          inflight: false,
+          durationMs: durationMs,
+        );
         logNavPresViewZoom(
           requestedLevel: _driverCockpitViewZoomLifecycle.requestedLevel,
-          appliedLevel: _driverCockpitViewLevel,
+          appliedLevel: targetLevel,
           generation: generation,
           phase: 'camera_complete',
           durationMs: durationMs,
@@ -14780,20 +14874,27 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
       }
     } catch (_) {
-      // NAV-ZOOM-FIELD-REPAIR-1: a timeout or platform error must self-heal.
-      // Release ownership and, when a newer level was selected meanwhile,
-      // still replay to it so the driver's last press is not lost.
+      // RAPID-ZOOM-INPUT-PRESSURE-GUARD-1: timeout / platform error releases
+      // ownership and still allows the latest pending level to proceed.
+      final durationMs = DateTime.now().difference(started).inMilliseconds;
+      _recordViewZoomPressure(
+        event: 'camera_failed',
+        currentLevel:
+            _driverCockpitViewZoomLifecycle.appliedLevel ?? targetLevel,
+        desiredLevel: _driverCockpitViewZoomLifecycle.requestedLevel,
+        generation: generation,
+        inflight: false,
+        durationMs: durationMs,
+      );
       logNavUiInputTiming(
         action: NavUiInputTimingAction.viewZoom,
         phase: NavUiInputTimingPhase.failed,
         managerGeneration: _routeAnnotationGate.managerGeneration,
         renderEpoch: _routeRenderEpoch,
+        durationMs: durationMs,
         reason: 'camera_exception',
       );
-      needsRerun = _driverCockpitViewZoomLifecycle.shouldIgnoreStaleCamera(
-        generation,
-      );
-      _driverCockpitViewZoomLifecycle.cancelCamera(
+      needsRerun = _driverCockpitViewZoomLifecycle.releaseForFailure(
         requestGeneration: generation,
       );
     } finally {
@@ -14803,16 +14904,43 @@ class _DriverHomePageState extends State<DriverHomePage>
           requestGeneration: generation,
         );
       }
-      // NAV-ZOOM-FIELD-REPAIR-1: only replay when nothing else owns the newest
-      // target. Replaying unconditionally doubled the platform-channel camera
-      // calls under rapid taps.
+      // Route visual restore/replay only for a camera state that was actually
+      // applied — never once per superseded intermediate tap.
+      if (appliedThisFlight && mounted && _lastPos != null) {
+        _recordViewZoomPressure(
+          event: 'route_restore_started',
+          currentLevel: targetLevel,
+          desiredLevel: _driverCockpitViewZoomLifecycle.requestedLevel,
+          generation: generation,
+          inflight: false,
+        );
+        try {
+          await _syncVisibleRouteLineWithProgress(
+            _lastPos!,
+            reason: 'cockpit_adjust',
+            force: true,
+          );
+          _recordViewZoomPressure(
+            event: 'route_restore_completed',
+            currentLevel: targetLevel,
+            desiredLevel: _driverCockpitViewZoomLifecycle.requestedLevel,
+            generation: generation,
+            inflight: false,
+          );
+        } catch (_) {
+          // Route restore must not escape or pin camera ownership.
+        }
+      }
+      // Only replay when nothing else owns the newest target.
       if (needsRerun &&
+          mounted &&
           _lastPos != null &&
           !_driverCockpitViewZoomLifecycle.latestTargetAlreadyOwned()) {
         unawaited(
           _applyDriverCockpitViewZoomCamera(
             _lastPos!,
             generation: _driverCockpitViewZoomLifecycle.generation,
+            pendingLatest: true,
           ),
         );
       }
