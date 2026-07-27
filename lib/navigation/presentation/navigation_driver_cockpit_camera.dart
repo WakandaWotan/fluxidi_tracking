@@ -199,9 +199,33 @@ const double kDriverCockpitCameraFollowMaxPitchStep = 6.5;
 const double kDriverCockpitCameraDirectAdjustMaxZoomStep = 99.0;
 const double kDriverCockpitCameraDirectAdjustMaxPitchStep = 99.0;
 
-/// NAV-PRES-3D-PRO2: ease exponents — high end much more aggressive.
-const double kDriverCockpitPro2LowSegmentPower = 1.35;
-const double kDriverCockpitPro2HighSegmentPower = 3.2;
+/// NAV-PRES-3D-PRO2: ease exponents across the level 1 / 7 / 13 anchors.
+///
+/// NAV-ZOOM-FIELD-REPAIR-1: the high exponent was 3.2, which made the first
+/// presses above the default View 7 arithmetically dead (L7 -> L8 moved the
+/// map by 0.008 zoom, L8 -> L9 by 0.066). The commands were issued and
+/// applied correctly; the visible result was effectively zero. Both
+/// exponents are recalibrated so every adjacent manual step stays inside the
+/// approved visibility band of [kDriverCockpitViewLevelMinVisibleZoomDelta],
+/// [kDriverCockpitViewLevelMaxVisibleZoomDelta] on both form factors, while
+/// keeping the level 1 / 7 / 13 anchors, the default level and the overall
+/// zoom range untouched.
+///
+/// Both segments now share the same exponent, so the step size no longer
+/// resets at the level-7 boundary. The low exponent moved 1.35 -> 1.30
+/// because at 1.35 the tablet overview step L1 -> L2 was 0.169 zoom, just
+/// under the same visibility floor.
+const double kDriverCockpitPro2LowSegmentPower = 1.30;
+const double kDriverCockpitPro2HighSegmentPower = 1.30;
+
+/// NAV-ZOOM-FIELD-REPAIR-1: approved per-step visibility band.
+///
+/// A deliberate View +/- press must move the map by at least
+/// [kDriverCockpitViewLevelMinVisibleZoomDelta] zoom so it is never visually
+/// meaningless, and by at most [kDriverCockpitViewLevelMaxVisibleZoomDelta]
+/// so a single press never feels like a jump.
+const double kDriverCockpitViewLevelMinVisibleZoomDelta = 0.18;
+const double kDriverCockpitViewLevelMaxVisibleZoomDelta = 0.60;
 
 /// Legacy level-7 anchor labels (tests / diagnostics).
 const double kDriverCockpitVehicleAnchorFractionPortrait =

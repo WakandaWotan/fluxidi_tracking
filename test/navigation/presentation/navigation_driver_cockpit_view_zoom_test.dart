@@ -12,20 +12,26 @@ void main() {
       expect(lifecycle.requestedLevel, 8);
       expect(lifecycle.beginCamera(g1), isTrue);
 
-      // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: newest View + supersedes immediately.
+      // NAV-ZOOM-FIELD-REPAIR-1: the newest View + no longer starts a second
+      // concurrent flight. It becomes the single coalesced pending target and
+      // the in-flight owner replays to it on completion.
       final g2 = lifecycle.requestManualLevel(9, t0);
       expect(g2, 2);
-      expect(lifecycle.beginCamera(g2), isTrue);
-      expect(lifecycle.inFlightGeneration, g2);
+      expect(lifecycle.beginCamera(g2), isFalse);
+      expect(lifecycle.inFlightGeneration, g1);
+      expect(lifecycle.requestedLevel, 9);
 
-      // Stale finish for g1 must not wipe the superseding owner.
+      // The superseded finish releases ownership and asks for a rerun.
       expect(
         lifecycle.finishCamera(requestGeneration: g1, appliedLevel: 8, now: t0),
         isTrue,
       );
-      expect(lifecycle.cameraInFlight, isTrue);
+      expect(lifecycle.cameraInFlight, isFalse);
       expect(lifecycle.appliedLevel, isNull);
 
+      // The rerun runs for the newest generation only.
+      expect(lifecycle.latestTargetAlreadyOwned(), isFalse);
+      expect(lifecycle.beginCamera(g2), isTrue);
       expect(
         lifecycle.finishCamera(requestGeneration: g2, appliedLevel: 9, now: t0),
         isFalse,
@@ -38,6 +44,8 @@ void main() {
       final lifecycle = DriverCockpitViewZoomLifecycle();
       final g1 = lifecycle.requestManualLevel(8, t0);
       expect(lifecycle.beginCamera(g1), isTrue);
+      lifecycle.cancelCamera(requestGeneration: g1);
+
       final g2 = lifecycle.requestManualLevel(10, t0);
       expect(lifecycle.beginCamera(g2), isTrue);
       lifecycle.cancelCamera(requestGeneration: g1);

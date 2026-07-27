@@ -14491,8 +14491,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
 
-    // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: newest View +/- supersedes an older
-    // in-flight owner. Do not wait multiple seconds for an obsolete flyTo.
+    // NAV-ZOOM-FIELD-REPAIR-1: at most one active manual camera request. A
+    // rejected start is not a dropped tap — the level is already committed in
+    // state and the in-flight owner replays to the newest generation when it
+    // completes.
     if (!_driverCockpitViewZoomLifecycle.beginCamera(generation)) {
       return;
     }
@@ -14540,6 +14542,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
       }
     } catch (_) {
+      // NAV-ZOOM-FIELD-REPAIR-1: a timeout or platform error must self-heal.
+      // Release ownership and, when a newer level was selected meanwhile,
+      // still replay to it so the driver's last press is not lost.
+      needsRerun = _driverCockpitViewZoomLifecycle.shouldIgnoreStaleCamera(
+        generation,
+      );
       _driverCockpitViewZoomLifecycle.cancelCamera(
         requestGeneration: generation,
       );
@@ -14550,7 +14558,12 @@ class _DriverHomePageState extends State<DriverHomePage>
           requestGeneration: generation,
         );
       }
-      if (needsRerun && _lastPos != null) {
+      // NAV-ZOOM-FIELD-REPAIR-1: only replay when nothing else owns the newest
+      // target. Replaying unconditionally doubled the platform-channel camera
+      // calls under rapid taps.
+      if (needsRerun &&
+          _lastPos != null &&
+          !_driverCockpitViewZoomLifecycle.latestTargetAlreadyOwned()) {
         unawaited(
           _applyDriverCockpitViewZoomCamera(
             _lastPos!,

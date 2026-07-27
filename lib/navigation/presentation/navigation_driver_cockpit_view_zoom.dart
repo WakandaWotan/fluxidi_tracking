@@ -50,14 +50,33 @@ class DriverCockpitViewZoomLifecycle {
 
   /// Begin camera ownership for [requestGeneration].
   ///
-  /// NAV-CAMERA-INFLIGHT-SELF-HEAL-1: a newer manual View +/- request
-  /// supersedes an older in-flight owner instead of waiting for Mapbox to
-  /// finish the obsolete animation. Stale generations are still rejected.
+  /// NAV-CAMERA-INFLIGHT-SELF-HEAL-1: stale generations are rejected.
+  ///
+  /// NAV-ZOOM-FIELD-REPAIR-1: the manual adjustment path owns at most one
+  /// active camera request. A newer generation arriving mid-flight no longer
+  /// starts a second concurrent flight — it only bumps [generation], which is
+  /// the single coalesced latest pending target. The in-flight owner replays
+  /// to that newest target when it completes. Starting a concurrent flight
+  /// per tap is what produced roughly 2N platform-channel camera calls for N
+  /// rapid taps and amplified the DartMessenger backlog.
   bool beginCamera(int requestGeneration) {
     if (shouldIgnoreStaleCamera(requestGeneration)) return false;
+    if (_cameraInFlight) return false;
     _cameraInFlight = true;
     _inFlightGeneration = requestGeneration;
     return true;
+  }
+
+  /// True when the newest target is already owned, so a superseded flight
+  /// must not schedule a duplicate replay.
+  ///
+  /// NAV-ZOOM-FIELD-REPAIR-1: covers both the case where the newest
+  /// generation already has a flight running and the case where a completed
+  /// flight already applied the newest requested level.
+  bool latestTargetAlreadyOwned() {
+    if (_cameraInFlight && _inFlightGeneration == _generation) return true;
+    if (_appliedLevel != null && _appliedLevel == _requestedLevel) return true;
+    return false;
   }
 
   void cancelCamera({int? requestGeneration}) {
