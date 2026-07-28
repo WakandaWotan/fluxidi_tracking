@@ -69,7 +69,9 @@ const FUTURE_DOCUMENT_AUDIT_EVENT_TYPES = Object.freeze({
 //   }
 
 const SCHEMA_VERSION = "compliance_event_v1";
-const SYNC_STATE = "not_configured";
+// CHIRON-RELEASE-PRESENTATION-REPAIR-1 C: append default is unknown / not yet
+// evaluated — never a synthetic "external export not_configured" fact.
+const SYNC_STATE = "unknown";
 const RETRY_OUTBOX_STATE_DIRECT = "direct_append_v1";
 const APPEND_PATH = "/compliance/events/append";
 const RECENT_PATH = "/compliance/events/recent";

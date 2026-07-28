@@ -13,6 +13,9 @@ import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/compliance_ledger_reader.dart';
 import 'package:fluxidi_tracking/compliance_register_receipt_bridge.dart';
 import 'package:fluxidi_tracking/local_ride_assignment_cache.dart';
+import 'package:fluxidi_tracking/main_parts/chiron_context_hydration_retry.dart';
+import 'package:fluxidi_tracking/main_parts/chiron_dossier_grouping.dart';
+import 'package:fluxidi_tracking/main_parts/chiron_sync_status_presentation.dart';
 import 'package:fluxidi_tracking/company_driver_management_page.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
@@ -941,10 +944,31 @@ class _ChironHubStatusCard extends StatefulWidget {
 }
 
 class _ChironHubStatusCardState extends State<_ChironHubStatusCard> {
+  late final ChironContextLoadCoordinator _loadCoordinator;
+
   @override
   void initState() {
     super.initState();
-    unawaited(_refreshBackendChironStatus());
+    _loadCoordinator = ChironContextLoadCoordinator(
+      listenables: <Listenable>[
+        activeCompanySessionNotifier,
+        companyProfileNotifier,
+      ],
+      hasCompanySession: () => hasCompanyOwnerAuthContext(),
+      companyId: () {
+        final profile = companyProfileNotifier.value?.companyId.trim() ?? '';
+        if (profile.isNotEmpty) return profile;
+        return activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+      },
+      runLoad: _refreshBackendChironStatus,
+      onDiag: (stage) => debugPrint('[CHIRON_LOAD][DIAG] stage=$stage'),
+    )..attach();
+  }
+
+  @override
+  void dispose() {
+    _loadCoordinator.dispose();
+    super.dispose();
   }
 
   String _t({
@@ -965,7 +989,7 @@ class _ChironHubStatusCardState extends State<_ChironHubStatusCard> {
     }
   }
 
-  Future<void> _refreshBackendChironStatus() async {
+  Future<void> _refreshBackendChironStatus(int gen) async {
     final scope = _chironScopedCompanyIds();
     if (scope == null) return;
     try {
@@ -973,12 +997,15 @@ class _ChironHubStatusCardState extends State<_ChironHubStatusCard> {
         tenantId: scope.tenantId,
         companyId: scope.companyId,
       );
+      if (!_loadCoordinator.shouldApplyGeneration(gen)) return;
       _publishChironDashboardStatusFetch(
         status: fetched.status,
         internalTest: fetched.internalTest,
       );
     } catch (e) {
-      debugPrint('[CHIRON_CONNECTION][DASHBOARD_LOAD] error=$e');
+      if (_loadCoordinator.shouldApplyGeneration(gen)) {
+        debugPrint('[CHIRON_CONNECTION][DASHBOARD_LOAD] error=$e');
+      }
     }
   }
 
@@ -1124,6 +1151,22 @@ class _ChironHubStatusCardState extends State<_ChironHubStatusCard> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      if (!_loadCoordinator.prerequisitesReady)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(
+                            _t(
+                              nl: 'Bedrijfscontext wordt geladen…',
+                              en: 'Loading company context…',
+                              fr: 'Chargement du contexte entreprise…',
+                              es: 'Cargando contexto de empresa…',
+                            ),
+                            style: TextStyle(
+                              color: _chironTextMuted,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
@@ -2086,6 +2129,7 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
   String _lastConnectionStatus = 'never_tested';
   bool _resettingTestflow = false;
   bool _editingTestCredentials = false;
+  late final ChironContextLoadCoordinator _loadCoordinator;
 
   @override
   void initState() {
@@ -2093,7 +2137,20 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
     _apiTokenController.addListener(_onCredentialFieldChanged);
     _clientIdController.addListener(_onCredentialFieldChanged);
     _clientSecretController.addListener(_onCredentialFieldChanged);
-    unawaited(_refreshStatus());
+    _loadCoordinator = ChironContextLoadCoordinator(
+      listenables: <Listenable>[
+        activeCompanySessionNotifier,
+        companyProfileNotifier,
+      ],
+      hasCompanySession: () => hasCompanyOwnerAuthContext(),
+      companyId: () {
+        final profile = companyProfileNotifier.value?.companyId.trim() ?? '';
+        if (profile.isNotEmpty) return profile;
+        return activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+      },
+      runLoad: _performStatusLoad,
+      onDiag: (stage) => debugPrint('[CHIRON_LOAD][DIAG] stage=$stage'),
+    )..attach();
   }
 
   void _onCredentialFieldChanged() {
@@ -2102,6 +2159,7 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
 
   @override
   void dispose() {
+    _loadCoordinator.dispose();
     _apiTokenController.removeListener(_onCredentialFieldChanged);
     _clientIdController.removeListener(_onCredentialFieldChanged);
     _clientSecretController.removeListener(_onCredentialFieldChanged);
@@ -2206,23 +2264,34 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
     );
   }
 
-  Future<void> _refreshStatus() async {
+  String _releaseSafeWorkerError({String? code, String? sanitizedDetail}) {
+    if (kReleaseMode) {
+      return _localizedApiError(code);
+    }
+    final detail = sanitizedDetail?.trim() ?? '';
+    if (detail.isNotEmpty) return detail;
+    return _localizedApiError(code);
+  }
+
+  Future<void> _performStatusLoad(int gen) async {
     final scope = _effectiveTenantCompanyIds();
     if (scope == null) return;
-    setState(() {
-      _loadingStatus = true;
-      _actionError = null;
-    });
+    if (_loadCoordinator.shouldApplyGeneration(gen) && mounted) {
+      setState(() {
+        _loadingStatus = true;
+        _actionError = null;
+      });
+    }
     try {
       final fetched = await _fetchChironTestAccessBackendStatus(
         tenantId: scope.tenantId,
         companyId: scope.companyId,
       );
+      if (!_loadCoordinator.shouldApplyGeneration(gen) || !mounted) return;
       _publishChironDashboardStatusFetch(
         status: fetched.status,
         internalTest: fetched.internalTest,
       );
-      if (!mounted) return;
       setState(() {
         _testflowProgress = fetched.testflow;
         _lastConnectionStatus = fetched.status.lastConnectionStatus;
@@ -2240,7 +2309,7 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
         }
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!_loadCoordinator.shouldApplyGeneration(gen) || !mounted) return;
       setState(() {
         _actionError = _t(
           nl: 'Status kon niet geladen worden.',
@@ -2250,10 +2319,14 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
         );
       });
     } finally {
-      if (mounted) {
+      if (_loadCoordinator.shouldApplyGeneration(gen) && mounted) {
         setState(() => _loadingStatus = false);
       }
     }
+  }
+
+  Future<void> _refreshStatus() async {
+    _loadCoordinator.requestManualRefresh();
   }
 
   bool get _isOAuthSchemeSelected =>
@@ -2325,12 +2398,12 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
     } on BackendChironConnectionApiException catch (e) {
       if (!mounted) return;
       setState(() {
-        _actionError = _localizedApiError(e.error);
+        _actionError = _releaseSafeWorkerError(code: e.error);
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _actionError = _localizedApiError('network_error');
+        _actionError = _releaseSafeWorkerError(code: 'network_error');
       });
     } finally {
       if (mounted) {
@@ -2359,9 +2432,10 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
         // tokens or secrets. Fallback to localized error code otherwise.
         final sanitized = result.sanitizedError?.trim() ?? '';
         setState(() {
-          _actionError = result.isOAuthScheme && sanitized.isNotEmpty
-              ? sanitized
-              : _localizedApiError(result.errorCode);
+          _actionError = _releaseSafeWorkerError(
+            code: result.errorCode,
+            sanitizedDetail: result.isOAuthScheme ? sanitized : null,
+          );
         });
         return;
       }
@@ -2394,7 +2468,7 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _actionError = _localizedApiError('network_error');
+        _actionError = _releaseSafeWorkerError(code: 'network_error');
       });
     } finally {
       if (mounted) {
@@ -2736,6 +2810,20 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
               ),
               const SizedBox(height: 6),
               Text(
+                _t(
+                  nl: 'Als bedrijfsbeheerder controleert u hier de Chiron ACC/test-verbinding van uw onderneming.',
+                  en: 'As company administrator, verify your company’s Chiron ACC/test connection here.',
+                  fr: 'En tant qu’administrateur d’entreprise, vérifiez ici la connexion Chiron ACC/test de votre société.',
+                  es: 'Como administrador de empresa, verifique aquí la conexión Chiron ACC/test de su compañía.',
+                ),
+                style: TextStyle(
+                  color: _chironTextMuted,
+                  fontSize: 11,
+                  height: 1.35,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
                 testCredentialsStored && connectionPassed
                     ? _t(
                         nl: 'Uw testgegevens zijn veilig opgeslagen. Fluxidi kan verbinden met Chiron ACC/test.',
@@ -2867,6 +2955,18 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                     ),
                 ],
               ),
+              if (!_loadCoordinator.prerequisitesReady) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _t(
+                    nl: 'Bedrijfscontext wordt geladen…',
+                    en: 'Loading company context…',
+                    fr: 'Chargement du contexte entreprise…',
+                    es: 'Cargando contexto de empresa…',
+                  ),
+                  style: TextStyle(color: _chironTextMuted, fontSize: 11),
+                ),
+              ],
               if (_loadingStatus) ...[
                 const SizedBox(height: 10),
                 SizedBox(
@@ -9760,7 +9860,8 @@ class _RemoteComplianceEventsSection extends StatefulWidget {
 class _RemoteComplianceEventsSectionState
     extends State<_RemoteComplianceEventsSection> {
   late Future<RemoteComplianceEventsResponse> _future;
-  bool _isResettingRemoteEvents = false;
+  final bool _isResettingRemoteEvents = false;
+  late final ChironContextLoadCoordinator _loadCoordinator;
   // Patch 4A: local-only search + category filter for the
   // Backendmeldingen list. State is reset on widget disposal; nothing
   // persists outside this section.
@@ -9772,19 +9873,51 @@ class _RemoteComplianceEventsSectionState
   @override
   void initState() {
     super.initState();
-    _future = _loadRemoteEvents();
+    _future = Future<RemoteComplianceEventsResponse>.value(
+      RemoteComplianceEventsResponse(
+        ok: false,
+        tenantId: '',
+        companyId: '',
+        limit: 100,
+        count: 0,
+        malformedCount: 0,
+        events: const <RemoteComplianceEvent>[],
+        errorMessage: '',
+      ),
+    );
+    _loadCoordinator = ChironContextLoadCoordinator(
+      listenables: <Listenable>[
+        activeCompanySessionNotifier,
+        companyProfileNotifier,
+      ],
+      hasCompanySession: () => hasCompanyOwnerAuthContext(),
+      companyId: () {
+        final profile = companyProfileNotifier.value?.companyId.trim() ?? '';
+        if (profile.isNotEmpty) return profile;
+        return activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+      },
+      runLoad: _performRemoteEventsLoad,
+      onDiag: (stage) => debugPrint('[CHIRON_LOAD][DIAG] stage=$stage'),
+    )..attach();
   }
 
   @override
   void dispose() {
+    _loadCoordinator.dispose();
     _searchController.dispose();
     super.dispose();
   }
 
-  void _refresh() {
+  Future<void> _performRemoteEventsLoad(int gen) async {
+    final result = await _loadRemoteEvents();
+    if (!_loadCoordinator.shouldApplyGeneration(gen) || !mounted) return;
     setState(() {
-      _future = _loadRemoteEvents();
+      _future = Future<RemoteComplianceEventsResponse>.value(result);
     });
+  }
+
+  void _refresh() {
+    _loadCoordinator.requestManualRefresh();
   }
 
   // Patch 4A: build a lowercased haystack of every field the search
@@ -9981,7 +10114,7 @@ class _RemoteComplianceEventsSectionState
         };
         return bookingEventTypes.contains(eventType) && rideType != 'direct';
       case _RemoteComplianceCategoryFilter.straatritten:
-        return rideType == 'direct' || eventType == 'ride_stop';
+        return rideType == 'direct';
       case _RemoteComplianceCategoryFilter.betaald:
         return paymentStatus == 'paid' ||
             (eventType == 'payment_update' && paymentStatus.isEmpty);
@@ -10471,15 +10604,8 @@ class _RemoteComplianceEventsSectionState
     }
   }
 
-  String _localizedSyncStateLabel(String raw) {
-    switch (raw.trim().toLowerCase()) {
-      case 'not_configured':
-        return _t(
-          nl: 'Externe Chiron-export niet ingesteld',
-          en: 'External Chiron export not configured',
-          fr: 'Export Chiron externe non configuré',
-          es: 'Exportación externa de Chiron no configurada',
-        );
+  String _authoritativeSyncStateLabel(ChironSyncStatusPresentation presentation) {
+    switch (presentation.authoritativeLabelKey) {
       case 'synced':
         return _t(
           nl: 'gesynchroniseerd',
@@ -10496,12 +10622,33 @@ class _RemoteComplianceEventsSectionState
         );
       case 'failed':
         return _t(nl: 'mislukt', en: 'failed', fr: 'échoué', es: 'fallido');
-      case 'unknown':
-      case '':
-        return _localizedUnknown();
       default:
         return _localizedUnknown();
     }
+  }
+
+  String _localizedSyncStateLabel(String raw) {
+    final presentation = classifyChironSyncState(raw);
+    if (presentation.showChip) {
+      return _authoritativeSyncStateLabel(presentation);
+    }
+    return _localizedUnknown();
+  }
+
+  /// Returns a renderable sync-state chip label ONLY for authoritative states.
+  String? _renderableSyncStateChipLabel(String? raw) {
+    final presentation = classifyChironSyncState(raw);
+    if (!presentation.showChip) return null;
+    return _authoritativeSyncStateLabel(presentation);
+  }
+
+  /// Aggregate sync-state chip across dossier events; null when all hide.
+  String? _aggregateSyncStateChipLabel(List<RemoteComplianceEvent> sorted) {
+    for (final event in sorted) {
+      final label = _renderableSyncStateChipLabel(event.syncState);
+      if (label != null) return label;
+    }
+    return null;
   }
 
   String _localizedProducerLabel(String raw) {
@@ -11085,17 +11232,13 @@ class _RemoteComplianceEventsSectionState
   }
 
   String _dossierGroupKey(RemoteComplianceEvent e, int index) {
-    if (_isMeaningfulIdentity(e.bookingId)) {
-      return 'booking:${e.bookingId.trim().toLowerCase()}';
-    }
-    if (_isMeaningfulIdentity(e.tripId)) {
-      return 'trip:${e.tripId.trim().toLowerCase()}';
-    }
-    final eventId = _text(e.eventId);
-    if (eventId.isNotEmpty) return 'event:${eventId.toLowerCase()}';
-    final createdAt = _text(e.createdAtUtc);
-    if (createdAt.isNotEmpty) return 'event:${createdAt.toLowerCase()}';
-    return 'event:index_$index';
+    return chironCanonicalRideKey(
+      bookingId: e.bookingId,
+      tripId: e.tripId,
+      eventId: e.eventId,
+      index: index,
+      isMeaningfulIdentity: _isMeaningfulIdentity,
+    );
   }
 
   bool _isLegScopedEvent(RemoteComplianceEvent event) {
@@ -11978,14 +12121,19 @@ class _RemoteComplianceEventsSectionState
 
   List<Widget> _paymentUpdateAuditChips(
     RemoteComplianceEvent e,
-    Map<String, RemoteComplianceEvent> latestPaymentUpdates,
-  ) {
+    Map<String, RemoteComplianceEvent> latestPaymentUpdates, {
+    String? aggregateSyncChipLabel,
+  }) {
     final payment = _effectivePaymentForEvent(e, latestPaymentUpdates);
-    final chips = <Widget>[
-      _chip(
-        '${_t(nl: 'Synchronisatie', en: 'Sync', fr: 'Synchronisation', es: 'Sincronización')}: ${_localizedSyncStateLabel(e.syncState)}',
-      ),
-    ];
+    final chips = <Widget>[];
+    final syncLabel = _renderableSyncStateChipLabel(e.syncState);
+    if (syncLabel != null && syncLabel != aggregateSyncChipLabel) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Synchronisatie', en: 'Sync', fr: 'Synchronisation', es: 'Sincronización')}: $syncLabel',
+        ),
+      );
+    }
     if (payment.status.isNotEmpty) {
       chips.add(
         _chip(
@@ -12024,30 +12172,47 @@ class _RemoteComplianceEventsSectionState
     return chips;
   }
 
-  List<Widget> _cancellationAuditChips(RemoteComplianceEvent e) {
-    final chips = <Widget>[
-      _chip(
-        '${_t(nl: 'Synchronisatie', en: 'Sync', fr: 'Synchronisation', es: 'Sincronización')}: ${_localizedSyncStateLabel(e.syncState)}',
-      ),
+  List<Widget> _cancellationAuditChips(
+    RemoteComplianceEvent e, {
+    String? aggregateSyncChipLabel,
+  }) {
+    final chips = <Widget>[];
+    final syncLabel = _renderableSyncStateChipLabel(e.syncState);
+    if (syncLabel != null && syncLabel != aggregateSyncChipLabel) {
+      chips.add(
+        _chip(
+          '${_t(nl: 'Synchronisatie', en: 'Sync', fr: 'Synchronisation', es: 'Sincronización')}: $syncLabel',
+        ),
+      );
+    }
+    chips.add(
       _chip(
         '${_t(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado')}: ${_t(nl: 'geannuleerd', en: 'cancelled', fr: 'annulée', es: 'cancelado')}',
       ),
-    ];
+    );
     chips.addAll(_actorAuditChip(e));
     return chips;
   }
 
   List<Widget> _auditHistoryChips(
     RemoteComplianceEvent e,
-    Map<String, RemoteComplianceEvent> latestPaymentUpdates,
-  ) {
+    Map<String, RemoteComplianceEvent> latestPaymentUpdates, {
+    String? aggregateSyncChipLabel,
+  }) {
     final token = _normalizeToken(e.eventType);
     switch (token) {
       case 'payment_update':
-        return _paymentUpdateAuditChips(e, latestPaymentUpdates);
+        return _paymentUpdateAuditChips(
+          e,
+          latestPaymentUpdates,
+          aggregateSyncChipLabel: aggregateSyncChipLabel,
+        );
       case 'booking_status_update':
         if (_eventIsCancelledStatusUpdate(e)) {
-          return _cancellationAuditChips(e);
+          return _cancellationAuditChips(
+            e,
+            aggregateSyncChipLabel: aggregateSyncChipLabel,
+          );
         }
         break;
       case 'booking_credit_decision':
@@ -12057,10 +12222,12 @@ class _RemoteComplianceEventsSectionState
     }
     final payment = _effectivePaymentForEvent(e, latestPaymentUpdates);
     final producer = _text(e.provenance['producer']);
+    final syncLabel = _renderableSyncStateChipLabel(e.syncState);
     return [
-      _chip(
-        '${_t(nl: 'Synchronisatie', en: 'Sync', fr: 'Synchronisation', es: 'Sincronización')}: ${_localizedSyncStateLabel(e.syncState)}',
-      ),
+      if (syncLabel != null && syncLabel != aggregateSyncChipLabel)
+        _chip(
+          '${_t(nl: 'Synchronisatie', en: 'Sync', fr: 'Synchronisation', es: 'Sincronización')}: $syncLabel',
+        ),
       if (payment.status.isNotEmpty)
         _chip(
           '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${_localizedPaymentStatusLabel(payment.status)}',
@@ -12226,8 +12393,9 @@ class _RemoteComplianceEventsSectionState
 
   Widget _auditHistoryRow(
     RemoteComplianceEvent e,
-    Map<String, RemoteComplianceEvent> latestPaymentUpdates,
-  ) {
+    Map<String, RemoteComplianceEvent> latestPaymentUpdates, {
+    String? aggregateSyncChipLabel,
+  }) {
     final eventTitle = _localizedAuditEventTitle(e);
     final rideTypeLabel = _localizedAuditRideTypeLabel(e);
     final legLabel = _localizedRoundtripLegLabel(e.legType);
@@ -12267,7 +12435,11 @@ class _RemoteComplianceEventsSectionState
           Wrap(
             spacing: 6,
             runSpacing: 6,
-            children: _auditHistoryChips(e, latestPaymentUpdates),
+            children: _auditHistoryChips(
+              e,
+              latestPaymentUpdates,
+              aggregateSyncChipLabel: aggregateSyncChipLabel,
+            ),
           ),
         ],
       ),
@@ -12324,6 +12496,7 @@ class _RemoteComplianceEventsSectionState
       raw: latest.syncState,
       display: _localizedSyncStateLabel(latest.syncState),
     );
+    final aggregateSyncChipLabel = _aggregateSyncStateChipLabel(sorted);
     final reference = _businessReferenceForRemoteCard(
       rideType: latest.rideType,
       publicBookingReference: publicBookingReference,
@@ -12385,9 +12558,10 @@ class _RemoteComplianceEventsSectionState
               _chip(
                 '${_t(nl: 'Ritstatus', en: 'Ride status', fr: 'Statut de la course', es: 'Estado del viaje')}: ${_localizedRideStatus(sorted)}',
               ),
-              _chip(
-                '${_t(nl: 'Synchronisatie', en: 'Sync', fr: 'Synchronisation', es: 'Sincronización')}: ${_localizedSyncStateLabel(latest.syncState)}',
-              ),
+              if (aggregateSyncChipLabel != null)
+                _chip(
+                  '${_t(nl: 'Synchronisatie', en: 'Sync', fr: 'Synchronisation', es: 'Sincronización')}: $aggregateSyncChipLabel',
+                ),
               if (payment.status.isNotEmpty)
                 _chip(
                   '${_t(nl: 'Betaling', en: 'Payment', fr: 'Paiement', es: 'Pago')}: ${_localizedPaymentStatusLabel(payment.status)}',
@@ -12432,7 +12606,11 @@ class _RemoteComplianceEventsSectionState
           ),
           const SizedBox(height: 6),
           ...sorted.map(
-            (event) => _auditHistoryRow(event, latestPaymentUpdates),
+            (event) => _auditHistoryRow(
+              event,
+              latestPaymentUpdates,
+              aggregateSyncChipLabel: aggregateSyncChipLabel,
+            ),
           ),
         ],
       ),
@@ -12616,6 +12794,19 @@ class _RemoteComplianceEventsSectionState
           ),
         ),
         const SizedBox(height: 12),
+        if (!_loadCoordinator.prerequisitesReady)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              _t(
+                nl: 'Bedrijfscontext wordt geladen…',
+                en: 'Loading company context…',
+                fr: 'Chargement du contexte entreprise…',
+                es: 'Cargando contexto de empresa…',
+              ),
+              style: TextStyle(color: _chironTextMuted, fontSize: 12),
+            ),
+          ),
         FutureBuilder<RemoteComplianceEventsResponse>(
           future: _future,
           builder: (context, snapshot) {
@@ -12717,15 +12908,16 @@ class _RemoteComplianceEventsSectionState
             final latestPaymentUpdates = _latestPaymentUpdatesByKey(
               filteredEvents,
             );
-            final grouped = <String, List<RemoteComplianceEvent>>{};
-            for (final entry in filteredEvents.asMap().entries) {
-              final index = entry.key;
-              final event = entry.value;
-              final groupKey = _dossierGroupKey(event, index);
-              grouped
-                  .putIfAbsent(groupKey, () => <RemoteComplianceEvent>[])
-                  .add(event);
-            }
+            final grouped = groupChironDossiers<RemoteComplianceEvent>(
+              events: filteredEvents,
+              identitiesOf: (e) => ChironEventIdentities(
+                bookingIdRaw: e.bookingId,
+                tripIdRaw: e.tripId,
+                eventIdRaw: e.eventId,
+                createdAtUtcRaw: e.createdAtUtc,
+              ),
+              isMeaningfulIdentity: _isMeaningfulIdentity,
+            );
             final dossiers = grouped.values.toList(growable: false)
               ..sort((a, b) {
                 final newestA = [...a]..sort(_compareRemoteEventsNewestFirst);
@@ -12883,6 +13075,7 @@ class _LocalComplianceLedgerSectionState
   bool _isLoading = true;
   bool _isClearingLocalTestData = false;
   bool _isClearingLocalCustomerBookings = false;
+  late final ChironContextLoadCoordinator _loadCoordinator;
   // Patch LR-1: local-only search + category filter for the ride register.
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -12892,30 +13085,44 @@ class _LocalComplianceLedgerSectionState
   @override
   void initState() {
     super.initState();
-    unawaited(_loadRegister());
+    _loadCoordinator = ChironContextLoadCoordinator(
+      listenables: <Listenable>[
+        activeCompanySessionNotifier,
+        companyProfileNotifier,
+      ],
+      hasCompanySession: () => hasCompanyOwnerAuthContext(),
+      companyId: () {
+        final profile = companyProfileNotifier.value?.companyId.trim() ?? '';
+        if (profile.isNotEmpty) return profile;
+        return activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+      },
+      runLoad: _performRegisterLoad,
+      onDiag: (stage) => debugPrint('[CHIRON_LOAD][DIAG] stage=$stage'),
+    )..attach();
   }
 
   @override
   void dispose() {
+    _loadCoordinator.dispose();
     _searchController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadRegister() async {
-    if (mounted) {
+  Future<void> _performRegisterLoad(int gen) async {
+    if (_loadCoordinator.shouldApplyGeneration(gen) && mounted) {
       setState(() => _isLoading = true);
     }
     final result = await _reader.loadRegisterGrouped(
       groupLimit: 20,
       onLocalLoaded: (local) {
-        if (!mounted) return;
+        if (!_loadCoordinator.shouldApplyGeneration(gen) || !mounted) return;
         setState(() {
           _result = local;
           _isLoading = false;
         });
       },
     );
-    if (!mounted) return;
+    if (!_loadCoordinator.shouldApplyGeneration(gen) || !mounted) return;
     setState(() {
       _result = result;
       _isLoading = false;
@@ -12923,7 +13130,7 @@ class _LocalComplianceLedgerSectionState
   }
 
   void _refresh() {
-    unawaited(_loadRegister());
+    _loadCoordinator.requestManualRefresh();
   }
 
   Future<void> _hideGroupFromRegister(List<ComplianceLedgerEntry> group) async {
@@ -15017,15 +15224,14 @@ class _LocalComplianceLedgerSectionState
     final lifecycle = _ledgerToken(_resolveLedgerLifecycleToken(group));
     final rideType = _ledgerToken(summary.rideType);
     final paymentStatus = _ledgerToken(effectivePayment.paymentStatus);
-    final hasRideStop = group.any(
-      (entry) => _ledgerToken(entry.eventType) == 'ride_stop',
-    );
 
     switch (_categoryFilter) {
       case _LocalRideRegisterCategoryFilter.alles:
         return true;
       case _LocalRideRegisterCategoryFilter.straatritten:
-        return rideType == 'direct' || hasRideStop;
+        // CHIRON-RELEASE-PRESENTATION-REPAIR-1: street rides are ride_type
+        // direct only — do not pull planned ride_stop into this filter.
+        return rideType == 'direct';
       case _LocalRideRegisterCategoryFilter.geplandeRitten:
         if (rideType == 'planned' || rideType == 'booking') return true;
         return group.any((entry) {
@@ -15603,54 +15809,56 @@ class _LocalComplianceLedgerSectionState
                     color: _chironGold.withOpacity(0.95),
                   ),
                 ),
-                IconButton(
-                  tooltip: _t(
-                    nl: 'Lokale testdata wissen',
-                    en: 'Clear local test data',
-                    fr: 'Effacer les données de test locales',
-                    es: 'Borrar datos de prueba locales',
-                  ),
-                  onPressed: _isClearingLocalTestData
-                      ? null
-                      : _clearLocalTestData,
-                  icon: _isClearingLocalTestData
-                      ? SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: _chironGold,
+                if (!kReleaseMode) ...[
+                  IconButton(
+                    tooltip: _t(
+                      nl: 'Lokale testdata wissen',
+                      en: 'Clear local test data',
+                      fr: 'Effacer les données de test locales',
+                      es: 'Borrar datos de prueba locales',
+                    ),
+                    onPressed: _isClearingLocalTestData
+                        ? null
+                        : _clearLocalTestData,
+                    icon: _isClearingLocalTestData
+                        ? SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: _chironGold,
+                            ),
+                          )
+                        : Icon(
+                            Icons.delete_sweep,
+                            color: _chironGold.withOpacity(0.95),
                           ),
-                        )
-                      : Icon(
-                          Icons.delete_sweep,
-                          color: _chironGold.withOpacity(0.95),
-                        ),
-                ),
-                IconButton(
-                  tooltip: _t(
-                    nl: 'Lokale klantboekingen wissen',
-                    en: 'Clear local customer bookings',
-                    fr: 'Effacer les réservations client locales',
-                    es: 'Borrar reservas locales del cliente',
                   ),
-                  onPressed: _isClearingLocalCustomerBookings
-                      ? null
-                      : _clearLocalCustomerBookings,
-                  icon: _isClearingLocalCustomerBookings
-                      ? SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: _chironGold,
+                  IconButton(
+                    tooltip: _t(
+                      nl: 'Lokale klantboekingen wissen',
+                      en: 'Clear local customer bookings',
+                      fr: 'Effacer les réservations client locales',
+                      es: 'Borrar reservas locales del cliente',
+                    ),
+                    onPressed: _isClearingLocalCustomerBookings
+                        ? null
+                        : _clearLocalCustomerBookings,
+                    icon: _isClearingLocalCustomerBookings
+                        ? SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: _chironGold,
+                            ),
+                          )
+                        : Icon(
+                            Icons.person_remove,
+                            color: _chironGold.withOpacity(0.95),
                           ),
-                        )
-                      : Icon(
-                          Icons.person_remove,
-                          color: _chironGold.withOpacity(0.95),
-                        ),
-                ),
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 6),
@@ -15781,6 +15989,21 @@ class _LocalComplianceLedgerSectionState
             const SizedBox(height: 12),
             Builder(
               builder: (context) {
+                if (!_loadCoordinator.prerequisitesReady) {
+                  return Text(
+                    _t(
+                      nl: 'Bedrijfscontext wordt geladen…',
+                      en: 'Loading company context…',
+                      fr: 'Chargement du contexte entreprise…',
+                      es: 'Cargando contexto de empresa…',
+                    ),
+                    style: TextStyle(
+                      color: _chironTextSecondary,
+                      fontSize: 12,
+                    ),
+                  );
+                }
+
                 if (_isLoading && _result == null) {
                   return Row(
                     children: [

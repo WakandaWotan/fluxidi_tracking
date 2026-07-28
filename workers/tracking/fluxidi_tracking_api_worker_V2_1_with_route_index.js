@@ -1534,11 +1534,19 @@ function buildDirectTripStartComplianceEvent(trip, startedAt, canonicalScope = n
   const dropoff = _complianceLocationFromPoint(trip?.destination);
   const eventAt = safeStr(startedAt, 64) ?? safeStr(trip?.started_at ?? trip?.startedAt, 64) ?? nowIso();
 
+  // CHIRON-RELEASE-PRESENTATION-REPAIR-1 B: when the same start-direct lifecycle
+  // already created/resolved a booking (trip.booking_id), include it on START
+  // so STOP (booking-first) and START share one canonical ride identity. trip_id
+  // remains as alias/reference. Never invent a booking_id here.
+  const tripId = safeStr(trip?.trip_id ?? trip?.tripId, 128) ?? undefined;
+  const bookingId = safeStr(trip?.booking_id ?? trip?.bookingId, 128) ?? undefined;
+
   return {
     event_type: "ride_start",
     tenant_id: tenantId,
     company_id: companyId,
-    trip_id: safeStr(trip?.trip_id ?? trip?.tripId, 128) ?? undefined,
+    ...(bookingId ? { booking_id: bookingId } : {}),
+    trip_id: tripId,
     session_id: safeStr(trip?.session_id ?? trip?.sessionId, 128) ?? undefined,
     receipt_reference: safeStr(trip?.receipt_reference ?? trip?.receiptReference, 128) ?? undefined,
     ride_type: "direct",
@@ -1563,6 +1571,23 @@ function buildDirectTripStartComplianceEvent(trip, startedAt, canonicalScope = n
       source_endpoint: "/trip/start-direct",
       backend_confirmed: true,
       validation_state: "exportable",
+      // Explicit server alias proof for Flutter defensive grouping.
+      ...(bookingId && tripId
+        ? {
+            ride_identity: {
+              canonical: `booking:${bookingId}`,
+              booking_id: bookingId,
+              trip_id: tripId,
+            },
+          }
+        : tripId
+          ? {
+              ride_identity: {
+                canonical: `trip:${tripId}`,
+                trip_id: tripId,
+              },
+            }
+          : {}),
     },
   };
 }
@@ -1790,6 +1815,24 @@ function buildDirectTripStopComplianceEvent(trip, stopPayload, stoppedAt, totals
       source_endpoint: "/trip/stop",
       backend_confirmed: true,
       validation_state: "exportable",
+      // Explicit server alias when both ids are known on STOP.
+      ...((() => {
+        const b = safeStr(trip?.booking_id ?? trip?.bookingId, 128);
+        const t = safeStr(trip?.trip_id ?? trip?.tripId, 128);
+        if (b && t) {
+          return {
+            ride_identity: {
+              canonical: `booking:${b}`,
+              booking_id: b,
+              trip_id: t,
+            },
+          };
+        }
+        if (t) {
+          return { ride_identity: { canonical: `trip:${t}`, trip_id: t } };
+        }
+        return {};
+      })()),
     },
   };
 }
