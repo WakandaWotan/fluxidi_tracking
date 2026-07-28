@@ -65,6 +65,12 @@ enum OnlinePaymentMethodsStatus {
   /// The most recent status lookup failed (network/API error) and there is
   /// no prior authoritative snapshot to fall back on.
   lookupFailed,
+
+  /// MOLLIE-ONBOARDING-READ-SCOPE-P0-1: Mollie is connected but the OAuth
+  /// token lacks `onboarding.read`, so live status cannot be verified.
+  /// Must never be shown as activation-pending, and must not claim that
+  /// online payments are disabled.
+  statusCheckPermissionMissing,
 }
 
 /// 3. In-person / Tap terminals.
@@ -156,6 +162,7 @@ OnlinePaymentMethodsStatus resolveOnlinePaymentMethods({
   int? activeMethodCount,
   int? totalMethodCount,
   bool lookupFailed = false,
+  bool statusCheckPermissionMissing = false,
 }) {
   if (lookupFailed) return OnlinePaymentMethodsStatus.lookupFailed;
   if (!connected) return OnlinePaymentMethodsStatus.noneActive;
@@ -163,6 +170,16 @@ OnlinePaymentMethodsStatus resolveOnlinePaymentMethods({
   final o = _norm(onboardingStatus);
   final genuinelyPending = _isGenuinelyPendingOnboardingStatus(o);
   final needsData = _isNeedsDataOnboardingStatus(o);
+
+  // MOLLIE-ONBOARDING-READ-SCOPE-P0-1: a 403 / missing onboarding.read must
+  // never be presented as "Activation pending". Preserve a known-good
+  // can_receive_payments=true; otherwise surface the permission-missing state.
+  if (statusCheckPermissionMissing) {
+    if (canReceivePayments == true) {
+      return OnlinePaymentMethodsStatus.active;
+    }
+    return OnlinePaymentMethodsStatus.statusCheckPermissionMissing;
+  }
 
   if (canReceivePayments == true) {
     return OnlinePaymentMethodsStatus.active;

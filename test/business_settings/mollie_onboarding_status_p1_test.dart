@@ -159,9 +159,9 @@ void main() {
       expect(activeBranch.hasMatch(cardBody), isTrue);
     });
 
-    test('actionRequired/noneActive/lookupFailed never silently claim "complete"', () {
+    test('actionRequired/noneActive/lookupFailed/permissionMissing never silently claim "complete"', () {
       final attentionBranch = RegExp(
-        r'case OnlinePaymentMethodsStatus\.actionRequired:\s*\n\s*case OnlinePaymentMethodsStatus\.noneActive:\s*\n\s*case OnlinePaymentMethodsStatus\.lookupFailed:\s*\n\s*cardStatus = _SetupStatus\.attention;',
+        r'case OnlinePaymentMethodsStatus\.actionRequired:\s*\n\s*case OnlinePaymentMethodsStatus\.noneActive:\s*\n\s*case OnlinePaymentMethodsStatus\.lookupFailed:\s*\n\s*case OnlinePaymentMethodsStatus\.statusCheckPermissionMissing:\s*\n\s*cardStatus = _SetupStatus\.attention;',
       );
       expect(attentionBranch.hasMatch(cardBody), isTrue);
     });

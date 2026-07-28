@@ -8745,6 +8745,24 @@ Map<String, dynamic> _safeMollieConnectMap(Map<dynamic, dynamic> raw) {
       'status_check_error',
       'statusCheckError',
     ]),
+    'last_status_check_error': textAny(const [
+      'last_status_check_error',
+      'lastStatusCheckError',
+    ]),
+    'lastStatusCheckError': textAny(const [
+      'lastStatusCheckError',
+      'last_status_check_error',
+    ]),
+    'oauth_scopes': textAny(const ['oauth_scopes', 'oauthScopes']),
+    'oauthScopes': textAny(const ['oauthScopes', 'oauth_scopes']),
+    'onboarding_read_granted': boolOrNullAny(const [
+      'onboarding_read_granted',
+      'onboardingReadGranted',
+    ]),
+    'onboardingReadGranted': boolOrNullAny(const [
+      'onboardingReadGranted',
+      'onboarding_read_granted',
+    ]),
     'mollie_organization_id': textAny(const [
       'mollie_organization_id',
       'mollieOrganizationId',

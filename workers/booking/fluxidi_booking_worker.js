@@ -169,6 +169,7 @@ import {
   resolveCompanyMollieConnectCredentials,
   refreshMollieOnboardingCapabilityStatus,
   createMollieLiveStatusDiag,
+  normalizeMollieConnectGrantedScopes,
   _sanitizeMollieTerminalForSnapshot,
   _mollieTerminalsScopeMissingFromResponse,
   _adminPosTerminalError,
@@ -6377,6 +6378,9 @@ async function mollieConnectOAuthCallback(request, env) {
       Number.isFinite(expiresInSec) && expiresInSec > 0
         ? new Date(Date.now() + expiresInSec * 1000).toISOString()
         : null;
+    // MOLLIE-ONBOARDING-READ-SCOPE-P0-1: persist normalized granted scopes
+    // only after a successful code exchange. Never log the token/code.
+    const grantedScopes = normalizeMollieConnectGrantedScopes(tokens?.scope);
     const existing = await loadScopedMollieConnectAuthRecord(env, scopedState);
     const scopedRecord = {
       version: 1,
@@ -6391,14 +6395,21 @@ async function mollieConnectOAuthCallback(request, env) {
           ? metadata.canReceivePayments
           : null,
       ...encryptedTokens,
+      ...(grantedScopes
+        ? { oauthScopes: grantedScopes, oauth_scopes: grantedScopes }
+        : {}),
       tokenRef,
       expiresAt,
       lastConnectedAt: nowIso,
       lastErrorCode: null,
       lastErrorAt: null,
+      lastStatusCheckError: null,
+      last_status_check_error: null,
       createdAt: safeStr(existing?.createdAt ?? existing?.created_at, 64) || nowIso,
       updatedAt: nowIso,
     };
+    // Atomic reconnect: replace credentials only after state/nonce verify,
+    // code exchange, and required credential fields are valid (above).
     await saveScopedMollieConnectAuthRecord(env, scopedState, scopedRecord);
     await updateBusinessProfileMollieMetadata(env, scopedState, {
       connected: true,

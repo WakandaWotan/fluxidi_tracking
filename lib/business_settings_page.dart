@@ -2648,15 +2648,33 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       if (showErrorSnack &&
           forceRefresh &&
           (data['status_check'] ?? '').toString() == 'failed') {
+        final permissionMissing =
+            (data['status_check_error'] ?? '').toString() ==
+            'mollie_onboarding_permission_missing';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              _t(
-                nl: 'Kon Mollie-status niet live verifiëren. De laatst bekende status wordt getoond.',
-                en: 'Could not verify the live Mollie status. Showing the last known status.',
-                fr: 'Impossible de vérifier le statut Mollie en direct. Le dernier statut connu est affiché.',
-                es: 'No se pudo verificar el estado de Mollie en vivo. Se muestra el último estado conocido.',
-              ),
+              permissionMissing
+                  ? _t(
+                      nl:
+                          'Mollie is gekoppeld. Verbind Mollie opnieuw om de actuele accountstatus te kunnen controleren.',
+                      en:
+                          'Mollie is connected. Reconnect Mollie to verify the current account status.',
+                      fr:
+                          'Mollie est connecté. Reconnectez Mollie pour vérifier le statut actuel du compte.',
+                      es:
+                          'Mollie está conectado. Vuelve a conectar Mollie para verificar el estado actual de la cuenta.',
+                    )
+                  : _t(
+                      nl:
+                          'Kon Mollie-status niet live verifiëren. De laatst bekende status wordt getoond.',
+                      en:
+                          'Could not verify the live Mollie status. Showing the last known status.',
+                      fr:
+                          'Impossible de vérifier le statut Mollie en direct. Le dernier statut connu est affiché.',
+                      es:
+                          'No se pudo verificar el estado de Mollie en vivo. Se muestra el último estado conocido.',
+                    ),
             ),
           ),
         );
@@ -3765,12 +3783,23 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return (_mollieConnectStatus?['status_check'] ?? '').toString() == 'failed';
   }
 
+  /// MOLLIE-ONBOARDING-READ-SCOPE-P0-1: live onboarding/me returned 403
+  /// (missing onboarding.read). Distinct from a transient lookup failure.
+  bool _mollieOnboardingPermissionMissing() {
+    final live = (_mollieConnectStatus?['status_check_error'] ?? '').toString();
+    final last =
+        (_mollieConnectStatus?['last_status_check_error'] ?? '').toString();
+    return live == 'mollie_onboarding_permission_missing' ||
+        last == 'mollie_onboarding_permission_missing';
+  }
+
   /// Only a true "lookup failed" state (nothing authoritative to show at
   /// all) when the latest check errored AND there is neither a
   /// can_receive_payments signal nor an onboarding_status to fall back on.
   /// A transient failure that still has prior good data must keep showing
   /// that data — never downgrade to "failed".
   bool _mollieOnlineMethodsLookupFailed() {
+    if (_mollieOnboardingPermissionMissing()) return false;
     return _mollieStatusCheckFailed() &&
         _mollieCanReceivePayments() == null &&
         _mollieConnectStatusField('onboarding_status') == null;
@@ -3782,6 +3811,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       onboardingStatus: _mollieConnectStatusField('onboarding_status'),
       canReceivePayments: _mollieCanReceivePayments(),
       lookupFailed: _mollieOnlineMethodsLookupFailed(),
+      statusCheckPermissionMissing: _mollieOnboardingPermissionMissing(),
     );
   }
 
@@ -3824,6 +3854,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           fr: 'Statut non vérifiable',
           es: 'No se pudo verificar el estado',
         );
+      case OnlinePaymentMethodsStatus.statusCheckPermissionMissing:
+        return _t(
+          nl: 'Statuscontrole vereist herkoppeling',
+          en: 'Status check needs reconnect',
+          fr: 'Vérification : reconnecter',
+          es: 'Verificación requiere reconexión',
+        );
     }
   }
 
@@ -3853,6 +3890,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           case OnlinePaymentMethodsStatus.actionRequired:
           case OnlinePaymentMethodsStatus.noneActive:
           case OnlinePaymentMethodsStatus.lookupFailed:
+          case OnlinePaymentMethodsStatus.statusCheckPermissionMissing:
             cardStatus = _SetupStatus.attention;
             break;
         }
@@ -4011,10 +4049,28 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 : _t(nl: 'Nee', en: 'No', fr: 'Non', es: 'No'),
           ),
           const SizedBox(height: 12),
-          // MOLLIE-ONBOARDING-STATUS-P1: a failed LIVE re-verification is
-          // reported truthfully, but the status rows above already keep
-          // showing the last authoritative (never downgraded) snapshot.
-          if (_mollieStatusCheckFailed())
+          // MOLLIE-ONBOARDING-STATUS-P1 / MOLLIE-ONBOARDING-READ-SCOPE-P0-1:
+          // failed LIVE re-verification is reported truthfully; permission-
+          // missing (403 / onboarding.read) asks for reconnect without
+          // claiming payments are disabled or activation is pending.
+          if (_mollieOnboardingPermissionMissing())
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                _t(
+                  nl:
+                      'Mollie is gekoppeld. Verbind Mollie opnieuw om de actuele accountstatus te kunnen controleren.',
+                  en:
+                      'Mollie is connected. Reconnect Mollie to verify the current account status.',
+                  fr:
+                      'Mollie est connecté. Reconnectez Mollie pour vérifier le statut actuel du compte.',
+                  es:
+                      'Mollie está conectado. Vuelve a conectar Mollie para verificar el estado actual de la cuenta.',
+                ),
+                style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
+              ),
+            )
+          else if (_mollieStatusCheckFailed())
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(
@@ -4059,12 +4115,19 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     : const Icon(Icons.link_outlined),
                 label: Text(
                   mollieConnected
-                      ? _t(
-                          nl: 'Opnieuw koppelen',
-                          en: 'Reconnect',
-                          fr: 'Reconnecter',
-                          es: 'Volver a conectar',
-                        )
+                      ? (_mollieOnboardingPermissionMissing()
+                            ? _t(
+                                nl: 'Opnieuw verbinden voor statuscontrole',
+                                en: 'Reconnect for status check',
+                                fr: 'Reconnecter pour le statut',
+                                es: 'Reconectar para verificar estado',
+                              )
+                            : _t(
+                                nl: 'Opnieuw koppelen',
+                                en: 'Reconnect',
+                                fr: 'Reconnecter',
+                                es: 'Volver a conectar',
+                              ))
                       : _t(
                           nl: 'Mollie koppelen',
                           en: 'Connect Mollie',

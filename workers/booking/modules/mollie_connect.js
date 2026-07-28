@@ -35,9 +35,41 @@ import { json } from "./http_response.js";
 
 export const MOLLIE_CONNECT_OAUTH_NONCE_TTL_SECONDS = 600;
 export const MOLLIE_CONNECT_OAUTH_STATE_PURPOSE = "mollie_connect_oauth";
+// MOLLIE-ONBOARDING-READ-SCOPE-P0-1: onboarding.read is required for
+// GET /v2/onboarding/me (live status refresh). Keep payment-related scopes
+// intact; order is deterministic and must stay centralised here.
 export const MOLLIE_CONNECT_OAUTH_SCOPES =
-  "organizations.read profiles.read payments.read payments.write refunds.read terminals.read";
+  "organizations.read profiles.read payments.read payments.write refunds.read terminals.read onboarding.read";
+export const MOLLIE_CONNECT_ONBOARDING_READ_SCOPE = "onboarding.read";
 export const ADMIN_MOLLIE_CONNECT_TEST_PAYMENT_TTL_SECONDS = 60 * 60 * 24 * 30;
+
+/** Normalize Mollie's granted `scope` string (space/comma separated). */
+export function normalizeMollieConnectGrantedScopes(raw) {
+  const preferred = String(MOLLIE_CONNECT_OAUTH_SCOPES)
+    .split(/\s+/)
+    .filter(Boolean);
+  const preferredIndex = new Map(preferred.map((s, i) => [s, i]));
+  const tokens = safeStr(raw, 800)
+    .split(/[\s,]+/)
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => /^[a-z][a-z0-9_.-]{0,63}$/.test(t));
+  const unique = [...new Set(tokens)];
+  unique.sort((a, b) => {
+    const ia = preferredIndex.has(a) ? preferredIndex.get(a) : Number.MAX_SAFE_INTEGER;
+    const ib = preferredIndex.has(b) ? preferredIndex.get(b) : Number.MAX_SAFE_INTEGER;
+    if (ia !== ib) return ia - ib;
+    return a.localeCompare(b);
+  });
+  return unique.join(" ");
+}
+
+export function mollieConnectGrantedScopesInclude(raw, neededScope) {
+  const needed = safeStr(neededScope, 80).toLowerCase();
+  if (!needed) return false;
+  const normalized = normalizeMollieConnectGrantedScopes(raw);
+  if (!normalized) return false;
+  return normalized.split(/\s+/).includes(needed);
+}
 export const ADMIN_MOLLIE_TERMINAL_PAYMENT_INTENT_TTL_SECONDS = 60 * 60 * 2;
 export const MOLLIE_CONNECT_TOKEN_REFRESH_LEEWAY_MS = 60 * 1000;
 
@@ -425,6 +457,23 @@ export function sanitizeMollieConnectStatus(record, businessProfile) {
       safeStr(rec.lastStatusCheckError ?? rec.last_status_check_error, 120) || null,
     last_status_checked_at:
       safeStr(rec.lastStatusCheckedAt ?? rec.last_status_checked_at, 64) || null,
+    // MOLLIE-ONBOARDING-READ-SCOPE-P0-1: granted OAuth scopes when captured.
+    // Legacy records without this field keep `oauth_scopes: null` /
+    // `onboarding_read_granted: null` (unknown — not false).
+    oauth_scopes: (() => {
+      const normalized = normalizeMollieConnectGrantedScopes(
+        rec.oauthScopes ?? rec.oauth_scopes,
+      );
+      return normalized || null;
+    })(),
+    onboarding_read_granted: (() => {
+      const raw = rec.oauthScopes ?? rec.oauth_scopes;
+      if (!safeStr(raw, 800)) return null;
+      return mollieConnectGrantedScopesInclude(
+        raw,
+        MOLLIE_CONNECT_ONBOARDING_READ_SCOPE,
+      );
+    })(),
   };
 }
 
@@ -823,11 +872,15 @@ export async function refreshMollieConnectTokens(env, scope, existingRecord, opt
       ? new Date(nowMs + expiresInSec * 1000).toISOString()
       : null;
   const nowIso = new Date(nowMs).toISOString();
+  const grantedScopes = normalizeMollieConnectGrantedScopes(tokens?.scope);
   const updatedRecord = {
     ...existingRecord,
     accessTokenEncrypted: encryptedTokens.accessTokenEncrypted,
     ...(encryptedTokens.refreshTokenEncrypted
       ? { refreshTokenEncrypted: encryptedTokens.refreshTokenEncrypted }
+      : {}),
+    ...(grantedScopes
+      ? { oauthScopes: grantedScopes, oauth_scopes: grantedScopes }
       : {}),
     expiresAt,
     expires_at: expiresAt,
@@ -1198,19 +1251,25 @@ export async function refreshMollieOnboardingCapabilityStatus(env, scope, option
     return { ok: false, code: "company_mollie_not_connected" };
   }
   if (!onboarding.ok) {
+    // MOLLIE-ONBOARDING-READ-SCOPE-P0-1: HTTP 403 from onboarding/me is the
+    // proven missing-scope case (onboarding.read). Preserve confirmed
+    // onboarding/can_receive_payments; map to a distinct canonical code.
+    const failureCode =
+      onboarding.upstream_http_status === 403
+        ? "mollie_onboarding_permission_missing"
+        : "mollie_onboarding_lookup_failed";
     diag?.emit("mollie_status_request_failed", {
       upstream_endpoint_name: "onboarding_me",
       upstream_http_status: onboarding.upstream_http_status ?? undefined,
       mollie_error_type: onboarding.mollie_error_type || undefined,
-      mollie_error_code:
-        onboarding.mollie_error_code || "mollie_onboarding_lookup_failed",
+      mollie_error_code: onboarding.mollie_error_code || failureCode,
       response_shape: onboarding.response_shape || "lookup_failed",
       token_refresh_attempted: !!credentials.token_refresh_attempted,
     });
     const nextOnFailure = {
       ...existing,
-      lastStatusCheckError: "mollie_onboarding_lookup_failed",
-      last_status_check_error: "mollie_onboarding_lookup_failed",
+      lastStatusCheckError: failureCode,
+      last_status_check_error: failureCode,
       lastStatusCheckedAt: nowIso,
       last_status_checked_at: nowIso,
     };
@@ -1222,7 +1281,7 @@ export async function refreshMollieOnboardingCapabilityStatus(env, scope, option
     }
     diag?.emit("live_status_failed", {
       status_check: "failed",
-      mollie_error_code: "mollie_onboarding_lookup_failed",
+      mollie_error_code: failureCode,
       upstream_endpoint_name: "onboarding_me",
       upstream_http_status: onboarding.upstream_http_status ?? undefined,
       mollie_error_type: onboarding.mollie_error_type || undefined,
@@ -1235,7 +1294,7 @@ export async function refreshMollieOnboardingCapabilityStatus(env, scope, option
             : undefined,
       token_refresh_attempted: !!credentials.token_refresh_attempted,
     });
-    return { ok: false, code: "mollie_onboarding_lookup_failed", record: nextOnFailure };
+    return { ok: false, code: failureCode, record: nextOnFailure };
   }
   diag?.emit("mollie_status_response_received", {
     upstream_endpoint_name: "onboarding_me",

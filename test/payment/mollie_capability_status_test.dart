@@ -177,6 +177,46 @@ void main() {
         OnlinePaymentMethodsStatus.lookupFailed,
       );
     });
+
+    // MOLLIE-ONBOARDING-READ-SCOPE-P0-1
+    test(
+      'permission missing + known canReceivePayments true -> active (not activationPending)',
+      () {
+        expect(
+          resolveOnlinePaymentMethods(
+            connected: true,
+            onboardingStatus: null,
+            canReceivePayments: true,
+            statusCheckPermissionMissing: true,
+          ),
+          OnlinePaymentMethodsStatus.active,
+        );
+      },
+    );
+
+    test(
+      'permission missing without canReceivePayments -> statusCheckPermissionMissing (not activationPending)',
+      () {
+        expect(
+          resolveOnlinePaymentMethods(
+            connected: true,
+            onboardingStatus: 'in-review',
+            canReceivePayments: null,
+            statusCheckPermissionMissing: true,
+          ),
+          OnlinePaymentMethodsStatus.statusCheckPermissionMissing,
+        );
+        expect(
+          resolveOnlinePaymentMethods(
+            connected: true,
+            onboardingStatus: null,
+            canReceivePayments: false,
+            statusCheckPermissionMissing: true,
+          ),
+          OnlinePaymentMethodsStatus.statusCheckPermissionMissing,
+        );
+      },
+    );
   });
 
   group('OnlinePaymentMethodsStatus — legacy fallback (canReceivePayments unknown)', () {
