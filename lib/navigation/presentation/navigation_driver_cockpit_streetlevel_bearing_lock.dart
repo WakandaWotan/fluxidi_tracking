@@ -1,5 +1,6 @@
 import '../nav_engine/nav_bearing_policy.dart';
 import '../nav_engine/nav_bearing_smoother.dart';
+import 'nav_stationary_bearing_hold.dart';
 import 'navigation_driver_cockpit_camera.dart';
 import 'navigation_driver_route_bearing.dart';
 
@@ -13,6 +14,7 @@ class DriverCockpitStreetlevelBearingLockInput {
     this.gpsAccuracyM,
     this.previousAppliedBearingDeg,
     this.instantApply = false,
+    this.displacementM,
   });
 
   final DriverRouteBearingOutput routeBearing;
@@ -22,6 +24,11 @@ class DriverCockpitStreetlevelBearingLockInput {
   final double? gpsAccuracyM;
   final double? previousAppliedBearingDeg;
   final bool instantApply;
+
+  /// NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0: metres travelled since the
+  /// previously applied bearing. Lets a slow-but-genuinely-moving vehicle
+  /// re-target even when the reported speed is unreliable.
+  final double? displacementM;
 }
 
 /// NAV-PRES-3L-A: presentation-only streetlevel bearing lock output.
@@ -129,7 +136,27 @@ applyDriverCockpitStreetlevelBearingLock(
   late final String mode;
   late final String? reason;
 
-  if (tangent != null) {
+  // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0: the route tangent used to be
+  // adopted unconditionally, which made the branches below unreachable with a
+  // route loaded. A stationary vehicle re-snaps to a slightly different segment
+  // on every fix, so the tangent itself oscillates and rotated the map
+  // continuously. Movement must be trustworthy before ANY re-target; until then
+  // the established bearing is held. The tangent is still the *initial*
+  // orientation when nothing has been established yet, so START opens facing
+  // along the route rather than adopting a random stationary course.
+  final movementTrustworthy = navBearingMovementTrustworthy(
+    speedKmh: input.speedKmh,
+    displacementM: input.displacementM,
+    accuracyM: input.gpsAccuracyM,
+  );
+
+  if (!movementTrustworthy && previous != null) {
+    targetBearing = previous;
+    mode = 'hold';
+    reason = input.speedKmh < kNavBearingStationarySpeedKmh
+        ? 'stationary_hold'
+        : 'low_confidence_hold';
+  } else if (tangent != null) {
     final tangentBearing = NavBearingSmoother.normalizeBearing(tangent);
     if (gps != null &&
         driverCockpitGpsHeadingReliableForBearingLock(

@@ -2,6 +2,7 @@ import '../driver_navigation_geometry.dart';
 import '../driver_navigation_models.dart';
 import '../nav_engine/nav_bearing_policy.dart';
 import '../nav_engine/nav_bearing_smoother.dart';
+import 'nav_stationary_bearing_hold.dart';
 
 /// Input for NAV-PRES-3E route-locked cockpit camera bearing.
 class DriverRouteBearingInput {
@@ -22,6 +23,12 @@ class DriverRouteBearingInput {
   final double tangentLookaheadM;
   final double maxStepDeg;
 
+  /// NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0: metres travelled since the
+  /// previous bearing, and the reported horizontal accuracy. Both feed the
+  /// movement-confidence gate that guards the raw GPS heading fallback.
+  final double? displacementM;
+  final double? accuracyM;
+
   const DriverRouteBearingInput({
     this.routeCoords = const <DriverLonLat>[],
     this.segmentIndex,
@@ -36,6 +43,8 @@ class DriverRouteBearingInput {
     this.speedKmh = 0.0,
     this.tangentLookaheadM = kDriverRouteBearingTangentLookaheadM,
     this.maxStepDeg = 0.0,
+    this.displacementM,
+    this.accuracyM,
   });
 }
 
@@ -121,18 +130,35 @@ DriverRouteBearingOutput resolveDriverRouteBearing(
           input.previousBearingDeg!.isFinite
       ? NavBearingSmoother.normalizeBearing(input.previousBearingDeg!)
       : null;
+  // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0: raw course-over-ground is noise
+  // at a standstill (geolocator reports an arbitrary value, or -1). It may only
+  // act as a bearing source once movement is trustworthy; otherwise the last
+  // resolved bearing is held.
+  final double? eligibleGps = gps != null &&
+          navBearingMovementTrustworthy(
+            speedKmh: input.speedKmh,
+            displacementM: input.displacementM,
+            accuracyM: input.accuracyM,
+          )
+      ? gps
+      : null;
 
   final tangent = resolveDriverRouteTangentBearing(input);
   var usableTangent = tangent;
   var rejectReason = '';
   if (usableTangent != null &&
-      driverRouteBearingIsFlipCandidate(previous ?? gps, usableTangent)) {
+      driverRouteBearingIsFlipCandidate(
+        previous ?? eligibleGps,
+        usableTangent,
+      )) {
     usableTangent = null;
     rejectReason = 'flip_guard_previous';
   }
+  // Only a trustworthy GPS course may veto a route tangent; stationary noise
+  // must not reject the correct road orientation.
   if (usableTangent != null &&
-      gps != null &&
-      driverRouteBearingIsFlipCandidate(gps, usableTangent)) {
+      eligibleGps != null &&
+      driverRouteBearingIsFlipCandidate(eligibleGps, usableTangent)) {
     usableTangent = null;
     rejectReason = 'flip_guard_gps';
   }
@@ -147,8 +173,8 @@ DriverRouteBearingOutput resolveDriverRouteBearing(
     source = 'route_tangent';
     reason = 'route_snap_tangent';
     confidence = (input.routeConfidence ?? 85.0).clamp(0.0, 100.0);
-  } else if (gps != null) {
-    target = gps;
+  } else if (eligibleGps != null) {
+    target = eligibleGps;
     source = 'gps_heading';
     reason = tangent != null
         ? (rejectReason.isEmpty ? 'tangent_rejected' : rejectReason)

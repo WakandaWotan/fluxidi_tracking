@@ -624,6 +624,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   String? _lastNavPresBearingSignature;
   String? _lastNavPresControlsLayoutSignature;
   int _driverCockpitViewLevel = kDriverCockpitViewLevelDefault;
+  // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 1): records that the
+  // driver actively chose a style / camera level on the pre-start preview
+  // surface, so START preserves it instead of resetting to the theme default.
+  bool _preStartStyleSelected = false;
+  int? _preStartViewLevel;
   double? _lastDriverCockpitAppliedZoom;
   double? _lastDriverCockpitAppliedPitch;
   int? _lastDriverCockpitAppliedLevel;
@@ -765,6 +770,15 @@ class _DriverHomePageState extends State<DriverHomePage>
       NavStreetlevelFollowPump();
   final NavStreetlevelBearingController _streetlevelBearingController =
       NavStreetlevelBearingController();
+  // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 2): the bearing
+  // controller is a bounded *smoother* — it must keep rotating for a genuine
+  // low-speed route-tangent turn. Refusing to move the target at all while the
+  // vehicle is stationary is this gate's job, so a parked tablet cannot spin
+  // the map from re-snapped route tangents or noisy GPS course.
+  final NavStationaryBearingGate _navStationaryBearingGate =
+      NavStationaryBearingGate();
+  double? _navBearingAnchorLat;
+  double? _navBearingAnchorLon;
   Timer? _streetlevelFollowPumpTimer;
   int _streetlevelPoseGeneration = 0;
   int _streetlevelCameraGeneration = 0;
@@ -1858,6 +1872,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     _activeBanner = null;
     _activeLaneGuidance = null;
     _lastLaneResolveDiag = null;
+
+    // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 2): a newly accepted
+    // route is the only trustworthy orientation evidence at START, when the
+    // vehicle has not moved yet. Seed the stable initial bearing from the first
+    // meaningful segment so the camera opens facing along the road instead of
+    // adopting a stationary GPS course.
+    _seedNavStationaryBearingFromRoute(reason: 'route_applied');
 
     // Content consumers: accepted route-steps version only.
     _streetlevelFollowPump.setExpectedRouteGeneration(appliedVersion);
@@ -5945,27 +5966,64 @@ class _DriverHomePageState extends State<DriverHomePage>
     final prefersDark = _effectiveMapThemeFor(_CameraMode.follow) ==
         MapThemeMode.dark;
     final decision = decideNavActiveRideStart(prefersDark: prefersDark);
-    // Discard any Satellite / Standard / custom preview so
-    // `_styleForTheme(_effectiveMapThemeFor(_CameraMode.follow))` resolves to
-    // the safe navigation-day/-night pair.
-    _driverMapVisualMode = DriverMapVisualMode.street;
-    if (kNavigation3dCockpitSceneEnabled) {
-      _driverCockpitMapVisualStyle = prefersDark
-          ? DriverCockpitMapVisualStyle.dark
-          : DriverCockpitMapVisualStyle.light;
+    // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 1): a style the driver
+    // deliberately chose on the preview surface is the active-ride style. Only
+    // an inherited theme default is normalised to the navigation-day/-night
+    // pair; the preview camera level becomes the starting level rather than
+    // being discarded.
+    final carryOver = decideNavPreStartCarryOver(
+      selection: NavPreStartSelection(
+        styleSelected: _preStartStyleSelected,
+        viewLevel: _preStartViewLevel,
+      ),
+      defaultViewLevel: _driverCockpitViewLevel,
+    );
+    if (!carryOver.preserveStyle) {
+      _driverMapVisualMode = DriverMapVisualMode.street;
+      if (kNavigation3dCockpitSceneEnabled) {
+        _driverCockpitMapVisualStyle = prefersDark
+            ? DriverCockpitMapVisualStyle.dark
+            : DriverCockpitMapVisualStyle.light;
+      }
     }
+    _driverCockpitViewLevel = clampDriverCockpitViewLevel(
+      carryOver.startViewLevel,
+    );
     logNavActiveRideStart(
-      style: navActiveRideStyleLabel(decision.style),
+      style: carryOver.preserveStyle
+          ? _driverCockpitMapStyleLabel()
+          : navActiveRideStyleLabel(decision.style),
       enterStreetLevel: decision.enterStreetLevel,
-      discardPreviewZoom: decision.discardPreviewZoom,
+      discardPreviewZoom: false,
       styleGeneration: _styleRequestGeneration,
     );
     _logNavBounded(
       'NAV_ACTIVE_RIDE_START',
-      'reason=$reason style=${navActiveRideStyleLabel(decision.style)} '
+      'reason=$reason '
+      'style=${carryOver.preserveStyle ? _driverCockpitMapStyleLabel() : navActiveRideStyleLabel(decision.style)} '
       'streetLevel=${decision.enterStreetLevel} '
-      'discardPreviewZoom=${decision.discardPreviewZoom}',
+      'preserveStyle=${carryOver.preserveStyle} '
+      'startViewLevel=$_driverCockpitViewLevel '
+      'carryOver=${carryOver.reason}',
     );
+  }
+
+  /// PII-free label for the currently selected driver map style.
+  String _driverCockpitMapStyleLabel() {
+    if (_driverMapVisualMode == DriverMapVisualMode.satellite) {
+      return 'satellite';
+    }
+    if (!kNavigation3dCockpitSceneEnabled) return 'street';
+    switch (_driverCockpitMapVisualStyle) {
+      case DriverCockpitMapVisualStyle.light:
+        return 'light';
+      case DriverCockpitMapVisualStyle.dark:
+        return 'dark';
+      case DriverCockpitMapVisualStyle.standard3d:
+        return 'standard3d';
+      case DriverCockpitMapVisualStyle.satellite:
+        return 'satellite';
+    }
   }
 
   Duration get _effectiveWaitElapsed {
@@ -5981,6 +6039,16 @@ class _DriverHomePageState extends State<DriverHomePage>
       _activeTripId == null &&
       _activeBooking == null &&
       (_directRideDestinationText ?? '').trim().isNotEmpty;
+
+  /// NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 1): single source of
+  /// truth for which map controls the current phase exposes. Preview owns them,
+  /// the active ride locks them, STOP restores them.
+  NavMapControlAvailability get _navMapControls =>
+      resolveNavMapControlAvailability(
+        liveRideActive: _liveRideActive,
+        hasPreviewDestination: _directRideDraft || _activeBooking != null,
+        routePointCount: _routeCoords.length,
+      );
 
   double? get _fixedBookingPriceEur {
     final b = _activeBooking;
@@ -9664,6 +9732,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     });
     _toast('Straatrit klaar. Druk START om te rijden.');
     _scheduleDirectRideEstimateRefresh(reason: 'destination_changed');
+    // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 1): present the
+    // calculated route immediately. Continue used to leave the map empty until
+    // START, which also kept every route-dependent control hidden.
+    await _buildDirectRidePreviewRoute(_directRideDestinationText ?? '');
   }
 
   Future<void> _startDirectRide() async {
@@ -11241,6 +11313,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       _logNavMapStyle(reason: 'cockpit_style_choice_blocked_active_ride');
       return;
     }
+    if (!_liveRideActive) _preStartStyleSelected = true;
     setState(() {
       _driverCockpitMapVisualStyle = style;
       switch (style) {
@@ -12168,6 +12241,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final next = _driverMapVisualMode == DriverMapVisualMode.street
         ? DriverMapVisualMode.satellite
         : DriverMapVisualMode.street;
+    if (!_liveRideActive) _preStartStyleSelected = true;
     if (mounted) {
       setState(() => _driverMapVisualMode = next);
     } else {
@@ -14784,9 +14858,14 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       return;
     }
-    if (!_navigationPresentationStateFor(
-      _navCameraViewMode,
-    ).showDriverCockpitCameraControls) {
+    // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 1): the presentation
+    // state only advertises cockpit controls for the live driver view, so this
+    // guard also rejected pre-start preview zoom. Preview is explicitly allowed;
+    // the selected level becomes the active-ride starting level at START.
+    if (_navMapControls.phase != NavMapSurfacePhase.preview &&
+        !_navigationPresentationStateFor(
+          _navCameraViewMode,
+        ).showDriverCockpitCameraControls) {
       logNavUiInputTiming(
         action: NavUiInputTimingAction.viewZoom,
         phase: NavUiInputTimingPhase.failed,
@@ -14805,6 +14884,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         _driverCockpitViewLevel = nextLevel;
       });
     }
+    // Remember a preview-phase level so START begins from it.
+    if (!_liveRideActive) _preStartViewLevel = _driverCockpitViewLevel;
     _logNavPresCameraControl(action: increase ? 'plus' : 'minus');
 
     // RAPID-ZOOM-INPUT-PRESSURE-GUARD-1: accept/clamp every tap, but never
@@ -17331,6 +17412,12 @@ class _DriverHomePageState extends State<DriverHomePage>
       now: DateTime.now(),
     );
     _streetlevelBearingController.reset();
+    // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0: the new route owns the
+    // bearing anchor; re-seed from the new geometry on the next fix instead of
+    // holding a bearing derived from the superseded route.
+    _navStationaryBearingGate.reset();
+    _navBearingAnchorLat = null;
+    _navBearingAnchorLon = null;
     _streetlevelFollowPump.setExpectedRouteGeneration(_routeStepsVersion);
     // FLUXIDI Phase 2A: advance the native-side route generation so any
     // in-flight pose belonging to the old route is rejected by the custom
@@ -19199,6 +19286,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _streetlevelFollowPumpTimer = null;
     _streetlevelFollowPump.reset();
     _streetlevelBearingController.reset();
+    _navStationaryBearingGate.reset();
+    _navBearingAnchorLat = null;
+    _navBearingAnchorLon = null;
     _lastStreetlevelPumpCameraAt = null;
     _driverMarkerVisualUpdateInFlight = false;
     _unregisterNavFrameTimings();
@@ -19319,6 +19409,95 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  /// NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 2): fixes the initial
+  /// Street Level bearing from the first meaningful segment of the accepted
+  /// route. Called on route activation, i.e. before any movement exists.
+  void _seedNavStationaryBearingFromRoute({required String reason}) {
+    if (_routeCoords.length < 2) return;
+    final seeded = _navStationaryBearingGate.seedInitialRouteBearing(
+      routeTangentBearingDeg: navFirstMeaningfulRouteSegmentBearing(
+        _routeCoords,
+      ),
+      routeSegmentIndex: 0,
+    );
+    if (seeded == null) return;
+    _navBearingAnchorLat = _lastPos?.latitude;
+    _navBearingAnchorLon = _lastPos?.longitude;
+    _streetlevelBearingController.reset();
+    _logNavBounded(
+      'NAV_BEARING_SEED',
+      'reason=$reason bearing=${seeded.toStringAsFixed(1)} '
+      'source=${navBearingSourceLabel(NavBearingSource.initialRouteSegment)}',
+      intervalMs: 1000,
+    );
+  }
+
+  /// NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 2): resolves the
+  /// bearing the Street Level camera is allowed to aim at.
+  ///
+  /// The pose bearing arrives from the vehicle-visual pipeline, which re-derives
+  /// a heading on every GPS fix. While the vehicle is stationary that value
+  /// wanders (re-snapped route tangent near the origin, plus raw course noise),
+  /// so it must not become a camera target. The gate holds the last reliable
+  /// bearing until movement is trustworthy; only then does the smoother below
+  /// see a moving target.
+  double _stabilizeStreetlevelCameraBearing({
+    required double poseBearingDeg,
+    required double speedKmh,
+    required double dtMs,
+  }) {
+    final pos = _lastPos;
+    double? displacementM;
+    if (pos != null &&
+        _navBearingAnchorLat != null &&
+        _navBearingAnchorLon != null) {
+      displacementM = _metersBetween(
+        _LonLat(_navBearingAnchorLon!, _navBearingAnchorLat!),
+        _LonLat(pos.longitude, pos.latitude),
+      );
+    }
+    final progress = _lastNavRouteProgress;
+    final decision = _navStationaryBearingGate.resolve(
+      NavStationaryBearingInput(
+        speedKmh: speedKmh,
+        routeTangentBearingDeg: pos == null
+            ? _routeBearingFromProgress(progress)
+            : _resolveForwardRouteBearing(pos),
+        routeSegmentIndex: progress?.segmentIndex,
+        gpsHeadingDeg: pos != null && pos.heading.isFinite && pos.heading >= 0
+            ? pos.heading
+            : null,
+        movementBearingDeg: _lastMovementBearing,
+        displacementM: displacementM,
+        accuracyM: pos != null && pos.accuracy.isFinite && pos.accuracy > 0
+            ? pos.accuracy
+            : null,
+        dtMs: dtMs,
+      ),
+    );
+    if (!decision.held && pos != null) {
+      _navBearingAnchorLat = pos.latitude;
+      _navBearingAnchorLon = pos.longitude;
+    }
+    if (decision.held) {
+      _logNavBounded(
+        'NAV_BEARING_HOLD',
+        formatNavStationaryBearingDiag(
+          decision: decision,
+          speedKmh: speedKmh,
+          segmentIndex: progress?.segmentIndex,
+        ),
+        intervalMs: 2000,
+      );
+      // Nothing reliable yet: keep the pose bearing rather than snapping the
+      // camera to an arbitrary 0 degrees.
+      if (_navStationaryBearingGate.acceptedBearing == null) {
+        return poseBearingDeg;
+      }
+    }
+    return decision.bearingDeg;
+  }
+
   Future<void> _applyStreetlevelPumpCamera(
     NavStreetlevelPose pose,
     double zoom,
@@ -19330,6 +19509,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     final intervalMs = _lastStreetlevelPumpCameraAt == null
         ? 0
         : now.difference(_lastStreetlevelPumpCameraAt!).inMilliseconds;
+    final dtMs = intervalMs <= 0
+        ? _navAdaptiveCadence.currentTickMs().toDouble()
+        : intervalMs.toDouble();
+    final targetBearing = _stabilizeStreetlevelCameraBearing(
+      poseBearingDeg: pose.bearingDeg,
+      speedKmh: speedKmh,
+      dtMs: dtMs,
+    );
     // FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 (Phase 1 fallback): drive
     // bearing at the actual measured camera-apply interval so angular
     // velocity stays cadence-independent when the adaptive controller
@@ -19337,11 +19524,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     // adaptive controller's current target as the reference dt so the
     // warm-up frame is not biased by the 16 ms pose-interpolator constant.
     final appliedBearing = _streetlevelBearingController.follow(
-      targetBearingDeg: pose.bearingDeg,
+      targetBearingDeg: targetBearing,
       speedKmh: speedKmh,
-      dtMs: intervalMs <= 0
-          ? _navAdaptiveCadence.currentTickMs().toDouble()
-          : intervalMs.toDouble(),
+      dtMs: dtMs,
     );
     _lastStreetlevelPumpCameraAt = now;
     _streetlevelCameraGeneration = pose.poseGeneration;
@@ -19369,7 +19554,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           vehicleGeneration: _streetlevelVehicleGeneration,
           poseAgeMs: nowMs - pose.timestampMs,
           cameraUpdateIntervalMs: intervalMs,
-          bearingTarget: pose.bearingDeg,
+          bearingTarget: targetBearing,
           bearingApplied: appliedBearing,
           bearingDelta: _streetlevelBearingController.lastAppliedDeltaDeg,
           cameraInFlight: _streetlevelFollowPump.inFlight,
@@ -20471,6 +20656,91 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  /// NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 1): builds and renders
+  /// the route preview for a street-ride draft, i.e. after the destination is
+  /// chosen and BEFORE START.
+  ///
+  /// [_buildDirectRouteToDestination] cannot serve this phase: it requires
+  /// `_directRideActive`, which only START sets, so the preview map stayed empty
+  /// and every control that keys off a non-empty route stayed hidden. This uses
+  /// [DriverRouteApplyPurpose.overview], whose acceptance rule is "must not
+  /// overwrite a live navigation session" — exactly the pre-start contract. It
+  /// starts no meter, no tracking and no worker session.
+  Future<bool> _buildDirectRidePreviewRoute(String destinationText) async {
+    final epoch = _routeCleanupEpoch;
+    if (!_isRouteTaskStillValid(epoch: epoch)) return false;
+    if (_liveRideActive) return false;
+    if (!_mapSupported || _map == null) return false;
+    final dropoffText = destinationText.trim();
+    if (dropoffText.isEmpty) return false;
+    var origin = _lastPos;
+    if (origin == null) {
+      await _ensureLocationPermission();
+      try {
+        origin = await geo.Geolocator.getCurrentPosition(
+          desiredAccuracy: geo.LocationAccuracy.best,
+        );
+        _lastPos = origin;
+      } catch (_) {
+        origin = null;
+      }
+    }
+    if (origin == null) return false;
+    if (!_isRouteTaskStillValid(epoch: epoch) || _liveRideActive) return false;
+
+    final request = _beginDriverRouteRequest(
+      purpose: DriverRouteApplyPurpose.overview,
+    );
+    if (mounted) {
+      setState(() => _navStepsLoading = true);
+    } else {
+      _navStepsLoading = true;
+    }
+    debugPrint('[NAV_PHASE] direct_preview');
+    try {
+      final fromLL = _LonLat(origin.longitude, origin.latitude);
+      final toLL =
+          _directRideDestinationPoint ?? await _geocodeOne(dropoffText);
+      final package = await _directionsRoute(fromLL, toLL);
+      if (!_tryActivatePreparedDriverRoute(
+        context: request,
+        package: package,
+      )) {
+        return false;
+      }
+      final renderEpoch = _routeRenderEpoch;
+      if (mounted) setState(() {});
+      await _drawPins(fromLL, toLL, routeRenderEpoch: renderEpoch);
+      await _drawRouteLine(_routeCoords, routeRenderEpoch: renderEpoch);
+      // The preview frames the whole route; START hands the camera to the
+      // cockpit follow profile.
+      if (_cameraMode == _CameraMode.overview &&
+          _isCurrentRouteRenderEpoch(renderEpoch)) {
+        await _fitBoundsToRoute(_routeCoords);
+      }
+      _scheduleDirectRideEstimateRefresh(reason: 'preview_route_ready');
+      _clearNavRouteFailure();
+      _logNavBounded(
+        'NAV_PRESTART_PREVIEW',
+        'event=route_ready points=${_routeCoords.length} '
+        'km=${(_routeKm ?? 0).toStringAsFixed(2)} '
+        'durationSec=${_routeDurationSec ?? -1}',
+      );
+      return true;
+    } catch (e) {
+      _handleNavRouteRequestFailure(e, isReroute: false);
+      return false;
+    } finally {
+      if (_isRouteTaskStillValid(epoch: epoch)) {
+        if (mounted) {
+          setState(() => _navStepsLoading = false);
+        } else {
+          _navStepsLoading = false;
+        }
+      }
+    }
+  }
+
   Future<bool> _buildDirectRouteToDestination(String destinationText) async {
     final epoch = _routeCleanupEpoch;
     if (!_isRouteTaskStillValid(epoch: epoch, requireDirectRide: true)) {
@@ -21491,10 +21761,19 @@ class _DriverHomePageState extends State<DriverHomePage>
     bool phoneLandscapeKpiPriorityCollapsed = false,
   }) {
     final hasExternal = _resolveExternalNavTarget() != null;
+    // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 1): style + offline
+    // entry are part of the pre-start preview, not only of an active ride. The
+    // active-ride style *tap* stays blocked by [navStyleTapDecision]; hiding the
+    // chip before START was what made the whole flow unusable.
+    final navMapControls = _navMapControls;
     final showNavMapTools =
-        _cameraMode == _CameraMode.follow || _routeCoords.length >= 2;
+        _cameraMode == _CameraMode.follow ||
+        _routeCoords.length >= 2 ||
+        navMapControls.phase == NavMapSurfacePhase.preview;
+    // Active ride: hidden rather than shown-and-blocked, so the driver is never
+    // offered a control that refuses every tap.
     final showMapStyleToggle =
-        kDriverMapSatelliteToggleEnabled && showNavMapTools;
+        kDriverMapSatelliteToggleEnabled && showNavMapTools && !_liveRideActive;
     final showOffline = showNavMapTools;
     final inFollowNav = _cameraMode == _CameraMode.follow;
 
@@ -29419,9 +29698,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
     final bool cockpitHudVisible = hudVisibility.cockpitHud;
     final bool navHudVisible = hudVisibility.navBannerHud;
+    // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 1): the pre-start
+    // preview surface owns the map actions row. Previously this required follow
+    // mode or an already-built route, both of which only existed after START.
+    final navMapControls = _navMapControls;
+    final bool previewPhase =
+        navMapControls.phase == NavMapSurfacePhase.preview;
     final bool showNavQuickActions =
         showCockpit &&
         (_cameraMode == _CameraMode.follow ||
+            previewPhase ||
             _resolveExternalNavTarget() != null ||
             _routeCoords.length >= 2);
     final screenH = MediaQuery.of(context).size.height;
@@ -29566,16 +29852,21 @@ class _DriverHomePageState extends State<DriverHomePage>
     // controls during an active ride. Camera follow uses the existing
     // bounded latest-wins lifecycle; live customization is deferred to
     // AFTER STOP.
+    // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 1): the active-ride
+    // block is unchanged, but manual zoom is now available on the pre-start
+    // preview surface, where it was previously unreachable in both phases.
     final bool showDriverCockpitCameraControls =
-        _cameraMode == _CameraMode.follow &&
-        liveActive &&
-        navPresentationState.showDriverCockpitCameraControls &&
-        navActiveRideZoomAllowed(liveRideActive: liveActive) ==
-            NavActiveRideBlockReason.none;
+        (_cameraMode == _CameraMode.follow &&
+            liveActive &&
+            navPresentationState.showDriverCockpitCameraControls &&
+            navActiveRideZoomAllowed(liveRideActive: liveActive) ==
+                NavActiveRideBlockReason.none) ||
+        (previewPhase && navMapControls.zoomControls);
     // NAV-VEHICLE-MODE-CAR-ARROW-1: the Car/Arrow marker selector is shown
     // during live navigation independent of the map style (Light / Dark /
     // 3D-buildings / Satellite) and independent of any 3D eligibility gate.
-    final bool showNavMarkerSelector = followLiveActive;
+    final bool showNavMarkerSelector =
+        followLiveActive || (previewPhase && navMapControls.markerSelector);
     final AppLanguage navMarkerLanguage = appConfig.currentLanguage;
     final safePadding = MediaQuery.of(context).padding;
     final deviceOrientation = MediaQuery.of(context).orientation;

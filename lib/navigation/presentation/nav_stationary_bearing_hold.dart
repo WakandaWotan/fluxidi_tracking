@@ -1,0 +1,488 @@
+// NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 — Problem 2
+//
+// Pure, side-effect-free bearing stabilisation for the Street Level driving
+// camera. This module exists because the previous pipeline adopted a *new*
+// bearing target on every GPS fix even while the vehicle was completely
+// stationary:
+//
+//   * `applyDriverCockpitStreetlevelBearingLock` used the route tangent as the
+//     primary target whenever a tangent existed, so its low-speed hold branch
+//     was unreachable with a route loaded;
+//   * `resolveDriverRouteBearing` fell back to raw `Position.heading`, which
+//     geolocator reports as noise at speed 0;
+//   * the nearest route-segment index oscillates around the origin, so the
+//     tangent itself flipped back and forth between fixes.
+//
+// The downstream `NavStreetlevelBearingController` is a *bounded smoother*, not
+// a gate: it is required to keep rotating for a genuine low-speed route-tangent
+// turn. Stabilisation therefore has to happen here, at target resolution, by
+// refusing to move the target at all until movement is trustworthy.
+//
+// Owns no widget state, no Mapbox handle and no timers.
+
+import 'dart:math' as math;
+
+import '../driver_navigation_geometry.dart';
+import '../driver_navigation_models.dart';
+
+/// Speed at/above which a *moving* bearing source (GPS course, movement delta,
+/// re-targeted route tangent) becomes eligible at all.
+const double kNavBearingMovingEligibleSpeedKmh = 4.0;
+
+/// Shortest route segment (metres) considered "meaningful" for the initial
+/// bearing at START. Encoded polylines frequently begin with sub-metre stubs
+/// whose azimuth is arbitrary; skipping them is what keeps the opening camera
+/// orientation stable.
+const double kNavBearingMeaningfulSegmentMinMeters = 5.0;
+
+/// Speed below which the vehicle is treated as stationary or creeping. Between
+/// this and [kNavBearingMovingEligibleSpeedKmh] the last reliable bearing is
+/// held: enough to cover traffic lights and stop-and-go without spinning.
+const double kNavBearingStationarySpeedKmh = 2.0;
+
+/// Displacement (metres) since the last accepted bearing anchor required before
+/// movement is trusted, independent of the reported speed. GPS noise while
+/// parked is typically well under this.
+const double kNavBearingMovingEligibleDisplacementM = 5.0;
+
+/// Worst horizontal accuracy (metres) at which a moving bearing may be
+/// accepted. A 60 m fix cannot authorise a camera rotation.
+const double kNavBearingMaxAccuracyM = 25.0;
+
+/// Consecutive eligible fixes required before a moving bearing is trusted, so a
+/// single noisy fix cannot unlock rotation.
+const int kNavBearingMovingConfidenceFixes = 2;
+
+/// Maximum camera rotation rate (degrees per second) applied on top of the
+/// per-tick smoothing caps. Bounds how fast a legitimate re-target may sweep.
+const double kNavBearingMaxRotationRateDegPerSec = 45.0;
+
+/// Reference tick (ms) the rotation-rate clamp is expressed against.
+const double kNavBearingRotationRateReferenceTickMs = 1000.0;
+
+/// Where a resolved bearing came from. PII-free — safe for diagnostics.
+enum NavBearingSource {
+  /// Stable initial bearing taken from the first meaningful route segment at
+  /// START, before any movement exists.
+  initialRouteSegment,
+
+  /// Route tangent re-targeted while moving.
+  routeTangent,
+
+  /// Raw GPS course, accepted only once movement is trustworthy.
+  gpsCourse,
+
+  /// Bearing derived from displacement between fixes.
+  movementDelta,
+
+  /// The previously accepted bearing, deliberately unchanged.
+  held,
+}
+
+/// PII-free label for [NavBearingSource].
+String navBearingSourceLabel(NavBearingSource source) {
+  switch (source) {
+    case NavBearingSource.initialRouteSegment:
+      return 'initial_route_segment';
+    case NavBearingSource.routeTangent:
+      return 'route_tangent';
+    case NavBearingSource.gpsCourse:
+      return 'gps_course';
+    case NavBearingSource.movementDelta:
+      return 'movement_delta';
+    case NavBearingSource.held:
+      return 'held';
+  }
+}
+
+double navBearingNormalize(double bearing) {
+  if (!bearing.isFinite) return 0.0;
+  var b = bearing % 360.0;
+  if (b < 0) b += 360.0;
+  return b;
+}
+
+/// Signed shortest angular delta from [from] to [to] in (-180, 180]. This is
+/// the circular-smoothing primitive: 359 -> 1 yields +2, never -358.
+double navBearingShortestDelta(double from, double to) {
+  var delta = (navBearingNormalize(to) - navBearingNormalize(from)) % 360.0;
+  if (delta > 180.0) delta -= 360.0;
+  if (delta < -180.0) delta += 360.0;
+  return delta;
+}
+
+/// Advances [previousDeg] toward [targetDeg] along the short arc, bounded by
+/// [maxRotationRateDegPerSec] over [dtMs]. Pure.
+double navBearingRateClampedStep({
+  required double? previousDeg,
+  required double targetDeg,
+  double maxRotationRateDegPerSec = kNavBearingMaxRotationRateDegPerSec,
+  double dtMs = kNavBearingRotationRateReferenceTickMs,
+}) {
+  final target = navBearingNormalize(targetDeg);
+  if (previousDeg == null || !previousDeg.isFinite) return target;
+  final previous = navBearingNormalize(previousDeg);
+  if (!dtMs.isFinite || dtMs <= 0) return previous;
+  final maxStep =
+      maxRotationRateDegPerSec * (dtMs / kNavBearingRotationRateReferenceTickMs);
+  if (!maxStep.isFinite || maxStep <= 0) return previous;
+  final delta = navBearingShortestDelta(previous, target);
+  if (delta.abs() <= maxStep) return target;
+  return navBearingNormalize(previous + maxStep * delta.sign);
+}
+
+/// Whether the route tangent may be re-targeted for [candidateSegmentIndex].
+///
+/// While slow, the nearest-segment index oscillates around the origin (…0, 1,
+/// 0, 1…) purely from GPS noise, and each flip produces a materially different
+/// tangent. Below [kNavBearingMovingEligibleSpeedKmh] a re-target therefore
+/// requires the index to have genuinely *advanced* past the accepted one;
+/// going backwards or standing still keeps the accepted tangent.
+bool navRouteSegmentTangentRetargetAllowed({
+  required int? acceptedSegmentIndex,
+  required int? candidateSegmentIndex,
+  required double speedKmh,
+}) {
+  if (candidateSegmentIndex == null) return false;
+  if (acceptedSegmentIndex == null) return true;
+  if (speedKmh.isFinite && speedKmh >= kNavBearingMovingEligibleSpeedKmh) {
+    return true;
+  }
+  return candidateSegmentIndex > acceptedSegmentIndex;
+}
+
+/// Whether a moving bearing source may be trusted for this fix.
+bool navBearingMovementTrustworthy({
+  required double speedKmh,
+  double? displacementM,
+  double? accuracyM,
+}) {
+  if (accuracyM != null &&
+      accuracyM.isFinite &&
+      accuracyM > kNavBearingMaxAccuracyM) {
+    return false;
+  }
+  if (speedKmh.isFinite && speedKmh >= kNavBearingMovingEligibleSpeedKmh) {
+    return true;
+  }
+  if (displacementM != null &&
+      displacementM.isFinite &&
+      displacementM >= kNavBearingMovingEligibleDisplacementM) {
+    return true;
+  }
+  return false;
+}
+
+/// Whether a raw GPS course value is structurally usable. Geolocator reports
+/// -1 (and on some devices 0 with no fix) when course is unknown.
+bool navBearingGpsCourseUsable(double? gpsHeadingDeg) {
+  return gpsHeadingDeg != null && gpsHeadingDeg.isFinite && gpsHeadingDeg >= 0;
+}
+
+/// Bearing of the first route segment long enough to carry a trustworthy
+/// azimuth, walking forward from [startIndex]. Used to resolve the stable
+/// initial camera orientation at START, before any movement exists.
+///
+/// Returns null when the geometry has no segment reaching
+/// [minSegmentMeters]; the caller then falls back to the overall
+/// first-to-last direction rather than a sub-metre stub.
+double? navFirstMeaningfulRouteSegmentBearing(
+  List<DriverLonLat> routeCoords, {
+  int startIndex = 0,
+  double minSegmentMeters = kNavBearingMeaningfulSegmentMinMeters,
+}) {
+  if (routeCoords.length < 2) return null;
+  final from = startIndex.clamp(0, routeCoords.length - 2);
+  final origin = routeCoords[from];
+  for (var i = from + 1; i < routeCoords.length; i++) {
+    final candidate = routeCoords[i];
+    if (driverMetersBetween(origin, candidate) >= minSegmentMeters) {
+      return driverBearingFromPoints(
+        origin.lat,
+        origin.lon,
+        candidate.lat,
+        candidate.lon,
+      );
+    }
+  }
+  final last = routeCoords.last;
+  return driverBearingFromPoints(origin.lat, origin.lon, last.lat, last.lon);
+}
+
+/// Input for one [NavStationaryBearingGate] resolution.
+class NavStationaryBearingInput {
+  const NavStationaryBearingInput({
+    required this.speedKmh,
+    this.routeTangentBearingDeg,
+    this.routeSegmentIndex,
+    this.gpsHeadingDeg,
+    this.movementBearingDeg,
+    this.displacementM,
+    this.accuracyM,
+    this.dtMs = kNavBearingRotationRateReferenceTickMs,
+  });
+
+  final double speedKmh;
+
+  /// Forward tangent of the current route segment, when a reliable snap exists.
+  final double? routeTangentBearingDeg;
+
+  /// Nearest route-segment index for this fix (drives origin hysteresis).
+  final int? routeSegmentIndex;
+
+  /// Raw course-over-ground reported by the platform.
+  final double? gpsHeadingDeg;
+
+  /// Bearing derived from displacement between consecutive fixes.
+  final double? movementBearingDeg;
+
+  /// Metres travelled since the last accepted bearing anchor.
+  final double? displacementM;
+
+  /// Reported horizontal accuracy in metres.
+  final double? accuracyM;
+
+  /// Wall-clock interval since the previous resolution, for the rate clamp.
+  final double dtMs;
+}
+
+/// Outcome of one resolution. [held] is true when the gate deliberately refused
+/// to move the bearing.
+class NavStationaryBearingDecision {
+  const NavStationaryBearingDecision({
+    required this.bearingDeg,
+    required this.source,
+    required this.held,
+    required this.reason,
+    required this.movingConfident,
+  });
+
+  final double bearingDeg;
+  final NavBearingSource source;
+  final bool held;
+  final String reason;
+
+  /// Whether the gate currently considers movement trustworthy.
+  final bool movingConfident;
+}
+
+/// Stateful (but Mapbox-free) bearing gate for one navigation session.
+///
+/// Lifecycle:
+///   * [seedInitialRouteBearing] at START fixes a stable initial bearing from
+///     the first meaningful route segment;
+///   * [resolve] is called per accepted GPS fix and returns the bearing the
+///     camera target should use;
+///   * [reset] clears the session on STOP.
+class NavStationaryBearingGate {
+  double? _accepted;
+  double? _lastReliableMovingBearing;
+  int? _acceptedSegmentIndex;
+  int _eligibleStreak = 0;
+  bool _seeded = false;
+
+  /// Currently accepted bearing, or null before the first seed/resolve.
+  double? get acceptedBearing => _accepted;
+
+  /// Last bearing accepted while movement was trustworthy. Held across short
+  /// stops (traffic lights) so the camera keeps facing the road ahead.
+  double? get lastReliableMovingBearing => _lastReliableMovingBearing;
+
+  int? get acceptedSegmentIndex => _acceptedSegmentIndex;
+
+  /// Consecutive trustworthy fixes seen so far (bounded by the confidence
+  /// requirement, so this never grows unbounded).
+  int get eligibleStreak => _eligibleStreak;
+
+  bool get isSeeded => _seeded;
+
+  /// Fixes the stable initial bearing from the first meaningful route segment.
+  ///
+  /// Called once at START, before any movement exists, so the camera opens
+  /// facing along the route instead of adopting a random stationary course.
+  /// Returns the seeded bearing, or null when no usable segment bearing exists.
+  double? seedInitialRouteBearing({
+    required double? routeTangentBearingDeg,
+    int? routeSegmentIndex,
+  }) {
+    if (routeTangentBearingDeg == null || !routeTangentBearingDeg.isFinite) {
+      return null;
+    }
+    final seeded = navBearingNormalize(routeTangentBearingDeg);
+    _accepted = seeded;
+    _acceptedSegmentIndex = routeSegmentIndex;
+    _eligibleStreak = 0;
+    _seeded = true;
+    return seeded;
+  }
+
+  NavStationaryBearingDecision resolve(NavStationaryBearingInput input) {
+    final trustworthy = navBearingMovementTrustworthy(
+      speedKmh: input.speedKmh,
+      displacementM: input.displacementM,
+      accuracyM: input.accuracyM,
+    );
+    if (trustworthy) {
+      // Bounded: never grows past the confidence requirement.
+      _eligibleStreak = math.min(
+        _eligibleStreak + 1,
+        kNavBearingMovingConfidenceFixes,
+      );
+    } else {
+      _eligibleStreak = 0;
+    }
+    final movingConfident =
+        trustworthy && _eligibleStreak >= kNavBearingMovingConfidenceFixes;
+
+    // No bearing established yet: take the route segment as the initial
+    // orientation rather than a stationary GPS course.
+    if (_accepted == null) {
+      final tangent = input.routeTangentBearingDeg;
+      if (tangent != null && tangent.isFinite) {
+        _accepted = navBearingNormalize(tangent);
+        _acceptedSegmentIndex = input.routeSegmentIndex;
+        _seeded = true;
+        return NavStationaryBearingDecision(
+          bearingDeg: _accepted!,
+          source: NavBearingSource.initialRouteSegment,
+          held: false,
+          reason: 'initial_route_segment',
+          movingConfident: movingConfident,
+        );
+      }
+      if (movingConfident && navBearingGpsCourseUsable(input.gpsHeadingDeg)) {
+        _accepted = navBearingNormalize(input.gpsHeadingDeg!);
+        _lastReliableMovingBearing = _accepted;
+        return NavStationaryBearingDecision(
+          bearingDeg: _accepted!,
+          source: NavBearingSource.gpsCourse,
+          held: false,
+          reason: 'cold_start_moving_gps',
+          movingConfident: movingConfident,
+        );
+      }
+      // Nothing trustworthy at all yet — report 0 without accepting it, so a
+      // later route segment or genuine movement still seeds cleanly.
+      return NavStationaryBearingDecision(
+        bearingDeg: 0.0,
+        source: NavBearingSource.held,
+        held: true,
+        reason: 'no_reliable_bearing_yet',
+        movingConfident: movingConfident,
+      );
+    }
+
+    final previous = _accepted!;
+
+    // Stationary / creeping / low-confidence: hold. This is the branch that
+    // fixes the field bug — with a route loaded and the vehicle parked, the
+    // tangent is NOT allowed to re-target.
+    if (!movingConfident) {
+      final held = _lastReliableMovingBearing ?? previous;
+      _accepted = held;
+      return NavStationaryBearingDecision(
+        bearingDeg: held,
+        source: NavBearingSource.held,
+        held: true,
+        reason: input.speedKmh < kNavBearingStationarySpeedKmh
+            ? 'stationary_hold'
+            : 'low_confidence_hold',
+        movingConfident: movingConfident,
+      );
+    }
+
+    // Movement is trustworthy. Prefer the route tangent, but only when the
+    // segment index has not merely oscillated.
+    final tangent = input.routeTangentBearingDeg;
+    if (tangent != null &&
+        tangent.isFinite &&
+        navRouteSegmentTangentRetargetAllowed(
+          acceptedSegmentIndex: _acceptedSegmentIndex,
+          candidateSegmentIndex: input.routeSegmentIndex,
+          speedKmh: input.speedKmh,
+        )) {
+      final stepped = navBearingRateClampedStep(
+        previousDeg: previous,
+        targetDeg: tangent,
+        dtMs: input.dtMs,
+      );
+      _accepted = stepped;
+      _lastReliableMovingBearing = stepped;
+      _acceptedSegmentIndex = input.routeSegmentIndex ?? _acceptedSegmentIndex;
+      return NavStationaryBearingDecision(
+        bearingDeg: stepped,
+        source: NavBearingSource.routeTangent,
+        held: false,
+        reason: 'moving_route_tangent',
+        movingConfident: movingConfident,
+      );
+    }
+
+    if (navBearingGpsCourseUsable(input.gpsHeadingDeg)) {
+      final stepped = navBearingRateClampedStep(
+        previousDeg: previous,
+        targetDeg: input.gpsHeadingDeg!,
+        dtMs: input.dtMs,
+      );
+      _accepted = stepped;
+      _lastReliableMovingBearing = stepped;
+      return NavStationaryBearingDecision(
+        bearingDeg: stepped,
+        source: NavBearingSource.gpsCourse,
+        held: false,
+        reason: 'moving_gps_course',
+        movingConfident: movingConfident,
+      );
+    }
+
+    final movement = input.movementBearingDeg;
+    if (movement != null && movement.isFinite) {
+      final stepped = navBearingRateClampedStep(
+        previousDeg: previous,
+        targetDeg: movement,
+        dtMs: input.dtMs,
+      );
+      _accepted = stepped;
+      _lastReliableMovingBearing = stepped;
+      return NavStationaryBearingDecision(
+        bearingDeg: stepped,
+        source: NavBearingSource.movementDelta,
+        held: false,
+        reason: 'moving_displacement',
+        movingConfident: movingConfident,
+      );
+    }
+
+    return NavStationaryBearingDecision(
+      bearingDeg: previous,
+      source: NavBearingSource.held,
+      held: true,
+      reason: 'moving_without_source',
+      movingConfident: movingConfident,
+    );
+  }
+
+  void reset() {
+    _accepted = null;
+    _lastReliableMovingBearing = null;
+    _acceptedSegmentIndex = null;
+    _eligibleStreak = 0;
+    _seeded = false;
+  }
+}
+
+/// PII-free diagnostics line. Caller rate-limits; no coordinates are included.
+String formatNavStationaryBearingDiag({
+  required NavStationaryBearingDecision decision,
+  required double speedKmh,
+  required int? segmentIndex,
+}) {
+  return '[NAV_BEARING_HOLD] '
+      'source=${navBearingSourceLabel(decision.source)} '
+      'held=${decision.held} '
+      'movingConfident=${decision.movingConfident} '
+      'bearing=${decision.bearingDeg.toStringAsFixed(1)} '
+      'speedKmh=${speedKmh.toStringAsFixed(1)} '
+      'segmentIndex=${segmentIndex ?? -1} '
+      'reason=${decision.reason}';
+}
