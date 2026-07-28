@@ -15,6 +15,7 @@ import 'package:fluxidi_tracking/compliance_register_receipt_bridge.dart';
 import 'package:fluxidi_tracking/local_ride_assignment_cache.dart';
 import 'package:fluxidi_tracking/main_parts/chiron_context_hydration_retry.dart';
 import 'package:fluxidi_tracking/main_parts/chiron_dossier_grouping.dart';
+import 'package:fluxidi_tracking/main_parts/chiron_last_good_events_cache.dart';
 import 'package:fluxidi_tracking/main_parts/chiron_sync_status_presentation.dart';
 import 'package:fluxidi_tracking/company_driver_management_page.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
@@ -9767,6 +9768,13 @@ class RemoteComplianceEventsResponse {
   final String errorMessage;
 }
 
+/// CHIRON-LAST-GOOD-DATA-PRESERVATION-1: process-scoped last-good events for
+/// the Backendmeldingen section. Cleared/replaced on company scope change.
+/// Never holds tokens or credentials.
+final ChironLastGoodEventsCache<RemoteComplianceEventsResponse>
+_chironLastGoodRemoteEventsCache =
+    ChironLastGoodEventsCache<RemoteComplianceEventsResponse>();
+
 class _ChironRemoteCompliancePage extends StatelessWidget {
   const _ChironRemoteCompliancePage();
 
@@ -9859,7 +9867,6 @@ class _RemoteComplianceEventsSection extends StatefulWidget {
 
 class _RemoteComplianceEventsSectionState
     extends State<_RemoteComplianceEventsSection> {
-  late Future<RemoteComplianceEventsResponse> _future;
   final bool _isResettingRemoteEvents = false;
   late final ChironContextLoadCoordinator _loadCoordinator;
   // Patch 4A: local-only search + category filter for the
@@ -9870,21 +9877,89 @@ class _RemoteComplianceEventsSectionState
   _RemoteComplianceCategoryFilter _categoryFilter =
       _RemoteComplianceCategoryFilter.alles;
 
+  // CHIRON-LAST-GOOD-DATA-PRESERVATION-1: explicit presentation state.
+  // Remounts restore last-good from [_chironLastGoodRemoteEventsCache];
+  // first-ever load shows loading (never an empty unavailable seed).
+  bool _loading = true;
+  bool _staleWarning = false;
+  RemoteComplianceEventsResponse? _display;
+  String? _hardError;
+  String _boundScopeKey = '';
+
+  static String _scopeKey(String tenantId, String companyId) =>
+      '${tenantId.trim()}|${companyId.trim()}';
+
+  String _defaultUnavailableMessage() => _t(
+    nl: 'Systeemmeldingen uit de compliancemodule zijn niet beschikbaar.',
+    en: 'System messages from the compliance module are unavailable.',
+    fr: 'Les messages système du module de conformité ne sont pas disponibles.',
+    es: 'Los mensajes del sistema del módulo de cumplimiento no están disponibles.',
+  );
+
+  String _staleRefreshWarningMessage() => _t(
+    nl: 'Vernieuwen mislukt. De laatst geladen gegevens worden getoond.',
+    en: 'Refresh failed. Showing the last loaded data.',
+    fr: 'Échec de l’actualisation. Affichage des dernières données chargées.',
+    es: 'Error al actualizar. Se muestran los últimos datos cargados.',
+  );
+
+  void _applyPresentation(
+    ChironLastGoodPresentation<RemoteComplianceEventsResponse> presentation,
+  ) {
+    _loading = presentation.showLoading;
+    _staleWarning = presentation.showStaleWarning;
+    _display = presentation.display;
+    _hardError = presentation.hardErrorMessage;
+  }
+
+  void _restoreFromCacheForActiveScope() {
+    final scope = _effectiveTenantCompanyIds();
+    if (scope == null) {
+      _boundScopeKey = '';
+      _applyPresentation(
+        initialChironEventsPresentation<RemoteComplianceEventsResponse>(
+          cachedForActiveScope: null,
+        ),
+      );
+      return;
+    }
+    _boundScopeKey = _scopeKey(scope.tenantId, scope.companyId);
+    _chironLastGoodRemoteEventsCache.clearIfScopeMismatch(
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+    );
+    final cached = _chironLastGoodRemoteEventsCache.peek(
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+    );
+    _applyPresentation(
+      initialChironEventsPresentation<RemoteComplianceEventsResponse>(
+        cachedForActiveScope: cached,
+      ),
+    );
+  }
+
+  void _onAuthScopeChanged() {
+    if (!mounted) return;
+    final scope = _effectiveTenantCompanyIds();
+    final nextKey = scope == null
+        ? ''
+        : _scopeKey(scope.tenantId, scope.companyId);
+    if (nextKey == _boundScopeKey) return;
+    setState(() {
+      _restoreFromCacheForActiveScope();
+    });
+    if (scope != null && _loadCoordinator.prerequisitesReady) {
+      _loadCoordinator.requestManualRefresh();
+    }
+  }
+
   @override
   void initState() {
     super.initState();
-    _future = Future<RemoteComplianceEventsResponse>.value(
-      RemoteComplianceEventsResponse(
-        ok: false,
-        tenantId: '',
-        companyId: '',
-        limit: 100,
-        count: 0,
-        malformedCount: 0,
-        events: const <RemoteComplianceEvent>[],
-        errorMessage: '',
-      ),
-    );
+    _restoreFromCacheForActiveScope();
+    activeCompanySessionNotifier.addListener(_onAuthScopeChanged);
+    companyProfileNotifier.addListener(_onAuthScopeChanged);
     _loadCoordinator = ChironContextLoadCoordinator(
       listenables: <Listenable>[
         activeCompanySessionNotifier,
@@ -9903,6 +9978,8 @@ class _RemoteComplianceEventsSectionState
 
   @override
   void dispose() {
+    activeCompanySessionNotifier.removeListener(_onAuthScopeChanged);
+    companyProfileNotifier.removeListener(_onAuthScopeChanged);
     _loadCoordinator.dispose();
     _searchController.dispose();
     super.dispose();
@@ -9910,9 +9987,52 @@ class _RemoteComplianceEventsSectionState
 
   Future<void> _performRemoteEventsLoad(int gen) async {
     final result = await _loadRemoteEvents();
+    // Preserve latest-wins / dispose guard — do not mutate UI when stale.
     if (!_loadCoordinator.shouldApplyGeneration(gen) || !mounted) return;
+
+    final scope = _effectiveTenantCompanyIds();
+    final activeTenant = scope?.tenantId ?? '';
+    final activeCompany = scope?.companyId ?? '';
+    final cached = (activeTenant.isEmpty || activeCompany.isEmpty)
+        ? null
+        : _chironLastGoodRemoteEventsCache.peek(
+            tenantId: activeTenant,
+            companyId: activeCompany,
+          );
+
+    if (result.ok) {
+      // Only cache presentation data already scoped to the active company.
+      final resultTenant = result.tenantId.trim().isNotEmpty
+          ? result.tenantId.trim()
+          : activeTenant;
+      final resultCompany = result.companyId.trim().isNotEmpty
+          ? result.companyId.trim()
+          : activeCompany;
+      if (resultTenant.isNotEmpty &&
+          resultCompany.isNotEmpty &&
+          resultTenant == activeTenant &&
+          resultCompany == activeCompany) {
+        _chironLastGoodRemoteEventsCache.remember(
+          tenantId: resultTenant,
+          companyId: resultCompany,
+          payload: result,
+        );
+      }
+    }
+
+    final presentation =
+        applyChironEventsLoadResult<RemoteComplianceEventsResponse>(
+          resultOk: result.ok,
+          successPayload: result.ok ? result : null,
+          resultErrorMessage: result.errorMessage,
+          cachedForActiveScope: cached,
+          defaultHardError: _defaultUnavailableMessage(),
+        );
+
+    if (!mounted) return;
     setState(() {
-      _future = Future<RemoteComplianceEventsResponse>.value(result);
+      _boundScopeKey = _scopeKey(activeTenant, activeCompany);
+      _applyPresentation(presentation);
     });
   }
 
@@ -12807,10 +12927,11 @@ class _RemoteComplianceEventsSectionState
               style: TextStyle(color: _chironTextMuted, fontSize: 12),
             ),
           ),
-        FutureBuilder<RemoteComplianceEventsResponse>(
-          future: _future,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
+        Builder(
+          builder: (context) {
+            // CHIRON-LAST-GOOD-DATA-PRESERVATION-1: first-ever load → loading;
+            // remount with cache → keep last-good; hard error only without cache.
+            if (_loading && _display == null) {
               return Row(
                 children: [
                   SizedBox(
@@ -12835,26 +12956,8 @@ class _RemoteComplianceEventsSectionState
               );
             }
 
-            final effective = _effectiveTenantCompanyIds();
-            final result =
-                snapshot.data ??
-                RemoteComplianceEventsResponse(
-                  ok: false,
-                  tenantId: effective?.tenantId ?? '',
-                  companyId: effective?.companyId ?? '',
-                  limit: 10,
-                  count: 0,
-                  malformedCount: 0,
-                  events: const <RemoteComplianceEvent>[],
-                  errorMessage: _t(
-                    nl: 'Onbekende fout bij laden van backendmeldingen.',
-                    en: 'Unknown error while loading backend events.',
-                    fr: 'Erreur inconnue lors du chargement des événements backend.',
-                    es: 'Error desconocido al cargar los eventos del backend.',
-                  ),
-                );
-
-            if (!result.ok) {
+            final result = _display;
+            if (result == null || !result.ok) {
               return Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
@@ -12864,37 +12967,45 @@ class _RemoteComplianceEventsSectionState
                   border: Border.all(color: _chironBorder),
                 ),
                 child: Text(
-                  result.errorMessage.isEmpty
-                      ? _t(
-                          nl: 'Systeemmeldingen uit de compliancemodule zijn niet beschikbaar.',
-                          en: 'System messages from the compliance module are unavailable.',
-                          fr: 'Les messages système du module de conformité ne sont pas disponibles.',
-                          es: 'Los mensajes del sistema del módulo de cumplimiento no están disponibles.',
-                        )
-                      : result.errorMessage,
+                  (_hardError == null || _hardError!.isEmpty)
+                      ? _defaultUnavailableMessage()
+                      : _hardError!,
                   style: TextStyle(color: _chironWarning, fontSize: 12),
                 ),
               );
             }
 
             if (result.events.isEmpty) {
-              return Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: _chironPanel,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: _chironBorder),
-                ),
-                child: Text(
-                  _t(
-                    nl: 'Geen backendmeldingen gevonden.',
-                    en: 'No backend events found.',
-                    fr: 'Aucun événement backend trouvé.',
-                    es: 'No se encontraron eventos del backend.',
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_staleWarning)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        _staleRefreshWarningMessage(),
+                        style: TextStyle(color: _chironWarning, fontSize: 12),
+                      ),
+                    ),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: _chironPanel,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: _chironBorder),
+                    ),
+                    child: Text(
+                      _t(
+                        nl: 'Geen backendmeldingen gevonden.',
+                        en: 'No backend events found.',
+                        fr: 'Aucun événement backend trouvé.',
+                        es: 'No se encontraron eventos del backend.',
+                      ),
+                      style: TextStyle(color: _chironTextMuted, fontSize: 12),
+                    ),
                   ),
-                  style: TextStyle(color: _chironTextMuted, fontSize: 12),
-                ),
+                ],
               );
             }
 
@@ -12943,6 +13054,14 @@ class _RemoteComplianceEventsSectionState
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (_staleWarning)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      _staleRefreshWarningMessage(),
+                      style: TextStyle(color: _chironWarning, fontSize: 12),
+                    ),
+                  ),
                 if (result.malformedCount > 0)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
