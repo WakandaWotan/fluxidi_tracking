@@ -170,6 +170,10 @@ import 'navigation/nav_engine/nav_parking_arrival.dart';
 import 'navigation/nav_engine/nav_annotation_manager_lifecycle.dart';
 import 'navigation/nav_engine/nav_polyline_annotation_delete.dart';
 import 'navigation/nav_engine/nav_ui_input_timing_diagnostics.dart';
+import 'navigation/nav_engine/nav_background_dispatcher.dart';
+import 'navigation/nav_engine/nav_active_ride_controls.dart';
+import 'navigation/nav_engine/nav_field_diagnostics.dart';
+import 'navigation/presentation/driver_ride_meters_notifier.dart';
 import 'navigation/nav_diagnostics_recorder.dart';
 
 import 'widgets/cockpit_widget.dart';

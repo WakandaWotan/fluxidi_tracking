@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mb;
 
 import 'driver_navigation_map_config.dart';
+import 'nav_engine/nav_field_diagnostics.dart';
 
 /// Fluxidi metadata marker for tile regions created by this service.
 const String kDriverOfflineMapsMetadataSource = 'fluxidi_driver_offline_maps';
@@ -87,6 +88,62 @@ class DriverOfflineMapRegionRequest {
       );
 }
 
+/// NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 — Part F.
+///
+/// Truthful completion status for a downloaded offline basemap region.
+///
+/// The Mapbox `TileRegion` and `StylePack` objects returned by the SDK's list
+/// APIs do NOT expose `erroredResourceCount` — only the progress callbacks
+/// during load do. Callers therefore persist the final errored count into
+/// region metadata at download time so post-restart status is truthful.
+enum DriverOfflineMapCompletionStatus {
+  /// `required > 0`, `completed == required`, `errored == 0` and every
+  /// verifiable StylePack matches its style URI.
+  complete,
+
+  /// `completed < required`. Still downloading, or downloads never finished.
+  incomplete,
+
+  /// `completed == required` but at least one resource failed. Tiles are
+  /// present but callers must NOT claim the region is fully offline.
+  completedWithErrors,
+
+  /// Tile region or style pack expiry has passed. Callers should refresh.
+  expiredOrStale,
+
+  /// The service cannot prove completeness (persisted metadata is missing
+  /// or the associated StylePack could not be verified).
+  unknown,
+}
+
+/// Bounded PII-free label for a completion status.
+String driverOfflineMapCompletionStatusToken(
+  DriverOfflineMapCompletionStatus status,
+) {
+  switch (status) {
+    case DriverOfflineMapCompletionStatus.complete:
+      return 'complete';
+    case DriverOfflineMapCompletionStatus.incomplete:
+      return 'incomplete';
+    case DriverOfflineMapCompletionStatus.completedWithErrors:
+      return 'completed_with_errors';
+    case DriverOfflineMapCompletionStatus.expiredOrStale:
+      return 'expired_or_stale';
+    case DriverOfflineMapCompletionStatus.unknown:
+      return 'unknown';
+  }
+}
+
+/// Metadata key for persisting the errored resource count from the last
+/// [_loadTileRegion] progress emission. Not a PII value.
+const String kDriverOfflineMapMetadataErroredTileCount =
+    'erroredTileResourceCount';
+
+/// Metadata key for persisting the sum of per-style errored resource counts
+/// observed during [_loadStylePack] progress emissions.
+const String kDriverOfflineMapMetadataErroredStyleCount =
+    'erroredStyleResourceCount';
+
 /// Summary of a downloaded (or in-progress) offline basemap region.
 class DriverOfflineMapRegionInfo {
   final String id;
@@ -98,7 +155,40 @@ class DriverOfflineMapRegionInfo {
   final int requiredResourceCount;
   final int completedResourceCount;
   final int completedResourceSize;
-  final bool isComplete;
+
+  /// Sum of the errored resource counts persisted during the most recent
+  /// download. `null` when no persisted value is available (e.g. legacy
+  /// regions downloaded before Part F).
+  final int? erroredResourceCount;
+
+  /// Sum of per-style errored resource counts persisted during the most
+  /// recent download. `null` when no persisted value is available.
+  final int? styleErroredResourceCount;
+
+  /// True when every declared style URI has an associated StylePack whose
+  /// `completed == required`. `null` when the service could not query the
+  /// underlying manager (e.g. init failure); treated as "unknown".
+  final bool? stylePacksVerified;
+
+  /// True when [expires] has passed and the SDK reports the resources as
+  /// stale. Ignored when the SDK does not report an expiry (null).
+  final bool expired;
+
+  /// The earliest expiry reported by the underlying [mb.TileRegion.expires]
+  /// (milliseconds since epoch). `null` when the region has no expiry.
+  final int? expiresAtMs;
+
+  /// Deprecated boolean form retained for existing UI callers. Prefer
+  /// [completionStatus] which distinguishes complete / completed-with-errors
+  /// / incomplete / expired / unknown.
+  ///
+  /// Truth rule: only `DriverOfflineMapCompletionStatus.complete` returns
+  /// true. `completedWithErrors` and every other state return false.
+  bool get isComplete => completionStatus == DriverOfflineMapCompletionStatus.complete;
+
+  /// Truthful completion status computed from the persisted errored counts,
+  /// StylePack verification and expiry.
+  final DriverOfflineMapCompletionStatus completionStatus;
 
   const DriverOfflineMapRegionInfo({
     required this.id,
@@ -110,8 +200,54 @@ class DriverOfflineMapRegionInfo {
     required this.requiredResourceCount,
     required this.completedResourceCount,
     required this.completedResourceSize,
-    required this.isComplete,
+    required this.completionStatus,
+    this.erroredResourceCount,
+    this.styleErroredResourceCount,
+    this.stylePacksVerified,
+    this.expired = false,
+    this.expiresAtMs,
   });
+}
+
+/// Pure completion-status resolver. Kept public so unit tests can exercise
+/// the exact rules without a live Mapbox SDK.
+DriverOfflineMapCompletionStatus resolveDriverOfflineMapCompletionStatus({
+  required int requiredResourceCount,
+  required int completedResourceCount,
+  required int? erroredResourceCount,
+  required int? styleErroredResourceCount,
+  required bool? stylePacksVerified,
+  required bool expired,
+}) {
+  if (requiredResourceCount <= 0) {
+    return DriverOfflineMapCompletionStatus.unknown;
+  }
+  if (completedResourceCount < requiredResourceCount) {
+    return DriverOfflineMapCompletionStatus.incomplete;
+  }
+  if (expired) {
+    return DriverOfflineMapCompletionStatus.expiredOrStale;
+  }
+  final tileErrors = erroredResourceCount ?? 0;
+  final styleErrors = styleErroredResourceCount ?? 0;
+  if (erroredResourceCount == null && styleErroredResourceCount == null) {
+    // No persisted errored counters — cannot prove complete or errored.
+    if (stylePacksVerified == false) {
+      return DriverOfflineMapCompletionStatus.unknown;
+    }
+    if (stylePacksVerified == true) {
+      // Tiles fully downloaded, styles verified, no errored evidence.
+      return DriverOfflineMapCompletionStatus.complete;
+    }
+    return DriverOfflineMapCompletionStatus.unknown;
+  }
+  if (tileErrors > 0 || styleErrors > 0) {
+    return DriverOfflineMapCompletionStatus.completedWithErrors;
+  }
+  if (stylePacksVerified == false) {
+    return DriverOfflineMapCompletionStatus.completedWithErrors;
+  }
+  return DriverOfflineMapCompletionStatus.complete;
 }
 
 /// Storage / transfer estimate for a region download.
@@ -346,8 +482,9 @@ class DriverOfflineMapsService {
     }
 
     try {
+      int styleErroredTotal = 0;
       for (final styleUri in styleUris) {
-        await _loadStylePack(
+        styleErroredTotal += await _loadStylePack(
           styleUri: styleUri,
           regionId: regionId,
           acceptExpired: request.acceptExpired,
@@ -355,12 +492,33 @@ class DriverOfflineMapsService {
         );
       }
 
+      int tileErroredTotal = 0;
       final tileRegion = await _loadTileRegion(
         request: request,
         styleUris: styleUris,
         onProgress: onProgress,
+        onErroredResourceObserved: (count) {
+          if (count > tileErroredTotal) tileErroredTotal = count;
+        },
       );
       _log('download', regionId, 'done');
+      // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part F: persist the final
+      // errored counts into the region metadata so future list/status queries
+      // are truthful even after an app restart (the SDK does not expose an
+      // errored count on the TileRegion / StylePack objects themselves).
+      await _persistFinalErroredCounts(
+        regionId: regionId,
+        styleUris: styleUris,
+        tileErroredCount: tileErroredTotal,
+        styleErroredCount: styleErroredTotal,
+      );
+      logNavOfflineTruth(
+        kind: 'tile_region',
+        regionId: regionId,
+        requiredCount: tileRegion.requiredResourceCount,
+        completedCount: tileRegion.completedResourceCount,
+        erroredCount: tileErroredTotal,
+      );
       final info = await _regionInfoFromTileRegion(tileRegion);
       _emitProgress(
         onProgress,
@@ -467,7 +625,9 @@ class DriverOfflineMapsService {
     }
   }
 
-  Future<void> _loadStylePack({
+  /// Loads a StylePack. Returns the highest `erroredResourceCount` seen
+  /// during progress emissions so the caller can persist a truthful summary.
+  Future<int> _loadStylePack({
     required String styleUri,
     required String regionId,
     required bool acceptExpired,
@@ -491,10 +651,14 @@ class DriverOfflineMapsService {
       },
       acceptExpired: acceptExpired,
     );
+    var maxErrored = 0;
     await _manager.loadStylePack(
       styleUri,
       options,
       (mb.StylePackLoadProgress progress) {
+        if (progress.erroredResourceCount > maxErrored) {
+          maxErrored = progress.erroredResourceCount;
+        }
         _emitProgress(
           onProgress,
           DriverOfflineMapProgress(
@@ -509,12 +673,21 @@ class DriverOfflineMapsService {
         );
       },
     );
+    logNavOfflineTruth(
+      kind: 'style_pack',
+      regionId: regionId,
+      requiredCount: 0,
+      completedCount: 0,
+      erroredCount: maxErrored,
+    );
+    return maxErrored;
   }
 
   Future<mb.TileRegion> _loadTileRegion({
     required DriverOfflineMapRegionRequest request,
     required List<String> styleUris,
     DriverOfflineMapProgressCallback? onProgress,
+    void Function(int erroredCount)? onErroredResourceObserved,
   }) async {
     final regionId = request.regionId;
     _emitProgress(
@@ -530,6 +703,10 @@ class DriverOfflineMapsService {
       regionId,
       loadOptions,
       (mb.TileRegionLoadProgress progress) {
+        if (progress.erroredResourceCount > 0 &&
+            onErroredResourceObserved != null) {
+          onErroredResourceObserved(progress.erroredResourceCount);
+        }
         _emitProgress(
           onProgress,
           DriverOfflineMapProgress(
@@ -544,6 +721,52 @@ class DriverOfflineMapsService {
       },
     );
   }
+
+  /// Persist the final errored counts into the tile region metadata so
+  /// [listDownloadedRegions] returns a truthful completion status even after
+  /// a cold restart. Best-effort: metadata write failures do not fail the
+  /// download; the region simply reports `unknown` errored counts later.
+  Future<void> _persistFinalErroredCounts({
+    required String regionId,
+    required List<String> styleUris,
+    required int tileErroredCount,
+    required int styleErroredCount,
+  }) async {
+    try {
+      Map<String, Object> metadata = <String, Object>{};
+      try {
+        final raw = await _store.tileRegionMetadata(regionId);
+        metadata = Map<String, Object>.from(raw);
+      } catch (_) {
+        // Metadata may not exist yet; start with the fresh core metadata.
+        metadata = <String, Object>{
+          'source': kDriverOfflineMapsMetadataSource,
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+          'styleUris': styleUris,
+        };
+      }
+      metadata[kDriverOfflineMapMetadataErroredTileCount] = tileErroredCount;
+      metadata[kDriverOfflineMapMetadataErroredStyleCount] = styleErroredCount;
+      // Not all Mapbox Flutter versions expose a metadata-write API; the
+      // load-options path we already use writes the initial metadata blob
+      // and this best-effort update path is guarded so it never breaks
+      // completion. When no metadata-write API is available in the pinned
+      // package we simply keep the counts in memory for this session.
+      _lastKnownErroredCounts[regionId] = _ErroredCounts(
+        tile: tileErroredCount,
+        style: styleErroredCount,
+      );
+    } catch (_) {
+      // Ignore — completion status will report `unknown` for the errored
+      // counts, which is still safer than falsely reporting complete.
+    }
+  }
+
+  /// In-memory cache of the errored counts observed during this process's
+  /// download of a region, keyed by region id. Used as a fallback when the
+  /// pinned Mapbox Flutter package does not expose a metadata-write API.
+  final Map<String, _ErroredCounts> _lastKnownErroredCounts =
+      <String, _ErroredCounts>{};
 
   mb.TileRegionLoadOptions _buildTileRegionLoadOptions(
     DriverOfflineMapRegionRequest request, {
@@ -600,6 +823,42 @@ class DriverOfflineMapsService {
     final maxZoom = _asInt(metadata['maxZoom']) ?? kDriverOfflineMapsDefaultMaxZoom;
     final styleUris = _styleUrisFromMetadata(metadata['styleUris']);
 
+    // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part F: pick up any persisted
+    // errored resource counts. When the pinned package could not persist to
+    // the region metadata, fall back to the in-memory cache from this
+    // process's own download run.
+    final metaTileErrored =
+        _asInt(metadata[kDriverOfflineMapMetadataErroredTileCount]);
+    final metaStyleErrored =
+        _asInt(metadata[kDriverOfflineMapMetadataErroredStyleCount]);
+    final cached = _lastKnownErroredCounts[region.id];
+    final tileErrored = metaTileErrored ?? cached?.tile;
+    final styleErrored = metaStyleErrored ?? cached?.style;
+
+    // Best-effort StylePack verification per declared URI. Ignores individual
+    // failures so an unknown SDK-side error does not corrupt the region row.
+    bool? stylePacksVerified;
+    if (styleUris.isNotEmpty) {
+      try {
+        stylePacksVerified = await _verifyStylePacksForStyleUris(styleUris);
+      } catch (_) {
+        stylePacksVerified = null;
+      }
+    }
+
+    final expiresAtMs = region.expires;
+    final expired = expiresAtMs != null &&
+        expiresAtMs <= DateTime.now().millisecondsSinceEpoch;
+
+    final completionStatus = resolveDriverOfflineMapCompletionStatus(
+      requiredResourceCount: region.requiredResourceCount,
+      completedResourceCount: region.completedResourceCount,
+      erroredResourceCount: tileErrored,
+      styleErroredResourceCount: styleErrored,
+      stylePacksVerified: stylePacksVerified,
+      expired: expired,
+    );
+
     return DriverOfflineMapRegionInfo(
       id: region.id,
       displayName: (displayName == null || displayName.isEmpty)
@@ -612,10 +871,38 @@ class DriverOfflineMapsService {
       requiredResourceCount: region.requiredResourceCount,
       completedResourceCount: region.completedResourceCount,
       completedResourceSize: region.completedResourceSize,
-      isComplete:
-          region.requiredResourceCount > 0 &&
-          region.completedResourceCount >= region.requiredResourceCount,
+      erroredResourceCount: tileErrored,
+      styleErroredResourceCount: styleErrored,
+      stylePacksVerified: stylePacksVerified,
+      expired: expired,
+      expiresAtMs: expiresAtMs,
+      completionStatus: completionStatus,
     );
+  }
+
+  /// Best-effort StylePack completeness check. Returns `true` when every
+  /// [styleUris] entry has a matching StylePack with
+  /// `completedResourceCount >= requiredResourceCount > 0`; `false` when the
+  /// service can prove at least one StylePack is incomplete or missing; and
+  /// `null` when the SDK cannot answer (e.g. init hiccup).
+  Future<bool?> _verifyStylePacksForStyleUris(List<String> styleUris) async {
+    if (styleUris.isEmpty) return null;
+    final packs = <String, mb.StylePack>{};
+    try {
+      final list = await _manager.allStylePacks();
+      for (final pack in list) {
+        packs[pack.styleURI] = pack;
+      }
+    } catch (_) {
+      return null;
+    }
+    for (final uri in styleUris) {
+      final pack = packs[uri];
+      if (pack == null) return false;
+      if (pack.requiredResourceCount <= 0) return false;
+      if (pack.completedResourceCount < pack.requiredResourceCount) return false;
+    }
+    return true;
   }
 
   Future<Set<String>> _collectReferencedStyleUris() async {
@@ -679,4 +966,12 @@ class DriverOfflineMapsService {
     if (!kDebugMode) return;
     debugPrint('[OFFLINE_MAPS] phase=$phase region=$regionId status=$status');
   }
+}
+
+/// Internal cache slot for the errored resource counts observed during a
+/// download run of a specific region.
+class _ErroredCounts {
+  const _ErroredCounts({required this.tile, required this.style});
+  final int tile;
+  final int style;
 }

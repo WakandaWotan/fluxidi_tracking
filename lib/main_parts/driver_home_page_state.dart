@@ -154,6 +154,48 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _isStartingTrip = false; // UX: start button state
   Timer? _meterTicker;
 
+  // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part E: dedicated meter
+  // presentation notifier so meter/HUD subtrees repaint via
+  // ValueListenableBuilder without invoking setState() on the parent State
+  // that owns MapWidget. The underlying numeric state (_kmDriven,
+  // _liveMeterTotalEur, waiting timers) remains authoritative in this State.
+  final DriverRideMetersNotifier _driverRideMetersNotifier =
+      DriverRideMetersNotifier(emptyDriverRideMetersSnapshot());
+
+  // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Parts A / B / C: bounded
+  // latest-wins dispatchers so the accepted-GPS listener never awaits Mapbox
+  // annotation work or HTTP tracking pings. The dispatchers own no Mapbox or
+  // http state themselves — the runner closures live inside this class.
+  late final NavBackgroundDispatcher<geo.Position> _pingDispatcher =
+      NavBackgroundDispatcher<geo.Position>(
+    runner: _runPingDispatcherOwner,
+    eligibility: (_) => mounted && _activeTripId != null,
+    observer: (event) => logNavBackgroundDispatch(
+      owner: NavFieldDispatcherLabel.ping,
+      event: event,
+    ),
+    onError: (_, __) {
+      // Errors surface through observer(failed|timedOut); no PII in stack.
+    },
+    timeout: const Duration(seconds: 12),
+  );
+
+  late final NavBackgroundDispatcher<geo.Position> _routePresentationDispatcher =
+      NavBackgroundDispatcher<geo.Position>(
+    runner: _runRoutePresentationDispatcherOwner,
+    eligibility: (_) => mounted && _map != null && !_mapStyleChanging,
+    observer: (event) => logNavBackgroundDispatch(
+      owner: NavFieldDispatcherLabel.routePresentation,
+      event: event,
+    ),
+    onError: (_, __) {},
+    timeout: const Duration(seconds: 5),
+  );
+
+  // Monotonic sequence counter for accepted GPS positions (PII-free field
+  // diagnostics only). Not authoritative for meter accumulation.
+  int _navAcceptedGpsSequence = 0;
+
   // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 4)
   // Deterministic STOP/navigation teardown re-entrancy guard. Set while
   // `_deterministicStopTeardown` is running so a callback triggered during
@@ -3184,6 +3226,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     _splashAnimCtrl.dispose();
     _activePulseCtrl.dispose();
     _stopMeterTicker();
+    // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Parts A/B/C: drop any
+    // pending background dispatcher work so a late completion cannot
+    // touch a defunct State. In-flight tasks may still resolve; their
+    // side effects are already guarded by `if (!mounted) return`.
+    _pingDispatcher.dispose();
+    _routePresentationDispatcher.dispose();
+    _driverRideMetersNotifier.dispose();
     _stopTrackingInternal();
     unawaited(
       NavDiagnosticsRecorder.instance.endSessionIfActive(reason: 'dispose'),
@@ -4474,6 +4523,12 @@ class _DriverHomePageState extends State<DriverHomePage>
 
       // NAV-RIDE-BOUNDARY: planned nav start owns a fresh session before style/route.
       _hardClearAtRideBoundary(reason: 'planned_ride_start', bumpSession: true);
+      // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part D: enforce the fixed
+      // safe navigation-day/-night style and discard any pre-start Standard/
+      // Satellite preview zoom BEFORE we flip _activeTripId. Discarding the
+      // Satellite preview mode inside the same setState prevents the
+      // subsequent _applyMapStyleForMode() call from picking Satellite.
+      _applyActiveRideStartStyleDecision(reason: 'planned_ride_start');
       setState(() {
         _activeTripId = sessionId;
         _activeDirectTripId = null;
@@ -5837,13 +5892,80 @@ class _DriverHomePageState extends State<DriverHomePage>
         return;
       }
       _debugLiveMeter(reason: 'ticker');
-      setState(() {});
+      // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part E: publish through
+      // the meter notifier so only the meter/HUD subtree repaints. Avoids
+      // rebuilding the MapWidget subtree once every 5 s.
+      _publishDriverRideMetersSnapshot();
     });
   }
 
   void _stopMeterTicker() {
     _meterTicker?.cancel();
     _meterTicker = null;
+  }
+
+  /// NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part E: publish an up-to-date
+  /// snapshot into the meter notifier. Consumers subscribed via
+  /// ValueListenableBuilder repaint in isolation; the enclosing State does
+  /// not need to call setState().
+  void _publishDriverRideMetersSnapshot() {
+    if (!mounted) return;
+    _driverRideMetersNotifier.publish(_buildDriverRideMetersSnapshot());
+  }
+
+  /// NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part B: runner for the ping
+  /// dispatcher. Executes the existing [_sendPing] logic; any exception is
+  /// contained by the dispatcher and reported through its observer.
+  Future<void> _runPingDispatcherOwner(geo.Position pos) async {
+    if (!mounted) return;
+    await _sendPing(pos);
+  }
+
+  /// NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part C: runner for the
+  /// route-presentation dispatcher. Skips silently when the map or style is
+  /// not ready — the dispatcher's eligibility check will typically already
+  /// have short-circuited, but this belt-and-suspenders check makes the
+  /// runner robust against a raced style swap.
+  Future<void> _runRoutePresentationDispatcherOwner(geo.Position pos) async {
+    if (!mounted) return;
+    if (_map == null || _mapStyleChanging) return;
+    await _syncVisibleRouteLineWithProgress(pos);
+  }
+
+  /// NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part D: enforce the fixed
+  /// safe navigation-day/-night style at ride START and discard any pre-start
+  /// Standard/Satellite preview so the active ride never enters a partially
+  /// initialized custom style.
+  ///
+  /// Called from both `_startTrip` (planned) and `_startDirectRide` (street)
+  /// with the setState that flips `_activeTripId` / `_directRideActive`
+  /// bracketing this reset. The reset itself does NOT run setState — the
+  /// caller's setState covers the same frame.
+  void _applyActiveRideStartStyleDecision({required String reason}) {
+    final prefersDark = _effectiveMapThemeFor(_CameraMode.follow) ==
+        MapThemeMode.dark;
+    final decision = decideNavActiveRideStart(prefersDark: prefersDark);
+    // Discard any Satellite / Standard / custom preview so
+    // `_styleForTheme(_effectiveMapThemeFor(_CameraMode.follow))` resolves to
+    // the safe navigation-day/-night pair.
+    _driverMapVisualMode = DriverMapVisualMode.street;
+    if (kNavigation3dCockpitSceneEnabled) {
+      _driverCockpitMapVisualStyle = prefersDark
+          ? DriverCockpitMapVisualStyle.dark
+          : DriverCockpitMapVisualStyle.light;
+    }
+    logNavActiveRideStart(
+      style: navActiveRideStyleLabel(decision.style),
+      enterStreetLevel: decision.enterStreetLevel,
+      discardPreviewZoom: decision.discardPreviewZoom,
+      styleGeneration: _styleRequestGeneration,
+    );
+    _logNavBounded(
+      'NAV_ACTIVE_RIDE_START',
+      'reason=$reason style=${navActiveRideStyleLabel(decision.style)} '
+      'streetLevel=${decision.enterStreetLevel} '
+      'discardPreviewZoom=${decision.discardPreviewZoom}',
+    );
   }
 
   Duration get _effectiveWaitElapsed {
@@ -9108,10 +9230,19 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     _posSub = geo.Geolocator.getPositionStream(locationSettings: settings).listen((
       pos,
-    ) async {
+    ) {
+      // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part A: pure local
+      // GPS/meter core. No Mapbox Future and no HTTP Future is awaited on
+      // this callback; presentation and network work are handed off to
+      // bounded latest-wins dispatchers so a stalled Mapbox annotation or a
+      // 10-second mobile-data ping timeout can never block the next
+      // accepted position.
+      final meterCoreSw = Stopwatch()..start();
       final prev = _lastPos;
       _lastPos = pos;
       _startPos ??= pos;
+
+      var meterChanged = false;
 
       if (prev != null) {
         final meters = geo.Geolocator.distanceBetween(
@@ -9123,7 +9254,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         if (meters.isFinite && meters > 0) {
           // Only count driven distance once the trip is actually started.
           if (_liveRideActive && !_isWaiting) {
-            if (mounted) setState(() => _kmDriven += meters / 1000.0);
+            _kmDriven += meters / 1000.0;
+            meterChanged = true;
           } else if (_liveRideActive && _isWaiting) {
             debugPrint(
               '[METER][WAIT_DISTANCE_SKIPPED] meters=${meters.toStringAsFixed(1)} km=${_kmDriven.toStringAsFixed(3)}',
@@ -9190,7 +9322,11 @@ class _DriverHomePageState extends State<DriverHomePage>
         engineDispatchDtMs: navDispatchSw.elapsedMilliseconds,
       );
 
-      await _syncVisibleRouteLineWithProgress(pos);
+      // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part C: enqueue route line
+      // presentation on the bounded latest-wins dispatcher. Older pending
+      // positions are replaced; the GPS callback never awaits this work.
+      _routePresentationDispatcher.enqueue(pos);
+
       _syncNavDiagSession();
       _recordNavDiagGpsUpdate(
         pos,
@@ -9206,14 +9342,30 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       _maybeAddNavValidationSample(pos);
       final uiBearing = _adaptiveBearingFor(pos, snap: _lastRouteSnap).bearing;
-      if (mounted && _cameraMode == _CameraMode.follow) {
-        setState(() => _uiArrowBearing = uiBearing);
-      } else {
-        _uiArrowBearing = uiBearing;
-      }
+      _uiArrowBearing = uiBearing;
       _updateNextNavInstruction(pos);
 
-      await _sendPing(pos);
+      // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part B: enqueue the
+      // tracking-ping on the bounded latest-wins dispatcher. Older pending
+      // positions are replaced; the GPS callback never awaits HTTP.
+      _pingDispatcher.enqueue(pos);
+
+      meterCoreSw.stop();
+      _navAcceptedGpsSequence += 1;
+      logNavAcceptedGpsMeter(
+        sequence: _navAcceptedGpsSequence,
+        monotonicMs: DateTime.now().millisecondsSinceEpoch,
+        meterCoreMicros: meterCoreSw.elapsedMicroseconds,
+      );
+
+      // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part E: publish an
+      // updated meter snapshot through the dedicated notifier so the
+      // Tellers / HUD subtrees update independently of the MapWidget
+      // subtree. Skipped when nothing meter-relevant changed to avoid
+      // needless notification storms.
+      if (meterChanged) {
+        _publishDriverRideMetersSnapshot();
+      }
     });
     _activeGeolocatorSubscriptionCount = 1;
     debugPrint(
@@ -9549,6 +9701,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     // NAV-RIDE-BOUNDARY: clear prior ride geometry/style restore BEFORE this
     // session becomes live and before style apply can repaint stale coords.
     _hardClearAtRideBoundary(reason: 'street_ride_start', bumpSession: true);
+    // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part D: fixed safe navigation
+    // style + Street Level, before we go live. Any pre-start Satellite
+    // preview is discarded.
+    _applyActiveRideStartStyleDecision(reason: 'street_ride_start');
     setState(() {
       _directRideActive = true;
       _activeTripId = null;
@@ -14608,6 +14764,26 @@ class _DriverHomePageState extends State<DriverHomePage>
       styleGeneration: _styleRequestGeneration,
       reason: increase ? 'plus' : 'minus',
     );
+    // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part D: block manual +/- zoom
+    // during an active ride. Product rule: fixed navigation style + latest-
+    // wins camera follow only.
+    final blockReason = navActiveRideZoomAllowed(liveRideActive: _liveRideActive);
+    if (blockReason != NavActiveRideBlockReason.none) {
+      logNavActiveRideBlocked(
+        interaction: increase
+            ? NavFieldBlockedInteraction.zoomIn
+            : NavFieldBlockedInteraction.zoomOut,
+        reason: 'live_ride_active',
+      );
+      logNavUiInputTiming(
+        action: NavUiInputTimingAction.viewZoom,
+        phase: NavUiInputTimingPhase.failed,
+        managerGeneration: _routeAnnotationGate.managerGeneration,
+        renderEpoch: _routeRenderEpoch,
+        reason: 'blocked_active_ride',
+      );
+      return;
+    }
     if (!_navigationPresentationStateFor(
       _navCameraViewMode,
     ).showDriverCockpitCameraControls) {
@@ -21187,15 +21363,22 @@ class _DriverHomePageState extends State<DriverHomePage>
     required bool isLandscape,
   }) {
     final followLive = _cameraMode == _CameraMode.follow && _liveRideActive;
+    // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part E: seed the notifier
+    // with the freshest authoritative snapshot at build time, then subscribe
+    // via ValueListenableBuilder so subsequent meter ticks repaint ONLY the
+    // meters subtree (the MapWidget subtree remains untouched).
+    _driverRideMetersNotifier.publish(_buildDriverRideMetersSnapshot());
     return Positioned.fill(
-      child: DriverRideMetersView(
+      child: ValueListenableBuilder<DriverRideMetersSnapshot>(
+        valueListenable: _driverRideMetersNotifier,
+        builder: (context, snapshot, _) => DriverRideMetersView(
         // TELLERS-LIVE-NAV-INSTRUCTION-OVERLAY-1: the Tellers live map shows
         // the SAME maneuver the main navigation banner shows. Both read
         // _effectiveNavInstructionSnapshot() and the same gates in the same
         // build, so the two surfaces cannot disagree, and Tellers keeps no
         // route steps, maneuver index or exit number of its own.
         guidance: _resolveTellersGuidance(),
-        snapshot: _buildDriverRideMetersSnapshot(),
+        snapshot: snapshot,
         themeListenable: _activeDriverThemeListenable,
         isTablet: isTablet,
         isLandscape: isLandscape,
@@ -21236,6 +21419,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         // _followCameraTesla while Tellers is active). Idempotent when already
         // following. Does not leave Tellers or create a second camera/GPS owner.
         onRecenter: _liveRideActive ? () => unawaited(_centerOnMe()) : null,
+      ),
       ),
     );
   }
@@ -29378,10 +29562,16 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
     }
     final navActionColors = _navActionThemeColors();
+    // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part D: hide the manual +/-
+    // controls during an active ride. Camera follow uses the existing
+    // bounded latest-wins lifecycle; live customization is deferred to
+    // AFTER STOP.
     final bool showDriverCockpitCameraControls =
         _cameraMode == _CameraMode.follow &&
         liveActive &&
-        navPresentationState.showDriverCockpitCameraControls;
+        navPresentationState.showDriverCockpitCameraControls &&
+        navActiveRideZoomAllowed(liveRideActive: liveActive) ==
+            NavActiveRideBlockReason.none;
     // NAV-VEHICLE-MODE-CAR-ARROW-1: the Car/Arrow marker selector is shown
     // during live navigation independent of the map style (Light / Dark /
     // 3D-buildings / Satellite) and independent of any 3D eligibility gate.

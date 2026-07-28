@@ -560,6 +560,66 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
     return '${mb.toStringAsFixed(1)} MB';
   }
 
+  /// NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part F: truthful status label.
+  /// Distinguishes complete / completed-with-errors / incomplete / expired /
+  /// unknown so the driver never sees a false "complete" claim over a region
+  /// that failed resources or a StylePack that could not be verified.
+  String _offlineRegionStatusText(
+    DriverOfflineMapRegionInfo region, {
+    required bool nl,
+  }) {
+    switch (region.completionStatus) {
+      case DriverOfflineMapCompletionStatus.complete:
+        return nl ? 'Volledig' : 'Complete';
+      case DriverOfflineMapCompletionStatus.completedWithErrors:
+        return nl
+            ? 'Ontladen met fouten (niet volledig)'
+            : 'Downloaded with errors (not complete)';
+      case DriverOfflineMapCompletionStatus.incomplete:
+        return nl ? 'Bezig / onvolledig' : 'In progress / incomplete';
+      case DriverOfflineMapCompletionStatus.expiredOrStale:
+        return nl
+            ? 'Verlopen — vernieuwen aanbevolen'
+            : 'Expired — refresh recommended';
+      case DriverOfflineMapCompletionStatus.unknown:
+        return nl ? 'Status onbekend' : 'Status unknown';
+    }
+  }
+
+  /// NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part F: show which navigation
+  /// styles the region actually covers. Standard/Satellite are only listed as
+  /// offline when their StylePack was proven downloaded — never assumed.
+  String _offlineStyleCoverageText(
+    DriverOfflineMapRegionInfo region, {
+    required bool nl,
+  }) {
+    if (region.styleUris.isEmpty) {
+      return nl ? 'geen' : 'none';
+    }
+    final labels = region.styleUris.map(_offlineStyleLabel).toList();
+    final verified = region.stylePacksVerified;
+    final suffix = verified == true
+        ? (nl ? ' (geverifieerd)' : ' (verified)')
+        : verified == false
+            ? (nl ? ' (niet volledig)' : ' (not complete)')
+            : (nl ? ' (niet geverifieerd)' : ' (not verified)');
+    return '${labels.join(', ')}$suffix';
+  }
+
+  String _offlineStyleLabel(String styleUri) {
+    // navigation-day-v1 / navigation-night-v1 are the only styles the driver
+    // service currently downloads. Return a short bounded label; never leak
+    // the raw URI.
+    final trimmed = styleUri.trim();
+    if (trimmed.contains('navigation-day')) return 'Navigatie (dag)';
+    if (trimmed.contains('navigation-night')) return 'Navigatie (nacht)';
+    if (trimmed.contains('satellite')) return 'Satelliet';
+    if (trimmed.contains('standard')) return 'Standaard';
+    if (trimmed.contains('streets')) return 'Straten';
+    final parts = trimmed.split('/');
+    return parts.isNotEmpty ? parts.last : 'style';
+  }
+
   Widget _infoCard({
     required DriverThemePalette palette,
     required Widget child,
@@ -970,16 +1030,34 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                                       _tr(
                                         nl:
                                             'Opslag: ${_formatBytes(region.completedResourceSize)} · '
-                                            '${region.isComplete ? 'Volledig' : 'Bezig/onvolledig'}',
+                                            '${_offlineRegionStatusText(region, nl: true)}',
                                         en:
                                             'Storage: ${_formatBytes(region.completedResourceSize)} · '
-                                            '${region.isComplete ? 'Complete' : 'In progress/incomplete'}',
+                                            '${_offlineRegionStatusText(region, nl: false)}',
                                       ),
                                       style: TextStyle(
                                         color: palette.textMuted,
                                         fontSize: 12,
                                       ),
                                     ),
+                                    if (region.styleUris.isNotEmpty)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 2),
+                                        child: Text(
+                                          _tr(
+                                            nl:
+                                                'Navigatiestijlen offline: '
+                                                '${_offlineStyleCoverageText(region, nl: true)}',
+                                            en:
+                                                'Navigation styles offline: '
+                                                '${_offlineStyleCoverageText(region, nl: false)}',
+                                          ),
+                                          style: TextStyle(
+                                            color: palette.textMuted,
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                      ),
                                     const SizedBox(height: 10),
                                     Align(
                                       alignment: Alignment.centerRight,

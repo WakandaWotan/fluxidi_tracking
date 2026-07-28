@@ -486,12 +486,25 @@ void main() {
     });
 
     test('rapid style taps coalesce → latest style wins (product gate)', () {
+      // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part D: the emergency
+      // kill-switch now defaults to `false`, so a live-ride tap is BLOCKED
+      // unless the caller explicitly re-enables active-ride style switching.
+      // The Phase-6 lease/coalesce behaviour still exercises with the flag
+      // explicitly enabled.
       expect(
-        navStyleTapDecision(liveRideActive: true, styleTransactionRunning: false),
+        navStyleTapDecision(
+          liveRideActive: true,
+          styleTransactionRunning: false,
+          activeRideStyleSwitchEnabled: true,
+        ),
         NavStyleTapDecision.begin,
       );
       expect(
-        navStyleTapDecision(liveRideActive: true, styleTransactionRunning: true),
+        navStyleTapDecision(
+          liveRideActive: true,
+          styleTransactionRunning: true,
+          activeRideStyleSwitchEnabled: true,
+        ),
         NavStyleTapDecision.coalesce,
       );
       expect(
@@ -510,6 +523,16 @@ void main() {
           activeRideStyleSwitchEnabled: false,
         ),
         NavStyleTapDecision.begin,
+      );
+      // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part D: the default kill
+      // switch is now false. Every live-ride style tap through the default
+      // path is blocked.
+      expect(
+        navStyleTapDecision(
+          liveRideActive: true,
+          styleTransactionRunning: false,
+        ),
+        NavStyleTapDecision.blocked,
       );
     });
 

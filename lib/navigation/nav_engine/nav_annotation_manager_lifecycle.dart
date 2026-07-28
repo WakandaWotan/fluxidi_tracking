@@ -397,12 +397,18 @@ class NavAnnotationManagerGate {
   }
 }
 
-/// NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2 / Phase 6: central
-/// emergency kill-switch for active-ride map-style switching. Default true now
-/// that the transactional lease path is proven by deterministic race tests.
-/// Flip to false to disable style switching during a live ride independently
-/// if a field regression appears, without touching the transactional code.
-const bool kNavActiveRideStyleSwitchEnabled = true;
+/// NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2 / Phase 6 —
+/// NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part D: central emergency
+/// kill-switch for active-ride map-style switching.
+///
+/// FLIPPED TO FALSE (from the previous default `true`) after the mobile-data
+/// freeze audit proved that a live style swap can drain and recreate every
+/// annotation manager on the UI/platform pipeline while the GPS/meter
+/// callback is still awaiting Mapbox work. During an active ride we now
+/// keep the selected navigation-day/-night style fixed until STOP; live
+/// style customization is deferred to the pre-START and after-STOP phases,
+/// where it is safe.
+const bool kNavActiveRideStyleSwitchEnabled = false;
 
 /// Fail-safe decision (Phase 6): given whether a live ride is active and a
 /// style transaction is already running, should a new style tap begin a swap
