@@ -67,6 +67,14 @@ Size estimateDriverCockpitCameraControlsPanelSize({
 /// Landscape uses mid-right vertical placement. Portrait anchors above the
 /// cockpit bar with a fixed offset so high view levels / large HUD cars do
 /// not push the panel off-screen.
+///
+/// NAV-PRESTART-FIELD-BLOCKER-3 (Problem D): [bottomStripReserve] is the
+/// measured height of the actual bottom chrome (cockpit + secondary action
+/// row + optional fare-estimate panel) so the portrait zoom column is placed
+/// ABOVE the real bottom strip, not behind the fixed 168dp assumption. When
+/// the reserve is smaller than the fixed anchor the original placement
+/// wins, preserving the current behaviour for callers that do not measure
+/// the chrome.
 DriverCockpitCameraControlsLayoutResult
 resolveDriverCockpitCameraControlsLayout({
   required double screenHeight,
@@ -78,6 +86,7 @@ resolveDriverCockpitCameraControlsLayout({
   required double panelWidth,
   double margin = kDriverCockpitControlsEdgeMargin,
   double navBannerReserve = 0.0,
+  double bottomStripReserve = 0.0,
   DriverCockpitCameraControlsPlacementHints? placementHints,
 }) {
   final rightInsetExtra = placementHints?.rightInsetExtra ?? 0;
@@ -87,6 +96,9 @@ resolveDriverCockpitCameraControlsLayout({
   var clamped = false;
   late final String reason;
   var panelTop = 0.0;
+  final safeReserve = bottomStripReserve.isFinite && bottomStripReserve > 0
+      ? bottomStripReserve
+      : 0.0;
 
   if (isLandscape) {
     var top = (screenHeight - panelHeight) / 2.0;
@@ -106,7 +118,16 @@ resolveDriverCockpitCameraControlsLayout({
     final portraitBottomOffset =
         placementHints?.portraitBottomOffset ??
         kDriverCockpitControlsPortraitBottomOffset;
-    final desiredBottom = safeBottom + portraitBottomOffset;
+    // NAV-PRESTART-FIELD-BLOCKER-3 (Problem D): grow the offset to clear the
+    // measured chrome (cockpit + secondary + estimate) with an extra margin
+    // so the minus button never lands behind the cockpit panel.
+    final measuredBottomOffset = safeReserve > 0
+        ? safeReserve + margin
+        : portraitBottomOffset;
+    final effectiveBottomOffset = measuredBottomOffset > portraitBottomOffset
+        ? measuredBottomOffset
+        : portraitBottomOffset;
+    final desiredBottom = safeBottom + effectiveBottomOffset;
     var top = screenHeight - desiredBottom - panelHeight;
     if (top < minTop) {
       top = minTop;
@@ -117,7 +138,9 @@ resolveDriverCockpitCameraControlsLayout({
       clamped = true;
       reason = 'portrait_clamped_bottom';
     } else {
-      reason = 'portrait_above_cockpit';
+      reason = safeReserve > portraitBottomOffset
+          ? 'portrait_above_measured_chrome'
+          : 'portrait_above_cockpit';
     }
     panelTop = top;
   }

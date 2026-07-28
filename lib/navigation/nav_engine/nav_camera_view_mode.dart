@@ -43,6 +43,15 @@ NavCameraViewMode toggleNavCameraViewMode(NavCameraViewMode current) {
   }
 }
 
+/// NAV-PRESTART-FIELD-BLOCKER-3 (Problem B + C): the pre-start preview only
+/// exposes two presentation options (overview and street view); north-up is a
+/// live-only mode. This helper collapses any prior selection into a value the
+/// preview surface can safely render.
+NavCameraViewMode normaliseNavCameraViewModeForPreview(NavCameraViewMode mode) {
+  if (mode == NavCameraViewMode.streetView) return NavCameraViewMode.streetView;
+  return NavCameraViewMode.overview;
+}
+
 String navCameraViewModeLabel(NavCameraViewMode mode) {
   switch (mode) {
     case NavCameraViewMode.northUp:

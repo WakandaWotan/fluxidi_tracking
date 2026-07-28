@@ -288,6 +288,11 @@ bool mayClearOverviewAnnotations({required bool liveRideActive}) {
 ///
 /// NAV-RIDE-BOUNDARY: when session/style generations are supplied they must
 /// also match, and navigation must remain live.
+///
+/// NAV-PRESTART-FIELD-BLOCKER-3 (Problem A): [previewRestoreEligible] widens
+/// the "navigation must remain live" gate so a valid pre-start preview draft
+/// with an accepted route may still restore after a style swap. The session,
+/// style, render-epoch and route-steps-version owners still gate every redraw.
 bool mayRestoreRouteRender({
   required int routeCoordCount,
   required int capturedRenderEpoch,
@@ -299,9 +304,10 @@ bool mayRestoreRouteRender({
   int? capturedStyleGeneration,
   int? currentStyleGeneration,
   bool? navigationLive,
+  bool? previewRestoreEligible,
 }) {
   if (routeCoordCount < 2) return false;
-  if (navigationLive == false) return false;
+  if (navigationLive == false && previewRestoreEligible != true) return false;
   if (capturedSessionGeneration != null &&
       currentSessionGeneration != null &&
       capturedSessionGeneration != currentSessionGeneration) {

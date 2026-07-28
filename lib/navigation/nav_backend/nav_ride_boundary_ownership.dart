@@ -121,6 +121,11 @@ class StyleRestoreDecision {
 }
 
 /// Captured ownership token for an async style/route operation.
+///
+/// NAV-PRESTART-FIELD-BLOCKER-3 (Problem A): [previewRestoreEligible] lets a
+/// pre-start preview draft with an accepted route (>=2 coords, not live)
+/// participate in style-restore. It never widens the live-ride contract; the
+/// existing session/style/render-epoch owners still gate every redraw.
 class NavRouteOwnershipCapture {
   final int sessionGeneration;
   final int styleGeneration;
@@ -128,6 +133,7 @@ class NavRouteOwnershipCapture {
   final int renderEpoch;
   final bool navigationLive;
   final int routeCoordCount;
+  final bool previewRestoreEligible;
 
   const NavRouteOwnershipCapture({
     required this.sessionGeneration,
@@ -136,10 +142,16 @@ class NavRouteOwnershipCapture {
     required this.renderEpoch,
     required this.navigationLive,
     required this.routeCoordCount,
+    this.previewRestoreEligible = false,
   });
 }
 
 /// Live ownership snapshot compared against a capture.
+///
+/// NAV-PRESTART-FIELD-BLOCKER-3 (Problem A): mirrors
+/// [NavRouteOwnershipCapture.previewRestoreEligible] so restore is only
+/// allowed when both capture and current live snapshot still qualify as either
+/// a live ride or a valid pre-start preview draft.
 class NavRouteOwnershipSnapshot {
   final int sessionGeneration;
   final int styleGeneration;
@@ -148,6 +160,7 @@ class NavRouteOwnershipSnapshot {
   final bool navigationLive;
   final int? activePackageSessionGeneration;
   final int? activePackageRenderEpoch;
+  final bool previewRestoreEligible;
 
   const NavRouteOwnershipSnapshot({
     required this.sessionGeneration,
@@ -157,17 +170,23 @@ class NavRouteOwnershipSnapshot {
     required this.navigationLive,
     this.activePackageSessionGeneration,
     this.activePackageRenderEpoch,
+    this.previewRestoreEligible = false,
   });
 }
 
 /// Style-loaded restore is allowed only when every captured owner still matches
-/// and navigation remains live. Never reads mutable "current route" from an
-/// old callback — callers must pass frozen capture + live snapshot.
+/// and navigation is either live OR a valid pre-start preview draft owns the
+/// route. Never reads mutable "current route" from an old callback — callers
+/// must pass frozen capture + live snapshot.
 StyleRestoreDecision evaluateStyleRouteRestore({
   required NavRouteOwnershipCapture capture,
   required NavRouteOwnershipSnapshot current,
 }) {
-  if (!capture.navigationLive || !current.navigationLive) {
+  final captureAllowsRestore =
+      capture.navigationLive || capture.previewRestoreEligible;
+  final currentAllowsRestore =
+      current.navigationLive || current.previewRestoreEligible;
+  if (!captureAllowsRestore || !currentAllowsRestore) {
     return const StyleRestoreDecision.reject(
       StyleRestoreRejectReason.navigationNotLive,
     );
