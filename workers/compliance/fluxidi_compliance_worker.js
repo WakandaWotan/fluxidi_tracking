@@ -1149,6 +1149,40 @@ function pathValue(root, path) {
   return current;
 }
 
+// COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part A).
+//
+// Bounded-parallel fan-out for the per-key `COMPLIANCE_KV.get` phase of
+// `handleRecent`. The pre-repair worker awaited 100 KV reads sequentially,
+// which pushed the observed 100-event scope past the Flutter 10 s client
+// timeout. This limit keeps the fan-out well under Cloudflare's per-worker
+// subrequest ceiling (1000) and matches the number the tracking worker's
+// `handleTripsHistory` uses so both hot paths behave consistently.
+//
+// Ordering: the array-of-keys is preserved verbatim (input-order-preserving
+// parallel map). Correctness (sorting, limit, malformed skip, event projection
+// and tenant/company scope isolation) is unchanged — the only observable
+// difference is total latency.
+const _COMPLIANCE_RECENT_READ_CONCURRENCY = 16;
+
+/** @internal Bounded-parallel Map(input) => output preserving input order.
+ * Never throws for a single item — the mapper is expected to return `null`
+ * or a sentinel for malformed rows. */
+async function _boundedParallelMap(input, concurrency, mapper) {
+  const limit = Math.max(1, Math.min(concurrency, input.length || 1));
+  const out = new Array(input.length);
+  let next = 0;
+  const workers = new Array(limit).fill(0).map(async () => {
+    for (;;) {
+      const i = next;
+      next += 1;
+      if (i >= input.length) return;
+      out[i] = await mapper(input[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
 async function handleRecent(request, url, env, origin) {
   /* CHIRON-P0-2A: parse tenant/company from the URL BEFORE authenticating so
    * we can accept either a direct compliance admin bearer OR a scoped
@@ -1156,6 +1190,7 @@ async function handleRecent(request, url, env, origin) {
    * requires the case-preserved scope (matching the booking-worker's
    * x-fluxidi-proxy-* headers), while KV prefix reads use the lower-cased
    * `safeSegment` value below. */
+  const totalStart = Date.now();
   const tenant = parseRequiredQuerySegment(url, "tenant_id");
   if (tenant.error) {
     return jsonResponse({ ok: false, error: tenant.error }, 400, origin);
@@ -1167,10 +1202,12 @@ async function handleRecent(request, url, env, origin) {
   const tenantIdForScope = cleanText(url.searchParams.get("tenant_id"), 128);
   const companyIdForScope = cleanText(url.searchParams.get("company_id"), 128);
 
+  const authStart = Date.now();
   const authError = ensureAuthorizedOrInternalProxy(request, env, {
     tenantId: tenantIdForScope,
     companyId: companyIdForScope,
   });
+  const authMs = Date.now() - authStart;
   if (authError) return authError;
 
   if (!env || !env.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.list !== "function") {
@@ -1209,6 +1246,7 @@ async function handleRecent(request, url, env, origin) {
   let listComplete = false;
   let hitScanCap = false;
 
+  const listStart = Date.now();
   while (!listComplete && scannedKeyNames.length < maxScanKeys) {
     let listed;
     try {
@@ -1240,27 +1278,46 @@ async function handleRecent(request, url, env, origin) {
       hitScanCap = true;
     }
   }
+  const listMs = Date.now() - listStart;
 
+  // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part A): read events with bounded
+  // parallelism. The prior sequential `for (const key of scannedKeyNames) {
+  // await COMPLIANCE_KV.get(key) }` accumulated N per-request round-trips
+  // (~40 ms each), which pushed a 100-event scope past 4 s and, combined
+  // with the internal-proxy hop, above the 10 s Flutter timeout. Bounded
+  // parallelism preserves malformed-event skipping, tenant/company
+  // isolation, event projection and result ordering — only wall-clock time
+  // changes.
+  const readStart = Date.now();
+  const readOutcomes = await _boundedParallelMap(
+    scannedKeyNames,
+    _COMPLIANCE_RECENT_READ_CONCURRENCY,
+    async (key) => {
+      let raw;
+      try {
+        raw = await env.COMPLIANCE_KV.get(key);
+      } catch (_) {
+        return { ok: false };
+      }
+      if (!raw) return { ok: false };
+      try {
+        return { ok: true, key, parsed: JSON.parse(raw) };
+      } catch (_) {
+        return { ok: false };
+      }
+    },
+  );
+  const readMs = Date.now() - readStart;
+
+  const projectStart = Date.now();
   const events = [];
   let malformedCount = 0;
-  for (const key of scannedKeyNames) {
-    let raw;
-    try {
-      raw = await env.COMPLIANCE_KV.get(key);
-    } catch (_) {
+  for (const outcome of readOutcomes) {
+    if (!outcome || outcome.ok !== true) {
       malformedCount += 1;
       continue;
     }
-    if (!raw) {
-      malformedCount += 1;
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(raw);
-      events.push(projectRecentEvent(key, parsed));
-    } catch (_) {
-      malformedCount += 1;
-    }
+    events.push(projectRecentEvent(outcome.key, outcome.parsed));
   }
 
   const parseMaybeDate = (value) => {
@@ -1296,6 +1353,18 @@ async function handleRecent(request, url, env, origin) {
   });
   const limitedEvents = sortedEvents.slice(0, requestedLimit);
   const hasMoreCandidates = hitScanCap || sortedEvents.length > requestedLimit;
+  const projectMs = Date.now() - projectStart;
+  const totalMs = Date.now() - totalStart;
+
+  // PII-free timing diagnostic. Tokens are bounded integers only; no tenant,
+  // company, event or payload data is logged.
+  console.log(
+    `[COMPLIANCE_RECENT] endpoint=recent auth_ms=${authMs} list_ms=${listMs} ` +
+      `read_ms=${readMs} project_ms=${projectMs} total_ms=${totalMs} ` +
+      `keys=${scannedKeyNames.length} returned=${limitedEvents.length} ` +
+      `malformed=${malformedCount} scan_cap=${hitScanCap ? 1 : 0} ` +
+      `concurrency=${_COMPLIANCE_RECENT_READ_CONCURRENCY}`,
+  );
 
   return jsonResponse(
     {

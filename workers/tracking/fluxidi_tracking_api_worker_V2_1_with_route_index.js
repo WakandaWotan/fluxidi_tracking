@@ -979,6 +979,19 @@ function scopedDashboardBookingFinanceMonthKey(scope, month) {
   return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:dashboard:booking_finance:month:${monthPart}:v1`;
 }
 
+// COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part B): read-path cache for the
+// expensive unpaid-completed / pending-booking diagnostics scan. The
+// pre-repair `handleDashboardTripKpis` recomputed both diagnostics on every
+// GET by walking up to 5000 keys sequentially — which pushed a warm scope
+// past the Flutter 12 s timeout even though the `78c0ade` bounded fallback
+// had already skipped foreground reconciliation. The cache is a single
+// per-scope JSON blob refreshed by a background task; the GET response
+// picks it up in the same parallel batch as the four primary aggregates.
+function scopedDashboardKpiDiagnosticsCacheKey(scope) {
+  const normalizedScope = normalizeScopedKeyScope(scope);
+  return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:dashboard:trip_kpi_diagnostics_cache:v1`;
+}
+
 function scopedDashboardTripKpisMonthPrefix(scope) {
   const normalizedScope = normalizeScopedKeyScope(scope);
   return `tenant:${normalizedScope.tenant_id}:company:${normalizedScope.company_id}:dashboard:trip_kpis:month:`;
@@ -3960,14 +3973,118 @@ async function handleDashboardTripKpisReconcile(req, url, env, origin) {
   );
 }
 
-async function handleDashboardTripKpis(req, url, env, origin) {
+// COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part B): diagnostic cache is considered
+// "fresh" for this long. Any GET that finds a cache older than this triggers
+// a background refresh but still returns the (stale) cached values so the
+// response never blocks on the KV scan. 60 s balances truthfulness against
+// per-request KV load — long enough that a follow-up route_return refresh
+// re-uses the same cache, short enough that a repaired ride becomes visible
+// on the very next warm poll.
+const _KPI_DIAGNOSTICS_CACHE_FRESH_MS = 60_000;
+// Hard age ceiling. A cache older than this is treated as "unavailable" so
+// the response falls back to the primary aggregate for the visible KPI card
+// (never inventing a zero for a scope with real unpaid completed rides).
+const _KPI_DIAGNOSTICS_CACHE_MAX_AGE_MS = 15 * 60_000;
+
+function _kpiDiagnosticsCacheClassify(cache) {
+  if (!cache || typeof cache !== "object" || Array.isArray(cache)) {
+    return { present: false, ageMs: null, freshness: "unavailable" };
+  }
+  const computedAtMs = Date.parse(safeStr(cache.computed_at_utc, 64) ?? "");
+  if (!Number.isFinite(computedAtMs)) {
+    return { present: false, ageMs: null, freshness: "unavailable" };
+  }
+  const ageMs = Date.now() - computedAtMs;
+  if (ageMs < 0) {
+    return { present: true, ageMs: 0, freshness: "cached_fresh" };
+  }
+  if (ageMs <= _KPI_DIAGNOSTICS_CACHE_FRESH_MS) {
+    return { present: true, ageMs, freshness: "cached_fresh" };
+  }
+  if (ageMs <= _KPI_DIAGNOSTICS_CACHE_MAX_AGE_MS) {
+    return { present: true, ageMs, freshness: "cached_stale" };
+  }
+  return { present: false, ageMs, freshness: "unavailable" };
+}
+
+async function _refreshKpiDiagnosticsCache(env, normalizedScope) {
+  if (!env?.FLUXIDI_TRACKING || typeof env.FLUXIDI_TRACKING.put !== "function") {
+    return null;
+  }
+  try {
+    const [pendingDiagnostics, unpaidActionableStats] = await Promise.all([
+      _collectTripKpiPendingDiagnostics(env, normalizedScope),
+      _collectActionableUnpaidCompletedStats(env, normalizedScope),
+    ]);
+    const cache = {
+      trip_missing: Math.max(0, Math.round(Number(pendingDiagnostics?.trip_missing) || 0)),
+      trip_missing_active: Math.max(
+        0,
+        Math.round(Number(pendingDiagnostics?.trip_missing_active) || 0),
+      ),
+      paid_but_not_completed: Math.max(
+        0,
+        Math.round(Number(pendingDiagnostics?.paid_but_not_completed) || 0),
+      ),
+      paid_but_not_completed_active: Math.max(
+        0,
+        Math.round(Number(pendingDiagnostics?.paid_but_not_completed_active) || 0),
+      ),
+      actionable_count: Math.max(
+        0,
+        Math.round(Number(unpaidActionableStats?.actionable_count) || 0),
+      ),
+      tracking_only: Math.max(
+        0,
+        Math.round(Number(unpaidActionableStats?.tracking_only) || 0),
+      ),
+      stale_unactionable: Math.max(
+        0,
+        Math.round(Number(unpaidActionableStats?.stale_unactionable) || 0),
+      ),
+      missing_visible_payment_artifact: Math.max(
+        0,
+        Math.round(
+          Number(unpaidActionableStats?.missing_visible_payment_artifact) || 0,
+        ),
+      ),
+      total_scanned_unpaid_completed: Math.max(
+        0,
+        Math.round(
+          Number(unpaidActionableStats?.total_scanned_unpaid_completed) || 0,
+        ),
+      ),
+      computed_at_utc: new Date().toISOString(),
+    };
+    await kvPutJson(
+      env.FLUXIDI_TRACKING,
+      scopedDashboardKpiDiagnosticsCacheKey(normalizedScope),
+      cache,
+      _KPI_DIAGNOSTICS_CACHE_MAX_AGE_MS / 1000,
+    );
+    console.log(
+      `[TRIP_KPI_DIAGNOSTICS_CACHE][REFRESH] tenant=${maskScopeForTripKpiLog(normalizedScope.tenant_id)} company=${maskScopeForTripKpiLog(normalizedScope.company_id)} ok=true scanned_unpaid_completed=${cache.total_scanned_unpaid_completed} actionable=${cache.actionable_count} pending_trip_missing=${cache.trip_missing}`,
+    );
+    return cache;
+  } catch (err) {
+    console.log(
+      `[TRIP_KPI_DIAGNOSTICS_CACHE][REFRESH] tenant=${maskScopeForTripKpiLog(normalizedScope.tenant_id)} company=${maskScopeForTripKpiLog(normalizedScope.company_id)} ok=false reason=${(err && err.message) || "unknown"}`,
+    );
+    return null;
+  }
+}
+
+async function handleDashboardTripKpis(req, url, env, origin, ctx) {
   const requiredScope = parseRequiredTenantCompanyScope(req, url, null, {
     returnResponse: true,
     origin,
   });
   if (requiredScope instanceof Response) return requiredScope;
   const scope = requiredScope;
+  const requestStartedAt = Date.now();
+  const authStart = Date.now();
   const auth = await requireAdminOrCompanySessionForScope(req, url, env, scope, origin);
+  const authMs = Date.now() - authStart;
   if (!auth.ok) return auth.response;
   const monthRaw = safeStr(url.searchParams.get("month"), 16);
   const defaultMonth = new Date().toISOString().slice(0, 7);
@@ -3988,26 +4105,45 @@ async function handleDashboardTripKpis(req, url, env, origin) {
     );
   }
   const normalizedScope = normalizeScopedKeyScope(scope);
+  // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part B): fetch the four independent
+  // aggregate documents + the diagnostics cache blob in a single parallel
+  // batch. Pre-repair this was five serial `await kvGetJson(...)` calls
+  // (~200 ms wall time even on a warm namespace); the parallel batch
+  // collapses to a single round-trip class (~40–60 ms). Order of writes and
+  // read isolation is unchanged — the four aggregates already lived on
+  // independent keys, and the diagnostics cache is read-only here (writes
+  // happen exclusively in the background task).
+  const kpiReadStartedAt = Date.now();
+  const [
+    globalPrimary,
+    monthPrimary,
+    financeMonthPrimary,
+    debugCountersPrimary,
+    diagnosticsCachePrimary,
+  ] = await Promise.all([
+    kvGetJson(env.FLUXIDI_TRACKING, scopedDashboardTripKpisKey(normalizedScope)).catch(() => null),
+    kvGetJson(env.FLUXIDI_TRACKING, scopedDashboardTripMonthKpisKey(normalizedScope, selectedMonth)).catch(() => null),
+    kvGetJson(env.FLUXIDI_TRACKING, scopedDashboardBookingFinanceMonthKey(normalizedScope, selectedMonth)).catch(() => null),
+    kvGetJson(env.FLUXIDI_TRACKING, scopedDashboardTripDebugKey(normalizedScope)).catch(() => null),
+    kvGetJson(env.FLUXIDI_TRACKING, scopedDashboardKpiDiagnosticsCacheKey(normalizedScope)).catch(() => null),
+  ]);
+  const globalAggregate = globalPrimary ?? {};
+  const monthAggregate = monthPrimary ?? {};
+  const financeMonthEarly = financeMonthPrimary ?? {};
+  const debugCountersEarly = debugCountersPrimary ?? {};
+  const parallelReadMs = Date.now() - kpiReadStartedAt;
   // BUSINESS-KPI-FIRST-LOAD-P0-REPAIR-1: normal GET reads the authoritative
   // aggregates directly. Reconciliation only runs when aggregates are
   // absent/malformed OR when the caller explicitly asks for the debug
   // contributor rows. Bounded fallback cap keeps a cold tenant response
   // well below the client 12 s timeout; expensive repair belongs to
   // `/admin/dashboard/trip-kpis/reconcile`.
-  const kpiReadStartedAt = Date.now();
-  const globalPrimary = (await kvGetJson(
-    env.FLUXIDI_TRACKING,
-    scopedDashboardTripKpisKey(normalizedScope),
-  )) ?? {};
-  const monthPrimary = (await kvGetJson(
-    env.FLUXIDI_TRACKING,
-    scopedDashboardTripMonthKpisKey(normalizedScope, selectedMonth),
-  )) ?? {};
   const aggregatesReady = _tripKpiAggregatesStructurallyValidLocal(
-    globalPrimary,
-    monthPrimary,
+    globalAggregate,
+    monthAggregate,
   );
   const shouldReconcile = debugPaidContributorsEnabled || !aggregatesReady;
+  const reconcileStart = Date.now();
   const reconcileResult = shouldReconcile
     ? await _reconcileTripKpiMissingAmountForMonthBestEffort(
         env,
@@ -4022,46 +4158,134 @@ async function handleDashboardTripKpis(req, url, env, origin) {
         },
       )
     : null;
+  const reconcileMs = shouldReconcile ? Date.now() - reconcileStart : 0;
   const kpiReadSource = aggregatesReady
     ? 'aggregate'
     : reconcileResult?.trip_kpi_reconcile_budget_exceeded
       ? 'data_pending'
       : 'bounded_fallback';
   const kpiReadReconcile = shouldReconcile ? 'bounded' : 'skipped';
-  // Re-read month aggregate after a successful reconciliation so the
-  // response reflects the freshly-written values.
-  const global = globalPrimary && Object.keys(globalPrimary).length > 0
-    ? globalPrimary
-    : ((await kvGetJson(
-        env.FLUXIDI_TRACKING,
-        scopedDashboardTripKpisKey(normalizedScope),
-      )) ?? {});
+  // Re-read the month aggregate only when a reconciliation MAY have written
+  // new values (`shouldReconcile === true`). The pre-repair code
+  // unconditionally re-read `global` when the primary was empty — that
+  // masked missing aggregates as `{}` again and cost an extra KV round-trip
+  // per request. Post-repair we trust the parallel primary read and only
+  // re-fetch the month key when the reconcile step could have populated it.
+  const global = globalAggregate;
   const month = shouldReconcile
     ? ((await kvGetJson(
         env.FLUXIDI_TRACKING,
         scopedDashboardTripMonthKpisKey(normalizedScope, selectedMonth),
-      )) ?? monthPrimary ?? {})
-    : monthPrimary;
-  const financeMonth = (await kvGetJson(
-    env.FLUXIDI_TRACKING,
-    scopedDashboardBookingFinanceMonthKey(normalizedScope, selectedMonth),
-  )) ?? {};
-  const debugCounters = (await kvGetJson(
-    env.FLUXIDI_TRACKING,
-    scopedDashboardTripDebugKey(normalizedScope),
-  )) ?? {};
-  const pendingDiagnostics = await _collectTripKpiPendingDiagnostics(env, normalizedScope);
-  const unpaidActionableStats = await _collectActionableUnpaidCompletedStats(
-    env,
-    normalizedScope,
-  );
+      )) ?? monthAggregate ?? {})
+    : monthAggregate;
+  const financeMonth = financeMonthEarly;
+  const debugCounters = debugCountersEarly;
+  // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part B): the pending-booking scan and
+  // the actionable-unpaid scan each walk up to 5000 KV keys sequentially.
+  // Running them synchronously on every GET was the primary cause of the
+  // observed 12 s trip-KPI timeout (even with a warm aggregate).
+  //
+  // Read strategy:
+  //   * The GET picks up the cached diagnostic values in the parallel batch
+  //     above.
+  //   * If the cache is missing or stale we schedule a bounded background
+  //     refresh via `ctx.waitUntil` so the next warm request has fresh
+  //     values without any user-visible latency cost.
+  //   * If the cache is `unavailable` (never populated for this scope OR
+  //     past the hard age ceiling) we truthfully fall back the visible
+  //     `unpaid_completed_rides_count` KPI card to the trustworthy primary
+  //     aggregate value (`global.unpaid_completed_rides_count`) instead of
+  //     silently returning zero.
+  const diagnosticsCacheInfo = _kpiDiagnosticsCacheClassify(diagnosticsCachePrimary);
+  const diagnosticsCache = diagnosticsCacheInfo.present
+    ? diagnosticsCachePrimary
+    : null;
+  const diagnosticsSource = diagnosticsCacheInfo.freshness;
+  const shouldRefreshCacheBackground =
+    diagnosticsSource === "cached_stale" || diagnosticsSource === "unavailable";
+  if (
+    shouldRefreshCacheBackground &&
+    ctx &&
+    typeof ctx.waitUntil === "function"
+  ) {
+    ctx.waitUntil(_refreshKpiDiagnosticsCache(env, normalizedScope));
+  }
+  const pendingDiagnostics = diagnosticsCache
+    ? {
+        trip_missing: Math.max(0, Math.round(Number(diagnosticsCache.trip_missing) || 0)),
+        trip_missing_active: Math.max(
+          0,
+          Math.round(Number(diagnosticsCache.trip_missing_active) || 0),
+        ),
+        paid_but_not_completed: Math.max(
+          0,
+          Math.round(Number(diagnosticsCache.paid_but_not_completed) || 0),
+        ),
+        paid_but_not_completed_active: Math.max(
+          0,
+          Math.round(Number(diagnosticsCache.paid_but_not_completed_active) || 0),
+        ),
+      }
+    : {
+        trip_missing: 0,
+        trip_missing_active: 0,
+        paid_but_not_completed: 0,
+        paid_but_not_completed_active: 0,
+      };
+  const unpaidActionableStats = diagnosticsCache
+    ? {
+        actionable_count: Math.max(
+          0,
+          Math.round(Number(diagnosticsCache.actionable_count) || 0),
+        ),
+        tracking_only: Math.max(
+          0,
+          Math.round(Number(diagnosticsCache.tracking_only) || 0),
+        ),
+        stale_unactionable: Math.max(
+          0,
+          Math.round(Number(diagnosticsCache.stale_unactionable) || 0),
+        ),
+        missing_visible_payment_artifact: Math.max(
+          0,
+          Math.round(
+            Number(diagnosticsCache.missing_visible_payment_artifact) || 0,
+          ),
+        ),
+        total_scanned_unpaid_completed: Math.max(
+          0,
+          Math.round(
+            Number(diagnosticsCache.total_scanned_unpaid_completed) || 0,
+          ),
+        ),
+      }
+    : {
+        actionable_count: 0,
+        tracking_only: 0,
+        stale_unactionable: 0,
+        missing_visible_payment_artifact: 0,
+        total_scanned_unpaid_completed: 0,
+      };
+  const diagnosticsComputedAtUtc = diagnosticsCache?.computed_at_utc ?? null;
+  const diagnosticsAgeMs = Number.isFinite(diagnosticsCacheInfo.ageMs)
+    ? diagnosticsCacheInfo.ageMs
+    : null;
   const completed = Number.isFinite(Number(global.completed_rides_count))
     ? Math.max(0, Math.round(Number(global.completed_rides_count)))
     : 0;
   const unpaidRaw = Number.isFinite(Number(global.unpaid_completed_rides_count))
     ? Math.max(0, Math.round(Number(global.unpaid_completed_rides_count)))
     : 0;
-  const unpaid = Math.max(0, Math.round(Number(unpaidActionableStats.actionable_count) || 0));
+  // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part B): truthfully fall back the
+  // "actionable" refinement to the trustworthy primary aggregate value when
+  // diagnostics are unavailable. This preserves the classification (never
+  // overcounting) but ensures a scope with a genuine backlog of unpaid
+  // completed rides never sees the KPI card silently drop to zero the very
+  // first time it opens the dashboard on a scope whose diagnostic cache
+  // hasn't been populated yet.
+  const unpaid = diagnosticsCache
+    ? Math.max(0, Math.round(Number(unpaidActionableStats.actionable_count) || 0))
+    : unpaidRaw;
   const monthPaid = Number.isFinite(Number(month.monthly_paid_rides_count))
     ? Math.max(0, Math.round(Number(month.monthly_paid_rides_count)))
     : 0;
@@ -4243,6 +4467,13 @@ async function handleDashboardTripKpis(req, url, env, origin) {
       : 0,
     monthly_cancelled_paid_bookings_cents: monthCancelledPaidCents,
     monthly_cancelled_paid_bookings_eur: monthCancelledPaidCents / 100,
+    // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part B): expose the truthfulness of
+    // the diagnostic block so the client can render "—" instead of "0"
+    // when the background scan hasn't completed yet. Existing integer
+    // fields keep their pre-repair contract; the new fields are additive.
+    diagnostics_source: diagnosticsSource,
+    diagnostics_computed_at_utc: diagnosticsComputedAtUtc,
+    diagnostics_age_ms: diagnosticsAgeMs,
     diagnostics: {
       trip_missing: pendingDiagnostics.trip_missing,
       trip_missing_active: pendingDiagnostics.trip_missing_active,
@@ -4260,6 +4491,9 @@ async function handleDashboardTripKpis(req, url, env, origin) {
       scope_mismatch_historical: scopeMismatchCount,
       missing_amount: Math.max(monthMissingAmount, missingAmountDebugCount),
       missing_amount_historical: missingAmountDebugCount,
+      source: diagnosticsSource,
+      computed_at_utc: diagnosticsComputedAtUtc,
+      age_ms: diagnosticsAgeMs,
     },
     completeness: {
       level: "forward_aggregate",
@@ -4295,6 +4529,17 @@ async function handleDashboardTripKpis(req, url, env, origin) {
       elapsedMs: Date.now() - kpiReadStartedAt,
       status: 200,
     }),
+  );
+  // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part B): PII-free stage timings so
+  // deploy dashboards can distinguish "auth", "parallel aggregate read",
+  // "reconcile" and "total" cost. Integer millisecond counters only; no
+  // tenant/company/booking/trip/customer data.
+  const totalMs = Date.now() - requestStartedAt;
+  console.log(
+    `[TRIP_KPI_TIMING] endpoint=trip auth_ms=${authMs} ` +
+      `parallel_read_ms=${parallelReadMs} reconcile_ms=${reconcileMs} ` +
+      `total_ms=${totalMs} kpi_source=${kpiReadSource} ` +
+      `diagnostics_source=${diagnosticsSource}`,
   );
   return withCors(
     json(payload, { status: 200 }),
@@ -4976,11 +5221,41 @@ async function _streetRideShadowWriteGuard(env, scope, bookingId, parentBookingI
   return result;
 }
 
-async function handleTripsHistory(req, url, env, origin) {
+// COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part D): bounded-parallel fan-out for
+// per-trip KV reads in `handleTripsHistory`. Pre-repair the handler awaited
+// each trip record's `kvGetJson(scopedTripStorageKey)` (and its legacy
+// fallback) sequentially in a `for` loop — for a full driver index (up to
+// 200 trips) that meant 200 sequential round-trips (~8 s cold) with an
+// additional 200 round-trips for scope-migrated legacy trips (worst case).
+//
+// The concurrency ceiling matches the compliance-worker `handleRecent`
+// repair. Ordering is preserved by using an index-preserving parallel map.
+const _TRIPS_HISTORY_READ_CONCURRENCY = 16;
+
+async function _tripsHistoryBoundedParallelMap(input, concurrency, mapper) {
+  const limit = Math.max(1, Math.min(concurrency, input.length || 1));
+  const out = new Array(input.length);
+  let next = 0;
+  const workers = new Array(limit).fill(0).map(async () => {
+    for (;;) {
+      const i = next;
+      next += 1;
+      if (i >= input.length) return;
+      out[i] = await mapper(input[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+async function handleTripsHistory(req, url, env, origin, ctx) {
+  const requestStartedAt = Date.now();
   const requiredScope = parseRequiredTenantCompanyScope(req, url, null, { returnResponse: true, origin });
   if (requiredScope instanceof Response) return requiredScope;
   const scope = requiredScope;
+  const authStart = Date.now();
   const auth = await resolveTripsHistoryAuth(req, url, env, scope, origin);
+  const authMs = Date.now() - authStart;
   if (!auth.ok) return auth.response;
   const tenant_id = scope.tenant_id;
   const company_id = scope.company_id;
@@ -4996,33 +5271,77 @@ async function handleTripsHistory(req, url, env, origin) {
   const tripIds = Array.isArray(scopedIds)
     ? scopedIds
     : [];
+
+  // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part D): bounded-parallel read of the
+  // per-trip records. Each element of `resolutions` has the input index so
+  // the final `trips` array preserves the original canonical order —
+  // essential for the downstream `dedupeCanonicalStreetHistoryTrips` step
+  // which must see the same order pre-repair produced.
+  const readStart = Date.now();
+  const resolutions = await _tripsHistoryBoundedParallelMap(
+    tripIds,
+    _TRIPS_HISTORY_READ_CONCURRENCY,
+    async (raw_trip_id, index) => {
+      const safeTripId = safeStr(raw_trip_id, 128);
+      if (!safeTripId) return { index, keep: false };
+      const scopedTripStorageKey = scopedTripKey(scope, safeTripId);
+      let trip = null;
+      try {
+        trip = await kvGetJson(env.FLUXIDI_TRACKING, scopedTripStorageKey);
+      } catch (_) {
+        trip = null;
+      }
+      let migratedFromLegacy = false;
+      let legacyMigrationRecord = null;
+      if (!trip) {
+        let legacyTrip = null;
+        try {
+          legacyTrip = await kvGetJson(env.FLUXIDI_TRACKING, tripKey(safeTripId));
+        } catch (_) {
+          legacyTrip = null;
+        }
+        if (
+          legacyTrip &&
+          recordMatchesTenantCompanyScope(legacyTrip, scope)
+        ) {
+          const migratedTrip = applyCanonicalScopeToRecord(
+            { ...legacyTrip },
+            scope,
+          );
+          trip = migratedTrip;
+          migratedFromLegacy = true;
+          legacyMigrationRecord = migratedTrip;
+        }
+      }
+      return {
+        index,
+        keep: true,
+        safeTripId,
+        trip,
+        scopedTripStorageKey,
+        migratedFromLegacy,
+        legacyMigrationRecord,
+      };
+    },
+  );
+  const readMs = Date.now() - readStart;
+
   const trips = [];
   const cleaned = [];
+  const legacyMigrations = [];
 
-  for (const trip_id of tripIds) {
-    const safeTripId = safeStr(trip_id, 128);
-    if (!safeTripId) continue;
-    const scopedTripStorageKey = scopedTripKey(scope, safeTripId);
-    let trip = await kvGetJson(env.FLUXIDI_TRACKING, scopedTripStorageKey);
-    if (!trip) {
-      const legacyTrip = await kvGetJson(env.FLUXIDI_TRACKING, tripKey(safeTripId));
-      if (
-        legacyTrip &&
-        recordMatchesTenantCompanyScope(legacyTrip, scope)
-      ) {
-        const migratedTrip = applyCanonicalScopeToRecord(
-          { ...legacyTrip },
-          scope,
-        );
-        await kvPutJson(env.FLUXIDI_TRACKING, scopedTripStorageKey, migratedTrip, TTL_TRIP);
-        trip = migratedTrip;
-      }
-    }
+  for (const outcome of resolutions) {
+    if (!outcome || outcome.keep !== true) continue;
+    const trip = outcome.trip;
     if (!trip) continue;
-    if (!recordMatchesTenantCompanyScope(trip, scope)) {
-      continue;
+    if (!recordMatchesTenantCompanyScope(trip, scope)) continue;
+    cleaned.push(outcome.safeTripId);
+    if (outcome.migratedFromLegacy) {
+      legacyMigrations.push({
+        key: outcome.scopedTripStorageKey,
+        record: outcome.legacyMigrationRecord,
+      });
     }
-    cleaned.push(safeTripId);
     if (!includeActive && trip.status === "active") continue;
     if (!includeArchived && trip.archived === true) continue;
     trips.push(summarizeTrip(trip));
@@ -5034,13 +5353,43 @@ async function handleTripsHistory(req, url, env, origin) {
     // (<= 200 driver / <= 500 company).
   }
 
-  if (cleaned.length !== tripIds.length) {
-    await kvPutJson(
-      env.FLUXIDI_TRACKING,
-      scopedIndexKey,
-      cleaned.slice(0, driver_id ? 200 : 500),
-      TTL_TRIP
-    );
+  // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part D): defer the legacy-migration
+  // KV.put writes and the cleaned-index write to `ctx.waitUntil`. The
+  // migrations and the index compaction are read-time housekeeping — they
+  // do not affect the response payload for THIS request, and pre-repair
+  // they blocked the response by up to N+1 sequential KV.put round-trips.
+  // When `ctx` is not available (e.g. in tests without the CF runtime) the
+  // writes still run sequentially so behavior remains identical.
+  const persistLegacyMigrations = async () => {
+    for (const entry of legacyMigrations) {
+      try {
+        await kvPutJson(env.FLUXIDI_TRACKING, entry.key, entry.record, TTL_TRIP);
+      } catch (_) {
+        // best-effort migration only; do not surface failures on the
+        // read path.
+      }
+    }
+  };
+  const persistCleanedIndex = async () => {
+    if (cleaned.length !== tripIds.length) {
+      try {
+        await kvPutJson(
+          env.FLUXIDI_TRACKING,
+          scopedIndexKey,
+          cleaned.slice(0, driver_id ? 200 : 500),
+          TTL_TRIP,
+        );
+      } catch (_) {
+        // best-effort
+      }
+    }
+  };
+  if (ctx && typeof ctx.waitUntil === "function") {
+    if (legacyMigrations.length > 0) ctx.waitUntil(persistLegacyMigrations());
+    if (cleaned.length !== tripIds.length) ctx.waitUntil(persistCleanedIndex());
+  } else {
+    await persistLegacyMigrations();
+    await persistCleanedIndex();
   }
 
   // STREET-RIDE-HISTORY-DUPLICATE-ZERO-BOOKING-1B: collapse the planned
@@ -5051,12 +5400,25 @@ async function handleTripsHistory(req, url, env, origin) {
   //   -> canonical annotation -> dedupe -> counts -> pagination (slice).
   // Dedupe MUST precede the slice so a shadow can never split from its direct
   // trip across a page boundary.
+  const enrichStart = Date.now();
   const resolvedLinks = await _resolveStreetHistoryTrackingLinks(env, scope, trips);
   const canonical = dedupeCanonicalStreetHistoryTrips(trips, resolvedLinks);
   const canonicalTrips = canonical.trips.slice(0, limit);
+  const enrichMs = Date.now() - enrichStart;
   console.log(
     `[STREET_HISTORY_RUNTIME] source=worker canonicalVersion=${STREET_HISTORY_CANONICAL_VERSION} ` +
       `rowsBefore=${trips.length} rowsAfter=${canonical.trips.length} dropped=${canonical.dropped} returned=${canonicalTrips.length}`,
+  );
+  // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part D): PII-free stage timing so the
+  // deploy dashboard can distinguish "auth", "parallel per-trip read",
+  // "canonical enrich" and "total" wall-clock cost. Integer millisecond
+  // counters + integer trip counts only; no tenant/company/driver/trip IDs.
+  const totalMs = Date.now() - requestStartedAt;
+  console.log(
+    `[TRIPS_HISTORY_TIMING] endpoint=trips_history auth_ms=${authMs} ` +
+      `read_ms=${readMs} enrich_ms=${enrichMs} total_ms=${totalMs} ` +
+      `indexed=${tripIds.length} kept=${cleaned.length} ` +
+      `returned=${canonicalTrips.length} concurrency=${_TRIPS_HISTORY_READ_CONCURRENCY}`,
   );
 
   const resp = withCors(
@@ -7247,7 +7609,7 @@ export default {
       if (req.method === "GET" && url.pathname === "/health") return await handleHealth(req, env, origin);
 
       // direct trips
-      if (req.method === "GET" && url.pathname === "/admin/dashboard/trip-kpis") return await handleDashboardTripKpis(req, url, env, origin);
+      if (req.method === "GET" && url.pathname === "/admin/dashboard/trip-kpis") return await handleDashboardTripKpis(req, url, env, origin, ctx);
       if ((req.method === "POST" || req.method === "GET") && url.pathname === "/admin/dashboard/trip-kpis/reconcile") {
         return await handleDashboardTripKpisReconcile(req, url, env, origin);
       }
@@ -7258,7 +7620,7 @@ export default {
       if (req.method === "POST" && url.pathname === "/admin/dev/dashboard-kpis/reset") {
         return await handleDevDashboardKpisReset(req, url, env, origin);
       }
-      if (req.method === "GET" && url.pathname === "/trips/history") return await handleTripsHistory(req, url, env, origin);
+      if (req.method === "GET" && url.pathname === "/trips/history") return await handleTripsHistory(req, url, env, origin, ctx);
       if (req.method === "POST" && url.pathname === "/trips/archive") return await handleArchiveTrip(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/start-direct") return await handleStartDirectTrip(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/record-planned-stop") return await handleRecordPlannedStopTrip(req, url, env, origin, ctx);

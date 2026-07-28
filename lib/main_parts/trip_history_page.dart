@@ -225,9 +225,31 @@ _TripHistoryThemeTokens _tripHistoryThemeForVariant(
   }
 }
 
+// COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part E): sync-status enum surfaced to
+// the UI so the History page can show a small non-destructive warning
+// while a remote refresh is running or after a failure — without ever
+// replacing valid local rows with a spinner or an empty state.
+enum _TripHistorySyncStatus { idle, syncing, syncFailed }
+
 class _TripHistoryPageState extends State<_TripHistoryPage> {
-  late Future<List<_TripHistoryItem>> _future;
   _TripHistoryFilter _activeFilter = _TripHistoryFilter.all;
+
+  // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part E): local-first state.
+  //
+  // Pre-repair the page used `Future<List<_TripHistoryItem>>` with a
+  // remote-first `_fetch()` inside `FutureBuilder`, so locally-stored
+  // rides remained hidden behind a spinner for up to 10 s while the
+  // tracking-worker request either succeeded or timed out. Post-repair
+  // the local read populates `_items` first, then the authenticated
+  // remote request runs in the background and merges atomically.
+  List<_TripHistoryItem> _items = const <_TripHistoryItem>[];
+  bool _initialLoadStarted = false;
+  bool _localReadCompleted = false;
+  _TripHistorySyncStatus _syncStatus = _TripHistorySyncStatus.idle;
+  int _fetchGeneration = 0;
+  String _scopeSignature = '';
+  String? _workerCanonicalVersion;
+  bool _lastRemoteSucceeded = false;
 
   _TripHistoryItem _enrichTripHistoryItemWithBusinessRefs(
     _TripHistoryItem item, {
@@ -431,60 +453,188 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
   @override
   void initState() {
     super.initState();
-    _future = _fetch();
+    _scopeSignature = _computeScopeSignature();
+    _startLoad(reason: 'initState');
   }
 
-  Future<List<_TripHistoryItem>> _fetch() async {
-    DateTime? parseIso(String? iso) {
-      final text = iso?.trim();
-      if (text == null || text.isEmpty) return null;
-      return DateTime.tryParse(text);
-    }
-
-    void sortNewestFirst(List<_TripHistoryItem> items) {
-      items.sort((a, b) {
-        final aStopped = parseIso(a.stoppedAt);
-        final bStopped = parseIso(b.stoppedAt);
-        if (aStopped != null && bStopped != null) {
-          final c = bStopped.compareTo(aStopped);
-          if (c != 0) return c;
-        } else if (aStopped == null && bStopped != null) {
-          return 1;
-        } else if (aStopped != null && bStopped == null) {
-          return -1;
-        }
-        final aStarted = parseIso(a.startedAt);
-        final bStarted = parseIso(b.startedAt);
-        if (aStarted != null && bStarted != null) {
-          final c = bStarted.compareTo(aStarted);
-          if (c != 0) return c;
-        } else if (aStarted == null && bStarted != null) {
-          return 1;
-        } else if (aStarted != null && bStarted == null) {
-          return -1;
-        }
-        return b.tripId.compareTo(a.tripId);
+  @override
+  void didUpdateWidget(covariant _TripHistoryPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part E): if the caller rebuilds
+    // this page with a different tenant/company/driver (e.g. a company
+    // switch or a driver re-auth), invalidate the current items and
+    // restart the local-first cycle so we never surface another
+    // company's rows.
+    final nextSignature = _computeScopeSignature();
+    if (nextSignature != _scopeSignature) {
+      _scopeSignature = nextSignature;
+      setState(() {
+        _items = const <_TripHistoryItem>[];
+        _localReadCompleted = false;
+        _lastRemoteSucceeded = false;
+        _workerCanonicalVersion = null;
+        _syncStatus = _TripHistorySyncStatus.idle;
       });
+      _startLoad(reason: 'scope_changed');
     }
+  }
 
-    Future<List<_TripHistoryItem>> readLocalItems() async {
-      final localRecords = await _LocalDirectTripHistoryStore.readFor(
-        tenantId: widget.tenantId,
-        companyId: widget.companyId,
-        driverId: widget.driverId,
-        limit: 120,
-      );
-      return localRecords
-          .map(_TripHistoryItem.fromJson)
-          .where((e) => e.tripId.trim().isNotEmpty)
-          .toList(growable: false);
+  @override
+  void dispose() {
+    // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part E): bump the generation so
+    // any still-in-flight remote/local completions are dropped by the
+    // latest-wins guard rather than mutating disposed state.
+    _fetchGeneration += 1;
+    super.dispose();
+  }
+
+  String _computeScopeSignature() {
+    return '${widget.tenantId.trim()}::${widget.companyId.trim()}::${widget.driverId.trim()}';
+  }
+
+  static DateTime? _parseTripHistoryIso(String? iso) {
+    final text = iso?.trim();
+    if (text == null || text.isEmpty) return null;
+    return DateTime.tryParse(text);
+  }
+
+  static void _sortNewestFirst(List<_TripHistoryItem> items) {
+    items.sort((a, b) {
+      final aStopped = _parseTripHistoryIso(a.stoppedAt);
+      final bStopped = _parseTripHistoryIso(b.stoppedAt);
+      if (aStopped != null && bStopped != null) {
+        final c = bStopped.compareTo(aStopped);
+        if (c != 0) return c;
+      } else if (aStopped == null && bStopped != null) {
+        return 1;
+      } else if (aStopped != null && bStopped == null) {
+        return -1;
+      }
+      final aStarted = _parseTripHistoryIso(a.startedAt);
+      final bStarted = _parseTripHistoryIso(b.startedAt);
+      if (aStarted != null && bStarted != null) {
+        final c = bStarted.compareTo(aStarted);
+        if (c != 0) return c;
+      } else if (aStarted == null && bStarted != null) {
+        return 1;
+      } else if (aStarted != null && bStarted == null) {
+        return -1;
+      }
+      return b.tripId.compareTo(a.tripId);
+    });
+  }
+
+  Future<List<_TripHistoryItem>> _readLocalItems() async {
+    final localRecords = await _LocalDirectTripHistoryStore.readFor(
+      tenantId: widget.tenantId,
+      companyId: widget.companyId,
+      driverId: widget.driverId,
+      limit: 120,
+    );
+    return localRecords
+        .map(_TripHistoryItem.fromJson)
+        .where((e) => e.tripId.trim().isNotEmpty)
+        .toList(growable: false);
+  }
+
+  /// Applies the canonical dedupe + business-reference enrichment pipeline
+  /// to a merged (or local-only) list of items. Pure — no I/O.
+  List<_TripHistoryItem> _finalizeItems(
+    Iterable<_TripHistoryItem> input, {
+    required String sourceTag,
+    required bool cacheUsed,
+  }) {
+    final mergedByTripId = <String, _TripHistoryItem>{};
+    for (final item in input) {
+      mergedByTripId.putIfAbsent(item.tripId.trim(), () => item);
     }
+    final beforeItems = mergedByTripId.values.toList(growable: false);
+    final canonical = canonicalizeStreetHistory<_TripHistoryItem>(
+      beforeItems,
+      tripId: (item) => item.tripId,
+      kind: (item) => item.kind,
+      bookingId: (item) => item.bookingId ?? '',
+      parentBookingId: (item) => item.parentBookingId,
+      linkedTrackingTripId: (item) => item.linkedTrackingTripId,
+      isOperationalLeg: (item) => item.isOperationalLeg,
+      workerShadowHint: (item) => item.workerOperationalShadowHint,
+      onLog: (log) => debugPrint(log.toLogLine()),
+    );
+    debugPrint(
+      '[STREET_HISTORY_RUNTIME] source=client '
+      'workerCanonicalVersion=${_workerCanonicalVersion ?? 'absent'} '
+      'clientCanonicalVersion=$kStreetHistoryClientCanonicalVersion '
+      'rowsBefore=${beforeItems.length} rowsAfter=${canonical.length} '
+      'cacheUsed=$cacheUsed',
+    );
+    final finalized = canonical
+        .map(
+          (item) => _enrichTripHistoryItemWithBusinessRefs(
+            item,
+            sourceTag: sourceTag,
+          ),
+        )
+        .toList();
+    _sortNewestFirst(finalized);
+    return List<_TripHistoryItem>.unmodifiable(finalized);
+  }
 
-    late final List<_TripHistoryItem> backendItems;
-    // STREET-RIDE-HISTORY-DUPLICATE-ZERO-BOOKING-1A: worker canonical contract
-    // version, read from the `X-Fluxidi-History-Canonical` header or the
-    // `canonical_version` body field. `null` => stale worker (no dedupe at src).
-    String? workerCanonicalVersion;
+  /// COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part E): local-first lifecycle.
+  ///
+  /// 1. Read local rides and render them immediately (never behind a
+  ///    spinner).
+  /// 2. Start the authenticated remote request in the background.
+  /// 3. On success: atomically merge and replace `_items`.
+  /// 4. On timeout / failure: keep local rides visible, surface a small
+  ///    non-destructive sync warning.
+  ///
+  /// The `_fetchGeneration` guard prevents a stale completion from
+  /// overwriting a newer load (e.g. a route_return refresh that races an
+  /// earlier one), from mutating disposed state, or — in combination with
+  /// `_computeScopeSignature` — from surfacing another company's rows.
+  Future<void> _startLoad({required String reason}) async {
+    final generation = ++_fetchGeneration;
+    final scopeSignatureAtStart = _scopeSignature;
+    _initialLoadStarted = true;
+    debugPrint(
+      '[TRIP_HISTORY_LIFECYCLE] phase=start reason=$reason generation=$generation',
+    );
+
+    // ------------------------------------------------------------------
+    // 1. LOCAL PHASE — read + render immediately.
+    // ------------------------------------------------------------------
+    List<_TripHistoryItem> localItems;
+    try {
+      localItems = await _readLocalItems();
+    } catch (_) {
+      localItems = const <_TripHistoryItem>[];
+    }
+    if (!mounted ||
+        generation != _fetchGeneration ||
+        scopeSignatureAtStart != _scopeSignature) {
+      return;
+    }
+    final localFinalized = _finalizeItems(
+      localItems,
+      sourceTag: 'trip_history_local_first',
+      cacheUsed: true,
+    );
+    setState(() {
+      _items = localFinalized;
+      _localReadCompleted = true;
+      _syncStatus = _TripHistorySyncStatus.syncing;
+    });
+    debugPrint(
+      '[TRIP_HISTORY_LIFECYCLE] phase=local_done generation=$generation '
+      'local_count=${localFinalized.length}',
+    );
+
+    // ------------------------------------------------------------------
+    // 2. REMOTE PHASE — background, non-blocking for the UI.
+    // ------------------------------------------------------------------
+    List<_TripHistoryItem>? backendItems;
+    String? nextWorkerCanonicalVersion;
+    Object? remoteError;
     try {
       final uri = Uri.parse(
         '${widget.workerBaseUrl}$kTripsHistoryPath'
@@ -505,17 +655,17 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       if (decoded is! Map || decoded['ok'] != true) {
         throw Exception('Ongeldig antwoord van Worker');
       }
-      workerCanonicalVersion =
+      final rawVersion =
           (res.headers['x-fluxidi-history-canonical'] ??
                   decoded['canonical_version'])
               ?.toString()
               .trim();
-      if (workerCanonicalVersion != null && workerCanonicalVersion.isEmpty) {
-        workerCanonicalVersion = null;
-      }
+      nextWorkerCanonicalVersion = (rawVersion == null || rawVersion.isEmpty)
+          ? null
+          : rawVersion;
       final trips = decoded['trips'];
       backendItems = trips is! List
-          ? <_TripHistoryItem>[]
+          ? const <_TripHistoryItem>[]
           : trips
                 .whereType<Map>()
                 .map(
@@ -524,62 +674,79 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                 )
                 .where((e) => e.tripId.trim().isNotEmpty)
                 .toList(growable: false);
-    } catch (_) {
-      final localItems = await readLocalItems();
-      if (localItems.isEmpty) rethrow;
-      sortNewestFirst(localItems);
-      return localItems;
+    } catch (err) {
+      remoteError = err;
     }
 
-    final localItems = await readLocalItems();
-    final usedLocalFallback = backendItems.isEmpty && localItems.isNotEmpty;
-    final mergedByTripId = <String, _TripHistoryItem>{};
-    for (final item in backendItems) {
+    if (!mounted ||
+        generation != _fetchGeneration ||
+        scopeSignatureAtStart != _scopeSignature) {
+      debugPrint(
+        '[TRIP_HISTORY_LIFECYCLE] phase=remote_stale_dropped '
+        'generation=$generation currentGeneration=$_fetchGeneration '
+        'scopeChanged=${scopeSignatureAtStart != _scopeSignature}',
+      );
+      return;
+    }
+
+    if (remoteError != null) {
+      debugPrint(
+        '[TRIP_HISTORY_LIFECYCLE] phase=remote_failed generation=$generation '
+        'reason=${remoteError.runtimeType}',
+      );
+      setState(() {
+        _syncStatus = _TripHistorySyncStatus.syncFailed;
+        _lastRemoteSucceeded = false;
+      });
+      return;
+    }
+
+    _workerCanonicalVersion = nextWorkerCanonicalVersion;
+    // Re-read local rows a second time so a ride that finished during
+    // the network request still appears atomically merged (the pre-repair
+    // handler read local rides after the remote leg for the same reason).
+    List<_TripHistoryItem> latestLocalItems;
+    try {
+      latestLocalItems = await _readLocalItems();
+    } catch (_) {
+      latestLocalItems = const <_TripHistoryItem>[];
+    }
+    if (!mounted ||
+        generation != _fetchGeneration ||
+        scopeSignatureAtStart != _scopeSignature) {
+      return;
+    }
+    final safeBackendItems = backendItems ?? const <_TripHistoryItem>[];
+    // Backend takes precedence on ID collision (matches pre-repair merge
+    // order); local-only rows are appended after so their truthful
+    // `shouldRenderAsLocalOnlyUnconfirmed` badge survives.
+    final Map<String, _TripHistoryItem> mergedByTripId = {};
+    for (final item in safeBackendItems) {
       mergedByTripId[item.tripId.trim()] = item;
     }
-    for (final item in localItems) {
+    for (final item in latestLocalItems) {
       mergedByTripId.putIfAbsent(item.tripId.trim(), () => item);
     }
-    final beforeItems = mergedByTripId.values.toList(growable: false);
-    // STREET-RIDE-HISTORY-DUPLICATE-ZERO-BOOKING-1A: collapse the planned
-    // operational-leg shadow of a linked street-ride direct trip so one
-    // physical ride shows exactly one canonical row. Relational-id only:
-    // honours the worker `is_operational_shadow` hint when present, otherwise
-    // re-derives from booking_id + parent_booking_id + operational-leg flags.
-    final canonical = canonicalizeStreetHistory<_TripHistoryItem>(
-      beforeItems,
-      tripId: (item) => item.tripId,
-      kind: (item) => item.kind,
-      bookingId: (item) => item.bookingId ?? '',
-      parentBookingId: (item) => item.parentBookingId,
-      linkedTrackingTripId: (item) => item.linkedTrackingTripId,
-      isOperationalLeg: (item) => item.isOperationalLeg,
-      workerShadowHint: (item) => item.workerOperationalShadowHint,
-      onLog: (log) => debugPrint(log.toLogLine()),
+    final merged = _finalizeItems(
+      mergedByTripId.values,
+      sourceTag: 'trip_history_fetch_merge',
+      cacheUsed:
+          safeBackendItems.isEmpty && latestLocalItems.isNotEmpty,
     );
     debugPrint(
-      '[STREET_HISTORY_RUNTIME] source=client '
-      'workerCanonicalVersion=${workerCanonicalVersion ?? 'absent'} '
-      'clientCanonicalVersion=$kStreetHistoryClientCanonicalVersion '
-      'rowsBefore=${beforeItems.length} rowsAfter=${canonical.length} '
-      'cacheUsed=$usedLocalFallback',
+      '[TRIP_HISTORY_LIFECYCLE] phase=remote_done generation=$generation '
+      'backend_count=${safeBackendItems.length} '
+      'local_count=${latestLocalItems.length} merged_count=${merged.length}',
     );
-    final merged = canonical
-        .map(
-          (item) => _enrichTripHistoryItemWithBusinessRefs(
-            item,
-            sourceTag: 'trip_history_fetch_merge',
-          ),
-        )
-        .toList(growable: false);
-    sortNewestFirst(merged);
-    return merged;
+    setState(() {
+      _items = merged;
+      _syncStatus = _TripHistorySyncStatus.idle;
+      _lastRemoteSucceeded = true;
+    });
   }
 
   void _refresh() {
-    setState(() {
-      _future = _fetch();
-    });
+    _startLoad(reason: 'user_refresh');
   }
 
   String _formatDate(String? iso) {
@@ -1063,9 +1230,12 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                 color: background,
                 gradient: tokens.pageGradient,
               ),
-              child: FutureBuilder<List<_TripHistoryItem>>(
-                future: _future,
-                builder: (context, snapshot) {
+              // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part E): local-first
+              // presentation. `_items`, `_localReadCompleted` and
+              // `_syncStatus` drive the tree directly; no `FutureBuilder`
+              // and no top-level spinner over valid local rows.
+              child: Builder(
+                builder: (context) {
                   final tabLabels = <_TripHistoryFilter, String>{
                     _TripHistoryFilter.all: _tr(
                       nl: 'Alle ritten',
@@ -1494,28 +1664,21 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                     );
                   }
 
-                  if (snapshot.connectionState == ConnectionState.waiting) {
+                  // COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part E): only the
+                  // very first frame (before the local read completes)
+                  // shows a tiny placeholder. Once local rows are
+                  // available they are ALWAYS rendered directly, even
+                  // while a remote request is in flight or a previous
+                  // one failed. Never replace valid local rows with a
+                  // spinner or an empty state.
+                  final items = _items;
+                  final filteredItems = _applyFilter(items);
+                  final summary = _summary(items);
+                  if (!_localReadCompleted && items.isEmpty) {
                     return Center(
                       child: CircularProgressIndicator(color: accent),
                     );
                   }
-                  if (snapshot.hasError) {
-                    return Center(
-                      child: Container(
-                        margin: const EdgeInsets.all(16),
-                        padding: const EdgeInsets.all(16),
-                        decoration: cardDecoration(fallbackBorderOpacity: 0.30),
-                        child: Text(
-                          '${_receiptText('historyLoadFailed')}\n${snapshot.error}',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: textMuted),
-                        ),
-                      ),
-                    );
-                  }
-                  final items = snapshot.data ?? const <_TripHistoryItem>[];
-                  final filteredItems = _applyFilter(items);
-                  final summary = _summary(items);
                   if (items.isEmpty) {
                     return Center(
                       child: Container(
@@ -1529,9 +1692,68 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                       ),
                     );
                   }
+                  // Small non-destructive sync-status banner (renders
+                  // above the list). Truthful:
+                  //   * `syncing`     → "Bijwerken…" / "Syncing…"
+                  //   * `syncFailed`  → "Nieuwste ritten kunnen niet
+                  //                      worden opgehaald…"
+                  //   * `idle`        → null (no banner)
+                  Widget? syncBanner;
+                  final currentSyncStatus = _syncStatus;
+                  if (currentSyncStatus == _TripHistorySyncStatus.syncing) {
+                    syncBanner = _tripHistorySyncBanner(
+                      icon: Icons.sync,
+                      iconColor: accent.withOpacity(0.95),
+                      backgroundColor: surface,
+                      borderColor: accent.withOpacity(0.35),
+                      textColor: textMuted,
+                      text: _tr(
+                        nl: 'Ritten bijwerken…',
+                        en: 'Syncing rides…',
+                        fr: 'Synchronisation des courses…',
+                        es: 'Sincronizando viajes…',
+                      ),
+                      trailing: SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: accent.withOpacity(0.95),
+                        ),
+                      ),
+                    );
+                  } else if (currentSyncStatus ==
+                      _TripHistorySyncStatus.syncFailed) {
+                    syncBanner = _tripHistorySyncBanner(
+                      icon: Icons.cloud_off_rounded,
+                      iconColor: const Color(
+                        kLocalOnlyUnconfirmedBadgeColorArgb,
+                      ),
+                      backgroundColor: surface,
+                      borderColor: const Color(
+                        kLocalOnlyUnconfirmedBadgeColorArgb,
+                      ).withOpacity(0.55),
+                      textColor: textMuted,
+                      text: _tr(
+                        nl: 'Nieuwste ritten kunnen niet worden '
+                            'opgehaald. Lokale ritten blijven zichtbaar.',
+                        en: 'Could not fetch the latest rides. '
+                            'Local rides remain visible.',
+                        fr: 'Impossible de récupérer les dernières '
+                            'courses. Les courses locales restent visibles.',
+                        es: 'No se pudieron obtener los viajes más '
+                            'recientes. Los viajes locales siguen visibles.',
+                      ),
+                      trailing: null,
+                    );
+                  }
                   return ListView(
                     padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
                     children: [
+                      if (syncBanner != null) ...[
+                        syncBanner,
+                        const SizedBox(height: 10),
+                      ],
                       Container(
                         padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
                         decoration: overviewDecoration(),
@@ -1794,4 +2016,49 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       ),
     );
   }
+}
+
+// COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part E): shared visual for the small
+// non-destructive sync-status banner rendered above the History list. The
+// banner never covers or replaces trip cards — it stacks above them so
+// locally-stored rides remain visible during a remote refresh or after a
+// remote failure.
+Widget _tripHistorySyncBanner({
+  required IconData icon,
+  required Color iconColor,
+  required Color backgroundColor,
+  required Color borderColor,
+  required Color textColor,
+  required String text,
+  required Widget? trailing,
+}) {
+  return Container(
+    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+    decoration: BoxDecoration(
+      color: backgroundColor,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: borderColor),
+    ),
+    child: Row(
+      children: [
+        Icon(icon, size: 16, color: iconColor),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 11.6,
+              fontWeight: FontWeight.w600,
+              height: 1.3,
+            ),
+          ),
+        ),
+        if (trailing != null) ...[
+          const SizedBox(width: 8),
+          trailing,
+        ],
+      ],
+    ),
+  );
 }
