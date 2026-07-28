@@ -9723,11 +9723,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       // silently no-ops and the just-drawn route line sits off-screen, which
       // in the field reads as "no route line" because ETA/km still populate.
       _allowOverviewCamera = true;
-      // Preview always opens in overview presentation. The driver may promote
-      // to streetlevel via the preview presentation chip.
-      _navCameraViewMode = normaliseNavCameraViewModeForPreview(
-        _navCameraViewMode,
-      );
+      // NAV-CAMERA-FIELD-REGRESSION-1: always open preview in overview. Do not
+      // preserve a lingering streetView from a prior draft — that showed
+      // streetlevel chrome while fitBounds still owned the camera.
+      _navCameraViewMode = NavCameraViewMode.overview;
       _isWaiting = false;
       _waitStartedAt = null;
       _waitElapsed = Duration.zero;
@@ -11362,6 +11361,20 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   void _scheduleCockpitCameraAfterStyleSwitch() {
+    // NAV-CAMERA-FIELD-REGRESSION-1: preview streetlevel never enters follow,
+    // so the live-only gate below used to leave Mapbox's post-style-load
+    // default camera (extreme zoom-out / horizon on 3D) in place. Re-apply
+    // the cockpit profile exactly once after style ready.
+    if (mayRestorePreviewCockpitCameraAfterStyleSwitch(
+      hasPreviewDraft: _directRideDraft,
+      selectedViewMode: _navPreviewViewModeToken(),
+      liveRideActive: _liveRideActive,
+    )) {
+      unawaited(
+        _applyPreviewStreetlevelCameraIfEligible(reason: 'style_switch'),
+      );
+      return;
+    }
     if (_cameraMode != _CameraMode.follow || !_liveRideActive) return;
     if (!_navigationPresentationStateFor(
       _navCameraViewMode,
@@ -15869,12 +15882,14 @@ class _DriverHomePageState extends State<DriverHomePage>
       zoom: overrides.zoom,
       pitch: overrides.pitch,
     );
+    final bearingDeg = pos.heading.isFinite ? pos.heading : 0.0;
     try {
       await _map!.flyTo(
         mb.CameraOptions(
           center: _mbPoint(pos.longitude, pos.latitude),
           zoom: overrides.zoom,
           pitch: overrides.pitch,
+          bearing: bearingDeg,
           padding: mb.MbxEdgeInsets(
             top: overrides.padding.top,
             left: overrides.padding.left,
@@ -15890,6 +15905,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         'level=$_driverCockpitViewLevel '
         'zoom=${overrides.zoom.toStringAsFixed(2)} '
         'pitch=${overrides.pitch.toStringAsFixed(1)} '
+        'bearing=${bearingDeg.toStringAsFixed(1)} '
         'anchor=${overrides.anchorFraction.toStringAsFixed(3)}',
       );
     } catch (_) {
@@ -15911,11 +15927,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (_navCameraViewMode == target) return;
     setState(() {
       _navCameraViewMode = target;
-      if (target == NavCameraViewMode.overview) {
-        _allowOverviewCamera = true;
-      }
+      // NAV-CAMERA-FIELD-REGRESSION-1: streetlevel must own the camera.
+      // Leaving `_allowOverviewCamera` true let route-ready fitBounds
+      // overwrite the just-applied cockpit profile with a world/region frame.
+      _allowOverviewCamera = target == NavCameraViewMode.overview;
     });
     if (target == NavCameraViewMode.streetView) {
+      // Clear leftover overview zoom/pitch seeds so the known Pro2
+      // streetlevel targets apply exactly (not smoothed from a world frame).
+      _lastDriverCockpitAppliedZoom = null;
+      _lastDriverCockpitAppliedPitch = null;
       await _applyPreviewStreetlevelCameraIfEligible(
         reason: 'preview_chip_selected',
       );
@@ -20888,9 +20909,21 @@ class _DriverHomePageState extends State<DriverHomePage>
       await _drawRouteLine(_routeCoords, routeRenderEpoch: renderEpoch);
       // The preview frames the whole route; START hands the camera to the
       // cockpit follow profile.
+      // NAV-CAMERA-FIELD-REGRESSION-1: never let route-ready fitBounds
+      // overwrite an active preview streetlevel camera.
       if (_cameraMode == _CameraMode.overview &&
-          _isCurrentRouteRenderEpoch(renderEpoch)) {
+          _isCurrentRouteRenderEpoch(renderEpoch) &&
+          mayOverviewFitBoundsInPreview(
+            allowOverviewCamera: _allowOverviewCamera,
+            selectedViewMode: _navPreviewViewModeToken(),
+            liveRideActive: _liveRideActive,
+          )) {
         await _fitBoundsToRoute(_routeCoords);
+      } else if (_isCurrentRouteRenderEpoch(renderEpoch) &&
+          _navCameraViewMode == NavCameraViewMode.streetView) {
+        await _applyPreviewStreetlevelCameraIfEligible(
+          reason: 'preview_route_ready',
+        );
       }
       _scheduleDirectRideEstimateRefresh(reason: 'preview_route_ready');
       _clearNavRouteFailure();
@@ -23679,10 +23712,18 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _fitBoundsToRoute(List<_LonLat> coords) async {
+    // NAV-CAMERA-FIELD-REGRESSION-1: streetlevel owns the camera in preview;
+    // fitBounds must not re-frame the route while streetView is selected.
     final skip =
         _cameraMode == _CameraMode.follow ||
         _activeTripId != null ||
-        !_allowOverviewCamera;
+        !_allowOverviewCamera ||
+        _navCameraViewMode == NavCameraViewMode.streetView ||
+        !mayOverviewFitBoundsInPreview(
+          allowOverviewCamera: _allowOverviewCamera,
+          selectedViewMode: _navPreviewViewModeToken(),
+          liveRideActive: _liveRideActive,
+        );
     if (_map == null || coords.isEmpty) return;
     if (skip) return;
 
@@ -30009,6 +30050,14 @@ class _DriverHomePageState extends State<DriverHomePage>
       orientation:
           isLandscape ? Orientation.landscape : Orientation.portrait,
     );
+    // NAV-CAMERA-FIELD-REGRESSION-1: include the fare-estimate panel in the
+    // streetlevel nose-anchor / marker bottom offset so the vehicle clears
+    // the same chrome the View-column bottomStripReserve already reserves.
+    const double kDirectRideEstimatePanelReserveForAnchor = 96.0;
+    final bool estimatePanelForAnchor =
+        hasDirectDraft &&
+        _activeBooking == null &&
+        (_directRideDestinationText ?? '').trim().isNotEmpty;
     final double? streetLevelHudBottomOffset = streetLevelCockpit
         ? resolveStreetLevelMarkerBottomOffset(
             isLandscape: isLandscape,
@@ -30016,6 +30065,9 @@ class _DriverHomePageState extends State<DriverHomePage>
             secondaryActionRowHeight: kpiNavControlsLayout.rowHeight,
             primaryToSecondaryGap:
                 kpiNavControlsLayout.primaryToSecondaryGap,
+            extraBottomChrome: estimatePanelForAnchor
+                ? kDirectRideEstimatePanelReserveForAnchor
+                : 0.0,
           )
         : null;
     _streetLevelHudBottomOffset = streetLevelHudBottomOffset;

@@ -167,3 +167,33 @@ String normaliseNavPreviewViewMode(String current) {
   }
   return NavPreviewViewModeTokens.overview;
 }
+
+/// NAV-CAMERA-FIELD-REGRESSION-1: whether overview route framing (fit-bounds)
+/// may run on the pre-start preview surface.
+///
+/// Streetlevel ownership must win: once the driver selects streetlevel, an
+/// in-flight route-ready or style callback must not re-frame the whole route
+/// (which parks the camera at regional/world zoom and looks like a horizon).
+bool mayOverviewFitBoundsInPreview({
+  required bool allowOverviewCamera,
+  required String selectedViewMode,
+  required bool liveRideActive,
+}) {
+  if (liveRideActive) return false;
+  if (!allowOverviewCamera) return false;
+  if (selectedViewMode == NavPreviewViewModeTokens.streetView) return false;
+  return true;
+}
+
+/// NAV-CAMERA-FIELD-REGRESSION-1: whether a style switch in preview must
+/// re-apply the cockpit streetlevel camera. Live rides keep the existing
+/// `_followCameraTesla(style_switch)` path; preview never enters follow.
+bool mayRestorePreviewCockpitCameraAfterStyleSwitch({
+  required bool hasPreviewDraft,
+  required String selectedViewMode,
+  required bool liveRideActive,
+}) {
+  if (liveRideActive) return false;
+  if (!hasPreviewDraft) return false;
+  return selectedViewMode == NavPreviewViewModeTokens.streetView;
+}

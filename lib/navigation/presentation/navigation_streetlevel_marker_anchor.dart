@@ -72,12 +72,18 @@ double streetLevelMarkerBottomOffset({
 
 /// Convenience: resolves the Street Level marker bottom offset directly from
 /// the KPI layout inputs (panel height + gap), excluding the safe-area inset.
+///
+/// NAV-CAMERA-FIELD-REGRESSION-1: [extraBottomChrome] covers optional chrome
+/// stacked below the KPI secondary row (e.g. the direct-ride fare estimate
+/// panel) so the marker/camera nose-anchor clear the same bottom strip as
+/// the View-column `bottomStripReserve`.
 double resolveStreetLevelMarkerBottomOffset({
   required bool isLandscape,
   required bool hasSecondaryActions,
   required double secondaryActionRowHeight,
   required double primaryToSecondaryGap,
   double gapAboveKpi = kStreetLevelMarkerGapAboveKpi,
+  double extraBottomChrome = 0.0,
 }) {
   final panelHeight = streetLevelKpiPanelHeight(
     isLandscape: isLandscape,
@@ -85,8 +91,10 @@ double resolveStreetLevelMarkerBottomOffset({
     secondaryActionRowHeight: math.max(0, secondaryActionRowHeight),
     primaryToSecondaryGap: math.max(0, primaryToSecondaryGap),
   );
+  final extra =
+      extraBottomChrome.isFinite && extraBottomChrome > 0 ? extraBottomChrome : 0.0;
   return streetLevelMarkerBottomOffset(
-    kpiPanelHeight: panelHeight,
+    kpiPanelHeight: panelHeight + extra,
     gapAboveKpi: gapAboveKpi,
   );
 }
