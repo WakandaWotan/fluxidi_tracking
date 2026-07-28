@@ -71,6 +71,11 @@ import {
 } from "./modules/billit_provider.js";
 import { peppolIdentifierFromBelgianEnterpriseNumber } from "./modules/peppol_readiness.js";
 import {
+  reconcileBillitOrderTotalAgainstDocument,
+  formatBillitTotalReconciliationDiag,
+  buildBillitTotalReconciliationFailurePayload,
+} from "./modules/billit_total_reconciliation.js";
+import {
   COMPLIANCE_APPEND_PATH,
   buildComplianceAppendUrl,
   normalizeCompliancePaymentStatus,
@@ -1187,6 +1192,32 @@ async function handleAdminBillitSandboxOrderCreate({ request, url, env, document
     officialPreview,
     { idempotency_key: idempotencyKey },
   );
+
+  // 11b. B12-P1-1: the payload carries OrderLines but no document total, so
+  // Billit derives the order total itself. Refuse the export when that derived
+  // total disagrees with the authoritative issued invoice total by more than one
+  // cent. Runs on the FINAL createRequest body (the exact lines and currency
+  // that would be sent) and before the token decrypt, so a mismatch costs no
+  // outbound call and never touches the document.
+  const totalReconciliation = reconcileBillitOrderTotalAgainstDocument({
+    documentRecord: record,
+    orderLines: createRequest?.body?.OrderLines,
+    orderCurrency: createRequest?.body?.Currency,
+  });
+  if (!totalReconciliation.ok) {
+    console.log(
+      `[BILLIT_ORDER_CREATE][SANDBOX][TOTAL_RECONCILIATION_FAILED] doc=${docId.slice(0, 8)} ${formatBillitTotalReconciliationDiag(totalReconciliation)}`,
+    );
+    return json(
+      {
+        ...buildBillitTotalReconciliationFailurePayload(totalReconciliation),
+        document_id: docId,
+        document_number: recordDocNumber,
+        environment: "sandbox",
+      },
+      409,
+    );
+  }
 
   // 12. Acquire a usable sandbox access token (decrypt + single-use refresh).
   const tokenResult = await acquireBillitSandboxAccessToken(env, scope, config);
@@ -3531,6 +3562,24 @@ async function ensureBillitSandboxOrderForIssuedInvoice(
   const createRequest = buildBillitOfficialOrderCreateRequestFromPreview(officialPreview, {
     idempotency_key: idempotencyKey,
   });
+
+  // 3b. B12-P1-1: same fail-closed total reconciliation as the admin create
+  // route. The auto-create path runs unattended from the paid lifecycle, so a
+  // silent total divergence would be even harder to notice here.
+  const totalReconciliation = reconcileBillitOrderTotalAgainstDocument({
+    documentRecord,
+    orderLines: createRequest?.body?.OrderLines,
+    orderCurrency: createRequest?.body?.Currency,
+  });
+  if (!totalReconciliation.ok) {
+    console.log(
+      `[BILLIT_AUTO_CREATE][SANDBOX][TOTAL_RECONCILIATION_FAILED] doc=${docId.slice(0, 8)} ${formatBillitTotalReconciliationDiag(totalReconciliation)}`,
+    );
+    return {
+      ...buildBillitTotalReconciliationFailurePayload(totalReconciliation),
+      status: 409,
+    };
+  }
 
   // 4. Acquire a usable sandbox access token.
   const tokenResult = await acquireBillitSandboxAccessToken(env, scope, config);
@@ -35932,7 +35981,27 @@ export default {
       // =========================
       // INVOICE PREVIEW (HTML)
       // =========================
+      // B12-P1-2: these two legacy test-render routes were anonymous. Both feed
+      // caller-supplied body fields into the tenant-branded invoice template, and
+      // /invoice/pdf additionally spends paid PDFShift capacity, so anyone could
+      // mint branded output and burn the render quota. They now require the same
+      // header-based admin token as every other internal document/test route.
+      // Input normalization, the seller profile and the rendering itself are
+      // deliberately unchanged. The CORS preflight above answers OPTIONS before
+      // dispatch and never reaches these POST handlers.
       if (url.pathname === "/invoice/preview" && request.method === "POST") {
+        try {
+          _requireAdmin(request, url, env);
+        } catch (err) {
+          const message = String(err?.message || "Unauthorized");
+          return json(
+            {
+              ok: false,
+              error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+            },
+            message === "Unauthorized" ? 401 : 500,
+          );
+        }
         const body = await safeJson(request);
         const demo = normalizeInvoiceInputForTest(body);
         const commProfile = await resolveTenantCommunicationProfile(env);
@@ -35944,6 +36013,18 @@ export default {
       // INVOICE PDF (TEST)
       // =========================
       if (url.pathname === "/invoice/pdf" && request.method === "POST") {
+        try {
+          _requireAdmin(request, url, env);
+        } catch (err) {
+          const message = String(err?.message || "Unauthorized");
+          return json(
+            {
+              ok: false,
+              error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+            },
+            message === "Unauthorized" ? 401 : 500,
+          );
+        }
         const body = await safeJson(request);
         const demo = normalizeInvoiceInputForTest(body);
         const commProfile = await resolveTenantCommunicationProfile(env);
