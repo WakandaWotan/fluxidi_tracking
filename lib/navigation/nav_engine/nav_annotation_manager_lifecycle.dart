@@ -401,14 +401,11 @@ class NavAnnotationManagerGate {
 /// NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part D: central emergency
 /// kill-switch for active-ride map-style switching.
 ///
-/// FLIPPED TO FALSE (from the previous default `true`) after the mobile-data
-/// freeze audit proved that a live style swap can drain and recreate every
-/// annotation manager on the UI/platform pipeline while the GPS/meter
-/// callback is still awaiting Mapbox work. During an active ride we now
-/// keep the selected navigation-day/-night style fixed until STOP; live
-/// style customization is deferred to the pre-START and after-STOP phases,
-/// where it is safe.
-const bool kNavActiveRideStyleSwitchEnabled = false;
+/// NAV-RELEASE-SIMPLE-STREETLEVEL-1: re-enabled so Light/Dark/3D/Satellite
+/// remain usable during a live ride. Style swaps still use the transactional
+/// annotation-manager drain + latest-wins coalesce path; the fixed
+/// streetlevel camera is restored exactly once after each style load.
+const bool kNavActiveRideStyleSwitchEnabled = true;
 
 /// Fail-safe decision (Phase 6): given whether a live ride is active and a
 /// style transaction is already running, should a new style tap begin a swap

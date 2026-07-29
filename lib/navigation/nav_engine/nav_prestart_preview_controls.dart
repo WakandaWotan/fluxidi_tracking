@@ -98,9 +98,8 @@ bool navPreviewRouteDrawable(int routePointCount) =>
 /// Product rules:
 ///   * preview → route + style + zoom + marker + offline + START, with no live
 ///     ride required;
-///   * active ride → presentation locked: style selection and manual zoom are
-///     hidden, the route stays visible, offline entry and the marker selector
-///     stay usable;
+///   * active ride → fixed streetlevel: style + zoom remain available (release
+///     simplification); route, offline entry and marker selector stay usable;
 ///   * after STOP the surface falls back to preview/idle, which restores the
 ///     controls without any extra call.
 NavMapControlAvailability resolveNavMapControlAvailability({
@@ -137,8 +136,8 @@ NavMapControlAvailability resolveNavMapControlAvailability({
     case NavMapSurfacePhase.activeRide:
       return NavMapControlAvailability(
         routePreview: routeDrawable,
-        styleSelector: false,
-        zoomControls: false,
+        styleSelector: true,
+        zoomControls: true,
         markerSelector: true,
         offlineMapsEntry: true,
         startAction: false,

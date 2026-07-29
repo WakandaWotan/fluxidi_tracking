@@ -632,6 +632,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   double? _lastDriverCockpitAppliedZoom;
   double? _lastDriverCockpitAppliedPitch;
   int? _lastDriverCockpitAppliedLevel;
+  /// Sticky bottom-chrome reserve for fixed streetlevel (never shrinks on a
+  /// temporary incomplete measurement).
+  double? _lastReliableBottomChromeReserve;
   final DriverCockpitViewZoomLifecycle _driverCockpitViewZoomLifecycle =
       DriverCockpitViewZoomLifecycle();
   String? _lastNavPresCameraTargetSignature;
@@ -5989,6 +5992,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     _driverCockpitViewLevel = clampDriverCockpitViewLevel(
       carryOver.startViewLevel,
     );
+    // NAV-RELEASE-SIMPLE-STREETLEVEL-1: START must enter fixed streetlevel
+    // ownership — never leave a lingering overview mode after enterStreetLevel.
+    if (decision.enterStreetLevel) {
+      _navCameraViewMode = NavCameraViewMode.streetView;
+      _allowOverviewCamera = false;
+    }
     logNavActiveRideStart(
       style: carryOver.preserveStyle
           ? _driverCockpitMapStyleLabel()
@@ -6013,6 +6022,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (_driverMapVisualMode == DriverMapVisualMode.satellite) {
       return 'satellite';
     }
+    if (_driverMapVisualMode == DriverMapVisualMode.threeD) {
+      return '3d';
+    }
     if (!kNavigation3dCockpitSceneEnabled) return 'street';
     switch (_driverCockpitMapVisualStyle) {
       case DriverCockpitMapVisualStyle.light:
@@ -6020,7 +6032,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       case DriverCockpitMapVisualStyle.dark:
         return 'dark';
       case DriverCockpitMapVisualStyle.standard3d:
-        return 'standard3d';
+        return '3d';
       case DriverCockpitMapVisualStyle.satellite:
         return 'satellite';
     }
@@ -9717,16 +9729,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       _cameraMode = _CameraMode.overview;
       _hasSwitchedToFollow = false;
       _followCar = false;
-      // NAV-PRESTART-FIELD-BLOCKER-3 (Problem A + B): allow overview camera
-      // in preview so the route bounds-fit actually runs when the route
-      // package arrives. Without this the initial `_fitBoundsToRoute` call
-      // silently no-ops and the just-drawn route line sits off-screen, which
-      // in the field reads as "no route line" because ETA/km still populate.
-      _allowOverviewCamera = true;
-      // NAV-CAMERA-FIELD-REGRESSION-1: always open preview in overview. Do not
-      // preserve a lingering streetView from a prior draft — that showed
-      // streetlevel chrome while fitBounds still owned the camera.
-      _navCameraViewMode = NavCameraViewMode.overview;
+      // NAV-RELEASE-SIMPLE-STREETLEVEL-1: destination + route open under the
+      // single fixed streetlevel camera owner. Overview / fitBounds must not
+      // own the preview surface.
+      _allowOverviewCamera = false;
+      _navCameraViewMode = NavCameraViewMode.streetView;
       _isWaiting = false;
       _waitStartedAt = null;
       _waitElapsed = Duration.zero;
@@ -11026,6 +11033,14 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   bool _isDriverCockpit3dSceneEligible() {
     if (!kNavigation3dCockpitSceneEnabled) return false;
+    // NAV-RELEASE-SIMPLE-STREETLEVEL-1: real 3D is active whenever the driver
+    // selected the 3D style on a preview draft or live follow surface.
+    // Previously preview required follow+live, so UI "3D" stayed visualMode=street.
+    if (_driverCockpitMapVisualStyle == DriverCockpitMapVisualStyle.standard3d ||
+        _driverMapVisualMode == DriverMapVisualMode.threeD) {
+      return _directRideDraft ||
+          (_cameraMode == _CameraMode.follow && _liveRideActive);
+    }
     if (_cameraMode != _CameraMode.follow || !_liveRideActive) return false;
     return _navigationPresentationStateFor(
       _navCameraViewMode,
@@ -11342,7 +11357,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           _mapThemeOverride = MapThemeMode.dark;
           _driverMapVisualMode = DriverMapVisualMode.street;
         case DriverCockpitMapVisualStyle.standard3d:
-          _driverMapVisualMode = DriverMapVisualMode.street;
+          // Real 3D presentation — never leave visualMode=street while UI says 3D.
+          _driverMapVisualMode = DriverMapVisualMode.threeD;
         case DriverCockpitMapVisualStyle.satellite:
           _driverMapVisualMode = DriverMapVisualMode.satellite;
       }
@@ -12285,9 +12301,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       await _setDriverCockpitMapVisualStyle(next);
       return;
     }
-    final next = _driverMapVisualMode == DriverMapVisualMode.street
-        ? DriverMapVisualMode.satellite
-        : DriverMapVisualMode.street;
+    final next = _driverMapVisualMode == DriverMapVisualMode.satellite
+        ? DriverMapVisualMode.street
+        : DriverMapVisualMode.satellite;
     if (!_liveRideActive) _preStartStyleSelected = true;
     if (mounted) {
       setState(() => _driverMapVisualMode = next);
@@ -14801,6 +14817,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       lookahead: lookahead,
       viewLevel: _driverCockpitViewLevel,
       directAdjust: directAdjust,
+      fixedStreetLevelZoomOnly: true,
     );
     final noseAnchor = resolveDriverCockpitNoseAnchorFraction(
       isTablet: isTablet,
@@ -14885,9 +14902,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       styleGeneration: _styleRequestGeneration,
       reason: increase ? 'plus' : 'minus',
     );
-    // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part D: block manual +/- zoom
-    // during an active ride. Product rule: fixed navigation style + latest-
-    // wins camera follow only.
+    // NAV-RELEASE-SIMPLE-STREETLEVEL-1: zoom +/- allowed in preview and live.
     final blockReason = navActiveRideZoomAllowed(liveRideActive: _liveRideActive);
     if (blockReason != NavActiveRideBlockReason.none) {
       logNavActiveRideBlocked(
@@ -14905,11 +14920,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       return;
     }
-    // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 1): the presentation
-    // state only advertises cockpit controls for the live driver view, so this
-    // guard also rejected pre-start preview zoom. Preview is explicitly allowed;
-    // the selected level becomes the active-ride starting level at START.
-    if (_navMapControls.phase != NavMapSurfacePhase.preview &&
+    // NAV-RELEASE-SIMPLE-STREETLEVEL-1: zoom is available whenever the map
+    // control surface advertises zoomControls (preview + active ride).
+    if (!_navMapControls.zoomControls &&
         !_navigationPresentationStateFor(
           _navCameraViewMode,
         ).showDriverCockpitCameraControls) {
@@ -15292,9 +15305,18 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  /// Compact view-level label for the +/- controls, e.g. `View 7/13`.
+  /// Compact zoom label for the +/- controls (never View N/13).
   String _driverCockpitViewLevelLabel() {
-    return 'View $_driverCockpitViewLevel/$kDriverCockpitViewLevelMax';
+    final isTablet = MediaQuery.sizeOf(context).width >= 600;
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
+    final zoom = _lastDriverCockpitAppliedZoom ??
+        driverCockpitViewLevelTargetZoom(
+          isTablet: isTablet,
+          isLandscape: isLandscape,
+          level: _driverCockpitViewLevel,
+        );
+    return fixedStreetLevelZoomLabel(zoom);
   }
 
   /// NAV-PRES-3G: compact field-test debug line — applied camera values.
@@ -15913,75 +15935,37 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
-  /// NAV-PRESTART-FIELD-BLOCKER-3 (Problem B + C): pre-start camera presentation
-  /// toggle wired to the preview-only preset chip. Overview restores the
-  /// route bounds-fit; streetlevel applies the cockpit camera profile.
+  /// NAV-RELEASE-SIMPLE-STREETLEVEL-1: presentation toggle retired. Kept as a
+  /// no-op so any stray call site cannot switch away from fixed streetlevel.
   Future<void> _setNavPreStartPresentation(
     NavPreviewPresentationMode mode,
   ) async {
     if (!mounted) return;
     if (_liveRideActive) return;
-    final target = mode == NavPreviewPresentationMode.streetLevel
-        ? NavCameraViewMode.streetView
-        : NavCameraViewMode.overview;
-    if (_navCameraViewMode == target) return;
-    setState(() {
-      _navCameraViewMode = target;
-      // NAV-CAMERA-FIELD-REGRESSION-1: streetlevel must own the camera.
-      // Leaving `_allowOverviewCamera` true let route-ready fitBounds
-      // overwrite the just-applied cockpit profile with a world/region frame.
-      _allowOverviewCamera = target == NavCameraViewMode.overview;
-    });
-    if (target == NavCameraViewMode.streetView) {
-      // Clear leftover overview zoom/pitch seeds so the known Pro2
-      // streetlevel targets apply exactly (not smoothed from a world frame).
-      _lastDriverCockpitAppliedZoom = null;
-      _lastDriverCockpitAppliedPitch = null;
-      await _applyPreviewStreetlevelCameraIfEligible(
-        reason: 'preview_chip_selected',
-      );
-    } else if (_routeCoords.length >= 2) {
-      await _fitBoundsToRoute(_routeCoords);
+    if (_navCameraViewMode != NavCameraViewMode.streetView) {
+      setState(() {
+        _navCameraViewMode = NavCameraViewMode.streetView;
+        _allowOverviewCamera = false;
+      });
     }
+    await _applyPreviewStreetlevelCameraIfEligible(
+      reason: 'fixed_streetlevel_enforce',
+    );
   }
 
+  /// NAV-RELEASE-SIMPLE-STREETLEVEL-1: live view-mode cycling removed.
   void _toggleNavCameraViewMode() {
     if (_cameraMode != _CameraMode.follow || !_liveRideActive) return;
-    final previous = _navCameraViewMode;
-    final next = toggleNavCameraViewMode(previous);
-    assert(
-      _navigationPresentationStateFor(next).navCameraViewMode == next,
-      'NAV-PRES-1 presentation mapping must mirror NavCameraViewMode',
-    );
-    setState(() => _navCameraViewMode = next);
-    _lastSmoothedCameraBearing = null;
-    _stopStreetlevelFollowPump();
-    _resetDriverCockpitCameraState();
-    unawaited(_applyMapStyleForMode());
-    _logNavR15CameraView(
-      mode: next,
-      previousMode: previous,
-      source: 'user_toggle',
-    );
+    if (_navCameraViewMode != NavCameraViewMode.streetView) {
+      setState(() => _navCameraViewMode = NavCameraViewMode.streetView);
+    }
+    _allowOverviewCamera = false;
     final pos = _lastPos;
     if (pos != null) {
       unawaited(
-        _followCameraTesla(pos, force: true, cameraReason: 'view_mode'),
+        _followCameraTesla(pos, force: true, cameraReason: 'fixed_streetlevel'),
       );
     }
-    unawaited(
-      _applyMapboxTaxiMarkerPresentationOpacity(source: 'view_mode_change'),
-    );
-    // NAV-TELLERS-STREETLEVEL-SCREEN-UP-MARKER-1: entering/leaving Streetlevel
-    // flips the required rotation policy. Re-apply immediately so the visible
-    // marker (Tellers Mapbox annotation or ordinary Streetlevel Mapbox
-    // annotation without HUD) snaps to VIEWPORT + iconRotate 0 (Streetlevel)
-    // or back to MAP + pose-bearing (Overview / North-up) without waiting
-    // for the next GPS tick.
-    unawaited(
-      _reapplyDriverMarkerRotationPolicy(source: 'view_mode_change'),
-    );
-    unawaited(_ensureDriverVehicleModelLayer());
   }
 
   void _logNavR15CameraView({
@@ -20907,20 +20891,13 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (mounted) setState(() {});
       await _drawPins(fromLL, toLL, routeRenderEpoch: renderEpoch);
       await _drawRouteLine(_routeCoords, routeRenderEpoch: renderEpoch);
-      // The preview frames the whole route; START hands the camera to the
-      // cockpit follow profile.
-      // NAV-CAMERA-FIELD-REGRESSION-1: never let route-ready fitBounds
-      // overwrite an active preview streetlevel camera.
-      if (_cameraMode == _CameraMode.overview &&
-          _isCurrentRouteRenderEpoch(renderEpoch) &&
-          mayOverviewFitBoundsInPreview(
-            allowOverviewCamera: _allowOverviewCamera,
-            selectedViewMode: _navPreviewViewModeToken(),
-            liveRideActive: _liveRideActive,
-          )) {
-        await _fitBoundsToRoute(_routeCoords);
-      } else if (_isCurrentRouteRenderEpoch(renderEpoch) &&
-          _navCameraViewMode == NavCameraViewMode.streetView) {
+      // NAV-RELEASE-SIMPLE-STREETLEVEL-1: route-ready applies fixed streetlevel
+      // once. fitBounds / overview framing is retired for the release surface.
+      if (_isCurrentRouteRenderEpoch(renderEpoch)) {
+        if (_navCameraViewMode != NavCameraViewMode.streetView) {
+          _navCameraViewMode = NavCameraViewMode.streetView;
+          _allowOverviewCamera = false;
+        }
         await _applyPreviewStreetlevelCameraIfEligible(
           reason: 'preview_route_ready',
         );
@@ -21738,12 +21715,22 @@ class _DriverHomePageState extends State<DriverHomePage>
     unawaited(
       _reapplyDriverMarkerRotationPolicy(source: 'tellers_close'),
     );
+    // NAV-RELEASE-SIMPLE-STREETLEVEL-1: returning to Navigatie restores the
+    // single fixed streetlevel camera owner (no presentation re-init).
+    if (_navCameraViewMode != NavCameraViewMode.streetView) {
+      _navCameraViewMode = NavCameraViewMode.streetView;
+    }
+    _allowOverviewCamera = false;
     final pos = _lastPos;
     if (pos != null &&
         _cameraMode == _CameraMode.follow &&
         _liveRideActive) {
       unawaited(
         _followCameraTesla(pos, force: true, cameraReason: 'tellers_close'),
+      );
+    } else if (!_liveRideActive && _directRideDraft) {
+      unawaited(
+        _applyPreviewStreetlevelCameraIfEligible(reason: 'tellers_close'),
       );
     }
     if (!mounted) return;
@@ -21977,10 +21964,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         _cameraMode == _CameraMode.follow ||
         _routeCoords.length >= 2 ||
         navMapControls.phase == NavMapSurfacePhase.preview;
-    // Active ride: hidden rather than shown-and-blocked, so the driver is never
-    // offered a control that refuses every tap.
+    // NAV-RELEASE-SIMPLE-STREETLEVEL-1: style control stays available in
+    // preview and during the live ride (Light / Dark / 3D / Satellite).
     final showMapStyleToggle =
-        kDriverMapSatelliteToggleEnabled && showNavMapTools && !_liveRideActive;
+        kDriverMapSatelliteToggleEnabled && showNavMapTools;
     final showOffline = showNavMapTools;
     final inFollowNav = _cameraMode == _CameraMode.follow;
 
@@ -22049,95 +22036,13 @@ class _DriverHomePageState extends State<DriverHomePage>
       ),
     ];
 
-    // NAV-PRESTART-FIELD-BLOCKER-3 (Problem C + D): pre-start-only camera
-    // presentation chip. Restores the older tablet build's dedicated
-    // camera-preset control alongside the map style chip so overview and
-    // streetlevel are user-selectable BEFORE START.
-    if (!_liveRideActive && navMapControls.phase == NavMapSurfacePhase.preview) {
-      final NavPreviewPresentationMode currentPreviewMode =
-          _navCameraViewMode == NavCameraViewMode.streetView
-              ? NavPreviewPresentationMode.streetLevel
-              : NavPreviewPresentationMode.overview;
-      chips.add(
-        SizedBox(
-          width: compactNavLayout.minTouchTarget,
-          height: compactNavLayout.minTouchTarget,
-          child: Center(
-            child: NavigationDriverPreStartPresentationChip(
-              mode: currentPreviewMode,
-              onModeChanged: (next) =>
-                  unawaited(_setNavPreStartPresentation(next)),
-              accentColor: colors.accent,
-              textColor: colors.text,
-              surfaceColor: colors.surface,
-              buttonSize: compactNavLayout.buttonVisualSize,
-              iconSize: compactNavLayout.iconSize,
-              tooltipOverview: _tr(
-                nl: 'Overzicht (route in beeld)',
-                en: 'Overview (route framed)',
-                fr: "Vue d'ensemble (itinéraire cadré)",
-                es: 'Vista general (ruta enmarcada)',
-              ),
-              tooltipStreetlevel: _tr(
-                nl: 'Straatniveau (rijzicht)',
-                en: 'Street level (driving view)',
-                fr: 'Vue rue (conduite)',
-                es: 'Vista a nivel de calle',
-              ),
-            ),
-          ),
-        ),
-      );
-    }
+    // NAV-RELEASE-SIMPLE-STREETLEVEL-1: presentation / cube / View-mode chips
+    // removed. Fixed streetlevel owns the camera automatically.
 
     // NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1: Tellers entry point.
     // Presentation mode only — does not touch GPS/fare/route ownership.
     if (inFollowNav || _liveRideActive) {
       chips.add(_buildTellersEntryChip(colors: colors, layout: compactNavLayout));
-    }
-
-    if (inFollowNav) {
-      final viewMode = _navCameraViewMode;
-      final (icon, tooltip) = switch (viewMode) {
-        NavCameraViewMode.northUp => (
-          Icons.explore_outlined,
-          _tr(
-            nl: 'Noord boven',
-            en: 'North up',
-            fr: 'Nord en haut',
-            es: 'Norte arriba',
-          ),
-        ),
-        NavCameraViewMode.overview => (
-          Icons.view_in_ar_outlined,
-          _tr(
-            nl: 'Overzicht 3D',
-            en: 'Overview 3D',
-            fr: 'Vue 3D',
-            es: 'Vista 3D',
-          ),
-        ),
-        NavCameraViewMode.streetView => (
-          Icons.navigation,
-          _tr(
-            nl: 'Straatweergave',
-            en: 'Street view',
-            fr: 'Vue conducteur',
-            es: 'Vista conductor',
-          ),
-        ),
-      };
-      chips.add(
-        _buildCompactNavIconChip(
-          icon: icon,
-          tooltip: tooltip,
-          onPressed: _toggleNavCameraViewMode,
-          navAccent: colors.accent,
-          navText: colors.text,
-          navSurface: colors.surface,
-          layout: compactNavLayout,
-        ),
-      );
     }
 
     if (showMapStyleToggle) {
@@ -23712,9 +23617,12 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _fitBoundsToRoute(List<_LonLat> coords) async {
-    // NAV-CAMERA-FIELD-REGRESSION-1: streetlevel owns the camera in preview;
-    // fitBounds must not re-frame the route while streetView is selected.
-    final skip =
+    // NAV-RELEASE-SIMPLE-STREETLEVEL-1: fixed streetlevel owns the camera
+    // whenever a destination draft or live ride exists. fitBounds is a no-op.
+    if (fixedStreetLevelOwnsCamera(
+          hasPreviewDraft: _directRideDraft,
+          liveRideActive: _liveRideActive,
+        ) ||
         _cameraMode == _CameraMode.follow ||
         _activeTripId != null ||
         !_allowOverviewCamera ||
@@ -23723,9 +23631,10 @@ class _DriverHomePageState extends State<DriverHomePage>
           allowOverviewCamera: _allowOverviewCamera,
           selectedViewMode: _navPreviewViewModeToken(),
           liveRideActive: _liveRideActive,
-        );
+        )) {
+      return;
+    }
     if (_map == null || coords.isEmpty) return;
-    if (skip) return;
 
     double minLon = coords.first.lon, maxLon = coords.first.lon;
     double minLat = coords.first.lat, maxLat = coords.first.lat;
@@ -30144,13 +30053,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 1): the active-ride
     // block is unchanged, but manual zoom is now available on the pre-start
     // preview surface, where it was previously unreachable in both phases.
+    // NAV-RELEASE-SIMPLE-STREETLEVEL-1: zoom +/- visible in preview and live
+    // follow under fixed streetlevel (no View-mode presentation required).
     final bool showDriverCockpitCameraControls =
+        (previewPhase && navMapControls.zoomControls) ||
         (_cameraMode == _CameraMode.follow &&
             liveActive &&
-            navPresentationState.showDriverCockpitCameraControls &&
+            navMapControls.zoomControls &&
             navActiveRideZoomAllowed(liveRideActive: liveActive) ==
-                NavActiveRideBlockReason.none) ||
-        (previewPhase && navMapControls.zoomControls);
+                NavActiveRideBlockReason.none);
     // NAV-VEHICLE-MODE-CAR-ARROW-1: the Car/Arrow marker selector is shown
     // during live navigation independent of the map style (Light / Dark /
     // 3D-buildings / Satellite) and independent of any 3D eligibility gate.
@@ -30176,7 +30087,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         ? estimateDriverCockpitCameraControlsPanelSize(
             buttonSize: 40.0,
             hasLevelLabel: true,
-            hasDebugSubLabel: true,
+            hasDebugSubLabel: false,
             compactLandscape: isLandscape,
             panelWidthExtra: viewPanelPortraitLayout?.panelWidthExtra ?? 0,
             panelHorizontalPadding:
@@ -30195,7 +30106,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         _activeBooking == null &&
         (_directRideDestinationText ?? '').trim().isNotEmpty;
     const double kDirectRideEstimatePanelReserve = 96.0;
-    final double bottomChromeReserve = !isLandscape
+    final double measuredBottomChromeReserve = !isLandscape
         ? (kCockpitPortraitBasePanelHeight +
             (showNavQuickActions
                 ? (kpiNavControlsLayout.rowHeight +
@@ -30205,6 +30116,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                 ? kDirectRideEstimatePanelReserve
                 : 0.0))
         : 0.0;
+    final double bottomChromeReserve = stickyBottomChromeReserve(
+      measured: measuredBottomChromeReserve,
+      lastReliable: _lastReliableBottomChromeReserve,
+    );
+    if (bottomChromeReserve > 0) {
+      _lastReliableBottomChromeReserve = bottomChromeReserve;
+    }
     final DriverCockpitCameraControlsLayoutResult? cockpitControlsLayout =
         showDriverCockpitCameraControls
         ? resolveDriverCockpitCameraControlsLayout(
@@ -30516,8 +30434,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                       accentColor: navActionColors.accent,
                       textColor: navActionColors.text,
                       surfaceColor: navActionColors.surface,
+                      // Compact zoom value only — never View N/13 / preset names.
                       levelLabel: _driverCockpitViewLevelLabel(),
-                      debugSubLabel: _driverCockpitViewLevelDebugLabel(),
+                      debugSubLabel: null,
                       compactLandscape: isLandscape,
                       portraitPanelLayout: viewPanelPortraitLayout,
                     )

@@ -97,19 +97,18 @@ void main() {
   });
 
   group('NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 active-ride lock', () {
-    test('active-ride controls remain blocked', () {
+    test('active-ride keeps style + zoom under fixed streetlevel', () {
       final live = activeRide();
       expect(live.phase, NavMapSurfacePhase.activeRide);
-      expect(live.styleSelector, isFalse);
-      expect(live.zoomControls, isFalse);
-      // Existing product gates must still refuse the interaction itself.
+      expect(live.styleSelector, isTrue);
+      expect(live.zoomControls, isTrue);
       expect(
         navActiveRideStyleTapAllowed(liveRideActive: true),
-        NavActiveRideBlockReason.liveRideActive,
+        NavActiveRideBlockReason.none,
       );
       expect(
         navActiveRideZoomAllowed(liveRideActive: true),
-        NavActiveRideBlockReason.liveRideActive,
+        NavActiveRideBlockReason.none,
       );
     });
 
@@ -124,8 +123,8 @@ void main() {
         routePointCount: 24,
       );
       expect(live.phase, NavMapSurfacePhase.activeRide);
-      expect(live.styleSelector, isFalse);
-      expect(live.zoomControls, isFalse);
+      expect(live.styleSelector, isTrue);
+      expect(live.zoomControls, isTrue);
     });
 
     test('controls return after STOP', () {

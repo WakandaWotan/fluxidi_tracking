@@ -102,11 +102,11 @@ NavActiveRideBlockReason navActiveRideStyleTapAllowed({
 
 /// Whether a manual +/- zoom input is allowed right now.
 ///
-/// Product rule: BLOCKED during an active ride. Camera follow uses the
-/// existing bounded latest-wins lifecycle instead.
+/// NAV-RELEASE-SIMPLE-STREETLEVEL-1: zoom +/- stays available during a live
+/// ride. It changes zoom only around the fixed streetlevel profile; it does
+/// not switch camera modes or run fitBounds.
 NavActiveRideBlockReason navActiveRideZoomAllowed({
   required bool liveRideActive,
 }) {
-  if (liveRideActive) return NavActiveRideBlockReason.liveRideActive;
   return NavActiveRideBlockReason.none;
 }

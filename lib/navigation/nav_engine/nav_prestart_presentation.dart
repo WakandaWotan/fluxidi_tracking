@@ -1,34 +1,17 @@
 // NAV-PRESTART-FIELD-BLOCKER-3
+// NAV-RELEASE-SIMPLE-STREETLEVEL-1
 //
 // Pre-start presentation decisions for the driver map surface.
 //
-// Root causes addressed:
+// Release simplification: once a preview draft exists, fixed streetlevel is
+// the only presentation. Overview / View-mode selection is removed from the
+// product surface; fitBounds must not own the camera.
 //
-//   * Problem A (route line missing after style swap): the shared style-restore
-//     gate rejects a redraw whenever the ride is not live. In the pre-start
-//     preview the driver already has a valid destination and accepted route
-//     geometry, so a style change (Light -> Dark -> 3D -> Satellite) silently
-//     removes the blue line even though `_routeCoords` still holds >=2 points.
-//     This module exposes an explicit `previewRouteRestoreEligible` bit that
-//     callers thread into the ownership capture so restore may proceed for a
-//     valid preview draft without touching the live-ride contract.
-//
-//   * Problem B (streetlevel not applied pre-start): the driver page derives
-//     the navigation presentation state from `follow && liveRideActive` and
-//     silently folds every non-live combination into overview. That leaves the
-//     preview camera as a bounds-fit, so the marker sits centred instead of
-//     low above the KPI panel. This module returns an explicit
-//     `applyCockpitCamera` bit for a preview draft with streetlevel selected,
-//     letting the caller run the existing cockpit camera pipeline before START
-//     without allowing it to fire on an idle map.
-//
-// Pure decision only: no Mapbox handle, no widget state, no I/O. All side
-// effects stay with the caller so the same decision can be exercised by
-// widget-free unit tests.
+// Pure decision only: no Mapbox handle, no widget state, no I/O.
 
 /// The two presentation modes the pre-start preview surface may present.
 enum NavPreviewPresentationMode {
-  /// Route framed inside the viewport (existing behaviour).
+  /// Route framed inside the viewport (legacy; unused by release UI).
   overview,
 
   /// Driver cockpit view: taxi anchored low above the KPI panel.
@@ -59,9 +42,8 @@ class NavPreviewPresentationInputs {
   /// any other preview draft is currently active on the driver page.
   final bool hasPreviewDraft;
 
-  /// Opaque token from [NavPreviewViewModeTokens] describing what the driver
-  /// picked on the camera-view-mode preset. Any unknown value falls back to
-  /// [NavPreviewViewModeTokens.overview].
+  /// Opaque token from [NavPreviewViewModeTokens]. Release always treats a
+  /// preview draft as streetlevel regardless of this token.
   final String selectedViewMode;
 
   /// Live coord count. Values below 2 mark the route as not yet drawable.
@@ -84,14 +66,11 @@ class NavPreviewPresentationDecision {
   final NavPreviewPresentationMode mode;
 
   /// True when the caller must run the driver-cockpit camera pipeline for a
-  /// pre-start preview draft. When false, the caller falls back to the
-  /// existing overview/fit-bounds behaviour.
+  /// pre-start preview draft.
   final bool applyCockpitCamera;
 
   /// True when a style-restore in the pre-start preview may redraw the
-  /// accepted route line + pins. Callers pass this through the ownership
-  /// capture so the existing style-restore guard treats a valid preview draft
-  /// as restorable without touching the live-ride contract.
+  /// accepted route line + pins.
   final bool previewRouteRestoreEligible;
 
   /// Short, sanitized reason token used in diagnostic logging.
@@ -103,15 +82,11 @@ class NavPreviewPresentationDecision {
 /// Decides the pre-start preview presentation for the driver map surface.
 ///
 /// Rules:
-///   * Live ride wins. Preview presentation is a no-op during a live ride so
-///     the live camera profile is never overridden by preview logic.
+///   * Live ride wins. Preview presentation is a no-op during a live ride.
 ///   * Without a preview draft the surface stays in overview and no preview
-///     camera pipeline may run. A style-restore must not accidentally paint a
-///     stale route.
-///   * With a preview draft the caller may choose overview (default) or
-///     streetlevel. Only streetlevel triggers the cockpit camera pipeline.
-///   * The route becomes restore-eligible as soon as >=2 coords exist and a
-///     preview draft is present, independent of the selected mode.
+///     camera pipeline may run.
+///   * With a preview draft, fixed streetlevel always owns the camera
+///     (NAV-RELEASE-SIMPLE-STREETLEVEL-1).
 NavPreviewPresentationDecision decideNavPreviewPresentation(
   NavPreviewPresentationInputs input,
 ) {
@@ -132,27 +107,15 @@ NavPreviewPresentationDecision decideNavPreviewPresentation(
     );
   }
   final restoreEligible = input.routePointCount >= 2;
-  if (input.selectedViewMode == NavPreviewViewModeTokens.streetView) {
-    return NavPreviewPresentationDecision(
-      mode: NavPreviewPresentationMode.streetLevel,
-      applyCockpitCamera: true,
-      previewRouteRestoreEligible: restoreEligible,
-      reason: 'preview_streetlevel',
-    );
-  }
   return NavPreviewPresentationDecision(
-    mode: NavPreviewPresentationMode.overview,
-    applyCockpitCamera: false,
+    mode: NavPreviewPresentationMode.streetLevel,
+    applyCockpitCamera: true,
     previewRouteRestoreEligible: restoreEligible,
-    reason: 'preview_overview',
+    reason: 'preview_fixed_streetlevel',
   );
 }
 
-/// Cycles the preview view mode when the driver taps the camera preset chip.
-///
-/// The chip is a two-state toggle in preview (overview <-> streetLevel). Any
-/// other selection (northUp) is normalised to overview so the preview control
-/// never lands on a live-only mode.
+/// Legacy cycle helper kept for tests; release UI no longer exposes a toggle.
 String cycleNavPreviewViewMode(String current) {
   if (current == NavPreviewViewModeTokens.streetView) {
     return NavPreviewViewModeTokens.overview;
@@ -160,34 +123,25 @@ String cycleNavPreviewViewMode(String current) {
   return NavPreviewViewModeTokens.streetView;
 }
 
-/// Normalises any [current] view-mode token into a preview-safe token.
+/// Normalises any [current] view-mode token into the release-safe streetlevel.
 String normaliseNavPreviewViewMode(String current) {
-  if (current == NavPreviewViewModeTokens.streetView) {
-    return NavPreviewViewModeTokens.streetView;
-  }
-  return NavPreviewViewModeTokens.overview;
+  return NavPreviewViewModeTokens.streetView;
 }
 
-/// NAV-CAMERA-FIELD-REGRESSION-1: whether overview route framing (fit-bounds)
-/// may run on the pre-start preview surface.
-///
-/// Streetlevel ownership must win: once the driver selects streetlevel, an
-/// in-flight route-ready or style callback must not re-frame the whole route
-/// (which parks the camera at regional/world zoom and looks like a horizon).
+/// NAV-RELEASE-SIMPLE-STREETLEVEL-1: overview fit-bounds is never permitted
+/// on the navigation surface once a draft or live ride exists. Callers keep
+/// the old parameters for source compatibility.
 bool mayOverviewFitBoundsInPreview({
   required bool allowOverviewCamera,
   required String selectedViewMode,
   required bool liveRideActive,
 }) {
-  if (liveRideActive) return false;
-  if (!allowOverviewCamera) return false;
-  if (selectedViewMode == NavPreviewViewModeTokens.streetView) return false;
-  return true;
+  // Fixed streetlevel owns the camera; fitBounds is retired for release.
+  return false;
 }
 
-/// NAV-CAMERA-FIELD-REGRESSION-1: whether a style switch in preview must
-/// re-apply the cockpit streetlevel camera. Live rides keep the existing
-/// `_followCameraTesla(style_switch)` path; preview never enters follow.
+/// Style switch in preview must re-apply the fixed streetlevel camera for any
+/// active preview draft (selection no longer matters).
 bool mayRestorePreviewCockpitCameraAfterStyleSwitch({
   required bool hasPreviewDraft,
   required String selectedViewMode,
@@ -195,5 +149,5 @@ bool mayRestorePreviewCockpitCameraAfterStyleSwitch({
 }) {
   if (liveRideActive) return false;
   if (!hasPreviewDraft) return false;
-  return selectedViewMode == NavPreviewViewModeTokens.streetView;
+  return true;
 }

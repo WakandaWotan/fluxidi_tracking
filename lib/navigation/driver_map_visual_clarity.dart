@@ -23,6 +23,8 @@ String driverMapVisualModeLogLabel(DriverMapVisualMode mode) {
   switch (mode) {
     case DriverMapVisualMode.street:
       return 'street';
+    case DriverMapVisualMode.threeD:
+      return '3d';
     case DriverMapVisualMode.satellite:
       return 'satellite';
   }

@@ -871,16 +871,21 @@ DriverCockpitRouteAlignDiagnostics resolveDriverCockpitRouteAlignDiagnostics({
 
 /// NAV-PRES-3D-PRO2: lower third-person chase camera profile for driver mode.
 ///
-/// [viewLevel] (1..13, default 7) drives zoom, pitch, and anchor fraction
-/// via non-linear curves. The camera centers on the snapped vehicle
-/// coordinate and anchors it low on screen via top-heavy viewport padding.
+/// [viewLevel] (1..13, default 7) drives zoom via non-linear curves.
+/// NAV-RELEASE-SIMPLE-STREETLEVEL-1: when [fixedStreetLevelZoomOnly] is true
+/// (release default), pitch and nose-anchor stay locked at the proven Pro2 L7
+/// streetlevel profile — +/- only changes zoom within the safe band.
 DriverCockpitCameraProfileOutput resolveDriverCockpitCameraProfile(
   DriverCockpitCameraProfileInput input, {
   DriverCockpitCameraLookaheadInput? lookahead,
   int viewLevel = kDriverCockpitViewLevelDefault,
   bool directAdjust = false,
+  // Release driver page passes true; unit tests of the Pro2 curves keep false.
+  bool fixedStreetLevelZoomOnly = false,
 }) {
   final level = clampDriverCockpitViewLevel(viewLevel);
+  final pitchLevel =
+      fixedStreetLevelZoomOnly ? kDriverCockpitViewLevelDefault : level;
   final targetZoom = driverCockpitViewLevelTargetZoom(
     isTablet: input.isTablet,
     isLandscape: input.isLandscape,
@@ -889,7 +894,7 @@ DriverCockpitCameraProfileOutput resolveDriverCockpitCameraProfile(
   final targetPitch = driverCockpitViewLevelTargetPitch(
     isTablet: input.isTablet,
     isLandscape: input.isLandscape,
-    level: level,
+    level: pitchLevel,
   );
   final maxZoomStep = directAdjust
       ? kDriverCockpitCameraDirectAdjustMaxZoomStep
@@ -926,7 +931,7 @@ DriverCockpitCameraProfileOutput resolveDriverCockpitCameraProfile(
   final noseAnchor = resolveDriverCockpitNoseAnchorFraction(
     isTablet: input.isTablet,
     isLandscape: input.isLandscape,
-    viewLevel: level,
+    viewLevel: pitchLevel,
     appliedZoom: zoom,
     appliedPitch: pitch,
     hudVehicleSizePx: hudSize,

@@ -1,12 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/navigation/nav_engine/nav_prestart_presentation.dart';
 
-// NAV-PRESTART-FIELD-BLOCKER-3 unit tests.
-//
-// These pure tests pin the decision matrix for the pre-start preview
-// presentation so a future change cannot silently reintroduce the field-blocker
-// behaviour where street-level was unreachable before START and where a style
-// swap silently dropped the accepted preview route.
+// NAV-PRESTART-FIELD-BLOCKER-3 / NAV-RELEASE-SIMPLE-STREETLEVEL-1 unit tests.
 
 void main() {
   group('decideNavPreviewPresentation', () {
@@ -40,35 +35,26 @@ void main() {
       expect(decision.reason, 'no_preview_draft');
     });
 
-    test('preview draft + overview mode: overview, restore-eligible', () {
-      final decision = decideNavPreviewPresentation(
-        const NavPreviewPresentationInputs(
-          hasPreviewDraft: true,
-          selectedViewMode: NavPreviewViewModeTokens.overview,
-          routePointCount: 12,
-          liveRideActive: false,
-        ),
-      );
-      expect(decision.mode, NavPreviewPresentationMode.overview);
-      expect(decision.applyCockpitCamera, isFalse);
-      expect(decision.previewRouteRestoreEligible, isTrue);
-      expect(decision.reason, 'preview_overview');
-    });
-
-    test('preview draft + streetView: streetlevel, cockpit apply, restore', () {
-      final decision = decideNavPreviewPresentation(
-        const NavPreviewPresentationInputs(
-          hasPreviewDraft: true,
-          selectedViewMode: NavPreviewViewModeTokens.streetView,
-          routePointCount: 12,
-          liveRideActive: false,
-        ),
-      );
-      expect(decision.mode, NavPreviewPresentationMode.streetLevel);
-      expect(decision.isStreetLevel, isTrue);
-      expect(decision.applyCockpitCamera, isTrue);
-      expect(decision.previewRouteRestoreEligible, isTrue);
-      expect(decision.reason, 'preview_streetlevel');
+    test('preview draft always fixed streetlevel regardless of token', () {
+      for (final token in <String>[
+        NavPreviewViewModeTokens.overview,
+        NavPreviewViewModeTokens.streetView,
+        NavPreviewViewModeTokens.northUp,
+        'nonsense',
+      ]) {
+        final decision = decideNavPreviewPresentation(
+          NavPreviewPresentationInputs(
+            hasPreviewDraft: true,
+            selectedViewMode: token,
+            routePointCount: 12,
+            liveRideActive: false,
+          ),
+        );
+        expect(decision.mode, NavPreviewPresentationMode.streetLevel);
+        expect(decision.applyCockpitCamera, isTrue);
+        expect(decision.previewRouteRestoreEligible, isTrue);
+        expect(decision.reason, 'preview_fixed_streetlevel');
+      }
     });
 
     test('preview draft with <2 coords: restore not eligible', () {
@@ -80,34 +66,9 @@ void main() {
           liveRideActive: false,
         ),
       );
-      expect(decision.mode, NavPreviewPresentationMode.overview);
+      expect(decision.mode, NavPreviewPresentationMode.streetLevel);
+      expect(decision.applyCockpitCamera, isTrue);
       expect(decision.previewRouteRestoreEligible, isFalse);
-    });
-
-    test('northUp token in preview folds into overview presentation', () {
-      final decision = decideNavPreviewPresentation(
-        const NavPreviewPresentationInputs(
-          hasPreviewDraft: true,
-          selectedViewMode: NavPreviewViewModeTokens.northUp,
-          routePointCount: 12,
-          liveRideActive: false,
-        ),
-      );
-      expect(decision.mode, NavPreviewPresentationMode.overview);
-      expect(decision.applyCockpitCamera, isFalse);
-    });
-
-    test('unknown selectedViewMode token falls back to overview', () {
-      final decision = decideNavPreviewPresentation(
-        const NavPreviewPresentationInputs(
-          hasPreviewDraft: true,
-          selectedViewMode: 'nonsense',
-          routePointCount: 12,
-          liveRideActive: false,
-        ),
-      );
-      expect(decision.mode, NavPreviewPresentationMode.overview);
-      expect(decision.applyCockpitCamera, isFalse);
     });
   });
 
@@ -125,34 +86,54 @@ void main() {
         NavPreviewViewModeTokens.overview,
       );
     });
+  });
 
-    test('northUp folds to streetView on first tap', () {
+  group('normaliseNavPreviewViewMode', () {
+    test('release normalisation is always streetView', () {
       expect(
-        cycleNavPreviewViewMode(NavPreviewViewModeTokens.northUp),
+        normaliseNavPreviewViewMode(NavPreviewViewModeTokens.overview),
+        NavPreviewViewModeTokens.streetView,
+      );
+      expect(
+        normaliseNavPreviewViewMode(NavPreviewViewModeTokens.northUp),
         NavPreviewViewModeTokens.streetView,
       );
     });
   });
 
-  group('normaliseNavPreviewViewMode', () {
-    test('preserves streetView', () {
+  group('mayOverviewFitBoundsInPreview', () {
+    test('always false on release surface', () {
       expect(
-        normaliseNavPreviewViewMode(NavPreviewViewModeTokens.streetView),
-        NavPreviewViewModeTokens.streetView,
+        mayOverviewFitBoundsInPreview(
+          allowOverviewCamera: true,
+          selectedViewMode: NavPreviewViewModeTokens.overview,
+          liveRideActive: false,
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  group('mayRestorePreviewCockpitCameraAfterStyleSwitch', () {
+    test('any preview draft restores streetlevel', () {
+      expect(
+        mayRestorePreviewCockpitCameraAfterStyleSwitch(
+          hasPreviewDraft: true,
+          selectedViewMode: NavPreviewViewModeTokens.overview,
+          liveRideActive: false,
+        ),
+        isTrue,
       );
     });
 
-    test('collapses northUp into overview', () {
+    test('live ride keeps preview restore off', () {
       expect(
-        normaliseNavPreviewViewMode(NavPreviewViewModeTokens.northUp),
-        NavPreviewViewModeTokens.overview,
-      );
-    });
-
-    test('collapses unknown token into overview', () {
-      expect(
-        normaliseNavPreviewViewMode('nonsense'),
-        NavPreviewViewModeTokens.overview,
+        mayRestorePreviewCockpitCameraAfterStyleSwitch(
+          hasPreviewDraft: true,
+          selectedViewMode: NavPreviewViewModeTokens.streetView,
+          liveRideActive: true,
+        ),
+        isFalse,
       );
     });
   });

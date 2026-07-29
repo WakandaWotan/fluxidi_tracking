@@ -49,24 +49,21 @@ void main() {
       );
     });
 
-    test('live ride with default kill switch: blocked', () {
-      // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part D default is now
-      // `false` — the guard reports the live-ride block reason.
+    test('live ride with default kill switch: allowed', () {
+      // NAV-RELEASE-SIMPLE-STREETLEVEL-1: style switching stays available.
       expect(
         navActiveRideStyleTapAllowed(liveRideActive: true),
-        NavActiveRideBlockReason.liveRideActive,
+        NavActiveRideBlockReason.none,
       );
     });
 
-    test('live ride with kill switch explicitly disabled: allowed', () {
-      // Legacy path: some existing tests still exercise the transactional
-      // lease/coalesce behaviour with active-ride style switching enabled.
+    test('live ride with kill switch explicitly disabled: blocked', () {
       expect(
         navActiveRideStyleTapAllowed(
           liveRideActive: true,
-          activeRideStyleSwitchEnabled: true,
+          activeRideStyleSwitchEnabled: false,
         ),
-        NavActiveRideBlockReason.none,
+        NavActiveRideBlockReason.liveRideActive,
       );
     });
   });
@@ -79,10 +76,10 @@ void main() {
       );
     });
 
-    test('live ride: blocked', () {
+    test('live ride: allowed (fixed streetlevel zoom-only)', () {
       expect(
         navActiveRideZoomAllowed(liveRideActive: true),
-        NavActiveRideBlockReason.liveRideActive,
+        NavActiveRideBlockReason.none,
       );
     });
   });

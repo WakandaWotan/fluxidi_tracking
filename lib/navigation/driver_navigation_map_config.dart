@@ -35,7 +35,11 @@ double driverDestinationMarkerIconSize({required bool isTablet}) {
 }
 
 /// NAV-MAPSTYLE: driver map visual modes.
-enum DriverMapVisualMode { street, satellite }
+///
+/// NAV-RELEASE-SIMPLE-STREETLEVEL-1: [threeD] is the real 3D presentation
+/// (Mapbox Standard). Selecting the 3D style chip must set this mode — never
+/// silently keep [street] while the UI shows "3D".
+enum DriverMapVisualMode { street, threeD, satellite }
 
 /// NAV-PRES-3K: explicit driver cockpit map style choice (flagged builds only).
 enum DriverCockpitMapVisualStyle { light, dark, standard3d, satellite }
@@ -134,6 +138,9 @@ String driverMapStyleForTheme({
   if (visualMode == DriverMapVisualMode.satellite) {
     return kDriverMapStyleSatellite;
   }
+  if (visualMode == DriverMapVisualMode.threeD) {
+    return kDriverMapStyleStandard;
+  }
   return isLightTheme
       ? kDriverMapStyleNavStreetLight
       : kDriverMapStyleNavStreetDark;
@@ -216,12 +223,14 @@ String driverMapStyleForCockpit3d({
 
 /// NAV-PRES-3I/3K: resolves the active driver map style URI.
 ///
-/// When the 3D cockpit scene flag is off or [cockpit3dSceneActive] is false,
-/// returns the same URI as [driverMapStyleForTheme].
+/// When the 3D cockpit scene flag is off, returns the same URI as
+/// [driverMapStyleForTheme] (including [DriverMapVisualMode.threeD] → Standard).
 ///
-/// When the flag is on and [cockpitVisualStyle] is provided, uses the explicit
-/// driver choice (light / dark / 3D / satellite) instead of inferring 3D from
-/// street/satellite mode.
+/// NAV-RELEASE-SIMPLE-STREETLEVEL-1: when the flag is on and
+/// [cockpitVisualStyle] is provided, the explicit driver choice always wins
+/// (preview + live). [cockpit3dSceneActive] is no longer required for the
+/// explicit Light/Dark/3D/Satellite menu — that gate previously left preview
+/// 3D stuck on navigation-day/night with `result=already`.
 String resolveDriverMapStyleUri({
   required bool isLightTheme,
   required DriverMapVisualMode visualMode,
@@ -233,7 +242,7 @@ String resolveDriverMapStyleUri({
     isLightTheme: isLightTheme,
     visualMode: visualMode,
   );
-  if (!kNavigation3dCockpitSceneEnabled || !cockpit3dSceneActive) {
+  if (!kNavigation3dCockpitSceneEnabled) {
     return baseline;
   }
   if (cockpitVisualStyle != null) {
@@ -242,6 +251,9 @@ String resolveDriverMapStyleUri({
       isLightTheme: isLightTheme,
       rejectedExperimentalUris: rejectedExperimentalUris,
     );
+  }
+  if (!cockpit3dSceneActive) {
+    return baseline;
   }
   return driverMapStyleForCockpit3d(
     preferSatellite: visualMode == DriverMapVisualMode.satellite,
