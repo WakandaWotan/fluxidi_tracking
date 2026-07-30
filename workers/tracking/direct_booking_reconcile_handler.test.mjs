@@ -184,3 +184,301 @@ test("reconcile rejects a trip with no authoritative fare", async () => {
   assert.equal(json.reason, "skipped_missing_fare");
   assert.equal(api.calls.length, 0);
 });
+
+// CHIRON-AUTOMATIC-SYNC-AFTER-STOP-P0-FIELD-2026-07-29 -----------------------
+// Reuses the same in-memory-KV + fake-booking-API harness above. Adds a fake
+// COMPLIANCE_WORKER service binding so the tracking worker's compliance-emit
+// path (which the compliance dashboard's Chiron score-summary counts) can be
+// exercised end-to-end WITHOUT touching the real compliance worker.
+
+const COMPLIANCE_ENV_BASE = {
+  COMPLIANCE_API_URL: "https://compliance.internal",
+  COMPLIANCE_ADMIN_TOKEN: "compliance-admin-token",
+};
+
+function complianceWorker(handler) {
+  return {
+    calls: [],
+    async fetch(request) {
+      const body = await request.json().catch(() => ({}));
+      this.calls.push(body);
+      return handler(body, this.calls.length);
+    },
+  };
+}
+
+function stopReq(body) {
+  return new Request("https://track.internal/trip/stop", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-admin-token": ADMIN },
+    body: JSON.stringify(body),
+  });
+}
+
+function makeCtx() {
+  const pending = [];
+  return {
+    waitUntil(p) {
+      pending.push(Promise.resolve(p).catch(() => {}));
+    },
+    async flush() {
+      while (pending.length) await pending.shift();
+    },
+  };
+}
+
+function activeTrip(over = {}) {
+  return seedTrip({ status: "active", stopped_at: "", ...over });
+}
+
+test("STOP persists compliance_emit_state=applied with deterministic event_id after emit succeeds", async () => {
+  const kv = makeKV({ [TRIP_KEY]: activeTrip() });
+  const booking = bookingApi(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const compliance = complianceWorker(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const env = {
+    ...COMPLIANCE_ENV_BASE,
+    ADMIN_TOKEN: ADMIN,
+    FLUXIDI_TRACKING: kv,
+    BOOKING_API: booking,
+    COMPLIANCE_WORKER: compliance,
+  };
+  const ctx = makeCtx();
+
+  const res = await worker.fetch(
+    stopReq({ ...scope, trip_id: "trip_abc", km_total: 4.2, wait_seconds_total: 0 }),
+    env,
+    ctx,
+  );
+  assert.equal(res.status, 200); // STOP response never awaits Chiron.
+  await ctx.flush();
+
+  assert.equal(compliance.calls.length, 1);
+  assert.equal(compliance.calls[0].event_id, "ride_stop:T1:C1:trip_abc");
+  assert.equal(compliance.calls[0].event_type, "ride_stop");
+  assert.equal(compliance.calls[0].tenant_id, "T1");
+  assert.equal(compliance.calls[0].company_id, "C1");
+
+  const stored = JSON.parse(kv.store.get(TRIP_KEY));
+  assert.equal(stored.compliance_emit_state, "applied");
+  assert.equal(stored.compliance_emit_event_id, "ride_stop:T1:C1:trip_abc");
+  assert.equal(stored.compliance_emit_attempt_count, 1);
+  assert.equal(stored.compliance_emit_last_error_code, null);
+});
+
+test("STOP leaves compliance_emit_state=pending with error code when emit fails (response still 200)", async () => {
+  const kv = makeKV({ [TRIP_KEY]: activeTrip() });
+  const booking = bookingApi(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const compliance = complianceWorker(() => new Response(JSON.stringify({ ok: false }), { status: 503 }));
+  const env = {
+    ...COMPLIANCE_ENV_BASE,
+    ADMIN_TOKEN: ADMIN,
+    FLUXIDI_TRACKING: kv,
+    BOOKING_API: booking,
+    COMPLIANCE_WORKER: compliance,
+  };
+  const ctx = makeCtx();
+
+  const res = await worker.fetch(
+    stopReq({ ...scope, trip_id: "trip_abc", km_total: 4.2, wait_seconds_total: 0 }),
+    env,
+    ctx,
+  );
+  assert.equal(res.status, 200);
+  await ctx.flush();
+
+  const stored = JSON.parse(kv.store.get(TRIP_KEY));
+  assert.equal(stored.compliance_emit_state, "pending");
+  assert.equal(stored.compliance_emit_event_id, "ride_stop:T1:C1:trip_abc");
+  assert.equal(stored.compliance_emit_attempt_count, 1);
+  assert.equal(stored.compliance_emit_last_error_code, "http_503");
+});
+
+test("reconcile retries compliance emit for a booking-finalized-but-compliance-pending trip and marks applied", async () => {
+  // Seed a trip that mirrors the real bug: booking finalize already completed
+  // but compliance emit dropped silently at STOP time (pre-fix or transient).
+  const kv = makeKV({
+    [TRIP_KEY]: seedTrip({
+      booking_finalize_state: "completed",
+      booking_finalize_attempt_count: 1,
+      compliance_emit_state: "pending",
+      compliance_emit_attempt_count: 1,
+      compliance_emit_last_error_code: "timeout",
+    }),
+  });
+  const booking = bookingApi(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const compliance = complianceWorker(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const env = {
+    ...COMPLIANCE_ENV_BASE,
+    ADMIN_TOKEN: ADMIN,
+    FLUXIDI_TRACKING: kv,
+    BOOKING_API: booking,
+    COMPLIANCE_WORKER: compliance,
+  };
+
+  const res = await worker.fetch(reconcileReq({ ...scope, trip_id: "trip_abc" }), env, {});
+  const json = await res.json();
+
+  assert.equal(res.status, 200);
+  // Booking side stays idempotent (already completed → no re-finalize).
+  assert.equal(booking.calls.length, 0);
+  assert.equal(json.reason, "already_completed");
+  // Compliance retry ran using the deterministic event id.
+  assert.equal(compliance.calls.length, 1);
+  assert.equal(compliance.calls[0].event_id, "ride_stop:T1:C1:trip_abc");
+
+  const stored = JSON.parse(kv.store.get(TRIP_KEY));
+  assert.equal(stored.compliance_emit_state, "applied");
+  assert.equal(stored.compliance_emit_event_id, "ride_stop:T1:C1:trip_abc");
+  assert.equal(stored.compliance_emit_attempt_count, 2);
+  assert.equal(stored.compliance_emit_last_error_code, null);
+});
+
+test("reconcile does NOT re-emit compliance when trip is already applied", async () => {
+  const kv = makeKV({
+    [TRIP_KEY]: seedTrip({
+      booking_finalize_state: "completed",
+      compliance_emit_state: "applied",
+      compliance_emit_event_id: "ride_stop:T1:C1:trip_abc",
+      compliance_emit_attempt_count: 1,
+    }),
+  });
+  const booking = bookingApi(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const compliance = complianceWorker(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const env = {
+    ...COMPLIANCE_ENV_BASE,
+    ADMIN_TOKEN: ADMIN,
+    FLUXIDI_TRACKING: kv,
+    BOOKING_API: booking,
+    COMPLIANCE_WORKER: compliance,
+  };
+
+  await worker.fetch(reconcileReq({ ...scope, trip_id: "trip_abc" }), env, {});
+
+  assert.equal(compliance.calls.length, 0);
+  const stored = JSON.parse(kv.store.get(TRIP_KEY));
+  assert.equal(stored.compliance_emit_attempt_count, 1); // unchanged
+  assert.equal(stored.compliance_emit_state, "applied");
+});
+
+test("reconcile compliance retry leaves state pending and increments attempt on repeated failure", async () => {
+  const kv = makeKV({
+    [TRIP_KEY]: seedTrip({
+      booking_finalize_state: "completed",
+      compliance_emit_state: "pending",
+      compliance_emit_event_id: "ride_stop:T1:C1:trip_abc",
+      compliance_emit_attempt_count: 1,
+      compliance_emit_last_error_code: "fetch_failed",
+    }),
+  });
+  const booking = bookingApi(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const compliance = complianceWorker(() => new Response(JSON.stringify({ ok: false }), { status: 502 }));
+  const env = {
+    ...COMPLIANCE_ENV_BASE,
+    ADMIN_TOKEN: ADMIN,
+    FLUXIDI_TRACKING: kv,
+    BOOKING_API: booking,
+    COMPLIANCE_WORKER: compliance,
+  };
+
+  await worker.fetch(reconcileReq({ ...scope, trip_id: "trip_abc" }), env, {});
+
+  assert.equal(compliance.calls.length, 1);
+  const stored = JSON.parse(kv.store.get(TRIP_KEY));
+  assert.equal(stored.compliance_emit_state, "pending");
+  assert.equal(stored.compliance_emit_attempt_count, 2);
+  assert.equal(stored.compliance_emit_last_error_code, "http_502");
+  // event_id remains the deterministic one so a future successful retry
+  // reaches the same idempotency key.
+  assert.equal(stored.compliance_emit_event_id, "ride_stop:T1:C1:trip_abc");
+});
+
+test("STOP waitUntil re-reads the trip before writing: preserves booking-finalize AND out-of-band mutations (no lost update)", async () => {
+  // Concurrency invariants proven end-to-end:
+  //   1. STOP persists compliance_emit_state=pending BEFORE returning.
+  //   2. STOP synchronously runs booking finalize, which updates the trip row
+  //      AFTERWARD (still within the request).
+  //   3. An OUT-OF-BAND writer (simulating another handler on the same trip)
+  //      modifies the row between STOP's synchronous end and the waitUntil
+  //      callback firing.
+  //   4. The compliance emit resolves AFTERWARD; the waitUntil callback must
+  //      preserve BOTH the booking-finalize result and the out-of-band field.
+  const kv = makeKV({ [TRIP_KEY]: activeTrip() });
+  const booking = bookingApi(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+  // Compliance handler blocked until we explicitly release, so we can inject
+  // the concurrent write in the window between STOP's response and waitUntil.
+  let releaseEmit;
+  const emitBarrier = new Promise((resolve) => {
+    releaseEmit = resolve;
+  });
+  const compliance = complianceWorker(async () => {
+    await emitBarrier;
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  });
+  const env = {
+    ...COMPLIANCE_ENV_BASE,
+    ADMIN_TOKEN: ADMIN,
+    FLUXIDI_TRACKING: kv,
+    BOOKING_API: booking,
+    COMPLIANCE_WORKER: compliance,
+  };
+  const ctx = makeCtx();
+
+  // (1) & (2) STOP returns immediately; waitUntil is pending on the barrier.
+  const res = await worker.fetch(
+    stopReq({ ...scope, trip_id: "trip_abc", km_total: 4.2, wait_seconds_total: 0 }),
+    env,
+    ctx,
+  );
+  assert.equal(res.status, 200);
+
+  const beforeInjection = JSON.parse(kv.store.get(TRIP_KEY));
+  assert.equal(beforeInjection.status, "stopped");
+  assert.equal(beforeInjection.booking_finalize_state, "completed"); // (2)
+  assert.equal(beforeInjection.compliance_emit_state, "pending"); // (1)
+  // (3) Concurrent out-of-band writer touches the same KV row.
+  beforeInjection.probe_out_of_band = "external_write_before_waituntil";
+  beforeInjection.booking_finalize_attempt_count = 7; // simulate a repair bumping the counter
+  await kv.put(TRIP_KEY, JSON.stringify(beforeInjection));
+
+  // (4) Release the emit and let the waitUntil callback complete.
+  releaseEmit();
+  await ctx.flush();
+
+  const finalRow = JSON.parse(kv.store.get(TRIP_KEY));
+  // Compliance emit landed applied with the deterministic id.
+  assert.equal(finalRow.compliance_emit_state, "applied");
+  assert.equal(finalRow.compliance_emit_event_id, "ride_stop:T1:C1:trip_abc");
+  assert.equal(finalRow.compliance_emit_attempt_count, 1);
+  // Booking finalize result is preserved (would be lost by a stale-closure write).
+  assert.equal(finalRow.booking_finalize_state, "completed");
+  // Out-of-band mutations are preserved — this is the lost-update proof.
+  assert.equal(finalRow.probe_out_of_band, "external_write_before_waituntil");
+  assert.equal(finalRow.booking_finalize_attempt_count, 7);
+  // Every other field the STOP originally persisted is still intact.
+  assert.equal(finalRow.status, "stopped");
+  assert.equal(finalRow.tenant_id, "T1");
+  assert.equal(finalRow.company_id, "C1");
+});
+
+test("reconcile is a no-op for compliance emit when configuration is missing (leaves state pending, no crash)", async () => {
+  const kv = makeKV({
+    [TRIP_KEY]: seedTrip({
+      booking_finalize_state: "completed",
+      compliance_emit_state: "pending",
+    }),
+  });
+  const booking = bookingApi(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const env = {
+    // no COMPLIANCE_API_URL / COMPLIANCE_ADMIN_TOKEN / COMPLIANCE_WORKER
+    ADMIN_TOKEN: ADMIN,
+    FLUXIDI_TRACKING: kv,
+    BOOKING_API: booking,
+  };
+
+  const res = await worker.fetch(reconcileReq({ ...scope, trip_id: "trip_abc" }), env, {});
+  assert.equal(res.status, 200);
+  const stored = JSON.parse(kv.store.get(TRIP_KEY));
+  assert.equal(stored.compliance_emit_state, "pending");
+  assert.equal(stored.compliance_emit_last_error_code, "missing_config");
+});

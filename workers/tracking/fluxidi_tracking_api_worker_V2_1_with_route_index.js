@@ -2678,6 +2678,95 @@ function safeBookingFinalizeResponseFields(trip) {
   };
 }
 
+// CHIRON-AUTOMATIC-SYNC-AFTER-STOP-P0-FIELD-2026-07-29: durable outbox for the
+// tracking worker's compliance emit. Mirrors the `booking_finalize_*` scalar
+// family above deliberately: same monotonic shape, same reconcile-driven retry,
+// no new architecture. Never introduces a generic outbox container; keeps
+// concerns separated as parallel scalar fields on the trip record.
+//   trip.compliance_emit_state         "applied" | "pending"
+//   trip.compliance_emit_event_id      deterministic id reused by every retry
+//   trip.compliance_emit_attempted_at  ISO of last attempt
+//   trip.compliance_emit_attempt_count integer, monotonic
+//   trip.compliance_emit_last_error_code coarse PII-free code (null on applied)
+const COMPLIANCE_EMIT_STATE = { APPLIED: "applied", PENDING: "pending" };
+function complianceEmitAlreadyApplied(trip) {
+  return _dbfStr(trip?.compliance_emit_state).toLowerCase() === COMPLIANCE_EMIT_STATE.APPLIED;
+}
+// Deterministic idempotency key so a retry from /trip/reconcile-direct-booking
+// carries the exact same event_id as the first STOP emit. Compliance-worker
+// dedup is deliberately NOT introduced here (scope: tracking worker only) —
+// the deterministic id lets operations or a future compliance-side idempotency
+// change collapse duplicates without any client change.
+function buildDeterministicRideStopEventId(tenantId, companyId, tripId) {
+  const t = _dbfStr(tenantId, 96);
+  const c = _dbfStr(companyId, 96);
+  const r = _dbfStr(tripId, 160);
+  if (!t || !c || !r) return "";
+  return `ride_stop:${t}:${c}:${r}`;
+}
+function deriveComplianceEmitStateFromResult(res) {
+  return res && res.ok === true ? COMPLIANCE_EMIT_STATE.APPLIED : COMPLIANCE_EMIT_STATE.PENDING;
+}
+function complianceEmitErrorCodeFromResult(res) {
+  if (res && res.ok === true) return null;
+  // emitComplianceEventBestEffort shapes: {ok:false, skipped:"missing_config"},
+  // {ok:false, error:"timeout"|"fetch_failed"|"internal_error"}, or
+  // {ok:false, status:<number>}.
+  if (res && typeof res === "object") {
+    if (res.skipped) return _dbfStr(res.skipped, 120) || "skipped";
+    if (res.error) return _dbfStr(res.error, 120) || "error";
+    if (Number.isFinite(Number(res.status))) return `http_${Number(res.status)}`;
+  }
+  return "unknown";
+}
+function applyComplianceEmitAttempt(trip, { state, errorCode = null, eventId = null, nowIso, attemptDelta = 1 } = {}) {
+  if (!trip || typeof trip !== "object") return trip;
+  const applied = COMPLIANCE_EMIT_STATE.APPLIED;
+  // Monotonic: once APPLIED, never regress to pending (mirrors booking helper).
+  const nextState = complianceEmitAlreadyApplied(trip) ? applied : state;
+  trip.compliance_emit_state = nextState;
+  trip.compliance_emit_attempted_at = _dbfStr(nowIso, 80) || trip.compliance_emit_attempted_at || null;
+  const prevCount = Number(trip.compliance_emit_attempt_count);
+  trip.compliance_emit_attempt_count = (Number.isFinite(prevCount) ? prevCount : 0) + (Number(attemptDelta) || 0);
+  trip.compliance_emit_last_error_code = nextState === applied ? null : errorCode || null;
+  const persistedId = _dbfStr(trip.compliance_emit_event_id, 200);
+  const incomingId = _dbfStr(eventId, 200);
+  if (!persistedId && incomingId) trip.compliance_emit_event_id = incomingId;
+  return trip;
+}
+// True when a terminal trip's compliance emit has not yet reached the store
+// (state PENDING or absent — the latter covers pre-fix trips that predate this
+// field family so they get exactly one retry the first time reconcile touches
+// them, then become APPLIED and never retry again).
+function complianceEmitRetryEligible(trip) {
+  if (!trip || typeof trip !== "object") return false;
+  if (!directTripIsTerminal(trip)) return false;
+  const state = _dbfStr(trip.compliance_emit_state).toLowerCase();
+  return state === "" || state === COMPLIANCE_EMIT_STATE.PENDING;
+}
+// Bounded PII-free correlator so [CHIRON_SYNC] log lines can be joined without
+// leaking raw trip / booking ids. Uses a tiny FNV-1a → base36 → 12 chars.
+function _chironIdHash(v) {
+  const s = _dbfStr(v, 256);
+  if (!s) return "-";
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return h.toString(36).padStart(7, "0").slice(0, 12);
+}
+function _chironSyncLog(stage, trip, tripId, event, result, reason) {
+  const tenantPresent = !!(event?.tenant_id && event?.company_id);
+  const bookingId = _dbfStr(event?.booking_id ?? trip?.booking_id ?? trip?.bookingId, 160);
+  const idempotencyKeyPresent = !!(event?.event_id ?? trip?.compliance_emit_event_id);
+  const attempt = Number(trip?.compliance_emit_attempt_count) || 0;
+  console.log(
+    `[CHIRON_SYNC] stage=${stage} tripIdHash=${_chironIdHash(tripId)} bookingIdHash=${_chironIdHash(bookingId)} ` +
+      `tenantPresent=${tenantPresent} idempotencyKeyPresent=${idempotencyKeyPresent} result=${result} reason=${_dbfStr(reason, 40) || "-"} attempt=${attempt}`,
+  );
+}
+
 function summarizeTrip(trip) {
   const origin =
     trip?.origin && typeof trip.origin === "object"
@@ -6330,12 +6419,31 @@ async function handleStopTrip(req, url, env, origin, ctx) {
     console.log(`[COMPLIANCE_EMIT][direct_stop] skipped reason=missing_canonical_scope trip_id=${trip_id}`);
   }
   if (complianceEvent) {
-    const emitTask = emitComplianceEventBestEffort(env, complianceEvent, { timeoutMs: 1500 });
-    if (ctx && typeof ctx.waitUntil === "function") {
-      ctx.waitUntil(emitTask);
-    } else {
-      await emitTask;
-    }
+    // CHIRON-AUTOMATIC-SYNC-AFTER-STOP-P0-FIELD-2026-07-29:
+    // Attach a deterministic event_id so a reconcile retry carries the exact
+    // same idempotency key. Persist PENDING before scheduling the fire-and-
+    // forget emit so a transient downstream failure leaves a durable retryable
+    // outbox row (mirrors booking_finalize_state semantics).
+    const complianceEventId = buildDeterministicRideStopEventId(
+      complianceEvent.tenant_id,
+      complianceEvent.company_id,
+      complianceEvent.trip_id ?? trip_id,
+    );
+    if (complianceEventId) complianceEvent.event_id = complianceEventId;
+    applyComplianceEmitAttempt(trip, {
+      state: COMPLIANCE_EMIT_STATE.PENDING,
+      errorCode: null,
+      eventId: complianceEventId,
+      nowIso: nowIso(),
+    });
+    await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
+    _chironSyncLog("enqueue", trip, trip_id, complianceEvent, "queued", "direct_trip_stop");
+    // NOTE: the async emit task itself is created AFTER the booking-finalize
+    // block below, not here. Rationale: booking-finalize's synchronous
+    // kvPutJson would otherwise race with the emit callback's kvPutJson (both
+    // use the closure `trip`) and clobber whichever landed first. Deferring
+    // task creation until after booking-finalize has awaited and persisted
+    // guarantees the emit callback's re-read observes the fresh trip row.
   }
 
   // STREET-RIDE-BOOKING-LIFECYCLE (staging-validate): finalize the linked
@@ -6382,6 +6490,65 @@ async function handleStopTrip(req, url, env, origin, ctx) {
       console.log(
         `[DIRECT_TRIP][BOOKING_FINALIZE][OK] booking=${directBookingId} trip=${trip_id} state=completed`,
       );
+    }
+  }
+
+  // CHIRON-AUTOMATIC-SYNC-AFTER-STOP-P0-FIELD-2026-07-29 (deferred emit task):
+  // Created here — AFTER the booking-finalize block has awaited and persisted
+  // its result — so the async callback's re-read observes the freshest trip
+  // row (booking_finalize_*, timeline, out-of-band writes) and only touches
+  // compliance_emit_* on it. The enqueue write above already persisted
+  // compliance_emit_state=PENDING with attempt_count=1, so a total emit
+  // failure still leaves a durable retryable outbox row that reconcile picks
+  // up. The STOP response is returned as usual; ctx.waitUntil keeps the
+  // background task alive on Cloudflare.
+  if (complianceEvent) {
+    const emitTask = (async () => {
+      let emitRes;
+      try {
+        emitRes = await emitComplianceEventBestEffort(env, complianceEvent, { timeoutMs: 1500 });
+      } catch (err) {
+        emitRes = { ok: false, error: _dbfStr(err?.message || err, 120) || "internal_error" };
+      }
+      try {
+        // Lost-update guard: this callback fires up to ~1.5 s after STOP has
+        // returned. Any concurrent writer (reconcile, repair, admin) that
+        // touched the row during that window would be clobbered if we
+        // serialized the closure `trip` reference. Re-read the freshest row
+        // via the same primitive every handler uses at the top of a request
+        // and modify ONLY the compliance_emit_* scalars on it. Fall back to
+        // the closure if KV returned null (never expected within the TTL_TRIP
+        // window, but keeps the callback safe).
+        const latestResolved = await getScopedOrLegacyTripForScope(env, scope, trip_id);
+        const target = latestResolved?.trip || trip;
+        const targetKey = latestResolved?.key || key;
+        const nextState = deriveComplianceEmitStateFromResult(emitRes);
+        applyComplianceEmitAttempt(target, {
+          state: nextState,
+          errorCode: complianceEmitErrorCodeFromResult(emitRes),
+          eventId: complianceEvent.event_id,
+          nowIso: nowIso(),
+          attemptDelta: 0, // enqueue above already counted this attempt.
+        });
+        await kvPutJson(env.FLUXIDI_TRACKING, targetKey, target, TTL_TRIP);
+        _chironSyncLog(
+          nextState === COMPLIANCE_EMIT_STATE.APPLIED ? "applied" : "failed",
+          target,
+          trip_id,
+          complianceEvent,
+          nextState,
+          complianceEmitErrorCodeFromResult(emitRes) || "ok",
+        );
+      } catch (_) {
+        // Never crash on the post-hoc KV update: state stays PENDING and
+        // reconcile will retry from the client on next startup.
+        _chironSyncLog("failed", trip, trip_id, complianceEvent, "pending", "kv_write_failed");
+      }
+    })();
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(emitTask);
+    } else {
+      await emitTask;
     }
   }
 
@@ -6437,6 +6604,54 @@ async function handleReconcileDirectBooking(req, url, env, origin) {
     origin,
   });
   if (ownershipBlock) return ownershipBlock;
+
+  // CHIRON-AUTOMATIC-SYNC-AFTER-STOP-P0-FIELD-2026-07-29: opportunistic
+  // compliance-emit retry. Runs BEFORE the booking-finalize short-circuit so a
+  // trip whose booking already completed but whose compliance emit is still
+  // PENDING gets retried by the existing client-startup reconcile call. Never
+  // regresses APPLIED (idempotent). Uses the same deterministic event_id
+  // persisted at STOP so a compliance-side idempotency addition later would
+  // collapse duplicates without any client change.
+  if (complianceEmitRetryEligible(trip)) {
+    const retryEvent = buildDirectTripStopComplianceEvent(
+      trip,
+      body,
+      _dbfStr(trip?.stopped_at, 80) || nowIso(),
+      {
+        km_total: trip?.km_total,
+        wait_seconds_total: trip?.wait_seconds_total,
+        total_eur: trip?.total_eur,
+        price_ex_vat: trip?.price_ex_vat,
+        price_vat: trip?.price_vat,
+        price_incl_vat: trip?.price_incl_vat,
+        vat_rate: trip?.vat_rate,
+        vat_mode: trip?.vat_mode,
+        currency: trip?.currency,
+      },
+      scope,
+    );
+    if (retryEvent) {
+      const retryEventId = _dbfStr(trip.compliance_emit_event_id, 200) ||
+        buildDeterministicRideStopEventId(retryEvent.tenant_id, retryEvent.company_id, retryEvent.trip_id ?? trip_id);
+      if (retryEventId) retryEvent.event_id = retryEventId;
+      let emitRes;
+      try {
+        emitRes = await emitComplianceEventBestEffort(env, retryEvent, { timeoutMs: 1500, logLabel: "reconcile_retry" });
+      } catch (err) {
+        emitRes = { ok: false, error: _dbfStr(err?.message || err, 120) || "internal_error" };
+      }
+      const nextState = deriveComplianceEmitStateFromResult(emitRes);
+      applyComplianceEmitAttempt(trip, {
+        state: nextState,
+        errorCode: complianceEmitErrorCodeFromResult(emitRes),
+        eventId: retryEventId,
+        nowIso: nowIso(),
+      });
+      applyCanonicalScopeToRecord(trip, scope);
+      await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
+      _chironSyncLog("retry", trip, trip_id, retryEvent, nextState, complianceEmitErrorCodeFromResult(emitRes) || "ok");
+    }
+  }
 
   // Already durably completed → idempotent no-op.
   if (bookingAlreadyFinalized(trip)) {
