@@ -222,6 +222,12 @@ class _DriverHomePageState extends State<DriverHomePage>
   // already proven no live ride / STOP teardown / direct finalize is active.
   bool _routeExitInProgress = false;
 
+  // NAV-RELEASE-FINAL-FLOW-1: set by `_openNavigation` when unmetered guidance
+  // begins (driver→pickup A, or street-draft preview follow). Cleared on ride
+  // boundary / STOP. Locks map-style switching while NAV is active without
+  // starting the paid customer trip.
+  bool _navigationGuidanceActive = false;
+
   // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix)
   //
   // Reference-identity ownership marker for the operator-minted
@@ -1165,6 +1171,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (bumpSession) {
       _bumpNavigationSessionGeneration(reason: reason);
     }
+    // NAV-RELEASE-FINAL-FLOW-1: ride boundary always ends unmetered NAV
+    // guidance so style/zoom gates fall back to the next surface phase.
+    _navigationGuidanceActive = false;
     // Style generation advances so in-flight style restores from the prior
     // session cannot repaint after this boundary.
     _styleRequestGeneration += 1;
@@ -1195,6 +1204,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       extra: 'reason=$reason',
     );
     _logNavRouteRenderOwner(event: NavRouteRenderOwnerEvent.cleared);
+    unawaited(_reconcileMapZoomGestures(reason: reason));
     // Fire-and-forget Mapbox annotation deletes; shared refs are nulled first
     // so a concurrent draw cannot orphan a prior line via shared-field races.
     // NAV-STYLE-MANAGER-CRASH-TELLERS-MARKER-1: capture gate ownership and
@@ -4022,10 +4032,14 @@ class _DriverHomePageState extends State<DriverHomePage>
         _pingCount = 0;
         _lastPing = '—';
 
-        _cameraMode = _CameraMode.overview;
-        _hasSwitchedToFollow = false;
-        _followCar = false;
-        _allowOverviewCamera = true;
+        _cameraMode = _CameraMode.follow;
+        _hasSwitchedToFollow = true;
+        _followCar = true;
+        // NAV-RELEASE-FINAL-FLOW-1: prepared booking enters fixed streetlevel
+        // immediately — never overview / fitBounds ownership.
+        _allowOverviewCamera = false;
+        _navCameraViewMode = NavCameraViewMode.streetView;
+        _navigationGuidanceActive = false;
 
         _isWaiting = false;
         _waitStartedAt = null;
@@ -4063,9 +4077,20 @@ class _DriverHomePageState extends State<DriverHomePage>
 
       final bb = _activeBooking ?? b;
       await _buildOverviewRoute(bb);
+      // NAV-RELEASE-FINAL-FLOW-1: after the prepared A→B geometry is drawn,
+      // apply fixed streetlevel at the driver (never fitBounds overview).
+      if (_isCurrentRouteRenderEpoch(_routeRenderEpoch)) {
+        await _applyPreviewStreetlevelCameraIfEligible(
+          reason: 'booking_route_ready',
+        );
+      }
+      unawaited(
+        _attemptTaxiMarkerRestore(attempt: 0, reason: 'booking_route_ready'),
+      );
+      unawaited(_reconcileMapZoomGestures(reason: 'booking_route_ready'));
 
-      // Stay in overview mode after opening a booking.
-      // Driver explicitly presses START to begin an active tracking session & follow-cam.
+      // Stay in fixed streetlevel after opening a booking.
+      // Driver presses NAV for unmetered driver→A, START for paid A→B.
 
       if (mounted) setState(() => _isStartingTrip = false);
     } catch (e) {
@@ -4613,6 +4638,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       _startTrackingInternal();
       _startMeterTicker();
       await _forceFollowCameraNow(caller: 'start_trip');
+      unawaited(_reconcileMapZoomGestures(reason: 'planned_ride_start'));
       final bb = _activeBooking ?? b;
       await _buildNavRouteToDestination(bb);
       logNavUiInputTiming(
@@ -6077,6 +6103,20 @@ class _DriverHomePageState extends State<DriverHomePage>
         liveRideActive: _liveRideActive,
         hasPreviewDestination: _directRideDraft || _activeBooking != null,
         routePointCount: _routeCoords.length,
+        navigationGuidanceActive: _navigationGuidanceActive,
+      );
+
+  /// True when a prepared booking or street draft owns the fixed streetlevel
+  /// camera (no fitBounds / overview framing).
+  bool get _fixedStreetLevelPreviewDraft =>
+      _directRideDraft || (_activeBooking != null && !_liveRideActive);
+
+  /// NAV-RELEASE-FINAL-FLOW-1: NAV-to-pickup is booking-only on the prepared
+  /// surface. Direct street draft is already at A.
+  bool get _showNavToPickupAction => navToPickupActionVisible(
+        hasBooking: _activeBooking != null,
+        directRideDraft: _directRideDraft,
+        directRideActive: _directRideActive,
       );
 
   double? get _fixedBookingPriceEur {
@@ -9647,6 +9687,15 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _openNavigation() async {
     // NAV always forces follow mode for live street-level navigation.
     if (_map == null) return;
+    // NAV-RELEASE-FINAL-FLOW-1: direct street draft is already at pickup A
+    // (current driver position). Do not expose a preview-refresh NAV action.
+    if (!navToPickupActionVisible(
+      hasBooking: _activeBooking != null,
+      directRideDraft: _directRideDraft,
+      directRideActive: _directRideActive,
+    )) {
+      return;
+    }
     final booking = _activeBooking;
     if (booking != null &&
         !_canOperateBookingWithGuard(
@@ -9678,18 +9727,37 @@ class _DriverHomePageState extends State<DriverHomePage>
       _hasSwitchedToFollow = true;
       _followCar = true;
       _allowOverviewCamera = false;
+      _navCameraViewMode = NavCameraViewMode.streetView;
+      // NAV-RELEASE-FINAL-FLOW-1: unmetered guidance begins — style locks,
+      // fixed streetlevel owns the camera. Paid metering still requires START.
+      _navigationGuidanceActive = true;
     });
     _setNavigationWakelock(true);
     await _applyMapStyleForMode();
     await _syncMapboxUserLocationPuckVisibility();
     await _forceFollowCameraNow(caller: 'nav_button');
+    unawaited(_reconcileMapZoomGestures(reason: 'nav_button'));
     final b = _activeBooking;
-    if (b != null && _activeTripId == null) {
-      await _buildNavRouteToPickup(b);
-    } else if (b != null && _activeTripId != null) {
-      await _buildNavRouteToDestination(b);
-    } else if ((_directRideDestinationText ?? '').trim().isNotEmpty) {
-      await _buildDirectRouteToDestination(_directRideDestinationText!.trim());
+    final target = decideNavOpenRouteTarget(
+      hasBooking: b != null,
+      tripActive: _activeTripId != null,
+      hasDirectDestination:
+          (_directRideDestinationText ?? '').trim().isNotEmpty,
+      directRideActive: _directRideActive,
+    );
+    switch (target) {
+      case NavOpenRouteTarget.toPickup:
+        await _buildNavRouteToPickup(b!);
+      case NavOpenRouteTarget.toDropoff:
+        if (b != null) {
+          await _buildNavRouteToDestination(b);
+        } else {
+          await _buildDirectRouteToDestination(
+            _directRideDestinationText!.trim(),
+          );
+        }
+      case NavOpenRouteTarget.none:
+        break;
     }
     unawaited(_syncNavigationDestinationMarker(reason: 'nav_open'));
   }
@@ -9743,14 +9811,15 @@ class _DriverHomePageState extends State<DriverHomePage>
         renderInvalidateReason: 'phase_change',
       );
       _routePhase = _RideRoutePhase.trip;
-      _cameraMode = _CameraMode.overview;
-      _hasSwitchedToFollow = false;
-      _followCar = false;
-      // NAV-RELEASE-SIMPLE-STREETLEVEL-1: destination + route open under the
+      _cameraMode = _CameraMode.follow;
+      _hasSwitchedToFollow = true;
+      _followCar = true;
+      // NAV-RELEASE-FINAL-FLOW-1: destination + route open under the
       // single fixed streetlevel camera owner. Overview / fitBounds must not
-      // own the preview surface.
+      // own the preview surface. Style remains available until NAV/START.
       _allowOverviewCamera = false;
       _navCameraViewMode = NavCameraViewMode.streetView;
+      _navigationGuidanceActive = false;
       _isWaiting = false;
       _waitStartedAt = null;
       _waitElapsed = Duration.zero;
@@ -9769,6 +9838,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     // calculated route immediately. Continue used to leave the map empty until
     // START, which also kept every route-dependent control hidden.
     await _buildDirectRidePreviewRoute(_directRideDestinationText ?? '');
+    // NAV-RELEASE-FINAL-FLOW-1: seed GPS + persisted Car/Arrow without
+    // requiring the marker selector; pings stay gated on a live trip id.
+    if (_posSub == null) {
+      _startTrackingInternal();
+    }
+    unawaited(
+      _attemptTaxiMarkerRestore(attempt: 0, reason: 'direct_preview_ready'),
+    );
+    unawaited(_reconcileMapZoomGestures(reason: 'direct_preview_ready'));
   }
 
   Future<void> _startDirectRide() async {
@@ -9846,6 +9924,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     unawaited(_startDirectTripSessionOnWorker(destination: destination));
     await _forceFollowCameraNow(caller: 'direct_ride_start');
     await _buildDirectRouteToDestination(destination);
+    unawaited(_reconcileMapZoomGestures(reason: 'direct_ride_start'));
   }
 
   void _handleCockpitStart() {
@@ -9925,6 +10004,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     // Explicitly does NOT touch `mapboxMap.attribution` or `mapboxMap.logo`
     // — Mapbox terms compliance is preserved unchanged.
     unawaited(_hideMapboxScaleBarBestEffort(mapboxMap));
+    unawaited(_reconcileMapZoomGestures(reason: 'map_created'));
     // FLUXIDI Phase 2A: create the native-follow controller keyed by the
     // exact plugin-owned map instance id. Behind the build-time flag; a
     // flag-off build never enables the native session even though the
@@ -9965,6 +10045,36 @@ class _DriverHomePageState extends State<DriverHomePage>
       // is enough to trace, and it can never leak PII, tokens or plugin
       // internals through the log.
       debugPrint('[MAP][SCALEBAR][WARN] failed_to_disable');
+    }
+  }
+
+  /// NAV-RELEASE-FINAL-FLOW-1: when fixed streetlevel owns the surface,
+  /// disable Mapbox pinch / double-tap / quick-zoom so manual zoom cannot
+  /// bypass the removed +/- controls. Idle map keeps platform defaults.
+  Future<void> _reconcileMapZoomGestures({required String reason}) async {
+    final map = _map;
+    if (map == null) return;
+    final lock = resolveNavFixedZoomGestureLock(
+      preparedRouteOrGuidanceOrLive:
+          _fixedStreetLevelPreviewDraft ||
+          _liveRideActive ||
+          _navigationGuidanceActive,
+    );
+    try {
+      await map.gestures.updateSettings(
+        mb.GesturesSettings(
+          pinchToZoomEnabled: lock.pinchToZoomEnabled,
+          doubleTapToZoomInEnabled: lock.doubleTapToZoomInEnabled,
+          doubleTouchToZoomOutEnabled: lock.doubleTouchToZoomOutEnabled,
+          quickZoomEnabled: lock.quickZoomEnabled,
+        ),
+      );
+      debugPrint(
+        '[MAP][GESTURES] lockZoom=${lock.allZoomGesturesDisabled} '
+        'reason=$reason',
+      );
+    } catch (_) {
+      // Best effort — never break navigation for a gesture-channel failure.
     }
   }
 
@@ -11356,7 +11466,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2 / Phase 6: emergency
     // kill-switch — never swap style during a live ride when disabled.
     final decision = navStyleTapDecision(
-      liveRideActive: _liveRideActive,
+      liveRideActive: _liveRideActive || _navigationGuidanceActive,
       styleTransactionRunning: _mapStyleChanging,
     );
     if (decision == NavStyleTapDecision.blocked) {
@@ -11398,14 +11508,17 @@ class _DriverHomePageState extends State<DriverHomePage>
     // so the live-only gate below used to leave Mapbox's post-style-load
     // default camera (extreme zoom-out / horizon on 3D) in place. Re-apply
     // the cockpit profile exactly once after style ready.
+    // NAV-RELEASE-FINAL-FLOW-1: booking preview drafts must restore the same
+    // fixed streetlevel / zoom / anchor (not only street drafts).
     if (mayRestorePreviewCockpitCameraAfterStyleSwitch(
-      hasPreviewDraft: _directRideDraft,
+      hasPreviewDraft: _fixedStreetLevelPreviewDraft,
       selectedViewMode: _navPreviewViewModeToken(),
       liveRideActive: _liveRideActive,
     )) {
       unawaited(
         _applyPreviewStreetlevelCameraIfEligible(reason: 'style_switch'),
       );
+      unawaited(_reconcileMapZoomGestures(reason: 'style_switch'));
       return;
     }
     if (_cameraMode != _CameraMode.follow || !_liveRideActive) return;
@@ -11419,6 +11532,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     unawaited(
       _followCameraTesla(pos, force: true, cameraReason: 'style_switch'),
     );
+    unawaited(_reconcileMapZoomGestures(reason: 'style_switch_live'));
   }
 
   String _driverCockpitMapVisualStyleLabel(DriverCockpitMapVisualStyle style) {
@@ -12308,6 +12422,16 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _toggleDriverMapVisualMode() async {
     if (!kDriverMapSatelliteToggleEnabled || _map == null) return;
+    // NAV-RELEASE-FINAL-FLOW-1: same lock as the cockpit style chips — no
+    // style swap during active NAV guidance or the paid customer trip.
+    if (navStyleTapDecision(
+          liveRideActive: _liveRideActive || _navigationGuidanceActive,
+          styleTransactionRunning: _mapStyleChanging,
+        ) ==
+        NavStyleTapDecision.blocked) {
+      _logNavMapStyle(reason: 'visual_mode_toggle_blocked_active_nav');
+      return;
+    }
     if (kNavigation3dCockpitSceneEnabled) {
       final next =
           _driverCockpitMapVisualStyle == DriverCockpitMapVisualStyle.satellite
@@ -15878,7 +16002,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (_map == null || !_mapSupported) return;
     if (_liveRideActive) return;
     if (_navCameraViewMode != NavCameraViewMode.streetView) return;
-    if (!_directRideDraft) return;
+    // NAV-RELEASE-FINAL-FLOW-1: street draft OR prepared booking preview.
+    if (!_fixedStreetLevelPreviewDraft) return;
     final pos = _lastPos;
     if (pos == null) return;
     final width = MediaQuery.sizeOf(context).width;
@@ -18827,7 +18952,18 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _applyDriverMarkerChoiceToAnnotation() async {
     final mgr = _driverPointManager;
     final marker = _driverMarker;
-    if (mgr == null || marker == null) return;
+    // NAV-RELEASE-FINAL-FLOW-1: if the persisted Car/Arrow has no annotation
+    // yet (preview never waited for selector interaction), bootstrap it from
+    // the restore path instead of silently no-oping.
+    if (mgr == null || marker == null) {
+      unawaited(
+        _attemptTaxiMarkerRestore(
+          attempt: 0,
+          reason: 'marker_choice_bootstrap',
+        ),
+      );
+      return;
+    }
     if (!_canUpdateDriverMarker) return;
     if (!driverNavigationMarkerNeedsIconSwap(
       applied: _driverMarkerAppliedChoice,
@@ -20919,6 +21055,9 @@ class _DriverHomePageState extends State<DriverHomePage>
           reason: 'preview_route_ready',
         );
       }
+      unawaited(
+        _attemptTaxiMarkerRestore(attempt: 0, reason: 'preview_route_ready'),
+      );
       _scheduleDirectRideEstimateRefresh(reason: 'preview_route_ready');
       _clearNavRouteFailure();
       _logNavBounded(
@@ -21981,10 +22120,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         _cameraMode == _CameraMode.follow ||
         _routeCoords.length >= 2 ||
         navMapControls.phase == NavMapSurfacePhase.preview;
-    // NAV-RELEASE-SIMPLE-STREETLEVEL-1: style control stays available in
-    // preview and during the live ride (Light / Dark / 3D / Satellite).
+    // NAV-RELEASE-FINAL-FLOW-1: style control available only while the
+    // preview surface advertises styleSelector (before NAV/START). Locked
+    // during active NAV guidance and the paid customer trip.
     final showMapStyleToggle =
-        kDriverMapSatelliteToggleEnabled && showNavMapTools;
+        kDriverMapSatelliteToggleEnabled &&
+        showNavMapTools &&
+        navMapControls.styleSelector;
     final showOffline = showNavMapTools;
     final inFollowNav = _cameraMode == _CameraMode.follow;
 
@@ -23634,11 +23776,12 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _fitBoundsToRoute(List<_LonLat> coords) async {
-    // NAV-RELEASE-SIMPLE-STREETLEVEL-1: fixed streetlevel owns the camera
-    // whenever a destination draft or live ride exists. fitBounds is a no-op.
+    // NAV-RELEASE-FINAL-FLOW-1: fixed streetlevel owns the camera whenever a
+    // destination draft, prepared booking, or live ride exists. fitBounds is
+    // a no-op — overview framing must never take ownership.
     if (fixedStreetLevelOwnsCamera(
-          hasPreviewDraft: _directRideDraft,
-          liveRideActive: _liveRideActive,
+          hasPreviewDraft: _fixedStreetLevelPreviewDraft,
+          liveRideActive: _liveRideActive || _navigationGuidanceActive,
         ) ||
         _cameraMode == _CameraMode.follow ||
         _activeTripId != null ||
@@ -30590,6 +30733,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                             tripStarted: _liveRideActive,
                             isWaiting: _isWaiting,
                             navActive: _cameraMode == _CameraMode.follow,
+                            showNavToPickupAction: _showNavToPickupAction,
                             onNav: _openNavigation,
                             onStart: _handleCockpitStart,
                             onStop: _stopTrip,
@@ -32148,17 +32292,19 @@ class _DriverHomePageState extends State<DriverHomePage>
                   // === Controls ===
                   Row(
                     children: [
-                      Expanded(
-                        child: _cockpitButton(
-                          label: 'NAV',
-                          icon: Icons.navigation,
-                          onTap: _openNavigation,
-                          enabled: _routeCoords.isNotEmpty,
-                          isMidnightBlue: isMidnightBlue,
-                          isMiddayGold: isMiddayGold,
+                      if (_showNavToPickupAction) ...[
+                        Expanded(
+                          child: _cockpitButton(
+                            label: 'NAV',
+                            icon: Icons.navigation,
+                            onTap: _openNavigation,
+                            enabled: _routeCoords.isNotEmpty,
+                            isMidnightBlue: isMidnightBlue,
+                            isMiddayGold: isMiddayGold,
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 10),
+                        const SizedBox(width: 10),
+                      ],
                       Expanded(
                         child: _cockpitButton(
                           label: tripStarted ? 'STOP' : 'START',

@@ -49,37 +49,37 @@ void main() {
       );
     });
 
-    test('live ride with default kill switch: allowed', () {
-      // NAV-RELEASE-SIMPLE-STREETLEVEL-1: style switching stays available.
+    test('live ride with default kill switch: blocked', () {
+      // Final release flow: style switching locked during the paid trip.
       expect(
         navActiveRideStyleTapAllowed(liveRideActive: true),
-        NavActiveRideBlockReason.none,
+        NavActiveRideBlockReason.liveRideActive,
       );
     });
 
-    test('live ride with kill switch explicitly disabled: blocked', () {
+    test('live ride with kill switch explicitly enabled: allowed', () {
       expect(
         navActiveRideStyleTapAllowed(
           liveRideActive: true,
-          activeRideStyleSwitchEnabled: false,
+          activeRideStyleSwitchEnabled: true,
         ),
-        NavActiveRideBlockReason.liveRideActive,
+        NavActiveRideBlockReason.none,
       );
     });
   });
 
   group('navActiveRideZoomAllowed', () {
-    test('non-live ride: allowed', () {
+    test('non-live ride: blocked (no +/- on preview either)', () {
       expect(
         navActiveRideZoomAllowed(liveRideActive: false),
-        NavActiveRideBlockReason.none,
+        NavActiveRideBlockReason.liveRideActive,
       );
     });
 
-    test('live ride: allowed (fixed streetlevel zoom-only)', () {
+    test('live ride: blocked (fixed streetlevel owns zoom)', () {
       expect(
         navActiveRideZoomAllowed(liveRideActive: true),
-        NavActiveRideBlockReason.none,
+        NavActiveRideBlockReason.liveRideActive,
       );
     });
   });

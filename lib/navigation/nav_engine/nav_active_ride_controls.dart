@@ -83,14 +83,13 @@ enum NavActiveRideBlockReason {
 /// Whether a map-style change (Satellite ↔ Street, Light ↔ Dark) is allowed
 /// right now.
 ///
-/// Product rule (NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part D):
+/// Product rule (final release navigation flow):
 ///   - not in a live ride → allowed (pre-start preview remains available);
-///   - in a live ride with the emergency kill-switch engaged
+///   - in a live ride with the kill-switch engaged
 ///     ([activeRideStyleSwitchEnabled] == false, the current default) →
 ///     blocked with reason [NavActiveRideBlockReason.liveRideActive];
 ///   - in a live ride with the kill-switch explicitly disabled by a test
-///     ([activeRideStyleSwitchEnabled] == true) → allowed (used by legacy
-///     tests that still exercise the transactional lease coalesce path).
+///     ([activeRideStyleSwitchEnabled] == true) → allowed (legacy tests).
 NavActiveRideBlockReason navActiveRideStyleTapAllowed({
   required bool liveRideActive,
   bool activeRideStyleSwitchEnabled = kNavActiveRideStyleSwitchEnabled,
@@ -102,11 +101,11 @@ NavActiveRideBlockReason navActiveRideStyleTapAllowed({
 
 /// Whether a manual +/- zoom input is allowed right now.
 ///
-/// NAV-RELEASE-SIMPLE-STREETLEVEL-1: zoom +/- stays available during a live
-/// ride. It changes zoom only around the fixed streetlevel profile; it does
-/// not switch camera modes or run fitBounds.
+/// Final release navigation flow: no manual +/- zoom before or during
+/// navigation. The fixed streetlevel profile owns zoom exclusively.
 NavActiveRideBlockReason navActiveRideZoomAllowed({
   required bool liveRideActive,
 }) {
-  return NavActiveRideBlockReason.none;
+  // liveRideActive is retained for API stability; zoom is never allowed.
+  return NavActiveRideBlockReason.liveRideActive;
 }

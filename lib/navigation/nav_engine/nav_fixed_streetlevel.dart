@@ -52,11 +52,55 @@ double stickyBottomChromeReserve({
   return safeMeasured >= lastReliable ? safeMeasured : lastReliable;
 }
 
-/// Manual zoom remains allowed in preview and during a live ride for the
-/// release-simplified control surface (zoom only; pitch/anchor stay at L7).
+/// Manual +/- zoom is retired for the final release surface. Pitch/anchor
+/// stay at the fixed L7 streetlevel profile; zoom is never driver-adjustable.
 bool fixedStreetLevelZoomAllowed({required bool liveRideActive}) {
-  // liveRideActive is accepted for API clarity; zoom is never blocked.
-  return true;
+  // liveRideActive is accepted for API clarity; zoom is always blocked.
+  return false;
+}
+
+/// Native Mapbox zoom-gesture flags for the fixed streetlevel surface.
+///
+/// When [lockManualZoom] is true (prepared route, active NAV, or live ride),
+/// every Mapbox zoom gesture is off so the fixed standard zoom cannot change.
+class NavFixedZoomGestureLock {
+  const NavFixedZoomGestureLock({
+    required this.pinchToZoomEnabled,
+    required this.doubleTapToZoomInEnabled,
+    required this.doubleTouchToZoomOutEnabled,
+    required this.quickZoomEnabled,
+  });
+
+  final bool pinchToZoomEnabled;
+  final bool doubleTapToZoomInEnabled;
+  final bool doubleTouchToZoomOutEnabled;
+  final bool quickZoomEnabled;
+
+  bool get allZoomGesturesDisabled =>
+      !pinchToZoomEnabled &&
+      !doubleTapToZoomInEnabled &&
+      !doubleTouchToZoomOutEnabled &&
+      !quickZoomEnabled;
+}
+
+/// Resolves Mapbox zoom-gesture settings for the current surface.
+NavFixedZoomGestureLock resolveNavFixedZoomGestureLock({
+  required bool preparedRouteOrGuidanceOrLive,
+}) {
+  if (!preparedRouteOrGuidanceOrLive) {
+    return const NavFixedZoomGestureLock(
+      pinchToZoomEnabled: true,
+      doubleTapToZoomInEnabled: true,
+      doubleTouchToZoomOutEnabled: true,
+      quickZoomEnabled: true,
+    );
+  }
+  return const NavFixedZoomGestureLock(
+    pinchToZoomEnabled: false,
+    doubleTapToZoomInEnabled: false,
+    doubleTouchToZoomOutEnabled: false,
+    quickZoomEnabled: false,
+  );
 }
 
 /// Compact diagnostic label — never "View N/13".

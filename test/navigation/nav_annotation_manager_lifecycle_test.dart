@@ -522,14 +522,14 @@ void main() {
         ),
         NavStyleTapDecision.begin,
       );
-      // NAV-RELEASE-SIMPLE-STREETLEVEL-1: default kill switch is re-enabled so
-      // Light/Dark/3D/Satellite remain usable during a live ride.
+      // NAV-RELEASE-FINAL-FLOW-1: default kill switch locks style during a
+      // live ride; Light/Dark/3D/Satellite remain available only in preview.
       expect(
         navStyleTapDecision(
           liveRideActive: true,
           styleTransactionRunning: false,
         ),
-        NavStyleTapDecision.begin,
+        NavStyleTapDecision.blocked,
       );
     });
 

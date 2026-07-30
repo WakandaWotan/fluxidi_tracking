@@ -209,12 +209,12 @@ void main() {
       expect(fixedStreetLevelZoomLabel(19.1).contains('View'), isFalse);
     });
 
-    test('live zoom is allowed', () {
+    test('live zoom is blocked', () {
       expect(
         navActiveRideZoomAllowed(liveRideActive: true),
-        NavActiveRideBlockReason.none,
+        NavActiveRideBlockReason.liveRideActive,
       );
-      expect(fixedStreetLevelZoomAllowed(liveRideActive: true), isTrue);
+      expect(fixedStreetLevelZoomAllowed(liveRideActive: true), isFalse);
     });
   });
 
@@ -270,24 +270,24 @@ void main() {
   });
 
   group('controls surface', () {
-    test('active ride keeps zoom + style; no presentation modes', () {
+    test('active ride locks zoom + style; marker stays', () {
       final live = resolveNavMapControlAvailability(
         liveRideActive: true,
         hasPreviewDestination: true,
         routePointCount: 24,
       );
-      expect(live.zoomControls, isTrue);
-      expect(live.styleSelector, isTrue);
+      expect(live.zoomControls, isFalse);
+      expect(live.styleSelector, isFalse);
       expect(live.markerSelector, isTrue);
     });
 
-    test('preview keeps zoom + style + marker', () {
+    test('preview keeps style + marker; no zoom', () {
       final preview = resolveNavMapControlAvailability(
         liveRideActive: false,
         hasPreviewDestination: true,
         routePointCount: 24,
       );
-      expect(preview.zoomControls, isTrue);
+      expect(preview.zoomControls, isFalse);
       expect(preview.styleSelector, isTrue);
       expect(preview.markerSelector, isTrue);
     });

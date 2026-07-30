@@ -40,6 +40,10 @@ class CockpitWidget extends StatefulWidget {
   final bool navActive;
   final bool embedded;
 
+  /// NAV-RELEASE-FINAL-FLOW-1: when false, the NAV-to-pickup control is
+  /// omitted (direct street draft: driver is already at pickup A).
+  final bool showNavToPickupAction;
+
   final VoidCallback onNav;
   final VoidCallback onStart;
   final VoidCallback onStop;
@@ -88,6 +92,7 @@ class CockpitWidget extends StatefulWidget {
     required this.onWait,
     required this.onGo,
     this.embedded = false,
+    this.showNavToPickupAction = true,
     this.themeListenable,
     this.secondaryActions = const <Widget>[],
     this.secondaryActionGap = 6,
@@ -291,16 +296,18 @@ class _CockpitWidgetState extends State<CockpitWidget>
               flex: 5,
               child: Row(
                 children: [
-                  _iconBtn(
-                    keyId: 'nav',
-                    label: widget.navActive ? 'Navigation on' : 'Navigation',
-                    icon: widget.navActive
-                        ? Icons.navigation
-                        : Icons.navigation_outlined,
-                    onTap: widget.onNav,
-                    hot: widget.navActive,
-                  ),
-                  const SizedBox(width: metricTileGap),
+                  if (widget.showNavToPickupAction) ...[
+                    _iconBtn(
+                      keyId: 'nav',
+                      label: widget.navActive ? 'Navigation on' : 'Navigation',
+                      icon: widget.navActive
+                          ? Icons.navigation
+                          : Icons.navigation_outlined,
+                      onTap: widget.onNav,
+                      hot: widget.navActive,
+                    ),
+                    const SizedBox(width: metricTileGap),
+                  ],
                   _iconBtn(
                     keyId: 'primary',
                     label: widget.tripStarted ? 'Stop trip' : 'Start trip',
@@ -410,7 +417,8 @@ class _CockpitWidgetState extends State<CockpitWidget>
               flex: widget.landscapeKpiPriority ? 4 : 5,
               child: Row(
                 children: [
-                  if (!widget.landscapeKpiPriority) ...[
+                  if (!widget.landscapeKpiPriority &&
+                      widget.showNavToPickupAction) ...[
                     _iconBtn(
                       keyId: 'nav',
                       label: widget.navActive

@@ -55,8 +55,8 @@ void main() {
       expect(preStart().styleSelector, isTrue);
     });
 
-    test('zoom controls are available before START', () {
-      expect(preStart().zoomControls, isTrue);
+    test('zoom controls are absent before START', () {
+      expect(preStart().zoomControls, isFalse);
     });
 
     test('offline-map entry is available before START', () {
@@ -97,18 +97,18 @@ void main() {
   });
 
   group('NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 active-ride lock', () {
-    test('active-ride keeps style + zoom under fixed streetlevel', () {
+    test('active-ride locks style + zoom under fixed streetlevel', () {
       final live = activeRide();
       expect(live.phase, NavMapSurfacePhase.activeRide);
-      expect(live.styleSelector, isTrue);
-      expect(live.zoomControls, isTrue);
+      expect(live.styleSelector, isFalse);
+      expect(live.zoomControls, isFalse);
       expect(
         navActiveRideStyleTapAllowed(liveRideActive: true),
-        NavActiveRideBlockReason.none,
+        NavActiveRideBlockReason.liveRideActive,
       );
       expect(
         navActiveRideZoomAllowed(liveRideActive: true),
-        NavActiveRideBlockReason.none,
+        NavActiveRideBlockReason.liveRideActive,
       );
     });
 
@@ -123,8 +123,8 @@ void main() {
         routePointCount: 24,
       );
       expect(live.phase, NavMapSurfacePhase.activeRide);
-      expect(live.styleSelector, isTrue);
-      expect(live.zoomControls, isTrue);
+      expect(live.styleSelector, isFalse);
+      expect(live.zoomControls, isFalse);
     });
 
     test('controls return after STOP', () {
@@ -136,7 +136,7 @@ void main() {
       );
       expect(afterStop.phase, NavMapSurfacePhase.preview);
       expect(afterStop.styleSelector, isTrue);
-      expect(afterStop.zoomControls, isTrue);
+      expect(afterStop.zoomControls, isFalse);
       expect(afterStop.markerSelector, isTrue);
       expect(afterStop.offlineMapsEntry, isTrue);
       expect(
@@ -145,7 +145,7 @@ void main() {
       );
       expect(
         navActiveRideZoomAllowed(liveRideActive: false),
-        NavActiveRideBlockReason.none,
+        NavActiveRideBlockReason.liveRideActive,
       );
     });
   });

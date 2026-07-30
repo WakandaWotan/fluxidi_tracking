@@ -93,25 +93,73 @@ NavMapSurfacePhase resolveNavMapSurfacePhase({
 bool navPreviewRouteDrawable(int routePointCount) =>
     routePointCount >= kNavPreviewRoutePointMinimum;
 
+/// Which route `_openNavigation` must build for the current ride surface.
+///
+/// NAV is never the paid customer trip. START alone activates metering A→B.
+enum NavOpenRouteTarget {
+  /// Driver GPS → booking pickup A (unmetered guidance).
+  toPickup,
+
+  /// Live trip: rebuild driver GPS → dropoff B.
+  toDropoff,
+
+  /// Nothing to navigate (including direct street draft: A is already the
+  /// driver's current position, so NAV-to-pickup is not offered).
+  none,
+}
+
+/// Whether the NAV-to-pickup action should be visible.
+///
+/// Product rule: NAV = current driver position → pickup A. On a direct street
+/// draft, pickup A *is* the driver's current position, so the action must not
+/// appear as a preview-refresh button. Booking preview keeps NAV. An already
+/// active street ride may keep the follow/re-route control.
+bool navToPickupActionVisible({
+  required bool hasBooking,
+  required bool directRideDraft,
+  required bool directRideActive,
+}) {
+  if (directRideDraft) return false;
+  if (hasBooking) return true;
+  return directRideActive;
+}
+
+/// Pure NAV-button route decision. Street draft returns [none] — the UI must
+/// hide NAV rather than refresh the preview. The metered A→B route is START.
+NavOpenRouteTarget decideNavOpenRouteTarget({
+  required bool hasBooking,
+  required bool tripActive,
+  required bool hasDirectDestination,
+  required bool directRideActive,
+}) {
+  if (hasBooking && !tripActive) return NavOpenRouteTarget.toPickup;
+  if (hasBooking && tripActive) return NavOpenRouteTarget.toDropoff;
+  if (hasDirectDestination && directRideActive) {
+    return NavOpenRouteTarget.toDropoff;
+  }
+  // Direct street draft: already at A. No NAV-to-pickup target.
+  return NavOpenRouteTarget.none;
+}
+
 /// Resolves which map controls are available.
 ///
-/// Product rules:
-///   * preview → route + style + zoom + marker + offline + START, with no live
-///     ride required;
-///   * active ride → fixed streetlevel: style + zoom remain available (release
-///     simplification); route, offline entry and marker selector stay usable;
-///   * after STOP the surface falls back to preview/idle, which restores the
-///     controls without any extra call.
+/// Product rules (final release navigation flow):
+///   * preview → route + style + marker + offline + START; **no** +/- zoom;
+///   * active NAV guidance or live ride → fixed streetlevel, style locked,
+///     zoom locked; marker selector stays so Car/Arrow can still be changed;
+///   * after STOP the surface falls back to preview/idle.
 NavMapControlAvailability resolveNavMapControlAvailability({
   required bool liveRideActive,
   required bool hasPreviewDestination,
   required int routePointCount,
+  bool navigationGuidanceActive = false,
 }) {
   final phase = resolveNavMapSurfacePhase(
     liveRideActive: liveRideActive,
     hasPreviewDestination: hasPreviewDestination,
   );
   final routeDrawable = navPreviewRouteDrawable(routePointCount);
+  final lockPresentation = liveRideActive || navigationGuidanceActive;
   switch (phase) {
     case NavMapSurfacePhase.idle:
       return NavMapControlAvailability(
@@ -124,10 +172,24 @@ NavMapControlAvailability resolveNavMapControlAvailability({
         phase: phase,
       );
     case NavMapSurfacePhase.preview:
+      if (lockPresentation) {
+        // NAV pressed on a prepared booking/street draft: unmetered guidance
+        // with the same locked presentation as a live ride, but START remains
+        // available so the paid customer trip can still begin.
+        return NavMapControlAvailability(
+          routePreview: routeDrawable,
+          styleSelector: false,
+          zoomControls: false,
+          markerSelector: true,
+          offlineMapsEntry: true,
+          startAction: true,
+          phase: phase,
+        );
+      }
       return NavMapControlAvailability(
         routePreview: routeDrawable,
         styleSelector: true,
-        zoomControls: true,
+        zoomControls: false,
         markerSelector: true,
         offlineMapsEntry: true,
         startAction: true,
@@ -136,8 +198,8 @@ NavMapControlAvailability resolveNavMapControlAvailability({
     case NavMapSurfacePhase.activeRide:
       return NavMapControlAvailability(
         routePreview: routeDrawable,
-        styleSelector: true,
-        zoomControls: true,
+        styleSelector: false,
+        zoomControls: false,
         markerSelector: true,
         offlineMapsEntry: true,
         startAction: false,
