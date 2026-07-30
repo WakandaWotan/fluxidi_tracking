@@ -205,6 +205,23 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _stopTeardownInProgress = false;
   int _stopTeardownGeneration = 0;
 
+  // NAV-DRIVER-VIEW-EXIT-MAP-FLASH-P0-FIELD-2026-07-30
+  //
+  // Set synchronously by `_attemptBusinessPreviewRouteExit` immediately before
+  // `Navigator.pop`, and never cleared (the widget unmounts). Under Android
+  // Hybrid Composition (`kDriverMapHostingMode = HC`) the native Mapbox
+  // surface is composited by the Android view hierarchy, so it is NOT subject
+  // to the Flutter route transition and stays visible until the platform view
+  // detaches at `dispose()` — which runs only AFTER the pop animation. During
+  // `[NAV_PHASE] direct_preview` the existing `!showCockpit` cover is absent
+  // (a direct destination makes `showCockpit` true), leaving the map exposed
+  // and reading as an unintended navigation page between Driver View and
+  // Business Home. While this flag is set, `_buildMapLayer` swaps the platform
+  // view for an opaque backdrop in the same frame the pop transition starts,
+  // so no map frame can be presented. Only reachable when the exit guard has
+  // already proven no live ride / STOP teardown / direct finalize is active.
+  bool _routeExitInProgress = false;
+
   // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix)
   //
   // Reference-identity ownership marker for the operator-minted
@@ -25689,6 +25706,39 @@ class _DriverHomePageState extends State<DriverHomePage>
     _attemptBusinessPreviewRouteExit(source: 'back_to_business_button');
   }
 
+  /// NAV-DRIVER-VIEW-EXIT-MAP-FLASH-P0-FIELD-2026-07-30
+  ///
+  /// Marks this Driver View as exiting and tears down map presentation
+  /// ownership synchronously, immediately before `Navigator.pop`.
+  ///
+  ///   * `_routeExitInProgress` makes `_buildMapLayer` return an opaque
+  ///     backdrop instead of the retained Hybrid-Composition `MapWidget`, so
+  ///     the native surface is detached in the same frame the pop transition
+  ///     starts. No delay is introduced before the pop.
+  ///   * `_hardClearAtRideBoundary(bumpSession: true)` is the SAME clear the
+  ///     `dispose()` path already performs; running it here (rather than only
+  ///     after the transition) bumps the navigation session generation so
+  ///     pending pre-start / style-restore / camera callbacks from the
+  ///     preview phase are stale and cannot re-show the map, invalidates the
+  ///     route render epoch, and clears direct-preview route state.
+  ///
+  /// Idempotent: a second call is a no-op. Callers must already have passed
+  /// the ride / STOP-teardown / direct-finalize gates.
+  void _beginDriverViewRouteExitPresentation({required String source}) {
+    if (_routeExitInProgress) return;
+    _routeExitInProgress = true;
+    debugPrint(
+      '[NAV_DRIVER_VIEW_EXIT] stage=presentation_hidden source=$source '
+      'mapHidden=true',
+    );
+    _hardClearAtRideBoundary(reason: 'route_exit', bumpSession: true);
+    if (mounted) {
+      // Synchronous rebuild request: the frame that starts the pop transition
+      // is the same frame that swaps the platform view for the backdrop.
+      setState(() {});
+    }
+  }
+
   /// SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix)
   ///
   /// Shared business-preview exit guard used by the explicit "Back to
@@ -25739,6 +25789,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         if (shouldClear) {
           _clearOperatorMintedSessionIfOwned(reason: 'route_exit');
         }
+        // NAV-DRIVER-VIEW-EXIT-MAP-FLASH-P0-FIELD-2026-07-30: hide the native
+        // Mapbox surface and drop presentation ownership BEFORE the pop, so no
+        // navigation frame is visible during the transition. This branch is
+        // only reachable once `resolveExitRequest` has proven the ride,
+        // STOP-teardown and direct-finalize gates are all idle, so the STOP
+        // teardown path and active Street Level behaviour are untouched.
+        _beginDriverViewRouteExitPresentation(source: source);
         setAppRole(AppRole.companyAdmin);
         final nav = Navigator.of(context);
         if (nav.canPop()) {
@@ -30585,6 +30642,17 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Widget _buildMapLayer() {
+    // NAV-DRIVER-VIEW-EXIT-MAP-FLASH-P0-FIELD-2026-07-30: while the route exit
+    // is in flight the retained Hybrid-Composition MapWidget is replaced by an
+    // opaque backdrop, detaching the native surface so it cannot be presented
+    // during the Navigator pop transition. Checked FIRST so no map build log
+    // or platform-view build happens on the exiting frame.
+    if (_routeExitInProgress) {
+      return const ColoredBox(
+        key: ValueKey<String>('driver_map_route_exit_backdrop'),
+        color: kFluxidiMapBackdrop,
+      );
+    }
     final now = DateTime.now();
     final lastBuildLog = _lastMapWidgetBuildLogAt;
     if (lastBuildLog == null || now.difference(lastBuildLog).inSeconds >= 5) {
