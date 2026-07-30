@@ -6111,6 +6111,22 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool get _fixedStreetLevelPreviewDraft =>
       _directRideDraft || (_activeBooking != null && !_liveRideActive);
 
+  /// NAV-FIXED-HUD-PRESENTATION-1: which route phase the surface is in.
+  NavFixedHudPhase get _navFixedHudPhase => resolveNavFixedHudPhase(
+        liveRideActive: _liveRideActive,
+        navigationGuidanceActive: _navigationGuidanceActive,
+        preparedRouteDraft: _fixedStreetLevelPreviewDraft,
+      );
+
+  /// NAV-FIXED-HUD-PRESENTATION-1: the single activation predicate for the
+  /// screen-fixed HUD marker and the fixed Street Level camera. Replaces the
+  /// former `follow && _liveRideActive` gate so prepared route, NAV-to-pickup
+  /// and the live ride share one identical deterministic presentation.
+  bool get _navFixedHudPresentationActive => navFixedHudPresentationActive(
+        phase: _navFixedHudPhase,
+        cameraFollowMode: _cameraMode == _CameraMode.follow,
+      );
+
   /// NAV-RELEASE-FINAL-FLOW-1: NAV-to-pickup is booking-only on the prepared
   /// surface. Direct street draft is already at A.
   bool get _showNavToPickupAction => navToPickupActionVisible(
@@ -10943,11 +10959,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   /// (presentation state, follow-live gating, Tellers activity).
   DriverMarkerRotationPolicy _currentDriverMarkerRotationPolicy() {
     final pres = _navigationPresentationStateFor(_navCameraViewMode);
-    final followLiveActive =
-        _cameraMode == _CameraMode.follow && _liveRideActive;
     final owner = resolveDriverVehicleMarkerPresentationOwner(
       tellersActive: _navPresentationMode.isTellers,
-      followLiveActive: followLiveActive,
+      followLiveActive: _navFixedHudPresentationActive,
       showDriverHudOverlay: pres.showDriverHudOverlay,
     );
     return resolveDriverMarkerRotationPolicy(
@@ -13204,8 +13218,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     // owns the single vehicle marker — never show both.
     final owner = resolveDriverVehicleMarkerPresentationOwner(
       tellersActive: _navPresentationMode.isTellers,
-      followLiveActive:
-          _cameraMode == _CameraMode.follow && _liveRideActive,
+      followLiveActive: _navFixedHudPresentationActive,
       showDriverHudOverlay: pres.showDriverHudOverlay,
     );
     if (driverHideMapboxMarkerForPresentationOwner(owner)) {
@@ -13328,14 +13341,14 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _suppressMapboxTaxiMarkerAtRuntime(NavigationPresentationState pres) {
     return !_resolveNav3dHudRenderDecision(
       pres,
-      followLiveActive: _cameraMode == _CameraMode.follow && _liveRideActive,
+      followLiveActive: _navFixedHudPresentationActive,
     ).mapbox2dVisible;
   }
 
   bool _hideDriverHudVehicleAtRuntime(NavigationPresentationState pres) {
     return _resolveNav3dHudRenderDecision(
       pres,
-      followLiveActive: _cameraMode == _CameraMode.follow && _liveRideActive,
+      followLiveActive: _navFixedHudPresentationActive,
     ).shouldHideHud;
   }
 
@@ -14749,8 +14762,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   double _resolveDesiredMapboxTaxiOpacity({required String source}) {
-    final followLiveActive =
-        _cameraMode == _CameraMode.follow && _liveRideActive;
+    final followLiveActive = _navFixedHudPresentationActive;
     final pres = _navigationPresentationStateFor(_navCameraViewMode);
     final explicit2dFallback = _vehicleModelSyncLifecycle.sessionFallback2d;
     final presentation3dIntent = _currentNav3dPresentation3dIntent();
@@ -14794,8 +14806,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     String source = 'visual_sync',
   }) async {
     final desired = _resolveDesiredMapboxTaxiOpacity(source: source);
-    final followLiveActive =
-        _cameraMode == _CameraMode.follow && _liveRideActive;
+    final followLiveActive = _navFixedHudPresentationActive;
     final decision = _resolveNav3dHudRenderDecision(
       _navigationPresentationStateFor(_navCameraViewMode),
       followLiveActive: followLiveActive,
@@ -16006,6 +16017,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (!_fixedStreetLevelPreviewDraft) return;
     final pos = _lastPos;
     if (pos == null) return;
+    // NAV-FIXED-HUD-PRESENTATION-1: route-up, never raw GPS course. At
+    // standstill `pos.heading` is noise (or 0), which is exactly why the
+    // prepared route did not extend toward the top of the screen.
+    final routeUp = resolveNavFixedRouteUpBearing(
+      routeTangentBearingDeg: navFirstMeaningfulRouteSegmentBearing(
+        _routeCoords,
+      ),
+      seededRouteBearingDeg: _navStationaryBearingGate.acceptedBearing,
+      gpsHeadingDeg: pos.heading.isFinite ? pos.heading : null,
+    );
     final width = MediaQuery.sizeOf(context).width;
     final height = MediaQuery.sizeOf(context).height;
     final safe = MediaQuery.of(context).padding;
@@ -16037,7 +16058,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       screenHeight: height,
       vehicleLat: pos.latitude,
       vehicleLon: pos.longitude,
-      bearingDeg: pos.heading.isFinite ? pos.heading : 0.0,
+      bearingDeg: routeUp.bearingDeg,
       speedKmh: 0.0,
       progress: null,
       directAdjust: true,
@@ -16046,7 +16067,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       zoom: overrides.zoom,
       pitch: overrides.pitch,
     );
-    final bearingDeg = pos.heading.isFinite ? pos.heading : 0.0;
+    final bearingDeg = routeUp.bearingDeg;
     try {
       await _map!.flyTo(
         mb.CameraOptions(
@@ -16070,6 +16091,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         'zoom=${overrides.zoom.toStringAsFixed(2)} '
         'pitch=${overrides.pitch.toStringAsFixed(1)} '
         'bearing=${bearingDeg.toStringAsFixed(1)} '
+        'bearingSource=${navFixedRouteUpBearingSourceLabel(routeUp.source)} '
         'anchor=${overrides.anchorFraction.toStringAsFixed(3)}',
       );
     } catch (_) {
@@ -16982,7 +17004,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         : (progress?.hasReliableSnap ?? _useMatchedVisual);
     return NavCameraPolicyInput(
       timestamp: DateTime.now(),
-      liveRideActive: _liveRideActive,
+      // NAV-FIXED-HUD-PRESENTATION-1: the follow camera is the single camera
+      // owner for every phase that shows a prepared or driven route, not just
+      // the metered ride. Gating on `_liveRideActive` alone made a prepared
+      // booking and NAV-to-pickup resolve `follow=false reason=inactive`, so
+      // the map never rotated to route-up underneath the fixed HUD.
+      liveRideActive: _navFixedHudPresentationActive,
       cameraFollowMode: _cameraMode == _CameraMode.follow,
       manualRecenter: manualRecenter,
       speedKmh: _speedKmhFor(pos),
@@ -17000,7 +17027,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       nearManeuver: nearManeuver,
       waitingMode: _isWaiting,
       hasReliableSnap: hasReliableSnap,
-      viewMode: _cameraMode == _CameraMode.follow && _liveRideActive
+      // NAV-FIXED-HUD-PRESENTATION-1: overview here forced the fixed-north
+      // bearing branch of the smoother, which is the "north-up / stale map
+      // angle" the field test saw on prepared routes.
+      viewMode: _navFixedHudPresentationActive
           ? _navCameraViewMode
           : NavCameraViewMode.overview,
     );
@@ -19314,12 +19344,23 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
 
     // NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1: bounded PII-free invariant proof.
-    // Exactly one visible vehicle-marker owner (the Mapbox annotation), in
-    // both navigation and tellers modes. No coordinates or trip identifiers.
+    // Exactly one visible vehicle-marker owner. No coordinates or trip ids.
+    // NAV-FIXED-HUD-PRESENTATION-1: the owner used to be hardcoded to
+    // `mapbox`, so the field log could not distinguish "the HUD owns and the
+    // annotation is hidden" from "the annotation is the visible marker". It
+    // now reports the resolved owner and the route phase.
+    final markerOwner = resolveDriverVehicleMarkerPresentationOwner(
+      tellersActive: _navPresentationMode.isTellers,
+      followLiveActive: _navFixedHudPresentationActive,
+      showDriverHudOverlay: _navigationPresentationStateFor(
+        _navCameraViewMode,
+      ).showDriverHudOverlay,
+    );
     _logNavBounded(
       'NAV_MARKER_OWNER',
       'mode=${_navPresentationMode.isTellers ? 'tellers' : 'navigation'} '
-          'owner=mapbox '
+          'phase=${navFixedHudPhaseLabel(_navFixedHudPhase)} '
+          'owner=${driverVehicleMarkerPresentationOwnerLabel(markerOwner)} '
           'visible_owner_count=1 '
           'marker=${_driverNavigationMarkerChoice == DriverNavigationMarkerChoice.arrow ? 'arrow' : 'car'}',
       intervalMs: 3000,
@@ -30134,14 +30175,18 @@ class _DriverHomePageState extends State<DriverHomePage>
     // to the driver cockpit presentation.
     final navPreviewDecision = decideNavPreviewPresentation(
       NavPreviewPresentationInputs(
-        hasPreviewDraft: hasDirectDraft,
+        // NAV-FIXED-HUD-PRESENTATION-1: a prepared *booking* is a preview
+        // draft too. Passing only the street draft folded prepared bookings
+        // into overview, so they never reached the driver cockpit
+        // presentation and could not mount the screen-fixed HUD.
+        hasPreviewDraft: _fixedStreetLevelPreviewDraft,
         selectedViewMode: _navPreviewViewModeToken(),
         routePointCount: _routeCoords.length,
         liveRideActive: liveActive,
       ),
     );
     final NavigationPresentationState navPresentationState =
-        _cameraMode == _CameraMode.follow && liveActive
+        _navFixedHudPresentationActive
             ? _navigationPresentationStateFor(_navCameraViewMode)
             : (navPreviewDecision.isStreetLevel
                 ? _navigationPresentationStateFor(NavCameraViewMode.streetView)
@@ -30227,7 +30272,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (_cameraMode == _CameraMode.follow && liveActive) {
       _logNavPres3dVehicleVisibleStateIfChanged(navPresentationState);
     }
-    final followLiveActive = _cameraMode == _CameraMode.follow && liveActive;
+    // NAV-FIXED-HUD-PRESENTATION-1: prepared route, NAV-to-pickup and the
+    // live ride all mount the screen-fixed HUD as the sole visible owner.
+    final followLiveActive = _navFixedHudPresentationActive;
     final nav3dHudRenderDecision = _resolveNav3dHudRenderDecision(
       navPresentationState,
       followLiveActive: followLiveActive,

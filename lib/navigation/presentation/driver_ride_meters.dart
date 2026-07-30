@@ -102,6 +102,23 @@ DriverVehicleMarkerPresentationOwner resolveDriverVehicleMarkerPresentationOwner
   return DriverVehicleMarkerPresentationOwner.mapboxAnnotation;
 }
 
+/// Bounded, PII-free diagnostic label for a marker presentation owner.
+String driverVehicleMarkerPresentationOwnerLabel(
+  DriverVehicleMarkerPresentationOwner owner,
+) {
+  switch (owner) {
+    case DriverVehicleMarkerPresentationOwner.none:
+      return 'none';
+    case DriverVehicleMarkerPresentationOwner.navigationHud:
+      return 'hud';
+    case DriverVehicleMarkerPresentationOwner.mapboxAnnotation:
+      return 'mapbox';
+    // ignore: deprecated_member_use_from_same_package
+    case DriverVehicleMarkerPresentationOwner.tellersLiveWindow:
+      return 'tellers_live_window';
+  }
+}
+
 /// NAV-TELLERS-STREETLEVEL-SCREEN-UP-MARKER-1: rotation-alignment mode for
 /// the single Mapbox driver point annotation. Maps 1:1 onto Mapbox
 /// `IconRotationAlignment`:
@@ -190,11 +207,22 @@ DriverMarkerRotationPolicy resolveDriverMarkerRotationPolicy({
   required bool isStreetlevel,
   required DriverVehicleMarkerPresentationOwner owner,
 }) {
-  if (isStreetlevel &&
-      owner == DriverVehicleMarkerPresentationOwner.mapboxAnnotation) {
-    return DriverMarkerRotationPolicy.viewportScreenUp;
+  if (!isStreetlevel) return DriverMarkerRotationPolicy.mapRoadBearing;
+  switch (owner) {
+    case DriverVehicleMarkerPresentationOwner.mapboxAnnotation:
+      return DriverMarkerRotationPolicy.viewportScreenUp;
+    // NAV-FIXED-HUD-PRESENTATION-1: the HUD owns the visual and the Mapbox
+    // annotation sits behind it at opacity 0. Opacity is applied over an
+    // async channel, so a style swap, manager recreate or marker restore can
+    // expose that annotation for a frame. Forcing screen-up here means such
+    // a frame can never show a diagonal Car/Arrow.
+    case DriverVehicleMarkerPresentationOwner.navigationHud:
+      return DriverMarkerRotationPolicy.viewportScreenUp;
+    // ignore: deprecated_member_use_from_same_package
+    case DriverVehicleMarkerPresentationOwner.tellersLiveWindow:
+    case DriverVehicleMarkerPresentationOwner.none:
+      return DriverMarkerRotationPolicy.mapRoadBearing;
   }
-  return DriverMarkerRotationPolicy.mapRoadBearing;
 }
 
 /// True when the Mapbox 2D taxi/arrow annotation must be hidden because a

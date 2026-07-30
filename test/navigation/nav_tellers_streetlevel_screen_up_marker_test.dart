@@ -22,14 +22,18 @@ void main() {
       expect(policy.logLabel, 'viewport_screen_up');
     });
 
-    test('Streetlevel + Flutter HUD owner → legacy map alignment', () {
+    // NAV-FIXED-HUD-PRESENTATION-1: the hidden annotation behind the HUD is
+    // now screen-up too. Opacity travels over an async channel, so a style
+    // swap, manager recreate or marker restore can expose it for a frame;
+    // that frame must never show a diagonal Car/Arrow.
+    test('Streetlevel + Flutter HUD owner → viewport screen-up', () {
       final policy = resolveDriverMarkerRotationPolicy(
         isStreetlevel: true,
         owner: DriverVehicleMarkerPresentationOwner.navigationHud,
       );
-      expect(policy.alignment, DriverMarkerRotationAlignment.map);
-      expect(policy.forceIconRotateZero, isFalse);
-      expect(policy.logLabel, 'map_road_bearing');
+      expect(policy.alignment, DriverMarkerRotationAlignment.viewport);
+      expect(policy.forceIconRotateZero, isTrue);
+      expect(policy.logLabel, 'viewport_screen_up');
     });
 
     test('Streetlevel + no owner → legacy map alignment', () {
@@ -157,24 +161,24 @@ void main() {
   });
 
   group('Leaving Tellers restores MAP alignment where required', () {
-    test('same driver, view stays Streetlevel, HUD takes over → legacy MAP',
-        () {
+    test('same driver, view stays Streetlevel, HUD takes over → stays up', () {
       // Tellers open, Streetlevel:
       final duringTellers = resolveDriverMarkerRotationPolicy(
         isStreetlevel: true,
         owner: DriverVehicleMarkerPresentationOwner.mapboxAnnotation,
       );
       // Tellers closes → Flutter HUD becomes the owner (Streetlevel + HUD
-      // flag on). The Mapbox marker is hidden, so alignment falls back to the
-      // legacy MAP contract (defensive — the hidden marker rotation is
-      // invisible but must stay compatible with ordinary Navigation).
+      // flag on). NAV-FIXED-HUD-PRESENTATION-1: closing Tellers must not
+      // transfer ownership back to Mapbox, and the now-hidden annotation
+      // keeps the screen-up contract so the handover cannot flash a diagonal
+      // marker.
       final afterTellers = resolveDriverMarkerRotationPolicy(
         isStreetlevel: true,
         owner: DriverVehicleMarkerPresentationOwner.navigationHud,
       );
       expect(duringTellers.alignment, DriverMarkerRotationAlignment.viewport);
-      expect(afterTellers.alignment, DriverMarkerRotationAlignment.map);
-      expect(afterTellers.iconRotateFor(90.0), 90.0);
+      expect(afterTellers.alignment, DriverMarkerRotationAlignment.viewport);
+      expect(afterTellers.iconRotateFor(90.0), 0.0);
     });
 
     test(
