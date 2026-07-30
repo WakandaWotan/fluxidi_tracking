@@ -626,8 +626,18 @@ class NavComplexityGuard {
     if (_instructionAmbiguous(input)) {
       structuralSignals.add('ambiguous_instruction');
     }
+    // NAV-COMPLEXITY-CHURN-GATE-P0-FIELD-2026-07-29:
+    // `rapid_instruction_churn` on its own is NOT structural complexity. Field
+    // evidence (routeConfidence=96.5, mapMatchConfidence=100.0, branchCount=0,
+    // maneuverCount=2, offRoute=false, rerouteState=false) proved that stepping
+    // an instruction index twice inside the 10 s window is a normal event on
+    // ordinary routes. Churn is retained as a QUALITY signal so it can only
+    // ELEVATE / support an already-structural warning, never activate one by
+    // itself. The producer/presentation contract requires at least one genuine
+    // structural signal (real branches, dense conflicting geometry, materially
+    // ambiguous bearings/junction, complex interchange) before WARN may show.
     if (stepChangesInWindow >= rapidInstructionChurnThreshold) {
-      structuralSignals.add('rapid_instruction_churn');
+      qualitySignals.add('rapid_instruction_churn');
     }
 
     // NAV-COMPLEXITY-HEADING-CONFLICT-GATE-P0-1: a raw single-sample bearing
@@ -667,9 +677,13 @@ class NavComplexityGuard {
     final reasonCode = structuralPresent
         ? _primaryReason(uniqueStructural)
         : 'none';
+    // NAV-COMPLEXITY-CHURN-GATE-P0-FIELD-2026-07-29: churn is a quality
+    // signal now, so severity elevation must not rely on it. `warning`
+    // severity is reserved for genuine structural risk: a sustained
+    // route/heading conflict, or any structural signal on a route where
+    // confidence has collapsed below 40 %.
     final severity =
         uniqueStructural.contains('heading_route_conflict') ||
-            uniqueStructural.contains('rapid_instruction_churn') ||
             (overall != null && overall < 40.0 && structuralPresent)
         ? NavComplexitySeverity.warning
         : NavComplexitySeverity.info;

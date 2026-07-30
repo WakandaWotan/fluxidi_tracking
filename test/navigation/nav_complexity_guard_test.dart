@@ -374,6 +374,11 @@ void main() {
     });
 
     test('rapid instruction churn at complex area => warning', () {
+      // NAV-COMPLEXITY-CHURN-GATE-P0-FIELD-2026-07-29: churn is a QUALITY
+      // signal so the warning here is now owned by `ambiguous_instruction`
+      // (roundabout with an empty modifier). Churn appears in `qualityRules`
+      // rather than `triggerRules` — it supports the structural warning, it
+      // does not create one.
       final guard = NavComplexityGuard();
       var t = DateTime(2026, 1, 1, 12);
       NavComplexityGuardState state = NavComplexityGuardState.inactive;
@@ -396,7 +401,12 @@ void main() {
         }
       }
       expect(state.active, isTrue);
-      expect(state.decision.triggerRules, contains('rapid_instruction_churn'));
+      expect(state.decision.triggerRules, contains('ambiguous_instruction'));
+      expect(state.decision.qualityRules, contains('rapid_instruction_churn'));
+      expect(
+        state.decision.triggerRules,
+        isNot(contains('rapid_instruction_churn')),
+      );
     });
 
     test('decision snapshot exposes audit fields', () {
@@ -527,46 +537,48 @@ void main() {
       expect(state.decision.visible, isTrue);
     });
 
-    test('4) score=0 reason=none clears immediately on strong reliable recovery',
-        () {
-      final guard = NavComplexityGuard();
-      var t = DateTime(2026, 1, 1, 12);
-      NavComplexityGuardState state = NavComplexityGuardState.inactive;
-      for (var i = 0; i < 3; i++) {
+    test(
+      '4) score=0 reason=none clears immediately on strong reliable recovery',
+      () {
+        final guard = NavComplexityGuard();
+        var t = DateTime(2026, 1, 1, 12);
+        NavComplexityGuardState state = NavComplexityGuardState.inactive;
+        for (var i = 0; i < 3; i++) {
+          t = t.add(const Duration(milliseconds: 500));
+          state = guard.update(
+            _input(
+              timestamp: t,
+              overallConfidence: 70.0,
+              snapDistanceM: 10.0,
+              maneuverType: 'fork',
+              maneuverModifier: '',
+              speedKmh: 12.0,
+              distanceToManeuverM: 80.0,
+            ),
+          );
+        }
+        expect(state.active, isTrue);
+
         t = t.add(const Duration(milliseconds: 500));
         state = guard.update(
           _input(
             timestamp: t,
-            overallConfidence: 70.0,
-            snapDistanceM: 10.0,
-            maneuverType: 'fork',
-            maneuverModifier: '',
-            speedKmh: 12.0,
-            distanceToManeuverM: 80.0,
+            overallConfidence: 96.5,
+            snapDistanceM: 3.0,
+            maneuverType: 'turn',
+            maneuverModifier: 'right',
+            speedKmh: 40.0,
+            distanceToManeuverM: 400.0,
           ),
         );
-      }
-      expect(state.active, isTrue);
-
-      t = t.add(const Duration(milliseconds: 500));
-      state = guard.update(
-        _input(
-          timestamp: t,
-          overallConfidence: 96.5,
-          snapDistanceM: 3.0,
-          maneuverType: 'turn',
-          maneuverModifier: 'right',
-          speedKmh: 40.0,
-          distanceToManeuverM: 400.0,
-        ),
-      );
-      expect(state.decision.effectiveScore, 0);
-      expect(state.decision.reason, 'none');
-      expect(state.active, isFalse);
-      expect(state.decision.transition, 'reliable_recovery_clear');
-      expect(state.decision.visible, isFalse);
-      expect(state.decision.staleStateClearedReason, 'reliable_recovery');
-    });
+        expect(state.decision.effectiveScore, 0);
+        expect(state.decision.reason, 'none');
+        expect(state.active, isFalse);
+        expect(state.decision.transition, 'reliable_recovery_clear');
+        expect(state.decision.visible, isFalse);
+        expect(state.decision.staleStateClearedReason, 'reliable_recovery');
+      },
+    );
 
     test('4b) noisy recovery still uses negative hysteresis', () {
       final guard = NavComplexityGuard();
@@ -1000,59 +1012,67 @@ void main() {
       expect(state.decision.structuralComplexityPresent, isFalse);
     });
 
-    test('6) sustained heading conflict without supporting quality => no warning',
-        () {
-      final guard = NavComplexityGuard();
-      final state = drive(
-        guard,
-        (t) => _input(
-          timestamp: t,
-          // Healthy trust flags, good snap, healthy overall — no supporting
-          // quality signal, so a heading conflict must never activate.
-          overallConfidence: 90.0,
-          trustInstruction: true,
-          trustBearing: true,
-          snapDistanceM: 6.0,
-          headingDeltaDeg: 85.0,
-          speedKmh: 30.0,
-          maneuverType: 'turn',
-          maneuverModifier: 'left',
-          distanceToManeuverM: 641.0,
-        ),
-        samples: 12,
-      );
-      expect(state.active, isFalse);
-      expect(state.decision.triggerRules, isEmpty);
-      expect(state.decision.structuralComplexityPresent, isFalse);
-    });
-
-    test('7) alternating 75/60 curvature noise resets streak => no warning', () {
-      final guard = NavComplexityGuard();
-      var t = DateTime(2026, 1, 1, 12);
-      NavComplexityGuardState state = NavComplexityGuardState.inactive;
-      for (var i = 0; i < 20; i++) {
-        t = t.add(const Duration(milliseconds: 500));
-        final delta = i.isEven ? 75.0 : 60.0;
-        state = guard.update(
-          _input(
+    test(
+      '6) sustained heading conflict without supporting quality => no warning',
+      () {
+        final guard = NavComplexityGuard();
+        final state = drive(
+          guard,
+          (t) => _input(
             timestamp: t,
-            // Even with low confidence + high snap present as corroboration,
-            // an alternating pattern must never reach the sustained streak
-            // because the counter resets on each below-threshold sample.
-            overallConfidence: 45.0,
-            trustInstruction: false,
-            snapDistanceM: 32.0,
-            headingDeltaDeg: delta,
-            speedKmh: 25.0,
+            // Healthy trust flags, good snap, healthy overall — no supporting
+            // quality signal, so a heading conflict must never activate.
+            overallConfidence: 90.0,
+            trustInstruction: true,
+            trustBearing: true,
+            snapDistanceM: 6.0,
+            headingDeltaDeg: 85.0,
+            speedKmh: 30.0,
             maneuverType: 'turn',
             maneuverModifier: 'left',
             distanceToManeuverM: 641.0,
           ),
+          samples: 12,
         );
-      }
-      expect(state.active, isFalse);
-      expect(state.decision.triggerRules, isNot(contains('heading_route_conflict')));
-    });
+        expect(state.active, isFalse);
+        expect(state.decision.triggerRules, isEmpty);
+        expect(state.decision.structuralComplexityPresent, isFalse);
+      },
+    );
+
+    test(
+      '7) alternating 75/60 curvature noise resets streak => no warning',
+      () {
+        final guard = NavComplexityGuard();
+        var t = DateTime(2026, 1, 1, 12);
+        NavComplexityGuardState state = NavComplexityGuardState.inactive;
+        for (var i = 0; i < 20; i++) {
+          t = t.add(const Duration(milliseconds: 500));
+          final delta = i.isEven ? 75.0 : 60.0;
+          state = guard.update(
+            _input(
+              timestamp: t,
+              // Even with low confidence + high snap present as corroboration,
+              // an alternating pattern must never reach the sustained streak
+              // because the counter resets on each below-threshold sample.
+              overallConfidence: 45.0,
+              trustInstruction: false,
+              snapDistanceM: 32.0,
+              headingDeltaDeg: delta,
+              speedKmh: 25.0,
+              maneuverType: 'turn',
+              maneuverModifier: 'left',
+              distanceToManeuverM: 641.0,
+            ),
+          );
+        }
+        expect(state.active, isFalse);
+        expect(
+          state.decision.triggerRules,
+          isNot(contains('heading_route_conflict')),
+        );
+      },
+    );
 
     test('8) heading conflict below 8 km/h => no warning', () {
       final guard = NavComplexityGuard();
@@ -1072,7 +1092,10 @@ void main() {
         samples: 12,
       );
       expect(state.active, isFalse);
-      expect(state.decision.triggerRules, isNot(contains('heading_route_conflict')));
+      expect(
+        state.decision.triggerRules,
+        isNot(contains('heading_route_conflict')),
+      );
     });
 
     test(
@@ -1186,8 +1209,10 @@ void main() {
       // repeated_prediction is not a permitted corroboration for a heading
       // conflict — must remain hidden even when both are sustained.
       expect(state.active, isFalse);
-      expect(state.decision.triggerRules,
-          isNot(contains('heading_route_conflict')));
+      expect(
+        state.decision.triggerRules,
+        isNot(contains('heading_route_conflict')),
+      );
     });
 
     test('13) missing lane metadata remains irrelevant', () {
@@ -1480,11 +1505,7 @@ void main() {
         // Session becomes inactive — reset should clear counter.
         t = t.add(const Duration(milliseconds: 500));
         state = guard.update(
-          _input(
-            timestamp: t,
-            liveRideActive: false,
-            followMode: true,
-          ),
+          _input(timestamp: t, liveRideActive: false, followMode: true),
         );
         expect(state.active, isFalse);
 
@@ -1510,5 +1531,131 @@ void main() {
         );
       },
     );
+  });
+
+  group('NAV-COMPLEXITY-CHURN-GATE-P0-FIELD-2026-07-29', () {
+    // Field evidence (tablet test rides 2026-07-29):
+    //   overall=97 route=100 heading=100 map-match=100 branchCount=0
+    //   maneuverCount=2 offRoute=false rerouteState=false
+    //   triggerRules=rapid_instruction_churn qualityRules=repeated_prediction
+    //   predictionSupportingOnly=false structuralComplexityPresent=true
+    //   show=true positiveStreak growing into the hundreds
+    // On an ordinary, non-complex route WARN is a false positive. Churn alone
+    // (with or without repeated prediction) must never activate WARN.
+    test('field repro: churn + repeated prediction on ordinary high-confidence '
+        'route with branchCount=0 keeps WARN hidden', () {
+      final guard = NavComplexityGuard();
+      var t = DateTime(2026, 1, 1, 12);
+      NavComplexityGuardState state = NavComplexityGuardState.inactive;
+      var step = 0;
+      for (var tick = 0; tick < 20; tick++) {
+        t = t.add(const Duration(milliseconds: 700));
+        if (tick == 2 || tick == 6) step += 1;
+        state = guard.update(
+          _input(
+            timestamp: t,
+            overallConfidence: 97.0,
+            trustBearing: true,
+            trustInstruction: true,
+            snapDistanceM: 3.0,
+            offRouteLikely: false,
+            reroutePending: false,
+            headingDeltaDeg: 6.0,
+            predictionActive: true,
+            gapBridgeMs: 500,
+            instructionStepIndex: step,
+            maneuverType: 'turn',
+            maneuverModifier: 'right',
+            speedKmh: 46.0,
+            distanceToManeuverM: 320.0,
+          ),
+        );
+      }
+      expect(
+        state.active,
+        isFalse,
+        reason: 'WARN must not appear on an ordinary route',
+      );
+      expect(state.decision.visible, isFalse);
+      expect(state.decision.branchCount, 0);
+      expect(state.decision.offRoute, isFalse);
+      expect(state.decision.rerouteState, isFalse);
+      expect(state.decision.structuralComplexityPresent, isFalse);
+      expect(state.decision.effectiveScore, 0);
+      expect(state.decision.rawScore, 0);
+      expect(
+        state.decision.triggerRules,
+        isNot(contains('rapid_instruction_churn')),
+        reason: 'churn is now a QUALITY signal, never structural',
+      );
+      expect(
+        state.decision.qualityRules,
+        contains('rapid_instruction_churn'),
+        reason: 'churn stays observable in qualityRules',
+      );
+    });
+
+    test(
+      'churn plus one genuine structural signal (ambiguous roundabout) still '
+      'warns after the required positive streak',
+      () {
+        final guard = NavComplexityGuard();
+        var t = DateTime(2026, 1, 1, 12);
+        NavComplexityGuardState state = NavComplexityGuardState.inactive;
+        var step = 0;
+        for (var tick = 0; tick < 6; tick++) {
+          t = t.add(const Duration(milliseconds: 500));
+          if (tick == 1 || tick == 3) step += 1;
+          state = guard.update(
+            _input(
+              timestamp: t,
+              overallConfidence: 74.0,
+              snapDistanceM: 9.0,
+              instructionStepIndex: step,
+              maneuverType: 'roundabout',
+              maneuverModifier: '',
+              speedKmh: 18.0,
+              distanceToManeuverM: 60.0,
+            ),
+          );
+        }
+        expect(state.active, isTrue);
+        expect(state.decision.triggerRules, contains('ambiguous_instruction'));
+        expect(
+          state.decision.qualityRules,
+          contains('rapid_instruction_churn'),
+        );
+        expect(state.decision.structuralComplexityPresent, isTrue);
+      },
+    );
+
+    test('churn severity may only be `warning` when a real structural risk is '
+        'present (heading_route_conflict) — never for churn alone', () {
+      final guard = NavComplexityGuard();
+      var t = DateTime(2026, 1, 1, 12);
+      NavComplexityGuardState state = NavComplexityGuardState.inactive;
+      var step = 0;
+      for (var tick = 0; tick < 20; tick++) {
+        t = t.add(const Duration(milliseconds: 500));
+        if (tick == 2 || tick == 5 || tick == 8) step += 1;
+        state = guard.update(
+          _input(
+            timestamp: t,
+            overallConfidence: 88.0,
+            trustBearing: true,
+            trustInstruction: true,
+            snapDistanceM: 5.0,
+            headingDeltaDeg: 12.0,
+            instructionStepIndex: step,
+            maneuverType: 'turn',
+            maneuverModifier: 'right',
+            speedKmh: 40.0,
+            distanceToManeuverM: 260.0,
+          ),
+        );
+      }
+      expect(state.severity, NavComplexitySeverity.info);
+      expect(state.active, isFalse);
+    });
   });
 }

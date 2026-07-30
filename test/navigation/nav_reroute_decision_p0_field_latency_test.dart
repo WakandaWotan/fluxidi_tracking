@@ -602,14 +602,18 @@ void main() {
   });
 
   group('NAV-REROUTE-P0 complexity ownership recovery', () {
-    test('15-18) route N churn clears on N+1 ownership; transport pending ok',
+    test('15-18) route N warning clears on N+1 ownership; transport pending ok',
         () {
+      // NAV-COMPLEXITY-CHURN-GATE-P0-FIELD-2026-07-29: the "buildup" here is
+      // now a genuine structural signal (`ambiguous_instruction` on a
+      // roundabout with an unknown modifier) — the previous
+      // `rapid_instruction_churn` path no longer independently activates
+      // the guard. Ownership-cleanup semantics (route N-owned warning
+      // clears on N+1 tick) are preserved and are what this test exercises.
       final guard = NavComplexityGuard();
       var t = DateTime.utc(2026, 7, 17, 14, 20, 30);
       NavComplexityGuardState state = NavComplexityGuardState.inactive;
-      // Build rapid_instruction_churn on route version 3 (needs >=2 step
-      // changes and a 2-tick positive streak).
-      for (var step = 0; step < 4; step++) {
+      for (var i = 0; i < 4; i++) {
         t = t.add(const Duration(milliseconds: 400));
         state = guard.update(
           NavComplexityGuardInput(
@@ -620,9 +624,9 @@ void main() {
             trustInstruction: true,
             trustBearing: true,
             snapDistanceM: 12.0,
-            instructionStepIndex: step,
-            maneuverType: 'turn',
-            maneuverModifier: 'right',
+            instructionStepIndex: 0,
+            maneuverType: 'roundabout',
+            maneuverModifier: 'unknown',
             speedKmh: 30.0,
             distanceToManeuverM: 80.0,
             routeVersion: 3,
@@ -630,7 +634,7 @@ void main() {
         );
       }
       expect(state.active, isTrue);
-      expect(state.reasonCode, 'rapid_instruction_churn');
+      expect(state.reasonCode, 'ambiguous_instruction');
 
       // Home on accept: _resetNavComplexityState() then ownership maps
       // reroutePending=false even while the async Future is still finishing.
@@ -672,10 +676,14 @@ void main() {
     test(
       '18b) N→N+1 version tick alone clears N-owned warning without home reset',
       () {
+        // NAV-COMPLEXITY-CHURN-GATE-P0-FIELD-2026-07-29: churn is now a
+        // quality signal only; use `ambiguous_instruction` on a roundabout
+        // with an unknown modifier to build the N-owned warning so we can
+        // verify the version-tick cleanup path still works.
         final guard = NavComplexityGuard();
         var t = DateTime.utc(2026, 7, 17, 14, 20, 40);
         NavComplexityGuardState state = NavComplexityGuardState.inactive;
-        for (var step = 0; step < 4; step++) {
+        for (var i = 0; i < 4; i++) {
           t = t.add(const Duration(milliseconds: 400));
           state = guard.update(
             NavComplexityGuardInput(
@@ -684,9 +692,9 @@ void main() {
               followMode: true,
               overallConfidence: 60.0,
               snapDistanceM: 12.0,
-              instructionStepIndex: step,
-              maneuverType: 'turn',
-              maneuverModifier: 'right',
+              instructionStepIndex: 0,
+              maneuverType: 'roundabout',
+              maneuverModifier: 'unknown',
               speedKmh: 30.0,
               distanceToManeuverM: 80.0,
               routeVersion: 3,
