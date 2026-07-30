@@ -59125,9 +59125,16 @@ function _trackingSyncIsPlannedBookingRecord(rec) {
 // byte-identical.
 
 function _trackingSyncResolveTripId(bookingId, rec) {
+  // STREET-CASH-PAYMENT-RELOAD-P0: finalizeDirectRideBookingBestEffort persists
+  // the tracking trip as `tracking_trip_id` (not `trip_id`). Without reading
+  // that field, cash/QR/terminal mark-paid never syncs payment_status onto the
+  // street tracking trip, so Driver History reloads as Unpaid even though
+  // BOOKING_KV already holds Paid.
   const explicit = safeStr(
     rec?.trip_id ??
       rec?.tripId ??
+      rec?.tracking_trip_id ??
+      rec?.trackingTripId ??
       rec?.tracking_last?.trip_id ??
       rec?.tracking_last?.tripId ??
       rec?.trackingLast?.trip_id ??
@@ -59135,7 +59142,9 @@ function _trackingSyncResolveTripId(bookingId, rec) {
       rec?.trip?.trip_id ??
       rec?.trip?.tripId ??
       rec?.booking?.trip_id ??
-      rec?.booking?.tripId,
+      rec?.booking?.tripId ??
+      rec?.booking?.tracking_trip_id ??
+      rec?.booking?.trackingTripId,
     160,
   );
   if (explicit) return explicit;
