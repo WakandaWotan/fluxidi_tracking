@@ -102,10 +102,10 @@ void main() {
       expect(find.text('Privacybeleid openen'), findsOneWidget);
       expect(find.text('Inzage of correctie aanvragen'), findsOneWidget);
       expect(
-        find.text('Verwijdering bedrijfaccount aanvragen'),
+        find.text('Verwijdering bedrijfsaccount aanvragen'),
         findsOneWidget,
       );
-      expect(find.text('Fallback: info@fluxidi.com'), findsOneWidget);
+      expect(find.text('Terugval: info@fluxidi.com'), findsOneWidget);
 
       // Regression guard: no English fallback strings must appear.
       expect(find.text('Open privacy policy'), findsNothing);
@@ -136,14 +136,17 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.text('Demander l’accès ou une correction'),
+        find.text('Demander l’accès ou la rectification'),
         findsOneWidget,
       );
       expect(
-        find.text('Demander la suppression du compte entreprise'),
+        find.text('Demander la suppression du compte d’entreprise'),
         findsOneWidget,
       );
-      expect(find.text('Alternative: info@fluxidi.com'), findsOneWidget);
+      expect(
+        find.text('Solution de secours : info@fluxidi.com'),
+        findsOneWidget,
+      );
 
       expect(find.text('Open privacy policy'), findsNothing);
     });
@@ -153,10 +156,10 @@ void main() {
       await _openBusinessAsAdmin(tester);
 
       expect(find.text('Privacidad y cuenta'), findsOneWidget);
-      expect(find.text('Abrir política de privacidad'), findsOneWidget);
-      expect(find.text('Solicitar acceso o corrección'), findsOneWidget);
+      expect(find.text('Abrir la política de privacidad'), findsOneWidget);
+      expect(find.text('Solicitar acceso o rectificación'), findsOneWidget);
       expect(
-        find.text('Solicitar eliminación de la cuenta empresarial'),
+        find.text('Solicitar la eliminación de la cuenta de empresa'),
         findsOneWidget,
       );
       expect(find.text('Alternativa: info@fluxidi.com'), findsOneWidget);
@@ -215,7 +218,10 @@ void main() {
       await _openBusinessAsAdmin(tester);
       await _openDeletionDialog(tester);
 
-      expect(find.text('Confirmar solicitud de eliminación'), findsOneWidget);
+      expect(
+        find.text('Confirmar la solicitud de eliminación'),
+        findsOneWidget,
+      );
       expect(find.text('Cancelar'), findsOneWidget);
       expect(find.text('Continuar'), findsOneWidget);
     });

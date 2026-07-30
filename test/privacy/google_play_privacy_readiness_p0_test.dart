@@ -394,7 +394,13 @@ void main() {
   group('GOOGLE-PLAY-PRIVACY-READINESS-P0 wiring source contracts', () {
     test('1) privacy policy link is present for customer', () {
       final source = _read('lib/main_parts/customer_home_page.dart');
-      expect(source.contains('My data & privacy'), isTrue);
+      // PRIVACY-LOCALE-THEME-EMAIL-AND-CUSTOMER-WIDE-TILE-P0-4:
+      // The customer entry moved out of the two-column grid into a dedicated
+      // full-width card ("Mijn gegevens & account verwijderen") because the
+      // half-tile label truncated on a phone. The canonical wiring markers
+      // still exist: audience = customer and the shared opener.
+      expect(source.contains('My data & delete account'), isTrue);
+      expect(source.contains('Mijn gegevens & account verwijderen'), isTrue);
       expect(source.contains('FluxidiPrivacyAudience.customer'), isTrue);
       expect(source.contains('openFluxidiPrivacyAccountPage'), isTrue);
     });
@@ -442,6 +448,11 @@ void main() {
     });
 
     test('privacy contact email is the single documented mailbox', () {
+      // PRIVACY-P0-4-CORRECT-CANONICAL-EMAIL:
+      // The canonical central privacy contact is info@fluxidi.com. See
+      // test/privacy/privacy_email_regression_p0_4_test.dart for the full
+      // regression guard that forbids privacy contacts on any other
+      // (typo or unrelated) domain.
       expect(kFluxidiPrivacyContactEmail, 'info@fluxidi.com');
       final legal = _read('lib/privacy/fluxidi_legal_urls.dart');
       expect(legal.contains(kFluxidiPrivacyContactEmail), isTrue);

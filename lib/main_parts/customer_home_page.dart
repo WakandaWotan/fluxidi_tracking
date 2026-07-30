@@ -698,6 +698,109 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
     );
   }
 
+  /// PRIVACY-LOCALE-THEME-EMAIL-AND-CUSTOMER-WIDE-TILE-P0-4:
+  /// Full-width Fluxidi-styled action card that opens the shared customer
+  /// privacy / account-deletion flow. Reuses the same design tokens as
+  /// [_customerQuickActionCard] (gradient, border, radius, shadow, gold
+  /// icon chip, chevron) but stretches to fill the available content width
+  /// via [SizedBox.width == double.infinity], so the Dutch label never
+  /// truncates on a phone.
+  ///
+  /// The handler always opens the shared privacy flow with the customer
+  /// audience — no owner/admin authority, no driver id, no company copy.
+  Widget _customerPrivacyDeleteWideCard(BuildContext context) {
+    const wideActionIconContainerSize = 52.0;
+    const wideActionIconGlyphSize = 26.0;
+    final label = _t(
+      nl: 'Mijn gegevens & account verwijderen',
+      en: 'My data & delete account',
+      fr: 'Mes données & supprimer le compte',
+      es: 'Mis datos y eliminar la cuenta',
+    );
+    return SizedBox(
+      width: double.infinity,
+      child: GestureDetector(
+        key: const Key('customer_privacy_delete_wide_card'),
+        behavior: HitTestBehavior.opaque,
+        onTap: () => openFluxidiPrivacyAccountPage(
+          context,
+          audience: FluxidiPrivacyAudience.customer,
+        ),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                _premiumSurface,
+                _isNightGold
+                    ? _themePalette.surfaceAlt
+                    : const Color(0xFFFFF9EE),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: _premiumBorder),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.08),
+                blurRadius: 12,
+                offset: const Offset(0, 5),
+              ),
+              BoxShadow(
+                color: _premiumGold.withOpacity(0.05),
+                blurRadius: 8,
+              ),
+            ],
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: wideActionIconContainerSize,
+                height: wideActionIconContainerSize,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _isNightGold
+                      ? _themePalette.surfaceAlt.withOpacity(0.92)
+                      : const Color(0xFFFFF7E8),
+                  border: Border.all(color: _premiumGold.withOpacity(0.36)),
+                ),
+                child: Icon(
+                  Icons.privacy_tip_outlined,
+                  color: _premiumGold,
+                  size: wideActionIconGlyphSize,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  textAlign: TextAlign.left,
+                  style: TextStyle(
+                    color: _premiumText,
+                    fontSize: 13.6,
+                    fontWeight: FontWeight.w700,
+                    height: 1.2,
+                  ),
+                  maxLines: 2,
+                  softWrap: true,
+                  overflow: TextOverflow.fade,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Icon(
+                Icons.arrow_forward_ios_rounded,
+                size: 13,
+                color: _premiumGold.withOpacity(0.9),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _customerQuickActionGrid(
     BuildContext context, {
     required double mainAxisExtent,
@@ -730,20 +833,13 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           MaterialPageRoute(builder: (_) => const CustomerProfileEditPage()),
         ),
       ),
-      // GOOGLE-PLAY-PRIVACY-READINESS-P0: dedicated privacy & deletion hub.
-      (
-        icon: Icons.privacy_tip_outlined,
-        label: _t(
-          nl: 'Mijn gegevens & privacy',
-          en: 'My data & privacy',
-          fr: 'Mes données & confidentialité',
-          es: 'Mis datos y privacidad',
-        ),
-        onTap: () => openFluxidiPrivacyAccountPage(
-          context,
-          audience: FluxidiPrivacyAudience.customer,
-        ),
-      ),
+      // PRIVACY-LOCALE-THEME-EMAIL-AND-CUSTOMER-WIDE-TILE-P0-4:
+      // The customer privacy / delete-account entry is intentionally rendered
+      // as a separate full-width card below this quick-action grid (see
+      // `_customerPrivacyDeleteWideCard`), not as a half-width tile inside
+      // the grid, because on a phone the two-column grid truncated the
+      // Dutch label. The grid keeps exactly the four canonical customer
+      // quick actions in phone portrait: bookings, details, taxi, radar.
       (
         icon: Icons.local_taxi_outlined,
         label: _t(
@@ -1403,6 +1499,15 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                         forceTwoColumns: isPhonePortrait,
                         forceFourColumns: isTabletPortrait || isTabletLandscape,
                       ),
+                      // PRIVACY-LOCALE-THEME-EMAIL-AND-CUSTOMER-WIDE-TILE-P0-4:
+                      // Full-width customer privacy / delete-account card.
+                      // Rendered as its own row under the quick-action grid so
+                      // the Dutch label never truncates on a phone, and it
+                      // reuses the same Fluxidi design tokens as the tiles
+                      // above (gradient, border, radius, shadow, gold icon
+                      // chip, chevron).
+                      const SizedBox(height: 9),
+                      _customerPrivacyDeleteWideCard(context),
                       const SizedBox(height: 16),
                     ],
                   ),

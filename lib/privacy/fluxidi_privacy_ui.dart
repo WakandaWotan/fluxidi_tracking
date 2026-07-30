@@ -1,16 +1,23 @@
-/// GOOGLE-PLAY-PRIVACY-READINESS-P0
+/// GOOGLE-PLAY-PRIVACY-READINESS-P0 /
+/// PRIVACY-LOCALE-THEME-EMAIL-AND-CUSTOMER-WIDE-TILE-P0-4
 ///
 /// Shared "My data & privacy" / "Privacy & account" surface for customer,
 /// business and driver. Opens the canonical privacy policy and a confirmed
-/// deletion-request path (not an unsafe hard delete).
+/// deletion-request path (never an unsafe hard delete).
 ///
-/// PRIVACY-LOCALE-PARITY-P0-1
-/// The privacy UI binds to Fluxidi's own `appLanguageNotifier` — the same
-/// source of truth every other Fluxidi surface uses — so that the language
-/// selected inside the app (NL/EN/FR/ES) is honored here regardless of the
-/// device system locale. Previously this page read the Flutter Localizations
-/// widget locale (driven by device / MaterialApp), causing an NL-configured
-/// app to render in EN on many phones.
+/// This surface must:
+///   * bind to Fluxidi's own `appLanguageNotifier` — the single source of
+///     truth every other Fluxidi surface uses — so an NL / FR / EN / ES app
+///     renders in that language regardless of the device system locale, and
+///     rebuilds live when the language changes anywhere in the app.
+///     The device Localizations locale is intentionally not read here.
+///   * follow the active Fluxidi theme via `Theme.of(context)`. No hardcoded
+///     dark / light Scaffold, AppBar, dialog, text, divider or icon colors.
+///     The deletion action is semantically red via
+///     `Theme.of(context).colorScheme.error`.
+///   * use only the single canonical privacy contact mailbox
+///     `kFluxidiPrivacyContactEmail` (info@fluxidi.com); no other privacy
+///     address is allowed in `lib/privacy/`.
 library;
 
 import 'package:flutter/material.dart';
@@ -21,7 +28,7 @@ import 'fluxidi_background_location_disclosure.dart';
 import 'fluxidi_legal_urls.dart';
 import 'fluxidi_privacy_account.dart';
 
-/// PRIVACY-LOCALE-PARITY-P0-1: single authoritative language read.
+/// PRIVACY-LOCALE-PARITY-P0-1 / P0-4: single authoritative language read.
 String _fluxidiLangCode() => currentLanguageCode;
 
 String _t({
@@ -43,6 +50,26 @@ String _t({
   }
 }
 
+String _fallbackLabel(String lang) {
+  switch (lang) {
+    case 'en':
+      return 'Fallback';
+    case 'fr':
+      return 'Solution de secours';
+    case 'es':
+      return 'Alternativa';
+    case 'nl':
+    default:
+      return 'Terugval';
+  }
+}
+
+/// PRIVACY-LOCALE-THEME-EMAIL-AND-CUSTOMER-WIDE-TILE-P0-4:
+/// Colon glyph for the fallback / audience sentences. FR follows the
+/// typographic convention "espace insécable + deux-points". Other languages
+/// use a plain colon.
+String _colon(String lang) => lang == 'fr' ? ' : ' : ': ';
+
 Future<void> _launchExternal(Uri uri) async {
   await launchUrl(uri, mode: LaunchMode.externalApplication);
 }
@@ -62,9 +89,9 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // PRIVACY-LOCALE-PARITY-P0-1: rebuild live when the Fluxidi language
-    // changes anywhere in the app, matching the behavior of the rest of the
-    // shell (`appLanguageNotifier`).
+    // PRIVACY-LOCALE-PARITY-P0-1 / P0-4: rebuild live when the Fluxidi
+    // language changes anywhere in the app, matching the behavior of the
+    // rest of the shell (`appLanguageNotifier`).
     return AnimatedBuilder(
       animation: appLanguageNotifier,
       builder: (context, _) => _buildContent(context),
@@ -72,6 +99,7 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
   }
 
   Widget _buildContent(BuildContext context) {
+    final theme = Theme.of(context);
     final lang = _fluxidiLangCode();
     final title = fluxidiPrivacySectionTitle(
       audience: audience,
@@ -87,6 +115,8 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
         : canDeleteOwn;
 
     return Scaffold(
+      // PRIVACY-LOCALE-THEME-EMAIL-AND-CUSTOMER-WIDE-TILE-P0-4:
+      // Do not force a background color — inherit from the active theme.
       appBar: AppBar(title: Text(title)),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
@@ -98,7 +128,7 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
                 nl: 'Privacybeleid openen',
                 en: 'Open privacy policy',
                 fr: 'Ouvrir la politique de confidentialité',
-                es: 'Abrir política de privacidad',
+                es: 'Abrir la política de privacidad',
               ),
             ),
             subtitle: Text(kFluxidiPrivacyPolicyUrl),
@@ -111,40 +141,50 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
               _t(
                 nl: 'Inzage of correctie aanvragen',
                 en: 'Request access or correction',
-                fr: 'Demander l’accès ou une correction',
-                es: 'Solicitar acceso o corrección',
+                fr: 'Demander l’accès ou la rectification',
+                es: 'Solicitar acceso o rectificación',
               ),
             ),
             subtitle: Text(kFluxidiPrivacyContactEmail),
-            onTap: () => _launchExternal(
-              fluxidiPrivacyMailtoUri(
-                subject: _t(
-                  nl: 'Fluxidi — verzoek inzage/correctie (${fluxidiPrivacyAudienceLabel(audience)})',
-                  en: 'Fluxidi — access/correction request (${fluxidiPrivacyAudienceLabel(audience)})',
-                  fr: 'Fluxidi — demande d’accès/correction (${fluxidiPrivacyAudienceLabel(audience)})',
-                  es: 'Fluxidi — solicitud de acceso/corrección (${fluxidiPrivacyAudienceLabel(audience)})',
+            onTap: () {
+              final audienceKeyword = fluxidiPrivacyAudienceLabel(audience);
+              _launchExternal(
+                fluxidiPrivacyMailtoUri(
+                  subject: _t(
+                    nl: 'Fluxidi — verzoek inzage/correctie ($audienceKeyword)',
+                    en: 'Fluxidi — access/correction request ($audienceKeyword)',
+                    fr: 'Fluxidi — demande d’accès/correction ($audienceKeyword)',
+                    es: 'Fluxidi — solicitud de acceso/corrección ($audienceKeyword)',
+                  ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
           const Divider(),
           if (showDelete)
             ListTile(
-              leading: Icon(Icons.delete_outline, color: Colors.red.shade700),
+              // PRIVACY-LOCALE-THEME-EMAIL-AND-CUSTOMER-WIDE-TILE-P0-4:
+              // Semantic error color from the active theme, never a hardcoded
+              // red. In dark and light Fluxidi themes this stays consistent.
+              leading: Icon(
+                Icons.delete_outline,
+                color: theme.colorScheme.error,
+              ),
               title: Text(
                 audience == FluxidiPrivacyAudience.business
                     ? _t(
-                        nl: 'Verwijdering bedrijfaccount aanvragen',
+                        nl: 'Verwijdering bedrijfsaccount aanvragen',
                         en: 'Request business account deletion',
-                        fr: 'Demander la suppression du compte entreprise',
-                        es: 'Solicitar eliminación de la cuenta empresarial',
+                        fr: 'Demander la suppression du compte d’entreprise',
+                        es: 'Solicitar la eliminación de la cuenta de empresa',
                       )
                     : _t(
                         nl: 'Verwijdering account en gegevens aanvragen',
                         en: 'Request account and data deletion',
                         fr: 'Demander la suppression du compte et des données',
-                        es: 'Solicitar eliminación de cuenta y datos',
+                        es: 'Solicitar la eliminación de la cuenta y los datos',
                       ),
+                style: TextStyle(color: theme.colorScheme.error),
               ),
               onTap: () => _confirmAndOpenDeletion(context),
             )
@@ -162,13 +202,8 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
             ),
           const SizedBox(height: 16),
           Text(
-            _t(
-              nl: 'Fallback: $kFluxidiPrivacyContactEmail',
-              en: 'Fallback: $kFluxidiPrivacyContactEmail',
-              fr: 'Alternative: $kFluxidiPrivacyContactEmail',
-              es: 'Alternativa: $kFluxidiPrivacyContactEmail',
-            ),
-            style: Theme.of(context).textTheme.bodySmall,
+            '${_fallbackLabel(lang)}${_colon(lang)}$kFluxidiPrivacyContactEmail',
+            style: theme.textTheme.bodySmall,
           ),
           if (audience == FluxidiPrivacyAudience.driver) ...[
             const SizedBox(height: 24),
@@ -179,12 +214,12 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
             // or screen-locked use.
             Text(
               fluxidiBackgroundLocationDisclosureTitle(languageCode: lang),
-              style: Theme.of(context).textTheme.titleSmall,
+              style: theme.textTheme.titleSmall,
             ),
             const SizedBox(height: 8),
             Text(
               fluxidiBackgroundLocationDisclosureBody(languageCode: lang),
-              style: Theme.of(context).textTheme.bodyMedium,
+              style: theme.textTheme.bodyMedium,
             ),
           ],
         ],
@@ -217,7 +252,7 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) {
-        // PRIVACY-LOCALE-PARITY-P0-1: dialog also rebinds to
+        // PRIVACY-LOCALE-PARITY-P0-1 / P0-4: dialog also rebinds to
         // `appLanguageNotifier` so an in-app language change while the dialog
         // is open still updates its copy.
         return AnimatedBuilder(
@@ -226,13 +261,22 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
             final lang = _fluxidiLangCode();
             final retention =
                 fluxidiDeletionRetentionExplanation(languageCode: lang);
+            final displayAudience = fluxidiPrivacyAudienceDisplayLabel(
+              audience: audience,
+              languageCode: lang,
+            );
+            final colon = _colon(lang);
+            final fallback = _fallbackLabel(lang);
             return AlertDialog(
+              // PRIVACY-LOCALE-THEME-EMAIL-AND-CUSTOMER-WIDE-TILE-P0-4:
+              // No hardcoded background / text colors — inherits from
+              // Theme.of(ctx).dialogTheme via the AlertDialog defaults.
               title: Text(
                 _t(
                   nl: 'Verwijderingsverzoek bevestigen',
                   en: 'Confirm deletion request',
                   fr: 'Confirmer la demande de suppression',
-                  es: 'Confirmar solicitud de eliminación',
+                  es: 'Confirmar la solicitud de eliminación',
                 ),
               ),
               content: SingleChildScrollView(
@@ -242,10 +286,10 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
                   children: [
                     Text(
                       _t(
-                        nl: 'Dit verzoek betreft: ${fluxidiPrivacyAudienceLabel(audience)}.',
-                        en: 'This request concerns: ${fluxidiPrivacyAudienceLabel(audience)}.',
-                        fr: 'Cette demande concerne: ${fluxidiPrivacyAudienceLabel(audience)}.',
-                        es: 'Esta solicitud corresponde a: ${fluxidiPrivacyAudienceLabel(audience)}.',
+                        nl: 'Dit verzoek betreft$colon$displayAudience.',
+                        en: 'This request concerns$colon$displayAudience.',
+                        fr: 'Cette demande concerne$colon$displayAudience.',
+                        es: 'Esta solicitud corresponde a$colon$displayAudience.',
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -253,10 +297,10 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
                     const SizedBox(height: 12),
                     Text(
                       _t(
-                        nl: 'U wordt doorgestuurd naar de openbare verwijderingspagina. Alternatief: $kFluxidiPrivacyContactEmail.',
-                        en: 'You will be taken to the public deletion page. Fallback: $kFluxidiPrivacyContactEmail.',
-                        fr: 'Vous serez redirigé vers la page publique de suppression. Alternative: $kFluxidiPrivacyContactEmail.',
-                        es: 'Se le redirigirá a la página pública de eliminación. Alternativa: $kFluxidiPrivacyContactEmail.',
+                        nl: 'U wordt doorgestuurd naar de openbare verwijderingspagina. $fallback$colon$kFluxidiPrivacyContactEmail.',
+                        en: 'You will be taken to the public deletion page. $fallback$colon$kFluxidiPrivacyContactEmail.',
+                        fr: 'Vous serez redirigé vers la page publique de suppression. $fallback$colon$kFluxidiPrivacyContactEmail.',
+                        es: 'Se le redirigirá a la página pública de eliminación. $fallback$colon$kFluxidiPrivacyContactEmail.',
                       ),
                     ),
                   ],

@@ -20,7 +20,16 @@ const String kFluxidiPrivacyPolicyUrl =
 const String kFluxidiAccountDeletionUrl =
     'https://fluxidi.com/pages/account-en-gegevens-verwijderen';
 
-/// Accessible fallback for access, correction and deletion requests.
+/// PRIVACY-P0-4-CORRECT-CANONICAL-EMAIL:
+/// Canonical, single-source-of-truth privacy contact mailbox used by every
+/// privacy / account / deletion surface (customer, business, driver, in every
+/// supported language). Do not hardcode any other privacy address in
+/// `lib/privacy/`. Addresses forbidden as a privacy contact — enforced by
+/// `test/privacy/privacy_email_regression_p0_4_test.dart` — are:
+///   - info@fluxity.com          (domain typo — never valid)
+///   - support@fluxidi.com       (not a real Fluxidi mailbox)
+///   - support@fluxity.com       (not a real Fluxidi mailbox)
+///   - fluxidi.booking@gmail.com (legacy operational address, never privacy)
 const String kFluxidiPrivacyContactEmail = 'info@fluxidi.com';
 
 Uri fluxidiPrivacyPolicyUri() => Uri.parse(kFluxidiPrivacyPolicyUrl);

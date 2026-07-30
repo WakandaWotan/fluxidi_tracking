@@ -64,12 +64,20 @@ void main() {
   });
 
   group('PRIVACY-CUSTOMER-WIRING-AUDIT-P0-1 entry point', () {
-    test('customer_home_page.dart wires the "Mijn gegevens & privacy" tile '
-        'to audience = customer', () {
+    test('customer_home_page.dart wires the customer privacy card to '
+        'audience = customer', () {
       final source = File('lib/main_parts/customer_home_page.dart')
           .readAsStringSync();
-      expect(source.contains('Mijn gegevens & privacy'), isTrue);
-      expect(source.contains('My data & privacy'), isTrue);
+      // PRIVACY-LOCALE-THEME-EMAIL-AND-CUSTOMER-WIDE-TILE-P0-4:
+      // The entry moved out of the half-width grid tile into a full-width
+      // "Mijn gegevens & account verwijderen" card below the grid.
+      expect(source.contains('Mijn gegevens & account verwijderen'), isTrue);
+      expect(source.contains('My data & delete account'), isTrue);
+      expect(
+        source.contains('Mes données & supprimer le compte'),
+        isTrue,
+      );
+      expect(source.contains('Mis datos y eliminar la cuenta'), isTrue);
       expect(source.contains('openFluxidiPrivacyAccountPage'), isTrue);
       expect(source.contains('FluxidiPrivacyAudience.customer'), isTrue);
       // Owner/admin flag must never be raised on the customer surface.
@@ -98,14 +106,14 @@ void main() {
         find.text('Verwijdering account en gegevens aanvragen'),
         findsOneWidget,
       );
-      expect(find.text('Fallback: info@fluxidi.com'), findsOneWidget);
+      expect(find.text('Terugval: info@fluxidi.com'), findsOneWidget);
 
       // Business-specific copy must be absent for the customer surface.
       const forbidden = <String>[
-        'Verwijdering bedrijfaccount aanvragen',
+        'Verwijdering bedrijfsaccount aanvragen',
         'Request business account deletion',
-        'Demander la suppression du compte entreprise',
-        'Solicitar eliminación de la cuenta empresarial',
+        'Demander la suppression du compte d’entreprise',
+        'Solicitar la eliminación de la cuenta de empresa',
         'Alleen de geverifieerde bedrijfseigenaar/admin kan een bedrijfsverwijdering starten.',
         'Only a verified company owner/admin may start a business deletion request.',
         'Seul un propriétaire/admin d’entreprise vérifié peut démarrer une suppression.',
@@ -143,14 +151,20 @@ void main() {
         find.text('Ouvrir la politique de confidentialité'),
         findsOneWidget,
       );
-      expect(find.text('Demander l’accès ou une correction'), findsOneWidget);
+      expect(
+        find.text('Demander l’accès ou la rectification'),
+        findsOneWidget,
+      );
       expect(
         find.text('Demander la suppression du compte et des données'),
         findsOneWidget,
       );
-      expect(find.text('Alternative: info@fluxidi.com'), findsOneWidget);
       expect(
-        find.text('Demander la suppression du compte entreprise'),
+        find.text('Solution de secours : info@fluxidi.com'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Demander la suppression du compte d’entreprise'),
         findsNothing,
       );
     });
@@ -160,15 +174,15 @@ void main() {
       await _openCustomer(tester);
 
       expect(find.text('Mis datos y privacidad'), findsOneWidget);
-      expect(find.text('Abrir política de privacidad'), findsOneWidget);
-      expect(find.text('Solicitar acceso o corrección'), findsOneWidget);
+      expect(find.text('Abrir la política de privacidad'), findsOneWidget);
+      expect(find.text('Solicitar acceso o rectificación'), findsOneWidget);
       expect(
-        find.text('Solicitar eliminación de cuenta y datos'),
+        find.text('Solicitar la eliminación de la cuenta y los datos'),
         findsOneWidget,
       );
       expect(find.text('Alternativa: info@fluxidi.com'), findsOneWidget);
       expect(
-        find.text('Solicitar eliminación de la cuenta empresarial'),
+        find.text('Solicitar la eliminación de la cuenta de empresa'),
         findsNothing,
       );
     });
@@ -194,8 +208,11 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Verwijderingsverzoek bevestigen'), findsOneWidget);
+      // PRIVACY-LOCALE-THEME-EMAIL-AND-CUSTOMER-WIDE-TILE-P0-4:
+      // The dialog now surfaces the audience with a localized display label,
+      // never the machine keyword. NL customer → "klant".
       expect(
-        find.textContaining('Dit verzoek betreft: customer'),
+        find.textContaining('Dit verzoek betreft: klant'),
         findsOneWidget,
       );
       expect(find.text('Annuleren'), findsOneWidget);
@@ -233,7 +250,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.textContaining('Cette demande concerne: customer'),
+        find.textContaining('Cette demande concerne : le client'),
         findsOneWidget,
       );
       expect(find.text('Annuler'), findsOneWidget);

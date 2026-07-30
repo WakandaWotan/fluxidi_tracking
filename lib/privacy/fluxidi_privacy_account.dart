@@ -24,6 +24,55 @@ String fluxidiPrivacyAudienceLabel(FluxidiPrivacyAudience audience) {
   }
 }
 
+/// PRIVACY-LOCALE-THEME-EMAIL-AND-CUSTOMER-WIDE-TILE-P0-4:
+/// Human-readable, per-language label used by the privacy confirmation dialog
+/// ("Dit verzoek betreft: <label>"). Pure and side-effect free. Kept separate
+/// from [fluxidiPrivacyAudienceLabel], which remains the machine-readable
+/// keyword used in the safe deletion URL's bounded `audience` query.
+String fluxidiPrivacyAudienceDisplayLabel({
+  required FluxidiPrivacyAudience audience,
+  required String languageCode,
+}) {
+  switch (audience) {
+    case FluxidiPrivacyAudience.customer:
+      switch (languageCode) {
+        case 'en':
+          return 'customer';
+        case 'fr':
+          return 'le client';
+        case 'es':
+          return 'el cliente';
+        case 'nl':
+        default:
+          return 'klant';
+      }
+    case FluxidiPrivacyAudience.driver:
+      switch (languageCode) {
+        case 'en':
+          return 'driver';
+        case 'fr':
+          return 'le chauffeur';
+        case 'es':
+          return 'el conductor';
+        case 'nl':
+        default:
+          return 'chauffeur';
+      }
+    case FluxidiPrivacyAudience.business:
+      switch (languageCode) {
+        case 'en':
+          return 'business';
+        case 'fr':
+          return 'l’entreprise';
+        case 'es':
+          return 'empresa';
+        case 'nl':
+        default:
+          return 'bedrijf';
+      }
+  }
+}
+
 /// Safe, non-secret query on the public deletion page so the form can
 /// pre-select the request type. Never carries tokens, emails, phones or IDs.
 Uri buildFluxidiAccountDeletionRequestUri({
