@@ -43,6 +43,124 @@ void main() {
     });
   });
 
+  group('radar country source (locale leak guard)', () {
+    test('locale-shaped values resolve to the region, never the language', () {
+      expect(parseDemandRadarCountryCode('nl_BE'), 'BE');
+      expect(parseDemandRadarCountryCode('fr-BE'), 'BE');
+      expect(parseDemandRadarCountryCode('nl_BE_VLG'), 'BE');
+      expect(parseDemandRadarCountryCode('fr_FR'), 'FR');
+      expect(parseDemandRadarCountryCode(''), '');
+      expect(parseDemandRadarCountryCode('  '), '');
+    });
+
+    test('country names and ISO2 codes resolve, junk does not', () {
+      expect(parseDemandRadarCountryCode('België'), 'BE');
+      expect(parseDemandRadarCountryCode('Belgique'), 'BE');
+      expect(parseDemandRadarCountryCode('BE'), 'BE');
+      expect(parseDemandRadarCountryCode('Nederland'), 'NL');
+      expect(parseDemandRadarCountryCode('España'), 'ES');
+      expect(parseDemandRadarCountryCode('9688'), '');
+      expect(parseDemandRadarCountryCode('Onbekend'), '');
+      expect(parseDemandRadarCountryCode('XX'), '');
+      expect(parseDemandRadarCountryCode('zz_ZZ'), '');
+    });
+
+    test('stored business country wins over the company session code', () {
+      final resolved = resolveDemandRadarCountry(
+        businessProfileCountry: 'BE',
+        companySessionCountryCode: 'NL',
+      );
+      expect(resolved.country, 'BE');
+      expect(resolved.source, DemandRadarCountrySource.businessProfile);
+    });
+
+    test('session country is used only when the profile has none', () {
+      final resolved = resolveDemandRadarCountry(
+        businessProfileCountry: '',
+        companySessionCountryCode: 'NL',
+      );
+      expect(resolved.country, 'NL');
+      expect(resolved.source, DemandRadarCountrySource.companySession);
+    });
+
+    test('missing or invalid country is unavailable, never guessed', () {
+      final missing = resolveDemandRadarCountry(
+        businessProfileCountry: '',
+        companySessionCountryCode: '',
+      );
+      expect(missing.country, isEmpty);
+      expect(missing.source, DemandRadarCountrySource.none);
+
+      final invalid = resolveDemandRadarCountry(
+        businessProfileCountry: 'Onbekend',
+        companySessionCountryCode: 'XX',
+      );
+      expect(invalid.country, isEmpty);
+      expect(invalid.source, DemandRadarCountrySource.none);
+    });
+
+    test('app language never changes the radar country or cache key', () {
+      const stored = 'BE';
+      for (final language in <String>['nl', 'fr', 'en', 'es']) {
+        final resolved = resolveDemandRadarCountry(
+          businessProfileCountry: stored,
+          companySessionCountryCode: language,
+        );
+        expect(resolved.country, 'BE', reason: 'language $language');
+        expect(
+          demandRadarRegionCacheKey(
+            country: resolved.country,
+            postcode: '9688 Schorisse',
+            radiusKm: 30,
+          ),
+          'region_interest_v1|BE|9688|r30|live',
+          reason: 'language $language',
+        );
+      }
+    });
+
+    test('a Dutch company keeps NL with a Dutch postcode', () {
+      final resolved = resolveDemandRadarCountry(
+        businessProfileCountry: 'Nederland',
+        companySessionCountryCode: '',
+      );
+      expect(resolved.country, 'NL');
+      expect(
+        demandRadarRegionCacheKey(
+          country: resolved.country,
+          postcode: '1012 AB',
+          radiusKm: 30,
+        ),
+        'region_interest_v1|NL|1012|r30|live',
+      );
+    });
+
+    test('cache key marks an absent country instead of defaulting to BE', () {
+      expect(
+        demandRadarRegionCacheKey(
+          country: '',
+          postcode: '9688',
+          radiusKm: 30,
+        ),
+        'region_interest_v1|none|9688|r30|live',
+      );
+    });
+
+    test('radar page resolves country from stored company data only', () {
+      final source = _read(
+        'lib/main_parts/business_regional_demand_page_state.dart',
+      );
+      expect(source.contains('resolveDemandRadarCountry'), isTrue);
+      expect(source.contains('businessProfileCountry: backend.country'), isTrue);
+      expect(source.contains('country.isNotEmpty && limitedPostcodes'), isTrue);
+      expect(source.contains('currentLanguageCode)'), isTrue);
+      expect(
+        source.contains('_normalizeCountry(currentLanguageCode)'),
+        isFalse,
+      );
+    });
+  });
+
   group('hero total: true zero vs unavailable', () {
     test('successful zero response becomes 0+', () {
       final hero = decideDemandRadarHeroTotal(

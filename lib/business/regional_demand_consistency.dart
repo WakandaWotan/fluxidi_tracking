@@ -4,11 +4,113 @@
 /// No Flutter imports — unit-testable without widget plumbing.
 library;
 
-/// Normalized country code (2-letter ISO), defaulting to BE when empty.
-String normalizeDemandRadarCountry(String raw) {
-  final cleaned = raw.trim().toUpperCase().replaceAll(RegExp(r'[^A-Z]'), '');
-  if (cleaned.length >= 2) return cleaned.substring(0, 2);
-  return 'BE';
+/// Country spellings that map to an ISO2 code. Accent-stripped, uppercase.
+const Map<String, String> _kDemandRadarCountryNames = <String, String>{
+  'BELGIE': 'BE',
+  'BELGIQUE': 'BE',
+  'BELGIUM': 'BE',
+  'BELGIEN': 'BE',
+  'BELGICA': 'BE',
+  'NEDERLAND': 'NL',
+  'NETHERLANDS': 'NL',
+  'PAYSBAS': 'NL',
+  'FRANCE': 'FR',
+  'FRANKRIJK': 'FR',
+  'FRANCIA': 'FR',
+  'DEUTSCHLAND': 'DE',
+  'DUITSLAND': 'DE',
+  'GERMANY': 'DE',
+  'ALLEMAGNE': 'DE',
+  'ALEMANIA': 'DE',
+  'LUXEMBURG': 'LU',
+  'LUXEMBOURG': 'LU',
+  'ESPANA': 'ES',
+  'SPANJE': 'ES',
+  'SPAIN': 'ES',
+  'ESPAGNE': 'ES',
+};
+
+const Map<String, String> _kDemandRadarAsciiFolding = <String, String>{
+  'À': 'A', 'Á': 'A', 'Â': 'A', 'Ã': 'A', 'Ä': 'A', 'Å': 'A',
+  'È': 'E', 'É': 'E', 'Ê': 'E', 'Ë': 'E',
+  'Ì': 'I', 'Í': 'I', 'Î': 'I', 'Ï': 'I',
+  'Ò': 'O', 'Ó': 'O', 'Ô': 'O', 'Õ': 'O', 'Ö': 'O',
+  'Ù': 'U', 'Ú': 'U', 'Û': 'U', 'Ü': 'U',
+  'Ç': 'C', 'Ñ': 'N',
+};
+
+String _foldDemandRadarAscii(String upper) {
+  final buffer = StringBuffer();
+  for (final char in upper.split('')) {
+    buffer.write(_kDemandRadarAsciiFolding[char] ?? char);
+  }
+  return buffer.toString();
+}
+
+/// ISO2 codes the radar accepts as an operational region. Anything outside
+/// this set stays unavailable rather than being queried as a guessed region.
+const Set<String> kDemandRadarSupportedCountries = <String>{
+  'AT', 'BE', 'BG', 'CH', 'CY', 'CZ', 'DE', 'DK', 'EE', 'ES',
+  'FI', 'FR', 'GB', 'GR', 'HR', 'HU', 'IE', 'IS', 'IT', 'LI',
+  'LT', 'LU', 'LV', 'MT', 'NL', 'NO', 'PL', 'PT', 'RO', 'SE',
+  'SI', 'SK',
+};
+
+/// RELEASE-P0 radar country: strict ISO2 parse of an operational country
+/// field. Returns an empty string when the value is not a provable country,
+/// so callers render "unavailable" instead of querying a guessed region.
+///
+/// Locale-shaped values (`nl_BE`, `fr-BE`) resolve to the **region** subtag;
+/// the leading language subtag is never used as a country code.
+String parseDemandRadarCountryCode(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return '';
+  final locale = RegExp(
+    r'^([A-Za-z]{2,3})[_-]([A-Za-z]{2})(?:[_-].*)?$',
+  ).firstMatch(trimmed);
+  if (locale != null) {
+    final region = locale.group(2)!.toUpperCase();
+    return kDemandRadarSupportedCountries.contains(region) ? region : '';
+  }
+  final letters = _foldDemandRadarAscii(
+    trimmed.toUpperCase(),
+  ).replaceAll(RegExp(r'[^A-Z]'), '');
+  if (letters.length == 2) {
+    return kDemandRadarSupportedCountries.contains(letters) ? letters : '';
+  }
+  return _kDemandRadarCountryNames[letters] ?? '';
+}
+
+/// Normalized ISO2 country code, or empty when no valid country is available.
+String normalizeDemandRadarCountry(String raw) => parseDemandRadarCountryCode(raw);
+
+/// Where the radar country came from. Language is never a source.
+enum DemandRadarCountrySource { businessProfile, companySession, none }
+
+/// Resolve the radar country from stored company data only.
+///
+/// Order: persisted operational business profile country, then the company
+/// session country code. App language / device locale must never reach this
+/// function: switching NL/FR/EN/ES may not change the queried region.
+({String country, DemandRadarCountrySource source}) resolveDemandRadarCountry({
+  required String businessProfileCountry,
+  String companySessionCountryCode = '',
+}) {
+  final fromProfile = parseDemandRadarCountryCode(businessProfileCountry);
+  if (fromProfile.isNotEmpty) {
+    return (
+      country: fromProfile,
+      source: DemandRadarCountrySource.businessProfile,
+    );
+  }
+  final fromSession = parseDemandRadarCountryCode(companySessionCountryCode);
+  if (fromSession.isNotEmpty) {
+    return (
+      country: fromSession,
+      source: DemandRadarCountrySource.companySession,
+    );
+  }
+  return (country: '', source: DemandRadarCountrySource.none);
 }
 
 /// Normalize a regional postcode for radar queries.
@@ -75,7 +177,8 @@ String demandRadarRegionCacheKey({
   String datasetVersion = 'region_interest_v1',
   String snapshotId = '',
 }) {
-  final c = normalizeDemandRadarCountry(country);
+  final parsed = normalizeDemandRadarCountry(country);
+  final c = parsed.isEmpty ? 'none' : parsed;
   final p = normalizeDemandRadarPostcode(postcode);
   final r = radiusKm.clamp(1, 100);
   final snap = snapshotId.trim();
@@ -205,6 +308,7 @@ String formatDemandRadarDiag({
   int? cacheAgeSeconds,
   String? companyId,
   String? snapshotId,
+  DemandRadarCountrySource countrySource = DemandRadarCountrySource.none,
 }) {
   final region = normalizeDemandRadarPostcode(postcode);
   final maskedRegion = region.isEmpty
@@ -216,8 +320,11 @@ String formatDemandRadarDiag({
   final status = httpStatus?.toString() ?? 'none';
   final age = cacheAgeSeconds?.toString() ?? 'n/a';
   final snap = (snapshotId ?? '').trim().isEmpty ? 'live' : snapshotId!.trim();
+  final parsedCountry = normalizeDemandRadarCountry(country);
+  final countryPart = parsedCountry.isEmpty ? 'none' : parsedCountry;
   return '[DEMAND_RADAR_DIAG] corr=$correlationId '
-      'region=$maskedRegion country=${normalizeDemandRadarCountry(country)} '
+      'region=$maskedRegion country=$countryPart '
+      'country_src=${countrySource.name} '
       'radius=$radiusKm status=$status snap=$snap '
       'cache=${cacheHit ? 'hit' : 'miss'} age_s=$age '
       'source=${source.name} tenant=$tenant';

@@ -13,7 +13,7 @@ class _BusinessRegionalDemandPageState
   BusinessThemePalette get _businessThemePalette =>
       paletteForBusinessTheme(businessThemeNotifier.value);
   bool _loading = false;
-  String _country = 'BE';
+  String _country = '';
   String _city = '';
   String _primaryPostcode = '';
   String _serviceRadiusKm = '';
@@ -73,7 +73,7 @@ class _BusinessRegionalDemandPageState
     return double.tryParse(text.replaceAll(',', '.'));
   }
 
-  String _normalizeCountry(String raw) => normalizeDemandRadarCountry(raw);
+  DemandRadarCountrySource _countrySource = DemandRadarCountrySource.none;
 
   ({String tenantId, String companyId})? _activeDemandScope() {
     final profileId = companyProfileNotifier.value?.companyId.trim() ?? '';
@@ -105,6 +105,16 @@ class _BusinessRegionalDemandPageState
       fr: 'votre région',
       es: 'tu zona',
     );
+  }
+
+  /// Country line for the UI. An unresolvable business country renders the
+  /// localized unavailable label instead of a guessed code.
+  String _countryContextLabel() {
+    if (_country.isEmpty ||
+        _countrySource == DemandRadarCountrySource.none) {
+      return demandRadarUnavailableLabel(currentLanguageCode);
+    }
+    return _country;
   }
 
   String _totalDisplayCount() {
@@ -427,6 +437,7 @@ class _BusinessRegionalDemandPageState
     required String postcode,
     required String correlationId,
     required int radiusKm,
+    required DemandRadarCountrySource countrySource,
     String? companyId,
   }) async {
     final normalizedPostcode = _normalizePostcode(postcode);
@@ -449,6 +460,7 @@ class _BusinessRegionalDemandPageState
               : DemandRadarCountSource.unavailable,
           cacheHit: false,
           companyId: companyId,
+          countrySource: countrySource,
         ),
       );
       if (res.statusCode < 200 || res.statusCode >= 300) {
@@ -504,6 +516,7 @@ class _BusinessRegionalDemandPageState
           source: DemandRadarCountSource.unavailable,
           cacheHit: false,
           companyId: companyId,
+          countrySource: countrySource,
         ),
       );
       return _BusinessRegionalDemandRow(
@@ -574,11 +587,13 @@ class _BusinessRegionalDemandPageState
           ? company!.postalCode
           : backend.postcode,
     );
-    final country = _normalizeCountry(
-      (company?.countryCode ?? '').trim().isNotEmpty
-          ? company!.countryCode
-          : backend.country,
+    // RELEASE-P0 radar country: the stored operational business country wins.
+    // App language / locale must never become the queried region.
+    final countryResolution = resolveDemandRadarCountry(
+      businessProfileCountry: backend.country,
+      companySessionCountryCode: company?.countryCode ?? '',
     );
+    final country = countryResolution.country;
     final city = (company?.city ?? '').trim().isNotEmpty
         ? company!.city.trim()
         : backend.city.trim();
@@ -602,12 +617,13 @@ class _BusinessRegionalDemandPageState
     debugPrint(
       '[DEMAND_RADAR_DIAG] corr=$correlationId '
       'cache_key=${demandRadarRegionCacheKey(country: country, postcode: primary, radiusKm: coverageRadiusKm.round())} '
+      'country_src=${countryResolution.source.name} '
       'tenant=${maskDemandRadarTenantId(companyId ?? '')}',
     );
 
     List<_BusinessRegionalDemandRow> rows =
         const <_BusinessRegionalDemandRow>[];
-    if (limitedPostcodes.isNotEmpty) {
+    if (country.isNotEmpty && limitedPostcodes.isNotEmpty) {
       final fetched = await Future.wait(
         limitedPostcodes.map(
           (postcode) => _fetchPostcodeDemand(
@@ -615,6 +631,7 @@ class _BusinessRegionalDemandPageState
             postcode: postcode,
             correlationId: correlationId,
             radiusKm: coverageRadiusKm.round(),
+            countrySource: countryResolution.source,
             companyId: companyId,
           ),
         ),
@@ -651,6 +668,7 @@ class _BusinessRegionalDemandPageState
 
     setState(() {
       _country = country;
+      _countrySource = countryResolution.source;
       _city = city;
       _primaryPostcode = primary;
       _serviceRadiusKm = radius;
@@ -1260,10 +1278,10 @@ class _BusinessRegionalDemandPageState
                         const SizedBox(height: 4),
                         Text(
                           _t(
-                            nl: 'Landcontext: $_country',
-                            en: 'Country context: $_country',
-                            fr: 'Contexte pays : $_country',
-                            es: 'Contexto de país: $_country',
+                            nl: 'Landcontext: ${_countryContextLabel()}',
+                            en: 'Country context: ${_countryContextLabel()}',
+                            fr: 'Contexte pays : ${_countryContextLabel()}',
+                            es: 'Contexto de país: ${_countryContextLabel()}',
                           ),
                           style: TextStyle(
                             color: palette.textMuted.withOpacity(0.84),
