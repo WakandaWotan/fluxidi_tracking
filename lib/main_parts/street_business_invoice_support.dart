@@ -1059,6 +1059,66 @@ CanonicalRidePayment resolveCanonicalReceiptRidePayment({
   );
 }
 
+/// STREET-CASH-PAYMENT-RELOAD-P0: precedence for receipt reopen hydration.
+///
+/// Authoritative BOOKING_KV status always wins when present. History/trip
+/// projections are fallbacks only — they must never outrank a successful
+/// booking-worker read.
+String? resolveReceiptReloadPaymentStatusRaw({
+  String? authoritativeStatus,
+  String? historyTopLevelStatus,
+  String? historyNestedStatus,
+}) {
+  final auth = (authoritativeStatus ?? '').trim();
+  if (auth.isNotEmpty) return auth;
+  final top = (historyTopLevelStatus ?? '').trim();
+  if (top.isNotEmpty) return top;
+  final nested = (historyNestedStatus ?? '').trim();
+  if (nested.isNotEmpty) return nested;
+  return null;
+}
+
+bool _isConfirmedPaidStatusToken(String? raw) {
+  final text = (raw ?? '').trim().toLowerCase();
+  if (text.isEmpty) return false;
+  return text == 'paid' ||
+      text == 'settled' ||
+      text == 'confirmed' ||
+      text == 'completed' ||
+      text == 'success' ||
+      text == 'succeeded' ||
+      text == 'captured';
+}
+
+/// Stale / missing projections that must not outrank a prior server-confirmed
+/// Paid. Explicit terminal non-paid states (refunded / reversed / cancelled /
+/// rejected / failed) are NOT included — those must be allowed to win.
+bool _isStaleOrMissingUnpaidProjection(String? raw) {
+  final text = (raw ?? '').trim().toLowerCase();
+  if (text.isEmpty) return true;
+  return text == 'unpaid' ||
+      text == 'pending' ||
+      text == 'open' ||
+      text == 'authorized' ||
+      text == 'unknown' ||
+      text == 'none';
+}
+
+/// True when a prior server-confirmed Paid must be retained against a failed
+/// read, missing payment fields, or a stale cached/history Unpaid projection.
+///
+/// Must NOT mask a newer explicit authoritative non-paid state such as
+/// reversed, refunded, cancelled, rejected, or a failed payment write.
+bool shouldRetainConfirmedPaidOnReload({
+  required bool alreadyConfirmedPaid,
+  required String? resolvedRawStatus,
+}) {
+  if (!alreadyConfirmedPaid) return false;
+  if (_isConfirmedPaidStatusToken(resolvedRawStatus)) return false;
+  if (!_isStaleOrMissingUnpaidProjection(resolvedRawStatus)) return false;
+  return true;
+}
+
 /// Bounded de-dup guard so the ride-payment log fires only when the
 /// (booking, canonicalPaid, source) tuple actually changes.
 final Set<String> _streetInvoiceRidePaymentLogSeen = <String>{};

@@ -667,19 +667,25 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   Future<Map<String, dynamic>?> _fetchAuthoritativePaymentFields(
     String bookingId,
   ) async {
-    Map<String, dynamic> asMap(dynamic value) =>
-        value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
     try {
+      // STREET-CASH-PAYMENT-RELOAD-P0: use the same driver/company bearer as
+      // cash/QR/terminal mark-paid. The previous admin-token-only GET failed
+      // in production (ADMIN_TOKEN removed), so receipt reopen fell back to
+      // unpaid History even though BOOKING_KV already held Paid.
+      final authHeaders = await resolveInCarPaymentAuthHeaders();
+      if (authHeaders.mode == InCarPaymentAuthMode.none) {
+        debugPrint(
+          '[RECEIPT_PAYMENT][AUTHORITATIVE_GET] status=missing_auth '
+          'booking=${_safeRefPreview(bookingId)}',
+        );
+        return null;
+      }
       final uri = _withActiveBookingScope(
         kBookingBaseUrl,
         '/bookings/${Uri.encodeComponent(bookingId)}',
       );
-      final headers = <String, String>{'Content-Type': 'application/json'};
-      if (kAdminToken.trim().isNotEmpty) {
-        headers['x-admin-token'] = kAdminToken.trim();
-      }
       final res = await http
-          .get(uri, headers: headers)
+          .get(uri, headers: authHeaders.headers)
           .timeout(const Duration(seconds: 12));
       Map<String, dynamic>? parsed;
       dynamic decoded;
@@ -689,6 +695,11 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           final root = Map<String, dynamic>.from(decoded);
           parsed = _extractAuthoritativePaymentFields(root);
         }
+      } else {
+        debugPrint(
+          '[RECEIPT_PAYMENT][AUTHORITATIVE_GET] status=http_${res.statusCode} '
+          'booking=${_safeRefPreview(bookingId)}',
+        );
       }
       if (parsed != null && parsed.isNotEmpty) return parsed;
       return null;
@@ -717,14 +728,14 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       }
     }
 
-    String? resolved = authoritativePaymentStatus;
-    if (resolved != null && resolved.isNotEmpty) {
-    } else if (historyPaymentStatus != null &&
-        historyPaymentStatus.isNotEmpty) {
-      resolved = historyPaymentStatus;
-    } else if (nestedPaymentStatus != null && nestedPaymentStatus.isNotEmpty) {
-      resolved = nestedPaymentStatus;
-    }
+    // STREET-CASH-PAYMENT-RELOAD-P0: authoritative BOOKING_KV status wins;
+    // History is fallback only. Confirmed Paid is never downgraded by a
+    // stale Unpaid History projection when the booking GET failed.
+    final resolved = resolveReceiptReloadPaymentStatusRaw(
+      authoritativeStatus: authoritativePaymentStatus,
+      historyTopLevelStatus: historyPaymentStatus,
+      historyNestedStatus: nestedPaymentStatus,
+    );
 
     final methodFromDetails =
         authoritativePaymentMethod ?? _paymentMethodFromDetails();
@@ -745,7 +756,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     if (!mounted) return;
     setState(() {
       final fromStatus = _paymentStatusFromRaw(resolved);
-      if (basePaidBeforeAsync && fromStatus != _ReceiptPaymentStatus.paid) {
+      if (shouldRetainConfirmedPaidOnReload(
+        alreadyConfirmedPaid: basePaidBeforeAsync,
+        resolvedRawStatus: resolved,
+      )) {
         _paymentStatus = _ReceiptPaymentStatus.paid;
         return;
       }
