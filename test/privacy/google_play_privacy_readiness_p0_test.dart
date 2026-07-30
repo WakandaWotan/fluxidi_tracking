@@ -35,10 +35,13 @@ void main() {
     test('4) all surfaces use the same canonical privacy URL', () {
       expect(
         kFluxidiPrivacyPolicyUrl,
-        'https://fluxidi.com/policies/privacy-policy',
+        'https://fluxidi.com/pages/privacybeleid',
       );
-      expect(fluxidiPrivacyPolicyUri().toString(), kFluxidiPrivacyPolicyUrl);
+      expect(fluxidiPrivacyPolicyUri().toString(),
+          'https://fluxidi.com/pages/privacybeleid?lang=nl');
       expect(kFluxidiPrivacyPolicyUrl.contains('account-verwijderen'), isFalse);
+      expect(kFluxidiPrivacyPolicyUrl.contains('/policies/privacy-policy'),
+          isFalse);
     });
 
     test('5a) canonical deletion URL is the published Shopify slug', () {
@@ -427,7 +430,7 @@ void main() {
 
     test('14) UI opens the shared privacy page with canonical URLs', () {
       final ui = _read('lib/privacy/fluxidi_privacy_ui.dart');
-      expect(ui.contains('kFluxidiPrivacyPolicyUrl'), isTrue);
+      expect(ui.contains('fluxidiPrivacyPolicyUriForLanguage'), isTrue);
       expect(ui.contains('buildFluxidiAccountDeletionRequestUri'), isTrue);
       expect(ui.contains('fluxidiDeletionRetentionExplanation'), isTrue);
       expect(ui.contains('isSafeFluxidiAccountDeletionUri'), isTrue);

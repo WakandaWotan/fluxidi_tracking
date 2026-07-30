@@ -26985,7 +26985,14 @@ function normalizeRegionInterestCountry(value) {
 }
 
 function normalizeRegionInterestPostcode(value) {
-  return safeStr(value, 24).toUpperCase().replace(/\s+/g, "");
+  // RELEASE-P0 demand-radar consistency: Belgian postcodes often arrive as
+  // "9688 Schorisse" / "B-9688". Collapse those to the leading 4-digit block
+  // so companies in the same town hit the same KV counter key.
+  const raw = safeStr(value, 24).toUpperCase().replace(/\s+/g, "");
+  if (!raw) return "";
+  const beDigits = raw.match(/(\d{4})/);
+  if (beDigits && beDigits[1]) return beDigits[1];
+  return raw.replace(/[^A-Z0-9]/g, "");
 }
 
 function normalizeRegionInterestEmail(value) {

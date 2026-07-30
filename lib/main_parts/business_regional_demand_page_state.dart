@@ -26,6 +26,13 @@ class _BusinessRegionalDemandPageState
   List<String> _postcodes = const <String>[];
   List<_BusinessRegionalDemandRow> _rows = const <_BusinessRegionalDemandRow>[];
   int _totalCount = 0;
+  /// RELEASE-P0 demand-radar: true when the primary region has no valid
+  /// server response. Must never be presented as a numeric `0+`.
+  bool _totalUnavailable = false;
+  /// Monotonic load generation so late responses from an older refresh or
+  /// previous company session are ignored.
+  int _loadGeneration = 0;
+  String? _boundCompanyId;
 
   String _t({
     required String nl,
@@ -66,11 +73,7 @@ class _BusinessRegionalDemandPageState
     return double.tryParse(text.replaceAll(',', '.'));
   }
 
-  String _normalizeCountry(String raw) {
-    final cleaned = raw.trim().toUpperCase();
-    if (cleaned.length >= 2) return cleaned.substring(0, 2);
-    return 'BE';
-  }
+  String _normalizeCountry(String raw) => normalizeDemandRadarCountry(raw);
 
   ({String tenantId, String companyId})? _activeDemandScope() {
     final profileId = companyProfileNotifier.value?.companyId.trim() ?? '';
@@ -86,21 +89,10 @@ class _BusinessRegionalDemandPageState
     return (tenantId: base, companyId: base);
   }
 
-  String _normalizePostcode(String raw) {
-    return raw.trim().toUpperCase().replaceAll(RegExp(r'\s+'), '');
-  }
+  String _normalizePostcode(String raw) => normalizeDemandRadarPostcode(raw);
 
-  List<String> _parseServedPostcodes(String raw) {
-    final seen = <String>{};
-    final out = <String>[];
-    for (final token in raw.split(RegExp(r'[,;\n\r]+'))) {
-      final code = _normalizePostcode(token);
-      if (code.isEmpty || seen.contains(code)) continue;
-      seen.add(code);
-      out.add(code);
-    }
-    return out;
-  }
+  List<String> _parseServedPostcodes(String raw) =>
+      parseDemandRadarServedPostcodes(raw);
 
   String _locationLabel() {
     if (_primaryPostcode.isNotEmpty && _city.isNotEmpty) {
@@ -116,6 +108,9 @@ class _BusinessRegionalDemandPageState
   }
 
   String _totalDisplayCount() {
+    if (_totalUnavailable) {
+      return demandRadarUnavailableLabel(currentLanguageCode);
+    }
     return '$_totalCount+';
   }
 
@@ -430,16 +425,40 @@ class _BusinessRegionalDemandPageState
   Future<_BusinessRegionalDemandRow> _fetchPostcodeDemand({
     required String country,
     required String postcode,
+    required String correlationId,
+    required int radiusKm,
+    String? companyId,
   }) async {
+    final normalizedPostcode = _normalizePostcode(postcode);
     final uri = Uri.parse(
-      '$kBookingBaseUrl/region-interest/radar?country=${Uri.encodeQueryComponent(country)}&postcode=${Uri.encodeQueryComponent(postcode)}',
+      '$kBookingBaseUrl/region-interest/radar'
+      '?country=${Uri.encodeQueryComponent(country)}'
+      '&postcode=${Uri.encodeQueryComponent(normalizedPostcode)}',
     );
     try {
       final res = await http.get(uri).timeout(const Duration(seconds: 12));
+      debugPrint(
+        formatDemandRadarDiag(
+          correlationId: correlationId,
+          country: country,
+          postcode: normalizedPostcode,
+          radiusKm: radiusKm,
+          httpStatus: res.statusCode,
+          source: res.statusCode >= 200 && res.statusCode < 300
+              ? DemandRadarCountSource.network
+              : DemandRadarCountSource.unavailable,
+          cacheHit: false,
+          companyId: companyId,
+        ),
+      );
       if (res.statusCode < 200 || res.statusCode >= 300) {
         return _BusinessRegionalDemandRow(
-          postcode: postcode,
-          displayCount: '0+',
+          postcode: normalizedPostcode,
+          displayCount: demandRadarRowDisplayCount(
+            unavailable: true,
+            count: 0,
+            languageCode: currentLanguageCode,
+          ),
           count: 0,
           status: '',
           unavailable: true,
@@ -448,8 +467,12 @@ class _BusinessRegionalDemandPageState
       final decoded = jsonDecode(utf8.decode(res.bodyBytes));
       if (decoded is! Map<String, dynamic> || decoded['ok'] != true) {
         return _BusinessRegionalDemandRow(
-          postcode: postcode,
-          displayCount: '0+',
+          postcode: normalizedPostcode,
+          displayCount: demandRadarRowDisplayCount(
+            unavailable: true,
+            count: 0,
+            languageCode: currentLanguageCode,
+          ),
           count: 0,
           status: '',
           unavailable: true,
@@ -457,21 +480,39 @@ class _BusinessRegionalDemandPageState
       }
       final count = _asInt(decoded['count']) ?? 0;
       final rawDisplay = (decoded['display_count'] ?? '').toString().trim();
-      final display = rawDisplay.isNotEmpty
-          ? rawDisplay
-          : '${count.clamp(0, 999999)}+';
       final status = (decoded['status'] ?? '').toString().trim();
       return _BusinessRegionalDemandRow(
-        postcode: postcode,
-        displayCount: display,
+        postcode: normalizedPostcode,
+        displayCount: demandRadarRowDisplayCount(
+          unavailable: false,
+          count: count,
+          languageCode: currentLanguageCode,
+          serverDisplayCount: rawDisplay,
+        ),
         count: count,
         status: status,
         unavailable: false,
       );
     } catch (_) {
+      debugPrint(
+        formatDemandRadarDiag(
+          correlationId: correlationId,
+          country: country,
+          postcode: normalizedPostcode,
+          radiusKm: radiusKm,
+          httpStatus: null,
+          source: DemandRadarCountSource.unavailable,
+          cacheHit: false,
+          companyId: companyId,
+        ),
+      );
       return _BusinessRegionalDemandRow(
-        postcode: postcode,
-        displayCount: '0+',
+        postcode: normalizedPostcode,
+        displayCount: demandRadarRowDisplayCount(
+          unavailable: true,
+          count: 0,
+          languageCode: currentLanguageCode,
+        ),
         count: 0,
         status: '',
         unavailable: true,
@@ -481,12 +522,28 @@ class _BusinessRegionalDemandPageState
 
   Future<void> _loadDemand() async {
     if (!mounted) return;
+    final generation = ++_loadGeneration;
+    final correlationId =
+        'dr_${DateTime.now().millisecondsSinceEpoch}_$generation';
+    final scope = _activeDemandScope();
+    final companyId = scope?.companyId;
+    // Company switch: drop previous session rows so tenant A cache cannot
+    // paint tenant B's radar.
+    if (_boundCompanyId != null &&
+        companyId != null &&
+        _boundCompanyId != companyId) {
+      _rows = const <_BusinessRegionalDemandRow>[];
+      _postcodes = const <String>[];
+      _totalCount = 0;
+      _totalUnavailable = true;
+    }
+    _boundCompanyId = companyId;
+
     setState(() {
       _loading = true;
     });
 
     final company = companyProfileNotifier.value;
-    final scope = _activeDemandScope();
     final localFallback =
         localBackendBusinessProfileNotifier.value ??
         mergeLocalIntoBackendPreview(
@@ -504,6 +561,7 @@ class _BusinessRegionalDemandPageState
           tenantId: scope.tenantId,
           companyId: scope.companyId,
         );
+        if (!mounted || generation != _loadGeneration) return;
         backend = _mergeDemandProfile(local: localFallback, server: server);
         unawaited(updateLocalBackendBusinessProfileCache(backend));
       } catch (_) {
@@ -537,30 +595,31 @@ class _BusinessRegionalDemandPageState
     debugPrint(
       '[VRAAGRADAR_MAP] radius=${coverageRadiusKm.toStringAsFixed(1)}',
     );
-    final served = _parseServedPostcodes(backend.publicServedPostcodes);
-
-    final seen = <String>{};
-    final postcodes = <String>[];
-    if (primary.isNotEmpty) {
-      seen.add(primary);
-      postcodes.add(primary);
-    }
-    for (final code in served) {
-      if (seen.contains(code)) continue;
-      seen.add(code);
-      postcodes.add(code);
-    }
-    final limitedPostcodes = postcodes.take(50).toList(growable: false);
+    final limitedPostcodes = buildDemandRadarPostcodeQueryList(
+      primaryRaw: primary,
+      servedRaw: backend.publicServedPostcodes,
+    );
+    debugPrint(
+      '[DEMAND_RADAR_DIAG] corr=$correlationId '
+      'cache_key=${demandRadarRegionCacheKey(country: country, postcode: primary, radiusKm: coverageRadiusKm.round())} '
+      'tenant=${maskDemandRadarTenantId(companyId ?? '')}',
+    );
 
     List<_BusinessRegionalDemandRow> rows =
         const <_BusinessRegionalDemandRow>[];
     if (limitedPostcodes.isNotEmpty) {
       final fetched = await Future.wait(
         limitedPostcodes.map(
-          (postcode) =>
-              _fetchPostcodeDemand(country: country, postcode: postcode),
+          (postcode) => _fetchPostcodeDemand(
+            country: country,
+            postcode: postcode,
+            correlationId: correlationId,
+            radiusKm: coverageRadiusKm.round(),
+            companyId: companyId,
+          ),
         ),
       );
+      if (!mounted || generation != _loadGeneration) return;
       final indexed = fetched
           .asMap()
           .entries
@@ -575,9 +634,21 @@ class _BusinessRegionalDemandPageState
       });
       rows = indexed.map((e) => e.row).toList(growable: false);
     }
-    final total = rows.fold<int>(0, (sum, row) => sum + row.count);
+    if (!mounted || generation != _loadGeneration) return;
 
-    if (!mounted) return;
+    final hero = decideDemandRadarHeroTotal(
+      primaryPostcode: primary,
+      rows: rows
+          .map(
+            (row) => (
+              postcode: row.postcode,
+              count: row.count,
+              unavailable: row.unavailable,
+            ),
+          )
+          .toList(growable: false),
+    );
+
     setState(() {
       _country = country;
       _city = city;
@@ -588,7 +659,8 @@ class _BusinessRegionalDemandPageState
       _coverageRadiusKm = coverageRadiusKm;
       _postcodes = limitedPostcodes;
       _rows = rows;
-      _totalCount = total;
+      _totalCount = hero.count;
+      _totalUnavailable = !hero.available;
       _loading = false;
     });
     unawaited(_renderCoverageOverlay());
@@ -709,26 +781,30 @@ class _BusinessRegionalDemandPageState
                                   Text(
                                     _loading ? '…' : _totalDisplayCount(),
                                     style: TextStyle(
-                                      color: palette.accent.withOpacity(0.98),
+                                      color: _totalUnavailable
+                                          ? palette.textSecondary.withOpacity(
+                                              0.92,
+                                            )
+                                          : palette.accent.withOpacity(0.98),
                                       fontWeight: FontWeight.w900,
-                                      fontSize: 29,
+                                      fontSize: _totalUnavailable ? 15 : 29,
                                     ),
                                   ),
-                                  Text(
-                                    _t(
-                                      nl: 'potentiële klanten',
-                                      en: 'potential customers',
-                                      fr: 'clients potentiels',
-                                      es: 'clientes potenciales',
-                                    ),
-                                    style: TextStyle(
-                                      color: palette.textSecondary.withOpacity(
-                                        0.92,
+                                  if (!_totalUnavailable)
+                                    Text(
+                                      _t(
+                                        nl: 'potentiële klanten',
+                                        en: 'potential customers',
+                                        fr: 'clients potentiels',
+                                        es: 'clientes potenciales',
                                       ),
-                                      fontSize: 11.8,
-                                      fontWeight: FontWeight.w600,
+                                      style: TextStyle(
+                                        color: palette.textSecondary
+                                            .withOpacity(0.92),
+                                        fontSize: 11.8,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
-                                  ),
                                 ],
                               ),
                             ),
@@ -1141,7 +1217,11 @@ class _BusinessRegionalDemandPageState
                                           ),
                                         ),
                                         Text(
-                                          row.displayCount,
+                                          row.unavailable
+                                              ? demandRadarUnavailableLabel(
+                                                  currentLanguageCode,
+                                                )
+                                              : row.displayCount,
                                           style: TextStyle(
                                             color: row.unavailable
                                                 ? palette.textMuted.withOpacity(
@@ -1151,7 +1231,9 @@ class _BusinessRegionalDemandPageState
                                                     0.98,
                                                   ),
                                             fontWeight: FontWeight.w800,
-                                            fontSize: 14.8,
+                                            fontSize: row.unavailable
+                                                ? 11.2
+                                                : 14.8,
                                           ),
                                         ),
                                       ],

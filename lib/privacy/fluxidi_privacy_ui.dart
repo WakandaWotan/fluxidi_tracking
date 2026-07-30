@@ -131,8 +131,16 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
                 es: 'Abrir la política de privacidad',
               ),
             ),
-            subtitle: Text(kFluxidiPrivacyPolicyUrl),
-            onTap: () => _launchExternal(fluxidiPrivacyPolicyUri()),
+            // RELEASE-P0-PRIVACY-WEB-LOCALE: subtitle + launch URI follow
+            // Fluxidi's selected language via the central helper. Until
+            // Shopify publishes proven EN/FR/ES Fluxidi translations, the
+            // helper safely falls back to the canonical NL route.
+            subtitle: Text(
+              fluxidiPrivacyPolicyUriForLanguage(lang).toString(),
+            ),
+            onTap: () => _launchExternal(
+              fluxidiPrivacyPolicyUriForLanguage(lang),
+            ),
           ),
           const Divider(),
           ListTile(
