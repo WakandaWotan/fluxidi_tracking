@@ -6127,6 +6127,35 @@ class _DriverHomePageState extends State<DriverHomePage>
         cameraFollowMode: _cameraMode == _CameraMode.follow,
       );
 
+  /// NAV-PHASE-CAMERA-TARGET-1: resolves the camera target coordinate for
+  /// the preview surface. Uses the phase to decide whether pickup A, the
+  /// first route point, the snapped position, or (last resort) raw driver
+  /// GPS owns the vehicle anchor.
+  NavPhaseCameraTarget _resolvePhaseCameraTargetForPreview(geo.Position pos) {
+    final booking = _activeBooking;
+    _LonLat? pickup;
+    if (booking != null) {
+      pickup = _usableNavLonLat(_extractPreviewEndpoints(booking).pickup);
+    }
+    _LonLat? firstRoutePoint;
+    if (_routeCoords.isNotEmpty) {
+      firstRoutePoint = _routeCoords.first;
+    }
+    final progress = _lastNavRouteProgress;
+    return resolveNavPhaseCameraTarget(
+      phase: _navFixedHudPhase,
+      hasPickup: booking != null && pickup != null,
+      pickupLat: pickup?.lat,
+      pickupLon: pickup?.lon,
+      firstRouteLat: firstRoutePoint?.lat,
+      firstRouteLon: firstRoutePoint?.lon,
+      snappedLat: progress?.snappedLatitude,
+      snappedLon: progress?.snappedLongitude,
+      driverLat: pos.latitude,
+      driverLon: pos.longitude,
+    );
+  }
+
   /// NAV-RELEASE-FINAL-FLOW-1: NAV-to-pickup is booking-only on the prepared
   /// surface. Direct street draft is already at A.
   bool get _showNavToPickupAction => navToPickupActionVisible(
@@ -10064,18 +10093,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
-  /// NAV-RELEASE-FINAL-FLOW-1: when fixed streetlevel owns the surface,
-  /// disable Mapbox pinch / double-tap / quick-zoom so manual zoom cannot
-  /// bypass the removed +/- controls. Idle map keeps platform defaults.
+  /// NAV-RELEASE-FINAL-FLOW-1 / NAV-PHASE-CAMERA-TARGET-1: when the fixed
+  /// HUD owns the surface, disable every Mapbox interaction that could
+  /// move, rotate, tilt or scale the map beneath the screen-fixed Car —
+  /// pan and rotate and pitch were still enabled on c241f39 so a stray
+  /// touch shifted the map underneath the fixed marker.
   Future<void> _reconcileMapZoomGestures({required String reason}) async {
     final map = _map;
     if (map == null) return;
-    final lock = resolveNavFixedZoomGestureLock(
-      preparedRouteOrGuidanceOrLive:
-          _fixedStreetLevelPreviewDraft ||
-          _liveRideActive ||
-          _navigationGuidanceActive,
-    );
+    final lock = resolveNavPhaseGestureLock(phase: _navFixedHudPhase);
     try {
       await map.gestures.updateSettings(
         mb.GesturesSettings(
@@ -10083,10 +10109,14 @@ class _DriverHomePageState extends State<DriverHomePage>
           doubleTapToZoomInEnabled: lock.doubleTapToZoomInEnabled,
           doubleTouchToZoomOutEnabled: lock.doubleTouchToZoomOutEnabled,
           quickZoomEnabled: lock.quickZoomEnabled,
+          scrollEnabled: lock.scrollEnabled,
+          rotateEnabled: lock.rotateEnabled,
+          pitchEnabled: lock.pitchEnabled,
         ),
       );
       debugPrint(
-        '[MAP][GESTURES] lockZoom=${lock.allZoomGesturesDisabled} '
+        '[MAP][GESTURES] lockAll=${lock.allInteractionsDisabled} '
+        'phase=${navFixedHudPhaseLabel(_navFixedHudPhase)} '
         'reason=$reason',
       );
     } catch (_) {
@@ -16027,6 +16057,12 @@ class _DriverHomePageState extends State<DriverHomePage>
       seededRouteBearingDeg: _navStationaryBearingGate.acceptedBearing,
       gpsHeadingDeg: pos.heading.isFinite ? pos.heading : null,
     );
+    // NAV-PHASE-CAMERA-TARGET-1: center on pickup A (prepared booking) or
+    // the first route point (prepared street draft) rather than the raw
+    // driver GPS. When the driver is not yet at A, targeting driver GPS put
+    // the HUD off the route line and let the route point sideways.
+    final target = _resolvePhaseCameraTargetForPreview(pos);
+    if (!target.hasCoordinate) return;
     final width = MediaQuery.sizeOf(context).width;
     final height = MediaQuery.sizeOf(context).height;
     final safe = MediaQuery.of(context).padding;
@@ -16056,8 +16092,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       safeTop: safe.top,
       safeBottom: safe.bottom,
       screenHeight: height,
-      vehicleLat: pos.latitude,
-      vehicleLon: pos.longitude,
+      vehicleLat: target.lat,
+      vehicleLon: target.lon,
       bearingDeg: routeUp.bearingDeg,
       speedKmh: 0.0,
       progress: null,
@@ -16071,7 +16107,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     try {
       await _map!.flyTo(
         mb.CameraOptions(
-          center: _mbPoint(pos.longitude, pos.latitude),
+          center: _mbPoint(target.lon, target.lat),
           zoom: overrides.zoom,
           pitch: overrides.pitch,
           bearing: bearingDeg,
@@ -16092,6 +16128,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         'pitch=${overrides.pitch.toStringAsFixed(1)} '
         'bearing=${bearingDeg.toStringAsFixed(1)} '
         'bearingSource=${navFixedRouteUpBearingSourceLabel(routeUp.source)} '
+        'targetSource=${navPhaseCameraTargetSourceLabel(target.source)} '
         'anchor=${overrides.anchorFraction.toStringAsFixed(3)}',
       );
     } catch (_) {
@@ -20317,11 +20354,36 @@ class _DriverHomePageState extends State<DriverHomePage>
       safeTop: safeTop,
       safeBottom: safeBottom,
     );
+    // NAV-PHASE-CAMERA-TARGET-1: prepared route, NAV-to-pickup A and the
+    // active customer ride must all resolve through the same fixed L7 cockpit
+    // profile. The former `_liveRideActive` gate here let the prepared and
+    // toPickup phases fall through to the raw policy zoom (~17.0-17.6 street-
+    // view tuned), which is exactly what the tablet field failure recorded on
+    // manual recenter ([NAV_R1_CAMERA] zoom=17.6 reason=manual_recenter).
     if (_cameraMode == _CameraMode.follow &&
-        _liveRideActive &&
+        _navFixedHudPresentationActive &&
         navPresentation.useDriverCockpitCamera) {
       final isTablet = MediaQuery.sizeOf(context).width >= 600;
       final directAdjust = force && cameraReason == 'cockpit_adjust';
+      // NAV-PHASE-CAMERA-TARGET-1 (Correction 1): in the prepared-route
+      // phase the camera must stay pinned on the A→B route start across
+      // every subsequent GPS fix. Without this override, later
+      // `_followCameraTesla` calls resolved `visual.point` from the driver
+      // GPS (via `_displayRoutePointFor`) and re-centered the map on the
+      // driver, moving the HUD nose off the route origin. Route the target
+      // through the same phase resolver used by the initial preview apply.
+      final phasePreviewTarget =
+          _navFixedHudPhase == NavFixedHudPhase.preparedRoute
+              ? _resolvePhaseCameraTargetForPreview(pos)
+              : null;
+      final effectiveVehicleLat =
+          phasePreviewTarget?.hasCoordinate == true
+              ? phasePreviewTarget!.lat
+              : visual.point.lat;
+      final effectiveVehicleLon =
+          phasePreviewTarget?.hasCoordinate == true
+              ? phasePreviewTarget!.lon
+              : visual.point.lon;
       final cockpit = _driverCockpitCameraOverrides(
         policyZoom: cameraZoom,
         policyPitch: cameraPitch,
@@ -20330,8 +20392,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         safeTop: safeTop,
         safeBottom: safeBottom,
         screenHeight: MediaQuery.sizeOf(context).height,
-        vehicleLat: visual.point.lat,
-        vehicleLon: visual.point.lon,
+        vehicleLat: effectiveVehicleLat,
+        vehicleLon: effectiveVehicleLon,
         bearingDeg: heading,
         speedKmh: speedKmh,
         progress: progress,
@@ -20342,6 +20404,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       viewPadding = cockpit.padding;
       if (cockpit.centerLat != null && cockpit.centerLon != null) {
         cameraCenter = _mbPoint(cockpit.centerLon!, cockpit.centerLat!);
+      } else if (phasePreviewTarget?.hasCoordinate == true) {
+        cameraCenter =
+            _mbPoint(phasePreviewTarget!.lon, phasePreviewTarget.lat);
       }
       _commitDriverCockpitAppliedCamera(zoom: cameraZoom, pitch: cameraPitch);
       if (_isDriver3dVehicleModelEffectivelyActive()) {
@@ -21483,6 +21548,27 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _centerOnMe() async {
     debugPrint('[GPS][RECENTER][TAP]');
+    // NAV-PHASE-CAMERA-TARGET-1: during a route phase the fixed HUD owns the
+    // camera deterministically. A user-issued recenter must not mutate zoom,
+    // target or bearing — the previous behaviour ran through
+    // `DriverNavCameraPolicy.update`, which produced the speed-band
+    // ~17.0-17.6 zoom seen in the field ([NAV_R1_CAMERA] zoom=17.6 reason=
+    // manual_recenter). We reapply the phase-fixed preview camera instead in
+    // prepared and toPickup phases, and let the normal follow pipeline own
+    // the live ride.
+    if (!navPhaseManualCameraMutationAllowed(phase: _navFixedHudPhase)) {
+      debugPrint(
+        '[GPS][RECENTER][IGNORED_PHASE_LOCKED] '
+        'phase=${navFixedHudPhaseLabel(_navFixedHudPhase)}',
+      );
+      if (_navFixedHudPhase == NavFixedHudPhase.preparedRoute ||
+          _navFixedHudPhase == NavFixedHudPhase.toPickup) {
+        await _applyPreviewStreetlevelCameraIfEligible(
+          reason: 'phase_recenter_reapply',
+        );
+      }
+      return;
+    }
     geo.Position? pos = _lastPos;
     if (pos != null) {
       debugPrint('[GPS][RECENTER][CACHE_HIT]');
@@ -22225,15 +22311,20 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     final chips = <Widget>[
-      _buildCompactNavIconChip(
-        icon: Icons.my_location,
-        tooltip: kCenterOnMeLabel,
-        onPressed: _centerOnMe,
-        navAccent: colors.accent,
-        navText: colors.text,
-        navSurface: colors.surface,
-        layout: compactNavLayout,
-      ),
+      // NAV-PHASE-CAMERA-TARGET-1: the recenter chip is hidden in every
+      // route phase. The fixed HUD contract owns the camera; a manual
+      // recenter would rewrite zoom and target off the phase-fixed L7
+      // Street Level profile.
+      if (navPhaseRecenterVisible(phase: _navFixedHudPhase))
+        _buildCompactNavIconChip(
+          icon: Icons.my_location,
+          tooltip: kCenterOnMeLabel,
+          onPressed: _centerOnMe,
+          navAccent: colors.accent,
+          navText: colors.text,
+          navSurface: colors.surface,
+          layout: compactNavLayout,
+        ),
     ];
 
     // NAV-RELEASE-SIMPLE-STREETLEVEL-1: presentation / cube / View-mode chips
@@ -30637,7 +30728,12 @@ class _DriverHomePageState extends State<DriverHomePage>
             ),
           // NAV-UI-R6F: map actions live inside the bottom cockpit bar during
           // route/nav context; only the idle map keeps a floating recenter.
-          if (_mapSupported && !showNavQuickActions && !tellersActive)
+          // NAV-PHASE-CAMERA-TARGET-1: also gate on the route phase so the
+          // floating button can never re-appear on top of a prepared route.
+          if (_mapSupported &&
+              !showNavQuickActions &&
+              !tellersActive &&
+              navPhaseRecenterVisible(phase: _navFixedHudPhase))
             Positioned(
               right: 14,
               bottom: recenterBottom,
