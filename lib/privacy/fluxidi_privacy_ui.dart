@@ -3,36 +3,34 @@
 /// Shared "My data & privacy" / "Privacy & account" surface for customer,
 /// business and driver. Opens the canonical privacy policy and a confirmed
 /// deletion-request path (not an unsafe hard delete).
+///
+/// PRIVACY-LOCALE-PARITY-P0-1
+/// The privacy UI binds to Fluxidi's own `appLanguageNotifier` — the same
+/// source of truth every other Fluxidi surface uses — so that the language
+/// selected inside the app (NL/EN/FR/ES) is honored here regardless of the
+/// device system locale. Previously this page read the Flutter Localizations
+/// widget locale (driven by device / MaterialApp), causing an NL-configured
+/// app to render in EN on many phones.
 library;
 
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../app_config.dart';
 import 'fluxidi_background_location_disclosure.dart';
 import 'fluxidi_legal_urls.dart';
 import 'fluxidi_privacy_account.dart';
 
-String _langCode(BuildContext context) {
-  final code = Localizations.maybeLocaleOf(context)?.languageCode;
-  switch (code) {
-    case 'en':
-    case 'fr':
-    case 'es':
-    case 'nl':
-      return code!;
-    default:
-      return 'nl';
-  }
-}
+/// PRIVACY-LOCALE-PARITY-P0-1: single authoritative language read.
+String _fluxidiLangCode() => currentLanguageCode;
 
-String _t(
-  BuildContext context, {
+String _t({
   required String nl,
   required String en,
   required String fr,
   required String es,
 }) {
-  switch (_langCode(context)) {
+  switch (_fluxidiLangCode()) {
     case 'en':
       return en;
     case 'fr':
@@ -64,7 +62,17 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final lang = _langCode(context);
+    // PRIVACY-LOCALE-PARITY-P0-1: rebuild live when the Fluxidi language
+    // changes anywhere in the app, matching the behavior of the rest of the
+    // shell (`appLanguageNotifier`).
+    return AnimatedBuilder(
+      animation: appLanguageNotifier,
+      builder: (context, _) => _buildContent(context),
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
+    final lang = _fluxidiLangCode();
     final title = fluxidiPrivacySectionTitle(
       audience: audience,
       languageCode: lang,
@@ -87,7 +95,6 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
             leading: const Icon(Icons.policy_outlined),
             title: Text(
               _t(
-                context,
                 nl: 'Privacybeleid openen',
                 en: 'Open privacy policy',
                 fr: 'Ouvrir la politique de confidentialité',
@@ -102,7 +109,6 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
             leading: const Icon(Icons.mail_outline),
             title: Text(
               _t(
-                context,
                 nl: 'Inzage of correctie aanvragen',
                 en: 'Request access or correction',
                 fr: 'Demander l’accès ou une correction',
@@ -113,7 +119,6 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
             onTap: () => _launchExternal(
               fluxidiPrivacyMailtoUri(
                 subject: _t(
-                  context,
                   nl: 'Fluxidi — verzoek inzage/correctie (${fluxidiPrivacyAudienceLabel(audience)})',
                   en: 'Fluxidi — access/correction request (${fluxidiPrivacyAudienceLabel(audience)})',
                   fr: 'Fluxidi — demande d’accès/correction (${fluxidiPrivacyAudienceLabel(audience)})',
@@ -129,14 +134,12 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
               title: Text(
                 audience == FluxidiPrivacyAudience.business
                     ? _t(
-                        context,
                         nl: 'Verwijdering bedrijfaccount aanvragen',
                         en: 'Request business account deletion',
                         fr: 'Demander la suppression du compte entreprise',
                         es: 'Solicitar eliminación de la cuenta empresarial',
                       )
                     : _t(
-                        context,
                         nl: 'Verwijdering account en gegevens aanvragen',
                         en: 'Request account and data deletion',
                         fr: 'Demander la suppression du compte et des données',
@@ -150,7 +153,6 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
               leading: const Icon(Icons.lock_outline),
               title: Text(
                 _t(
-                  context,
                   nl: 'Alleen de geverifieerde bedrijfseigenaar/admin kan een bedrijfsverwijdering starten.',
                   en: 'Only a verified company owner/admin may start a business deletion request.',
                   fr: 'Seul un propriétaire/admin d’entreprise vérifié peut démarrer une suppression.',
@@ -161,7 +163,6 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
           const SizedBox(height: 16),
           Text(
             _t(
-              context,
               nl: 'Fallback: $kFluxidiPrivacyContactEmail',
               en: 'Fallback: $kFluxidiPrivacyContactEmail',
               fr: 'Alternative: $kFluxidiPrivacyContactEmail',
@@ -213,76 +214,80 @@ class FluxidiPrivacyAccountPage extends StatelessWidget {
       return;
     }
 
-    final lang = _langCode(context);
-    final retention = fluxidiDeletionRetentionExplanation(languageCode: lang);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) {
-        return AlertDialog(
-          title: Text(
-            _t(
-              ctx,
-              nl: 'Verwijderingsverzoek bevestigen',
-              en: 'Confirm deletion request',
-              fr: 'Confirmer la demande de suppression',
-              es: 'Confirmar solicitud de eliminación',
-            ),
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _t(
-                    ctx,
-                    nl: 'Dit verzoek betreft: ${fluxidiPrivacyAudienceLabel(audience)}.',
-                    en: 'This request concerns: ${fluxidiPrivacyAudienceLabel(audience)}.',
-                    fr: 'Cette demande concerne: ${fluxidiPrivacyAudienceLabel(audience)}.',
-                    es: 'Esta solicitud corresponde a: ${fluxidiPrivacyAudienceLabel(audience)}.',
+        // PRIVACY-LOCALE-PARITY-P0-1: dialog also rebinds to
+        // `appLanguageNotifier` so an in-app language change while the dialog
+        // is open still updates its copy.
+        return AnimatedBuilder(
+          animation: appLanguageNotifier,
+          builder: (ctx, _) {
+            final lang = _fluxidiLangCode();
+            final retention =
+                fluxidiDeletionRetentionExplanation(languageCode: lang);
+            return AlertDialog(
+              title: Text(
+                _t(
+                  nl: 'Verwijderingsverzoek bevestigen',
+                  en: 'Confirm deletion request',
+                  fr: 'Confirmer la demande de suppression',
+                  es: 'Confirmar solicitud de eliminación',
+                ),
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _t(
+                        nl: 'Dit verzoek betreft: ${fluxidiPrivacyAudienceLabel(audience)}.',
+                        en: 'This request concerns: ${fluxidiPrivacyAudienceLabel(audience)}.',
+                        fr: 'Cette demande concerne: ${fluxidiPrivacyAudienceLabel(audience)}.',
+                        es: 'Esta solicitud corresponde a: ${fluxidiPrivacyAudienceLabel(audience)}.',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(retention),
+                    const SizedBox(height: 12),
+                    Text(
+                      _t(
+                        nl: 'U wordt doorgestuurd naar de openbare verwijderingspagina. Alternatief: $kFluxidiPrivacyContactEmail.',
+                        en: 'You will be taken to the public deletion page. Fallback: $kFluxidiPrivacyContactEmail.',
+                        fr: 'Vous serez redirigé vers la page publique de suppression. Alternative: $kFluxidiPrivacyContactEmail.',
+                        es: 'Se le redirigirá a la página pública de eliminación. Alternativa: $kFluxidiPrivacyContactEmail.',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: Text(
+                    _t(
+                      nl: 'Annuleren',
+                      en: 'Cancel',
+                      fr: 'Annuler',
+                      es: 'Cancelar',
+                    ),
                   ),
                 ),
-                const SizedBox(height: 12),
-                Text(retention),
-                const SizedBox(height: 12),
-                Text(
-                  _t(
-                    ctx,
-                    nl: 'U wordt doorgestuurd naar de openbare verwijderingspagina. Alternatief: $kFluxidiPrivacyContactEmail.',
-                    en: 'You will be taken to the public deletion page. Fallback: $kFluxidiPrivacyContactEmail.',
-                    fr: 'Vous serez redirigé vers la page publique de suppression. Alternative: $kFluxidiPrivacyContactEmail.',
-                    es: 'Se le redirigirá a la página pública de eliminación. Alternativa: $kFluxidiPrivacyContactEmail.',
+                FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: Text(
+                    _t(
+                      nl: 'Doorgaan',
+                      en: 'Continue',
+                      fr: 'Continuer',
+                      es: 'Continuar',
+                    ),
                   ),
                 ),
               ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text(
-                _t(
-                  ctx,
-                  nl: 'Annuleren',
-                  en: 'Cancel',
-                  fr: 'Annuler',
-                  es: 'Cancelar',
-                ),
-              ),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: Text(
-                _t(
-                  ctx,
-                  nl: 'Doorgaan',
-                  en: 'Continue',
-                  fr: 'Continuer',
-                  es: 'Continuar',
-                ),
-              ),
-            ),
-          ],
+            );
+          },
         );
       },
     );
