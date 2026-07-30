@@ -730,6 +730,20 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           MaterialPageRoute(builder: (_) => const CustomerProfileEditPage()),
         ),
       ),
+      // GOOGLE-PLAY-PRIVACY-READINESS-P0: dedicated privacy & deletion hub.
+      (
+        icon: Icons.privacy_tip_outlined,
+        label: _t(
+          nl: 'Mijn gegevens & privacy',
+          en: 'My data & privacy',
+          fr: 'Mes données & confidentialité',
+          es: 'Mis datos y privacidad',
+        ),
+        onTap: () => openFluxidiPrivacyAccountPage(
+          context,
+          audience: FluxidiPrivacyAudience.customer,
+        ),
+      ),
       (
         icon: Icons.local_taxi_outlined,
         label: _t(

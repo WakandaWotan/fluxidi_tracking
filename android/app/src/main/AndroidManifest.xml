@@ -9,10 +9,22 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
-    <!-- Background location (Android 10+) — we'll request it in-app via permission_handler -->
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!--
+      GOOGLE-PLAY-PRIVACY-READINESS-P0:
+      ACCESS_BACKGROUND_LOCATION intentionally NOT declared.
 
-    <!-- Foreground service for location tracking (Android 9+/10+) -->
+      Release code path uses only Geolocator.getPositionStream with
+      AndroidSettings that do NOT set foregroundNotificationConfig, so no
+      location foreground service is ever started by this app. Location
+      updates therefore only run while the Activity is visible / foreground.
+      No Permission.locationAlways request exists in lib/. Keeping the
+      background permission would be a Play Data Safety mismatch.
+    -->
+
+    <!-- Foreground service (Android 9+/10+). No location FGS is started by
+         this app today; the geolocator plugin registers a service class but
+         only starts it when a foregroundNotificationConfig is provided,
+         which the release code path never does. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 

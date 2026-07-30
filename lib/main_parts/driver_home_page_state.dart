@@ -34179,6 +34179,32 @@ class _DriverHomePageState extends State<DriverHomePage>
                               );
                             },
                           ),
+                          // GOOGLE-PLAY-PRIVACY-READINESS-P0: driver privacy hub.
+                          // Driver may delete only their own profile — never the
+                          // company or another driver.
+                          cockpitRailButton(
+                            icon: Icons.privacy_tip_outlined,
+                            semanticLabel: _tr(
+                              nl: 'Mijn gegevens & privacy',
+                              en: 'My data & privacy',
+                              fr: 'Mes données & confidentialité',
+                              es: 'Mis datos y privacidad',
+                            ),
+                            onTap: () {
+                              Navigator.pop(context);
+                              final driverId =
+                                  (activeDriverSessionNotifier.value?.driverId ??
+                                          '')
+                                      .trim();
+                              openFluxidiPrivacyAccountPage(
+                                context,
+                                audience: FluxidiPrivacyAudience.driver,
+                                sessionDriverId: driverId.isEmpty
+                                    ? null
+                                    : driverId,
+                              );
+                            },
+                          ),
                           if (!isBusinessPreviewSession)
                             cockpitRailButton(
                               icon: Icons.swap_horiz_rounded,

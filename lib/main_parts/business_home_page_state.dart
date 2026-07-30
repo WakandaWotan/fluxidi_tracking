@@ -3133,6 +3133,28 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               _openCompanyDetails(context);
               return;
             }
+            if (value == 'privacy_account') {
+              // GOOGLE-PLAY-PRIVACY-READINESS-P0: authority resolved from the
+              // real active company session + AppRole (fail-closed) instead of
+              // a hardcoded true.
+              final companySession = activeCompanySessionNotifier.value;
+              final isOwnerOrAdmin = resolveIsCompanyOwnerOrAdmin(
+                hasCompanySession:
+                    CompanySessionStore.instance.hasValidCompanyContext &&
+                    companySession != null,
+                companySessionToken: companySession?.companySessionToken,
+                companyId: companySession?.companyId,
+                sessionRole: companySession?.role,
+                appRoleIsCompanyAdmin:
+                    appRoleNotifier.value == AppRole.companyAdmin,
+              );
+              openFluxidiPrivacyAccountPage(
+                context,
+                audience: FluxidiPrivacyAudience.business,
+                isCompanyOwnerOrAdmin: isOwnerOrAdmin,
+              );
+              return;
+            }
             if (value == 'help_manual') {
               _openBusinessHelpManual(context);
               return;
@@ -3286,6 +3308,20 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   en: 'Company details',
                   fr: 'Données de l’entreprise',
                   es: 'Datos de empresa',
+                ),
+                style: isCleanProfessional
+                    ? TextStyle(color: palette.textPrimary)
+                    : null,
+              ),
+            ),
+            PopupMenuItem<String>(
+              value: 'privacy_account',
+              child: Text(
+                _t(
+                  nl: 'Privacy & account',
+                  en: 'Privacy & account',
+                  fr: 'Confidentialité & compte',
+                  es: 'Privacidad y cuenta',
                 ),
                 style: isCleanProfessional
                     ? TextStyle(color: palette.textPrimary)
