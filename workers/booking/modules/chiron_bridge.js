@@ -30,6 +30,14 @@ export const CHIRON_CONNECTION_TEST_PATH = "/admin/chiron/connection/test";
 export const CHIRON_READINESS_PATH = "/admin/chiron/readiness";
 export const CHIRON_SCORE_SUMMARY_PATH = "/admin/chiron/score-summary";
 export const COMPLIANCE_EVENTS_RECENT_PATH = "/compliance/events/recent";
+/* RELEASE-P0-CHIRON-RESET-UX-2026-07-31: the company-owner-visible testflow
+ * reset. This is destructive (counters + ritnummer history are wiped and
+ * production is forced off), so the booking-worker handler ALWAYS invokes it
+ * behind `_requireAdminOrCompanySessionForExplicitScope` with strict scope
+ * validation before forwarding. Kept OUT of the platform-level
+ * `/admin/dev/reset-compliance-events` (which lists as truly destructive
+ * because it deletes event rows). */
+export const CHIRON_TESTFLOW_RESET_PATH = "/admin/chiron/testflow/reset";
 
 /* Marker header value so the compliance worker knows this request came via the
  * booking worker's internal proxy (as opposed to a direct admin call). */
@@ -70,7 +78,8 @@ export async function _proxyChironConfigStatusToComplianceWorker(env, explicitSc
     compliancePath !== CHIRON_CONFIG_TEST_CREDENTIALS_CLEAR_PATH &&
     compliancePath !== CHIRON_READINESS_PATH &&
     compliancePath !== CHIRON_SCORE_SUMMARY_PATH &&
-    compliancePath !== COMPLIANCE_EVENTS_RECENT_PATH
+    compliancePath !== COMPLIANCE_EVENTS_RECENT_PATH &&
+    compliancePath !== CHIRON_TESTFLOW_RESET_PATH
   ) {
     return json({ ok: false, error: "invalid_compliance_proxy_path" }, 400);
   }

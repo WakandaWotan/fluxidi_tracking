@@ -2102,6 +2102,420 @@ String? _formatChironInternalTestTimestamp(String? iso) {
   return '$day-$month-$year $hour:$minute';
 }
 
+/// RELEASE-P0-CHIRON-RESET-UX-2026-07-31: open the professional Chiron
+/// testflow-reset confirmation dialog. Returns the fresh
+/// `_ChironTestflowProgress` when the user confirmed and the backend reset
+/// succeeded, `null` when the user cancelled or the backend rejected the
+/// request. On backend failure the dialog stays open and shows a readable
+/// (secret-free) error until the user cancels.
+///
+/// The dialog is a self-contained state machine (initial → busy → error →
+/// closed) that owns the network call so that:
+///   * a double tap on "Testflow resetten" can never produce two requests
+///     (the primary button flips to disabled+progress the moment the first
+///     tap begins);
+///   * a backend failure never falsely flips the parent UI to a zeroed
+///     state — the parent only trusts the return value.
+Future<_ChironTestflowProgress?> showChironTestflowResetDialog({
+  required BuildContext context,
+  required AppLanguage lang,
+  required bool productionActive,
+  required Future<_ChironTestflowProgress> Function() onReset,
+}) {
+  return showDialog<_ChironTestflowProgress?>(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogContext) {
+      return ChironTestflowResetConfirmDialog<_ChironTestflowProgress>(
+        lang: lang,
+        productionActive: productionActive,
+        onReset: onReset,
+      );
+    },
+  );
+}
+
+/// Content of the Chiron testflow reset confirmation dialog. Public so widget
+/// tests can pump it in isolation without spinning up the full compliance
+/// page.
+///
+/// The widget:
+///   * pops the enclosing dialog with `null` on cancel;
+///   * calls [onReset] on confirm and pops with the returned progress on
+///     success;
+///   * stays open with an in-dialog error banner on failure so the operator
+///     sees exactly why the reset was refused;
+///   * disables both action buttons for the entire duration of the request.
+///
+/// The generic [T] is the shape of the "fresh testflow progress" the caller
+/// receives on success. Prod code always uses the file-private
+/// `_ChironTestflowProgress`; widget tests substitute a lightweight stub so
+/// the dialog can be pumped in isolation without importing internal types.
+class ChironTestflowResetConfirmDialog<T> extends StatefulWidget {
+  const ChironTestflowResetConfirmDialog({
+    super.key,
+    required this.lang,
+    required this.productionActive,
+    required this.onReset,
+  });
+
+  final AppLanguage lang;
+
+  /// True when the compliance backend currently has production_enabled=true
+  /// for this company. When true, the dialog surfaces an explicit precondition
+  /// notice so the operator sees that the reset will disable production.
+  final bool productionActive;
+
+  /// Actually performs the reset. Called at most once per dialog invocation.
+  final Future<T> Function() onReset;
+
+  @override
+  State<ChironTestflowResetConfirmDialog<T>> createState() =>
+      _ChironTestflowResetConfirmDialogState<T>();
+}
+
+class _ChironTestflowResetConfirmDialogState<T>
+    extends State<ChironTestflowResetConfirmDialog<T>> {
+  bool _busy = false;
+  String? _errorCode;
+
+  String _t({
+    required String nl,
+    required String en,
+    required String fr,
+    required String es,
+  }) {
+    switch (widget.lang) {
+      case AppLanguage.nl:
+        return nl;
+      case AppLanguage.en:
+        return en;
+      case AppLanguage.fr:
+        return fr;
+      case AppLanguage.es:
+        return es;
+    }
+  }
+
+  Future<void> _confirm() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _errorCode = null;
+    });
+    T? progress;
+    String? errorCode;
+    try {
+      progress = await widget.onReset();
+    } on BackendChironConnectionApiException catch (err) {
+      errorCode = err.error;
+    } catch (_) {
+      errorCode = 'unknown_error';
+    }
+    if (!mounted) return;
+    if (progress != null) {
+      Navigator.of(context).pop(progress);
+      return;
+    }
+    setState(() {
+      _busy = false;
+      _errorCode = errorCode ?? 'unknown_error';
+    });
+  }
+
+  void _cancel() {
+    if (_busy) return;
+    Navigator.of(context).pop(null);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = _chironTokens();
+    final title = _t(
+      nl: 'Chiron-testflow resetten?',
+      en: 'Reset the Chiron testflow?',
+      fr: 'Réinitialiser le flux de test Chiron ?',
+      es: '¿Reiniciar el flujo de prueba de Chiron?',
+    );
+    final body = _t(
+      nl: 'De voortgang van de acceptatietest wordt teruggezet naar nul. '
+          'Productie wordt uitgeschakeld en de Chiron-testomgeving wordt '
+          'opnieuw geactiveerd. Uw testgegevens en geslaagde OAuth2-verbinding '
+          'blijven bewaard.',
+      en: 'Acceptance-test progress will be reset to zero. Production is '
+          'disabled and the Chiron test environment is re-activated. Your '
+          'test credentials and successful OAuth2 connection remain intact.',
+      fr: 'La progression du test d’acceptation sera remise à zéro. La '
+          'production est désactivée et l’environnement de test Chiron est '
+          'réactivé. Vos identifiants de test et votre connexion OAuth2 '
+          'réussie sont conservés.',
+      es: 'El progreso de la prueba de aceptación se restablece a cero. Se '
+          'desactiva la producción y se reactiva el entorno de prueba de '
+          'Chiron. Sus credenciales de prueba y la conexión OAuth2 exitosa '
+          'se mantienen.',
+    );
+    final preconditionText = _t(
+      nl: 'Om een nieuwe Chiron-acceptatietest te starten, wordt productie '
+          'uitgeschakeld en wordt de testomgeving opnieuw geactiveerd.',
+      en: 'To start a new Chiron acceptance test, production is disabled and '
+          'the test environment is re-activated.',
+      fr: 'Pour lancer un nouveau test d’acceptation Chiron, la production '
+          'est désactivée et l’environnement de test est réactivé.',
+      es: 'Para iniciar una nueva prueba de aceptación de Chiron, se '
+          'desactiva la producción y se reactiva el entorno de prueba.',
+    );
+    final cancelLabel = _t(
+      nl: 'Annuleren',
+      en: 'Cancel',
+      fr: 'Annuler',
+      es: 'Cancelar',
+    );
+    final resetLabel = _t(
+      nl: 'Testflow resetten',
+      en: 'Reset testflow',
+      fr: 'Réinitialiser le flux de test',
+      es: 'Reiniciar flujo de prueba',
+    );
+    final busyLabel = _t(
+      nl: 'Bezig met resetten…',
+      en: 'Resetting…',
+      fr: 'Réinitialisation…',
+      es: 'Reiniciando…',
+    );
+    final errorLabel = _errorCode == null
+        ? null
+        : _t(
+            nl: 'Testflow resetten is niet gelukt. '
+                'De backend gaf: ${_errorCode!}. '
+                'Probeer het opnieuw of neem contact op met support.',
+            en: 'The testflow could not be reset. Backend reported: '
+                '${_errorCode!}. Please try again or contact support.',
+            fr: 'La réinitialisation du flux de test a échoué. Le backend a '
+                'répondu : ${_errorCode!}. Réessayez ou contactez le support.',
+            es: 'No se pudo reiniciar el flujo de prueba. El backend '
+                'respondió: ${_errorCode!}. Vuelve a intentarlo o contacta '
+                'con soporte.',
+          );
+
+    // Fully opaque surface — matches Fluxidi card treatment across the app so
+    // the dialog reads as first-class UI in both light (cleanProfessional)
+    // and dark (executive/steel) variants, and no lavender/lightgrey shows
+    // through under any theme.
+    final surface = tokens.card;
+    final borderColor = tokens.border;
+    final titleColor = tokens.textPrimary;
+    final bodyColor = tokens.textSecondary;
+    final subduedColor = tokens.textMuted;
+    final warningColor = tokens.warning;
+    final warningBg = tokens.warningSoft;
+    final dangerColor = tokens.danger;
+    final dangerBg = tokens.dangerSoft;
+
+    // Primary button is filled with the accent color and uses
+    // `palette.textOnAccent` — the per-theme foreground colour explicitly
+    // curated by each business palette for accent backgrounds. This keeps
+    // the button legible on every theme (dark accent-on-black, light accent-
+    // on-white, neon accent-on-purple, etc.) at ≥ 3:1 (WCAG AA large-text
+    // threshold, satisfied by our 14 sp bold label) instead of the fragile
+    // "accent vs background" pair we would otherwise fall back to.
+    final primaryFg = tokens.palette.textOnAccent;
+    final primaryBg = tokens.accent;
+
+    return Dialog(
+      backgroundColor: surface,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: borderColor),
+      ),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
+        // Scroll the body when the precondition banner + error banner + long
+        // localized text push the dialog past the available viewport height
+        // (e.g. small phone landscape). The action buttons live INSIDE the
+        // scrollable so they always remain reachable — Material treats a
+        // scrollable dialog as accessible, which is what we want here.
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: titleColor,
+                  height: 1.25,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                body,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: bodyColor,
+                  height: 1.35,
+                ),
+              ),
+              if (widget.productionActive) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: warningBg,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: warningColor.withOpacity(0.55),
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.warning_amber_rounded,
+                        size: 20,
+                        color: warningColor,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          preconditionText,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: titleColor,
+                            height: 1.35,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              if (errorLabel != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: dangerBg,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: dangerColor.withOpacity(0.55)),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.error_outline,
+                        size: 20,
+                        color: dangerColor,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          errorLabel,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: titleColor,
+                            height: 1.35,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 20),
+              if (_busy) ...[
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: primaryBg,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      busyLabel,
+                      style: TextStyle(
+                        color: subduedColor,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+              ],
+              // Wrap keeps the action row from overflowing on narrower
+              // dialog widths (phone landscape, small tablet portrait). Both
+              // touch targets stay at 44 dp tall which is Material's minimum
+              // recommendation for accessible tap size.
+              Wrap(
+                alignment: WrapAlignment.end,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  TextButton(
+                    onPressed: _busy ? null : _cancel,
+                    style: TextButton.styleFrom(
+                      foregroundColor: titleColor,
+                      minimumSize: const Size(88, 44),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
+                      textStyle: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    child: Text(cancelLabel),
+                  ),
+                  FilledButton(
+                    onPressed: _busy ? null : _confirm,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: primaryBg,
+                      foregroundColor: primaryFg,
+                      disabledBackgroundColor: primaryBg.withOpacity(0.55),
+                      disabledForegroundColor: primaryFg.withOpacity(0.7),
+                      minimumSize: const Size(140, 44),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 10,
+                      ),
+                      textStyle: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    child: Text(resetLabel),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
 class _ChironTestAccessCard extends StatefulWidget {
   const _ChironTestAccessCard({required this.lang});
 
@@ -2606,111 +3020,53 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
   Future<void> _resetTestflow() async {
     final scope = _effectiveTenantCompanyIds();
     if (scope == null) return;
+    if (_resettingTestflow) return;
 
-    final confirmed = await _confirmResetTestflow();
-    if (!confirmed || !mounted) return;
-
-    setState(() {
-      _resettingTestflow = true;
-      _actionError = null;
-    });
+    // RELEASE-P0-CHIRON-RESET-UX-2026-07-31: the dialog owns its own busy /
+    // error state and drives the network call itself. That way a double tap
+    // on "Testflow resetten" inside the dialog is guaranteed to produce only
+    // one backend request (the button is disabled the moment the request
+    // starts). The parent tracks `_resettingTestflow` so the outer
+    // OutlinedButton on the compliance card is also disabled for the whole
+    // duration.
+    setState(() => _resettingTestflow = true);
     try {
-      final progress = await _resetChironTestflowViaBooking(
-        tenantId: scope.tenantId,
-        companyId: scope.companyId,
+      final progress = await showChironTestflowResetDialog(
+        context: context,
+        lang: lang,
+        productionActive:
+            backendChironConnectionStatusNotifier.value?.productionEnabled ??
+                false,
+        onReset: () async {
+          return _resetChironTestflowViaBooking(
+            tenantId: scope.tenantId,
+            companyId: scope.companyId,
+          );
+        },
       );
       if (!mounted) return;
-      setState(() => _testflowProgress = progress);
-      await _refreshStatus();
-      if (!mounted) return;
-      _showSnack(
-        _t(
-          nl: 'Acceptatietest opnieuw gestart.',
-          en: 'Acceptance test reset.',
-          fr: 'Test d’acceptation réinitialisé.',
-          es: 'Prueba de aceptación reiniciada.',
-        ),
-      );
-    } on BackendChironConnectionApiException catch (_) {
-      if (!mounted) return;
-      _showSnack(
-        _t(
-          nl: 'Testflow resetten is niet gelukt.',
-          en: 'Could not reset the testflow.',
-          fr: 'Impossible de réinitialiser le flux de test.',
-          es: 'No se pudo reiniciar el flujo de prueba.',
-        ),
-        isError: true,
-      );
-    } catch (_) {
-      if (!mounted) return;
-      _showSnack(
-        _t(
-          nl: 'Testflow resetten is niet gelukt.',
-          en: 'Could not reset the testflow.',
-          fr: 'Impossible de réinitialiser le flux de test.',
-          es: 'No se pudo reiniciar el flujo de prueba.',
-        ),
-        isError: true,
-      );
+      if (progress != null) {
+        setState(() => _testflowProgress = progress);
+        // Refresh from the server so `backendChironConnectionStatusNotifier`,
+        // `_persistedInternalTest`, and every derived chip on the page
+        // reflect the fresh reset state. This is the ONLY place the parent
+        // trusts the outcome; a failed reset never mutates the local UI.
+        await _refreshStatus();
+        if (!mounted) return;
+        _showSnack(
+          _t(
+            nl: 'Acceptatietest opnieuw gestart.',
+            en: 'Acceptance test reset.',
+            fr: 'Test d’acceptation réinitialisé.',
+            es: 'Prueba de aceptación reiniciada.',
+          ),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() => _resettingTestflow = false);
       }
     }
-  }
-
-  Future<bool> _confirmResetTestflow() async {
-    if (!mounted) return false;
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          backgroundColor: _chironPanel,
-          title: Text(
-            _t(
-              nl: 'Testflow resetten?',
-              en: 'Reset testflow?',
-              fr: 'Réinitialiser le flux de test ?',
-              es: '¿Reiniciar el flujo de prueba?',
-            ),
-          ),
-          content: Text(
-            _t(
-              nl: 'De voortgang van de acceptatietest wordt teruggezet naar 0. Credentials en de verbindingsstatus blijven behouden.',
-              en: 'Acceptance test progress is reset to 0. Credentials and the connection status are kept.',
-              fr: 'La progression du test d’acceptation est remise à 0. Les identifiants et le statut de connexion sont conservés.',
-              es: 'El progreso de la prueba de aceptación se reinicia a 0. Las credenciales y el estado de conexión se conservan.',
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: Text(
-                _t(
-                  nl: 'Annuleren',
-                  en: 'Cancel',
-                  fr: 'Annuler',
-                  es: 'Cancelar',
-                ),
-              ),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: Text(
-                _t(
-                  nl: 'Resetten',
-                  en: 'Reset',
-                  fr: 'Réinitialiser',
-                  es: 'Reiniciar',
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-    return result == true;
   }
 
   Widget _statusChip({
@@ -2877,6 +3233,12 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                       active: true,
                     ),
                   _statusChip(
+                    // RELEASE-P0-CHIRON-RESET-UX-2026-07-31: when production
+                    // is off AND the backend reports the test environment,
+                    // surface an explicit "Testomgeving actief" label so a
+                    // just-completed reset is visually unambiguous — a bare
+                    // "Productie geblokkeerd" chip did not communicate that
+                    // the acceptance test is now the active target.
                     label: productionEnabled
                         ? _t(
                             nl: 'Productie actief',
@@ -2884,12 +3246,20 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                             fr: 'Production active',
                             es: 'Producción activa',
                           )
-                        : _t(
-                            nl: 'Productie geblokkeerd',
-                            en: 'Production blocked',
-                            fr: 'Production bloquée',
-                            es: 'Producción bloqueada',
-                          ),
+                        : (backendStatus?.environment ==
+                                ChironConnectionEnvironment.test
+                            ? _t(
+                                nl: 'Testomgeving actief',
+                                en: 'Test environment active',
+                                fr: 'Environnement de test actif',
+                                es: 'Entorno de prueba activo',
+                              )
+                            : _t(
+                                nl: 'Productie geblokkeerd',
+                                en: 'Production blocked',
+                                fr: 'Production bloquée',
+                                es: 'Producción bloqueada',
+                              )),
                     active: true,
                     activeColor: productionEnabled
                         ? _chironSuccess

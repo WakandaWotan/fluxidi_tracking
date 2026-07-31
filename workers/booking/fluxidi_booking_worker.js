@@ -97,6 +97,7 @@ import {
   CHIRON_READINESS_PATH,
   CHIRON_SCORE_SUMMARY_PATH,
   COMPLIANCE_EVENTS_RECENT_PATH,
+  CHIRON_TESTFLOW_RESET_PATH,
   CHIRON_INTERNAL_PROXY_MODE,
   _proxyChironConfigStatusToComplianceWorker,
 } from "./modules/chiron_bridge.js";
@@ -38172,6 +38173,50 @@ export default {
           body: proxyBody,
           compliancePath: CHIRON_CONNECTION_TEST_PATH,
         });
+      }
+
+      /* RELEASE-P0-CHIRON-RESET-UX-2026-07-31 — company-owner-triggered
+       * Chiron acceptance testflow reset. Destructive (counters + ritnummer
+       * history wiped, production forced off), so scope is validated on both
+       * URL/body AND session before forwarding. The compliance worker's
+       * `handleChironTestflowResetPost` re-checks the internal-proxy header
+       * + scope match, so a spoofed request that skipped the booking-worker
+       * cannot land on the wrong tenant. The response echoes the fresh
+       * derived counters (0/0/0/10/5/5) and `production_enabled=false` so
+       * the tablet can render the reset state without a follow-up GET. */
+      if (url.pathname === CHIRON_TESTFLOW_RESET_PATH) {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "Method Not Allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_CHIRON_TESTFLOW_RESET_POST",
+        });
+        if (!authScope.ok) return authScope.response;
+        if (body && typeof body === "object" && !Array.isArray(body)) {
+          const bodyScopeCheck = _validateSettingsPayloadScope(
+            body,
+            authScope.explicitScope,
+          );
+          if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
+        }
+        const proxyBody = {
+          tenant_id: authScope.explicitScope.tenant_id,
+          company_id: authScope.explicitScope.company_id,
+        };
+        return _proxyChironConfigStatusToComplianceWorker(
+          env,
+          authScope.explicitScope,
+          {
+            method: "POST",
+            body: proxyBody,
+            compliancePath: CHIRON_TESTFLOW_RESET_PATH,
+          },
+        );
       }
 
       /* CHIRON-P0-2A — read-only compliance/readiness proxy routes.

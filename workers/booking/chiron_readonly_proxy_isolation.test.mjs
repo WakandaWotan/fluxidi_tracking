@@ -553,16 +553,30 @@ test("chiron_bridge allowlist rejects unlisted paths", () => {
   const stripped = source
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
-  // Destructive/test-only paths must NOT appear in the allowlist source.
+  // Platform-level "reset all compliance events" stays destructive: it deletes
+  // event rows and is only ever reachable via the direct compliance admin
+  // token behind `ALLOW_DEV_RESET_ENDPOINTS`. It must NEVER appear on any
+  // company-session-facing proxy path.
   assert.equal(
     /['"]\/admin\/dev\/reset-compliance-events['"]/.test(stripped),
     false,
-    "destructive reset-compliance-events must not be in the proxy allowlist",
+    "platform-level reset-compliance-events must not be in the proxy allowlist",
   );
-  assert.equal(
+  // RELEASE-P0-CHIRON-RESET-UX-2026-07-31: the per-company Chiron testflow
+  // reset IS now proxied for company-owner sessions. It is destructive (wipes
+  // testflow counters + ritnummer history) but scoped to the caller's own
+  // tenant/company and forces `production_enabled=false` on completion, so a
+  // company owner can never accidentally leave production active after a
+  // reset. Booking-worker handler is `ADMIN_CHIRON_TESTFLOW_RESET_POST`;
+  // compliance-worker handler is `handleChironTestflowResetPost` which
+  // re-validates the internal-proxy scope on its side.
+  assert.ok(
+    /CHIRON_TESTFLOW_RESET_PATH/.test(stripped),
+    "chiron testflow reset must be present in the proxy allowlist",
+  );
+  assert.ok(
     /['"]\/admin\/chiron\/testflow\/reset['"]/.test(stripped),
-    false,
-    "chiron testflow reset must not be in the proxy allowlist",
+    "chiron testflow reset constant must be defined in the proxy allowlist source",
   );
   assert.ok(
     /CHIRON_READINESS_PATH/.test(stripped),

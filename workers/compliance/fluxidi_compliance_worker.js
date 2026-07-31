@@ -9096,23 +9096,29 @@ function buildChironTestflowResetStatusDoc(
       ? { ...existingStored }
       : {};
 
-  // Reset only testflow counters/status + ritnummer history. Credentials,
-  // last_connection_status and environment are preserved. production_enabled is
-  // forced false because a reset invalidates any prior completion (stricter).
+  // RELEASE-P0-CHIRON-RESET-UX-2026-07-31: a reset is an *atomic move to a
+  // known-clean testflow state*. It always ends up at:
+  //   - `production_enabled = false`  (any prior production toggle wiped)
+  //   - `environment = "test"`        (never a lingering prod environment)
+  //   - `official_submit_enabled = false` (defensive; response is derived)
+  //   - `testflow_auto_submit_enabled = true` (automatic pipeline armed)
+  //   - `testflow_started_at = updatedAt` (fresh UTC cutoff — no old events
+  //     from before the reset can bleed into the new run)
+  //   - counters/ritnummers/status/completion/last_error all zeroed
+  //   - `testflow_auto_reconcile_last_at = null` (throttle cleared so the
+  //     very next config-status GET immediately kicks a reconcile pass)
   //
-  // RELEASE-P0-AUTO-CHIRON-2026-07-31: reset also stamps a fresh cutoff on
-  // `testflow_started_at` when auto-submit is currently enabled, so any events
-  // durably stored BEFORE the reset are excluded from the automatic path
-  // (otherwise a reset would silently re-process old rides). Auto-submit flag
-  // itself is preserved: the operator opted in once and does not need to
-  // re-opt-in after a counter reset.
-  const autoSubmitPreserved = existing.testflow_auto_submit_enabled === true;
+  // OAuth test credentials + `last_connection_status` are preserved: the UI
+  // promises credentials survive a reset, and the operator has already paid
+  // the cost of OAuth setup.
   return {
     ...existing,
     schema_version: CHIRON_CONNECTION_STATUS_SCHEMA,
     tenant_id: tenantId,
     company_id: companyId,
     production_enabled: false,
+    environment: "test",
+    official_submit_enabled: false,
     test_messages_sent_count: 0,
     test_departure_sent_count: 0,
     test_arrival_sent_count: 0,
@@ -9124,8 +9130,8 @@ function buildChironTestflowResetStatusDoc(
     testflow_completed_at: null,
     testflow_last_error: null,
     testflow_updated_at: updatedAt,
-    testflow_auto_submit_enabled: autoSubmitPreserved,
-    testflow_started_at: autoSubmitPreserved ? updatedAt : null,
+    testflow_auto_submit_enabled: true,
+    testflow_started_at: updatedAt,
     testflow_auto_reconcile_last_at: null,
     updated_at: updatedAt,
     updated_by: updatedBy,
