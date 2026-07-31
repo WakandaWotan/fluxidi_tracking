@@ -505,6 +505,50 @@ function buildEventStorageKey(event) {
   ].join("/");
 }
 
+// Deterministic date-indexed key derived from an *arbitrary* ISO timestamp so
+// recovery of a missing date entry can rebuild the exact key that would have
+// been written on the first successful append.
+function buildDateIndexKeyForTimestamp(event, isoTimestamp) {
+  const when = cleanText(isoTimestamp, 64) || event.created_at_utc || nowIso();
+  const date = new Date(when);
+  const year = String(date.getUTCFullYear()).padStart(4, "0");
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  const ms = String(date.getTime()).padStart(13, "0");
+  return [
+    "compliance_event_v1",
+    "tenant",
+    safeSegment(event.tenant_id),
+    "company",
+    safeSegment(event.company_id),
+    year,
+    month,
+    day,
+    `${ms}_${safeSegment(event.event_id, "evt")}`,
+  ].join("/");
+}
+
+// RELEASE-P0-CLOSE-PLANNED-CHIRON-DURABILITY-GAPS-2026-07-31: deterministic
+// canonical event key keyed only by (tenant, company, event_id). This is the
+// SOURCE OF TRUTH for idempotency — one KV slot per (tenant, company,
+// event_id). Every retry (immediate or startup-recovery) collides on the
+// same slot; last-write-wins on identical content; a body is never split
+// across two rows. Deliberately uses a distinct top-level namespace
+// (`compliance_event_canonical_v1`) so it is not visible to the existing
+// date-partitioned recent-listing scan (that scan owns chronological reads;
+// this key owns idempotency). See handleAppend for the write/recovery order.
+function buildComplianceCanonicalEventKey(event) {
+  return [
+    "compliance_event_canonical_v1",
+    "tenant",
+    safeSegment(event.tenant_id),
+    "company",
+    safeSegment(event.company_id),
+    "eid",
+    safeSegment(event.event_id, "evt"),
+  ].join("/");
+}
+
 async function handleAppend(request, env, origin) {
   const authError = ensureAuthorized(request, env);
   if (authError) return authError;
@@ -521,6 +565,15 @@ async function handleAppend(request, env, origin) {
   if (payload === null) {
     return jsonResponse({ ok: false, error: "Invalid JSON body" }, 400, origin);
   }
+
+  // Capture the client-supplied event_id BEFORE normalization: idempotent
+  // storage is only guaranteed when the producer supplied a stable event_id.
+  // An empty client id still gets a random UUID from normalizeEventEnvelope
+  // (backward-compatible) but takes the legacy single-write path.
+  const clientSuppliedEventId =
+    payload && typeof payload === "object" && !Array.isArray(payload)
+      ? cleanText(payload.event_id, 200)
+      : "";
 
   const normalized = normalizeEventEnvelope(payload);
   if (normalized.error) {
@@ -539,6 +592,118 @@ async function handleAppend(request, env, origin) {
   }
 
   const event = normalized.value;
+
+  if (clientSuppliedEventId) {
+    // RELEASE-P0-CLOSE-PLANNED-CHIRON-DURABILITY-GAPS-2026-07-31: two-phase
+    // recovery-safe idempotent write.
+    //
+    //   Phase 1: CANONICAL body at the deterministic (tenant, company,
+    //            event_id) key. This slot IS the idempotency record; a
+    //            dedup response is only valid when this slot exists.
+    //   Phase 2: DATE-INDEXED body at the chronological read key. Written
+    //            AFTER canonical so a crash between phases leaves canonical
+    //            present but date entry missing.
+    //
+    // Every append re-verifies both phases. When canonical exists but the
+    // date entry is missing (partial write from a prior request), the date
+    // entry is rebuilt from the canonical body using the canonical's stored
+    // `created_at_utc`. This eliminates the pre-fix data-loss window where
+    // a pointer-hit could falsely return `deduplicated:true` while the
+    // canonical body was still missing.
+    const canonicalKey = buildComplianceCanonicalEventKey(event);
+    let canonicalExisting = null;
+    if (typeof env.COMPLIANCE_KV.get === "function") {
+      try {
+        canonicalExisting = await env.COMPLIANCE_KV.get(canonicalKey, {
+          type: "json",
+        });
+      } catch (_) {
+        // Read failure → fall through to write. Safe: canonical write below is
+        // idempotent (deterministic key + identical content).
+        canonicalExisting = null;
+      }
+    }
+    if (
+      canonicalExisting &&
+      typeof canonicalExisting === "object" &&
+      !Array.isArray(canonicalExisting)
+    ) {
+      // Canonical present → the event is authoritatively stored. Verify the
+      // date entry too and recover it if a prior request crashed mid-way.
+      const storedAt =
+        cleanText(canonicalExisting.created_at_utc, 64) || event.created_at_utc;
+      const dateKey = buildDateIndexKeyForTimestamp(event, storedAt);
+      let dateExisting = null;
+      try {
+        dateExisting = await env.COMPLIANCE_KV.get(dateKey);
+      } catch (_) {
+        dateExisting = null;
+      }
+      let recovered = false;
+      if (!dateExisting) {
+        // RELEASE-P0-FIX-CHIRON-RECOVERY-INDEX-FALSE-ACK-2026-07-31:
+        //
+        // Recovery MUST NOT swallow date-index write failures. Under the old
+        // (best-effort) behavior a KV.put throw here still returned
+        // {ok:true, deduplicated:true, recovered:false} with HTTP 200. The
+        // tracking worker derived APPLIED from that ok:true — but the
+        // dashboard could never see the event because the date-index entry
+        // was still missing, and no retry ever followed.
+        //
+        // New behavior: propagate the write error. The top-level fetch
+        // handler translates any thrown error to HTTP 500 + {ok:false,
+        // error:"Internal error"}, so tracking correctly marks the event
+        // PENDING and the periodic reconciler will retry until the
+        // date-index write succeeds. When it does, this same branch flips
+        // `recovered: true` and only THEN returns HTTP 200.
+        await env.COMPLIANCE_KV.put(
+          dateKey,
+          JSON.stringify(canonicalExisting),
+        );
+        recovered = true;
+      }
+      console.log(
+        `[COMPLIANCE_STORE][${cleanText(event.event_type, 64) || "unknown"}] deduplicated ok=true recovered=${recovered}`,
+      );
+      return jsonResponse(
+        {
+          ok: true,
+          event_id:
+            cleanText(canonicalExisting.event_id, 200) || event.event_id,
+          stored_at: storedAt,
+          deduplicated: true,
+          recovered,
+        },
+        200,
+        origin,
+      );
+    }
+
+    // Canonical missing → write canonical FIRST, then date index. Both use
+    // the same body; a concurrent second writer that also observed
+    // canonical-missing will PUT identical content and lose the race on
+    // date_index at read time only (see handleRecent read-time dedup by
+    // event_id, which enforces exactly-one at the dashboard level).
+    await env.COMPLIANCE_KV.put(canonicalKey, JSON.stringify(event));
+    const dateKey = buildDateIndexKeyForTimestamp(event, event.created_at_utc);
+    await env.COMPLIANCE_KV.put(dateKey, JSON.stringify(event));
+    console.log(
+      `[COMPLIANCE_STORE][${cleanText(event.event_type, 64) || "unknown"}] ok=true`,
+    );
+
+    return jsonResponse(
+      {
+        ok: true,
+        event_id: event.event_id,
+        stored_at: event.created_at_utc,
+        deduplicated: false,
+      },
+      200,
+      origin,
+    );
+  }
+
+  // Legacy path (no client-supplied event_id): single date-indexed write.
   const key = buildEventStorageKey(event);
   await env.COMPLIANCE_KV.put(key, JSON.stringify(event));
   console.log(
@@ -1351,8 +1516,33 @@ async function handleRecent(request, url, env, origin) {
     if (aTs == null && bTs != null) return 1;
     return cleanText(b?.key, 1024).localeCompare(cleanText(a?.key, 1024));
   });
-  const limitedEvents = sortedEvents.slice(0, requestedLimit);
-  const hasMoreCandidates = hitScanCap || sortedEvents.length > requestedLimit;
+
+  // RELEASE-P0-CLOSE-PLANNED-CHIRON-DURABILITY-GAPS-2026-07-31: read-time
+  // dedup by `event_id`. Under concurrent first-append races two writers may
+  // successfully PUT the DATE-indexed key with slightly different `ms` (their
+  // own `created_at_utc`), producing two date rows that resolve to the same
+  // canonical event. The canonical event key is deterministic so the *body*
+  // is always exactly one row; this dedup ensures the *reader* also sees
+  // exactly one row per `(tenant, company, event_id)` on the dashboard.
+  // Retains the newest-first entry (sortedEvents is already newest-first).
+  // Legacy events without `event_id` are always kept.
+  const seenEventIds = new Set();
+  const dedupedEvents = [];
+  let duplicateCollapsedCount = 0;
+  for (const ev of sortedEvents) {
+    const evId = cleanText(ev?.event_id, 200);
+    if (evId) {
+      if (seenEventIds.has(evId)) {
+        duplicateCollapsedCount += 1;
+        continue;
+      }
+      seenEventIds.add(evId);
+    }
+    dedupedEvents.push(ev);
+  }
+
+  const limitedEvents = dedupedEvents.slice(0, requestedLimit);
+  const hasMoreCandidates = hitScanCap || dedupedEvents.length > requestedLimit;
   const projectMs = Date.now() - projectStart;
   const totalMs = Date.now() - totalStart;
 
@@ -1363,6 +1553,7 @@ async function handleRecent(request, url, env, origin) {
       `read_ms=${readMs} project_ms=${projectMs} total_ms=${totalMs} ` +
       `keys=${scannedKeyNames.length} returned=${limitedEvents.length} ` +
       `malformed=${malformedCount} scan_cap=${hitScanCap ? 1 : 0} ` +
+      `dedup_collapsed=${duplicateCollapsedCount} ` +
       `concurrency=${_COMPLIANCE_RECENT_READ_CONCURRENCY}`,
   );
 

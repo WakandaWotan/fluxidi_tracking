@@ -2830,6 +2830,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     // STREET-RIDE-DURABLE-COMPLETION-2: reconcile any street/direct booking
     // whose stop finalization did not durably complete (crash/restart/network).
     unawaited(_recoverPendingDirectTripSession());
+    // RELEASE-P0-CLOSE-PLANNED-CHIRON-DURABILITY-GAPS-2026-07-31: bounded,
+    // tenant/company-scoped startup recovery for planned ride_start/ride_stop
+    // Chiron events whose immediate in-session retry never landed. Fire once
+    // on driver-home init; server-side retries reuse the persisted
+    // deterministic event_ids so no duplicate Chiron rows can result even if
+    // an in-session retry and this startup retry race.
+    unawaited(_recoverPlannedPendingOnWorker());
     _activeDriverThemeListenable.addListener(_onDriverThemeSourceChanged);
     chauffeurShellFrameThemeNotifier.value = _activeDriverThemeListenable.value;
     fluxidiPendingPaymentNotifier.addListener(_onPendingPaymentStatusChanged);
@@ -4586,6 +4593,23 @@ class _DriverHomePageState extends State<DriverHomePage>
       final sessionId = (j['session_id'] ?? j['sessionId'] ?? '').toString();
       if (sessionId.isEmpty)
         throw Exception('No session_id returned by Worker.');
+
+      // RELEASE-P0-DURABLE-CHIRON-SYNC-FOR-PLANNED-RIDES-2026-07-31: bounded
+      // in-session reconcile trigger for the planned ride_start emit. The
+      // tracking worker returns `compliance_emit_start_state` on the START
+      // response; when the fire-and-forget emit did not (yet) reach APPLIED,
+      // schedule an idempotent retry with the same deterministic event_id.
+      // Never blocks the START UX; server-side PENDING stays durable.
+      final startEmitState =
+          (j['compliance_emit_start_state'] ??
+                  j['complianceEmitStartState'] ??
+                  '')
+              .toString()
+              .trim()
+              .toLowerCase();
+      if (startEmitState.isNotEmpty && startEmitState != 'applied') {
+        unawaited(_reconcilePlannedSessionStartOnWorker(sessionId: sessionId));
+      }
 
       // NAV-RIDE-BOUNDARY: planned nav start owns a fresh session before style/route.
       _hardClearAtRideBoundary(reason: 'planned_ride_start', bumpSession: true);
@@ -8429,12 +8453,217 @@ class _DriverHomePageState extends State<DriverHomePage>
         throw Exception('HTTP ${res.statusCode}: ${res.body}');
       }
       debugPrint('[PLANNED_TRIP][HISTORY][OK] booking=${booking.bookingId}');
+
+      // RELEASE-P0-DURABLE-CHIRON-SYNC-FOR-PLANNED-RIDES-2026-07-31: inspect
+      // the durable Chiron outbox state returned by the tracking worker. When
+      // the fire-and-forget ride_stop emit stayed PENDING (or absent for
+      // legacy responses), trigger a bounded in-session reconcile with the
+      // same event_id — never blocks the stop UX, never regresses APPLIED,
+      // never invents ids. Server-side pending stays durable regardless of
+      // this call's outcome; startup + future retries will pick it up.
+      Object? decoded;
+      try {
+        decoded = jsonDecode(res.body);
+      } catch (_) {
+        decoded = null;
+      }
+      final tripIdFromResp = decoded is Map
+          ? (decoded['trip_id'] ?? decoded['tripId'] ?? '').toString().trim()
+          : '';
+      final emitStateRaw = decoded is Map
+          ? (decoded['compliance_emit_state'] ??
+                  decoded['complianceEmitState'] ??
+                  '')
+              .toString()
+              .trim()
+              .toLowerCase()
+          : '';
+      if (tripIdFromResp.isNotEmpty && emitStateRaw != 'applied') {
+        unawaited(
+          _reconcilePlannedTripStopOnWorker(
+            tripId: tripIdFromResp,
+            bookingId: booking.bookingId,
+          ),
+        );
+      }
       return true;
     } catch (e) {
       debugPrint(
         '[PLANNED_TRIP][HISTORY][WARN] booking=${booking.bookingId} reason=$e',
       );
       return false;
+    }
+  }
+
+  /// RELEASE-P0-DURABLE-CHIRON-SYNC-FOR-PLANNED-RIDES-2026-07-31: idempotent
+  /// planned Chiron retry. Fires `POST /trip/reconcile-planned-stop` with the
+  /// authoritative trip_id captured from the record-planned-stop response so
+  /// the tracking worker can retry the durable compliance_emit_* outbox row
+  /// using the exact same deterministic event_id (never regresses APPLIED,
+  /// never mutates trip status/totals, fails closed on tenant mismatch).
+  /// Best-effort: server-side pending remains durable regardless of outcome.
+  Future<void> _reconcilePlannedTripStopOnWorker({
+    required String tripId,
+    required String bookingId,
+  }) async {
+    final trip = tripId.trim();
+    if (trip.isEmpty) return;
+    try {
+      final strictScope = _strictBookingScopeForMutation(
+        action: 'reconcile_planned_stop',
+        showUx: false,
+      );
+      if (strictScope == null) return;
+      final res = await http
+          .post(
+            _uriWithScope(
+              kWorkerBaseUrl,
+              kReconcilePlannedStopPath,
+              strictScope,
+            ),
+            headers: _driverBearerHeaders(),
+            body: jsonEncode(<String, dynamic>{
+              'trip_id': trip,
+              if (bookingId.trim().isNotEmpty) 'booking_id': bookingId.trim(),
+              ...strictScope,
+              ..._driverMutationActorFields(
+                actorVehicleId: _directRideVehicleId(),
+              ),
+            }),
+          )
+          .timeout(const Duration(seconds: 6));
+      String reason = '-';
+      String state = '-';
+      try {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map) {
+          reason = (decoded['reason'] ?? '-').toString();
+          state = (decoded['compliance_emit_state'] ?? '-').toString();
+        }
+      } catch (_) {}
+      debugPrint(
+        '[PLANNED_TRIP][RECONCILE_STOP] trip=$trip booking=${bookingId.isEmpty ? '-' : bookingId} '
+        'http=${res.statusCode} reason=$reason state=$state',
+      );
+    } catch (e) {
+      debugPrint(
+        '[PLANNED_TRIP][RECONCILE_STOP][WARN] trip=$trip booking=${bookingId.isEmpty ? '-' : bookingId} reason=$e',
+      );
+    }
+  }
+
+  /// RELEASE-P0-DURABLE-CHIRON-SYNC-FOR-PLANNED-RIDES-2026-07-31: idempotent
+  /// planned ride_start Chiron retry. Fires
+  /// `POST /track/session/reconcile-start` so the tracking worker can retry
+  /// the durable compliance_emit_start_* outbox row on the session record.
+  /// Never regresses APPLIED, never invents ids, never blocks the START UX.
+  Future<void> _reconcilePlannedSessionStartOnWorker({
+    required String sessionId,
+  }) async {
+    final session = sessionId.trim();
+    if (session.isEmpty) return;
+    try {
+      final strictScope = _strictBookingScopeForMutation(
+        action: 'reconcile_planned_start',
+        showUx: false,
+      );
+      if (strictScope == null) return;
+      final res = await http
+          .post(
+            _uriWithScope(
+              kWorkerBaseUrl,
+              kReconcilePlannedStartPath,
+              strictScope,
+            ),
+            headers: _driverBearerHeaders(),
+            body: jsonEncode(<String, dynamic>{
+              'session_id': session,
+              ...strictScope,
+              ..._driverMutationActorFields(
+                actorVehicleId: _directRideVehicleId(),
+              ),
+            }),
+          )
+          .timeout(const Duration(seconds: 6));
+      String reason = '-';
+      String state = '-';
+      try {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map) {
+          reason = (decoded['reason'] ?? '-').toString();
+          state = (decoded['compliance_emit_start_state'] ?? '-').toString();
+        }
+      } catch (_) {}
+      debugPrint(
+        '[PLANNED_TRIP][RECONCILE_START] session=$session '
+        'http=${res.statusCode} reason=$reason state=$state',
+      );
+    } catch (e) {
+      debugPrint(
+        '[PLANNED_TRIP][RECONCILE_START][WARN] session=$session reason=$e',
+      );
+    }
+  }
+
+  /// RELEASE-P0-CLOSE-PLANNED-CHIRON-DURABILITY-GAPS-2026-07-31: bounded,
+  /// tenant/company-scoped startup recovery for planned ride_start /
+  /// ride_stop Chiron events that stayed PENDING (e.g. an app-kill between
+  /// the durable persist and the in-session immediate retry). Server-side
+  /// enumerates the scoped indices, reuses the persisted deterministic
+  /// event_ids and never re-emits APPLIED events. Client fires this once
+  /// on driver-page init as a non-blocking best-effort call.
+  Future<void> _recoverPlannedPendingOnWorker() async {
+    try {
+      final strictScope = _strictBookingScopeForMutation(
+        action: 'recover_planned_pending',
+        showUx: false,
+      );
+      if (strictScope == null) return;
+      final res = await http
+          .post(
+            _uriWithScope(
+              kWorkerBaseUrl,
+              kRecoverPlannedPendingPath,
+              strictScope,
+            ),
+            headers: _driverBearerHeaders(),
+            body: jsonEncode(<String, dynamic>{
+              'limit': 25,
+              ...strictScope,
+              ..._driverMutationActorFields(
+                actorVehicleId: _directRideVehicleId(),
+              ),
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
+      int reconciledStops = 0;
+      int reconciledStarts = 0;
+      int stillPendingStops = 0;
+      int stillPendingStarts = 0;
+      try {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map) {
+          reconciledStops =
+              int.tryParse((decoded['reconciled_stops'] ?? 0).toString()) ?? 0;
+          reconciledStarts =
+              int.tryParse((decoded['reconciled_starts'] ?? 0).toString()) ??
+                  0;
+          stillPendingStops =
+              int.tryParse((decoded['still_pending_stops'] ?? 0).toString()) ??
+                  0;
+          stillPendingStarts = int.tryParse(
+                (decoded['still_pending_starts'] ?? 0).toString(),
+              ) ??
+              0;
+        }
+      } catch (_) {}
+      debugPrint(
+        '[PLANNED_TRIP][RECOVER_STARTUP] http=${res.statusCode} '
+        'reconciled_stops=$reconciledStops reconciled_starts=$reconciledStarts '
+        'still_pending_stops=$stillPendingStops still_pending_starts=$stillPendingStarts',
+      );
+    } catch (e) {
+      debugPrint('[PLANNED_TRIP][RECOVER_STARTUP][WARN] reason=$e');
     }
   }
 

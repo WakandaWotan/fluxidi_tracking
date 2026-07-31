@@ -2744,6 +2744,131 @@ function complianceEmitRetryEligible(trip) {
   const state = _dbfStr(trip.compliance_emit_state).toLowerCase();
   return state === "" || state === COMPLIANCE_EMIT_STATE.PENDING;
 }
+
+// RELEASE-P0-DURABLE-CHIRON-SYNC-FOR-PLANNED-RIDES-2026-07-31: parallel scalar
+// outbox family for the planned ride_start event on the SESSION record. Mirrors
+// the direct compliance_emit_* semantics field-for-field but scoped to the
+// planned start emit (which lives on `session`, not `trip`). Keeping the two
+// families disjoint means a planned session and its later planned trip stop can
+// each track APPLIED/PENDING independently and never clobber each other.
+//   session.compliance_emit_start_state         "applied" | "pending"
+//   session.compliance_emit_start_event_id      deterministic id reused by retry
+//   session.compliance_emit_start_attempted_at  ISO of last attempt
+//   session.compliance_emit_start_attempt_count integer, monotonic
+//   session.compliance_emit_start_last_error_code coarse PII-free code
+function complianceEmitStartAlreadyApplied(session) {
+  return (
+    _dbfStr(session?.compliance_emit_start_state).toLowerCase() ===
+    COMPLIANCE_EMIT_STATE.APPLIED
+  );
+}
+// RELEASE-P0-CLOSE-PLANNED-CHIRON-DURABILITY-GAPS-2026-07-31: deterministic
+// idempotency key for planned ride_start scoped to *session_id*, not
+// booking_id. Rationale:
+//   * One booking can legitimately produce multiple START lifecycle events —
+//     roundtrip/leg-scoped BookingItems each call /track/session/start
+//     independently, and a driver who cancels+restarts a planned session gets
+//     a fresh session_id. Keying on booking_id would incorrectly collapse
+//     those distinct starts into a single Chiron ride_start event.
+//   * session_id is the smallest stable lifecycle identity: it is generated
+//     exactly once per START call, persisted in the session record, and reused
+//     by every reconcile/retry of that specific start. So retries always
+//     compute the same event_id (correct dedup); distinct legs/sessions get
+//     distinct event_ids (correct separation).
+// Tenant/company are baked into the key to guarantee cross-tenant isolation
+// (a compliance-side dedup collision across tenants is impossible).
+function buildDeterministicRideStartEventId(tenantId, companyId, sessionId) {
+  const t = _dbfStr(tenantId, 96);
+  const c = _dbfStr(companyId, 96);
+  const s = _dbfStr(sessionId, 200);
+  if (!t || !c || !s) return "";
+  return `ride_start:${t}:${c}:${s}`;
+}
+function applyComplianceEmitStartAttempt(
+  session,
+  { state, errorCode = null, eventId = null, nowIso, attemptDelta = 1 } = {},
+) {
+  if (!session || typeof session !== "object") return session;
+  const applied = COMPLIANCE_EMIT_STATE.APPLIED;
+  // Monotonic: never regress APPLIED to pending after a later transient failure.
+  const nextState = complianceEmitStartAlreadyApplied(session) ? applied : state;
+  session.compliance_emit_start_state = nextState;
+  session.compliance_emit_start_attempted_at =
+    _dbfStr(nowIso, 80) || session.compliance_emit_start_attempted_at || null;
+  const prevCount = Number(session.compliance_emit_start_attempt_count);
+  session.compliance_emit_start_attempt_count =
+    (Number.isFinite(prevCount) ? prevCount : 0) + (Number(attemptDelta) || 0);
+  session.compliance_emit_start_last_error_code =
+    nextState === applied ? null : errorCode || null;
+  const persistedId = _dbfStr(session.compliance_emit_start_event_id, 200);
+  const incomingId = _dbfStr(eventId, 200);
+  if (!persistedId && incomingId) {
+    session.compliance_emit_start_event_id = incomingId;
+  }
+  return session;
+}
+// Retry-eligible when session is present, has an event_id (or predates the
+// field family), and is not yet APPLIED. Never regresses an APPLIED session.
+function complianceEmitStartRetryEligible(session) {
+  if (!session || typeof session !== "object") return false;
+  if (complianceEmitStartAlreadyApplied(session)) return false;
+  return true;
+}
+
+// RELEASE-P0-DURABLE-CHIRON-SYNC-FOR-PLANNED-RIDES-2026-07-31: retry gate for
+// planned ride_stop reuses the shared compliance_emit_* family on the trip
+// record. Same PENDING/absent semantics as direct, but a planned trip is
+// classified by kind="planned" (never terminal check via `directTripIsTerminal`
+// — that helper checks street/direct classifications). A planned trip is
+// eligible when the trip exists, is stopped, and emit_state is pending/absent.
+function plannedTripIsStopped(trip) {
+  if (!trip || typeof trip !== "object") return false;
+  const status = _dbfStr(trip.status).toLowerCase();
+  if (status === "stopped" || status === "completed" || status === "done") {
+    return true;
+  }
+  return _dbfStr(trip.stopped_at).length > 0;
+}
+function plannedTripComplianceEmitRetryEligible(trip) {
+  if (!trip || typeof trip !== "object") return false;
+  const kind = _dbfStr(trip.kind).toLowerCase();
+  if (kind && kind !== "planned") return false;
+  if (!plannedTripIsStopped(trip)) return false;
+  const state = _dbfStr(trip.compliance_emit_state).toLowerCase();
+  return state === "" || state === COMPLIANCE_EMIT_STATE.PENDING;
+}
+// Public response shape mirrors safeBookingFinalizeResponseFields so the
+// client can inspect { compliance_emit_state, compliance_emit_event_id,
+// compliance_emit_attempt_count } and decide whether to trigger an immediate
+// in-session reconcile (never treated as booking failure — the trip is stopped
+// authoritatively either way).
+function safeComplianceEmitResponseFields(trip) {
+  return {
+    compliance_emit_state:
+      _dbfStr(trip?.compliance_emit_state).toLowerCase() ||
+      COMPLIANCE_EMIT_STATE.PENDING,
+    compliance_emit_event_id:
+      _dbfStr(trip?.compliance_emit_event_id, 200) || null,
+    compliance_emit_attempt_count:
+      Number.isFinite(Number(trip?.compliance_emit_attempt_count))
+        ? Number(trip.compliance_emit_attempt_count)
+        : 0,
+  };
+}
+function safeComplianceEmitStartResponseFields(session) {
+  return {
+    compliance_emit_start_state:
+      _dbfStr(session?.compliance_emit_start_state).toLowerCase() ||
+      COMPLIANCE_EMIT_STATE.PENDING,
+    compliance_emit_start_event_id:
+      _dbfStr(session?.compliance_emit_start_event_id, 200) || null,
+    compliance_emit_start_attempt_count: Number.isFinite(
+      Number(session?.compliance_emit_start_attempt_count),
+    )
+      ? Number(session.compliance_emit_start_attempt_count)
+      : 0,
+  };
+}
 // Bounded PII-free correlator so [CHIRON_SYNC] log lines can be joined without
 // leaking raw trip / booking ids. Uses a tiny FNV-1a → base36 → 12 chars.
 function _chironIdHash(v) {
@@ -6187,18 +6312,83 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
   await prependIndex(env.FLUXIDI_TRACKING, scopedTripsIndexKey(scope), trip_id, 500);
   await prependIndex(env.FLUXIDI_TRACKING, scopedTripsDriverIndexKey(scope, driver_id), trip_id, 200);
 
+  // RELEASE-P0-DURABLE-CHIRON-SYNC-FOR-PLANNED-RIDES-2026-07-31: durable
+  // Chiron outbox for planned STOP. Mirrors the direct STOP outbox 1:1 —
+  // deterministic event_id derived from (tenant, company, trip_id) so a retry
+  // from `/trip/reconcile-planned-stop` carries the exact same idempotency
+  // key. Persist compliance_emit_state=PENDING with attempt_count=1 BEFORE
+  // scheduling the fire-and-forget emit, then flip to APPLIED (or leave
+  // PENDING with an error code) from the async callback that re-reads the
+  // freshest trip row so any concurrent write (payment, admin, reconcile) is
+  // not clobbered. STOP response never awaits Chiron; the trip is stopped
+  // authoritatively either way.
   const complianceEvent = buildPlannedTripStopComplianceEvent(trip, body, scope);
+  const tripKey = scopedTripKey(scope, trip_id);
   if (complianceEvent) {
-    const emitTask = emitComplianceEventBestEffort(env, complianceEvent, {
-      timeoutMs: 1500,
-      logLabel: "planned_ride_stop",
+    const complianceEventId = buildDeterministicRideStopEventId(
+      complianceEvent.tenant_id,
+      complianceEvent.company_id,
+      complianceEvent.trip_id ?? trip_id,
+    );
+    if (complianceEventId) complianceEvent.event_id = complianceEventId;
+    applyComplianceEmitAttempt(trip, {
+      state: COMPLIANCE_EMIT_STATE.PENDING,
+      errorCode: null,
+      eventId: complianceEventId,
+      nowIso: nowIso(),
     });
+    await kvPutJson(env.FLUXIDI_TRACKING, tripKey, trip, TTL_TRIP);
+    _chironSyncLog("enqueue", trip, trip_id, complianceEvent, "queued", "planned_ride_stop");
+
+    const emitTask = (async () => {
+      let emitRes;
+      try {
+        emitRes = await emitComplianceEventBestEffort(env, complianceEvent, {
+          timeoutMs: 1500,
+          logLabel: "planned_ride_stop",
+        });
+      } catch (err) {
+        emitRes = { ok: false, error: _dbfStr(err?.message || err, 120) || "internal_error" };
+      }
+      try {
+        // Lost-update guard: re-read the freshest trip row from the same key
+        // and only mutate the compliance_emit_* scalars on it. Fall back to
+        // the closure trip if KV returned null (unexpected within TTL_TRIP).
+        const latestResolved = await getScopedOrLegacyTripForScope(env, scope, trip_id);
+        const target = latestResolved?.trip || trip;
+        const targetKey = latestResolved?.key || tripKey;
+        const nextState = deriveComplianceEmitStateFromResult(emitRes);
+        applyComplianceEmitAttempt(target, {
+          state: nextState,
+          errorCode: complianceEmitErrorCodeFromResult(emitRes),
+          eventId: complianceEvent.event_id,
+          nowIso: nowIso(),
+          attemptDelta: 0, // enqueue above already counted this attempt.
+        });
+        applyCanonicalScopeToRecord(target, scope);
+        await kvPutJson(env.FLUXIDI_TRACKING, targetKey, target, TTL_TRIP);
+        _chironSyncLog(
+          nextState === COMPLIANCE_EMIT_STATE.APPLIED ? "applied" : "failed",
+          target,
+          trip_id,
+          complianceEvent,
+          nextState,
+          complianceEmitErrorCodeFromResult(emitRes) || "ok",
+        );
+      } catch (_) {
+        _chironSyncLog("failed", trip, trip_id, complianceEvent, "pending", "kv_write_failed");
+      }
+    })();
     if (ctx && typeof ctx.waitUntil === "function") {
       ctx.waitUntil(emitTask);
     } else {
       await emitTask;
     }
   }
+
+  const stopEmitFields = complianceEvent
+    ? safeComplianceEmitResponseFields(trip)
+    : null;
 
   return withCors(
     json(
@@ -6209,6 +6399,7 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
         booking_id,
         status: "stopped",
         stopped_at: stoppedAt,
+        ...(stopEmitFields ?? {}),
       },
       { status: 200 }
     ),
@@ -6709,6 +6900,557 @@ async function handleReconcileDirectBooking(req, url, env, origin) {
   );
 }
 
+// RELEASE-P0-DURABLE-CHIRON-SYNC-FOR-PLANNED-RIDES-2026-07-31: idempotent
+// reconcile for a planned STOP whose durable Chiron outbox is still PENDING.
+// Mirrors the direct compliance-retry branch of `handleReconcileDirectBooking`
+// but scoped to planned trips: the trip is stopped authoritatively already;
+// the only work here is re-emitting the ride_stop event with the exact same
+// deterministic event_id and applying APPLIED/PENDING back onto the trip row.
+// Never regresses APPLIED. Never mutates trip status/totals. Never invents a
+// booking or a fare. Fail-closed on tenant/company mismatch.
+async function handleReconcilePlannedStop(req, url, env, origin) {
+  const rawBody = await readJson(req);
+  const auth = await requireDriverSessionOrAdminForScope(req, url, env, {
+    body: rawBody,
+    routeLabel: "TRIP_RECONCILE_PLANNED_STOP",
+  });
+  if (!auth.ok) return auth.response;
+  const body = applyDriverSessionToBody(rawBody, auth.driver_session);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
+  const actor = resolveTrackingActorFromRequest(req, url, body);
+  const trip_id = safeStr(body["trip_id"], 160);
+  if (!trip_id) throw new Error("trip_id is required");
+
+  const tripResolved = await getScopedOrLegacyTripForScope(env, scope, trip_id);
+  const trip = tripResolved.trip;
+  if (!trip) throw new Error("Unknown trip_id");
+  // Tenant/company scope isolation: identical guard as direct reconcile.
+  if (!recordMatchesTenantCompanyScope(trip, scope)) throw new Error("invalid trip scope");
+  const key = tripResolved.key;
+
+  const ownershipBlock = await _assertTripOwnedByActorOrBlock({
+    trip,
+    trip_id,
+    actor,
+    error: "trip_not_assigned_to_driver",
+    origin,
+  });
+  if (ownershipBlock) return ownershipBlock;
+
+  // Planned scope guard: never accept a direct/street trip on this endpoint.
+  // Direct rides own their own reconcile path (/trip/reconcile-direct-booking).
+  const kind = _dbfStr(trip.kind).toLowerCase();
+  if (kind && kind !== "planned") {
+    return withCors(
+      json({ ok: false, trip_id, reason: "not_planned", kind }, { status: 409 }),
+      origin,
+    );
+  }
+
+  // Already applied → strictly idempotent no-op.
+  if (complianceEmitAlreadyApplied(trip)) {
+    return withCors(
+      json(
+        {
+          ok: true,
+          trip_id,
+          reconciled: false,
+          reason: "already_applied",
+          ...safeComplianceEmitResponseFields(trip),
+        },
+        { status: 200 },
+      ),
+      origin,
+    );
+  }
+
+  if (!plannedTripComplianceEmitRetryEligible(trip)) {
+    return withCors(
+      json(
+        {
+          ok: false,
+          trip_id,
+          reconciled: false,
+          reason: plannedTripIsStopped(trip) ? "not_pending" : "non_terminal",
+          ...safeComplianceEmitResponseFields(trip),
+        },
+        { status: 409 },
+      ),
+      origin,
+    );
+  }
+
+  // Rebuild the ride_stop event from the authoritative trip totals (never
+  // from request input). Reuse the persisted deterministic event_id so
+  // compliance-side dedup collapses this retry into the original attempt.
+  const retryEvent = buildPlannedTripStopComplianceEvent(trip, body, scope);
+  if (!retryEvent) {
+    return withCors(
+      json(
+        {
+          ok: false,
+          trip_id,
+          reconciled: false,
+          reason: "missing_scope",
+          ...safeComplianceEmitResponseFields(trip),
+        },
+        { status: 409 },
+      ),
+      origin,
+    );
+  }
+  const retryEventId =
+    _dbfStr(trip.compliance_emit_event_id, 200) ||
+    buildDeterministicRideStopEventId(
+      retryEvent.tenant_id,
+      retryEvent.company_id,
+      retryEvent.trip_id ?? trip_id,
+    );
+  if (retryEventId) retryEvent.event_id = retryEventId;
+
+  let emitRes;
+  try {
+    emitRes = await emitComplianceEventBestEffort(env, retryEvent, {
+      timeoutMs: 1500,
+      logLabel: "reconcile_planned_stop_retry",
+    });
+  } catch (err) {
+    emitRes = { ok: false, error: _dbfStr(err?.message || err, 120) || "internal_error" };
+  }
+  const nextState = deriveComplianceEmitStateFromResult(emitRes);
+  applyComplianceEmitAttempt(trip, {
+    state: nextState,
+    errorCode: complianceEmitErrorCodeFromResult(emitRes),
+    eventId: retryEventId,
+    nowIso: nowIso(),
+  });
+  applyCanonicalScopeToRecord(trip, scope);
+  await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
+  _chironSyncLog(
+    "retry",
+    trip,
+    trip_id,
+    retryEvent,
+    nextState,
+    complianceEmitErrorCodeFromResult(emitRes) || "ok",
+  );
+
+  const applied = nextState === COMPLIANCE_EMIT_STATE.APPLIED;
+  return withCors(
+    json(
+      {
+        ok: applied,
+        trip_id,
+        reconciled: applied,
+        reason: applied ? "applied" : complianceEmitErrorCodeFromResult(emitRes) || "pending",
+        ...safeComplianceEmitResponseFields(trip),
+      },
+      { status: 200 },
+    ),
+    origin,
+  );
+}
+
+// RELEASE-P0-DURABLE-CHIRON-SYNC-FOR-PLANNED-RIDES-2026-07-31: idempotent
+// reconcile for the planned ride_start emit on a session record. Same
+// discipline as `handleReconcilePlannedStop` but keyed by session_id and
+// mutating only the `compliance_emit_start_*` scalar family.
+async function handleReconcilePlannedSessionStart(req, url, env, origin) {
+  const rawBody = await readJson(req);
+  const auth = await requireDriverSessionOrAdminForScope(req, url, env, {
+    body: rawBody,
+    routeLabel: "TRACK_SESSION_RECONCILE_START",
+  });
+  if (!auth.ok) return auth.response;
+  const body = applyDriverSessionToBody(rawBody, auth.driver_session);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, { returnResponse: true, origin });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
+  const actor = resolveTrackingActorFromRequest(req, url, body);
+  const session_id = safeStr(body["session_id"], 160);
+  if (!session_id) throw new Error("session_id is required");
+
+  const sessionKey = scopedSessionKey(scope, session_id);
+  const session = await kvGetJson(env.FLUXIDI_TRACKING, sessionKey);
+  if (!session) throw new Error("Unknown session_id");
+  if (!recordMatchesTenantCompanyScope(session, scope)) throw new Error("invalid session scope");
+
+  const ownershipBlock = await _assertSessionOwnedByActorOrBlock({
+    session,
+    session_id,
+    actor,
+    error: "session_not_assigned_to_driver",
+    origin,
+  });
+  if (ownershipBlock) return ownershipBlock;
+
+  if (complianceEmitStartAlreadyApplied(session)) {
+    return withCors(
+      json(
+        {
+          ok: true,
+          session_id,
+          reconciled: false,
+          reason: "already_applied",
+          ...safeComplianceEmitStartResponseFields(session),
+        },
+        { status: 200 },
+      ),
+      origin,
+    );
+  }
+  if (!complianceEmitStartRetryEligible(session)) {
+    return withCors(
+      json(
+        {
+          ok: false,
+          session_id,
+          reconciled: false,
+          reason: "not_pending",
+          ...safeComplianceEmitStartResponseFields(session),
+        },
+        { status: 409 },
+      ),
+      origin,
+    );
+  }
+
+  const startedAt =
+    _dbfStr(session?.started_at ?? session?.startedAt ?? session?.created_at, 64) || nowIso();
+  const retryEvent = buildPlannedSessionStartComplianceEvent(session, body, startedAt, scope);
+  if (!retryEvent) {
+    return withCors(
+      json(
+        {
+          ok: false,
+          session_id,
+          reconciled: false,
+          reason: "missing_scope",
+          ...safeComplianceEmitStartResponseFields(session),
+        },
+        { status: 409 },
+      ),
+      origin,
+    );
+  }
+  const retryEventId =
+    _dbfStr(session.compliance_emit_start_event_id, 200) ||
+    buildDeterministicRideStartEventId(
+      retryEvent.tenant_id,
+      retryEvent.company_id,
+      session_id,
+    );
+  if (retryEventId) retryEvent.event_id = retryEventId;
+
+  let emitRes;
+  try {
+    emitRes = await emitComplianceEventBestEffort(env, retryEvent, {
+      timeoutMs: 1500,
+      logLabel: "reconcile_planned_start_retry",
+    });
+  } catch (err) {
+    emitRes = { ok: false, error: _dbfStr(err?.message || err, 120) || "internal_error" };
+  }
+  const nextState = deriveComplianceEmitStateFromResult(emitRes);
+  applyComplianceEmitStartAttempt(session, {
+    state: nextState,
+    errorCode: complianceEmitErrorCodeFromResult(emitRes),
+    eventId: retryEventId,
+    nowIso: nowIso(),
+  });
+  applyCanonicalScopeToRecord(session, scope);
+  await kvPutJson(env.FLUXIDI_TRACKING, sessionKey, session, TTL_SESSION);
+  _chironSyncLog(
+    "retry_start",
+    session,
+    session_id,
+    retryEvent,
+    nextState,
+    complianceEmitErrorCodeFromResult(emitRes) || "ok",
+  );
+
+  const applied = nextState === COMPLIANCE_EMIT_STATE.APPLIED;
+  return withCors(
+    json(
+      {
+        ok: applied,
+        session_id,
+        reconciled: applied,
+        reason: applied ? "applied" : complianceEmitErrorCodeFromResult(emitRes) || "pending",
+        ...safeComplianceEmitStartResponseFields(session),
+      },
+      { status: 200 },
+    ),
+    origin,
+  );
+}
+
+// RELEASE-P0-CLOSE-PLANNED-CHIRON-DURABILITY-GAPS-2026-07-31: bounded,
+// tenant/company-scoped recovery of pending planned ride_start / ride_stop
+// events. Purpose: an app-kill (or transient failure) between the durable
+// PENDING persist and the in-session immediate retry must not leave a
+// planned Chiron event stuck indefinitely. On driver-session restore the
+// client hits this endpoint once; it scans the *scoped* recent-record
+// indices (never global), filters records whose compliance_emit_* state is
+// eligible for retry, and re-runs the exact same rebuild+emit+persist
+// discipline as the per-record reconcile handlers.
+//
+// Guarantees:
+//   * Strict tenant/company scope: reads use `scopedBookingIndexKey(scope)`
+//     and `scopedTripsIndexKey(scope)`; each record loaded via
+//     getScopedOrLegacy*ForScope is re-checked with
+//     recordMatchesTenantCompanyScope. Cross-tenant fallback is impossible.
+//   * Applied events are never re-emitted (complianceEmit*AlreadyApplied
+//     guard) — even under retry storms.
+//   * Same deterministic event_id per record — the persisted
+//     compliance_emit_event_id / compliance_emit_start_event_id is reused
+//     verbatim; a fresh id is only derived when a legacy record predates
+//     the durable outbox, and it uses the same deterministic builder
+//     (tenant/company/session_id or tenant/company/trip_id).
+//   * Bounded: at most `limit` records per index (default 25, hard max
+//     100). Beyond the bound the client can re-invoke with a cursor or
+//     wait for the next background sweep.
+//   * Failures remain PENDING with the coarse error code (per
+//     applyComplianceEmit*Attempt).
+async function handleRecoverPlannedPending(req, url, env, origin) {
+  const rawBody = await readJson(req);
+  const auth = await requireDriverSessionOrAdminForScope(req, url, env, {
+    body: rawBody,
+    routeLabel: "PLANNED_RECOVER_PENDING",
+  });
+  if (!auth.ok) return auth.response;
+  const body = applyDriverSessionToBody(rawBody, auth.driver_session);
+  const requiredScope = parseRequiredTenantCompanyScope(req, url, body, {
+    returnResponse: true,
+    origin,
+  });
+  if (requiredScope instanceof Response) return requiredScope;
+  const scope = requiredScope;
+  const actor = resolveTrackingActorFromRequest(req, url, body);
+
+  // Bounded scan: cap both indices independently so a busy scope cannot burn
+  // through the Cloudflare subrequest budget in a single recovery call.
+  const limitRaw = Number(body?.limit);
+  const limit = Number.isFinite(limitRaw)
+    ? Math.max(1, Math.min(100, Math.floor(limitRaw)))
+    : 25;
+
+  const summary = {
+    scanned_trips: 0,
+    scanned_sessions: 0,
+    eligible_stops: 0,
+    eligible_starts: 0,
+    reconciled_stops: 0,
+    reconciled_starts: 0,
+    still_pending_stops: 0,
+    still_pending_starts: 0,
+    already_applied_stops: 0,
+    already_applied_starts: 0,
+    skipped_scope_mismatch: 0,
+    skipped_direct_kind: 0,
+    skipped_non_terminal: 0,
+    skipped_missing: 0,
+    errors: 0,
+  };
+
+  // -------- ride_stop recovery: scan scoped trips index --------
+  try {
+    const tripsIndex =
+      (await kvGetJson(env.FLUXIDI_TRACKING, scopedTripsIndexKey(scope))) ?? [];
+    const tripIds = Array.isArray(tripsIndex) ? tripsIndex.slice(0, limit) : [];
+    for (const rawTripId of tripIds) {
+      const tripId = safeStr(rawTripId, 160);
+      if (!tripId) continue;
+      summary.scanned_trips++;
+      try {
+        const resolved = await getScopedOrLegacyTripForScope(env, scope, tripId);
+        const trip = resolved.trip;
+        if (!trip) {
+          summary.skipped_missing++;
+          continue;
+        }
+        if (!recordMatchesTenantCompanyScope(trip, scope)) {
+          summary.skipped_scope_mismatch++;
+          continue;
+        }
+        // Planned-only: never touch direct/street trips (they own the
+        // /trip/reconcile-direct-booking + /trip/repair-direct-bookings path).
+        const kind = _dbfStr(trip.kind).toLowerCase();
+        if (kind && kind !== "planned") {
+          summary.skipped_direct_kind++;
+          continue;
+        }
+        if (complianceEmitAlreadyApplied(trip)) {
+          summary.already_applied_stops++;
+          continue;
+        }
+        if (!plannedTripComplianceEmitRetryEligible(trip)) {
+          if (!plannedTripIsStopped(trip)) summary.skipped_non_terminal++;
+          continue;
+        }
+        // Optional actor filter: when a driver session is present, only recover
+        // trips assigned to that driver. Skips silently otherwise (admin path
+        // with no actor still recovers everything in scope).
+        if (actor && actor.driver_id && trip.driver_id && trip.driver_id !== actor.driver_id) {
+          continue;
+        }
+        summary.eligible_stops++;
+
+        const retryEvent = buildPlannedTripStopComplianceEvent(trip, body, scope);
+        if (!retryEvent) {
+          summary.errors++;
+          continue;
+        }
+        const retryEventId =
+          _dbfStr(trip.compliance_emit_event_id, 200) ||
+          buildDeterministicRideStopEventId(
+            retryEvent.tenant_id,
+            retryEvent.company_id,
+            retryEvent.trip_id ?? tripId,
+          );
+        if (retryEventId) retryEvent.event_id = retryEventId;
+
+        let emitRes;
+        try {
+          emitRes = await emitComplianceEventBestEffort(env, retryEvent, {
+            timeoutMs: 1500,
+            logLabel: "recover_planned_stop",
+          });
+        } catch (err) {
+          emitRes = {
+            ok: false,
+            error: _dbfStr(err?.message || err, 120) || "internal_error",
+          };
+        }
+        const nextState = deriveComplianceEmitStateFromResult(emitRes);
+        applyComplianceEmitAttempt(trip, {
+          state: nextState,
+          errorCode: complianceEmitErrorCodeFromResult(emitRes),
+          eventId: retryEventId,
+          nowIso: nowIso(),
+        });
+        applyCanonicalScopeToRecord(trip, scope);
+        await kvPutJson(env.FLUXIDI_TRACKING, resolved.key, trip, TTL_TRIP);
+        _chironSyncLog(
+          "recover",
+          trip,
+          tripId,
+          retryEvent,
+          nextState,
+          complianceEmitErrorCodeFromResult(emitRes) || "ok",
+        );
+        if (nextState === COMPLIANCE_EMIT_STATE.APPLIED) summary.reconciled_stops++;
+        else summary.still_pending_stops++;
+      } catch (_) {
+        summary.errors++;
+      }
+    }
+  } catch (_) {
+    summary.errors++;
+  }
+
+  // -------- ride_start recovery: scan scoped bookings index → resolve sessions --------
+  try {
+    const bookingsIndex =
+      (await kvGetJson(env.FLUXIDI_TRACKING, scopedBookingIndexKey(scope))) ?? [];
+    const bookingIds = Array.isArray(bookingsIndex)
+      ? bookingsIndex.slice(0, limit)
+      : [];
+    for (const rawBookingId of bookingIds) {
+      const bookingId = safeStr(rawBookingId, 160);
+      if (!bookingId) continue;
+      try {
+        const mapResolved = await getScopedOrLegacyBookingMapForScope(env, scope, bookingId);
+        const map = mapResolved.map;
+        const sessionId = safeStr(map?.session_id ?? map?.sessionId, 200);
+        if (!sessionId) {
+          summary.skipped_missing++;
+          continue;
+        }
+        summary.scanned_sessions++;
+        const sessResolved = await getScopedOrLegacySessionForScope(env, scope, sessionId);
+        const session = sessResolved.session;
+        if (!session) {
+          summary.skipped_missing++;
+          continue;
+        }
+        if (!recordMatchesTenantCompanyScope(session, scope)) {
+          summary.skipped_scope_mismatch++;
+          continue;
+        }
+        if (complianceEmitStartAlreadyApplied(session)) {
+          summary.already_applied_starts++;
+          continue;
+        }
+        if (!complianceEmitStartRetryEligible(session)) {
+          continue;
+        }
+        if (actor && actor.driver_id && session.driver_id && session.driver_id !== actor.driver_id) {
+          continue;
+        }
+        summary.eligible_starts++;
+
+        const startedAt =
+          _dbfStr(session?.started_at ?? session?.startedAt ?? session?.created_at, 64) ||
+          nowIso();
+        const retryEvent = buildPlannedSessionStartComplianceEvent(session, body, startedAt, scope);
+        if (!retryEvent) {
+          summary.errors++;
+          continue;
+        }
+        const retryEventId =
+          _dbfStr(session.compliance_emit_start_event_id, 200) ||
+          buildDeterministicRideStartEventId(
+            retryEvent.tenant_id,
+            retryEvent.company_id,
+            sessionId,
+          );
+        if (retryEventId) retryEvent.event_id = retryEventId;
+
+        let emitRes;
+        try {
+          emitRes = await emitComplianceEventBestEffort(env, retryEvent, {
+            timeoutMs: 1500,
+            logLabel: "recover_planned_start",
+          });
+        } catch (err) {
+          emitRes = {
+            ok: false,
+            error: _dbfStr(err?.message || err, 120) || "internal_error",
+          };
+        }
+        const nextState = deriveComplianceEmitStateFromResult(emitRes);
+        applyComplianceEmitStartAttempt(session, {
+          state: nextState,
+          errorCode: complianceEmitErrorCodeFromResult(emitRes),
+          eventId: retryEventId,
+          nowIso: nowIso(),
+        });
+        applyCanonicalScopeToRecord(session, scope);
+        await kvPutJson(env.FLUXIDI_TRACKING, sessResolved.key, session, TTL_SESSION);
+        _chironSyncLog(
+          "recover_start",
+          session,
+          sessionId,
+          retryEvent,
+          nextState,
+          complianceEmitErrorCodeFromResult(emitRes) || "ok",
+        );
+        if (nextState === COMPLIANCE_EMIT_STATE.APPLIED) summary.reconciled_starts++;
+        else summary.still_pending_starts++;
+      } catch (_) {
+        summary.errors++;
+      }
+    }
+  } catch (_) {
+    summary.errors++;
+  }
+
+  return withCors(json({ ok: true, limit, ...summary }, { status: 200 }), origin);
+}
+
 // STREET-RIDE-DURABLE-COMPLETION-2: bounded, authenticated batch repair of
 // historical stuck street/direct bookings. DRY-RUN BY DEFAULT (no writes unless
 // the caller explicitly passes dry_run:false). Scans the scoped trips index,
@@ -7042,7 +7784,7 @@ async function handleTripPayment(req, url, env, origin, ctx) {
   );
 }
 
-async function handleStart(req, url, env, origin) {
+async function handleStart(req, url, env, origin, ctx) {
   const rawBody = await readJson(req);
   const auth = await requireDriverSessionOrAdminForScope(req, url, env, {
     body: rawBody,
@@ -7298,17 +8040,98 @@ async function handleStart(req, url, env, origin) {
   const next = [booking_id, ...idx.filter((x) => x !== booking_id)].slice(0, 200);
   await kvPutJson(env.FLUXIDI_TRACKING, scopedBookingIndexKey(scope), next, TTL_INDEX);
 
+  // RELEASE-P0-DURABLE-CHIRON-SYNC-FOR-PLANNED-RIDES-2026-07-31: durable
+  // outbox for the planned ride_start emit. Same discipline as the direct
+  // trip stop outbox: attach a deterministic event_id, persist
+  // compliance_emit_start_state=PENDING on the session BEFORE scheduling the
+  // fire-and-forget emit, then flip it to APPLIED (or leave PENDING with an
+  // error code) from the callback. START response is never blocked on Chiron.
+  //
+  // RELEASE-P0-CLOSE-PLANNED-CHIRON-DURABILITY-GAPS-2026-07-31: event_id is
+  // now scoped to session_id (not booking_id). Retries reuse the same
+  // sessionId (persisted on the session record) so the event_id is stable
+  // for the *same* start; distinct starts (roundtrip legs, restart after
+  // cancel) allocate a fresh session_id and correctly produce distinct
+  // Chiron ride_start events.
   const startComplianceEvent = buildPlannedSessionStartComplianceEvent(session, body, startedAt, scope);
   if (startComplianceEvent) {
-    await emitComplianceEventBestEffort(env, startComplianceEvent, {
-      timeoutMs: 1500,
-      logLabel: "ride_start_planned",
+    const startEventId = buildDeterministicRideStartEventId(
+      startComplianceEvent.tenant_id,
+      startComplianceEvent.company_id,
+      sessionId,
+    );
+    if (startEventId) startComplianceEvent.event_id = startEventId;
+    applyComplianceEmitStartAttempt(session, {
+      state: COMPLIANCE_EMIT_STATE.PENDING,
+      errorCode: null,
+      eventId: startEventId,
+      nowIso: nowIso(),
     });
+    await kvPutJson(env.FLUXIDI_TRACKING, scopedSession, session, TTL_SESSION);
+    _chironSyncLog("enqueue", session, sessionId, startComplianceEvent, "queued", "planned_ride_start");
+
+    const emitTask = (async () => {
+      let emitRes;
+      try {
+        emitRes = await emitComplianceEventBestEffort(env, startComplianceEvent, {
+          timeoutMs: 1500,
+          logLabel: "ride_start_planned",
+        });
+      } catch (err) {
+        emitRes = { ok: false, error: _dbfStr(err?.message || err, 120) || "internal_error" };
+      }
+      try {
+        // Re-read the freshest session so a concurrent ping/stop write does
+        // not clobber the compliance_emit_start_* fields.
+        const latest = await kvGetJson(env.FLUXIDI_TRACKING, scopedSession);
+        const target =
+          latest && recordMatchesTenantCompanyScope(latest, scope) ? latest : session;
+        const nextState = deriveComplianceEmitStateFromResult(emitRes);
+        applyComplianceEmitStartAttempt(target, {
+          state: nextState,
+          errorCode: complianceEmitErrorCodeFromResult(emitRes),
+          eventId: startComplianceEvent.event_id,
+          nowIso: nowIso(),
+          attemptDelta: 0, // enqueue above already counted this attempt.
+        });
+        applyCanonicalScopeToRecord(target, scope);
+        await kvPutJson(env.FLUXIDI_TRACKING, scopedSession, target, TTL_SESSION);
+        _chironSyncLog(
+          nextState === COMPLIANCE_EMIT_STATE.APPLIED ? "applied" : "failed",
+          target,
+          sessionId,
+          startComplianceEvent,
+          nextState,
+          complianceEmitErrorCodeFromResult(emitRes) || "ok",
+        );
+      } catch (_) {
+        _chironSyncLog("failed", session, sessionId, startComplianceEvent, "pending", "kv_write_failed");
+      }
+    })();
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(emitTask);
+    } else {
+      await emitTask;
+    }
   }
 
+  const startEmitFields = startComplianceEvent
+    ? safeComplianceEmitStartResponseFields(session)
+    : null;
+
   return withCors(
-    json({ ok: true, session_id: sessionId, booking_id, created_at: session.created_at, public_token }, { status: 200 }),
-    origin
+    json(
+      {
+        ok: true,
+        session_id: sessionId,
+        booking_id,
+        created_at: session.created_at,
+        public_token,
+        ...(startEmitFields ?? {}),
+      },
+      { status: 200 },
+    ),
+    origin,
   );
 }
 
@@ -7843,11 +8666,14 @@ export default {
       if (req.method === "POST" && url.pathname === "/trip/wait-end") return await handleWaitEndTrip(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/stop") return await handleStopTrip(req, url, env, origin, ctx);
       if (req.method === "POST" && url.pathname === "/trip/reconcile-direct-booking") return await handleReconcileDirectBooking(req, url, env, origin);
+      if (req.method === "POST" && url.pathname === "/trip/reconcile-planned-stop") return await handleReconcilePlannedStop(req, url, env, origin);
+      if (req.method === "POST" && url.pathname === "/trip/recover-planned-pending") return await handleRecoverPlannedPending(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/repair-direct-bookings") return await handleRepairDirectBookings(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/payment") return await handleTripPayment(req, url, env, origin, ctx);
 
       // core
-      if (req.method === "POST" && url.pathname === "/track/session/start") return await handleStart(req, url, env, origin);
+      if (req.method === "POST" && url.pathname === "/track/session/start") return await handleStart(req, url, env, origin, ctx);
+      if (req.method === "POST" && url.pathname === "/track/session/reconcile-start") return await handleReconcilePlannedSessionStart(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/track/ping") return await handlePing(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/track/session/stop") return await handleStop(req, url, env, origin);
 

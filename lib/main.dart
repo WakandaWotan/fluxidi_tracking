@@ -2331,6 +2331,18 @@ const String kPingPath = '/track/ping';
 const String kStopTripPath = '/track/session/stop'; // optional
 const String kStartDirectTripPath = '/trip/start-direct';
 const String kRecordPlannedTripStopPath = '/trip/record-planned-stop';
+// RELEASE-P0-DURABLE-CHIRON-SYNC-FOR-PLANNED-RIDES-2026-07-31: idempotent
+// planned Chiron reconcile endpoints (tracking worker). Retries the durable
+// compliance_emit_* outbox row using the exact same deterministic event_id, so
+// a delivery failure of the ride_start / ride_stop emit at STOP time is
+// eventually reconciled without producing a second Chiron dossier.
+const String kReconcilePlannedStopPath = '/trip/reconcile-planned-stop';
+const String kReconcilePlannedStartPath = '/track/session/reconcile-start';
+// RELEASE-P0-CLOSE-PLANNED-CHIRON-DURABILITY-GAPS-2026-07-31: startup-time
+// bounded, tenant/company-scoped recovery for planned ride_start / ride_stop
+// events that remained PENDING after the in-session immediate retry (e.g.
+// after an app kill / cold restart / worker transient failure).
+const String kRecoverPlannedPendingPath = '/trip/recover-planned-pending';
 const String kDirectTripWaitStartPath = '/trip/wait-start';
 const String kDirectTripWaitEndPath = '/trip/wait-end';
 const String kStopDirectTripPath = '/trip/stop';
