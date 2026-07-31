@@ -511,6 +511,40 @@ test("config-status POST: operator-supplied testflow_started_at wins over auto-s
   );
 });
 
+test("config-status POST: preserves test_credentials_stored (regression fix)", async () => {
+  const kv = makeKV();
+  const env = baseEnv(kv);
+  await seedConnectionStatus(
+    kv,
+    goodStatusDoc({
+      test_credentials_stored: true,
+      production_credentials_stored: false,
+      test_messages_sent_count: 10,
+    }),
+  );
+  const req = new Request(
+    "https://compliance.internal/admin/chiron/config/status",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-token": ADMIN },
+      body: JSON.stringify({
+        tenant_id: TENANT,
+        company_id: COMPANY,
+        enabled: true,
+        testflow_auto_submit_enabled: true,
+      }),
+    },
+  );
+  const res = await worker.fetch(req, env);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(
+    body.test_credentials_stored,
+    true,
+    "config-status POST must NOT wipe test_credentials_stored",
+  );
+});
+
 test("config-status POST: rejects invalid testflow_started_at", async () => {
   const kv = makeKV();
   const env = baseEnv(kv);

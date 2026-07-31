@@ -9546,6 +9546,19 @@ function parseChironConfigStatusPostInput(body, existingStored) {
       environment: environmentRaw,
       region: regionRaw,
       production_enabled: productionEnabledFinal,
+      // RELEASE-P0-AUTO-CHIRON-2026-07-31: preserve identity + credential
+      // presence markers across a config-status POST. Without these lines
+      // any config-status write (e.g. an operator toggling `enabled` or
+      // opting into auto-submit) would silently wipe the
+      // `test_credentials_stored` / `production_credentials_stored` flags —
+      // which are the very fields `_chironTestflowLiveGate` reads to guard
+      // the automatic submit path. Existing credentials are stored under a
+      // separate KV key (`buildChironCredentialsKvKey`) so the actual
+      // credential blobs are unaffected; this just keeps the meta doc in
+      // sync with reality.
+      test_credentials_stored: existing.test_credentials_stored === true,
+      production_credentials_stored:
+        existing.production_credentials_stored === true,
       last_connection_status: existingStatus,
       last_connection_test_at: cleanText(existing.last_connection_test_at, 64) || null,
       last_connection_status_message:
@@ -10194,9 +10207,15 @@ async function handleChironConnectionTestPost(request, url, env, origin) {
         tokenType: exchangeResult.token_type,
         expiresInSeconds: exchangeResult.expires_in_seconds,
       });
+      // RELEASE-P0-AUTO-CHIRON-2026-07-31: a successful live OAuth exchange
+      // is proof that the encrypted per-company test credentials are stored
+      // AND valid. Re-stamp `test_credentials_stored: true` so any prior
+      // meta-doc drift (e.g. an earlier config-status POST that predates the
+      // preserve fix) is repaired automatically on the next connection test.
       const statusDocToWrite = {
         ...existingStatusDoc,
         ...liveFields,
+        test_credentials_stored: true,
         updated_at: testedAt,
       };
 
