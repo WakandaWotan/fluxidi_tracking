@@ -2542,7 +2542,12 @@ String get currentLanguageCode {
     case AppLanguage.fr:
       return 'fr';
     case AppLanguage.es:
+
       return 'es';
+
+    case AppLanguage.de:
+
+      return 'de';
   }
 }
 
@@ -3568,7 +3573,12 @@ String _languageCode(AppLanguage l) {
     case AppLanguage.fr:
       return 'fr';
     case AppLanguage.es:
+
       return 'es';
+
+    case AppLanguage.de:
+
+      return 'de';
   }
 }
 
@@ -3580,6 +3590,8 @@ AppLanguage _languageFromCode(String code) {
       return AppLanguage.fr;
     case 'es':
       return AppLanguage.es;
+    case 'de':
+      return AppLanguage.de;
     case 'nl':
     default:
       return AppLanguage.nl;

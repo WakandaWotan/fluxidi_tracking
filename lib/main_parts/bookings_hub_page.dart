@@ -135,6 +135,8 @@ class _BookingsHubPage extends StatelessWidget {
           return fr;
         case AppLanguage.es:
           return es;
+        case AppLanguage.de:
+          return en;
       }
     }
 

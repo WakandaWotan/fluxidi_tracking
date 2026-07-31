@@ -23,6 +23,9 @@ import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/vehicle_management_page.dart';
 import 'package:fluxidi_tracking/widgets/chiron_environment_status_labels.dart';
+import 'package:fluxidi_tracking/widgets/chiron_friendly_diagnose_sheet.dart';
+import 'package:fluxidi_tracking/widgets/chiron_production_setup_card.dart';
+import 'package:fluxidi_tracking/widgets/chiron_self_service_wizard.dart';
 import 'package:http/http.dart' as http;
 import 'package:share_plus/share_plus.dart';
 
@@ -203,6 +206,19 @@ ButtonStyle _chironTestAccessDangerButtonStyle() {
   );
 }
 
+({String tenantId, String companyId})? _chironDashboardTenantCompanyScope() {
+  final activeCompanyId = companyProfileNotifier.value?.companyId.trim() ?? '';
+  if (activeCompanyId.isNotEmpty) {
+    return (tenantId: activeCompanyId, companyId: activeCompanyId);
+  }
+  final sessionCompanyId =
+      activeCompanySessionNotifier.value?.companyId.trim() ?? '';
+  if (sessionCompanyId.isNotEmpty) {
+    return (tenantId: sessionCompanyId, companyId: sessionCompanyId);
+  }
+  return null;
+}
+
 class ChironComplianceDashboardPage extends StatelessWidget {
   const ChironComplianceDashboardPage({super.key});
 
@@ -223,6 +239,8 @@ class ChironComplianceDashboardPage extends StatelessWidget {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -292,14 +310,122 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                             mutedColor: tokens.textSecondary,
                           ),
                           const SizedBox(height: 12),
-                          ChironProductionBlockGated(
+                          ChironProductionSetupCard(
                             status: backendStatus,
-                            testflowStatus:
-                                backendStatus?.testflowStatus ?? 'not_started',
                             language: _lang,
                             backgroundColor: tokens.panel,
                             textColor: tokens.textPrimary,
                             mutedColor: tokens.textSecondary,
+                            onSave: (clientId, clientSecret) async {
+                              final scope =
+                                  _chironDashboardTenantCompanyScope();
+                              if (scope == null) {
+                                throw Exception(
+                                  _t(
+                                    nl: 'Bedrijfsscope ontbreekt.',
+                                    en: 'Company scope is missing.',
+                                    fr: 'Le périmètre entreprise est manquant.',
+                                    es: 'Falta el ámbito de empresa.',
+                                  ),
+                                );
+                              }
+                              if (clientId.trim().isEmpty ||
+                                  clientSecret.trim().isEmpty) {
+                                throw Exception(
+                                  _t(
+                                    nl: 'Voer eerst uw productiegegevens in.',
+                                    en: 'Enter your production credentials first.',
+                                    fr: 'Saisissez d\'abord vos identifiants production.',
+                                    es: 'Introduzca primero sus credenciales de producción.',
+                                  ),
+                                );
+                              }
+                              await _saveChironProductionOAuthCredentialsViaBooking(
+                                tenantId: scope.tenantId,
+                                companyId: scope.companyId,
+                                clientId: clientId.trim(),
+                                clientSecret: clientSecret,
+                              );
+                              await fetchBackendChironConnectionStatus(
+                                tenantId: scope.tenantId,
+                                companyId: scope.companyId,
+                              ).then((status) {
+                                backendChironConnectionStatusNotifier.value =
+                                    status;
+                              });
+                            },
+                            onTestConnection: () async {
+                              final scope =
+                                  _chironDashboardTenantCompanyScope();
+                              if (scope == null) {
+                                throw Exception(
+                                  _t(
+                                    nl: 'Bedrijfsscope ontbreekt.',
+                                    en: 'Company scope is missing.',
+                                    fr: 'Le périmètre entreprise est manquant.',
+                                    es: 'Falta el ámbito de empresa.',
+                                  ),
+                                );
+                              }
+                              final result =
+                                  await _runChironMockConnectionTestViaBooking(
+                                tenantId: scope.tenantId,
+                                companyId: scope.companyId,
+                                environment:
+                                    ChironConnectionEnvironment.production,
+                              );
+                              await fetchBackendChironConnectionStatus(
+                                tenantId: scope.tenantId,
+                                companyId: scope.companyId,
+                              ).then((status) {
+                                backendChironConnectionStatusNotifier.value =
+                                    status;
+                              });
+                              if (!result.ok) {
+                                final detail =
+                                    (result.sanitizedError ?? '').trim();
+                                throw Exception(
+                                  detail.isNotEmpty
+                                      ? detail
+                                      : _t(
+                                          nl: 'Productieverbinding mislukt. Gegevens zijn bewaard — controleer Client ID en Secret en probeer opnieuw.',
+                                          en: 'Production connection failed. Credentials are kept — check Client ID and Secret and try again.',
+                                          fr: 'Échec de la connexion production. Les identifiants sont conservés — vérifiez le Client ID et le Secret, puis réessayez.',
+                                          es: 'Falló la conexión de producción. Las credenciales se conservan: revise Client ID y Secret e inténtelo de nuevo.',
+                                        ),
+                                );
+                              }
+                            },
+                            onActivate: () async {
+                              final scope =
+                                  _chironDashboardTenantCompanyScope();
+                              if (scope == null) {
+                                throw Exception(
+                                  _t(
+                                    nl: 'Bedrijfsscope ontbreekt.',
+                                    en: 'Company scope is missing.',
+                                    fr: 'Le périmètre entreprise est manquant.',
+                                    es: 'Falta el ámbito de empresa.',
+                                  ),
+                                );
+                              }
+                              final current =
+                                  backendChironConnectionStatusNotifier.value;
+                              final updated =
+                                  await saveBackendChironConnectionStatus(
+                                tenantId: scope.tenantId,
+                                companyId: scope.companyId,
+                                enabled: current?.enabled ?? true,
+                                environment:
+                                    ChironConnectionEnvironment.production,
+                                region: current?.region.isNotEmpty == true
+                                    ? current!.region
+                                    : ChironRegionScope.flanders,
+                                productionEnabled: true,
+                              );
+                              backendChironConnectionStatusNotifier.value =
+                                  updated;
+                            },
                           ),
                         ],
                       ),
@@ -424,6 +550,8 @@ Future<_ChironReadinessResponse> _fetchChironReadinessResponse(
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -549,6 +677,8 @@ Future<void> _openChironTechnicalReport(
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -626,6 +756,8 @@ class _ChironComplianceOverviewState extends State<_ChironComplianceOverview> {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -657,7 +789,20 @@ class _ChironComplianceOverviewState extends State<_ChironComplianceOverview> {
             style: TextStyle(color: _chironTextSecondary, fontSize: 13),
           ),
           const SizedBox(height: 12),
-          _ChironOnboardingHelpCard(lang: widget.lang),
+          ValueListenableBuilder<BackendChironConnectionStatus?>(
+            valueListenable: backendChironConnectionStatusNotifier,
+            builder: (context, backendStatus, _) {
+              return ChironSelfServiceWizard(
+                status: backendStatus,
+                language: widget.lang,
+                textPrimary: _chironTextPrimary,
+                textSecondary: _chironTextSecondary,
+                panelColor: _chironPanel,
+                borderColor: _chironBorder,
+                accentColor: _chironGold,
+              );
+            },
+          ),
           const SizedBox(height: 12),
           _ChironHubStatusCard(
             lang: widget.lang,
@@ -715,6 +860,8 @@ class _ChironOnboardingHelpCardState extends State<_ChironOnboardingHelpCard> {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -1045,6 +1192,8 @@ class _ChironHubStatusCardState extends State<_ChironHubStatusCard> {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -1362,13 +1511,14 @@ class _ChironHubAdvancedDiagnosticsSection extends StatefulWidget {
 
 class _ChironHubAdvancedDiagnosticsSectionState
     extends State<_ChironHubAdvancedDiagnosticsSection> {
-  bool _expanded = false;
+  bool _busy = false;
 
   String _t({
     required String nl,
     required String en,
     required String fr,
     required String es,
+    String? de,
   }) {
     switch (widget.lang) {
       case AppLanguage.nl:
@@ -1379,6 +1529,32 @@ class _ChironHubAdvancedDiagnosticsSectionState
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return de ?? en;
+    }
+  }
+
+  /// RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: single tap opens the panel
+  /// immediately. Previous root cause: expand-then-second-tap + network await
+  /// before any real panel (often ending in SnackBar only).
+  Future<void> _openDiagnoseOnce() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    final status = backendChironConnectionStatusNotifier.value;
+    try {
+      await showChironFriendlyDiagnoseSheet(
+        context: context,
+        language: widget.lang,
+        status: status,
+        panelColor: _chironPanel,
+        cardColor: _chironCard,
+        borderColor: _chironBorder,
+        textPrimary: _chironTextPrimary,
+        textSecondary: _chironTextSecondary,
+        onOpenAdvanced: widget.onOpenReport,
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -1395,123 +1571,74 @@ class _ChironHubAdvancedDiagnosticsSectionState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
-            onTap: () => setState(() => _expanded = !_expanded),
-            borderRadius: BorderRadius.circular(8),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _t(
-                            nl: 'Probleemoplossing',
-                            en: 'Troubleshooting',
-                            fr: 'Dépannage',
-                            es: 'Solución de problemas',
-                          ),
-                          style: TextStyle(
-                            color: _chironTextPrimary,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 13,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          _t(
-                            nl: 'Open dit alleen wanneer support of Fluxidi vraagt om technische ritdata te controleren.',
-                            en: 'Open this only when support or Fluxidi asks you to check technical ride data.',
-                            fr: 'Ouvrez ceci uniquement lorsque le support ou Fluxidi demande de contrôler les données techniques de course.',
-                            es: 'Abra esto solo cuando soporte o Fluxidi pida comprobar los datos técnicos de viaje.',
-                          ),
-                          style: TextStyle(
-                            color: _chironTextMuted,
-                            fontSize: 11,
-                            height: 1.35,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Icon(
-                    _expanded ? Icons.expand_less : Icons.expand_more,
-                    color: _chironTextMuted,
-                    size: 20,
-                  ),
-                ],
+          Text(
+            _t(
+              nl: 'Probleemoplossing',
+              en: 'Troubleshooting',
+              fr: 'Dépannage',
+              es: 'Solución de problemas',
+              de: 'Fehlerbehebung',
+            ),
+            style: TextStyle(
+              color: _chironTextPrimary,
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _t(
+              nl: 'Open Diagnose voor een duidelijke status van test, acceptatie en productie.',
+              en: 'Open Diagnose for a clear status of test, acceptance and production.',
+              fr: 'Ouvrez Diagnostic pour un état clair du test, de l’acceptation et de la production.',
+              es: 'Abra Diagnóstico para un estado claro de prueba, aceptación y producción.',
+              de: 'Öffnen Sie Diagnose für einen klaren Status von Test, Akzeptanz und Produktion.',
+            ),
+            style: TextStyle(
+              color: _chironTextMuted,
+              fontSize: 11,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: FilledButton.icon(
+              key: const ValueKey('chiron_diagnose_button'),
+              onPressed: _busy ? null : _openDiagnoseOnce,
+              icon: _busy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.troubleshoot_outlined, size: 20),
+              label: Text(
+                _busy
+                    ? _t(
+                        nl: 'Diagnose wordt uitgevoerd…',
+                        en: 'Running diagnostics…',
+                        fr: 'Diagnostic en cours…',
+                        es: 'Ejecutando diagnóstico…',
+                        de: 'Diagnose wird ausgeführt…',
+                      )
+                    : _t(
+                        nl: 'Diagnose',
+                        en: 'Diagnose',
+                        fr: 'Diagnostic',
+                        es: 'Diagnóstico',
+                        de: 'Diagnose',
+                      ),
               ),
             ),
           ),
-          if (_expanded) ...[
-            const SizedBox(height: 10),
-            Text(
-              _t(
-                nl: 'Geavanceerde diagnose toont Fluxidi-technische controles op ritdata. Officiële Chiron-toegang en goedkeuring verlopen buiten Fluxidi.',
-                en: 'Advanced diagnostics shows Fluxidi technical checks on ride data. Official Chiron access and approval happen outside Fluxidi.',
-                fr: 'Le diagnostic avancé affiche les contrôles techniques Fluxidi sur les données de course. L’accès et l’approbation Chiron officiels se font en dehors de Fluxidi.',
-                es: 'El diagnóstico avanzado muestra comprobaciones técnicas de Fluxidi sobre datos de viaje. El acceso y la aprobación oficial de Chiron ocurren fuera de Fluxidi.',
-              ),
-              style: TextStyle(
-                color: _chironTextMuted,
-                fontSize: 11,
-                height: 1.35,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Material(
-              color: _chironCard,
-              borderRadius: BorderRadius.circular(10),
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                onTap: widget.onOpenReport,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 12,
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.manage_search_outlined,
-                        color: _chironGold,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          _t(
-                            nl: 'Geavanceerde diagnose openen',
-                            en: 'Open advanced diagnostics',
-                            fr: 'Ouvrir le diagnostic avancé',
-                            es: 'Abrir diagnóstico avanzado',
-                          ),
-                          style: TextStyle(
-                            color: _chironTextPrimary,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ),
-                      Icon(
-                        Icons.chevron_right,
-                        color: _chironTextMuted,
-                        size: 20,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
         ],
       ),
     );
   }
 }
+
 
 Uri _chironBookingScopedEndpoint(
   String path, {
@@ -1587,6 +1714,53 @@ Future<String> _saveChironOAuthClientCredentialsViaBooking({
 }) async {
   final endpoint = _chironBookingScopedEndpoint(
     '/admin/chiron/config/test-credentials',
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{
+          'tenant_id': tenantId,
+          'company_id': companyId,
+          'auth_scheme':
+              ChironCredentialAuthScheme.authSchemeOAuthClientCredentials,
+          'credential_fields': <String, dynamic>{
+            'client_id': clientId,
+            'client_secret': clientSecret,
+          },
+        }),
+      )
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(res.body);
+  if (decoded is! Map) {
+    throw BackendChironConnectionApiException(
+      error: 'invalid_response',
+      statusCode: res.statusCode,
+    );
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300 || map['ok'] == false) {
+    throw BackendChironConnectionApiException(
+      error: _chironSafeApiErrorCode(map),
+      statusCode: res.statusCode,
+    );
+  }
+  final masked = map['masked_identifier'] ?? map['maskedIdentifier'];
+  return masked == null ? '' : masked.toString().trim();
+}
+
+/// RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: store production OAuth credentials.
+Future<String> _saveChironProductionOAuthCredentialsViaBooking({
+  required String tenantId,
+  required String companyId,
+  required String clientId,
+  required String clientSecret,
+}) async {
+  final endpoint = _chironBookingScopedEndpoint(
+    '/admin/chiron/config/production-credentials',
     tenantId: tenantId,
     companyId: companyId,
   );
@@ -1798,6 +1972,7 @@ class _ChironMockConnectionTestResult {
 Future<_ChironMockConnectionTestResult> _runChironMockConnectionTestViaBooking({
   required String tenantId,
   required String companyId,
+  String environment = ChironConnectionEnvironment.test,
 }) async {
   final endpoint = _chironBookingScopedEndpoint(
     '/admin/chiron/connection/test',
@@ -1812,7 +1987,7 @@ Future<_ChironMockConnectionTestResult> _runChironMockConnectionTestViaBooking({
         body: jsonEncode(<String, dynamic>{
           'tenant_id': tenantId,
           'company_id': companyId,
-          'environment': ChironConnectionEnvironment.test,
+          'environment': environment,
         }),
       )
       .timeout(const Duration(seconds: 12));
@@ -2252,6 +2427,8 @@ class _ChironTestflowResetConfirmDialogState<T>
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -2659,6 +2836,8 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -3567,10 +3746,10 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                     decoration: InputDecoration(
                       isDense: true,
                       labelText: _t(
-                        nl: 'Chiron Client ID',
-                        en: 'Chiron Client ID',
-                        fr: 'Chiron Client ID',
-                        es: 'Chiron Client ID',
+                        nl: 'Test Client ID',
+                        en: 'Test Client ID',
+                        fr: 'Client ID test',
+                        es: 'Client ID de prueba',
                       ),
                       helperText: testCredentialsStored
                           ? _t(
@@ -3608,10 +3787,10 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                     decoration: InputDecoration(
                       isDense: true,
                       labelText: _t(
-                        nl: 'Chiron Client secret',
-                        en: 'Chiron Client secret',
-                        fr: 'Chiron Client secret',
-                        es: 'Chiron Client secret',
+                        nl: 'Test Client Secret',
+                        en: 'Test Client Secret',
+                        fr: 'Client Secret test',
+                        es: 'Client Secret de prueba',
                       ),
                       helperText: testCredentialsStored
                           ? _t(
@@ -3972,6 +4151,8 @@ class _ChironScoreSummaryPanelState extends State<_ChironScoreSummaryPanel> {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -4363,6 +4544,8 @@ class _ChironReadinessPanelState extends State<_ChironReadinessPanel> {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -5122,6 +5305,8 @@ String _chironTechnicalReadinessScopeNote(AppLanguage lang) {
       return 'Fluxidi comprueba la conexión técnica con Chiron y los datos de viaje. Los permisos legales y el acceso oficial a Chiron siguen siendo responsabilidad del operador.';
     case AppLanguage.nl:
       return 'Fluxidi controleert de technische Chiron-koppeling en ritdata. Wettelijke vergunningen en officiële Chiron-toegang blijven de verantwoordelijkheid van de uitbater.';
+  case AppLanguage.de:
+    return 'Fluxidi checks the technical Chiron connection and ride data. Legal permits and official Chiron access remain the operator\'s responsibility.';
   }
 }
 
@@ -5135,6 +5320,8 @@ String _companyChecklistScopeNote(AppLanguage lang) {
       return 'Esta puntuación cubre solo perfil de empresa, conductores y vehículos. Los documentos opcionales se siguen por separado abajo y no bloquean la preparación operativa.';
     case AppLanguage.nl:
       return 'Deze score geldt alleen voor bedrijfsprofiel, chauffeurs en voertuigen. Optionele documenten staan apart hieronder en blokkeren de operationele gereedheid niet.';
+  case AppLanguage.de:
+    return 'This score covers company profile, drivers and vehicles only. Optional documents are tracked separately below and do not block operational readiness.';
   }
 }
 
@@ -5148,6 +5335,8 @@ String _companyChecklistOptionalDocumentsNote(AppLanguage lang) {
       return 'Los documentos son opcionales y útiles para el seguimiento, el control de vencimientos y las revisiones. No bloquean la preparación operativa diaria.';
     case AppLanguage.nl:
       return 'Documenten zijn optioneel en nuttig voor opvolging, vervaldatums en controles. Ze blokkeren de operationele gereedheid voor dagelijks gebruik niet.';
+  case AppLanguage.de:
+    return 'Documents are optional and useful for follow-up, expiry tracking and controls. They do not block daily operational readiness.';
   }
 }
 
@@ -5194,6 +5383,8 @@ class _ChironReadinessReportPage extends StatelessWidget {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -7841,6 +8032,8 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -9228,6 +9421,8 @@ class _ChironLocalLedgerPage extends StatelessWidget {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -10223,6 +10418,8 @@ class _ChironRemoteCompliancePage extends StatelessWidget {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -10764,6 +10961,8 @@ class _RemoteComplianceEventsSectionState
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -13993,6 +14192,8 @@ class _LocalComplianceLedgerSectionState
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 

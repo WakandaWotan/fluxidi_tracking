@@ -38,6 +38,9 @@ export const COMPLIANCE_EVENTS_RECENT_PATH = "/compliance/events/recent";
  * `/admin/dev/reset-compliance-events` (which lists as truly destructive
  * because it deletes event rows). */
 export const CHIRON_TESTFLOW_RESET_PATH = "/admin/chiron/testflow/reset";
+/* RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: production credential store. */
+export const CHIRON_CONFIG_PRODUCTION_CREDENTIALS_PATH =
+  "/admin/chiron/config/production-credentials";
 
 /* Marker header value so the compliance worker knows this request came via the
  * booking worker's internal proxy (as opposed to a direct admin call). */
@@ -79,7 +82,8 @@ export async function _proxyChironConfigStatusToComplianceWorker(env, explicitSc
     compliancePath !== CHIRON_READINESS_PATH &&
     compliancePath !== CHIRON_SCORE_SUMMARY_PATH &&
     compliancePath !== COMPLIANCE_EVENTS_RECENT_PATH &&
-    compliancePath !== CHIRON_TESTFLOW_RESET_PATH
+    compliancePath !== CHIRON_TESTFLOW_RESET_PATH &&
+    compliancePath !== CHIRON_CONFIG_PRODUCTION_CREDENTIALS_PATH
   ) {
     return json({ ok: false, error: "invalid_compliance_proxy_path" }, 400);
   }

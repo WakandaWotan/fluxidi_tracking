@@ -275,6 +275,8 @@ class _DriverKpiPageState extends State<DriverKpiPage> {
         return es;
       case AppLanguage.nl:
         return nl;
+    case AppLanguage.de:
+      return en;
     }
   }
 

@@ -53,6 +53,8 @@ class ChironEnvironmentStatusLabels extends StatelessWidget {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -196,6 +198,7 @@ class ChironProductionBlockGated extends StatelessWidget {
     required String en,
     required String fr,
     required String es,
+    String? de,
   }) {
     switch (language) {
       case AppLanguage.nl:
@@ -206,11 +209,60 @@ class ChironProductionBlockGated extends StatelessWidget {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return de ?? en;
     }
   }
 
   bool get _unlocked =>
       testflowStatus.trim().toLowerCase() == 'complete';
+
+  String _blockReason() {
+    final s = status;
+    if (!_unlocked) {
+      return _t(
+        nl: 'Voltooi eerst de acceptatietest.',
+        en: 'Complete the acceptance test first.',
+        fr: 'Terminez d\'abord le test d\'acceptation.',
+        es: 'Complete primero la prueba de aceptación.',
+        de: 'Schließen Sie zuerst den Akzeptanztest ab.',
+      );
+    }
+    if (s?.productionCredentialsStored != true) {
+      return _t(
+        nl: 'Voer eerst uw productiegegevens in.',
+        en: 'Enter your production credentials first.',
+        fr: 'Saisissez d\'abord vos identifiants production.',
+        es: 'Introduzca primero sus credenciales de producción.',
+        de: 'Geben Sie zuerst Ihre Produktionsdaten ein.',
+      );
+    }
+    if (s?.productionLastConnectionStatus != 'test_passed') {
+      return _t(
+        nl: 'Controleer eerst de productieverbinding.',
+        en: 'Check the production connection first.',
+        fr: 'Vérifiez d\'abord la connexion production.',
+        es: 'Compruebe primero la conexión de producción.',
+        de: 'Prüfen Sie zuerst die Produktionsverbindung.',
+      );
+    }
+    if (s?.productionSubmitActive == true) {
+      return _t(
+        nl: 'Chiron-productie is actief. Nieuwe ritten worden automatisch en realtime naar de Chiron-productieomgeving verstuurd.',
+        en: 'Chiron production is active. New rides are sent automatically and in real time to the Chiron production environment.',
+        fr: 'La production Chiron est active. Les nouvelles courses sont envoyées automatiquement et en temps réel vers l\'environnement production Chiron.',
+        es: 'La producción Chiron está activa. Los nuevos viajes se envían automática y en tiempo real al entorno de producción Chiron.',
+        de: 'Chiron-Produktion ist aktiv. Neue Fahrten werden automatisch und in Echtzeit an die Chiron-Produktionsumgebung gesendet.',
+      );
+    }
+    return _t(
+      nl: 'Productie activeren blijft geblokkeerd tot u expliciet activeert.',
+      en: 'Production activation stays blocked until you activate explicitly.',
+      fr: 'L\'activation production reste bloquée jusqu\'à une activation explicite.',
+      es: 'La activación de producción permanece bloqueada hasta que active explícitamente.',
+      de: 'Produktionsaktivierung bleibt gesperrt, bis Sie ausdrücklich aktivieren.',
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -320,6 +372,28 @@ class ChironProductionBlockGated extends StatelessWidget {
             style: TextStyle(color: muted, fontSize: 13, height: 1.35),
           ),
           const SizedBox(height: 10),
+          Text(
+            _t(
+              nl: 'Productie Client ID',
+              en: 'Production Client ID',
+              fr: 'Client ID production',
+              es: 'Client ID de producción',
+              de: 'Produktions-Client-ID',
+            ),
+            style: TextStyle(color: text, fontWeight: FontWeight.w700, fontSize: 12),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _t(
+              nl: 'Productie Client Secret',
+              en: 'Production Client Secret',
+              fr: 'Client Secret production',
+              es: 'Client Secret de producción',
+              de: 'Produktions-Client-Secret',
+            ),
+            style: TextStyle(color: text, fontWeight: FontWeight.w700, fontSize: 12),
+          ),
+          const SizedBox(height: 10),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -329,33 +403,27 @@ class ChironProductionBlockGated extends StatelessWidget {
                 en: 'Save production credentials',
                 fr: 'Enregistrer les identifiants',
                 es: 'Guardar credenciales',
+                de: 'Produktionsdaten speichern',
               ), muted),
               _actionChip(_t(
                 nl: 'Productieverbinding controleren',
                 en: 'Check production connection',
                 fr: 'Vérifier la connexion',
                 es: 'Verificar conexión',
+                de: 'Produktionsverbindung prüfen',
               ), muted),
               _actionChip(_t(
                 nl: 'Productie activeren',
                 en: 'Activate production',
                 fr: 'Activer la production',
                 es: 'Activar producción',
+                de: 'Produktion aktivieren',
               ), muted),
             ],
           ),
           const SizedBox(height: 8),
           Text(
-            _t(
-              nl:
-                  'Productie activeren blijft geblokkeerd zolang productiecredentials of productie-OAuth-test ontbreken.',
-              en:
-                  'Activation stays blocked until production credentials and the production OAuth test are in place.',
-              fr:
-                  'L\'activation reste bloquée tant que les identifiants et le test OAuth production sont manquants.',
-              es:
-                  'La activación permanece bloqueada mientras falten las credenciales o la prueba OAuth de producción.',
-            ),
+            _blockReason(),
             style: TextStyle(
               color: muted,
               fontSize: 12,

@@ -398,6 +398,8 @@ String driverDocumentTypeLabel(String type, AppLanguage lang) {
           return 'Permis de conduire';
         case AppLanguage.es:
           return 'Permiso de conducir';
+        case AppLanguage.de:
+          return 'Driving license';
       }
     case DriverDocumentTypes.taxiDriverCard:
       switch (lang) {
@@ -409,6 +411,8 @@ String driverDocumentTypeLabel(String type, AppLanguage lang) {
           return 'Carte professionnelle de chauffeur';
         case AppLanguage.es:
           return 'Tarjeta de conductor de taxi';
+        case AppLanguage.de:
+          return 'Driving license';
       }
     case DriverDocumentTypes.medicalCertificate:
       switch (lang) {
@@ -420,6 +424,8 @@ String driverDocumentTypeLabel(String type, AppLanguage lang) {
           return 'Certificat médical';
         case AppLanguage.es:
           return 'Certificado médico';
+        case AppLanguage.de:
+          return 'Driving license';
       }
     case DriverDocumentTypes.goodConduct:
       switch (lang) {
@@ -431,6 +437,8 @@ String driverDocumentTypeLabel(String type, AppLanguage lang) {
           return 'Extrait de casier judiciaire';
         case AppLanguage.es:
           return 'Antecedentes penales / conducta';
+        case AppLanguage.de:
+          return 'Taxi driver card';
       }
     case DriverDocumentTypes.identityDocument:
       switch (lang) {
@@ -442,6 +450,8 @@ String driverDocumentTypeLabel(String type, AppLanguage lang) {
           return 'Pièce d\'identité';
         case AppLanguage.es:
           return 'Documento de identidad';
+        case AppLanguage.de:
+          return 'Medical certificate';
       }
     case DriverDocumentTypes.workPermit:
       switch (lang) {
@@ -453,6 +463,8 @@ String driverDocumentTypeLabel(String type, AppLanguage lang) {
           return 'Permis de travail';
         case AppLanguage.es:
           return 'Permiso de trabajo';
+        case AppLanguage.de:
+          return 'Good conduct / criminal record';
       }
     case DriverDocumentTypes.postingDeclaration:
       switch (lang) {
@@ -464,6 +476,8 @@ String driverDocumentTypeLabel(String type, AppLanguage lang) {
           return 'Déclaration de détachement / transfrontalière';
         case AppLanguage.es:
           return 'Desplazamiento / declaración transfronteriza';
+        case AppLanguage.de:
+          return 'Identity document';
       }
     default:
       switch (lang) {
@@ -475,6 +489,8 @@ String driverDocumentTypeLabel(String type, AppLanguage lang) {
           return 'Autre';
         case AppLanguage.es:
           return 'Otro';
+        case AppLanguage.de:
+          return 'Identity document';
       }
   }
 }
@@ -491,6 +507,8 @@ String driverDocumentStatusLabel(String status, AppLanguage lang) {
           return 'Manquant';
         case AppLanguage.es:
           return 'Falta';
+        case AppLanguage.de:
+          return 'Posting / cross-border declaration';
       }
     case DriverDocumentStatuses.pendingReview:
       switch (lang) {
@@ -502,6 +520,8 @@ String driverDocumentStatusLabel(String status, AppLanguage lang) {
           return 'En cours de vérification';
         case AppLanguage.es:
           return 'En revisión';
+        case AppLanguage.de:
+          return 'Posting / cross-border declaration';
       }
     case DriverDocumentStatuses.approved:
       switch (lang) {
@@ -513,6 +533,8 @@ String driverDocumentStatusLabel(String status, AppLanguage lang) {
           return 'Approuvé';
         case AppLanguage.es:
           return 'Aprobado';
+        case AppLanguage.de:
+          return 'Other';
       }
     case DriverDocumentStatuses.expired:
       switch (lang) {
@@ -524,6 +546,8 @@ String driverDocumentStatusLabel(String status, AppLanguage lang) {
           return 'Expiré';
         case AppLanguage.es:
           return 'Caducado';
+        case AppLanguage.de:
+          return 'Missing';
       }
     case DriverDocumentStatuses.rejected:
       switch (lang) {
@@ -535,6 +559,8 @@ String driverDocumentStatusLabel(String status, AppLanguage lang) {
           return 'Rejeté';
         case AppLanguage.es:
           return 'Rechazado';
+        case AppLanguage.de:
+          return 'Under review';
       }
     default:
       switch (lang) {
@@ -546,6 +572,8 @@ String driverDocumentStatusLabel(String status, AppLanguage lang) {
           return 'Inconnu';
         case AppLanguage.es:
           return 'Desconocido';
+        case AppLanguage.de:
+          return 'Approved';
       }
   }
 }

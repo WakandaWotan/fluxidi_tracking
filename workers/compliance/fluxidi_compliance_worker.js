@@ -172,7 +172,18 @@ const CHIRON_OAUTH_CLIENT_SECRET_MAX_LENGTH = 1024;
 // is introduced in a later phase.
 const CHIRON_OAUTH_TOKEN_URL_BY_ENVIRONMENT = {
   test: "https://mow-acc.api.vlaanderen.be/oauth/token",
+  // RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: production OAuth is a separate
+  // allowlisted endpoint. Never read from request body / KV — only this map.
+  production: "https://mow.api.vlaanderen.be/oauth/token",
 };
+const CHIRON_TAXIRIT_URL_BY_ENVIRONMENT = {
+  test: "https://mow-acc.api.vlaanderen.be/chiron/taxirit",
+  production: "https://mow.api.vlaanderen.be/chiron/taxirit",
+};
+const CHIRON_CONFIG_PRODUCTION_CREDENTIALS_PATH =
+  "/admin/chiron/config/production-credentials";
+const CHIRON_CONFIG_PRODUCTION_CREDENTIALS_CLEAR_PATH =
+  "/admin/chiron/config/production-credentials/clear";
 const CHIRON_OAUTH_EXCHANGE_TIMEOUT_MS = 10000;
 const CHIRON_OAUTH_DEFAULT_TEST_MESSAGES_REQUIRED = 10;
 // Chiron Connect 4C: acceptance testflow requirements. 5 rides x (departure +
@@ -2979,7 +2990,8 @@ async function _chironExchangeOAuthClientCredentials(
   { environment, clientId, clientSecret } = {},
 ) {
   const envKey = cleanText(environment, 32).toLowerCase();
-  if (envKey !== "test") {
+  // RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: allowlisted test + production.
+  if (envKey !== "test" && envKey !== "production") {
     return { ok: false, error: "unsupported_environment", http_status: null };
   }
   const tokenUrl = CHIRON_OAUTH_TOKEN_URL_BY_ENVIRONMENT[envKey];
@@ -3139,7 +3151,10 @@ async function _chironAcquireOAuthAccessTokenForSubmit(
   environment,
 ) {
   const envKey = cleanText(environment, 32).toLowerCase();
-  if (envKey !== "test") {
+  // RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: production OAuth acquire is
+  // allowed only when the caller already pinned effective_environment to
+  // production (auto-submit path) or when connection-test targets production.
+  if (envKey !== "test" && envKey !== "production") {
     return { ok: false, error: "unsupported_environment", http_status: null };
   }
 
@@ -3153,7 +3168,14 @@ async function _chironAcquireOAuthAccessTokenForSubmit(
     return { ok: false, error: credentialsRead.error, http_status: null };
   }
   if (!credentialsRead.doc) {
-    return { ok: false, error: "missing_test_credentials", http_status: null };
+    return {
+      ok: false,
+      error:
+        envKey === "production"
+          ? "missing_production_credentials"
+          : "missing_test_credentials",
+      http_status: null,
+    };
   }
   const credentialsDoc = credentialsRead.doc;
   if (!_chironCredentialsDocReadyForMockTest(credentialsDoc)) {
@@ -6756,6 +6778,11 @@ function _chironEvaluateSubmitDuplicateGuard(previousStatus) {
   if (state === "waiting_for_departure") {
     return { decision: "allow" };
   }
+  // RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: durable production auth/network
+  // failures and queued markers are always retryable. Never silently stuck.
+  if (state === "retryable_failed" || state === "queued") {
+    return { decision: "allow" };
+  }
   if (state === "failed") {
     // Retry only for a definitively failed prior attempt:
     //   - explicit definitive marker; OR
@@ -7021,7 +7048,13 @@ function parseChironTaxiritSubmitResponse(httpStatus, responseBody) {
 // treating it as a plain retryable failure.
 const CHIRON_TAXIRIT_SUBMIT_TIMEOUT_MS = 10000;
 async function _chironPostChironExportTestPayload(env, payload, options = {}) {
-  const baseUrl = cleanText(env?.CHIRON_EXPORT_BASE_URL, 512).replace(/\/+$/, "");
+  // RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: callers may pin the taxirit URL
+  // via options.baseUrl (production path). Default remains the ACC/test env
+  // var. Production never falls back to ACC — if production URL is missing
+  // the call fails closed.
+  const overrideBase = cleanText(options?.baseUrl, 512).replace(/\/+$/, "");
+  const envBase = cleanText(env?.CHIRON_EXPORT_BASE_URL, 512).replace(/\/+$/, "");
+  const baseUrl = overrideBase || envBase;
   if (!baseUrl) {
     return {
       ok: false,
@@ -7180,6 +7213,36 @@ function _chironTestflowLiveGate(statusPayload, env) {
     return "chiron_export_target_not_verified_test";
   }
   return null;
+}
+
+// RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: production auto-submit gate.
+// Opens only when every production invariant holds. Never falls back to ACC.
+function _chironProductionLiveGate(statusPayload) {
+  if (!statusPayload || typeof statusPayload !== "object") return "missing_connection_status";
+  if (statusPayload.enabled !== true) return "chiron_not_enabled";
+  if (_chironDeriveEffectiveChironEnvironment(statusPayload) !== "production") {
+    return "effective_environment_not_production";
+  }
+  if (statusPayload.production_credentials_stored !== true) {
+    return "missing_production_credentials";
+  }
+  if (
+    cleanText(statusPayload.production_last_connection_status, 64).toLowerCase() !==
+    "test_passed"
+  ) {
+    return "production_connection_not_tested";
+  }
+  return null;
+}
+
+// Unified auto-submit eligibility: routes to ACC live-gate or production
+// live-gate based on the derived effective environment. Never silently skips.
+function _chironAutoSubmitRoutingGate(statusPayload, env) {
+  const effective = _chironDeriveEffectiveChironEnvironment(statusPayload);
+  if (effective === "production") {
+    return _chironProductionLiveGate(statusPayload);
+  }
+  return _chironTestflowLiveGate(statusPayload, env);
 }
 
 async function _chironFindSingleScopedComplianceEvent(env, parsedInput) {
@@ -8700,14 +8763,11 @@ function parseChironConnectionTestPostInput(body) {
       ? "test"
       : cleanText(body.environment, 32).toLowerCase();
 
-  if (environmentRaw === "production") {
-    return { error: "production_connection_test_not_supported" };
-  }
-  if (environmentRaw !== "test") {
+  if (environmentRaw !== "test" && environmentRaw !== "production") {
     return { error: "invalid_environment" };
   }
 
-  return { tenantId, companyId, environment: "test" };
+  return { tenantId, companyId, environment: environmentRaw };
 }
 
 function _chironDecryptedCredentialPayloadValid(parsed) {
@@ -8839,6 +8899,36 @@ function buildChironTestCredentialsStatusDoc(
         ? Math.floor(testMessagesRequired)
         : 10,
     test_messages_sent_count: 0,
+    updated_at: updatedAt,
+    updated_by: updatedBy,
+  };
+}
+
+// RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: after storing production
+// credentials, mark presence + reset production OAuth status. Never touches
+// test credentials, ACC connection status, or acceptance counters. Forces
+// production_enabled=false until the operator re-tests and re-activates.
+function buildChironProductionCredentialsStatusDoc(
+  existingStored,
+  tenantId,
+  companyId,
+  updatedAt,
+  updatedBy,
+) {
+  const existing =
+    existingStored && typeof existingStored === "object" && !Array.isArray(existingStored)
+      ? { ...existingStored }
+      : {};
+  return {
+    ...existing,
+    schema_version: CHIRON_CONNECTION_STATUS_SCHEMA,
+    tenant_id: tenantId,
+    company_id: companyId,
+    production_credentials_stored: true,
+    production_last_connection_status: "never_tested",
+    production_last_connection_test_at: null,
+    production_last_connection_status_message: "",
+    production_enabled: false,
     updated_at: updatedAt,
     updated_by: updatedBy,
   };
@@ -10087,6 +10177,166 @@ async function handleChironConfigTestCredentialsPost(request, url, env, origin) 
   );
 }
 
+// RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: store production OAuth credentials
+// under the production KV key. Mirrors the test-credentials handler but never
+// mutates test credentials / ACC connection status.
+async function handleChironConfigProductionCredentialsPost(request, url, env, origin) {
+  if (!requireJsonRequest(request)) {
+    return jsonResponse(
+      { ok: false, error: "Content-Type must be application/json" },
+      400,
+      origin,
+    );
+  }
+
+  const body = await readJsonBody(request);
+  if (body === null) {
+    return jsonResponse({ ok: false, error: "Invalid JSON body" }, 400, origin);
+  }
+
+  const parsed = parseChironTestCredentialsPostInput(body);
+  if (parsed.error) {
+    return jsonResponse({ ok: false, error: parsed.error }, 400, origin);
+  }
+  if (parsed.authScheme !== "oauth_client_credentials") {
+    return jsonResponse(
+      { ok: false, error: "production_requires_oauth_client_credentials" },
+      400,
+      origin,
+    );
+  }
+
+  const { tenantId, companyId, authScheme } = parsed;
+
+  const authError = ensureAuthorizedOrInternalProxy(request, env, {
+    tenantId,
+    companyId,
+  });
+  if (authError) return authError;
+
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.put !== "function") {
+    return jsonResponse({ ok: false, error: "missing_kv" }, 500, origin);
+  }
+
+  // Production onboarding requires a completed acceptance testflow.
+  const statusReadGate = await readChironConnectionStatusRaw(env, tenantId, companyId);
+  const progressGate = getChironTestflowProgress(statusReadGate.doc);
+  if (progressGate.testflow_status !== "complete") {
+    return jsonResponse(
+      { ok: false, error: "production_requires_testflow_complete" },
+      403,
+      origin,
+    );
+  }
+
+  const plaintextEnvelope = JSON.stringify({
+    schema_version: CHIRON_CREDENTIALS_PAYLOAD_SCHEMA_VERSION,
+    auth_scheme: authScheme,
+    client_id: parsed.clientId,
+    client_secret: parsed.clientSecret,
+  });
+  const fingerprintSeed = `${parsed.clientId}:${parsed.clientSecret}`;
+  const maskedSeed = parsed.clientId;
+
+  let credentialPayloadEncrypted;
+  let credentialFingerprintShort;
+  let maskedIdentifier;
+  try {
+    credentialPayloadEncrypted = await encryptChironCredentialBlob(plaintextEnvelope, env);
+    credentialFingerprintShort = await chironCredentialFingerprintShort(fingerprintSeed);
+    maskedIdentifier = chironMaskTrailingIdentifier(maskedSeed);
+  } catch (_) {
+    return jsonResponse({ ok: false, error: "credential_encrypt_failed" }, 500, origin);
+  }
+
+  const credentialsKey = buildChironCredentialsKvKey(tenantId, companyId, "production");
+  if (!credentialsKey) {
+    return jsonResponse({ ok: false, error: "missing_scope" }, 400, origin);
+  }
+
+  const existingCredentials = await readChironCredentialsRaw(
+    env,
+    tenantId,
+    companyId,
+    "production",
+  );
+  const updatedAt = nowIso();
+  const hadExisting =
+    existingCredentials.doc &&
+    typeof existingCredentials.doc === "object" &&
+    !Array.isArray(existingCredentials.doc);
+  const preservedCreatedAt = hadExisting
+    ? cleanText(existingCredentials.doc.created_at, 64)
+    : "";
+
+  const credentialsDoc = {
+    schema_version: CHIRON_CREDENTIALS_SCHEMA_VERSION,
+    tenant_id: tenantId,
+    company_id: companyId,
+    environment: "production",
+    auth_scheme: authScheme,
+    credential_payload_encrypted: credentialPayloadEncrypted,
+    credential_fingerprint_short: credentialFingerprintShort,
+    masked_identifier: maskedIdentifier,
+    created_at: preservedCreatedAt || updatedAt,
+    updated_at: updatedAt,
+    rotated_at: hadExisting ? updatedAt : null,
+  };
+
+  const credentialsWrite = await writeChironCredentialsRaw(
+    env,
+    credentialsKey,
+    credentialsDoc,
+  );
+  if (!credentialsWrite.ok) {
+    return jsonResponse(
+      { ok: false, error: credentialsWrite.error || "kv_write_failed" },
+      500,
+      origin,
+    );
+  }
+
+  const statusRead = await readChironConnectionStatusRaw(env, tenantId, companyId);
+  const statusDoc = buildChironProductionCredentialsStatusDoc(
+    statusRead.doc,
+    tenantId,
+    companyId,
+    updatedAt,
+    _resolveChironConfigUpdatedBy(request),
+  );
+
+  const statusWrite = await writeChironConnectionStatusRaw(
+    env,
+    tenantId,
+    companyId,
+    statusDoc,
+  );
+  if (!statusWrite.ok) {
+    return jsonResponse(
+      { ok: false, error: statusWrite.error || "kv_write_failed" },
+      500,
+      origin,
+    );
+  }
+
+  return jsonResponse(
+    {
+      ok: true,
+      schema_version: CHIRON_CREDENTIALS_SCHEMA_VERSION,
+      tenant_id: tenantId,
+      company_id: companyId,
+      environment: "production",
+      auth_scheme: authScheme,
+      production_credentials_stored: true,
+      credential_fingerprint_short: credentialFingerprintShort,
+      masked_identifier: maskedIdentifier,
+      updated_at: updatedAt,
+    },
+    200,
+    origin,
+  );
+}
+
 // Chiron Connect 4C: reset only the acceptance testflow counters/status for a
 // tenant/company. Credentials, last_connection_status and environment are left
 // untouched; production stays locked.
@@ -10319,7 +10569,17 @@ async function handleChironConnectionTestPost(request, url, env, origin) {
     environment,
   );
   if (!credentialsRead.doc) {
-    return jsonResponse({ ok: false, error: "missing_test_credentials" }, 404, origin);
+    return jsonResponse(
+      {
+        ok: false,
+        error:
+          environment === "production"
+            ? "missing_production_credentials"
+            : "missing_test_credentials",
+      },
+      404,
+      origin,
+    );
   }
 
   const credentialsDoc = credentialsRead.doc;
@@ -10365,6 +10625,18 @@ async function handleChironConnectionTestPost(request, url, env, origin) {
       ? statusRead.doc
       : {};
 
+  // Production connection test requires OAuth only (no legacy api_token).
+  if (
+    environment === "production" &&
+    decryptedAuthScheme !== "oauth_client_credentials"
+  ) {
+    return jsonResponse(
+      { ok: false, error: "production_requires_oauth_client_credentials" },
+      400,
+      origin,
+    );
+  }
+
   // Chiron Connect 4B: live OAuth2 client_credentials exchange branch. Only
   // engaged when the stored credential is an oauth_client_credentials envelope.
   // Legacy api_token credentials keep the existing mock-only behaviour below.
@@ -10382,17 +10654,28 @@ async function handleChironConnectionTestPost(request, url, env, origin) {
         tokenType: exchangeResult.token_type,
         expiresInSeconds: exchangeResult.expires_in_seconds,
       });
-      // RELEASE-P0-AUTO-CHIRON-2026-07-31: a successful live OAuth exchange
-      // is proof that the encrypted per-company test credentials are stored
-      // AND valid. Re-stamp `test_credentials_stored: true` so any prior
-      // meta-doc drift (e.g. an earlier config-status POST that predates the
-      // preserve fix) is repaired automatically on the next connection test.
-      const statusDocToWrite = {
-        ...existingStatusDoc,
-        ...liveFields,
-        test_credentials_stored: true,
-        updated_at: testedAt,
-      };
+      // RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: production OAuth success
+      // writes the SEPARATE production_last_connection_* fields and never
+      // mutates the ACC test connection status. Test OAuth keeps the prior
+      // last_connection_* contract + re-stamps test_credentials_stored.
+      let statusDocToWrite;
+      if (environment === "production") {
+        statusDocToWrite = {
+          ...existingStatusDoc,
+          production_credentials_stored: true,
+          production_last_connection_status: "test_passed",
+          production_last_connection_test_at: testedAt,
+          production_last_connection_status_message: "",
+          updated_at: testedAt,
+        };
+      } else {
+        statusDocToWrite = {
+          ...existingStatusDoc,
+          ...liveFields,
+          test_credentials_stored: true,
+          updated_at: testedAt,
+        };
+      }
 
       const statusWrite = await writeChironConnectionStatusRaw(
         env,
@@ -10431,7 +10714,9 @@ async function handleChironConnectionTestPost(request, url, env, origin) {
           company_id: companyId,
           environment,
           auth_scheme: "oauth_client_credentials",
-          test_credentials_stored: true,
+          test_credentials_stored: statusPayload.test_credentials_stored === true,
+          production_credentials_stored:
+            statusPayload.production_credentials_stored === true,
           credential_decrypt_ok: true,
           credential_payload_valid: true,
           credential_fingerprint_short: credentialFingerprintShort,
@@ -10440,7 +10725,9 @@ async function handleChironConnectionTestPost(request, url, env, origin) {
           token_type: "Bearer",
           expires_in_seconds: liveFields.last_connection_expires_in_seconds,
           last_connection_status: statusPayload.last_connection_status,
-          production_enabled: false,
+          production_last_connection_status:
+            statusPayload.production_last_connection_status,
+          production_enabled: statusPayload.production_enabled === true,
           official_submit_enabled: false,
           updated_at: testedAt,
         },
@@ -10458,11 +10745,20 @@ async function handleChironConnectionTestPost(request, url, env, origin) {
       environment,
       sanitizedError,
     });
-    const statusDocToWrite = {
-      ...existingStatusDoc,
-      ...failedFields,
-      updated_at: testedAt,
-    };
+    const statusDocToWrite =
+      environment === "production"
+        ? {
+            ...existingStatusDoc,
+            production_last_connection_status: "test_failed",
+            production_last_connection_test_at: testedAt,
+            production_last_connection_status_message: sanitizedError,
+            updated_at: testedAt,
+          }
+        : {
+            ...existingStatusDoc,
+            ...failedFields,
+            updated_at: testedAt,
+          };
 
     const statusWrite = await writeChironConnectionStatusRaw(
       env,
@@ -10630,26 +10926,32 @@ function _chironAutoSubmitEligibleForEvent(statusPayload, env, event) {
   }
   const messageType = _chironAutoSubmitMessageTypeForEventType(event.event_type);
   if (!messageType) return "event_type_not_auto_submittable";
-  const liveGate = _chironTestflowLiveGate(statusPayload, env);
+  const liveGate = _chironAutoSubmitRoutingGate(statusPayload, env);
   if (liveGate) return liveGate;
-  if (statusPayload?.testflow_auto_submit_enabled !== true) {
-    return "testflow_auto_submit_disabled";
+  const effective = _chironDeriveEffectiveChironEnvironment(statusPayload);
+  // ACC auto-submit still requires the explicit opt-in + cutoff. Production
+  // auto-submit is implied by a valid production activation and does not
+  // depend on the acceptance-testflow gate (counters may already be complete).
+  if (effective !== "production") {
+    if (statusPayload?.testflow_auto_submit_enabled !== true) {
+      return "testflow_auto_submit_disabled";
+    }
+    const cutoffRaw = cleanText(statusPayload?.testflow_started_at, 64);
+    if (!cutoffRaw) return "missing_testflow_started_at";
+    const eventAtRaw = cleanText(
+      event.created_at_utc ||
+        event.timestamps?.recorded_at_utc ||
+        event.timestamps?.event_at_utc,
+      64,
+    );
+    if (!eventAtRaw) return "missing_event_timestamp";
+    const cutoffMs = Date.parse(cutoffRaw);
+    const eventMs = Date.parse(eventAtRaw);
+    if (!Number.isFinite(cutoffMs) || !Number.isFinite(eventMs)) {
+      return "invalid_timestamp";
+    }
+    if (eventMs < cutoffMs) return "event_before_testflow_start";
   }
-  const cutoffRaw = cleanText(statusPayload?.testflow_started_at, 64);
-  if (!cutoffRaw) return "missing_testflow_started_at";
-  const eventAtRaw = cleanText(
-    event.created_at_utc ||
-      event.timestamps?.recorded_at_utc ||
-      event.timestamps?.event_at_utc,
-    64,
-  );
-  if (!eventAtRaw) return "missing_event_timestamp";
-  const cutoffMs = Date.parse(cutoffRaw);
-  const eventMs = Date.parse(eventAtRaw);
-  if (!Number.isFinite(cutoffMs) || !Number.isFinite(eventMs)) {
-    return "invalid_timestamp";
-  }
-  if (eventMs < cutoffMs) return "event_before_testflow_start";
   return null;
 }
 
@@ -11116,53 +11418,6 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
       effectiveEnvForThisEvent = _chironDeriveEffectiveChironEnvironment(statusPayload);
     }
 
-    // RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: production events must NOT
-    // fall back to ACC. When the effective env is "production" we do not have
-    // a live production submit path today — the event is durably queued with
-    // sync_state="queued" + effective_environment="production" so an operator
-    // (and future production submit worker) can pick it up. NEVER silently
-    // downgrades to ACC. Fail-closed default keeps this branch essentially
-    // unreachable for the current release (production_enabled cannot become
-    // true without production credentials + separate OAuth test).
-    if (effectiveEnvForThisEvent === "production") {
-      const queuedDoc = {
-        schema_version: CHIRON_EXPORT_STATUS_SCHEMA,
-        tenant_id: scope.tenant_id,
-        company_id: scope.company_id,
-        event_id: cleanText(event.event_id, 200) || null,
-        official_idempotency_key: officialIdempotencyKey,
-        official_ritnummer: ritnummer,
-        official_status: officialStatus,
-        official_payload_shape: "chiron_taxirit_api_v1",
-        sync_state: "queued",
-        failure_kind: null,
-        verification_required_reason: null,
-        external_status_code: null,
-        external_reference: null,
-        response_shape: null,
-        fouten_count: null,
-        last_attempt_at: null,
-        attempt_count: Number(previousStatus?.attempt_count || 0),
-        sanitized_error: null,
-        auto_submit: true,
-        auto_submit_source: source,
-        effective_environment: "production",
-        queued_reason: "production_submit_path_not_configured",
-      };
-      await _chironWriteExportStatus(env, statusKey, queuedDoc);
-      console.log(
-        `[CHIRON_AUTO_SUBMIT][QUEUED_PRODUCTION] tenant=${logMask(scope.tenant_id)} company=${logMask(scope.company_id)} ritnummer=${ritnummer} message_type=${messageType} source=${source}`,
-      );
-      return {
-        ok: false,
-        skipped: true,
-        reason: "queued_production_no_fallback",
-        message_type: messageType,
-        status_key: statusKey,
-        source,
-      };
-    }
-
     const attemptCount = Number(previousStatus?.attempt_count || 0) + 1;
     const attemptedAt = nowIso();
     const pendingDoc = {
@@ -11188,32 +11443,47 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
     };
     await _chironWriteExportStatus(env, statusKey, pendingDoc);
 
+    // RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: OAuth + taxirit URL follow the
+    // per-ride environment stamp. Production NEVER falls back to ACC — a
+    // missing production token URL or credential fails closed as retryable.
+    const oauthEnv =
+      effectiveEnvForThisEvent === "production" ? "production" : "test";
+    const taxiritBaseUrl =
+      CHIRON_TAXIRIT_URL_BY_ENVIRONMENT[oauthEnv] ||
+      (oauthEnv === "test"
+        ? cleanText(env?.CHIRON_EXPORT_BASE_URL, 512)
+        : "");
     const oauthAcquire = await _chironAcquireOAuthAccessTokenForSubmit(
       env,
       scope.tenant_id,
       scope.company_id,
-      "test",
+      oauthEnv,
     );
     if (!oauthAcquire.ok) {
-      // OAuth failure BEFORE the external POST — Chiron was NEVER contacted,
-      // so the submit is safely retryable. We delete the pending status doc
-      // rather than persisting a `failed` state, so the next reconcile tick
-      // starts from a clean slate (`_chironEvaluateSubmitDuplicateGuard`
-      // treats null as `allow`). This intentionally sacrifices audit
-      // granularity for retry safety: the OAuth failure IS logged via
-      // console.log below and via `writeChironConnectionStatusRaw` when a
-      // subsequent success eventually lands.
-      try {
-        await env.COMPLIANCE_KV.delete(statusKey);
-      } catch (_) {
-        // If we can't delete, leave the pending doc in place. The duplicate
-        // guard will report `conflict_pending` and reconciler backs off.
-      }
       const sanitizedOauthError = _chironSanitizeExportError(
         oauthAcquire.error || "oauth_failure",
       );
+      // RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: production OAuth failures
+      // must leave a durable retryable_failed status (never silent skip, never
+      // ACC fallback). ACC/test keeps the prior delete-for-retry behaviour.
+      if (oauthEnv === "production") {
+        const failedDoc = {
+          ...pendingDoc,
+          sync_state: "retryable_failed",
+          failure_kind: "retryable",
+          sanitized_error: sanitizedOauthError,
+          last_attempt_at: nowIso(),
+        };
+        await _chironWriteExportStatus(env, statusKey, failedDoc);
+      } else {
+        try {
+          await env.COMPLIANCE_KV.delete(statusKey);
+        } catch (_) {
+          // leave pending; duplicate guard backs off
+        }
+      }
       console.log(
-        `[CHIRON_AUTO_SUBMIT][OAUTH_FAIL] tenant=${logMask(scope.tenant_id)} company=${logMask(scope.company_id)} ritnummer=${ritnummer} message_type=${messageType} error=${sanitizedOauthError} source=${source}`,
+        `[CHIRON_AUTO_SUBMIT][OAUTH_FAIL] tenant=${logMask(scope.tenant_id)} company=${logMask(scope.company_id)} ritnummer=${ritnummer} message_type=${messageType} env=${oauthEnv} error=${sanitizedOauthError} source=${source}`,
       );
       return {
         ok: false,
@@ -11227,12 +11497,33 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
       };
     }
 
+    if (!taxiritBaseUrl) {
+      const failedDoc = {
+        ...pendingDoc,
+        sync_state: "retryable_failed",
+        failure_kind: "retryable",
+        sanitized_error: "missing_taxirit_url",
+        last_attempt_at: nowIso(),
+      };
+      await _chironWriteExportStatus(env, statusKey, failedDoc);
+      return {
+        ok: false,
+        skipped: false,
+        reason: "missing_taxirit_url",
+        message_type: messageType,
+        status_key: statusKey,
+        retryable: true,
+        source,
+      };
+    }
+
     const postResult = await _chironPostChironExportTestPayload(
       env,
       chironApiPayload,
       {
         accessToken: oauthAcquire._access_token_in_memory_only,
         timeoutMs: CHIRON_AUTO_SUBMIT_INNER_TIMEOUT_MS,
+        baseUrl: taxiritBaseUrl,
       },
     );
     oauthAcquire._access_token_in_memory_only = null;
@@ -11265,25 +11556,28 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
     };
     await _chironWriteExportStatus(env, statusKey, finalDoc);
 
-    // Advance testflow counters exactly like the manual submit-one path.
-    const nextStatusDoc = recordChironTestflowSubmitResult(statusRead.doc, {
-      officialStatus,
-      ritnummer,
-      ok: acceptedByChiron,
-      foutenCount: postResult.fouten_count ?? 0,
-      sanitizedError: acceptedByChiron
-        ? null
-        : (postResult.sanitized_error || "chiron_auto_submit_failed"),
-    });
-    await writeChironConnectionStatusRaw(
-      env,
-      scope.tenant_id,
-      scope.company_id,
-      nextStatusDoc,
-    );
+    // Advance acceptance counters only for ACC/test submits. Production
+    // rides must never inflate the 5/5 acceptance testflow.
+    if (oauthEnv !== "production") {
+      const nextStatusDoc = recordChironTestflowSubmitResult(statusRead.doc, {
+        officialStatus,
+        ritnummer,
+        ok: acceptedByChiron,
+        foutenCount: postResult.fouten_count ?? 0,
+        sanitizedError: acceptedByChiron
+          ? null
+          : (postResult.sanitized_error || "chiron_auto_submit_failed"),
+      });
+      await writeChironConnectionStatusRaw(
+        env,
+        scope.tenant_id,
+        scope.company_id,
+        nextStatusDoc,
+      );
+    }
 
     console.log(
-      `[CHIRON_AUTO_SUBMIT][${acceptedByChiron ? "OK" : ambiguousTransport ? "AMBIGUOUS" : "FAIL"}] tenant=${logMask(scope.tenant_id)} company=${logMask(scope.company_id)} ritnummer=${ritnummer} status=${officialStatus} fouten=${postResult.fouten_count ?? 0} source=${source}`,
+      `[CHIRON_AUTO_SUBMIT][${acceptedByChiron ? "OK" : ambiguousTransport ? "AMBIGUOUS" : "FAIL"}] tenant=${logMask(scope.tenant_id)} company=${logMask(scope.company_id)} ritnummer=${ritnummer} status=${officialStatus} env=${oauthEnv} fouten=${postResult.fouten_count ?? 0} source=${source}`,
     );
 
     return {
@@ -11360,31 +11654,41 @@ async function _chironAutoReconcileScopeBestEffort(
       companyId,
       statusRead.doc,
     );
-    const liveGate = _chironTestflowLiveGate(statusPayload, env);
+    const liveGate = _chironAutoSubmitRoutingGate(statusPayload, env);
     if (liveGate) {
       outcome.ok = false;
       outcome.reason = liveGate;
       return outcome;
     }
-    if (statusPayload.testflow_auto_submit_enabled !== true) {
-      outcome.ok = false;
-      outcome.reason = "testflow_auto_submit_disabled";
-      return outcome;
+    const reconcileEffective =
+      _chironDeriveEffectiveChironEnvironment(statusPayload);
+    if (reconcileEffective !== "production") {
+      if (statusPayload.testflow_auto_submit_enabled !== true) {
+        outcome.ok = false;
+        outcome.reason = "testflow_auto_submit_disabled";
+        return outcome;
+      }
     }
-    const cutoffRaw = cleanText(statusPayload.testflow_started_at, 64);
-    if (!cutoffRaw) {
+    const cutoffRaw =
+      reconcileEffective === "production"
+        ? null
+        : cleanText(statusPayload.testflow_started_at, 64);
+    if (reconcileEffective !== "production" && !cutoffRaw) {
       outcome.ok = false;
       outcome.reason = "missing_testflow_started_at";
       return outcome;
     }
-    const cutoffMs = Date.parse(cutoffRaw);
-    if (!Number.isFinite(cutoffMs)) {
-      outcome.ok = false;
-      outcome.reason = "invalid_testflow_started_at";
-      return outcome;
-    }
     const windowFloorMs = Date.now() - CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS;
-    const effectiveFloorMs = Math.max(cutoffMs, windowFloorMs);
+    let effectiveFloorMs = windowFloorMs;
+    if (reconcileEffective !== "production") {
+      const cutoffMs = Date.parse(cutoffRaw);
+      if (!Number.isFinite(cutoffMs)) {
+        outcome.ok = false;
+        outcome.reason = "invalid_testflow_started_at";
+        return outcome;
+      }
+      effectiveFloorMs = Math.max(cutoffMs, windowFloorMs);
+    }
 
     const tenantSegment = safeSegment(tenantId, "");
     const companySegment = safeSegment(companyId, "");
@@ -11675,6 +11979,8 @@ export default {
       url.pathname !== CHIRON_CONFIG_STATUS_PATH &&
       url.pathname !== CHIRON_CONFIG_TEST_CREDENTIALS_PATH &&
       url.pathname !== CHIRON_CONFIG_TEST_CREDENTIALS_CLEAR_PATH &&
+      url.pathname !== CHIRON_CONFIG_PRODUCTION_CREDENTIALS_PATH &&
+      url.pathname !== CHIRON_CONFIG_PRODUCTION_CREDENTIALS_CLEAR_PATH &&
       url.pathname !== CHIRON_CONNECTION_TEST_PATH &&
       url.pathname !== CHIRON_TESTFLOW_RESET_PATH &&
       url.pathname !== CHIRON_TESTFLOW_SUBMIT_ONE_PATH &&
@@ -11755,6 +12061,17 @@ export default {
           return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
         }
         return await handleChironConfigTestCredentialsPost(request, url, env, origin);
+      }
+      if (url.pathname === CHIRON_CONFIG_PRODUCTION_CREDENTIALS_PATH) {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+        }
+        return await handleChironConfigProductionCredentialsPost(
+          request,
+          url,
+          env,
+          origin,
+        );
       }
       if (url.pathname === CHIRON_CONFIG_TEST_CREDENTIALS_CLEAR_PATH) {
         if (request.method !== "POST") {

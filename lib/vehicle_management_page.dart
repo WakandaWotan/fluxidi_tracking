@@ -490,6 +490,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 

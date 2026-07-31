@@ -24,17 +24,19 @@ class PaymentQrPanel extends StatelessWidget {
     AppLanguage.fr => 'Scanner et payer',
     AppLanguage.es => 'Escanear y pagar',
     AppLanguage.nl => 'Scan en betaal',
+    AppLanguage.de => 'Scan and pay',
   };
 
   static String subtitleFor(AppLanguage language) => switch (language) {
-    AppLanguage.en =>
-      'Open Bancontact Pay, Payconiq by Bancontact, or your Belgian banking app and scan this QR code.',
+    AppLanguage.en => 'Open Bancontact Pay, Payconiq by Bancontact, or your Belgian banking app and scan this QR code.',
     AppLanguage.fr =>
       'Ouvrez Bancontact Pay, Payconiq by Bancontact ou votre application bancaire belge et scannez ce QR code.',
     AppLanguage.es =>
       'Abre Bancontact Pay, Payconiq by Bancontact o tu app bancaria belga y escanea este código QR.',
     AppLanguage.nl =>
       'Open Bancontact Pay, Payconiq by Bancontact of je bank-app en scan deze QR-code.',
+    AppLanguage.de =>
+      'Open Bancontact Pay, Payconiq by Bancontact, or your Belgian banking app and scan this QR code.',
   };
 
   static String fallbackButtonLabelFor(AppLanguage language) =>
@@ -43,6 +45,7 @@ class PaymentQrPanel extends StatelessWidget {
         AppLanguage.fr => 'Ouvrir la page de paiement',
         AppLanguage.es => 'Abrir página de pago',
         AppLanguage.nl => 'Open betaalpagina',
+        AppLanguage.de => 'Open payment page',
       };
 
   Widget? _buildQrImage(String src) {

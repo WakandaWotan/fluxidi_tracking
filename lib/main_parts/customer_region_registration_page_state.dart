@@ -197,6 +197,15 @@ class _CustomerRegionRegistrationPageState
             const TextSpan(text: ' yet'),
           ],
         );
+      case AppLanguage.de:
+        return TextSpan(
+          style: baseStyle,
+          children: [
+            const TextSpan(text: 'Fluxidi is not active in '),
+            TextSpan(text: 'your region', style: highlightStyle),
+            const TextSpan(text: ' yet'),
+          ],
+        );
     }
   }
 

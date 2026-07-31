@@ -184,10 +184,14 @@ void main() {
       expect(panelReadiness.contains('x-admin-token'), isFalse);
 
       // Remote compliance events fetch (RemoteComplianceEventsFetcher-equivalent).
+      // CHIRON-P0-2A follow-up A: the state class now also contains a
+      // sibling `_dispatchLoad()` wrapper (which handles the hydration
+      // generation guard); this regex anchors on the actual network
+      // fetcher `_loadRemoteEvents` to keep the invariant precise.
       final events = _extractMethodBody(
         dashboardSrc,
         RegExp(
-          r'Future<RemoteComplianceEventsResponse>\s+\w+\s*\(',
+          r'Future<RemoteComplianceEventsResponse>\s+_loadRemoteEvents\s*\(',
         ),
       );
       expect(

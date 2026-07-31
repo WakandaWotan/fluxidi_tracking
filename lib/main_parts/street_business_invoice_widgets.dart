@@ -56,6 +56,8 @@ String _tl(
       return es;
     case AppLanguage.nl:
       return nl;
+    case AppLanguage.de:
+      return en;
   }
 }
 
@@ -71,6 +73,8 @@ String _langKey(AppLanguage lang) {
       return 'fr';
     case AppLanguage.es:
       return 'es';
+    case AppLanguage.de:
+      return 'de';
   }
 }
 

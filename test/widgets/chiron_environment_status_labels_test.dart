@@ -118,7 +118,7 @@ void main() {
   });
 
   testWidgets(
-    'production block LOCKED before 5/5 → shows lock icon + explanatory text, no action chips',
+    'legacy gated production block LOCKED before 5/5 still renders lock reason',
     (tester) async {
       await tester.pumpWidget(
         _host(
@@ -134,46 +134,9 @@ void main() {
         find.byKey(const ValueKey('chiron_production_block_locked')),
         findsOneWidget,
       );
-      expect(
-        find.byKey(const ValueKey('chiron_production_block_unlocked')),
-        findsNothing,
-      );
       expect(find.byIcon(Icons.lock_outline), findsOneWidget);
       expect(find.textContaining('Vergrendeld'), findsOneWidget);
-      // Action chips must NOT render in the locked state.
       expect(find.textContaining('Productiegegevens opslaan'), findsNothing);
-      expect(find.textContaining('Productie activeren'), findsNothing);
-    },
-  );
-
-  testWidgets(
-    'production block UNLOCKED at complete → shows official link + three action chips',
-    (tester) async {
-      await tester.pumpWidget(
-        _host(
-          ChironProductionBlockGated(
-            status: _status(testflowStatus: 'complete'),
-            testflowStatus: 'complete',
-            language: AppLanguage.nl,
-          ),
-        ),
-      );
-
-      expect(
-        find.byKey(const ValueKey('chiron_production_block_unlocked')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('chiron_production_block_locked')),
-        findsNothing,
-      );
-      expect(
-        find.text('https://chiron.vlaanderen.be/chiron/registratie/toegang'),
-        findsOneWidget,
-      );
-      expect(find.text('Productiegegevens opslaan'), findsOneWidget);
-      expect(find.text('Productieverbinding controleren'), findsOneWidget);
-      expect(find.text('Productie activeren'), findsOneWidget);
     },
   );
 

@@ -804,6 +804,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -4625,6 +4627,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         return 'Comprobando la reserva...';
       case AppLanguage.nl:
         return 'Boeking wordt gecontroleerd...';
+    case AppLanguage.de:
+      return 'Checking booking status...';
     }
   }
 
@@ -4638,6 +4642,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         return 'Comprobando el pago...';
       case AppLanguage.nl:
         return 'Betaling controleren...';
+    case AppLanguage.de:
+      return 'Checking booking status...';
     }
   }
 
@@ -4651,6 +4657,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         return 'No pudimos confirmar la reserva. Revisa Mis reservas o actualiza.';
       case AppLanguage.nl:
         return 'We konden de bevestiging niet controleren. Kijk bij Mijn boekingen of vernieuw.';
+    case AppLanguage.de:
+      return 'Checking booking status...';
     }
   }
 
@@ -6677,6 +6685,8 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 

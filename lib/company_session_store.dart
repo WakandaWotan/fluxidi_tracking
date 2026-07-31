@@ -194,6 +194,8 @@ class CompanyProfile {
           return 'Suspendu';
         case AppLanguage.es:
           return 'Suspendido';
+        case AppLanguage.de:
+          return 'Suspended';
       }
     }
     if (isVerified) {
@@ -206,6 +208,8 @@ class CompanyProfile {
           return 'Vérifié';
         case AppLanguage.es:
           return 'Verificado';
+        case AppLanguage.de:
+          return 'Suspended';
       }
     }
     switch (lang) {
@@ -217,6 +221,8 @@ class CompanyProfile {
         return 'Non vérifié';
       case AppLanguage.es:
         return 'No verificado';
+      case AppLanguage.de:
+        return 'Suspended';
     }
   }
 
@@ -233,6 +239,8 @@ class CompanyProfile {
         return 'Cette entreprise a été créée localement. Les fonctions en ligne complètes seront activées après vérification.';
       case AppLanguage.es:
         return 'Esta empresa se creó localmente. Las funciones en vivo completas se activarán después de la verificación.';
+      case AppLanguage.de:
+        return 'Verified';
     }
   }
 

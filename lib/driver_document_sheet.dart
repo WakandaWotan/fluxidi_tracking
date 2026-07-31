@@ -28,6 +28,8 @@ String _ddT(
       return fr;
     case AppLanguage.es:
       return es;
+    case AppLanguage.de:
+      return en;
   }
 }
 

@@ -93,6 +93,7 @@ import {
   CHIRON_CONFIG_STATUS_PATH,
   CHIRON_CONFIG_TEST_CREDENTIALS_PATH,
   CHIRON_CONFIG_TEST_CREDENTIALS_CLEAR_PATH,
+  CHIRON_CONFIG_PRODUCTION_CREDENTIALS_PATH,
   CHIRON_CONNECTION_TEST_PATH,
   CHIRON_READINESS_PATH,
   CHIRON_SCORE_SUMMARY_PATH,
@@ -38172,6 +38173,40 @@ export default {
           method: "POST",
           body: proxyBody,
           compliancePath: CHIRON_CONNECTION_TEST_PATH,
+        });
+      }
+
+      /* RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: production credentials save. */
+      if (url.pathname === CHIRON_CONFIG_PRODUCTION_CREDENTIALS_PATH) {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "Method Not Allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_CHIRON_CONFIG_PRODUCTION_CREDENTIALS_POST",
+        });
+        if (!authScope.ok) return authScope.response;
+        const bodyScopeCheck = _validateSettingsPayloadScope(body, authScope.explicitScope);
+        if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
+        const proxyBody =
+          body && typeof body === "object" && !Array.isArray(body)
+            ? {
+                ...body,
+                tenant_id: authScope.explicitScope.tenant_id,
+                company_id: authScope.explicitScope.company_id,
+              }
+            : {
+                tenant_id: authScope.explicitScope.tenant_id,
+                company_id: authScope.explicitScope.company_id,
+              };
+        return _proxyChironConfigStatusToComplianceWorker(env, authScope.explicitScope, {
+          method: "POST",
+          body: proxyBody,
+          compliancePath: CHIRON_CONFIG_PRODUCTION_CREDENTIALS_PATH,
         });
       }
 

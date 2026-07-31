@@ -2798,6 +2798,8 @@ class _BusinessOrientationFlowPageState
         return tr.fr;
       case AppLanguage.es:
         return tr.es;
+      case AppLanguage.de:
+        return tr.en;
     }
   }
 
@@ -4422,6 +4424,7 @@ class _BusinessOrientationFlowPageState
         return 0.92;
       case AppLanguage.nl:
       case AppLanguage.en:
+      case AppLanguage.de:
         return 1.0;
     }
   }
@@ -4893,6 +4896,7 @@ class _BusinessOrientationFlowPageState
         return 0.92;
       case AppLanguage.nl:
       case AppLanguage.en:
+      case AppLanguage.de:
         return 1.0;
     }
   }
@@ -5496,6 +5500,7 @@ class _BusinessOrientationFlowPageState
         return 0.92;
       case AppLanguage.nl:
       case AppLanguage.en:
+      case AppLanguage.de:
         return 1.0;
     }
   }
@@ -6014,6 +6019,7 @@ class _BusinessOrientationFlowPageState
         return 0.92;
       case AppLanguage.nl:
       case AppLanguage.en:
+      case AppLanguage.de:
         return 1.0;
     }
   }
@@ -6732,6 +6738,7 @@ class _BusinessOrientationFlowPageState
         return 0.92;
       case AppLanguage.nl:
       case AppLanguage.en:
+      case AppLanguage.de:
         return 1.0;
     }
   }
@@ -7278,6 +7285,7 @@ class _BusinessOrientationFlowPageState
         return 0.92;
       case AppLanguage.nl:
       case AppLanguage.en:
+      case AppLanguage.de:
         return 1.0;
     }
   }
@@ -7818,6 +7826,7 @@ class _BusinessOrientationFlowPageState
         return 0.92;
       case AppLanguage.nl:
       case AppLanguage.en:
+      case AppLanguage.de:
         return 1.0;
     }
   }
@@ -8402,6 +8411,7 @@ class _BusinessOrientationFlowPageState
         return 0.92;
       case AppLanguage.nl:
       case AppLanguage.en:
+      case AppLanguage.de:
         return 1.0;
     }
   }
@@ -8793,6 +8803,7 @@ class _BusinessOrientationFlowPageState
         return 0.92;
       case AppLanguage.nl:
       case AppLanguage.en:
+      case AppLanguage.de:
         return 1.0;
     }
   }
@@ -8825,6 +8836,7 @@ class _BusinessOrientationFlowPageState
       case AppLanguage.nl:
         return 0.95;
       case AppLanguage.en:
+      case AppLanguage.de:
         return 1.0;
     }
   }
@@ -9331,6 +9343,7 @@ class _BusinessOrientationFlowPageState
       case AppLanguage.nl:
         return 0.96;
       case AppLanguage.en:
+      case AppLanguage.de:
         return 1.0;
     }
   }
@@ -10030,6 +10043,7 @@ class _BusinessOrientationFlowPageState
         return 0.92;
       case AppLanguage.nl:
       case AppLanguage.en:
+      case AppLanguage.de:
         return 1.0;
     }
   }
@@ -10422,6 +10436,7 @@ class _BusinessOrientationFlowPageState
         return 0.92;
       case AppLanguage.nl:
       case AppLanguage.en:
+      case AppLanguage.de:
         return 1.0;
     }
   }
@@ -11820,6 +11835,7 @@ class _BusinessOrientationFlowPageState
       AppLanguage.en => ('Everything starts from your ', 'Fluxidi cockpit'),
       AppLanguage.fr => ('Tout commence depuis votre ', 'cockpit Fluxidi'),
       AppLanguage.es => ('Todo empieza desde tu ', 'cockpit Fluxidi'),
+    AppLanguage.de => ('Everything starts from your ', 'Fluxidi cockpit'),
     };
     const List<Shadow> textShadows = <Shadow>[
       Shadow(color: Color(0xCC000000), blurRadius: 10, offset: Offset(0, 1)),

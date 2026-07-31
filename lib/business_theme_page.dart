@@ -112,6 +112,8 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
         return es;
       case AppLanguage.nl:
         return nl;
+    case AppLanguage.de:
+      return en;
     }
   }
 

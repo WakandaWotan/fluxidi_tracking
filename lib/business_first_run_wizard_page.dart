@@ -43,6 +43,8 @@ class BusinessFirstRunSetupChoicePage extends StatelessWidget {
         return tr.fr;
       case AppLanguage.es:
         return tr.es;
+      case AppLanguage.de:
+        return tr.en;
     }
   }
 
@@ -504,6 +506,8 @@ class _BusinessFirstRunWizardPageState
         return tr.fr;
       case AppLanguage.es:
         return tr.es;
+      case AppLanguage.de:
+        return tr.en;
     }
   }
 

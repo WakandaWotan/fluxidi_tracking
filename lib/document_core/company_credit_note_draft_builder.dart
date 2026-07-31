@@ -24,6 +24,8 @@ String _documentCoreLanguageCode() {
       return 'es';
     case AppLanguage.nl:
       return 'nl';
+  case AppLanguage.de:
+    return 'en';
   }
 }
 

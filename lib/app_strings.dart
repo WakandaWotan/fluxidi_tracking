@@ -1,16 +1,18 @@
-enum AppLanguage { nl, en, fr, es }
+enum AppLanguage { nl, en, fr, es, de }
 
 class LocalizedText {
   final String nl;
   final String en;
   final String fr;
   final String es;
+  final String? de;
 
   const LocalizedText({
     required this.nl,
     required this.en,
     required this.fr,
     required this.es,
+    this.de,
   });
 
   String of(AppLanguage lang) {
@@ -23,6 +25,8 @@ class LocalizedText {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return de ?? en;
     }
   }
 }
@@ -284,6 +288,8 @@ class AppStrings {
         return _fr;
       case AppLanguage.es:
         return _es;
+      case AppLanguage.de:
+        return _en;
     }
   }
 

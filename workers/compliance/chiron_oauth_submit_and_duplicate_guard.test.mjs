@@ -395,7 +395,9 @@ test("taxirit-post: AbortController timeout → ambiguous (timeout)", async () =
 // -----------------------------------------------------------------------
 // C. OAuth acquire scope + scheme isolation.
 // -----------------------------------------------------------------------
-test("oauth-acquire: env != test blocks (no fetch)", async () => {
+test("oauth-acquire: production without credentials → missing_production_credentials (no ACC fallback)", async () => {
+  // RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: production OAuth is allowed,
+  // but without stored production credentials it fails closed — never ACC.
   const stub = installFetchStub(() => {
     throw new Error("no fetch expected");
   });
@@ -407,7 +409,7 @@ test("oauth-acquire: env != test blocks (no fetch)", async () => {
       "production",
     );
     assert.equal(res.ok, false);
-    assert.equal(res.error, "unsupported_environment");
+    assert.equal(res.error, "missing_production_credentials");
     assert.equal(stub.calls.length, 0);
   } finally {
     stub.restore();

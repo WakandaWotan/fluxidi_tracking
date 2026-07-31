@@ -861,6 +861,8 @@ class _L {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 }

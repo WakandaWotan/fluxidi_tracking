@@ -13,6 +13,8 @@ import 'package:fluxidi_tracking/business_theme_page.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/chiron_company_connection_config.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/widgets/chiron_environment_status_labels.dart';
+import 'package:fluxidi_tracking/widgets/chiron_self_service_wizard.dart';
 import 'package:fluxidi_tracking/payment/mollie_capability_status.dart';
 import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
 import 'package:fluxidi_tracking/payment/payment_method_logo.dart';
@@ -447,6 +449,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   }
 
@@ -520,6 +524,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         return 'Étape $i sur $t';
       case AppLanguage.es:
         return 'Paso $i de $t';
+      case AppLanguage.de:
+        return 'Step $i of $t';
     }
   }
 
@@ -987,12 +993,31 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   }
 
   _SetupStatus _chironConnectionSetupStatus() {
+    // RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: never show Complete for
+    // ACC-test-only. Complete only when production submission is truly active.
     if (!_chironEnabled) {
       return _SetupStatus.optional;
     }
+    final backend = backendChironConnectionStatusNotifier.value;
+    if (backend?.productionSubmitActive == true) {
+      return _SetupStatus.complete;
+    }
+    if (backend?.lastConnectionStatus == ChironConnectionStatus.testFailed ||
+        backend?.productionLastConnectionStatus ==
+            ChironConnectionStatus.testFailed) {
+      return _SetupStatus.attention;
+    }
+    if (backend?.testCredentialsStored == true &&
+        backend?.lastConnectionStatus == ChironConnectionStatus.testPassed &&
+        backend?.testflowStatus.trim().toLowerCase() != 'complete') {
+      return _SetupStatus.activationPending;
+    }
+    if (backend?.testflowStatus.trim().toLowerCase() == 'complete') {
+      return _SetupStatus.activationPending; // production still to set up
+    }
     switch (_chironConnectionStatus) {
       case ChironConnectionStatus.testPassed:
-        return _SetupStatus.complete;
+        return _SetupStatus.activationPending;
       case ChironConnectionStatus.testFailed:
         return _SetupStatus.attention;
       case ChironConnectionStatus.testPending:
@@ -1064,10 +1089,6 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   }
 
   Widget _chironBackendStatusPanel() {
-    final officialSubmitEnabled =
-        backendChironConnectionStatusNotifier.value?.officialSubmitEnabled ==
-            true &&
-        _chironBackendConfirmed;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(10),
@@ -1129,31 +1150,19 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             ),
             style: TextStyle(color: _textSecondary, fontSize: 11.5),
           ),
-          const SizedBox(height: 4),
-          Text(
-            _t(
-              nl: officialSubmitEnabled
-                  ? 'Officiële doorgifte: aan'
-                  : 'Officiële doorgifte: uit',
-              en: officialSubmitEnabled
-                  ? 'Official submission: on'
-                  : 'Official submission: off',
-              fr: officialSubmitEnabled
-                  ? 'Transmission officielle : activée'
-                  : 'Transmission officielle : désactivée',
-              es: officialSubmitEnabled
-                  ? 'Envío oficial: activado'
-                  : 'Envío oficial: desactivado',
-            ),
-            style: TextStyle(color: _textSecondary, fontSize: 11.5),
+          const SizedBox(height: 8),
+          ChironEnvironmentStatusLabels(
+            status: backendChironConnectionStatusNotifier.value,
+            language: appConfig.currentLanguage,
+            textColor: _textPrimary,
+            mutedColor: _textSecondary,
           ),
           const SizedBox(height: 8),
           Text(
-            _t(
-              nl: 'Volgende stap: testgegevens toevoegen en verbinding testen.',
-              en: 'Next step: add test credentials and test the connection.',
-              fr: 'Étape suivante : ajouter les identifiants de test et tester la connexion.',
-              es: 'Siguiente paso: añadir credenciales de prueba y probar la conexión.',
+            chironHonestNextStepLabel(
+              status: backendChironConnectionStatusNotifier.value,
+              language: appConfig.currentLanguage,
+              enabled: _chironEnabled,
             ),
             style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
           ),
@@ -9253,6 +9262,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             return entry[3];
           case AppLanguage.es:
             return entry[4];
+          case AppLanguage.de:
+            return entry[2];
         }
       }
     }
@@ -11782,6 +11793,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           DropdownMenuItem(
                             value: AppLanguage.es,
                             child: Text('Español'),
+                          ),
+                          DropdownMenuItem(
+                            value: AppLanguage.de,
+                            child: Text('Deutsch'),
                           ),
                         ],
                         onChanged: (v) {

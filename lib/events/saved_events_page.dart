@@ -40,6 +40,8 @@ class _SavedEventsPageState extends State<SavedEventsPage> {
         return es;
       case AppLanguage.nl:
         return nl;
+    case AppLanguage.de:
+      return en;
     }
   }
 

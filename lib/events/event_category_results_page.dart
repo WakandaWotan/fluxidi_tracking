@@ -83,6 +83,8 @@ class _EventCategoryResultsPageState extends State<EventCategoryResultsPage> {
         return es;
       case AppLanguage.nl:
         return nl;
+    case AppLanguage.de:
+      return en;
     }
   }
 
