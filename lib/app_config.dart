@@ -748,6 +748,20 @@ class BackendChironConnectionStatus {
   final int testMessagesRequired;
   final int testMessagesSentCount;
   final String? updatedAt;
+  // RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: state-machine projections.
+  // `effectiveChironEnvironment` is the authoritative routing target for new
+  // rides ("test" or "production"). `accTestSubmitActive` and
+  // `productionSubmitActive` are two separate booleans that back the split
+  // status labels in the operator UI. The three production_last_connection_*
+  // fields mirror the test connection metadata but for the separate
+  // production OAuth check.
+  final String effectiveChironEnvironment;
+  final bool accTestSubmitActive;
+  final bool productionSubmitActive;
+  final String productionLastConnectionStatus;
+  final String? productionLastConnectionTestAt;
+  final String productionLastConnectionStatusMessage;
+  final String testflowStatus;
 
   const BackendChironConnectionStatus({
     this.ok = false,
@@ -768,6 +782,14 @@ class BackendChironConnectionStatus {
     this.testMessagesRequired = 10,
     this.testMessagesSentCount = 0,
     this.updatedAt,
+    this.effectiveChironEnvironment = ChironConnectionEnvironment.test,
+    this.accTestSubmitActive = false,
+    this.productionSubmitActive = false,
+    this.productionLastConnectionStatus =
+        ChironBackendLastConnectionStatus.neverTested,
+    this.productionLastConnectionTestAt,
+    this.productionLastConnectionStatusMessage = '',
+    this.testflowStatus = 'not_started',
   });
 
   factory BackendChironConnectionStatus.fromJson(Map<String, dynamic> json) {
@@ -874,6 +896,39 @@ class BackendChironConnectionStatus {
         'testMessagesSentCount',
       ], 0),
       updatedAt: nullableTextAny(const ['updated_at', 'updatedAt']),
+      effectiveChironEnvironment:
+          textAny(const [
+                'effective_chiron_environment',
+                'effectiveChironEnvironment',
+              ], ChironConnectionEnvironment.test)
+                  .toLowerCase() ==
+              ChironConnectionEnvironment.production
+          ? ChironConnectionEnvironment.production
+          : ChironConnectionEnvironment.test,
+      accTestSubmitActive: boolAny(const [
+        'acc_test_submit_active',
+        'accTestSubmitActive',
+      ], false),
+      productionSubmitActive: boolAny(const [
+        'production_submit_active',
+        'productionSubmitActive',
+      ], false),
+      productionLastConnectionStatus: textAny(const [
+        'production_last_connection_status',
+        'productionLastConnectionStatus',
+      ], ChironBackendLastConnectionStatus.neverTested).toLowerCase(),
+      productionLastConnectionTestAt: nullableTextAny(const [
+        'production_last_connection_test_at',
+        'productionLastConnectionTestAt',
+      ]),
+      productionLastConnectionStatusMessage: textAny(const [
+        'production_last_connection_status_message',
+        'productionLastConnectionStatusMessage',
+      ], ''),
+      testflowStatus: textAny(const [
+        'testflow_status',
+        'testflowStatus',
+      ], 'not_started').toLowerCase(),
     );
   }
 }

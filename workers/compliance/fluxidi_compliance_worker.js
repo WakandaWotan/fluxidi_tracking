@@ -9061,16 +9061,40 @@ function recordChironTestflowSubmitResult(
 
   base.testflow_last_error = null;
 
+  // RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: cap counter increments at the
+  // required maxima. Ritnummer history still records every new unique
+  // ritnummer (unbounded to CHIRON_TESTFLOW_RITNUMMER_HISTORY_MAX) so extra
+  // ACC submits past 5/5 remain audit-visible, but the visible counters
+  // freeze at the required value ("de acceptatietellers mogen stoppen/cappen
+  // op 5/5"). ACC-verzending continues regardless — the auto-submit gate
+  // does NOT consult counters.
+  const capIncrement = (current, required) =>
+    Math.min(current + 1, Number.isFinite(required) ? required : current + 1);
   if (status === "vertrek" && cleanRit && !departureRits.includes(cleanRit)) {
-    base.test_departure_sent_count = progress.test_departure_sent_count + 1;
-    base.test_messages_sent_count = progress.test_messages_sent_count + 1;
+    base.test_departure_sent_count = capIncrement(
+      progress.test_departure_sent_count,
+      progress.test_departure_required,
+    );
+    base.test_messages_sent_count = capIncrement(
+      progress.test_messages_sent_count,
+      progress.test_messages_required,
+    );
     base.testflow_ritnummers_departure = _chironTestflowAppendRit(departureRits, cleanRit);
   } else if (status === "aankomst" && cleanRit && !arrivalRits.includes(cleanRit)) {
-    base.test_arrival_sent_count = progress.test_arrival_sent_count + 1;
-    base.test_messages_sent_count = progress.test_messages_sent_count + 1;
+    base.test_arrival_sent_count = capIncrement(
+      progress.test_arrival_sent_count,
+      progress.test_arrival_required,
+    );
+    base.test_messages_sent_count = capIncrement(
+      progress.test_messages_sent_count,
+      progress.test_messages_required,
+    );
     base.testflow_ritnummers_arrival = _chironTestflowAppendRit(arrivalRits, cleanRit);
     if (!completedRits.includes(cleanRit)) {
-      base.test_rides_completed_count = progress.test_rides_completed_count + 1;
+      base.test_rides_completed_count = capIncrement(
+        progress.test_rides_completed_count,
+        progress.test_rides_required,
+      );
       base.testflow_ritnummers_completed = _chironTestflowAppendRit(completedRits, cleanRit);
     }
   }
@@ -9111,6 +9135,14 @@ function buildChironTestflowResetStatusDoc(
   // OAuth test credentials + `last_connection_status` are preserved: the UI
   // promises credentials survive a reset, and the operator has already paid
   // the cost of OAuth setup.
+  //
+  // RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: production credential presence
+  // marker + production connection test result are ALSO preserved across a
+  // reset. Only the acceptance counters/cutoff/production_enabled toggle are
+  // affected. This mirrors the new UX contract: "productiecredentials niet
+  // verwijderen" — an operator who has already configured production stays
+  // exactly one explicit toggle away from re-activating once the fresh
+  // acceptance run passes.
   return {
     ...existing,
     schema_version: CHIRON_CONNECTION_STATUS_SCHEMA,
@@ -9119,6 +9151,15 @@ function buildChironTestflowResetStatusDoc(
     production_enabled: false,
     environment: "test",
     official_submit_enabled: false,
+    production_credentials_stored:
+      existing.production_credentials_stored === true,
+    production_last_connection_status:
+      cleanText(existing.production_last_connection_status, 64).toLowerCase() ||
+      "never_tested",
+    production_last_connection_test_at:
+      cleanText(existing.production_last_connection_test_at, 64) || null,
+    production_last_connection_status_message:
+      cleanText(existing.production_last_connection_status_message, 256) || "",
     test_messages_sent_count: 0,
     test_departure_sent_count: 0,
     test_arrival_sent_count: 0,
@@ -9294,6 +9335,52 @@ function buildChironOAuthLiveTestFailedStatusFields({
   };
 }
 
+// RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: pure derivation of the effective
+// Chiron submit target. Returns "production" iff every hard invariant is met,
+// otherwise "test" (which is fail-closed default even when the KV doc has been
+// corrupted or is missing). Consumers MUST route auto-submits based on this
+// value only — the raw `environment` / `production_enabled` fields on the KV
+// doc are advisory. Kept intentionally strict so a partial rollout of
+// production wiring (e.g. credentials stored but OAuth never tested) cannot
+// silently start routing live rides to production.
+function _chironDeriveEffectiveChironEnvironment(payloadOrStored) {
+  const doc =
+    payloadOrStored &&
+    typeof payloadOrStored === "object" &&
+    !Array.isArray(payloadOrStored)
+      ? payloadOrStored
+      : null;
+  if (!doc) return "test";
+  if (doc.enabled === true &&
+      doc.environment === "production" &&
+      doc.production_enabled === true &&
+      doc.production_credentials_stored === true &&
+      cleanText(doc.production_last_connection_status, 64).toLowerCase() === "test_passed") {
+    return "production";
+  }
+  return "test";
+}
+
+// RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: production connection status
+// projection. Mirrors the `last_connection_*` fields but ONLY for the
+// production OAuth test. Falls back to "never_tested" when the KV doc predates
+// this feature. Never leaks unrelated fields.
+function _chironProductionConnectionStatusResponseFields(stored) {
+  const doc =
+    stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+  const rawStatus = cleanText(doc.production_last_connection_status, 64).toLowerCase();
+  const status = CHIRON_CONNECTION_ALLOWED_STATUSES.has(rawStatus)
+    ? rawStatus
+    : "never_tested";
+  return {
+    production_last_connection_status: status,
+    production_last_connection_test_at:
+      cleanText(doc.production_last_connection_test_at, 64) || null,
+    production_last_connection_status_message:
+      cleanText(doc.production_last_connection_status_message, 256) || "",
+  };
+}
+
 function buildChironInternalTestStatusResponseFields(stored) {
   if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
     return {};
@@ -9348,14 +9435,48 @@ function buildChironConnectionStatusResponse(tenantId, companyId, stored) {
   // Chiron Connect 4C: testflow progress (with defaults for older docs).
   const testflow = getChironTestflowProgress(stored);
 
-  // Production stays false unless the OAuth test passed AND the full acceptance
-  // testflow is complete. OAuth test_passed alone is never sufficient.
+  // RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: production connection status
+  // and hard fail-closed derivation. `production_enabled` in the response is
+  // TRUE only when *every* invariant holds — legacy invalid stored states
+  // (e.g. `production_enabled=true` with `production_credentials_stored=false`)
+  // are neutralized on the read side so no downstream consumer can act on
+  // them. The stored KV doc is not mutated here; the config-status POST
+  // validator rejects new invalid writes.
+  const productionConnFields = _chironProductionConnectionStatusResponseFields(stored);
+  const productionCredentialsStored = stored.production_credentials_stored === true;
+  const productionConnectionPassed =
+    productionConnFields.production_last_connection_status === "test_passed";
   const productionEnabled =
     stored.production_enabled === true &&
+    productionCredentialsStored &&
+    productionConnectionPassed &&
     lastConnectionStatus === "test_passed" &&
     testflow.testflow_status === "complete";
 
-  return {
+  // RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: cap counters at their required
+  // maxima for UI/state-machine consumers. The raw stored counts stay
+  // uncapped so audit history is preserved; the client should never render a
+  // "6/5" or "11/10". A ride submitted after 5/5 still contributes to
+  // ridenumbers history (dedup) but the projected counter freezes.
+  const cap = (n, max) => (Number.isFinite(n) && Number.isFinite(max) ? Math.min(n, max) : n);
+  const cappedMessagesSent = cap(
+    testflow.test_messages_sent_count,
+    testflow.test_messages_required,
+  );
+  const cappedDepartureSent = cap(
+    testflow.test_departure_sent_count,
+    testflow.test_departure_required,
+  );
+  const cappedArrivalSent = cap(
+    testflow.test_arrival_sent_count,
+    testflow.test_arrival_required,
+  );
+  const cappedRidesCompleted = cap(
+    testflow.test_rides_completed_count,
+    testflow.test_rides_required,
+  );
+
+  const payload = {
     ok: true,
     schema_version: CHIRON_CONNECTION_STATUS_SCHEMA,
     tenant_id: tenantId,
@@ -9365,23 +9486,24 @@ function buildChironConnectionStatusResponse(tenantId, companyId, stored) {
     region,
     production_enabled: productionEnabled,
     test_credentials_stored: stored.test_credentials_stored === true,
-    production_credentials_stored: stored.production_credentials_stored === true,
+    production_credentials_stored: productionCredentialsStored,
     last_connection_status: lastConnectionStatus,
     last_connection_test_at: cleanText(stored.last_connection_test_at, 64) || null,
     last_connection_status_message:
       cleanText(stored.last_connection_status_message, 256) || "",
+    ...productionConnFields,
     official_submit_enabled: false,
     official_submission_performed_at:
       cleanText(stored.official_submission_performed_at, 64) || null,
     test_messages_required: testflow.test_messages_required,
-    test_messages_sent_count: testflow.test_messages_sent_count,
+    test_messages_sent_count: cappedMessagesSent,
     // Chiron Connect 4C: acceptance testflow projection.
     test_rides_required: testflow.test_rides_required,
     test_departure_required: testflow.test_departure_required,
     test_arrival_required: testflow.test_arrival_required,
-    test_departure_sent_count: testflow.test_departure_sent_count,
-    test_arrival_sent_count: testflow.test_arrival_sent_count,
-    test_rides_completed_count: testflow.test_rides_completed_count,
+    test_departure_sent_count: cappedDepartureSent,
+    test_arrival_sent_count: cappedArrivalSent,
+    test_rides_completed_count: cappedRidesCompleted,
     testflow_status: testflow.testflow_status,
     testflow_completed_at: testflow.testflow_completed_at,
     testflow_updated_at: testflow.testflow_updated_at,
@@ -9398,6 +9520,22 @@ function buildChironConnectionStatusResponse(tenantId, companyId, stored) {
     updated_at: cleanText(stored.updated_at, 64) || null,
     ...buildChironInternalTestStatusResponseFields(stored),
   };
+
+  // RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: expose the effective Chiron
+  // environment and split test/production submission active flags so the
+  // Flutter app can render two distinct status lines
+  // ("ACC-testinzending: actief/inactief" + "Productie-inzending:
+  // actief/inactief") without re-deriving business logic. These are strictly
+  // read-only projections; the config-status POST cannot set them directly.
+  const effectiveEnv = _chironDeriveEffectiveChironEnvironment(payload);
+  payload.effective_chiron_environment = effectiveEnv;
+  payload.acc_test_submit_active =
+    effectiveEnv === "test" &&
+    payload.enabled === true &&
+    payload.test_credentials_stored === true &&
+    payload.last_connection_status === "test_passed";
+  payload.production_submit_active = effectiveEnv === "production";
+  return payload;
 }
 
 async function readChironConnectionStatusRaw(env, tenantId, companyId) {
@@ -9465,6 +9603,25 @@ function parseChironConfigStatusPostInput(body, existingStored) {
     return { error: "production_requires_test_passed" };
   }
 
+  // RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: fail-closed on the previously
+  // permitted invalid combination `production_enabled=true` +
+  // `production_credentials_stored=false`. Even when the OAuth *test* status
+  // is "test_passed", the operator must ALSO have stored production
+  // credentials AND passed a separate production connection test before the
+  // backend accepts a production toggle. Refusing at the boundary keeps the
+  // stored doc in a strictly valid shape so downstream readers never see
+  // legacy corruption.
+  if (productionEnabledRequested && existing.production_credentials_stored !== true) {
+    return { error: "production_credentials_missing" };
+  }
+  const existingProdConnStatus = cleanText(
+    existing.production_last_connection_status,
+    64,
+  ).toLowerCase();
+  if (productionEnabledRequested && existingProdConnStatus !== "test_passed") {
+    return { error: "production_connection_not_tested" };
+  }
+
   const testMessagesSent = Number(existing.test_messages_sent_count);
   const safeTestMessagesSent =
     Number.isFinite(testMessagesSent) && testMessagesSent >= 0
@@ -9498,6 +9655,8 @@ function parseChironConfigStatusPostInput(body, existingStored) {
   const productionEnabledFinal =
     productionEnabledRequested &&
     existingStatus === "test_passed" &&
+    existing.production_credentials_stored === true &&
+    existingProdConnStatus === "test_passed" &&
     safeTestMessagesSent >= safeTestMessagesRequired &&
     testflowProgress.testflow_status === "complete";
 
@@ -9569,6 +9728,16 @@ function parseChironConfigStatusPostInput(body, existingStored) {
       last_connection_test_at: cleanText(existing.last_connection_test_at, 64) || null,
       last_connection_status_message:
         cleanText(existing.last_connection_status_message, 256) || "",
+      // RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: production connection
+      // status fields survive every config-status POST. The dedicated
+      // production connection-test endpoint is the only writer; other writes
+      // must preserve them so a stale config-save cannot silently reset a
+      // successful production OAuth check to `never_tested`.
+      production_last_connection_status: existingProdConnStatus || "never_tested",
+      production_last_connection_test_at:
+        cleanText(existing.production_last_connection_test_at, 64) || null,
+      production_last_connection_status_message:
+        cleanText(existing.production_last_connection_status_message, 256) || "",
       test_messages_sent_count: safeTestMessagesSent,
       test_messages_required: safeTestMessagesRequired,
       // Chiron Connect 4C: preserve acceptance testflow progress across config
@@ -10801,6 +10970,14 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
             status_key: arrivalStatusKey,
           };
         }
+        // RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: arrivals inherit the
+        // effective environment stamp of their paired departure so that a
+        // mid-ride production activation NEVER redirects the arrival to a
+        // different Chiron environment. Falls back to the current scope's
+        // effective env only when the paired departure has no stamp (legacy).
+        const inheritedEnvForArrival =
+          cleanText(departureStatus?.effective_environment, 32).toLowerCase() ||
+          _chironDeriveEffectiveChironEnvironment(statusPayload);
         const waitingDoc = {
           schema_version: CHIRON_EXPORT_STATUS_SCHEMA,
           tenant_id: scope.tenant_id,
@@ -10825,6 +11002,7 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
           paired_departure_sync_state: departureSyncState || null,
           auto_submit: true,
           auto_submit_source: source,
+          effective_environment: inheritedEnvForArrival,
         };
         await _chironWriteExportStatus(env, arrivalStatusKey, waitingDoc);
         console.log(
@@ -10904,6 +11082,87 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
       };
     }
 
+    // RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: per-ride environment
+    // ownership. Depart-events stamp the current effective Chiron environment
+    // on the export status doc; the arrival read path inherits that stamp so a
+    // mid-ride cutover cannot redirect the paired arrival to a different
+    // environment. For arrivals we inherit from the departure (already
+    // resolved above); for departures we stamp the current effective env.
+    // Note: with fail-closed production gating, this value is "test" today.
+    // The stamp is defensive: it guarantees that once production wiring lands
+    // in a later phase, cutovers only ever affect NEW rides — every
+    // in-flight ritnummer completes in the environment it started in.
+    let effectiveEnvForThisEvent;
+    if (messageType === "arrival") {
+      // Recompute the paired departure's inherited env (the branch above only
+      // wrote it for the waiting_for_departure case; here we know departure
+      // IS synced so we still honor its stored environment stamp).
+      const departureIdempotencyKey =
+        _chironPairedDepartureIdempotencyKeyForArrivalDraft(scope, officialPayload);
+      const departureStatusKey = departureIdempotencyKey
+        ? buildChironExportStatusKey(
+            tenantSegment,
+            companySegment,
+            departureIdempotencyKey,
+          )
+        : null;
+      const departureStatus = departureStatusKey
+        ? await _chironReadExportStatus(env, departureStatusKey)
+        : null;
+      effectiveEnvForThisEvent =
+        cleanText(departureStatus?.effective_environment, 32).toLowerCase() ||
+        _chironDeriveEffectiveChironEnvironment(statusPayload);
+    } else {
+      effectiveEnvForThisEvent = _chironDeriveEffectiveChironEnvironment(statusPayload);
+    }
+
+    // RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: production events must NOT
+    // fall back to ACC. When the effective env is "production" we do not have
+    // a live production submit path today — the event is durably queued with
+    // sync_state="queued" + effective_environment="production" so an operator
+    // (and future production submit worker) can pick it up. NEVER silently
+    // downgrades to ACC. Fail-closed default keeps this branch essentially
+    // unreachable for the current release (production_enabled cannot become
+    // true without production credentials + separate OAuth test).
+    if (effectiveEnvForThisEvent === "production") {
+      const queuedDoc = {
+        schema_version: CHIRON_EXPORT_STATUS_SCHEMA,
+        tenant_id: scope.tenant_id,
+        company_id: scope.company_id,
+        event_id: cleanText(event.event_id, 200) || null,
+        official_idempotency_key: officialIdempotencyKey,
+        official_ritnummer: ritnummer,
+        official_status: officialStatus,
+        official_payload_shape: "chiron_taxirit_api_v1",
+        sync_state: "queued",
+        failure_kind: null,
+        verification_required_reason: null,
+        external_status_code: null,
+        external_reference: null,
+        response_shape: null,
+        fouten_count: null,
+        last_attempt_at: null,
+        attempt_count: Number(previousStatus?.attempt_count || 0),
+        sanitized_error: null,
+        auto_submit: true,
+        auto_submit_source: source,
+        effective_environment: "production",
+        queued_reason: "production_submit_path_not_configured",
+      };
+      await _chironWriteExportStatus(env, statusKey, queuedDoc);
+      console.log(
+        `[CHIRON_AUTO_SUBMIT][QUEUED_PRODUCTION] tenant=${logMask(scope.tenant_id)} company=${logMask(scope.company_id)} ritnummer=${ritnummer} message_type=${messageType} source=${source}`,
+      );
+      return {
+        ok: false,
+        skipped: true,
+        reason: "queued_production_no_fallback",
+        message_type: messageType,
+        status_key: statusKey,
+        source,
+      };
+    }
+
     const attemptCount = Number(previousStatus?.attempt_count || 0) + 1;
     const attemptedAt = nowIso();
     const pendingDoc = {
@@ -10925,6 +11184,7 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
       sanitized_error: null,
       auto_submit: true,
       auto_submit_source: source,
+      effective_environment: effectiveEnvForThisEvent,
     };
     await _chironWriteExportStatus(env, statusKey, pendingDoc);
 
@@ -11367,6 +11627,16 @@ export const __testInternals = {
   CHIRON_AUTO_RECONCILE_MIN_INTERVAL_MS,
   CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS,
   CHIRON_TESTFLOW_AUTO_RECONCILE_PATH,
+  // RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: fail-closed derivation +
+  // config-status POST validation + response projection. Exposed only so
+  // tests can lock the state machine invariants into the source of truth.
+  _chironDeriveEffectiveChironEnvironment,
+  _chironProductionConnectionStatusResponseFields,
+  buildChironConnectionStatusResponse,
+  parseChironConfigStatusPostInput,
+  buildChironTestflowResetStatusDoc,
+  recordChironTestflowSubmitResult,
+  getChironTestflowProgress,
 };
 
 export default {

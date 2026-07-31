@@ -22,6 +22,7 @@ import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/vehicle_management_page.dart';
+import 'package:fluxidi_tracking/widgets/chiron_environment_status_labels.dart';
 import 'package:http/http.dart' as http;
 import 'package:share_plus/share_plus.dart';
 
@@ -249,6 +250,63 @@ class ChironComplianceDashboardPage extends StatelessWidget {
             padding: const EdgeInsets.all(14),
             children: [
               _ChironComplianceOverview(lang: _lang),
+              // RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: explicit split
+              // status labels replace the previously ambiguous "official
+              // submission: off" line. Backed entirely by the new server
+              // fields (`acc_test_submit_active`, `production_submit_active`,
+              // `effective_chiron_environment`) so the client never
+              // second-guesses the state-machine derivation.
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: ValueListenableBuilder<BackendChironConnectionStatus?>(
+                  valueListenable: backendChironConnectionStatusNotifier,
+                  builder: (context, backendStatus, _) {
+                    return Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: tokens.panel,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: tokens.border),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _t(
+                              nl: 'Chiron-omgevingstatus',
+                              en: 'Chiron environment status',
+                              fr: 'État de l\'environnement Chiron',
+                              es: 'Estado del entorno Chiron',
+                            ),
+                            style: TextStyle(
+                              color: tokens.textPrimary,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          ChironEnvironmentStatusLabels(
+                            status: backendStatus,
+                            language: _lang,
+                            textColor: tokens.textPrimary,
+                            mutedColor: tokens.textSecondary,
+                          ),
+                          const SizedBox(height: 12),
+                          ChironProductionBlockGated(
+                            status: backendStatus,
+                            testflowStatus:
+                                backendStatus?.testflowStatus ?? 'not_started',
+                            language: _lang,
+                            backgroundColor: tokens.panel,
+                            textColor: tokens.textPrimary,
+                            mutedColor: tokens.textSecondary,
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
               _HubActionCard(
                 title: _t(
                   nl: 'Checklist & voorbereiding',
