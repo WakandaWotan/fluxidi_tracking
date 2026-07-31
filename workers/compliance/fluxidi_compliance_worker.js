@@ -3229,6 +3229,33 @@ function chironOfficialRegistratieWire(value) {
   return normalizeBelgianEnterpriseNumber(value);
 }
 
+// RELEASE-P0-CHIRON-LICENSE-PLATE-WIRE-2026-07-31:
+//
+// Chiron ACC returns fouten `CH1212` ("Kentekenplaat (…) mag enkel
+// alfanumerieke tekens bevatten.") when the payload contains any non
+// [A-Z0-9] character (spaces, dots, dashes, lowercase). Fluxidi stores
+// Belgian taxi plates in a human-readable dashed form (e.g. `T-XAA-674`
+// or `TX-ABC-123`); those separators must be stripped on the wire only,
+// without touching the internal vehicle profile / app display / event
+// records / validators.
+//
+// Rules:
+//   - uppercase;
+//   - remove every non-alphanumeric character;
+//   - return null if nothing alphanumeric remains, so the serializer can
+//     fail-closed and never ship a body Chiron will reject with CH1212.
+//
+// Idempotency-key generation (`buildChironOfficialIdempotencyKey`) is
+// keyed on `registratie` + `ritnummer` + `status` — NOT on the plate — so
+// this transform does not shift the export-status storage-key of any
+// prior submit and the failed/definitive retry-state is preserved.
+function chironOfficialKentekenplaatWire(value) {
+  const text = cleanText(value, 32);
+  if (!text) return null;
+  const alnum = text.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return alnum.length > 0 ? alnum : null;
+}
+
 function normalizeChironMoney(value) {
   if (value === null || value === undefined || value === "") return null;
   const num = Number(value);
@@ -6807,7 +6834,17 @@ function buildChironTaxiritApiPayload(officialPayload) {
   if (broncreatiedatum) body.broncreatiedatum = broncreatiedatum;
 
   if (status === "vertrek" || status === "aankomst") {
-    const nummerplaat = cleanText(officialPayload.kentekenplaat, 32);
+    // RELEASE-P0-CHIRON-LICENSE-PLATE-WIRE-2026-07-31: canonicalize the
+    // license plate at the wire-serializer just before the taxirit-POST.
+    // Chiron requires `[A-Z0-9]` only; fail-closed when a non-empty
+    // display plate can't be stripped to at least one alphanumeric
+    // character so we never emit a body Chiron will reject with CH1212.
+    const nummerplaatDisplay = cleanText(officialPayload.kentekenplaat, 32);
+    let nummerplaat = null;
+    if (nummerplaatDisplay) {
+      nummerplaat = chironOfficialKentekenplaatWire(nummerplaatDisplay);
+      if (!nummerplaat) return null;
+    }
     const bestuurderspasnummer = cleanText(officialPayload.bestuurderspasnummer, 64);
     const vertrektijdstip = cleanText(officialPayload.vertrektijdstip, 64);
     const vLng = _chironApiNumber(officialPayload.vertrekpunt_lengtegraad);
@@ -10216,6 +10253,7 @@ export const __testInternals = {
   _chironTestflowLiveGate,
   _chironExportBaseUrlLooksTestOrAcc,
   chironOfficialRegistratieWire,
+  chironOfficialKentekenplaatWire,
   buildChironTaxiritApiPayload,
   normalizeChironKboRegistration,
   buildChironOfficialIdempotencyKey,
