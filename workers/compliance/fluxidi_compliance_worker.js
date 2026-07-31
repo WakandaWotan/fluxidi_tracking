@@ -10956,44 +10956,28 @@ async function _chironAutoReconcileScopeBestEffort(
     const companySegment = safeSegment(companyId, "");
     const prefix = buildCompliancePrefixForScope(tenantSegment, companySegment);
 
-    const keyNames = [];
-    let cursor;
-    let pages = 0;
-    while (
-      keyNames.length < CHIRON_AUTO_RECONCILE_MAX_EVENTS &&
-      pages < 20
-    ) {
-      pages += 1;
-      let page;
-      try {
-        page = await env.COMPLIANCE_KV.list({
-          prefix,
-          limit: 500,
-          ...(cursor ? { cursor } : {}),
-        });
-      } catch (_) {
-        break;
-      }
-      for (const entry of page?.keys || []) {
-        const name = cleanText(entry?.name, 1024);
-        if (!name) continue;
-        keyNames.push(name);
-        if (keyNames.length >= CHIRON_AUTO_RECONCILE_MAX_EVENTS) break;
-      }
-      if (page?.list_complete === true) break;
-      cursor = cleanText(page?.cursor, 1024) || undefined;
-      if (!cursor) break;
+    // Walk the FULL scoped key set (bounded by CHIRON_EXPORT_LIST_SCAN_CAP =
+    // 10,000). Naively taking the first `CHIRON_AUTO_RECONCILE_MAX_EVENTS`
+    // lexicographic keys never sees the newest events (KV list returns keys
+    // ascending, and our date-indexed keys are lexicographic == chronological
+    // ascending). Instead we scan everything, filter for auto-submittable
+    // event types after `effectiveFloorMs`, then process at most
+    // `CHIRON_AUTO_RECONCILE_MAX_PROCESS` in chronological order so a
+    // departure is always attempted before its paired arrival.
+    let allKeyNames;
+    try {
+      allKeyNames = await listScopedComplianceEventKeys(env, prefix);
+    } catch (_) {
+      outcome.ok = false;
+      outcome.reason = "kv_list_failed";
+      return outcome;
     }
-    outcome.scanned = keyNames.length;
+    outcome.scanned = allKeyNames.length;
 
-    // Sort ascending so we always process departures before arrivals when
-    // both fall inside the same batch (the date-indexed key encodes the
-    // stored ms so lexicographic order == chronological order).
-    keyNames.sort();
-
-    let processed = 0;
-    for (const key of keyNames) {
-      if (processed >= CHIRON_AUTO_RECONCILE_MAX_PROCESS) break;
+    // Fetch, parse, and filter down to the candidate set. Bounded by the
+    // total list-scan cap so a very old namespace can't blow up CPU.
+    const candidates = [];
+    for (const key of allKeyNames) {
       let raw;
       try {
         raw = await env.COMPLIANCE_KV.get(key);
@@ -11012,14 +10996,17 @@ async function _chironAutoReconcileScopeBestEffort(
       if (!messageType) continue;
       const eventAtMs = Date.parse(cleanText(event.created_at_utc, 64));
       if (!Number.isFinite(eventAtMs) || eventAtMs < effectiveFloorMs) continue;
+      candidates.push({ key, event, eventAtMs, messageType });
+    }
+    // Process oldest first so a leg's departure is always attempted before
+    // its paired arrival on the same reconciler pass.
+    candidates.sort((a, b) => a.eventAtMs - b.eventAtMs);
 
+    let processed = 0;
+    for (const c of candidates) {
+      if (processed >= CHIRON_AUTO_RECONCILE_MAX_PROCESS) break;
       outcome.considered += 1;
-
-      // Cheap pre-check: only attempt when the current per-event status is
-      // not already terminal. This avoids OAuth + KV write cost for events
-      // that are already synced or awaiting operator verification.
-      // We recompute the idempotency key by building the draft.
-      const submitOutcome = await _chironAutoSubmitOneEvent(env, event, key, {
+      const submitOutcome = await _chironAutoSubmitOneEvent(env, c.event, c.key, {
         source,
       });
       processed += 1;
