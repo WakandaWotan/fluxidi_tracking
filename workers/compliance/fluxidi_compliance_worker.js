@@ -101,6 +101,21 @@ const CHIRON_CONFIG_TEST_CREDENTIALS_CLEAR_PATH =
 const CHIRON_CONNECTION_TEST_PATH = "/admin/chiron/connection/test";
 const CHIRON_TESTFLOW_RESET_PATH = "/admin/chiron/testflow/reset";
 const CHIRON_TESTFLOW_SUBMIT_ONE_PATH = "/admin/chiron/testflow/submit-one";
+// RELEASE-P0-OFFICIAL-CHIRON-OAUTH-SUBMIT-2026-07-31: operator-only
+// resolution endpoints for the new `verification_required` sync_state. Both
+// require admin auth AND full (tenant/company/idempotency_key) scoping. Used
+// exclusively AFTER an operator verified the official Chiron portaal.
+const CHIRON_TAXIRIT_VERIFY_CONFIRM_SYNCED_PATH =
+  "/admin/chiron/taxirit/verification/confirm-synced";
+const CHIRON_TAXIRIT_VERIFY_MARK_RETRYABLE_PATH =
+  "/admin/chiron/taxirit/verification/mark-retryable";
+// Official Chiron status tokens that a verification-resolution can target.
+// Kept as a set so misspellings and unrelated tokens are rejected up front.
+const CHIRON_ALLOWED_OFFICIAL_STATUSES_FOR_RESOLUTION = new Set([
+  "reservatie",
+  "vertrek",
+  "aankomst",
+]);
 const CHIRON_CONNECTION_STATUS_SCHEMA = "chiron_connection_status_v1";
 const CHIRON_CONNECTION_KV_SUFFIX = "chiron_connection:v1";
 const CHIRON_INTERNAL_PROXY_MODE = "booking_worker_v1";
@@ -3023,15 +3038,144 @@ async function _chironExchangeOAuthClientCredentials(
 
   const expiresInSeconds = _chironCoerceOAuthExpiresInSeconds(parsedBody.expires_in);
 
-  // The access_token is intentionally dropped here; we only surface a boolean
-  // confirmation upstream. There is no caching, no encrypted persistence and
-  // no return-to-caller of the token in this phase (4B).
+  // RELEASE-P0-OFFICIAL-CHIRON-OAUTH-SUBMIT-2026-07-31:
+  //
+  // The access_token now surfaces to the caller for in-memory use during a
+  // single official Chiron taxirit POST (see
+  // _chironAcquireOAuthAccessTokenForSubmit + _chironPostChironExportTestPayload).
+  //
+  // MUST NEVER be:
+  //   - persisted (no KV, no cache);
+  //   - logged (see log calls below and the sanitiser in _chironSanitizeExportError);
+  //   - returned to Flutter / admin HTTP responses (connection-test handler
+  //     continues to expose only {access_token_obtained: true}, never the token);
+  //   - included in any error message.
+  //
+  // Callers that only need connection-test proof continue to read
+  // `access_token_obtained` (unchanged contract). Callers that need to sign a
+  // single official taxirit-POST read `_access_token_in_memory_only` and MUST
+  // discard it immediately after that submit; that field is intentionally
+  // absent from anything that ever reaches storage or a response body.
   return {
     ok: true,
     token_type: "Bearer",
     expires_in_seconds: expiresInSeconds,
     access_token_obtained: true,
     http_status: httpStatus,
+    _access_token_in_memory_only: accessToken,
+  };
+}
+
+// RELEASE-P0-OFFICIAL-CHIRON-OAUTH-SUBMIT-2026-07-31: scoped acquisition
+// wrapper for the official Chiron taxirit submit. Reads scoped credentials
+// (tenant/company/environment), decrypts them, exchanges for an OAuth2
+// access_token, and returns it (in-memory only) to the caller. Enforces
+// fail-closed behavior: any decrypt / scheme / env / exchange failure blocks
+// the taxirit submit and surfaces a coarse, PII-free error code.
+//
+// Scope isolation invariants:
+//   - credentials are read by (tenantId, companyId, environment). A company-A
+//     token can never be exchanged for company-B because the KV key
+//     (buildChironCredentialsKvKey) already fully scopes the ciphertext.
+//   - environment is HARD-PINNED to "test" (the connection-test flow and
+//     export test-mode both refuse anything else); production has no OAuth
+//     URL in CHIRON_OAUTH_TOKEN_URL_BY_ENVIRONMENT and is rejected upstream.
+//   - the api_token legacy scheme is REJECTED for official taxirit submit —
+//     legacy static tokens must never be treated as an OAuth-derived bearer.
+async function _chironAcquireOAuthAccessTokenForSubmit(
+  env,
+  tenantId,
+  companyId,
+  environment,
+) {
+  const envKey = cleanText(environment, 32).toLowerCase();
+  if (envKey !== "test") {
+    return { ok: false, error: "unsupported_environment", http_status: null };
+  }
+
+  const credentialsRead = await readChironCredentialsRaw(
+    env,
+    tenantId,
+    companyId,
+    envKey,
+  );
+  if (credentialsRead.error) {
+    return { ok: false, error: credentialsRead.error, http_status: null };
+  }
+  if (!credentialsRead.doc) {
+    return { ok: false, error: "missing_test_credentials", http_status: null };
+  }
+  const credentialsDoc = credentialsRead.doc;
+  if (!_chironCredentialsDocReadyForMockTest(credentialsDoc)) {
+    return { ok: false, error: "invalid_credential_payload", http_status: null };
+  }
+  const storedScheme = cleanText(credentialsDoc.auth_scheme, 64).toLowerCase();
+  if (storedScheme !== "oauth_client_credentials") {
+    // Legacy api_token credentials MUST NOT authenticate an official Chiron
+    // submit. This closes the door on the previous static-token path.
+    return {
+      ok: false,
+      error: "oauth_client_credentials_required",
+      http_status: null,
+    };
+  }
+
+  let decryptedPlaintext = "";
+  try {
+    decryptedPlaintext = await decryptChironCredentialBlob(
+      credentialsDoc.credential_payload_encrypted,
+      env,
+    );
+  } catch (_) {
+    return { ok: false, error: "credential_decrypt_failed", http_status: null };
+  }
+
+  let decryptedPayload = null;
+  try {
+    decryptedPayload = JSON.parse(decryptedPlaintext);
+  } catch (_) {
+    return { ok: false, error: "invalid_credential_payload", http_status: null };
+  }
+  if (!_chironDecryptedCredentialPayloadValid(decryptedPayload)) {
+    return { ok: false, error: "invalid_credential_payload", http_status: null };
+  }
+  if (
+    cleanText(decryptedPayload.auth_scheme, 64).toLowerCase() !==
+    "oauth_client_credentials"
+  ) {
+    return {
+      ok: false,
+      error: "oauth_client_credentials_required",
+      http_status: null,
+    };
+  }
+
+  const exchangeResult = await _chironExchangeOAuthClientCredentials(env, {
+    environment: envKey,
+    clientId: decryptedPayload.client_id,
+    clientSecret: decryptedPayload.client_secret,
+  });
+
+  // Even on `ok: true` we only propagate the access token in-memory (never
+  // stored, never logged, never in a response body — see caller contract).
+  if (!exchangeResult.ok) {
+    return {
+      ok: false,
+      error: cleanText(exchangeResult.error, 120) || "oauth_exchange_failed",
+      http_status: exchangeResult.http_status ?? null,
+      sanitized_error: exchangeResult.sanitized_error ?? null,
+    };
+  }
+  const accessToken = exchangeResult._access_token_in_memory_only;
+  if (typeof accessToken !== "string" || !accessToken) {
+    return { ok: false, error: "invalid_oauth_response", http_status: exchangeResult.http_status ?? null };
+  }
+  return {
+    ok: true,
+    _access_token_in_memory_only: accessToken,
+    token_type: exchangeResult.token_type || "Bearer",
+    expires_in_seconds: exchangeResult.expires_in_seconds ?? null,
+    http_status: exchangeResult.http_status ?? null,
   };
 }
 
@@ -6476,6 +6620,63 @@ async function _chironBuildExportDryRunPayloadResponse(
   return response;
 }
 
+// RELEASE-P0-OFFICIAL-CHIRON-OAUTH-SUBMIT-2026-07-31: duplicate-submit guard.
+// Chiron rejects duplicate rides in acceptance; both admin submit endpoints
+// must consult previousStatus BEFORE any OAuth or taxirit call. Returns:
+//   { decision: "allow" }                — first attempt OR previous was
+//                                          definitive failure OK to retry
+//   { decision: "already_synced" }       — event was accepted; return an
+//                                          idempotent HTTP 200 without
+//                                          re-POSTing to Chiron; never
+//                                          increment attempt_count
+//   { decision: "conflict_pending" }     — an in-flight submit exists; do
+//                                          not race a second POST
+//   { decision: "verification_required" }— previous attempt hit an ambiguous
+//                                          transport failure; operator MUST
+//                                          resolve via the portaal first
+//   { decision: "not_retryable" }        — a prior failure whose cause is
+//                                          unclear; blocks automatic retry
+function _chironEvaluateSubmitDuplicateGuard(previousStatus) {
+  if (!previousStatus || typeof previousStatus !== "object") {
+    return { decision: "allow" };
+  }
+  const state = cleanText(previousStatus.sync_state, 32).toLowerCase();
+  if (state === "synced") {
+    return { decision: "already_synced" };
+  }
+  if (state === "pending") {
+    return { decision: "conflict_pending" };
+  }
+  if (state === "verification_required") {
+    return { decision: "verification_required" };
+  }
+  if (state === "failed") {
+    // Retry only for a definitively failed prior attempt:
+    //   - explicit definitive marker; OR
+    //   - a Chiron HTTP response received (2xx with fouten[] > 0 or non-2xx);
+    //     that means we KNOW Chiron rejected/never accepted the message.
+    // A prior transport failure without HTTP response is still ambiguous and
+    // gets promoted to `verification_required` at write time — but if an
+    // older status doc lacks the marker, we conservatively block retries.
+    if (previousStatus.failure_kind === "definitive") {
+      return { decision: "allow" };
+    }
+    const httpStatus = Number(previousStatus.external_status_code);
+    const foutenCount = Number(previousStatus.fouten_count);
+    const gotChironResponse =
+      Number.isFinite(httpStatus) && httpStatus > 0 &&
+      (httpStatus < 200 || httpStatus >= 300 ||
+       (Number.isFinite(foutenCount) && foutenCount > 0));
+    if (gotChironResponse) {
+      return { decision: "allow" };
+    }
+    // Ambiguous or unknown-cause prior failure → block automatic retry.
+    return { decision: "not_retryable" };
+  }
+  // Unknown states are treated as blocking (fail-closed).
+  return { decision: "not_retryable" };
+}
+
 async function _chironReadExportStatus(env, statusKey) {
   if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.get !== "function") return null;
   try {
@@ -6647,6 +6848,23 @@ function parseChironTaxiritSubmitResponse(httpStatus, responseBody) {
     };
   }
 
+  // RELEASE-P0-OFFICIAL-CHIRON-OAUTH-SUBMIT-2026-07-31: 2xx alone is NEVER
+  // proof of Chiron acceptance. To be counted as synced the response body
+  // MUST parse as a valid JSON object AND MUST carry a `fouten` array (the
+  // official Rit API v1 contract). Anything else — no body, non-JSON,
+  // unexpected shape — is classified as NOT synced so tracking cannot flip
+  // to APPLIED against an unproven acceptance.
+  if (!hasFoutenArray) {
+    return {
+      ok: false,
+      response_shape: responseShape,
+      external_status_code: statusCode,
+      external_reference: externalReference,
+      fouten_count: 0,
+      sanitized_error: "chiron_response_shape_unexpected",
+    };
+  }
+
   return {
     ok: true,
     response_shape: responseShape,
@@ -6657,33 +6875,87 @@ function parseChironTaxiritSubmitResponse(httpStatus, responseBody) {
   };
 }
 
-async function _chironPostChironExportTestPayload(env, payload) {
+// RELEASE-P0-OFFICIAL-CHIRON-OAUTH-SUBMIT-2026-07-31:
+//
+// The official Chiron taxirit POST now REQUIRES a caller-supplied OAuth2
+// access_token (via `options.accessToken`). The legacy static
+// `CHIRON_EXPORT_API_TOKEN` env var is NO LONGER accepted as the official
+// authentication bearer — it exists in this worker only as an infrastructure
+// gate (`chironExportTestModeEnabled`) that keeps the taxirit-POST path off
+// entirely when unset. The bearer we actually put on the wire is always the
+// per-company OAuth-derived token from
+// `_chironAcquireOAuthAccessTokenForSubmit`.
+//
+// The fetch is bounded by `CHIRON_TAXIRIT_SUBMIT_TIMEOUT_MS` via an
+// AbortController so a hung Chiron ACC connection can't ride out the
+// worker's 30s CPU/wall-clock limit ambiguously. A transport failure
+// AFTER the fetch has been initiated is classified as `ambiguous: true`
+// (see `sanitized_error === "chiron_transport_ambiguous"`) so the caller
+// can flip the local sync_state to "verification_required" instead of
+// treating it as a plain retryable failure.
+const CHIRON_TAXIRIT_SUBMIT_TIMEOUT_MS = 10000;
+async function _chironPostChironExportTestPayload(env, payload, options = {}) {
   const baseUrl = cleanText(env?.CHIRON_EXPORT_BASE_URL, 512).replace(/\/+$/, "");
-  const token = cleanText(env?.CHIRON_EXPORT_API_TOKEN, 512);
-  if (!baseUrl || !token) {
-    return { ok: false, error: "chiron_export_test_mode_disabled" };
+  if (!baseUrl) {
+    return {
+      ok: false,
+      error: "chiron_export_test_mode_disabled",
+      sanitized_error: "chiron_export_test_mode_disabled",
+      ambiguous: false,
+    };
+  }
+  const accessToken =
+    typeof options.accessToken === "string" ? options.accessToken.trim() : "";
+  if (!accessToken) {
+    // Pre-fetch failure: no bearer, no request goes out. Safely retryable
+    // once OAuth is fixed. NEVER falls back to CHIRON_EXPORT_API_TOKEN.
+    return {
+      ok: false,
+      error: "missing_oauth_access_token",
+      sanitized_error: "missing_oauth_access_token",
+      ambiguous: false,
+    };
   }
 
+  const requestedTimeout = Number(options.timeoutMs);
+  const timeoutMs = Number.isFinite(requestedTimeout) && requestedTimeout > 0
+    ? Math.min(30000, Math.max(1000, Math.round(requestedTimeout)))
+    : CHIRON_TAXIRIT_SUBMIT_TIMEOUT_MS;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   let response;
+  let fetchStarted = true;
   try {
     response = await fetch(baseUrl, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${token}`,
+        authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify(payload),
+      signal: controller.signal,
     });
   } catch (err) {
+    clearTimeout(timer);
+    // Transport failure AFTER fetch was initiated: we cannot prove Chiron
+    // didn't receive the message. Report `ambiguous: true` so the handler
+    // flips sync_state to verification_required and refuses automatic
+    // retries until an operator resolves it against the Chiron portaal.
+    const isAbort = err && err.name === "AbortError";
     return {
       ok: false,
-      response_shape: "non_chiron_test_receiver",
+      response_shape: null,
       external_status_code: null,
       external_reference: null,
       fouten_count: 0,
-      sanitized_error: _chironSanitizeExportError(err?.message || "network_error"),
+      sanitized_error: "chiron_transport_ambiguous",
+      transport_error_kind: isAbort ? "timeout" : "network",
+      ambiguous: fetchStarted,
     };
   }
+  clearTimeout(timer);
 
   let responseBody = null;
   const contentType = cleanText(response.headers.get("content-type"), 128).toLowerCase();
@@ -6697,8 +6969,11 @@ async function _chironPostChironExportTestPayload(env, payload) {
 
   // Chiron Connect 4A0: ok/error is decided by parseChironTaxiritSubmitResponse
   // so that a HTTP 200 carrying a non-empty `fouten` array is treated as a
-  // rejection rather than a successful submit.
-  return parseChironTaxiritSubmitResponse(response.status, responseBody);
+  // rejection rather than a successful submit. Ambiguity is only produced by
+  // transport failures above; once we have any HTTP response, the outcome is
+  // definitive and NOT verification_required.
+  const parsed = parseChironTaxiritSubmitResponse(response.status, responseBody);
+  return { ...parsed, ambiguous: false };
 }
 
 function parseChironTestflowSubmitOneInput(body) {
@@ -7017,6 +7292,65 @@ async function handleChironTestflowSubmitOnePost(request, env, origin) {
     officialIdempotencyKey,
   );
   const previousStatus = await _chironReadExportStatus(env, statusKey);
+
+  // RELEASE-P0-OFFICIAL-CHIRON-OAUTH-SUBMIT-2026-07-31: duplicate-submit
+  // guard. Consulted BEFORE OAuth, BEFORE the Chiron POST, and BEFORE
+  // touching attempt_count for idempotency. Ensures Chiron never receives
+  // a second departure/arrival message for the same ritnummer via this
+  // admin path.
+  const guard = _chironEvaluateSubmitDuplicateGuard(previousStatus);
+  if (guard.decision === "already_synced") {
+    return jsonResponse(
+      {
+        ...baseResponse,
+        ok: true,
+        submitted: false,
+        already_synced: true,
+        sync_state: "synced",
+        attempt_count: Number(previousStatus?.attempt_count || 0),
+        export_status_stored: true,
+        chiron_response_sanitized: {
+          ok: true,
+          external_status_code: previousStatus?.external_status_code ?? null,
+          external_reference: previousStatus?.external_reference ?? null,
+          response_shape: previousStatus?.response_shape ?? null,
+          fouten_count: previousStatus?.fouten_count ?? 0,
+          sanitized_error: null,
+        },
+      },
+      200,
+      origin,
+    );
+  }
+  if (guard.decision === "conflict_pending") {
+    return jsonResponse(
+      { ...baseResponse, ok: false, error: "chiron_submit_in_progress" },
+      409,
+      origin,
+    );
+  }
+  if (guard.decision === "verification_required") {
+    return jsonResponse(
+      {
+        ...baseResponse,
+        ok: false,
+        error: "chiron_submit_verification_required",
+        sync_state: "verification_required",
+        verification_required_reason:
+          cleanText(previousStatus?.verification_required_reason, 120) || null,
+      },
+      409,
+      origin,
+    );
+  }
+  if (guard.decision === "not_retryable") {
+    return jsonResponse(
+      { ...baseResponse, ok: false, error: "chiron_submit_not_retryable" },
+      409,
+      origin,
+    );
+  }
+
   const attemptCount = Number(previousStatus?.attempt_count || 0) + 1;
   const attemptedAt = nowIso();
   const pendingDoc = {
@@ -7040,13 +7374,75 @@ async function handleChironTestflowSubmitOnePost(request, env, origin) {
   };
   await _chironWriteExportStatus(env, statusKey, pendingDoc);
 
-  const postResult = await _chironPostChironExportTestPayload(env, chironApiPayload);
+  // RELEASE-P0-OFFICIAL-CHIRON-OAUTH-SUBMIT-2026-07-31: acquire the
+  // per-company OAuth-derived access token in-memory ONLY. The token is
+  // never persisted, never logged and never returned; it is consumed by
+  // _chironPostChironExportTestPayload for exactly one taxirit-POST.
+  const oauthAcquire = await _chironAcquireOAuthAccessTokenForSubmit(
+    env,
+    parsed.tenantId,
+    parsed.companyId,
+    "test",
+  );
+  if (!oauthAcquire.ok) {
+    const failedDoc = {
+      ...pendingDoc,
+      sync_state: "failed",
+      failure_kind: "definitive",
+      sanitized_error: _chironSanitizeExportError(oauthAcquire.error || "oauth_failure"),
+      last_attempt_at: nowIso(),
+    };
+    await _chironWriteExportStatus(env, statusKey, failedDoc);
+    return jsonResponse(
+      {
+        ...baseResponse,
+        ok: false,
+        submitted: false,
+        sync_state: "failed",
+        error: "oauth_acquire_failed",
+        attempt_count: failedDoc.attempt_count,
+        export_status_stored: true,
+        chiron_response_sanitized: {
+          ok: false,
+          external_status_code: null,
+          external_reference: null,
+          response_shape: null,
+          fouten_count: 0,
+          sanitized_error: failedDoc.sanitized_error,
+        },
+      },
+      502,
+      origin,
+    );
+  }
+
+  const postResult = await _chironPostChironExportTestPayload(
+    env,
+    chironApiPayload,
+    { accessToken: oauthAcquire._access_token_in_memory_only },
+  );
+  // Discard the in-memory token immediately after the single POST attempt.
+  oauthAcquire._access_token_in_memory_only = null;
   const foutenCount = Number(postResult.fouten_count ?? 0);
   const hasChironErrors = Number.isFinite(foutenCount) && foutenCount > 0;
   const acceptedByChiron = postResult.ok === true && !hasChironErrors;
+  const ambiguousTransport = postResult.ambiguous === true;
+  const nextSyncState = acceptedByChiron
+    ? "synced"
+    : ambiguousTransport
+      ? "verification_required"
+      : "failed";
   const finalDoc = {
     ...pendingDoc,
-    sync_state: acceptedByChiron ? "synced" : "failed",
+    sync_state: nextSyncState,
+    failure_kind: acceptedByChiron
+      ? null
+      : ambiguousTransport
+        ? "ambiguous"
+        : "definitive",
+    verification_required_reason: ambiguousTransport
+      ? cleanText(postResult.sanitized_error, 120) || "chiron_transport_ambiguous"
+      : null,
     external_status_code: postResult.external_status_code ?? null,
     external_reference: postResult.external_reference ?? null,
     response_shape: postResult.response_shape ?? null,
@@ -7125,6 +7521,7 @@ async function handleChironTestflowSubmitOnePost(request, env, origin) {
       ok: acceptedByChiron,
       submitted: true,
       sync_state: finalDoc.sync_state,
+      verification_required_reason: finalDoc.verification_required_reason,
       attempt_count: finalDoc.attempt_count,
       export_status_stored: true,
       chiron_response_sanitized: {
@@ -7134,10 +7531,199 @@ async function handleChironTestflowSubmitOnePost(request, env, origin) {
         response_shape: postResult.response_shape ?? null,
         fouten_count: postResult.fouten_count ?? null,
         sanitized_error: postResult.sanitized_error ?? null,
+        ambiguous: ambiguousTransport,
       },
       testflow: _chironBuildTestflowCountersResponse(nextStatusPayload),
     },
-    acceptedByChiron ? 200 : 502,
+    acceptedByChiron ? 200 : ambiguousTransport ? 202 : 502,
+    origin,
+  );
+}
+
+// RELEASE-P0-OFFICIAL-CHIRON-OAUTH-SUBMIT-2026-07-31: parse and validate
+// the admin resolution body for verification_required transitions. Full
+// (tenant/company/idempotency_key/expected_official_status) scope is
+// REQUIRED — an operator resolution can never target another company's
+// event, and it can never mutate a status doc whose official_status has
+// drifted (e.g. someone resubmitted a different status in the meantime).
+function _chironParseVerificationResolutionBody(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { error: "invalid_body" };
+  }
+  const tenantId = cleanText(body.tenant_id, 128);
+  const companyId = cleanText(body.company_id, 128);
+  const idempotencyKey = cleanText(body.official_idempotency_key, 256);
+  const officialStatus = cleanText(body.official_status, 32).toLowerCase();
+  if (!tenantId || !companyId) return { error: "missing_scope" };
+  if (!idempotencyKey) return { error: "missing_official_idempotency_key" };
+  if (!officialStatus || !CHIRON_ALLOWED_OFFICIAL_STATUSES_FOR_RESOLUTION.has(officialStatus)) {
+    return { error: "invalid_official_status" };
+  }
+  const tenantSegment = safeSegment(tenantId, "");
+  const companySegment = safeSegment(companyId, "");
+  if (!tenantSegment || !companySegment) return { error: "invalid_scope" };
+  return {
+    tenantId,
+    companyId,
+    tenantSegment,
+    companySegment,
+    idempotencyKey,
+    officialStatus,
+  };
+}
+
+async function _chironLoadVerificationResolutionTarget(env, parsed) {
+  const statusKey = buildChironExportStatusKey(
+    parsed.tenantSegment,
+    parsed.companySegment,
+    parsed.idempotencyKey,
+  );
+  const doc = await _chironReadExportStatus(env, statusKey);
+  if (!doc || typeof doc !== "object") {
+    return { statusKey, doc: null, error: "export_status_not_found" };
+  }
+  if (
+    cleanText(doc.tenant_id, 128) !== parsed.tenantId ||
+    cleanText(doc.company_id, 128) !== parsed.companyId
+  ) {
+    return { statusKey, doc: null, error: "export_status_scope_mismatch" };
+  }
+  if (
+    cleanText(doc.official_idempotency_key, 256) !== parsed.idempotencyKey ||
+    cleanText(doc.official_status, 32).toLowerCase() !== parsed.officialStatus
+  ) {
+    return { statusKey, doc: null, error: "export_status_identity_mismatch" };
+  }
+  if (cleanText(doc.sync_state, 32).toLowerCase() !== "verification_required") {
+    return { statusKey, doc, error: "not_in_verification_required" };
+  }
+  return { statusKey, doc };
+}
+
+async function handleChironTaxiritVerificationConfirmSynced(request, env, origin) {
+  const authError = ensureAuthorized(request, env);
+  if (authError) return authError;
+  if (!requireJsonRequest(request)) {
+    return jsonResponse(
+      { ok: false, error: "Content-Type must be application/json" },
+      400,
+      origin,
+    );
+  }
+  const body = await readJsonBody(request);
+  if (body === null) {
+    return jsonResponse({ ok: false, error: "Invalid JSON body" }, 400, origin);
+  }
+  const parsed = _chironParseVerificationResolutionBody(body);
+  if (parsed.error) {
+    return jsonResponse({ ok: false, error: parsed.error }, 400, origin);
+  }
+  const load = await _chironLoadVerificationResolutionTarget(env, parsed);
+  if (load.error) {
+    const status = load.error === "export_status_not_found" ? 404 : 409;
+    return jsonResponse({ ok: false, error: load.error }, status, origin);
+  }
+  const nowIsoStr = nowIso();
+  const nextDoc = {
+    ...load.doc,
+    sync_state: "synced",
+    failure_kind: null,
+    verification_required_reason: null,
+    sanitized_error: null,
+    external_reference:
+      load.doc.external_reference ?? "operator_confirmed_via_portaal",
+    operator_resolution: "confirmed_synced",
+    operator_resolution_at: nowIsoStr,
+  };
+  const writeRes = await _chironWriteExportStatus(env, load.statusKey, nextDoc);
+  if (!writeRes.ok) {
+    return jsonResponse(
+      { ok: false, error: writeRes.reason || "kv_write_failed" },
+      500,
+      origin,
+    );
+  }
+  console.log(
+    `[CHIRON_TAXIRIT][RESOLVE][CONFIRMED_SYNCED] tenant=${_chironMaskScopeId(
+      parsed.tenantId,
+    )} company=${_chironMaskScopeId(parsed.companyId)} status=${parsed.officialStatus}`,
+  );
+  return jsonResponse(
+    {
+      ok: true,
+      resolution: "confirmed_synced",
+      tenant_id: parsed.tenantId,
+      company_id: parsed.companyId,
+      official_status: parsed.officialStatus,
+      sync_state: "synced",
+      attempt_count: Number(nextDoc.attempt_count || 0),
+    },
+    200,
+    origin,
+  );
+}
+
+async function handleChironTaxiritVerificationMarkRetryable(request, env, origin) {
+  const authError = ensureAuthorized(request, env);
+  if (authError) return authError;
+  if (!requireJsonRequest(request)) {
+    return jsonResponse(
+      { ok: false, error: "Content-Type must be application/json" },
+      400,
+      origin,
+    );
+  }
+  const body = await readJsonBody(request);
+  if (body === null) {
+    return jsonResponse({ ok: false, error: "Invalid JSON body" }, 400, origin);
+  }
+  const parsed = _chironParseVerificationResolutionBody(body);
+  if (parsed.error) {
+    return jsonResponse({ ok: false, error: parsed.error }, 400, origin);
+  }
+  const load = await _chironLoadVerificationResolutionTarget(env, parsed);
+  if (load.error) {
+    const status = load.error === "export_status_not_found" ? 404 : 409;
+    return jsonResponse({ ok: false, error: load.error }, status, origin);
+  }
+  const nowIsoStr = nowIso();
+  // Flip to a DEFINITIVE failure so the duplicate-guard now permits exactly
+  // one controlled retry. The retry itself goes through the normal
+  // submit-one path, which re-runs OAuth and re-POSTs the taxirit body.
+  const nextDoc = {
+    ...load.doc,
+    sync_state: "failed",
+    failure_kind: "definitive",
+    verification_required_reason: null,
+    sanitized_error: "operator_marked_not_received",
+    operator_resolution: "mark_not_received_retryable",
+    operator_resolution_at: nowIsoStr,
+  };
+  const writeRes = await _chironWriteExportStatus(env, load.statusKey, nextDoc);
+  if (!writeRes.ok) {
+    return jsonResponse(
+      { ok: false, error: writeRes.reason || "kv_write_failed" },
+      500,
+      origin,
+    );
+  }
+  console.log(
+    `[CHIRON_TAXIRIT][RESOLVE][MARK_RETRYABLE] tenant=${_chironMaskScopeId(
+      parsed.tenantId,
+    )} company=${_chironMaskScopeId(parsed.companyId)} status=${parsed.officialStatus}`,
+  );
+  return jsonResponse(
+    {
+      ok: true,
+      resolution: "mark_not_received_retryable",
+      tenant_id: parsed.tenantId,
+      company_id: parsed.companyId,
+      official_status: parsed.officialStatus,
+      sync_state: "failed",
+      retry_allowed: true,
+      attempt_count: Number(nextDoc.attempt_count || 0),
+    },
+    200,
     origin,
   );
 }
@@ -7360,6 +7946,14 @@ async function handleChironExportTest(request, env, origin) {
     }),
   );
 
+  // RELEASE-P0-OFFICIAL-CHIRON-OAUTH-SUBMIT-2026-07-31: acquire the
+  // per-company OAuth access token lazily and reuse it across all live
+  // POSTs in this single batch. The token stays in-memory (never stored /
+  // logged / returned) and is nulled at the end of the loop. If OAuth
+  // fails we short-circuit without touching Chiron.
+  let batchAccessToken = null;
+  let batchOAuthError = null;
+
   for (const payload of livePayloads) {
     // Chiron Fase 3F strict gating. We never submit when the official
     // draft is missing, when the event is not a ride_payload (e.g.
@@ -7395,6 +7989,32 @@ async function handleChironExportTest(request, env, origin) {
       officialIdempotencyKey,
     );
     const previousStatus = await _chironReadExportStatus(env, statusKey);
+
+    // RELEASE-P0-OFFICIAL-CHIRON-OAUTH-SUBMIT-2026-07-31: batch export must
+    // NEVER re-POST an event whose duplicate-guard forbids resubmission
+    // (already synced, still pending, awaiting operator verification, or
+    // otherwise not-retryable). Skip and record the reason.
+    const guard = _chironEvaluateSubmitDuplicateGuard(previousStatus);
+    if (guard.decision !== "allow") {
+      exportAttempts.push({
+        event_id: payload.event_id,
+        idempotency_key: officialIdempotencyKey,
+        official_ritnummer: cleanText(officialPayload.ritnummer, 256) || null,
+        official_status: cleanText(officialDraft.status, 32) || null,
+        official_payload_shape: "chiron_taxirit_api_v1",
+        sync_state: cleanText(previousStatus?.sync_state, 32) || null,
+        external_status_code: previousStatus?.external_status_code ?? null,
+        external_reference: previousStatus?.external_reference ?? null,
+        response_shape: previousStatus?.response_shape ?? null,
+        fouten_count: previousStatus?.fouten_count ?? null,
+        attempt_count: Number(previousStatus?.attempt_count || 0),
+        sanitized_error: previousStatus?.sanitized_error ?? null,
+        status_key: statusKey,
+        skipped: true,
+        skip_reason: `duplicate_guard_${guard.decision}`,
+      });
+      continue;
+    }
     const attemptCount = Number(previousStatus?.attempt_count || 0) + 1;
 
     const pendingDoc = {
@@ -7415,13 +8035,64 @@ async function handleChironExportTest(request, env, origin) {
     };
     await _chironWriteExportStatus(env, statusKey, pendingDoc);
 
-    // Chiron Fase 3F + 4A0: only the nested official Chiron Rit API body is
-    // sent externally. No tenant_id, event_id, payment_status, amount, vat_*
-    // or other generic wrapper fields leak to the test receiver.
-    const postResult = await _chironPostChironExportTestPayload(env, chironApiPayload);
+    if (!batchAccessToken && !batchOAuthError) {
+      const oauthAcquire = await _chironAcquireOAuthAccessTokenForSubmit(
+        env,
+        tenantId,
+        companyId,
+        "test",
+      );
+      if (oauthAcquire.ok) {
+        batchAccessToken = oauthAcquire._access_token_in_memory_only;
+        oauthAcquire._access_token_in_memory_only = null;
+      } else {
+        batchOAuthError = _chironSanitizeExportError(
+          oauthAcquire.error || "oauth_failure",
+        );
+      }
+    }
+
+    let postResult;
+    if (batchOAuthError) {
+      postResult = {
+        ok: false,
+        sanitized_error: batchOAuthError,
+        ambiguous: false,
+        external_status_code: null,
+        external_reference: null,
+        response_shape: null,
+        fouten_count: 0,
+      };
+    } else {
+      // Chiron Fase 3F + 4A0: only the nested official Chiron Rit API body is
+      // sent externally, signed with the per-company OAuth-derived bearer.
+      // No tenant_id, event_id, payment_status, amount, vat_* or other
+      // generic wrapper fields leak to the test receiver.
+      postResult = await _chironPostChironExportTestPayload(env, chironApiPayload, {
+        accessToken: batchAccessToken,
+      });
+    }
+    const foutenCount = Number(postResult.fouten_count ?? 0);
+    const acceptedByChiron =
+      postResult.ok === true &&
+      !(Number.isFinite(foutenCount) && foutenCount > 0);
+    const ambiguousTransport = postResult.ambiguous === true;
+    const nextSyncState = acceptedByChiron
+      ? "synced"
+      : ambiguousTransport
+        ? "verification_required"
+        : "failed";
     const finalDoc = {
       ...pendingDoc,
-      sync_state: postResult.ok ? "synced" : "failed",
+      sync_state: nextSyncState,
+      failure_kind: acceptedByChiron
+        ? null
+        : ambiguousTransport
+          ? "ambiguous"
+          : "definitive",
+      verification_required_reason: ambiguousTransport
+        ? cleanText(postResult.sanitized_error, 120) || "chiron_transport_ambiguous"
+        : null,
       external_status_code: postResult.external_status_code ?? null,
       external_reference: postResult.external_reference ?? null,
       response_shape: postResult.response_shape ?? null,
@@ -7438,6 +8109,7 @@ async function handleChironExportTest(request, env, origin) {
       official_status: pendingDoc.official_status,
       official_payload_shape: pendingDoc.official_payload_shape,
       sync_state: finalDoc.sync_state,
+      verification_required_reason: finalDoc.verification_required_reason,
       external_status_code: finalDoc.external_status_code,
       external_reference: finalDoc.external_reference,
       response_shape: finalDoc.response_shape,
@@ -7447,6 +8119,8 @@ async function handleChironExportTest(request, env, origin) {
       status_key: statusKey,
     });
   }
+
+  batchAccessToken = null;
 
   console.log(
     `[CHIRON_EXPORT][TEST][LIVE] tenant=${_chironMaskScopeId(tenantId)} company=${_chironMaskScopeId(companyId)} attempts=${exportAttempts.length} synced=${exportAttempts.filter((entry) => entry.sync_state === "synced").length}`,
@@ -9475,6 +10149,24 @@ async function handleChironConnectionTestPost(request, url, env, origin) {
   );
 }
 
+// RELEASE-P0-OFFICIAL-CHIRON-OAUTH-SUBMIT-2026-07-31: internal helpers
+// intentionally exposed for tests only. This surface exists solely so the
+// OAuth-derived bearer / duplicate-guard / ambiguous-transport code paths
+// can be exercised deterministically without spinning up the full
+// event-hydration pipeline. NEVER import these from production code.
+export const __testInternals = {
+  _chironEvaluateSubmitDuplicateGuard,
+  _chironAcquireOAuthAccessTokenForSubmit,
+  _chironPostChironExportTestPayload,
+  encryptChironCredentialBlob,
+  buildChironCredentialsKvKey,
+  CHIRON_CREDENTIALS_PAYLOAD_SCHEMA_VERSION,
+  CHIRON_CREDENTIALS_SCHEMA_VERSION,
+  buildChironExportStatusKey,
+  CHIRON_EXPORT_STATUS_SCHEMA,
+  safeSegment,
+};
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("origin") || "*";
@@ -9508,7 +10200,9 @@ export default {
       url.pathname !== CHIRON_CONFIG_TEST_CREDENTIALS_CLEAR_PATH &&
       url.pathname !== CHIRON_CONNECTION_TEST_PATH &&
       url.pathname !== CHIRON_TESTFLOW_RESET_PATH &&
-      url.pathname !== CHIRON_TESTFLOW_SUBMIT_ONE_PATH
+      url.pathname !== CHIRON_TESTFLOW_SUBMIT_ONE_PATH &&
+      url.pathname !== CHIRON_TAXIRIT_VERIFY_CONFIRM_SYNCED_PATH &&
+      url.pathname !== CHIRON_TAXIRIT_VERIFY_MARK_RETRYABLE_PATH
     ) {
       return jsonResponse(
         { ok: false, error: "Not Found", path: url.pathname },
@@ -9607,6 +10301,18 @@ export default {
           return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
         }
         return await handleChironTestflowSubmitOnePost(request, env, origin);
+      }
+      if (url.pathname === CHIRON_TAXIRIT_VERIFY_CONFIRM_SYNCED_PATH) {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+        }
+        return await handleChironTaxiritVerificationConfirmSynced(request, env, origin);
+      }
+      if (url.pathname === CHIRON_TAXIRIT_VERIFY_MARK_RETRYABLE_PATH) {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+        }
+        return await handleChironTaxiritVerificationMarkRetryable(request, env, origin);
       }
       if (request.method !== "GET") {
         return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
