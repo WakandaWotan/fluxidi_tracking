@@ -474,6 +474,98 @@ test("config-status POST: enabling auto-submit stamps testflow_started_at", asyn
   );
 });
 
+test("config-status POST: operator-supplied testflow_started_at wins over auto-stamp", async () => {
+  const kv = makeKV();
+  const env = baseEnv(kv);
+  await seedConnectionStatus(
+    kv,
+    goodStatusDoc({
+      testflow_auto_submit_enabled: false,
+      testflow_started_at: null,
+      test_messages_sent_count: 10,
+    }),
+  );
+  const overrideIso = "2026-07-31T14:00:00.000Z";
+  const req = new Request(
+    "https://compliance.internal/admin/chiron/config/status",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-token": ADMIN },
+      body: JSON.stringify({
+        tenant_id: TENANT,
+        company_id: COMPANY,
+        enabled: true,
+        testflow_auto_submit_enabled: true,
+        testflow_started_at: overrideIso,
+      }),
+    },
+  );
+  const res = await worker.fetch(req, env);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.testflow_auto_submit_enabled, true);
+  assert.equal(
+    body.testflow_started_at,
+    overrideIso,
+    "operator-provided cutoff should be persisted verbatim",
+  );
+});
+
+test("config-status POST: rejects invalid testflow_started_at", async () => {
+  const kv = makeKV();
+  const env = baseEnv(kv);
+  await seedConnectionStatus(
+    kv,
+    goodStatusDoc({ test_messages_sent_count: 10 }),
+  );
+  const req = new Request(
+    "https://compliance.internal/admin/chiron/config/status",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-token": ADMIN },
+      body: JSON.stringify({
+        tenant_id: TENANT,
+        company_id: COMPANY,
+        enabled: true,
+        testflow_auto_submit_enabled: true,
+        testflow_started_at: "not-a-date",
+      }),
+    },
+  );
+  const res = await worker.fetch(req, env);
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.error, "invalid_testflow_started_at");
+});
+
+test("config-status POST: rejects future testflow_started_at", async () => {
+  const kv = makeKV();
+  const env = baseEnv(kv);
+  await seedConnectionStatus(
+    kv,
+    goodStatusDoc({ test_messages_sent_count: 10 }),
+  );
+  const futureIso = new Date(Date.now() + 3600_000).toISOString();
+  const req = new Request(
+    "https://compliance.internal/admin/chiron/config/status",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-token": ADMIN },
+      body: JSON.stringify({
+        tenant_id: TENANT,
+        company_id: COMPANY,
+        enabled: true,
+        testflow_auto_submit_enabled: true,
+        testflow_started_at: futureIso,
+      }),
+    },
+  );
+  const res = await worker.fetch(req, env);
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.error, "testflow_started_at_in_future");
+});
+
 test("config-status POST: preserves testflow_started_at when toggling off then on again", async () => {
   const kv = makeKV();
   const env = baseEnv(kv);

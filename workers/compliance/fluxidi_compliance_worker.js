@@ -9506,18 +9506,35 @@ function parseChironConfigStatusPostInput(body, existingStored) {
   const nowIsoForAutoSubmit = nowIso();
   const testflowStartedAtPrev =
     cleanText(existing.testflow_started_at, 64) || null;
-  // When the operator opts in for the first time, stamp the cutoff so events
-  // that were durably stored BEFORE this exact moment are excluded from the
-  // automatic path (old noisy test data / manual-submit rides / historical
-  // events stay untouched). Existing cutoff is preserved on subsequent saves.
-  let testflowStartedAtFinal = testflowStartedAtPrev;
-  if (autoSubmitRequested && !autoSubmitPrev) {
-    testflowStartedAtFinal = nowIsoForAutoSubmit;
+  // Operator-supplied ISO cutoff. Accepted so an operator can dial the
+  // cutoff to a moment that includes rides that were driven BEFORE the
+  // auto-submit opt-in but still belong to the active testflow (e.g. when
+  // the tablet already sits at 2/5 4/10 and the last 3 rides need to be
+  // picked up by the automatic path). We validate the shape and reject
+  // future timestamps to keep the semantics obvious.
+  const testflowStartedAtRawBody = cleanText(body?.testflow_started_at, 64);
+  let testflowStartedAtBodyValid = null;
+  if (testflowStartedAtRawBody) {
+    const parsedMs = Date.parse(testflowStartedAtRawBody);
+    if (!Number.isFinite(parsedMs)) {
+      return { error: "invalid_testflow_started_at" };
+    }
+    if (parsedMs - Date.now() > 60_000) {
+      return { error: "testflow_started_at_in_future" };
+    }
+    testflowStartedAtBodyValid = new Date(parsedMs).toISOString();
   }
-  if (!autoSubmitRequested) {
-    // Turning auto-submit OFF: keep the historical cutoff intact so a later
-    // re-enable does not silently re-process events between the two windows.
-    testflowStartedAtFinal = testflowStartedAtPrev;
+  // Resolution order:
+  //   1. Explicit body value (if valid) always wins - operator override.
+  //   2. Otherwise, on first opt-in (prev off -> now on), stamp `now()`.
+  //   3. Otherwise, preserve the existing cutoff. Turning auto-submit off
+  //      also preserves the existing cutoff so a later re-enable does not
+  //      silently re-process events between the two windows.
+  let testflowStartedAtFinal = testflowStartedAtPrev;
+  if (testflowStartedAtBodyValid) {
+    testflowStartedAtFinal = testflowStartedAtBodyValid;
+  } else if (autoSubmitRequested && !autoSubmitPrev) {
+    testflowStartedAtFinal = nowIsoForAutoSubmit;
   }
   const autoReconcileLastAtPrev =
     cleanText(existing.testflow_auto_reconcile_last_at, 64) || null;
