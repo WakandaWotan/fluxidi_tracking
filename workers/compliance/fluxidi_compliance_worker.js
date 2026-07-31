@@ -3208,6 +3208,27 @@ function normalizeChironKboRegistration(value) {
   return null;
 }
 
+// RELEASE-P0-CHIRON-REGISTRATION-KBO-CANONICAL-2026-07-31:
+//
+// Chiron ACC requires the official taxirit-JSON field
+// `rit.taxibedrijf.aanbieder.registratie` to be byte-identical to the KBO
+// subject that authenticated the OAuth call. Chiron's OAuth issuer stores
+// KBO as a 10-digit Belgian enterprise number WITHOUT dots, WITHOUT the
+// `BE` prefix, and WITHOUT any other separators. Any mismatch (e.g. a
+// dotted display form like `0772.931.038`) yields a Chiron `fouten[]`
+// rejection ("kbonummers komen niet overeen") — regardless of numeric
+// equality.
+//
+// This helper produces the wire-canonical digits-only form for that ONE
+// JSON field, and returns null when the input can't be normalized to
+// exactly 10 digits so the serializer can fail-closed instead of shipping
+// a malformed body. The internal display form (`0772.931.038`) used for
+// idempotency keys, validators and readiness output is intentionally
+// UNCHANGED — this transform only runs at the last-hop wire serializer.
+function chironOfficialRegistratieWire(value) {
+  return normalizeBelgianEnterpriseNumber(value);
+}
+
 function normalizeChironMoney(value) {
   if (value === null || value === undefined || value === "") return null;
   const num = Number(value);
@@ -6755,12 +6776,22 @@ function buildChironTaxiritApiPayload(officialPayload) {
   }
 
   const ritnummer = cleanText(officialPayload.ritnummer, 256);
-  const registratie = cleanText(officialPayload.registratie, 64);
+  const registratieDisplay = cleanText(officialPayload.registratie, 64);
   const naam = cleanText(officialPayload.naam, 256);
   const broncreatiedatum = cleanText(officialPayload.broncreatiedatum, 64);
 
+  // RELEASE-P0-CHIRON-REGISTRATION-KBO-CANONICAL-2026-07-31: emit digits-only
+  // KBO on the wire to match the OAuth-authenticated subject. Fail-closed
+  // when the display form can't be normalized to exactly 10 digits so we
+  // never ship a body Chiron will reject with a KBO mismatch fout.
+  let registratieWire = null;
+  if (registratieDisplay) {
+    registratieWire = chironOfficialRegistratieWire(registratieDisplay);
+    if (!registratieWire) return null;
+  }
+
   const aanbieder = {};
-  if (registratie) aanbieder.registratie = registratie;
+  if (registratieWire) aanbieder.registratie = registratieWire;
   if (naam) aanbieder.naam = naam;
 
   const rit = {
@@ -10184,6 +10215,10 @@ export const __testInternals = {
   chironExportTestModeEnabled,
   _chironTestflowLiveGate,
   _chironExportBaseUrlLooksTestOrAcc,
+  chironOfficialRegistratieWire,
+  buildChironTaxiritApiPayload,
+  normalizeChironKboRegistration,
+  buildChironOfficialIdempotencyKey,
 };
 
 export default {
