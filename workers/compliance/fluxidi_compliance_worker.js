@@ -564,7 +564,7 @@ function buildComplianceCanonicalEventKey(event) {
   ].join("/");
 }
 
-async function handleAppend(request, env, origin) {
+async function handleAppend(request, env, origin, ctx) {
   const authError = ensureAuthorized(request, env);
   if (authError) return authError;
 
@@ -706,6 +706,12 @@ async function handleAppend(request, env, origin) {
       `[COMPLIANCE_STORE][${cleanText(event.event_type, 64) || "unknown"}] ok=true`,
     );
 
+    // RELEASE-P0-AUTO-CHIRON-2026-07-31: fire the automatic Chiron ACC
+    // submit best-effort AFTER the event is durably stored. Runs inside
+    // ctx.waitUntil so the compliance HTTP response returns immediately;
+    // the driver-facing tracking worker is never blocked on OAuth / Chiron.
+    _chironScheduleAutoSubmitAfterAppend(ctx, env, event, dateKey);
+
     return jsonResponse(
       {
         ok: true,
@@ -725,6 +731,12 @@ async function handleAppend(request, env, origin) {
     `[COMPLIANCE_STORE][${cleanText(event.event_type, 64) || "unknown"}] ok=true`,
   );
 
+  // RELEASE-P0-AUTO-CHIRON-2026-07-31: same best-effort auto-submit hook for
+  // the legacy single-write path. Tracking-worker events always ship a
+  // deterministic event_id (so they take the canonical branch above), but
+  // this keeps behavior consistent for any legacy producers.
+  _chironScheduleAutoSubmitAfterAppend(ctx, env, event, key);
+
   return jsonResponse(
     {
       ok: true,
@@ -734,6 +746,28 @@ async function handleAppend(request, env, origin) {
     200,
     origin,
   );
+}
+
+// RELEASE-P0-AUTO-CHIRON-2026-07-31: best-effort scheduler used by handleAppend.
+// * Uses `ctx.waitUntil` when available (Cloudflare runtime) so the response
+//   returns immediately.
+// * Falls back to fire-and-forget in test/local runtimes where `ctx` is
+//   undefined.
+// * ALWAYS wraps the underlying promise in a catch so a rejected promise
+//   never crashes the Worker.
+function _chironScheduleAutoSubmitAfterAppend(ctx, env, event, eventKey) {
+  try {
+    const promise = _chironAutoSubmitAfterAppendBestEffort(env, event, eventKey)
+      .catch(() => {
+        // Any thrown/rejected outcome is already logged inside the helper.
+        return null;
+      });
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(promise);
+    }
+  } catch (_) {
+    // Best-effort only; never break the caller.
+  }
 }
 
 function parseRecentLimit(url) {
@@ -6714,6 +6748,14 @@ function _chironEvaluateSubmitDuplicateGuard(previousStatus) {
   if (state === "verification_required") {
     return { decision: "verification_required" };
   }
+  // RELEASE-P0-AUTO-CHIRON-2026-07-31: automatic arrival-submit records this
+  // state on an arrival whose paired departure is not yet `synced`. The
+  // duplicate guard MUST allow a retry once the departure catches up, so the
+  // reconcile loop can promote the marker into a real submit. Never returns
+  // `already_synced` because Chiron was never contacted.
+  if (state === "waiting_for_departure") {
+    return { decision: "allow" };
+  }
   if (state === "failed") {
     // Retry only for a definitively failed prior attempt:
     //   - explicit definitive marker; OR
@@ -9057,6 +9099,14 @@ function buildChironTestflowResetStatusDoc(
   // Reset only testflow counters/status + ritnummer history. Credentials,
   // last_connection_status and environment are preserved. production_enabled is
   // forced false because a reset invalidates any prior completion (stricter).
+  //
+  // RELEASE-P0-AUTO-CHIRON-2026-07-31: reset also stamps a fresh cutoff on
+  // `testflow_started_at` when auto-submit is currently enabled, so any events
+  // durably stored BEFORE the reset are excluded from the automatic path
+  // (otherwise a reset would silently re-process old rides). Auto-submit flag
+  // itself is preserved: the operator opted in once and does not need to
+  // re-opt-in after a counter reset.
+  const autoSubmitPreserved = existing.testflow_auto_submit_enabled === true;
   return {
     ...existing,
     schema_version: CHIRON_CONNECTION_STATUS_SCHEMA,
@@ -9074,6 +9124,9 @@ function buildChironTestflowResetStatusDoc(
     testflow_completed_at: null,
     testflow_last_error: null,
     testflow_updated_at: updatedAt,
+    testflow_auto_submit_enabled: autoSubmitPreserved,
+    testflow_started_at: autoSubmitPreserved ? updatedAt : null,
+    testflow_auto_reconcile_last_at: null,
     updated_at: updatedAt,
     updated_by: updatedBy,
   };
@@ -9109,6 +9162,15 @@ function defaultChironConnectionStatusDoc(tenantId, companyId) {
     testflow_completed_at: null,
     testflow_updated_at: null,
     testflow_last_error: null,
+    // RELEASE-P0-AUTO-CHIRON-2026-07-31: automatic testflow submission gate.
+    // Both fields default to closed. `testflow_auto_submit_enabled` is a hard
+    // opt-in flag that MUST be true before any ride event can trigger the
+    // automatic Chiron official submit path; `testflow_started_at` is the ISO
+    // cutoff that fences off historical events (only events with
+    // created_at_utc >= testflow_started_at are processed).
+    testflow_auto_submit_enabled: false,
+    testflow_started_at: null,
+    testflow_auto_reconcile_last_at: null,
     updated_at: null,
   };
 }
@@ -9318,6 +9380,15 @@ function buildChironConnectionStatusResponse(tenantId, companyId, stored) {
     testflow_completed_at: testflow.testflow_completed_at,
     testflow_updated_at: testflow.testflow_updated_at,
     testflow_last_error: testflow.testflow_last_error,
+    // RELEASE-P0-AUTO-CHIRON-2026-07-31: expose the auto-submit gate + cutoff
+    // so the tablet/app can render `In behandeling` / `Voltooid` state without
+    // any additional endpoints. Both flags are strictly read-only from the
+    // client's perspective (writes go through the config-status POST).
+    testflow_auto_submit_enabled: stored.testflow_auto_submit_enabled === true,
+    testflow_started_at:
+      cleanText(stored.testflow_started_at, 64) || null,
+    testflow_auto_reconcile_last_at:
+      cleanText(stored.testflow_auto_reconcile_last_at, 64) || null,
     updated_at: cleanText(stored.updated_at, 64) || null,
     ...buildChironInternalTestStatusResponseFields(stored),
   };
@@ -9424,6 +9495,33 @@ function parseChironConfigStatusPostInput(body, existingStored) {
     safeTestMessagesSent >= safeTestMessagesRequired &&
     testflowProgress.testflow_status === "complete";
 
+  // RELEASE-P0-AUTO-CHIRON-2026-07-31: automatic testflow submit opt-in.
+  // Fields are strictly additive; older body shapes without them keep the
+  // previously-stored value (so nothing regresses on unrelated writes).
+  const autoSubmitPrev = existing.testflow_auto_submit_enabled === true;
+  const autoSubmitRequested =
+    typeof body?.testflow_auto_submit_enabled === "boolean"
+      ? body.testflow_auto_submit_enabled
+      : autoSubmitPrev;
+  const nowIsoForAutoSubmit = nowIso();
+  const testflowStartedAtPrev =
+    cleanText(existing.testflow_started_at, 64) || null;
+  // When the operator opts in for the first time, stamp the cutoff so events
+  // that were durably stored BEFORE this exact moment are excluded from the
+  // automatic path (old noisy test data / manual-submit rides / historical
+  // events stay untouched). Existing cutoff is preserved on subsequent saves.
+  let testflowStartedAtFinal = testflowStartedAtPrev;
+  if (autoSubmitRequested && !autoSubmitPrev) {
+    testflowStartedAtFinal = nowIsoForAutoSubmit;
+  }
+  if (!autoSubmitRequested) {
+    // Turning auto-submit OFF: keep the historical cutoff intact so a later
+    // re-enable does not silently re-process events between the two windows.
+    testflowStartedAtFinal = testflowStartedAtPrev;
+  }
+  const autoReconcileLastAtPrev =
+    cleanText(existing.testflow_auto_reconcile_last_at, 64) || null;
+
   return {
     value: {
       schema_version: CHIRON_CONNECTION_STATUS_SCHEMA,
@@ -9458,13 +9556,16 @@ function parseChironConfigStatusPostInput(body, existingStored) {
       testflow_ritnummers_completed: _chironTestflowRitList(
         existing.testflow_ritnummers_completed,
       ),
+      testflow_auto_submit_enabled: autoSubmitRequested === true,
+      testflow_started_at: testflowStartedAtFinal,
+      testflow_auto_reconcile_last_at: autoReconcileLastAtPrev,
       official_submission_performed_at:
         cleanText(existing.official_submission_performed_at, 64) || null,
     },
   };
 }
 
-async function handleChironConfigStatusGet(request, url, env, origin) {
+async function handleChironConfigStatusGet(request, url, env, origin, ctx) {
   const tenant = parseRequiredQuerySegment(url, "tenant_id");
   if (tenant.error) {
     return jsonResponse({ ok: false, error: tenant.error }, 400, origin);
@@ -9511,7 +9612,33 @@ async function handleChironConfigStatusGet(request, url, env, origin) {
   console.log(
     `[CHIRON_CONFIG_STATUS] tenant=${_chironMaskScopeId(tenantId)} company=${_chironMaskScopeId(companyId)} result=ok source=${source}`,
   );
+
+  // RELEASE-P0-AUTO-CHIRON-2026-07-31: opportunistic reconcile trigger.
+  // The tablet/app polls config-status to refresh testflow counters. When
+  // auto-submit is enabled and the throttle window elapsed, we schedule
+  // a bounded reconcile pass via ctx.waitUntil. The response is returned
+  // immediately with whatever counters are currently in KV — the reconcile
+  // then updates them for the NEXT poll.
+  if (ctx && _chironShouldRunReconcileFromStatusPoll(readResult.doc)) {
+    _chironScheduleAutoReconcileFromStatusPoll(ctx, env, tenantId, companyId);
+  }
+
   return jsonResponse(payload, 200, origin);
+}
+
+// RELEASE-P0-AUTO-CHIRON-2026-07-31: schedule a bounded reconcile pass from
+// the config-status poll. Best-effort; swallow all errors.
+function _chironScheduleAutoReconcileFromStatusPoll(ctx, env, tenantId, companyId) {
+  try {
+    const promise = _chironAutoReconcileScopeBestEffort(env, tenantId, companyId, {
+      source: "status_poll",
+    }).catch(() => null);
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(promise);
+    }
+  } catch (_) {
+    // best-effort
+  }
 }
 
 async function handleChironConfigStatusPost(request, url, env, origin) {
@@ -9587,9 +9714,9 @@ async function handleChironConfigStatusPost(request, url, env, origin) {
   return jsonResponse(payload, 200, origin);
 }
 
-async function handleChironConfigStatus(request, url, env, origin) {
+async function handleChironConfigStatus(request, url, env, origin, ctx) {
   if (request.method === "GET") {
-    return handleChironConfigStatusGet(request, url, env, origin);
+    return handleChironConfigStatusGet(request, url, env, origin, ctx);
   }
   if (request.method === "POST") {
     return handleChironConfigStatusPost(request, url, env, origin);
@@ -10233,6 +10360,745 @@ async function handleChironConnectionTestPost(request, url, env, origin) {
   );
 }
 
+// ==========================================================================
+// RELEASE-P0-AUTO-CHIRON-2026-07-31: automatic Chiron testflow submission.
+//
+// After a compliance event is durably stored (canonical + date entry), the
+// compliance worker automatically drives the official ACC submit on behalf of
+// the taxi company — provided every gate in `_chironAutoSubmitEligibleForEvent`
+// is satisfied. This eliminates the manual `submit-one` step during the
+// Chiron acceptance testflow: departures POST after START, arrivals POST after
+// STOP once the paired departure is `synced`, counters advance, and the
+// tablet/app reflects the new state via the existing config-status GET
+// (which the app polls). All external calls run inside `ctx.waitUntil` so
+// driver-facing requests never wait on Chiron / OAuth / KV writes.
+//
+// This module NEVER:
+//   * submits when `_chironTestflowLiveGate` fails;
+//   * submits when `testflow_auto_submit_enabled !== true`;
+//   * processes events strictly older than `testflow_started_at`;
+//   * re-POSTs an already-synced or verification_required event
+//     (`_chironEvaluateSubmitDuplicateGuard`);
+//   * re-POSTs after a definitive Chiron rejection without operator action;
+//   * blocks the compliance append response on the external submit;
+//   * scans namespace-wide.
+//
+// The reconciler is bounded to the compliance events since `testflow_started_at`
+// (or the last ~7 days if that is more restrictive) and is throttled per
+// company via `testflow_auto_reconcile_last_at`.
+// ==========================================================================
+const CHIRON_TESTFLOW_AUTO_RECONCILE_PATH = "/admin/chiron/testflow/auto-reconcile";
+// Auto-submit inner timeouts and scan bounds. Kept conservative so no single
+// invocation can blow the Worker CPU / subrequest budgets even at 1000
+// companies.
+const CHIRON_AUTO_SUBMIT_INNER_TIMEOUT_MS = 5000;
+const CHIRON_AUTO_RECONCILE_MAX_EVENTS = 200;
+const CHIRON_AUTO_RECONCILE_MAX_PROCESS = 20;
+// Throttle: skip an auto-reconcile trigger from the config-status GET if the
+// last automated pass ran less than this many ms ago. Manual admin-path calls
+// bypass the throttle.
+const CHIRON_AUTO_RECONCILE_MIN_INTERVAL_MS = 15000;
+// Any event stored strictly before (now - CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS)
+// is invisible to the reconciler even when `testflow_started_at` is older.
+// Keeps the scan bounded even after a long deployment gap.
+const CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS = 14 * 24 * 60 * 60 * 1000; // 14d
+
+function _chironAutoSubmitMessageTypeForEventType(eventType) {
+  const type = cleanText(eventType, 64).toLowerCase();
+  if (CHIRON_OFFICIAL_DEPARTURE_EVENT_TYPES.has(type)) return "departure";
+  if (CHIRON_OFFICIAL_ARRIVAL_EVENT_TYPES.has(type)) return "arrival";
+  return null;
+}
+
+// Pure eligibility check. Returns null when the event qualifies for automatic
+// submit, or a short reason string otherwise. Callers log the reason without
+// leaking any PII / secrets.
+function _chironAutoSubmitEligibleForEvent(statusPayload, env, event) {
+  if (!event || typeof event !== "object" || Array.isArray(event)) {
+    return "invalid_event";
+  }
+  const messageType = _chironAutoSubmitMessageTypeForEventType(event.event_type);
+  if (!messageType) return "event_type_not_auto_submittable";
+  const liveGate = _chironTestflowLiveGate(statusPayload, env);
+  if (liveGate) return liveGate;
+  if (statusPayload?.testflow_auto_submit_enabled !== true) {
+    return "testflow_auto_submit_disabled";
+  }
+  const cutoffRaw = cleanText(statusPayload?.testflow_started_at, 64);
+  if (!cutoffRaw) return "missing_testflow_started_at";
+  const eventAtRaw = cleanText(
+    event.created_at_utc ||
+      event.timestamps?.recorded_at_utc ||
+      event.timestamps?.event_at_utc,
+    64,
+  );
+  if (!eventAtRaw) return "missing_event_timestamp";
+  const cutoffMs = Date.parse(cutoffRaw);
+  const eventMs = Date.parse(eventAtRaw);
+  if (!Number.isFinite(cutoffMs) || !Number.isFinite(eventMs)) {
+    return "invalid_timestamp";
+  }
+  if (eventMs < cutoffMs) return "event_before_testflow_start";
+  return null;
+}
+
+// Build the full official draft payload for a single event using the exact
+// same hydration + leg-type + batch-rit-status pipeline as the manual submit-
+// one flow. Never throws.
+async function _chironBuildOfficialDraftForSingleEvent(env, event, eventKey) {
+  const scope = {
+    tenant_id: cleanText(event.tenant_id, 128),
+    company_id: cleanText(event.company_id, 128),
+  };
+  if (!scope.tenant_id || !scope.company_id) {
+    return { error: "missing_scope" };
+  }
+
+  const scopedHydrationCache = await _chironLoadScopedHydrationCache(
+    env,
+    scope,
+    true,
+  );
+  const entries = [{ key: cleanText(eventKey, 1024) || null, event }];
+  const legTypeMap = await _chironLoadBookingLegTypeMap(env, entries);
+  _chironStampResolvedLegTypeOnEntries(entries, legTypeMap);
+  const batchRitStatuses = _chironBuildBatchRitStatusIndex(entries);
+  const trustedRideHydration = _chironBuildBatchTrustedRideHydrationIndex(entries);
+
+  const exportPayload = buildChironExportPayload(event, eventKey, {
+    includeRaw: false,
+    includeOfficialDraft: true,
+    batchRitStatuses,
+    scopedHydrationCache,
+    trustedRideHydration,
+  });
+  return { scope, exportPayload };
+}
+
+// Compute the paired departure's official idempotency key from an arrival's
+// draft. Returns null when the paired departure cannot be identified (e.g.
+// missing registratie / ritnummer). Pure.
+function _chironPairedDepartureIdempotencyKeyForArrivalDraft(
+  scope,
+  arrivalOfficialPayload,
+) {
+  if (
+    !arrivalOfficialPayload ||
+    typeof arrivalOfficialPayload !== "object" ||
+    Array.isArray(arrivalOfficialPayload)
+  ) {
+    return null;
+  }
+  const registratie = cleanText(arrivalOfficialPayload.registratie, 256);
+  const ritnummer = cleanText(arrivalOfficialPayload.ritnummer, 256);
+  if (!registratie || !ritnummer) return null;
+  return buildChironOfficialIdempotencyKey(scope, registratie, ritnummer, "vertrek");
+}
+
+// Core auto-submit helper for a single event. Shared between the append-time
+// hook and the reconciler. Never throws; returns a structured outcome object.
+async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
+  const source = cleanText(options.source, 32) || "auto_submit";
+  const logMask = (v) => _chironMaskScopeId(cleanText(v, 128));
+  try {
+    const statusRead = await readChironConnectionStatusRaw(
+      env,
+      cleanText(event?.tenant_id, 128),
+      cleanText(event?.company_id, 128),
+    );
+    const statusPayload = buildChironConnectionStatusResponse(
+      cleanText(event?.tenant_id, 128),
+      cleanText(event?.company_id, 128),
+      statusRead.doc,
+    );
+    const ineligibleReason = _chironAutoSubmitEligibleForEvent(
+      statusPayload,
+      env,
+      event,
+    );
+    if (ineligibleReason) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: ineligibleReason,
+        source,
+      };
+    }
+
+    const messageType = _chironAutoSubmitMessageTypeForEventType(event.event_type);
+    if (!messageType) {
+      return { ok: false, skipped: true, reason: "event_type_not_auto_submittable", source };
+    }
+
+    const built = await _chironBuildOfficialDraftForSingleEvent(env, event, eventKey);
+    if (built.error) {
+      return { ok: false, skipped: true, reason: built.error, source };
+    }
+    const { scope, exportPayload } = built;
+    const officialDraft = exportPayload?.chiron_official_draft;
+    const officialValidation = officialDraft?.validation || {};
+    const officialPayload = officialDraft?.payload;
+    const expectedOfficialStatus =
+      _chironExpectedOfficialStatusForMessageType(messageType);
+    const officialStatus = cleanText(officialDraft?.status, 32).toLowerCase();
+    const officialIdempotencyKey = cleanText(officialDraft?.idempotency_key, 256);
+    const ritnummer = cleanText(officialPayload?.ritnummer, 256);
+    const validationStatus = cleanText(officialValidation.status, 64).toLowerCase();
+    const validationMissing = Array.isArray(officialValidation.missing)
+      ? officialValidation.missing
+      : [];
+    const validationErrors = Array.isArray(officialValidation.errors)
+      ? officialValidation.errors
+      : [];
+    const validationBlockers = Array.isArray(officialValidation.blockers)
+      ? officialValidation.blockers
+      : [];
+    const officialValidationAcceptable =
+      officialValidation.exportable === true &&
+      (validationStatus === "ready" || validationStatus === "warning") &&
+      validationMissing.length === 0 &&
+      validationErrors.length === 0 &&
+      validationBlockers.length === 0 &&
+      officialValidation.sequence_safe !== false;
+
+    if (
+      !officialDraft ||
+      officialDraft.category !== "ride_payload" ||
+      officialStatus !== expectedOfficialStatus ||
+      !officialValidationAcceptable ||
+      !officialPayload ||
+      typeof officialPayload !== "object" ||
+      Array.isArray(officialPayload) ||
+      !officialIdempotencyKey ||
+      !ritnummer
+    ) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: "official_payload_not_ready",
+        message_type: messageType,
+        source,
+      };
+    }
+
+    const tenantSegment = safeSegment(scope.tenant_id, "");
+    const companySegment = safeSegment(scope.company_id, "");
+
+    // Arrival sequence gate: only allowed when the paired departure is
+    // already `synced`. When departure is pending / verification_required /
+    // failed we record a `waiting_for_departure` marker on the arrival's
+    // status key. The reconciler retries later; the duplicate guard allows
+    // retries out of this state.
+    if (messageType === "arrival") {
+      const departureIdempotencyKey =
+        _chironPairedDepartureIdempotencyKeyForArrivalDraft(
+          scope,
+          officialPayload,
+        );
+      const departureStatusKey = departureIdempotencyKey
+        ? buildChironExportStatusKey(
+            tenantSegment,
+            companySegment,
+            departureIdempotencyKey,
+          )
+        : null;
+      const departureStatus = departureStatusKey
+        ? await _chironReadExportStatus(env, departureStatusKey)
+        : null;
+      const departureSyncState = cleanText(departureStatus?.sync_state, 32).toLowerCase();
+      if (departureSyncState !== "synced") {
+        const arrivalStatusKey = buildChironExportStatusKey(
+          tenantSegment,
+          companySegment,
+          officialIdempotencyKey,
+        );
+        const arrivalExisting = await _chironReadExportStatus(env, arrivalStatusKey);
+        // Never overwrite a terminal state on the arrival's own key.
+        const arrivalState = cleanText(arrivalExisting?.sync_state, 32).toLowerCase();
+        if (
+          arrivalState === "synced" ||
+          arrivalState === "pending" ||
+          arrivalState === "verification_required" ||
+          (arrivalState === "failed" &&
+            arrivalExisting?.failure_kind === "definitive")
+        ) {
+          return {
+            ok: false,
+            skipped: true,
+            reason: `arrival_existing_state_${arrivalState}`,
+            message_type: messageType,
+            source,
+            status_key: arrivalStatusKey,
+          };
+        }
+        const waitingDoc = {
+          schema_version: CHIRON_EXPORT_STATUS_SCHEMA,
+          tenant_id: scope.tenant_id,
+          company_id: scope.company_id,
+          event_id: cleanText(event.event_id, 200) || null,
+          official_idempotency_key: officialIdempotencyKey,
+          official_ritnummer: ritnummer,
+          official_status: officialStatus,
+          official_payload_shape: "chiron_taxirit_api_v1",
+          sync_state: "waiting_for_departure",
+          failure_kind: null,
+          verification_required_reason: null,
+          external_status_code: null,
+          external_reference: null,
+          response_shape: null,
+          fouten_count: null,
+          last_attempt_at: null,
+          attempt_count: Number(arrivalExisting?.attempt_count || 0),
+          sanitized_error: null,
+          waiting_for_departure: true,
+          paired_departure_idempotency_key: departureIdempotencyKey || null,
+          paired_departure_sync_state: departureSyncState || null,
+          auto_submit: true,
+          auto_submit_source: source,
+        };
+        await _chironWriteExportStatus(env, arrivalStatusKey, waitingDoc);
+        console.log(
+          `[CHIRON_AUTO_SUBMIT][WAITING] tenant=${logMask(scope.tenant_id)} company=${logMask(scope.company_id)} ritnummer=${ritnummer} paired_dep_state=${departureSyncState || "-"} source=${source}`,
+        );
+        return {
+          ok: true,
+          skipped: true,
+          reason: "waiting_for_departure",
+          message_type: messageType,
+          status_key: arrivalStatusKey,
+          source,
+        };
+      }
+    }
+
+    const statusKey = buildChironExportStatusKey(
+      tenantSegment,
+      companySegment,
+      officialIdempotencyKey,
+    );
+    const previousStatus = await _chironReadExportStatus(env, statusKey);
+    const guard = _chironEvaluateSubmitDuplicateGuard(previousStatus);
+    if (guard.decision !== "allow") {
+      return {
+        ok: false,
+        skipped: true,
+        reason: `duplicate_guard_${guard.decision}`,
+        message_type: messageType,
+        status_key: statusKey,
+        source,
+      };
+    }
+
+    const chironApiPayload = buildChironTaxiritApiPayload(officialPayload);
+    if (!chironApiPayload) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: "official_payload_serialization_failed",
+        message_type: messageType,
+        source,
+      };
+    }
+
+    const attemptCount = Number(previousStatus?.attempt_count || 0) + 1;
+    const attemptedAt = nowIso();
+    const pendingDoc = {
+      schema_version: CHIRON_EXPORT_STATUS_SCHEMA,
+      tenant_id: scope.tenant_id,
+      company_id: scope.company_id,
+      event_id: cleanText(event.event_id, 200) || null,
+      official_idempotency_key: officialIdempotencyKey,
+      official_ritnummer: ritnummer,
+      official_status: officialStatus,
+      official_payload_shape: "chiron_taxirit_api_v1",
+      sync_state: "pending",
+      external_status_code: null,
+      external_reference: null,
+      response_shape: null,
+      fouten_count: null,
+      last_attempt_at: attemptedAt,
+      attempt_count: attemptCount,
+      sanitized_error: null,
+      auto_submit: true,
+      auto_submit_source: source,
+    };
+    await _chironWriteExportStatus(env, statusKey, pendingDoc);
+
+    const oauthAcquire = await _chironAcquireOAuthAccessTokenForSubmit(
+      env,
+      scope.tenant_id,
+      scope.company_id,
+      "test",
+    );
+    if (!oauthAcquire.ok) {
+      // OAuth failure BEFORE the external POST — Chiron was NEVER contacted,
+      // so the submit is safely retryable. We delete the pending status doc
+      // rather than persisting a `failed` state, so the next reconcile tick
+      // starts from a clean slate (`_chironEvaluateSubmitDuplicateGuard`
+      // treats null as `allow`). This intentionally sacrifices audit
+      // granularity for retry safety: the OAuth failure IS logged via
+      // console.log below and via `writeChironConnectionStatusRaw` when a
+      // subsequent success eventually lands.
+      try {
+        await env.COMPLIANCE_KV.delete(statusKey);
+      } catch (_) {
+        // If we can't delete, leave the pending doc in place. The duplicate
+        // guard will report `conflict_pending` and reconciler backs off.
+      }
+      const sanitizedOauthError = _chironSanitizeExportError(
+        oauthAcquire.error || "oauth_failure",
+      );
+      console.log(
+        `[CHIRON_AUTO_SUBMIT][OAUTH_FAIL] tenant=${logMask(scope.tenant_id)} company=${logMask(scope.company_id)} ritnummer=${ritnummer} message_type=${messageType} error=${sanitizedOauthError} source=${source}`,
+      );
+      return {
+        ok: false,
+        skipped: false,
+        reason: "oauth_failure",
+        message_type: messageType,
+        status_key: statusKey,
+        retryable: true,
+        sanitized_error: sanitizedOauthError,
+        source,
+      };
+    }
+
+    const postResult = await _chironPostChironExportTestPayload(
+      env,
+      chironApiPayload,
+      {
+        accessToken: oauthAcquire._access_token_in_memory_only,
+        timeoutMs: CHIRON_AUTO_SUBMIT_INNER_TIMEOUT_MS,
+      },
+    );
+    oauthAcquire._access_token_in_memory_only = null;
+    const foutenCount = Number(postResult.fouten_count ?? 0);
+    const hasChironErrors = Number.isFinite(foutenCount) && foutenCount > 0;
+    const acceptedByChiron = postResult.ok === true && !hasChironErrors;
+    const ambiguousTransport = postResult.ambiguous === true;
+    const nextSyncState = acceptedByChiron
+      ? "synced"
+      : ambiguousTransport
+        ? "verification_required"
+        : "failed";
+    const finalDoc = {
+      ...pendingDoc,
+      sync_state: nextSyncState,
+      failure_kind: acceptedByChiron
+        ? null
+        : ambiguousTransport
+          ? "ambiguous"
+          : "definitive",
+      verification_required_reason: ambiguousTransport
+        ? cleanText(postResult.sanitized_error, 120) || "chiron_transport_ambiguous"
+        : null,
+      external_status_code: postResult.external_status_code ?? null,
+      external_reference: postResult.external_reference ?? null,
+      response_shape: postResult.response_shape ?? null,
+      fouten_count: postResult.fouten_count ?? null,
+      sanitized_error: postResult.sanitized_error ?? null,
+      last_attempt_at: nowIso(),
+    };
+    await _chironWriteExportStatus(env, statusKey, finalDoc);
+
+    // Advance testflow counters exactly like the manual submit-one path.
+    const nextStatusDoc = recordChironTestflowSubmitResult(statusRead.doc, {
+      officialStatus,
+      ritnummer,
+      ok: acceptedByChiron,
+      foutenCount: postResult.fouten_count ?? 0,
+      sanitizedError: acceptedByChiron
+        ? null
+        : (postResult.sanitized_error || "chiron_auto_submit_failed"),
+    });
+    await writeChironConnectionStatusRaw(
+      env,
+      scope.tenant_id,
+      scope.company_id,
+      nextStatusDoc,
+    );
+
+    console.log(
+      `[CHIRON_AUTO_SUBMIT][${acceptedByChiron ? "OK" : ambiguousTransport ? "AMBIGUOUS" : "FAIL"}] tenant=${logMask(scope.tenant_id)} company=${logMask(scope.company_id)} ritnummer=${ritnummer} status=${officialStatus} fouten=${postResult.fouten_count ?? 0} source=${source}`,
+    );
+
+    return {
+      ok: acceptedByChiron,
+      skipped: false,
+      message_type: messageType,
+      sync_state: finalDoc.sync_state,
+      status_key: statusKey,
+      ritnummer,
+      official_status: officialStatus,
+      attempt_count: attemptCount,
+      source,
+    };
+  } catch (err) {
+    console.log(
+      `[CHIRON_AUTO_SUBMIT][EXCEPTION] source=${source} error_name=${err?.name || "-"} error_message=${cleanText(err?.message, 120) || "-"}`,
+    );
+    return { ok: false, skipped: false, reason: "internal_exception", source };
+  }
+}
+
+// Best-effort append-time hook. Loaded by `handleAppend` via `ctx.waitUntil`
+// so the compliance HTTP response returns as fast as before. Guarantees:
+//   * never throws (all errors swallowed and logged);
+//   * never blocks the calling request;
+//   * respects the auto-submit gate + cutoff.
+async function _chironAutoSubmitAfterAppendBestEffort(env, event, eventKey) {
+  try {
+    const outcome = await _chironAutoSubmitOneEvent(env, event, eventKey, {
+      source: "append",
+    });
+    return outcome;
+  } catch (_) {
+    return { ok: false, skipped: false, reason: "internal_exception", source: "append" };
+  }
+}
+
+// Bounded per-scope reconciler. Scans compliance events since
+// `testflow_started_at` (bounded by CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS) and
+// tries auto-submit for every unsynced departure/arrival, in chronological
+// order. Never scans another tenant's namespace.
+async function _chironAutoReconcileScopeBestEffort(
+  env,
+  tenantId,
+  companyId,
+  options = {},
+) {
+  const source = cleanText(options.source, 32) || "reconcile";
+  const logMask = (v) => _chironMaskScopeId(cleanText(v, 128));
+  const outcome = {
+    ok: true,
+    tenant_id: tenantId,
+    company_id: companyId,
+    scanned: 0,
+    considered: 0,
+    processed: 0,
+    submitted: 0,
+    waiting_for_departure: 0,
+    already_synced: 0,
+    skipped: 0,
+    failed: 0,
+    source,
+  };
+  try {
+    const statusRead = await readChironConnectionStatusRaw(env, tenantId, companyId);
+    const statusPayload = buildChironConnectionStatusResponse(
+      tenantId,
+      companyId,
+      statusRead.doc,
+    );
+    const liveGate = _chironTestflowLiveGate(statusPayload, env);
+    if (liveGate) {
+      outcome.ok = false;
+      outcome.reason = liveGate;
+      return outcome;
+    }
+    if (statusPayload.testflow_auto_submit_enabled !== true) {
+      outcome.ok = false;
+      outcome.reason = "testflow_auto_submit_disabled";
+      return outcome;
+    }
+    const cutoffRaw = cleanText(statusPayload.testflow_started_at, 64);
+    if (!cutoffRaw) {
+      outcome.ok = false;
+      outcome.reason = "missing_testflow_started_at";
+      return outcome;
+    }
+    const cutoffMs = Date.parse(cutoffRaw);
+    if (!Number.isFinite(cutoffMs)) {
+      outcome.ok = false;
+      outcome.reason = "invalid_testflow_started_at";
+      return outcome;
+    }
+    const windowFloorMs = Date.now() - CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS;
+    const effectiveFloorMs = Math.max(cutoffMs, windowFloorMs);
+
+    const tenantSegment = safeSegment(tenantId, "");
+    const companySegment = safeSegment(companyId, "");
+    const prefix = buildCompliancePrefixForScope(tenantSegment, companySegment);
+
+    const keyNames = [];
+    let cursor;
+    let pages = 0;
+    while (
+      keyNames.length < CHIRON_AUTO_RECONCILE_MAX_EVENTS &&
+      pages < 20
+    ) {
+      pages += 1;
+      let page;
+      try {
+        page = await env.COMPLIANCE_KV.list({
+          prefix,
+          limit: 500,
+          ...(cursor ? { cursor } : {}),
+        });
+      } catch (_) {
+        break;
+      }
+      for (const entry of page?.keys || []) {
+        const name = cleanText(entry?.name, 1024);
+        if (!name) continue;
+        keyNames.push(name);
+        if (keyNames.length >= CHIRON_AUTO_RECONCILE_MAX_EVENTS) break;
+      }
+      if (page?.list_complete === true) break;
+      cursor = cleanText(page?.cursor, 1024) || undefined;
+      if (!cursor) break;
+    }
+    outcome.scanned = keyNames.length;
+
+    // Sort ascending so we always process departures before arrivals when
+    // both fall inside the same batch (the date-indexed key encodes the
+    // stored ms so lexicographic order == chronological order).
+    keyNames.sort();
+
+    let processed = 0;
+    for (const key of keyNames) {
+      if (processed >= CHIRON_AUTO_RECONCILE_MAX_PROCESS) break;
+      let raw;
+      try {
+        raw = await env.COMPLIANCE_KV.get(key);
+      } catch (_) {
+        continue;
+      }
+      if (!raw) continue;
+      let event;
+      try {
+        event = JSON.parse(raw);
+      } catch (_) {
+        continue;
+      }
+      if (!event || typeof event !== "object" || Array.isArray(event)) continue;
+      const messageType = _chironAutoSubmitMessageTypeForEventType(event.event_type);
+      if (!messageType) continue;
+      const eventAtMs = Date.parse(cleanText(event.created_at_utc, 64));
+      if (!Number.isFinite(eventAtMs) || eventAtMs < effectiveFloorMs) continue;
+
+      outcome.considered += 1;
+
+      // Cheap pre-check: only attempt when the current per-event status is
+      // not already terminal. This avoids OAuth + KV write cost for events
+      // that are already synced or awaiting operator verification.
+      // We recompute the idempotency key by building the draft.
+      const submitOutcome = await _chironAutoSubmitOneEvent(env, event, key, {
+        source,
+      });
+      processed += 1;
+      outcome.processed += 1;
+      if (submitOutcome.ok === true && submitOutcome.skipped !== true) {
+        outcome.submitted += 1;
+      } else if (submitOutcome.reason === "waiting_for_departure") {
+        outcome.waiting_for_departure += 1;
+      } else if (submitOutcome.reason === "duplicate_guard_already_synced") {
+        outcome.already_synced += 1;
+      } else if (submitOutcome.skipped === true) {
+        outcome.skipped += 1;
+      } else if (submitOutcome.ok !== true) {
+        outcome.failed += 1;
+      }
+
+      // Hard stop on unrecoverable Chiron rejection so the reconciler never
+      // loops on the same failure. `_chironAutoSubmitOneEvent` already wrote
+      // failure_kind=definitive; the duplicate guard will let a subsequent
+      // manual retry through only when explicitly allowed. Per task
+      // requirement: "Stop bij de eerste definitieve Chiron-fout."
+      if (
+        submitOutcome.sync_state === "failed" &&
+        submitOutcome.reason !== "oauth_failure"
+      ) {
+        outcome.stopped_on_definitive_failure = true;
+        break;
+      }
+    }
+
+    // Stamp the throttle marker so subsequent config-status GETs skip the
+    // reconciler until the interval elapses.
+    const nextStatusDoc = statusRead.doc && typeof statusRead.doc === "object"
+      ? { ...statusRead.doc, testflow_auto_reconcile_last_at: nowIso() }
+      : null;
+    if (nextStatusDoc) {
+      await writeChironConnectionStatusRaw(env, tenantId, companyId, nextStatusDoc);
+    }
+
+    console.log(
+      `[CHIRON_AUTO_RECONCILE] tenant=${logMask(tenantId)} company=${logMask(companyId)} scanned=${outcome.scanned} considered=${outcome.considered} submitted=${outcome.submitted} waiting=${outcome.waiting_for_departure} skipped=${outcome.skipped} failed=${outcome.failed} source=${source}`,
+    );
+    return outcome;
+  } catch (err) {
+    outcome.ok = false;
+    outcome.reason = "internal_exception";
+    outcome.error_name = err?.name || null;
+    return outcome;
+  }
+}
+
+function _chironShouldRunReconcileFromStatusPoll(statusDoc) {
+  if (!statusDoc || typeof statusDoc !== "object") return false;
+  if (statusDoc.testflow_auto_submit_enabled !== true) return false;
+  const lastRaw = cleanText(statusDoc.testflow_auto_reconcile_last_at, 64);
+  if (!lastRaw) return true;
+  const lastMs = Date.parse(lastRaw);
+  if (!Number.isFinite(lastMs)) return true;
+  return Date.now() - lastMs >= CHIRON_AUTO_RECONCILE_MIN_INTERVAL_MS;
+}
+
+async function handleChironAutoReconcilePost(request, url, env, origin) {
+  if (!requireJsonRequest(request)) {
+    return jsonResponse(
+      { ok: false, error: "Content-Type must be application/json" },
+      400,
+      origin,
+    );
+  }
+  const body = await readJsonBody(request);
+  if (body === null) {
+    return jsonResponse({ ok: false, error: "Invalid JSON body" }, 400, origin);
+  }
+  const tenantId = cleanText(body?.tenant_id, 128);
+  const companyId = cleanText(body?.company_id, 128);
+  if (!tenantId || !companyId) {
+    return jsonResponse({ ok: false, error: "missing_scope" }, 400, origin);
+  }
+  const authError = ensureAuthorizedOrInternalProxy(request, env, {
+    tenantId,
+    companyId,
+  });
+  if (authError) return authError;
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.list !== "function") {
+    return jsonResponse(
+      { ok: false, error: "missing_kv" },
+      500,
+      origin,
+    );
+  }
+  const outcome = await _chironAutoReconcileScopeBestEffort(
+    env,
+    tenantId,
+    companyId,
+    { source: "admin_manual" },
+  );
+  const statusRead = await readChironConnectionStatusRaw(env, tenantId, companyId);
+  const statusPayload = buildChironConnectionStatusResponse(
+    tenantId,
+    companyId,
+    statusRead.doc,
+  );
+  return jsonResponse(
+    {
+      ...outcome,
+      testflow: _chironBuildTestflowCountersResponse(statusPayload),
+    },
+    200,
+    origin,
+  );
+}
+// ==========================================================================
+// END RELEASE-P0-AUTO-CHIRON-2026-07-31
+// ==========================================================================
+
 // RELEASE-P0-OFFICIAL-CHIRON-OAUTH-SUBMIT-2026-07-31: internal helpers
 // intentionally exposed for tests only. This surface exists solely so the
 // OAuth-derived bearer / duplicate-guard / ambiguous-transport code paths
@@ -10257,10 +11123,28 @@ export const __testInternals = {
   buildChironTaxiritApiPayload,
   normalizeChironKboRegistration,
   buildChironOfficialIdempotencyKey,
+  // RELEASE-P0-AUTO-CHIRON-2026-07-31: expose the auto-submit + reconcile
+  // internals so tests can drive the state-machine deterministically without
+  // launching a full worker instance.
+  _chironAutoSubmitEligibleForEvent,
+  _chironAutoSubmitMessageTypeForEventType,
+  _chironPairedDepartureIdempotencyKeyForArrivalDraft,
+  _chironAutoSubmitOneEvent,
+  _chironAutoSubmitAfterAppendBestEffort,
+  _chironAutoReconcileScopeBestEffort,
+  _chironShouldRunReconcileFromStatusPoll,
+  CHIRON_AUTO_RECONCILE_MIN_INTERVAL_MS,
+  CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS,
+  CHIRON_TESTFLOW_AUTO_RECONCILE_PATH,
 };
 
 export default {
-  async fetch(request, env) {
+  // RELEASE-P0-AUTO-CHIRON-2026-07-31: accept `ctx` so the compliance append +
+  // config-status handlers can schedule automatic Chiron submits / bounded
+  // reconciles via `ctx.waitUntil`. All existing routes continue to work
+  // exactly as before when `ctx` is absent (older runtimes / tests) — the
+  // handlers gracefully fall back to inline execution.
+  async fetch(request, env, ctx) {
     const origin = request.headers.get("origin") || "*";
     const url = new URL(request.url);
 
@@ -10293,6 +11177,7 @@ export default {
       url.pathname !== CHIRON_CONNECTION_TEST_PATH &&
       url.pathname !== CHIRON_TESTFLOW_RESET_PATH &&
       url.pathname !== CHIRON_TESTFLOW_SUBMIT_ONE_PATH &&
+      url.pathname !== CHIRON_TESTFLOW_AUTO_RECONCILE_PATH &&
       url.pathname !== CHIRON_TAXIRIT_VERIFY_CONFIRM_SYNCED_PATH &&
       url.pathname !== CHIRON_TAXIRIT_VERIFY_MARK_RETRYABLE_PATH
     ) {
@@ -10308,7 +11193,7 @@ export default {
         if (request.method !== "POST") {
           return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
         }
-        return await handleAppend(request, env, origin);
+        return await handleAppend(request, env, origin, ctx);
       }
       if (url.pathname === ADMIN_RESET_DRY_RUN_PATH) {
         if (request.method !== "GET") {
@@ -10362,7 +11247,7 @@ export default {
         return await handleChironReadinessReport(request, url, env, origin);
       }
       if (url.pathname === CHIRON_CONFIG_STATUS_PATH) {
-        return await handleChironConfigStatus(request, url, env, origin);
+        return await handleChironConfigStatus(request, url, env, origin, ctx);
       }
       if (url.pathname === CHIRON_CONFIG_TEST_CREDENTIALS_PATH) {
         if (request.method !== "POST") {
@@ -10393,6 +11278,12 @@ export default {
           return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
         }
         return await handleChironTestflowSubmitOnePost(request, env, origin);
+      }
+      if (url.pathname === CHIRON_TESTFLOW_AUTO_RECONCILE_PATH) {
+        if (request.method !== "POST") {
+          return jsonResponse({ ok: false, error: "Method Not Allowed" }, 405, origin);
+        }
+        return await handleChironAutoReconcilePost(request, url, env, origin);
       }
       if (url.pathname === CHIRON_TAXIRIT_VERIFY_CONFIRM_SYNCED_PATH) {
         if (request.method !== "POST") {
