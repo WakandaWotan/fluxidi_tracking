@@ -11039,9 +11039,21 @@ async function _chironAutoReconcileScopeBestEffort(
 
     // Stamp the throttle marker so subsequent config-status GETs skip the
     // reconciler until the interval elapses.
-    const nextStatusDoc = statusRead.doc && typeof statusRead.doc === "object"
-      ? { ...statusRead.doc, testflow_auto_reconcile_last_at: nowIso() }
-      : null;
+    //
+    // CRITICAL: re-read the status doc immediately before writing so we do
+    // NOT clobber any counter updates that just landed inside the loop via
+    // `_chironAutoSubmitOneEvent -> writeChironConnectionStatusRaw`. Using
+    // the initial `statusRead.doc` here would race the loop's counter
+    // increments and overwrite them with the pre-run counters.
+    const throttleRead = await readChironConnectionStatusRaw(
+      env,
+      tenantId,
+      companyId,
+    );
+    const nextStatusDoc =
+      throttleRead.doc && typeof throttleRead.doc === "object"
+        ? { ...throttleRead.doc, testflow_auto_reconcile_last_at: nowIso() }
+        : null;
     if (nextStatusDoc) {
       await writeChironConnectionStatusRaw(env, tenantId, companyId, nextStatusDoc);
     }
