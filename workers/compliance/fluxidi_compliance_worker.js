@@ -167,9 +167,7 @@ const CHIRON_CREDENTIALS_ALLOWED_AUTH_SCHEMES = new Set([
 const CHIRON_OAUTH_CLIENT_ID_MAX_LENGTH = 256;
 const CHIRON_OAUTH_CLIENT_SECRET_MAX_LENGTH = 1024;
 // Chiron Connect 4B: fixed allowlisted OAuth2 token endpoint per environment.
-// We never read this from KV or from request bodies. Production endpoint is
-// intentionally absent from this map until the production credentials route
-// is introduced in a later phase.
+// We never read token URLs from KV or request bodies — only this allowlist.
 const CHIRON_OAUTH_TOKEN_URL_BY_ENVIRONMENT = {
   test: "https://mow-acc.api.vlaanderen.be/oauth/token",
   // RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: production OAuth is a separate
@@ -3139,9 +3137,9 @@ async function _chironExchangeOAuthClientCredentials(
 //   - credentials are read by (tenantId, companyId, environment). A company-A
 //     token can never be exchanged for company-B because the KV key
 //     (buildChironCredentialsKvKey) already fully scopes the ciphertext.
-//   - environment is HARD-PINNED to "test" (the connection-test flow and
-//     export test-mode both refuse anything else); production has no OAuth
-//     URL in CHIRON_OAUTH_TOKEN_URL_BY_ENVIRONMENT and is rejected upstream.
+//   - environment is pinned to "test" or "production". Production uses the
+//     production OAuth URL map entry and production credentials KV slot;
+//     it never falls back to ACC credentials or ACC URLs.
 //   - the api_token legacy scheme is REJECTED for official taxirit submit —
 //     legacy static tokens must never be treated as an OAuth-derived bearer.
 async function _chironAcquireOAuthAccessTokenForSubmit(
@@ -8803,8 +8801,16 @@ function _chironDecryptedCredentialPayloadValid(parsed) {
 
 function _chironCredentialsDocReadyForMockTest(doc) {
   if (!doc || typeof doc !== "object" || Array.isArray(doc)) return false;
-  if (cleanText(doc.schema_version, 64) !== CHIRON_CREDENTIALS_SCHEMA_VERSION) return false;
-  if (cleanText(doc.environment, 32).toLowerCase() !== "test") return false;
+  if (cleanText(doc.schema_version, 64) !== CHIRON_CREDENTIALS_SCHEMA_VERSION) {
+    return false;
+  }
+  // RELEASE-P0-CHIRON-PROD-SUBMIT-2026-07-31: production credentials are
+  // stored with environment="production". Readiness must accept both test and
+  // production docs so OAuth acquire + connection-test + auto-submit can use
+  // the company's separately stored production Client ID/Secret. Never treat
+  // a production doc as invalid solely because it is not ACC/test.
+  const environment = cleanText(doc.environment, 32).toLowerCase();
+  if (environment !== "test" && environment !== "production") return false;
   const scheme = cleanText(doc.auth_scheme, 64).toLowerCase();
   if (!CHIRON_CREDENTIALS_ALLOWED_AUTH_SCHEMES.has(scheme)) return false;
   const encrypted = doc.credential_payload_encrypted;
@@ -11390,10 +11396,8 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
     // mid-ride cutover cannot redirect the paired arrival to a different
     // environment. For arrivals we inherit from the departure (already
     // resolved above); for departures we stamp the current effective env.
-    // Note: with fail-closed production gating, this value is "test" today.
-    // The stamp is defensive: it guarantees that once production wiring lands
-    // in a later phase, cutovers only ever affect NEW rides — every
-    // in-flight ritnummer completes in the environment it started in.
+    // Production auto-submit uses the stamped environment for OAuth + taxirit
+    // URL selection and never falls back to ACC.
     let effectiveEnvForThisEvent;
     if (messageType === "arrival") {
       // Recompute the paired departure's inherited env (the branch above only
@@ -11831,7 +11835,13 @@ async function _chironAutoReconcileScopeBestEffort(
 
 function _chironShouldRunReconcileFromStatusPoll(statusDoc) {
   if (!statusDoc || typeof statusDoc !== "object") return false;
-  if (statusDoc.testflow_auto_submit_enabled !== true) return false;
+  // RELEASE-P0-CHIRON-PROD-SUBMIT-2026-07-31: production auto-submit does not
+  // depend on the ACC testflow opt-in. When the derived effective environment
+  // is production, status-poll reconcile must still run (throttled) so queued
+  // / retryable production events are drained without falling back to ACC.
+  const effective = _chironDeriveEffectiveChironEnvironment(statusDoc);
+  const accArmed = statusDoc.testflow_auto_submit_enabled === true;
+  if (effective !== "production" && !accArmed) return false;
   const lastRaw = cleanText(statusDoc.testflow_auto_reconcile_last_at, 64);
   if (!lastRaw) return true;
   const lastMs = Date.parse(lastRaw);
@@ -11936,11 +11946,16 @@ export const __testInternals = {
   // tests can lock the state machine invariants into the source of truth.
   _chironDeriveEffectiveChironEnvironment,
   _chironProductionConnectionStatusResponseFields,
+  _chironProductionLiveGate,
+  _chironAutoSubmitRoutingGate,
+  _chironCredentialsDocReadyForMockTest,
   buildChironConnectionStatusResponse,
   parseChironConfigStatusPostInput,
   buildChironTestflowResetStatusDoc,
   recordChironTestflowSubmitResult,
   getChironTestflowProgress,
+  CHIRON_OAUTH_TOKEN_URL_BY_ENVIRONMENT,
+  CHIRON_TAXIRIT_URL_BY_ENVIRONMENT,
 };
 
 export default {

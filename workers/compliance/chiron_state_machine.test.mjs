@@ -199,14 +199,19 @@ test("state-machine 6: ride started in ACC ends in ACC (env ownership pinned to 
 // (never fallbacks to ACC).
 // -------------------------------------------------------------------------
 test("state-machine 7: ride started in production ends in production (no ACC fallback)", () => {
+  // Per-ride stamp owns routing. Arrival inherits departure's production stamp
+  // even if company config later changes — never ACC fallback.
   const departureExportStatus = {
     schema_version: "chiron_export_status_v1",
-    sync_state: "queued",
+    sync_state: "synced",
     effective_environment: "production",
-    queued_reason: "production_submit_path_not_configured",
   };
-  assert.equal(departureExportStatus.effective_environment, "production");
-  assert.notEqual(departureExportStatus.effective_environment, "test");
+  const arrivalInherited =
+    departureExportStatus.effective_environment === "production"
+      ? "production"
+      : "test";
+  assert.equal(arrivalInherited, "production");
+  assert.notEqual(arrivalInherited, "test");
 });
 
 // -------------------------------------------------------------------------

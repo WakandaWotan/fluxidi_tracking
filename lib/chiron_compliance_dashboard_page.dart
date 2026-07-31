@@ -22,10 +22,12 @@ import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/driver_documents_store.dart';
 import 'package:fluxidi_tracking/vehicle_management_page.dart';
+import 'package:fluxidi_tracking/widgets/chiron_acceptance_step_card.dart';
 import 'package:fluxidi_tracking/widgets/chiron_environment_status_labels.dart';
 import 'package:fluxidi_tracking/widgets/chiron_friendly_diagnose_sheet.dart';
 import 'package:fluxidi_tracking/widgets/chiron_production_setup_card.dart';
 import 'package:fluxidi_tracking/widgets/chiron_self_service_wizard.dart';
+import 'package:fluxidi_tracking/widgets/chiron_test_setup_card.dart';
 import 'package:http/http.dart' as http;
 import 'package:share_plus/share_plus.dart';
 
@@ -308,124 +310,6 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                             language: _lang,
                             textColor: tokens.textPrimary,
                             mutedColor: tokens.textSecondary,
-                          ),
-                          const SizedBox(height: 12),
-                          ChironProductionSetupCard(
-                            status: backendStatus,
-                            language: _lang,
-                            backgroundColor: tokens.panel,
-                            textColor: tokens.textPrimary,
-                            mutedColor: tokens.textSecondary,
-                            onSave: (clientId, clientSecret) async {
-                              final scope =
-                                  _chironDashboardTenantCompanyScope();
-                              if (scope == null) {
-                                throw Exception(
-                                  _t(
-                                    nl: 'Bedrijfsscope ontbreekt.',
-                                    en: 'Company scope is missing.',
-                                    fr: 'Le périmètre entreprise est manquant.',
-                                    es: 'Falta el ámbito de empresa.',
-                                  ),
-                                );
-                              }
-                              if (clientId.trim().isEmpty ||
-                                  clientSecret.trim().isEmpty) {
-                                throw Exception(
-                                  _t(
-                                    nl: 'Voer eerst uw productiegegevens in.',
-                                    en: 'Enter your production credentials first.',
-                                    fr: 'Saisissez d\'abord vos identifiants production.',
-                                    es: 'Introduzca primero sus credenciales de producción.',
-                                  ),
-                                );
-                              }
-                              await _saveChironProductionOAuthCredentialsViaBooking(
-                                tenantId: scope.tenantId,
-                                companyId: scope.companyId,
-                                clientId: clientId.trim(),
-                                clientSecret: clientSecret,
-                              );
-                              await fetchBackendChironConnectionStatus(
-                                tenantId: scope.tenantId,
-                                companyId: scope.companyId,
-                              ).then((status) {
-                                backendChironConnectionStatusNotifier.value =
-                                    status;
-                              });
-                            },
-                            onTestConnection: () async {
-                              final scope =
-                                  _chironDashboardTenantCompanyScope();
-                              if (scope == null) {
-                                throw Exception(
-                                  _t(
-                                    nl: 'Bedrijfsscope ontbreekt.',
-                                    en: 'Company scope is missing.',
-                                    fr: 'Le périmètre entreprise est manquant.',
-                                    es: 'Falta el ámbito de empresa.',
-                                  ),
-                                );
-                              }
-                              final result =
-                                  await _runChironMockConnectionTestViaBooking(
-                                tenantId: scope.tenantId,
-                                companyId: scope.companyId,
-                                environment:
-                                    ChironConnectionEnvironment.production,
-                              );
-                              await fetchBackendChironConnectionStatus(
-                                tenantId: scope.tenantId,
-                                companyId: scope.companyId,
-                              ).then((status) {
-                                backendChironConnectionStatusNotifier.value =
-                                    status;
-                              });
-                              if (!result.ok) {
-                                final detail =
-                                    (result.sanitizedError ?? '').trim();
-                                throw Exception(
-                                  detail.isNotEmpty
-                                      ? detail
-                                      : _t(
-                                          nl: 'Productieverbinding mislukt. Gegevens zijn bewaard — controleer Client ID en Secret en probeer opnieuw.',
-                                          en: 'Production connection failed. Credentials are kept — check Client ID and Secret and try again.',
-                                          fr: 'Échec de la connexion production. Les identifiants sont conservés — vérifiez le Client ID et le Secret, puis réessayez.',
-                                          es: 'Falló la conexión de producción. Las credenciales se conservan: revise Client ID y Secret e inténtelo de nuevo.',
-                                        ),
-                                );
-                              }
-                            },
-                            onActivate: () async {
-                              final scope =
-                                  _chironDashboardTenantCompanyScope();
-                              if (scope == null) {
-                                throw Exception(
-                                  _t(
-                                    nl: 'Bedrijfsscope ontbreekt.',
-                                    en: 'Company scope is missing.',
-                                    fr: 'Le périmètre entreprise est manquant.',
-                                    es: 'Falta el ámbito de empresa.',
-                                  ),
-                                );
-                              }
-                              final current =
-                                  backendChironConnectionStatusNotifier.value;
-                              final updated =
-                                  await saveBackendChironConnectionStatus(
-                                tenantId: scope.tenantId,
-                                companyId: scope.companyId,
-                                enabled: current?.enabled ?? true,
-                                environment:
-                                    ChironConnectionEnvironment.production,
-                                region: current?.region.isNotEmpty == true
-                                    ? current!.region
-                                    : ChironRegionScope.flanders,
-                                productionEnabled: true,
-                              );
-                              backendChironConnectionStatusNotifier.value =
-                                  updated;
-                            },
                           ),
                         ],
                       ),
@@ -792,14 +676,175 @@ class _ChironComplianceOverviewState extends State<_ChironComplianceOverview> {
           ValueListenableBuilder<BackendChironConnectionStatus?>(
             valueListenable: backendChironConnectionStatusNotifier,
             builder: (context, backendStatus, _) {
-              return ChironSelfServiceWizard(
-                status: backendStatus,
-                language: widget.lang,
-                textPrimary: _chironTextPrimary,
-                textSecondary: _chironTextSecondary,
-                panelColor: _chironPanel,
-                borderColor: _chironBorder,
-                accentColor: _chironGold,
+              Future<void> refreshStatus() async {
+                final scope = _chironDashboardTenantCompanyScope();
+                if (scope == null) return;
+                final status = await fetchBackendChironConnectionStatus(
+                  tenantId: scope.tenantId,
+                  companyId: scope.companyId,
+                );
+                backendChironConnectionStatusNotifier.value = status;
+              }
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ChironSelfServiceWizard(
+                    status: backendStatus,
+                    language: widget.lang,
+                    textPrimary: _chironTextPrimary,
+                    textSecondary: _chironTextSecondary,
+                    panelColor: _chironPanel,
+                    borderColor: _chironBorder,
+                    accentColor: _chironGold,
+                  ),
+                  const SizedBox(height: 12),
+                  ChironTestSetupCard(
+                    status: backendStatus,
+                    language: widget.lang,
+                    backgroundColor: _chironPanel,
+                    textColor: _chironTextPrimary,
+                    mutedColor: _chironTextSecondary,
+                    onSave: (clientId, clientSecret) async {
+                      final scope = _chironDashboardTenantCompanyScope();
+                      if (scope == null) {
+                        throw Exception('missing_scope');
+                      }
+                      if (clientId.trim().isEmpty ||
+                          clientSecret.trim().isEmpty) {
+                        throw Exception('missing_test_credentials');
+                      }
+                      await _saveChironOAuthClientCredentialsViaBooking(
+                        tenantId: scope.tenantId,
+                        companyId: scope.companyId,
+                        clientId: clientId.trim(),
+                        clientSecret: clientSecret,
+                      );
+                      await refreshStatus();
+                    },
+                    onTestConnection: () async {
+                      final scope = _chironDashboardTenantCompanyScope();
+                      if (scope == null) {
+                        throw Exception('missing_scope');
+                      }
+                      final result =
+                          await _runChironMockConnectionTestViaBooking(
+                        tenantId: scope.tenantId,
+                        companyId: scope.companyId,
+                        environment: ChironConnectionEnvironment.test,
+                      );
+                      await refreshStatus();
+                      if (!result.ok) {
+                        throw Exception(
+                          (result.sanitizedError ?? result.errorCode ??
+                                  'connection_failed')
+                              .toString(),
+                        );
+                      }
+                    },
+                    onClear: () async {
+                      final scope = _chironDashboardTenantCompanyScope();
+                      if (scope == null) {
+                        throw Exception('missing_scope');
+                      }
+                      await _clearChironTestCredentialsViaBooking(
+                        tenantId: scope.tenantId,
+                        companyId: scope.companyId,
+                      );
+                      await refreshStatus();
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  ChironAcceptanceStepCard(
+                    status: backendStatus,
+                    language: widget.lang,
+                    backgroundColor: _chironPanel,
+                    textColor: _chironTextPrimary,
+                    mutedColor: _chironTextSecondary,
+                    onReset: () async {
+                      final scope = _chironDashboardTenantCompanyScope();
+                      if (scope == null) return;
+                      await showChironTestflowResetDialog(
+                        context: context,
+                        lang: widget.lang,
+                        productionActive:
+                            backendStatus?.productionEnabled ?? false,
+                        onReset: () => _resetChironTestflowViaBooking(
+                          tenantId: scope.tenantId,
+                          companyId: scope.companyId,
+                        ),
+                      );
+                      await refreshStatus();
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  ChironProductionSetupCard(
+                    status: backendStatus,
+                    language: widget.lang,
+                    backgroundColor: _chironPanel,
+                    textColor: _chironTextPrimary,
+                    mutedColor: _chironTextSecondary,
+                    onSave: (clientId, clientSecret) async {
+                      final scope = _chironDashboardTenantCompanyScope();
+                      if (scope == null) {
+                        throw Exception('missing_scope');
+                      }
+                      if (clientId.trim().isEmpty ||
+                          clientSecret.trim().isEmpty) {
+                        throw Exception('missing_production_credentials');
+                      }
+                      await _saveChironProductionOAuthCredentialsViaBooking(
+                        tenantId: scope.tenantId,
+                        companyId: scope.companyId,
+                        clientId: clientId.trim(),
+                        clientSecret: clientSecret,
+                      );
+                      await refreshStatus();
+                    },
+                    onTestConnection: () async {
+                      final scope = _chironDashboardTenantCompanyScope();
+                      if (scope == null) {
+                        throw Exception('missing_scope');
+                      }
+                      final result =
+                          await _runChironMockConnectionTestViaBooking(
+                        tenantId: scope.tenantId,
+                        companyId: scope.companyId,
+                        environment: ChironConnectionEnvironment.production,
+                      );
+                      await refreshStatus();
+                      if (!result.ok) {
+                        throw Exception(
+                          (result.sanitizedError ??
+                                  result.errorCode ??
+                                  'connection_failed')
+                              .toString(),
+                        );
+                      }
+                    },
+                    onActivate: () async {
+                      final scope = _chironDashboardTenantCompanyScope();
+                      if (scope == null) {
+                        throw Exception('missing_scope');
+                      }
+                      final current =
+                          backendChironConnectionStatusNotifier.value;
+                      final updated =
+                          await saveBackendChironConnectionStatus(
+                        tenantId: scope.tenantId,
+                        companyId: scope.companyId,
+                        enabled: current?.enabled ?? true,
+                        environment:
+                            ChironConnectionEnvironment.production,
+                        region: current?.region.isNotEmpty == true
+                            ? current!.region
+                            : ChironRegionScope.flanders,
+                        productionEnabled: true,
+                      );
+                      backendChironConnectionStatusNotifier.value = updated;
+                    },
+                  ),
+                ],
               );
             },
           ),
@@ -1535,8 +1580,17 @@ class _ChironHubAdvancedDiagnosticsSectionState
   }
 
   /// RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: single tap opens the panel
-  /// immediately. Previous root cause: expand-then-second-tap + network await
-  /// before any real panel (often ending in SnackBar only).
+  /// immediately.
+  ///
+  /// Proven root cause of multi-tap:
+  /// 1) older UX required expanding "Probleemoplossing" before Diagnose;
+  /// 2) the handler awaited a network status fetch / technical report before
+  ///    any modal was shown, so the first tap often looked like a no-op
+  ///    (SnackBar-only / delayed feedback) and users tapped again.
+  ///
+  /// Fix: one onPressed → set busy → open bottom sheet with cached status
+  /// immediately → sheet performs at most one refresh with spinner; errors
+  /// stay inside the open panel; busy clears when the sheet closes.
   Future<void> _openDiagnoseOnce() async {
     if (_busy) return;
     setState(() => _busy = true);

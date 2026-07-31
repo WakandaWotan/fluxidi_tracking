@@ -762,6 +762,15 @@ class BackendChironConnectionStatus {
   final String? productionLastConnectionTestAt;
   final String productionLastConnectionStatusMessage;
   final String testflowStatus;
+  // RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: acceptance counters for the
+  // customer-facing wizard (0/5 departures, 0/5 arrivals, 0/5 rides, 0/10 msgs).
+  final int testDepartureSentCount;
+  final int testArrivalSentCount;
+  final int testRidesCompletedCount;
+  final int testDepartureRequired;
+  final int testArrivalRequired;
+  final int testRidesRequired;
+  final bool testflowAutoSubmitEnabled;
 
   const BackendChironConnectionStatus({
     this.ok = false,
@@ -790,6 +799,13 @@ class BackendChironConnectionStatus {
     this.productionLastConnectionTestAt,
     this.productionLastConnectionStatusMessage = '',
     this.testflowStatus = 'not_started',
+    this.testDepartureSentCount = 0,
+    this.testArrivalSentCount = 0,
+    this.testRidesCompletedCount = 0,
+    this.testDepartureRequired = 5,
+    this.testArrivalRequired = 5,
+    this.testRidesRequired = 5,
+    this.testflowAutoSubmitEnabled = false,
   });
 
   factory BackendChironConnectionStatus.fromJson(Map<String, dynamic> json) {
@@ -929,6 +945,34 @@ class BackendChironConnectionStatus {
         'testflow_status',
         'testflowStatus',
       ], 'not_started').toLowerCase(),
+      testDepartureSentCount: intAny(const [
+        'test_departure_sent_count',
+        'testDepartureSentCount',
+      ], 0),
+      testArrivalSentCount: intAny(const [
+        'test_arrival_sent_count',
+        'testArrivalSentCount',
+      ], 0),
+      testRidesCompletedCount: intAny(const [
+        'test_rides_completed_count',
+        'testRidesCompletedCount',
+      ], 0),
+      testDepartureRequired: intAny(const [
+        'test_departure_required',
+        'testDepartureRequired',
+      ], 5),
+      testArrivalRequired: intAny(const [
+        'test_arrival_required',
+        'testArrivalRequired',
+      ], 5),
+      testRidesRequired: intAny(const [
+        'test_rides_required',
+        'testRidesRequired',
+      ], 5),
+      testflowAutoSubmitEnabled: boolAny(const [
+        'testflow_auto_submit_enabled',
+        'testflowAutoSubmitEnabled',
+      ], false),
     );
   }
 }

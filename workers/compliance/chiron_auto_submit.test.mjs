@@ -343,12 +343,29 @@ test("reconcile throttle: ran long ago => allowed", () => {
   assert.equal(_chironShouldRunReconcileFromStatusPoll(doc), true);
 });
 
-test("reconcile throttle: auto_submit disabled => never runs", () => {
+test("reconcile throttle: auto_submit disabled => never runs (ACC)", () => {
   const doc = goodStatusDoc({
     testflow_auto_submit_enabled: false,
     testflow_auto_reconcile_last_at: null,
   });
   assert.equal(_chironShouldRunReconcileFromStatusPoll(doc), false);
+});
+
+test("reconcile throttle: production effective env runs even when ACC auto-submit off", () => {
+  const doc = goodStatusDoc({
+    testflow_auto_submit_enabled: false,
+    testflow_auto_reconcile_last_at: null,
+    environment: "production",
+    production_enabled: true,
+    production_credentials_stored: true,
+    production_last_connection_status: "test_passed",
+    test_departure_sent_count: 5,
+    test_arrival_sent_count: 5,
+    test_messages_sent_count: 10,
+    test_rides_completed_count: 5,
+    testflow_status: "complete",
+  });
+  assert.equal(_chironShouldRunReconcileFromStatusPoll(doc), true);
 });
 
 // =====================================================================
