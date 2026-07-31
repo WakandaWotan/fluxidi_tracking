@@ -27,6 +27,7 @@ const {
   _chironAutoSubmitOneEvent,
   _chironAutoReconcileScopeBestEffort,
   _chironShouldRunReconcileFromStatusPoll,
+  _chironInferLegTypeForLeglessRideStarts,
   _chironEvaluateSubmitDuplicateGuard,
   buildChironOfficialIdempotencyKey,
   buildChironExportStatusKey,
@@ -887,4 +888,101 @@ test("auto-reconcile: bounded scan does not process more than the cap", async ()
     outcome.processed <= 20,
     `must not process more than 20 events per pass, got ${outcome.processed}`,
   );
+});
+
+// =====================================================================
+// L. Roundtrip leg inference: pair legless ride_start with sibling stops.
+// =====================================================================
+test("leg inference: pairs legless ride_start with chronologically-later ride_stop of same booking", () => {
+  const bookingId = "2026-07-830695";
+  const startOutbound = {
+    event_type: "ride_start",
+    booking_id: bookingId,
+    created_at_utc: "2026-07-31T14:35:00.000Z",
+  };
+  const stopOutbound = {
+    event_type: "ride_stop",
+    booking_id: bookingId,
+    leg_type: "outbound",
+    created_at_utc: "2026-07-31T14:36:00.000Z",
+  };
+  const startReturn = {
+    event_type: "ride_start",
+    booking_id: bookingId,
+    created_at_utc: "2026-07-31T14:55:00.000Z",
+  };
+  const stopReturn = {
+    event_type: "ride_stop",
+    booking_id: bookingId,
+    leg_type: "return",
+    created_at_utc: "2026-07-31T14:56:00.000Z",
+  };
+  const entries = [
+    { key: "k1", event: startOutbound },
+    { key: "k2", event: stopOutbound },
+    { key: "k3", event: startReturn },
+    { key: "k4", event: stopReturn },
+  ];
+  _chironInferLegTypeForLeglessRideStarts(entries);
+  assert.equal(startOutbound.leg_type, "outbound", "first start should inherit outbound");
+  assert.equal(startReturn.leg_type, "return", "second start should inherit return");
+});
+
+test("leg inference: leaves already-legged ride_start untouched", () => {
+  const start = {
+    event_type: "ride_start",
+    booking_id: "b1",
+    leg_type: "outbound",
+    created_at_utc: "2026-07-31T14:00:00.000Z",
+  };
+  const stop = {
+    event_type: "ride_stop",
+    booking_id: "b1",
+    leg_type: "return",
+    created_at_utc: "2026-07-31T14:05:00.000Z",
+  };
+  const entries = [{ key: "a", event: start }, { key: "b", event: stop }];
+  _chironInferLegTypeForLeglessRideStarts(entries);
+  assert.equal(start.leg_type, "outbound", "already-legged start must not be rewritten");
+});
+
+test("leg inference: never claims a ride_stop that predates the ride_start", () => {
+  const stopBefore = {
+    event_type: "ride_stop",
+    booking_id: "b1",
+    leg_type: "outbound",
+    created_at_utc: "2026-07-31T13:00:00.000Z",
+  };
+  const startAfter = {
+    event_type: "ride_start",
+    booking_id: "b1",
+    created_at_utc: "2026-07-31T14:00:00.000Z",
+  };
+  const entries = [
+    { key: "s", event: stopBefore },
+    { key: "r", event: startAfter },
+  ];
+  _chironInferLegTypeForLeglessRideStarts(entries);
+  assert.equal(
+    startAfter.leg_type,
+    undefined,
+    "must not inherit from an earlier ride_stop of a prior leg",
+  );
+});
+
+test("leg inference: does not cross booking boundaries", () => {
+  const startA = {
+    event_type: "ride_start",
+    booking_id: "A",
+    created_at_utc: "2026-07-31T14:00:00.000Z",
+  };
+  const stopB = {
+    event_type: "ride_stop",
+    booking_id: "B",
+    leg_type: "outbound",
+    created_at_utc: "2026-07-31T14:05:00.000Z",
+  };
+  const entries = [{ key: "a", event: startA }, { key: "b", event: stopB }];
+  _chironInferLegTypeForLeglessRideStarts(entries);
+  assert.equal(startA.leg_type, undefined, "must not inherit from a different booking's stop");
 });

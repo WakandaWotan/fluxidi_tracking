@@ -10478,10 +10478,79 @@ function _chironAutoSubmitEligibleForEvent(statusPayload, env, event) {
   return null;
 }
 
+// Chronologically pair legless ride_start events with sibling ride_stop events
+// that carry a leg_type, per booking_id. Stamps the resolved leg_type on the
+// target ride_start in-memory only (never persisted back to KV) so the
+// downstream ritnummer resolver emits the correct leg-scoped ritnummer for
+// planned roundtrip departures.
+//
+// Rationale: for planned roundtrip bookings the tracking worker currently
+// emits ride_start compliance events WITHOUT `leg_type` (both outbound and
+// return share the parent booking_id), while ride_stop events DO carry the
+// leg_type. Without inference the outbound and return departures collapse to
+// the SAME ritnummer, colliding on the Chiron official idempotency key so the
+// second departure is falsely reported as `already_synced`. Inference matches
+// each legless ride_start with the earliest strictly-later ride_stop that
+// (a) shares the same booking_id and (b) has not been claimed by an earlier
+// legless ride_start. Stops without leg_type or already-legged starts are
+// left untouched. Pure, bounded, and safe when the batch is empty.
+function _chironInferLegTypeForLeglessRideStarts(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) return;
+  const startsByBooking = new Map();
+  const stopsByBooking = new Map();
+  for (const entry of entries) {
+    const event = entry?.event;
+    if (!event || typeof event !== "object" || Array.isArray(event)) continue;
+    const bookingId = cleanText(event.booking_id, 128);
+    if (!bookingId) continue;
+    const eventType = cleanText(event.event_type, 64).toLowerCase();
+    const ts = Date.parse(cleanText(event.created_at_utc, 64));
+    if (!Number.isFinite(ts)) continue;
+    if (eventType === "ride_start") {
+      if (_chironEventHasLegScope(event)) continue;
+      if (!startsByBooking.has(bookingId)) startsByBooking.set(bookingId, []);
+      startsByBooking.get(bookingId).push({ event, ts });
+    } else if (eventType === "ride_stop") {
+      const legType = cleanText(event.leg_type ?? event.legType, 32);
+      if (!legType) continue;
+      if (!stopsByBooking.has(bookingId)) stopsByBooking.set(bookingId, []);
+      stopsByBooking.get(bookingId).push({ legType, ts });
+    }
+  }
+  for (const [bookingId, starts] of startsByBooking) {
+    const stops = stopsByBooking.get(bookingId);
+    if (!Array.isArray(stops) || stops.length === 0) continue;
+    starts.sort((a, b) => a.ts - b.ts);
+    const sortedStops = stops.slice().sort((a, b) => a.ts - b.ts);
+    const claimed = new Array(sortedStops.length).fill(false);
+    for (const s of starts) {
+      let chosen = -1;
+      for (let i = 0; i < sortedStops.length; i += 1) {
+        if (claimed[i]) continue;
+        if (sortedStops[i].ts < s.ts) continue;
+        chosen = i;
+        break;
+      }
+      if (chosen < 0) continue;
+      claimed[chosen] = true;
+      s.event.leg_type = sortedStops[chosen].legType;
+      s.event.legType = sortedStops[chosen].legType;
+    }
+  }
+}
+
 // Build the full official draft payload for a single event using the exact
 // same hydration + leg-type + batch-rit-status pipeline as the manual submit-
-// one flow. Never throws.
-async function _chironBuildOfficialDraftForSingleEvent(env, event, eventKey) {
+// one flow. Accepts an optional `preloadedContextEntries` batch so the
+// reconciler can avoid re-scanning KV per-event; when absent, the batch falls
+// back to the full scoped compliance-event list (same call the manual submit-
+// one path uses). Never throws.
+async function _chironBuildOfficialDraftForSingleEvent(
+  env,
+  event,
+  eventKey,
+  options = {},
+) {
   const scope = {
     tenant_id: cleanText(event.tenant_id, 128),
     company_id: cleanText(event.company_id, 128),
@@ -10495,9 +10564,59 @@ async function _chironBuildOfficialDraftForSingleEvent(env, event, eventKey) {
     scope,
     true,
   );
-  const entries = [{ key: cleanText(eventKey, 1024) || null, event }];
+
+  let contextEntries = null;
+  if (Array.isArray(options?.preloadedContextEntries)) {
+    contextEntries = options.preloadedContextEntries;
+  } else {
+    const tenantSegment = safeSegment(scope.tenant_id, "");
+    const companySegment = safeSegment(scope.company_id, "");
+    const prefix = buildCompliancePrefixForScope(tenantSegment, companySegment);
+    try {
+      const keyNames = await listScopedComplianceEventKeys(env, prefix);
+      const loaded = [];
+      for (const key of keyNames) {
+        let raw;
+        try {
+          raw = await env.COMPLIANCE_KV.get(key);
+        } catch (_) {
+          continue;
+        }
+        if (!raw) continue;
+        try {
+          const parsed = JSON.parse(raw);
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+          loaded.push({ key, event: parsed });
+        } catch (_) {}
+      }
+      contextEntries = loaded;
+    } catch (_) {
+      contextEntries = null;
+    }
+  }
+
+  // Ensure the target event is present in the batch so both leg-inference and
+  // sequence-safe validation see it. If the caller preloaded a context that
+  // already contains this key, don't duplicate.
+  const targetKeyText = cleanText(eventKey, 1024) || null;
+  let entries;
+  if (Array.isArray(contextEntries) && contextEntries.length > 0) {
+    const hasTarget = contextEntries.some(
+      (e) => cleanText(e?.key, 1024) === targetKeyText,
+    );
+    entries = hasTarget
+      ? contextEntries
+      : [...contextEntries, { key: targetKeyText, event }];
+  } else {
+    entries = [{ key: targetKeyText, event }];
+  }
+
+  // Single-leg booking stamping (existing behavior, only fires when the
+  // booking record itself carries exactly one leg or is explicitly one-way).
   const legTypeMap = await _chironLoadBookingLegTypeMap(env, entries);
   _chironStampResolvedLegTypeOnEntries(entries, legTypeMap);
+  // Roundtrip inference for legless ride_start events (see helper docstring).
+  _chironInferLegTypeForLeglessRideStarts(entries);
   const batchRitStatuses = _chironBuildBatchRitStatusIndex(entries);
   const trustedRideHydration = _chironBuildBatchTrustedRideHydrationIndex(entries);
 
@@ -10566,7 +10685,16 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
       return { ok: false, skipped: true, reason: "event_type_not_auto_submittable", source };
     }
 
-    const built = await _chironBuildOfficialDraftForSingleEvent(env, event, eventKey);
+    const built = await _chironBuildOfficialDraftForSingleEvent(
+      env,
+      event,
+      eventKey,
+      {
+        preloadedContextEntries: Array.isArray(options?.preloadedContextEntries)
+          ? options.preloadedContextEntries
+          : null,
+      },
+    );
     if (built.error) {
       return { ok: false, skipped: true, reason: built.error, source };
     }
@@ -10715,6 +10843,40 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
     const previousStatus = await _chironReadExportStatus(env, statusKey);
     const guard = _chironEvaluateSubmitDuplicateGuard(previousStatus);
     if (guard.decision !== "allow") {
+      // RELEASE-P0-AUTO-CHIRON-2026-07-31: when the duplicate guard reports the
+      // idempotency key is `already_synced` but the testflow counters have NOT
+      // yet been advanced for this ritnummer, reconcile the counters here. This
+      // repairs a real-world drift class where an earlier run submitted to
+      // Chiron successfully (KV export_status = synced) but a bug — e.g. the
+      // reconciler's throttle-write overwriting counters with a stale doc —
+      // reverted the counter update. `recordChironTestflowSubmitResult` is
+      // idempotent: it early-outs when the ritnummer is already tracked, so
+      // this branch NEVER double-counts. We only fire for the true
+      // `already_synced` decision — pending / verification_required stay
+      // strictly untouched (they represent an in-flight or ambiguous submit
+      // and the operator resolves them explicitly).
+      if (guard.decision === "already_synced" && ritnummer && officialStatus) {
+        try {
+          const nextStatusDoc = recordChironTestflowSubmitResult(statusRead.doc, {
+            officialStatus,
+            ritnummer,
+            ok: true,
+            foutenCount: 0,
+            sanitizedError: null,
+          });
+          await writeChironConnectionStatusRaw(
+            env,
+            scope.tenant_id,
+            scope.company_id,
+            nextStatusDoc,
+          );
+          console.log(
+            `[CHIRON_AUTO_SUBMIT][ALREADY_SYNCED_COUNTER_REPAIR] tenant=${logMask(scope.tenant_id)} company=${logMask(scope.company_id)} ritnummer=${ritnummer} status=${officialStatus} source=${source}`,
+          );
+        } catch (_) {
+          // Best-effort: counter repair never blocks the guard decision.
+        }
+      }
       return {
         ok: false,
         skipped: true,
@@ -10917,6 +11079,12 @@ async function _chironAutoReconcileScopeBestEffort(
     already_synced: 0,
     skipped: 0,
     failed: 0,
+    // RELEASE-P0-AUTO-CHIRON-2026-07-31: per-event diagnostics so an operator
+    // can see WHICH events were submitted / skipped / waited and why, without
+    // any PII beyond the compliance event_key (which is already scoped to
+    // tenant/company). The array is bounded by CHIRON_AUTO_RECONCILE_MAX_PROCESS
+    // so this can never blow the response size at scale.
+    events: [],
     source,
   };
   try {
@@ -10976,6 +11144,11 @@ async function _chironAutoReconcileScopeBestEffort(
 
     // Fetch, parse, and filter down to the candidate set. Bounded by the
     // total list-scan cap so a very old namespace can't blow up CPU.
+    // `contextEntries` collects EVERY parsed event (not just submittables) so
+    // downstream leg inference / batch-rit-status can see paired
+    // ride_start/ride_stop / booking_* siblings when building each event's
+    // official draft. Bounded by CHIRON_EXPORT_LIST_SCAN_CAP.
+    const contextEntries = [];
     const candidates = [];
     for (const key of allKeyNames) {
       let raw;
@@ -10992,6 +11165,7 @@ async function _chironAutoReconcileScopeBestEffort(
         continue;
       }
       if (!event || typeof event !== "object" || Array.isArray(event)) continue;
+      contextEntries.push({ key, event });
       const messageType = _chironAutoSubmitMessageTypeForEventType(event.event_type);
       if (!messageType) continue;
       const eventAtMs = Date.parse(cleanText(event.created_at_utc, 64));
@@ -11008,6 +11182,7 @@ async function _chironAutoReconcileScopeBestEffort(
       outcome.considered += 1;
       const submitOutcome = await _chironAutoSubmitOneEvent(env, c.event, c.key, {
         source,
+        preloadedContextEntries: contextEntries,
       });
       processed += 1;
       outcome.processed += 1;
@@ -11022,6 +11197,20 @@ async function _chironAutoReconcileScopeBestEffort(
       } else if (submitOutcome.ok !== true) {
         outcome.failed += 1;
       }
+      outcome.events.push({
+        key: c.key,
+        event_type: cleanText(c.event?.event_type, 64) || null,
+        message_type: c.messageType,
+        booking_id: cleanText(c.event?.booking_id, 128) || null,
+        leg_type:
+          cleanText(c.event?.leg_type ?? c.event?.legType, 32) || null,
+        created_at_utc: cleanText(c.event?.created_at_utc, 64) || null,
+        ok: submitOutcome.ok === true,
+        skipped: submitOutcome.skipped === true,
+        reason: cleanText(submitOutcome.reason, 96) || null,
+        sync_state: cleanText(submitOutcome.sync_state, 32) || null,
+        ritnummer: cleanText(submitOutcome.ritnummer, 96) || null,
+      });
 
       // Hard stop on unrecoverable Chiron rejection so the reconciler never
       // loops on the same failure. `_chironAutoSubmitOneEvent` already wrote
@@ -11168,6 +11357,7 @@ export const __testInternals = {
   _chironAutoSubmitAfterAppendBestEffort,
   _chironAutoReconcileScopeBestEffort,
   _chironShouldRunReconcileFromStatusPoll,
+  _chironInferLegTypeForLeglessRideStarts,
   CHIRON_AUTO_RECONCILE_MIN_INTERVAL_MS,
   CHIRON_AUTO_RECONCILE_MAX_WINDOW_MS,
   CHIRON_TESTFLOW_AUTO_RECONCILE_PATH,
