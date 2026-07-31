@@ -2836,11 +2836,27 @@ async function handleChironScoreSummary(request, url, env, origin) {
   );
 }
 
+// RELEASE-P0-CHIRON-TEST-RUNTIME-GATE-2026-07-31: infrastructure enable-marker
+// for the Chiron taxirit ACC/test path. Prior versions also required the
+// legacy `CHIRON_EXPORT_API_TOKEN` env var, but that dependency has been
+// dropped: the official taxirit-POST authenticates exclusively with the
+// per-company OAuth-derived access_token (see
+// `_chironPostChironExportTestPayload` / `_chironAcquireOAuthAccessTokenForSubmit`),
+// so a static bearer is neither required nor consulted here.
+//
+// This function intentionally stays PROVIDER-side; it is combined at request
+// time with the per-company preflight (`_chironTestflowLiveGate`) which
+// additionally enforces:
+//   - statusPayload.environment === "test"
+//   - statusPayload.production_enabled === false
+//   - statusPayload.official_submit_enabled === false
+//   - statusPayload.test_credentials_stored === true
+//   - statusPayload.last_connection_status === "test_passed"
+//   - `_chironExportBaseUrlLooksTestOrAcc(env)` (ACC/test URL allowlist).
 function chironExportTestModeEnabled(env) {
   return (
     cleanText(env?.CHIRON_EXPORT_MODE, 32).toLowerCase() === "test" &&
-    cleanText(env?.CHIRON_EXPORT_BASE_URL, 512).length > 0 &&
-    cleanText(env?.CHIRON_EXPORT_API_TOKEN, 512).length > 0
+    cleanText(env?.CHIRON_EXPORT_BASE_URL, 512).length > 0
   );
 }
 
@@ -10165,6 +10181,9 @@ export const __testInternals = {
   buildChironExportStatusKey,
   CHIRON_EXPORT_STATUS_SCHEMA,
   safeSegment,
+  chironExportTestModeEnabled,
+  _chironTestflowLiveGate,
+  _chironExportBaseUrlLooksTestOrAcc,
 };
 
 export default {

@@ -7,6 +7,20 @@ preview_urls = false
 [observability.logs]
 enabled = true
 
+# RELEASE-P0-CHIRON-TEST-RUNTIME-GATE-2026-07-31: non-sensitive test-runtime
+# configuration for the official Chiron ACC path. These are the ONLY two
+# environment values required at deploy time to unlock the operator-driven
+# testflow submit-one endpoint. All bearer credentials (per-company OAuth
+# client_id/client_secret) live in KV and are decrypted with the
+# `CHIRON_CREDENTIALS_ENCRYPTION_KEY` secret at request time — they are never
+# committed here and never derived from `CHIRON_EXPORT_API_TOKEN`.
+#
+# Only ACC (mow-acc.api.vlaanderen.be) taxirit URLs must be committed. No
+# production URL. No fallback URL. No credentials.
+[vars]
+CHIRON_EXPORT_MODE = "test"
+CHIRON_EXPORT_BASE_URL = "https://mow-acc.api.vlaanderen.be/chiron/taxirit"
+
 # Append-only compliance event storage.
 [[kv_namespaces]]
 binding = "COMPLIANCE_KV"
@@ -26,3 +40,8 @@ id = "6805da1ffefe4a3982b4c419250c59b1"
 # CHIRON_CREDENTIALS_ENCRYPTION_KEY    — AES-GCM encryption key for stored Chiron credentials
 # CHIRON_CREDENTIALS_ENCRYPTION_KID    — optional key id label (default v1)
 # CHIRON_PRODUCTION_SUBMIT_ENABLED     — explicit gate for production credential/submit paths
+#
+# DEPRECATED legacy secret (kept only so pre-existing deployments do not break;
+# no code path uses this value as an HTTP bearer any more — the official
+# taxirit-POST uses the per-company OAuth-derived access token exclusively):
+# CHIRON_EXPORT_API_TOKEN              — legacy static token, DO NOT rely on
