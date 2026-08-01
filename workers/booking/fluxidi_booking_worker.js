@@ -77566,13 +77566,43 @@ async function createStreetRideCheckoutAuthoritative(
     }
   }
 
-  // Online method / Mollie readiness — force online_payment (generic Checkout).
+  // Online readiness: company must have Mollie Connect usable AND at least one
+  // Mollie-hosted checkout option enabled (online_payment umbrella OR any
+  // concrete Mollie method such as bancontact/card/paypal). Street checkout
+  // omits a fixed Mollie method so Checkout shows Mollie's available set.
+  const paymentOptions = await resolveCompanyPaymentOptionsForScope(env, tenantScope, {
+    onlineRequested: true,
+  });
+  const enabled = paymentOptions?.enabledSet || new Set();
+  const hasOnlineUmbrella = enabled.has("online_payment");
+  const firstConcreteMollieMethod = Array.from(
+    SUPPORTED_MOLLIE_CHECKOUT_PUBLIC_PAYMENT_OPTION_IDS,
+  ).find((id) => id !== "online_payment" && enabled.has(id));
+  if (!hasOnlineUmbrella && !firstConcreteMollieMethod) {
+    return {
+      ok: false,
+      error: "payment_method_disabled_for_company",
+      code: "payment_method_disabled_for_company",
+      message: "No online Mollie checkout methods are enabled for this company.",
+      payment_method: "online_payment",
+      paymentMethod: "online_payment",
+      ...(paymentOptions?.payment_owner_mode
+        ? {
+            payment_owner_mode: paymentOptions.payment_owner_mode,
+            paymentOwnerMode: paymentOptions.payment_owner_mode,
+          }
+        : {}),
+    };
+  }
+  const methodForValidation = hasOnlineUmbrella
+    ? "online_payment"
+    : firstConcreteMollieMethod;
   const methodValidation = await validateCompanyPaymentMethodForBooking(
     env,
     tenantScope,
     {
-      payment_method: "online_payment",
-      paymentMethod: "online_payment",
+      payment_method: methodForValidation,
+      paymentMethod: methodForValidation,
       payment_mode: "mollie",
       payment_provider: "mollie",
     },
