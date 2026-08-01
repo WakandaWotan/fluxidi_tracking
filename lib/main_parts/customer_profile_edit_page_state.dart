@@ -356,15 +356,31 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
     }
     if (!mounted) return;
     setState(() => _saving = false);
+    final hasSession = session != null;
+    final syncOk = synced != null;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          _t(
-            nl: 'Gegevens opgeslagen.',
-            en: 'Details saved.',
-            fr: 'Informations enregistrées.',
-            es: 'Datos guardados.',
-          ),
+          !hasSession
+              ? _t(
+                  nl: 'Gegevens lokaal opgeslagen.',
+                  en: 'Details saved locally.',
+                  fr: 'Informations enregistrées localement.',
+                  es: 'Datos guardados localmente.',
+                )
+              : syncOk
+              ? _t(
+                  nl: 'Gegevens opgeslagen en gesynchroniseerd.',
+                  en: 'Details saved and synchronized.',
+                  fr: 'Informations enregistrées et synchronisées.',
+                  es: 'Datos guardados y sincronizados.',
+                )
+              : _t(
+                  nl: 'Gegevens lokaal opgeslagen. Synchronisatie met de server is mislukt — probeer opnieuw.',
+                  en: 'Details saved locally. Server sync failed — please try again.',
+                  fr: 'Informations enregistrées localement. La synchronisation a échoué — réessayez.',
+                  es: 'Datos guardados localmente. Falló la sincronización — inténtalo de nuevo.',
+                ),
         ),
       ),
     );

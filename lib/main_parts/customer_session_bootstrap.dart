@@ -525,6 +525,24 @@ Future<CustomerProfile?> _syncCustomerProfileToBackendBestEffort({
         'preferred_postcode': localProfile.preferredPostcode,
         'company_name': localProfile.companyName,
         'vat_number': localProfile.vatNumber,
+        'invoice_email': localProfile.invoiceEmail,
+        'billing_street': localProfile.billingStreet,
+        'billing_postal_code': localProfile.billingPostalCode,
+        'billing_city': localProfile.billingCity,
+        'billing_country': localProfile.billingCountry,
+        'billing_address': <String, dynamic>{
+          'street': localProfile.billingStreet,
+          'postal_code': localProfile.billingPostalCode,
+          'city': localProfile.billingCity,
+          'country': localProfile.billingCountry,
+        },
+        'peppol_endpoint_id': localProfile.peppolEndpointId,
+        'peppol_scheme': localProfile.peppolScheme,
+        'peppol': <String, dynamic>{
+          'endpoint_id': localProfile.peppolEndpointId,
+          'scheme': localProfile.peppolScheme,
+        },
+        'favorite_partner_ids': localProfile.favoritePartnerIds,
       },
     );
     if (remote == null) {

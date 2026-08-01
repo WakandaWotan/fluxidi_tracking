@@ -7633,7 +7633,7 @@ Future<Map<String, dynamic>?> fetchPublicHotelSearch({
   }
 }
 
-Map<String, dynamic> _sanitizePublicCustomerProfilePayload(
+Map<String, dynamic> sanitizePublicCustomerProfilePayload(
   Map<String, dynamic> payload,
 ) {
   String readAny(List<String> keys) {
@@ -7644,6 +7644,13 @@ Map<String, dynamic> _sanitizePublicCustomerProfilePayload(
       if (text.isNotEmpty) return text;
     }
     return '';
+  }
+
+  bool hasAnyKey(List<String> keys) {
+    for (final key in keys) {
+      if (payload.containsKey(key)) return true;
+    }
+    return false;
   }
 
   List<String> readListAny(List<String> keys) {
@@ -7663,7 +7670,26 @@ Map<String, dynamic> _sanitizePublicCustomerProfilePayload(
     return const <String>[];
   }
 
-  return <String, dynamic>{
+  final billingAddress = payload['billing_address'] is Map
+      ? Map<String, dynamic>.from(payload['billing_address'] as Map)
+      : (payload['billingAddress'] is Map
+            ? Map<String, dynamic>.from(payload['billingAddress'] as Map)
+            : const <String, dynamic>{});
+  final peppolBlock = payload['peppol'] is Map
+      ? Map<String, dynamic>.from(payload['peppol'] as Map)
+      : const <String, dynamic>{};
+
+  String readNested(Map<String, dynamic> source, List<String> keys) {
+    for (final key in keys) {
+      final value = source[key];
+      if (value == null) continue;
+      final text = value.toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+    return '';
+  }
+
+  final out = <String, dynamic>{
     'name': readAny(const ['name']),
     'phone': readAny(const ['phone']),
     'email': readAny(const ['email']).toLowerCase(),
@@ -7673,13 +7699,141 @@ Map<String, dynamic> _sanitizePublicCustomerProfilePayload(
     ]),
     'company_name': readAny(const ['company_name', 'companyName']),
     'vat_number': readAny(const ['vat_number', 'vatNumber']),
-    'favorite_partner_ids': readListAny(const [
+  };
+
+  if (hasAnyKey(const [
+    'favorite_partner_ids',
+    'favoritePartnerIds',
+    'favourite_partner_ids',
+    'favouritePartnerIds',
+  ])) {
+    out['favorite_partner_ids'] = readListAny(const [
       'favorite_partner_ids',
       'favoritePartnerIds',
       'favourite_partner_ids',
       'favouritePartnerIds',
-    ]),
-  };
+    ]);
+  }
+
+  // Billing / Peppol: only include when present so partial upserts (e.g.
+  // favorites) cannot wipe synchronized billing data with empty defaults.
+  if (hasAnyKey(const ['invoice_email', 'invoiceEmail'])) {
+    out['invoice_email'] = readAny(const [
+      'invoice_email',
+      'invoiceEmail',
+    ]).toLowerCase();
+  }
+
+  final hasBillingStreet =
+      hasAnyKey(const ['billing_street', 'billingStreet']) ||
+      billingAddress.containsKey('street');
+  final hasBillingPostal =
+      hasAnyKey(const ['billing_postal_code', 'billingPostalCode']) ||
+      billingAddress.containsKey('postal_code') ||
+      billingAddress.containsKey('postalCode');
+  final hasBillingCity =
+      hasAnyKey(const ['billing_city', 'billingCity']) ||
+      billingAddress.containsKey('city');
+  final hasBillingCountry =
+      hasAnyKey(const ['billing_country', 'billingCountry']) ||
+      billingAddress.containsKey('country') ||
+      billingAddress.containsKey('country_code') ||
+      billingAddress.containsKey('countryCode');
+
+  if (hasBillingStreet ||
+      hasBillingPostal ||
+      hasBillingCity ||
+      hasBillingCountry ||
+      payload.containsKey('billing_address') ||
+      payload.containsKey('billingAddress')) {
+    final street = hasBillingStreet
+        ? (readAny(const [
+                'billing_street',
+                'billingStreet',
+              ]).isNotEmpty
+              ? readAny(const ['billing_street', 'billingStreet'])
+              : readNested(billingAddress, const ['street']))
+        : '';
+    final postal = hasBillingPostal
+        ? (readAny(const [
+                'billing_postal_code',
+                'billingPostalCode',
+              ]).isNotEmpty
+              ? readAny(const ['billing_postal_code', 'billingPostalCode'])
+              : readNested(billingAddress, const [
+                  'postal_code',
+                  'postalCode',
+                ]))
+        : '';
+    final city = hasBillingCity
+        ? (readAny(const ['billing_city', 'billingCity']).isNotEmpty
+              ? readAny(const ['billing_city', 'billingCity'])
+              : readNested(billingAddress, const ['city']))
+        : '';
+    final country = hasBillingCountry
+        ? (readAny(const [
+                'billing_country',
+                'billingCountry',
+              ]).isNotEmpty
+              ? readAny(const ['billing_country', 'billingCountry'])
+              : readNested(billingAddress, const [
+                  'country',
+                  'country_code',
+                  'countryCode',
+                ]))
+              .toUpperCase()
+        : '';
+    if (hasBillingStreet) out['billing_street'] = street;
+    if (hasBillingPostal) out['billing_postal_code'] = postal;
+    if (hasBillingCity) out['billing_city'] = city;
+    if (hasBillingCountry) out['billing_country'] = country;
+    out['billing_address'] = <String, dynamic>{
+      if (hasBillingStreet) 'street': street,
+      if (hasBillingPostal) 'postal_code': postal,
+      if (hasBillingCity) 'city': city,
+      if (hasBillingCountry) 'country': country,
+    };
+  }
+
+  final hasPeppolEndpoint =
+      hasAnyKey(const ['peppol_endpoint_id', 'peppolEndpointId']) ||
+      peppolBlock.containsKey('endpoint_id') ||
+      peppolBlock.containsKey('endpointId') ||
+      peppolBlock.containsKey('participant_id') ||
+      peppolBlock.containsKey('participantId');
+  final hasPeppolScheme =
+      hasAnyKey(const ['peppol_scheme', 'peppolScheme']) ||
+      peppolBlock.containsKey('scheme');
+  if (hasPeppolEndpoint ||
+      hasPeppolScheme ||
+      payload.containsKey('peppol')) {
+    final endpoint = hasPeppolEndpoint
+        ? (readAny(const [
+                'peppol_endpoint_id',
+                'peppolEndpointId',
+              ]).isNotEmpty
+              ? readAny(const ['peppol_endpoint_id', 'peppolEndpointId'])
+              : readNested(peppolBlock, const [
+                  'endpoint_id',
+                  'endpointId',
+                  'participant_id',
+                  'participantId',
+                ]))
+        : '';
+    final scheme = hasPeppolScheme
+        ? (readAny(const ['peppol_scheme', 'peppolScheme']).isNotEmpty
+              ? readAny(const ['peppol_scheme', 'peppolScheme'])
+              : readNested(peppolBlock, const ['scheme']))
+        : '';
+    if (hasPeppolEndpoint) out['peppol_endpoint_id'] = endpoint;
+    if (hasPeppolScheme) out['peppol_scheme'] = scheme;
+    out['peppol'] = <String, dynamic>{
+      if (hasPeppolEndpoint) 'endpoint_id': endpoint,
+      if (hasPeppolScheme) 'scheme': scheme,
+    };
+  }
+
+  return out;
 }
 
 Future<Map<String, dynamic>?> fetchPublicCustomerProfile({
@@ -7743,7 +7897,7 @@ Future<Map<String, dynamic>?> upsertPublicCustomerProfile({
   final endpoint = Uri.parse(
     '${appConfig.bookingBaseUrl}/public/customer/profile',
   );
-  final safePayload = _sanitizePublicCustomerProfilePayload(payload);
+  final safePayload = sanitizePublicCustomerProfilePayload(payload);
   try {
     final res = await http
         .post(

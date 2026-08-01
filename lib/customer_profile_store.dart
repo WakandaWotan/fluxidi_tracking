@@ -133,8 +133,36 @@ class CustomerProfile {
       peppolEndpointId: readAny(const [
         'peppolEndpointId',
         'peppol_endpoint_id',
-      ]),
-      peppolScheme: readAny(const ['peppolScheme', 'peppol_scheme']),
+      ]).isNotEmpty
+          ? readAny(const ['peppolEndpointId', 'peppol_endpoint_id'])
+          : (() {
+              final peppol = json['peppol'] is Map
+                  ? Map<String, dynamic>.from(json['peppol'] as Map)
+                  : const <String, dynamic>{};
+              for (final key in const [
+                'endpoint_id',
+                'endpointId',
+                'participant_id',
+                'participantId',
+              ]) {
+                final value = peppol[key];
+                if (value == null) continue;
+                final text = value.toString().trim();
+                if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+              }
+              return '';
+            })(),
+      peppolScheme: readAny(const ['peppolScheme', 'peppol_scheme']).isNotEmpty
+          ? readAny(const ['peppolScheme', 'peppol_scheme'])
+          : (() {
+              final peppol = json['peppol'] is Map
+                  ? Map<String, dynamic>.from(json['peppol'] as Map)
+                  : const <String, dynamic>{};
+              final value = peppol['scheme'];
+              if (value == null) return '';
+              final text = value.toString().trim();
+              return text.toLowerCase() == 'null' ? '' : text;
+            })(),
       favoritePartnerIds: readStringListAny(const [
         'favorite_partner_ids',
         'favoritePartnerIds',
@@ -669,11 +697,39 @@ class CustomerProfileStore {
     final backendPeppolEndpointId = readAny(const [
       'peppol_endpoint_id',
       'peppolEndpointId',
-    ]);
+    ]).isNotEmpty
+        ? readAny(const ['peppol_endpoint_id', 'peppolEndpointId'])
+        : (() {
+            final peppol = profile['peppol'] is Map
+                ? Map<String, dynamic>.from(profile['peppol'] as Map)
+                : const <String, dynamic>{};
+            for (final key in const [
+              'endpoint_id',
+              'endpointId',
+              'participant_id',
+              'participantId',
+            ]) {
+              final value = peppol[key];
+              if (value == null) continue;
+              final text = value.toString().trim();
+              if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+            }
+            return '';
+          })();
     final backendPeppolScheme = readAny(const [
       'peppol_scheme',
       'peppolScheme',
-    ]);
+    ]).isNotEmpty
+        ? readAny(const ['peppol_scheme', 'peppolScheme'])
+        : (() {
+            final peppol = profile['peppol'] is Map
+                ? Map<String, dynamic>.from(profile['peppol'] as Map)
+                : const <String, dynamic>{};
+            final value = peppol['scheme'];
+            if (value == null) return '';
+            final text = value.toString().trim();
+            return text.toLowerCase() == 'null' ? '' : text;
+          })();
     List<String> readStringListAny(List<String> keys) {
       for (final key in keys) {
         final value = profile[key];

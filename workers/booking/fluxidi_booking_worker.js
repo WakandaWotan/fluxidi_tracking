@@ -19665,8 +19665,23 @@ function _sanitizePublicCustomerProfilePayload(body) {
   const source = body && typeof body === "object" && !Array.isArray(body)
     ? body
     : {};
+  const billingAddress =
+    source.billing_address &&
+    typeof source.billing_address === "object" &&
+    !Array.isArray(source.billing_address)
+      ? source.billing_address
+      : source.billingAddress &&
+          typeof source.billingAddress === "object" &&
+          !Array.isArray(source.billingAddress)
+        ? source.billingAddress
+        : {};
+  const peppolBlock =
+    source.peppol && typeof source.peppol === "object" && !Array.isArray(source.peppol)
+      ? source.peppol
+      : {};
+
   const name = sanitizeTenantString(source.name, 160);
-  const email = _normalizeCustomerEmail(source.email);
+  const emailRaw = _normalizeCustomerEmail(source.email);
   const preferredPostcode = sanitizeTenantString(
     source.preferred_postcode ?? source.preferredPostcode,
     32,
@@ -19675,7 +19690,15 @@ function _sanitizePublicCustomerProfilePayload(body) {
     source.company_name ?? source.companyName,
     160,
   );
-  const vatNumber = normalizeVatNumber(source.vat_number ?? source.vatNumber ?? source.vat);
+  // Soft VAT normalize: trim/upper/strip separators only. Do not invent a
+  // Belgium-only BE prefix from digit-only identifiers on the profile API.
+  const vatNumber = sanitizeTenantString(
+    String(source.vat_number ?? source.vatNumber ?? source.vat ?? "")
+      .trim()
+      .toUpperCase()
+      .replace(/[.\s]/g, ""),
+    40,
+  );
   const phoneNormalized = _normalizeCustomerPhone(source.phone);
   const phone = _looksLikeE164Phone(phoneNormalized) ? phoneNormalized : "";
   const favoritePartnerIds = _normalizeFavoritePartnerIds(
@@ -19690,10 +19713,116 @@ function _sanitizePublicCustomerProfilePayload(body) {
     Object.prototype.hasOwnProperty.call(source, "favourite_partner_ids") ||
     Object.prototype.hasOwnProperty.call(source, "favouritePartnerIds")
   );
+
+  const hasInvoiceEmail = (
+    Object.prototype.hasOwnProperty.call(source, "invoice_email") ||
+    Object.prototype.hasOwnProperty.call(source, "invoiceEmail")
+  );
+  const invoiceEmailRaw = _normalizeCustomerEmail(
+    source.invoice_email ?? source.invoiceEmail,
+  );
+
+  const hasBillingStreet = (
+    Object.prototype.hasOwnProperty.call(source, "billing_street") ||
+    Object.prototype.hasOwnProperty.call(source, "billingStreet") ||
+    Object.prototype.hasOwnProperty.call(billingAddress, "street")
+  );
+  const billingStreet = sanitizeTenantString(
+    source.billing_street ?? source.billingStreet ?? billingAddress.street,
+    200,
+  );
+
+  const hasBillingPostalCode = (
+    Object.prototype.hasOwnProperty.call(source, "billing_postal_code") ||
+    Object.prototype.hasOwnProperty.call(source, "billingPostalCode") ||
+    Object.prototype.hasOwnProperty.call(billingAddress, "postal_code") ||
+    Object.prototype.hasOwnProperty.call(billingAddress, "postalCode")
+  );
+  const billingPostalCode = sanitizeTenantString(
+    source.billing_postal_code ??
+      source.billingPostalCode ??
+      billingAddress.postal_code ??
+      billingAddress.postalCode,
+    32,
+  );
+
+  const hasBillingCity = (
+    Object.prototype.hasOwnProperty.call(source, "billing_city") ||
+    Object.prototype.hasOwnProperty.call(source, "billingCity") ||
+    Object.prototype.hasOwnProperty.call(billingAddress, "city")
+  );
+  const billingCity = sanitizeTenantString(
+    source.billing_city ?? source.billingCity ?? billingAddress.city,
+    120,
+  );
+
+  const hasBillingCountry = (
+    Object.prototype.hasOwnProperty.call(source, "billing_country") ||
+    Object.prototype.hasOwnProperty.call(source, "billingCountry") ||
+    Object.prototype.hasOwnProperty.call(billingAddress, "country") ||
+    Object.prototype.hasOwnProperty.call(billingAddress, "country_code") ||
+    Object.prototype.hasOwnProperty.call(billingAddress, "countryCode")
+  );
+  const billingCountryRaw = sanitizeTenantString(
+    source.billing_country ??
+      source.billingCountry ??
+      billingAddress.country ??
+      billingAddress.country_code ??
+      billingAddress.countryCode,
+    8,
+  ).toUpperCase().replace(/[^A-Z]/g, "");
+  const billingCountry = billingCountryRaw.slice(0, 2);
+
+  const hasPeppolEndpointId = (
+    Object.prototype.hasOwnProperty.call(source, "peppol_endpoint_id") ||
+    Object.prototype.hasOwnProperty.call(source, "peppolEndpointId") ||
+    Object.prototype.hasOwnProperty.call(peppolBlock, "endpoint_id") ||
+    Object.prototype.hasOwnProperty.call(peppolBlock, "endpointId") ||
+    Object.prototype.hasOwnProperty.call(peppolBlock, "participant_id") ||
+    Object.prototype.hasOwnProperty.call(peppolBlock, "participantId")
+  );
+  const peppolEndpointId = sanitizeTenantString(
+    source.peppol_endpoint_id ??
+      source.peppolEndpointId ??
+      peppolBlock.endpoint_id ??
+      peppolBlock.endpointId ??
+      peppolBlock.participant_id ??
+      peppolBlock.participantId,
+    160,
+  );
+
+  const hasPeppolScheme = (
+    Object.prototype.hasOwnProperty.call(source, "peppol_scheme") ||
+    Object.prototype.hasOwnProperty.call(source, "peppolScheme") ||
+    Object.prototype.hasOwnProperty.call(peppolBlock, "scheme")
+  );
+  const peppolScheme = sanitizeTenantString(
+    source.peppol_scheme ?? source.peppolScheme ?? peppolBlock.scheme,
+    64,
+  );
+
+  // Validation errors are opaque codes only (no PII echoed).
+  let validationError = "";
+  if (emailRaw && !isValidEmail(emailRaw)) validationError = "invalid_email";
+  if (!validationError && hasInvoiceEmail && invoiceEmailRaw && !isValidEmail(invoiceEmailRaw)) {
+    validationError = "invalid_invoice_email";
+  }
+  if (
+    !validationError &&
+    hasBillingCountry &&
+    billingCountryRaw &&
+    billingCountry.length !== 2
+  ) {
+    validationError = "invalid_billing_country";
+  }
+
   return {
+    ok: !validationError,
+    error: validationError || null,
     name,
     phone,
-    email,
+    email: emailRaw && isValidEmail(emailRaw) ? emailRaw : (emailRaw ? "" : ""),
+    // Keep empty email when absent; reject path handles malformed above.
     preferred_postcode: preferredPostcode,
     preferredPostcode,
     company_name: companyName,
@@ -19704,6 +19833,38 @@ function _sanitizePublicCustomerProfilePayload(body) {
     favoritePartnerIds: favoritePartnerIds,
     has_favorite_partner_ids: hasFavoritePartnerIds,
     hasFavoritePartnerIds,
+    invoice_email: hasInvoiceEmail
+      ? (invoiceEmailRaw && isValidEmail(invoiceEmailRaw) ? invoiceEmailRaw : "")
+      : "",
+    invoiceEmail: hasInvoiceEmail
+      ? (invoiceEmailRaw && isValidEmail(invoiceEmailRaw) ? invoiceEmailRaw : "")
+      : "",
+    has_invoice_email: hasInvoiceEmail,
+    hasInvoiceEmail,
+    billing_street: billingStreet,
+    billingStreet,
+    has_billing_street: hasBillingStreet,
+    hasBillingStreet,
+    billing_postal_code: billingPostalCode,
+    billingPostalCode,
+    has_billing_postal_code: hasBillingPostalCode,
+    hasBillingPostalCode,
+    billing_city: billingCity,
+    billingCity,
+    has_billing_city: hasBillingCity,
+    hasBillingCity,
+    billing_country: billingCountry,
+    billingCountry,
+    has_billing_country: hasBillingCountry,
+    hasBillingCountry,
+    peppol_endpoint_id: peppolEndpointId,
+    peppolEndpointId,
+    has_peppol_endpoint_id: hasPeppolEndpointId,
+    hasPeppolEndpointId,
+    peppol_scheme: peppolScheme,
+    peppolScheme,
+    has_peppol_scheme: hasPeppolScheme,
+    hasPeppolScheme,
   };
 }
 
@@ -19748,12 +19909,67 @@ function _projectPublicCustomerProfileResponse(sessionCustomerId, sourceProfile)
     source.company_name ?? source.companyName,
     160,
   );
-  const vatNumber = normalizeVatNumber(source.vat_number ?? source.vatNumber ?? source.vat);
+  const vatNumber = sanitizeTenantString(
+    String(source.vat_number ?? source.vatNumber ?? source.vat ?? "")
+      .trim()
+      .toUpperCase()
+      .replace(/[.\s]/g, ""),
+    40,
+  );
   const favoritePartnerIds = _normalizeFavoritePartnerIds(
     source.favorite_partner_ids ??
     source.favoritePartnerIds ??
     source.favourite_partner_ids ??
     source.favouritePartnerIds,
+  );
+  const billingAddress =
+    source.billing_address &&
+    typeof source.billing_address === "object" &&
+    !Array.isArray(source.billing_address)
+      ? source.billing_address
+      : {};
+  const peppolBlock =
+    source.peppol && typeof source.peppol === "object" && !Array.isArray(source.peppol)
+      ? source.peppol
+      : {};
+  const invoiceEmail = _normalizeCustomerEmail(
+    source.invoice_email ?? source.invoiceEmail,
+  );
+  const billingStreet = sanitizeTenantString(
+    source.billing_street ?? source.billingStreet ?? billingAddress.street,
+    200,
+  );
+  const billingPostalCode = sanitizeTenantString(
+    source.billing_postal_code ??
+      source.billingPostalCode ??
+      billingAddress.postal_code ??
+      billingAddress.postalCode,
+    32,
+  );
+  const billingCity = sanitizeTenantString(
+    source.billing_city ?? source.billingCity ?? billingAddress.city,
+    120,
+  );
+  const billingCountry = sanitizeTenantString(
+    source.billing_country ??
+      source.billingCountry ??
+      billingAddress.country ??
+      billingAddress.country_code ??
+      billingAddress.countryCode,
+    8,
+  ).toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2);
+  const peppolEndpointId = sanitizeTenantString(
+    source.peppol_endpoint_id ??
+      source.peppolEndpointId ??
+      peppolBlock.endpoint_id ??
+      peppolBlock.endpointId ??
+      peppolBlock.participant_id ??
+      peppolBlock.participantId,
+    160,
+  );
+  const peppolScheme = sanitizeTenantString(
+    source.peppol_scheme ?? source.peppolScheme ?? peppolBlock.scheme,
+    64,
   );
   const createdAt = sanitizeTenantString(source.created_at ?? source.createdAt, 80);
   const updatedAt = sanitizeTenantString(source.updated_at ?? source.updatedAt, 80);
@@ -19762,13 +19978,37 @@ function _projectPublicCustomerProfileResponse(sessionCustomerId, sourceProfile)
     customerId,
     name,
     phone,
-    email,
+    email: email && isValidEmail(email) ? email : "",
     preferred_postcode: preferredPostcode,
     preferredPostcode,
     company_name: companyName,
     companyName,
     vat_number: vatNumber,
     vatNumber,
+    invoice_email: invoiceEmail && isValidEmail(invoiceEmail) ? invoiceEmail : "",
+    invoiceEmail: invoiceEmail && isValidEmail(invoiceEmail) ? invoiceEmail : "",
+    billing_street: billingStreet,
+    billingStreet,
+    billing_postal_code: billingPostalCode,
+    billingPostalCode,
+    billing_city: billingCity,
+    billingCity,
+    billing_country: billingCountry,
+    billingCountry,
+    billing_address: {
+      street: billingStreet,
+      postal_code: billingPostalCode,
+      city: billingCity,
+      country: billingCountry,
+    },
+    peppol_endpoint_id: peppolEndpointId,
+    peppolEndpointId,
+    peppol_scheme: peppolScheme,
+    peppolScheme,
+    peppol: {
+      endpoint_id: peppolEndpointId,
+      scheme: peppolScheme,
+    },
     favorite_partner_ids: favoritePartnerIds,
     favoritePartnerIds: favoritePartnerIds,
     created_at: createdAt,
@@ -19788,6 +20028,7 @@ async function handlePublicCustomerProfileGet(request, env) {
   if (!tenantId || !companyId || !customerId) {
     return json({ ok: false, error: "unauthorized" }, 401);
   }
+  // Ignore client-supplied customer_id / tenant / company query for auth.
   const scopedProfileKey = customerProfileScopedKey(tenantId, companyId, customerId);
   if (!scopedProfileKey) return json({ ok: false, error: "unauthorized" }, 401);
   let stored = await env.BOOKING_KV.get(scopedProfileKey, { type: "json" });
@@ -19825,6 +20066,9 @@ async function handlePublicCustomerProfilePost(request, env, body) {
   }
   const existing = _projectPublicCustomerProfileResponse(customerId, existingRaw);
   const incoming = _sanitizePublicCustomerProfilePayload(body);
+  if (!incoming.ok) {
+    return json({ ok: false, error: incoming.error || "invalid_body" }, 400);
+  }
   const nextFavoritePartnerIds = incoming.has_favorite_partner_ids
     ? incoming.favorite_partner_ids
     : _normalizeFavoritePartnerIds(existing.favorite_partner_ids ?? existing.favoritePartnerIds);
@@ -19842,10 +20086,15 @@ async function handlePublicCustomerProfilePost(request, env, body) {
   }
   const sessionPhone = _customerSessionPreferredPhoneE164(session);
   const nowIso = new Date().toISOString();
+  const pickPresent = (hasFlag, nextValue, existingValue) =>
+    hasFlag ? (nextValue || "") : (existingValue || "");
   const merged = {
     ...existing,
     customer_id: customerId,
     customerId,
+    // Core fields: non-empty incoming wins; empty does not wipe (favorites-only
+    // upserts and partial saves stay safe). Billing/Peppol use presence flags
+    // so an explicit empty string clears the stored value.
     name: incoming.name || existing.name || "",
     phone: sessionPhone || incoming.phone || existing.phone || "",
     email: incoming.email || existing.email || "",
@@ -19855,6 +20104,76 @@ async function handlePublicCustomerProfilePost(request, env, body) {
     companyName: incoming.company_name || existing.company_name || "",
     vat_number: incoming.vat_number || existing.vat_number || "",
     vatNumber: incoming.vat_number || existing.vat_number || "",
+    invoice_email: pickPresent(
+      incoming.has_invoice_email,
+      incoming.invoice_email,
+      existing.invoice_email,
+    ),
+    invoiceEmail: pickPresent(
+      incoming.has_invoice_email,
+      incoming.invoice_email,
+      existing.invoice_email,
+    ),
+    billing_street: pickPresent(
+      incoming.has_billing_street,
+      incoming.billing_street,
+      existing.billing_street,
+    ),
+    billingStreet: pickPresent(
+      incoming.has_billing_street,
+      incoming.billing_street,
+      existing.billing_street,
+    ),
+    billing_postal_code: pickPresent(
+      incoming.has_billing_postal_code,
+      incoming.billing_postal_code,
+      existing.billing_postal_code,
+    ),
+    billingPostalCode: pickPresent(
+      incoming.has_billing_postal_code,
+      incoming.billing_postal_code,
+      existing.billing_postal_code,
+    ),
+    billing_city: pickPresent(
+      incoming.has_billing_city,
+      incoming.billing_city,
+      existing.billing_city,
+    ),
+    billingCity: pickPresent(
+      incoming.has_billing_city,
+      incoming.billing_city,
+      existing.billing_city,
+    ),
+    billing_country: pickPresent(
+      incoming.has_billing_country,
+      incoming.billing_country,
+      existing.billing_country,
+    ),
+    billingCountry: pickPresent(
+      incoming.has_billing_country,
+      incoming.billing_country,
+      existing.billing_country,
+    ),
+    peppol_endpoint_id: pickPresent(
+      incoming.has_peppol_endpoint_id,
+      incoming.peppol_endpoint_id,
+      existing.peppol_endpoint_id,
+    ),
+    peppolEndpointId: pickPresent(
+      incoming.has_peppol_endpoint_id,
+      incoming.peppol_endpoint_id,
+      existing.peppol_endpoint_id,
+    ),
+    peppol_scheme: pickPresent(
+      incoming.has_peppol_scheme,
+      incoming.peppol_scheme,
+      existing.peppol_scheme,
+    ),
+    peppolScheme: pickPresent(
+      incoming.has_peppol_scheme,
+      incoming.peppol_scheme,
+      existing.peppol_scheme,
+    ),
     favorite_partner_ids: nextFavoritePartnerIds,
     favoritePartnerIds: nextFavoritePartnerIds,
     created_at: existing.created_at || nowIso,
@@ -19862,15 +20181,44 @@ async function handlePublicCustomerProfilePost(request, env, body) {
     updated_at: nowIso,
     updatedAt: nowIso,
   };
+  merged.billing_address = {
+    street: merged.billing_street || "",
+    postal_code: merged.billing_postal_code || "",
+    city: merged.billing_city || "",
+    country: merged.billing_country || "",
+  };
+  merged.peppol = {
+    endpoint_id: merged.peppol_endpoint_id || "",
+    scheme: merged.peppol_scheme || "",
+  };
+  const projected = _projectPublicCustomerProfileResponse(customerId, merged);
   await env.BOOKING_KV.put(
     profileKey,
     JSON.stringify({
-      version: 1,
+      // v2 metadata: extended billing/Peppol fields. v1 records still load.
+      version: 2,
       purpose: "customer_global_profile",
       ...merged,
     }),
   );
-  return json({ ok: true, profile: merged }, 200);
+  // Mirror to legacy global key so older readers / mixed session scopes stay
+  // compatible without trusting client customer_id.
+  const legacyProfileKey = _globalCustomerProfileKey(customerId);
+  if (legacyProfileKey) {
+    try {
+      await env.BOOKING_KV.put(
+        legacyProfileKey,
+        JSON.stringify({
+          version: 2,
+          purpose: "customer_global_profile",
+          ...merged,
+        }),
+      );
+    } catch (_) {
+      // Best-effort mirror.
+    }
+  }
+  return json({ ok: true, profile: projected }, 200);
 }
 
 function _customerRatingValueFromAnyBlock(raw) {
