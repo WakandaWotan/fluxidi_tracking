@@ -3,10 +3,7 @@ import 'dart:convert';
 
 import 'package:app_links/app_links.dart';
 import 'package:flutter/widgets.dart';
-import 'package:fluxidi_tracking/app_config.dart';
-import 'package:fluxidi_tracking/company_session_store.dart';
-import 'package:fluxidi_tracking/customer_session_store.dart';
-import 'package:fluxidi_tracking/driver_session_store.dart';
+import 'package:fluxidi_tracking/payment/mollie_street_status_auth.dart';
 import 'package:http/http.dart' as http;
 
 const String kFluxidiPaymentReturnScheme = 'fluxidi';
@@ -49,27 +46,9 @@ class FluxidiPendingPayment {
 final ValueNotifier<FluxidiPendingPayment?> fluxidiPendingPaymentNotifier =
     ValueNotifier<FluxidiPendingPayment?>(null);
 
-Map<String, String>? _activePaymentScopeQuery() {
-  final profileCompanyId = companyProfileNotifier.value?.companyId.trim() ?? '';
-  final sessionCompanyId =
-      activeCompanySessionNotifier.value?.companyId.trim() ?? '';
-  if (profileCompanyId.isNotEmpty &&
-      sessionCompanyId.isNotEmpty &&
-      profileCompanyId != sessionCompanyId) {
-    return null;
-  }
-  final companyId = profileCompanyId.isNotEmpty
-      ? profileCompanyId
-      : sessionCompanyId;
-  if (companyId.isEmpty) return null;
-  final tenantId = companyId;
-  return <String, String>{
-    'tenant_id': tenantId,
-    'company_id': companyId,
-    'tenantId': tenantId,
-    'companyId': companyId,
-  };
-}
+/// Scope for `/pay/status` — same helper as the street Mollie dialog.
+Map<String, String>? _activePaymentScopeQuery() =>
+    resolveMollieStreetStatusScopeQuery();
 
 void setFluxidiPendingPayment({
   required String paymentBookingId,
@@ -199,7 +178,9 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
       );
     }
     debugPrint(
-      '[PAY_RETURN][DEEP_LINK] source=$source id=$paymentBookingId '
+      '[PAY_RETURN][DEEP_LINK] source=$source '
+      'pay=${mollieStreetIdHash(paymentBookingId)} '
+      'booking=${mollieStreetIdHash(publicBookingId)} '
       'hint_status=$statusRaw (hint ignored until /pay/status)',
     );
     unawaited(_reconcilePendingPayment(source: 'DEEP_LINK'));
@@ -228,7 +209,7 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
       final strictScope = _activePaymentScopeQuery();
       if (strictScope == null) {
         debugPrint(
-          '[PAYMENT_SCOPE][BLOCK] reason=missing_strict_company_scope action=pay_status',
+          '[PAYMENT_SCOPE][BLOCK] reason=missing_street_status_scope action=pay_status',
         );
         return;
       }
@@ -239,6 +220,7 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
           attempt: attempt,
           source: source,
           strictScope: strictScope,
+          publicBookingId: pending.publicBookingId,
         );
         if (ok) break;
         if (attempt < 6) {
@@ -265,6 +247,7 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
     required int attempt,
     required String source,
     required Map<String, String> strictScope,
+    String? publicBookingId,
   }) async {
     try {
       final uri = Uri.parse('$_bookingBaseUrl/pay/status').replace(
@@ -273,31 +256,29 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
           ...strictScope,
         },
       );
-      // TRUSTED-IDENTITY-P0: /pay/status requires a trusted session bearer.
-      final headers = <String, String>{'Content-Type': 'application/json'};
-      final companyAuth = await resolveCompanyOwnerAuthHeaders(json: false);
-      if (companyAuth.mode != CompanyOwnerAuthMode.none) {
-        headers.addAll(companyAuth.headers);
-      } else {
-        final driverToken =
-            (activeDriverSessionNotifier.value?.driverSessionToken ?? '')
-                .trim();
-        if (driverToken.isNotEmpty) {
-          headers['Authorization'] = 'Bearer $driverToken';
-        } else {
-          final customerSession =
-              await CustomerSessionStore.instance.loadValidSession();
-          final customerToken =
-              (customerSession?.customerSessionToken ?? '').trim();
-          if (customerToken.isNotEmpty) {
-            headers['Authorization'] = 'Bearer $customerToken';
-          }
-        }
+      // Same company-first auth helper as the street Mollie dialog.
+      final auth = await resolveMollieStreetStatusAuthHeaders(json: false);
+      if (auth.mode == MollieStreetStatusAuthMode.none) {
+        logMollieStreetStatusDiag(
+          authMode: auth.mode,
+          httpStatus: 0,
+          errorCode: 'missing_auth',
+          paymentBookingId: paymentBookingId,
+          canonicalBookingId: publicBookingId,
+        );
+        return false;
       }
       final res = await http
-          .get(uri, headers: headers)
+          .get(uri, headers: auth.headers)
           .timeout(const Duration(seconds: 12));
       if (res.statusCode < 200 || res.statusCode >= 300) {
+        logMollieStreetStatusDiag(
+          authMode: auth.mode,
+          httpStatus: res.statusCode,
+          errorCode: 'http_error',
+          paymentBookingId: paymentBookingId,
+          canonicalBookingId: publicBookingId,
+        );
         return false;
       }
       final decoded = jsonDecode(res.body);
@@ -320,6 +301,16 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
           .toString()
           .trim();
       final confirmed = confirmedAt.isNotEmpty;
+
+      logMollieStreetStatusDiag(
+        authMode: auth.mode,
+        httpStatus: res.statusCode,
+        errorCode: confirmed
+            ? 'confirmed'
+            : (paid ? 'paid' : 'pending'),
+        paymentBookingId: paymentBookingId,
+        canonicalBookingId: publicBookingId,
+      );
 
       final pending = fluxidiPendingPaymentNotifier.value;
       if (pending != null) {

@@ -678,12 +678,11 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     String bookingId,
   ) async {
     try {
-      // STREET-CASH-PAYMENT-RELOAD-P0: use the same driver/company bearer as
-      // cash/QR/terminal mark-paid. The previous admin-token-only GET failed
-      // in production (ADMIN_TOKEN removed), so receipt reopen fell back to
-      // unpaid History even though BOOKING_KV already held Paid.
-      final authHeaders = await resolveInCarPaymentAuthHeaders();
-      if (authHeaders.mode == InCarPaymentAuthMode.none) {
+      // STREET Mollie converge: company-first status auth (same as
+      // PaymentReturnCoordinator / street dialog). Cash/QR mark-paid still
+      // uses resolveInCarPaymentAuthHeaders (driver-first) elsewhere.
+      final authHeaders = await resolveMollieStreetStatusAuthHeaders();
+      if (authHeaders.mode == MollieStreetStatusAuthMode.none) {
         debugPrint(
           '[RECEIPT_PAYMENT][AUTHORITATIVE_GET] status=missing_auth '
           'booking=${_safeRefPreview(bookingId)}',
@@ -763,12 +762,22 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     //   in-vehicle cash / Bancontact settlement yet. Upgrades from unpaid to
     //   paid are still honored.
     final basePaidBeforeAsync = _isEffectiveReceiptPaid();
+    final alreadyPaidLocally =
+        basePaidBeforeAsync || _paymentStatus == _ReceiptPaymentStatus.paid;
     if (!mounted) return;
     setState(() {
       final fromStatus = _paymentStatusFromRaw(resolved);
       if (shouldRetainConfirmedPaidOnReload(
-        alreadyConfirmedPaid: basePaidBeforeAsync,
+        alreadyConfirmedPaid: alreadyPaidLocally,
         resolvedRawStatus: resolved,
+      )) {
+        _paymentStatus = _ReceiptPaymentStatus.paid;
+        return;
+      }
+      if (shouldKeepReceiptPaidMonotonic(
+        currentlyPaid: alreadyPaidLocally,
+        authoritativeSaysPaid: fromStatus == _ReceiptPaymentStatus.paid,
+        authoritativeReadSucceeded: authoritativePaymentStatus != null,
       )) {
         _paymentStatus = _ReceiptPaymentStatus.paid;
         return;
@@ -3574,18 +3583,28 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
             checkoutUrl: safeCheckoutUrl.isEmpty ? null : safeCheckoutUrl,
             amountText: amountText,
             paymentBookingId: paymentBookingId,
+            canonicalBookingId: (item.bookingId ?? '').trim(),
             textMutedColor: _palette.textMuted,
             pendingPaymentListenable: fluxidiPendingPaymentNotifier,
             copy: MollieStreetCheckoutCopy(
               title: _receiptText('onlinePay'),
               instruction: _receiptText('onlinePayInstruction'),
               waitingText: _receiptText('waitingForPayment'),
+              processingText: _receiptText('paymentStillProcessing'),
               succeededText: _receiptText('paymentSucceeded'),
               failedText: _receiptText('paymentFailed'),
               cancelledText: _receiptText('paymentCancelled'),
               expiredText: _receiptText('paymentExpired'),
               iHavePaidLabel: _receiptText('iHavePaid'),
               closeLabel: _receiptText('close'),
+              statusAuthErrorText: _receiptText('paymentStatusAuthError'),
+              statusNotFoundErrorText: _receiptText(
+                'paymentStatusNotFoundError',
+              ),
+              statusServerErrorText: _receiptText('paymentStatusServerError'),
+              statusGenericErrorText: _receiptText(
+                'paymentStatusGenericError',
+              ),
             ),
             pollOnce: () => _pollMollieStreetCheckoutStatusOnce(
               paymentBookingId: paymentBookingId,
@@ -3603,25 +3622,44 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     );
 
     if (!context.mounted) return;
-    await _handleMollieStreetCheckoutDialogOutcome(context, outcome);
+    // Always refresh canonical booking after modal close (paid or not).
+    await _refreshCanonicalReceiptAfterStreetMollieModal(
+      context,
+      dialogOutcome: outcome,
+    );
   }
 
   /// Single `GET /pay/status` attempt for a street-checkout in-flight
-  /// payment. Never throws — every failure path (missing auth, transport
-  /// error, non-2xx, undecodable body) resolves to
-  /// [MollieStreetCheckoutPollOutcome.error] so the dialog keeps polling
-  /// instead of wrongly treating the ride as paid.
-  Future<MollieStreetCheckoutPollOutcome> _pollMollieStreetCheckoutStatusOnce({
+  /// payment. Uses company-first [resolveMollieStreetStatusAuthHeaders].
+  Future<MollieStreetCheckoutPollResult> _pollMollieStreetCheckoutStatusOnce({
     required String paymentBookingId,
     required Map<String, String> strictScope,
   }) async {
+    final bookingId = (item.bookingId ?? '').trim();
     if (paymentBookingId.isEmpty) {
-      return MollieStreetCheckoutPollOutcome.error;
+      return const MollieStreetCheckoutPollResult(
+        outcome: MollieStreetCheckoutPollOutcome.error,
+        httpCode: 0,
+        sanitizedErrorCode: 'missing_id',
+      );
     }
     try {
-      final authHeaders = await resolveInCarPaymentAuthHeaders(json: false);
-      if (authHeaders.mode == InCarPaymentAuthMode.none) {
-        return MollieStreetCheckoutPollOutcome.error;
+      final authHeaders = await resolveMollieStreetStatusAuthHeaders(
+        json: false,
+      );
+      if (authHeaders.mode == MollieStreetStatusAuthMode.none) {
+        logMollieStreetStatusDiag(
+          authMode: authHeaders.mode,
+          httpStatus: 0,
+          errorCode: 'missing_auth',
+          paymentBookingId: paymentBookingId,
+          canonicalBookingId: bookingId,
+        );
+        return const MollieStreetCheckoutPollResult(
+          outcome: MollieStreetCheckoutPollOutcome.error,
+          httpCode: 0,
+          sanitizedErrorCode: 'unauthorized',
+        );
       }
       final uri = Uri.parse('$kBookingBaseUrl/pay/status').replace(
         queryParameters: <String, String>{
@@ -3644,17 +3682,90 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       final data = root['data'] is Map
           ? Map<String, dynamic>.from(root['data'] as Map)
           : root;
-      final outcome = classifyMollieStreetCheckoutPollStatus(
+      final result = buildMollieStreetCheckoutPollResult(
         httpCode: res.statusCode,
+        root: root,
         data: data,
       );
-      if (outcome == MollieStreetCheckoutPollOutcome.paid) {
+      logMollieStreetStatusDiag(
+        authMode: authHeaders.mode,
+        httpStatus: res.statusCode,
+        errorCode: result.sanitizedErrorCode ?? result.outcome.name,
+        paymentBookingId: paymentBookingId,
+        canonicalBookingId: bookingId,
+      );
+      if (result.outcome == MollieStreetCheckoutPollOutcome.paid) {
         _mollieStreetCheckoutPollPaidData = data;
       }
-      return outcome;
+      return result;
     } catch (e) {
       debugPrint('[MOLLIE_STREET_CHECKOUT][POLL][ERROR] $e');
-      return MollieStreetCheckoutPollOutcome.error;
+      logMollieStreetStatusDiag(
+        authMode: MollieStreetStatusAuthMode.none,
+        httpStatus: 0,
+        errorCode: 'network',
+        paymentBookingId: paymentBookingId,
+        canonicalBookingId: bookingId,
+      );
+      return MollieStreetCheckoutPollResult.error;
+    }
+  }
+
+  /// After every street Mollie modal close: apply dialog outcome, then
+  /// always run one authoritative canonical booking refresh so a server-paid
+  /// ride cannot stay locally unpaid.
+  Future<void> _refreshCanonicalReceiptAfterStreetMollieModal(
+    BuildContext context, {
+    required MollieStreetCheckoutPollOutcome? dialogOutcome,
+  }) async {
+    await _handleMollieStreetCheckoutDialogOutcome(context, dialogOutcome);
+
+    final beforePaid = _paymentStatus == _ReceiptPaymentStatus.paid;
+    final bookingId = (item.bookingId ?? '').trim();
+    if (bookingId.isEmpty) return;
+
+    final fields = await _fetchAuthoritativePaymentFields(bookingId);
+    if (!mounted) return;
+
+    if (fields == null || fields.isEmpty) {
+      if (!beforePaid && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_receiptText('paymentRefreshFailed'))),
+        );
+      }
+      return;
+    }
+
+    _mergePaymentFieldsIntoReceiptDetails(fields);
+    final authStatus =
+        _mapText(fields, 'payment_status') ?? _mapText(fields, 'paymentStatus');
+    final fromStatus = _paymentStatusFromRaw(authStatus);
+    final authPaid = fromStatus == _ReceiptPaymentStatus.paid;
+
+    if (!mounted) return;
+    setState(() {
+      if (shouldKeepReceiptPaidMonotonic(
+        currentlyPaid: beforePaid || authPaid,
+        authoritativeSaysPaid: authPaid,
+        authoritativeReadSucceeded: true,
+      )) {
+        _paymentStatus = _ReceiptPaymentStatus.paid;
+        return;
+      }
+      if (authPaid) {
+        _paymentStatus = _ReceiptPaymentStatus.paid;
+      }
+    });
+
+    if (authPaid) {
+      clearFluxidiPendingPayment();
+      if (!beforePaid &&
+          dialogOutcome != MollieStreetCheckoutPollOutcome.paid &&
+          context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_receiptText('paymentSucceeded'))),
+        );
+      }
     }
   }
 
@@ -3690,9 +3801,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       case MollieStreetCheckoutPollOutcome.pending:
       case MollieStreetCheckoutPollOutcome.error:
       case null:
-        // Dismissed by the driver, or the bounded poll window elapsed
-        // without a terminal status. No optimistic paid write; the driver
-        // can reopen via "Online betalen" (server returns `reused: true`).
+        // Dismissed without terminal status — canonical refresh runs next.
         return;
     }
   }

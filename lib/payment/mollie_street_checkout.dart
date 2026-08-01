@@ -308,10 +308,78 @@ enum MollieStreetCheckoutPollOutcome {
   error,
 }
 
+/// Full result of one street `/pay/status` attempt (outcome + sanitized meta).
+class MollieStreetCheckoutPollResult {
+  const MollieStreetCheckoutPollResult({
+    required this.outcome,
+    this.httpCode = 0,
+    this.sanitizedErrorCode,
+  });
+
+  final MollieStreetCheckoutPollOutcome outcome;
+  final int httpCode;
+
+  /// Bounded, non-PII error token suitable for UI/diagnostics
+  /// (`unauthorized`, `not_found`, `server_error`, …).
+  final String? sanitizedErrorCode;
+
+  static const MollieStreetCheckoutPollResult pending =
+      MollieStreetCheckoutPollResult(
+        outcome: MollieStreetCheckoutPollOutcome.pending,
+        httpCode: 200,
+      );
+
+  static const MollieStreetCheckoutPollResult paid =
+      MollieStreetCheckoutPollResult(
+        outcome: MollieStreetCheckoutPollOutcome.paid,
+        httpCode: 200,
+      );
+
+  static const MollieStreetCheckoutPollResult error =
+      MollieStreetCheckoutPollResult(
+        outcome: MollieStreetCheckoutPollOutcome.error,
+        httpCode: 0,
+        sanitizedErrorCode: 'network',
+      );
+}
+
 /// True when [outcome] is a final state (no more polling needed).
 bool molliePollOutcomeIsTerminal(MollieStreetCheckoutPollOutcome outcome) {
   return outcome != MollieStreetCheckoutPollOutcome.pending &&
       outcome != MollieStreetCheckoutPollOutcome.error;
+}
+
+/// Sanitized error code for non-success `/pay/status` responses.
+String sanitizeMollieStreetStatusErrorCode({
+  required int httpCode,
+  Map<String, dynamic>? root,
+}) {
+  if (httpCode == 0) return 'network';
+  if (httpCode == 401) return 'unauthorized';
+  if (httpCode == 403) return 'forbidden';
+  if (httpCode == 404) return 'not_found';
+  if (httpCode == 409) return 'conflict';
+  if (httpCode >= 500) return 'server_error';
+  if (httpCode < 200 || httpCode >= 300) return 'http_error';
+
+  final err = _lower(
+    root?['error'] ?? root?['error_code'] ?? root?['code'],
+  );
+  if (err.isEmpty) return 'unknown';
+  // Whitelist known backend tokens only — never echo raw bodies.
+  const allowed = <String>{
+    'unauthorized',
+    'forbidden',
+    'booking_not_found',
+    'missing_tenant_scope',
+    'tenant_scope_conflict',
+    'missing_id',
+  };
+  if (allowed.contains(err)) return err;
+  if (err.contains('not_found')) return 'not_found';
+  if (err.contains('forbidden')) return 'forbidden';
+  if (err.contains('unauthorized')) return 'unauthorized';
+  return 'unknown';
 }
 
 /// Classifies a single `GET /pay/status` response into a poll outcome.
@@ -352,4 +420,49 @@ MollieStreetCheckoutPollOutcome classifyMollieStreetCheckoutPollStatus({
     return MollieStreetCheckoutPollOutcome.cancelled;
   }
   return MollieStreetCheckoutPollOutcome.pending;
+}
+
+/// Builds a [MollieStreetCheckoutPollResult] from an HTTP status + body maps.
+MollieStreetCheckoutPollResult buildMollieStreetCheckoutPollResult({
+  required int httpCode,
+  Map<String, dynamic>? root,
+  Map<String, dynamic>? data,
+}) {
+  final outcome = classifyMollieStreetCheckoutPollStatus(
+    httpCode: httpCode,
+    data: data ?? root,
+  );
+  if (outcome == MollieStreetCheckoutPollOutcome.error ||
+      httpCode < 200 ||
+      httpCode >= 300) {
+    return MollieStreetCheckoutPollResult(
+      outcome: MollieStreetCheckoutPollOutcome.error,
+      httpCode: httpCode,
+      sanitizedErrorCode: sanitizeMollieStreetStatusErrorCode(
+        httpCode: httpCode,
+        root: root,
+      ),
+    );
+  }
+  return MollieStreetCheckoutPollResult(
+    outcome: outcome,
+    httpCode: httpCode,
+  );
+}
+
+/// True when a local receipt that is already paid must stay paid against a
+/// stale unpaid/pending projection from history or a failed refresh.
+///
+/// Paid is monotonic for the street Mollie receipt surface: a refresh may
+/// never revert paid → unpaid.
+bool shouldKeepReceiptPaidMonotonic({
+  required bool currentlyPaid,
+  required bool authoritativeSaysPaid,
+  required bool authoritativeReadSucceeded,
+}) {
+  if (!currentlyPaid) return false;
+  if (authoritativeSaysPaid) return true;
+  if (!authoritativeReadSucceeded) return true;
+  // Authoritative unpaid while local is paid: keep paid (no revert).
+  return true;
 }

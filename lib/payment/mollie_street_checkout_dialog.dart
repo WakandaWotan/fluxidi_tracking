@@ -1,18 +1,21 @@
-// RELEASE-P0-MOLLIE-STREET-CHECKOUT-RETURN-1
+// RELEASE-P0-MOLLIE-STREET-CHECKOUT-CONVERGE-1
 //
 // Waiting dialog for a street-ride Mollie hosted checkout. Owns:
 //   * bounded /pay/status polling (injected via [pollOnce]);
 //   * immediate poll on first frame and on app resume;
-//   * optional "I have paid" refresh;
+//   * "I have paid" refresh with visible feedback (never silent);
+//   * accepting a same-id verified paid/confirmed notifier event;
 //   * terminal success/failure UI without requiring close/reopen.
 //
-// Server truth comes only from [pollOnce] — deep links and local notifiers
-// may *trigger* a poll, but never mark the ride paid by themselves.
+// Deep-link status hints never mark paid. Notifier paid/confirmed is trusted
+// only when PaymentReturnCoordinator already reconciled via authenticated
+// `/pay/status` for the same payment shadow id.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/payment/mollie_street_checkout.dart';
+import 'package:fluxidi_tracking/payment/mollie_street_status_auth.dart';
 import 'package:fluxidi_tracking/payment/payment_qr_panel.dart';
 import 'package:fluxidi_tracking/payment_return.dart';
 
@@ -22,23 +25,33 @@ class MollieStreetCheckoutCopy {
     required this.title,
     required this.instruction,
     required this.waitingText,
+    required this.processingText,
     required this.succeededText,
     required this.failedText,
     required this.cancelledText,
     required this.expiredText,
     required this.iHavePaidLabel,
     required this.closeLabel,
+    required this.statusAuthErrorText,
+    required this.statusNotFoundErrorText,
+    required this.statusServerErrorText,
+    required this.statusGenericErrorText,
   });
 
   final String title;
   final String instruction;
   final String waitingText;
+  final String processingText;
   final String succeededText;
   final String failedText;
   final String cancelledText;
   final String expiredText;
   final String iHavePaidLabel;
   final String closeLabel;
+  final String statusAuthErrorText;
+  final String statusNotFoundErrorText;
+  final String statusServerErrorText;
+  final String statusGenericErrorText;
 }
 
 /// Content of the street "Online betalen" waiting dialog.
@@ -54,6 +67,7 @@ class MollieStreetCheckoutDialogContent extends StatefulWidget {
     required this.copy,
     required this.pollOnce,
     this.pendingPaymentListenable,
+    this.canonicalBookingId,
     this.maxAttempts = 60,
     this.interval = const Duration(seconds: 5),
   });
@@ -63,13 +77,14 @@ class MollieStreetCheckoutDialogContent extends StatefulWidget {
   final String? checkoutUrl;
   final String amountText;
   final String paymentBookingId;
+  final String? canonicalBookingId;
   final Color textMutedColor;
   final MollieStreetCheckoutCopy copy;
-  final Future<MollieStreetCheckoutPollOutcome> Function() pollOnce;
+  final Future<MollieStreetCheckoutPollResult> Function() pollOnce;
 
-  /// Optional app-level pending-payment notifier. When the matching payment
-  /// id is marked checking (e.g. deep link / coordinator resume), this dialog
-  /// immediately re-polls server truth.
+  /// Optional app-level pending-payment notifier. Matching payment id with
+  /// verified paid/confirmed transitions the modal immediately; other
+  /// matching updates only trigger a server poll.
   final ValueNotifier<FluxidiPendingPayment?>? pendingPaymentListenable;
 
   final int maxAttempts;
@@ -85,12 +100,24 @@ class MollieStreetCheckoutDialogContentState
     extends State<MollieStreetCheckoutDialogContent>
     with WidgetsBindingObserver {
   int _attempts = 0;
+  int _pollGeneration = 0;
   bool _polling = false;
   bool _stopped = false;
   bool _pollQueued = false;
+  bool _userRefreshPendingFeedback = false;
   MollieStreetCheckoutPollOutcome? _terminal;
+  String? _feedbackText;
   Timer? _intervalTimer;
   Timer? _terminalPaintTimer;
+
+  @visibleForTesting
+  bool get isPolling => _polling;
+
+  @visibleForTesting
+  MollieStreetCheckoutPollOutcome? get terminalOutcome => _terminal;
+
+  @visibleForTesting
+  String? get feedbackText => _feedbackText;
 
   @override
   void initState() {
@@ -125,46 +152,140 @@ class MollieStreetCheckoutDialogContentState
     if (_terminal != null || _stopped) return;
     final pending = widget.pendingPaymentListenable?.value;
     if (pending == null) return;
-    if (pending.paymentBookingId != widget.paymentBookingId) return;
-    // Deep link / coordinator only triggers a server poll — never marks paid.
+    if (!mollieStreetPaymentIdsMatch(
+      pending.paymentBookingId,
+      widget.paymentBookingId,
+    )) {
+      return;
+    }
+    // Same payment shadow: accept verified paid/confirmed from coordinator.
+    if (pending.status == FluxidiPaymentStatus.paid ||
+        pending.status == FluxidiPaymentStatus.confirmed) {
+      _acceptVerifiedPaid(source: 'PENDING_NOTIFIER');
+      return;
+    }
+    // Deep link / checking only triggers a server poll — never marks paid.
     unawaited(_runPoll(source: 'PENDING_NOTIFIER'));
   }
 
-  /// Manual refresh ("Ik heb betaald").
-  Future<void> refreshNow() => _runPoll(source: 'USER_REFRESH');
+  /// Manual refresh ("Ik heb betaald") — always shows visible feedback.
+  Future<void> refreshNow() =>
+      _runPoll(source: 'USER_REFRESH', userInitiated: true);
 
-  Future<void> _runPoll({required String source}) async {
-    if (!mounted || _stopped || _terminal != null) return;
+  void _acceptVerifiedPaid({required String source}) {
+    if (_terminal == MollieStreetCheckoutPollOutcome.paid) return;
+    _intervalTimer?.cancel();
+    _pollQueued = false;
+    _polling = false;
+    _feedbackText = null;
+    if (!mounted || _stopped) return;
+    setState(() => _terminal = MollieStreetCheckoutPollOutcome.paid);
+    debugPrint(
+      '[MOLLIE_STREET_CHECKOUT][NOTIFIER_PAID] source=$source '
+      'pay=${mollieStreetIdHash(widget.paymentBookingId)} '
+      'booking=${mollieStreetIdHash(widget.canonicalBookingId)}',
+    );
+    _scheduleTerminalPop(MollieStreetCheckoutPollOutcome.paid);
+  }
+
+  void _scheduleTerminalPop(MollieStreetCheckoutPollOutcome outcome) {
+    _terminalPaintTimer?.cancel();
+    _terminalPaintTimer = Timer(const Duration(milliseconds: 450), () {
+      if (!mounted || _stopped) return;
+      final nav = Navigator.of(context);
+      if (nav.canPop()) {
+        nav.pop(outcome);
+      }
+    });
+  }
+
+  String _feedbackForError(MollieStreetCheckoutPollResult result) {
+    final code = (result.sanitizedErrorCode ?? '').toLowerCase();
+    if (code == 'unauthorized' || code == 'forbidden') {
+      return widget.copy.statusAuthErrorText;
+    }
+    if (code == 'not_found' || code == 'booking_not_found') {
+      return widget.copy.statusNotFoundErrorText;
+    }
+    if (code == 'server_error' || result.httpCode >= 500) {
+      return widget.copy.statusServerErrorText;
+    }
+    return widget.copy.statusGenericErrorText;
+  }
+
+  Future<void> _runPoll({
+    required String source,
+    bool userInitiated = false,
+  }) async {
+    if (!mounted || _stopped) return;
+    if (_terminal == MollieStreetCheckoutPollOutcome.paid) return;
+    if (_terminal != null && molliePollOutcomeIsTerminal(_terminal!)) return;
+
     if (_polling) {
       _pollQueued = true;
+      if (userInitiated) _userRefreshPendingFeedback = true;
       return;
     }
+
+    final myGen = ++_pollGeneration;
     _polling = true;
     _pollQueued = false;
-    if (mounted) setState(() {});
-    MollieStreetCheckoutPollOutcome outcome;
-    try {
-      outcome = await widget.pollOnce();
-    } catch (_) {
-      outcome = MollieStreetCheckoutPollOutcome.error;
+    if (userInitiated) {
+      _userRefreshPendingFeedback = true;
+      _feedbackText = null;
     }
+    if (mounted) setState(() {});
+
+    MollieStreetCheckoutPollResult result;
+    try {
+      result = await widget.pollOnce();
+    } catch (_) {
+      result = MollieStreetCheckoutPollResult.error;
+    }
+
     if (!mounted || _stopped) return;
+
+    // Latest-wins: discard stale non-paid results when a newer poll started.
+    final isStale = myGen != _pollGeneration;
+    if (isStale &&
+        result.outcome != MollieStreetCheckoutPollOutcome.paid &&
+        !_userRefreshPendingFeedback) {
+      _polling = false;
+      if (_pollQueued) {
+        unawaited(_runPoll(source: 'QUEUED'));
+      }
+      return;
+    }
+
+    // Paid always wins — even from a slightly older in-flight response.
+    if (_terminal == MollieStreetCheckoutPollOutcome.paid) {
+      _polling = false;
+      return;
+    }
+
     _polling = false;
     _attempts++;
 
+    final outcome = result.outcome;
+    final showUserFeedback =
+        userInitiated || _userRefreshPendingFeedback;
+
     if (molliePollOutcomeIsTerminal(outcome)) {
       _intervalTimer?.cancel();
+      _userRefreshPendingFeedback = false;
+      _feedbackText = null;
       setState(() => _terminal = outcome);
-      // Brief success/failure paint, then pop so the receipt can refresh.
-      _terminalPaintTimer?.cancel();
-      _terminalPaintTimer = Timer(const Duration(milliseconds: 450), () {
-        if (!mounted || _stopped) return;
-        final nav = Navigator.of(context);
-        if (nav.canPop()) {
-          nav.pop(outcome);
-        }
-      });
+      _scheduleTerminalPop(outcome);
       return;
+    }
+
+    if (showUserFeedback) {
+      _userRefreshPendingFeedback = false;
+      if (outcome == MollieStreetCheckoutPollOutcome.pending) {
+        _feedbackText = widget.copy.processingText;
+      } else if (outcome == MollieStreetCheckoutPollOutcome.error) {
+        _feedbackText = _feedbackForError(result);
+      }
     }
 
     if (mounted) setState(() {});
@@ -182,7 +303,6 @@ class MollieStreetCheckoutDialogContentState
       return;
     }
 
-    // Continue bounded background polling while the dialog stays open.
     _intervalTimer?.cancel();
     _intervalTimer = Timer(widget.interval, () {
       if (!mounted || _stopped || _terminal != null) return;
@@ -191,6 +311,11 @@ class MollieStreetCheckoutDialogContentState
   }
 
   String _statusText() {
+    if (_terminal == null &&
+        _feedbackText != null &&
+        _feedbackText!.trim().isNotEmpty) {
+      return _feedbackText!;
+    }
     switch (_terminal) {
       case MollieStreetCheckoutPollOutcome.paid:
         return widget.copy.succeededText;
@@ -210,6 +335,8 @@ class MollieStreetCheckoutDialogContentState
   @override
   Widget build(BuildContext context) {
     final isPaid = _terminal == MollieStreetCheckoutPollOutcome.paid;
+    final hasFeedback =
+        _feedbackText != null && _feedbackText!.trim().isNotEmpty;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -242,7 +369,11 @@ class MollieStreetCheckoutDialogContentState
                 const SizedBox(width: 8),
               ],
               if (isPaid)
-                const Icon(Icons.check_circle, color: Color(0xFF15803D), size: 18),
+                const Icon(
+                  Icons.check_circle,
+                  color: Color(0xFF15803D),
+                  size: 18,
+                ),
               if (isPaid) const SizedBox(width: 6),
               Flexible(
                 child: Text(
@@ -252,9 +383,15 @@ class MollieStreetCheckoutDialogContentState
                     fontSize: 12,
                     color: isPaid
                         ? const Color(0xFF15803D)
+                        : hasFeedback
+                        ? const Color(0xFFB45309)
                         : widget.textMutedColor,
-                    fontStyle: isPaid ? FontStyle.normal : FontStyle.italic,
-                    fontWeight: isPaid ? FontWeight.w700 : FontWeight.w400,
+                    fontStyle: isPaid || hasFeedback
+                        ? FontStyle.normal
+                        : FontStyle.italic,
+                    fontWeight: isPaid || hasFeedback
+                        ? FontWeight.w700
+                        : FontWeight.w400,
                   ),
                 ),
               ),

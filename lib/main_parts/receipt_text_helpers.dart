@@ -473,6 +473,48 @@ String _receiptText(String key) {
         fr: 'En attente du paiement…',
         es: 'Esperando el pago…',
       );
+    case 'paymentStillProcessing':
+      return _tr(
+        nl: 'Betaling wordt nog verwerkt…',
+        en: 'Payment is still being processed…',
+        fr: 'Le paiement est encore en cours de traitement…',
+        es: 'El pago aún se está procesando…',
+      );
+    case 'paymentStatusAuthError':
+      return _tr(
+        nl: 'Kon de betaalstatus niet ophalen (sessie). Probeer opnieuw.',
+        en: 'Could not check payment status (session). Please try again.',
+        fr: 'Impossible de vérifier le paiement (session). Réessayez.',
+        es: 'No se pudo comprobar el pago (sesión). Inténtalo de nuevo.',
+      );
+    case 'paymentStatusNotFoundError':
+      return _tr(
+        nl: 'Betaling niet gevonden. Vernieuw of probeer opnieuw.',
+        en: 'Payment not found. Refresh or try again.',
+        fr: 'Paiement introuvable. Actualisez ou réessayez.',
+        es: 'Pago no encontrado. Actualiza o inténtalo de nuevo.',
+      );
+    case 'paymentStatusServerError':
+      return _tr(
+        nl: 'Tijdelijke serverfout. Probeer opnieuw.',
+        en: 'Temporary server error. Please try again.',
+        fr: 'Erreur serveur temporaire. Réessayez.',
+        es: 'Error temporal del servidor. Inténtalo de nuevo.',
+      );
+    case 'paymentStatusGenericError':
+      return _tr(
+        nl: 'Kon de betaalstatus niet controleren. Probeer opnieuw.',
+        en: 'Could not check payment status. Please try again.',
+        fr: 'Impossible de vérifier le statut du paiement. Réessayez.',
+        es: 'No se pudo comprobar el estado del pago. Inténtalo de nuevo.',
+      );
+    case 'paymentRefreshFailed':
+      return _tr(
+        nl: 'Bon kon niet vernieuwd worden. Trek omlaag of open opnieuw.',
+        en: 'Receipt could not be refreshed. Pull to refresh or reopen.',
+        fr: 'Impossible d’actualiser le reçu. Actualisez ou rouvrez.',
+        es: 'No se pudo actualizar el recibo. Actualiza o vuelve a abrir.',
+      );
     case 'iHavePaid':
       return _tr(
         nl: 'Ik heb betaald',

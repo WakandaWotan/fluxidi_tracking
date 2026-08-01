@@ -24,12 +24,17 @@ MollieStreetCheckoutCopy _copy() => const MollieStreetCheckoutCopy(
       instruction:
           'Open de beveiligde betaalpagina of scan de QR-code. Kies daarna een van de beschikbare betaalmethodes.',
       waitingText: 'Wachten op betaling…',
+      processingText: 'Betaling wordt nog verwerkt…',
       succeededText: 'Betaling geslaagd',
       failedText: 'Betaling mislukt',
       cancelledText: 'Betaling geannuleerd',
       expiredText: 'Betaling verlopen',
       iHavePaidLabel: 'Ik heb betaald',
       closeLabel: 'Sluiten',
+      statusAuthErrorText: 'Kon de betaalstatus niet ophalen (sessie).',
+      statusNotFoundErrorText: 'Betaling niet gevonden.',
+      statusServerErrorText: 'Tijdelijke serverfout.',
+      statusGenericErrorText: 'Kon de betaalstatus niet controleren.',
     );
 
 void main() {
@@ -115,9 +120,9 @@ void main() {
     testWidgets('5+6. app resume triggers immediate /pay/status; webhook-paid updates modal',
         (tester) async {
       var polls = 0;
-      final outcomes = <MollieStreetCheckoutPollOutcome>[
-        MollieStreetCheckoutPollOutcome.pending,
-        MollieStreetCheckoutPollOutcome.paid,
+      final outcomes = <MollieStreetCheckoutPollResult>[
+        MollieStreetCheckoutPollResult.pending,
+        MollieStreetCheckoutPollResult.paid,
       ];
       MollieStreetCheckoutPollOutcome? popped;
 
@@ -138,7 +143,7 @@ void main() {
                         paymentBookingId: 'pay_shadow_1',
                         textMutedColor: Colors.grey,
                         copy: _copy(),
-                        interval: const Duration(days: 1), // avoid interval noise
+                        interval: const Duration(days: 1),
                         maxAttempts: 10,
                         pollOnce: () async {
                           final i = polls;
@@ -157,17 +162,16 @@ void main() {
       );
 
       await tester.tap(find.text('open'));
-      await tester.pump(); // open dialog
-      await tester.pump(); // post-frame first poll start
+      await tester.pump();
+      await tester.pump();
       await tester.pump(const Duration(milliseconds: 20));
       expect(find.text('Wachten op betaling…'), findsOneWidget);
       expect(polls, greaterThanOrEqualTo(1));
 
-      // Simulate returning from Chrome after webhook paid.
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 20));
-      await tester.pump(const Duration(milliseconds: 500)); // success paint + pop
+      await tester.pump(const Duration(milliseconds: 500));
 
       expect(polls, greaterThanOrEqualTo(2));
       expect(popped, MollieStreetCheckoutPollOutcome.paid);
@@ -190,7 +194,7 @@ void main() {
               maxAttempts: 20,
               pollOnce: () async {
                 polls++;
-                return MollieStreetCheckoutPollOutcome.paid;
+                return MollieStreetCheckoutPollResult.paid;
               },
             ),
           ),
@@ -202,7 +206,7 @@ void main() {
       expect(find.text('Betaling geslaagd'), findsOneWidget);
       final afterPaid = polls;
       await tester.pump(const Duration(milliseconds: 100));
-      expect(polls, afterPaid); // no further polls
+      expect(polls, afterPaid);
     });
 
     testWidgets('8. polling remains bounded on perpetual pending', (tester) async {
@@ -229,7 +233,7 @@ void main() {
                         maxAttempts: 3,
                         pollOnce: () async {
                           polls++;
-                          return MollieStreetCheckoutPollOutcome.pending;
+                          return MollieStreetCheckoutPollResult.pending;
                         },
                       ),
                     ),
@@ -243,7 +247,6 @@ void main() {
       );
       await tester.tap(find.text('open'));
       await tester.pump();
-      // Drain bounded polls.
       for (var i = 0; i < 12; i++) {
         await tester.pump(const Duration(milliseconds: 5));
       }
@@ -271,8 +274,10 @@ void main() {
                         textMutedColor: Colors.grey,
                         copy: _copy(),
                         interval: const Duration(days: 1),
-                        pollOnce: () async =>
-                            MollieStreetCheckoutPollOutcome.failed,
+                        pollOnce: () async => const MollieStreetCheckoutPollResult(
+                          outcome: MollieStreetCheckoutPollOutcome.failed,
+                          httpCode: 200,
+                        ),
                       ),
                     ),
                   );
@@ -303,7 +308,7 @@ void main() {
               textMutedColor: Colors.grey,
               copy: _copy(),
               interval: const Duration(days: 1),
-              pollOnce: () async => MollieStreetCheckoutPollOutcome.paid,
+              pollOnce: () async => MollieStreetCheckoutPollResult.paid,
             ),
           ),
         ),
@@ -331,7 +336,7 @@ void main() {
               maxAttempts: 20,
               pollOnce: () async {
                 polls++;
-                return MollieStreetCheckoutPollOutcome.pending;
+                return MollieStreetCheckoutPollResult.pending;
               },
             ),
           ),
@@ -359,7 +364,6 @@ void main() {
     });
 
     test('pending notifier triggers poll without trusting deep-link paid', () async {
-      // Classification still requires server paid; deep link status ignored.
       expect(
         classifyMollieStreetCheckoutPollStatus(
           httpCode: 200,
@@ -374,7 +378,6 @@ void main() {
         ),
         MollieStreetCheckoutPollOutcome.paid,
       );
-      // Ensure coordinator constant still points at custom scheme.
       expect(kFluxidiPaymentReturnUrl, 'fluxidi://pay/return');
     });
   });

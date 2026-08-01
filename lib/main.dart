@@ -37,6 +37,7 @@ import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:fluxidi_tracking/payment/payment_qr_panel.dart';
 import 'package:fluxidi_tracking/payment/mollie_street_checkout.dart';
 import 'package:fluxidi_tracking/payment/mollie_street_checkout_dialog.dart';
+import 'package:fluxidi_tracking/payment/mollie_street_status_auth.dart';
 import 'package:fluxidi_tracking/payment_return.dart';
 export 'package:fluxidi_tracking/payment_return.dart'
     show
