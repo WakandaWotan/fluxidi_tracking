@@ -20,6 +20,139 @@ class _InCarPaymentAuthRequiredException implements Exception {
 final StreetInvoiceEligibilityMemo _streetInvoiceEligibilityMemo =
     StreetInvoiceEligibilityMemo();
 
+/// RELEASE-P0-MOLLIE-STREET-CHECKOUT-1: content of the "Online betalen"
+/// dialog. Reuses [PaymentQrPanel] for the QR / "open payment page"
+/// affordance and owns a bounded `/pay/status` poll loop (injected via
+/// [pollOnce] so the network call stays testable/owned by the receipt
+/// state). Pops its enclosing dialog with the terminal
+/// [MollieStreetCheckoutPollOutcome] once one is reached, or after the
+/// bounded attempt budget elapses (`pending`, meaning "stop waiting, no
+/// optimistic paid write").
+class _MollieStreetCheckoutDialogContent extends StatefulWidget {
+  const _MollieStreetCheckoutDialogContent({
+    required this.language,
+    required this.qrSrc,
+    required this.checkoutUrl,
+    required this.amountText,
+    required this.paymentBookingId,
+    required this.textMutedColor,
+    required this.waitingText,
+    required this.pollOnce,
+  });
+
+  final AppLanguage language;
+  final String qrSrc;
+  final String? checkoutUrl;
+  final String amountText;
+  final String paymentBookingId;
+  final Color textMutedColor;
+  final String waitingText;
+  final Future<MollieStreetCheckoutPollOutcome> Function() pollOnce;
+
+  @override
+  State<_MollieStreetCheckoutDialogContent> createState() =>
+      _MollieStreetCheckoutDialogContentState();
+}
+
+class _MollieStreetCheckoutDialogContentState
+    extends State<_MollieStreetCheckoutDialogContent> {
+  // Bounded polling budget: ~5 minutes at a 5s cadence. Long enough for a
+  // customer to complete a Mollie hosted checkout, short enough to never
+  // spin forever if the driver leaves the dialog open unattended.
+  static const int _maxAttempts = 60;
+  static const Duration _interval = Duration(seconds: 5);
+
+  int _attempts = 0;
+  bool _polling = false;
+  bool _stopped = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.paymentBookingId.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleNext());
+    }
+  }
+
+  @override
+  void dispose() {
+    _stopped = true;
+    super.dispose();
+  }
+
+  void _scheduleNext() {
+    if (!mounted || _stopped) return;
+    Future.delayed(_interval, _runPoll);
+  }
+
+  Future<void> _runPoll() async {
+    if (!mounted || _stopped) return;
+    _attempts++;
+    setState(() => _polling = true);
+    final outcome = await widget.pollOnce();
+    if (!mounted || _stopped) return;
+    setState(() => _polling = false);
+    if (molliePollOutcomeIsTerminal(outcome)) {
+      Navigator.of(context).pop(outcome);
+      return;
+    }
+    if (_attempts >= _maxAttempts) {
+      Navigator.of(context).pop(MollieStreetCheckoutPollOutcome.pending);
+      return;
+    }
+    _scheduleNext();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        PaymentQrPanel(
+          language: widget.language,
+          qrSrc: widget.qrSrc,
+          checkoutUrl: widget.checkoutUrl,
+        ),
+        const SizedBox(height: 14),
+        Center(
+          child: Text(
+            widget.amountText,
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+          ),
+        ),
+        if (widget.paymentBookingId.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (_polling) ...[
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Flexible(
+                child: Text(
+                  widget.waitingText,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: widget.textMutedColor,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+}
+
 class _RideReceiptBodyState extends State<_RideReceiptBody> {
   _ReceiptPaymentStatus _paymentStatus = _ReceiptPaymentStatus.pending;
 
@@ -28,6 +161,16 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   /// fall back to a misleading bare "Unpaid" while the ride is on invoice.
   bool _hasStreetBusinessInvoice = false;
   bool _streetBusinessInvoicePaid = false;
+
+  /// RELEASE-P0-MOLLIE-STREET-CHECKOUT-1: true while the "Online betalen"
+  /// start request is in flight. Drives the bounded (~25s) button spinner;
+  /// never left `true` indefinitely.
+  bool _mollieCheckoutLoading = false;
+
+  /// Raw `/pay/status` payload captured on the poll attempt that first
+  /// reported `paid`, used to enrich the authoritative-fields merge when the
+  /// live booking GET fallback is unavailable.
+  Map<String, dynamic>? _mollieStreetCheckoutPollPaidData;
 
   /// Cached Booking Worker record used to confirm street-ride identity when
   /// Tracking `/trips/history` omitted `source` (summarizeTrip strips it).
@@ -3390,6 +3533,366 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     );
   }
 
+  /// RELEASE-P0-MOLLIE-STREET-CHECKOUT-1: user-facing message for a failed
+  /// `POST /bookings/:id/street-checkout` start attempt.
+  String _mollieStreetCheckoutErrorMessage(MollieStreetCheckoutErrorKind kind) {
+    switch (kind) {
+      case MollieStreetCheckoutErrorKind.authRequired:
+        return _receiptText('paymentAuthRequired');
+      case MollieStreetCheckoutErrorKind.rideAlreadyPaid:
+        return _receiptText('rideAlreadyPaid');
+      case MollieStreetCheckoutErrorKind.mollieNotConnected:
+        return _receiptText('mollieNotConnected');
+      case MollieStreetCheckoutErrorKind.noOnlineMethods:
+        return _receiptText('noOnlineMethods');
+      case MollieStreetCheckoutErrorKind.notEligible:
+      case MollieStreetCheckoutErrorKind.network:
+      case MollieStreetCheckoutErrorKind.unknown:
+        return _receiptText('paymentMarkFailed');
+    }
+  }
+
+  /// RELEASE-P0-MOLLIE-STREET-CHECKOUT-1: starts (or reopens) the Mollie
+  /// online checkout for this completed street/direct ride.
+  ///
+  /// Never sends `amount` as an authority in the request body — the
+  /// booking-worker derives the payable amount server-side from the
+  /// canonical booking record, matching the same "server decides the money"
+  /// rule already enforced for QR/cash/terminal in [_persistInCarPayment].
+  Future<void> _startMollieStreetCheckout(BuildContext context) async {
+    if (_mollieCheckoutLoading) return;
+    if (!_guardDriverReceiptOperation(action: 'street_checkout')) return;
+
+    final strictScope = _strictReceiptPaymentScopeForMutation(
+      context: context,
+      action: 'street_checkout',
+    );
+    if (strictScope == null) return;
+
+    final bookingId = (item.bookingId ?? '').trim();
+    if (bookingId.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_receiptText('bookingIdMissing'))));
+      return;
+    }
+
+    final authHeaders = await resolveInCarPaymentAuthHeaders();
+    if (authHeaders.mode == InCarPaymentAuthMode.none) {
+      debugPrint('[MOLLIE_STREET_CHECKOUT][START] status=missing_auth');
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_receiptText('paymentAuthRequired'))),
+      );
+      return;
+    }
+
+    final maskedRef = _safeRefPreview(bookingId);
+    setState(() => _mollieCheckoutLoading = true);
+    try {
+      final uri = Uri.parse(
+        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(bookingId)}/street-checkout',
+      ).replace(queryParameters: strictScope);
+      final payload = <String, dynamic>{
+        ...strictScope,
+        'return_url': kFluxidiPaymentReturnUrl,
+      };
+      debugPrint('[MOLLIE_STREET_CHECKOUT][START] booking=$maskedRef');
+      final res = await http
+          .post(uri, headers: authHeaders.headers, body: jsonEncode(payload))
+          .timeout(const Duration(seconds: 25));
+      dynamic decodedRaw;
+      try {
+        decodedRaw = jsonDecode(utf8.decode(res.bodyBytes));
+      } catch (_) {
+        decodedRaw = null;
+      }
+      final decoded = decodedRaw is Map
+          ? Map<String, dynamic>.from(decodedRaw)
+          : <String, dynamic>{};
+      if (res.statusCode == 401) {
+        throw const _InCarPaymentAuthRequiredException();
+      }
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        final kind = classifyMollieStreetCheckoutStartError(
+          httpCode: res.statusCode,
+          decoded: decoded,
+        );
+        debugPrint(
+          '[MOLLIE_STREET_CHECKOUT][START][ERROR] booking=$maskedRef '
+          'code=${res.statusCode} kind=${kind.name}',
+        );
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_mollieStreetCheckoutErrorMessage(kind))),
+        );
+        return;
+      }
+      final result = parseMollieStreetCheckoutStartResponse(decoded);
+      if (!result.ok || !result.hasCheckout) {
+        debugPrint(
+          '[MOLLIE_STREET_CHECKOUT][START][NO_CHECKOUT] booking=$maskedRef',
+        );
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_receiptText('noOnlineMethods'))),
+        );
+        return;
+      }
+      debugPrint(
+        '[MOLLIE_STREET_CHECKOUT][START][OK] booking=$maskedRef '
+        'reused=${result.reused} hasQr=${(result.qrSrc ?? '').isNotEmpty} '
+        'hasCheckoutUrl=${(result.checkoutUrl ?? '').isNotEmpty}',
+      );
+      final paymentBookingId = (result.paymentBookingId ?? '').trim();
+      if (paymentBookingId.isNotEmpty) {
+        setFluxidiPendingPayment(
+          paymentBookingId: paymentBookingId,
+          publicBookingId: bookingId,
+        );
+      }
+      if (!context.mounted) return;
+      await _showMollieStreetCheckoutDialog(
+        context,
+        result: result,
+        strictScope: strictScope,
+      );
+    } catch (err) {
+      final isAuthFailure = err is _InCarPaymentAuthRequiredException;
+      debugPrint(
+        '[MOLLIE_STREET_CHECKOUT][START][EXCEPTION] booking=$maskedRef '
+        'auth_failure=$isAuthFailure error=$err',
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isAuthFailure
+                ? _receiptText('paymentAuthRequired')
+                : _receiptText('paymentMarkFailed'),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _mollieCheckoutLoading = false);
+    }
+  }
+
+  /// Shows the online-checkout dialog (reusing [PaymentQrPanel] for the QR /
+  /// "open payment page" affordance) and starts the bounded `/pay/status`
+  /// poll for [result.paymentBookingId]. Resolves once the dialog closes,
+  /// either because polling reached a terminal outcome or the driver
+  /// dismissed it manually.
+  Future<void> _showMollieStreetCheckoutDialog(
+    BuildContext context, {
+    required MollieStreetCheckoutStartResult result,
+    required Map<String, String> strictScope,
+  }) async {
+    final language = appConfig.currentLanguage;
+    final amountText = _moneyText(result.amount ?? _selectedPaymentAmount());
+    final safeCheckoutUrl = (result.checkoutUrl ?? '').trim();
+    final qrSrc = (result.qrSrc ?? '').trim();
+    final paymentBookingId = (result.paymentBookingId ?? '').trim();
+
+    final outcome = await showDialog<MollieStreetCheckoutPollOutcome>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_receiptText('onlinePay')),
+        content: SizedBox(
+          width: 300,
+          child: _MollieStreetCheckoutDialogContent(
+            language: language,
+            qrSrc: qrSrc,
+            checkoutUrl: safeCheckoutUrl.isEmpty ? null : safeCheckoutUrl,
+            amountText: amountText,
+            paymentBookingId: paymentBookingId,
+            textMutedColor: _palette.textMuted,
+            waitingText: _receiptText('waitingForPayment'),
+            pollOnce: () => _pollMollieStreetCheckoutStatusOnce(
+              paymentBookingId: paymentBookingId,
+              strictScope: strictScope,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(_receiptText('close')),
+          ),
+        ],
+      ),
+    );
+
+    if (!context.mounted) return;
+    await _handleMollieStreetCheckoutDialogOutcome(context, outcome);
+  }
+
+  /// Single `GET /pay/status` attempt for a street-checkout in-flight
+  /// payment. Never throws — every failure path (missing auth, transport
+  /// error, non-2xx, undecodable body) resolves to
+  /// [MollieStreetCheckoutPollOutcome.error] so the dialog keeps polling
+  /// instead of wrongly treating the ride as paid.
+  Future<MollieStreetCheckoutPollOutcome> _pollMollieStreetCheckoutStatusOnce({
+    required String paymentBookingId,
+    required Map<String, String> strictScope,
+  }) async {
+    if (paymentBookingId.isEmpty) {
+      return MollieStreetCheckoutPollOutcome.error;
+    }
+    try {
+      final authHeaders = await resolveInCarPaymentAuthHeaders(json: false);
+      if (authHeaders.mode == InCarPaymentAuthMode.none) {
+        return MollieStreetCheckoutPollOutcome.error;
+      }
+      final uri = Uri.parse('$kBookingBaseUrl/pay/status').replace(
+        queryParameters: <String, String>{
+          'id': paymentBookingId,
+          ...strictScope,
+        },
+      );
+      final res = await http
+          .get(uri, headers: authHeaders.headers)
+          .timeout(const Duration(seconds: 12));
+      dynamic decodedRaw;
+      try {
+        decodedRaw = jsonDecode(utf8.decode(res.bodyBytes));
+      } catch (_) {
+        decodedRaw = null;
+      }
+      final root = decodedRaw is Map
+          ? Map<String, dynamic>.from(decodedRaw)
+          : <String, dynamic>{};
+      final data = root['data'] is Map
+          ? Map<String, dynamic>.from(root['data'] as Map)
+          : root;
+      final outcome = classifyMollieStreetCheckoutPollStatus(
+        httpCode: res.statusCode,
+        data: data,
+      );
+      if (outcome == MollieStreetCheckoutPollOutcome.paid) {
+        _mollieStreetCheckoutPollPaidData = data;
+      }
+      return outcome;
+    } catch (e) {
+      debugPrint('[MOLLIE_STREET_CHECKOUT][POLL][ERROR] $e');
+      return MollieStreetCheckoutPollOutcome.error;
+    }
+  }
+
+  Future<void> _handleMollieStreetCheckoutDialogOutcome(
+    BuildContext context,
+    MollieStreetCheckoutPollOutcome? outcome,
+  ) async {
+    switch (outcome) {
+      case MollieStreetCheckoutPollOutcome.paid:
+        await _markMollieStreetCheckoutPaid(context);
+        return;
+      case MollieStreetCheckoutPollOutcome.failed:
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_receiptText('paymentFailed'))),
+          );
+        }
+        return;
+      case MollieStreetCheckoutPollOutcome.cancelled:
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_receiptText('paymentCancelled'))),
+          );
+        }
+        return;
+      case MollieStreetCheckoutPollOutcome.expired:
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_receiptText('paymentExpired'))),
+          );
+        }
+        return;
+      case MollieStreetCheckoutPollOutcome.pending:
+      case MollieStreetCheckoutPollOutcome.error:
+      case null:
+        // Dismissed by the driver, or the bounded poll window elapsed
+        // without a terminal status. No optimistic paid write; the driver
+        // can reopen via "Online betalen" (server returns `reused: true`).
+        return;
+    }
+  }
+
+  /// Marks the receipt paid after `/pay/status` confirmed `paid`. Prefers
+  /// re-fetching the authoritative booking record (same helper used by
+  /// [_resolveReceiptPaymentStatus]) so the merged fields (method/provider/
+  /// paid_at) come from the booking-worker's canonical record rather than
+  /// being guessed from the `/pay/status` shape.
+  Future<void> _markMollieStreetCheckoutPaid(BuildContext context) async {
+    final bookingId = (item.bookingId ?? '').trim();
+    final authoritative = bookingId.isEmpty
+        ? null
+        : await _fetchAuthoritativePaymentFields(bookingId);
+    final pollData = _mollieStreetCheckoutPollPaidData ?? const <String, dynamic>{};
+    final paidAtIso =
+        (pollData['confirmed_at'] ?? pollData['confirmedAt'] ?? '')
+                .toString()
+                .trim()
+                .isNotEmpty
+        ? (pollData['confirmed_at'] ?? pollData['confirmedAt']).toString()
+        : DateTime.now().toUtc().toIso8601String();
+    final extracted = <String, dynamic>{
+      'payment_status': 'paid',
+      'paymentStatus': 'paid',
+      'payment_method': 'mollie',
+      'paymentMethod': 'mollie',
+      'payment_source': 'online',
+      'paymentSource': 'online',
+      'payment_provider': 'mollie',
+      'paymentProvider': 'mollie',
+      'paid_at': paidAtIso,
+      'paidAt': paidAtIso,
+      ...?authoritative,
+    };
+    _mergePaymentFieldsIntoReceiptDetails(extracted);
+    if (mounted) {
+      setState(() => _paymentStatus = _ReceiptPaymentStatus.paid);
+    }
+    _appendPaymentUpdateLedgerIfPaid(
+      fields: extracted,
+      method: 'mollie',
+      source: 'online',
+      backendConfirmed: true,
+    );
+    clearFluxidiPendingPayment();
+    debugPrint(
+      '[MOLLIE_STREET_CHECKOUT][PAID] booking=${_safeRefPreview(bookingId)}',
+    );
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(_receiptText('paymentSucceeded'))),
+    );
+  }
+
+  /// Confirmation dialog shown when a manual payment (cash / Bancontact
+  /// terminal / QR confirm) is rejected because an online Mollie checkout is
+  /// already open for this ride. Returning `true` retries the same manual
+  /// payment with `confirm_cancel_open_mollie: true`.
+  Future<bool?> _confirmCancelOpenMollieCheckout(BuildContext context) {
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_receiptText('openPaymentExists')),
+        content: Text(_receiptText('cancelOpenMollieConfirm')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(_receiptText('close')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(_receiptText('tryAgain')),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _togglePaidDemo(BuildContext context) {
     setState(() {
       _paymentStatus = _paymentStatus == _ReceiptPaymentStatus.paid
@@ -3408,6 +3911,11 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   Future<void> _persistInCarPayment({
     required BuildContext context,
     required String method,
+    // RELEASE-P0-MOLLIE-STREET-CHECKOUT-1: set on the retry after the driver
+    // confirms cancelling an open Mollie checkout (see
+    // `manualPaymentBlockedByOpenMollieCheckout` below). Only meaningful for
+    // the booking-level payment path; leg/trip payment paths ignore it.
+    bool confirmCancelOpenMollie = false,
   }) async {
     if (!_guardDriverReceiptOperation(action: 'persist_payment_$method'))
       return;
@@ -3774,6 +4282,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         actorVehicleId: (item.vehicleId ?? '').trim(),
       ),
       if (amount != null) 'amount': amount,
+      // RELEASE-P0-MOLLIE-STREET-CHECKOUT-1: only present on the driver-
+      // confirmed retry after a 409 conflict reported an open Mollie
+      // checkout for this booking (see `manualPaymentBlockedByOpenMollieCheckout`).
+      if (confirmCancelOpenMollie) 'confirm_cancel_open_mollie': true,
     };
 
     if (isQrPayment) {
@@ -3802,6 +4314,48 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       }
       if (res.statusCode == 401) {
         throw const _InCarPaymentAuthRequiredException();
+      }
+      if (res.statusCode == 409) {
+        dynamic conflictRaw;
+        try {
+          conflictRaw = jsonDecode(utf8.decode(res.bodyBytes));
+        } catch (_) {
+          conflictRaw = null;
+        }
+        final conflictBody = conflictRaw is Map
+            ? Map<String, dynamic>.from(conflictRaw)
+            : <String, dynamic>{};
+        // RELEASE-P0-MOLLIE-STREET-CHECKOUT-1: a manual confirmation (cash /
+        // Bancontact terminal / QR) can race an already-open online Mollie
+        // checkout for the same ride. Offer the driver an explicit
+        // cancel-and-continue confirmation instead of a bare failure; never
+        // retry silently.
+        if (manualPaymentBlockedByOpenMollieCheckout(
+          httpCode: res.statusCode,
+          decoded: conflictBody,
+        )) {
+          debugPrint(
+            '[RECEIPT_PAYMENT][OPEN_MOLLIE_CONFLICT] booking=$maskedRef method=$normalizedMethod confirmCancelOpenMollie=$confirmCancelOpenMollie',
+          );
+          if (!confirmCancelOpenMollie) {
+            if (!context.mounted) return;
+            final confirmed = await _confirmCancelOpenMollieCheckout(context);
+            if (confirmed == true && context.mounted) {
+              await _persistInCarPayment(
+                context: context,
+                method: method,
+                confirmCancelOpenMollie: true,
+              );
+              return;
+            }
+          }
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_receiptText('openPaymentExists'))),
+          );
+          return;
+        }
+        throw Exception('HTTP ${res.statusCode}');
       }
       if (res.statusCode < 200 || res.statusCode >= 300) {
         throw Exception('HTTP ${res.statusCode}');
@@ -4191,6 +4745,29 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     return double.tryParse((value ?? '').toString().replaceAll(',', '.'));
   }
 
+  /// RELEASE-P0-MOLLIE-STREET-CHECKOUT-1: whether the primary "Online
+  /// betalen" action may be offered for this receipt. Delegates the actual
+  /// decision to the pure [resolveMollieStreetCheckoutEligible] so the rule
+  /// (street/direct ride, unpaid, positive amount, not cancelled, has a
+  /// booking id) is unit-testable without Flutter.
+  bool _mollieStreetCheckoutEligible() {
+    final bookingId = (item.bookingId ?? '').trim();
+    if (bookingId.isEmpty) return false;
+    final statusToken = item.status.trim().toUpperCase().replaceAll(
+      RegExp(r'[-\s]+'),
+      '_',
+    );
+    return resolveMollieStreetCheckoutEligible(
+      bookingId: bookingId,
+      isPaid: _isEffectiveReceiptPaid(),
+      isCancelled: statusToken.contains('CANCEL'),
+      amount: _selectedPaymentAmount(),
+      source: _receiptBookingSourceToken(),
+      bookingSource: _receiptBookingSourceToken(),
+      rideType: _receiptRideTypeToken(),
+    );
+  }
+
   Widget _paymentSection(BuildContext context) {
     final receiptTotal = _selectedPaymentAmount();
     final selectedScope = _selectedPaymentScopeLabel();
@@ -4247,6 +4824,32 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           ),
           const SizedBox(height: 10),
           if (!alreadyPaid) ...[
+            if (_mollieStreetCheckoutEligible()) ...[
+              FilledButton.icon(
+                onPressed: (canRequestPayment && !_mollieCheckoutLoading)
+                    ? () => _startMollieStreetCheckout(context)
+                    : null,
+                icon: _mollieCheckoutLoading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.credit_card_outlined),
+                label: Text(_receiptText('onlinePay')),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(left: 4, top: 4, bottom: 4),
+                child: Text(
+                  _receiptText('onlinePaySubtitle'),
+                  style: TextStyle(fontSize: 11, color: _palette.textMuted),
+                ),
+              ),
+              const SizedBox(height: 4),
+            ],
             FilledButton.icon(
               onPressed: canRequestPayment
                   ? () => _showPaymentQr(context)
@@ -4351,6 +4954,27 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       if (signals.bookingSource.isNotEmpty) return signals.bookingSource;
     }
     return '';
+  }
+
+  /// Reads a `ride_type` token from the receipt's booking data, falling back
+  /// to the looked-up Booking Worker record and finally to `item.kind`
+  /// (History summaries commonly carry `direct` there for street rides).
+  /// Used only as a corroborating signal for the online-checkout eligibility
+  /// gate ([_mollieStreetCheckoutEligible]).
+  String _receiptRideTypeToken() {
+    for (final src in [item.bookingDetails, item.rawSource]) {
+      for (final k in const ['ride_type', 'rideType']) {
+        final v = (src[k] ?? '').toString().trim();
+        if (v.isNotEmpty && v.toLowerCase() != 'null') return v;
+      }
+    }
+    if (_streetInvoiceLookupBooking != null) {
+      final signals = extractStreetSignalsFromBookingRecord(
+        _streetInvoiceLookupBooking,
+      );
+      if (signals.rideType.isNotEmpty) return signals.rideType;
+    }
+    return item.kind;
   }
 
   String _receiptDirectRideKey() {

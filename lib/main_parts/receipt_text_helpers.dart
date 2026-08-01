@@ -441,6 +441,97 @@ String _receiptText(String key) {
         fr: 'Plus d’options',
         es: 'Más opciones',
       );
+    case 'onlinePay':
+      return _tr(
+        nl: 'Online betalen',
+        en: 'Pay online',
+        fr: 'Payer en ligne',
+        es: 'Pagar en línea',
+      );
+    case 'onlinePaySubtitle':
+      return _tr(
+        nl: 'Bankkaart, PayPal en andere beschikbare betaalmethodes',
+        en: 'Card, PayPal and other available payment methods',
+        fr: 'Carte bancaire, PayPal et autres méthodes disponibles',
+        es: 'Tarjeta, PayPal y otros métodos de pago disponibles',
+      );
+    case 'waitingForPayment':
+      return _tr(
+        nl: 'Wachten op betaling…',
+        en: 'Waiting for payment…',
+        fr: 'En attente du paiement…',
+        es: 'Esperando el pago…',
+      );
+    case 'paymentSucceeded':
+      return _tr(
+        nl: 'Betaling gelukt.',
+        en: 'Payment succeeded.',
+        fr: 'Paiement réussi.',
+        es: 'Pago realizado con éxito.',
+      );
+    case 'paymentFailed':
+      return _tr(
+        nl: 'Betaling mislukt. Probeer opnieuw.',
+        en: 'Payment failed. Please try again.',
+        fr: 'Le paiement a échoué. Réessayez.',
+        es: 'El pago ha fallado. Inténtalo de nuevo.',
+      );
+    case 'paymentCancelled':
+      return _tr(
+        nl: 'Betaling geannuleerd.',
+        en: 'Payment cancelled.',
+        fr: 'Paiement annulé.',
+        es: 'Pago cancelado.',
+      );
+    case 'paymentExpired':
+      return _tr(
+        nl: 'Betaling verlopen. Probeer opnieuw.',
+        en: 'Payment expired. Please try again.',
+        fr: 'Le paiement a expiré. Réessayez.',
+        es: 'El pago ha caducado. Inténtalo de nuevo.',
+      );
+    case 'tryAgain':
+      return _tr(
+        nl: 'Probeer opnieuw',
+        en: 'Try again',
+        fr: 'Réessayer',
+        es: 'Intentar de nuevo',
+      );
+    case 'noOnlineMethods':
+      return _tr(
+        nl: 'Geen online betaalmethodes beschikbaar.',
+        en: 'No online payment methods available.',
+        fr: 'Aucune méthode de paiement en ligne disponible.',
+        es: 'No hay métodos de pago en línea disponibles.',
+      );
+    case 'mollieNotConnected':
+      return _tr(
+        nl: 'Online betalen is nog niet gekoppeld voor dit bedrijf.',
+        en: 'Online payment is not connected for this company yet.',
+        fr: "Le paiement en ligne n'est pas encore connecté pour cette société.",
+        es: 'El pago en línea aún no está conectado para esta empresa.',
+      );
+    case 'openPaymentExists':
+      return _tr(
+        nl: 'Er loopt al een online betaling voor deze rit.',
+        en: 'An online payment is already open for this ride.',
+        fr: 'Un paiement en ligne est déjà en cours pour cette course.',
+        es: 'Ya hay un pago en línea abierto para este viaje.',
+      );
+    case 'rideAlreadyPaid':
+      return _tr(
+        nl: 'Deze rit is al betaald.',
+        en: 'This ride is already paid.',
+        fr: 'Cette course est déjà payée.',
+        es: 'Este viaje ya está pagado.',
+      );
+    case 'cancelOpenMollieConfirm':
+      return _tr(
+        nl: 'Wil je de openstaande online betaling annuleren en deze betaling handmatig registreren?',
+        en: 'Do you want to cancel the open online payment and record this payment manually?',
+        fr: "Voulez-vous annuler le paiement en ligne en cours et enregistrer ce paiement manuellement ?",
+        es: '¿Quieres cancelar el pago en línea abierto y registrar este pago manualmente?',
+      );
     case 'payByQr':
       return _tr(
         nl: 'Betaal via QR',
