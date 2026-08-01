@@ -16263,6 +16263,18 @@ async function _assertCanonicalBookingOwnershipOrOpaque404(rec, tenantScope) {
   return { ok: true };
 }
 
+function _recordDerivedTenantScopeOrNull(rec) {
+  const recordScope = resolveBookingTenantScopeFromRecord(rec);
+  const tenantId = sanitizeTenantString(recordScope?.tenant_id, 80);
+  const companyId = sanitizeTenantString(recordScope?.company_id, 80);
+  if (!tenantId || !companyId) return null;
+  return {
+    tenant_id: tenantId,
+    company_id: companyId,
+    hasScope: true,
+  };
+}
+
 async function _assertCustomerSessionOwnsBookingOrOpaque404(
   env,
   rec,
@@ -16288,7 +16300,17 @@ async function _assertCustomerSessionOwnsBookingOrOpaque404(
     );
     return { ok: false, response: _opaqueBookingNotFoundResponse() };
   }
-  return { ok: true, sessionScope };
+  // OWNERSHIP-FIRST: after customer ownership succeeds, operations use the
+  // canonical booking record scope — never session global/global and never
+  // client-supplied tenant/company as the authorization source.
+  const tenantScope = _recordDerivedTenantScopeOrNull(rec);
+  if (!tenantScope) {
+    console.log(
+      `[TRUSTED_IDENTITY][CUSTOMER][OPAQUE_404] booking=${_bookingIntentMask(bookingId)} proof=missing_record_scope`,
+    );
+    return { ok: false, response: _opaqueBookingNotFoundResponse() };
+  }
+  return { ok: true, sessionScope: tenantScope, tenantScope, ownership };
 }
 
 function _readPayloadAssignedVehicleId(body) {
@@ -20481,6 +20503,41 @@ async function bookingBelongsToCustomerSessionForWrite(
   const isGlobalSession =
     sessionTenantId.toLowerCase() === "global" &&
     sessionCompanyId.toLowerCase() === "global";
+  const strictScope = {
+    tenant_id: recordTenantId,
+    company_id: recordCompanyId,
+    hasScope: true,
+  };
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, strictScope)) {
+    return { matched: false, proof: "scope_mismatch", scope_proof: "none" };
+  }
+  const bookingCustomerIds = _customerBookingIdsFromRecord(rec);
+  // OWNERSHIP-FIRST (global customer sessions): matching booking.customer_id
+  // authorizes access; tenant/company are then taken from the record. Do not
+  // require global→company scope-link rows before customer_id proof.
+  if (
+    isGlobalSession &&
+    sessionCustomerId &&
+    bookingCustomerIds.length > 0 &&
+    bookingCustomerIds.includes(sessionCustomerId)
+  ) {
+    console.log(
+      `[CUSTOMER_RATING][SCOPE_CHECK] booking=${_bookingIntentMask(bookingId)} rec_scope=${_bookingIntentScopeMask(strictScope).tenant || "-"}/${_bookingIntentScopeMask(strictScope).company || "-"} session_scope=global/global allowed_scopes=0 result=match proof=customer_id`,
+    );
+    return {
+      matched: true,
+      proof: "customer_id",
+      scope_proof: "record_ownership",
+    };
+  }
+  if (
+    isGlobalSession &&
+    sessionCustomerId &&
+    bookingCustomerIds.length > 0 &&
+    !bookingCustomerIds.includes(sessionCustomerId)
+  ) {
+    return { matched: false, proof: "customer_id_mismatch", scope_proof: "none" };
+  }
   const allowedScopes = [];
   if (!isGlobalSession) {
     allowedScopes.push({
@@ -20536,15 +20593,6 @@ async function bookingBelongsToCustomerSessionForWrite(
   if (!matchedAllowedScope) {
     return { matched: false, proof: "scope_mismatch", scope_proof: "none" };
   }
-  const strictScope = {
-    tenant_id: recordTenantId,
-    company_id: recordCompanyId,
-    hasScope: true,
-  };
-  if (!bookingMatchesRequiredTenantCompanyScope(rec, strictScope)) {
-    return { matched: false, proof: "scope_mismatch", scope_proof: "none" };
-  }
-  const bookingCustomerIds = _customerBookingIdsFromRecord(rec);
   if (
     sessionCustomerId &&
     bookingCustomerIds.length > 0 &&
@@ -39688,11 +39736,46 @@ export default {
           const scopeBodyGet = {};
           if (trustedGet.company_session) {
             _applyCompanySessionToBookingBody(scopeBodyGet, trustedGet.company_session);
-          } else if (trustedGet.customer_session) {
-            scopeBodyGet.tenant_id = trustedGet.customer_session.tenant_id;
-            scopeBodyGet.tenantId = trustedGet.customer_session.tenant_id;
-            scopeBodyGet.company_id = trustedGet.customer_session.company_id;
-            scopeBodyGet.companyId = trustedGet.customer_session.company_id;
+          }
+          // OWNERSHIP-FIRST customer path: never merge session global/global into
+          // requireExplicitBookingRouteScope (conflicts with booking company query
+          // and fails closed before ownership). Load → own → record-derived scope.
+          if (trustedGet.customer_session) {
+            let preloadedCustomerRec = null;
+            try {
+              const loadedCustomer = await loadBookingRecord(env, bookingId);
+              preloadedCustomerRec = loadedCustomer?.rec || null;
+            } catch (loadErr) {
+              if (String(loadErr?.message || "") === "Booking not found") {
+                return _opaqueBookingNotFoundResponse();
+              }
+              throw loadErr;
+            }
+            const customerGate = await _assertCustomerSessionOwnsBookingOrOpaque404(
+              env,
+              preloadedCustomerRec,
+              trustedGet.customer_session,
+              bookingId,
+            );
+            if (!customerGate.ok) return customerGate.response;
+            const tenantScopeCustomer = customerGate.tenantScope;
+            // Client query/body tenant/company never grants access. After
+            // ownership, ignore client scope (or optionally validate equality).
+            // Smallest safe pattern: ignore and use record-derived scope.
+            const outCustomer = await getBookingAuthoritative(
+              bookingId,
+              env,
+              tenantScopeCustomer,
+              preloadedCustomerRec,
+            );
+            return json(
+              outCustomer,
+              outCustomer?.error === "missing_tenant_scope"
+                ? 400
+                : outCustomer?.error === "booking_not_found"
+                  ? 404
+                  : (outCustomer?.error === "forbidden" ? 403 : 200),
+            );
           }
           const scopedRoute = requireExplicitBookingRouteScope({
             request,
@@ -39717,15 +39800,6 @@ export default {
               tenantScope,
             );
             if (!ownershipGate.ok) return ownershipGate.response;
-          }
-          if (trustedGet.customer_session) {
-            const customerGate = await _assertCustomerSessionOwnsBookingOrOpaque404(
-              env,
-              preloadedRec,
-              trustedGet.customer_session,
-              bookingId,
-            );
-            if (!customerGate.ok) return customerGate.response;
           }
           const out = await getBookingAuthoritative(bookingId, env, tenantScope, preloadedRec);
           return json(
@@ -39850,32 +39924,60 @@ export default {
           } else if (trusted.company_session) {
             _applyCompanySessionToBookingBody(body, trusted.company_session);
           } else if (trusted.customer_session) {
-            body.tenant_id = trusted.customer_session.tenant_id;
-            body.tenantId = trusted.customer_session.tenant_id;
-            body.company_id = trusted.customer_session.company_id;
-            body.companyId = trusted.customer_session.company_id;
+            // OWNERSHIP-FIRST: do not inject session global/global into body
+            // scope (conflicts with client company query / booking scope).
             body.actor_role = "customer";
             body.actorRole = "customer";
           }
-          const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
-          if (!scopedRoute.ok) return scopedRoute.response;
-          const tenantScope = scopedRoute.scope;
+          let tenantScope = null;
           let rec = null;
-          try {
-            const loaded = await loadBookingRecord(env, bookingId);
-            rec = loaded?.rec || null;
-          } catch (loadErr) {
-            if (String(loadErr?.message || "") === "Booking not found") {
-              return _opaqueBookingNotFoundResponse();
+          if (trusted.customer_session) {
+            try {
+              const loaded = await loadBookingRecord(env, bookingId);
+              rec = loaded?.rec || null;
+            } catch (loadErr) {
+              if (String(loadErr?.message || "") === "Booking not found") {
+                return _opaqueBookingNotFoundResponse();
+              }
+              throw loadErr;
             }
-            throw loadErr;
-          }
-          if (trusted.auth_mode !== "admin_token") {
-            const ownershipGate = await _assertCanonicalBookingOwnershipOrOpaque404(
+            const customerGate = await _assertCustomerSessionOwnsBookingOrOpaque404(
+              env,
               rec,
-              tenantScope,
+              trusted.customer_session,
+              bookingId,
             );
-            if (!ownershipGate.ok) return ownershipGate.response;
+            if (!customerGate.ok) return customerGate.response;
+            tenantScope = customerGate.tenantScope;
+            // Strip client-supplied scope so downstream never treats it as auth.
+            delete body.tenant_id;
+            delete body.tenantId;
+            delete body.company_id;
+            delete body.companyId;
+            body.tenant_id = tenantScope.tenant_id;
+            body.tenantId = tenantScope.tenant_id;
+            body.company_id = tenantScope.company_id;
+            body.companyId = tenantScope.company_id;
+          } else {
+            const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+            if (!scopedRoute.ok) return scopedRoute.response;
+            tenantScope = scopedRoute.scope;
+            try {
+              const loaded = await loadBookingRecord(env, bookingId);
+              rec = loaded?.rec || null;
+            } catch (loadErr) {
+              if (String(loadErr?.message || "") === "Booking not found") {
+                return _opaqueBookingNotFoundResponse();
+              }
+              throw loadErr;
+            }
+            if (trusted.auth_mode !== "admin_token") {
+              const ownershipGate = await _assertCanonicalBookingOwnershipOrOpaque404(
+                rec,
+                tenantScope,
+              );
+              if (!ownershipGate.ok) return ownershipGate.response;
+            }
           }
           const actorRole =
             trusted.auth_mode === "driver_session"
@@ -39895,13 +39997,7 @@ export default {
           const statusActorRole = actorRole || (adminAuthorized ? "admin" : "system");
           if (actorRole === "customer" && (shouldEvaluateCustomerCancelPolicy || !adminAuthorized)) {
             if (trusted.customer_session) {
-              const customerGate = await _assertCustomerSessionOwnsBookingOrOpaque404(
-                env,
-                rec,
-                trusted.customer_session,
-                bookingId,
-              );
-              if (!customerGate.ok) return customerGate.response;
+              // Ownership already enforced above for customer_session path.
               console.log(
                 `[BOOKING_STATUS][CUSTOMER_CANCEL_AUTH] booking=${_bookingIntentMask(bookingId)} actor_role=customer ownership=session_passed`,
               );
@@ -40068,23 +40164,62 @@ export default {
             if (conflict) return json({ ok: false, error: "forbidden" }, 403);
             _applyDriverSessionToBookingBody(body, driverAuth);
           }
-          const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
-          if (!scopedRoute.ok) return scopedRoute.response;
-          const tenantScope = scopedRoute.scope;
+          const customerSessionLeg = await _loadCustomerSessionFromRequest(request, env);
+          const actorRolePreview = _scopeText(
+            body?.actor_role ?? body?.actorRole,
+            32,
+          ).toLowerCase();
+          let tenantScope = null;
           let rec = null;
-          try {
-            const loaded = await loadBookingRecord(env, bookingId);
-            rec = loaded?.rec || null;
-          } catch (loadErr) {
-            if (String(loadErr?.message || "") === "Booking not found") {
+          // OWNERSHIP-FIRST customer leg cancel: load → own → record scope.
+          // Do not force session global into conflict with client company scope.
+          if (customerSessionLeg && actorRolePreview === "customer") {
+            try {
+              const loaded = await loadBookingRecord(env, bookingId);
+              rec = loaded?.rec || null;
+            } catch (loadErr) {
+              if (String(loadErr?.message || "") === "Booking not found") {
+                return _opaqueBookingNotFoundResponse();
+              }
+              throw loadErr;
+            }
+            const customerGate = await _assertCustomerSessionOwnsBookingOrOpaque404(
+              env,
+              rec,
+              customerSessionLeg,
+              bookingId,
+            );
+            if (!customerGate.ok) return customerGate.response;
+            tenantScope = customerGate.tenantScope;
+            body.actor_role = "customer";
+            body.actorRole = "customer";
+            delete body.tenant_id;
+            delete body.tenantId;
+            delete body.company_id;
+            delete body.companyId;
+            body.tenant_id = tenantScope.tenant_id;
+            body.tenantId = tenantScope.tenant_id;
+            body.company_id = tenantScope.company_id;
+            body.companyId = tenantScope.company_id;
+          } else {
+            const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+            if (!scopedRoute.ok) return scopedRoute.response;
+            tenantScope = scopedRoute.scope;
+            try {
+              const loaded = await loadBookingRecord(env, bookingId);
+              rec = loaded?.rec || null;
+            } catch (loadErr) {
+              if (String(loadErr?.message || "") === "Booking not found") {
+                return _opaqueBookingNotFoundResponse();
+              }
+              throw loadErr;
+            }
+            const adminAuthorizedEarly = hasValidAdminToken(request, url, env);
+            if (!adminAuthorizedEarly && !bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
               return _opaqueBookingNotFoundResponse();
             }
-            throw loadErr;
           }
           const adminAuthorized = hasValidAdminToken(request, url, env);
-          if (!adminAuthorized && !bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
-            return _opaqueBookingNotFoundResponse();
-          }
           const actorRole = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
           const statusActorRole = actorRole || (adminAuthorized ? "admin" : "system");
           const rawRequestedStatus = safeStr(body?.status ?? body?.stage, 80);
@@ -40104,15 +40239,8 @@ export default {
           );
           if (actorRole === "customer") {
             // TRUSTED-IDENTITY-P0: require customer session (or explicit legacy flag).
-            const customerSession = await _loadCustomerSessionFromRequest(request, env);
-            if (customerSession) {
-              const customerGate = await _assertCustomerSessionOwnsBookingOrOpaque404(
-                env,
-                rec,
-                customerSession,
-                bookingId,
-              );
-              if (!customerGate.ok) return customerGate.response;
+            if (customerSessionLeg) {
+              // Ownership already enforced on the ownership-first path above.
             } else if (_legacyCustomerContactProofEnabled(env)) {
               const proof = _requestCustomerContactProof({ url, body });
               if (!customerProofMatchesBooking(rec, proof)) {

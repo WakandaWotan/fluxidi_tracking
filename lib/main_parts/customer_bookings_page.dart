@@ -189,17 +189,11 @@ class _CustomerBookingsPageState extends State<CustomerBookingsPage> {
           continue;
         }
         try {
-          final proof = await _customerOwnershipProof(
-            bookingId: id,
-            fallbackEmail: item.customerEmail,
-            fallbackPhone: item.customerPhone,
-          );
-          final uri = _withActiveBookingScope(
-            kBookingBaseUrl,
-            '/bookings/${Uri.encodeComponent(id)}',
-            extraQuery: proof.isEmpty ? null : proof,
-          );
-          final res = await http.get(uri).timeout(const Duration(seconds: 12));
+          final uri = _customerCanonicalBookingGetUri(id);
+          final headers = await _customerSessionBearerHeaders();
+          final res = await http
+              .get(uri, headers: headers)
+              .timeout(const Duration(seconds: 12));
           if (res.statusCode != 200) continue;
           final decoded = jsonDecode(utf8.decode(res.bodyBytes));
           if (decoded is! Map<String, dynamic> || decoded['ok'] != true)

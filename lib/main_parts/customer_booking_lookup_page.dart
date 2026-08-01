@@ -70,19 +70,11 @@ class _CustomerBookingLookupPageState extends State<CustomerBookingLookupPage> {
     });
 
     try {
-      final contactEmail = contact.contains('@') ? contact : null;
-      final contactPhone = contact.contains('@') ? null : contact;
-      final proof = await _customerOwnershipProof(
-        bookingId: bookingId,
-        fallbackEmail: contactEmail,
-        fallbackPhone: contactPhone,
-      );
-      final uri = _withActiveBookingScope(
-        kBookingBaseUrl,
-        '/bookings/${Uri.encodeComponent(bookingId)}',
-        extraQuery: proof.isEmpty ? null : proof,
-      );
-      final res = await http.get(uri).timeout(const Duration(seconds: 12));
+      final uri = _customerCanonicalBookingGetUri(bookingId);
+      final headers = await _customerSessionBearerHeaders();
+      final res = await http
+          .get(uri, headers: headers)
+          .timeout(const Duration(seconds: 12));
       if (res.statusCode != 200) {
         if (!mounted) return;
         setState(() {

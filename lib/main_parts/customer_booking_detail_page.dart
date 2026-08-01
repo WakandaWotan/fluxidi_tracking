@@ -196,76 +196,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       _refreshError = null;
     });
     try {
-      final aliases = _customerBookingDeleteAliases(
-        bookingId: widget.bookingId,
-        publicBookingReference: _view.publicBookingReference,
-        bookingReference: _view.publicBookingReference,
-        publicReference: _view.publicBookingReference,
-        planningReference: _view.planningReference,
-        receiptReference: _view.receiptReference,
-        source: _view.source,
-      );
-      final proof = await _customerOwnershipProof(
-        bookingId: widget.bookingId,
-        aliases: aliases,
-        fallbackEmail: _view.customerEmail,
-        fallbackPhone: _view.customerPhone,
-        source: _view.source,
-      );
-      final scopeSource = <String, dynamic>{
-        ..._view.source,
-        'record': _view.record,
-        'booking': _view.booking,
-      };
-      final tenantFromStored = _cancelScopeFirstNonEmpty(scopeSource, const [
-        'tenant_id',
-        'tenantId',
-        'record.tenant_id',
-        'record.tenantId',
-        'record.booking.tenant_id',
-        'record.booking.tenantId',
-        'record.payload.tenant_id',
-        'record.payload.tenantId',
-        'booking.tenant_id',
-        'booking.tenantId',
-        'payload.tenant_id',
-        'payload.tenantId',
-        'data.tenant_id',
-        'data.tenantId',
-        'data.record.tenant_id',
-        'data.record.tenantId',
-      ]);
-      final companyFromStored = _cancelScopeFirstNonEmpty(scopeSource, const [
-        'company_id',
-        'companyId',
-        'record.company_id',
-        'record.companyId',
-        'record.booking.company_id',
-        'record.booking.companyId',
-        'record.payload.company_id',
-        'record.payload.companyId',
-        'booking.company_id',
-        'booking.companyId',
-        'payload.company_id',
-        'payload.companyId',
-        'data.company_id',
-        'data.companyId',
-        'data.record.company_id',
-        'data.record.companyId',
-      ]);
-      final refreshScope =
-          tenantFromStored.isNotEmpty && companyFromStored.isNotEmpty
-          ? <String, String>{
-              'tenant_id': tenantFromStored,
-              'company_id': companyFromStored,
-              'tenantId': tenantFromStored,
-              'companyId': companyFromStored,
-            }
-          : _activeBookingScopeQuery();
-      final uri = Uri.parse(
-        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(widget.bookingId)}',
-      ).replace(queryParameters: <String, String>{...refreshScope, ...proof});
-      final refreshHeaders = await _cancelHeaders();
+      final uri = _customerCanonicalBookingGetUri(widget.bookingId);
+      final refreshHeaders = await _customerSessionBearerHeaders();
       final res = await http
           .get(uri, headers: refreshHeaders)
           .timeout(const Duration(seconds: 12));
@@ -321,7 +253,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           );
           final derivedPaymentToken = await _derivePaymentDisplayToken(
             view: view,
-            preferredScopeQuery: refreshScope,
+            preferredScopeQuery: null,
           );
           if (!mounted) return;
           setState(() {
@@ -1587,19 +1519,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   // TRUSTED-IDENTITY-P0: customer cancel/read must send the cryptographic
   // customer session bearer. Contact proof alone is no longer authorization.
   // Admin credentials are never attached from the customer surface.
-  Future<Map<String, String>> _cancelHeaders() async {
-    final headers = <String, String>{'Content-Type': 'application/json'};
-    final session = await CustomerSessionStore.instance.loadValidSession();
-    final token = (session?.customerSessionToken ?? '').trim();
-    if (token.isNotEmpty) {
-      headers['Authorization'] = 'Bearer $token';
-    }
-    debugPrint(
-      '[CUSTOMER_CANCEL_AUTH][HEADERS] surface=customer_detail booking=${_safeRefPreview(widget.bookingId)} '
-      'customer_session=${token.isNotEmpty ? "present" : "missing"}',
-    );
-    return headers;
-  }
+  Future<Map<String, String>> _cancelHeaders() => _customerSessionBearerHeaders();
 
   dynamic _cancelScopeValueAtPath(Map<String, dynamic> source, String path) {
     dynamic current = source;
@@ -1864,6 +1784,8 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   }
 
   bool get _canCancelBooking {
+    // Local-only / failed refresh: never present cancel as available.
+    if (_usingLocalCache) return false;
     if (_blocksPaidOnlineCustomerCancellation()) return false;
     final focusedLegType = _focusedRoundtripLegType;
     if (focusedLegType != null) {
@@ -2296,14 +2218,9 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
 
   Future<bool> _verifyCancellationServerState({
     required String bookingId,
-    required Map<String, String> proof,
-    required Map<String, String> cancelScope,
   }) async {
     try {
-      final scopedQuery = <String, String>{...cancelScope, ...proof};
-      final uri = Uri.parse(
-        '$kBookingBaseUrl$kListBookingsPath/${Uri.encodeComponent(bookingId)}',
-      ).replace(queryParameters: scopedQuery);
+      final uri = _customerCanonicalBookingGetUri(bookingId);
       final res = await http
           .get(uri, headers: await _cancelHeaders())
           .timeout(const Duration(seconds: 12));
@@ -2414,6 +2331,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
   Future<void> _cancelBookingServerSide() async {
     final bookingId = widget.bookingId.trim();
     if (bookingId.isEmpty || _cancelling || !_canCancelBooking) return;
+    if (_usingLocalCache) return;
     if (_blocksPaidOnlineCustomerCancellation()) {
       await _showCustomerCancellationFailureDialog(
         reason: 'paid_cancellation_requires_contact',
@@ -2564,53 +2482,23 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       _cancelling = true;
       _refreshError = null;
     });
-    final scope = _selectedCancelScopeQuery();
-    if (scope == null) {
-      if (mounted) {
-        setState(() => _cancelling = false);
-        await _showCustomerCancellationFailureDialog(reason: 'unknown_failure');
-      }
-      debugPrint(
-        '[CUSTOMER_BOOKING][CANCEL_SCOPE][WARN] reason=missing_strict_scope booking=${_safeRefPreview(bookingId)}',
-      );
-      return;
-    }
-    final aliases = _customerBookingDeleteAliases(
-      bookingId: bookingId,
-      publicBookingReference: _view.publicBookingReference,
-      bookingReference: _view.publicBookingReference,
-      publicReference: _view.publicBookingReference,
-      planningReference: _view.planningReference,
-      receiptReference: _view.receiptReference,
-      source: _view.source,
-    );
-    final proof = await _customerOwnershipProof(
-      bookingId: bookingId,
-      aliases: aliases,
-      fallbackEmail: _view.customerEmail,
-      fallbackPhone: _view.customerPhone,
-      source: _view.source,
-    );
-    final cancelCandidates = _cancelBookingIdCandidates(bookingId);
+    // OWNERSHIP-FIRST: Bearer + canonical id only. Do not send tenant/company
+    // query (conflicts with global customer session) or contact-proof auth.
+    // Public/planning refs are presentation aliases, not cancel route keys.
+    final cancelCandidates = <String>[bookingId];
     debugPrint(
       '[CUSTOMER_BOOKING][CANCEL_REQ] booking=${_safeRefPreview(bookingId)} candidates=${cancelCandidates.map(_safeRefPreview).join(",")} single_leg=$cancelSingleLeg',
     );
     try {
       String? successfulBookingId;
       String strongestFailureReason = 'unknown_failure';
-      final candidateIds = cancelSingleLeg && cancelCandidates.isNotEmpty
-          ? <String>[cancelCandidates.first]
-          : cancelCandidates;
+      final candidateIds = cancelCandidates;
       for (final candidateId in candidateIds) {
         final payload = <String, dynamic>{
           'booking_id': candidateId,
           'parent_booking_id': candidateId,
           'parentBookingId': candidateId,
           'status': 'CANCELLED',
-          'tenant_id': scope['tenant_id'],
-          'company_id': scope['company_id'],
-          'tenantId': scope['tenantId'],
-          'companyId': scope['companyId'],
           'actor_role': 'customer',
           'actorRole': 'customer',
           if (cancelSingleLeg && targetLegId != null) ...<String, dynamic>{
@@ -2626,18 +2514,11 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
             'cancel_scope': 'full_roundtrip',
             'cancelScope': 'full_roundtrip',
           },
-          if (proof['customer_email'] != null)
-            'customer_email': proof['customer_email'],
-          if (proof['customer_phone'] != null)
-            'customer_phone': proof['customer_phone'],
         };
-        final scopedQuery = <String, String>{...scope, ...proof};
         final path = cancelSingleLeg && targetLegId != null
             ? '$kUpdateBookingStatusPath/${Uri.encodeComponent(candidateId)}/legs/${Uri.encodeComponent(targetLegId)}/status'
             : '$kUpdateBookingStatusPath/${Uri.encodeComponent(candidateId)}/status';
-        final uri = Uri.parse(
-          '$kBookingBaseUrl$path',
-        ).replace(queryParameters: scopedQuery);
+        final uri = Uri.parse('$kBookingBaseUrl$path');
         final res = await http
             .post(
               uri,
@@ -2793,14 +2674,21 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       if (_isCancellationTransportError(err)) {
         final cancelled = await _verifyCancellationServerState(
           bookingId: bookingId,
-          proof: proof,
-          cancelScope: scope,
         );
         if (cancelled) {
+          final verifyAliases = _customerBookingDeleteAliases(
+            bookingId: bookingId,
+            publicBookingReference: _view.publicBookingReference,
+            bookingReference: _view.publicBookingReference,
+            publicReference: _view.publicBookingReference,
+            planningReference: _view.planningReference,
+            receiptReference: _view.receiptReference,
+            source: _view.source,
+          );
           final localResult =
               await _optimisticHideCustomerBookingForCancelOrRemove(
                 bookingForLog: bookingId,
-                aliases: aliases,
+                aliases: verifyAliases,
                 reason: 'cancel',
               );
           debugPrint(
@@ -2808,7 +2696,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           );
           if (!mounted) return;
           debugPrint(
-            '[CUSTOMER_BOOKING_CANCEL][DETAIL_RESULT] action=$_customerDetailResultCancelledServer booking=${_safeRefPreview(bookingId)} aliases=${aliases.length}',
+            '[CUSTOMER_BOOKING_CANCEL][DETAIL_RESULT] action=$_customerDetailResultCancelledServer booking=${_safeRefPreview(bookingId)} aliases=${verifyAliases.length}',
           );
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -3342,10 +3230,10 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
                           ),
                           child: Text(
                             _t(
-                              nl: 'Je ziet lokale gegevens. Vernieuwen voor de laatste status.',
-                              en: 'Showing local data. Refresh for the latest status.',
-                              fr: 'Donnees locales affichees. Actualisez pour le statut le plus recent.',
-                              es: 'Mostrando datos locales. Actualiza para ver el estado mas reciente.',
+                              nl: 'Je ziet lokale gegevens. Vernieuwen voor de laatste status.\nAnnuleren is tijdelijk niet beschikbaar omdat de boeking niet met de server kon worden bevestigd.',
+                              en: 'Showing local data. Refresh for the latest status.\nCancel is temporarily unavailable because the booking could not be confirmed with the server.',
+                              fr: 'Donnees locales affichees. Actualisez pour le statut le plus recent.\nL\'annulation est temporairement indisponible car la reservation n\'a pas pu etre confirmee avec le serveur.',
+                              es: 'Mostrando datos locales. Actualiza para ver el estado mas reciente.\nCancelar no esta disponible temporalmente porque no se pudo confirmar la reserva con el servidor.',
                             ),
                             style: TextStyle(color: palette.textPrimary),
                           ),

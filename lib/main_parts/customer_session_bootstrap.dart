@@ -29,6 +29,36 @@ void _invalidateCustomerProfileCaches() {
   CustomerBookingsStore.instance.invalidateCache();
 }
 
+/// Customer Bearer headers for protected booking read/cancel.
+/// Never logs the token. Contact-query auth is not used when a session exists.
+Future<Map<String, String>> _customerSessionBearerHeaders({
+  Map<String, String>? extra,
+}) async {
+  final headers = <String, String>{
+    if (extra != null) ...extra,
+  };
+  if (!headers.containsKey('Content-Type') &&
+      !headers.containsKey('content-type')) {
+    headers['Content-Type'] = 'application/json';
+  }
+  final session = await CustomerSessionStore.instance.loadValidSession();
+  final token = (session?.customerSessionToken ?? '').trim();
+  if (token.isNotEmpty) {
+    headers['Authorization'] = 'Bearer $token';
+  }
+  return headers;
+}
+
+/// Canonical customer booking GET: Bearer only — omit tenant/company query and
+/// contact-proof query (global session claims conflict with company scope;
+/// contact-only auth stays disabled).
+Uri _customerCanonicalBookingGetUri(String bookingId) {
+  final id = bookingId.trim();
+  return Uri.parse(
+    '$kBookingBaseUrl/bookings/${Uri.encodeComponent(id)}',
+  );
+}
+
 Future<Map<String, String>> _customerOwnershipProof({
   required String bookingId,
   Set<String>? aliases,

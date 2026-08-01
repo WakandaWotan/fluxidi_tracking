@@ -174,27 +174,11 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
         }
         attempted += 1;
         try {
-          final proof = await _customerOwnershipProof(
-            bookingId: id,
-            fallbackEmail: item.customerEmail,
-            fallbackPhone: item.customerPhone,
-          );
-          final scope = <String, String>{
-            'tenant_id': item.tenantId,
-            'company_id': item.companyId,
-            'tenantId': item.tenantId,
-            'companyId': item.companyId,
-          };
-          final uri =
-              Uri.parse(
-                '$kBookingBaseUrl/bookings/${Uri.encodeComponent(id)}',
-              ).replace(
-                queryParameters: <String, String>{
-                  ...scope,
-                  if (proof.isNotEmpty) ...proof,
-                },
-              );
-          final res = await http.get(uri).timeout(const Duration(seconds: 8));
+          final uri = _customerCanonicalBookingGetUri(id);
+          final headers = await _customerSessionBearerHeaders();
+          final res = await http
+              .get(uri, headers: headers)
+              .timeout(const Duration(seconds: 8));
           if (res.statusCode != 200) continue;
           final decoded = jsonDecode(utf8.decode(res.bodyBytes));
           if (decoded is! Map<String, dynamic> || decoded['ok'] != true) {
@@ -1272,22 +1256,11 @@ class _CustomerSavedBookingsPageState extends State<CustomerSavedBookingsPage> {
     final beforeCount = _bookings.length;
     final aliases = _aliasesForSavedBooking(booking);
     try {
-      final proof = await _customerOwnershipProof(
-        bookingId: id,
-        aliases: aliases,
-        source: booking.rawSnapshot,
-      );
-      final scope = _savedBookingScopeQuery(booking);
-      final uri =
-          Uri.parse(
-            '$kBookingBaseUrl/bookings/${Uri.encodeComponent(id)}',
-          ).replace(
-            queryParameters: <String, String>{
-              ...scope,
-              if (proof.isNotEmpty) ...proof,
-            },
-          );
-      final res = await http.get(uri).timeout(const Duration(seconds: 12));
+      final uri = _customerCanonicalBookingGetUri(id);
+      final headers = await _customerSessionBearerHeaders();
+      final res = await http
+          .get(uri, headers: headers)
+          .timeout(const Duration(seconds: 12));
       if (res.statusCode == 200) {
         final decoded = jsonDecode(utf8.decode(res.bodyBytes));
         if (decoded is Map<String, dynamic> && decoded['ok'] == true) {
