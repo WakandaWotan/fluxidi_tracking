@@ -1,6 +1,6 @@
 # ============================================================================
 # FLUXIDI FIELD BUILD — GSM
-# Exact commit: cbafd6e50ca362e573041f456ef1f394439ef62b
+# Exact commit: 8e4c4ce3f201b7df9b66b4d8b6c7fd2a171936d8
 # Clean detached worktree. Dirty hoofdrepository blijft onaangeraakt.
 # Exact 12 dart-defines, NO ADMIN_TOKEN, NO LEARNING_SERVICE_TOKEN.
 # ============================================================================
@@ -12,7 +12,7 @@ $repo         = 'C:\_flutter_work\fluxidi_tracking'
 $worktree     = 'C:\_flutter_work\fluxidi_tracking_field_4639249_phone'
 $device       = 'SG7XLZ7TKRLZOJTG'
 $adb          = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-$requiredHead = 'cbafd6e50ca362e573041f456ef1f394439ef62b'
+$requiredHead = '8e4c4ce3f201b7df9b66b4d8b6c7fd2a171936d8'
 $branch       = 'fix/dispatch-deterministic-origin-leg'
 
 function Assert-LastExitCode {
