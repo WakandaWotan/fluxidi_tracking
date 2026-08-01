@@ -121,6 +121,150 @@ _ChironThemeTokens _chironTokensForVariant(BusinessThemeVariant variant) {
 _ChironThemeTokens _chironTokens() =>
     _chironTokensForVariant(businessThemeNotifier.value);
 
+/// Material theme derived from the active Chiron surface colors.
+///
+/// The app shell is dark (`ColorScheme.dark` + white outlined buttons). Clean
+/// Professional paints light cards; without this override, outlined/filled
+/// controls inherit white foreground on light surfaces (unreadable).
+ThemeData _chironMaterialTheme(_ChironThemeTokens tokens) {
+  final isDark = tokens.palette.isDark;
+  final base = (isDark ? ThemeData.dark : ThemeData.light)(useMaterial3: true);
+  final typography =
+      (isDark ? Typography.whiteMountainView : Typography.blackMountainView)
+          .apply(
+            bodyColor: tokens.textPrimary,
+            displayColor: tokens.textPrimary,
+          );
+  final disabledFg = Color.lerp(
+    tokens.textMuted,
+    tokens.textPrimary,
+    isDark ? 0.18 : 0.28,
+  )!;
+  final disabledBg = tokens.border.withOpacity(isDark ? 0.28 : 0.45);
+  return base.copyWith(
+    brightness: isDark ? Brightness.dark : Brightness.light,
+    scaffoldBackgroundColor: tokens.background,
+    disabledColor: disabledFg,
+    colorScheme: ColorScheme(
+      brightness: isDark ? Brightness.dark : Brightness.light,
+      primary: tokens.accent,
+      onPrimary: tokens.palette.textOnAccent,
+      secondary: tokens.accent,
+      onSecondary: tokens.palette.textOnAccent,
+      error: tokens.danger,
+      onError: tokens.palette.textOnAccent,
+      surface: tokens.card,
+      onSurface: tokens.textPrimary,
+    ),
+    textTheme: typography,
+    primaryTextTheme: typography,
+    iconTheme: IconThemeData(color: tokens.textSecondary),
+    appBarTheme: AppBarTheme(
+      backgroundColor: tokens.background,
+      foregroundColor: tokens.textPrimary,
+      elevation: 0,
+    ),
+    dialogTheme: DialogThemeData(
+      backgroundColor: tokens.card,
+      surfaceTintColor: Colors.transparent,
+      titleTextStyle: TextStyle(
+        color: tokens.textPrimary,
+        fontSize: 18,
+        fontWeight: FontWeight.w800,
+      ),
+      contentTextStyle: TextStyle(
+        color: tokens.textSecondary,
+        fontSize: 14,
+        height: 1.35,
+      ),
+    ),
+    progressIndicatorTheme: ProgressIndicatorThemeData(color: tokens.accent),
+    inputDecorationTheme: InputDecorationTheme(
+      labelStyle: TextStyle(color: tokens.textSecondary),
+      hintStyle: TextStyle(color: tokens.textMuted),
+      helperStyle: TextStyle(color: tokens.textMuted, fontSize: 11.5),
+      filled: true,
+      fillColor: tokens.panel,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: tokens.border),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: tokens.border),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: tokens.accent, width: 1.2),
+      ),
+      disabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: tokens.border.withOpacity(0.7)),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: ButtonStyle(
+        foregroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) return disabledFg;
+          return tokens.textPrimary;
+        }),
+        iconColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) return disabledFg;
+          return tokens.textPrimary;
+        }),
+        backgroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) return disabledBg;
+          return Colors.transparent;
+        }),
+        side: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) {
+            return BorderSide(color: tokens.border.withOpacity(0.95));
+          }
+          return BorderSide(color: tokens.accent.withOpacity(0.85));
+        }),
+        textStyle: const WidgetStatePropertyAll(
+          TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+        ),
+      ),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: ButtonStyle(
+        backgroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) return disabledBg;
+          return tokens.accent;
+        }),
+        foregroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) return disabledFg;
+          return tokens.palette.textOnAccent;
+        }),
+        iconColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) return disabledFg;
+          return tokens.palette.textOnAccent;
+        }),
+        textStyle: const WidgetStatePropertyAll(
+          TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+        ),
+      ),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: ButtonStyle(
+        foregroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) return disabledFg;
+          return tokens.textPrimary;
+        }),
+      ),
+    ),
+    chipTheme: ChipThemeData(
+      backgroundColor: tokens.panel,
+      disabledColor: disabledBg,
+      selectedColor: tokens.accent.withOpacity(0.16),
+      labelStyle: TextStyle(color: tokens.textSecondary, fontSize: 12),
+      secondaryLabelStyle: TextStyle(color: tokens.textPrimary, fontSize: 12),
+      side: BorderSide(color: tokens.border),
+    ),
+  );
+}
+
 Color get _chironBg => _chironTokens().background;
 Color get _chironCard => _chironTokens().card;
 Color get _chironPanel => _chironTokens().panel;
@@ -252,72 +396,74 @@ class ChironComplianceDashboardPage extends StatelessWidget {
       valueListenable: businessThemeNotifier,
       builder: (context, variant, _) {
         final tokens = _chironTokensForVariant(variant);
-        return Scaffold(
-          backgroundColor: tokens.background,
-          appBar: AppBar(
+        return Theme(
+          data: _chironMaterialTheme(tokens),
+          child: Scaffold(
             backgroundColor: tokens.background,
-            foregroundColor: tokens.textPrimary,
-            title: Text(
-              _t(
-                nl: 'Chiron-compliance',
-                en: 'Chiron Compliance',
-                fr: 'Conformité Chiron',
-                es: 'Cumplimiento Chiron',
-              ),
-            ),
-          ),
-          body: ListView(
-            padding: const EdgeInsets.all(14),
-            children: [
-              _ChironComplianceOverview(lang: _lang),
-              // RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: explicit split
-              // status labels replace the previously ambiguous "official
-              // submission: off" line. Backed entirely by the new server
-              // fields (`acc_test_submit_active`, `production_submit_active`,
-              // `effective_chiron_environment`) so the client never
-              // second-guesses the state-machine derivation.
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: ValueListenableBuilder<BackendChironConnectionStatus?>(
-                  valueListenable: backendChironConnectionStatusNotifier,
-                  builder: (context, backendStatus, _) {
-                    return Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: tokens.panel,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: tokens.border),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _t(
-                              nl: 'Chiron-omgevingstatus',
-                              en: 'Chiron environment status',
-                              fr: 'État de l\'environnement Chiron',
-                              es: 'Estado del entorno Chiron',
-                            ),
-                            style: TextStyle(
-                              color: tokens.textPrimary,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 14,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          ChironEnvironmentStatusLabels(
-                            status: backendStatus,
-                            language: _lang,
-                            textColor: tokens.textPrimary,
-                            mutedColor: tokens.textSecondary,
-                          ),
-                        ],
-                      ),
-                    );
-                  },
+            appBar: AppBar(
+              backgroundColor: tokens.background,
+              foregroundColor: tokens.textPrimary,
+              title: Text(
+                _t(
+                  nl: 'Chiron-compliance',
+                  en: 'Chiron Compliance',
+                  fr: 'Conformité Chiron',
+                  es: 'Cumplimiento Chiron',
                 ),
               ),
-              _HubActionCard(
+            ),
+            body: ListView(
+              padding: const EdgeInsets.all(14),
+              children: [
+                _ChironComplianceOverview(lang: _lang),
+                // RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: explicit split
+                // status labels replace the previously ambiguous "official
+                // submission: off" line. Backed entirely by the new server
+                // fields (`acc_test_submit_active`, `production_submit_active`,
+                // `effective_chiron_environment`) so the client never
+                // second-guesses the state-machine derivation.
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: ValueListenableBuilder<BackendChironConnectionStatus?>(
+                    valueListenable: backendChironConnectionStatusNotifier,
+                    builder: (context, backendStatus, _) {
+                      return Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: tokens.panel,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: tokens.border),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _t(
+                                nl: 'Chiron-omgevingstatus',
+                                en: 'Chiron environment status',
+                                fr: 'État de l\'environnement Chiron',
+                                es: 'Estado del entorno Chiron',
+                              ),
+                              style: TextStyle(
+                                color: tokens.textPrimary,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 14,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            ChironEnvironmentStatusLabels(
+                              status: backendStatus,
+                              language: _lang,
+                              textColor: tokens.textPrimary,
+                              mutedColor: tokens.textSecondary,
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                _HubActionCard(
                 title: _t(
                   nl: 'Checklist & voorbereiding',
                   en: 'Checklist & readiness',
@@ -395,7 +541,8 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                   );
                 },
               ),
-            ],
+              ],
+            ),
           ),
         );
       },
@@ -1268,7 +1415,9 @@ class _ChironHubAdvancedDiagnosticsSection extends StatefulWidget {
 
 class _ChironHubAdvancedDiagnosticsSectionState
     extends State<_ChironHubAdvancedDiagnosticsSection> {
-  bool _busy = false;
+  /// Silent re-entry guard only — never drives a "Running diagnostics…" label
+  /// behind the open sheet. Loading ownership lives inside the sheet.
+  bool _sheetOpen = false;
 
   String _t({
     required String nl,
@@ -1291,21 +1440,10 @@ class _ChironHubAdvancedDiagnosticsSectionState
     }
   }
 
-  /// RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: single tap opens the panel
-  /// immediately.
-  ///
-  /// Proven root cause of multi-tap:
-  /// 1) older UX required expanding "Probleemoplossing" before Diagnose;
-  /// 2) the handler awaited a network status fetch / technical report before
-  ///    any modal was shown, so the first tap often looked like a no-op
-  ///    (SnackBar-only / delayed feedback) and users tapped again.
-  ///
-  /// Fix: one onPressed → set busy → open bottom sheet with cached status
-  /// immediately → sheet performs at most one refresh with spinner; errors
-  /// stay inside the open panel; busy clears when the sheet closes.
+  /// One tap opens the sheet immediately. Spinner/error stay in the sheet.
   Future<void> _openDiagnoseOnce() async {
-    if (_busy) return;
-    setState(() => _busy = true);
+    if (_sheetOpen) return;
+    _sheetOpen = true;
     final status = backendChironConnectionStatusNotifier.value;
     try {
       await showChironFriendlyDiagnoseSheet(
@@ -1320,7 +1458,7 @@ class _ChironHubAdvancedDiagnosticsSectionState
         onOpenAdvanced: widget.onOpenReport,
       );
     } finally {
-      if (mounted) setState(() => _busy = false);
+      _sheetOpen = false;
     }
   }
 
@@ -1372,30 +1510,16 @@ class _ChironHubAdvancedDiagnosticsSectionState
             height: 48,
             child: FilledButton.icon(
               key: const ValueKey('chiron_diagnose_button'),
-              onPressed: _busy ? null : _openDiagnoseOnce,
-              icon: _busy
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.troubleshoot_outlined, size: 20),
+              onPressed: _openDiagnoseOnce,
+              icon: const Icon(Icons.troubleshoot_outlined, size: 20),
               label: Text(
-                _busy
-                    ? _t(
-                        nl: 'Diagnose wordt uitgevoerd…',
-                        en: 'Running diagnostics…',
-                        fr: 'Diagnostic en cours…',
-                        es: 'Ejecutando diagnóstico…',
-                        de: 'Diagnose wird ausgeführt…',
-                      )
-                    : _t(
-                        nl: 'Diagnose',
-                        en: 'Diagnose',
-                        fr: 'Diagnostic',
-                        es: 'Diagnóstico',
-                        de: 'Diagnose',
-                      ),
+                _t(
+                  nl: 'Diagnose',
+                  en: 'Diagnose',
+                  fr: 'Diagnostic',
+                  es: 'Diagnóstico',
+                  de: 'Diagnose',
+                ),
               ),
             ),
           ),
@@ -9198,39 +9322,42 @@ class _ChironLocalLedgerPage extends StatelessWidget {
       valueListenable: businessThemeNotifier,
       builder: (context, variant, _) {
         final tokens = _chironTokensForVariant(variant);
-        return Scaffold(
-          backgroundColor: tokens.background,
-          appBar: AppBar(
+        return Theme(
+          data: _chironMaterialTheme(tokens),
+          child: Scaffold(
             backgroundColor: tokens.background,
-            foregroundColor: tokens.textPrimary,
-            title: Text(
-              _t(
-                nl: 'Lokaal rittenregister',
-                en: 'Local ride register',
-                fr: 'Registre local des trajets',
-                es: 'Registro local de viajes',
-              ),
-            ),
-          ),
-          body: ListView(
-            padding: const EdgeInsets.all(14),
-            children: [
-              _baseCard(
-                title: _t(
+            appBar: AppBar(
+              backgroundColor: tokens.background,
+              foregroundColor: tokens.textPrimary,
+              title: Text(
+                _t(
                   nl: 'Lokaal rittenregister',
                   en: 'Local ride register',
                   fr: 'Registre local des trajets',
                   es: 'Registro local de viajes',
                 ),
-                subtitle: _t(
-                  nl: 'Laatste lokale ritten (alleen-lezen, geen synchronisatie).',
-                  en: 'Latest local rides (read-only, no synchronization).',
-                  fr: 'Derniers trajets locaux (lecture seule, sans synchronisation).',
-                  es: 'Últimos viajes locales (solo lectura, sin sincronización).',
-                ),
-                child: _LocalComplianceLedgerSection(lang: _lang),
               ),
-            ],
+            ),
+            body: ListView(
+              padding: const EdgeInsets.all(14),
+              children: [
+                _baseCard(
+                  title: _t(
+                    nl: 'Lokaal rittenregister',
+                    en: 'Local ride register',
+                    fr: 'Registre local des trajets',
+                    es: 'Registro local de viajes',
+                  ),
+                  subtitle: _t(
+                    nl: 'Laatste lokale ritten (alleen-lezen, geen synchronisatie).',
+                    en: 'Latest local rides (read-only, no synchronization).',
+                    fr: 'Derniers trajets locaux (lecture seule, sans synchronisation).',
+                    es: 'Últimos viajes locales (solo lectura, sin sincronización).',
+                  ),
+                  child: _LocalComplianceLedgerSection(lang: _lang),
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -13582,23 +13709,33 @@ class _LocalComplianceLedgerSection extends StatefulWidget {
 
 class _LocalComplianceLedgerSectionState
     extends State<_LocalComplianceLedgerSection> {
-  final ComplianceLedgerReader _reader = ComplianceLedgerReader();
+  late final ComplianceLedgerReader _reader;
   ComplianceLedgerReadResult? _result;
   bool _isLoading = true;
+  bool _refreshBusy = false;
   String? _loadError;
   bool _isClearingLocalTestData = false;
   bool _isClearingLocalCustomerBookings = false;
   late final ChironContextLoadCoordinator _loadCoordinator;
   Timer? _prereqTimeout;
+  Timer? _hardDeadline;
   // Patch LR-1: local-only search + category filter for the ride register.
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   _LocalRideRegisterCategoryFilter _categoryFilter =
       _LocalRideRegisterCategoryFilter.alles;
 
+  static const Duration _hardLoadDeadline = Duration(seconds: 12);
+
   @override
   void initState() {
     super.initState();
+    // Resolve the reader in initState so test factories set before navigation
+    // are honored (field initializers can race with test setup ordering).
+    _reader = ComplianceLedgerReader.create();
+    debugPrint(
+      '[LOCAL_RIDE_REGISTER][READER] type=${_reader.runtimeType}',
+    );
     _loadCoordinator = ChironContextLoadCoordinator(
       listenables: <Listenable>[
         activeCompanySessionNotifier,
@@ -13612,15 +13749,34 @@ class _LocalComplianceLedgerSectionState
       },
       runLoad: _performRegisterLoad,
       onDiag: (stage) => debugPrint('[CHIRON_LOAD][DIAG] stage=$stage'),
-    )..attach();
+    );
+    // Defer attach: the coordinator starts a load that setStates. Doing that
+    // synchronously from initState (ancestor still building) aborts the load
+    // and leaves the page stuck on "Loading local ledger...".
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _loadCoordinator.isDisposed) return;
+      _loadCoordinator.attach();
+    });
     // Terminal empty/error instead of an infinite "loading company context".
-    _prereqTimeout = Timer(const Duration(seconds: 8), () {
+    _prereqTimeout = Timer(const Duration(seconds: 5), () {
       if (!mounted) return;
       if (!_loadCoordinator.prerequisitesReady && _result == null) {
-        setState(() {
-          _isLoading = false;
-          _loadError = 'missing_company_context';
-        });
+        _forceTerminal(
+          error: 'missing_company_context',
+          backendError: 'missing_company_context',
+        );
+      }
+    });
+    // Absolute last-resort: never leave the spinner past 12s even if a
+    // generation is discarded or a native open never returns to Dart.
+    _hardDeadline = Timer(_hardLoadDeadline, () {
+      if (!mounted) return;
+      if (_isLoading && _result == null) {
+        debugPrint('[LOCAL_RIDE_REGISTER][UI_LOAD] error=hard_deadline');
+        _forceTerminal(
+          error: 'load_deadline',
+          backendError: 'load_deadline',
+        );
       }
     });
   }
@@ -13628,16 +13784,48 @@ class _LocalComplianceLedgerSectionState
   @override
   void dispose() {
     _prereqTimeout?.cancel();
+    _hardDeadline?.cancel();
     _loadCoordinator.dispose();
     _searchController.dispose();
     super.dispose();
   }
 
+  void _forceTerminal({required String error, required String backendError}) {
+    if (!mounted) return;
+    setState(() {
+      _isLoading = false;
+      _refreshBusy = false;
+      _loadError = error;
+      _result ??= ComplianceLedgerReadResult(
+        entries: const <ComplianceLedgerEntry>[],
+        fileExists: false,
+        skippedMalformedLines: 0,
+        isSyncingBackend: false,
+        backendFetchOk: false,
+        backendError: backendError,
+      );
+    });
+  }
+
+  /// Apply UI updates for [gen], or for any stale completion that would
+  /// otherwise leave the page stuck on the first-paint spinner.
+  bool _mayApply(int gen) {
+    if (!mounted) return false;
+    if (_loadCoordinator.shouldApplyGeneration(gen)) return true;
+    return _isLoading && _result == null;
+  }
+
   Future<void> _performRegisterLoad(int gen) async {
+    debugPrint(
+      '[LOCAL_RIDE_REGISTER][UI_LOAD] begin gen=$gen reader=${_reader.runtimeType}',
+    );
+    final keepVisibleCache = _result != null && _result!.entries.isNotEmpty;
     if (_loadCoordinator.shouldApplyGeneration(gen) && mounted) {
       setState(() {
-        _isLoading = true;
-        _loadError = null;
+        // Never blank already-visible cache while a refresh is in flight.
+        _isLoading = !keepVisibleCache && _result == null;
+        _refreshBusy = true;
+        if (!keepVisibleCache) _loadError = null;
       });
     }
     try {
@@ -13646,66 +13834,115 @@ class _LocalComplianceLedgerSectionState
           .loadRegisterGrouped(
             groupLimit: 20,
             onLocalLoaded: (local) {
-              if (!_loadCoordinator.shouldApplyGeneration(gen) || !mounted) {
-                return;
-              }
+              if (!_mayApply(gen)) return;
               setState(() {
                 _result = local;
                 _isLoading = false;
+                final localErr = (local.backendError ?? '').trim();
+                if (localErr == 'local_file_lock' ||
+                    localErr == 'local_read_timeout') {
+                  _loadError = localErr;
+                }
               });
             },
           )
-          .timeout(const Duration(seconds: 15));
+          .timeout(_hardLoadDeadline);
       debugPrint(
         '[LOCAL_RIDE_REGISTER][UI_LOAD] gen=$gen elapsed_ms=${sw.elapsedMilliseconds} '
-        'backend_ok=${result.backendFetchOk} merged=${result.mergedCount}',
+        'backend_ok=${result.backendFetchOk} merged=${result.mergedCount} '
+        'error=${result.backendError ?? '-'}',
       );
-      if (!_loadCoordinator.shouldApplyGeneration(gen) || !mounted) return;
+      if (!_mayApply(gen)) return;
       setState(() {
-        _result = result;
+        // Keep prior rows when a refresh fails with empty payload.
+        if (result.entries.isEmpty &&
+            keepVisibleCache &&
+            result.backendFetchOk == false) {
+          _result = _result!.copyWith(
+            backendFetchOk: false,
+            backendError: result.backendError,
+            isSyncingBackend: false,
+          );
+        } else {
+          _result = result;
+        }
         _isLoading = false;
+        _refreshBusy = false;
+        final err = (result.backendError ?? '').trim();
         if (result.backendFetchOk == false &&
-            (result.backendError ?? '').isNotEmpty &&
-            result.entries.isEmpty) {
-          _loadError = result.backendError;
+            err.isNotEmpty &&
+            (_result?.entries.isEmpty ?? true)) {
+          _loadError = err;
+        } else if (result.backendFetchOk == true) {
+          _loadError = null;
         }
       });
     } on TimeoutException {
       debugPrint('[LOCAL_RIDE_REGISTER][UI_LOAD] gen=$gen error=timeout');
-      if (!_loadCoordinator.shouldApplyGeneration(gen) || !mounted) return;
+      if (!_mayApply(gen)) return;
       setState(() {
         _isLoading = false;
-        _loadError = 'backend_timeout';
-        _result ??= const ComplianceLedgerReadResult(
-          entries: <ComplianceLedgerEntry>[],
-          fileExists: false,
-          skippedMalformedLines: 0,
-          isSyncingBackend: false,
-          backendFetchOk: false,
-          backendError: 'backend_timeout',
-        );
+        _refreshBusy = false;
+        if (_result == null || _result!.entries.isEmpty) {
+          _loadError = 'backend_timeout';
+          _result ??= const ComplianceLedgerReadResult(
+            entries: <ComplianceLedgerEntry>[],
+            fileExists: false,
+            skippedMalformedLines: 0,
+            isSyncingBackend: false,
+            backendFetchOk: false,
+            backendError: 'backend_timeout',
+          );
+        } else {
+          _result = _result!.copyWith(
+            backendFetchOk: false,
+            backendError: 'backend_timeout',
+            isSyncingBackend: false,
+          );
+        }
       });
     } catch (err) {
+      final code = complianceLedgerLooksLikeLockError(err)
+          ? 'local_file_lock'
+          : 'load_failed';
       debugPrint(
-        '[LOCAL_RIDE_REGISTER][UI_LOAD] gen=$gen error=${err.runtimeType}',
+        '[LOCAL_RIDE_REGISTER][UI_LOAD] gen=$gen error=$code',
       );
-      if (!_loadCoordinator.shouldApplyGeneration(gen) || !mounted) return;
+      if (!_mayApply(gen)) return;
       setState(() {
         _isLoading = false;
-        _loadError = 'load_failed';
-        _result ??= const ComplianceLedgerReadResult(
-          entries: <ComplianceLedgerEntry>[],
-          fileExists: false,
-          skippedMalformedLines: 0,
-          isSyncingBackend: false,
-          backendFetchOk: false,
-          backendError: 'load_failed',
-        );
+        _refreshBusy = false;
+        if (_result == null || _result!.entries.isEmpty) {
+          _loadError = code;
+          _result ??= ComplianceLedgerReadResult(
+            entries: const <ComplianceLedgerEntry>[],
+            fileExists: false,
+            skippedMalformedLines: 0,
+            isSyncingBackend: false,
+            backendFetchOk: false,
+            backendError: code,
+          );
+        } else {
+          _result = _result!.copyWith(
+            backendFetchOk: false,
+            backendError: code,
+            isSyncingBackend: false,
+          );
+        }
       });
+    } finally {
+      if (mounted && _refreshBusy && _loadCoordinator.shouldApplyGeneration(gen)) {
+        setState(() => _refreshBusy = false);
+      }
     }
   }
 
   void _refresh() {
+    if (_refreshBusy || _loadCoordinator.loadInFlight) return;
+    // Synchronous busy latch so double-taps cannot enqueue two refreshes
+    // before the async load body runs.
+    _refreshBusy = true;
+    if (mounted) setState(() {});
     _loadCoordinator.requestManualRefresh();
   }
 
@@ -16375,17 +16612,27 @@ class _LocalComplianceLedgerSectionState
                   ),
                 ),
                 IconButton(
+                  key: const ValueKey('chiron_local_register_refresh'),
                   tooltip: _t(
                     nl: 'Vernieuwen',
                     en: 'Refresh',
                     fr: 'Rafraîchir',
                     es: 'Actualizar',
                   ),
-                  onPressed: _refresh,
-                  icon: Icon(
-                    Icons.refresh,
-                    color: _chironGold.withOpacity(0.95),
-                  ),
+                  onPressed: _refreshBusy ? null : _refresh,
+                  icon: _refreshBusy
+                      ? SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: _chironGold,
+                          ),
+                        )
+                      : Icon(
+                          Icons.refresh,
+                          color: _chironGold.withOpacity(0.95),
+                        ),
                 ),
                 if (!kReleaseMode) ...[
                   IconButton(
@@ -16645,17 +16892,25 @@ class _LocalComplianceLedgerSectionState
 
                 if (_loadError != null &&
                     (_result == null || _result!.entries.isEmpty)) {
+                  final lock = _loadError == 'local_file_lock';
                   return Column(
                     key: const ValueKey('chiron_local_register_error'),
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _t(
-                          nl: 'Rittenregister kon niet geladen worden. Probeer opnieuw.',
-                          en: 'Ride register could not be loaded. Please try again.',
-                          fr: 'Le registre des courses n’a pas pu être chargé. Réessayez.',
-                          es: 'No se pudo cargar el registro de viajes. Inténtelo de nuevo.',
-                        ),
+                        lock
+                            ? _t(
+                                nl: 'Lokale ledger is tijdelijk vergrendeld. Sluit andere Fluxidi-processen en probeer opnieuw.',
+                                en: 'The local ledger is temporarily locked. Close other Fluxidi processes and try again.',
+                                fr: 'Le ledger local est temporairement verrouillé. Fermez les autres processus Fluxidi et réessayez.',
+                                es: 'El ledger local está temporalmente bloqueado. Cierre otros procesos de Fluxidi e inténtelo de nuevo.',
+                              )
+                            : _t(
+                                nl: 'Rittenregister kon niet geladen worden. Probeer opnieuw.',
+                                en: 'Ride register could not be loaded. Please try again.',
+                                fr: 'Le registre des courses n’a pas pu être chargé. Réessayez.',
+                                es: 'No se pudo cargar el registro de viajes. Inténtelo de nuevo.',
+                              ),
                         style: TextStyle(
                           color: _chironTextSecondary,
                           fontSize: 12,
@@ -16663,7 +16918,8 @@ class _LocalComplianceLedgerSectionState
                       ),
                       const SizedBox(height: 8),
                       OutlinedButton(
-                        onPressed: _refresh,
+                        key: const ValueKey('chiron_local_register_retry'),
+                        onPressed: _refreshBusy ? null : _refresh,
                         child: Text(
                           _t(
                             nl: 'Opnieuw laden',
@@ -16758,6 +17014,7 @@ class _LocalComplianceLedgerSectionState
                       ),
                     if (result.entries.isEmpty)
                       Container(
+                        key: const ValueKey('chiron_local_register_empty'),
                         width: double.infinity,
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
@@ -16767,10 +17024,10 @@ class _LocalComplianceLedgerSectionState
                         ),
                         child: Text(
                           _t(
-                            nl: 'Nog geen ritten in het register voor deze scope.',
-                            en: 'No rides in the register for this scope yet.',
-                            fr: 'Aucun trajet dans le registre pour cette portée.',
-                            es: 'Aún no hay viajes en el registro para este ámbito.',
+                            nl: 'Nog geen lokale ritten gevonden',
+                            en: 'No local rides found yet',
+                            fr: 'Aucun trajet local trouvé',
+                            es: 'Aún no se encontraron viajes locales',
                           ),
                           style: TextStyle(
                             color: _chironTextMuted,

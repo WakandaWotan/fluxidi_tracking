@@ -2,12 +2,34 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show debugPrint, kIsWeb, visibleForTesting;
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
+
+/// Strict per-stage budgets for the local ride register (must never hang UI).
+const Duration kComplianceLedgerLocalOpenTimeout = Duration(seconds: 2);
+const Duration kComplianceLedgerLocalReadTimeout = Duration(seconds: 3);
+const Duration kComplianceLedgerAuthTimeout = Duration(seconds: 4);
+const Duration kComplianceLedgerBackendTimeout = Duration(seconds: 8);
+const Duration kComplianceLedgerCacheWriteTimeout = Duration(seconds: 3);
+
+@visibleForTesting
+bool complianceLedgerLooksLikeLockError(Object error) {
+  final text = error.toString().toLowerCase();
+  return text.contains('lock') ||
+      text.contains('sharing violation') ||
+      text.contains('errno = 11') ||
+      text.contains('errno = 26') ||
+      text.contains('resource busy') ||
+      text.contains('being used by another process') ||
+      text.contains('file_busy') ||
+      text.contains('ebusy') ||
+      text.contains('eagain');
+}
 
 String _sanitizeScopeSegment(String value) {
   final trimmed = value.trim();
@@ -286,6 +308,16 @@ class ComplianceLedgerReadResult {
 }
 
 class ComplianceLedgerReader {
+  ComplianceLedgerReader();
+
+  /// Test seam — when set, [_LocalComplianceLedgerSection] and callers that
+  /// honor this factory use the injected reader instead of a real filesystem.
+  @visibleForTesting
+  static ComplianceLedgerReader Function()? debugFactory;
+
+  static ComplianceLedgerReader create() =>
+      debugFactory?.call() ?? ComplianceLedgerReader();
+
   static const String fileName = 'compliance_ledger_v1.jsonl';
   static const String localDirectHistoryFileName =
       'local_direct_trip_history_v1.jsonl';
@@ -1120,61 +1152,96 @@ class ComplianceLedgerReader {
         'limit': '$limit',
       },
     );
-    // Bound auth resolution + HTTP together so a hung token bootstrap cannot
-    // leave the local ride register on an infinite "syncing" spinner.
-    try {
-      return await () async {
-        final auth = await resolveCompanyOwnerAuthHeaders(json: false);
-        final res = await http.get(uri, headers: auth.headers);
-        Map<String, dynamic> asMap(Object? value) {
-          if (value is Map) return Map<String, dynamic>.from(value);
-          return const <String, dynamic>{};
-        }
 
-        final contentType = (res.headers['content-type'] ?? '').toLowerCase();
-        Map<String, dynamic> payload = const <String, dynamic>{};
-        if (contentType.contains('application/json') && res.body.isNotEmpty) {
-          try {
-            payload = asMap(jsonDecode(res.body));
-          } catch (err) {
-            debugPrint(
-              '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error error=json_parse_failed status_code=${res.statusCode}',
-            );
-          }
-        }
-        if (res.statusCode < 200 || res.statusCode >= 300) {
-          final err = (payload['error'] ?? '').toString().trim();
+    late final CompanyOwnerAuthHeaders auth;
+    try {
+      auth = await resolveCompanyOwnerAuthHeaders(
+        json: false,
+      ).timeout(kComplianceLedgerAuthTimeout);
+    } on TimeoutException {
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error error=auth_timeout',
+      );
+      return (
+        entries: const <ComplianceLedgerEntry>[],
+        ok: false,
+        error: 'auth_timeout',
+      );
+    } catch (err) {
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error error=auth_${err.runtimeType}',
+      );
+      return (
+        entries: const <ComplianceLedgerEntry>[],
+        ok: false,
+        error: 'auth_failed',
+      );
+    }
+
+    try {
+      final res = await http
+          .get(uri, headers: auth.headers)
+          .timeout(kComplianceLedgerBackendTimeout);
+      Map<String, dynamic> asMap(Object? value) {
+        if (value is Map) return Map<String, dynamic>.from(value);
+        return const <String, dynamic>{};
+      }
+
+      final contentType = (res.headers['content-type'] ?? '').toLowerCase();
+      Map<String, dynamic> payload = const <String, dynamic>{};
+      if (contentType.contains('application/json') && res.body.isNotEmpty) {
+        try {
+          payload = asMap(jsonDecode(res.body));
+        } catch (err) {
           debugPrint(
-            '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error status_code=${res.statusCode} error=$err',
+            '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error error=json_parse_failed status_code=${res.statusCode}',
           );
           return (
             entries: const <ComplianceLedgerEntry>[],
             ok: false,
-            error: err.isEmpty ? 'backend_fetch_failed' : err,
+            error: 'malformed_response',
           );
         }
-
-        final eventsRaw = payload['events'];
-        final events = eventsRaw is List
-            ? eventsRaw
-                  .whereType<Map>()
-                  .map((e) => Map<String, dynamic>.from(e))
-                  .toList(growable: false)
-            : const <Map<String, dynamic>>[];
-        final parsed = <ComplianceLedgerEntry>[];
-        for (var i = 0; i < events.length; i++) {
-          final raw = backendEventToLedgerRaw(
-            events[i],
-            tenantId: scope.tenantId,
-            companyId: scope.companyId,
-          );
-          parsed.add(ComplianceLedgerEntry.fromRaw(raw, sourceLineIndex: i));
-        }
-        debugPrint(
-          '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=${parsed.length} status=ok',
+      } else if (res.body.isNotEmpty &&
+          !contentType.contains('application/json')) {
+        return (
+          entries: const <ComplianceLedgerEntry>[],
+          ok: false,
+          error: 'malformed_response',
         );
-        return (entries: parsed, ok: true, error: null);
-      }().timeout(const Duration(seconds: 12));
+      }
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        final err = (payload['error'] ?? '').toString().trim();
+        debugPrint(
+          '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error status_code=${res.statusCode} error=$err',
+        );
+        return (
+          entries: const <ComplianceLedgerEntry>[],
+          ok: false,
+          error: err.isEmpty ? 'backend_fetch_failed' : err,
+        );
+      }
+
+      final eventsRaw = payload['events'];
+      final events = eventsRaw is List
+          ? eventsRaw
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList(growable: false)
+          : const <Map<String, dynamic>>[];
+      final parsed = <ComplianceLedgerEntry>[];
+      for (var i = 0; i < events.length; i++) {
+        final raw = backendEventToLedgerRaw(
+          events[i],
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+        );
+        parsed.add(ComplianceLedgerEntry.fromRaw(raw, sourceLineIndex: i));
+      }
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=${parsed.length} status=ok status_code=${res.statusCode}',
+      );
+      return (entries: parsed, ok: true, error: null);
     } on TimeoutException {
       debugPrint(
         '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error error=backend_timeout',
@@ -1191,7 +1258,7 @@ class ComplianceLedgerReader {
       return (
         entries: const <ComplianceLedgerEntry>[],
         ok: false,
-        error: err.runtimeType.toString(),
+        error: 'backend_fetch_failed',
       );
     }
   }
@@ -1203,7 +1270,7 @@ class ComplianceLedgerReader {
     final file = await _scopedFile(
       tenantId: scope.tenantId,
       companyId: scope.companyId,
-    );
+    ).timeout(kComplianceLedgerLocalOpenTimeout);
     if (!await file.parent.exists()) {
       await file.parent.create(recursive: true);
     }
@@ -1215,18 +1282,45 @@ class ComplianceLedgerReader {
     debugPrint('[LOCAL_RIDE_REGISTER][CACHE_SAVE] count=${entries.length}');
   }
 
-  /// CHIRON-P0-2A: no more `apiBaseUrl` / `adminToken` — the backend fetch
-  /// now routes through the booking worker with the active company-owner
-  /// session bearer.
+  /// Local cache/file first (bounded), then independent backend refresh.
+  ///
+  /// [onLocalLoaded] is always invoked — even on local open/read/lock failure
+  /// — so the UI can leave the spinner before the backend finishes.
   Future<ComplianceLedgerReadResult> loadRegisterGrouped({
     required int groupLimit,
     bool allowLegacyWithoutScope = false,
     void Function(ComplianceLedgerReadResult localSnapshot)? onLocalLoaded,
   }) async {
-    final localRead = await _readScopedEntries(
-      allowLegacyWithoutScope: allowLegacyWithoutScope,
-    );
-    final hidden = await loadHiddenGroupKeys();
+    String? localError;
+    ({
+      List<ComplianceLedgerEntry> entries,
+      bool fileExists,
+      int skippedMalformedLines,
+      bool useScoped,
+    })? localRead;
+    Set<String> hidden = <String>{};
+
+    try {
+      localRead = await _readScopedEntries(
+        allowLegacyWithoutScope: allowLegacyWithoutScope,
+      ).timeout(kComplianceLedgerLocalReadTimeout);
+      hidden = await loadHiddenGroupKeys().timeout(
+        kComplianceLedgerLocalOpenTimeout,
+      );
+    } on TimeoutException {
+      localError = 'local_read_timeout';
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][LOAD_LOCAL] count=0 status=error error=local_read_timeout',
+      );
+    } catch (err) {
+      localError = complianceLedgerLooksLikeLockError(err)
+          ? 'local_file_lock'
+          : 'local_read_failed';
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][LOAD_LOCAL] count=0 status=error error=$localError',
+      );
+    }
+
     final localEntries = localRead?.entries ?? const <ComplianceLedgerEntry>[];
     final visibleLocal = _filterHiddenGroups(localEntries, hidden);
     final localSnapshot = _groupedFromEntries(
@@ -1237,14 +1331,27 @@ class ComplianceLedgerReader {
       localCount: visibleLocal.length,
       mergedCount: visibleLocal.length,
       isSyncingBackend: true,
+      backendFetchOk: false,
+      backendError: localError,
     );
     onLocalLoaded?.call(localSnapshot);
 
+    // Local lock/unavailable: do not wipe UI with a silent hang — surface
+    // error and skip backend so refresh can retry cleanly.
+    if (localError == 'local_file_lock') {
+      return localSnapshot.copyWith(
+        isSyncingBackend: false,
+        backendFetchOk: false,
+        backendError: localError,
+      );
+    }
+
     final backend = await fetchBackendEntries();
     if (!backend.ok) {
+      // Preserve any already-visible local rows; attach backend error.
       return localSnapshot.copyWith(
         backendFetchOk: false,
-        backendError: backend.error,
+        backendError: backend.error ?? localError,
         isSyncingBackend: false,
       );
     }
@@ -1256,7 +1363,15 @@ class ComplianceLedgerReader {
     debugPrint(
       '[LOCAL_RIDE_REGISTER][MERGE] local=${localEntries.length} backend=${backend.entries.length} merged=${mergedAll.length} deduped=${localEntries.length + backend.entries.length - mergedAll.length}',
     );
-    await saveCacheEntries(mergedAll);
+    try {
+      await saveCacheEntries(
+        mergedAll,
+      ).timeout(kComplianceLedgerCacheWriteTimeout);
+    } catch (err) {
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][CACHE_SAVE] status=error error=${err.runtimeType}',
+      );
+    }
 
     final visibleMerged = _filterHiddenGroups(mergedAll, hidden);
     return _groupedFromEntries(
@@ -1273,7 +1388,7 @@ class ComplianceLedgerReader {
   }
 }
 
-extension _ComplianceLedgerReadResultCopy on ComplianceLedgerReadResult {
+extension ComplianceLedgerReadResultCopy on ComplianceLedgerReadResult {
   ComplianceLedgerReadResult copyWith({
     List<ComplianceLedgerEntry>? entries,
     bool? fileExists,

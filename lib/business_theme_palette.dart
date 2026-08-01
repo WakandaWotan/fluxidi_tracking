@@ -86,7 +86,8 @@ const BusinessThemePalette _cleanProfessionalPalette = BusinessThemePalette(
   textMuted: Color(0xFF5F6B7A),
   textOnAccent: Color(0xFFFFFFFF),
   textOnWarning: Color(0xFF3C2900),
-  accent: Color(0xFF3B82F6),
+  // Darker than blue-500 so white label text meets WCAG AA (≥4.5:1).
+  accent: Color(0xFF1D4ED8),
   border: Color(0xFFD7DEE9),
   danger: Color(0xFFC95D6D),
   success: Color(0xFF2FAE7B),
