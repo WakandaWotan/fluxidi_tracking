@@ -1118,37 +1118,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             const SizedBox(height: 8),
           ],
           Text(
-            _t(
-              nl: 'Chiron-koppeling ingeschakeld',
-              en: 'Chiron connection enabled',
-              fr: 'Connexion Chiron activée',
-              es: 'Conexión Chiron activada',
+            chironHonestSetupStatusLabel(
+              status: backendChironConnectionStatusNotifier.value,
+              language: appConfig.currentLanguage,
+              enabled: _chironEnabled,
             ),
             style: TextStyle(
               color: _textPrimary,
               fontSize: 12,
               fontWeight: FontWeight.w700,
             ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            _t(
-              nl: 'Omgeving: ${_chironEnvironmentLabel()}',
-              en: 'Environment: ${_chironEnvironmentLabel()}',
-              fr: 'Environnement : ${_chironEnvironmentLabel()}',
-              es: 'Entorno: ${_chironEnvironmentLabel()}',
-            ),
-            style: TextStyle(color: _textSecondary, fontSize: 11.5),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            _t(
-              nl: 'Status: ${_chironDetailedStatusLabel()}',
-              en: 'Status: ${_chironDetailedStatusLabel()}',
-              fr: 'Statut : ${_chironDetailedStatusLabel()}',
-              es: 'Estado: ${_chironDetailedStatusLabel()}',
-            ),
-            style: TextStyle(color: _textSecondary, fontSize: 11.5),
           ),
           const SizedBox(height: 8),
           ChironEnvironmentStatusLabels(
@@ -1165,7 +1144,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               enabled: _chironEnabled,
             ),
             style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
-          ),
+          )
         ],
       ),
     );

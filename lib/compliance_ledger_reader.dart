@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -1119,59 +1120,70 @@ class ComplianceLedgerReader {
         'limit': '$limit',
       },
     );
-    final auth = await resolveCompanyOwnerAuthHeaders(json: false);
+    // Bound auth resolution + HTTP together so a hung token bootstrap cannot
+    // leave the local ride register on an infinite "syncing" spinner.
     try {
-      final res = await http
-          .get(uri, headers: auth.headers)
-          .timeout(const Duration(seconds: 12));
-      Map<String, dynamic> asMap(Object? value) {
-        if (value is Map) return Map<String, dynamic>.from(value);
-        return const <String, dynamic>{};
-      }
+      return await () async {
+        final auth = await resolveCompanyOwnerAuthHeaders(json: false);
+        final res = await http.get(uri, headers: auth.headers);
+        Map<String, dynamic> asMap(Object? value) {
+          if (value is Map) return Map<String, dynamic>.from(value);
+          return const <String, dynamic>{};
+        }
 
-      final contentType = (res.headers['content-type'] ?? '').toLowerCase();
-      Map<String, dynamic> payload = const <String, dynamic>{};
-      if (contentType.contains('application/json') && res.body.isNotEmpty) {
-        try {
-          payload = asMap(jsonDecode(res.body));
-        } catch (err) {
+        final contentType = (res.headers['content-type'] ?? '').toLowerCase();
+        Map<String, dynamic> payload = const <String, dynamic>{};
+        if (contentType.contains('application/json') && res.body.isNotEmpty) {
+          try {
+            payload = asMap(jsonDecode(res.body));
+          } catch (err) {
+            debugPrint(
+              '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error error=json_parse_failed status_code=${res.statusCode}',
+            );
+          }
+        }
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          final err = (payload['error'] ?? '').toString().trim();
           debugPrint(
-            '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error error=json_parse_failed status_code=${res.statusCode}',
+            '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error status_code=${res.statusCode} error=$err',
+          );
+          return (
+            entries: const <ComplianceLedgerEntry>[],
+            ok: false,
+            error: err.isEmpty ? 'backend_fetch_failed' : err,
           );
         }
-      }
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        final err = (payload['error'] ?? '').toString().trim();
-        debugPrint(
-          '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error status_code=${res.statusCode} error=$err',
-        );
-        return (
-          entries: const <ComplianceLedgerEntry>[],
-          ok: false,
-          error: err.isEmpty ? 'backend_fetch_failed' : err,
-        );
-      }
 
-      final eventsRaw = payload['events'];
-      final events = eventsRaw is List
-          ? eventsRaw
-                .whereType<Map>()
-                .map((e) => Map<String, dynamic>.from(e))
-                .toList(growable: false)
-          : const <Map<String, dynamic>>[];
-      final parsed = <ComplianceLedgerEntry>[];
-      for (var i = 0; i < events.length; i++) {
-        final raw = backendEventToLedgerRaw(
-          events[i],
-          tenantId: scope.tenantId,
-          companyId: scope.companyId,
+        final eventsRaw = payload['events'];
+        final events = eventsRaw is List
+            ? eventsRaw
+                  .whereType<Map>()
+                  .map((e) => Map<String, dynamic>.from(e))
+                  .toList(growable: false)
+            : const <Map<String, dynamic>>[];
+        final parsed = <ComplianceLedgerEntry>[];
+        for (var i = 0; i < events.length; i++) {
+          final raw = backendEventToLedgerRaw(
+            events[i],
+            tenantId: scope.tenantId,
+            companyId: scope.companyId,
+          );
+          parsed.add(ComplianceLedgerEntry.fromRaw(raw, sourceLineIndex: i));
+        }
+        debugPrint(
+          '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=${parsed.length} status=ok',
         );
-        parsed.add(ComplianceLedgerEntry.fromRaw(raw, sourceLineIndex: i));
-      }
+        return (entries: parsed, ok: true, error: null);
+      }().timeout(const Duration(seconds: 12));
+    } on TimeoutException {
       debugPrint(
-        '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=${parsed.length} status=ok',
+        '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error error=backend_timeout',
       );
-      return (entries: parsed, ok: true, error: null);
+      return (
+        entries: const <ComplianceLedgerEntry>[],
+        ok: false,
+        error: 'backend_timeout',
+      );
     } catch (err) {
       debugPrint(
         '[LOCAL_RIDE_REGISTER][FETCH_RESULT] count=0 status=error error=${err.runtimeType}',

@@ -687,16 +687,20 @@ class _ChironComplianceOverviewState extends State<_ChironComplianceOverview> {
               }
 
               return Column(
+                key: const ValueKey('chiron_compliance_overview_wizard'),
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ChironSelfServiceWizard(
-                    status: backendStatus,
-                    language: widget.lang,
-                    textPrimary: _chironTextPrimary,
-                    textSecondary: _chironTextSecondary,
-                    panelColor: _chironPanel,
-                    borderColor: _chironBorder,
-                    accentColor: _chironGold,
+                  KeyedSubtree(
+                    key: _testAccessSectionKey,
+                    child: ChironSelfServiceWizard(
+                      status: backendStatus,
+                      language: widget.lang,
+                      textPrimary: _chironTextPrimary,
+                      textSecondary: _chironTextSecondary,
+                      panelColor: _chironPanel,
+                      borderColor: _chironBorder,
+                      accentColor: _chironGold,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   ChironTestSetupCard(
@@ -764,7 +768,7 @@ class _ChironComplianceOverviewState extends State<_ChironComplianceOverview> {
                     onReset: () async {
                       final scope = _chironDashboardTenantCompanyScope();
                       if (scope == null) return;
-                      await showChironTestflowResetDialog(
+                      final progress = await showChironTestflowResetDialog(
                         context: context,
                         lang: widget.lang,
                         productionActive:
@@ -774,7 +778,11 @@ class _ChironComplianceOverviewState extends State<_ChironComplianceOverview> {
                           companyId: scope.companyId,
                         ),
                       );
-                      await refreshStatus();
+                      // Only refresh after a confirmed successful reset —
+                      // cancel must not start a hanging status fetch.
+                      if (progress != null) {
+                        await refreshStatus();
+                      }
                     },
                   ),
                   const SizedBox(height: 12),
@@ -866,318 +874,16 @@ class _ChironComplianceOverviewState extends State<_ChironComplianceOverview> {
             onOpenReport: () =>
                 _openChironTechnicalReport(context, widget.lang),
           ),
-          const SizedBox(height: 12),
-          KeyedSubtree(
-            key: _testAccessSectionKey,
-            child: _ChironTestAccessCard(lang: widget.lang),
-          ),
+          // Obsolete duplicate credential / testflow editor
+          // (_ChironTestAccessCard) intentionally not routed here — the
+          // three-step wizard cards above are the only self-service UI.
         ],
       ),
     );
   }
 }
 
-class _ChironOnboardingHelpCard extends StatefulWidget {
-  const _ChironOnboardingHelpCard({required this.lang});
-
-  final AppLanguage lang;
-
-  @override
-  State<_ChironOnboardingHelpCard> createState() =>
-      _ChironOnboardingHelpCardState();
-}
-
-class _ChironOnboardingHelpCardState extends State<_ChironOnboardingHelpCard> {
-  bool _expanded = false;
-
-  String _t({
-    required String nl,
-    required String en,
-    required String fr,
-    required String es,
-  }) {
-    switch (widget.lang) {
-      case AppLanguage.nl:
-        return nl;
-      case AppLanguage.en:
-        return en;
-      case AppLanguage.fr:
-        return fr;
-      case AppLanguage.es:
-        return es;
-      case AppLanguage.de:
-        return en;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final steps = [
-      _ChironOnboardingStep(
-        title: _t(
-          nl: 'Registreer uw bedrijf in de Chiron-testomgeving',
-          en: 'Register your company in the Chiron test environment',
-          fr: 'Enregistrez votre entreprise dans l’environnement de test Chiron',
-          es: 'Registre su empresa en el entorno de prueba de Chiron',
-        ),
-        body: _t(
-          nl: 'De wettelijke vertegenwoordiger meldt zich aan met eID, itsme of een officiële aanmeldmethode. Controleer dat het bedrijf correct gekoppeld is en dat de taxi-/VVB-gegevens in orde zijn.',
-          en: 'The legal representative signs in with eID, itsme or an official login method. Check that the company is linked correctly and that taxi/VVB data is complete.',
-          fr: 'Le représentant légal se connecte avec eID, itsme ou une méthode officielle. Vérifiez que l’entreprise est correctement liée et que les données taxi/VVB sont complètes.',
-          es: 'El representante legal inicia sesión con eID, itsme u otro método oficial. Compruebe que la empresa esté vinculada y que los datos taxi/VVB estén completos.',
-        ),
-      ),
-      _ChironOnboardingStep(
-        title: _t(
-          nl: 'Kopieer de testgegevens',
-          en: 'Copy the test credentials',
-          fr: 'Copiez les identifiants de test',
-          es: 'Copie las credenciales de prueba',
-        ),
-        body: _t(
-          nl: 'Na registratie toont Chiron meestal een Client ID en Secret. Soms wordt met een publieke sleutel/JWKS gewerkt. Fluxidi toont secrets nooit opnieuw zichtbaar.',
-          en: 'After registration Chiron usually shows a Client ID and Secret. In some cases a public key/JWKS is used. Fluxidi never shows secrets again.',
-          fr: 'Après l’enregistrement, Chiron affiche généralement un Client ID et un Secret. Dans certains cas, une clé publique/JWKS est utilisée. Fluxidi ne réaffiche jamais les secrets.',
-          es: 'Tras el registro, Chiron suele mostrar un Client ID y Secret. En algunos casos se usa una clave pública/JWKS. Fluxidi nunca vuelve a mostrar los secretos.',
-        ),
-      ),
-      _ChironOnboardingStep(
-        title: _t(
-          nl: 'Voer de testgegevens in Fluxidi in',
-          en: 'Enter the test credentials in Fluxidi',
-          fr: 'Saisissez les identifiants de test dans Fluxidi',
-          es: 'Introduzca las credenciales de prueba en Fluxidi',
-        ),
-        body: _t(
-          nl: 'Fluxidi bewaart de gegevens per bedrijf en gebruikt ze alleen om de eigen Chiron-koppeling te testen en later ritberichten door te sturen.',
-          en: 'Fluxidi stores credentials per company and only uses them to test that company’s Chiron connection and later send ride messages.',
-          fr: 'Fluxidi conserve les identifiants par entreprise et les utilise uniquement pour tester la connexion Chiron puis envoyer les messages de course.',
-          es: 'Fluxidi guarda las credenciales por empresa y solo las usa para probar su conexión Chiron y más adelante enviar mensajes de viaje.',
-        ),
-      ),
-      _ChironOnboardingStep(
-        title: _t(
-          nl: 'Test de verbinding',
-          en: 'Test the connection',
-          fr: 'Testez la connexion',
-          es: 'Pruebe la conexión',
-        ),
-        body: _t(
-          nl: 'Fluxidi voert een OAuth2-test uit. Mogelijke statussen: verbinding geslaagd, verbinding mislukt of testgegevens ontbreken.',
-          en: 'Fluxidi runs an OAuth2 test. Possible statuses: connection passed, connection failed or test credentials missing.',
-          fr: 'Fluxidi effectue un test OAuth2. Statuts possibles : connexion réussie, connexion échouée ou identifiants manquants.',
-          es: 'Fluxidi ejecuta una prueba OAuth2. Estados posibles: conexión correcta, conexión fallida o faltan credenciales de prueba.',
-        ),
-      ),
-      _ChironOnboardingStep(
-        title: _t(
-          nl: 'Controleer de rit- en bedrijfsgegevens',
-          en: 'Check ride and company data',
-          fr: 'Vérifiez les données de course et d’entreprise',
-          es: 'Revise los datos de viaje y empresa',
-        ),
-        body: _t(
-          nl: 'Chiron heeft correcte gegevens nodig: ondernemingsnummer/KBO, voertuig en nummerplaat, chauffeursgegevens, bestuurderspasnummer, ritnummer, vertrek- en aankomstgegevens, afstand en prijs of contractgegevens.',
-          en: 'Chiron needs correct data: company number, vehicle and plate, driver details, driver permit number, ride number, departure and arrival data, distance and price or contract data.',
-          fr: 'Chiron exige des données correctes : numéro d’entreprise, véhicule et plaque, données chauffeur, numéro de carte chauffeur, numéro de course, départ et arrivée, distance, prix ou contrat.',
-          es: 'Chiron necesita datos correctos: número de empresa, vehículo y matrícula, datos del conductor, número de permiso, número de viaje, salida y llegada, distancia y precio o contrato.',
-        ),
-      ),
-      _ChironOnboardingStep(
-        title: _t(
-          nl: 'Doorloop de acceptatietest',
-          en: 'Complete the acceptance test',
-          fr: 'Effectuez le test d’acceptation',
-          es: 'Complete la prueba de aceptación',
-        ),
-        body: _t(
-          nl: 'Er zijn minstens 10 correcte testberichten nodig: 5 vertrekberichten en 5 aankomstberichten. Fluxidi toont de voortgang van deze testflow.',
-          en: 'At least 10 correct test messages are required: 5 departure messages and 5 arrival messages. Fluxidi shows the testflow progress.',
-          fr: 'Au moins 10 messages de test corrects sont requis : 5 départs et 5 arrivées. Fluxidi affiche la progression du test.',
-          es: 'Se requieren al menos 10 mensajes correctos: 5 salidas y 5 llegadas. Fluxidi muestra el progreso del flujo de prueba.',
-        ),
-      ),
-      _ChironOnboardingStep(
-        title: _t(
-          nl: 'Controleer fouten',
-          en: 'Review errors',
-          fr: 'Contrôlez les erreurs',
-          es: 'Revise errores',
-        ),
-        body: _t(
-          nl: 'Als Chiron berichten weigert, volgt de exploitant de fout op. Fluxidi kan tonen wat aandacht nodig heeft. Fouten kunnen ook in het Chiron-portaal of via e-mail verschijnen.',
-          en: 'If Chiron rejects messages, the operator follows up the error. Fluxidi can show what needs attention. Errors may also appear in the Chiron portal or by email.',
-          fr: 'Si Chiron refuse des messages, l’exploitant suit l’erreur. Fluxidi peut indiquer les points à vérifier. Les erreurs peuvent aussi apparaître dans le portail Chiron ou par e-mail.',
-          es: 'Si Chiron rechaza mensajes, el operador debe revisar el error. Fluxidi puede indicar qué requiere atención. Los errores también pueden aparecer en el portal Chiron o por email.',
-        ),
-      ),
-      _ChironOnboardingStep(
-        title: _t(
-          nl: 'Activeer productie pas na succesvolle test',
-          en: 'Activate production only after a successful test',
-          fr: 'Activez la production seulement après un test réussi',
-          es: 'Active producción solo tras una prueba correcta',
-        ),
-        body: _t(
-          nl: 'Productie gebruikt andere toegangsgegevens dan test. Fluxidi houdt productie geblokkeerd tot de testverbinding geslaagd is, de acceptatietest voltooid is, productiegegevens aanwezig zijn en de productieverbinding gecontroleerd is.',
-          en: 'Production uses different credentials than test. Fluxidi keeps production blocked until the test connection passed, the acceptance test is complete, production credentials exist and the production connection is checked.',
-          fr: 'La production utilise d’autres identifiants que le test. Fluxidi bloque la production tant que la connexion de test, le test d’acceptation, les identifiants production et la connexion production ne sont pas validés.',
-          es: 'Producción usa credenciales distintas de prueba. Fluxidi mantiene producción bloqueada hasta superar la prueba, completar la aceptación, añadir credenciales de producción y comprobar la conexión.',
-        ),
-      ),
-    ];
-
-    return Card(
-      color: _chironCard,
-      elevation: 0,
-      margin: EdgeInsets.zero,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: _chironBorder),
-      ),
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          initiallyExpanded: false,
-          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
-          childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-          onExpansionChanged: (expanded) =>
-              setState(() => _expanded = expanded),
-          leading: Icon(Icons.route_outlined, color: _chironGold),
-          title: Text(
-            _t(
-              nl: 'Chiron aansluiten met Fluxidi',
-              en: 'Connect Chiron with Fluxidi',
-              fr: 'Connecter Chiron avec Fluxidi',
-              es: 'Conectar Chiron con Fluxidi',
-            ),
-            style: TextStyle(
-              color: _chironGold,
-              fontWeight: FontWeight.w800,
-              fontSize: 15,
-            ),
-          ),
-          subtitle: Text(
-            _expanded
-                ? _t(
-                    nl: 'Volg de stappen om test, acceptatie en productie veilig voor te bereiden.',
-                    en: 'Follow the steps to prepare test, acceptance and production safely.',
-                    fr: 'Suivez les étapes pour préparer test, acceptation et production en sécurité.',
-                    es: 'Siga los pasos para preparar prueba, aceptación y producción de forma segura.',
-                  )
-                : _t(
-                    nl: 'Compacte startersgids voor taxi-/VVB-bedrijven.',
-                    en: 'Compact starter guide for taxi/VVB companies.',
-                    fr: 'Guide de démarrage compact pour entreprises taxi/VVB.',
-                    es: 'Guía compacta para empresas taxi/VVB.',
-                  ),
-            style: TextStyle(color: _chironTextSecondary, fontSize: 12),
-          ),
-          children: [
-            const SizedBox(height: 4),
-            ...steps.asMap().entries.map((entry) {
-              final number = entry.key + 1;
-              final step = entry.value;
-              return _ChironOnboardingStepTile(number: number, step: step);
-            }),
-            const SizedBox(height: 8),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: _chironPanel,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: _chironBorder),
-              ),
-              child: Text(
-                _t(
-                  nl: 'Fluxidi begeleidt uw bedrijf technisch door de Chiron-aansluiting. De officiële registratie, toegangsrechten en wettelijke verantwoordelijkheid blijven bij de taxi-exploitant. De officiële informatie en voorwaarden van Chiron blijven altijd leidend.',
-                  en: 'Fluxidi guides your company technically through the Chiron connection. Official registration, access rights and legal responsibility remain with the taxi operator. Chiron’s official information and conditions always remain leading.',
-                  fr: 'Fluxidi accompagne techniquement votre entreprise dans la connexion Chiron. L’enregistrement officiel, les droits d’accès et la responsabilité légale restent chez l’exploitant taxi. Les informations et conditions officielles de Chiron restent toujours prioritaires.',
-                  es: 'Fluxidi guía técnicamente a su empresa en la conexión Chiron. El registro oficial, los derechos de acceso y la responsabilidad legal siguen siendo del operador de taxi. La información y condiciones oficiales de Chiron siempre prevalecen.',
-                ),
-                style: TextStyle(
-                  color: _chironTextSecondary,
-                  fontSize: 12,
-                  height: 1.35,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ChironOnboardingStep {
-  const _ChironOnboardingStep({required this.title, required this.body});
-
-  final String title;
-  final String body;
-}
-
-class _ChironOnboardingStepTile extends StatelessWidget {
-  const _ChironOnboardingStepTile({required this.number, required this.step});
-
-  final int number;
-  final _ChironOnboardingStep step;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 26,
-            height: 26,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: _chironGold.withOpacity(0.14),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: _chironGold.withOpacity(0.45)),
-            ),
-            child: Text(
-              '$number',
-              style: TextStyle(
-                color: _chironGold,
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  step.title,
-                  style: TextStyle(
-                    color: _chironTextPrimary,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 12.5,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  step.body,
-                  style: TextStyle(
-                    color: _chironTextSecondary,
-                    fontSize: 12,
-                    height: 1.35,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+// RELEASE-P0: obsolete 8-step onboarding ExpansionTile and helper tiles were removed from the active Chiron route.
 
 class _ChironHubStatusCard extends StatefulWidget {
   const _ChironHubStatusCard({
@@ -1460,12 +1166,18 @@ class _ChironHubStatusCardState extends State<_ChironHubStatusCard> {
                         ],
                       ),
                       const SizedBox(height: 8),
+                      ChironEnvironmentStatusLabels(
+                        status: backendStatus,
+                        language: widget.lang,
+                        textColor: _chironTextPrimary,
+                        mutedColor: _chironTextSecondary,
+                      ),
+                      const SizedBox(height: 8),
                       Text(
-                        _t(
-                          nl: 'Beheer regio, testomgeving en productie-instellingen in Bedrijfsinstellingen.',
-                          en: 'Manage region, test environment and production settings in Business Settings.',
-                          fr: 'Gérez la région, l’environnement de test et les paramètres de production dans les paramètres entreprise.',
-                          es: 'Gestiona región, entorno de prueba y ajustes de producción en la configuración de empresa.',
+                        chironHonestNextStepLabel(
+                          status: backendStatus,
+                          language: widget.lang,
+                          enabled: enabled,
                         ),
                         style: TextStyle(
                           color: _chironTextSecondary,
@@ -13873,9 +13585,11 @@ class _LocalComplianceLedgerSectionState
   final ComplianceLedgerReader _reader = ComplianceLedgerReader();
   ComplianceLedgerReadResult? _result;
   bool _isLoading = true;
+  String? _loadError;
   bool _isClearingLocalTestData = false;
   bool _isClearingLocalCustomerBookings = false;
   late final ChironContextLoadCoordinator _loadCoordinator;
+  Timer? _prereqTimeout;
   // Patch LR-1: local-only search + category filter for the ride register.
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -13899,10 +13613,21 @@ class _LocalComplianceLedgerSectionState
       runLoad: _performRegisterLoad,
       onDiag: (stage) => debugPrint('[CHIRON_LOAD][DIAG] stage=$stage'),
     )..attach();
+    // Terminal empty/error instead of an infinite "loading company context".
+    _prereqTimeout = Timer(const Duration(seconds: 8), () {
+      if (!mounted) return;
+      if (!_loadCoordinator.prerequisitesReady && _result == null) {
+        setState(() {
+          _isLoading = false;
+          _loadError = 'missing_company_context';
+        });
+      }
+    });
   }
 
   @override
   void dispose() {
+    _prereqTimeout?.cancel();
     _loadCoordinator.dispose();
     _searchController.dispose();
     super.dispose();
@@ -13910,23 +13635,74 @@ class _LocalComplianceLedgerSectionState
 
   Future<void> _performRegisterLoad(int gen) async {
     if (_loadCoordinator.shouldApplyGeneration(gen) && mounted) {
-      setState(() => _isLoading = true);
+      setState(() {
+        _isLoading = true;
+        _loadError = null;
+      });
     }
-    final result = await _reader.loadRegisterGrouped(
-      groupLimit: 20,
-      onLocalLoaded: (local) {
-        if (!_loadCoordinator.shouldApplyGeneration(gen) || !mounted) return;
-        setState(() {
-          _result = local;
-          _isLoading = false;
-        });
-      },
-    );
-    if (!_loadCoordinator.shouldApplyGeneration(gen) || !mounted) return;
-    setState(() {
-      _result = result;
-      _isLoading = false;
-    });
+    try {
+      final sw = Stopwatch()..start();
+      final result = await _reader
+          .loadRegisterGrouped(
+            groupLimit: 20,
+            onLocalLoaded: (local) {
+              if (!_loadCoordinator.shouldApplyGeneration(gen) || !mounted) {
+                return;
+              }
+              setState(() {
+                _result = local;
+                _isLoading = false;
+              });
+            },
+          )
+          .timeout(const Duration(seconds: 15));
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][UI_LOAD] gen=$gen elapsed_ms=${sw.elapsedMilliseconds} '
+        'backend_ok=${result.backendFetchOk} merged=${result.mergedCount}',
+      );
+      if (!_loadCoordinator.shouldApplyGeneration(gen) || !mounted) return;
+      setState(() {
+        _result = result;
+        _isLoading = false;
+        if (result.backendFetchOk == false &&
+            (result.backendError ?? '').isNotEmpty &&
+            result.entries.isEmpty) {
+          _loadError = result.backendError;
+        }
+      });
+    } on TimeoutException {
+      debugPrint('[LOCAL_RIDE_REGISTER][UI_LOAD] gen=$gen error=timeout');
+      if (!_loadCoordinator.shouldApplyGeneration(gen) || !mounted) return;
+      setState(() {
+        _isLoading = false;
+        _loadError = 'backend_timeout';
+        _result ??= const ComplianceLedgerReadResult(
+          entries: <ComplianceLedgerEntry>[],
+          fileExists: false,
+          skippedMalformedLines: 0,
+          isSyncingBackend: false,
+          backendFetchOk: false,
+          backendError: 'backend_timeout',
+        );
+      });
+    } catch (err) {
+      debugPrint(
+        '[LOCAL_RIDE_REGISTER][UI_LOAD] gen=$gen error=${err.runtimeType}',
+      );
+      if (!_loadCoordinator.shouldApplyGeneration(gen) || !mounted) return;
+      setState(() {
+        _isLoading = false;
+        _loadError = 'load_failed';
+        _result ??= const ComplianceLedgerReadResult(
+          entries: <ComplianceLedgerEntry>[],
+          fileExists: false,
+          skippedMalformedLines: 0,
+          isSyncingBackend: false,
+          backendFetchOk: false,
+          backendError: 'load_failed',
+        );
+      });
+    }
   }
 
   void _refresh() {
@@ -16792,6 +16568,38 @@ class _LocalComplianceLedgerSectionState
             Builder(
               builder: (context) {
                 if (!_loadCoordinator.prerequisitesReady) {
+                  if (_loadError != null) {
+                    return Column(
+                      key: const ValueKey('chiron_local_register_error'),
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _t(
+                            nl: 'Bedrijfscontext ontbreekt. Probeer te verversen.',
+                            en: 'Company context is missing. Try refreshing.',
+                            fr: 'Le contexte entreprise est manquant. Essayez d’actualiser.',
+                            es: 'Falta el contexto de empresa. Intente actualizar.',
+                          ),
+                          style: TextStyle(
+                            color: _chironTextSecondary,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton(
+                          onPressed: _refresh,
+                          child: Text(
+                            _t(
+                              nl: 'Opnieuw laden',
+                              en: 'Reload',
+                              fr: 'Recharger',
+                              es: 'Recargar',
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  }
                   return Text(
                     _t(
                       nl: 'Bedrijfscontext wordt geladen…',
@@ -16808,6 +16616,7 @@ class _LocalComplianceLedgerSectionState
 
                 if (_isLoading && _result == null) {
                   return Row(
+                    key: const ValueKey('chiron_local_register_loading'),
                     children: [
                       SizedBox(
                         width: 14,
@@ -16828,6 +16637,40 @@ class _LocalComplianceLedgerSectionState
                         style: TextStyle(
                           color: _chironTextSecondary,
                           fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  );
+                }
+
+                if (_loadError != null &&
+                    (_result == null || _result!.entries.isEmpty)) {
+                  return Column(
+                    key: const ValueKey('chiron_local_register_error'),
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _t(
+                          nl: 'Rittenregister kon niet geladen worden. Probeer opnieuw.',
+                          en: 'Ride register could not be loaded. Please try again.',
+                          fr: 'Le registre des courses n’a pas pu être chargé. Réessayez.',
+                          es: 'No se pudo cargar el registro de viajes. Inténtelo de nuevo.',
+                        ),
+                        style: TextStyle(
+                          color: _chironTextSecondary,
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton(
+                        onPressed: _refresh,
+                        child: Text(
+                          _t(
+                            nl: 'Opnieuw laden',
+                            en: 'Reload',
+                            fr: 'Recharger',
+                            es: 'Recargar',
+                          ),
                         ),
                       ),
                     ],
