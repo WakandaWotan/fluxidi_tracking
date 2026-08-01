@@ -413,11 +413,17 @@ export function isLegacyTenantScopeRequest(requestedScope) {
 }
 
 /**
- * Soft list matcher. MUST NOT be used for externally reachable object
- * read/write authorization. External hot paths must use
- * `bookingMatchesRequiredTenantCompanyScope` (strict fail-closed).
- * Missing company_id on a record is treated as a match when only tenant
- * matches — that is intentional for authenticated list projections only.
+ * LEGACY soft matcher — DO NOT use for tenant-visible lists, dispatch,
+ * customer hydrate, or any new code.
+ *
+ * RELEASE-P1: company/driver/customer lists and dispatch open-pool use
+ * `bookingMatchesRequiredTenantCompanyScope` (strict) exclusively.
+ * This soft helper remains only for a few non-list internal paths that
+ * have not yet been migrated; it must never authorize mutations alone.
+ *
+ * Soft gaps vs strict:
+ * - unscoped records match only when the request is legacy `fluxidi`;
+ * - missing company on one side can still match when tenant matches.
  */
 export function bookingMatchesRequestedTenantScope(rec, requestedScope) {
   if (!requestedScope?.hasScope) return false;

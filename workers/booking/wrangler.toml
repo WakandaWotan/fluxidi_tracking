@@ -17,6 +17,12 @@ HUMAN_BOOKING_ID_PROBES_ENABLED = "0"
 # TRUSTED-IDENTITY-P0 — contact-proof-only customer read/cancel. Disabled by
 # default; enable only for a measured migration window.
 ALLOW_LEGACY_CUSTOMER_CONTACT_PROOF = "0"
+# RELEASE-P1 — list/dispatch use strict ownership. Kept as documentation flag;
+# behavior is always-on in code paths (no soft fallback).
+STRICT_LIST_DISPATCH_OWNERSHIP = "1"
+# RELEASE-P1 — admin legacy scope migrate/quarantine apply. Dry-run always
+# allowed for admin; apply requires this flag = "1".
+LEGACY_SCOPE_MIGRATION_ENABLED = "0"
 
 # Mollie Connect OAuth (Phase 1) — set via Cloudflare secrets, never commit values:
 # MOLLIE_CONNECT_CLIENT_ID       — OAuth app client id (app_…)

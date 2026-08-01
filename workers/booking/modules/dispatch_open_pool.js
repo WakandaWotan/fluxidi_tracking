@@ -65,8 +65,8 @@ import {
   _bookingListIsPaymentShadowRecord,
   _resolveCanonicalBookingIdFromShadow,
 } from "./booking_identity.js";
+import { bookingMatchesTenantVisibleListScope } from "./legacy_scope_migration.js";
 import {
-  bookingMatchesRequestedTenantScope,
   _flattenBookingForRidesListWithOperationalLegs,
 } from "./booking_read_model.js";
 import { _maskPublicDriverLoginValue } from "./driver_ops.js";
@@ -417,7 +417,7 @@ export async function _collectAvailableUnassignedRowsFromCompanyIndex(
       logSkip(bookingId, "", "record_missing");
       continue;
     }
-    if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+    if (!bookingMatchesTenantVisibleListScope(rec, tenantScope)) {
       result.skipped += 1;
       logSkip(bookingId, "", "tenant_mismatch");
       continue;

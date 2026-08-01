@@ -25,6 +25,13 @@ import { finalizeLegPricingInclVat } from "./modules/leg_pricing_finalize.mjs";
 import { buildBuildTagResponse, listKvKeyNames } from "./modules/diagnostics.js";
 import { BOOKING_TEST_RESET_CONFIRM_PHRASE, allowDevResetEndpoints } from "./modules/dev_reset.js";
 import {
+  censusLegacyBookingScope,
+  applyLegacyBookingScopeMigration,
+  legacyScopeMigrationEnabled,
+  bookingMatchesTenantVisibleListScope,
+  LEGACY_SCOPE_QUARANTINE_REASON,
+} from "./modules/legacy_scope_migration.js";
+import {
   HUMAN_BOOKING_ID_DO_BINDING,
   HUMAN_BOOKING_ID_DO_FLAG,
   HUMAN_BOOKING_ID_MAX_ALLOCATE_ATTEMPTS,
@@ -20875,7 +20882,8 @@ async function hydrateCustomerBookingsFromScopedIndex(
         );
         continue;
       }
-      if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+      // RELEASE-P1: strict ownership (+ quarantine) for tenant-visible customer lists.
+      if (!bookingMatchesTenantVisibleListScope(rec, tenantScope)) {
         console.log(
           `[CUSTOMER_BOOTSTRAP][HYDRATE][SKIP] tenant=${scopeMask.tenant || "-"} company=${scopeMask.company || "-"} customer=${safeCustomerMask || "-"} booking=${_bookingIntentMask(bookingId)} bucket=scope_mismatch`,
         );
@@ -29683,6 +29691,20 @@ export default {
         request.method === "POST"
       ) {
         return handleHumanBookingIdAllocatorNeutralizeProbes(request, url, env);
+      }
+
+      // RELEASE-P1 — legacy scope census / migration (admin only).
+      if (
+        url.pathname === "/admin/legacy-scope/census" &&
+        request.method === "GET"
+      ) {
+        return handleAdminLegacyScopeCensus(request, url, env);
+      }
+      if (
+        url.pathname === "/admin/legacy-scope/migrate" &&
+        request.method === "POST"
+      ) {
+        return handleAdminLegacyScopeMigrate(request, url, env);
       }
 
       // OAUTH
@@ -45450,7 +45472,7 @@ async function _driverEnRouteResolvePreviousDropoffProjection({
       if (!candidateId || candidateId === bookingId) continue;
       const candidateRec = await env.BOOKING_KV.get(`booking:${candidateId}`, { type: "json" });
       if (!candidateRec || typeof candidateRec !== "object") continue;
-      if (!bookingMatchesRequestedTenantScope(candidateRec, scope)) continue;
+      if (!bookingMatchesTenantVisibleListScope(candidateRec, scope)) continue;
       if (!_driverEnRouteRecordAssignmentMatches(assignment, candidateRec)) continue;
       const candidateIdentitySignals = _driverEnRouteBookingIdentitySignals(candidateRec);
       const sameLegOverlap = _driverEnRouteIdentitySetOverlaps(
@@ -74452,7 +74474,8 @@ async function debugFleetRecentBookings(url, env, tenantScope = null) {
     if (!key.startsWith("booking:")) continue;
     const rec = await env.BOOKING_KV.get(key, { type: "json" });
     if (!rec || typeof rec !== "object") continue;
-    if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) continue;
+    // RELEASE-P1: strict raw ownership for scoped fleet debug listings.
+    if (!bookingMatchesTenantVisibleListScope(rec, tenantScope)) continue;
     const bookingId = key.slice("booking:".length) || null;
     const rawStage = rec?.stage ?? null;
     const rawStatus = rec?.status ?? null;
@@ -74805,7 +74828,8 @@ async function listBookingsAuthoritative(
       }
       recordCache.set(bookingId, rec);
     }
-    if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+    // RELEASE-P1: strict ownership (+ quarantine) for tenant-visible company lists.
+    if (!bookingMatchesTenantVisibleListScope(rec, tenantScope)) {
       staleIds.add(bookingId);
       continue;
     }
@@ -75542,7 +75566,8 @@ function computeDashboardBookingKpiContribution(bookingId, rec, scope, options =
   if (!safeBookingId || !rec || typeof rec !== "object") return null;
   const tenantScope = normalizeFleetTenantScope(scope || {});
   if (!tenantScope?.hasScope) return null;
-  if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) return null;
+  // RELEASE-P1: dashboard KPI contributions require raw strict ownership.
+  if (!bookingMatchesTenantVisibleListScope(rec, tenantScope)) return null;
   const nowMs = Number.isFinite(Number(options?.nowMs)) ? Number(options.nowMs) : Date.now();
   const openCheck = _isDashboardActionableOpenBooking(rec, nowMs, { recordKeyId: safeBookingId });
   const identityKey = _dashboardBookingIdentityKey(rec, safeBookingId) || safeBookingId;
@@ -75848,7 +75873,7 @@ async function rebuildDashboardBookingsKpiProjectionForScope(
       if (!bookingId) continue;
       const rec = await env.BOOKING_KV.get(key, { type: "json" });
       if (!rec || typeof rec !== "object") continue;
-      if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+      if (!bookingMatchesTenantVisibleListScope(rec, tenantScope)) {
         excludedOutOfScope += 1;
         continue;
       }
@@ -76116,7 +76141,7 @@ async function computeDashboardOpenBookingsKpiFallback(
         if (!bookingId) continue;
         const rec = await env.BOOKING_KV.get(key, { type: "json" });
         if (!rec || typeof rec !== "object") continue;
-        if (!bookingMatchesRequestedTenantScope(rec, scope)) continue;
+        if (!bookingMatchesTenantVisibleListScope(rec, scope)) continue;
         candidateIds.add(bookingId);
       }
       cursor = page?.cursor;
@@ -76131,7 +76156,7 @@ async function computeDashboardOpenBookingsKpiFallback(
     totalScanned += 1;
     const rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
     if (!rec || typeof rec !== "object") continue;
-    if (!bookingMatchesRequestedTenantScope(rec, scope)) continue;
+    if (!bookingMatchesTenantVisibleListScope(rec, scope)) continue;
     matchedScope += 1;
     const contribution = computeDashboardBookingKpiContribution(bookingId, rec, scope);
     if (contribution) contributions.push(contribution);
@@ -80202,6 +80227,56 @@ async function persistNewBookingRecord(env, bookingId, record, opts = {}) {
     throw err;
   }
   return result;
+}
+
+async function handleAdminLegacyScopeCensus(request, url, env) {
+  try {
+    _requireAdmin(request, url, env);
+  } catch (authErr) {
+    return json({ ok: false, error: safeStr(authErr?.message || "unauthorized") }, 401);
+  }
+  const cursor = safeStr(url.searchParams.get("cursor"), 500) || null;
+  const limit = Number(url.searchParams.get("limit") || "100");
+  const out = await censusLegacyBookingScope(env, { cursor, limit });
+  return json(out, out?.ok ? 200 : 400);
+}
+
+async function handleAdminLegacyScopeMigrate(request, url, env) {
+  try {
+    _requireAdmin(request, url, env);
+  } catch (authErr) {
+    return json({ ok: false, error: safeStr(authErr?.message || "unauthorized") }, 401);
+  }
+  const body = await safeJson(request);
+  const dryRun =
+    body?.dry_run === true ||
+    body?.dryRun === true ||
+    body?.apply !== true;
+  const cursor = safeStr(body?.cursor, 500) || null;
+  const limit = Number(body?.limit || 50);
+  if (!dryRun && !legacyScopeMigrationEnabled(env)) {
+    return json(
+      {
+        ok: false,
+        error: "legacy_scope_migration_disabled",
+        dry_run_hint: "POST { dry_run:true } or set LEGACY_SCOPE_MIGRATION_ENABLED=1",
+      },
+      403,
+    );
+  }
+  const out = await applyLegacyBookingScopeMigration(env, {
+    cursor,
+    limit,
+    dryRun,
+  });
+  return json(
+    {
+      ...out,
+      quarantine_reason: LEGACY_SCOPE_QUARANTINE_REASON,
+      migration_flag_enabled: legacyScopeMigrationEnabled(env),
+    },
+    out?.ok ? 200 : out?.error === "legacy_scope_migration_disabled" ? 403 : 400,
+  );
 }
 
 async function handleHumanBookingIdAllocatorStatus(request, url, env) {

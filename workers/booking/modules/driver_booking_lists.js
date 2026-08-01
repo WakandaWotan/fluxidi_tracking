@@ -64,8 +64,8 @@ import {
   _resolveCanonicalBookingIdFromShadow,
   _dashboardCanonicalBookingNumber,
 } from "./booking_identity.js";
+import { bookingMatchesTenantVisibleListScope } from "./legacy_scope_migration.js";
 import {
-  bookingMatchesRequestedTenantScope,
   _flattenBookingForRidesListWithOperationalLegs,
   _rowIsStreetDirectRide,
 } from "./booking_read_model.js";
@@ -353,7 +353,7 @@ export async function listDriverBookingsAuthoritative(
       }
       continue;
     }
-    if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) {
+    if (!bookingMatchesTenantVisibleListScope(rec, tenantScope)) {
       for (const indexKey of bookingToSourceKeys.get(bookingId) || []) {
         const stale = staleIdsByKey.get(indexKey) || new Set();
         stale.add(bookingId);
@@ -590,7 +590,7 @@ export async function listAdminDriverBookingsPreviewAuthoritative(
       rec = await env.BOOKING_KV.get(`booking:${bookingId}`, { type: "json" });
     }
     if (!rec || typeof rec !== "object") continue;
-    if (!bookingMatchesRequestedTenantScope(rec, tenantScope)) continue;
+    if (!bookingMatchesTenantVisibleListScope(rec, tenantScope)) continue;
     if (_driverAvailableUnassignedRowHidden(rec)) continue;
 
     // P0-FIELD-REPAIR-1 (A1): this preview mirrors the driver planned/open
