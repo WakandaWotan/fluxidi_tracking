@@ -74,6 +74,7 @@ Create-if-absent protection stays active on both paths.
 | GET | `/admin/booking-id-allocator/status` | admin token |
 | POST | `/admin/booking-id-allocator/seed` | admin token |
 | POST | `/admin/booking-id-allocator/rollback-prepare` | admin token |
+| POST | `/admin/booking-id-allocator/allocate-probe` | admin token |
 
 ## Tests
 

@@ -29470,6 +29470,12 @@ export default {
       ) {
         return handleHumanBookingIdAllocatorRollbackPrepare(request, url, env);
       }
+      if (
+        url.pathname === "/admin/booking-id-allocator/allocate-probe" &&
+        request.method === "POST"
+      ) {
+        return handleHumanBookingIdAllocatorAllocateProbe(request, url, env);
+      }
 
       // OAUTH
       if (url.pathname === "/oauth/start" && request.method === "GET") return oauthStart(request, env);
@@ -79626,6 +79632,53 @@ async function handleHumanBookingIdAllocatorSeed(request, url, env) {
     flag_enabled: humanBookingIdDoEnabled(env, envFlag),
     note:
       "Idempotent monotonic seed. Enable HUMAN_BOOKING_ID_DO_ALLOCATOR only after verifying seed_floor >= max_existing_suffix.",
+  });
+}
+
+async function handleHumanBookingIdAllocatorAllocateProbe(request, url, env) {
+  try {
+    _requireAdmin(request, url, env);
+  } catch (authErr) {
+    return json({ ok: false, error: safeStr(authErr?.message || "unauthorized") }, 401);
+  }
+  if (!env?.[HUMAN_BOOKING_ID_DO_BINDING]) {
+    return json({ ok: false, error: "missing_human_booking_id_sequence_binding" }, 500);
+  }
+  const body = await safeJson(request).catch(() => ({}));
+  const yearMonth =
+    normalizeHumanBookingYearMonth(body?.year_month || body?.yearMonth) ||
+    humanBookingYearMonthFromPickupIso(new Date().toISOString());
+  const count = Math.max(1, Math.min(40, Math.trunc(Number(body?.count) || 8)));
+  const persist = body?.persist === true || body?.persist === "true";
+  const ids = [];
+  const records = [];
+  for (let i = 0; i < count; i++) {
+    // Use the same allocator path as production creates (respects flag).
+    const id = await nextHumanBookingId(env, `${yearMonth}-15T12:00:00+02:00`);
+    ids.push(id);
+    if (persist) {
+      const rec = {
+        bookingId: id,
+        allocator_probe: true,
+        created_at: new Date().toISOString(),
+        tenant_id: "allocator_probe",
+        company_id: `probe_${i}`,
+      };
+      const put = await persistNewBookingRecord(env, id, rec, { mode: "create" });
+      records.push({ id, put });
+    }
+  }
+  const unique = new Set(ids).size;
+  return json({
+    ok: unique === ids.length,
+    year_month: yearMonth,
+    flag_enabled: humanBookingIdDoEnabled(env, envFlag),
+    count: ids.length,
+    unique,
+    ids,
+    persisted: persist ? records : [],
+    note:
+      "Probe allocates via nextHumanBookingId. Set persist:true only for sandbox overwrite proofs.",
   });
 }
 

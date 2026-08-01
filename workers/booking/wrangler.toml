@@ -10,7 +10,7 @@ GOOGLE_CALENDAR_ID = "primary"
 FLEET_AVAILABILITY_MODE = "multi_vehicle"
 COMPLIANCE_API_URL = "https://fluxidi-compliance-api.fluxidi.workers.dev"
 # RELEASE-P0 Option A′ — staged rollout. Keep "0" until month seed is verified.
-HUMAN_BOOKING_ID_DO_ALLOCATOR = "0"
+HUMAN_BOOKING_ID_DO_ALLOCATOR = "1"
 
 # Mollie Connect OAuth (Phase 1) — set via Cloudflare secrets, never commit values:
 # MOLLIE_CONNECT_CLIENT_ID       — OAuth app client id (app_…)
