@@ -10,6 +10,14 @@ export const HUMAN_BOOKING_ID_MAX_ALLOCATE_ATTEMPTS = 12;
 export const HUMAN_BOOKING_ID_SEED_LIST_PAGE_LIMIT = 1000;
 export const HUMAN_BOOKING_ID_SEED_MAX_PAGES = 50;
 
+/** True for internal allocator probe / neutralized probe records. */
+export function isAllocatorProbeRecord(rec) {
+  if (!rec || typeof rec !== "object") return false;
+  if (rec.allocator_probe === true || rec.allocatorProbe === true) return true;
+  const status = String(rec.status || rec.lifecycle || "").trim().toLowerCase();
+  return status === "allocator_probe";
+}
+
 export function humanBookingIdDoEnabled(env, envFlagFn) {
   if (typeof envFlagFn !== "function") return false;
   return envFlagFn(env?.[HUMAN_BOOKING_ID_DO_FLAG]);

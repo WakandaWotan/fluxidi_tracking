@@ -75,6 +75,7 @@
  */
 
 import { sanitizeTenantString, safeStr } from "./parsing_utils.js";
+import { isAllocatorProbeRecord } from "./human_booking_id_allocator.mjs";
 import {
   _scopeText,
   resolveBookingTenantScopeFromRecord,
@@ -669,6 +670,9 @@ export function bookingListIndexItemFromRecord(bookingId, rec) {
 
 export async function upsertCustomerScopedBookingIndexForBooking(env, bookingId, rec) {
   if (!env?.BOOKING_KV) return { ok: false, reason: "missing_kv" };
+  if (isAllocatorProbeRecord(rec)) {
+    return { ok: true, skipped: true, reason: "allocator_probe" };
+  }
   const recordScope = resolveBookingTenantScopeFromRecord(rec);
   const tenantId = sanitizeTenantString(recordScope?.tenant_id, 80);
   const companyId = sanitizeTenantString(recordScope?.company_id, 80);
@@ -795,6 +799,9 @@ export async function saveScopedAssignmentBookingIndex(env, key, indexObj) {
 export async function upsertDriverVehicleBookingIndexesBestEffort(env, bookingId, rec, scopeHint = null) {
   try {
     if (!env?.BOOKING_KV) return { ok: false, reason: "missing_kv" };
+    if (isAllocatorProbeRecord(rec)) {
+      return { ok: true, skipped: true, reason: "allocator_probe" };
+    }
     const fallbackScope = resolveBookingTenantScopeFromRecord(rec);
     const scope = _indexNormalizeFleetTenantScope(scopeHint?.hasScope ? scopeHint : fallbackScope);
     if (!scope?.hasScope) return { ok: false, skipped: true, reason: "missing_scope" };
@@ -967,6 +974,9 @@ export async function saveCompanyBookingsListIndex(env, scope, indexObj) {
 export async function upsertCompanyBookingsListIndexBestEffort(env, bookingId, rec, scopeHint = null) {
   try {
     if (!env?.BOOKING_KV) return { ok: false, reason: "missing_kv" };
+    if (isAllocatorProbeRecord(rec)) {
+      return { ok: true, skipped: true, reason: "allocator_probe" };
+    }
     const recordScope = resolveBookingTenantScopeFromRecord(rec);
     const scope = _indexNormalizeFleetTenantScope(scopeHint?.hasScope ? scopeHint : recordScope);
     if (!scope?.hasScope) return { ok: false, skipped: true, reason: "missing_scope" };
@@ -1044,6 +1054,10 @@ export async function rebuildCompanyBookingsListIndexForScope(env, scope, { dryR
       }
       const rec = await env.BOOKING_KV.get(key, { type: "json" });
       if (!rec || typeof rec !== "object") {
+        invalidSkipped += 1;
+        continue;
+      }
+      if (isAllocatorProbeRecord(rec)) {
         invalidSkipped += 1;
         continue;
       }

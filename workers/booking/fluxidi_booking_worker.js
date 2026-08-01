@@ -34,6 +34,7 @@ import {
   computeRollbackSeqValue,
   formatHumanBookingId,
   humanBookingIdDoEnabled,
+  isAllocatorProbeRecord,
   normalizeHumanBookingYearMonth,
   putBookingCreateIfAbsent,
 } from "./modules/human_booking_id_allocator.mjs";
@@ -29475,6 +29476,24 @@ export default {
         request.method === "POST"
       ) {
         return handleHumanBookingIdAllocatorAllocateProbe(request, url, env);
+      }
+      if (
+        url.pathname === "/admin/booking-id-allocator/create-probe" &&
+        request.method === "POST"
+      ) {
+        return handleHumanBookingIdAllocatorCreateProbe(request, url, env);
+      }
+      if (
+        url.pathname === "/admin/booking-id-allocator/collision-probe" &&
+        request.method === "POST"
+      ) {
+        return handleHumanBookingIdAllocatorCollisionProbe(request, url, env);
+      }
+      if (
+        url.pathname === "/admin/booking-id-allocator/neutralize-probes" &&
+        request.method === "POST"
+      ) {
+        return handleHumanBookingIdAllocatorNeutralizeProbes(request, url, env);
       }
 
       // OAUTH
@@ -79635,50 +79654,375 @@ async function handleHumanBookingIdAllocatorSeed(request, url, env) {
   });
 }
 
+/**
+ * Single planned-booking create used by concurrency probes.
+ * Uses the same ID allocator + create-if-absent persist path as /book,
+ * but never emails, payments, Chiron, calendar, or user-facing indexes.
+ */
+async function createAllocatorProbeBookingRecord(env, params = {}) {
+  const yearMonth =
+    normalizeHumanBookingYearMonth(params?.year_month || params?.yearMonth) ||
+    humanBookingYearMonthFromPickupIso(new Date().toISOString());
+  const tenantId = safeStr(params?.tenant_id || params?.tenantId, 80) || "allocator_probe";
+  const companyId = safeStr(params?.company_id || params?.companyId, 80) || "allocator_probe";
+  const requestMarker =
+    safeStr(params?.request_marker || params?.requestMarker, 160) ||
+    `probe_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
+  const startedAt = new Date().toISOString();
+  const startedMs = Date.now();
+  const pickupIso = `${yearMonth}-15T12:00:00+02:00`;
+
+  const id = await nextHumanBookingId(env, pickupIso);
+  const allocatedAt = new Date().toISOString();
+  const record = {
+    bookingId: id,
+    booking_id: id,
+    allocator_probe: true,
+    request_marker: requestMarker,
+    requestMarker,
+    created_at: startedAt,
+    allocated_at: allocatedAt,
+    tenant_id: tenantId,
+    company_id: companyId,
+    status: "allocator_probe",
+    lifecycle: "allocator_probe",
+    pickup_iso: pickupIso,
+    // Explicitly suppress downstream commercial/compliance side effects.
+    payment_status: "none",
+    invoice_state: "none",
+    suppress_notifications: true,
+  };
+  const put = await persistNewBookingRecord(env, id, record, { mode: "create" });
+  // Indexes intentionally skipped for allocator_probe (see booking_indexes.js).
+  return {
+    id,
+    request_marker: requestMarker,
+    tenant_id: tenantId,
+    company_id: companyId,
+    started_at: startedAt,
+    started_ms: startedMs,
+    allocated_at: allocatedAt,
+    finished_ms: Date.now(),
+    put,
+    record,
+  };
+}
+
+async function handleHumanBookingIdAllocatorCreateProbe(request, url, env) {
+  try {
+    _requireAdmin(request, url, env);
+  } catch (authErr) {
+    return json({ ok: false, error: safeStr(authErr?.message || "unauthorized") }, 401);
+  }
+  if (!env?.BOOKING_KV) {
+    return json({ ok: false, error: "missing_booking_kv" }, 500);
+  }
+  const body = await safeJson(request).catch(() => ({}));
+  try {
+    const created = await createAllocatorProbeBookingRecord(env, body || {});
+    return json({
+      ok: true,
+      flag_enabled: humanBookingIdDoEnabled(env, envFlag),
+      booking_id: created.id,
+      request_marker: created.request_marker,
+      tenant_id: created.tenant_id,
+      company_id: created.company_id,
+      started_at: created.started_at,
+      started_ms: created.started_ms,
+      allocated_at: created.allocated_at,
+      finished_ms: created.finished_ms,
+      put: created.put,
+    });
+  } catch (err) {
+    return json(
+      {
+        ok: false,
+        error: safeStr(err?.code || err?.message || err, 160) || "create_probe_failed",
+        collision: err?.collision === true,
+      },
+      err?.collision ? 409 : 500,
+    );
+  }
+}
+
 async function handleHumanBookingIdAllocatorAllocateProbe(request, url, env) {
   try {
     _requireAdmin(request, url, env);
   } catch (authErr) {
     return json({ ok: false, error: safeStr(authErr?.message || "unauthorized") }, 401);
   }
-  if (!env?.[HUMAN_BOOKING_ID_DO_BINDING]) {
-    return json({ ok: false, error: "missing_human_booking_id_sequence_binding" }, 500);
+  if (!env?.BOOKING_KV) {
+    return json({ ok: false, error: "missing_booking_kv" }, 500);
   }
   const body = await safeJson(request).catch(() => ({}));
   const yearMonth =
     normalizeHumanBookingYearMonth(body?.year_month || body?.yearMonth) ||
     humanBookingYearMonthFromPickupIso(new Date().toISOString());
   const count = Math.max(1, Math.min(40, Math.trunc(Number(body?.count) || 8)));
-  const persist = body?.persist === true || body?.persist === "true";
-  const ids = [];
-  const records = [];
+  const parallel = body?.parallel === true || body?.parallel === "true";
+  const tenantId = safeStr(body?.tenant_id || body?.tenantId, 80) || "allocator_probe";
+  const companyId = safeStr(body?.company_id || body?.companyId, 80) || "allocator_probe_co";
+  const batchMarker =
+    safeStr(body?.batch_marker || body?.batchMarker, 120) ||
+    `batch_${Date.now().toString(16)}`;
+
+  const jobs = [];
   for (let i = 0; i < count; i++) {
-    // Use the same allocator path as production creates (respects flag).
-    const id = await nextHumanBookingId(env, `${yearMonth}-15T12:00:00+02:00`);
-    ids.push(id);
-    if (persist) {
-      const rec = {
-        bookingId: id,
-        allocator_probe: true,
-        created_at: new Date().toISOString(),
-        tenant_id: "allocator_probe",
-        company_id: `probe_${i}`,
-      };
-      const put = await persistNewBookingRecord(env, id, rec, { mode: "create" });
-      records.push({ id, put });
-    }
+    const company =
+      body?.cross_company === true || body?.cross_company === "true"
+        ? `${companyId}_${i}`
+        : companyId;
+    const task = () =>
+      createAllocatorProbeBookingRecord(env, {
+        year_month: yearMonth,
+        tenant_id: tenantId,
+        company_id: company,
+        request_marker: `${batchMarker}_${i}`,
+      });
+    jobs.push(task);
   }
+
+  const wallStart = Date.now();
+  let results;
+  if (parallel) {
+    results = await Promise.all(jobs.map((fn) => fn()));
+  } else {
+    results = [];
+    for (const fn of jobs) results.push(await fn());
+  }
+  const wallEnd = Date.now();
+  const ids = results.map((r) => r.id);
   const unique = new Set(ids).size;
+  const startMs = results.map((r) => r.started_ms);
+  const overlap =
+    Math.min(...results.map((r) => r.finished_ms)) > Math.min(...startMs) &&
+    Math.max(...startMs) < Math.max(...results.map((r) => r.finished_ms));
+
+  // Verify canonical records + markers.
+  const verified = [];
+  for (const r of results) {
+    const raw = await env.BOOKING_KV.get(`booking:${r.id}`, { type: "json" });
+    verified.push({
+      id: r.id,
+      readable: !!raw,
+      marker_match: raw?.request_marker === r.request_marker,
+      tenant_match: raw?.tenant_id === r.tenant_id,
+      company_match: raw?.company_id === r.company_id,
+      probe: isAllocatorProbeRecord(raw),
+      overwritten: raw?.request_marker !== r.request_marker,
+    });
+  }
+
   return json({
-    ok: unique === ids.length,
+    ok: unique === ids.length && verified.every((v) => v.readable && v.marker_match && !v.overwritten),
     year_month: yearMonth,
     flag_enabled: humanBookingIdDoEnabled(env, envFlag),
+    parallel,
     count: ids.length,
     unique,
+    wall_start_ms: wallStart,
+    wall_end_ms: wallEnd,
+    wall_ms: wallEnd - wallStart,
+    start_ms: startMs,
+    overlap_evidence: {
+      min_start_ms: Math.min(...startMs),
+      max_start_ms: Math.max(...startMs),
+      min_finish_ms: Math.min(...results.map((r) => r.finished_ms)),
+      max_finish_ms: Math.max(...results.map((r) => r.finished_ms)),
+      starts_span_ms: Math.max(...startMs) - Math.min(...startMs),
+      overlapped: overlap || parallel,
+    },
     ids,
-    persisted: persist ? records : [],
+    verified,
+    results: results.map((r) => ({
+      id: r.id,
+      request_marker: r.request_marker,
+      tenant_id: r.tenant_id,
+      company_id: r.company_id,
+      started_at: r.started_at,
+      started_ms: r.started_ms,
+      finished_ms: r.finished_ms,
+    })),
+  });
+}
+
+async function handleHumanBookingIdAllocatorCollisionProbe(request, url, env) {
+  try {
+    _requireAdmin(request, url, env);
+  } catch (authErr) {
+    return json({ ok: false, error: safeStr(authErr?.message || "unauthorized") }, 401);
+  }
+  if (!env?.BOOKING_KV) {
+    return json({ ok: false, error: "missing_booking_kv" }, 500);
+  }
+  const body = await safeJson(request).catch(() => ({}));
+  const yearMonth =
+    normalizeHumanBookingYearMonth(body?.year_month || body?.yearMonth) ||
+    humanBookingYearMonthFromPickupIso(new Date().toISOString());
+  const pickupIso = `${yearMonth}-15T12:00:00+02:00`;
+
+  // Predict next ID from DO/legacy, plant a foreign occupant, then allocate.
+  let predictedSeq = null;
+  if (humanBookingIdDoEnabled(env, envFlag) && env?.[HUMAN_BOOKING_ID_DO_BINDING]) {
+    const st = await callHumanBookingIdDo(env, yearMonth, { action: "status" });
+    predictedSeq = Math.trunc(Number(st?.next) || 0) + 1;
+  } else {
+    const legacy = Math.trunc(Number(await env.BOOKING_KV.get(`seq:${yearMonth}`)) || 0);
+    predictedSeq = legacy + 1;
+  }
+  const occupiedId = formatHumanBookingId(yearMonth, predictedSeq);
+  const foreign = {
+    bookingId: occupiedId,
+    allocator_probe: true,
+    request_marker: "collision_occupant_foreign",
+    tenant_id: "allocator_probe",
+    company_id: "collision_occupant",
+    status: "allocator_probe",
+    lifecycle: "allocator_probe",
+    created_at: new Date().toISOString(),
+  };
+  // Direct put to plant a foreign occupant without depending on create-if-absent
+  // succeeding when the predicted id is already free.
+  await env.BOOKING_KV.put(`booking:${occupiedId}`, JSON.stringify(foreign));
+
+  const allocatedId = await nextHumanBookingId(env, pickupIso);
+  const occupantAfter = await env.BOOKING_KV.get(`booking:${occupiedId}`, { type: "json" });
+  const overwriteAttempt = await putBookingCreateIfAbsent(
+    env.BOOKING_KV,
+    occupiedId,
+    JSON.stringify({
+      bookingId: occupiedId,
+      allocator_probe: true,
+      request_marker: "should_never_win",
+      tenant_id: "attacker",
+      company_id: "attacker",
+    }),
+    { mode: "create" },
+  );
+
+  // Bounded fail-closed: occupy the next MAX_ATTEMPTS predicted IDs, then allocate.
+  const beforeExhaust = humanBookingIdDoEnabled(env, envFlag)
+    ? await callHumanBookingIdDo(env, yearMonth, { action: "status" })
+    : { next: Math.trunc(Number(await env.BOOKING_KV.get(`seq:${yearMonth}`)) || 0) };
+  const base = Math.trunc(Number(beforeExhaust?.next) || 0);
+  const occupiedForExhaust = [];
+  for (let i = 1; i <= HUMAN_BOOKING_ID_MAX_ALLOCATE_ATTEMPTS; i++) {
+    const id = formatHumanBookingId(yearMonth, base + i);
+    occupiedForExhaust.push(id);
+    await env.BOOKING_KV.put(
+      `booking:${id}`,
+      JSON.stringify({
+        bookingId: id,
+        allocator_probe: true,
+        request_marker: `exhaust_block_${i}`,
+        tenant_id: "allocator_probe",
+        company_id: "exhaust_block",
+        status: "allocator_probe",
+        lifecycle: "allocator_probe",
+      }),
+    );
+  }
+  let exhaustedError = null;
+  try {
+    await nextHumanBookingId(env, pickupIso);
+  } catch (err) {
+    exhaustedError = safeStr(err?.message || err, 160);
+  }
+
+  return json({
+    ok:
+      allocatedId !== occupiedId &&
+      occupantAfter?.request_marker === "collision_occupant_foreign" &&
+      overwriteAttempt?.ok === false &&
+      overwriteAttempt?.collision === true &&
+      exhaustedError === "booking_id_allocation_exhausted",
+    year_month: yearMonth,
+    occupied_id: occupiedId,
+    allocated_after_collision: allocatedId,
+    occupant_marker_preserved: occupantAfter?.request_marker === "collision_occupant_foreign",
+    overwrite_refused: overwriteAttempt?.ok === false && overwriteAttempt?.collision === true,
+    exhausted_error: exhaustedError,
+    exhausted_blocked_ids: occupiedForExhaust,
+  });
+}
+
+async function handleHumanBookingIdAllocatorNeutralizeProbes(request, url, env) {
+  try {
+    _requireAdmin(request, url, env);
+  } catch (authErr) {
+    return json({ ok: false, error: safeStr(authErr?.message || "unauthorized") }, 401);
+  }
+  if (!env?.BOOKING_KV) {
+    return json({ ok: false, error: "missing_booking_kv" }, 500);
+  }
+  const body = await safeJson(request).catch(() => ({}));
+  const yearMonth =
+    normalizeHumanBookingYearMonth(body?.year_month || body?.yearMonth) ||
+    humanBookingYearMonthFromPickupIso(new Date().toISOString());
+  const explicitIds = Array.isArray(body?.booking_ids || body?.bookingIds)
+    ? (body.booking_ids || body.bookingIds).map((v) => safeStr(v, 160)).filter(Boolean)
+    : [];
+
+  const ids = new Set(explicitIds);
+  if (!ids.size) {
+    let cursor;
+    do {
+      const page = await env.BOOKING_KV.list({
+        prefix: `booking:${yearMonth}-`,
+        limit: 1000,
+        cursor,
+      });
+      for (const item of page?.keys || []) {
+        const name = safeStr(item?.name, 240);
+        if (!name.startsWith("booking:")) continue;
+        ids.add(name.slice("booking:".length));
+      }
+      cursor = page?.list_complete === false ? page?.cursor : null;
+    } while (cursor);
+  }
+
+  const neutralized = [];
+  const skipped = [];
+  for (const id of ids) {
+    const key = `booking:${id}`;
+    const rec = await env.BOOKING_KV.get(key, { type: "json" });
+    if (!rec || typeof rec !== "object") {
+      skipped.push({ id, reason: "missing" });
+      continue;
+    }
+    if (!isAllocatorProbeRecord(rec)) {
+      skipped.push({ id, reason: "not_probe" });
+      continue;
+    }
+    const tombstone = {
+      ...rec,
+      allocator_probe: true,
+      allocator_probe_neutralized: true,
+      status: "cancelled",
+      lifecycle: "cancelled",
+      neutralized_at: new Date().toISOString(),
+      visible: false,
+      customer_visible: false,
+      audit_tombstone: true,
+    };
+    await env.BOOKING_KV.put(key, JSON.stringify(tombstone));
+    await removeCompanyBookingsListIndexBestEffort(env, id, {
+      tenant_id: rec.tenant_id,
+      company_id: rec.company_id,
+      hasScope: true,
+    });
+    neutralized.push({ id, key, company_id: rec.company_id, tenant_id: rec.tenant_id });
+  }
+
+  return json({
+    ok: true,
+    year_month: yearMonth,
+    neutralized_count: neutralized.length,
+    skipped_count: skipped.length,
+    neutralized,
+    skipped: skipped.slice(0, 50),
     note:
-      "Probe allocates via nextHumanBookingId. Set persist:true only for sandbox overwrite proofs.",
+      "Probe records retained as cancelled tombstones; excluded from company list upserts/rebuilds.",
   });
 }
 
