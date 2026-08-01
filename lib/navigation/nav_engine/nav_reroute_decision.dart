@@ -35,6 +35,12 @@ class NavRerouteDecisionConfig {
   static const double minDeviationSpeedKmh = 8.0;
   static const double parkingSpeedKmh = 3.0;
 
+  /// RELEASE-P0: crawl floor for confirmed strong opposite only.
+  /// Does not lower the global deviation / wrong-street speed floors.
+  static const double minStrongOppositeCrawlSpeedKmh = 1.5;
+  static const int strongOppositeCrawlMinSamples = 2;
+  static const double strongOppositeHeadingDeg = 135.0;
+
   /// Primary fast path: confirmed wrong outgoing street after a junction.
   /// Detection is heading + unmatched geometry — not an 80–120 m snap wait.
   static const double wrongStreetMinSpeedKmh = 12.0;
@@ -414,6 +420,15 @@ class NavRerouteDecisionTracker {
       samplesOffRoute: samplesOffRoute,
       offRouteLikely: offRouteLikely,
     );
+    final movementBlockReason = navRerouteMovementBlockedReason(
+      speedKmh: input.speedKmh,
+      offRouteReason: offRouteReason,
+      routeDeviationLikely: routeDeviation || wrongStreetEval.observation,
+      samplesOffRoute: samplesOffRoute,
+      offRouteLikely: offRouteLikely,
+      accuracyM: input.accuracyM,
+      headingDeltaDeg: progress.headingDeltaDeg,
+    );
 
     String blockedReason = 'none';
     if (!input.hasRoute) {
@@ -423,17 +438,24 @@ class NavRerouteDecisionTracker {
     } else if (input.isWaiting) {
       blockedReason = 'waiting';
     } else if (!input.allowReroutePhase) {
-      blockedReason = 'phase_blocked';
+      blockedReason = 'phase_not_allowed';
     } else if (input.isRerouting) {
       blockedReason = 'request_in_flight';
-    } else if (wrongStreetEval.ambiguous && !wrongStreetConfirmed) {
+    } else if (wrongStreetEval.ambiguous &&
+        !wrongStreetConfirmed &&
+        !strongOppositeDirection &&
+        !oppositeDirection) {
       blockedReason = 'junction_ambiguous';
     } else if (!offRouteLikely) {
       blockedReason = 'not_off_route';
     } else if (!movementOk) {
-      blockedReason = 'movement_blocked';
+      blockedReason = movementBlockReason;
     } else if (cooldownEval.active) {
-      blockedReason = cooldownEval.blockedReason;
+      blockedReason = cooldownEval.blockedReason == 'successful_reroute_cooldown' ||
+              cooldownEval.blockedReason == 'failed_retry_backoff' ||
+              cooldownEval.blockedReason == 'startup_grace'
+          ? 'cooldown'
+          : cooldownEval.blockedReason;
     }
 
     final eligible =
@@ -445,7 +467,10 @@ class NavRerouteDecisionTracker {
         !input.isWaiting &&
         !input.isRerouting &&
         input.hasRoute &&
-        !(wrongStreetEval.ambiguous && !wrongStreetConfirmed);
+        !(wrongStreetEval.ambiguous &&
+            !wrongStreetConfirmed &&
+            !strongOppositeDirection &&
+            !oppositeDirection);
 
     final debounceRequired = navRerouteDebounceFor(
       offRouteReason: offRouteReason,
@@ -576,9 +601,15 @@ NavRerouteWrongStreetEval navRerouteEvaluateWrongStreet({
       distanceToManeuverM <= NavRerouteDecisionConfig.wrongStreetNearManeuverM;
 
   // Inside a wide / ambiguous junction: wait until the outgoing street clears.
+  // RELEASE-P0: sustained very-strong reverse heading (>=135) must not be
+  // treated as junction ambiguity solely because snap is still <10 m.
+  final veryStrongReverse = heading != null &&
+      heading.isFinite &&
+      heading >= NavRerouteDecisionConfig.strongOppositeHeadingDeg;
   final ambiguous = snapDistanceM <
           NavRerouteDecisionConfig.wrongStreetMinSnapM &&
       !strongHeading &&
+      !veryStrongReverse &&
       !routeSaysWrong;
 
   if (ambiguous) {
@@ -594,7 +625,8 @@ NavRerouteWrongStreetEval navRerouteEvaluateWrongStreet({
   if (snapDistanceM <=
           NavRerouteDecisionConfig.wrongStreetParallelLaneMaxSnapM &&
       !headingDisagree &&
-      !routeSaysWrong) {
+      !routeSaysWrong &&
+      !veryStrongReverse) {
     return NavRerouteWrongStreetEval.none;
   }
 
@@ -605,35 +637,44 @@ NavRerouteWrongStreetEval navRerouteEvaluateWrongStreet({
   final unmatched = progress.offRouteLikely ||
       !progress.hasReliableSnap ||
       progress.confidence < 55.0 ||
-      snapDistanceM >= NavRerouteDecisionConfig.wrongStreetMinSnapM;
+      snapDistanceM >= NavRerouteDecisionConfig.wrongStreetMinSnapM ||
+      veryStrongReverse ||
+      routeSaysWrong;
   if (!unmatched) return NavRerouteWrongStreetEval.none;
 
   final beyondJunction = snapDistanceM >=
           NavRerouteDecisionConfig.wrongStreetMinSnapM &&
       (headingDisagree || routeSaysWrong);
-  final exitClear = beyondJunction &&
-      (snapGrowing ||
-          snapDistanceM >= NavRerouteDecisionConfig.wrongStreetClearSnapM ||
-          nearOrPastManeuver ||
-          wrongStreetSampleCount >= 1 ||
-          strongHeading ||
-          routeSaysWrong);
+  // RELEASE-P0: small-snap reverse travel along/beside the corridor.
+  final smallSnapReverse = veryStrongReverse &&
+      routeSaysWrong &&
+      snapDistanceM < NavRerouteDecisionConfig.wrongStreetMinSnapM;
+  final exitClear = (beyondJunction &&
+          (snapGrowing ||
+              snapDistanceM >= NavRerouteDecisionConfig.wrongStreetClearSnapM ||
+              nearOrPastManeuver ||
+              wrongStreetSampleCount >= 1 ||
+              strongHeading ||
+              routeSaysWrong)) ||
+      smallSnapReverse;
 
-  if (!exitClear && !beyondJunction) {
+  if (!exitClear && !beyondJunction && !smallSnapReverse) {
     return NavRerouteWrongStreetEval(
       observation: false,
-      ambiguous: nearOrPastManeuver,
-      strongHeading: strongHeading,
+      ambiguous: nearOrPastManeuver && !veryStrongReverse,
+      strongHeading: strongHeading || veryStrongReverse,
       nearOrPastManeuver: nearOrPastManeuver,
     );
   }
 
-  if (!beyondJunction) return NavRerouteWrongStreetEval.none;
+  if (!beyondJunction && !smallSnapReverse) {
+    return NavRerouteWrongStreetEval.none;
+  }
 
   return NavRerouteWrongStreetEval(
     observation: true,
     ambiguous: false,
-    strongHeading: strongHeading,
+    strongHeading: strongHeading || veryStrongReverse,
     nearOrPastManeuver: nearOrPastManeuver,
   );
 }
@@ -780,31 +821,36 @@ NavRerouteCooldownEval navRerouteEvaluateCooldown({
   }
 
   // Successful-reroute anti-thrash — strong/severe fast path may bypass.
-  final antiThrashAnchor = successAt ?? lastRerouteAt;
-  if (antiThrashAnchor != null) {
-    final elapsed = now.difference(antiThrashAnchor);
-    final isDeviation = navRerouteIsRouteDeviationReason(offRouteReason);
-    final limit = isDeviation
-        ? NavRerouteDecisionConfig.rerouteCooldownRouteDeviation
-        : NavRerouteDecisionConfig.successfulRerouteCooldown;
-    if (elapsed < limit) {
-      final allowBypass = fastPathReady && (severeEvidence || !isDeviation);
-      if (!allowBypass) {
-        return NavRerouteCooldownEval(
-          kind: NavRerouteCooldownKind.successfulReroute,
-          active: true,
-          remainingMs: (limit - elapsed).inMilliseconds,
-          fastPathEligible: fastPathReady,
-          blockedReason: 'successful_reroute_cooldown',
+  // Failed attempts must NOT inherit this window; they use the shorter
+  // failed-retry backoff above so persistent opposite-direction deviations
+  // can recover after ~3s.
+  if (!lastRerouteFailed) {
+    final antiThrashAnchor = successAt ?? lastRerouteAt;
+    if (antiThrashAnchor != null) {
+      final elapsed = now.difference(antiThrashAnchor);
+      final isDeviation = navRerouteIsRouteDeviationReason(offRouteReason);
+      final limit = isDeviation
+          ? NavRerouteDecisionConfig.rerouteCooldownRouteDeviation
+          : NavRerouteDecisionConfig.successfulRerouteCooldown;
+      if (elapsed < limit) {
+        final allowBypass = fastPathReady && (severeEvidence || !isDeviation);
+        if (!allowBypass) {
+          return NavRerouteCooldownEval(
+            kind: NavRerouteCooldownKind.successfulReroute,
+            active: true,
+            remainingMs: (limit - elapsed).inMilliseconds,
+            fastPathEligible: fastPathReady,
+            blockedReason: 'successful_reroute_cooldown',
+          );
+        }
+        return const NavRerouteCooldownEval(
+          kind: NavRerouteCooldownKind.none,
+          active: false,
+          remainingMs: 0,
+          fastPathEligible: true,
+          blockedReason: 'none',
         );
       }
-      return const NavRerouteCooldownEval(
-        kind: NavRerouteCooldownKind.none,
-        active: false,
-        remainingMs: 0,
-        fastPathEligible: true,
-        blockedReason: 'none',
-      );
     }
   }
 
@@ -920,6 +966,15 @@ bool navRerouteMovementOk({
   required bool offRouteLikely,
 }) {
   if (!offRouteLikely) return false;
+  // RELEASE-P0: strong opposite crawl (fuel-station / reverse exit) may
+  // proceed below the normal 8 km/h floor once progress already confirmed
+  // the deviation with displacement evidence.
+  if (offRouteReason == 'opposite_direction_strong' &&
+      speedKmh >= NavRerouteDecisionConfig.minStrongOppositeCrawlSpeedKmh &&
+      samplesOffRoute >=
+          NavRerouteDecisionConfig.strongOppositeCrawlMinSamples) {
+    return true;
+  }
   if (routeDeviationLikely &&
       speedKmh >= NavRerouteDecisionConfig.minDeviationSpeedKmh) {
     return true;
@@ -943,6 +998,43 @@ bool navRerouteMovementOk({
     return routeDeviationLikely && samplesOffRoute >= 3;
   }
   return samplesOffRoute >= 2;
+}
+
+/// PII-safe blocked reason when [navRerouteMovementOk] is false.
+String navRerouteMovementBlockedReason({
+  required double speedKmh,
+  required String offRouteReason,
+  required bool routeDeviationLikely,
+  required int samplesOffRoute,
+  required bool offRouteLikely,
+  double? accuracyM,
+  double? headingDeltaDeg,
+}) {
+  if (!offRouteLikely) return 'not_off_route';
+  if (speedKmh < NavRerouteDecisionConfig.minStrongOppositeCrawlSpeedKmh) {
+    return 'stationary';
+  }
+  if (accuracyM != null &&
+      accuracyM.isFinite &&
+      accuracyM > NavRerouteDecisionConfig.goodAccuracyMaxM &&
+      navRerouteIsRouteDeviationReason(offRouteReason)) {
+    return 'accuracy_low';
+  }
+  if (offRouteReason == 'opposite_direction_strong' ||
+      offRouteReason == 'opposite_direction') {
+    if (headingDeltaDeg != null &&
+        headingDeltaDeg.isFinite &&
+        headingDeltaDeg < NavRerouteDecisionConfig.strongOppositeHeadingDeg &&
+        speedKmh < NavRerouteDecisionConfig.minDeviationSpeedKmh) {
+      return 'heading_not_strong';
+    }
+    if (samplesOffRoute <
+        NavRerouteDecisionConfig.strongOppositeCrawlMinSamples) {
+      return 'insufficient_samples';
+    }
+  }
+  if (samplesOffRoute < 2) return 'insufficient_samples';
+  return 'movement_blocked';
 }
 
 String navRerouteHeadingDeltaBucket(double? headingDeltaDeg) {
@@ -970,6 +1062,15 @@ String navRerouteMovementBucket(double speedKmh) {
   if (speed < 30.0) return 'city';
   if (speed < 60.0) return 'urban';
   return 'highway';
+}
+
+String navRerouteDisplacementBucket(double displacementM) {
+  if (!displacementM.isFinite || displacementM < 0) return 'na';
+  if (displacementM < 1.0) return '0-1';
+  if (displacementM < 3.0) return '1-3';
+  if (displacementM < 8.0) return '3-8';
+  if (displacementM < 20.0) return '8-20';
+  return '20+';
 }
 
 String navRerouteAccuracyBucket(double? accuracyM) {

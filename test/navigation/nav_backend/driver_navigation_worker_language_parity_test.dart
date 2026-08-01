@@ -142,6 +142,31 @@ void main() {
       expect(body['reason'], 'off_route');
     });
 
+    test('G2) /reroute preserves opposite_direction and wrong_street', () async {
+      final httpClient = _CapturingHttpClient();
+      final client = DriverNavigationWorkerClient(
+        baseUrl: 'https://nav.example.invalid',
+        httpClient: httpClient,
+      );
+      await client.reroute(
+        current: const DriverLonLat(4.40, 50.85),
+        destination: const DriverLonLat(4.41, 50.86),
+        country: 'BE',
+        reason: 'opposite_direction_strong',
+      );
+      var body = jsonDecode(httpClient.lastBody!) as Map<String, dynamic>;
+      expect(body['reason'], 'opposite_direction');
+
+      await client.reroute(
+        current: const DriverLonLat(4.40, 50.85),
+        destination: const DriverLonLat(4.41, 50.86),
+        country: 'BE',
+        reason: 'wrong_street',
+      );
+      body = jsonDecode(httpClient.lastBody!) as Map<String, dynamic>;
+      expect(body['reason'], 'wrong_street');
+    });
+
     test('I) older request without language omits the field', () async {
       final httpClient = _CapturingHttpClient();
       final client = DriverNavigationWorkerClient(

@@ -117,6 +117,14 @@ class DriverNavRouteProgress {
   static const int _oppositeHeadingStreakThreshold = 2;
   static const int _backwardProgressStreakThreshold = 2;
 
+  // RELEASE-P0: strong opposite-direction crawl path (fuel-station exit /
+  // same-road reverse) — does NOT lower the global 8 km/h floor.
+  static const double _stationarySpeedKmh = 1.0;
+  static const double _strongOppositeCrawlMinSpeedKmh = 1.5;
+  static const double _strongOppositeMinDisplacementM = 3.0;
+  static const int _strongOppositeCrawlStreakThreshold = 3;
+  static const double _courseOverGroundMinDisplacementM = 2.0;
+
   int? _previousSegmentIndex;
   int? _lastReliableSegmentIndex;
   double? _lastDistanceAlongRouteM;
@@ -124,6 +132,10 @@ class DriverNavRouteProgress {
   int _oppositeHeadingStreak = 0;
   int _backwardProgressStreak = 0;
   bool _routeWasReset = true;
+  double? _lastRawLatitude;
+  double? _lastRawLongitude;
+  DateTime? _lastRawTimestamp;
+  double _strongOppositeDisplacementM = 0.0;
 
   void reset() {
     _previousSegmentIndex = null;
@@ -133,6 +145,10 @@ class DriverNavRouteProgress {
     _oppositeHeadingStreak = 0;
     _backwardProgressStreak = 0;
     _routeWasReset = true;
+    _lastRawLatitude = null;
+    _lastRawLongitude = null;
+    _lastRawTimestamp = null;
+    _strongOppositeDisplacementM = 0.0;
   }
 
   NavRouteProgressOutput update(NavRouteProgressInput input) {
@@ -199,39 +215,100 @@ class DriverNavRouteProgress {
       confidence = (confidence - 20.0).clamp(0.0, 100.0);
     }
 
-    // NAV-R12-B: explicit opposite-direction detection. Snap distance can
+    // NAV-R12-B / RELEASE-P0: opposite-direction detection. Snap distance can
     // stay near 0 while the route no longer matches actual movement, so
-    // heading vs matched segment bearing must be decisive.
+    // heading vs matched segment bearing must be decisive. Prefer course-
+    // over-ground from consecutive GPS when the vehicle actually moved.
+    final stepDisplacementM = _stepDisplacementMeters(
+      lat: input.rawLatitude,
+      lon: input.rawLongitude,
+    );
+    final courseOverGroundDeg = _courseOverGroundDeg(
+      lat: input.rawLatitude,
+      lon: input.rawLongitude,
+      stepDisplacementM: stepDisplacementM,
+    );
+    final effectiveHeading =
+        courseOverGroundDeg ?? input.rawHeading;
     final headingDeltaDeg = _headingDeltaDegFor(
-      rawHeading: input.rawHeading,
+      rawHeading: effectiveHeading,
       segmentBearing: candidate.segmentBearing,
     );
+    final accuracyOk =
+        accuracyM == null ||
+        !accuracyM.isFinite ||
+        accuracyM <= _deviationMaxAccuracyM;
     final movingReliably =
-        speedKmh >= _deviationMinSpeedKmh &&
-        (accuracyM == null ||
-            !accuracyM.isFinite ||
-            accuracyM <= _deviationMaxAccuracyM);
+        speedKmh >= _deviationMinSpeedKmh && accuracyOk;
+    final strongHeadingMismatch = headingDeltaDeg != null &&
+        headingDeltaDeg > _strongOppositeHeadingDeltaDeg;
+    final progressingAwayFromStationary =
+        speedKmh >= _strongOppositeCrawlMinSpeedKmh ||
+        stepDisplacementM >= _courseOverGroundMinDisplacementM;
+    if (strongHeadingMismatch && progressingAwayFromStationary) {
+      _strongOppositeDisplacementM += math.max(0.0, stepDisplacementM);
+    } else if (!strongHeadingMismatch ||
+        speedKmh < _stationarySpeedKmh) {
+      _strongOppositeDisplacementM = 0.0;
+    }
+    final crawlDisplacementOk =
+        _strongOppositeDisplacementM >= _strongOppositeMinDisplacementM ||
+        stepDisplacementM >= _strongOppositeMinDisplacementM;
+    // Grow crawl evidence below the normal 8 km/h floor; displacement is
+    // required only to *confirm* opposite, not to start the streak.
+    final crawlCandidate = accuracyOk &&
+        strongHeadingMismatch &&
+        speedKmh >= _strongOppositeCrawlMinSpeedKmh &&
+        speedKmh < _deviationMinSpeedKmh;
+    // Hold an in-progress streak when speed briefly dips below 8 km/h while
+    // the vehicle is still progressing with a strong reverse heading.
+    final holdStrongStreak = accuracyOk &&
+        _oppositeHeadingStreak > 0 &&
+        strongHeadingMismatch &&
+        speedKmh >= _stationarySpeedKmh &&
+        progressingAwayFromStationary;
+
     var oppositeDirectionLikely = false;
     var routeDeviationReason = 'none';
-    if (movingReliably && headingDeltaDeg != null) {
-      if (headingDeltaDeg > _oppositeHeadingDeltaDeg) {
+    if (headingDeltaDeg == null || !accuracyOk) {
+      if (speedKmh < _stationarySpeedKmh) {
+        _oppositeHeadingStreak = 0;
+        _strongOppositeDisplacementM = 0.0;
+      }
+      // Poor accuracy / missing heading: do not grow evidence, but do not
+      // wipe a strong crawl streak solely for a brief accuracy blip unless
+      // the vehicle is stationary.
+    } else if (headingDeltaDeg > _oppositeHeadingDeltaDeg) {
+      if (movingReliably || crawlCandidate || holdStrongStreak) {
         _oppositeHeadingStreak += 1;
-        if (headingDeltaDeg > _strongOppositeHeadingDeltaDeg) {
+        final crawlReady = (crawlCandidate || holdStrongStreak) &&
+            crawlDisplacementOk &&
+            _oppositeHeadingStreak >= _strongOppositeCrawlStreakThreshold;
+        final normalStrongReady = movingReliably &&
+            headingDeltaDeg > _strongOppositeHeadingDeltaDeg &&
+            _oppositeHeadingStreak >= _oppositeHeadingStreakThreshold;
+        if (crawlReady || normalStrongReady) {
           oppositeDirectionLikely = true;
           routeDeviationReason = 'opposite_heading_strong';
-        } else if (_oppositeHeadingStreak >= _oppositeHeadingStreakThreshold ||
-            (headingDeltaDeg > 110.0 && !forwardProgress)) {
+        } else if (movingReliably &&
+            (_oppositeHeadingStreak >= _oppositeHeadingStreakThreshold ||
+                (headingDeltaDeg > 110.0 && !forwardProgress))) {
           oppositeDirectionLikely = true;
           routeDeviationReason = 'opposite_heading';
         }
-      } else {
+      } else if (speedKmh < _stationarySpeedKmh) {
         _oppositeHeadingStreak = 0;
+        _strongOppositeDisplacementM = 0.0;
       }
+      // Else: noisy crawl without usable motion — leave streak unchanged.
     } else {
-      // Stopped, creeping, poor accuracy, or no usable heading: streaks
-      // require consecutive reliable moving fixes, so start over.
       _oppositeHeadingStreak = 0;
+      _strongOppositeDisplacementM = 0.0;
     }
+
+    _lastRawLatitude = input.rawLatitude;
+    _lastRawLongitude = input.rawLongitude;
+    _lastRawTimestamp = input.timestamp;
 
     // NAV-R12-B: sustained backward route progress invalidates the current
     // route, not just a confidence penalty.
@@ -324,6 +401,35 @@ class DriverNavRouteProgress {
       return null;
     }
     return _bearingDiff(rawHeading, segmentBearing).abs();
+  }
+
+  double _stepDisplacementMeters({
+    required double lat,
+    required double lon,
+  }) {
+    final prevLat = _lastRawLatitude;
+    final prevLon = _lastRawLongitude;
+    if (prevLat == null || prevLon == null) return 0.0;
+    final d = _haversineMeters(prevLat, prevLon, lat, lon);
+    if (!d.isFinite || d < 0) return 0.0;
+    // Ignore absurd GPS jumps between fixes for crawl evidence.
+    if (d > 80.0) return 0.0;
+    return d;
+  }
+
+  double? _courseOverGroundDeg({
+    required double lat,
+    required double lon,
+    required double stepDisplacementM,
+  }) {
+    final prevLat = _lastRawLatitude;
+    final prevLon = _lastRawLongitude;
+    if (prevLat == null ||
+        prevLon == null ||
+        stepDisplacementM < _courseOverGroundMinDisplacementM) {
+      return null;
+    }
+    return _bearingFromPoints(prevLat, prevLon, lat, lon);
   }
 
   static double _maxReliableSnapDistanceM(double? accuracyM) {

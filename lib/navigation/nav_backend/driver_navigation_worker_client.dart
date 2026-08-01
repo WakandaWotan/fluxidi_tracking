@@ -12,7 +12,23 @@ const Set<String> _allowedRerouteReasons = {
   'manual',
   'traffic',
   'unknown',
+  'opposite_direction',
+  'wrong_street',
 };
+
+/// Normalize a client-side deviation reason for the navigation worker wire.
+///
+/// Preserves explicit deviation reasons so the worker can bypass stale route
+/// cache. Maps strong/backward variants onto the allowlisted tokens.
+String normalizeNavigationWorkerRerouteReason(String? raw) {
+  final text = (raw ?? '').trim().toLowerCase();
+  if (text.isEmpty) return 'unknown';
+  if (text == 'opposite_direction_strong' || text == 'backward_progress') {
+    return 'opposite_direction';
+  }
+  if (_allowedRerouteReasons.contains(text)) return text;
+  return 'unknown';
+}
 
 /// Fluxidi UI / Mapbox navigation languages (never country codes).
 const Set<String> kNavigationWorkerLanguageAllowlist = {
@@ -602,10 +618,7 @@ class DriverNavigationWorkerClient {
   }) async {
     final countryCode = _normalizeCountry(country);
     final navigationLanguage = normalizeNavigationWorkerLanguage(language);
-    final rerouteReason = _allowedRerouteReasons.contains(reason)
-        ? reason
-        : 'unknown';
-    final body = <String, dynamic>{
+    final rerouteReason = normalizeNavigationWorkerRerouteReason(reason);    final body = <String, dynamic>{
       'current': {'lat': current.lat, 'lng': current.lon},
       'destination': {'lat': destination.lat, 'lng': destination.lon},
       'country': countryCode,

@@ -17780,6 +17780,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           'firstStrongEvidenceAgeMs=${decision.firstStrongEvidenceAgeMs ?? -1} '
           'strongEvidenceDurationMs=${decision.strongEvidenceDurationMs ?? -1} '
           'movementBucket=${navRerouteMovementBucket(_speedKmhFor(pos))} '
+          'usableSampleStreak=${decision.samplesOffRoute} '
           'eligible=${decision.eligible} '
           'cooldown=${decision.cooldownActive} '
           'cooldownKind=${navRerouteCooldownKindToken(decision.cooldownKind)} '
@@ -17806,6 +17807,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           'firstStrongEvidenceAgeMs': decision.firstStrongEvidenceAgeMs ?? -1,
           'strongEvidenceDurationMs': decision.strongEvidenceDurationMs ?? -1,
           'movementBucket': navRerouteMovementBucket(_speedKmhFor(pos)),
+          'usableSampleStreak': decision.samplesOffRoute,
           'eligible': decision.eligible,
           'cooldown': decision.cooldownActive,
           'cooldownKind': navRerouteCooldownKindToken(decision.cooldownKind),
@@ -18213,6 +18215,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       _rerouteOwnershipAccepted = false;
       _rerouteReason = null;
       _rerouteDecisionEligibleAt = null;
+      _logNavBounded(
+        'NAV_R17_REROUTE_APPLY',
+        'result=in_flight_cleared ok=${ok ? 1 : 0} reason=$reason',
+      );
       debugPrint(
         '[NAV_REROUTE] phase=$phaseLabel reason=$reason result=${ok ? 'ok' : 'fail'}',
       );

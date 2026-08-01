@@ -36,7 +36,20 @@ const ALLOWED_REROUTE_REASONS = new Set([
   "manual",
   "traffic",
   "unknown",
+  "opposite_direction",
+  "wrong_street",
 ]);
+
+const REROUTE_CACHE_BYPASS_REASONS = new Set([
+  "off_route",
+  "traffic",
+  "opposite_direction",
+  "wrong_street",
+]);
+
+export function shouldBypassRerouteCache(kind, rerouteReason) {
+  return kind === "reroute" && REROUTE_CACHE_BYPASS_REASONS.has(rerouteReason);
+}
 
 const CACHE_HOST = "https://fluxidi-nav-cache.internal";
 
@@ -531,7 +544,8 @@ async function handleRoute(request, env, { kind = "route" } = {}) {
       return jsonResponse(
         {
           ok: false,
-          error: "reason must be one of off_route, manual, traffic, unknown",
+          error:
+            "reason must be one of off_route, opposite_direction, wrong_street, manual, traffic, unknown",
         },
         400,
       );
@@ -556,7 +570,7 @@ async function handleRoute(request, env, { kind = "route" } = {}) {
     language: navigationLanguage,
   });
 
-  const bypassCache = kind === "reroute" && (rerouteReason === "off_route" || rerouteReason === "traffic");
+  const bypassCache = shouldBypassRerouteCache(kind, rerouteReason);
   let cacheStatus = bypassCache ? "bypass" : "miss";
   let routePayload = null;
 
