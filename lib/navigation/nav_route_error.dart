@@ -292,5 +292,7 @@ String mapboxDirectionsLanguageCode(AppLanguage lang) {
       return 'en';
     case AppLanguage.nl:
       return 'nl';
+    case AppLanguage.de:
+      return 'en';
   }
 }

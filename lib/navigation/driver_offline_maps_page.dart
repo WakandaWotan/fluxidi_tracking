@@ -192,6 +192,8 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
         return nl;
       case AppLanguage.en:
         return en;
+      case AppLanguage.de:
+        return en;
     }
   }
 

@@ -96,6 +96,8 @@ String driverNavigationMarkerChoiceLabel(
       return choice == DriverNavigationMarkerChoice.car ? 'Coche' : 'Flecha';
     case AppLanguage.en:
       return choice == DriverNavigationMarkerChoice.car ? 'Car' : 'Arrow';
+    case AppLanguage.de:
+      return choice == DriverNavigationMarkerChoice.car ? 'Car' : 'Arrow';
   }
 }
 
