@@ -51,7 +51,7 @@ class NavRouteProgressOutput {
   final bool oppositeDirectionLikely;
 
   /// NAV-R12-B: 'none' | 'opposite_heading' | 'opposite_heading_strong'
-  /// | 'backward_progress'.
+  /// | 'backward_progress' | 'forced_detour'.
   final String routeDeviationReason;
 
   /// NAV-R12-B: absolute delta (0..180) between GPS heading and the matched
@@ -125,12 +125,22 @@ class DriverNavRouteProgress {
   static const int _strongOppositeCrawlStreakThreshold = 3;
   static const double _courseOverGroundMinDisplacementM = 2.0;
 
+  // RELEASE-P0 immediate detour: clear turn onto another road while the old
+  // corridor remains geographically nearby. Must not wait for 58 m snap or
+  // an 8 km/h floor when heading + displacement already prove departure.
+  static const double _forcedDetourHeadingMinDeg = 55.0;
+  static const double _forcedDetourMinSnapM = 10.0;
+  static const double _forcedDetourMinSpeedKmh = 3.0;
+  static const double _forcedDetourMinDisplacementM = 2.0;
+  static const int _forcedDetourStreakThreshold = 2;
+
   int? _previousSegmentIndex;
   int? _lastReliableSegmentIndex;
   double? _lastDistanceAlongRouteM;
   int _lowConfidenceStreak = 0;
   int _oppositeHeadingStreak = 0;
   int _backwardProgressStreak = 0;
+  int _forcedDetourStreak = 0;
   bool _routeWasReset = true;
   double? _lastRawLatitude;
   double? _lastRawLongitude;
@@ -144,6 +154,7 @@ class DriverNavRouteProgress {
     _lowConfidenceStreak = 0;
     _oppositeHeadingStreak = 0;
     _backwardProgressStreak = 0;
+    _forcedDetourStreak = 0;
     _routeWasReset = true;
     _lastRawLatitude = null;
     _lastRawLongitude = null;
@@ -319,10 +330,38 @@ class DriverNavRouteProgress {
     }
     final backwardProgressLikely =
         _backwardProgressStreak >= _backwardProgressStreakThreshold;
-    final routeDeviationLikely =
-        oppositeDirectionLikely || backwardProgressLikely;
+
+    // RELEASE-P0 immediate detour recovery: a clear turn onto another road
+    // while snap remains moderate (old route still nearby). Raw position +
+    // heading/displacement are authoritative — snapped projection must not
+    // hide the departure.
+    final forcedDetourHeading = headingDeltaDeg != null &&
+        headingDeltaDeg.isFinite &&
+        headingDeltaDeg >= _forcedDetourHeadingMinDeg;
+    final forcedDetourMotion = accuracyOk &&
+        speedKmh >= _forcedDetourMinSpeedKmh &&
+        (stepDisplacementM >= _forcedDetourMinDisplacementM ||
+            speedKmh >= _deviationMinSpeedKmh);
+    final forcedDetourSnap = candidate.snapDistanceM >= _forcedDetourMinSnapM ||
+        (candidate.snapDistanceM >= 6.0 && !forwardProgress);
+    if (!oppositeDirectionLikely &&
+        forcedDetourHeading &&
+        forcedDetourMotion &&
+        forcedDetourSnap) {
+      _forcedDetourStreak += 1;
+    } else if (speedKmh < _stationarySpeedKmh || !forcedDetourHeading) {
+      _forcedDetourStreak = 0;
+    }
+    final forcedDetourLikely =
+        _forcedDetourStreak >= _forcedDetourStreakThreshold;
+
+    var routeDeviationLikely =
+        oppositeDirectionLikely || backwardProgressLikely || forcedDetourLikely;
     if (routeDeviationReason == 'none' && backwardProgressLikely) {
       routeDeviationReason = 'backward_progress';
+    }
+    if (routeDeviationReason == 'none' && forcedDetourLikely) {
+      routeDeviationReason = 'forced_detour';
     }
 
     final maxSnapDist = _maxReliableSnapDistanceM(accuracyM);

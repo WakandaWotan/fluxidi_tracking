@@ -14,6 +14,8 @@ const Set<String> _allowedRerouteReasons = {
   'unknown',
   'opposite_direction',
   'wrong_street',
+  'forced_detour',
+  'wrong_exit',
 };
 
 /// Normalize a client-side deviation reason for the navigation worker wire.
@@ -26,6 +28,7 @@ String normalizeNavigationWorkerRerouteReason(String? raw) {
   if (text == 'opposite_direction_strong' || text == 'backward_progress') {
     return 'opposite_direction';
   }
+  if (text == 'wrong_exit') return 'forced_detour';
   if (_allowedRerouteReasons.contains(text)) return text;
   return 'unknown';
 }

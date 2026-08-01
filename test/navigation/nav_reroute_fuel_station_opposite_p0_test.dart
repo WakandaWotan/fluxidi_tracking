@@ -167,6 +167,7 @@ void main() {
       expect(last.routeDeviationReason, 'opposite_heading_strong');
 
       var triggerCount = 0;
+      var isRerouting = false;
       for (var i = 0; i < 4; i++) {
         final decision = tracker.update(
           _tick(
@@ -174,9 +175,14 @@ void main() {
             speedKmh: 4.0,
             now: t,
             accuracyM: 8.0,
+            isRerouting: isRerouting,
           ),
         );
-        if (decision.shouldTrigger) triggerCount += 1;
+        if (decision.shouldTrigger) {
+          triggerCount += 1;
+          // Production locks in-flight after the first request start.
+          isRerouting = true;
+        }
         t = t.add(const Duration(milliseconds: 600));
       }
       expect(triggerCount, 1);

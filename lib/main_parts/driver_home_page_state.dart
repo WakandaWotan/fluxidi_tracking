@@ -1063,6 +1063,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   // | 'backward_progress' | 'snap_distance'.
   String _offRouteReason = 'none';
   bool _isRerouting = false;
+  /// When a newer deviation arrives while a request is in flight, bump
+  /// generation (stale responses cannot apply) and retry after the in-flight
+  /// attempt finishes.
+  bool _pendingRerouteAfterInFlight = false;
+  String? _pendingRerouteReason;
   /// True once an accepted package owns the new route version while the
   /// async reroute Future may still be finishing transport cleanup.
   bool _rerouteOwnershipAccepted = false;
@@ -1335,6 +1340,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     // or auto-retry can never survive into the next session.
     _clearNavRouteFailure();
     _isRerouting = false;
+    _pendingRerouteAfterInFlight = false;
+    _pendingRerouteReason = null;
     _rerouteOwnershipAccepted = false;
     _lastRerouteAt = null;
     _lastRerouteSuccessAt = null;
@@ -1827,6 +1834,27 @@ class _DriverHomePageState extends State<DriverHomePage>
           accepted: false,
           reason: decision.reason,
         ),
+      );
+      return false;
+    }
+
+    // RELEASE-P0: reject a reroute package whose start is materially behind
+    // the current vehicle — forces a fresh request from the latest raw GPS.
+    if (_isRerouting &&
+        _lastPos != null &&
+        package.coords.isNotEmpty &&
+        !navRerouteRouteIsAheadOfVehicle(
+          vehicleLat: _lastPos!.latitude,
+          vehicleLon: _lastPos!.longitude,
+          routeStartLat: package.coords.first.lat,
+          routeStartLon: package.coords.first.lon,
+          maxBehindM: 45,
+        )) {
+      _logNavBounded(
+        'NAV_R17_REROUTE_APPLY',
+        'result=rejected reason=route_behind_vehicle '
+            'gen=${context.requestGeneration}',
+        intervalMs: 500,
       );
       return false;
     }
@@ -18061,8 +18089,24 @@ class _DriverHomePageState extends State<DriverHomePage>
     return _routePhase == _RideRoutePhase.toPickup ? 'toPickup' : 'toDropoff';
   }
 
-  Future<void> _triggerOffRouteReroute({required String reason}) async {
-    if (_isRerouting || !(_lastRerouteDecision?.eligible ?? false)) {
+  Future<void> _triggerOffRouteReroute({
+    required String reason,
+    bool forceFollowUp = false,
+  }) async {
+    if (_isRerouting) {
+      // Latest-wins: invalidate any in-flight package via a new generation and
+      // queue one follow-up using the latest real position after clear.
+      _routeRequestGeneration.begin();
+      _pendingRerouteAfterInFlight = true;
+      _pendingRerouteReason = reason;
+      _logNavBounded(
+        'NAV_R17_REROUTE_APPLY',
+        'result=supersede_inflight reason=$reason gen=${_routeRequestGeneration.latest}',
+        intervalMs: 800,
+      );
+      return;
+    }
+    if (!forceFollowUp && !(_lastRerouteDecision?.eligible ?? false)) {
       _logNavR17RerouteApply(
         result: 'skipped',
         reason: reason,
@@ -18072,6 +18116,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     _isRerouting = true;
+    _pendingRerouteAfterInFlight = false;
+    _pendingRerouteReason = null;
     _rerouteOwnershipAccepted = false;
     _rerouteReason = reason;
     _lastRerouteAt = DateTime.now();
@@ -18215,6 +18261,25 @@ class _DriverHomePageState extends State<DriverHomePage>
       _rerouteOwnershipAccepted = false;
       _rerouteReason = null;
       _rerouteDecisionEligibleAt = null;
+      if (_pendingRerouteAfterInFlight) {
+        final followUp = (_pendingRerouteReason ?? reason).trim();
+        _pendingRerouteAfterInFlight = false;
+        _pendingRerouteReason = null;
+        if (followUp.isNotEmpty) {
+          // Short yield so the next tick can refresh GPS + decision state.
+          unawaited(
+            Future<void>.delayed(const Duration(milliseconds: 200), () {
+              if (!mounted) return;
+              unawaited(
+                _triggerOffRouteReroute(
+                  reason: followUp,
+                  forceFollowUp: true,
+                ),
+              );
+            }),
+          );
+        }
+      }
       _logNavBounded(
         'NAV_R17_REROUTE_APPLY',
         'result=in_flight_cleared ok=${ok ? 1 : 0} reason=$reason',
@@ -21195,8 +21260,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     debugPrint('[NAV_PHASE] toPickup');
     try {
-      final fromLL = _LonLat(_lastPos!.longitude, _lastPos!.latitude);
       final toLL = await _resolvePickupLonLat(b);
+      // RELEASE-P0: always use the newest raw GPS at send time — never a
+      // pre-await snapshot and never a snapped/projected point.
+      final originPos = _lastPos;
+      if (originPos == null) return false;
+      final fromLL = _LonLat(originPos.longitude, originPos.latitude);
       final package = await _directionsRoute(fromLL, toLL);
       if (!_tryActivatePreparedDriverRoute(
         context: request,
@@ -21277,8 +21346,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     debugPrint('[NAV_PHASE] trip');
     try {
-      final fromLL = _LonLat(_lastPos!.longitude, _lastPos!.latitude);
       final toLL = await _resolveDropoffLonLat(b);
+      // RELEASE-P0: newest raw GPS at send time (not pre-await / not snapped).
+      final originPos = _lastPos;
+      if (originPos == null) return false;
+      final fromLL = _LonLat(originPos.longitude, originPos.latitude);
       final package = await _directionsRoute(fromLL, toLL);
       if (!_tryActivatePreparedDriverRoute(
         context: request,
@@ -21446,9 +21518,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     debugPrint('[NAV_PHASE] direct_trip');
     try {
-      final fromLL = _LonLat(_lastPos!.longitude, _lastPos!.latitude);
       final toLL =
           _directRideDestinationPoint ?? await _geocodeOne(dropoffText);
+      // RELEASE-P0: newest raw GPS at send time (not pre-await / not snapped).
+      final originPos = _lastPos;
+      if (originPos == null) return false;
+      final fromLL = _LonLat(originPos.longitude, originPos.latitude);
       final package = await _directionsRoute(fromLL, toLL);
       if (!_tryActivatePreparedDriverRoute(
         context: request,

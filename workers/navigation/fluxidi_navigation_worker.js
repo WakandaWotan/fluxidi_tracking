@@ -38,17 +38,22 @@ const ALLOWED_REROUTE_REASONS = new Set([
   "unknown",
   "opposite_direction",
   "wrong_street",
+  "forced_detour",
+  "wrong_exit",
 ]);
-
-const REROUTE_CACHE_BYPASS_REASONS = new Set([
+const CACHE_BYPASS_REROUTE_REASONS = new Set([
   "off_route",
   "traffic",
   "opposite_direction",
   "wrong_street",
+  "forced_detour",
+  "wrong_exit",
 ]);
 
 export function shouldBypassRerouteCache(kind, rerouteReason) {
-  return kind === "reroute" && REROUTE_CACHE_BYPASS_REASONS.has(rerouteReason);
+  if (kind !== "reroute") return false;
+  const reason = String(rerouteReason || "").trim().toLowerCase();
+  return CACHE_BYPASS_REROUTE_REASONS.has(reason);
 }
 
 const CACHE_HOST = "https://fluxidi-nav-cache.internal";
@@ -545,7 +550,7 @@ async function handleRoute(request, env, { kind = "route" } = {}) {
         {
           ok: false,
           error:
-            "reason must be one of off_route, opposite_direction, wrong_street, manual, traffic, unknown",
+            "reason must be one of off_route, opposite_direction, wrong_street, forced_detour, wrong_exit, manual, traffic, unknown",
         },
         400,
       );

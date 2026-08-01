@@ -43,7 +43,9 @@ class NavRerouteDecisionConfig {
 
   /// Primary fast path: confirmed wrong outgoing street after a junction.
   /// Detection is heading + unmatched geometry — not an 80–120 m snap wait.
-  static const double wrongStreetMinSpeedKmh = 12.0;
+  /// RELEASE-P0: low-speed genuine departures are allowed when progress already
+  /// marked a forced detour / deviation; observation floor is crawl-grade.
+  static const double wrongStreetMinSpeedKmh = 3.0;
   static const double wrongStreetMaxSpeedKmh = 70.0;
   static const double wrongStreetMinSnapM = 10.0;
   static const double wrongStreetClearSnapM = 15.0;
@@ -310,6 +312,7 @@ class NavRerouteDecisionTracker {
         progress.routeDeviationReason == 'opposite_heading_strong';
     final backwardProgress = progress.backwardProgressLikely;
     final routeDeviation = progress.routeDeviationLikely;
+    final forcedDetour = progress.routeDeviationReason == 'forced_detour';
 
     final wrongStreetConfirmed = navRerouteWrongStreetConfirmed(
       eval: wrongStreetEval,
@@ -326,8 +329,8 @@ class NavRerouteDecisionTracker {
       progressOffRouteLikely: progress.offRouteLikely,
       snapDistanceM: snapDistance,
       snapDistanceIncreaseStreak: snapDistanceIncreaseStreak,
-      wrongStreetConfirmed: wrongStreetConfirmed,
-      wrongStreetObservation: wrongStreetEval.observation,
+      wrongStreetConfirmed: wrongStreetConfirmed || forcedDetour,
+      wrongStreetObservation: wrongStreetEval.observation || forcedDetour,
     );
 
     final offRoute = offRouteHitCount >= hitsRequired;
@@ -337,6 +340,7 @@ class NavRerouteDecisionTracker {
             strongOppositeDirection: strongOppositeDirection,
             backwardProgress: backwardProgress,
             wrongStreet: wrongStreetEval.observation || wrongStreetConfirmed,
+            forcedDetour: forcedDetour,
           )
         : 'none';
 
@@ -889,7 +893,11 @@ String navRerouteOffRouteReason({
   required bool strongOppositeDirection,
   required bool backwardProgress,
   bool wrongStreet = false,
+  bool forcedDetour = false,
 }) {
+  if (forcedDetour && !oppositeDirection && !backwardProgress) {
+    return 'forced_detour';
+  }
   if (wrongStreet && !oppositeDirection && !backwardProgress) {
     return 'wrong_street';
   }
@@ -899,6 +907,7 @@ String navRerouteOffRouteReason({
         : 'opposite_direction';
   }
   if (backwardProgress) return 'backward_progress';
+  if (forcedDetour) return 'forced_detour';
   if (wrongStreet) return 'wrong_street';
   return 'snap_distance';
 }
@@ -907,7 +916,9 @@ bool navRerouteIsRouteDeviationReason(String reason) {
   return reason == 'opposite_direction' ||
       reason == 'opposite_direction_strong' ||
       reason == 'backward_progress' ||
-      reason == 'wrong_street';
+      reason == 'wrong_street' ||
+      reason == 'forced_detour' ||
+      reason == 'wrong_exit';
 }
 
 Duration navRerouteCooldownFor({
@@ -933,7 +944,7 @@ Duration navRerouteDebounceFor({
   if (offRouteReason == 'wrong_street' && wrongStreetConfirmed) {
     return NavRerouteDecisionConfig.debounceWrongStreetConfirmed;
   }
-  if (offRouteReason == 'wrong_street') {
+  if (offRouteReason == 'wrong_street' || offRouteReason == 'forced_detour') {
     return NavRerouteDecisionConfig.debounceWrongStreetConfirm;
   }
   if (offRouteReason == 'opposite_direction_strong') {
@@ -966,9 +977,19 @@ bool navRerouteMovementOk({
   required bool offRouteLikely,
 }) {
   if (!offRouteLikely) return false;
-  // RELEASE-P0: strong opposite crawl (fuel-station / reverse exit) may
-  // proceed below the normal 8 km/h floor once progress already confirmed
-  // the deviation with displacement evidence.
+  // Stationary GPS jitter must not open a reroute.
+  if (speedKmh < NavRerouteDecisionConfig.minStrongOppositeCrawlSpeedKmh) {
+    return false;
+  }
+  // RELEASE-P0: genuine departure (forced detour / wrong street / opposite)
+  // must not be blocked by the ordinary 5–8 km/h floors once progress already
+  // confirmed the deviation with samples. Displacement+heading live in
+  // progress; here we only require crawl-grade motion.
+  if (navRerouteIsRouteDeviationReason(offRouteReason) &&
+      samplesOffRoute >= 1 &&
+      (routeDeviationLikely || offRouteReason == 'forced_detour')) {
+    return true;
+  }
   if (offRouteReason == 'opposite_direction_strong' &&
       speedKmh >= NavRerouteDecisionConfig.minStrongOppositeCrawlSpeedKmh &&
       samplesOffRoute >=
@@ -980,7 +1001,8 @@ bool navRerouteMovementOk({
     return true;
   }
   if ((offRouteReason == 'opposite_direction_strong' ||
-          offRouteReason == 'wrong_street') &&
+          offRouteReason == 'wrong_street' ||
+          offRouteReason == 'forced_detour') &&
       speedKmh >= NavRerouteDecisionConfig.minMovementSpeedKmh) {
     return true;
   }
@@ -1094,4 +1116,30 @@ String navRerouteCooldownKindToken(NavRerouteCooldownKind kind) {
     case NavRerouteCooldownKind.failedRetry:
       return 'failed_retry';
   }
+}
+
+/// True when the new route start is at/near or ahead of the vehicle (not
+/// materially behind). Pure helper for post-reroute ownership checks.
+bool navRerouteRouteIsAheadOfVehicle({
+  required double vehicleLat,
+  required double vehicleLon,
+  required double routeStartLat,
+  required double routeStartLon,
+  double maxBehindM = 40.0,
+}) {
+  if (![vehicleLat, vehicleLon, routeStartLat, routeStartLon]
+      .every((v) => v.isFinite)) {
+    return false;
+  }
+  final dLat = (routeStartLat - vehicleLat) * 111320.0;
+  final midLat = (routeStartLat + vehicleLat) * 0.5;
+  final dLon = (routeStartLon - vehicleLon) *
+      111320.0 *
+      math.cos(midLat * math.pi / 180.0);
+  final distM = math.sqrt(dLat * dLat + dLon * dLon);
+  // If start is within [maxBehindM], treat as acceptable (at/near vehicle).
+  // A start farther than maxBehindM from the vehicle is rejected — callers
+  // that also know travel bearing can refine; for ownership we fail closed
+  // when the geometric start is far from the car (typically "behind").
+  return distM <= maxBehindM;
 }

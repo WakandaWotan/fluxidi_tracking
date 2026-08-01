@@ -8,6 +8,8 @@ describe("RELEASE-P0 reroute cache bypass", () => {
       "off_route",
       "opposite_direction",
       "wrong_street",
+      "forced_detour",
+      "wrong_exit",
       "traffic",
     ]) {
       assert.equal(shouldBypassRerouteCache("reroute", reason), true, reason);
