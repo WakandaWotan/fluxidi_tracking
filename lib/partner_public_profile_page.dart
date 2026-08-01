@@ -205,16 +205,10 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
       if (hasValidSession) {
         final remoteProfile = await upsertPublicCustomerProfile(
           customerSessionToken: sessionToken,
-          payload: <String, dynamic>{
-            'name': savedProfile.name,
-            'phone': savedProfile.phone,
-            'email': savedProfile.email,
-            'preferred_postcode': savedProfile.preferredPostcode,
-            'company_name': savedProfile.companyName,
-            'vat_number': savedProfile.vatNumber,
-            'favorite_partner_ids': savedProfile.favoritePartnerIds,
-            'favoritePartnerIds': savedProfile.favoritePartnerIds,
-          },
+          payload: buildPublicCustomerProfilePayload(
+            profile: savedProfile,
+            intent: CustomerProfileSyncIntent.favoritesOnly,
+          ),
         );
         if (remoteProfile != null) {
           final remoteFavorites = _favoritePartnerIdsFromAnyMap(remoteProfile);

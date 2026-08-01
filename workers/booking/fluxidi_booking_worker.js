@@ -20088,6 +20088,10 @@ async function handlePublicCustomerProfilePost(request, env, body) {
   const nowIso = new Date().toISOString();
   const pickPresent = (hasFlag, nextValue, existingValue) =>
     hasFlag ? (nextValue || "") : (existingValue || "");
+  // Presence semantics (documented + tested):
+  // - omitted key (hasFlag=false) → preserve existing server value
+  // - present empty string (hasFlag=true, next="") → intentional clear
+  // - present normalized value → replace
   const merged = {
     ...existing,
     customer_id: customerId,

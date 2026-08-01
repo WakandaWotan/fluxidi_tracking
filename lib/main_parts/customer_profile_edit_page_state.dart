@@ -350,6 +350,7 @@ class _CustomerProfileEditPageState extends State<CustomerProfileEditPage> {
     final synced = await _syncCustomerProfileToBackendBestEffort(
       reason: 'customer_profile_edit_save',
       localProfile: saved,
+      intent: CustomerProfileSyncIntent.explicitProfileSave,
     );
     if (synced != null) {
       _setCachedCustomerProfile(synced);

@@ -212,6 +212,181 @@ class CustomerProfile {
   }
 }
 
+/// How a customer profile POST should treat empty values.
+///
+/// Backend semantics (unchanged):
+/// - omitted key → preserve server value
+/// - present empty string → intentional clear
+/// - present normalized value → replace
+///
+/// Never infer “clear” from an empty local default on bootstrap.
+enum CustomerProfileSyncIntent {
+  /// Best-effort / onboarding / background: only non-empty confirmed fields.
+  /// Never includes empty billing/Peppol keys (cannot wipe server billing).
+  bootstrapMerge,
+
+  /// User tapped save on “Mijn gegevens”: full supported schema.
+  /// Empty string clears the corresponding server field.
+  explicitProfileSave,
+
+  /// Favorites (or similarly narrow) update: never sends billing/Peppol keys.
+  favoritesOnly,
+}
+
+/// Builds the profile API POST body for [intent].
+///
+/// Pass the result through [sanitizePublicCustomerProfilePayload] before send.
+Map<String, dynamic> buildPublicCustomerProfilePayload({
+  required CustomerProfile profile,
+  required CustomerProfileSyncIntent intent,
+}) {
+  void putIfNonEmpty(Map<String, dynamic> out, String key, String value) {
+    final text = value.trim();
+    if (text.isEmpty) return;
+    out[key] = text;
+  }
+
+  switch (intent) {
+    case CustomerProfileSyncIntent.favoritesOnly:
+      final out = <String, dynamic>{
+        'favorite_partner_ids': profile.favoritePartnerIds,
+        'favoritePartnerIds': profile.favoritePartnerIds,
+      };
+      // Core contact may be sent when non-empty so the worker merge still has
+      // identity context; billing/Peppol keys are never included.
+      putIfNonEmpty(out, 'name', profile.name);
+      putIfNonEmpty(out, 'phone', profile.phone);
+      putIfNonEmpty(out, 'email', profile.email);
+      putIfNonEmpty(out, 'preferred_postcode', profile.preferredPostcode);
+      putIfNonEmpty(out, 'company_name', profile.companyName);
+      putIfNonEmpty(out, 'vat_number', profile.vatNumber);
+      return out;
+
+    case CustomerProfileSyncIntent.bootstrapMerge:
+      final out = <String, dynamic>{};
+      putIfNonEmpty(out, 'name', profile.name);
+      putIfNonEmpty(out, 'phone', profile.phone);
+      putIfNonEmpty(out, 'email', profile.email);
+      putIfNonEmpty(out, 'preferred_postcode', profile.preferredPostcode);
+      putIfNonEmpty(out, 'company_name', profile.companyName);
+      putIfNonEmpty(out, 'vat_number', profile.vatNumber);
+      putIfNonEmpty(out, 'invoice_email', profile.invoiceEmail);
+      putIfNonEmpty(out, 'billing_street', profile.billingStreet);
+      putIfNonEmpty(out, 'billing_postal_code', profile.billingPostalCode);
+      putIfNonEmpty(out, 'billing_city', profile.billingCity);
+      putIfNonEmpty(out, 'billing_country', profile.billingCountry);
+      putIfNonEmpty(out, 'peppol_endpoint_id', profile.peppolEndpointId);
+      putIfNonEmpty(out, 'peppol_scheme', profile.peppolScheme);
+      if (profile.favoritePartnerIds.isNotEmpty) {
+        out['favorite_partner_ids'] = profile.favoritePartnerIds;
+        out['favoritePartnerIds'] = profile.favoritePartnerIds;
+      }
+      final hasBilling = profile.billingStreet.trim().isNotEmpty ||
+          profile.billingPostalCode.trim().isNotEmpty ||
+          profile.billingCity.trim().isNotEmpty ||
+          profile.billingCountry.trim().isNotEmpty;
+      if (hasBilling) {
+        out['billing_address'] = <String, dynamic>{
+          if (profile.billingStreet.trim().isNotEmpty)
+            'street': profile.billingStreet.trim(),
+          if (profile.billingPostalCode.trim().isNotEmpty)
+            'postal_code': profile.billingPostalCode.trim(),
+          if (profile.billingCity.trim().isNotEmpty)
+            'city': profile.billingCity.trim(),
+          if (profile.billingCountry.trim().isNotEmpty)
+            'country': profile.billingCountry.trim(),
+        };
+      }
+      final hasPeppol = profile.peppolEndpointId.trim().isNotEmpty ||
+          profile.peppolScheme.trim().isNotEmpty;
+      if (hasPeppol) {
+        out['peppol'] = <String, dynamic>{
+          if (profile.peppolEndpointId.trim().isNotEmpty)
+            'endpoint_id': profile.peppolEndpointId.trim(),
+          if (profile.peppolScheme.trim().isNotEmpty)
+            'scheme': profile.peppolScheme.trim(),
+        };
+      }
+      return out;
+
+    case CustomerProfileSyncIntent.explicitProfileSave:
+      // Full schema: empty string means intentional clear on the worker.
+      return <String, dynamic>{
+        'name': profile.name.trim(),
+        'phone': profile.phone.trim(),
+        'email': profile.email.trim().toLowerCase(),
+        'preferred_postcode': profile.preferredPostcode.trim(),
+        'company_name': profile.companyName.trim(),
+        'vat_number': profile.vatNumber.trim(),
+        'invoice_email': profile.invoiceEmail.trim().toLowerCase(),
+        'billing_street': profile.billingStreet.trim(),
+        'billing_postal_code': profile.billingPostalCode.trim(),
+        'billing_city': profile.billingCity.trim(),
+        'billing_country': profile.billingCountry.trim(),
+        'billing_address': <String, dynamic>{
+          'street': profile.billingStreet.trim(),
+          'postal_code': profile.billingPostalCode.trim(),
+          'city': profile.billingCity.trim(),
+          'country': profile.billingCountry.trim(),
+        },
+        'peppol_endpoint_id': profile.peppolEndpointId.trim(),
+        'peppol_scheme': profile.peppolScheme.trim(),
+        'peppol': <String, dynamic>{
+          'endpoint_id': profile.peppolEndpointId.trim(),
+          'scheme': profile.peppolScheme.trim(),
+        },
+        'favorite_partner_ids': profile.favoritePartnerIds,
+        'favoritePartnerIds': profile.favoritePartnerIds,
+      };
+  }
+}
+
+/// Booking-facing billing fields hydrated from a synchronized [CustomerProfile].
+/// Mirrors calculator/airport `billing_customer` + top-level invoice email keys
+/// without triggering Billit/Peppol submission.
+Map<String, dynamic> bookingBillingFieldsFromCustomerProfile(
+  CustomerProfile profile,
+) {
+  final invoiceEmail = profile.invoiceEmail.trim().toLowerCase();
+  final legalName = profile.companyName.trim();
+  final vat = profile.vatNumber.trim();
+  final street = profile.billingStreet.trim();
+  final postal = profile.billingPostalCode.trim();
+  final city = profile.billingCity.trim();
+  final country = profile.billingCountry.trim().toUpperCase();
+  final peppolEndpoint = profile.peppolEndpointId.trim();
+  final peppolScheme = profile.peppolScheme.trim();
+  final hasBillingCustomer = legalName.isNotEmpty ||
+      vat.isNotEmpty ||
+      street.isNotEmpty ||
+      postal.isNotEmpty ||
+      city.isNotEmpty ||
+      country.isNotEmpty ||
+      peppolEndpoint.isNotEmpty ||
+      peppolScheme.isNotEmpty;
+  return <String, dynamic>{
+    if (invoiceEmail.isNotEmpty) 'invoice_email': invoiceEmail,
+    if (invoiceEmail.isNotEmpty) 'invoiceEmail': invoiceEmail,
+    if (hasBillingCustomer)
+      'billing_customer': <String, dynamic>{
+        'customer_type': 'business',
+        if (legalName.isNotEmpty) 'legal_name': legalName,
+        if (legalName.isNotEmpty) 'display_name': legalName,
+        if (vat.isNotEmpty) 'vat_number': vat,
+        'billing_address': <String, dynamic>{
+          if (street.isNotEmpty) 'street': street,
+          if (postal.isNotEmpty) 'postal_code': postal,
+          if (city.isNotEmpty) 'city': city,
+          if (country.isNotEmpty) 'country': country,
+        },
+        'peppol': <String, dynamic>{
+          if (peppolEndpoint.isNotEmpty) 'endpoint_id': peppolEndpoint,
+          if (peppolScheme.isNotEmpty) 'scheme': peppolScheme,
+        },
+      },
+  };
+}
+
 class CustomerProfileStore {
   CustomerProfileStore._();
 
@@ -632,12 +807,6 @@ class CustomerProfileStore {
       return '';
     }
 
-    String pickPreferBackend(String backend, String local) {
-      final b = backend.trim();
-      if (b.isNotEmpty) return b;
-      return local.trim();
-    }
-
     await ActiveLocalCustomerStore.instance.setActiveCustomerId(
       sessionCustomerId.trim(),
     );
@@ -651,6 +820,24 @@ class CustomerProfileStore {
               : (existing?.customerId.trim().isNotEmpty ?? false)
               ? existing!.customerId.trim()
               : _generateCustomerId());
+
+    final backendUpdatedAtEarly = readAny(const ['updated_at', 'updatedAt']);
+    // Prefer a non-empty local draft when it is strictly newer than the server
+    // stamp (unsaved edits after a prior pull). Empty backend never wipes local.
+    String pickPreferBackend(String backend, String local) {
+      final b = backend.trim();
+      final l = local.trim();
+      if (b.isEmpty) return l;
+      if (l.isEmpty) return b;
+      final localTs = DateTime.tryParse(existing?.updatedAt ?? '');
+      final backendTs = DateTime.tryParse(backendUpdatedAtEarly);
+      if (localTs != null &&
+          backendTs != null &&
+          localTs.isAfter(backendTs)) {
+        return l;
+      }
+      return b;
+    }
 
     final backendName = readAny(const ['name']);
     final backendPhone = readAny(const ['phone']);

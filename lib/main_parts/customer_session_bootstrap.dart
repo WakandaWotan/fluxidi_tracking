@@ -503,6 +503,7 @@ Future<CustomerProfile?> _syncCustomerProfileFromBackendBestEffort({
 Future<CustomerProfile?> _syncCustomerProfileToBackendBestEffort({
   required String reason,
   required CustomerProfile localProfile,
+  CustomerProfileSyncIntent intent = CustomerProfileSyncIntent.bootstrapMerge,
 }) async {
   try {
     final session = await CustomerSessionStore.instance.loadValidSession();
@@ -516,34 +517,19 @@ Future<CustomerProfile?> _syncCustomerProfileToBackendBestEffort({
       session.customerId,
     );
     _invalidateCustomerProfileCaches();
+    // Intent-aware payload: bootstrapMerge omits empty billing/Peppol keys so
+    // an empty device cannot wipe a populated server profile. explicitProfileSave
+    // includes empties for intentional clear. favoritesOnly never sends billing.
+    final payload = buildPublicCustomerProfilePayload(
+      profile: localProfile,
+      intent: intent,
+    );
+    debugPrint(
+      '[CUSTOMER_PROFILE_SYNC][PUSH] reason=$reason intent=${intent.name} keys=${payload.keys.join(",")}',
+    );
     final remote = await upsertPublicCustomerProfile(
       customerSessionToken: session.customerSessionToken,
-      payload: <String, dynamic>{
-        'name': localProfile.name,
-        'phone': localProfile.phone,
-        'email': localProfile.email,
-        'preferred_postcode': localProfile.preferredPostcode,
-        'company_name': localProfile.companyName,
-        'vat_number': localProfile.vatNumber,
-        'invoice_email': localProfile.invoiceEmail,
-        'billing_street': localProfile.billingStreet,
-        'billing_postal_code': localProfile.billingPostalCode,
-        'billing_city': localProfile.billingCity,
-        'billing_country': localProfile.billingCountry,
-        'billing_address': <String, dynamic>{
-          'street': localProfile.billingStreet,
-          'postal_code': localProfile.billingPostalCode,
-          'city': localProfile.billingCity,
-          'country': localProfile.billingCountry,
-        },
-        'peppol_endpoint_id': localProfile.peppolEndpointId,
-        'peppol_scheme': localProfile.peppolScheme,
-        'peppol': <String, dynamic>{
-          'endpoint_id': localProfile.peppolEndpointId,
-          'scheme': localProfile.peppolScheme,
-        },
-        'favorite_partner_ids': localProfile.favoritePartnerIds,
-      },
+      payload: payload,
     );
     if (remote == null) {
       final status = lastCustomerProfileHttpStatusCode ?? 0;
