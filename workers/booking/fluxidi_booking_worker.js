@@ -368,7 +368,22 @@ import {
   _flattenBookingForRidesList,
   _flattenOperationalLegForRidesList,
   _flattenBookingForRidesListWithOperationalLegs,
+  _isStreetDirectRecord,
 } from "./modules/booking_read_model.js";
+import {
+  streetCheckoutLockKey,
+  streetCheckoutIdempotencyKey,
+  resolveStreetCheckoutAuthoritativeAmount,
+  streetCheckoutEligibility,
+  streetCheckoutPaymentStatusToken,
+  isStreetCheckoutPaidLike,
+  isStreetCheckoutFailedLike,
+  isStreetCheckoutOpenLike,
+  readOpenStreetMollieCheckout,
+  manualMarkPaidConflict,
+  webhookAfterManualPaidConflict,
+  buildStreetCheckoutShadowPayload,
+} from "./modules/street_mollie_checkout.js";
 
 /* -------- Google API helpers (hoisted at top to avoid any ReferenceError) -------- */
 
@@ -40166,6 +40181,132 @@ export default {
 
         if (
           pathParts.length === 3 &&
+          pathParts[2] === "street-checkout" &&
+          request.method === "POST"
+        ) {
+          // RELEASE-P0-MOLLIE-STREET-CHECKOUT-1: Mollie hosted checkout for a
+          // finalized COMPLETED street ride. Resume-style payment shadow only.
+          const body = await safeJson(request);
+          const trusted = await _resolveTrustedBookingActor(request, url, env, body);
+          if (!trusted.ok) return trusted.response;
+
+          let preloadedRec = null;
+          let loadedKey = "";
+          try {
+            const loaded = await loadBookingRecord(env, bookingId);
+            preloadedRec = loaded?.rec || null;
+            loadedKey = loaded?.key || "";
+          } catch (loadErr) {
+            if (String(loadErr?.message || "") === "Booking not found") {
+              return _opaqueBookingNotFoundResponse();
+            }
+            throw loadErr;
+          }
+          if (!preloadedRec) return _opaqueBookingNotFoundResponse();
+
+          const recordScope = resolveBookingTenantScopeFromRecord(preloadedRec);
+          if (!recordScope?.tenant_id || !recordScope?.company_id) {
+            return _opaqueBookingNotFoundResponse();
+          }
+          const tenantScope = {
+            tenant_id: recordScope.tenant_id,
+            company_id: recordScope.company_id,
+            hasScope: true,
+          };
+
+          // Ownership: never authorize from client tenant/company alone.
+          if (trusted.company_session) {
+            if (
+              trusted.company_session.tenant_id !== tenantScope.tenant_id ||
+              trusted.company_session.company_id !== tenantScope.company_id
+            ) {
+              return _opaqueBookingNotFoundResponse();
+            }
+          } else if (trusted.driver_session) {
+            if (
+              trusted.driver_session.tenant_id !== tenantScope.tenant_id ||
+              trusted.driver_session.company_id !== tenantScope.company_id
+            ) {
+              return _opaqueBookingNotFoundResponse();
+            }
+            const assigned = safeStr(
+              preloadedRec?.assigned_driver_id ??
+                preloadedRec?.assignedDriverId ??
+                preloadedRec?.booking?.assigned_driver_id ??
+                preloadedRec?.booking?.assignedDriverId,
+              96,
+            );
+            if (assigned && assigned !== trusted.driver_session.driver_id) {
+              return _opaqueBookingNotFoundResponse();
+            }
+          } else if (trusted.customer_session) {
+            const customerGate = await _assertCustomerSessionOwnsBookingOrOpaque404(
+              env,
+              preloadedRec,
+              trusted.customer_session,
+              bookingId,
+            );
+            if (!customerGate.ok) return customerGate.response;
+          } else if (trusted.auth_mode !== "admin_token" && trusted.actor_role !== "admin") {
+            // Admin token path from _resolveTrustedBookingActor.
+            if (!hasValidAdminToken(request, url, env)) {
+              return trusted.response || json({ ok: false, error: "unauthorized" }, 401);
+            }
+          }
+
+          const out = await createStreetRideCheckoutAuthoritative(
+            bookingId,
+            env,
+            request,
+            tenantScope,
+            {
+              body,
+              preloadedRec,
+              loadedKey,
+              actor: trusted,
+            },
+          );
+          let statusCode = out?.ok ? 200 : 400;
+          if (out?.error === "booking_not_found") statusCode = 404;
+          else if (out?.error === "forbidden") statusCode = 403;
+          else if (out?.error === "unauthorized") statusCode = 401;
+          else if (
+            out?.error === "payment_already_paid" ||
+            out?.error === "payment_already_paid_manual" ||
+            out?.error === "client_amount_mismatch" ||
+            out?.error === "client_amount_rejected" ||
+            out?.error === "checkout_in_progress" ||
+            out?.error === "not_street_booking" ||
+            out?.error === "street_not_completed" ||
+            out?.error === "street_fare_not_finalized" ||
+            out?.error === "street_fare_unavailable" ||
+            out?.error === "street_currency_unsupported" ||
+            out?.error === "booking_not_payable"
+          ) {
+            statusCode = 409;
+          } else if (
+            out?.error === "payment_checkout_unavailable" ||
+            out?.error === "Mollie payment failed"
+          ) {
+            statusCode = 502;
+          } else if (
+            out?.error === "mollie_config_unavailable" ||
+            out?.error === "company_mollie_credentials_unavailable" ||
+            out?.error === "company_mollie_not_connected" ||
+            out?.error === "online_payments_disabled_for_company" ||
+            out?.error === "payment_method_disabled_for_company" ||
+            out?.error === "missing_company_mollie_profile_id"
+          ) {
+            statusCode = 400;
+          }
+          if (out?.error === "booking_not_found") {
+            return _opaqueBookingNotFoundResponse();
+          }
+          return json(out, statusCode);
+        }
+
+        if (
+          pathParts.length === 3 &&
           pathParts[2] === "checkout-resume" &&
           request.method === "POST"
         ) {
@@ -40852,7 +40993,15 @@ export default {
             out,
             out?.error === "missing_tenant_scope"
               ? 400
-              : (out?.error === "forbidden" ? 403 : (out.ok ? 200 : 400)),
+              : out?.error === "forbidden"
+                ? 403
+                : out?.error === "open_mollie_checkout_exists" ||
+                    out?.error === "payment_already_paid_mollie" ||
+                    out?.error === "payment_already_paid"
+                  ? 409
+                  : out.ok
+                    ? 200
+                    : 400,
           );
         }
 
@@ -77280,6 +77429,497 @@ function _applyCheckoutResumeFieldsToCanonicalRecord(rec, {
   }
 }
 
+async function createStreetRideCheckoutAuthoritative(
+  bookingId,
+  env,
+  request,
+  tenantScope,
+  options = {},
+) {
+  if (!tenantScope?.hasScope) return missingTenantScopeError();
+  if (!env?.BOOKING_KV) {
+    return { ok: false, error: "missing_binding" };
+  }
+  const body = options?.body && typeof options.body === "object" ? options.body : {};
+  let key = safeStr(options?.loadedKey, 240);
+  let rec = options?.preloadedRec && typeof options.preloadedRec === "object"
+    ? options.preloadedRec
+    : null;
+  if (!rec) {
+    try {
+      const loaded = await loadBookingRecord(env, bookingId);
+      key = loaded.key;
+      rec = loaded.rec;
+    } catch (loadErr) {
+      if (String(loadErr?.message || "") === "Booking not found") {
+        return { ok: false, error: "booking_not_found" };
+      }
+      throw loadErr;
+    }
+  }
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+    return { ok: false, error: "booking_not_found" };
+  }
+
+  const eligibility = streetCheckoutEligibility(rec, {
+    isStreetDirect: _isStreetDirectRecord(rec) === true,
+  });
+  if (!eligibility.ok) {
+    return {
+      ok: false,
+      error: eligibility.error || "street_checkout_not_eligible",
+      message: safeStr(eligibility.error, 120) || "Street checkout not eligible",
+    };
+  }
+
+  // Client amount is never authority — reject mismatches explicitly.
+  const clientAmountRaw =
+    body?.amount ??
+    body?.price ??
+    body?.total ??
+    body?.price_incl_vat ??
+    body?.priceInclVat ??
+    body?.total_incl_vat ??
+    body?.amount_due;
+  const amountResolution = resolveStreetCheckoutAuthoritativeAmount(rec, clientAmountRaw);
+  if (!amountResolution.ok) {
+    return {
+      ok: false,
+      error: amountResolution.error || "street_fare_unavailable",
+      ...(amountResolution.canonical_amount != null
+        ? {
+            canonical_amount: amountResolution.canonical_amount,
+            canonical_amount_cents: amountResolution.canonical_amount_cents,
+          }
+        : {}),
+    };
+  }
+
+  const payStatus = streetCheckoutPaymentStatusToken(rec);
+  if (isStreetCheckoutPaidLike(payStatus)) {
+    const provider = safeStr(rec?.payment_provider ?? rec?.paymentProvider, 40).toLowerCase();
+    return {
+      ok: false,
+      error:
+        provider === "manual" || provider === ""
+          ? "payment_already_paid_manual"
+          : "payment_already_paid",
+      payment_status: "paid",
+      paymentStatus: "paid",
+    };
+  }
+
+  const existingOpen = readOpenStreetMollieCheckout(rec);
+  if (existingOpen?.checkout_url) {
+    // Re-validate Mollie status when we have a payment id.
+    let stillOpen = true;
+    const existingPaymentId = existingOpen.mollie_payment_id;
+    if (existingPaymentId) {
+      try {
+        const rideCredentials = await resolveRideMollieCredentials(env, tenantScope);
+        if (rideCredentials.ok) {
+          const snap = await mollieFetchPaymentJson(existingPaymentId, env, rideCredentials, {
+            paymentRecord: rec,
+          });
+          const apiStatus = safeStr(snap?.status, 40).toLowerCase();
+          if (isStreetCheckoutPaidLike(apiStatus) || apiStatus === "paid") {
+            return {
+              ok: false,
+              error: "payment_already_paid",
+              payment_status: "paid",
+              paymentStatus: "paid",
+            };
+          }
+          if (isStreetCheckoutFailedLike(apiStatus)) {
+            stillOpen = false;
+          } else if (!isStreetCheckoutOpenLike(apiStatus) && apiStatus) {
+            stillOpen = isStreetCheckoutOpenLike(apiStatus);
+          }
+          const freshCheckout = normalizeMollieCheckoutUrl(snap?._links?.checkout?.href);
+          if (stillOpen && freshCheckout) {
+            existingOpen.checkout_url = freshCheckout;
+          }
+        }
+      } catch (_) {
+        // Reuse stored checkout URL on fetch failure.
+      }
+    }
+    if (stillOpen) {
+      console.log(
+        `[STREET_CHECKOUT][REUSED] booking=${_bookingIntentMask(bookingId)} paymentBooking=${_bookingIntentMask(existingOpen.payment_booking_id)}`,
+      );
+      return {
+        ok: true,
+        booking_id: bookingId,
+        bookingId,
+        checkout_url: existingOpen.checkout_url,
+        checkoutUrl: existingOpen.checkout_url,
+        payment_booking_id: existingOpen.payment_booking_id,
+        paymentBookingId: existingOpen.payment_booking_id,
+        payment_status: "pending",
+        paymentStatus: "pending",
+        amount: amountResolution.amount_value,
+        amount_cents: amountResolution.amount_cents,
+        currency: "EUR",
+        reused: true,
+      };
+    }
+  }
+
+  // Online method / Mollie readiness — force online_payment (generic Checkout).
+  const methodValidation = await validateCompanyPaymentMethodForBooking(
+    env,
+    tenantScope,
+    {
+      payment_method: "online_payment",
+      paymentMethod: "online_payment",
+      payment_mode: "mollie",
+      payment_provider: "mollie",
+    },
+    { onlineRequested: true },
+  );
+  if (!methodValidation.ok) {
+    return {
+      ok: false,
+      error: methodValidation.error || "payment_method_disabled_for_company",
+      code: methodValidation.code || methodValidation.error,
+      message: methodValidation.message || "Online payment is not available for this company.",
+      ...(methodValidation.payment_owner_mode
+        ? {
+            payment_owner_mode: methodValidation.payment_owner_mode,
+            paymentOwnerMode: methodValidation.payment_owner_mode,
+          }
+        : {}),
+    };
+  }
+
+  const rideCredentials = await resolveRideMollieCredentials(env, tenantScope);
+  if (!rideCredentials.ok) {
+    return {
+      ok: false,
+      error: rideCredentials.error || "mollie_config_unavailable",
+      ...paymentOwnershipApiFields(rideCredentials),
+    };
+  }
+  const companyMollieCreateTestMode = resolveCompanyMolliePaymentTestMode(env, rideCredentials);
+  if (normalizePaymentOwnerMode(rideCredentials.payment_owner_mode) === "company_mollie") {
+    rideCredentials.payment_test_mode = companyMollieCreateTestMode;
+    rideCredentials.paymentTestMode = companyMollieCreateTestMode;
+  }
+  const companyMollieProfileId = _isCompanyMollieOAuthCredentials(rideCredentials)
+    ? _companyMollieProfileId(rideCredentials)
+    : "";
+  if (_isCompanyMollieOAuthCredentials(rideCredentials) && !companyMollieProfileId) {
+    return {
+      ok: false,
+      error: "missing_company_mollie_profile_id",
+      code: "missing_company_mollie_profile_id",
+      ...paymentOwnershipApiFields(rideCredentials),
+    };
+  }
+
+  const attemptId = crypto.randomUUID();
+  const lockKey = streetCheckoutLockKey(
+    tenantScope.tenant_id,
+    tenantScope.company_id,
+    bookingId,
+  );
+  if (lockKey) {
+    let existingLock = null;
+    try {
+      existingLock = await env.BOOKING_KV.get(lockKey, { type: "json" });
+    } catch (_) {
+      existingLock = null;
+    }
+    const lockAgeMs = existingLock?.created_at
+      ? Date.now() - Date.parse(existingLock.created_at)
+      : null;
+    if (
+      existingLock &&
+      Number.isFinite(lockAgeMs) &&
+      lockAgeMs >= 0 &&
+      lockAgeMs < 90_000
+    ) {
+      if (existingLock.payment_booking_id) {
+        // Another create finished — reload and try reuse.
+        try {
+          const reloaded = await loadBookingRecord(env, bookingId);
+          const open = readOpenStreetMollieCheckout(reloaded.rec);
+          if (open?.checkout_url) {
+            return {
+              ok: true,
+              booking_id: bookingId,
+              bookingId,
+              checkout_url: open.checkout_url,
+              checkoutUrl: open.checkout_url,
+              payment_booking_id: open.payment_booking_id,
+              paymentBookingId: open.payment_booking_id,
+              payment_status: "pending",
+              paymentStatus: "pending",
+              amount: amountResolution.amount_value,
+              amount_cents: amountResolution.amount_cents,
+              currency: "EUR",
+              reused: true,
+            };
+          }
+        } catch (_) {}
+      }
+      return {
+        ok: false,
+        error: "checkout_in_progress",
+        message: "A street checkout is already being created for this ride.",
+      };
+    }
+    await env.BOOKING_KV.put(
+      lockKey,
+      JSON.stringify({
+        attempt_id: attemptId,
+        created_at: new Date().toISOString(),
+        booking_id: bookingId,
+      }),
+      { expirationTtl: 120 },
+    );
+    // Re-read lock — lose if another attempt won.
+    try {
+      const winner = await env.BOOKING_KV.get(lockKey, { type: "json" });
+      if (winner?.attempt_id && winner.attempt_id !== attemptId) {
+        return {
+          ok: false,
+          error: "checkout_in_progress",
+          message: "A street checkout is already being created for this ride.",
+        };
+      }
+    } catch (_) {}
+  }
+
+  const paymentBookingId = crypto.randomUUID();
+  const nowIso = new Date().toISOString();
+  const returnUrl =
+    safeStr(body?.return_url ?? body?.returnUrl, 500) || "fluxidi://pay/return";
+  const from =
+    safeStr(rec?.from ?? rec?.booking?.from ?? rec?.payload?.from, 200) || "Street ride";
+  const to =
+    safeStr(rec?.to ?? rec?.booking?.to ?? rec?.payload?.to, 200) || "Street ride";
+  const pickupIso =
+    safeStr(
+      rec?.pickup_iso ??
+        rec?.pickupStartIso ??
+        rec?.completed_at ??
+        rec?.booking?.pickup_iso ??
+        nowIso,
+      80,
+    ) || nowIso;
+
+  const payloadClean = buildStreetCheckoutShadowPayload({
+    canonicalBookingId: bookingId,
+    tenantId: tenantScope.tenant_id,
+    companyId: tenantScope.company_id,
+    amountValue: amountResolution.amount_value,
+    amountCents: amountResolution.amount_cents,
+    currency: "EUR",
+    attemptId,
+    returnUrl,
+    from,
+    to,
+    pickupIso,
+  });
+
+  const shadowRecord = {
+    bookingId: paymentBookingId,
+    booking_id: paymentBookingId,
+    status: "PENDING",
+    createdAt: nowIso,
+    created_at: nowIso,
+    tenant_id: tenantScope.tenant_id,
+    tenantId: tenantScope.tenant_id,
+    company_id: tenantScope.company_id,
+    companyId: tenantScope.company_id,
+    public_booking_id: bookingId,
+    publicBookingId: bookingId,
+    checkout_resume: true,
+    checkoutResume: true,
+    street_checkout: true,
+    streetCheckout: true,
+    payment_status: "pending",
+    paymentStatus: "pending",
+    payment_mode: "mollie",
+    paymentMode: "mollie",
+    payment_provider: "mollie",
+    paymentProvider: "mollie",
+    payment_method: "online_payment",
+    paymentMethod: "online_payment",
+    amount: amountResolution.amount,
+    authoritative_amount: amountResolution.amount_value,
+    authoritative_amount_cents: amountResolution.amount_cents,
+    currency: "EUR",
+    payload: payloadClean,
+    quote: {
+      ok: true,
+      price_incl_vat: amountResolution.amount,
+      currency: "EUR",
+    },
+    mollie: null,
+    street_checkout_attempt_id: attemptId,
+  };
+  applyPaymentOwnershipFields(shadowRecord, rideCredentials);
+  await env.BOOKING_KV.put(
+    `booking:${paymentBookingId}`,
+    JSON.stringify(shadowRecord),
+    { expirationTtl: 60 * 60 },
+  );
+
+  const base = getBaseUrl(request);
+  const redirectUrl = `${base}/pay/return?id=${encodeURIComponent(paymentBookingId)}&return_to=${encodeURIComponent(returnUrl)}`;
+  const webhookUrl = `${base}/webhook/mollie`;
+  const commProfile = await resolveTenantCommunicationProfile(
+    env,
+    tenantScope.tenant_id,
+    tenantScope.company_id,
+  );
+  const description = `${safeBrandName(commProfile?.brandName, "Fluxidi Taxi")} street ${bookingId}`;
+
+  // Generic hosted Checkout: omit Mollie method (online_payment → null).
+  const mollieCreateBody = {
+    amount: { currency: "EUR", value: amountResolution.amount_value },
+    description,
+    redirectUrl,
+    webhookUrl,
+    metadata: {
+      bookingId: paymentBookingId,
+      tenantId: tenantScope.tenant_id,
+      companyId: tenantScope.company_id,
+      canonicalBookingId: bookingId,
+      streetCheckout: true,
+      authoritativeAmountCents: amountResolution.amount_cents,
+      currency: "EUR",
+      attemptId,
+    },
+  };
+  if (companyMollieCreateTestMode) mollieCreateBody.testmode = true;
+  if (companyMollieProfileId) mollieCreateBody.profileId = companyMollieProfileId;
+
+  const idempotencyKey = streetCheckoutIdempotencyKey(bookingId, attemptId);
+  const mollieApiUrl = _mollieCreatePaymentApiUrl({ includeQrCode: true });
+  console.log(
+    `[STREET_CHECKOUT][CREATE] booking=${_bookingIntentMask(bookingId)} paymentBooking=${_bookingIntentMask(paymentBookingId)} amount=${amountResolution.amount_value} cents=${amountResolution.amount_cents} ownerMode=${safeStr(rideCredentials?.payment_owner_mode, 40) || "-"}`,
+  );
+
+  const mollieRes = await fetch(mollieApiUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${rideCredentials.apiKey}`,
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify(mollieCreateBody),
+  });
+  const mollie = await mollieRes.json().catch(() => ({}));
+  const checkoutUrl = normalizeMollieCheckoutUrl(mollie?._links?.checkout?.href);
+  const publicQrCode = extractPublicMollieQrCode(mollie);
+  if (!mollieRes.ok || !mollie?.id || !checkoutUrl) {
+    console.log(
+      `[STREET_CHECKOUT][FAIL] booking=${_bookingIntentMask(bookingId)} http=${Number(mollieRes?.status || 0)} err=${safeStr(mollie?.detail || mollie?.title || mollie?.error, 80) || "-"}`,
+    );
+    shadowRecord.status = "FAILED";
+    shadowRecord.mollie_error = {
+      status: Number(mollieRes?.status || 0),
+      detail: safeStr(mollie?.detail || mollie?.title, 160) || null,
+    };
+    await env.BOOKING_KV.put(
+      `booking:${paymentBookingId}`,
+      JSON.stringify(shadowRecord),
+      { expirationTtl: 60 * 60 * 24 },
+    );
+    if (lockKey) {
+      try {
+        await env.BOOKING_KV.delete(lockKey);
+      } catch (_) {}
+    }
+    return {
+      ok: false,
+      error: "payment_checkout_unavailable",
+      message: "Online payment checkout could not be created",
+      ...paymentOwnershipApiFields(rideCredentials),
+    };
+  }
+
+  Object.assign(
+    shadowRecord,
+    normalizedPaymentFields({
+      status: mollie.status || "open",
+      paymentId: mollie.id,
+      paymentMethod: "online_payment",
+    }),
+  );
+  shadowRecord.mollie = {
+    id: mollie.id,
+    payment_id: mollie.id,
+    status: mollie.status || "open",
+  };
+  shadowRecord.checkout_url = checkoutUrl;
+  shadowRecord.checkoutUrl = checkoutUrl;
+  applyPaymentOwnershipFields(shadowRecord, rideCredentials);
+  await env.BOOKING_KV.put(
+    `booking:${paymentBookingId}`,
+    JSON.stringify(shadowRecord),
+    { expirationTtl: 60 * 60 * 24 * 30 },
+  );
+
+  // Stamp canonical — resume-style linkage, do not change COMPLETED lifecycle.
+  _applyCheckoutResumeFieldsToCanonicalRecord(rec, {
+    checkoutUrl,
+    paymentBookingId,
+    molliePaymentId: mollie.id,
+    mollieStatus: mollie.status || "open",
+    statusUrl: `${base}/pay/status?id=${encodeURIComponent(paymentBookingId)}`,
+    amount: amountResolution.amount,
+    preservedPaymentMethod: "online_payment",
+    paymentOwnership: rideCredentials,
+  });
+  rec.street_checkout = true;
+  rec.streetCheckout = true;
+  rec.payment_attempt_status = "mollie_open";
+  rec.paymentAttemptStatus = "mollie_open";
+  if (!key) key = `booking:${bookingId}`;
+  await env.BOOKING_KV.put(key, JSON.stringify(rec));
+
+  if (lockKey) {
+    await env.BOOKING_KV.put(
+      lockKey,
+      JSON.stringify({
+        attempt_id: attemptId,
+        payment_booking_id: paymentBookingId,
+        created_at: nowIso,
+        booking_id: bookingId,
+        completed_at: new Date().toISOString(),
+      }),
+      { expirationTtl: 300 },
+    );
+  }
+
+  console.log(
+    `[STREET_CHECKOUT][OK] booking=${_bookingIntentMask(bookingId)} paymentBooking=${_bookingIntentMask(paymentBookingId)} mollie=${_bookingIntentMask(mollie.id)} reused=false`,
+  );
+
+  return {
+    ok: true,
+    booking_id: bookingId,
+    bookingId,
+    checkout_url: checkoutUrl,
+    checkoutUrl,
+    payment_booking_id: paymentBookingId,
+    paymentBookingId,
+    payment_status: "pending",
+    paymentStatus: "pending",
+    amount: amountResolution.amount_value,
+    amount_cents: amountResolution.amount_cents,
+    currency: "EUR",
+    reused: false,
+    ...(publicQrCode ? { qr_code: publicQrCode, qrCode: publicQrCode } : {}),
+    ...paymentOwnershipApiFields(rideCredentials),
+  };
+}
+
 async function resumeBookingCheckoutAuthoritative(
   bookingId,
   env,
@@ -79178,6 +79818,72 @@ async function updateBookingPaymentAuthoritative(
   const method = asText(payment?.payment_method || payment?.paymentMethod).toLowerCase();
   const source = asText(payment?.payment_source || payment?.paymentSource).toLowerCase() || "in_car";
   const providerRaw = asText(payment?.payment_provider || payment?.paymentProvider).toLowerCase();
+  const confirmCancelOpenMollie = boolish(
+    payment?.confirm_cancel_open_mollie ??
+      payment?.confirmCancelOpenMollie ??
+      payment?.cancel_open_mollie ??
+      payment?.cancelOpenMollie,
+  );
+
+  // RELEASE-P0-MOLLIE-STREET-CHECKOUT-1: manual cash/QR/external vs Mollie.
+  const isManualInCarMarkPaid =
+    normalizedStatus === "paid" &&
+    source !== "mollie" &&
+    providerRaw !== "mollie" &&
+    method !== "mollie";
+  if (isManualInCarMarkPaid) {
+    const conflict = manualMarkPaidConflict(rec, {
+      confirmCancelOpenMollie,
+    });
+    if (conflict?.error) {
+      return {
+        ok: false,
+        error: conflict.error,
+        message: conflict.message || conflict.error,
+        ...(conflict.open_checkout ? { open_checkout: conflict.open_checkout } : {}),
+        ...(conflict.requires_confirm_cancel_open_mollie
+          ? { requires_confirm_cancel_open_mollie: true }
+          : {}),
+      };
+    }
+    if (conflict?.cancel_open === true) {
+      const open = conflict.open_checkout;
+      const molliePaymentId = safeStr(open?.mollie_payment_id, 120);
+      if (molliePaymentId) {
+        try {
+          const rideCredentials = await resolveRideMollieCredentials(env, tenantScope);
+          if (rideCredentials.ok) {
+            const cancelUrl = _molliePaymentApiUrl(molliePaymentId, {
+              testMode: _molliePaymentFetchTestMode(rideCredentials, { paymentRecord: rec }),
+              profileId: _molliePaymentFetchProfileId(rideCredentials, { paymentRecord: rec }),
+            });
+            await fetch(cancelUrl, {
+              method: "DELETE",
+              headers: {
+                Authorization: `Bearer ${rideCredentials.apiKey}`,
+                "Content-Type": "application/json",
+              },
+            }).catch(() => null);
+          }
+        } catch (_) {
+          // Best-effort cancel; still clear local open checkout markers.
+        }
+      }
+      rec.checkout_url = null;
+      rec.checkoutUrl = null;
+      rec.payment_url = null;
+      rec.paymentUrl = null;
+      rec.payment_attempt_status = "cancelled";
+      rec.paymentAttemptStatus = "cancelled";
+      if (rec.mollie && typeof rec.mollie === "object") {
+        rec.mollie = { ...rec.mollie, status: "canceled", cancelled_for_manual_paid: true };
+      }
+      console.log(
+        `[BOOKING_PAYMENT_UPDATE][CANCEL_OPEN_MOLLIE] booking=${_bookingIntentMask(bookingId)} mollie=${_bookingIntentMask(molliePaymentId)}`,
+      );
+    }
+  }
+
   const paidAt = asText(payment?.paid_at || payment?.paidAt) || new Date().toISOString();
   const currency = asText(payment?.currency || rec?.booking?.currency || rec?.currency || "EUR").toUpperCase() || "EUR";
   const amountRaw = payment?.amount ?? payment?.price ?? payment?.total;
@@ -90664,6 +91370,26 @@ async function finalizeResumePaidPaymentToCanonical(stored, env, request, opts =
       !existingMolliePaymentId ||
       existingMolliePaymentId === incomingMolliePaymentId)
   ) {
+    const recon = webhookAfterManualPaidConflict(canonicalRec, incomingMolliePaymentId);
+    if (recon) {
+      stored.payment_reconciliation_error = recon.reason || recon.error;
+      stored.paymentReconciliationError = stored.payment_reconciliation_error;
+      stored.finalize_debug.stage = "resume_paid_canonical_reconciliation_conflict";
+      stored.finalize_debug.error = stored.payment_reconciliation_error;
+      stored.confirmed_at = stored.confirmed_at || nowIso;
+      stored.confirming_at = null;
+      console.log(
+        `[PAYMENT_FINALIZE][RECONCILIATION_CONFLICT] paymentBooking=${_bookingIntentMask(paymentBookingId)} canonical=${_bookingIntentMask(canonicalBookingId)} reason=${safeStr(recon.reason, 80) || "-"}`,
+      );
+      return {
+        ok: false,
+        updatedStored: stored,
+        error: "payment_reconciliation_conflict",
+        reason: recon.reason,
+        already: true,
+        canonicalBookingId,
+      };
+    }
     stored.confirmed_at = stored.confirmed_at || nowIso;
     stored.confirming_at = null;
     stored.finalize_debug.stage = "resume_paid_canonical_already_paid";
@@ -90676,11 +91402,61 @@ async function finalizeResumePaidPaymentToCanonical(stored, env, request, opts =
     };
   }
 
+  if (existingPaymentStatus === "paid") {
+    const recon = webhookAfterManualPaidConflict(canonicalRec, incomingMolliePaymentId) || {
+      error: "payment_reconciliation_conflict",
+      reason: "canonical_already_paid_different_mollie",
+    };
+    stored.payment_reconciliation_error = recon.reason || recon.error;
+    stored.paymentReconciliationError = stored.payment_reconciliation_error;
+    stored.finalize_debug.stage = "resume_paid_canonical_reconciliation_conflict";
+    stored.finalize_debug.error = stored.payment_reconciliation_error;
+    stored.confirming_at = null;
+    console.log(
+      `[PAYMENT_FINALIZE][RECONCILIATION_CONFLICT] paymentBooking=${_bookingIntentMask(paymentBookingId)} canonical=${_bookingIntentMask(canonicalBookingId)} reason=${safeStr(recon.reason, 80) || "-"}`,
+    );
+    return {
+      ok: false,
+      updatedStored: stored,
+      error: "payment_reconciliation_conflict",
+      reason: recon.reason,
+      canonicalBookingId,
+    };
+  }
+
+  // Street checkout: verify shadow authoritative amount still matches canonical.
+  if (
+    stored?.street_checkout === true ||
+    stored?.payload?.__street_checkout === true ||
+    stored?.payload?.street_checkout === true
+  ) {
+    const amountCheck = resolveStreetCheckoutAuthoritativeAmount(canonicalRec);
+    const shadowCents = Number(
+      stored?.authoritative_amount_cents ??
+        stored?.payload?.authoritative_amount_cents ??
+        null,
+    );
+    if (
+      amountCheck.ok &&
+      Number.isFinite(shadowCents) &&
+      shadowCents > 0 &&
+      shadowCents !== amountCheck.amount_cents
+    ) {
+      stored.confirm_error = "street_checkout_amount_mismatch";
+      stored.finalize_debug.stage = "resume_paid_canonical_rejected";
+      stored.finalize_debug.error = stored.confirm_error;
+      stored.confirming_at = null;
+      return { ok: false, updatedStored: stored, error: stored.confirm_error };
+    }
+  }
+
   _applyResumePaidPaymentToCanonicalRecord(canonicalRec, stored, {
     paymentBookingId,
     molliePaymentId: incomingMolliePaymentId,
     paidAt: stored?.paid_at || stored?.paidAt,
   });
+  canonicalRec.payment_attempt_status = "paid";
+  canonicalRec.paymentAttemptStatus = "paid";
 
   const invoiceContext = _invoiceLifecycleContextFromRecord(canonicalRec);
   _applyPaymentInvoiceLifecycleToRecord(canonicalRec, {

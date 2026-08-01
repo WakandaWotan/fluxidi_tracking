@@ -1,0 +1,775 @@
+// RELEASE-P0-MOLLIE-STREET-CHECKOUT-1
+//
+// Run:
+//   node --test workers/booking/street_mollie_checkout_p0.test.mjs
+//   node --test workers/booking/modules/street_mollie_checkout.js  (helpers covered here)
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+
+import worker from "./fluxidi_booking_worker.js";
+import {
+  resolveStreetCheckoutAuthoritativeAmount,
+  streetCheckoutEligibility,
+  manualMarkPaidConflict,
+  webhookAfterManualPaidConflict,
+  readOpenStreetMollieCheckout,
+} from "./modules/street_mollie_checkout.js";
+import {
+  buildScopedMollieConnectAuthKey,
+  encryptMollieConnectTokenPayload,
+} from "./modules/mollie_connect.js";
+
+const ADMIN = "test-admin-token";
+const ENC_KEY = "test-mollie-connect-encryption-key-please-rotate";
+
+async function sha256Hex(text) {
+  const data = new TextEncoder().encode(String(text || ""));
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  const bytes = new Uint8Array(digest);
+  let hex = "";
+  for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
+  return hex;
+}
+
+function makeKV(seed = {}) {
+  const store = new Map(Object.entries(seed));
+  return {
+    store,
+    async get(key, opts) {
+      if (!store.has(key)) return null;
+      const raw = store.get(key);
+      if (opts && opts.type === "json") {
+        try {
+          return typeof raw === "string" ? JSON.parse(raw) : raw;
+        } catch (_) {
+          return null;
+        }
+      }
+      return typeof raw === "string" ? raw : JSON.stringify(raw);
+    },
+    async put(key, val) {
+      store.set(key, val);
+    },
+    async delete(key) {
+      store.delete(key);
+    },
+    async list(opts = {}) {
+      const prefix = String(opts?.prefix || "");
+      const keys = [...store.keys()].filter((name) =>
+        prefix ? name.startsWith(prefix) : true,
+      );
+      return { keys: keys.map((name) => ({ name })), list_complete: true };
+    },
+  };
+}
+
+async function seedCompanySession({
+  tokenValue,
+  tenantId,
+  companyId,
+  role = "company_admin",
+}) {
+  const hash = await sha256Hex(tokenValue);
+  return {
+    key: `company_admin:session:${hash}:v1`,
+    record: {
+      role,
+      tenant_id: tenantId,
+      company_id: companyId,
+      expires_at: new Date(Date.now() + 3600_000).toISOString(),
+    },
+  };
+}
+
+async function seedDriverSession({
+  tokenValue,
+  tenantId,
+  companyId,
+  driverId,
+}) {
+  const hash = await sha256Hex(tokenValue);
+  return {
+    key: `public_driver:session:${hash}:v1`,
+    record: {
+      role: "driver",
+      tenant_id: tenantId,
+      company_id: companyId,
+      driver_id: driverId,
+      expires_at: new Date(Date.now() + 3600_000).toISOString(),
+    },
+  };
+}
+
+function seedStreetBooking({
+  bookingId = "street_1001_abc",
+  tenantId = "T1",
+  companyId = "C1",
+  driverId = "drv_1",
+  status = "COMPLETED",
+  paymentStatus = "unpaid",
+  priceInclVat = 42.5,
+  fareFinalized = true,
+  currency = "EUR",
+  paymentProvider = null,
+  paymentMode = null,
+  checkoutUrl = null,
+  paymentBookingId = null,
+  mollie = null,
+  source = "street_ride",
+  rideType = "direct",
+}) {
+  const record = {
+    booking_id: bookingId,
+    bookingId,
+    tenant_id: tenantId,
+    company_id: companyId,
+    status,
+    payment_status: paymentStatus,
+    paymentStatus,
+    assigned_driver_id: driverId,
+    assignedDriverId: driverId,
+    source,
+    booking_source: source,
+    ride_type: rideType,
+    price_incl_vat: priceInclVat,
+    street_ride_fare_finalized: fareFinalized,
+    currency,
+    from: "A",
+    to: "B",
+    pickup_iso: "2026-08-01T12:00:00.000Z",
+    booking: {
+      booking_id: bookingId,
+      price_incl_vat: priceInclVat,
+      currency,
+      status,
+      payment_status: paymentStatus,
+    },
+  };
+  if (paymentProvider) {
+    record.payment_provider = paymentProvider;
+    record.paymentProvider = paymentProvider;
+  }
+  if (paymentMode) {
+    record.payment_mode = paymentMode;
+    record.paymentMode = paymentMode;
+  }
+  if (checkoutUrl) {
+    record.checkout_url = checkoutUrl;
+    record.checkoutUrl = checkoutUrl;
+  }
+  if (paymentBookingId) {
+    record.payment_booking_id = paymentBookingId;
+    record.paymentBookingId = paymentBookingId;
+  }
+  if (mollie) record.mollie = mollie;
+  return { key: `booking:${bookingId}`, record };
+}
+
+function seedBusinessProfile(tenantId, companyId) {
+  return {
+    key: `tenant:${tenantId}:company:${companyId}:business_profile:v1`,
+    record: {
+      business_profile: {
+        mollie_connected: true,
+        mollieConnected: true,
+        payment_owner_mode: "company_mollie",
+        enabled_public_payment_options: [
+          "cash",
+          "qr_code",
+          "online_payment",
+          "bancontact",
+        ],
+      },
+      payment_owner_mode: "company_mollie",
+      mollie_connected: true,
+      mollieConnected: true,
+      enabled_public_payment_options: [
+        "cash",
+        "qr_code",
+        "online_payment",
+        "bancontact",
+      ],
+      enabledPublicPaymentOptions: [
+        "cash",
+        "qr_code",
+        "online_payment",
+        "bancontact",
+      ],
+    },
+  };
+}
+
+function installMollieFetchMock({ paymentId = "tr_street_1", status = "open" } = {}) {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const href = typeof input === "string" ? input : String(input?.url || "");
+    calls.push({ href, method: init.method || "GET", headers: init.headers || {}, body: init.body });
+    if (/api\.mollie\.com\/v2\/payments\/?(\?|$)/.test(href) && (init.method || "GET") === "POST") {
+      return new Response(
+        JSON.stringify({
+          id: paymentId,
+          status,
+          amount: { currency: "EUR", value: "42.50" },
+          _links: {
+            checkout: { href: `https://www.mollie.com/checkout/test/${paymentId}` },
+          },
+          details: {
+            qrCode: { src: "https://www.mollie.com/qr/test.png" },
+          },
+        }),
+        { status: 201, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (/api\.mollie\.com\/v2\/payments\//.test(href) && (init.method || "GET") === "GET") {
+      return new Response(
+        JSON.stringify({
+          id: paymentId,
+          status,
+          _links: {
+            checkout: { href: `https://www.mollie.com/checkout/test/${paymentId}` },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (/api\.mollie\.com\/v2\/payments\//.test(href) && init.method === "DELETE") {
+      return new Response(JSON.stringify({ id: paymentId, status: "canceled" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ ok: false, error: "unexpected_fetch", href }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  return {
+    calls,
+    restore() {
+      globalThis.fetch = original;
+    },
+  };
+}
+
+async function makeEnv(extraSeed = {}) {
+  const booking = seedStreetBooking({});
+  const company = await seedCompanySession({
+    tokenValue: "co_tok_1",
+    tenantId: "T1",
+    companyId: "C1",
+  });
+  const driver = await seedDriverSession({
+    tokenValue: "drv_tok_1",
+    tenantId: "T1",
+    companyId: "C1",
+    driverId: "drv_1",
+  });
+  const mollieKey = buildScopedMollieConnectAuthKey({
+    tenant_id: "T1",
+    company_id: "C1",
+  });
+  const encrypted = await encryptMollieConnectTokenPayload(
+    {
+      access_token: "access_tok_test_street",
+      refresh_token: "refresh_tok_test",
+    },
+    { MOLLIE_CONNECT_ENCRYPTION_KEY: ENC_KEY },
+  );
+  const mollieRecord = {
+    version: 1,
+    connected: true,
+    status: "connected",
+    organizationId: "org_street_test",
+    profileId: "pfl_street_test",
+    mollie_profile_id: "pfl_street_test",
+    mollie_mode: "test",
+    onboardingStatus: "completed",
+    canReceivePayments: true,
+    ...encrypted,
+    lastConnectedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const profile = seedBusinessProfile("T1", "C1");
+  const seed = {
+    [booking.key]: booking.record,
+    [company.key]: company.record,
+    [driver.key]: driver.record,
+    [mollieKey]: mollieRecord,
+    [profile.key]: profile.record,
+    ...extraSeed,
+  };
+  const kv = makeKV(seed);
+  return {
+    env: {
+      ADMIN_TOKEN: ADMIN,
+      BOOKING_KV: kv,
+      MOLLIE_COMPANY_PAYMENTS_ENABLED: "true",
+      MOLLIE_COMPANY_LIVE_PAYMENTS_ENABLED: "true",
+      MOLLIE_CONNECT_ENCRYPTION_KEY: ENC_KEY,
+    },
+    kv,
+    booking,
+  };
+}
+
+function streetCheckoutRequest({
+  bookingId = "street_1001_abc",
+  token = "co_tok_1",
+  body = {},
+  admin = false,
+}) {
+  const headers = {
+    "content-type": "application/json",
+    accept: "application/json",
+  };
+  if (admin) headers["x-admin-token"] = ADMIN;
+  else headers.authorization = `Bearer ${token}`;
+  return new Request(
+    `https://booking.internal/bookings/${encodeURIComponent(bookingId)}/street-checkout?tenant_id=T1&company_id=C1`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ tenant_id: "T1", company_id: "C1", ...body }),
+    },
+  );
+}
+
+// ---------- pure helper tests ----------
+
+test("amount: finalized price_incl_vat is authoritative", () => {
+  const rec = seedStreetBooking({ priceInclVat: 12.34 }).record;
+  const got = resolveStreetCheckoutAuthoritativeAmount(rec);
+  assert.equal(got.ok, true);
+  assert.equal(got.amount_cents, 1234);
+  assert.equal(got.amount_value, "12.34");
+});
+
+test("amount: forged lower client amount rejected", () => {
+  const rec = seedStreetBooking({ priceInclVat: 42.5 }).record;
+  const got = resolveStreetCheckoutAuthoritativeAmount(rec, 1.0);
+  assert.equal(got.ok, false);
+  assert.equal(got.error, "client_amount_mismatch");
+});
+
+test("amount: forged higher client amount rejected", () => {
+  const rec = seedStreetBooking({ priceInclVat: 42.5 }).record;
+  const got = resolveStreetCheckoutAuthoritativeAmount(rec, 99.99);
+  assert.equal(got.ok, false);
+  assert.equal(got.error, "client_amount_mismatch");
+});
+
+test("amount: unfinalized fare rejected", () => {
+  const rec = seedStreetBooking({ fareFinalized: false }).record;
+  const got = resolveStreetCheckoutAuthoritativeAmount(rec);
+  assert.equal(got.ok, false);
+  assert.equal(got.error, "street_fare_not_finalized");
+});
+
+test("eligibility: non-COMPLETED rejected", () => {
+  const rec = seedStreetBooking({ status: "PENDING" }).record;
+  const got = streetCheckoutEligibility(rec, { isStreetDirect: true });
+  assert.equal(got.ok, false);
+  assert.equal(got.error, "street_not_completed");
+});
+
+test("eligibility: non-street rejected", () => {
+  const rec = seedStreetBooking({}).record;
+  const got = streetCheckoutEligibility(rec, { isStreetDirect: false });
+  assert.equal(got.ok, false);
+  assert.equal(got.error, "not_street_booking");
+});
+
+test("manual conflict: open Mollie blocks cash without confirm", () => {
+  const rec = seedStreetBooking({
+    paymentMode: "mollie",
+    paymentProvider: "mollie",
+    paymentStatus: "pending",
+    checkoutUrl: "https://www.mollie.com/checkout/x",
+    mollie: { id: "tr_1", payment_id: "tr_1", status: "open" },
+  }).record;
+  const got = manualMarkPaidConflict(rec, { confirmCancelOpenMollie: false });
+  assert.equal(got.error, "open_mollie_checkout_exists");
+});
+
+test("manual conflict: Mollie paid blocks cash", () => {
+  const rec = seedStreetBooking({
+    paymentMode: "mollie",
+    paymentProvider: "mollie",
+    paymentStatus: "paid",
+  }).record;
+  const got = manualMarkPaidConflict(rec);
+  assert.equal(got.error, "payment_already_paid_mollie");
+});
+
+test("webhook-after-cash conflict is visible", () => {
+  const rec = seedStreetBooking({
+    paymentStatus: "paid",
+    paymentProvider: "manual",
+    paymentMode: "manual",
+  }).record;
+  const got = webhookAfterManualPaidConflict(rec, "tr_other");
+  assert.equal(got.error, "payment_reconciliation_conflict");
+  assert.equal(got.reason, "canonical_already_paid_manual");
+});
+
+// ---------- route tests ----------
+
+test("1. unauthenticated street checkout denied", async () => {
+  const { env } = await makeEnv();
+  const mock = installMollieFetchMock();
+  try {
+    const res = await worker.fetch(
+      new Request(
+        "https://booking.internal/bookings/street_1001_abc/street-checkout?tenant_id=T1&company_id=C1",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ tenant_id: "T1", company_id: "C1" }),
+        },
+      ),
+      env,
+      {},
+    );
+    assert.equal(res.status, 401);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("2. foreign booking returns opaque 404", async () => {
+  const foreign = seedStreetBooking({
+    bookingId: "street_foreign",
+    tenantId: "T2",
+    companyId: "C2",
+  });
+  const { env } = await makeEnv({ [foreign.key]: foreign.record });
+  const mock = installMollieFetchMock();
+  try {
+    const res = await worker.fetch(
+      streetCheckoutRequest({ bookingId: "street_foreign", token: "co_tok_1" }),
+      env,
+      {},
+    );
+    assert.equal(res.status, 404);
+    const body = await res.json();
+    assert.equal(body.error, "booking_not_found");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("3. non-street booking rejected", async () => {
+  const planned = seedStreetBooking({
+    bookingId: "2026-08-999",
+    source: "planned",
+    rideType: "planned",
+  });
+  planned.record.source = "customer_app";
+  planned.record.booking_source = "customer_app";
+  planned.record.ride_type = "planned";
+  // force non-street id
+  const { env, kv } = await makeEnv();
+  await kv.put(planned.key, JSON.stringify(planned.record));
+  const mock = installMollieFetchMock();
+  try {
+    const res = await worker.fetch(
+      streetCheckoutRequest({ bookingId: "2026-08-999" }),
+      env,
+      {},
+    );
+    assert.equal(res.status, 409);
+    const body = await res.json();
+    assert.equal(body.error, "not_street_booking");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("4-6. non-COMPLETED / unfinalized / zero fare rejected", async () => {
+  const cases = [
+    {
+      bookingId: "street_pending",
+      patch: { status: "PENDING" },
+      error: "street_not_completed",
+    },
+    {
+      bookingId: "street_unfinal",
+      patch: { street_ride_fare_finalized: false },
+      error: "street_fare_not_finalized",
+    },
+    {
+      bookingId: "street_zero",
+      patch: { price_incl_vat: 0, booking: { price_incl_vat: 0 } },
+      error: "street_fare_unavailable",
+    },
+  ];
+  for (const c of cases) {
+    const b = seedStreetBooking({ bookingId: c.bookingId });
+    Object.assign(b.record, c.patch);
+    if (c.patch.booking) Object.assign(b.record.booking, c.patch.booking);
+    const { env, kv } = await makeEnv();
+    await kv.put(b.key, JSON.stringify(b.record));
+    const mock = installMollieFetchMock();
+    try {
+      const res = await worker.fetch(
+        streetCheckoutRequest({ bookingId: c.bookingId }),
+        env,
+        {},
+      );
+      assert.equal(res.status, 409, c.error);
+      const body = await res.json();
+      assert.equal(body.error, c.error);
+    } finally {
+      mock.restore();
+    }
+  }
+});
+
+test("7. client amount cannot override canonical amount", async () => {
+  const { env } = await makeEnv();
+  const mock = installMollieFetchMock();
+  try {
+    const res = await worker.fetch(
+      streetCheckoutRequest({ body: { amount: 1.0 } }),
+      env,
+      {},
+    );
+    assert.equal(res.status, 409);
+    const body = await res.json();
+    assert.equal(body.error, "client_amount_mismatch");
+    assert.equal(mock.calls.some((c) => /api\.mollie\.com/.test(c.href)), false);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("8-10. happy create uses company Mollie + Idempotency-Key", async () => {
+  const { env } = await makeEnv();
+  const mock = installMollieFetchMock({ paymentId: "tr_ok_1" });
+  try {
+    const res = await worker.fetch(streetCheckoutRequest({}), env, {});
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.reused, false);
+    assert.equal(body.amount, "42.50");
+    assert.equal(body.amount_cents, 4250);
+    assert.match(body.checkout_url, /mollie\.com\/checkout/);
+    assert.ok(body.payment_booking_id);
+    const createCall = mock.calls.find(
+      (c) => /api\.mollie\.com\/v2\/payments/.test(c.href) && c.method === "POST",
+    );
+    assert.ok(createCall);
+    const headers = createCall.headers;
+    const idem =
+      headers["Idempotency-Key"] ||
+      headers["idempotency-key"] ||
+      (typeof headers.get === "function" ? headers.get("Idempotency-Key") : null);
+    assert.ok(idem && String(idem).includes("fluxidi-street-checkout:"));
+    const parsed = JSON.parse(createCall.body);
+    assert.equal(parsed.amount.value, "42.50");
+    assert.equal(parsed.method, undefined);
+    assert.equal(parsed.metadata.canonicalBookingId, "street_1001_abc");
+    assert.equal(parsed.profileId, "pfl_street_test");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("12. double tap returns same open checkout", async () => {
+  const { env } = await makeEnv();
+  const mock = installMollieFetchMock({ paymentId: "tr_reuse" });
+  try {
+    const first = await worker.fetch(streetCheckoutRequest({}), env, {});
+    assert.equal(first.status, 200);
+    const a = await first.json();
+    const second = await worker.fetch(streetCheckoutRequest({}), env, {});
+    assert.equal(second.status, 200);
+    const b = await second.json();
+    assert.equal(b.reused, true);
+    assert.equal(b.payment_booking_id, a.payment_booking_id);
+    assert.equal(b.checkout_url, a.checkout_url);
+    const posts = mock.calls.filter(
+      (c) => /api\.mollie\.com\/v2\/payments\/?(\?|$)/.test(c.href) && c.method === "POST",
+    );
+    assert.equal(posts.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("14. already-paid ride cannot create checkout", async () => {
+  const paid = seedStreetBooking({
+    paymentStatus: "paid",
+    paymentProvider: "manual",
+    paymentMode: "manual",
+  });
+  const { env, kv } = await makeEnv();
+  await kv.put(paid.key, JSON.stringify(paid.record));
+  const mock = installMollieFetchMock();
+  try {
+    const res = await worker.fetch(streetCheckoutRequest({}), env, {});
+    assert.equal(res.status, 409);
+    const body = await res.json();
+    assert.ok(
+      body.error === "payment_already_paid" ||
+        body.error === "payment_already_paid_manual",
+    );
+  } finally {
+    mock.restore();
+  }
+});
+
+test("20. cash paid blocks new Mollie checkout", async () => {
+  const paid = seedStreetBooking({
+    paymentStatus: "paid",
+    paymentProvider: "manual",
+    paymentMode: "manual",
+  });
+  const { env, kv } = await makeEnv();
+  await kv.put(paid.key, JSON.stringify(paid.record));
+  const mock = installMollieFetchMock();
+  try {
+    const res = await worker.fetch(streetCheckoutRequest({}), env, {});
+    assert.equal(res.status, 409);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("21. Mollie paid blocks manual cash mark-paid", async () => {
+  const paid = seedStreetBooking({
+    paymentStatus: "paid",
+    paymentProvider: "mollie",
+    paymentMode: "mollie",
+  });
+  const { env, kv } = await makeEnv();
+  await kv.put(paid.key, JSON.stringify(paid.record));
+  const mock = installMollieFetchMock();
+  try {
+    const res = await worker.fetch(
+      new Request(
+        "https://booking.internal/bookings/street_1001_abc/payment?tenant_id=T1&company_id=C1",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer co_tok_1",
+          },
+          body: JSON.stringify({
+            tenant_id: "T1",
+            company_id: "C1",
+            payment_status: "paid",
+            payment_method: "cash",
+            payment_source: "in_car",
+            payment_provider: "manual",
+            amount: 42.5,
+          }),
+        },
+      ),
+      env,
+      {},
+    );
+    assert.equal(res.status, 409);
+    const body = await res.json();
+    assert.equal(body.error, "payment_already_paid_mollie");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("open Mollie blocks cash without confirm; confirm cancels", async () => {
+  const { env } = await makeEnv();
+  const mock = installMollieFetchMock({ paymentId: "tr_open_cash" });
+  try {
+    const created = await worker.fetch(streetCheckoutRequest({}), env, {});
+    assert.equal(created.status, 200);
+    const blocked = await worker.fetch(
+      new Request(
+        "https://booking.internal/bookings/street_1001_abc/payment?tenant_id=T1&company_id=C1",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer co_tok_1",
+          },
+          body: JSON.stringify({
+            tenant_id: "T1",
+            company_id: "C1",
+            payment_status: "paid",
+            payment_method: "cash",
+            payment_source: "in_car",
+            payment_provider: "manual",
+            amount: 42.5,
+          }),
+        },
+      ),
+      env,
+      {},
+    );
+    assert.equal(blocked.status, 409);
+    const blockedBody = await blocked.json();
+    assert.equal(blockedBody.error, "open_mollie_checkout_exists");
+
+    const confirmed = await worker.fetch(
+      new Request(
+        "https://booking.internal/bookings/street_1001_abc/payment?tenant_id=T1&company_id=C1",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer co_tok_1",
+          },
+          body: JSON.stringify({
+            tenant_id: "T1",
+            company_id: "C1",
+            payment_status: "paid",
+            payment_method: "cash",
+            payment_source: "in_car",
+            payment_provider: "manual",
+            amount: 42.5,
+            confirm_cancel_open_mollie: true,
+          }),
+        },
+      ),
+      env,
+      {},
+    );
+    assert.equal(confirmed.status, 200);
+    const okBody = await confirmed.json();
+    assert.equal(okBody.ok, true);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("23. checkout create does not mutate fare", async () => {
+  const { env, kv } = await makeEnv();
+  const mock = installMollieFetchMock();
+  try {
+    const before = JSON.parse(await kv.get("booking:street_1001_abc"));
+    const res = await worker.fetch(streetCheckoutRequest({}), env, {});
+    assert.equal(res.status, 200);
+    const after = JSON.parse(await kv.get("booking:street_1001_abc"));
+    assert.equal(after.price_incl_vat, before.price_incl_vat);
+    assert.equal(after.street_ride_fare_finalized, true);
+    assert.equal(String(after.status).toUpperCase(), "COMPLETED");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("readOpenStreetMollieCheckout detects open attempt", () => {
+  const rec = seedStreetBooking({
+    paymentMode: "mollie",
+    paymentStatus: "pending",
+    checkoutUrl: "https://www.mollie.com/checkout/x",
+    paymentBookingId: "uuid-1",
+    mollie: { id: "tr_1", status: "open" },
+  }).record;
+  const open = readOpenStreetMollieCheckout(rec);
+  assert.ok(open);
+  assert.equal(open.payment_booking_id, "uuid-1");
+});
