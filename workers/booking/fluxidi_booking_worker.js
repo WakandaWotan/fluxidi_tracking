@@ -79606,16 +79606,30 @@ async function handleHumanBookingIdAllocatorStatus(request, url, env) {
       doStatus = { ok: false, error: safeStr(e?.message || e) };
     }
   }
+  // KV list can lag; also probe keys in [1..do.next] for a hard upper bound.
+  let maxExistingSuffix = computed.maxExistingSuffix;
+  const doNext = Math.trunc(Number(doStatus?.next) || 0);
+  if (doNext > 0 && env?.BOOKING_KV) {
+    let found = 0;
+    for (let n = Math.max(1, doNext - 40); n <= doNext; n++) {
+      const id = formatHumanBookingId(yearMonth, n);
+      const exists = await env.BOOKING_KV.get(`booking:${id}`);
+      if (exists) found = Math.max(found, n);
+    }
+    maxExistingSuffix = Math.max(maxExistingSuffix, found);
+  }
   return json({
     ok: true,
     flag: HUMAN_BOOKING_ID_DO_FLAG,
     flag_enabled: humanBookingIdDoEnabled(env, envFlag),
     year_month: yearMonth,
     legacy_seq: computed.legacySeq,
-    max_existing_suffix: computed.maxExistingSuffix,
-    seed_floor: computed.seedFloor,
+    max_existing_suffix: maxExistingSuffix,
+    max_existing_suffix_from_list: computed.maxExistingSuffix,
+    seed_floor: Math.max(computed.seedFloor, maxExistingSuffix),
     do_status: doStatus,
     binding: HUMAN_BOOKING_ID_DO_BINDING,
+    invariant_do_next_gte_max_suffix: doNext >= maxExistingSuffix,
   });
 }
 
@@ -79964,22 +79978,42 @@ async function handleHumanBookingIdAllocatorNeutralizeProbes(request, url, env) 
     : [];
 
   const ids = new Set(explicitIds);
-  if (!ids.size) {
-    let cursor;
-    do {
-      const page = await env.BOOKING_KV.list({
-        prefix: `booking:${yearMonth}-`,
-        limit: 1000,
-        cursor,
-      });
-      for (const item of page?.keys || []) {
-        const name = safeStr(item?.name, 240);
-        if (!name.startsWith("booking:")) continue;
-        ids.add(name.slice("booking:".length));
-      }
-      cursor = page?.list_complete === false ? page?.cursor : null;
-    } while (cursor);
+  // Prefer an authoritative DO/legacy upper bound so newly written probe keys
+  // are not missed by eventually-consistent KV list cursors.
+  let upper = 0;
+  try {
+    if (env?.[HUMAN_BOOKING_ID_DO_BINDING]) {
+      const st = await callHumanBookingIdDo(env, yearMonth, { action: "status" });
+      upper = Math.max(upper, Math.trunc(Number(st?.next) || 0));
+    }
+  } catch (_) {
+    // ignore
   }
+  try {
+    upper = Math.max(
+      upper,
+      Math.trunc(Number(await env.BOOKING_KV.get(`seq:${yearMonth}`)) || 0),
+    );
+  } catch (_) {
+    // ignore
+  }
+  for (let n = 1; n <= upper; n++) {
+    ids.add(formatHumanBookingId(yearMonth, n));
+  }
+  let cursor;
+  do {
+    const page = await env.BOOKING_KV.list({
+      prefix: `booking:${yearMonth}-`,
+      limit: 1000,
+      cursor,
+    });
+    for (const item of page?.keys || []) {
+      const name = safeStr(item?.name, 240);
+      if (!name.startsWith("booking:")) continue;
+      ids.add(name.slice("booking:".length));
+    }
+    cursor = page?.list_complete === false ? page?.cursor : null;
+  } while (cursor);
 
   const neutralized = [];
   const skipped = [];
