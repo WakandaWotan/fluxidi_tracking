@@ -1,11 +1,11 @@
 ﻿# ============================================================================
 # FLUXIDI FIELD BUILD — Tablet
-# Exact commit: 312f8d21cd85f6abaa01e4d15f642a234336f4ad
+# Exact commit: 2e81700dc7d8ad7907647738d3b5f2aafc1ed64b
 # Clean detached worktree. Dirty hoofdrepository blijft onaangeraakt.
 # Exact 12 dart-defines, NO ADMIN_TOKEN, NO LEARNING_SERVICE_TOKEN.
 #
 # PIN NOTE: never leave this on a pre-wizard commit (e.g. 1e79314). On HEAD
-# mismatch the script force-recreates the detached worktree at $requiredHead.
+# mismatch the script checks out $requiredHead in place (or recreates).
 # ============================================================================
 
 $ErrorActionPreference = 'Stop'
@@ -15,7 +15,7 @@ $repo         = 'C:\_flutter_work\fluxidi_tracking'
 $worktree     = 'C:\_flutter_work\fluxidi_tracking_field_312f8d2_tablet'
 $device       = 'R52Y808CN2M'
 $adb          = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-$requiredHead = '312f8d21cd85f6abaa01e4d15f642a234336f4ad'
+$requiredHead = '2e81700dc7d8ad7907647738d3b5f2aafc1ed64b'
 $branch       = 'fix/dispatch-deterministic-origin-leg'
 
 function Assert-LastExitCode {
