@@ -450,10 +450,21 @@ String _receiptText(String key) {
       );
     case 'onlinePaySubtitle':
       return _tr(
-        nl: 'Bankkaart, PayPal en andere beschikbare betaalmethodes',
-        en: 'Card, PayPal and other available payment methods',
-        fr: 'Carte bancaire, PayPal et autres méthodes disponibles',
-        es: 'Tarjeta, PayPal y otros métodos de pago disponibles',
+        nl: 'Beschikbare online betaalmethodes',
+        en: 'Available online payment methods',
+        fr: 'Méthodes de paiement en ligne disponibles',
+        es: 'Métodos de pago en línea disponibles',
+      );
+    case 'onlinePayInstruction':
+      return _tr(
+        nl:
+            'Open de beveiligde betaalpagina of scan de QR-code. Kies daarna een van de beschikbare betaalmethodes.',
+        en:
+            'Open the secure payment page or scan the QR code. Then choose one of the available payment methods.',
+        fr:
+            'Ouvrez la page de paiement sécurisée ou scannez le code QR. Choisissez ensuite l’une des méthodes disponibles.',
+        es:
+            'Abre la página de pago segura o escanea el código QR. Luego elige uno de los métodos disponibles.',
       );
     case 'waitingForPayment':
       return _tr(
@@ -462,12 +473,19 @@ String _receiptText(String key) {
         fr: 'En attente du paiement…',
         es: 'Esperando el pago…',
       );
+    case 'iHavePaid':
+      return _tr(
+        nl: 'Ik heb betaald',
+        en: 'I have paid',
+        fr: 'J’ai payé',
+        es: 'Ya he pagado',
+      );
     case 'paymentSucceeded':
       return _tr(
-        nl: 'Betaling gelukt.',
-        en: 'Payment succeeded.',
-        fr: 'Paiement réussi.',
-        es: 'Pago realizado con éxito.',
+        nl: 'Betaling geslaagd',
+        en: 'Payment successful',
+        fr: 'Paiement réussi',
+        es: 'Pago realizado',
       );
     case 'paymentFailed':
       return _tr(

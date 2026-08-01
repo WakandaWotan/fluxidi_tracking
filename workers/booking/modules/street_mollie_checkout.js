@@ -356,3 +356,18 @@ export function buildStreetCheckoutShadowPayload({
     ride_type: "direct",
   };
 }
+
+/**
+ * Mollie redirectUrl for street checkout: always HTTPS worker /pay/return,
+ * which then deep-links to the app. Never send fluxidi:// directly to Mollie.
+ */
+export function buildStreetMollieRedirectUrl({
+  baseUrl,
+  paymentBookingId,
+  returnTo = "fluxidi://pay/return",
+}) {
+  const base = String(baseUrl || "").replace(/\/$/, "");
+  const id = String(paymentBookingId || "").trim();
+  const deep = String(returnTo || "fluxidi://pay/return").trim() || "fluxidi://pay/return";
+  return `${base}/pay/return?id=${encodeURIComponent(id)}&return_to=${encodeURIComponent(deep)}`;
+}

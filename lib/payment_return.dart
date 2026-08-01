@@ -175,53 +175,33 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
             .toLowerCase();
     if (paymentBookingId.isEmpty) return;
 
+    // Deep-link query status is advisory only. Return URL / custom-scheme
+    // handoff must NEVER mark the ride paid or confirmed by itself — only
+    // authenticated `/pay/status` (or the Mollie webhook finalizer) may.
     final existing = fluxidiPendingPaymentNotifier.value;
     if (existing == null || existing.paymentBookingId != paymentBookingId) {
       setFluxidiPendingPayment(
         paymentBookingId: paymentBookingId,
         publicBookingId: publicBookingId.isNotEmpty ? publicBookingId : null,
       );
-      final created = fluxidiPendingPaymentNotifier.value;
-      if (created != null && created.paymentBookingId == paymentBookingId) {
-        fluxidiPendingPaymentNotifier.value = created.copyWith(
-          isChecking: true,
-        );
-      }
     } else if (publicBookingId.isNotEmpty &&
         (existing.publicBookingId == null ||
             existing.publicBookingId!.isEmpty)) {
       fluxidiPendingPaymentNotifier.value = existing.copyWith(
         publicBookingId: publicBookingId,
-        isChecking: true,
       );
-    } else {
-      fluxidiPendingPaymentNotifier.value = existing.copyWith(isChecking: true);
     }
     final afterLink = fluxidiPendingPaymentNotifier.value;
     if (afterLink != null && afterLink.paymentBookingId == paymentBookingId) {
-      if (statusRaw == 'confirmed') {
-        fluxidiPendingPaymentNotifier.value = afterLink.copyWith(
-          status: FluxidiPaymentStatus.confirmed,
-          isChecking: false,
-          lastCheckedAt: DateTime.now(),
-        );
-      } else if (statusRaw == 'paid') {
-        fluxidiPendingPaymentNotifier.value = afterLink.copyWith(
-          status: FluxidiPaymentStatus.paid,
-          isChecking: true,
-          lastCheckedAt: DateTime.now(),
-        );
-      } else if (statusRaw == 'failed' ||
-          statusRaw == 'expired' ||
-          statusRaw == 'canceled' ||
-          statusRaw == 'cancelled') {
-        fluxidiPendingPaymentNotifier.value = afterLink.copyWith(
-          status: FluxidiPaymentStatus.failed,
-          isChecking: false,
-          lastCheckedAt: DateTime.now(),
-        );
-      }
+      fluxidiPendingPaymentNotifier.value = afterLink.copyWith(
+        isChecking: true,
+        lastCheckedAt: DateTime.now(),
+      );
     }
+    debugPrint(
+      '[PAY_RETURN][DEEP_LINK] source=$source id=$paymentBookingId '
+      'hint_status=$statusRaw (hint ignored until /pay/status)',
+    );
     unawaited(_reconcilePendingPayment(source: 'DEEP_LINK'));
   }
 

@@ -4,7 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-/// Customer-facing Belgian QR payment panel (Payconiq / Bancontact Pay QR).
+/// Customer-facing QR payment panel.
+///
+/// Default copy targets Belgian Bancontact / Payconiq QR flows (calculator /
+/// airport). Pass [title]/[subtitle] to override for generic Mollie Checkout
+/// (street online pay) without changing Bancontact-only callers.
 class PaymentQrPanel extends StatelessWidget {
   const PaymentQrPanel({
     super.key,
@@ -12,12 +16,20 @@ class PaymentQrPanel extends StatelessWidget {
     required this.qrSrc,
     this.checkoutUrl,
     this.onOpenCheckout,
+    this.title,
+    this.subtitle,
   });
 
   final AppLanguage language;
   final String qrSrc;
   final String? checkoutUrl;
   final VoidCallback? onOpenCheckout;
+
+  /// Optional override; when null, uses [titleFor] (Bancontact-oriented).
+  final String? title;
+
+  /// Optional override; when null, uses [subtitleFor] (Bancontact-oriented).
+  final String? subtitle;
 
   static String titleFor(AppLanguage language) => switch (language) {
     AppLanguage.en => 'Scan and pay',
@@ -92,18 +104,24 @@ class PaymentQrPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final qrImage = _buildQrImage(qrSrc);
     final hasCheckout = (checkoutUrl?.trim().isNotEmpty ?? false);
+    final resolvedTitle = (title ?? '').trim().isNotEmpty
+        ? title!.trim()
+        : titleFor(language);
+    final resolvedSubtitle = (subtitle ?? '').trim().isNotEmpty
+        ? subtitle!.trim()
+        : subtitleFor(language);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          titleFor(language),
+          resolvedTitle,
           style: Theme.of(context).textTheme.titleMedium,
         ),
         const SizedBox(height: 8),
         Text(
-          subtitleFor(language),
+          resolvedSubtitle,
           style: Theme.of(context).textTheme.bodyMedium,
         ),
         if (qrImage != null) ...[

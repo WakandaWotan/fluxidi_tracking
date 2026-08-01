@@ -383,6 +383,7 @@ import {
   manualMarkPaidConflict,
   webhookAfterManualPaidConflict,
   buildStreetCheckoutShadowPayload,
+  buildStreetMollieRedirectUrl,
 } from "./modules/street_mollie_checkout.js";
 
 /* -------- Google API helpers (hoisted at top to avoid any ReferenceError) -------- */
@@ -34800,7 +34801,9 @@ export default {
                 const params = new URLSearchParams();
                 params.set('booking_id', humanId || '');
                 params.set('payment_booking_id', paymentId || '');
-                params.set('status', 'confirmed');
+                // Hint only — Flutter must reconcile via authenticated /pay/status.
+                // Never claim confirmed/paid from the browser return page alone.
+                params.set('status', 'pending');
                 if (RECOVERED_SCOPE && RECOVERED_SCOPE.tenant_id && RECOVERED_SCOPE.company_id) {
                   params.set('tenant_id', RECOVERED_SCOPE.tenant_id);
                   params.set('company_id', RECOVERED_SCOPE.company_id);
@@ -34910,13 +34913,26 @@ export default {
               }
 
               let attempt = 1;
+              // TRUSTED-IDENTITY-P0: browser /pay/status is unauthenticated and
+              // will 401. Do NOT gate app return on that poll — open the deep
+              // link immediately so Chrome does not leave the driver stranded
+              // on the Mollie/thank-you page after a successful payment.
+              (function immediateAppReturn(){
+                const target = buildAppReturnUrl('', BOOKING_ID);
+                if (!target) return;
+                showAppCta(target);
+                attemptOpenApp(target);
+              })();
               (async function loop(){
                 const done = await poll(attempt);
                 if (done) return;
                 if (attempt >= 30) {
                   const target = buildAppReturnUrl('', BOOKING_ID);
-                  if (target) showAppCta(target);
-                  setStatus('<b>⚠️ Nog niet bevestigd.</b> Open <code>/pay/status?id=' + BOOKING_ID + '</code> of probeer opnieuw.');
+                  if (target) {
+                    showAppCta(target);
+                    attemptOpenApp(target);
+                  }
+                  setStatus('<b>⚠️ Nog niet bevestigd.</b> Tik op “Open Fluxidi app” of open de app handmatig.');
                   return;
                 }
                 attempt++;
@@ -77799,7 +77815,11 @@ async function createStreetRideCheckoutAuthoritative(
   );
 
   const base = getBaseUrl(request);
-  const redirectUrl = `${base}/pay/return?id=${encodeURIComponent(paymentBookingId)}&return_to=${encodeURIComponent(returnUrl)}`;
+  const redirectUrl = buildStreetMollieRedirectUrl({
+    baseUrl: base,
+    paymentBookingId,
+    returnTo: returnUrl,
+  });
   const webhookUrl = `${base}/webhook/mollie`;
   const commProfile = await resolveTenantCommunicationProfile(
     env,

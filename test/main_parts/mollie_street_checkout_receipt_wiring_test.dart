@@ -110,14 +110,25 @@ void main() {
     });
 
     test('/pay/status poll uses a bounded attempt budget (no infinite spinner)', () {
+      final dialog = _readSourceOrFail(
+        'lib/payment/mollie_street_checkout_dialog.dart',
+      );
+      expect(dialog, contains('maxAttempts = 60'));
+      expect(dialog, contains("source: 'LIFECYCLE_RESUME'"));
+      expect(dialog, contains('WidgetsBindingObserver'));
+      expect(dialog, contains('iHavePaidLabel'));
+    });
+
+    test('street dialog uses generic Mollie instruction (not Bancontact-only)', () {
       expect(
         receiptSource,
-        contains('static const int _maxAttempts = 60;'),
+        contains("_receiptText('onlinePayInstruction')"),
       );
       expect(
         receiptSource,
-        contains('static const Duration _interval = Duration(seconds: 5);'),
+        contains('MollieStreetCheckoutDialogContent('),
       );
+      expect(receiptSource, isNot(contains('_MollieStreetCheckoutDialogContent(')));
     });
 
     test('cash/bancontact conflict path supports confirm_cancel_open_mollie', () {
@@ -153,7 +164,9 @@ void main() {
       const keys = <String>[
         'onlinePay',
         'onlinePaySubtitle',
+        'onlinePayInstruction',
         'waitingForPayment',
+        'iHavePaid',
         'paymentSucceeded',
         'paymentFailed',
         'paymentCancelled',

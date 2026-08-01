@@ -20,139 +20,6 @@ class _InCarPaymentAuthRequiredException implements Exception {
 final StreetInvoiceEligibilityMemo _streetInvoiceEligibilityMemo =
     StreetInvoiceEligibilityMemo();
 
-/// RELEASE-P0-MOLLIE-STREET-CHECKOUT-1: content of the "Online betalen"
-/// dialog. Reuses [PaymentQrPanel] for the QR / "open payment page"
-/// affordance and owns a bounded `/pay/status` poll loop (injected via
-/// [pollOnce] so the network call stays testable/owned by the receipt
-/// state). Pops its enclosing dialog with the terminal
-/// [MollieStreetCheckoutPollOutcome] once one is reached, or after the
-/// bounded attempt budget elapses (`pending`, meaning "stop waiting, no
-/// optimistic paid write").
-class _MollieStreetCheckoutDialogContent extends StatefulWidget {
-  const _MollieStreetCheckoutDialogContent({
-    required this.language,
-    required this.qrSrc,
-    required this.checkoutUrl,
-    required this.amountText,
-    required this.paymentBookingId,
-    required this.textMutedColor,
-    required this.waitingText,
-    required this.pollOnce,
-  });
-
-  final AppLanguage language;
-  final String qrSrc;
-  final String? checkoutUrl;
-  final String amountText;
-  final String paymentBookingId;
-  final Color textMutedColor;
-  final String waitingText;
-  final Future<MollieStreetCheckoutPollOutcome> Function() pollOnce;
-
-  @override
-  State<_MollieStreetCheckoutDialogContent> createState() =>
-      _MollieStreetCheckoutDialogContentState();
-}
-
-class _MollieStreetCheckoutDialogContentState
-    extends State<_MollieStreetCheckoutDialogContent> {
-  // Bounded polling budget: ~5 minutes at a 5s cadence. Long enough for a
-  // customer to complete a Mollie hosted checkout, short enough to never
-  // spin forever if the driver leaves the dialog open unattended.
-  static const int _maxAttempts = 60;
-  static const Duration _interval = Duration(seconds: 5);
-
-  int _attempts = 0;
-  bool _polling = false;
-  bool _stopped = false;
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.paymentBookingId.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleNext());
-    }
-  }
-
-  @override
-  void dispose() {
-    _stopped = true;
-    super.dispose();
-  }
-
-  void _scheduleNext() {
-    if (!mounted || _stopped) return;
-    Future.delayed(_interval, _runPoll);
-  }
-
-  Future<void> _runPoll() async {
-    if (!mounted || _stopped) return;
-    _attempts++;
-    setState(() => _polling = true);
-    final outcome = await widget.pollOnce();
-    if (!mounted || _stopped) return;
-    setState(() => _polling = false);
-    if (molliePollOutcomeIsTerminal(outcome)) {
-      Navigator.of(context).pop(outcome);
-      return;
-    }
-    if (_attempts >= _maxAttempts) {
-      Navigator.of(context).pop(MollieStreetCheckoutPollOutcome.pending);
-      return;
-    }
-    _scheduleNext();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        PaymentQrPanel(
-          language: widget.language,
-          qrSrc: widget.qrSrc,
-          checkoutUrl: widget.checkoutUrl,
-        ),
-        const SizedBox(height: 14),
-        Center(
-          child: Text(
-            widget.amountText,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-          ),
-        ),
-        if (widget.paymentBookingId.isNotEmpty) ...[
-          const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (_polling) ...[
-                const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-                const SizedBox(width: 8),
-              ],
-              Flexible(
-                child: Text(
-                  widget.waitingText,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: widget.textMutedColor,
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ],
-    );
-  }
-}
-
 class _RideReceiptBodyState extends State<_RideReceiptBody> {
   _ReceiptPaymentStatus _paymentStatus = _ReceiptPaymentStatus.pending;
 
@@ -3696,18 +3563,30 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
 
     final outcome = await showDialog<MollieStreetCheckoutPollOutcome>(
       context: context,
+      barrierDismissible: false,
       builder: (dialogContext) => AlertDialog(
         title: Text(_receiptText('onlinePay')),
         content: SizedBox(
           width: 300,
-          child: _MollieStreetCheckoutDialogContent(
+          child: MollieStreetCheckoutDialogContent(
             language: language,
             qrSrc: qrSrc,
             checkoutUrl: safeCheckoutUrl.isEmpty ? null : safeCheckoutUrl,
             amountText: amountText,
             paymentBookingId: paymentBookingId,
             textMutedColor: _palette.textMuted,
-            waitingText: _receiptText('waitingForPayment'),
+            pendingPaymentListenable: fluxidiPendingPaymentNotifier,
+            copy: MollieStreetCheckoutCopy(
+              title: _receiptText('onlinePay'),
+              instruction: _receiptText('onlinePayInstruction'),
+              waitingText: _receiptText('waitingForPayment'),
+              succeededText: _receiptText('paymentSucceeded'),
+              failedText: _receiptText('paymentFailed'),
+              cancelledText: _receiptText('paymentCancelled'),
+              expiredText: _receiptText('paymentExpired'),
+              iHavePaidLabel: _receiptText('iHavePaid'),
+              closeLabel: _receiptText('close'),
+            ),
             pollOnce: () => _pollMollieStreetCheckoutStatusOnce(
               paymentBookingId: paymentBookingId,
               strictScope: strictScope,
