@@ -3,7 +3,10 @@ import 'dart:convert';
 
 import 'package:app_links/app_links.dart';
 import 'package:flutter/widgets.dart';
+import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/customer_session_store.dart';
+import 'package:fluxidi_tracking/driver_session_store.dart';
 import 'package:http/http.dart' as http;
 
 const String kFluxidiPaymentReturnScheme = 'fluxidi';
@@ -290,8 +293,29 @@ class PaymentReturnCoordinator with WidgetsBindingObserver {
           ...strictScope,
         },
       );
+      // TRUSTED-IDENTITY-P0: /pay/status requires a trusted session bearer.
+      final headers = <String, String>{'Content-Type': 'application/json'};
+      final companyAuth = await resolveCompanyOwnerAuthHeaders(json: false);
+      if (companyAuth.mode != CompanyOwnerAuthMode.none) {
+        headers.addAll(companyAuth.headers);
+      } else {
+        final driverToken =
+            (activeDriverSessionNotifier.value?.driverSessionToken ?? '')
+                .trim();
+        if (driverToken.isNotEmpty) {
+          headers['Authorization'] = 'Bearer $driverToken';
+        } else {
+          final customerSession =
+              await CustomerSessionStore.instance.loadValidSession();
+          final customerToken =
+              (customerSession?.customerSessionToken ?? '').trim();
+          if (customerToken.isNotEmpty) {
+            headers['Authorization'] = 'Bearer $customerToken';
+          }
+        }
+      }
       final res = await http
-          .get(uri, headers: const {'Content-Type': 'application/json'})
+          .get(uri, headers: headers)
           .timeout(const Duration(seconds: 12));
       if (res.statusCode < 200 || res.statusCode >= 300) {
         return false;

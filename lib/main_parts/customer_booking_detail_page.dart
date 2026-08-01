@@ -265,7 +265,10 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
       final uri = Uri.parse(
         '$kBookingBaseUrl/bookings/${Uri.encodeComponent(widget.bookingId)}',
       ).replace(queryParameters: <String, String>{...refreshScope, ...proof});
-      final res = await http.get(uri).timeout(const Duration(seconds: 12));
+      final refreshHeaders = await _cancelHeaders();
+      final res = await http
+          .get(uri, headers: refreshHeaders)
+          .timeout(const Duration(seconds: 12));
       if (res.statusCode == 200) {
         final dynamic decoded = jsonDecode(utf8.decode(res.bodyBytes));
         if (decoded is Map<String, dynamic> && decoded['ok'] == true) {
@@ -849,7 +852,11 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           '$kBookingBaseUrl/bookings/${Uri.encodeComponent(candidateId)}/checkout-resume',
         ).replace(queryParameters: scopedQuery);
         final res = await http
-            .post(uri, headers: _cancelHeaders(), body: jsonEncode(payload))
+            .post(
+              uri,
+              headers: await _cancelHeaders(),
+              body: jsonEncode(payload),
+            )
             .timeout(const Duration(seconds: 20));
         dynamic decoded;
         try {
@@ -1577,15 +1584,19 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
     );
   }
 
-  // Customer-surface requests never carry any client-side admin credentials.
-  // The backend customer-cancellation policy block (paid online guard, airport
-  // 1440-min cutoff, driver-en-route block) is bypassed for admin actors, so
-  // the customer surface always sends no auth and lets the policy run.
-  Map<String, String> _cancelHeaders() {
+  // TRUSTED-IDENTITY-P0: customer cancel/read must send the cryptographic
+  // customer session bearer. Contact proof alone is no longer authorization.
+  // Admin credentials are never attached from the customer surface.
+  Future<Map<String, String>> _cancelHeaders() async {
     final headers = <String, String>{'Content-Type': 'application/json'};
+    final session = await CustomerSessionStore.instance.loadValidSession();
+    final token = (session?.customerSessionToken ?? '').trim();
+    if (token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
+    }
     debugPrint(
       '[CUSTOMER_CANCEL_AUTH][HEADERS] surface=customer_detail booking=${_safeRefPreview(widget.bookingId)} '
-      'admin_token=omitted reason=customer_surface',
+      'customer_session=${token.isNotEmpty ? "present" : "missing"}',
     );
     return headers;
   }
@@ -2294,7 +2305,7 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
         '$kBookingBaseUrl$kListBookingsPath/${Uri.encodeComponent(bookingId)}',
       ).replace(queryParameters: scopedQuery);
       final res = await http
-          .get(uri, headers: _cancelHeaders())
+          .get(uri, headers: await _cancelHeaders())
           .timeout(const Duration(seconds: 12));
       if (res.statusCode < 200 || res.statusCode >= 300) return false;
       final decoded = jsonDecode(utf8.decode(res.bodyBytes));
@@ -2628,7 +2639,11 @@ class _CustomerBookingDetailPageState extends State<CustomerBookingDetailPage> {
           '$kBookingBaseUrl$path',
         ).replace(queryParameters: scopedQuery);
         final res = await http
-            .post(uri, headers: _cancelHeaders(), body: jsonEncode(payload))
+            .post(
+              uri,
+              headers: await _cancelHeaders(),
+              body: jsonEncode(payload),
+            )
             .timeout(const Duration(seconds: 15));
         dynamic decoded;
         try {
