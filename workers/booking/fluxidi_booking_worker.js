@@ -25,6 +25,21 @@ import { finalizeLegPricingInclVat } from "./modules/leg_pricing_finalize.mjs";
 import { buildBuildTagResponse, listKvKeyNames } from "./modules/diagnostics.js";
 import { BOOKING_TEST_RESET_CONFIRM_PHRASE, allowDevResetEndpoints } from "./modules/dev_reset.js";
 import {
+  HUMAN_BOOKING_ID_DO_BINDING,
+  HUMAN_BOOKING_ID_DO_FLAG,
+  HUMAN_BOOKING_ID_MAX_ALLOCATE_ATTEMPTS,
+  HumanBookingIdSequenceDO,
+  callHumanBookingIdDo,
+  computeHumanBookingIdSeedFloor,
+  computeRollbackSeqValue,
+  formatHumanBookingId,
+  humanBookingIdDoEnabled,
+  normalizeHumanBookingYearMonth,
+  putBookingCreateIfAbsent,
+} from "./modules/human_booking_id_allocator.mjs";
+
+export { HumanBookingIdSequenceDO };
+import {
   BILLIT_PROVIDER,
   BILLIT_OAUTH_STATE_TTL_SECONDS,
   DEFAULT_BILLIT_PAYMENT_TERMS_DAYS,
@@ -29436,6 +29451,26 @@ export default {
         return new Response(null, { headers: corsHeaders() });
       }
 
+      // RELEASE-P0 Option A′ — human booking ID allocator admin (admin token).
+      if (
+        url.pathname === "/admin/booking-id-allocator/status" &&
+        request.method === "GET"
+      ) {
+        return handleHumanBookingIdAllocatorStatus(request, url, env);
+      }
+      if (
+        url.pathname === "/admin/booking-id-allocator/seed" &&
+        request.method === "POST"
+      ) {
+        return handleHumanBookingIdAllocatorSeed(request, url, env);
+      }
+      if (
+        url.pathname === "/admin/booking-id-allocator/rollback-prepare" &&
+        request.method === "POST"
+      ) {
+        return handleHumanBookingIdAllocatorRollbackPrepare(request, url, env);
+      }
+
       // OAUTH
       if (url.pathname === "/oauth/start" && request.method === "GET") return oauthStart(request, env);
       if (url.pathname === "/oauth/callback" && request.method === "GET") return oauthCallback(request, env);
@@ -56943,9 +56978,11 @@ async function handleBooking(payload, env, request, options = {}) {
               rec: provisionalRecord,
             });
           }
-          await env.BOOKING_KV.put(
-            `booking:${canonicalBookingId}`,
-            JSON.stringify(provisionalRecord),
+          await persistNewBookingRecord(
+            env,
+            canonicalBookingId,
+            provisionalRecord,
+            { mode: "create" },
           );
           bookingPersisted = true;
           _emitBookingReservationComplianceEventBestEffort(
@@ -57850,9 +57887,11 @@ Retour route: ${return_from || to} → ${return_to || from}`,
           rec: provisionalRecord,
         });
       }
-      await env.BOOKING_KV.put(
-        `booking:${canonicalBookingId}`,
-        JSON.stringify(provisionalRecord),
+      await persistNewBookingRecord(
+        env,
+        canonicalBookingId,
+        provisionalRecord,
+        { mode: "create" },
       );
       bookingPersisted = true;
       _emitBookingReservationComplianceEventBestEffort(
@@ -58405,7 +58444,14 @@ Retour route: ${return_from || to} → ${return_to || from}`,
     }
 
     try {
-      await env.BOOKING_KV.put(`booking:${booking.bookingId}`, JSON.stringify(record));
+      await persistNewBookingRecord(
+        env,
+        booking.bookingId,
+        record,
+        // Provisional → confirmed for the same id is an in-flow upsert.
+        // First confirmed write without provisional remains create-if-absent.
+        { mode: bookingPersisted ? "upsert_same" : "create" },
+      );
       bookingPersisted = true;
       _emitBookingReservationComplianceEventBestEffort(env, record, booking.bookingId, {
         kind: "confirmed",
@@ -79394,13 +79440,9 @@ async function googleDeleteEvent(accessToken, calendarId, eventId) {
 
 /* ===================== BOOKING ID (HUMAN) ===================== */
 
-// Generates human-friendly sequential IDs like 2026-01-001.
-// Uses BOOKING_KV as a lightweight counter store (OK for low volume).
-async function nextHumanBookingId(env, pickupIso) {
-  if (!env?.BOOKING_KV) throw new Error("Missing BOOKING_KV binding (needed for booking ids)");
+// RELEASE-P0 Option A′: Brussels-local YYYY-MM bucket for planned booking IDs.
+function humanBookingYearMonthFromPickupIso(pickupIso) {
   const parts = brusselsDateTimePartsFromIso(pickupIso || new Date().toISOString());
-
-  // parts.date is usually dd/mm/yyyy
   let yyyy = "";
   let mm = "";
 
@@ -79414,7 +79456,10 @@ async function nextHumanBookingId(env, pickupIso) {
 
   if (!yyyy || !mm) {
     const m = safeStr(parts?.date).match(/^([0-9]{4})-([0-9]{2})-/);
-    if (m) { yyyy = m[1]; mm = m[2]; }
+    if (m) {
+      yyyy = m[1];
+      mm = m[2];
+    }
   }
 
   if (!yyyy || !mm) {
@@ -79423,21 +79468,212 @@ async function nextHumanBookingId(env, pickupIso) {
     mm = String(d.getUTCMonth() + 1).padStart(2, "0");
   }
 
-  const counterKey = `seq:${yyyy}-${mm}`;
-  const maxTries = 6;
+  return normalizeHumanBookingYearMonth(`${yyyy}-${mm}`) ||
+    normalizeHumanBookingYearMonth(
+      `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`,
+    );
+}
+
+async function nextHumanBookingIdFromLegacyKv(env, yearMonth) {
+  const ym = normalizeHumanBookingYearMonth(yearMonth);
+  if (!ym) throw new Error("invalid_year_month");
+  const counterKey = `seq:${ym}`;
+  const maxTries = HUMAN_BOOKING_ID_MAX_ALLOCATE_ATTEMPTS;
 
   for (let i = 0; i < maxTries; i++) {
     const curRaw = await env.BOOKING_KV.get(counterKey);
-    const cur = clampInt(curRaw, 0, 0, 999999);
+    const cur = clampInt(curRaw, 0, 999999999);
     const next = cur + 1;
     await env.BOOKING_KV.put(counterKey, String(next));
 
-    const id = `${yyyy}-${mm}-${String(next).padStart(3, "0")}`;
+    const id = formatHumanBookingId(ym, next);
     const exists = await env.BOOKING_KV.get(`booking:${id}`);
     if (!exists) return id;
   }
 
-  return `${yyyy}-${mm}-${String(Date.now()).slice(-6)}`;
+  throw new Error("booking_id_allocation_exhausted");
+}
+
+async function nextHumanBookingIdFromDo(env, yearMonth) {
+  const ym = normalizeHumanBookingYearMonth(yearMonth);
+  if (!ym) throw new Error("invalid_year_month");
+  if (!env?.[HUMAN_BOOKING_ID_DO_BINDING]) {
+    throw new Error("missing_human_booking_id_sequence_binding");
+  }
+
+  // Lazy one-time seed floor from legacy seq + existing suffix max.
+  // The DO seed is monotonic; double-seed is safe.
+  let seedFloor;
+  try {
+    const status = await callHumanBookingIdDo(env, ym, { action: "status" });
+    if (status?.seeded !== true) {
+      const computed = await computeHumanBookingIdSeedFloor(env.BOOKING_KV, ym);
+      seedFloor = computed.seedFloor;
+    }
+  } catch (_) {
+    const computed = await computeHumanBookingIdSeedFloor(env.BOOKING_KV, ym);
+    seedFloor = computed.seedFloor;
+  }
+
+  const maxTries = HUMAN_BOOKING_ID_MAX_ALLOCATE_ATTEMPTS;
+  for (let i = 0; i < maxTries; i++) {
+    const allocated = await callHumanBookingIdDo(env, ym, {
+      action: "allocate",
+      ...(i === 0 && seedFloor != null ? { seed_floor: seedFloor } : {}),
+    });
+    const id = safeStr(allocated?.booking_id || allocated?.bookingId) ||
+      formatHumanBookingId(ym, allocated?.seq);
+    if (!id) throw new Error("human_booking_id_do_empty");
+    const exists = await env.BOOKING_KV.get(`booking:${id}`);
+    if (!exists) return id;
+    // Collision (should be rare with DO): allocate again, never overwrite.
+  }
+
+  throw new Error("booking_id_allocation_exhausted");
+}
+
+// Generates human-friendly sequential IDs like 2026-01-001.
+// When HUMAN_BOOKING_ID_DO_ALLOCATOR is on: global month-scoped Durable Object.
+// When off: legacy KV seq:YYYY-MM (rollback path). Always create-if-absent safe.
+async function nextHumanBookingId(env, pickupIso) {
+  if (!env?.BOOKING_KV) throw new Error("Missing BOOKING_KV binding (needed for booking ids)");
+  const yearMonth = humanBookingYearMonthFromPickupIso(pickupIso);
+  if (!yearMonth) throw new Error("invalid_year_month");
+
+  if (humanBookingIdDoEnabled(env, envFlag)) {
+    return nextHumanBookingIdFromDo(env, yearMonth);
+  }
+  return nextHumanBookingIdFromLegacyKv(env, yearMonth);
+}
+
+async function persistNewBookingRecord(env, bookingId, record, opts = {}) {
+  const payload =
+    typeof record === "string" ? record : JSON.stringify(record);
+  const mode = opts.mode === "upsert_same" ? "upsert_same" : "create";
+  const result = await putBookingCreateIfAbsent(env.BOOKING_KV, bookingId, payload, {
+    mode,
+  });
+  if (!result.ok) {
+    const err = new Error(result.error || "booking_id_collision");
+    err.code = result.error || "booking_id_collision";
+    err.bookingId = bookingId;
+    err.collision = result.collision === true;
+    throw err;
+  }
+  return result;
+}
+
+async function handleHumanBookingIdAllocatorStatus(request, url, env) {
+  try {
+    _requireAdmin(request, url, env);
+  } catch (authErr) {
+    return json({ ok: false, error: safeStr(authErr?.message || "unauthorized") }, 401);
+  }
+  const yearMonth =
+    normalizeHumanBookingYearMonth(url.searchParams.get("year_month")) ||
+    humanBookingYearMonthFromPickupIso(new Date().toISOString());
+  const computed = await computeHumanBookingIdSeedFloor(env.BOOKING_KV, yearMonth);
+  let doStatus = null;
+  if (env?.[HUMAN_BOOKING_ID_DO_BINDING]) {
+    try {
+      doStatus = await callHumanBookingIdDo(env, yearMonth, { action: "status" });
+    } catch (e) {
+      doStatus = { ok: false, error: safeStr(e?.message || e) };
+    }
+  }
+  return json({
+    ok: true,
+    flag: HUMAN_BOOKING_ID_DO_FLAG,
+    flag_enabled: humanBookingIdDoEnabled(env, envFlag),
+    year_month: yearMonth,
+    legacy_seq: computed.legacySeq,
+    max_existing_suffix: computed.maxExistingSuffix,
+    seed_floor: computed.seedFloor,
+    do_status: doStatus,
+    binding: HUMAN_BOOKING_ID_DO_BINDING,
+  });
+}
+
+async function handleHumanBookingIdAllocatorSeed(request, url, env) {
+  try {
+    _requireAdmin(request, url, env);
+  } catch (authErr) {
+    return json({ ok: false, error: safeStr(authErr?.message || "unauthorized") }, 401);
+  }
+  if (!env?.[HUMAN_BOOKING_ID_DO_BINDING]) {
+    return json({ ok: false, error: "missing_human_booking_id_sequence_binding" }, 500);
+  }
+  const body = await safeJson(request).catch(() => ({}));
+  const yearMonth =
+    normalizeHumanBookingYearMonth(body?.year_month || body?.yearMonth) ||
+    normalizeHumanBookingYearMonth(url.searchParams.get("year_month")) ||
+    humanBookingYearMonthFromPickupIso(new Date().toISOString());
+  const computed = await computeHumanBookingIdSeedFloor(env.BOOKING_KV, yearMonth);
+  const seedFloor = Math.max(
+    computed.seedFloor,
+    Math.trunc(Number(body?.seed_floor ?? body?.seedFloor) || 0),
+  );
+  const seeded = await callHumanBookingIdDo(env, yearMonth, {
+    action: "seed",
+    seed_floor: seedFloor,
+  });
+  return json({
+    ok: true,
+    year_month: yearMonth,
+    computed,
+    seed_floor: seedFloor,
+    do: seeded,
+    flag_enabled: humanBookingIdDoEnabled(env, envFlag),
+    note:
+      "Idempotent monotonic seed. Enable HUMAN_BOOKING_ID_DO_ALLOCATOR only after verifying seed_floor >= max_existing_suffix.",
+  });
+}
+
+async function handleHumanBookingIdAllocatorRollbackPrepare(request, url, env) {
+  try {
+    _requireAdmin(request, url, env);
+  } catch (authErr) {
+    return json({ ok: false, error: safeStr(authErr?.message || "unauthorized") }, 401);
+  }
+  const body = await safeJson(request).catch(() => ({}));
+  const yearMonth =
+    normalizeHumanBookingYearMonth(body?.year_month || body?.yearMonth) ||
+    normalizeHumanBookingYearMonth(url.searchParams.get("year_month")) ||
+    humanBookingYearMonthFromPickupIso(new Date().toISOString());
+  const computed = await computeHumanBookingIdSeedFloor(env.BOOKING_KV, yearMonth);
+  let doNext = 0;
+  if (env?.[HUMAN_BOOKING_ID_DO_BINDING]) {
+    try {
+      const st = await callHumanBookingIdDo(env, yearMonth, { action: "status" });
+      doNext = Math.trunc(Number(st?.next) || 0);
+    } catch (_) {
+      doNext = 0;
+    }
+  }
+  const rollbackSeq = computeRollbackSeqValue({
+    doNext,
+    legacySeq: computed.legacySeq,
+    maxExistingSuffix: computed.maxExistingSuffix,
+  });
+  const apply = body?.apply === true || body?.apply === "true" || body?.apply === 1;
+  if (apply) {
+    await env.BOOKING_KV.put(`seq:${yearMonth}`, String(rollbackSeq));
+  }
+  return json({
+    ok: true,
+    year_month: yearMonth,
+    do_next: doNext,
+    legacy_seq: computed.legacySeq,
+    max_existing_suffix: computed.maxExistingSuffix,
+    rollback_seq: rollbackSeq,
+    applied: apply === true,
+    instructions: [
+      "1. Set HUMAN_BOOKING_ID_DO_ALLOCATOR=0 (wrangler var / dashboard) and redeploy.",
+      "2. POST this endpoint with { apply:true } to restore seq:YYYY-MM to rollback_seq.",
+      "3. Create-if-absent protection remains active regardless of allocator path.",
+      "4. Leave DO storage and historical booking:{id} records untouched.",
+    ],
+  });
 }
 
 function normalizeBookingReferenceYearMonth(value) {

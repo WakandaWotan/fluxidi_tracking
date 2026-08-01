@@ -9,6 +9,8 @@ find_additional_modules = false
 GOOGLE_CALENDAR_ID = "primary"
 FLEET_AVAILABILITY_MODE = "multi_vehicle"
 COMPLIANCE_API_URL = "https://fluxidi-compliance-api.fluxidi.workers.dev"
+# RELEASE-P0 Option A′ — staged rollout. Keep "0" until month seed is verified.
+HUMAN_BOOKING_ID_DO_ALLOCATOR = "0"
 
 # Mollie Connect OAuth (Phase 1) — set via Cloudflare secrets, never commit values:
 # MOLLIE_CONNECT_CLIENT_ID       — OAuth app client id (app_…)
@@ -48,6 +50,10 @@ class_name = "DocumentReferenceSequenceDO"
 name = "FLUXIDI_SUBSCRIPTION_FOUNDER_SLOTS"
 class_name = "FluxidiSubscriptionFounderSlotsDO"
 
+[[durable_objects.bindings]]
+name = "HUMAN_BOOKING_ID_SEQUENCE"
+class_name = "HumanBookingIdSequenceDO"
+
 # REQUIRED KV bindings used by this worker code.
 [[kv_namespaces]]
 binding = "BOOKING_KV"
@@ -80,3 +86,7 @@ new_sqlite_classes = ["DocumentReferenceSequenceDO"]
 [[migrations]]
 tag = "fluxidi-subscription-founder-slots-v1"
 new_sqlite_classes = ["FluxidiSubscriptionFounderSlotsDO"]
+
+[[migrations]]
+tag = "human-booking-id-sequence-v1"
+new_sqlite_classes = ["HumanBookingIdSequenceDO"]
