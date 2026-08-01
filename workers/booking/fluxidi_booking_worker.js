@@ -16088,11 +16088,200 @@ function _applyDriverSessionToBookingBody(body, driverSession) {
   body.actor_role = "driver";
   body.actor_driver_id = driverSession.driver_id;
   body.actorDriverId = driverSession.driver_id;
-  if (!_scopeText(body.driver_id, 96) && !_scopeText(body.driverId, 96)) {
-    body.driver_id = driverSession.driver_id;
-    body.driverId = driverSession.driver_id;
-  }
+  // TRUSTED-IDENTITY-P0: always overwrite client-supplied driver ids so
+  // spoofed actor_driver_id/driver_id cannot survive into ownership checks.
+  body.driver_id = driverSession.driver_id;
+  body.driverId = driverSession.driver_id;
   return body;
+}
+
+function _opaqueBookingNotFoundResponse() {
+  return json({ ok: false, error: "booking_not_found" }, 404);
+}
+
+function _opaqueBookingNotFoundResult() {
+  return { ok: false, error: "booking_not_found" };
+}
+
+function _humanBookingIdProbesEnabled(env) {
+  // Default OFF. Production mutation/probe routes require explicit temporary
+  // ops enablement: HUMAN_BOOKING_ID_PROBES_ENABLED=1
+  const raw = String(env?.HUMAN_BOOKING_ID_PROBES_ENABLED ?? "0").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
+function _legacyCustomerContactProofEnabled(env) {
+  // Default OFF. Contact knowledge alone must not authorize booking
+  // read/cancel in production. Set ALLOW_LEGACY_CUSTOMER_CONTACT_PROOF=1
+  // only for a measured migration window.
+  const raw = String(env?.ALLOW_LEGACY_CUSTOMER_CONTACT_PROOF ?? "0")
+    .trim()
+    .toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
+function _companySessionConflictsWithBody(companySession, body) {
+  if (!companySession || !body || typeof body !== "object" || Array.isArray(body)) {
+    return null;
+  }
+  const clientTenant = _scopeText(body.tenant_id ?? body.tenantId);
+  if (clientTenant && clientTenant !== companySession.tenant_id) return "tenant_mismatch";
+  const clientCompany = _scopeText(body.company_id ?? body.companyId);
+  if (clientCompany && clientCompany !== companySession.company_id) {
+    return "company_mismatch";
+  }
+  return null;
+}
+
+function _companySessionConflictsWithUrl(companySession, url) {
+  if (!companySession || !url?.searchParams) return null;
+  const clientTenant = _scopeText(
+    url.searchParams.get("tenant_id") ?? url.searchParams.get("tenantId"),
+  );
+  if (clientTenant && clientTenant !== companySession.tenant_id) return "tenant_mismatch";
+  const clientCompany = _scopeText(
+    url.searchParams.get("company_id") ?? url.searchParams.get("companyId"),
+  );
+  if (clientCompany && clientCompany !== companySession.company_id) {
+    return "company_mismatch";
+  }
+  return null;
+}
+
+function _applyCompanySessionToBookingBody(body, companySession) {
+  if (!companySession || !body || typeof body !== "object" || Array.isArray(body)) {
+    return body;
+  }
+  body.tenant_id = companySession.tenant_id;
+  body.tenantId = companySession.tenant_id;
+  body.company_id = companySession.company_id;
+  body.companyId = companySession.company_id;
+  return body;
+}
+
+function _driverSessionConflictsWithUrl(driverSession, url) {
+  if (!driverSession || !url?.searchParams) return null;
+  const clientTenant = _scopeText(
+    url.searchParams.get("tenant_id") ?? url.searchParams.get("tenantId"),
+  );
+  if (clientTenant && clientTenant !== driverSession.tenant_id) return "tenant_mismatch";
+  const clientCompany = _scopeText(
+    url.searchParams.get("company_id") ?? url.searchParams.get("companyId"),
+  );
+  if (clientCompany && clientCompany !== driverSession.company_id) {
+    return "company_mismatch";
+  }
+  const clientDriver = _scopeText(
+    url.searchParams.get("driver_id") ??
+      url.searchParams.get("driverId") ??
+      url.searchParams.get("actor_driver_id") ??
+      url.searchParams.get("actorDriverId"),
+    96,
+  );
+  if (clientDriver && clientDriver !== driverSession.driver_id) return "driver_mismatch";
+  return null;
+}
+
+/**
+ * TRUSTED-IDENTITY-P0 — resolve authenticated actor for booking object
+ * routes. Request-supplied tenant/company/driver/email never creates identity.
+ * Preference: admin token → company session → driver session → customer session.
+ */
+async function _resolveTrustedBookingActor(request, url, env, body = null) {
+  if (hasValidAdminToken(request, url, env)) {
+    return {
+      ok: true,
+      auth_mode: "admin_token",
+      actor_role: "admin",
+      driver_session: null,
+      company_session: null,
+      customer_session: null,
+    };
+  }
+  const companySession = await _loadCompanySessionFromRequest(request, env);
+  if (companySession) {
+    const conflict =
+      _companySessionConflictsWithBody(companySession, body) ||
+      _companySessionConflictsWithUrl(companySession, url);
+    if (conflict) {
+      return { ok: false, response: json({ ok: false, error: "forbidden" }, 403) };
+    }
+    return {
+      ok: true,
+      auth_mode: "company_session",
+      actor_role: "company",
+      driver_session: null,
+      company_session: companySession,
+      customer_session: null,
+    };
+  }
+  const driverSession = await _loadPublicDriverSessionFromRequest(request, env);
+  if (driverSession) {
+    const conflict =
+      _driverSessionConflictsWithBody(driverSession, body) ||
+      _driverSessionConflictsWithUrl(driverSession, url);
+    if (conflict) {
+      return { ok: false, response: json({ ok: false, error: "forbidden" }, 403) };
+    }
+    return {
+      ok: true,
+      auth_mode: "driver_session",
+      actor_role: "driver",
+      driver_session: driverSession,
+      company_session: null,
+      customer_session: null,
+    };
+  }
+  const customerSession = await _loadCustomerSessionFromRequest(request, env);
+  if (customerSession) {
+    return {
+      ok: true,
+      auth_mode: "customer_session",
+      actor_role: "customer",
+      driver_session: null,
+      company_session: null,
+      customer_session: customerSession,
+    };
+  }
+  return {
+    ok: false,
+    response: json({ ok: false, error: "unauthorized" }, 401),
+  };
+}
+
+async function _assertCanonicalBookingOwnershipOrOpaque404(rec, tenantScope) {
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+    return { ok: false, response: _opaqueBookingNotFoundResponse() };
+  }
+  return { ok: true };
+}
+
+async function _assertCustomerSessionOwnsBookingOrOpaque404(
+  env,
+  rec,
+  customerSession,
+  bookingId,
+) {
+  if (!customerSession) {
+    return { ok: false, response: json({ ok: false, error: "unauthorized" }, 401) };
+  }
+  const sessionScope = {
+    tenant_id: sanitizeTenantString(customerSession.tenant_id, 80),
+    company_id: sanitizeTenantString(customerSession.company_id, 80),
+    hasScope: true,
+  };
+  const ownership = await bookingBelongsToCustomerSessionForWrite(env, rec, {
+    session: customerSession,
+    sessionScope,
+    bookingId,
+  });
+  if (!ownership?.matched) {
+    console.log(
+      `[TRUSTED_IDENTITY][CUSTOMER][OPAQUE_404] booking=${_bookingIntentMask(bookingId)} proof=${sanitizeTenantString(ownership?.proof, 40) || "none"}`,
+    );
+    return { ok: false, response: _opaqueBookingNotFoundResponse() };
+  }
+  return { ok: true, sessionScope };
 }
 
 function _readPayloadAssignedVehicleId(body) {
@@ -34051,10 +34240,25 @@ export default {
       }
 
       // Debug status: check booking in KV
+      // TRUSTED-IDENTITY-P0: payment id secrecy alone is not authorization.
       if (url.pathname === "/pay/status" && request.method === "GET") {
+        const trustedPay = await _resolveTrustedBookingActor(request, url, env, null);
+        if (!trustedPay.ok) return trustedPay.response;
+        const payScopeBody = {};
+        if (trustedPay.company_session) {
+          _applyCompanySessionToBookingBody(payScopeBody, trustedPay.company_session);
+        } else if (trustedPay.driver_session) {
+          _applyDriverSessionToBookingBody(payScopeBody, trustedPay.driver_session);
+        } else if (trustedPay.customer_session) {
+          payScopeBody.tenant_id = trustedPay.customer_session.tenant_id;
+          payScopeBody.tenantId = trustedPay.customer_session.tenant_id;
+          payScopeBody.company_id = trustedPay.customer_session.company_id;
+          payScopeBody.companyId = trustedPay.customer_session.company_id;
+        }
         const statusScope = resolveExplicitBookingRequestScope({
           request,
           url,
+          body: Object.keys(payScopeBody).length ? payScopeBody : null,
           allowLegacyFallback: false,
         });
         if (!statusScope?.hasScope) {
@@ -34063,7 +34267,27 @@ export default {
             400,
           );
         }
-        return payStatus(request, env, statusScope);
+        if (
+          trustedPay.auth_mode !== "admin_token" &&
+          trustedPay.company_session &&
+          (statusScope.tenant_id !== trustedPay.company_session.tenant_id ||
+            statusScope.company_id !== trustedPay.company_session.company_id)
+        ) {
+          // Opaque: do not confirm whether a payment/booking exists for another scope.
+          return json({ ok: false, error: "booking_not_found" }, 404);
+        }
+        if (
+          trustedPay.driver_session &&
+          (statusScope.tenant_id !== trustedPay.driver_session.tenant_id ||
+            statusScope.company_id !== trustedPay.driver_session.company_id)
+        ) {
+          return json({ ok: false, error: "booking_not_found" }, 404);
+        }
+        return payStatus(request, env, statusScope, {
+          customer_session: trustedPay.customer_session,
+          driver_session: trustedPay.driver_session,
+          auth_mode: trustedPay.auth_mode,
+        });
       }
 
       // Patch 2.4G: friendly public return page for add-on checkout.
@@ -39366,6 +39590,9 @@ export default {
               }
               throw loadErr;
             }
+            if (!bookingMatchesRequiredTenantCompanyScope(preloadedRec, tenantScope)) {
+              return _opaqueBookingNotFoundResponse();
+            }
             const driverOwns = await driverOwnsBookingForMutation({
               rec: preloadedRec,
               actorDriverId: driverAuthGet.driver_id,
@@ -39386,28 +39613,106 @@ export default {
               out,
               out?.error === "missing_tenant_scope"
                 ? 400
-                : (out?.error === "forbidden" ? 403 : 200),
+                : out?.error === "booking_not_found"
+                  ? 404
+                  : (out?.error === "forbidden" ? 403 : 200),
             );
           }
-          const scopedRoute = requireExplicitBookingRouteScope({ request, url });
+          // TRUSTED-IDENTITY-P0: company / customer / admin. Contact proof
+          // alone is not authorization unless the explicit migration flag is on.
+          const trustedGet = await _resolveTrustedBookingActor(request, url, env, null);
+          if (!trustedGet.ok) {
+            if (_legacyCustomerContactProofEnabled(env)) {
+              const scopedRouteLegacy = requireExplicitBookingRouteScope({ request, url });
+              if (!scopedRouteLegacy.ok) return scopedRouteLegacy.response;
+              const tenantScopeLegacy = scopedRouteLegacy.scope;
+              let preloadedLegacy = null;
+              try {
+                const loadedLegacy = await loadBookingRecord(env, bookingId);
+                preloadedLegacy = loadedLegacy?.rec || null;
+              } catch (loadErr) {
+                if (String(loadErr?.message || "") === "Booking not found") {
+                  return _opaqueBookingNotFoundResponse();
+                }
+                throw loadErr;
+              }
+              const proofLegacy = _requestCustomerContactProof({ url });
+              if (!customerProofMatchesBooking(preloadedLegacy, proofLegacy)) {
+                return _opaqueBookingNotFoundResponse();
+              }
+              if (!bookingMatchesRequiredTenantCompanyScope(preloadedLegacy, tenantScopeLegacy)) {
+                return _opaqueBookingNotFoundResponse();
+              }
+              console.log(
+                `[TRUSTED_IDENTITY][LEGACY_CONTACT_PROOF] route=GET_bookings booking=${_bookingIntentMask(bookingId)}`,
+              );
+              const outLegacy = await getBookingAuthoritative(
+                bookingId,
+                env,
+                tenantScopeLegacy,
+                preloadedLegacy,
+              );
+              return json(
+                outLegacy,
+                outLegacy?.error === "missing_tenant_scope"
+                  ? 400
+                  : outLegacy?.error === "booking_not_found"
+                    ? 404
+                    : (outLegacy?.error === "forbidden" ? 403 : 200),
+              );
+            }
+            return trustedGet.response;
+          }
+          const scopeBodyGet = {};
+          if (trustedGet.company_session) {
+            _applyCompanySessionToBookingBody(scopeBodyGet, trustedGet.company_session);
+          } else if (trustedGet.customer_session) {
+            scopeBodyGet.tenant_id = trustedGet.customer_session.tenant_id;
+            scopeBodyGet.tenantId = trustedGet.customer_session.tenant_id;
+            scopeBodyGet.company_id = trustedGet.customer_session.company_id;
+            scopeBodyGet.companyId = trustedGet.customer_session.company_id;
+          }
+          const scopedRoute = requireExplicitBookingRouteScope({
+            request,
+            url,
+            body: Object.keys(scopeBodyGet).length ? scopeBodyGet : null,
+          });
           if (!scopedRoute.ok) return scopedRoute.response;
           const tenantScope = scopedRoute.scope;
           let preloadedRec = null;
-          const adminAuthorized = hasValidAdminToken(request, url, env);
-          if (!adminAuthorized) {
+          try {
             const loaded = await loadBookingRecord(env, bookingId);
             preloadedRec = loaded?.rec || null;
-            const proof = _requestCustomerContactProof({ url });
-            if (!customerProofMatchesBooking(preloadedRec, proof)) {
-              return json({ ok: false, error: "customer ownership verification failed" }, 403);
+          } catch (loadErr) {
+            if (String(loadErr?.message || "") === "Booking not found") {
+              return _opaqueBookingNotFoundResponse();
             }
+            throw loadErr;
+          }
+          if (trustedGet.auth_mode !== "admin_token") {
+            const ownershipGate = await _assertCanonicalBookingOwnershipOrOpaque404(
+              preloadedRec,
+              tenantScope,
+            );
+            if (!ownershipGate.ok) return ownershipGate.response;
+          }
+          if (trustedGet.customer_session) {
+            const customerGate = await _assertCustomerSessionOwnsBookingOrOpaque404(
+              env,
+              preloadedRec,
+              trustedGet.customer_session,
+              bookingId,
+            );
+            if (!customerGate.ok) return customerGate.response;
           }
           const out = await getBookingAuthoritative(bookingId, env, tenantScope, preloadedRec);
           return json(
             out,
             out?.error === "missing_tenant_scope"
               ? 400
-              : (out?.error === "forbidden" ? 403 : 200),
+              : out?.error === "booking_not_found"
+                ? 404
+                : (out?.error === "forbidden" ? 403 : 200),
           );
         }
 
@@ -39420,22 +39725,45 @@ export default {
           const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
           if (!scopedRoute.ok) return scopedRoute.response;
           const tenantScope = scopedRoute.scope;
-          const adminAuthorized = hasValidAdminToken(request, url, env);
-          if (!adminAuthorized) {
+          // TRUSTED-IDENTITY-P0: checkout-resume requires trusted identity.
+          const trustedResume = await _resolveTrustedBookingActor(request, url, env, body);
+          if (!trustedResume.ok) {
+            if (_legacyCustomerContactProofEnabled(env)) {
+              let preloadedRec = null;
+              try {
+                const loaded = await loadBookingRecord(env, bookingId);
+                preloadedRec = loaded?.rec || null;
+              } catch (loadErr) {
+                if (String(loadErr?.message || "") === "Booking not found") {
+                  return _opaqueBookingNotFoundResponse();
+                }
+                throw loadErr;
+              }
+              const proof = _requestCustomerContactProof({ url, body });
+              if (!customerProofMatchesBooking(preloadedRec, proof)) {
+                return _opaqueBookingNotFoundResponse();
+              }
+            } else {
+              return trustedResume.response;
+            }
+          } else if (trustedResume.customer_session) {
             let preloadedRec = null;
             try {
               const loaded = await loadBookingRecord(env, bookingId);
               preloadedRec = loaded?.rec || null;
             } catch (loadErr) {
               if (String(loadErr?.message || "") === "Booking not found") {
-                return json({ ok: false, error: "booking_not_found" }, 404);
+                return _opaqueBookingNotFoundResponse();
               }
               throw loadErr;
             }
-            const proof = _requestCustomerContactProof({ url, body });
-            if (!customerProofMatchesBooking(preloadedRec, proof)) {
-              return json({ ok: false, error: "customer ownership verification failed" }, 403);
-            }
+            const customerGate = await _assertCustomerSessionOwnsBookingOrOpaque404(
+              env,
+              preloadedRec,
+              trustedResume.customer_session,
+              bookingId,
+            );
+            if (!customerGate.ok) return customerGate.response;
           }
           const out = await resumeBookingCheckoutAuthoritative(
             bookingId,
@@ -39464,6 +39792,49 @@ export default {
           request.method === "POST"
         ) {
           const body = await safeJson(request);
+          // TRUSTED-IDENTITY-P0: authenticate before trusting body scope/driver ids.
+          const declaredActorRole = _scopeText(
+            body?.actor_role ?? body?.actorRole,
+            32,
+          ).toLowerCase();
+          if (
+            declaredActorRole &&
+            !new Set(["customer", "driver", "admin", "system", "company"]).has(
+              declaredActorRole,
+            )
+          ) {
+            return json({ ok: false, error: "invalid_actor_role" }, 400);
+          }
+          let trusted = await _resolveTrustedBookingActor(request, url, env, body);
+          let legacyCustomerContact = false;
+          if (
+            !trusted.ok &&
+            declaredActorRole === "customer" &&
+            _legacyCustomerContactProofEnabled(env)
+          ) {
+            legacyCustomerContact = true;
+            trusted = {
+              ok: true,
+              auth_mode: "legacy_customer_contact_proof",
+              actor_role: "customer",
+              driver_session: null,
+              company_session: null,
+              customer_session: null,
+            };
+          }
+          if (!trusted.ok) return trusted.response;
+          if (trusted.driver_session) {
+            _applyDriverSessionToBookingBody(body, trusted.driver_session);
+          } else if (trusted.company_session) {
+            _applyCompanySessionToBookingBody(body, trusted.company_session);
+          } else if (trusted.customer_session) {
+            body.tenant_id = trusted.customer_session.tenant_id;
+            body.tenantId = trusted.customer_session.tenant_id;
+            body.company_id = trusted.customer_session.company_id;
+            body.companyId = trusted.customer_session.company_id;
+            body.actor_role = "customer";
+            body.actorRole = "customer";
+          }
           const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
           if (!scopedRoute.ok) return scopedRoute.response;
           const tenantScope = scopedRoute.scope;
@@ -39473,29 +39844,56 @@ export default {
             rec = loaded?.rec || null;
           } catch (loadErr) {
             if (String(loadErr?.message || "") === "Booking not found") {
-              return json({ ok: false, error: "booking_not_found" }, 404);
+              return _opaqueBookingNotFoundResponse();
             }
             throw loadErr;
           }
-          const actorRole = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
-          if (actorRole && !new Set(["customer", "driver", "admin", "system"]).has(actorRole)) {
-            return json({ ok: false, error: "invalid_actor_role" }, 400);
+          if (trusted.auth_mode !== "admin_token") {
+            const ownershipGate = await _assertCanonicalBookingOwnershipOrOpaque404(
+              rec,
+              tenantScope,
+            );
+            if (!ownershipGate.ok) return ownershipGate.response;
           }
+          const actorRole =
+            trusted.auth_mode === "driver_session"
+              ? "driver"
+              : trusted.auth_mode === "customer_session" || legacyCustomerContact
+                ? "customer"
+                : trusted.auth_mode === "company_session"
+                  ? "admin"
+                  : _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase() ||
+                    (trusted.auth_mode === "admin_token" ? "admin" : "system");
           const rawRequestedStatus = safeStr(body?.status ?? body?.stage, 80);
           const normalizedRequestedStatus = _normLifecycleStatus(rawRequestedStatus);
           const shouldEvaluateCustomerCancelPolicy =
             _isCustomerCancellationStatus(rawRequestedStatus) ||
             _isCustomerCancellationStatus(normalizedRequestedStatus);
-          const adminAuthorized = hasValidAdminToken(request, url, env);
+          const adminAuthorized = trusted.auth_mode === "admin_token";
           const statusActorRole = actorRole || (adminAuthorized ? "admin" : "system");
           if (actorRole === "customer" && (shouldEvaluateCustomerCancelPolicy || !adminAuthorized)) {
-            const proof = _requestCustomerContactProof({ url, body });
-            const ownershipPassed = customerProofMatchesBooking(rec, proof);
-            console.log(
-              `[BOOKING_STATUS][CUSTOMER_CANCEL_AUTH] booking=${_bookingIntentMask(bookingId)} actor_role=customer ownership=${ownershipPassed ? "passed" : "failed"}`,
-            );
-            if (!ownershipPassed) {
-              return json({ ok: false, error: "customer ownership verification failed" }, 403);
+            if (trusted.customer_session) {
+              const customerGate = await _assertCustomerSessionOwnsBookingOrOpaque404(
+                env,
+                rec,
+                trusted.customer_session,
+                bookingId,
+              );
+              if (!customerGate.ok) return customerGate.response;
+              console.log(
+                `[BOOKING_STATUS][CUSTOMER_CANCEL_AUTH] booking=${_bookingIntentMask(bookingId)} actor_role=customer ownership=session_passed`,
+              );
+            } else if (legacyCustomerContact) {
+              const proof = _requestCustomerContactProof({ url, body });
+              const ownershipPassed = customerProofMatchesBooking(rec, proof);
+              console.log(
+                `[BOOKING_STATUS][CUSTOMER_CANCEL_AUTH] booking=${_bookingIntentMask(bookingId)} actor_role=customer ownership=${ownershipPassed ? "legacy_passed" : "failed"}`,
+              );
+              if (!ownershipPassed) {
+                return _opaqueBookingNotFoundResponse();
+              }
+            } else {
+              return json({ ok: false, error: "unauthorized" }, 401);
             }
             if (!shouldEvaluateCustomerCancelPolicy) {
               console.log(
@@ -39579,33 +39977,26 @@ export default {
               }
             }
           }
-          if (!adminAuthorized) {
-            if (actorRole === "driver") {
-              const ownershipBlock = await enforceDriverOwnershipForMutation({
-                request,
-                url,
-                body,
-                rec,
-                tenantScope,
-                env,
-              });
-              if (ownershipBlock) {
-                return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
-              }
-            } else if (actorRole !== "customer") {
-              return json({ ok: false, error: "Unauthorized" }, 401);
+          if (!adminAuthorized && actorRole === "driver") {
+            if (!trusted.driver_session) {
+              return json({ ok: false, error: "unauthorized" }, 401);
             }
-          }
-          const ownershipBlock = await enforceDriverOwnershipForMutation({
-            request,
-            url,
-            body,
-            rec,
-            tenantScope,
-            env,
-          });
-          if (ownershipBlock) {
-            return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
+            const allowed = await driverOwnsBookingForMutation({
+              rec,
+              actorDriverId: trusted.driver_session.driver_id,
+              actorVehicleId: trusted.driver_session.assigned_vehicle_id || null,
+              tenantScope,
+              env,
+            });
+            if (!allowed) {
+              return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
+            }
+          } else if (
+            !adminAuthorized &&
+            actorRole !== "customer" &&
+            trusted.auth_mode !== "company_session"
+          ) {
+            return json({ ok: false, error: "unauthorized" }, 401);
           }
           const out = await updateBookingStatusAuthoritative(
             bookingId,
@@ -39621,15 +40012,17 @@ export default {
             out,
             out?.error === "missing_tenant_scope"
               ? 400
-              : out?.error === "forbidden"
-                ? 403
-                : out?.error === "future_pickup_not_started" ||
-                    out?.error === "future_completion_not_allowed" ||
-                    out?.error === "parent_completion_requires_all_legs_terminal"
-                  ? 409
-                  : out.ok
-                    ? 200
-                    : 400,
+              : out?.error === "booking_not_found"
+                ? 404
+                : out?.error === "forbidden"
+                  ? 403
+                  : out?.error === "future_pickup_not_started" ||
+                      out?.error === "future_completion_not_allowed" ||
+                      out?.error === "parent_completion_requires_all_legs_terminal"
+                    ? 409
+                    : out.ok
+                      ? 200
+                      : 400,
           );
         }
 
@@ -39662,12 +40055,15 @@ export default {
             rec = loaded?.rec || null;
           } catch (loadErr) {
             if (String(loadErr?.message || "") === "Booking not found") {
-              return json({ ok: false, error: "booking_not_found" }, 404);
+              return _opaqueBookingNotFoundResponse();
             }
             throw loadErr;
           }
-          const actorRole = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
           const adminAuthorized = hasValidAdminToken(request, url, env);
+          if (!adminAuthorized && !bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+            return _opaqueBookingNotFoundResponse();
+          }
+          const actorRole = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
           const statusActorRole = actorRole || (adminAuthorized ? "admin" : "system");
           const rawRequestedStatus = safeStr(body?.status ?? body?.stage, 80);
           const normalizedRequestedStatus = _normLifecycleStatus(rawRequestedStatus);
@@ -39685,10 +40081,26 @@ export default {
             `[CUSTOMER_CANCEL_AUTH][ROLE] route=leg booking=${_bookingIntentMask(bookingId)} leg=${_bookingIntentMask(legId)} actor_role=${actorRole || "-"} admin_authorized=${adminAuthorized ? "true" : "false"} should_evaluate_customer_policy=${shouldEvaluateCustomerCancelPolicy ? "true" : "false"}`,
           );
           if (actorRole === "customer") {
-            const proof = _requestCustomerContactProof({ url, body });
-            const ownershipPassed = customerProofMatchesBooking(rec, proof);
-            if (!ownershipPassed) {
-              return json({ ok: false, error: "customer ownership verification failed" }, 403);
+            // TRUSTED-IDENTITY-P0: require customer session (or explicit legacy flag).
+            const customerSession = await _loadCustomerSessionFromRequest(request, env);
+            if (customerSession) {
+              const customerGate = await _assertCustomerSessionOwnsBookingOrOpaque404(
+                env,
+                rec,
+                customerSession,
+                bookingId,
+              );
+              if (!customerGate.ok) return customerGate.response;
+            } else if (_legacyCustomerContactProofEnabled(env)) {
+              const proof = _requestCustomerContactProof({ url, body });
+              if (!customerProofMatchesBooking(rec, proof)) {
+                return _opaqueBookingNotFoundResponse();
+              }
+              console.log(
+                `[TRUSTED_IDENTITY][LEGACY_CONTACT_PROOF] route=leg_status booking=${_bookingIntentMask(bookingId)}`,
+              );
+            } else {
+              return json({ ok: false, error: "unauthorized" }, 401);
             }
             if (shouldEvaluateCustomerCancelPolicy) {
               const cancellationPolicyProfile = await loadCancellationPolicyProfile(env, tenantScope, {
@@ -39770,31 +40182,40 @@ export default {
             }
           } else if (!adminAuthorized) {
             if (actorRole === "driver") {
-              const ownershipBlock = await enforceDriverOwnershipForMutation({
-                request,
-                url,
-                body,
+              // TRUSTED-IDENTITY-P0: driver mutations require a driver session;
+              // never trust client-supplied actor_driver_id alone.
+              if (!driverAuth) {
+                return json({ ok: false, error: "unauthorized" }, 401);
+              }
+              const allowed = await driverOwnsBookingForMutation({
                 rec,
+                actorDriverId: driverAuth.driver_id,
+                actorVehicleId: driverAuth.assigned_vehicle_id || null,
                 tenantScope,
                 env,
               });
-              if (ownershipBlock) {
+              if (!allowed) {
                 return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
               }
             } else {
-              return json({ ok: false, error: "Unauthorized" }, 401);
+              const companySession = await _loadCompanySessionFromRequest(request, env);
+              if (!companySession) {
+                return json({ ok: false, error: "unauthorized" }, 401);
+              }
+              if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+                return _opaqueBookingNotFoundResponse();
+              }
             }
           }
-          if (actorRole !== "customer") {
-            const ownershipBlock = await enforceDriverOwnershipForMutation({
-              request,
-              url,
-              body,
+          if (actorRole === "driver" && driverAuth) {
+            const allowed = await driverOwnsBookingForMutation({
               rec,
+              actorDriverId: driverAuth.driver_id,
+              actorVehicleId: driverAuth.assigned_vehicle_id || null,
               tenantScope,
               env,
             });
-            if (ownershipBlock) {
+            if (!allowed) {
               return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
             }
           }
@@ -40542,18 +40963,92 @@ export default {
       if (url.pathname === "/track/booking/status" && request.method === "POST") {
         const body = await safeJson(request);
         const bookingId = String(body?.booking_id || body?.bookingId || "").trim();
+        if (!bookingId) {
+          return json({ ok: false, error: "booking_id is required" }, 400);
+        }
+        // TRUSTED-IDENTITY-P0: same contract as POST /bookings/:id/status.
+        const declaredActorRole = _scopeText(
+          body?.actor_role ?? body?.actorRole,
+          32,
+        ).toLowerCase();
+        let trusted = await _resolveTrustedBookingActor(request, url, env, body);
+        let legacyCustomerContact = false;
+        if (
+          !trusted.ok &&
+          declaredActorRole === "customer" &&
+          _legacyCustomerContactProofEnabled(env)
+        ) {
+          legacyCustomerContact = true;
+          trusted = {
+            ok: true,
+            auth_mode: "legacy_customer_contact_proof",
+            actor_role: "customer",
+            driver_session: null,
+            company_session: null,
+            customer_session: null,
+          };
+        }
+        if (!trusted.ok) return trusted.response;
+        if (trusted.driver_session) {
+          _applyDriverSessionToBookingBody(body, trusted.driver_session);
+        } else if (trusted.company_session) {
+          _applyCompanySessionToBookingBody(body, trusted.company_session);
+        } else if (trusted.customer_session) {
+          body.tenant_id = trusted.customer_session.tenant_id;
+          body.tenantId = trusted.customer_session.tenant_id;
+          body.company_id = trusted.customer_session.company_id;
+          body.companyId = trusted.customer_session.company_id;
+          body.actor_role = "customer";
+          body.actorRole = "customer";
+        }
         const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
         if (!scopedRoute.ok) return scopedRoute.response;
         const tenantScope = scopedRoute.scope;
-        const { rec } = await loadBookingRecord(env, bookingId);
-        const actorRole = _scopeText(body?.actor_role ?? body?.actorRole, 32).toLowerCase();
-        const adminAuthorized = hasValidAdminToken(request, url, env);
+        let rec = null;
+        try {
+          const loaded = await loadBookingRecord(env, bookingId);
+          rec = loaded?.rec || null;
+        } catch (loadErr) {
+          if (String(loadErr?.message || "") === "Booking not found") {
+            return _opaqueBookingNotFoundResponse();
+          }
+          throw loadErr;
+        }
+        if (trusted.auth_mode !== "admin_token") {
+          const ownershipGate = await _assertCanonicalBookingOwnershipOrOpaque404(
+            rec,
+            tenantScope,
+          );
+          if (!ownershipGate.ok) return ownershipGate.response;
+        }
+        const actorRole =
+          trusted.auth_mode === "driver_session"
+            ? "driver"
+            : trusted.auth_mode === "customer_session" || legacyCustomerContact
+              ? "customer"
+              : trusted.auth_mode === "company_session"
+                ? "admin"
+                : declaredActorRole ||
+                  (trusted.auth_mode === "admin_token" ? "admin" : "system");
+        const adminAuthorized = trusted.auth_mode === "admin_token";
         const statusActorRole = actorRole || (adminAuthorized ? "admin" : "system");
         if (!adminAuthorized) {
           if (actorRole === "customer") {
-            const proof = _requestCustomerContactProof({ url, body });
-            if (!customerProofMatchesBooking(rec, proof)) {
-              return json({ ok: false, error: "customer ownership verification failed" }, 403);
+            if (trusted.customer_session) {
+              const customerGate = await _assertCustomerSessionOwnsBookingOrOpaque404(
+                env,
+                rec,
+                trusted.customer_session,
+                bookingId,
+              );
+              if (!customerGate.ok) return customerGate.response;
+            } else if (legacyCustomerContact) {
+              const proof = _requestCustomerContactProof({ url, body });
+              if (!customerProofMatchesBooking(rec, proof)) {
+                return _opaqueBookingNotFoundResponse();
+              }
+            } else {
+              return json({ ok: false, error: "unauthorized" }, 401);
             }
             const rawRequestedStatus = safeStr(body?.status ?? body?.stage, 80);
             const normalizedRequestedStatus = _normLifecycleStatus(rawRequestedStatus);
@@ -40639,31 +41134,22 @@ export default {
               }
             }
           } else if (actorRole === "driver") {
-            const ownershipBlock = await enforceDriverOwnershipForMutation({
-              request,
-              url,
-              body,
+            if (!trusted.driver_session) {
+              return json({ ok: false, error: "unauthorized" }, 401);
+            }
+            const allowed = await driverOwnsBookingForMutation({
               rec,
+              actorDriverId: trusted.driver_session.driver_id,
+              actorVehicleId: trusted.driver_session.assigned_vehicle_id || null,
               tenantScope,
               env,
             });
-            if (ownershipBlock) {
+            if (!allowed) {
               return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
             }
-          } else {
-            return json({ ok: false, error: "Unauthorized" }, 401);
+          } else if (trusted.auth_mode !== "company_session") {
+            return json({ ok: false, error: "unauthorized" }, 401);
           }
-        }
-        const ownershipBlock = await enforceDriverOwnershipForMutation({
-          request,
-          url,
-          body,
-          rec,
-          tenantScope,
-          env,
-        });
-        if (ownershipBlock) {
-          return json({ ok: false, error: "booking_not_assigned_to_driver" }, 403);
         }
         const out = await updateBookingStatusAuthoritative(
           bookingId,
@@ -40857,46 +41343,115 @@ export default {
       }
 
       // Start a tracking session (creates trip_id, persists on booking)
+      // TRUSTED-IDENTITY-P0: driver/company/admin session required; body
+      // tenant/company alone is never authorization.
+      // ADMIN_TOKEN: retained as the documented platform/S2S identity for
+      // ops and internal tooling. No separate internal-service secret is
+      // minted because no worker currently calls booking /tracking/*.
+      // Flutter GPS lifecycle uses the tracking worker (/track/session/*,
+      // /track/ping), not these booking-worker routes.
       if (url.pathname === "/tracking/start" && request.method === "POST") {
         const body = await safeJson(request);
+        const trusted = await _resolveTrustedBookingActor(request, url, env, body);
+        if (!trusted.ok) return trusted.response;
+        if (trusted.auth_mode === "customer_session") {
+          return json({ ok: false, error: "unauthorized" }, 401);
+        }
+        if (trusted.driver_session) {
+          _applyDriverSessionToBookingBody(body, trusted.driver_session);
+        } else if (trusted.company_session) {
+          _applyCompanySessionToBookingBody(body, trusted.company_session);
+        }
         const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
         if (!scopedRoute.ok) return scopedRoute.response;
         const tenantScope = scopedRoute.scope;
-        const out = await trackingStart(body, env, tenantScope);
+        const out = await trackingStart(body, env, tenantScope, {
+          driver_session: trusted.driver_session,
+          require_driver_assignment: !!trusted.driver_session,
+        });
         return json(
           out,
           out?.error === "missing_tenant_scope" || out?.error === "missing_tracking_booking_scope"
             ? 400
-            : (out?.error === "forbidden" ? 403 : 200),
+            : out?.error === "booking_not_found"
+              ? 404
+              : out?.error === "booking_not_assigned_to_driver"
+                ? 403
+                : out?.error === "forbidden"
+                  ? 403
+                  : 200,
         );
       }
 
       // GPS ping from driver phone
       if (url.pathname === "/tracking/ping" && request.method === "POST") {
         const body = await safeJson(request);
+        const trusted = await _resolveTrustedBookingActor(request, url, env, body);
+        if (!trusted.ok) return trusted.response;
+        if (trusted.auth_mode === "customer_session") {
+          return json({ ok: false, error: "unauthorized" }, 401);
+        }
+        if (trusted.driver_session) {
+          _applyDriverSessionToBookingBody(body, trusted.driver_session);
+        } else if (trusted.company_session) {
+          _applyCompanySessionToBookingBody(body, trusted.company_session);
+        }
         const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
         if (!scopedRoute.ok) return scopedRoute.response;
         const tenantScope = scopedRoute.scope;
-        const out = await trackingPing(body, env, tenantScope);
+        const out = await trackingPing(body, env, tenantScope, {
+          driver_session: trusted.driver_session,
+          require_driver_assignment: !!trusted.driver_session,
+        });
         return json(
           out,
           out?.error === "missing_tenant_scope" || out?.error === "missing_tracking_booking_scope"
             ? 400
-            : (out?.error === "forbidden" ? 403 : 200),
+            : out?.error === "booking_not_found"
+              ? 404
+              : out?.error === "booking_not_assigned_to_driver"
+                ? 403
+                : out?.error === "forbidden"
+                  ? 403
+                  : 200,
         );
       }
 
       // Read last GPS ping (tablet + diagnostics)
       if (url.pathname === "/tracking/last" && request.method === "GET") {
-        const scopedRoute = requireExplicitBookingRouteScope({ request, url });
+        const trusted = await _resolveTrustedBookingActor(request, url, env, null);
+        if (!trusted.ok) return trusted.response;
+        if (trusted.auth_mode === "customer_session") {
+          return json({ ok: false, error: "unauthorized" }, 401);
+        }
+        const scopeBody = {};
+        if (trusted.driver_session) {
+          _applyDriverSessionToBookingBody(scopeBody, trusted.driver_session);
+        } else if (trusted.company_session) {
+          _applyCompanySessionToBookingBody(scopeBody, trusted.company_session);
+        }
+        const scopedRoute = requireExplicitBookingRouteScope({
+          request,
+          url,
+          body: Object.keys(scopeBody).length ? scopeBody : null,
+        });
         if (!scopedRoute.ok) return scopedRoute.response;
         const tenantScope = scopedRoute.scope;
-        const out = await trackingLast(url, env, tenantScope);
+        const out = await trackingLast(url, env, tenantScope, {
+          driver_session: trusted.driver_session,
+          require_driver_assignment: !!trusted.driver_session,
+        });
         return json(
           out,
           out?.error === "missing_tenant_scope" || out?.error === "missing_tracking_booking_scope"
             ? 400
-            : (out?.error === "forbidden" ? 403 : 200),
+            : out?.error === "booking_not_found"
+              ? 404
+              : out?.error === "booking_not_assigned_to_driver"
+                ? 403
+                : out?.error === "forbidden"
+                  ? 403
+                  : 200,
         );
       }
 
@@ -65683,10 +66238,27 @@ async function loadBookingRecord(env, bookingId) {
 
 function ensureTrackingScopeForRecord(rec, requestedScope) {
   if (!requestedScope?.hasScope) return missingTenantScopeError();
-  if (!bookingMatchesRequestedTenantScope(rec, requestedScope)) {
-    return { ok: false, error: "forbidden" };
+  // TRUSTED-IDENTITY-P0: strict fail-closed ownership; missing company_id
+  // must never authorize. Foreign/missing → opaque booking_not_found.
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, requestedScope)) {
+    return _opaqueBookingNotFoundResult();
   }
   return null;
+}
+
+async function _trackingAuthorizeAssignedDriver(env, rec, tenantScope, options = {}) {
+  if (!options?.require_driver_assignment || !options?.driver_session) {
+    return null;
+  }
+  const allowed = await driverOwnsBookingForMutation({
+    rec,
+    actorDriverId: options.driver_session.driver_id,
+    actorVehicleId: options.driver_session.assigned_vehicle_id || null,
+    tenantScope,
+    env,
+  });
+  if (allowed) return null;
+  return { ok: false, error: "booking_not_assigned_to_driver" };
 }
 
 function _trackingMappingSafePart(value, maxLen = 160) {
@@ -65864,16 +66436,32 @@ async function trackingGetBooking(body, env, requestedScope = null) {
   }
 }
 
-async function trackingStart(body, env, requestedScope = null) {
+async function trackingStart(body, env, requestedScope = null, options = {}) {
   try {
     const booking_id = requireStr(body?.booking_id || body?.bookingId, "booking_id");
-    const { key, rec } = await loadBookingRecord(env, booking_id);
+    let loaded;
+    try {
+      loaded = await loadBookingRecord(env, booking_id);
+    } catch (loadErr) {
+      if (String(loadErr?.message || "") === "Booking not found") {
+        return _opaqueBookingNotFoundResult();
+      }
+      throw loadErr;
+    }
+    const { key, rec } = loaded;
     if (!bookingMatchesRequiredTenantCompanyScope(rec, requestedScope)) {
       if (!requestedScope?.tenant_id || !requestedScope?.company_id) {
         return missingTenantScopeError();
       }
-      return { ok: false, error: "forbidden" };
+      return _opaqueBookingNotFoundResult();
     }
+    const driverBlock = await _trackingAuthorizeAssignedDriver(
+      env,
+      rec,
+      requestedScope,
+      options,
+    );
+    if (driverBlock) return driverBlock;
 
     const trip_id = crypto?.randomUUID ? crypto.randomUUID() : `trip_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     rec.trip = {
@@ -65900,7 +66488,7 @@ async function trackingStart(body, env, requestedScope = null) {
   }
 }
 
-async function trackingPing(body, env, requestedScope = null) {
+async function trackingPing(body, env, requestedScope = null, options = {}) {
   try {
     const booking_id = safeStr(body?.booking_id || body?.bookingId);
     const session_id = safeStr(
@@ -65924,7 +66512,14 @@ async function trackingPing(body, env, requestedScope = null) {
     let resolvedBookingId = booking_id;
     let loaded = null;
     if (resolvedBookingId) {
-      loaded = await loadBookingRecord(env, resolvedBookingId);
+      try {
+        loaded = await loadBookingRecord(env, resolvedBookingId);
+      } catch (loadErr) {
+        if (String(loadErr?.message || "") === "Booking not found") {
+          return _opaqueBookingNotFoundResult();
+        }
+        throw loadErr;
+      }
     } else if (session_id || trip_id) {
       const resolved = await _resolveTrackingBookingBySessionId(
         env,
@@ -65944,8 +66539,15 @@ async function trackingPing(body, env, requestedScope = null) {
       if (!requestedScope?.tenant_id || !requestedScope?.company_id) {
         return missingTenantScopeError();
       }
-      return { ok: false, error: "forbidden" };
+      return _opaqueBookingNotFoundResult();
     }
+    const driverBlock = await _trackingAuthorizeAssignedDriver(
+      env,
+      rec,
+      requestedScope,
+      options,
+    );
+    if (driverBlock) return driverBlock;
 
     rec.tracking_last = {
       lat,
@@ -65978,7 +66580,7 @@ async function trackingPing(body, env, requestedScope = null) {
   }
 }
 
-async function trackingLast(url, env, requestedScope = null) {
+async function trackingLast(url, env, requestedScope = null, options = {}) {
   try {
     if (!requestedScope?.hasScope) {
       return missingTenantScopeError();
@@ -66001,8 +66603,15 @@ async function trackingLast(url, env, requestedScope = null) {
     let resolvedBookingId = booking_id;
     let rec = null;
     if (resolvedBookingId) {
-      const loaded = await loadBookingRecord(env, resolvedBookingId);
-      rec = loaded.rec;
+      try {
+        const loaded = await loadBookingRecord(env, resolvedBookingId);
+        rec = loaded.rec;
+      } catch (loadErr) {
+        if (String(loadErr?.message || "") === "Booking not found") {
+          return _opaqueBookingNotFoundResult();
+        }
+        throw loadErr;
+      }
     } else if (session_id || trip_id) {
       const resolved = await _resolveTrackingBookingBySessionId(
         env,
@@ -66019,6 +66628,13 @@ async function trackingLast(url, env, requestedScope = null) {
     }
     const scopeBlock = ensureTrackingScopeForRecord(rec, requestedScope);
     if (scopeBlock) return scopeBlock;
+    const driverBlock = await _trackingAuthorizeAssignedDriver(
+      env,
+      rec,
+      requestedScope,
+      options,
+    );
+    if (driverBlock) return driverBlock;
 
     return { ok: true, booking_id: resolvedBookingId,
       build: FLUXIDI_BUILD, tracking_last: rec?.tracking_last || null, trip: rec?.trip || null };
@@ -79639,6 +80255,9 @@ async function handleHumanBookingIdAllocatorSeed(request, url, env) {
   } catch (authErr) {
     return json({ ok: false, error: safeStr(authErr?.message || "unauthorized") }, 401);
   }
+  if (!_humanBookingIdProbesEnabled(env)) {
+    return json({ ok: false, error: "allocator_probes_disabled" }, 403);
+  }
   if (!env?.[HUMAN_BOOKING_ID_DO_BINDING]) {
     return json({ ok: false, error: "missing_human_booking_id_sequence_binding" }, 500);
   }
@@ -79728,6 +80347,9 @@ async function handleHumanBookingIdAllocatorCreateProbe(request, url, env) {
   } catch (authErr) {
     return json({ ok: false, error: safeStr(authErr?.message || "unauthorized") }, 401);
   }
+  if (!_humanBookingIdProbesEnabled(env)) {
+    return json({ ok: false, error: "allocator_probes_disabled" }, 403);
+  }
   if (!env?.BOOKING_KV) {
     return json({ ok: false, error: "missing_booking_kv" }, 500);
   }
@@ -79764,6 +80386,9 @@ async function handleHumanBookingIdAllocatorAllocateProbe(request, url, env) {
     _requireAdmin(request, url, env);
   } catch (authErr) {
     return json({ ok: false, error: safeStr(authErr?.message || "unauthorized") }, 401);
+  }
+  if (!_humanBookingIdProbesEnabled(env)) {
+    return json({ ok: false, error: "allocator_probes_disabled" }, 403);
   }
   if (!env?.BOOKING_KV) {
     return json({ ok: false, error: "missing_booking_kv" }, 500);
@@ -79866,6 +80491,9 @@ async function handleHumanBookingIdAllocatorCollisionProbe(request, url, env) {
   } catch (authErr) {
     return json({ ok: false, error: safeStr(authErr?.message || "unauthorized") }, 401);
   }
+  if (!_humanBookingIdProbesEnabled(env)) {
+    return json({ ok: false, error: "allocator_probes_disabled" }, 403);
+  }
   if (!env?.BOOKING_KV) {
     return json({ ok: false, error: "missing_booking_kv" }, 500);
   }
@@ -79965,6 +80593,9 @@ async function handleHumanBookingIdAllocatorNeutralizeProbes(request, url, env) 
     _requireAdmin(request, url, env);
   } catch (authErr) {
     return json({ ok: false, error: safeStr(authErr?.message || "unauthorized") }, 401);
+  }
+  if (!_humanBookingIdProbesEnabled(env)) {
+    return json({ ok: false, error: "allocator_probes_disabled" }, 403);
   }
   if (!env?.BOOKING_KV) {
     return json({ ok: false, error: "missing_booking_kv" }, 500);
@@ -80067,6 +80698,13 @@ async function handleHumanBookingIdAllocatorRollbackPrepare(request, url, env) {
     return json({ ok: false, error: safeStr(authErr?.message || "unauthorized") }, 401);
   }
   const body = await safeJson(request).catch(() => ({}));
+  const apply = body?.apply === true || body?.apply === "true" || body?.apply === 1;
+  // TRUSTED-IDENTITY-P0: mutating rollback (apply:true) requires the same
+  // temporary probes enablement as other allocator mutation helpers.
+  // Read-only preview (apply omitted/false) remains admin-authenticated only.
+  if (apply && !_humanBookingIdProbesEnabled(env)) {
+    return json({ ok: false, error: "allocator_probes_disabled" }, 403);
+  }
   const yearMonth =
     normalizeHumanBookingYearMonth(body?.year_month || body?.yearMonth) ||
     normalizeHumanBookingYearMonth(url.searchParams.get("year_month")) ||
@@ -80086,7 +80724,6 @@ async function handleHumanBookingIdAllocatorRollbackPrepare(request, url, env) {
     legacySeq: computed.legacySeq,
     maxExistingSuffix: computed.maxExistingSuffix,
   });
-  const apply = body?.apply === true || body?.apply === "true" || body?.apply === 1;
   if (apply) {
     await env.BOOKING_KV.put(`seq:${yearMonth}`, String(rollbackSeq));
   }
@@ -80100,9 +80737,10 @@ async function handleHumanBookingIdAllocatorRollbackPrepare(request, url, env) {
     applied: apply === true,
     instructions: [
       "1. Set HUMAN_BOOKING_ID_DO_ALLOCATOR=0 (wrangler var / dashboard) and redeploy.",
-      "2. POST this endpoint with { apply:true } to restore seq:YYYY-MM to rollback_seq.",
+      "2. Enable HUMAN_BOOKING_ID_PROBES_ENABLED=1 temporarily, then POST this endpoint with { apply:true } to restore seq:YYYY-MM to rollback_seq.",
       "3. Create-if-absent protection remains active regardless of allocator path.",
       "4. Leave DO storage and historical booking:{id} records untouched.",
+      "5. Disable HUMAN_BOOKING_ID_PROBES_ENABLED again after the ops window.",
     ],
   });
 }
@@ -89774,7 +90412,7 @@ async function _resolvePaymentReturnScope(env, id) {
   };
 }
 
-async function payStatus(request, env, requestedScopeOverride = null) {
+async function payStatus(request, env, requestedScopeOverride = null, authOptions = null) {
   const url = new URL(request.url);
   const id = (url.searchParams.get("id") || "").trim();
   if (!id) return json({ ok: false, error: "missing id" }, 400);
@@ -89792,7 +90430,8 @@ async function payStatus(request, env, requestedScopeOverride = null) {
     // if booking key didn't exist, try payment key (edge)
     data = await env.BOOKING_KV.get(kvKeyPayment, "json");
   }
-  if (!data) return json({ ok: false, error: "not found" }, 404);
+  // Opaque not-found: missing and foreign both look the same.
+  if (!data) return json({ ok: false, error: "booking_not_found" }, 404);
 
   const resolvedScope =
     requestedScopeOverride && requestedScopeOverride.hasScope
@@ -89832,16 +90471,41 @@ async function payStatus(request, env, requestedScopeOverride = null) {
   const paymentScope = _payStatusScopeFromPaymentRecord(data);
 
   if (bookingScope && !_payStatusScopeMatches(bookingScope, requestedScope)) {
-    return json({ ok: false, error: "forbidden" }, 403);
+    return json({ ok: false, error: "booking_not_found" }, 404);
   }
   if (paymentScope && !_payStatusScopeMatches(paymentScope, requestedScope)) {
-    return json({ ok: false, error: "forbidden" }, 403);
+    return json({ ok: false, error: "booking_not_found" }, 404);
   }
   if (!bookingScope && !paymentScope) {
-    return json({ ok: false, error: "forbidden" }, 403);
+    return json({ ok: false, error: "booking_not_found" }, 404);
   }
-  if (linkedBooking?.rec && !bookingMatchesRequestedTenantScope(linkedBooking.rec, requestedScope)) {
-    return json({ ok: false, error: "forbidden" }, 403);
+  // TRUSTED-IDENTITY-P0: strict ownership; missing company_id fails closed.
+  if (
+    linkedBooking?.rec &&
+    !bookingMatchesRequiredTenantCompanyScope(linkedBooking.rec, requestedScope)
+  ) {
+    return json({ ok: false, error: "booking_not_found" }, 404);
+  }
+  if (authOptions?.customer_session && linkedBooking?.rec) {
+    const customerGate = await _assertCustomerSessionOwnsBookingOrOpaque404(
+      env,
+      linkedBooking.rec,
+      authOptions.customer_session,
+      linkedBooking.booking_id || id,
+    );
+    if (!customerGate.ok) return customerGate.response;
+  }
+  if (authOptions?.driver_session && linkedBooking?.rec) {
+    const allowed = await driverOwnsBookingForMutation({
+      rec: linkedBooking.rec,
+      actorDriverId: authOptions.driver_session.driver_id,
+      actorVehicleId: authOptions.driver_session.assigned_vehicle_id || null,
+      tenantScope: requestedScope,
+      env,
+    });
+    if (!allowed) {
+      return json({ ok: false, error: "booking_not_found" }, 404);
+    }
   }
 
   const effectiveScope = requestedScope;

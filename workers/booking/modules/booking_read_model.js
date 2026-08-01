@@ -412,6 +412,13 @@ export function isLegacyTenantScopeRequest(requestedScope) {
   return requestedTenant === legacyId || requestedCompany === legacyId;
 }
 
+/**
+ * Soft list matcher. MUST NOT be used for externally reachable object
+ * read/write authorization. External hot paths must use
+ * `bookingMatchesRequiredTenantCompanyScope` (strict fail-closed).
+ * Missing company_id on a record is treated as a match when only tenant
+ * matches — that is intentional for authenticated list projections only.
+ */
 export function bookingMatchesRequestedTenantScope(rec, requestedScope) {
   if (!requestedScope?.hasScope) return false;
   const recordScope = resolveBookingTenantScopeFromRecord(rec);

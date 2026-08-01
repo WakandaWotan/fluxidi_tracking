@@ -513,10 +513,12 @@ export async function listIssuedDocumentsForBooking(env, scope, canonicalBooking
       if (!record) continue;
       const recTenant = safeStr(record?.tenant_id ?? record?.tenantId, 80);
       const recCompany = safeStr(record?.company_id ?? record?.companyId, 80);
-      if (
-        (recTenant && recTenant !== scope.tenant_id) ||
-        (recCompany && recCompany !== scope.company_id)
-      ) {
+      // TRUSTED-IDENTITY-P0: missing ownership fields must not authorize
+      // cross-tenant lookup — fail closed on ambiguous registry rows.
+      if (!recTenant || !recCompany) {
+        continue;
+      }
+      if (recTenant !== scope.tenant_id || recCompany !== scope.company_id) {
         continue;
       }
       // 2G-R: defensive source-booking binding check. A stale or mis-indexed
@@ -618,10 +620,12 @@ export async function listIssuedDocumentRecordsForBooking(
       if (!record) continue;
       const recTenant = safeStr(record?.tenant_id ?? record?.tenantId, 80);
       const recCompany = safeStr(record?.company_id ?? record?.companyId, 80);
-      if (
-        (recTenant && recTenant !== scope.tenant_id) ||
-        (recCompany && recCompany !== scope.company_id)
-      ) {
+      // TRUSTED-IDENTITY-P0: missing ownership fields must not authorize
+      // cross-tenant lookup — fail closed on ambiguous registry rows.
+      if (!recTenant || !recCompany) {
+        continue;
+      }
+      if (recTenant !== scope.tenant_id || recCompany !== scope.company_id) {
         continue;
       }
       const recordSourceBookingId =

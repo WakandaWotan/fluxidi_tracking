@@ -11,6 +11,12 @@ FLEET_AVAILABILITY_MODE = "multi_vehicle"
 COMPLIANCE_API_URL = "https://fluxidi-compliance-api.fluxidi.workers.dev"
 # RELEASE-P0 Option A′ — staged rollout. Keep "0" until month seed is verified.
 HUMAN_BOOKING_ID_DO_ALLOCATOR = "1"
+# TRUSTED-IDENTITY-P0 — allocator mutation/probe routes disabled by default.
+# Set temporarily to "1" for ops proofs only; leave "0" in production.
+HUMAN_BOOKING_ID_PROBES_ENABLED = "0"
+# TRUSTED-IDENTITY-P0 — contact-proof-only customer read/cancel. Disabled by
+# default; enable only for a measured migration window.
+ALLOW_LEGACY_CUSTOMER_CONTACT_PROOF = "0"
 
 # Mollie Connect OAuth (Phase 1) — set via Cloudflare secrets, never commit values:
 # MOLLIE_CONNECT_CLIENT_ID       — OAuth app client id (app_…)
