@@ -12,6 +12,7 @@ import {
   mergeDocumentPaymentMethodMetadata,
   fixtureOnlinePaymentMollieBookingTruth,
   buildPaymentMethodTruthRecord,
+  resolveResumeFinalizePaymentMethodMerge,
 } from "./payment_method_truth.js";
 import { mapFluxidiPaymentMethodToBillitPaymentMethod } from "./billit_provider.js";
 import {
@@ -263,4 +264,140 @@ test("cross-tenant: resolver is scope-agnostic pure; ids stay bounded", () => {
     { method_id: b.method_id, category: b.category, label_nl: b.label_nl },
   );
   assert.equal(normalizePaymentMethodId("IDEAL!!!"), "ideal");
+});
+
+test("live-shape PayPal: canonical online_payment + shadow paypal => paypal", () => {
+  const merged = resolveResumeFinalizePaymentMethodMerge({
+    canonicalMethod: "online_payment",
+    shadowMethod: "paypal",
+    shadowMollieBlockMethod: "paypal",
+    shadowMollieMethod: "paypal",
+    provider: "mollie",
+    status: "paid",
+    providerRef: "tr_kxxxUJ",
+  });
+  assert.equal(merged.method_id, "paypal");
+  assert.equal(merged.provider_method, "paypal");
+  assert.equal(merged.label_nl, "PayPal");
+  assert.equal(merged.category, "online");
+
+  const canonical = {
+    payment_method: "online_payment",
+    payment_provider: "mollie",
+    payment_status: "paid",
+    mollie: { id: "tr_kxxxUJ", status: "paid" },
+  };
+  const applied = applyPaymentMethodTruthToBookingRecord(canonical, merged, {
+    refineOnly: true,
+  });
+  assert.equal(applied.ok, true);
+  assert.equal(canonical.payment_method, "paypal");
+  assert.equal(canonical.mollie.method, "paypal");
+  assert.equal(canonical.mollie_method, "paypal");
+
+  // Idempotent second finalize
+  const again = resolveResumeFinalizePaymentMethodMerge({
+    canonicalMethod: canonical.payment_method,
+    shadowMethod: "paypal",
+    shadowMollieBlockMethod: "paypal",
+    provider: "mollie",
+    status: "paid",
+  });
+  assert.equal(again.method_id, "paypal");
+  applyPaymentMethodTruthToBookingRecord(canonical, again, { refineOnly: true });
+  assert.equal(canonical.payment_method, "paypal");
+});
+
+test("generic online_payment shadow cannot overwrite concrete canonical ideal", () => {
+  const merged = resolveResumeFinalizePaymentMethodMerge({
+    canonicalMethod: "ideal",
+    shadowMethod: "online_payment",
+    shadowMollieBlockMethod: "",
+    provider: "mollie",
+    status: "paid",
+  });
+  assert.equal(merged.method_id, "ideal");
+  const rec = { payment_method: "ideal", payment_provider: "mollie" };
+  applyPaymentMethodTruthToBookingRecord(
+    rec,
+    buildPaymentMethodTruthRecord({
+      methodId: "online_payment",
+      provider: "mollie",
+    }),
+    { refineOnly: true },
+  );
+  assert.equal(rec.payment_method, "ideal");
+});
+
+test("provider-confirmed concrete shadow beats generic canonical", () => {
+  const merged = resolveResumeFinalizePaymentMethodMerge({
+    canonicalMethod: "online_payment",
+    shadowMethod: "online_payment",
+    shadowMollieBlockMethod: "paypal",
+    provider: "mollie",
+  });
+  assert.equal(merged.method_id, "paypal");
+});
+
+test("Document Core metadata upgrades online_payment → paypal without financial changes", () => {
+  const issued = {
+    document_id: "34f67058-d863-42e7-970b-1f34906ecca3",
+    document_number: "INV-2026-000036",
+    content_hash: "hash036",
+    immutable_snapshot: {
+      totals: { total_incl_vat: 5.5, vat_amount: 0.31, vat_rate_percent: 6 },
+    },
+    totals: { total_incl_vat: 5.5, vat_amount: 0.31, vat_rate_percent: 6 },
+    payment_method_truth: {
+      method_id: "online_payment",
+      category: "online",
+      provider: "mollie",
+      label_nl: "Online betaling",
+    },
+  };
+  const upgraded = mergeDocumentPaymentMethodMetadata(
+    issued,
+    resolveResumeFinalizePaymentMethodMerge({
+      canonicalMethod: "online_payment",
+      shadowMethod: "paypal",
+      shadowMollieBlockMethod: "paypal",
+      provider: "mollie",
+      status: "paid",
+    }),
+  );
+  assert.equal(upgraded.ok, true);
+  assert.equal(upgraded.payment_method_truth.method_id, "paypal");
+  assert.equal(upgraded.payment_method_truth.label_nl, "PayPal");
+  assert.equal(upgraded.record.document_number, "INV-2026-000036");
+  assert.equal(upgraded.record.content_hash, "hash036");
+  assert.equal(upgraded.record.totals.total_incl_vat, 5.5);
+  assert.equal(upgraded.record.totals.vat_rate_percent, 6);
+  assert.deepEqual(upgraded.record.immutable_snapshot.totals, {
+    total_incl_vat: 5.5,
+    vat_amount: 0.31,
+    vat_rate_percent: 6,
+  });
+});
+
+test("paypal never Billit Wired; bank transfer aliases remain Wired; labels", () => {
+  assert.equal(
+    mapPaymentMethodTruthToBillitPaymentMethod(
+      resolvePaymentMethodTruth({ bookingMethod: "paypal", provider: "mollie" }),
+    ),
+    null,
+  );
+  assert.equal(mapFluxidiPaymentMethodToBillitPaymentMethod("paypal", "mollie", ""), null);
+  assert.equal(
+    mapFluxidiPaymentMethodToBillitPaymentMethod("bank_transfer_bacs", "manual", ""),
+    "Wired",
+  );
+  assert.equal(mapFluxidiPaymentMethodToBillitPaymentMethod("sepa", "manual", ""), "Wired");
+  assert.equal(
+    mapFluxidiPaymentMethodToBillitPaymentMethod("wire_transfer", "manual", ""),
+    "Wired",
+  );
+  assert.equal(formatPaymentMethodLabelNl("paypal"), "PayPal");
+  assert.equal(formatFluxidiPaymentMethodLabel("paypal"), "PayPal");
+  assert.equal(formatPaymentMethodLabelNl("online_payment"), "Online betaling");
+  assert.equal(formatFluxidiPaymentMethodLabel("online_payment"), "Online betaling");
 });

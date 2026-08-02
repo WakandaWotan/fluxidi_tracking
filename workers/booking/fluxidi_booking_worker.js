@@ -266,6 +266,7 @@ import {
   mergeDocumentPaymentMethodMetadata,
   buildBillitPaymentInternalInfoFromTruth,
   mergePaymentMethodIds,
+  resolveResumeFinalizePaymentMethodMerge,
 } from "./modules/payment_method_truth.js";
 import {
   buildSellerSnapshotFromBusinessProfile,
@@ -91414,20 +91415,51 @@ function _applyResumePaidPaymentToCanonicalRecord(
   const nowIso = new Date().toISOString();
   const paidAtIso =
     safeStr(paidAt || stored?.paid_at || stored?.paidAt, 80) || nowIso;
-  const preservedMethod = normalizeBookingPaymentMethodId(
+  const canonicalMethod = normalizeBookingPaymentMethodId(
     canonicalRec?.payment_method ??
       canonicalRec?.paymentMethod ??
       canonicalRec?.booking?.payment_method ??
       canonicalRec?.booking?.paymentMethod ??
       canonicalRec?.payload?.payment_method ??
-      canonicalRec?.payload?.paymentMethod ??
-      stored?.payment_method ??
+      canonicalRec?.payload?.paymentMethod,
+  );
+  const shadowMethod = normalizeBookingPaymentMethodId(
+    stored?.payment_method ??
       stored?.paymentMethod ??
       stored?.payload?.payment_method ??
       stored?.payload?.paymentMethod,
   );
+  const shadowMollieMethod = safeStr(
+    stored?.mollie_method ?? stored?.mollieMethod,
+    40,
+  );
+  const shadowMollieBlockMethod = safeStr(
+    stored?.mollie?.method ?? stored?.mollie?.payment_method,
+    40,
+  );
   const safePaymentBookingId = safeStr(paymentBookingId, 160) || null;
   const safeMolliePaymentId = safeStr(molliePaymentId, 120) || null;
+
+  const mergedTruth = resolveResumeFinalizePaymentMethodMerge({
+    canonicalMethod,
+    shadowMethod,
+    shadowMollieMethod,
+    shadowMollieBlockMethod,
+    provider: "mollie",
+    status: "paid",
+    paidAt: paidAtIso,
+    providerRef: safeMolliePaymentId,
+  });
+  const preservedMethod =
+    safeStr(mergedTruth?.method_id, 80) ||
+    shadowMethod ||
+    canonicalMethod ||
+    null;
+  const providerMethodRaw =
+    safeStr(mergedTruth?.provider_method, 40) ||
+    shadowMollieBlockMethod ||
+    shadowMollieMethod ||
+    null;
 
   canonicalRec.payment_status = "paid";
   canonicalRec.paymentStatus = "paid";
@@ -91449,10 +91481,27 @@ function _applyResumePaidPaymentToCanonicalRecord(
     canonicalRec.mollie.id = safeMolliePaymentId;
     canonicalRec.mollie.payment_id = safeMolliePaymentId;
     canonicalRec.mollie.status = "paid";
+  } else if (!canonicalRec.mollie || typeof canonicalRec.mollie !== "object") {
+    canonicalRec.mollie = {};
+  }
+  if (providerMethodRaw) {
+    canonicalRec.mollie_method = providerMethodRaw;
+    canonicalRec.mollieMethod = providerMethodRaw;
+    if (!canonicalRec.mollie || typeof canonicalRec.mollie !== "object") {
+      canonicalRec.mollie = {};
+    }
+    canonicalRec.mollie.method = providerMethodRaw;
   }
   if (preservedMethod) {
     canonicalRec.payment_method = preservedMethod;
     canonicalRec.paymentMethod = preservedMethod;
+  }
+  // Apply truth helper for camel/snake + nested booking consistency (refine-only
+  // so a generic shadow cannot downgrade a concrete canonical method).
+  if (mergedTruth?.method_id) {
+    applyPaymentMethodTruthToBookingRecord(canonicalRec, mergedTruth, {
+      refineOnly: true,
+    });
   }
   canonicalRec.updatedAt = nowIso;
   canonicalRec.updated_at = nowIso;
@@ -91477,6 +91526,10 @@ function _applyResumePaidPaymentToCanonicalRecord(
       canonicalRec.booking.payment_method = preservedMethod;
       canonicalRec.booking.paymentMethod = preservedMethod;
     }
+    if (providerMethodRaw) {
+      canonicalRec.booking.mollie_method = providerMethodRaw;
+      canonicalRec.booking.mollieMethod = providerMethodRaw;
+    }
     canonicalRec.booking.updatedAt = nowIso;
     canonicalRec.booking.updated_at = nowIso;
   }
@@ -91493,6 +91546,66 @@ function _applyResumePaidPaymentToCanonicalRecord(
       canonicalRec.payload.payment_method = preservedMethod;
       canonicalRec.payload.paymentMethod = preservedMethod;
     }
+    if (providerMethodRaw) {
+      canonicalRec.payload.mollie_method = providerMethodRaw;
+      canonicalRec.payload.mollieMethod = providerMethodRaw;
+    }
+  }
+}
+
+/* Best-effort: refresh mutable Document Core payment_method_truth from the
+ * refined canonical booking. Never touches immutable snapshot / totals /
+ * document_number / Billit order identity. */
+async function _restampDocumentPaymentMethodTruthAfterCanonicalRefine(
+  env,
+  scope,
+  bookingId,
+  canonicalRec,
+) {
+  try {
+    if (!env?.BOOKING_KV || !canonicalRec || typeof canonicalRec !== "object") {
+      return { ok: false, skipped: true, reason: "missing_inputs" };
+    }
+    const truth = resolvePaymentMethodTruthFromRecord(canonicalRec);
+    if (!truth?.method_id) {
+      return { ok: false, skipped: true, reason: "missing_truth" };
+    }
+    let documentId = safeStr(
+      canonicalRec.invoice_document_id ?? canonicalRec.invoiceDocumentId,
+      200,
+    );
+    let record = null;
+    if (documentId) {
+      record = await loadIssuedDocumentRegistryRecordById(env, scope, documentId);
+    }
+    if (!record) {
+      const existing = await findExistingInvoiceDocumentForBooking(
+        env,
+        scope,
+        bookingId,
+      );
+      documentId = safeStr(existing?.document_id, 200) || documentId;
+      record =
+        existing?.document_record ||
+        (documentId
+          ? await loadIssuedDocumentRegistryRecordById(env, scope, documentId)
+          : null);
+    }
+    if (!record || !documentId) {
+      return { ok: true, skipped: true, reason: "no_issued_invoice_yet" };
+    }
+    return await persistDocumentPaymentMethodTruthMetadata(
+      env,
+      scope,
+      record,
+      truth,
+    );
+  } catch (err) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: safeStr(err?.message || err, 80) || "restamp_error",
+    };
   }
 }
 
@@ -92658,11 +92771,41 @@ async function finalizeResumePaidPaymentToCanonical(stored, env, request, opts =
     stored.confirming_at = null;
     stored.finalize_debug.stage = "resume_paid_canonical_already_paid";
     stored.finalize_debug.error = null;
+    // Heal stuck generic online_payment when the shadow later refined to a
+    // concrete provider method (e.g. paypal). Does not change payment status,
+    // amounts, VAT, invoice number, or Billit order identity.
+    try {
+      const beforeMethod = safeStr(
+        canonicalRec?.payment_method ?? canonicalRec?.paymentMethod,
+        80,
+      );
+      _applyResumePaidPaymentToCanonicalRecord(canonicalRec, stored, {
+        paymentBookingId,
+        molliePaymentId: incomingMolliePaymentId,
+        paidAt: canonicalRec?.paid_at || canonicalRec?.paidAt || stored?.paid_at,
+      });
+      const afterMethod = safeStr(
+        canonicalRec?.payment_method ?? canonicalRec?.paymentMethod,
+        80,
+      );
+      if (afterMethod && afterMethod !== beforeMethod) {
+        await env.BOOKING_KV.put(canonicalKey, JSON.stringify(canonicalRec));
+      }
+      await _restampDocumentPaymentMethodTruthAfterCanonicalRefine(
+        env,
+        tenantScope,
+        canonicalBookingId,
+        canonicalRec,
+      );
+    } catch (_) {
+      // Non-fatal refine on already-paid path.
+    }
     return {
       ok: true,
       updatedStored: stored,
       already: true,
       canonicalBookingId,
+      canonicalRec,
     };
   }
 
@@ -92753,6 +92896,13 @@ async function finalizeResumePaidPaymentToCanonical(stored, env, request, opts =
   // KV.put + index re-emission. No new payment, invoice, or email side-
   // effects are introduced here.
   await env.BOOKING_KV.put(canonicalKey, JSON.stringify(canonicalRec));
+  // Mutable Document Core payment metadata only (no financial/number changes).
+  await _restampDocumentPaymentMethodTruthAfterCanonicalRefine(
+    env,
+    tenantScope,
+    canonicalBookingId,
+    canonicalRec,
+  );
   const fleetScope = normalizeFleetTenantScope(tenantScope);
   await upsertBookingDemandIndexBestEffort(env, canonicalBookingId, canonicalRec, fleetScope);
   await upsertDriverVehicleBookingIndexesBestEffort(

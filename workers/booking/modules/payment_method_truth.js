@@ -652,6 +652,57 @@ export function mergeDocumentPaymentMethodMetadata(existingRecord, truth) {
   return { ok: true, record: base, payment_method_truth: base.payment_method_truth };
 }
 
+/**
+ * Merge payment-method fields when a paid Mollie shadow finalizes onto a
+ * canonical booking. Concrete provider-confirmed shadow methods (e.g. paypal)
+ * replace generic canonical online_payment; generic shadow never overwrites
+ * concrete canonical (ideal/bancontact/paypal/…).
+ */
+export function resolveResumeFinalizePaymentMethodMerge({
+  canonicalMethod = "",
+  shadowMethod = "",
+  shadowMollieMethod = "",
+  shadowMollieBlockMethod = "",
+  provider = "mollie",
+  status = "paid",
+  paidAt = "",
+  providerRef = "",
+} = {}) {
+  const providerMethodRaw =
+    _token(shadowMollieBlockMethod, 40) ||
+    _token(shadowMollieMethod, 40) ||
+    "";
+  const truth = resolvePaymentMethodTruth({
+    bookingMethod: canonicalMethod,
+    chosenMethod: shadowMethod,
+    providerConfirmedMethod: mapMollieProviderMethodToCanonical(providerMethodRaw),
+    providerMethod: providerMethodRaw,
+    provider,
+    status,
+    paidAt,
+    providerRef,
+  });
+  // Belt-and-suspenders: explicit merge of canonical vs shadow ids.
+  const mergedId =
+    mergePaymentMethodIds(
+      normalizePaymentMethodId(canonicalMethod),
+      mergePaymentMethodIds(
+        normalizePaymentMethodId(shadowMethod),
+        mapMollieProviderMethodToCanonical(providerMethodRaw),
+      ),
+    ) ||
+    truth.method_id ||
+    "";
+  return buildPaymentMethodTruthRecord({
+    methodId: mergedId || truth.method_id,
+    provider: truth.provider || provider || "mollie",
+    providerMethod: providerMethodRaw || truth.provider_method,
+    status: truth.status || status,
+    paidAt: truth.paid_at || paidAt,
+    providerRef: truth.provider_ref || providerRef,
+  });
+}
+
 /** Fixture helper matching street_1785684244820_97ofs7tm shape. */
 export function fixtureOnlinePaymentMollieBookingTruth() {
   return resolvePaymentMethodTruth({
