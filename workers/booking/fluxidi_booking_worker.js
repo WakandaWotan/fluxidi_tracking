@@ -2243,7 +2243,6 @@ async function handleCompanyBillitSandboxOrderStatus({ request, url, env, docume
     warnings,
   });
 }
-}
 
 /* Shared (Patch B11-B) loader + fail-closed gate context for the Billit SANDBOX
  * Peppol send + reconcile handlers (admin AND company). Runs AFTER auth, scope
