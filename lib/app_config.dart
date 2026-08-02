@@ -9316,6 +9316,7 @@ Map<String, dynamic> _safeBillitIntegrationMap(Map<dynamic, dynamic> raw) {
     'company_sandbox_oauth_allowed': boolAny(const [
       'company_sandbox_oauth_allowed',
     ]),
+    'disconnect_allowed': boolAny(const ['disconnect_allowed']),
     'error': textAny(const ['error']),
     'warnings': warnings,
   };

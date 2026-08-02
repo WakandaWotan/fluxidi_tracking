@@ -133,14 +133,36 @@ export function resolveBillitOAuthConfig(env) {
   };
 }
 
-/** Internal/test-only: allow company-session OAuth against sandbox. */
-export function isBillitCompanySandboxOAuthAllowed(env) {
+/** Internal/test-only: allow company-session OAuth against sandbox.
+ * Fail-closed: requires BOTH the master env flag AND an explicit company
+ * allowlist hit. Never trusts client claims, email, or company display name.
+ * Admin `/admin/integrations/billit/oauth/start` is independent of this gate.
+ */
+export function isBillitCompanySandboxOAuthAllowed(env, scope = null) {
   const raw = safeStr(
     env?.BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH ??
       env?.BILLIT_ALLOW_SANDBOX_COMPANY_OAUTH,
     8,
   ).toLowerCase();
-  return raw === "1" || raw === "true" || raw === "yes";
+  const masterOn = raw === "1" || raw === "true" || raw === "yes";
+  if (!masterOn) return false;
+  const allowlistRaw = safeStr(
+    env?.BILLIT_SANDBOX_OAUTH_COMPANY_ALLOWLIST ??
+      env?.BILLIT_COMPANY_SANDBOX_OAUTH_ALLOWLIST,
+    2000,
+  );
+  const allowedIds = allowlistRaw
+    .split(/[,;\s]+/)
+    .map((part) => sanitizeTenantString(part, 80))
+    .filter(Boolean);
+  // Master alone must never open sandbox OAuth to every company on the worker.
+  if (allowedIds.length === 0) return false;
+  const companyId = sanitizeTenantString(
+    scope?.company_id ?? scope?.companyId,
+    80,
+  );
+  if (!companyId) return false;
+  return allowedIds.includes(companyId);
 }
 
 /* ===================== Scoped key builders + state generator ===================== */
@@ -388,7 +410,10 @@ export async function readBillitConnectionStatusForScope(env, scope) {
   if (!billitTokenEncryptionAvailable(env)) {
     warnings.push("billit_token_encryption_key_missing");
   }
-  const companySandboxOauthAllowed = isBillitCompanySandboxOAuthAllowed(env);
+  const companySandboxOauthAllowed = isBillitCompanySandboxOAuthAllowed(
+    env,
+    scope,
+  );
   const productionConnectEnabled = config.environment === "production";
   const customerConnectAllowed =
     projected.connected === true
@@ -413,11 +438,12 @@ export async function readBillitConnectionStatusForScope(env, scope) {
     connected_at: projected.connected_at,
     updated_at: projected.updated_at,
     last_error_code: projected.last_error_code,
-    // RELEASE combine: ordinary company OAuth must not hit sandbox until
-    // production approval. Internal/test may set BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH=1.
+    // Ordinary company OAuth must not hit sandbox until production approval.
+    // Internal sandbox requires server master flag + company allowlist hit.
     customer_connect_allowed: customerConnectAllowed,
     production_approval_pending: productionApprovalPending,
     company_sandbox_oauth_allowed: companySandboxOauthAllowed,
+    disconnect_allowed: projected.connected === true,
     warnings,
   };
 }

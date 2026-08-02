@@ -266,11 +266,117 @@ test("self-heal short-circuits when party_id already present (no probe)", async 
 test("company sandbox oauth allow flag defaults off for ordinary customers", () => {
   assert.equal(isBillitCompanySandboxOAuthAllowed({}), false);
   assert.equal(
-    isBillitCompanySandboxOAuthAllowed({ BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH: "1" }),
+    isBillitCompanySandboxOAuthAllowed({
+      BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH: "1",
+    }),
+    false,
+    "master alone must not open sandbox to every company",
+  );
+  assert.equal(
+    isBillitCompanySandboxOAuthAllowed({
+      BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH: "0",
+      BILLIT_SANDBOX_OAUTH_COMPANY_ALLOWLIST: "fluxidi_fluxidi_ddmh9g",
+    }),
+    false,
+  );
+});
+
+test("1) ordinary company cannot connect to sandbox", () => {
+  const env = {
+    BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH: "1",
+    BILLIT_SANDBOX_OAUTH_COMPANY_ALLOWLIST: "fluxidi_fluxidi_ddmh9g",
+  };
+  assert.equal(
+    isBillitCompanySandboxOAuthAllowed(env, {
+      company_id: "customer_co_ordinary",
+    }),
+    false,
+  );
+});
+
+test("2) ordinary company receives no sandbox entitlement even with master on", () => {
+  assert.equal(
+    isBillitCompanySandboxOAuthAllowed(
+      {
+        BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH: "1",
+        BILLIT_SANDBOX_OAUTH_COMPANY_ALLOWLIST: "fluxidi_fluxidi_ddmh9g",
+      },
+      { company_id: "someone_else" },
+    ),
+    false,
+  );
+});
+
+test("3) internal entitled session can connect", () => {
+  assert.equal(
+    isBillitCompanySandboxOAuthAllowed(
+      {
+        BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH: "1",
+        BILLIT_SANDBOX_OAUTH_COMPANY_ALLOWLIST: "fluxidi_fluxidi_ddmh9g",
+      },
+      { company_id: "fluxidi_fluxidi_ddmh9g" },
+    ),
+    true,
+  );
+});
+
+test("4) internal entitled company stays entitled for reconnect after disconnect", () => {
+  const env = {
+    BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH: "1",
+    BILLIT_SANDBOX_OAUTH_COMPANY_ALLOWLIST: "fluxidi_fluxidi_ddmh9g",
+  };
+  const scope = { company_id: "fluxidi_fluxidi_ddmh9g" };
+  assert.equal(isBillitCompanySandboxOAuthAllowed(env, scope), true);
+  assert.equal(isBillitCompanySandboxOAuthAllowed(env, scope), true);
+});
+
+test("5) removing entitlement immediately restores production gate", () => {
+  const scope = { company_id: "fluxidi_fluxidi_ddmh9g" };
+  assert.equal(
+    isBillitCompanySandboxOAuthAllowed(
+      {
+        BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH: "1",
+        BILLIT_SANDBOX_OAUTH_COMPANY_ALLOWLIST: "fluxidi_fluxidi_ddmh9g",
+      },
+      scope,
+    ),
     true,
   );
   assert.equal(
-    isBillitCompanySandboxOAuthAllowed({ BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH: "0" }),
+    isBillitCompanySandboxOAuthAllowed(
+      {
+        BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH: "0",
+        BILLIT_SANDBOX_OAUTH_COMPANY_ALLOWLIST: "fluxidi_fluxidi_ddmh9g",
+      },
+      scope,
+    ),
+    false,
+  );
+  assert.equal(
+    isBillitCompanySandboxOAuthAllowed(
+      {
+        BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH: "1",
+        BILLIT_SANDBOX_OAUTH_COMPANY_ALLOWLIST: "",
+      },
+      scope,
+    ),
+    false,
+  );
+});
+
+test("6) no company can self-assert internal access", () => {
+  assert.equal(
+    isBillitCompanySandboxOAuthAllowed(
+      { BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH: "1" },
+      { company_id: "i_claim_to_be_internal" },
+    ),
+    false,
+  );
+  assert.equal(
+    isBillitCompanySandboxOAuthAllowed(
+      {},
+      { company_id: "fluxidi_fluxidi_ddmh9g" },
+    ),
     false,
   );
 });

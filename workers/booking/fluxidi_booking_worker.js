@@ -32872,7 +32872,7 @@ export default {
           const billitConfig = resolveBillitOAuthConfig(env);
           if (
             billitConfig.environment === "sandbox" &&
-            !isBillitCompanySandboxOAuthAllowed(env)
+            !isBillitCompanySandboxOAuthAllowed(env, scope)
           ) {
             return json(
               {
@@ -32880,6 +32880,7 @@ export default {
                 error: "billit_production_approval_pending",
                 environment: "sandbox",
                 production_approval_pending: true,
+                company_sandbox_oauth_allowed: false,
               },
               409,
             );

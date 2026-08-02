@@ -39,6 +39,12 @@ LEGACY_SCOPE_MIGRATION_ENABLED = "0"
 # FLUXIDI_SUBSCRIPTION_WEBHOOK_SECRET   — path-secret used in /webhooks/subscription/mollie/{secret}
 # FLUXIDI_SUBSCRIPTION_MOLLIE_MODE      — optional, "test" or "live", for logging only
 
+# Internal company-session Billit sandbox OAuth (fail-closed). Requires BOTH
+# the master flag and an explicit company_id allowlist. Ordinary customers
+# stay blocked. Admin /admin/integrations/billit/oauth/start is independent.
+BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH = "1"
+BILLIT_SANDBOX_OAUTH_COMPANY_ALLOWLIST = "fluxidi_fluxidi_ddmh9g"
+
 [[services]]
 binding = "COMPLIANCE_WORKER"
 service = "fluxidi-compliance-api"

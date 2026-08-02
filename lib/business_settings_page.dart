@@ -4227,7 +4227,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   BillitCustomerConnectPresentation _billitCustomerConnectPresentation() {
     final environment = _billitStatusField('environment');
     final env = environment.isEmpty ? 'sandbox' : environment;
-    final allowSandbox = kFluxidiBillitAllowSandboxConnect ||
+    // Server-authoritative only. Never unlock sandbox from a client dart-define.
+    final allowSandbox =
         _billitStatus?['company_sandbox_oauth_allowed'] == true;
     final productionConnectEnabled = env.toLowerCase() == 'production' &&
         _billitStatus?['customer_connect_allowed'] == true;
@@ -4409,10 +4410,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               padding: const EdgeInsets.only(top: 8),
               child: Text(
                 _t(
-                  nl: 'Interne sandbox-koppeling is tijdelijk beschikbaar voor test.',
-                  en: 'Internal sandbox connect is temporarily available for testing.',
-                  fr: 'La connexion sandbox interne est temporairement disponible pour les tests.',
-                  es: 'La conexión sandbox interna está temporalmente disponible para pruebas.',
+                  nl: 'Interne Billit-sandbox',
+                  en: 'Internal Billit sandbox',
+                  fr: 'Sandbox Billit interne',
+                  es: 'Sandbox interno de Billit',
                 ),
                 style: TextStyle(color: _textSecondary, fontSize: 12),
               ),

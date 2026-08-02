@@ -1,7 +1,7 @@
 /// Temporary customer-facing Billit connect gate while production approval
 /// is pending. Ordinary customers must never be sent to the Billit sandbox
-/// OAuth host. Sandbox connect remains available only when explicitly allowed
-/// (internal/admin/test builds via dart-define).
+/// OAuth host. Sandbox connect is available only when the booking worker
+/// returns a trusted `company_sandbox_oauth_allowed` entitlement.
 library;
 
 enum BillitCustomerConnectMode {
@@ -14,7 +14,7 @@ enum BillitCustomerConnectMode {
   /// Production approval still pending (or worker is sandbox-locked).
   productionApprovalPending,
 
-  /// Sandbox OAuth allowed for explicit internal/test builds only.
+  /// Sandbox OAuth allowed for server-entitled internal/test companies only.
   sandboxInternalAllowed,
 }
 
@@ -33,11 +33,12 @@ class BillitCustomerConnectPresentation {
   });
 }
 
-/// Resolves customer Billit connect UX from status + local allow flags.
+/// Resolves customer Billit connect UX from status + server entitlement.
 ///
 /// [environment] comes from the worker status (`sandbox` | `production`).
-/// [allowSandboxConnect] must be true only for explicit internal/test builds
-/// (`--dart-define=FLUXIDI_BILLIT_ALLOW_SANDBOX_CONNECT=true`).
+/// [allowSandboxConnect] must reflect ONLY the server field
+/// `company_sandbox_oauth_allowed` (master flag + company allowlist).
+/// Never enable sandbox from a client-only switch.
 /// [productionConnectEnabled] is reserved for when production OAuth is
 /// intentionally opened to ordinary customers (worker env = production).
 BillitCustomerConnectPresentation resolveBillitCustomerConnectPresentation({
@@ -78,7 +79,7 @@ BillitCustomerConnectPresentation resolveBillitCustomerConnectPresentation({
   }
 
   // Default for ordinary customers while Billit production approval is pending
-  // OR while the worker remains sandbox-locked.
+  // OR while the worker remains sandbox-locked without internal entitlement.
   return const BillitCustomerConnectPresentation(
     mode: BillitCustomerConnectMode.productionApprovalPending,
     connectButtonEnabled: false,
@@ -87,7 +88,10 @@ BillitCustomerConnectPresentation resolveBillitCustomerConnectPresentation({
   );
 }
 
-/// Compile-time flag for internal/admin/test builds that may use sandbox OAuth.
+/// Deprecated compile-time flag — must NOT unlock sandbox alone.
+/// Kept for source compatibility; Bedrijfsinstellingen trusts only the
+/// server `company_sandbox_oauth_allowed` entitlement.
+@Deprecated('Use server company_sandbox_oauth_allowed entitlement only')
 const bool kFluxidiBillitAllowSandboxConnect = bool.fromEnvironment(
   'FLUXIDI_BILLIT_ALLOW_SANDBOX_CONNECT',
   defaultValue: false,
