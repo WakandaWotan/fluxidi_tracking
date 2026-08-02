@@ -1,6 +1,6 @@
 # ============================================================================
 # FLUXIDI FIELD BUILD — GSM
-# Exact commit: 268d0ce56c001e8b9e70c13657b1775893f519b7
+# Exact commit: 2ad0b5ef4f85f38455b50e9614a3e523a6f94b35
 # Clean detached worktree. Dirty hoofdrepository blijft onaangeraakt.
 # Exact 12 dart-defines, NO ADMIN_TOKEN, NO LEARNING_SERVICE_TOKEN.
 # ============================================================================
@@ -12,7 +12,7 @@ $repo         = 'C:\_flutter_work\fluxidi_tracking'
 $worktree     = 'C:\_flutter_work\fluxidi_tracking_field_4639249_phone'
 $device       = 'SG7XLZ7TKRLZOJTG'
 $adb          = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-$requiredHead = '268d0ce56c001e8b9e70c13657b1775893f519b7'
+$requiredHead = '2ad0b5ef4f85f38455b50e9614a3e523a6f94b35'
 $branch       = 'fix/dispatch-deterministic-origin-leg'
 
 function Assert-LastExitCode {
@@ -86,22 +86,56 @@ if (-not (Test-Path -LiteralPath $repo)) {
     throw "Hoofdrepository ontbreekt: $repo"
 }
 
-if (-not (Test-Path -LiteralPath $worktree)) {
-    Write-Host "Clean worktree bestaat nog niet en wordt aangemaakt..."
-
-    Set-Location -LiteralPath $repo
-
-    & git cat-file -e $requiredHead 2>$null
-
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "Commit niet lokaal gevonden; branch wordt opgehaald..."
-        & git fetch origin $branch
-        Assert-LastExitCode -Step 'git fetch'
+function Ensure-PinnedPhoneWorktree {
+    if (-not (Test-Path -LiteralPath $worktree)) {
+        Write-Host "Clean worktree bestaat nog niet en wordt aangemaakt..."
+        Set-Location -LiteralPath $repo
+        & git cat-file -e $requiredHead 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Commit niet lokaal gevonden; branch wordt opgehaald..."
+            & git fetch origin $branch
+            Assert-LastExitCode -Step 'git fetch'
+        }
+        & git worktree add --detach $worktree $requiredHead
+        Assert-LastExitCode -Step 'git worktree add'
+        return
     }
 
-    & git worktree add --detach $worktree $requiredHead
-    Assert-LastExitCode -Step 'git worktree add'
+    Set-Location -LiteralPath $worktree
+    $head = (& git rev-parse HEAD).Trim()
+    Assert-LastExitCode -Step 'git rev-parse HEAD'
+    Write-Host "worktree_head_before=$head"
+
+    if ($head -eq $requiredHead) {
+        return
+    }
+
+    Write-Host "HEAD mismatch: checking out required pin $requiredHead in place" `
+        -ForegroundColor Yellow
+    Set-Location -LiteralPath $worktree
+    & git checkout --detach $requiredHead
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "checkout failed; attempting force recreate..." -ForegroundColor Yellow
+        Set-Location -LiteralPath $repo
+        & git worktree remove --force $worktree
+        if ($LASTEXITCODE -ne 0) {
+            throw (
+                "Kan worktree niet bijwerken naar $requiredHead. " +
+                "Sluit Gradle/Flutter/IDE-processen die $worktree vasthouden " +
+                "en start het script opnieuw."
+            )
+        }
+        & git worktree add --detach $worktree $requiredHead
+        Assert-LastExitCode -Step 'git worktree add'
+        return
+    }
+    & git reset --hard $requiredHead
+    Assert-LastExitCode -Step 'git reset --hard requiredHead'
+    & git clean -fd
+    Assert-LastExitCode -Step 'git clean -fd'
 }
+
+Ensure-PinnedPhoneWorktree
 
 Set-Location -LiteralPath $worktree
 
@@ -119,7 +153,7 @@ Assert-LastExitCode -Step 'git rev-parse HEAD'
 Write-Host "worktree_head=$head"
 
 if ($head -ne $requiredHead) {
-    throw "HEAD mismatch: gevonden $head, verwacht $requiredHead"
+    throw "HEAD mismatch after ensure: gevonden $head, verwacht $requiredHead"
 }
 
 # --- Windows-regelovergangen neutraliseren zonder gedeelde Git-config te wijzigen ---

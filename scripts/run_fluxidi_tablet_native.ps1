@@ -1,6 +1,6 @@
 # ============================================================================
 # FLUXIDI FIELD BUILD — Tablet
-# Exact commit: 268d0ce56c001e8b9e70c13657b1775893f519b7
+# Exact commit: 2ad0b5ef4f85f38455b50e9614a3e523a6f94b35
 # Clean detached worktree. Dirty hoofdrepository blijft onaangeraakt.
 # Exact 12 dart-defines, NO ADMIN_TOKEN, NO LEARNING_SERVICE_TOKEN.
 #
@@ -15,7 +15,7 @@ $repo         = 'C:\_flutter_work\fluxidi_tracking'
 $worktree     = 'C:\_flutter_work\fluxidi_tracking_field_312f8d2_tablet'
 $device       = 'R52Y808CN2M'
 $adb          = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-$requiredHead = '268d0ce56c001e8b9e70c13657b1775893f519b7'
+$requiredHead = '2ad0b5ef4f85f38455b50e9614a3e523a6f94b35'
 $branch       = 'fix/dispatch-deterministic-origin-leg'
 
 function Assert-LastExitCode {
