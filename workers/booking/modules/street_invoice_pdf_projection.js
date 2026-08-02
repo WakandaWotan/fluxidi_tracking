@@ -4,6 +4,12 @@
  * Used by ensureStreetBusinessInvoicePdfArtifact and paid PDF refresh.
  */
 import { safeStr } from "./parsing_utils.js";
+import {
+  formatBelgianEnterpriseNumber,
+  formatBelgianVatNumber,
+  legalFormLabelNl,
+  formatSellerIdentityPresentationLines,
+} from "./seller_identity.js";
 
 export const STREET_INVOICE_PDF_PROJECTION_VERSION = "street_pdf_proj_v1";
 
@@ -228,42 +234,98 @@ export function resolveInvoiceFinancialCents({
 
 function _composeSellerAddress(seller) {
   if (!seller || typeof seller !== "object") return "";
-  const direct = _norm(seller.address ?? seller.full_address ?? seller.fullAddress);
+  const direct = _norm(
+    seller.address ?? seller.full_address ?? seller.fullAddress,
+  );
   if (direct) return direct;
-  const street = _norm(seller.street ?? seller.address_line1 ?? seller.addressLine1);
+  const street = _norm(
+    seller.street ??
+      seller.address_line ??
+      seller.addressLine ??
+      seller.address_line1 ??
+      seller.addressLine1,
+  );
   const postal = _norm(seller.postal_code ?? seller.postalCode ?? seller.zip);
   const city = _norm(seller.city);
-  const country = _norm(seller.country);
+  const country = _norm(
+    seller.country_code ?? seller.countryCode ?? seller.country,
+  );
   const line2 = [postal, city].filter(Boolean).join(" ");
   return [street, line2, country].filter(Boolean).join("\n");
 }
 
 /**
  * Seller for PDF: issued seller_snapshot wins over live communication profile.
+ * Preserves legal entrepreneur vs trading name when present on the snapshot.
  */
 export function resolveInvoiceSellerCommProfile({
   issuedDocument = null,
   communicationProfile = null,
 } = {}) {
   const seller = _issuedSellerSnapshot(issuedDocument);
-  const name = _norm(seller?.name ?? seller?.company_name ?? seller?.companyName);
-  const legal = _norm(seller?.legal_name ?? seller?.legalName);
+  const trading = _norm(
+    seller?.trading_name ??
+      seller?.tradingName ??
+      seller?.name ??
+      seller?.company_name ??
+      seller?.companyName,
+  );
+  const legal = _norm(
+    seller?.legal_entrepreneur_name ??
+      seller?.legalEntrepreneurName ??
+      seller?.legal_name ??
+      seller?.legalName,
+  );
   const vat = _norm(seller?.vat_number ?? seller?.vatNumber);
+  const enterprise = _norm(
+    seller?.enterprise_number ??
+      seller?.registration_number ??
+      seller?.registrationNumber,
+  );
+  const legalForm = _norm(seller?.legal_form ?? seller?.legalForm);
   const phone = _norm(seller?.phone ?? seller?.telephone);
   const email = _norm(seller?.email ?? seller?.invoice_email);
   const address = _composeSellerAddress(seller);
-  if (seller && (name || legal || vat || address)) {
-    const brand = name || legal;
+  if (seller && (trading || legal || vat || address)) {
+    const presentationLines = formatSellerIdentityPresentationLines({
+      legal_seller_name: legal,
+      legal_entrepreneur_name: legal,
+      trading_name: trading,
+      legal_form: legalForm,
+      legal_form_label_nl:
+        _norm(seller?.legal_form_label_nl) || legalFormLabelNl(legalForm),
+      enterprise_number: enterprise,
+      enterprise_number_display: formatBelgianEnterpriseNumber(enterprise),
+      vat_number: vat,
+      vat_number_display: formatBelgianVatNumber(vat),
+    });
     return {
       source: "document_core_seller_snapshot",
-      brandName: brand,
-      legalName: legal || brand,
-      address,
+      brandName: trading || legal,
+      legalName: legal || trading,
+      legalEntrepreneurName: legal,
+      tradingName: trading,
+      legalForm: legalForm || null,
+      legalFormLabelNl:
+        _norm(seller?.legal_form_label_nl) || legalFormLabelNl(legalForm),
+      enterpriseNumber: enterprise,
+      enterpriseNumberDisplay: formatBelgianEnterpriseNumber(enterprise),
       vatNumber: vat,
+      vatNumberDisplay: formatBelgianVatNumber(vat),
+      sellerPresentationLines: presentationLines,
+      address,
       phone,
       invoiceEmail: email,
       logoUrl: _norm(seller?.logo_url ?? seller?.logoUrl),
       invoiceFooter: _norm(seller?.invoice_footer ?? seller?.invoiceFooter),
+      addressIsVisitor:
+        seller?.address_is_visitor === true ||
+        seller?.addressIsVisitor === true
+          ? true
+          : seller?.address_is_visitor === false ||
+              seller?.addressIsVisitor === false
+            ? false
+            : null,
     };
   }
 
@@ -271,16 +333,60 @@ export function resolveInvoiceSellerCommProfile({
     communicationProfile && typeof communicationProfile === "object"
       ? communicationProfile
       : {};
+  const profileLegal = _norm(
+    profile.legalEntrepreneurName ??
+      profile.legal_entrepreneur_name ??
+      profile.legalName ??
+      profile.legal_name,
+  );
+  const profileTrading = _norm(
+    profile.tradingName ??
+      profile.trading_name ??
+      profile.brandName ??
+      profile.brand_name,
+  );
+  const profileForm = _norm(profile.legalForm ?? profile.legal_form);
+  const profileEnterprise = _norm(
+    profile.enterpriseNumber ?? profile.enterprise_number,
+  );
+  const profileVat = _norm(profile.vatNumber ?? profile.vat_number);
   return {
     source: "company_communication_profile",
-    brandName: _norm(profile.brandName ?? profile.brand_name),
-    legalName: _norm(profile.legalName ?? profile.legal_name),
+    brandName: profileTrading,
+    legalName: profileLegal,
+    legalEntrepreneurName: profileLegal,
+    tradingName: profileTrading,
+    legalForm: profileForm || null,
+    legalFormLabelNl:
+      _norm(profile.legalFormLabelNl) || legalFormLabelNl(profileForm),
+    enterpriseNumber: profileEnterprise,
+    enterpriseNumberDisplay:
+      _norm(profile.enterpriseNumberDisplay) ||
+      formatBelgianEnterpriseNumber(profileEnterprise),
+    vatNumber: profileVat,
+    vatNumberDisplay:
+      _norm(profile.vatNumberDisplay) || formatBelgianVatNumber(profileVat),
+    sellerPresentationLines: formatSellerIdentityPresentationLines({
+      legal_seller_name: profileLegal,
+      trading_name: profileTrading,
+      legal_form: profileForm,
+      legal_form_label_nl:
+        _norm(profile.legalFormLabelNl) || legalFormLabelNl(profileForm),
+      enterprise_number: profileEnterprise,
+      vat_number: profileVat,
+    }),
     address: _norm(profile.address),
-    vatNumber: _norm(profile.vatNumber ?? profile.vat_number),
     phone: _norm(profile.phone),
     invoiceEmail: _norm(profile.invoiceEmail ?? profile.invoice_email),
     logoUrl: _norm(profile.logoUrl ?? profile.logo_url),
     invoiceFooter: _norm(profile.invoiceFooter ?? profile.invoice_footer),
+    addressIsVisitor:
+      profile.addressIsVisitor === true || profile.address_is_visitor === true
+        ? true
+        : profile.addressIsVisitor === false ||
+            profile.address_is_visitor === false
+          ? false
+          : null,
   };
 }
 

@@ -247,6 +247,15 @@ import {
   normalizeVatRatePercent,
 } from "./modules/street_invoice_pdf_projection.js";
 import {
+  buildSellerSnapshotFromBusinessProfile,
+  validateSellerIdentityForInvoiceIssuance,
+  assertSellerProfileScopeMatch,
+  resolveCanonicalSellerIdentity,
+  sellerIdentityToCommProfileFields,
+  formatSellerIdentityPresentationLines,
+  normalizeLegalForm,
+} from "./modules/seller_identity.js";
+import {
   customerScopedBookingsIndexKey,
   driverScopedBookingsIndexKey,
   vehicleScopedBookingsIndexKey,
@@ -8825,8 +8834,15 @@ const TENANT_CANCELLATION_POLICY_PROFILE_KEY = "tenant:cancellation_policy:v1";
 
 const DEFAULT_BUSINESS_PROFILE = {
   version: 1,
-  companyName: "Fluxidi Taxi",
-  legalName: "Fluxidi Taxi",
+  // Never invent a trading or legal name. Empty means "not configured".
+  companyName: "",
+  trading_name: "",
+  tradingName: "",
+  legalName: "",
+  legal_entrepreneur_name: "",
+  legalEntrepreneurName: "",
+  legal_form: "",
+  legalForm: "",
   vatNumber: "",
   vat_number: "",
   vatVerificationStatus: "pending",
@@ -8847,6 +8863,8 @@ const DEFAULT_BUSINESS_PROFILE = {
   postcode: "",
   city: "",
   country: "BE",
+  address_is_visitor: null,
+  addressIsVisitor: null,
   phone: "",
   companyEmail: "",
   email: "",
@@ -9458,10 +9476,53 @@ function normalizeBusinessProfile(input = {}) {
       DEFAULT_BUSINESS_PROFILE.chironReadinessStatus,
     32,
   ).toLowerCase();
+  const legalForm = normalizeLegalForm(source.legal_form ?? source.legalForm);
+  const legalEntrepreneurName = sanitizeTenantString(
+    source.legal_entrepreneur_name ??
+      source.legalEntrepreneurName ??
+      source.entrepreneur_name ??
+      source.entrepreneurName ??
+      source.owner_name ??
+      source.ownerName ??
+      "",
+    160,
+  );
+  // Preserve stored legalName/companyName verbatim — never substitute defaults
+  // such as "Fluxidi Taxi" / "Fluxidi BV".
+  const companyName = sanitizeTenantString(
+    source.companyName ?? source.company_name ?? "",
+    120,
+  );
+  const tradingName = sanitizeTenantString(
+    source.trading_name ?? source.tradingName ?? companyName,
+    160,
+  );
+  const legalName = sanitizeTenantString(
+    source.legalName ?? source.legal_name ?? "",
+    160,
+  );
+  const addressIsVisitorRaw =
+    source.address_is_visitor ??
+    source.addressIsVisitor ??
+    source.is_visitor_address ??
+    source.isVisitorAddress;
+  const addressIsVisitor =
+    addressIsVisitorRaw === true
+      ? true
+      : addressIsVisitorRaw === false
+        ? false
+        : null;
   return {
     version: 1,
-    companyName: sanitizeTenantString(source.companyName ?? DEFAULT_BUSINESS_PROFILE.companyName, 120),
-    legalName: sanitizeTenantString(source.legalName ?? DEFAULT_BUSINESS_PROFILE.legalName, 160),
+    companyName,
+    trading_name: tradingName,
+    tradingName,
+    legalName,
+    legal_name: legalName,
+    legal_entrepreneur_name: legalEntrepreneurName,
+    legalEntrepreneurName,
+    legal_form: legalForm || "",
+    legalForm: legalForm || "",
     vatNumber: sanitizeTenantString(source.vatNumber ?? source.vat_number ?? DEFAULT_BUSINESS_PROFILE.vatNumber, 64),
     vat_number: sanitizeTenantString(source.vatNumber ?? source.vat_number ?? DEFAULT_BUSINESS_PROFILE.vatNumber, 64),
     vatVerificationStatus,
@@ -9482,6 +9543,8 @@ function normalizeBusinessProfile(input = {}) {
     postcode: sanitizeTenantString(source.postcode ?? source.postalCode ?? DEFAULT_BUSINESS_PROFILE.postcode, 24),
     city: sanitizeTenantString(source.city ?? DEFAULT_BUSINESS_PROFILE.city, 80),
     country: sanitizeTenantString(source.country ?? DEFAULT_BUSINESS_PROFILE.country, 64),
+    address_is_visitor: addressIsVisitor,
+    addressIsVisitor,
     phone: sanitizeTenantString(source.phone ?? DEFAULT_BUSINESS_PROFILE.phone, 64),
     companyEmail,
     email,
@@ -10448,6 +10511,40 @@ async function loadBusinessProfile(
     raw = await env.BOOKING_KV.get(TENANT_BUSINESS_PROFILE_KEY, { type: "json" });
   }
   return normalizeBusinessProfile(raw?.business_profile ?? raw ?? DEFAULT_BUSINESS_PROFILE);
+}
+
+/**
+ * Resolve + validate seller identity for NEW Document Core invoice issues.
+ * Never rewrites an existing issued seller_snapshot. Fail-closed when the
+ * legal seller identity is incomplete (trading name alone is insufficient).
+ */
+function resolveSellerSnapshotForNewInvoiceIssue(scope, businessProfile) {
+  const scopeCheck = assertSellerProfileScopeMatch(scope, businessProfile);
+  if (!scopeCheck.ok) {
+    return {
+      ok: false,
+      error: scopeCheck.error || "seller_profile_scope_mismatch",
+      missing_fields: [],
+      seller_snapshot: null,
+    };
+  }
+  const validated = validateSellerIdentityForInvoiceIssuance(businessProfile);
+  if (!validated.ok) {
+    return {
+      ok: false,
+      error: validated.error || "seller_identity_incomplete",
+      missing_fields: validated.missing_fields || [],
+      message: validated.message || null,
+      seller_snapshot: null,
+    };
+  }
+  return {
+    ok: true,
+    error: null,
+    missing_fields: [],
+    seller_snapshot: buildSellerSnapshotFromBusinessProfile(businessProfile),
+    identity: validated.identity,
+  };
 }
 
 async function saveBusinessProfile(
@@ -28556,8 +28653,12 @@ function safeBrandName(value, fallback = "Fluxidi Taxi") {
 
 function maybeNormalizeCommunicationProfile(raw) {
   const source = raw && typeof raw === "object" ? raw : {};
-  const brandName = safeBrandName(source.brandName, "Fluxidi Taxi");
-  const legalName = sanitizeTenantString(source.legalName, 160) || brandName;
+  // Never invent "Fluxidi Taxi" / substitute trading name as legal entrepreneur.
+  const brandName = sanitizeTenantString(source.brandName ?? source.tradingName, 160);
+  const legalName = sanitizeTenantString(
+    source.legalName ?? source.legalEntrepreneurName,
+    160,
+  );
   const bookingEmail = pickFirstValidEmail(
     source.bookingEmail,
     source.bookingsEmail,
@@ -28574,9 +28675,35 @@ function maybeNormalizeCommunicationProfile(raw) {
   const locale = sanitizeTenantString(source.locale, 16).toLowerCase() || "nl";
   const currencyRaw = sanitizeTenantString(source.currency, 8).toUpperCase();
   const currency = /^[A-Z]{3}$/.test(currencyRaw) ? currencyRaw : "EUR";
+  const sellerPresentationLines = Array.isArray(source.sellerPresentationLines)
+    ? source.sellerPresentationLines.map((line) => sanitizeTenantString(line, 240)).filter(Boolean)
+    : [];
   return {
     brandName,
     legalName,
+    legalEntrepreneurName: sanitizeTenantString(
+      source.legalEntrepreneurName ?? source.legal_entrepreneur_name ?? legalName,
+      160,
+    ),
+    tradingName: sanitizeTenantString(
+      source.tradingName ?? source.trading_name ?? brandName,
+      160,
+    ),
+    legalForm: normalizeLegalForm(source.legalForm ?? source.legal_form) || "",
+    legalFormLabelNl: sanitizeTenantString(source.legalFormLabelNl, 80),
+    enterpriseNumber: sanitizeTenantString(
+      source.enterpriseNumber ?? source.enterprise_number,
+      32,
+    ),
+    enterpriseNumberDisplay: sanitizeTenantString(source.enterpriseNumberDisplay, 40),
+    vatNumberDisplay: sanitizeTenantString(source.vatNumberDisplay, 48),
+    sellerPresentationLines,
+    addressIsVisitor:
+      source.addressIsVisitor === true || source.address_is_visitor === true
+        ? true
+        : source.addressIsVisitor === false || source.address_is_visitor === false
+          ? false
+          : null,
     bookingEmail,
     companyEmail,
     supportEmail,
@@ -28640,6 +28767,8 @@ async function resolveTenantCommunicationProfile(env, tenantId = null, companyId
     2000,
   );
 
+  const sellerIdentity = resolveCanonicalSellerIdentity(business);
+  const sellerComm = sellerIdentityToCommProfileFields(sellerIdentity);
   const addressParts = [
     sanitizeTenantString(business?.address, 220),
     [sanitizeTenantString(business?.postcode, 24), sanitizeTenantString(business?.city, 80)].filter(Boolean).join(" "),
@@ -28649,20 +28778,30 @@ async function resolveTenantCommunicationProfile(env, tenantId = null, companyId
   const mapped = {
     tenantId: normalizedTenantId,
     companyId: normalizedCompanyId,
-    brandName: business?.companyName,
-    legalName: business?.legalName || business?.companyName,
+    // Prefer canonical seller identity; never invent Fluxidi Taxi / Fluxidi BV.
+    brandName: sellerComm.brandName || sanitizeTenantString(business?.companyName, 120),
+    legalName: sellerComm.legalName || sanitizeTenantString(business?.legalName, 160),
+    legalEntrepreneurName: sellerComm.legalEntrepreneurName,
+    tradingName: sellerComm.tradingName,
+    legalForm: sellerComm.legalForm,
+    legalFormLabelNl: sellerComm.legalFormLabelNl,
+    enterpriseNumber: sellerComm.enterpriseNumber,
+    enterpriseNumberDisplay: sellerComm.enterpriseNumberDisplay,
+    vatNumberDisplay: sellerComm.vatNumberDisplay,
+    sellerPresentationLines: formatSellerIdentityPresentationLines(sellerIdentity),
+    addressIsVisitor: sellerComm.addressIsVisitor,
     bookingEmail: business?.bookingEmail || business?.bookingsEmail || business?.reservationEmail || business?.reservationsEmail || business?.dispatchEmail,
     companyEmail: business?.companyEmail || business?.email,
     supportEmail: business?.supportEmail || business?.email,
-    invoiceEmail: business?.invoiceEmail,
+    invoiceEmail: sellerComm.invoiceEmail || business?.invoiceEmail,
     billingEmail: business?.billingEmail || business?.invoiceEmail,
     notificationEmail: business?.notificationEmail || business?.email || business?.invoiceEmail,
     replyToEmail: business?.replyToEmail,
     phone: business?.phone,
     website: business?.website,
-    address: addressParts.join("\n"),
-    vatNumber: business?.vatNumber,
-    companyNumber: business?.companyRegistrationNumber,
+    address: sellerComm.address || addressParts.join("\n"),
+    vatNumber: sellerComm.vatNumber || business?.vatNumber,
+    companyNumber: business?.companyRegistrationNumber || sellerComm.enterpriseNumber,
     logoUrl: env?.INVOICE_LOGO_URL,
     invoiceFooter: business?.invoiceReceiptFooterText || footerTemplate,
     receiptFooter: business?.invoiceReceiptFooterText || footerTemplate,
@@ -85644,7 +85783,8 @@ async function _issueCreditNoteCore({
     }
 
     // 9. Server-side identity: seller_snapshot from BOOKING_KV business
-    //    profile (NEVER from body), buyer_snapshot best-effort from rec.
+    //    profile (NEVER from body). Fail closed when legal seller identity is
+    //    incomplete — never invent Fluxidi Taxi / Fluxidi BV / trading-only.
     const issueTimestamp = new Date().toISOString();
     const documentId = crypto.randomUUID();
 
@@ -85654,55 +85794,29 @@ async function _issueCreditNoteCore({
         allowTenantLegacyFallback: true,
       });
     } catch (_) {
-      // tolerate; seller_snapshot will be a minimal placeholder
       businessProfile = null;
     }
-    const sellerSnapshot = {
-      name:
-        safeStr(
-          businessProfile?.companyName ?? businessProfile?.company_name,
-          240,
-        ) || null,
-      legal_name:
-        safeStr(
-          businessProfile?.legalName ?? businessProfile?.legal_name,
-          240,
-        ) || null,
-      vat_number:
-        safeStr(
-          businessProfile?.vatNumber ?? businessProfile?.vat_number,
-          64,
-        ) || null,
-      registration_number:
-        safeStr(
-          businessProfile?.companyRegistrationNumber ??
-            businessProfile?.company_registration_number ??
-            businessProfile?.enterpriseNumber ??
-            businessProfile?.enterprise_number ??
-            businessProfile?.kboNumber ??
-            businessProfile?.kbo_number,
-          64,
-        ) || null,
-      email:
-        safeStr(
-          businessProfile?.invoiceEmail ??
-            businessProfile?.invoice_email ??
-            businessProfile?.billingEmail ??
-            businessProfile?.billing_email ??
-            businessProfile?.companyEmail ??
-            businessProfile?.company_email ??
-            businessProfile?.email,
-          240,
-        ) || null,
-      address_line:
-        safeStr(businessProfile?.address, 240) || null,
-      postal_code:
-        safeStr(businessProfile?.postcode ?? businessProfile?.postal_code, 32) ||
-        null,
-      city: safeStr(businessProfile?.city, 120) || null,
-      country_code:
-        safeStr(businessProfile?.country, 8).toUpperCase() || null,
-    };
+    const sellerResolved = resolveSellerSnapshotForNewInvoiceIssue(
+      scope,
+      businessProfile,
+    );
+    if (!sellerResolved.ok) {
+      console.log(
+        `[${routeLabel}][SELLER_IDENTITY] booking=${bookingMask} error=${safeStr(sellerResolved.error, 80) || "seller_identity_incomplete"}`,
+      );
+      return json(
+        {
+          ok: false,
+          error: sellerResolved.error || "seller_identity_incomplete",
+          missing_fields: sellerResolved.missing_fields || [],
+          message:
+            sellerResolved.message ||
+            "Company invoicing profile is missing a required legal seller identity.",
+        },
+        409,
+      );
+    }
+    const sellerSnapshot = sellerResolved.seller_snapshot;
 
     const buyerBooking = rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
     const buyerPayload = rec?.payload && typeof rec.payload === "object" ? rec.payload : {};
@@ -86214,7 +86328,8 @@ async function _issueRefundProofCore({
     }
 
     // 9. Server-side identity: seller_snapshot from BOOKING_KV business
-    //    profile (NEVER from body), buyer_snapshot best-effort from rec.
+    //    profile (NEVER from body). Fail closed when legal seller identity is
+    //    incomplete — never invent Fluxidi Taxi / Fluxidi BV / trading-only.
     const issueTimestamp = new Date().toISOString();
     const documentId = crypto.randomUUID();
 
@@ -86226,52 +86341,27 @@ async function _issueRefundProofCore({
     } catch (_) {
       businessProfile = null;
     }
-    const sellerSnapshot = {
-      name:
-        safeStr(
-          businessProfile?.companyName ?? businessProfile?.company_name,
-          240,
-        ) || null,
-      legal_name:
-        safeStr(
-          businessProfile?.legalName ?? businessProfile?.legal_name,
-          240,
-        ) || null,
-      vat_number:
-        safeStr(
-          businessProfile?.vatNumber ?? businessProfile?.vat_number,
-          64,
-        ) || null,
-      registration_number:
-        safeStr(
-          businessProfile?.companyRegistrationNumber ??
-            businessProfile?.company_registration_number ??
-            businessProfile?.enterpriseNumber ??
-            businessProfile?.enterprise_number ??
-            businessProfile?.kboNumber ??
-            businessProfile?.kbo_number,
-          64,
-        ) || null,
-      email:
-        safeStr(
-          businessProfile?.invoiceEmail ??
-            businessProfile?.invoice_email ??
-            businessProfile?.billingEmail ??
-            businessProfile?.billing_email ??
-            businessProfile?.companyEmail ??
-            businessProfile?.company_email ??
-            businessProfile?.email,
-          240,
-        ) || null,
-      address_line:
-        safeStr(businessProfile?.address, 240) || null,
-      postal_code:
-        safeStr(businessProfile?.postcode ?? businessProfile?.postal_code, 32) ||
-        null,
-      city: safeStr(businessProfile?.city, 120) || null,
-      country_code:
-        safeStr(businessProfile?.country, 8).toUpperCase() || null,
-    };
+    const sellerResolved = resolveSellerSnapshotForNewInvoiceIssue(
+      scope,
+      businessProfile,
+    );
+    if (!sellerResolved.ok) {
+      console.log(
+        `[${routeLabel}][SELLER_IDENTITY] booking=${bookingMask} error=${safeStr(sellerResolved.error, 80) || "seller_identity_incomplete"}`,
+      );
+      return json(
+        {
+          ok: false,
+          error: sellerResolved.error || "seller_identity_incomplete",
+          missing_fields: sellerResolved.missing_fields || [],
+          message:
+            sellerResolved.message ||
+            "Company invoicing profile is missing a required legal seller identity.",
+        },
+        409,
+      );
+    }
+    const sellerSnapshot = sellerResolved.seller_snapshot;
 
     const buyerBooking =
       rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
@@ -86868,7 +86958,7 @@ async function _issueInvoiceCore({
     }
 
     // 9. Server-side identity: seller_snapshot from BOOKING_KV business profile
-    //    (NEVER from body), buyer_snapshot best-effort from rec.
+    //    (NEVER from body). Fail closed when legal seller identity is incomplete.
     const issueTimestamp = new Date().toISOString();
     const documentId = crypto.randomUUID();
 
@@ -86880,50 +86970,27 @@ async function _issueInvoiceCore({
     } catch (_) {
       businessProfile = null;
     }
-    const sellerSnapshot = {
-      name:
-        safeStr(
-          businessProfile?.companyName ?? businessProfile?.company_name,
-          240,
-        ) || null,
-      legal_name:
-        safeStr(
-          businessProfile?.legalName ?? businessProfile?.legal_name,
-          240,
-        ) || null,
-      vat_number:
-        safeStr(
-          businessProfile?.vatNumber ?? businessProfile?.vat_number,
-          64,
-        ) || null,
-      registration_number:
-        safeStr(
-          businessProfile?.companyRegistrationNumber ??
-            businessProfile?.company_registration_number ??
-            businessProfile?.enterpriseNumber ??
-            businessProfile?.enterprise_number ??
-            businessProfile?.kboNumber ??
-            businessProfile?.kbo_number,
-          64,
-        ) || null,
-      email:
-        safeStr(
-          businessProfile?.invoiceEmail ??
-            businessProfile?.invoice_email ??
-            businessProfile?.billingEmail ??
-            businessProfile?.billing_email ??
-            businessProfile?.companyEmail ??
-            businessProfile?.company_email ??
-            businessProfile?.email,
-          240,
-        ) || null,
-      address_line: safeStr(businessProfile?.address, 240) || null,
-      postal_code:
-        safeStr(businessProfile?.postcode ?? businessProfile?.postal_code, 32) ||
-        null,
-      city: safeStr(businessProfile?.city, 120) || null,
-      country_code: safeStr(businessProfile?.country, 8).toUpperCase() || null,
-    };
+    const sellerResolved = resolveSellerSnapshotForNewInvoiceIssue(
+      scope,
+      businessProfile,
+    );
+    if (!sellerResolved.ok) {
+      console.log(
+        `[${routeLabel}][SELLER_IDENTITY] booking=${bookingMask} error=${safeStr(sellerResolved.error, 80) || "seller_identity_incomplete"}`,
+      );
+      return json(
+        {
+          ok: false,
+          error: sellerResolved.error || "seller_identity_incomplete",
+          missing_fields: sellerResolved.missing_fields || [],
+          message:
+            sellerResolved.message ||
+            "Company invoicing profile is missing a required legal seller identity.",
+        },
+        409,
+      );
+    }
+    const sellerSnapshot = sellerResolved.seller_snapshot;
 
     const buyerBooking =
       rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
@@ -89630,26 +89697,56 @@ function renderInvoiceHtml(env, data, commProfile = null) {
     (preserveIssuedSeller
       ? ""
       : safeStr(env?.INVOICE_LOGO_URL) || safeStr(d.logoUrl) || DEFAULT_LOGO_URL);
-  const sellerBrand = preserveIssuedSeller
-    ? sanitizeTenantString(profile.brandName || profile.legalName || "", 160) || "—"
-    : safeBrandName(profile.brandName, "Fluxidi Taxi");
-  const sellerLegal = preserveIssuedSeller
-    ? sanitizeTenantString(profile.legalName || profile.brandName || "", 160) || sellerBrand
-    : sanitizeTenantString(profile.legalName || sellerBrand, 160) || sellerBrand;
-  const sellerAddress = preserveIssuedSeller
-    ? safeStr(profile.address) || ""
-    : safeStr(profile.address) || "Koekamerstraat 48\n9680 Maarkedal\nBelgië";
-  const sellerVat = preserveIssuedSeller
-    ? safeStr(profile.vatNumber) || ""
-    : safeStr(profile.vatNumber) || "BE0772931038";
-  const sellerPhone = preserveIssuedSeller
-    ? safeStr(profile.phone) || ""
-    : safeStr(profile.phone) || "+32 491 59 75 54";
+  // Never invent Fluxidi Taxi / Fluxidi BV / hardcoded address/VAT fallbacks.
+  const sellerPresentationLines = Array.isArray(profile.sellerPresentationLines)
+    ? profile.sellerPresentationLines.filter((line) => safeStr(line))
+    : formatSellerIdentityPresentationLines({
+        legal_seller_name: profile.legalEntrepreneurName || profile.legalName,
+        trading_name: profile.tradingName || profile.brandName,
+        legal_form: profile.legalForm,
+        legal_form_label_nl: profile.legalFormLabelNl,
+        enterprise_number: profile.enterpriseNumber || profile.companyNumber,
+        enterprise_number_display: profile.enterpriseNumberDisplay,
+        vat_number: profile.vatNumber,
+        vat_number_display: profile.vatNumberDisplay,
+      });
+  const sellerBrand =
+    sanitizeTenantString(profile.tradingName || profile.brandName || "", 160) ||
+    sanitizeTenantString(profile.legalName || "", 160) ||
+    "—";
+  const sellerLegal =
+    sanitizeTenantString(
+      profile.legalEntrepreneurName || profile.legalName || "",
+      160,
+    ) || sellerBrand;
+  const sellerAddress = safeStr(profile.address) || "";
+  const sellerVat =
+    safeStr(profile.vatNumberDisplay) ||
+    safeStr(profile.vatNumber) ||
+    "";
+  const sellerPhone = safeStr(profile.phone) || "";
   const sellerFooter = preserveIssuedSeller
     ? safeStr(profile.invoiceFooter) || ""
     : safeStr(profile.invoiceFooter) ||
-      `Dank u voor het vertrouwen in ${sellerBrand} — wij brengen u in stijl.`;
+      (sellerBrand && sellerBrand !== "—"
+        ? `Dank u voor het vertrouwen in ${sellerBrand} — wij brengen u in stijl.`
+        : "");
+  const sellerIdentityHtml = sellerPresentationLines.length
+    ? sellerPresentationLines
+        .map((line) => escapeHtml(String(line)))
+        .join("<br>")
+    : `<strong>${escapeHtml(sellerLegal)}</strong>`;
   const sellerAddressHtml = escapeHtml(sellerAddress).replace(/\n/g, "<br>");
+  const sellerEnterpriseLine = safeStr(profile.enterpriseNumberDisplay)
+    ? `Ondernemingsnummer: ${escapeHtml(profile.enterpriseNumberDisplay)}<br>`
+    : "";
+  // When presentation lines already include enterprise/VAT, avoid duplicating.
+  const sellerBlockHasVat = sellerPresentationLines.some((line) =>
+    /BTW:|VAT:/i.test(String(line)),
+  );
+  const sellerBlockHasEnterprise = sellerPresentationLines.some((line) =>
+    /Ondernemingsnummer:|Enterprise number:/i.test(String(line)),
+  );
 
   const vatRatePct = (() => {
     const fromPercent = Number(d.vatRate);
@@ -89944,10 +90041,11 @@ function renderInvoiceHtml(env, data, commProfile = null) {
       <img alt="${escapeHtml(sellerBrand)}" src="${escapeHtml(LOGO_URL)}">
     </div>
     <div class="company-info">
-      <strong>${escapeHtml(sellerLegal)}</strong><br>
-      ${sellerAddressHtml}<br>
-      BTW: ${escapeHtml(sellerVat)}<br>
-      Tel: ${escapeHtml(sellerPhone)}
+      ${sellerPresentationLines.length ? sellerIdentityHtml : `<strong>${escapeHtml(sellerLegal)}</strong>`}<br>
+      ${sellerAddressHtml}${sellerAddress ? "<br>" : ""}
+      ${sellerBlockHasEnterprise ? "" : sellerEnterpriseLine}
+      ${sellerBlockHasVat ? "" : (sellerVat ? `BTW: ${escapeHtml(sellerVat)}<br>` : "")}
+      ${sellerPhone ? `Tel: ${escapeHtml(sellerPhone)}` : ""}
     </div>
   </div>
 

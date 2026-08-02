@@ -200,7 +200,47 @@ test("C) seller_snapshot wins over stale communication profile", () => {
   });
   assert.equal(seller.source, "document_core_seller_snapshot");
   assert.equal(seller.brandName, "Issued Co");
+  assert.equal(seller.legalName, "Issued Legal");
   assert.match(seller.legalName, /Issued/);
+});
+
+test("C3) sole-prop seller snapshot presents entrepreneur and trading name separately", () => {
+  const seller = resolveInvoiceSellerCommProfile({
+    issuedDocument: {
+      tenant_id: "t1",
+      company_id: "c1",
+      document_id: "doc-1",
+      document_number: "INV-X",
+      source_booking_id: "street_1",
+      seller_snapshot: {
+        name: "Fluxidi",
+        trading_name: "Fluxidi",
+        legal_name: "Christophe Vanrokeghem",
+        legal_entrepreneur_name: "Christophe Vanrokeghem",
+        legal_form: "eenmanszaak",
+        legal_form_label_nl: "Eenmanszaak",
+        vat_number: "BE0772931038",
+        enterprise_number: "0772931038",
+        registration_number: "0772931038",
+        address_line: "Koekamerstraat 48A",
+        postal_code: "9688",
+        city: "Schorisse",
+        country_code: "BE",
+      },
+      totals: {
+        total_incl_vat: 5.3,
+        vat_amount: 0.3,
+        subtotal_ex_vat: 5,
+        vat_rate_percent: 6,
+      },
+    },
+  });
+  const text = (seller.sellerPresentationLines || []).join("\n");
+  assert.match(text, /Christophe Vanrokeghem/);
+  assert.match(text, /handelend onder de naam Fluxidi/);
+  assert.match(text, /Eenmanszaak/);
+  assert.match(text, /0772\.931\.038/);
+  assert.doesNotMatch(text, /\bBV\b/);
 });
 
 test("C2) new invoice without seller snapshot may use profile", () => {
