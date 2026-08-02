@@ -12,6 +12,7 @@ import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_page.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/chiron_company_connection_config.dart';
+import 'package:fluxidi_tracking/company/billit_customer_connect_gate.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/widgets/chiron_environment_status_labels.dart';
 import 'package:fluxidi_tracking/widgets/chiron_self_service_wizard.dart';
@@ -417,6 +418,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   Color get _pageBg => _palette.background;
   Color get _panelBg => _palette.surface;
   Color get _subPanelBg => _palette.surfaceAlt;
+  Color get _subSurfaceBg => _subPanelBg;
   Color get _accent => _palette.accent;
   Color get _textPrimary => _palette.textPrimary;
   Color get _textSecondary => _palette.textSecondary;
@@ -3027,6 +3029,23 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final configured = _billitStatus?['configured'] == true;
     final connected = _billitStatus?['connected'] == true;
     if (!configured || connected) return;
+    final connectUx = _billitCustomerConnectPresentation();
+    if (!connectUx.connectButtonEnabled) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Billit-koppeling is nog niet beschikbaar: goedkeuring in behandeling.',
+              en: 'Billit connection is not available yet: approval is pending.',
+              fr: 'La connexion Billit n’est pas encore disponible : approbation en cours.',
+              es: 'La conexión con Billit aún no está disponible: aprobación en curso.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
     setState(() => _billitStartLoading = true);
     try {
       final scope = _strictSettingsScopeForAction(action: 'start_billit_oauth');
@@ -4205,10 +4224,27 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return raw;
   }
 
+  BillitCustomerConnectPresentation _billitCustomerConnectPresentation() {
+    final environment = _billitStatusField('environment');
+    final env = environment.isEmpty ? 'sandbox' : environment;
+    final allowSandbox = kFluxidiBillitAllowSandboxConnect ||
+        _billitStatus?['company_sandbox_oauth_allowed'] == true;
+    final productionConnectEnabled = env.toLowerCase() == 'production' &&
+        _billitStatus?['customer_connect_allowed'] == true;
+    return resolveBillitCustomerConnectPresentation(
+      configured: _billitStatus?['configured'] == true,
+      connected: _billitStatus?['connected'] == true,
+      environment: env,
+      allowSandboxConnect: allowSandbox,
+      productionConnectEnabled: productionConnectEnabled,
+    );
+  }
+
   ({String label, _SetupStatus status}) _billitStatusDescriptor() {
     final configured = _billitStatus?['configured'] == true;
     final connected = _billitStatus?['connected'] == true;
     final statusCode = _billitStatusField('status');
+    final connectUx = _billitCustomerConnectPresentation();
     if (connected) {
       return (
         label: _t(
@@ -4218,6 +4254,17 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           es: 'Conectado',
         ),
         status: _SetupStatus.complete,
+      );
+    }
+    if (connectUx.mode == BillitCustomerConnectMode.productionApprovalPending) {
+      return (
+        label: _t(
+          nl: 'Billit-goedkeuring in behandeling',
+          en: 'Billit approval pending',
+          fr: 'Approbation Billit en cours',
+          es: 'Aprobación de Billit en curso',
+        ),
+        status: _SetupStatus.activationPending,
       );
     }
     if (statusCode == 'error') {
@@ -4242,7 +4289,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         status: _SetupStatus.attention,
       );
     }
-    if (configured) {
+    if (configured && connectUx.connectButtonEnabled) {
       return (
         label: _t(
           nl: 'Klaar om te koppelen',
@@ -4251,6 +4298,17 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           es: 'Listo para conectar',
         ),
         status: _SetupStatus.incomplete,
+      );
+    }
+    if (configured) {
+      return (
+        label: _t(
+          nl: 'Billit-goedkeuring in behandeling',
+          en: 'Billit approval pending',
+          fr: 'Approbation Billit en cours',
+          es: 'Aprobación de Billit en curso',
+        ),
+        status: _SetupStatus.activationPending,
       );
     }
     return (
@@ -4268,12 +4326,15 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final configured = _billitStatus?['configured'] == true;
     final connected = _billitStatus?['connected'] == true;
     final descriptor = _billitStatusDescriptor();
+    final connectUx = _billitCustomerConnectPresentation();
     final environment = _billitStatusField('environment');
     final connectedAt = _billitStatusField('connected_at');
     final updatedAt = _billitStatusField('updated_at');
     final lastErrorCode = _billitStatusField('last_error_code');
     final loadingInitial = _billitLoading && _billitStatus == null;
     final busy = _billitStartLoading || _billitDisconnectLoading;
+    final connectEnabled =
+        configured && !connected && !busy && connectUx.connectButtonEnabled;
     return _collapsibleSettingsCard(
       id: 'billit_peppol',
       anchorKey: _sectionAnchorKeys['billit_peppol'],
@@ -4291,13 +4352,71 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         children: [
           Text(
             _t(
-              nl: 'Koppel je eigen Billit-account om facturen, creditnota’s en Peppol-verzending vanuit Fluxidi voor te bereiden.',
-              en: 'Connect your own Billit account to prepare invoices, credit notes and Peppol sending from Fluxidi.',
-              fr: 'Connectez votre propre compte Billit pour préparer factures, notes de crédit et envoi Peppol depuis Fluxidi.',
-              es: 'Conecta tu propia cuenta de Billit para preparar facturas, notas de crédito y envío Peppol desde Fluxidi.',
+              nl: 'Koppel je eigen Billit-account om facturen, creditnota’s en Peppol-verzending vanuit Fluxidi voor te bereiden. Lokale Fluxidi-facturen en PDF’s blijven beschikbaar zonder Billit.',
+              en: 'Connect your own Billit account to prepare invoices, credit notes and Peppol sending from Fluxidi. Local Fluxidi invoices and PDFs remain available without Billit.',
+              fr: 'Connectez votre propre compte Billit pour préparer factures, notes de crédit et envoi Peppol depuis Fluxidi. Les factures et PDF Fluxidi locaux restent disponibles sans Billit.',
+              es: 'Conecta tu propia cuenta de Billit para preparar facturas, notas de crédito y envío Peppol desde Fluxidi. Las facturas y PDF locales de Fluxidi siguen disponibles sin Billit.',
             ),
             style: TextStyle(color: _textSecondary, height: 1.45),
           ),
+          if (connectUx.showApprovalPendingBanner)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: _subPanelBg,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: _border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _t(
+                        nl: 'Billit-goedkeuring in behandeling',
+                        en: 'Billit approval pending',
+                        fr: 'Approbation Billit en cours',
+                        es: 'Aprobación de Billit en curso',
+                      ),
+                      style: TextStyle(
+                        color: _textPrimary,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13.5,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _t(
+                        nl: 'De productie-integratie wordt momenteel door Billit beoordeeld. Na goedkeuring kan je hier je eigen Billit-account koppelen.',
+                        en: 'The production integration is currently being reviewed by Billit. After approval you can connect your own Billit account here.',
+                        fr: 'L’intégration de production est actuellement examinée par Billit. Après approbation, vous pourrez connecter votre propre compte Billit ici.',
+                        es: 'Billit está revisando actualmente la integración de producción. Tras la aprobación podrás conectar aquí tu propia cuenta de Billit.',
+                      ),
+                      style: TextStyle(
+                        color: _textSecondary,
+                        fontSize: 12.2,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          if (connectUx.showSandboxInternalHint)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                _t(
+                  nl: 'Interne sandbox-koppeling is tijdelijk beschikbaar voor test.',
+                  en: 'Internal sandbox connect is temporarily available for testing.',
+                  fr: 'La connexion sandbox interne est temporairement disponible pour les tests.',
+                  es: 'La conexión sandbox interna está temporalmente disponible para pruebas.',
+                ),
+                style: TextStyle(color: _textSecondary, fontSize: 12),
+              ),
+            ),
           if (loadingInitial)
             const Padding(
               padding: EdgeInsets.only(top: 10),
@@ -4312,7 +4431,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             _t(nl: 'Status', en: 'Status', fr: 'Statut', es: 'Estado'),
             descriptor.label,
           ),
-          if (environment.isNotEmpty)
+          if (environment.isNotEmpty &&
+              (connected || connectUx.connectButtonEnabled))
             _paymentOwnershipInfoRow(
               _t(
                 nl: 'Omgeving',
@@ -4352,7 +4472,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               ),
               lastErrorCode,
             ),
-          if (!configured)
+          if (!configured && !connectUx.showApprovalPendingBanner)
             Padding(
               padding: const EdgeInsets.only(top: 4, bottom: 4),
               child: Text(
@@ -4417,9 +4537,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 ),
               ),
               FilledButton.icon(
-                onPressed: (!configured || connected || busy)
-                    ? null
-                    : _startBillitConnect,
+                onPressed: connectEnabled ? _startBillitConnect : null,
                 icon: _billitStartLoading
                     ? const SizedBox(
                         width: 14,

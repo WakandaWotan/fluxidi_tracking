@@ -74,6 +74,7 @@ import {
   _resolveBillitConnectionProbePath,
   callBillitSandboxConnectionProbe,
   acquireBillitSandboxAccessToken,
+  isBillitCompanySandboxOAuthAllowed,
   postBillitSandboxOrderCreate,
   sanitizeBillitOrderReadResponse,
   fetchBillitSandboxOrderById,
@@ -32763,6 +32764,24 @@ export default {
             tenant_id: authScope.explicitScope.tenant_id,
             company_id: authScope.explicitScope.company_id,
           };
+          // Ordinary company sessions must not open sandbox Billit OAuth
+          // (my.sandbox.billit.be) while production approval is pending.
+          // Admin `/admin/integrations/billit/oauth/start` is unchanged.
+          const billitConfig = resolveBillitOAuthConfig(env);
+          if (
+            billitConfig.environment === "sandbox" &&
+            !isBillitCompanySandboxOAuthAllowed(env)
+          ) {
+            return json(
+              {
+                ok: false,
+                error: "billit_production_approval_pending",
+                environment: "sandbox",
+                production_approval_pending: true,
+              },
+              409,
+            );
+          }
           const result = await startBillitOAuthForScope(env, scope);
           return json(result.body, result.status);
         } catch (err) {

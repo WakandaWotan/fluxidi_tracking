@@ -133,6 +133,16 @@ export function resolveBillitOAuthConfig(env) {
   };
 }
 
+/** Internal/test-only: allow company-session OAuth against sandbox. */
+export function isBillitCompanySandboxOAuthAllowed(env) {
+  const raw = safeStr(
+    env?.BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH ??
+      env?.BILLIT_ALLOW_SANDBOX_COMPANY_OAUTH,
+    8,
+  ).toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
 /* ===================== Scoped key builders + state generator ===================== */
 
 // Scoped connection record key - one per tenant/company, never global.
@@ -378,6 +388,16 @@ export async function readBillitConnectionStatusForScope(env, scope) {
   if (!billitTokenEncryptionAvailable(env)) {
     warnings.push("billit_token_encryption_key_missing");
   }
+  const companySandboxOauthAllowed = isBillitCompanySandboxOAuthAllowed(env);
+  const productionConnectEnabled = config.environment === "production";
+  const customerConnectAllowed =
+    projected.connected === true
+      ? false
+      : productionConnectEnabled
+        ? config.configured
+        : companySandboxOauthAllowed && config.configured;
+  const productionApprovalPending =
+    projected.connected !== true && !customerConnectAllowed;
   return {
     ok: true,
     provider: BILLIT_PROVIDER,
@@ -393,6 +413,11 @@ export async function readBillitConnectionStatusForScope(env, scope) {
     connected_at: projected.connected_at,
     updated_at: projected.updated_at,
     last_error_code: projected.last_error_code,
+    // RELEASE combine: ordinary company OAuth must not hit sandbox until
+    // production approval. Internal/test may set BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH=1.
+    customer_connect_allowed: customerConnectAllowed,
+    production_approval_pending: productionApprovalPending,
+    company_sandbox_oauth_allowed: companySandboxOauthAllowed,
     warnings,
   };
 }

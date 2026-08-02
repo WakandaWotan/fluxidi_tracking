@@ -16,6 +16,7 @@ import {
   BILLIT_LINK_STATES,
   persistBillitPartyIdOnConnectionRecord,
   resolveBillitPartyIdWithSelfHeal,
+  isBillitCompanySandboxOAuthAllowed,
 } from "./billit_provider.js";
 
 test("1: single administration resolves PartyID", () => {
@@ -259,4 +260,41 @@ test("self-heal short-circuits when party_id already present (no probe)", async 
   assert.equal(result.ok, true);
   assert.equal(result.party_id, "already-set");
   assert.equal(result.healed, false);
+});
+
+test("company sandbox oauth allow flag defaults off for ordinary customers", () => {
+  assert.equal(isBillitCompanySandboxOAuthAllowed({}), false);
+  assert.equal(
+    isBillitCompanySandboxOAuthAllowed({ BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH: "1" }),
+    true,
+  );
+  assert.equal(
+    isBillitCompanySandboxOAuthAllowed({ BILLIT_ALLOW_COMPANY_SANDBOX_OAUTH: "0" }),
+    false,
+  );
+});
+
+test("export preservation: link-status merge keeps existing billit_export", () => {
+  const base = {
+    document_id: "doc-1",
+    document_number: "INV-2026-000034",
+    billit_export: {
+      provider: "billit",
+      environment: "sandbox",
+      order_id: "3138157",
+      status: "created",
+    },
+  };
+  const link = normalizeBillitLinkStatusMetadata({
+    state: BILLIT_LINK_STATES.LINKED,
+    order_id: "3138157",
+    retryable: false,
+  });
+  assert.equal(link.ok, true);
+  const merged = {
+    ...base,
+    billit_link_status: link.status,
+  };
+  assert.equal(merged.billit_export.order_id, "3138157");
+  assert.equal(merged.billit_link_status.state, "linked");
 });

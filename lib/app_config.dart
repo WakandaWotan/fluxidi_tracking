@@ -9309,6 +9309,13 @@ Map<String, dynamic> _safeBillitIntegrationMap(Map<dynamic, dynamic> raw) {
     'updated_at': textAny(const ['updated_at']),
     'last_error_code': textAny(const ['last_error_code']),
     'authorization_url': textAny(const ['authorization_url']),
+    'customer_connect_allowed': boolAny(const ['customer_connect_allowed']),
+    'production_approval_pending': boolAny(const [
+      'production_approval_pending',
+    ]),
+    'company_sandbox_oauth_allowed': boolAny(const [
+      'company_sandbox_oauth_allowed',
+    ]),
     'error': textAny(const ['error']),
     'warnings': warnings,
   };
