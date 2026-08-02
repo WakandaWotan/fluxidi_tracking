@@ -52,6 +52,14 @@ service = "fluxidi-compliance-api"
 [observability.logs]
 enabled = true
 
+# BILLIT-DURABLE-EXPORT-RECOVERY-P0-1: cron-triggered sweep of the durable
+# Billit export outbox. Every 2 minutes the scheduled handler retries due
+# outbox entries (state=pending / retryable_error / stalled in_progress).
+# Idempotency is guaranteed by the deterministic Billit Idempotent-Key header
+# and stored order_id short-circuit; the sweep bounds work per invocation.
+[triggers]
+crons = ["*/2 * * * *"]
+
 [[durable_objects.bindings]]
 name = "FLEET_ALLOCATOR"
 class_name = "FleetAllocatorDO"

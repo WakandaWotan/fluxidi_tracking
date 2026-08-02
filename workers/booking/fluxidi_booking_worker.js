@@ -100,6 +100,15 @@ import {
   buildSafeBillitLinkStatusProjection,
   buildBillitCreateOutboxRecord,
 } from "./modules/billit_provider.js";
+import {
+  BILLIT_EXPORT_STATES,
+  buildPendingOutboxRecord,
+  markOutboxInProgress,
+  mergeBillitOutboxAttemptResult,
+  isBillitOutboxDue,
+  normalizeLegacyOutboxRecord,
+  IN_PROGRESS_STALL_MS as BILLIT_IN_PROGRESS_STALL_MS,
+} from "./modules/billit_export_recovery.js";
 import { peppolIdentifierFromBelgianEnterpriseNumber } from "./modules/peppol_readiness.js";
 import {
   reconcileBillitOrderTotalAgainstDocument,
@@ -1247,24 +1256,53 @@ async function persistBillitLinkAttemptAndMaybeOutbox(env, scope, opts = {}) {
         // non-fatal
       }
     } else if (options.retryable === true) {
-      const existing = await env.BOOKING_KV.get(outboxKey, { type: "json" }).catch(() => null);
-      const attemptCount =
-        existing && typeof existing === "object"
-          ? Math.max(1, Number(existing.attempt_count) || 1) + 1
-          : 1;
-      const outbox = buildBillitCreateOutboxRecord({
-        scope,
-        documentId,
-        documentNumber: options.documentNumber,
-        bookingId: options.bookingId,
-        errorCode: options.errorCode,
-        idempotencyKey: normalized.status.idempotency_key,
-        invoiceIdempotencyKey: options.invoiceIdempotencyKey,
-        attemptCount,
+      // BILLIT-DURABLE-EXPORT-RECOVERY-P0-1: outbox failure writes use the
+      // durable state-machine reducer so retry state survives request
+      // completion, worker restart, and client disconnect. Each attempt is
+      // counted exactly once (via markOutboxInProgress) and the reducer
+      // schedules a bounded exponential backoff or escalates to
+      // permanent_error on validation / auth / party-selection failures.
+      const existingRaw = await env.BOOKING_KV.get(outboxKey, {
+        type: "json",
+      }).catch(() => null);
+      const normalizedExisting = existingRaw
+        ? normalizeLegacyOutboxRecord(existingRaw)
+        : buildPendingOutboxRecord({
+            scope,
+            documentId,
+            documentNumber: options.documentNumber,
+            bookingId: options.bookingId,
+            idempotencyKey: normalized.status.idempotency_key,
+            invoiceIdempotencyKey: options.invoiceIdempotencyKey,
+          });
+      const inProgress =
+        normalizedExisting?.state === BILLIT_EXPORT_STATES.IN_PROGRESS
+          ? normalizedExisting
+          : markOutboxInProgress(normalizedExisting);
+      const merged = mergeBillitOutboxAttemptResult({
+        previous: inProgress,
+        result: {
+          ok: false,
+          error_code: options.errorCode,
+          status_code:
+            Number.isFinite(Number(options.errorStatusCode))
+              ? Number(options.errorStatusCode)
+              : null,
+        },
       });
-      if (outbox) {
+      if (merged) {
+        // Preserve document_number / booking_id from the failure call if the
+        // stored record was missing them (defensive; legacy outboxes wrote
+        // both, but pending markers may not have them until the ride ID
+        // context is available).
+        if (!merged.document_number && options.documentNumber) {
+          merged.document_number = safeStr(options.documentNumber, 80);
+        }
+        if (!merged.booking_id && options.bookingId) {
+          merged.booking_id = safeStr(options.bookingId, 200);
+        }
         try {
-          await env.BOOKING_KV.put(outboxKey, JSON.stringify(outbox));
+          await env.BOOKING_KV.put(outboxKey, JSON.stringify(merged));
         } catch (_) {
           // non-fatal
         }
@@ -1273,6 +1311,360 @@ async function persistBillitLinkAttemptAndMaybeOutbox(env, scope, opts = {}) {
   }
   return { ok: true, record: updatedRecord, status: normalized.status };
 }
+
+/* ===================== BILLIT-DURABLE-EXPORT-RECOVERY-P0-1 ===================== */
+
+/**
+ * Persist the durable `pending` outbox marker BEFORE the first Billit POST
+ * runs. Once Document Core has issued the invoice, this marker exists in KV
+ * regardless of what happens next on the request: client disconnect, network
+ * failure, worker eviction — the sweep will pick it up and retry.
+ *
+ * Idempotent: if a pending / in_progress / retryable_error record already
+ * exists for this document, it is left untouched (writing a fresh pending
+ * record would reset attempt counts and undo scheduled backoff).
+ */
+async function persistPendingBillitExportOutboxOnce(env, scope, opts = {}) {
+  const options = opts && typeof opts === "object" ? opts : {};
+  const documentId = safeStr(options.documentId, 200);
+  if (!env?.BOOKING_KV || !documentId) return { ok: false, error: "missing" };
+  const outboxKey = buildBillitCreateOutboxKey(scope, documentId);
+  if (!outboxKey) return { ok: false, error: "invalid_key" };
+  try {
+    const existing = await env.BOOKING_KV.get(outboxKey, { type: "json" });
+    if (existing && typeof existing === "object") {
+      return { ok: true, existed: true };
+    }
+  } catch (_) {
+    // Non-fatal: fall through to write.
+  }
+  const rec = buildPendingOutboxRecord({
+    scope,
+    documentId,
+    documentNumber: options.documentNumber,
+    bookingId: options.bookingId,
+    idempotencyKey:
+      options.idempotencyKey ||
+      buildBillitSandboxOrderCreateIdempotencyKey(documentId),
+    invoiceIdempotencyKey: options.invoiceIdempotencyKey,
+  });
+  if (!rec) return { ok: false, error: "invalid_pending_record" };
+  try {
+    await env.BOOKING_KV.put(outboxKey, JSON.stringify(rec));
+    return { ok: true, existed: false };
+  } catch (_) {
+    return { ok: false, error: "outbox_persist_failed" };
+  }
+}
+
+/**
+ * Short-TTL KV lock so simultaneous retries (webhook + refresh + sweep)
+ * cannot post multiple Billit orders for the same invoice. The Billit
+ * `Idempotent-Key` header still protects the remote side; this local lock
+ * additionally avoids wasteful concurrent work and preserves ordering of
+ * outbox state writes.
+ */
+function _buildBillitRecoveryLockKey(scope, documentId) {
+  const tenant = safeStr(scope?.tenant_id ?? scope?.tenantId, 96);
+  const company = safeStr(scope?.company_id ?? scope?.companyId, 96);
+  const doc = safeStr(documentId, 200);
+  if (!tenant || !company || !doc) return null;
+  return `billit_recovery_lock:${tenant}:${company}:${doc}`;
+}
+
+async function _acquireBillitRecoveryLock(env, scope, documentId, holderId) {
+  const key = _buildBillitRecoveryLockKey(scope, documentId);
+  if (!key || !env?.BOOKING_KV) return { acquired: false, reason: "no_kv" };
+  try {
+    const held = await env.BOOKING_KV.get(key);
+    if (held) return { acquired: false, reason: "held", holder: held };
+    await env.BOOKING_KV.put(key, holderId, { expirationTtl: 90 });
+    return { acquired: true, key };
+  } catch (_) {
+    return { acquired: false, reason: "lock_error" };
+  }
+}
+
+async function _releaseBillitRecoveryLock(env, key) {
+  if (!key || !env?.BOOKING_KV) return;
+  try {
+    await env.BOOKING_KV.delete(key);
+  } catch (_) {
+    // non-fatal; TTL will clear it
+  }
+}
+
+/**
+ * Durable Billit export attempt.
+ *
+ * Preconditions:
+ *  * A Document Core invoice already exists for the target booking (its
+ *    document_id and source_booking_id must be persisted). Callers on the
+ *    paid-lifecycle path pass the invoice record they just issued; the
+ *    sweep path loads it from the document registry.
+ *
+ * Guarantees:
+ *  * Acquires a per-document lock (concurrent retries can never post more
+ *    than one Billit order).
+ *  * Marks the outbox `in_progress` so a stalled attempt is detectable.
+ *  * Delegates to the existing `ensureBillitOrderForPaidBusinessBooking`
+ *    which is fully idempotent (Billit `Idempotent-Key` header + local
+ *    stored order_id short-circuit). Retries reuse the same order identity.
+ *  * The wrapped ensure function persists success / failure to the outbox
+ *    via the new state-machine reducer in `persistBillitLinkAttemptAndMaybeOutbox`.
+ *  * Releases the lock in `finally`.
+ *
+ * Never mutates payment status, invoice number, totals, VAT, seller/buyer
+ * snapshots, or Peppol. Never runs a Peppol send.
+ */
+async function runBillitDurableExportAttempt(env, scope, opts = {}) {
+  const options = opts && typeof opts === "object" ? opts : {};
+  const documentId = safeStr(options.documentId, 200);
+  const bookingId = safeStr(options.bookingId, 200);
+  const source = safeStr(options.source, 64) || "durable_recovery";
+  if (!env?.BOOKING_KV || !documentId || !bookingId) {
+    return { ok: false, skipped: true, reason: "missing_input" };
+  }
+  const config =
+    options.config && typeof options.config === "object"
+      ? options.config
+      : resolveBillitOAuthConfig(env);
+  if (!config || config.environment !== "sandbox") {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "config_not_sandbox",
+    };
+  }
+  if (!config.configured) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "billit_oauth_not_configured",
+      permanent: true,
+    };
+  }
+
+  const outboxKey = buildBillitCreateOutboxKey(scope, documentId);
+  const lockHolder = `${source}:${Date.now()}`;
+  const lock = await _acquireBillitRecoveryLock(env, scope, documentId, lockHolder);
+  if (!lock.acquired) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: "concurrent_recovery_locked",
+      lock_reason: lock.reason,
+    };
+  }
+
+  try {
+    // Read the current outbox (may be null or legacy shape). Mark it
+    // in_progress so a stalled attempt is visible to the next sweep.
+    let existingRaw = null;
+    try {
+      existingRaw = outboxKey
+        ? await env.BOOKING_KV.get(outboxKey, { type: "json" })
+        : null;
+    } catch (_) {
+      existingRaw = null;
+    }
+    // If a terminal state is already recorded, do not attempt.
+    if (existingRaw && typeof existingRaw === "object") {
+      const st = safeStr(existingRaw.state, 40);
+      if (st === BILLIT_EXPORT_STATES.SYNCED) {
+        return { ok: true, skipped: true, reason: "already_synced" };
+      }
+      if (st === BILLIT_EXPORT_STATES.PERMANENT_ERROR) {
+        return {
+          ok: false,
+          skipped: true,
+          reason: "permanent_error",
+          error_code: safeStr(existingRaw.last_error_code, 120) || null,
+        };
+      }
+    }
+    const previous = existingRaw
+      ? normalizeLegacyOutboxRecord(existingRaw)
+      : buildPendingOutboxRecord({
+          scope,
+          documentId,
+          documentNumber: options.documentNumber,
+          bookingId,
+          idempotencyKey: buildBillitSandboxOrderCreateIdempotencyKey(documentId),
+          invoiceIdempotencyKey: options.invoiceIdempotencyKey,
+        });
+    if (outboxKey && previous) {
+      const inProgress = markOutboxInProgress(previous);
+      try {
+        await env.BOOKING_KV.put(outboxKey, JSON.stringify(inProgress));
+      } catch (_) {
+        // non-fatal
+      }
+    }
+
+    // Invoke the existing idempotent orchestrator. It internally re-issues
+    // Document Core (idempotent by inv-auto:...:v1), performs party self-heal,
+    // and calls Billit with a deterministic Idempotent-Key. Failure writes
+    // land on the outbox via the reducer inside
+    // `persistBillitLinkAttemptAndMaybeOutbox`.
+    const result = await ensureBillitOrderForPaidBusinessBooking(
+      env,
+      scope,
+      bookingId,
+      {
+        confirmSandbox: true,
+        config,
+        environment: "sandbox",
+        source,
+        scopeForBookingMatch: scope,
+      },
+    );
+    if (result?.ok) {
+      // Success: the ensure path called persistBillitLinkAttemptAndMaybeOutbox
+      // with clearOutbox=true. Belt-and-suspenders — try again in case the
+      // clear failed while KV was slow.
+      if (outboxKey) {
+        try {
+          await env.BOOKING_KV.delete(outboxKey);
+        } catch (_) {
+          // non-fatal
+        }
+      }
+      return {
+        ok: true,
+        skipped: false,
+        billit_order_id: safeStr(result.billit_order_id, 120) || null,
+        document_id: documentId,
+        booking_id: bookingId,
+      };
+    }
+    const body = result?.body && typeof result.body === "object" ? result.body : {};
+    const errorCode = safeStr(body.error, 120) || "billit_order_create_failed";
+    const statusCode = Number.isFinite(Number(result?.http_status))
+      ? Number(result.http_status)
+      : null;
+    return {
+      ok: false,
+      skipped: false,
+      error_code: errorCode,
+      status_code: statusCode,
+      retryable: body.retryable === true,
+      document_id: documentId,
+      booking_id: bookingId,
+    };
+  } finally {
+    await _releaseBillitRecoveryLock(env, lock.key);
+  }
+}
+
+/**
+ * Sweep due Billit export outbox entries and retry each once. Called from
+ * the cron-triggered `scheduled` handler and (for the current booking only)
+ * from the documents-list refresh handler. Idempotent and bounded: capped
+ * by `limit` per pass so a single run cannot exhaust the isolate.
+ */
+async function sweepBillitDurableRecoveryOutbox(env, ctx, options = {}) {
+  const opts = options && typeof options === "object" ? options : {};
+  const source = safeStr(opts.source, 64) || "durable_recovery_sweep";
+  const limit = Math.max(1, Math.min(50, Number(opts.limit) || 20));
+  // Tests may inject a fixed clock; production uses the real current time.
+  const now = opts.now instanceof Date ? opts.now : new Date();
+  if (!env?.BOOKING_KV) {
+    return { ok: false, error: "missing_binding", processed: 0, retried: 0 };
+  }
+  // Optional per-booking filter — used by the documents-refresh nudge so we
+  // never scan the global outbox for a single-user refresh.
+  const bookingFilter = safeStr(opts.bookingId, 200) || null;
+  const prefixOverride = safeStr(opts.prefix, 200);
+  const prefix = prefixOverride || "billit_create_outbox:";
+
+  let cursor = undefined;
+  let scanned = 0;
+  let dueCount = 0;
+  let attempted = 0;
+  let succeeded = 0;
+  let failed = 0;
+  let skipped = 0;
+  let permanent = 0;
+  const errors = [];
+  try {
+    // Only one list page per sweep; the cron runs every 2 minutes so the
+    // backlog is drained naturally.
+    const page = await env.BOOKING_KV.list({ prefix, limit: 1000, cursor });
+    for (const entry of page.keys || []) {
+      scanned += 1;
+      if (attempted >= limit) break;
+      const key = entry?.name;
+      if (!key) continue;
+      let raw = null;
+      try {
+        raw = await env.BOOKING_KV.get(key, { type: "json" });
+      } catch (_) {
+        continue;
+      }
+      if (!raw || typeof raw !== "object") continue;
+      if (bookingFilter && safeStr(raw.booking_id, 200) !== bookingFilter) continue;
+      const normalized = normalizeLegacyOutboxRecord(raw, { now });
+      if (!isBillitOutboxDue(normalized, { now })) continue;
+      dueCount += 1;
+      const scope = {
+        tenant_id: normalized.tenant_id,
+        company_id: normalized.company_id,
+      };
+      const documentId = normalized.document_id;
+      const bookingId = normalized.booking_id;
+      if (!scope.tenant_id || !scope.company_id || !documentId || !bookingId) {
+        skipped += 1;
+        continue;
+      }
+      attempted += 1;
+      try {
+        const outcome = await runBillitDurableExportAttempt(env, scope, {
+          documentId,
+          documentNumber: normalized.document_number,
+          bookingId,
+          invoiceIdempotencyKey: normalized.invoice_idempotency_key,
+          source,
+        });
+        if (outcome.ok && !outcome.skipped) {
+          succeeded += 1;
+        } else if (outcome.skipped) {
+          skipped += 1;
+        } else {
+          failed += 1;
+          if (outcome.permanent) permanent += 1;
+          if (outcome.error_code) errors.push(outcome.error_code);
+        }
+      } catch (err) {
+        failed += 1;
+        errors.push("recovery_exception");
+      }
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      error: "sweep_list_failed",
+      processed: 0,
+      retried: 0,
+    };
+  }
+  const errorSummary = errors.slice(0, 5).join(",");
+  console.log(
+    `[BILLIT_DURABLE_RECOVERY][SWEEP] source=${source} scanned=${scanned} due=${dueCount} attempted=${attempted} ok=${succeeded} failed=${failed} skipped=${skipped} permanent=${permanent} errors=${errorSummary}`,
+  );
+  return {
+    ok: true,
+    processed: scanned,
+    due: dueCount,
+    retried: attempted,
+    succeeded,
+    failed,
+    skipped,
+    permanent,
+  };
+}
+
+/* ===================== END BILLIT-DURABLE-EXPORT-RECOVERY-P0-1 ===================== */
 
 /* Admin-only, SANDBOX-ONLY Billit order create for ONE invoice document (Patch
  * B6a). Heavily guarded: explicit confirmation + document_number match, invoice-
@@ -4160,6 +4552,23 @@ async function ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, op
     };
   }
 
+  // BILLIT-DURABLE-EXPORT-RECOVERY-P0-1: persist the durable pending outbox
+  // marker BEFORE any Billit POST runs. Once the invoice exists in Document
+  // Core, this marker guarantees the sweep can complete the export even if
+  // the current request dies (client disconnect / network drop / isolate
+  // eviction). Idempotent: existing pending / in_progress / retryable_error
+  // records are left untouched so scheduled backoff is not reset.
+  await persistPendingBillitExportOutboxOnce(env, scope, {
+    documentId: invoiceResult.document_id,
+    documentNumber: invoiceResult.document_number,
+    bookingId: bId,
+    invoiceIdempotencyKey: safeStr(
+      invoiceResult.document_record?.idempotency_key ??
+        invoiceResult.document_record?.idempotencyKey,
+      200,
+    ),
+  });
+
   // Billit connected + PartyID available. When party_id is missing on an
   // otherwise connected sandbox OAuth record, self-heal via accountInformation
   // for THIS tenant/company only (never cross-company PartyID reuse).
@@ -4185,6 +4594,7 @@ async function ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, op
         bookingId: bId,
         state: linkState,
         errorCode: healError,
+        errorStatusCode: heal.status_code ?? null,
         retryable,
         invoiceIdempotencyKey: safeStr(
           invoiceResult.document_record?.idempotency_key ??
@@ -4233,6 +4643,11 @@ async function ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, op
         ? BILLIT_LINK_STATES.CREATE_FAILED
         : BILLIT_LINK_STATES.CREATE_FAILED,
       errorCode: createError,
+      errorStatusCode: Number.isFinite(Number(billitResult?.status))
+        ? Number(billitResult.status)
+        : Number.isFinite(Number(billitResult?.status_code))
+          ? Number(billitResult.status_code)
+          : null,
       retryable,
       invoiceIdempotencyKey: safeStr(
         invoiceResult.document_record?.idempotency_key ??
@@ -5561,6 +5976,11 @@ async function runPaidBookingAfterLifecycle(env, scope, bookingId, options = {})
 // Production fetch routes keep calling the internal binding; this export does
 // not change payment, invoice numbering, Billit, or Peppol behaviour.
 export { runPaidBookingAfterLifecycle };
+export {
+  runBillitDurableExportAttempt,
+  sweepBillitDurableRecoveryOutbox,
+  persistPendingBillitExportOutboxOnce,
+};
 
 async function handleAdminBookingBillitAutoCreateSandbox({ request, url, env, bookingId }) {
   // 1. Admin auth.
@@ -30730,6 +31150,41 @@ async function handleScopedBookingTestResetApply(request, url, env) {
 
 
 export default {
+  // BILLIT-DURABLE-EXPORT-RECOVERY-P0-1: cron-triggered sweep of the durable
+  // Billit export outbox. Runs bounded work per invocation. Failure of the
+  // sweep never affects live request handling.
+  async scheduled(event, env, ctx) {
+    try {
+      const source =
+        event && typeof event.cron === "string" && event.cron
+          ? `cron:${event.cron}`
+          : "cron";
+      ctx.waitUntil(
+        sweepBillitDurableRecoveryOutbox(env, ctx, {
+          source,
+          limit: 20,
+        }).catch((err) => {
+          try {
+            console.log(
+              `[BILLIT_DURABLE_RECOVERY][SCHEDULED_ERROR] ${String(
+                err?.message || err,
+              )}`,
+            );
+          } catch (_) {
+            // best-effort logging
+          }
+        }),
+      );
+    } catch (err) {
+      try {
+        console.log(
+          `[BILLIT_DURABLE_RECOVERY][SCHEDULED_SETUP_ERROR] ${String(
+            err?.message || err,
+          )}`,
+        );
+      } catch (_) {}
+    }
+  },
   async fetch(request, env, ctx) {
     try {
       const url = new URL(request.url);
@@ -32995,6 +33450,28 @@ export default {
               }
             } catch (_) {
               // Non-fatal: keep the original list projection.
+            }
+            // BILLIT-DURABLE-EXPORT-RECOVERY-P0-1: on documents refresh, nudge
+            // any due Billit export outbox entries scoped to THIS booking.
+            // This is a safe read-side accelerator — correctness still
+            // depends on the cron sweep. Bounded to at most 4 attempts per
+            // refresh so the request stays fast.
+            try {
+              const swept = await sweepBillitDurableRecoveryOutbox(env, null, {
+                source: "documents_refresh_nudge",
+                bookingId: sourceBookingId,
+                limit: 4,
+              });
+              if (swept?.retried > 0) {
+                const relisted = await listIssuedDocumentsForBooking(
+                  env,
+                  scope,
+                  sourceBookingId,
+                );
+                if (relisted.ok) listed = relisted;
+              }
+            } catch (_) {
+              // Non-fatal: keep the healed / original list projection.
             }
             const documents = Array.isArray(listed.documents)
               ? listed.documents

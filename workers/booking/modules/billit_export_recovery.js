@@ -1,0 +1,340 @@
+// BILLIT-DURABLE-EXPORT-RECOVERY-P0-1
+//
+// Pure state machine + record helpers for durable Billit sandbox order-create
+// recovery. Once Document Core has issued an invoice, Billit export must no
+// longer depend on the phone request remaining connected. This module owns:
+//
+//   * the export-state vocabulary (pending / in_progress / synced /
+//     retryable_error / permanent_error);
+//   * bounded exponential backoff for retryable failures;
+//   * classification of Billit / self-heal error codes as permanent vs
+//     retryable so infinite retry loops on real validation errors are
+//     impossible;
+//   * a stable outbox-record shape carrying `state`, `next_attempt_at`,
+//     `first_seen_at`, `in_progress_since`, `last_error_code`,
+//     `last_error_status_code` and `attempt_count`;
+//   * a small `mergeBillitOutboxAttemptResult` reducer so callers can update
+//     the outbox record from a Billit attempt outcome without re-implementing
+//     the state machine in every callsite.
+//
+// Nothing in this module touches KV, Billit, Mollie, or Peppol. It never
+// mutates its inputs. Callers persist the returned records themselves.
+
+// Local safe-string sanitizer (no external imports so this module stays a
+// pure state-machine leaf that can be unit-tested without env/KV mocks).
+function safeStr(value, maxLen = 200) {
+  if (value === undefined || value === null) return "";
+  const s = String(value);
+  return s.length > maxLen ? s.slice(0, maxLen) : s;
+}
+
+export const BILLIT_EXPORT_STATES = Object.freeze({
+  PENDING: "pending",
+  IN_PROGRESS: "in_progress",
+  SYNCED: "synced",
+  RETRYABLE_ERROR: "retryable_error",
+  PERMANENT_ERROR: "permanent_error",
+});
+
+// Bounded exponential backoff (milliseconds) applied by attempt count.
+// After BACKOFF_SCHEDULE_MS.length attempts a retryable failure escalates
+// to permanent_error so we never loop forever.
+export const BACKOFF_SCHEDULE_MS = Object.freeze([
+  30 * 1000, //  30s  after attempt 1
+  2 * 60 * 1000, //  2m  after attempt 2
+  8 * 60 * 1000, //  8m  after attempt 3
+  30 * 60 * 1000, // 30m  after attempt 4
+  2 * 60 * 60 * 1000, //  2h  after attempt 5
+  6 * 60 * 60 * 1000, //  6h  after attempt 6
+  12 * 60 * 60 * 1000, // 12h  after attempt 7
+  24 * 60 * 60 * 1000, // 24h  after attempt 8
+]);
+
+export const MAX_RETRYABLE_ATTEMPTS = BACKOFF_SCHEDULE_MS.length;
+
+// When an attempt is marked in_progress but never persists a terminal state
+// (e.g. worker isolate died before the Billit fetch resolved), the sweep
+// treats it as due for retry after this stall window.
+export const IN_PROGRESS_STALL_MS = 5 * 60 * 1000; // 5 minutes
+
+// Error codes that must never loop. These are validation / authorization /
+// party-selection outcomes that require operator action, not backoff.
+const PERMANENT_ERROR_CODES = new Set([
+  "billit_oauth_not_configured",
+  "billit_config_missing",
+  "billit_config_incomplete",
+  "billit_auto_create_sandbox_only",
+  "billit_administration_selection_required",
+  "billit_no_administration",
+  "billit_party_id_missing_no_heal",
+  "party_missing_required_billing_identity",
+  "billit_payload_invalid",
+  "billit_total_mismatch",
+  "billit_customer_invalid",
+  "billit_invoice_lines_invalid",
+  "billit_export_sandbox_only",
+  "confirm_sandbox_auto_create_required",
+]);
+
+// HTTP status codes that indicate a permanent client error. 429 remains
+// retryable (rate-limit / throttle).
+const PERMANENT_HTTP_STATUS = new Set([400, 401, 403, 404, 405, 409, 422]);
+
+/**
+ * Classify a Billit attempt failure as permanent (never retry) or retryable
+ * (retry with backoff). Called with the sanitized error code and HTTP status
+ * code produced by `ensureBillitOrderForPaidBusinessBooking`.
+ */
+export function isPermanentBillitError({
+  errorCode = "",
+  statusCode = null,
+} = {}) {
+  const code = safeStr(errorCode, 120);
+  if (code && PERMANENT_ERROR_CODES.has(code)) return true;
+  const n = Number(statusCode);
+  if (Number.isFinite(n) && PERMANENT_HTTP_STATUS.has(n)) return true;
+  return false;
+}
+
+/**
+ * Given a completed attempt count and error classification, return the ISO
+ * timestamp of the next attempt (or null when the failure is permanent /
+ * max-attempts reached). Never throws.
+ */
+export function computeNextAttemptSchedule({
+  attemptCount = 1,
+  errorCode = "",
+  statusCode = null,
+  now = new Date(),
+} = {}) {
+  const permanent = isPermanentBillitError({ errorCode, statusCode });
+  if (permanent) {
+    return {
+      state: BILLIT_EXPORT_STATES.PERMANENT_ERROR,
+      next_attempt_at: null,
+      retryable: false,
+      backoff_ms: 0,
+      max_attempts_reached: false,
+    };
+  }
+  const attempts = Math.max(1, Number(attemptCount) || 1);
+  if (attempts >= MAX_RETRYABLE_ATTEMPTS) {
+    return {
+      state: BILLIT_EXPORT_STATES.PERMANENT_ERROR,
+      next_attempt_at: null,
+      retryable: false,
+      backoff_ms: 0,
+      max_attempts_reached: true,
+    };
+  }
+  const backoffMs = BACKOFF_SCHEDULE_MS[attempts - 1];
+  const base = now instanceof Date ? now : new Date(now);
+  const next = new Date(base.getTime() + backoffMs);
+  return {
+    state: BILLIT_EXPORT_STATES.RETRYABLE_ERROR,
+    next_attempt_at: next.toISOString(),
+    retryable: true,
+    backoff_ms: backoffMs,
+    max_attempts_reached: false,
+  };
+}
+
+/**
+ * Build the initial `state: pending` outbox record persisted BEFORE the first
+ * Billit POST is attempted. Once this record exists, a client disconnect,
+ * timeout, or worker restart cannot lose the export — the sweep will pick it
+ * up.
+ */
+export function buildPendingOutboxRecord({
+  scope,
+  documentId,
+  documentNumber = null,
+  bookingId = null,
+  idempotencyKey = null,
+  invoiceIdempotencyKey = null,
+  now = new Date(),
+} = {}) {
+  const tenant = safeStr(scope?.tenant_id ?? scope?.tenantId, 96);
+  const company = safeStr(scope?.company_id ?? scope?.companyId, 96);
+  const doc = safeStr(documentId, 200);
+  if (!tenant || !company || !doc) return null;
+  const nowIso = (now instanceof Date ? now : new Date(now)).toISOString();
+  return {
+    provider: "billit",
+    environment: "sandbox",
+    tenant_id: tenant,
+    company_id: company,
+    document_id: doc,
+    document_number: safeStr(documentNumber, 80) || null,
+    booking_id: safeStr(bookingId, 200) || null,
+    state: BILLIT_EXPORT_STATES.PENDING,
+    retryable: true,
+    attempt_count: 0,
+    last_error_code: null,
+    last_error_status_code: null,
+    idempotency_key: safeStr(idempotencyKey, 200) || null,
+    invoice_idempotency_key: safeStr(invoiceIdempotencyKey, 200) || null,
+    first_seen_at: nowIso,
+    next_attempt_at: nowIso, // immediately eligible
+    in_progress_since: null,
+    created_at: nowIso,
+    updated_at: nowIso,
+  };
+}
+
+/**
+ * Transition an outbox record to `in_progress` at the start of an attempt.
+ * Increments `attempt_count` optimistically; if the attempt fails the reducer
+ * uses this count to compute the next backoff.
+ */
+export function markOutboxInProgress(previous, { now = new Date() } = {}) {
+  const nowIso = (now instanceof Date ? now : new Date(now)).toISOString();
+  const src =
+    previous && typeof previous === "object" && !Array.isArray(previous)
+      ? previous
+      : {};
+  const attempt = Math.max(0, Number(src.attempt_count) || 0) + 1;
+  return {
+    ...src,
+    state: BILLIT_EXPORT_STATES.IN_PROGRESS,
+    retryable: true,
+    attempt_count: attempt,
+    in_progress_since: nowIso,
+    updated_at: nowIso,
+  };
+}
+
+/**
+ * Reducer: apply the outcome of one Billit attempt to a stored outbox
+ * record. Callers pass the previous record (as read from KV, or a fresh
+ * pending record if none existed) plus a sanitized `result` object:
+ *   { ok: boolean, error_code?: string, status_code?: number, order_id?: string }
+ * Returns the next outbox record. Returns `null` when the attempt succeeded
+ * (caller must delete the outbox key). Never mutates inputs.
+ */
+export function mergeBillitOutboxAttemptResult({
+  previous,
+  result,
+  now = new Date(),
+} = {}) {
+  const nowIso = (now instanceof Date ? now : new Date(now)).toISOString();
+  const src =
+    previous && typeof previous === "object" && !Array.isArray(previous)
+      ? previous
+      : {};
+  const r = result && typeof result === "object" ? result : {};
+  if (r.ok === true) {
+    // Success → delete outbox. Return null so callers know to remove the key.
+    return null;
+  }
+  const attemptCount = Math.max(
+    1,
+    Number(src.attempt_count) || 1,
+  );
+  const schedule = computeNextAttemptSchedule({
+    attemptCount,
+    errorCode: r.error_code,
+    statusCode: r.status_code,
+    now,
+  });
+  return {
+    ...src,
+    state: schedule.state,
+    retryable: schedule.retryable,
+    attempt_count: attemptCount,
+    last_error_code: safeStr(r.error_code, 120) || null,
+    last_error_status_code:
+      Number.isFinite(Number(r.status_code)) && r.status_code !== null
+        ? Number(r.status_code)
+        : null,
+    next_attempt_at: schedule.next_attempt_at,
+    in_progress_since: null,
+    updated_at: nowIso,
+  };
+}
+
+/**
+ * Should the sweep pick this outbox record up right now? True when either:
+ *   * state is pending/retryable_error and `next_attempt_at` has passed, or
+ *   * state is in_progress but the previous run stalled past
+ *     `IN_PROGRESS_STALL_MS` — a stalled attempt is due for retry.
+ * Permanent_error and synced records are never due. Records without a
+ * timestamp are treated as due (legacy compatibility with the pre-recovery
+ * outbox shape).
+ */
+export function isBillitOutboxDue(record, { now = new Date() } = {}) {
+  const src = record && typeof record === "object" ? record : null;
+  if (!src) return false;
+  const state = safeStr(src.state, 40);
+  if (
+    state === BILLIT_EXPORT_STATES.PERMANENT_ERROR ||
+    state === BILLIT_EXPORT_STATES.SYNCED
+  ) {
+    return false;
+  }
+  const base = now instanceof Date ? now : new Date(now);
+  const nowMs = base.getTime();
+  if (state === BILLIT_EXPORT_STATES.IN_PROGRESS) {
+    const startedAt = _parseIsoMs(
+      src.in_progress_since || src.updated_at || src.created_at,
+    );
+    if (startedAt === null) return true; // legacy record with no marker
+    return nowMs - startedAt >= IN_PROGRESS_STALL_MS;
+  }
+  // pending / retryable_error / legacy shapes
+  const dueAt = _parseIsoMs(src.next_attempt_at);
+  if (dueAt === null) return true; // legacy: no schedule → treat as due
+  return nowMs >= dueAt;
+}
+
+function _parseIsoMs(iso) {
+  const s = safeStr(iso, 40);
+  if (!s) return null;
+  const n = Date.parse(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Normalize a legacy outbox record (as written by the pre-recovery code
+ * path) to the new state-machine shape. Legacy records only carried
+ * `attempt_count`, `state: "pending"`, `retryable: true` and no
+ * `next_attempt_at`; the sweep needs the new fields to schedule further
+ * retries correctly.
+ */
+export function normalizeLegacyOutboxRecord(record, { now = new Date() } = {}) {
+  const src = record && typeof record === "object" ? record : null;
+  if (!src) return null;
+  const nowIso = (now instanceof Date ? now : new Date(now)).toISOString();
+  const attemptCount = Math.max(1, Number(src.attempt_count) || 1);
+  return {
+    provider: safeStr(src.provider, 24) || "billit",
+    environment: safeStr(src.environment, 24) || "sandbox",
+    tenant_id: safeStr(src.tenant_id ?? src.tenantId, 96),
+    company_id: safeStr(src.company_id ?? src.companyId, 96),
+    document_id: safeStr(src.document_id ?? src.documentId, 200),
+    document_number: safeStr(src.document_number, 80) || null,
+    booking_id: safeStr(src.booking_id ?? src.bookingId, 200) || null,
+    state: _resolveLegacyState(src),
+    retryable: src.retryable === true || src.retryable === undefined,
+    attempt_count: attemptCount,
+    last_error_code: safeStr(src.error_code ?? src.last_error_code, 120) || null,
+    last_error_status_code:
+      Number.isFinite(Number(src.last_error_status_code))
+        ? Number(src.last_error_status_code)
+        : null,
+    idempotency_key: safeStr(src.idempotency_key, 200) || null,
+    invoice_idempotency_key: safeStr(src.invoice_idempotency_key, 200) || null,
+    first_seen_at: safeStr(src.first_seen_at ?? src.created_at, 40) || nowIso,
+    next_attempt_at: safeStr(src.next_attempt_at, 40) || nowIso,
+    in_progress_since: safeStr(src.in_progress_since, 40) || null,
+    created_at: safeStr(src.created_at, 40) || nowIso,
+    updated_at: safeStr(src.updated_at, 40) || nowIso,
+  };
+}
+
+function _resolveLegacyState(src) {
+  const state = safeStr(src.state, 40);
+  const valid = new Set(Object.values(BILLIT_EXPORT_STATES));
+  if (valid.has(state)) return state;
+  return BILLIT_EXPORT_STATES.PENDING;
+}
