@@ -241,6 +241,12 @@ import {
   resolveBillitPaidLifecycleGate,
 } from "./modules/street_business_invoice.js";
 import {
+  buildStreetInvoicePdfProjection,
+  shouldRefreshStreetInvoicePdfArtifact,
+  readStoredStreetInvoicePdfProjectionRevision,
+  normalizeVatRatePercent,
+} from "./modules/street_invoice_pdf_projection.js";
+import {
   customerScopedBookingsIndexKey,
   driverScopedBookingsIndexKey,
   vehicleScopedBookingsIndexKey,
@@ -5205,6 +5211,14 @@ async function runPaidBookingAfterLifecycle(env, scope, bookingId, options = {})
         }
       : { tenant_id: "", company_id: "" };
 
+  // Optional impl overrides are for hermetic regression tests only. Production
+  // callers never pass them; default behavior is unchanged.
+  const documentCoreImpl =
+    typeof opts.documentCoreImpl === "function" ? opts.documentCoreImpl : null;
+  const billitImpl = typeof opts.billitImpl === "function" ? opts.billitImpl : null;
+  const pdfRefreshImpl =
+    typeof opts.pdfRefreshImpl === "function" ? opts.pdfRefreshImpl : null;
+
   const runChain = async () => {
     const chainResult = { document_core_result: null, billit_result: null };
     // Document Core FIRST. The wrapper is already fail-closed, but guard the
@@ -5212,16 +5226,25 @@ async function runPaidBookingAfterLifecycle(env, scope, bookingId, options = {})
     // step or bubble to the caller.
     if (!skipDocumentCore) {
       try {
-        chainResult.document_core_result = await maybeRunDocumentCoreInvoiceAfterPaidLifecycle(
-          env,
-          normalizedScope,
-          bookingId,
-          {
-            source,
-            effectiveScope,
-            rec,
-          },
-        );
+        chainResult.document_core_result = documentCoreImpl
+          ? await documentCoreImpl({
+              env,
+              scope: normalizedScope,
+              bookingId,
+              source,
+              effectiveScope,
+              rec,
+            })
+          : await maybeRunDocumentCoreInvoiceAfterPaidLifecycle(
+              env,
+              normalizedScope,
+              bookingId,
+              {
+                source,
+                effectiveScope,
+                rec,
+              },
+            );
       } catch (documentCoreErr) {
         console.log(
           `[PAID_AFTER_LIFECYCLE][DOCUMENT_CORE_ERROR] booking=${maskedBooking} source=${source} error=${safeStr(documentCoreErr?.message || documentCoreErr, 120) || "exception"}`,
@@ -5234,27 +5257,90 @@ async function runPaidBookingAfterLifecycle(env, scope, bookingId, options = {})
     // bypasses that setting (1A). Duplicate-guard reuses linked orders.
     if (!skipBillit) {
       try {
-        chainResult.billit_result = await maybeRunBillitAutoCreateAfterPaidLifecycle(
-          env,
-          normalizedScope,
-          bookingId,
-          {
-            source,
-            rec,
-            effectiveScope,
-            nowIso,
-          },
-        );
+        chainResult.billit_result = billitImpl
+          ? await billitImpl({
+              env,
+              scope: normalizedScope,
+              bookingId,
+              source,
+              effectiveScope,
+              rec,
+              nowIso,
+            })
+          : await maybeRunBillitAutoCreateAfterPaidLifecycle(
+              env,
+              normalizedScope,
+              bookingId,
+              {
+                source,
+                rec,
+                effectiveScope,
+                nowIso,
+              },
+            );
       } catch (billitErr) {
         console.log(
           `[PAID_AFTER_LIFECYCLE][BILLIT_ERROR] booking=${maskedBooking} source=${source} error=${safeStr(billitErr?.message || billitErr, 120) || "exception"}`,
         );
       }
     }
+    // PDF THIRD: controlled street invoice PDF refresh after a genuine paid
+    // transition. Idempotent via projection revision — never allocates a new
+    // invoice number, never Billit create/PATCH, never Peppol. Ordinary GET
+    // /invoice/pdf remains read-only and does not call this path.
+    try {
+      let pdfRec = rec && typeof rec === "object" ? rec : null;
+      try {
+        const fresh = await env.BOOKING_KV.get(`booking:${bookingId}`, {
+          type: "json",
+        });
+        if (fresh && typeof fresh === "object") pdfRec = fresh;
+      } catch (_) {
+        // keep optional caller rec
+      }
+      const hasInvoiceArtifactOrNumber = !!(
+        pdfRec &&
+        (safeStr(findExistingInvoiceNumber(pdfRec), 120) ||
+          safeStr(
+            pdfRec.invoice_pdf_key ??
+              pdfRec.invoicePdfKey ??
+              pdfRec.booking?.invoice_pdf_key ??
+              pdfRec.booking?.invoicePdfKey,
+            240,
+          ))
+      );
+      if (hasInvoiceArtifactOrNumber) {
+        chainResult.pdf_result = pdfRefreshImpl
+          ? await pdfRefreshImpl({
+              env,
+              scope: normalizedScope,
+              bookingId,
+              rec: pdfRec,
+            })
+          : await maybeRefreshStreetInvoicePdfAfterPaid(
+              env,
+              normalizedScope,
+              bookingId,
+              pdfRec,
+            );
+      } else {
+        chainResult.pdf_result = {
+          ok: true,
+          skipped: true,
+          reason: "no_invoice_pdf_or_number",
+        };
+      }
+    } catch (pdfErr) {
+      console.log(
+        `[PAID_AFTER_LIFECYCLE][PDF_ERROR] booking=${maskedBooking} source=${source} error=${safeStr(pdfErr?.message || pdfErr, 120) || "exception"}`,
+      );
+      chainResult.pdf_result = { ok: false, reason: "pdf_refresh_exception" };
+    }
     // One grep-able summary line per invocation. Envelope-only, no PII.
     try {
       const dc = chainResult.document_core_result || {};
       const bi = chainResult.billit_result || {};
+      const pdf = chainResult.pdf_result || {};
       const dcOk = dc?.ok === true ? "true" : "false";
       const dcSkipped = dc?.skipped === true ? "true" : "false";
       const dcReason = safeStr(dc?.reason, 80) || (skipDocumentCore ? "skipped_by_caller" : "-");
@@ -5263,8 +5349,11 @@ async function runPaidBookingAfterLifecycle(env, scope, bookingId, options = {})
       const biSkipped = bi?.skipped === true ? "true" : "false";
       const biReason = safeStr(bi?.reason, 80) || (skipBillit ? "skipped_by_caller" : "-");
       const biOrderPresent = safeStr(bi?.billit_order_id, 120) ? "true" : "false";
+      const pdfOk = pdf?.ok === true ? "true" : "false";
+      const pdfSkipped = pdf?.skipped === true ? "true" : "false";
+      const pdfReason = safeStr(pdf?.reason, 80) || "-";
       console.log(
-        `[PAID_AFTER_LIFECYCLE][SUMMARY] booking=${maskedBooking} source=${source} dc_ok=${dcOk} dc_skipped=${dcSkipped} dc_reason=${dcReason} dc_multi_leg=${dcMultiLeg} billit_ok=${biOk} billit_skipped=${biSkipped} billit_reason=${biReason} billit_order_id_present=${biOrderPresent}`,
+        `[PAID_AFTER_LIFECYCLE][SUMMARY] booking=${maskedBooking} source=${source} dc_ok=${dcOk} dc_skipped=${dcSkipped} dc_reason=${dcReason} dc_multi_leg=${dcMultiLeg} billit_ok=${biOk} billit_skipped=${biSkipped} billit_reason=${biReason} billit_order_id_present=${biOrderPresent} pdf_ok=${pdfOk} pdf_skipped=${pdfSkipped} pdf_reason=${pdfReason}`,
       );
     } catch (_) {
       // Never throw from the summary log block.
@@ -5318,6 +5407,11 @@ async function runPaidBookingAfterLifecycle(env, scope, bookingId, options = {})
     return { error: true };
   }
 }
+
+// Named export for hermetic paid-lifecycle regression tests only.
+// Production fetch routes keep calling the internal binding; this export does
+// not change payment, invoice numbering, Billit, or Peppol behaviour.
+export { runPaidBookingAfterLifecycle };
 
 async function handleAdminBookingBillitAutoCreateSandbox({ request, url, env, bookingId }) {
   // 1. Admin auth.
@@ -63602,32 +63696,29 @@ async function _requireBusinessInvoiceActor({
   };
 }
 
-/* STREET-BUSINESS-INVOICE-PDF-PAYMENT-SYNC-1: ensure a booking-level invoice
- * PDF artifact exists after Document Core issue. Idempotent: if invoice_pdf_key
- * is already present, returns immediately. Never emails, never issues a second
- * Document Core invoice, never creates a second Billit order. Uses the existing
- * generateAndSendInvoice path with skipEmailDelivery + the Document Core
- * invoice reference as the invoice number. */
+/* STREET-BUSINESS-INVOICE-PDF-PAYMENT-SYNC-1 / P1 source-of-truth:
+ * Ensure (or controlled-refresh) the booking-level invoice PDF artifact from
+ * Document Core + booking projection. Never allocates a new invoice number,
+ * never creates/PATCHes Billit, never sends Peppol. Ordinary download stays
+ * read-only (handleBookingInvoicePdfGet). */
 async function ensureStreetBusinessInvoicePdfArtifact(
   env,
   scope,
   bookingId,
   rec,
-  { invoiceReference = "" } = {},
+  {
+    invoiceReference = "",
+    documentId = "",
+    issuedDocument = null,
+    forceRefresh = false,
+    reason = "ensure",
+  } = {},
 ) {
   const safeBookingId = safeStr(bookingId, 200) || "";
   if (!safeBookingId || !rec || typeof rec !== "object") {
     return { ok: false, skipped: true, reason: "missing_booking" };
   }
-  const existing = _invoicePdfMetadataFromRecord(rec);
-  if (existing.exists) {
-    return {
-      ok: true,
-      skipped: true,
-      reason: "already_persisted",
-      key: existing.key,
-    };
-  }
+
   const invoiceNumber =
     safeStr(invoiceReference, 120) ||
     findExistingInvoiceNumber(rec) ||
@@ -63635,6 +63726,7 @@ async function ensureStreetBusinessInvoicePdfArtifact(
   if (!invoiceNumber) {
     return { ok: false, skipped: true, reason: "missing_invoice_number" };
   }
+
   // Persist Document Core number onto the booking so findExistingInvoiceNumber
   // and PDF filename stay aligned across retries (no second sequence allocate).
   try {
@@ -63660,77 +63752,154 @@ async function ensureStreetBusinessInvoicePdfArtifact(
     // Non-fatal: generateAndSendInvoice can still reuse invoiceNumber via input.
   }
 
-  const booking =
-    rec.booking && typeof rec.booking === "object" ? rec.booking : {};
-  const parseNum = (value, fallback = 0) => {
-    const num = Number(value);
-    return Number.isFinite(num) ? num : fallback;
-  };
-  const pickupIso = safeStr(
-    booking.pickupStartIso ||
-      booking.pickup_iso ||
-      rec.pickupStartIso ||
-      rec.scheduled_pickup_at,
+  let resolvedDocumentId =
+    safeStr(documentId, 200) ||
+    safeStr(
+      rec.invoice_document_id ??
+        rec.invoiceDocumentId ??
+        rec.document_id ??
+        rec.documentId,
+      200,
+    );
+  let resolvedIssued = issuedDocument;
+  if (
+    (!resolvedIssued || typeof resolvedIssued !== "object") &&
+    resolvedDocumentId &&
+    env?.BOOKING_KV
+  ) {
+    try {
+      resolvedIssued = await loadIssuedDocumentRegistryRecordById(
+        env,
+        scope,
+        resolvedDocumentId,
+      );
+    } catch (_) {
+      resolvedIssued = null;
+    }
+  }
+  if (
+    (!resolvedIssued || typeof resolvedIssued !== "object") &&
+    env?.BOOKING_KV
+  ) {
+    try {
+      const existingInvoice = await findExistingInvoiceDocumentForBooking(
+        env,
+        scope,
+        safeBookingId,
+      );
+      if (existingInvoice?.document_id) {
+        resolvedDocumentId =
+          safeStr(existingInvoice.document_id, 200) || resolvedDocumentId;
+        resolvedIssued = await loadIssuedDocumentRegistryRecordById(
+          env,
+          scope,
+          resolvedDocumentId,
+        );
+      }
+    } catch (_) {
+      // keep null issued doc; booking snapshot / company VAT may still work
+    }
+  }
+
+  let companyVatRatePercent = null;
+  try {
+    const pricingProfile = await _loadTenantPricingProfile(env, scope, {
+      allowTenantLegacyFallback: true,
+    });
+    companyVatRatePercent = normalizeVatRatePercent(
+      pricingProfile?.vat_rate ??
+        pricingProfile?.vatRate ??
+        pricingProfile?.pricing_vat_rate ??
+        pricingProfile?.pricingVatRate ??
+        pricingProfile?.vat_rate_percent ??
+        pricingProfile?.vatRatePercent,
+    );
+  } catch (_) {
+    companyVatRatePercent = null;
+  }
+  if (companyVatRatePercent == null) {
+    try {
+      const businessProfile = await loadBusinessProfile(env, {
+        tenant_id: scope?.tenant_id,
+        company_id: scope?.company_id,
+      });
+      companyVatRatePercent = normalizeVatRatePercent(
+        businessProfile?.pricingVatRate ??
+          businessProfile?.pricing_vat_rate ??
+          businessProfile?.vat_rate ??
+          businessProfile?.vatRate ??
+          businessProfile?.defaultVatRate,
+      );
+    } catch (_) {
+      companyVatRatePercent = null;
+    }
+  }
+
+  const commProfile = await resolveTenantCommunicationProfile(
+    env,
+    scope?.tenant_id,
+    scope?.company_id,
   );
-  const invoiceInput = {
-    invoice_number: invoiceNumber,
-    invoiceNumber,
-    pickupStartIso: pickupIso,
-    bookingPublicId: safeBookingId,
+
+  const projection = buildStreetInvoicePdfProjection({
+    scope,
     bookingId: safeBookingId,
-    tenant_id: safeStr(scope?.tenant_id ?? rec.tenant_id, 120),
-    company_id: safeStr(scope?.company_id ?? rec.company_id, 120),
-    from: safeStr(booking.from || rec.from || booking.pickup_address),
-    to: safeStr(booking.to || rec.to || booking.destination_address),
-    stops: Array.isArray(booking.stops) ? booking.stops : [],
-    paymentStatus: streetRidePaymentStatus(rec),
-    paymentMethod: safeStr(
-      rec.payment_method ?? booking.payment_method ?? rec.paymentMethod,
-    ),
-    paymentSource: safeStr(
-      rec.payment_source ?? booking.payment_source ?? rec.paymentSource,
-    ),
-    customerName: safeStr(
-      booking.customer_name || booking.custName || rec.customer_name,
-    ),
-    customerEmail: safeStr(
-      booking.customer_email || booking.custEmail || rec.customer_email,
-    ),
-    customerPhone: safeStr(
-      booking.customer_phone || booking.custPhone || rec.customer_phone,
-    ),
-    customerVat: safeStr(booking.vat_number || rec.vat_number),
-    customerCompany: safeStr(booking.company_name || rec.company_name),
-    invoiceAddress: safeStr(booking.invoice_address || rec.invoice_address),
-    vat_rate: parseNum(booking.vat_rate ?? rec.vat_rate_percent, 21) > 1
-      ? parseNum(booking.vat_rate ?? rec.vat_rate_percent, 21) / 100
-      : parseNum(booking.vat_rate ?? rec.vat_rate, 0.21),
-    subtotalEx: parseNum(
-      booking.price_ex_vat ?? rec.price_ex_vat ?? booking.subtotal_ex_vat,
-      0,
-    ),
-    vatAmount: parseNum(booking.price_vat ?? rec.price_vat, 0),
-    total: parseNum(booking.price_incl_vat ?? rec.price_incl_vat, 0),
-    billing_customer_snapshot:
-      rec.billing_customer_snapshot || booking.billing_customer_snapshot || null,
-  };
+    bookingRecord: rec,
+    issuedDocument: resolvedIssued,
+    invoiceNumber,
+    documentId: resolvedDocumentId,
+    companyVatRatePercent,
+    communicationProfile: commProfile,
+    paymentStatusResolver: streetRidePaymentStatus,
+  });
+  if (!projection.ok) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: safeStr(projection.error, 80) || "projection_failed",
+    };
+  }
+
+  const existing = _invoicePdfMetadataFromRecord(rec);
+  const storedRevision = readStoredStreetInvoicePdfProjectionRevision(rec);
+  const refreshDecision = shouldRefreshStreetInvoicePdfArtifact({
+    existingPdfExists: existing.exists === true,
+    forceRefresh: forceRefresh === true,
+    storedProjectionRevision: storedRevision,
+    nextProjectionRevision: projection.projectionRevision,
+    reason,
+  });
+  if (!refreshDecision.refresh) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: refreshDecision.reason || "already_persisted",
+      key: existing.key || null,
+      projection_revision: storedRevision || projection.projectionRevision,
+    };
+  }
 
   try {
     const result = await generateAndSendInvoice({
       env,
-      booking: invoiceInput,
+      booking: projection.invoiceInput,
       bookingRecordInfoOverride: {
         key: `booking:${safeBookingId}`,
         booking_id: safeBookingId,
         rec,
       },
+      commProfileOverride: projection.sellerCommProfile,
       emailPolicy: {
         skipEmailDelivery: true,
         sendCustomerEmail: false,
         requireArtifactPersistence: true,
         customerSkipReason: "street_business_invoice_pdf_only",
-        context: "street_business_invoice_pdf_ensure",
+        context:
+          reason === "paid_refresh"
+            ? "street_business_invoice_pdf_paid_refresh"
+            : "street_business_invoice_pdf_ensure",
       },
+      projectionRevision: projection.projectionRevision,
     });
     const artifactOk = result?.invoice_pdf_artifact?.ok === true;
     if (!artifactOk) {
@@ -63745,8 +63914,11 @@ async function ensureStreetBusinessInvoicePdfArtifact(
     return {
       ok: true,
       skipped: false,
-      reason: "persisted",
+      reason: reason === "paid_refresh" ? "refreshed_paid" : "persisted",
       key: safeStr(result?.invoice_pdf_artifact?.key, 1024) || null,
+      projection_revision: projection.projectionRevision,
+      invoice_number: projection.invoiceNumber,
+      document_id: projection.documentId,
     };
   } catch (err) {
     return {
@@ -63755,6 +63927,24 @@ async function ensureStreetBusinessInvoicePdfArtifact(
       reason: safeStr(err?.message || err, 80) || "pdf_ensure_error",
     };
   }
+}
+
+async function maybeRefreshStreetInvoicePdfAfterPaid(
+  env,
+  scope,
+  bookingId,
+  rec,
+  { invoiceReference = "", documentId = "" } = {},
+) {
+  if (streetRidePaymentStatus(rec) !== "paid") {
+    return { ok: true, skipped: true, reason: "not_paid" };
+  }
+  return ensureStreetBusinessInvoicePdfArtifact(env, scope, bookingId, rec, {
+    invoiceReference,
+    documentId,
+    forceRefresh: false,
+    reason: "paid_refresh",
+  });
 }
 
 async function handleCompanyBookingRequestBusinessInvoice({
@@ -64132,7 +64322,11 @@ async function handleCompanyBookingRequestBusinessInvoice({
       scope,
       safeBookingId,
       pdfRec,
-      { invoiceReference },
+      {
+        invoiceReference,
+        documentId,
+        reason: paymentStatus === "paid" ? "paid_refresh" : "ensure",
+      },
     );
     if (pdfEnsure?.ok !== true) {
       warnings.push(
@@ -64143,8 +64337,23 @@ async function handleCompanyBookingRequestBusinessInvoice({
       );
     } else if (pdfEnsure.skipped !== true) {
       console.log(
-        `[BUSINESS_INVOICE][PDF] booking=${bookingMask} ok=true reason=persisted`,
+        `[BUSINESS_INVOICE][PDF] booking=${bookingMask} ok=true reason=${safeStr(pdfEnsure.reason, 40) || "persisted"}`,
       );
+    } else if (paymentStatus === "paid") {
+      // Paid convergence: if ensure skipped as unchanged, still attempt explicit
+      // paid refresh helper (idempotent via projection revision).
+      const paidRefresh = await maybeRefreshStreetInvoicePdfAfterPaid(
+        env,
+        scope,
+        safeBookingId,
+        pdfRec,
+        { invoiceReference, documentId },
+      );
+      if (paidRefresh?.ok === true && paidRefresh.skipped !== true) {
+        console.log(
+          `[BUSINESS_INVOICE][PDF][PAID_REFRESH] booking=${bookingMask} reason=${safeStr(paidRefresh.reason, 40) || "refreshed"}`,
+        );
+      }
     }
   } catch (_) {
     warnings.push("invoice_pdf_ensure_error");
@@ -89158,6 +89367,7 @@ async function _sha256HexFromBytes(bytes) {
 async function persistInvoicePdfArtifactForBooking(env, bookingRecordInfo, {
   invoiceNumber,
   pdfBytes,
+  projectionRevision = "",
 } = {}) {
   const storage = env?.PUBLIC_MEDIA;
   if (!storage || typeof storage.put !== "function") {
@@ -89247,6 +89457,11 @@ async function persistInvoicePdfArtifactForBooking(env, bookingRecordInfo, {
     latest.invoicePdfSizeBytes = sizeBytes;
     latest.invoice_pdf_sha256 = sha256;
     latest.invoicePdfSha256 = sha256;
+    const safeProjectionRevision = safeStr(projectionRevision, 500);
+    if (safeProjectionRevision) {
+      latest.invoice_pdf_projection_revision = safeProjectionRevision;
+      latest.invoicePdfProjectionRevision = safeProjectionRevision;
+    }
     if (latest.booking && typeof latest.booking === "object") {
       latest.booking.invoice_pdf_key = objectKey;
       latest.booking.invoicePdfKey = objectKey;
@@ -89258,6 +89473,10 @@ async function persistInvoicePdfArtifactForBooking(env, bookingRecordInfo, {
       latest.booking.invoicePdfSizeBytes = sizeBytes;
       latest.booking.invoice_pdf_sha256 = sha256;
       latest.booking.invoicePdfSha256 = sha256;
+      if (safeProjectionRevision) {
+        latest.booking.invoice_pdf_projection_revision = safeProjectionRevision;
+        latest.booking.invoicePdfProjectionRevision = safeProjectionRevision;
+      }
     }
     latest.updatedAt = generatedAt;
     await env.BOOKING_KV.put(key, JSON.stringify(latest));
@@ -89404,17 +89623,50 @@ function renderInvoiceHtml(env, data, commProfile = null) {
   const profile = maybeNormalizeCommunicationProfile(commProfile || {});
 
   const DEFAULT_LOGO_URL = "https://cdn.shopify.com/s/files/1/0959/4788/2827/files/ChatGPT_Image_9_jan_2026_17_37_39_fef5e6e4-ad29-43cd-b950-c98f77f27e0d.png?v=1768311638";
-  const LOGO_URL = safeStr(profile.logoUrl) || safeStr(env?.INVOICE_LOGO_URL) || safeStr(d.logoUrl) || DEFAULT_LOGO_URL;
-  const sellerBrand = safeBrandName(profile.brandName, "Fluxidi Taxi");
-  const sellerLegal = sanitizeTenantString(profile.legalName || sellerBrand, 160) || sellerBrand;
-  const sellerAddress = safeStr(profile.address) || "Koekamerstraat 48\n9680 Maarkedal\nBelgië";
-  const sellerVat = safeStr(profile.vatNumber) || "BE0772931038";
-  const sellerPhone = safeStr(profile.phone) || "+32 491 59 75 54";
-  const sellerFooter = safeStr(profile.invoiceFooter) || `Dank u voor het vertrouwen in ${sellerBrand} — wij brengen u in stijl.`;
+  const preserveIssuedSeller =
+    safeStr(d.seller_source || d.sellerSource) === "document_core_seller_snapshot";
+  const LOGO_URL =
+    safeStr(profile.logoUrl) ||
+    (preserveIssuedSeller
+      ? ""
+      : safeStr(env?.INVOICE_LOGO_URL) || safeStr(d.logoUrl) || DEFAULT_LOGO_URL);
+  const sellerBrand = preserveIssuedSeller
+    ? sanitizeTenantString(profile.brandName || profile.legalName || "", 160) || "—"
+    : safeBrandName(profile.brandName, "Fluxidi Taxi");
+  const sellerLegal = preserveIssuedSeller
+    ? sanitizeTenantString(profile.legalName || profile.brandName || "", 160) || sellerBrand
+    : sanitizeTenantString(profile.legalName || sellerBrand, 160) || sellerBrand;
+  const sellerAddress = preserveIssuedSeller
+    ? safeStr(profile.address) || ""
+    : safeStr(profile.address) || "Koekamerstraat 48\n9680 Maarkedal\nBelgië";
+  const sellerVat = preserveIssuedSeller
+    ? safeStr(profile.vatNumber) || ""
+    : safeStr(profile.vatNumber) || "BE0772931038";
+  const sellerPhone = preserveIssuedSeller
+    ? safeStr(profile.phone) || ""
+    : safeStr(profile.phone) || "+32 491 59 75 54";
+  const sellerFooter = preserveIssuedSeller
+    ? safeStr(profile.invoiceFooter) || ""
+    : safeStr(profile.invoiceFooter) ||
+      `Dank u voor het vertrouwen in ${sellerBrand} — wij brengen u in stijl.`;
   const sellerAddressHtml = escapeHtml(sellerAddress).replace(/\n/g, "<br>");
 
-  const vatRatePct = toInt(d.vatRate, (typeof d.vat_rate === "number" ? Math.round(d.vat_rate * 100) : 6));
-  const eur = (v) => `€${money2(v)}`;
+  const vatRatePct = (() => {
+    const fromPercent = Number(d.vatRate);
+    if (Number.isFinite(fromPercent) && fromPercent >= 0) return fromPercent;
+    if (typeof d.vat_rate === "number" && Number.isFinite(d.vat_rate)) {
+      return d.vat_rate > 0 && d.vat_rate <= 1
+        ? Math.round(d.vat_rate * 10000) / 100
+        : d.vat_rate;
+    }
+    // No invented default rate in the HTML layer — blank label if missing.
+    return null;
+  })();
+  const eur = (v, fixedOverride) => {
+    const fixed = safeStr(fixedOverride, 32);
+    if (fixed && /^-?\d+\.\d{2}$/.test(fixed)) return `€${fixed}`;
+    return `€${money2(v)}`;
+  };
 
   const stops = Array.isArray(d.stops) ? d.stops.filter(Boolean) : [];
   const stopsLine = stops.length
@@ -89744,7 +89996,7 @@ function renderInvoiceHtml(env, data, commProfile = null) {
           ${returnLine}
           ${kmLine}${minLine}
         </td>
-        <td class="right">${eur(d.total)}</td>
+        <td class="right">${eur(d.total, d.totalFixed)}</td>
       </tr>
       ${splitLines}
       `}
@@ -89755,15 +90007,15 @@ function renderInvoiceHtml(env, data, commProfile = null) {
     <tbody>
       <tr>
         <td>Subtotaal (excl. btw)</td>
-        <td class="right">${eur(d.subtotalEx)}</td>
+        <td class="right">${eur(d.subtotalEx, d.subtotalExFixed)}</td>
       </tr>
       <tr>
-        <td>BTW (${escapeHtml(String(vatRatePct))}%)</td>
-        <td class="right">${eur(d.vatAmount)}</td>
+        <td>BTW (${escapeHtml(vatRatePct == null ? "—" : String(vatRatePct))}%)</td>
+        <td class="right">${eur(d.vatAmount, d.vatAmountFixed)}</td>
       </tr>
       <tr>
         <td>Totaal (incl. btw)</td>
-        <td class="right">${eur(d.total)}</td>
+        <td class="right">${eur(d.total, d.totalFixed)}</td>
       </tr>
     </tbody>
   </table>
@@ -90021,6 +90273,8 @@ async function generateAndSendInvoice({
   booking,
   emailPolicy = null,
   bookingRecordInfoOverride = null,
+  commProfileOverride = null,
+  projectionRevision = "",
 }) {
   try {
     const bookingInput = booking && typeof booking === "object" ? booking : {};
@@ -90037,7 +90291,10 @@ async function generateAndSendInvoice({
     const invoiceScope = invoiceTenantId && invoiceCompanyId
       ? { tenant_id: invoiceTenantId, company_id: invoiceCompanyId }
       : null;
-    const commProfile = await resolveTenantCommunicationProfile(env, invoiceTenantId, invoiceCompanyId);
+    const commProfile =
+      commProfileOverride && typeof commProfileOverride === "object"
+        ? maybeNormalizeCommunicationProfile(commProfileOverride)
+        : await resolveTenantCommunicationProfile(env, invoiceTenantId, invoiceCompanyId);
     const profileMissing = !safeStr(commProfile?.brandName) && !safeStr(commProfile?.legalName);
     const bookingRecordInfo =
       bookingRecordInfoOverride &&
@@ -90082,23 +90339,85 @@ async function generateAndSendInvoice({
       const num = Number(value);
       return Number.isFinite(num) ? round2(num) : null;
     };
-    const vatRateNormalized = (typeof bookingInput.vat_rate === "number" && Number.isFinite(bookingInput.vat_rate))
-      ? bookingInput.vat_rate
-      : 0.06;
-    const totalRaw = parseAmount(bookingInput.total);
-    const subtotalRaw = parseAmount(bookingInput.subtotalEx ?? bookingInput.subtotal);
-    const vatRaw = parseAmount(bookingInput.vatAmount);
-    const derivedTotal = totalRaw ?? ((subtotalRaw != null && vatRaw != null) ? round2(subtotalRaw + vatRaw) : null);
-    const derivedSubtotal = subtotalRaw ?? (derivedTotal != null ? round2(derivedTotal / (1 + vatRateNormalized)) : null);
-    const derivedVat = vatRaw ?? (
-      derivedTotal != null && derivedSubtotal != null
-        ? round2(derivedTotal - derivedSubtotal)
-        : null
-    );
-    const finalTotal = derivedTotal ?? 0;
-    const finalSubtotal = derivedSubtotal ?? 0;
-    const finalVat = derivedVat ?? 0;
-    const missingTotal = !(derivedTotal != null && derivedTotal > 0);
+    const requireExplicitVat = bookingInput.require_explicit_vat === true;
+    const vatRateNormalized =
+      typeof bookingInput.vat_rate === "number" && Number.isFinite(bookingInput.vat_rate)
+        ? bookingInput.vat_rate
+        : null;
+    if (requireExplicitVat && !(typeof vatRateNormalized === "number" && Number.isFinite(vatRateNormalized))) {
+      return {
+        ok: false,
+        error: "missing_vat_rate",
+        email_sent: false,
+        invoice_pdf_artifact: {
+          ok: false,
+          reason: "missing_vat_rate",
+          key: null,
+          generated_at: null,
+          content_type: null,
+          size_bytes: null,
+        },
+      };
+    }
+    // Street PDF projection supplies require_explicit_vat + *Fixed strings from
+    // integer cents. Never invent a VAT rate on that path. Legacy non-street
+    // email/PDF callers may still fall back to 0.06 only when explicit VAT is
+    // not required.
+    const effectiveVatRate =
+      typeof vatRateNormalized === "number" && Number.isFinite(vatRateNormalized)
+        ? vatRateNormalized
+        : 0.06;
+    const hasAuthoritativeFixedTotals =
+      bookingInput.totalFixed != null &&
+      bookingInput.totalFixed !== "" &&
+      bookingInput.vatAmountFixed != null &&
+      bookingInput.vatAmountFixed !== "" &&
+      bookingInput.subtotalExFixed != null &&
+      bookingInput.subtotalExFixed !== "";
+    let finalTotal;
+    let finalSubtotal;
+    let finalVat;
+    if (hasAuthoritativeFixedTotals) {
+      // Preserve authoritative cent-exact Fixed strings; do not recompute VAT
+      // from rate × base (avoids floating-point reround of issued snapshots).
+      finalTotal = parseAmount(bookingInput.totalFixed) ?? 0;
+      finalSubtotal = parseAmount(bookingInput.subtotalExFixed) ?? 0;
+      finalVat = parseAmount(bookingInput.vatAmountFixed) ?? 0;
+    } else {
+      const totalRaw = parseAmount(bookingInput.totalFixed ?? bookingInput.total);
+      const subtotalRaw = parseAmount(
+        bookingInput.subtotalExFixed ??
+          bookingInput.subtotalEx ??
+          bookingInput.subtotal,
+      );
+      const vatRaw = parseAmount(
+        bookingInput.vatAmountFixed ?? bookingInput.vatAmount,
+      );
+      const derivedTotal =
+        totalRaw ??
+        (subtotalRaw != null && vatRaw != null
+          ? round2(subtotalRaw + vatRaw)
+          : null);
+      const derivedSubtotal =
+        subtotalRaw ??
+        (derivedTotal != null
+          ? round2(derivedTotal / (1 + effectiveVatRate))
+          : null);
+      const derivedVat =
+        vatRaw ??
+        (derivedTotal != null && derivedSubtotal != null
+          ? round2(derivedTotal - derivedSubtotal)
+          : null);
+      finalTotal = derivedTotal ?? 0;
+      finalSubtotal = derivedSubtotal ?? 0;
+      finalVat = derivedVat ?? 0;
+    }
+    const displayVatRatePercent = (() => {
+      const fromInput = Number(bookingInput.vat_rate_percent);
+      if (Number.isFinite(fromInput) && fromInput >= 0) return fromInput;
+      return Math.round(effectiveVatRate * 100);
+    })();
+    const missingTotal = !(Number.isFinite(finalTotal) && finalTotal > 0);
     const customerEmail = pickFirstValidEmail(
       bookingInput.customerEmail,
       bookingInput.custEmail,
@@ -90236,11 +90555,21 @@ async function generateAndSendInvoice({
       buyerBillingContactEmail: _buyerContactEmail || "",
 
       // totals
-      vat_rate: vatRateNormalized,
-      vatRate: Math.round(vatRateNormalized * 100),
+      vat_rate: effectiveVatRate,
+      vatRate: displayVatRatePercent,
       subtotalEx: finalSubtotal,
       vatAmount: finalVat,
       total: finalTotal,
+      seller_source: safeStr(bookingInput.seller_source || bookingInput.sellerSource, 80),
+      // Cent-exact Fixed strings when projection supplied them (renderers that
+      // prefer strings over floats).
+      ...(hasAuthoritativeFixedTotals
+        ? {
+            subtotalExFixed: String(bookingInput.subtotalExFixed),
+            vatAmountFixed: String(bookingInput.vatAmountFixed),
+            totalFixed: String(bookingInput.totalFixed),
+          }
+        : {}),
 
       // optional split (display only)
       priceMainIncl: bookingInput.priceMainIncl ?? "",
@@ -90270,6 +90599,10 @@ async function generateAndSendInvoice({
       artifactResult = await persistInvoicePdfArtifactForBooking(env, bookingRecordInfo, {
         invoiceNumber,
         pdfBytes,
+        projectionRevision:
+          safeStr(projectionRevision, 500) ||
+          safeStr(bookingInput.street_pdf_projection_revision, 500) ||
+          "",
       });
     }
     const artifactReason = safeStr(
