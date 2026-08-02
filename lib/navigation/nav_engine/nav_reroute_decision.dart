@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'nav_reroute_apply_progress.dart';
 import 'nav_route_progress.dart';
 
 /// NAV-R17A / NAV-REROUTE-P0: bounded off-route / reroute decision helpers.
@@ -1118,28 +1119,27 @@ String navRerouteCooldownKindToken(NavRerouteCooldownKind kind) {
   }
 }
 
-/// True when the new route start is at/near or ahead of the vehicle (not
-/// materially behind). Pure helper for post-reroute ownership checks.
+/// True when the new route can own the vehicle at apply time.
+///
+/// Prefer [routeCoords] + optional [vehicleCourseDeg] so selection uses
+/// forward course-compatible projection rather than Euclidean start distance
+/// alone. Falls back to near-start proximity when only the start is known.
 bool navRerouteRouteIsAheadOfVehicle({
   required double vehicleLat,
   required double vehicleLon,
   required double routeStartLat,
   required double routeStartLon,
   double maxBehindM = 40.0,
+  List<NavRerouteApplyLatLon>? routeCoords,
+  double? vehicleCourseDeg,
 }) {
-  if (![vehicleLat, vehicleLon, routeStartLat, routeStartLon]
-      .every((v) => v.isFinite)) {
-    return false;
-  }
-  final dLat = (routeStartLat - vehicleLat) * 111320.0;
-  final midLat = (routeStartLat + vehicleLat) * 0.5;
-  final dLon = (routeStartLon - vehicleLon) *
-      111320.0 *
-      math.cos(midLat * math.pi / 180.0);
-  final distM = math.sqrt(dLat * dLat + dLon * dLon);
-  // If start is within [maxBehindM], treat as acceptable (at/near vehicle).
-  // A start farther than maxBehindM from the vehicle is rejected — callers
-  // that also know travel bearing can refine; for ownership we fail closed
-  // when the geometric start is far from the car (typically "behind").
-  return distM <= maxBehindM;
+  return navRerouteApplyRouteIsAheadOfVehicle(
+    vehicleLat: vehicleLat,
+    vehicleLon: vehicleLon,
+    routeStartLat: routeStartLat,
+    routeStartLon: routeStartLon,
+    maxBehindM: maxBehindM,
+    routeCoords: routeCoords,
+    vehicleCourseDeg: vehicleCourseDeg,
+  );
 }

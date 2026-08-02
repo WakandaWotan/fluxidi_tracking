@@ -1071,6 +1071,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   /// True once an accepted package owns the new route version while the
   /// async reroute Future may still be finishing transport cleanup.
   bool _rerouteOwnershipAccepted = false;
+  /// RELEASE-P0: apply-time forward progress/trim/snap/bearing must survive
+  /// `_resetOffRouteStateAfterReroute` (briefly-correct-then-behind guard).
+  bool _rerouteApplyForwardOwnershipActive = false;
+  final NavRerouteApplyStaleWriterCounter _rerouteApplyStaleWriters =
+      NavRerouteApplyStaleWriterCounter();
   DateTime? _lastRerouteAt;
   DateTime? _lastRerouteSuccessAt;
   DateTime? _lastRerouteFailureAt;
@@ -1343,6 +1348,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     _pendingRerouteAfterInFlight = false;
     _pendingRerouteReason = null;
     _rerouteOwnershipAccepted = false;
+    _rerouteApplyForwardOwnershipActive = false;
+    _rerouteApplyStaleWriters.reset();
     _lastRerouteAt = null;
     _lastRerouteSuccessAt = null;
     _lastRerouteFailureAt = null;
@@ -1838,25 +1845,45 @@ class _DriverHomePageState extends State<DriverHomePage>
       return false;
     }
 
-    // RELEASE-P0: reject a reroute package whose start is materially behind
-    // the current vehicle — forces a fresh request from the latest raw GPS.
-    if (_isRerouting &&
-        _lastPos != null &&
-        package.coords.isNotEmpty &&
-        !navRerouteRouteIsAheadOfVehicle(
-          vehicleLat: _lastPos!.latitude,
-          vehicleLon: _lastPos!.longitude,
-          routeStartLat: package.coords.first.lat,
-          routeStartLon: package.coords.first.lon,
-          maxBehindM: 45,
-        )) {
-      _logNavBounded(
-        'NAV_R17_REROUTE_APPLY',
-        'result=rejected reason=route_behind_vehicle '
-            'gen=${context.requestGeneration}',
-        intervalMs: 500,
+    // RELEASE-P0: reject a reroute package that cannot initialize forward
+    // progress at the *current* vehicle position (course-compatible). Do not
+    // accept merely because route start is Euclidean-near the car.
+    NavRerouteApplyProgressResult? applyProgress;
+    if (_isRerouting && _lastPos != null && package.coords.isNotEmpty) {
+      final applyCoords = <NavRerouteApplyLatLon>[
+        for (final c in package.coords)
+          NavRerouteApplyLatLon(lat: c.lat, lon: c.lon),
+      ];
+      final course = _lastPos!.heading.isFinite && _lastPos!.heading >= 0
+          ? _lastPos!.heading
+          : _lastMovementBearing;
+      applyProgress = navRerouteSelectApplyProgress(
+        routeCoords: applyCoords,
+        vehicleLat: _lastPos!.latitude,
+        vehicleLon: _lastPos!.longitude,
+        vehicleCourseDeg: course,
       );
-      return false;
+      if (!applyProgress.accepted) {
+        _logNavBounded(
+          'NAV_R17_REROUTE_APPLY',
+          'result=rejected reason=${applyProgress.reason} '
+              'gen=${context.requestGeneration}',
+          intervalMs: 500,
+        );
+        debugPrint(
+          formatNavRerouteApplyProgressDiag(
+            generation: context.requestGeneration,
+            progress: applyProgress,
+            requestOriginDeltaM: 0,
+            writer: 'activate_reject',
+          ),
+        );
+        // Do not install a behind-vehicle package; request a fresh reroute
+        // from the current vehicle position after this attempt clears.
+        _pendingRerouteAfterInFlight = true;
+        _pendingRerouteReason = 'apply_no_forward';
+        return false;
+      }
     }
 
     // NAV-SIGNAL-P0B2: content version and render epoch advance together on
@@ -1909,8 +1936,39 @@ class _DriverHomePageState extends State<DriverHomePage>
     _routeLineProgressTrimmed = false;
     _lastRouteLineTrimProgressM = 0.0;
     _lastRouteLineTrimAt = null;
+    _rerouteApplyForwardOwnershipActive = false;
 
-    _routeCoords = List<_LonLat>.from(package.coords);
+    var activeCoords = List<_LonLat>.from(package.coords);
+    // RELEASE-P0: on reroute, trim behind apply-time forward progress and
+    // seed the progress engine so the first camera/render tick owns ahead.
+    if (_isRerouting && applyProgress != null && applyProgress.accepted) {
+      final trimmed = navRerouteTrimCoordsAhead(
+        routeCoords: [
+          for (final c in package.coords)
+            NavRerouteApplyLatLon(lat: c.lat, lon: c.lon),
+        ],
+        progress: applyProgress,
+      );
+      activeCoords = [
+        for (final c in trimmed) _LonLat(c.lon, c.lat),
+      ];
+      final originDelta = package.coords.isEmpty
+          ? 0.0
+          : _metersBetween(
+              _LonLat(package.coords.first.lon, package.coords.first.lat),
+              _LonLat(_lastPos!.longitude, _lastPos!.latitude),
+            );
+      debugPrint(
+        formatNavRerouteApplyProgressDiag(
+          generation: context.requestGeneration,
+          progress: applyProgress,
+          requestOriginDeltaM: originDelta,
+          writer: 'activate_trim',
+        ),
+      );
+    }
+
+    _routeCoords = activeCoords;
     _routeKm = package.distanceMeters / 1000.0;
     _routeDurationSec = package.durationSeconds;
 
@@ -1931,12 +1989,58 @@ class _DriverHomePageState extends State<DriverHomePage>
     _activeLaneGuidance = null;
     _lastLaneResolveDiag = null;
 
-    // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 2): a newly accepted
-    // route is the only trustworthy orientation evidence at START, when the
-    // vehicle has not moved yet. Seed the stable initial bearing from the first
-    // meaningful segment so the camera opens facing along the road instead of
-    // adopting a stationary GPS course.
-    _seedNavStationaryBearingFromRoute(reason: 'route_applied');
+    if (_isRerouting && applyProgress != null && applyProgress.accepted) {
+      // Trimmed geometry starts at the snap point → seed segment 0.
+      _driverNavRouteProgress.seedAtProjection(
+        segmentIndex: 0,
+        distanceAlongRouteM: 0.0,
+        snappedLatitude: applyProgress.snappedLat ?? _lastPos!.latitude,
+        snappedLongitude: applyProgress.snappedLon ?? _lastPos!.longitude,
+      );
+      _routeLineProgressTrimmed = true;
+      _lastRouteLineTrimProgressM = 0.0;
+      _lastRouteLineTrimAt = acceptedAt;
+      _rerouteApplyForwardOwnershipActive = true;
+      _rerouteApplyStaleWriters.reset();
+      if (applyProgress.snappedLat != null &&
+          applyProgress.snappedLon != null) {
+        _lastRouteSnap = DriverRouteSnap(
+          point: DriverLonLat(
+            applyProgress.snappedLon!,
+            applyProgress.snappedLat!,
+          ),
+          distanceFromRouteM: applyProgress.snapDistanceM ?? 0.0,
+          distanceAlongRouteM: 0.0,
+          segmentIndex: 0,
+          segmentT: 0.0,
+        );
+        _useMatchedVisual = true;
+      }
+      // Seed camera from the accepted forward segment, not route index 0 of
+      // the untrimmed request-origin stub.
+      final seedBearing = applyProgress.segmentBearingDeg ??
+          navFirstMeaningfulRouteSegmentBearing(_routeCoords);
+      if (seedBearing != null) {
+        final seeded = _navStationaryBearingGate.seedInitialRouteBearing(
+          routeTangentBearingDeg: seedBearing,
+          routeSegmentIndex: 0,
+        );
+        if (seeded != null) {
+          _navBearingAnchorLat = _lastPos?.latitude;
+          _navBearingAnchorLon = _lastPos?.longitude;
+          _streetlevelBearingController.reset();
+          _logNavBounded(
+            'NAV_BEARING_SEED',
+            'reason=reroute_apply_forward bearing=${seeded.toStringAsFixed(1)} '
+                'source=forward_segment',
+            intervalMs: 1000,
+          );
+        }
+      }
+    } else {
+      // Non-reroute (initial route): seed from first meaningful segment.
+      _seedNavStationaryBearingFromRoute(reason: 'route_applied');
+    }
 
     // Content consumers: accepted route-steps version only.
     _streetlevelFollowPump.setExpectedRouteGeneration(appliedVersion);
@@ -1960,10 +2064,24 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   bool _isCurrentRouteRenderEpoch(int routeRenderEpoch) {
-    return !shouldIgnoreStaleRouteDraw(
+    final stale = shouldIgnoreStaleRouteDraw(
       drawAppliedRouteVersion: routeRenderEpoch,
       currentAppliedRouteVersion: _routeRenderEpoch,
     );
+    if (stale) {
+      _rerouteApplyStaleWriters.note('route_line_coords');
+      _logNavBounded(
+        'NAV_R17_REROUTE_APPLY',
+        formatNavRerouteApplyStaleWriterDiag(
+          writer: 'route_line_coords',
+          writerGeneration: routeRenderEpoch,
+          activeGeneration: _routeRenderEpoch,
+          rejectedCount: _rerouteApplyStaleWriters.total,
+        ),
+        intervalMs: 800,
+      );
+    }
+    return !stale;
   }
 
   Future<void> _clearRouteAndPinAnnotationsOnly() async {
@@ -15608,6 +15726,18 @@ class _DriverHomePageState extends State<DriverHomePage>
         now: DateTime.now(),
       );
       if (_driverCockpitViewZoomLifecycle.shouldIgnoreStaleCamera(generation)) {
+        _rerouteApplyStaleWriters.note('camera_bearing');
+        _logNavBounded(
+          'NAV_R17_REROUTE_APPLY',
+          formatNavRerouteApplyStaleWriterDiag(
+            writer: 'camera_bearing',
+            writerGeneration: generation,
+            activeGeneration:
+                _driverCockpitViewZoomLifecycle.generation,
+            rejectedCount: _rerouteApplyStaleWriters.total,
+          ),
+          intervalMs: 800,
+        );
         logNavPresViewZoom(
           requestedLevel: _driverCockpitViewZoomLifecycle.requestedLevel,
           appliedLevel: _driverCockpitViewZoomLifecycle.appliedLevel,
@@ -18058,13 +18188,51 @@ class _DriverHomePageState extends State<DriverHomePage>
       newRouteGeneration: _routeStepsVersion,
       now: DateTime.now(),
     );
-    _streetlevelBearingController.reset();
-    // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0: the new route owns the
-    // bearing anchor; re-seed from the new geometry on the next fix instead of
-    // holding a bearing derived from the superseded route.
-    _navStationaryBearingGate.reset();
-    _navBearingAnchorLat = null;
-    _navBearingAnchorLon = null;
+    // RELEASE-P0: do NOT wipe apply-time forward ownership established in
+    // `_tryActivatePreparedDriverRoute`. Clearing matched visual / snap /
+    // trim / bearing seed here caused briefly-correct-then-behind: the first
+    // draw looked right, then this finally-block restored old ownership.
+    final preserveApplyOwnership = _rerouteApplyForwardOwnershipActive;
+    if (!preserveApplyOwnership) {
+      _streetlevelBearingController.reset();
+      _navStationaryBearingGate.reset();
+      _navBearingAnchorLat = null;
+      _navBearingAnchorLon = null;
+      _useMatchedVisual = false;
+      _lastVisualProgressM = null;
+      _lastRouteSnap = null;
+      _routeLineProgressTrimmed = false;
+      _lastRouteLineTrimProgressM = 0.0;
+      _lastRouteLineTrimAt = null;
+    } else {
+      // Keep snap/trim/matched visual. Re-seed bearing from the *new* forward
+      // segment so a prior streetlevel reset cannot restore diagonal bearing.
+      _streetlevelBearingController.reset();
+      final seedBearing =
+          navFirstMeaningfulRouteSegmentBearing(_routeCoords);
+      if (seedBearing != null) {
+        final seeded = _navStationaryBearingGate.seedInitialRouteBearing(
+          routeTangentBearingDeg: seedBearing,
+          routeSegmentIndex: 0,
+        );
+        if (seeded != null) {
+          _navBearingAnchorLat = _lastPos?.latitude;
+          _navBearingAnchorLon = _lastPos?.longitude;
+          _logNavBounded(
+            'NAV_BEARING_SEED',
+            'reason=reroute_reset_preserve bearing=${seeded.toStringAsFixed(1)} '
+                'source=forward_segment',
+            intervalMs: 1000,
+          );
+        }
+      }
+      _logNavBounded(
+        'NAV_R17_REROUTE_APPLY',
+        'result=preserve_apply_ownership gen=$_routeStepsVersion '
+            'trimmed=$_routeLineProgressTrimmed matched=$_useMatchedVisual',
+        intervalMs: 500,
+      );
+    }
     _streetlevelFollowPump.setExpectedRouteGeneration(_routeStepsVersion);
     // FLUXIDI Phase 2A: advance the native-side route generation so any
     // in-flight pose belonging to the old route is rejected by the custom
@@ -18077,12 +18245,6 @@ class _DriverHomePageState extends State<DriverHomePage>
     _offRouteRerouteDebounceStartedAt = null;
     _matchEnterHits = 0;
     _matchExitHits = 0;
-    _useMatchedVisual = false;
-    _lastVisualProgressM = null;
-    _lastRouteSnap = null;
-    _routeLineProgressTrimmed = false;
-    _lastRouteLineTrimProgressM = 0.0;
-    _lastRouteLineTrimAt = null;
   }
 
   String _reroutePhaseLabel() {
@@ -21285,10 +21447,14 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
       }
       await _drawPins(fromLL, toLL, routeRenderEpoch: renderEpoch);
-      await _drawRouteLine(
-        _routeCoords,
-        routeRenderEpoch: renderEpoch,
-      );
+      // RELEASE-P0: when apply already trimmed + synced the ahead line, do not
+      // redraw the full polyline (avoids briefly-correct-then-wrong).
+      if (!_routeLineProgressTrimmed) {
+        await _drawRouteLine(
+          _routeCoords,
+          routeRenderEpoch: renderEpoch,
+        );
+      }
       unawaited(
         _syncNavigationDestinationMarker(
           reason: 'nav_route_pickup',
@@ -21370,10 +21536,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
       }
       await _drawPins(fromLL, toLL, routeRenderEpoch: renderEpoch);
-      await _drawRouteLine(
-        _routeCoords,
-        routeRenderEpoch: renderEpoch,
-      );
+      if (!_routeLineProgressTrimmed) {
+        await _drawRouteLine(
+          _routeCoords,
+          routeRenderEpoch: renderEpoch,
+        );
+      }
       unawaited(
         _syncNavigationDestinationMarker(
           reason: 'nav_route_destination',
@@ -21543,10 +21711,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
       }
       await _drawPins(fromLL, toLL, routeRenderEpoch: renderEpoch);
-      await _drawRouteLine(
-        _routeCoords,
-        routeRenderEpoch: renderEpoch,
-      );
+      if (!_routeLineProgressTrimmed) {
+        await _drawRouteLine(
+          _routeCoords,
+          routeRenderEpoch: renderEpoch,
+        );
+      }
       unawaited(
         _syncNavigationDestinationMarker(
           reason: 'nav_route_direct',

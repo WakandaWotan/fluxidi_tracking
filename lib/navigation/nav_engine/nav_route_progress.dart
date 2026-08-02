@@ -162,6 +162,24 @@ class DriverNavRouteProgress {
     _strongOppositeDisplacementM = 0.0;
   }
 
+  /// Seed progress at a known forward projection so the first post-apply
+  /// sample uses a window around that segment instead of scanning from 0.
+  void seedAtProjection({
+    required int segmentIndex,
+    required double distanceAlongRouteM,
+    required double snappedLatitude,
+    required double snappedLongitude,
+  }) {
+    reset();
+    if (segmentIndex < 0) return;
+    _previousSegmentIndex = segmentIndex;
+    _lastReliableSegmentIndex = segmentIndex;
+    _lastDistanceAlongRouteM = distanceAlongRouteM;
+    _lastRawLatitude = snappedLatitude;
+    _lastRawLongitude = snappedLongitude;
+    _routeWasReset = false;
+  }
+
   NavRouteProgressOutput update(NavRouteProgressInput input) {
     final points = input.routePoints;
     if (points.length < 2) {
