@@ -313,10 +313,10 @@ test("E2) qr_code displays as QR payment label", () => {
   assert.equal(formatFluxidiPaymentMethodLabel("qr_code"), "QR-betaling");
 });
 
-test("E3) Billit mapper unchanged for qr_code → Wired", () => {
+test("E3) Billit mapper: qr_code is not Wired (online/QR ≠ bank transfer)", () => {
   assert.equal(
     mapFluxidiPaymentMethodToBillitPaymentMethod("qr_code", "manual", "qr"),
-    "Wired",
+    null,
   );
 });
 

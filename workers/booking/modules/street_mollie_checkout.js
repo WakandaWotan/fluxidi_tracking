@@ -3,6 +3,8 @@
 // Pure helpers for Mollie hosted checkout on a finalized street/direct ride.
 // Network / KV I/O lives in fluxidi_booking_worker.js (createStreetRideCheckoutAuthoritative).
 
+import { normalizePaymentMethodId } from "./payment_method_truth.js";
+
 function _safeStr(value, max = 200) {
   const text = String(value ?? "").trim();
   if (!text) return "";
@@ -323,7 +325,22 @@ export function buildStreetCheckoutShadowPayload({
   from,
   to,
   pickupIso,
+  paymentMethod = "",
+  mollieMethod = "",
 }) {
+  // Prefer a concrete chosen method; only fall back to generic online_payment
+  // when the concrete method is unknown. Never invent bank_transfer.
+  const normalizedChosen = normalizePaymentMethodId(paymentMethod);
+  const methodId =
+    normalizedChosen && normalizedChosen !== "online_payment"
+      ? normalizedChosen
+      : "online_payment";
+  const providerMethod =
+    normalizePaymentMethodId(mollieMethod) ||
+    String(mollieMethod || "").trim() ||
+    null;
+  // Keep raw mollie API token when provided (ideal/creditcard/…); store both.
+  const providerMethodRaw = String(mollieMethod || "").trim() || null;
   return {
     __checkout_resume: true,
     checkout_resume: true,
@@ -340,8 +357,13 @@ export function buildStreetCheckoutShadowPayload({
     paymentMode: "mollie",
     payment_provider: "mollie",
     paymentProvider: "mollie",
-    payment_method: "online_payment",
-    paymentMethod: "online_payment",
+    payment_method: methodId,
+    paymentMethod: methodId,
+    ...(providerMethodRaw
+      ? { mollie_method: providerMethodRaw, mollieMethod: providerMethodRaw }
+      : providerMethod
+        ? { mollie_method: providerMethod, mollieMethod: providerMethod }
+        : {}),
     return_url: returnUrl || "fluxidi://pay/return",
     returnUrl: returnUrl || "fluxidi://pay/return",
     authoritative_amount: amountValue,

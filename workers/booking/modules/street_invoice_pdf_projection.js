@@ -15,6 +15,11 @@ import {
   isDocumentCoreInvoiceNumber,
   resolveCanonicalInvoiceNumberBinding,
 } from "./invoice_number_source_of_truth.js";
+import {
+  formatPaymentMethodLabelNl,
+  normalizePaymentMethodId,
+  resolvePaymentMethodTruthFromRecord,
+} from "./payment_method_truth.js";
 
 export const STREET_INVOICE_PDF_PROJECTION_VERSION = "street_pdf_proj_v1";
 
@@ -479,44 +484,13 @@ export function resolveInvoiceRideProjection(bookingRecord = null) {
 }
 
 /**
- * Human-readable Fluxidi payment method labels.
+ * Human-readable Fluxidi payment method labels (central source-of-truth).
  * Never copies Billit Wired / Overschrijving.
  */
 export function formatFluxidiPaymentMethodLabel(paymentMethod) {
-  const method = _lower(paymentMethod);
-  if (!method) return "";
-  if (method === "qr_code" || method === "qr" || method === "epc_qr") {
-    return "QR-betaling";
-  }
-  if (method === "cash") return "Contant";
-  if (
-    method === "in_car" ||
-    method === "pay_in_car" ||
-    method === "in_vehicle_card"
-  ) {
-    return "Betaling in de wagen";
-  }
-  if (method === "bancontact" || method === "bancontact_qr") return "Bancontact";
-  if (method === "card" || method === "creditcard" || method === "card_payment") {
-    return "Kaart";
-  }
-  if (method === "ideal") return "iDEAL";
-  if (method === "paypal") return "PayPal";
-  if (method === "applepay") return "Apple Pay";
-  if (method === "googlepay") return "Google Pay";
-  if (
-    method === "bank_transfer" ||
-    method === "wire_transfer" ||
-    method === "sepa"
-  ) {
-    return "Bankoverschrijving";
-  }
-  if (method === "mollie" || method === "online" || method === "online_payment") {
-    return "Online betaling";
-  }
-  if (method === "manual") return "Handmatig";
-  // Unknown: readable token, not a raw underscore enum dump preference
-  return method.replace(/_/g, " ");
+  const id = normalizePaymentMethodId(paymentMethod);
+  if (!id) return "";
+  return formatPaymentMethodLabelNl(id);
 }
 
 export function buildStreetInvoicePdfProjectionRevision({
@@ -738,10 +712,15 @@ export function buildStreetInvoicePdfProjection({
     bookingRecord && typeof bookingRecord === "object" ? bookingRecord : {};
   const booking =
     rec.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const paymentTruth = resolvePaymentMethodTruthFromRecord(rec);
   const rawMethod = _norm(
-    rec.payment_method ?? booking.payment_method ?? rec.paymentMethod,
+    paymentTruth.method_id ||
+      rec.payment_method ||
+      booking.payment_method ||
+      rec.paymentMethod,
   );
-  const paymentMethodLabel = formatFluxidiPaymentMethodLabel(rawMethod);
+  const paymentMethodLabel =
+    paymentTruth.label_nl || formatFluxidiPaymentMethodLabel(rawMethod);
   const paymentSource = _norm(
     rec.payment_source ?? booking.payment_source ?? rec.paymentSource,
   );

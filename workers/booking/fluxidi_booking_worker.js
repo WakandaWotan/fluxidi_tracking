@@ -259,6 +259,15 @@ import {
   formatInvoiceNumberMismatchLog,
 } from "./modules/invoice_number_source_of_truth.js";
 import {
+  resolvePaymentMethodTruth,
+  resolvePaymentMethodTruthFromRecord,
+  applyPaymentMethodTruthToBookingRecord,
+  mapMollieProviderMethodToCanonical,
+  mergeDocumentPaymentMethodMetadata,
+  buildBillitPaymentInternalInfoFromTruth,
+  mergePaymentMethodIds,
+} from "./modules/payment_method_truth.js";
+import {
   buildSellerSnapshotFromBusinessProfile,
   validateSellerIdentityForInvoiceIssuance,
   assertSellerProfileScopeMatch,
@@ -1105,6 +1114,70 @@ async function persistBillitOrderExportOnDocumentRecord(env, scope, record, bill
     return { ok: true, record: updatedRecord, export: safeExport };
   } catch (_) {
     return { ok: false, error: "billit_export_persist_failed" };
+  }
+}
+
+/* Mutable payment_method_truth on an issued document registry record.
+ * Never touches immutable_snapshot / content_hash / document_number / totals /
+ * currency / buyer/seller snapshots. Idempotent refine (concrete wins). */
+async function persistDocumentPaymentMethodTruthMetadata(
+  env,
+  scope,
+  record,
+  truth,
+) {
+  if (!env?.BOOKING_KV) {
+    return { ok: false, error: "missing_binding" };
+  }
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    return { ok: false, error: "missing_registry_record" };
+  }
+  const merged = mergeDocumentPaymentMethodMetadata(record, truth);
+  if (!merged.ok) {
+    return { ok: false, error: merged.error || "merge_failed" };
+  }
+  let key;
+  try {
+    key = buildDocumentRegistryKey(
+      scope,
+      safeStr(record.document_id ?? record.documentId, 200),
+    );
+  } catch (_) {
+    return { ok: false, error: "invalid_registry_key" };
+  }
+  if (!key) return { ok: false, error: "invalid_registry_key" };
+  const latest = await env.BOOKING_KV.get(key, { type: "json" }).catch(() => null);
+  const base =
+    latest && typeof latest === "object" && !Array.isArray(latest)
+      ? latest
+      : merged.record;
+  const again = mergeDocumentPaymentMethodMetadata(base, truth);
+  if (!again.ok) {
+    return { ok: false, error: again.error || "merge_failed" };
+  }
+  // Scope guard: refuse cross-tenant writes.
+  const scopeTenant = safeStr(scope?.tenant_id ?? scope?.tenantId, 120);
+  const scopeCompany = safeStr(scope?.company_id ?? scope?.companyId, 120);
+  const recTenant = safeStr(again.record.tenant_id ?? again.record.tenantId, 120);
+  const recCompany = safeStr(
+    again.record.company_id ?? again.record.companyId,
+    120,
+  );
+  if (scopeTenant && recTenant && scopeTenant !== recTenant) {
+    return { ok: false, error: "document_tenant_mismatch" };
+  }
+  if (scopeCompany && recCompany && scopeCompany !== recCompany) {
+    return { ok: false, error: "document_company_mismatch" };
+  }
+  try {
+    await env.BOOKING_KV.put(key, JSON.stringify(again.record));
+    return {
+      ok: true,
+      record: again.record,
+      payment_method_truth: again.payment_method_truth,
+    };
+  } catch (_) {
+    return { ok: false, error: "payment_method_truth_persist_failed" };
   }
 }
 
@@ -3470,6 +3543,13 @@ function _bookingPaymentFieldsForBillitSync(rec) {
       booking?.paymentSource,
     40,
   );
+  const providerMethod = safeStr(
+    rec?.mollie_method ??
+      rec?.mollieMethod ??
+      mollieBlock?.method ??
+      mollieBlock?.payment_method,
+    40,
+  );
   const paymentRef = safeStr(
     rec?.mollie_payment_id ??
       rec?.molliePaymentId ??
@@ -3479,29 +3559,38 @@ function _bookingPaymentFieldsForBillitSync(rec) {
       rec?.paymentId,
     128,
   );
+  const truth = resolvePaymentMethodTruth({
+    bookingMethod: paymentMethod,
+    provider: paymentProvider,
+    providerMethod,
+    providerConfirmedMethod: mapMollieProviderMethodToCanonical(providerMethod),
+    status: paymentStatus,
+    paidAt,
+    providerRef: paymentRef,
+  });
   return {
     payment_status: paymentStatus,
     paid_at: paidAt || null,
-    payment_method: paymentMethod || null,
-    payment_provider: paymentProvider || null,
+    payment_method: truth.method_id || paymentMethod || null,
+    payment_provider: truth.provider || paymentProvider || null,
     payment_source: paymentSource || null,
     payment_ref: paymentRef || null,
+    provider_method: truth.provider_method || providerMethod || null,
+    payment_method_truth: truth,
   };
 }
 
 function _billitPaymentSyncInternalInfo(paymentFields) {
   if (!paymentFields) return null;
-  const provider = safeStr(paymentFields.payment_provider, 40) || "unknown";
-  const method = safeStr(paymentFields.payment_method, 80) || "unknown";
-  const ref = safeStr(paymentFields.payment_ref, 128);
-  const refPreview = ref
-    ? ref.length <= 8
-      ? ref
-      : `${ref.slice(0, 4)}…${ref.slice(-2)}`
-    : null;
-  return refPreview
-    ? `Fluxidi paid ${provider}/${method} ref=${refPreview}`
-    : `Fluxidi paid ${provider}/${method}`;
+  const truth = resolvePaymentMethodTruth({
+    bookingMethod: paymentFields.payment_method,
+    provider: paymentFields.payment_provider,
+    providerMethod: paymentFields.provider_method || paymentFields.mollie_method,
+    status: paymentFields.payment_status,
+    paidAt: paymentFields.paid_at,
+    providerRef: paymentFields.payment_ref,
+  });
+  return buildBillitPaymentInternalInfoFromTruth(truth);
 }
 
 /* P1-C-A: sandbox-only Billit payment-state sync after order create/reuse.
@@ -3636,6 +3725,27 @@ async function maybeSyncBillitSandboxOrderPaymentState(
       documentRecord,
       mergedExport,
     );
+    // Idempotent mutable payment metadata (never touches immutable snapshot).
+    try {
+      const truth =
+        paymentFields.payment_method_truth ||
+        resolvePaymentMethodTruth({
+          bookingMethod: paymentFields.payment_method,
+          provider: paymentFields.payment_provider,
+          providerMethod: paymentFields.provider_method,
+          status: paymentFields.payment_status,
+          paidAt: paymentFields.paid_at,
+          providerRef: paymentFields.payment_ref,
+        });
+      await persistDocumentPaymentMethodTruthMetadata(
+        env,
+        scope,
+        persistResult.ok ? persistResult.record : documentRecord,
+        truth,
+      );
+    } catch (_) {
+      // Non-fatal
+    }
     console.log(
       `[BILLIT_PAYMENT_SYNC][SANDBOX][OK] doc=${docId.slice(0, 8)} order=yes refreshed=${tokenRefreshed}`,
     );
@@ -56608,18 +56718,26 @@ async function mollieWebhook(request, env, ctx = null) {
 
     const mollieStatus = safeStr(p.data?.status);
 
-    // Persist latest Mollie status
+    // Persist latest Mollie status + refine concrete method when Mollie reports it.
     Object.assign(stored, normalizedPaymentFields({
       status: mollieStatus,
       paymentId: mollieId,
       paidAt: stored.paid_at,
     }));
+    const mollieProviderMethod = safeStr(p.data?.method, 64) || null;
     stored.mollie = {
       id: mollieId,
       payment_id: mollieId,
       status: mollieStatus,
-      last_webhook_at: new Date().toISOString()
+      last_webhook_at: new Date().toISOString(),
+      ...(mollieProviderMethod ? { method: mollieProviderMethod } : {}),
     };
+    if (mollieProviderMethod) {
+      const truth = resolvePaymentMethodTruthFromRecord(stored, {
+        molliePayment: { method: mollieProviderMethod, status: mollieStatus, id: mollieId },
+      });
+      applyPaymentMethodTruthToBookingRecord(stored, truth, { refineOnly: true });
+    }
     if (rideCredentials?.ok) {
       applyPaymentOwnershipFields(stored, rideCredentials);
     }
@@ -93029,11 +93147,20 @@ async function payStatus(request, env, requestedScopeOverride = null, authOption
       }
       const status = pay?.status || null;
       const mollieMethod = safeStr(pay?.method, 64) || null;
+      const existingMethod = safeStr(
+        data?.payment_method ?? data?.paymentMethod,
+        80,
+      );
+      const canonicalFromMollie = mapMollieProviderMethodToCanonical(mollieMethod);
+      const mergedMethod = mergePaymentMethodIds(
+        existingMethod,
+        canonicalFromMollie || mollieMethod,
+      );
       const normalized = normalizedPaymentFields({
         status,
         paymentId,
         paidAt: data?.paid_at,
-        paymentMethod: mollieMethod,
+        paymentMethod: mergedMethod || existingMethod || null,
       });
 
       Object.assign(data, normalized);
@@ -93042,6 +93169,10 @@ async function payStatus(request, env, requestedScopeOverride = null, authOption
       data.mollie.last_checked_at = new Date().toISOString();
       if (mollieMethod) {
         data.mollie.method = mollieMethod;
+        const truth = resolvePaymentMethodTruthFromRecord(data, {
+          molliePayment: { method: mollieMethod, status, id: paymentId },
+        });
+        applyPaymentMethodTruthToBookingRecord(data, truth, { refineOnly: true });
       }
 
       // Keep webhook timestamp if present

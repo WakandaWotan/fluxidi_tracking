@@ -33,6 +33,11 @@
 import { safeStr, sanitizeTenantString } from "./parsing_utils.js";
 import { base64urlEncodeBytes, base64urlDecodeToBytes } from "./crypto_utils.js";
 import { missingTenantScopeError } from "./auth_scope.js";
+import {
+  resolvePaymentMethodTruth,
+  mapPaymentMethodTruthToBillitPaymentMethod,
+  buildBillitPaymentInternalInfoFromTruth,
+} from "./payment_method_truth.js";
 
 /* ===================== Billit constants ===================== */
 
@@ -1060,64 +1065,25 @@ export async function fetchBillitSandboxOrderById(config, accessToken, partyId, 
   return { ok: true, status: statusCode, order: sanitizeBillitOrderReadResponse(data) };
 }
 
-/* Billit PATCH payment-status: confirmed-safe PaymentMethod enum (Billit docs). */
+/* Billit PATCH payment-status: confirmed-safe PaymentMethod enum (Billit docs).
+ * Wired is ONLY for real bank transfers — never for online PSP / QR / cash. */
 const BILLIT_PATCH_PAYMENT_METHOD_WIRED = "Wired";
 
-/* Defensive Fluxidi → Billit PaymentMethod mapping. Returns null when uncertain
- * so the PATCH omits PaymentMethod and never fails solely on an unknown enum. */
+/* Fluxidi → Billit PaymentMethod. Wired exclusively for bank transfers.
+ * Online PSP / QR / cash / in-vehicle / unknown → omit (null). No other Billit
+ * PaymentMethod enums are confirmed supported by this integration yet. */
 export function mapFluxidiPaymentMethodToBillitPaymentMethod(
   paymentMethod,
   paymentProvider,
   paymentSource,
 ) {
-  const method = safeStr(paymentMethod, 80).toLowerCase();
-  const provider = safeStr(paymentProvider, 40).toLowerCase();
-  const source = safeStr(paymentSource, 40).toLowerCase();
-
-  if (
-    method === "bancontact" ||
-    method === "bancontact_qr" ||
-    method === "belfius" ||
-    method === "kbc" ||
-    method === "kbc_cbc" ||
-    method === "ideal" ||
-    method === "card" ||
-    method === "creditcard" ||
-    method === "card_payment" ||
-    method === "cartes_bancaires" ||
-    method === "paypal" ||
-    method === "applepay" ||
-    method === "googlepay" ||
-    method === "online_payment" ||
-    method === "online" ||
-    method === "mollie"
-  ) {
-    return BILLIT_PATCH_PAYMENT_METHOD_WIRED;
-  }
-  if (provider === "mollie") {
-    return BILLIT_PATCH_PAYMENT_METHOD_WIRED;
-  }
-  if (
-    method === "qr_code" ||
-    method === "bank_transfer" ||
-    method === "wire_transfer" ||
-    method === "sepa" ||
-    source === "qr"
-  ) {
-    return BILLIT_PATCH_PAYMENT_METHOD_WIRED;
-  }
-  // cash / in-car / manual: omit PaymentMethod (Paid + PaidDate are sufficient).
-  if (
-    method === "cash" ||
-    method === "in_vehicle_card" ||
-    method === "pay_in_car" ||
-    method === "in_car" ||
-    provider === "manual" ||
-    source === "in_car"
-  ) {
-    return null;
-  }
-  return null;
+  const truth = resolvePaymentMethodTruth({
+    bookingMethod: paymentMethod,
+    provider: paymentProvider,
+    chosenMethod: paymentSource === "qr" ? "qr_code" : "",
+  });
+  const mapped = mapPaymentMethodTruthToBillitPaymentMethod(truth);
+  return mapped === "Wired" ? BILLIT_PATCH_PAYMENT_METHOD_WIRED : mapped;
 }
 
 /* Billit expects PaidDate with date + time (no timezone suffix required). */
@@ -1141,15 +1107,19 @@ export function buildBillitSandboxOrderPaymentPatchBody({
     Paid: true,
     PaidDate: formatBillitPaidDateForPatch(paidAt),
   };
-  const billitMethod = mapFluxidiPaymentMethodToBillitPaymentMethod(
-    paymentMethod,
-    paymentProvider,
-    paymentSource,
-  );
+  const truth = resolvePaymentMethodTruth({
+    bookingMethod: paymentMethod,
+    provider: paymentProvider,
+    chosenMethod: paymentSource === "qr" ? "qr_code" : "",
+  });
+  const billitMethod = mapPaymentMethodTruthToBillitPaymentMethod(truth);
   if (billitMethod) {
     body.PaymentMethod = billitMethod;
   }
-  const info = safeStr(internalInfo, 200);
+  const info =
+    safeStr(internalInfo, 200) ||
+    buildBillitPaymentInternalInfoFromTruth(truth) ||
+    "";
   if (info) {
     body.InternalInfo = info;
   }
