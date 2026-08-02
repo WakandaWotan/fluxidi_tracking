@@ -247,6 +247,18 @@ import {
   normalizeVatRatePercent,
 } from "./modules/street_invoice_pdf_projection.js";
 import {
+  isLegacyFlxInvoiceNumber,
+  isDocumentCoreInvoiceNumber,
+  resolveCanonicalInvoiceNumberBinding,
+  applyCanonicalInvoiceBindingToBookingRecord,
+  shouldAllocateLegacyFlxInvoiceNumber,
+  pickReusableInvoiceNumberForGenerator,
+  canPersistInvoiceNumberOnBooking,
+  findBookingInvoiceNumber,
+  buildInvoiceNumberMismatchDiag,
+  formatInvoiceNumberMismatchLog,
+} from "./modules/invoice_number_source_of_truth.js";
+import {
   buildSellerSnapshotFromBusinessProfile,
   validateSellerIdentityForInvoiceIssuance,
   assertSellerProfileScopeMatch,
@@ -4978,6 +4990,23 @@ async function maybeRunDocumentCoreInvoiceAfterPaidLifecycle(env, scope, booking
         console.log(
           `[DOCUMENT_CORE_INVOICE_LIFECYCLE][OK] booking=${maskedBooking} source=${source} reused=${reused ? "true" : "false"} document_id=${docIdMask} document_number=${documentNumber || "-"}`,
         );
+        if (documentId && documentNumber) {
+          try {
+            await stampBookingInvoiceDocumentCoreBinding(
+              env,
+              invoiceScope,
+              bookingId,
+              {
+                documentId,
+                documentNumber,
+                issuedDocument: result.document_record || null,
+                bookingRecord: bookingRecForLegDetection,
+              },
+            );
+          } catch (_) {
+            // Non-fatal: PDF ensure / business invoice path can still stamp.
+          }
+        }
         return {
           ok: true,
           skipped: false,
@@ -50256,6 +50285,26 @@ async function _maybeGenerateBusinessInvoiceForPaidBooking({
     return { ok: true, skipped: true, reason: "already_sent", mutated: true };
   }
 
+  // Business invoices are numbered by Document Core (INV-*). Do not preemptively
+  // mint a legacy FLX number via generateAndSendInvoice; paid after-lifecycle
+  // issues Document Core and ensureStreetBusinessInvoicePdfArtifact binds INV.
+  if (context.businessInvoiceIntent === true) {
+    _applyPaymentInvoiceLifecycleToRecord(rec, {
+      invoiceRequested: true,
+      invoiceIntent: "business_invoice",
+      invoiceState: "ready_to_send",
+    });
+    console.log(
+      `[INVOICE_LIFECYCLE][SKIP] bookingId=${safeStr(bookingId)} source=${safeStr(source)} reason=defer_document_core_invoice_number`,
+    );
+    return {
+      ok: true,
+      skipped: true,
+      reason: "defer_document_core_invoice_number",
+      mutated: true,
+    };
+  }
+
   if (!booking) {
     _applyPaymentInvoiceLifecycleToRecord(rec, {
       invoiceRequested: true,
@@ -63835,6 +63884,90 @@ async function _requireBusinessInvoiceActor({
   };
 }
 
+/* Best-effort stamp of Document Core invoice binding onto booking KV.
+ * Upgrades legacy FLX → INV; never overwrites INV with FLX. Scope-checked by
+ * resolveCanonicalInvoiceNumberBinding / applyCanonicalInvoiceBindingToBookingRecord. */
+async function stampBookingInvoiceDocumentCoreBinding(
+  env,
+  scope,
+  bookingId,
+  {
+    documentId = "",
+    documentNumber = "",
+    issuedDocument = null,
+    bookingRecord = null,
+  } = {},
+) {
+  const safeBookingId = safeStr(bookingId, 200) || "";
+  const safeDocId = safeStr(documentId, 200) || "";
+  const safeNumber = safeStr(documentNumber, 120) || "";
+  if (!env?.BOOKING_KV || !safeBookingId || !safeDocId || !safeNumber) {
+    return { ok: false, skipped: true, reason: "missing_binding_inputs" };
+  }
+  if (isLegacyFlxInvoiceNumber(safeNumber)) {
+    return { ok: false, skipped: true, reason: "refuse_stamp_legacy_flx" };
+  }
+  if (issuedDocument && typeof issuedDocument === "object") {
+    const binding = resolveCanonicalInvoiceNumberBinding({
+      scope,
+      bookingId: safeBookingId,
+      bookingRecord,
+      issuedDocument,
+      invoiceReference: safeNumber,
+      documentId: safeDocId,
+    });
+    if (!binding.ok) {
+      return { ok: false, skipped: true, reason: binding.error || "link_invalid" };
+    }
+  }
+  try {
+    const key = `booking:${safeBookingId}`;
+    const latest = await env.BOOKING_KV.get(key, { type: "json" });
+    if (!latest || typeof latest !== "object" || Array.isArray(latest)) {
+      return { ok: false, skipped: true, reason: "booking_not_found" };
+    }
+    const latestTenant = safeStr(latest.tenant_id ?? latest.tenantId, 120);
+    const latestCompany = safeStr(latest.company_id ?? latest.companyId, 120);
+    const scopeTenant = safeStr(scope?.tenant_id ?? scope?.tenantId, 120);
+    const scopeCompany = safeStr(scope?.company_id ?? scope?.companyId, 120);
+    if (scopeTenant && latestTenant && latestTenant !== scopeTenant) {
+      return { ok: false, skipped: true, reason: "booking_tenant_mismatch" };
+    }
+    if (scopeCompany && latestCompany && latestCompany !== scopeCompany) {
+      return { ok: false, skipped: true, reason: "booking_company_mismatch" };
+    }
+    const applied = applyCanonicalInvoiceBindingToBookingRecord(latest, {
+      documentId: safeDocId,
+      documentNumber: safeNumber,
+      forceUpgradeFromLegacyFlx: true,
+    });
+    if (!applied.ok) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: applied.error || "stamp_refused",
+      };
+    }
+    if (applied.mutated) {
+      await env.BOOKING_KV.put(key, JSON.stringify(latest));
+    }
+    return {
+      ok: true,
+      mutated: applied.mutated === true,
+      document_id: safeDocId,
+      document_number: safeNumber,
+      previous_invoice_number: applied.previous_invoice_number || null,
+      rec: latest,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: safeStr(err?.message || err, 80) || "stamp_error",
+    };
+  }
+}
+
 /* STREET-BUSINESS-INVOICE-PDF-PAYMENT-SYNC-1 / P1 source-of-truth:
  * Ensure (or controlled-refresh) the booking-level invoice PDF artifact from
  * Document Core + booking projection. Never allocates a new invoice number,
@@ -63856,39 +63989,6 @@ async function ensureStreetBusinessInvoicePdfArtifact(
   const safeBookingId = safeStr(bookingId, 200) || "";
   if (!safeBookingId || !rec || typeof rec !== "object") {
     return { ok: false, skipped: true, reason: "missing_booking" };
-  }
-
-  const invoiceNumber =
-    safeStr(invoiceReference, 120) ||
-    findExistingInvoiceNumber(rec) ||
-    "";
-  if (!invoiceNumber) {
-    return { ok: false, skipped: true, reason: "missing_invoice_number" };
-  }
-
-  // Persist Document Core number onto the booking so findExistingInvoiceNumber
-  // and PDF filename stay aligned across retries (no second sequence allocate).
-  try {
-    const latest = await env.BOOKING_KV.get(`booking:${safeBookingId}`, {
-      type: "json",
-    });
-    if (latest && typeof latest === "object" && !Array.isArray(latest)) {
-      if (!safeStr(latest.invoice_number ?? latest.invoiceNumber, 120)) {
-        latest.invoice_number = invoiceNumber;
-        latest.invoiceNumber = invoiceNumber;
-        if (latest.booking && typeof latest.booking === "object") {
-          latest.booking.invoice_number = invoiceNumber;
-          latest.booking.invoiceNumber = invoiceNumber;
-        }
-        await env.BOOKING_KV.put(
-          `booking:${safeBookingId}`,
-          JSON.stringify(latest),
-        );
-        rec = latest;
-      }
-    }
-  } catch (_) {
-    // Non-fatal: generateAndSendInvoice can still reuse invoiceNumber via input.
   }
 
   let resolvedDocumentId =
@@ -63929,17 +64029,101 @@ async function ensureStreetBusinessInvoicePdfArtifact(
       if (existingInvoice?.document_id) {
         resolvedDocumentId =
           safeStr(existingInvoice.document_id, 200) || resolvedDocumentId;
-        resolvedIssued = await loadIssuedDocumentRegistryRecordById(
-          env,
-          scope,
-          resolvedDocumentId,
-        );
+        resolvedIssued =
+          existingInvoice.document_record &&
+          typeof existingInvoice.document_record === "object"
+            ? existingInvoice.document_record
+            : await loadIssuedDocumentRegistryRecordById(
+                env,
+                scope,
+                resolvedDocumentId,
+              );
       }
     } catch (_) {
       // keep null issued doc; booking snapshot / company VAT may still work
     }
   }
 
+  const binding = resolveCanonicalInvoiceNumberBinding({
+    scope,
+    bookingId: safeBookingId,
+    bookingRecord: rec,
+    issuedDocument: resolvedIssued,
+    invoiceReference,
+    documentId: resolvedDocumentId,
+    requireDocumentCore: false,
+  });
+  if (!binding.ok) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: safeStr(binding.error, 80) || "invoice_number_resolve_failed",
+    };
+  }
+
+  const invoiceNumber = safeStr(binding.invoice_number, 120) || "";
+  if (!invoiceNumber) {
+    return { ok: false, skipped: true, reason: "missing_invoice_number" };
+  }
+  if (binding.mismatch) {
+    console.log(
+      formatInvoiceNumberMismatchLog(
+        buildInvoiceNumberMismatchDiag({
+          bookingId: safeBookingId,
+          documentId: binding.document_id || resolvedDocumentId,
+          documentNumber: binding.document_number || invoiceNumber,
+          bookingInvoiceNumber: binding.booking_invoice_number,
+          source: reason || "ensure",
+        }),
+      ),
+    );
+  }
+
+  // Persist Document Core binding onto the booking (upgrade FLX→INV; never
+  // allocate a second sequence). Retries are idempotent.
+  if (binding.document_id && binding.document_number) {
+    const stamped = await stampBookingInvoiceDocumentCoreBinding(
+      env,
+      scope,
+      safeBookingId,
+      {
+        documentId: binding.document_id,
+        documentNumber: binding.document_number,
+        issuedDocument: resolvedIssued,
+        bookingRecord: rec,
+      },
+    );
+    if (stamped?.rec && typeof stamped.rec === "object") {
+      rec = stamped.rec;
+    }
+  } else if (
+    isDocumentCoreInvoiceNumber(invoiceNumber) &&
+    !findBookingInvoiceNumber(rec)
+  ) {
+    try {
+      const latest = await env.BOOKING_KV.get(`booking:${safeBookingId}`, {
+        type: "json",
+      });
+      if (latest && typeof latest === "object" && !Array.isArray(latest)) {
+        latest.invoice_number = invoiceNumber;
+        latest.invoiceNumber = invoiceNumber;
+        if (latest.booking && typeof latest.booking === "object") {
+          latest.booking.invoice_number = invoiceNumber;
+          latest.booking.invoiceNumber = invoiceNumber;
+        }
+        await env.BOOKING_KV.put(
+          `booking:${safeBookingId}`,
+          JSON.stringify(latest),
+        );
+        rec = latest;
+      }
+    } catch (_) {
+      // Non-fatal: generateAndSendInvoice can still reuse invoiceNumber via input.
+    }
+  }
+
+  // Drop the old early number/stamp block — document resolution already done above.
+  // Keep company VAT / projection path unchanged below.
   let companyVatRatePercent = null;
   try {
     const pricingProfile = await _loadTenantPricingProfile(env, scope, {
@@ -63986,7 +64170,7 @@ async function ensureStreetBusinessInvoicePdfArtifact(
     bookingRecord: rec,
     issuedDocument: resolvedIssued,
     invoiceNumber,
-    documentId: resolvedDocumentId,
+    documentId: binding.document_id || resolvedDocumentId,
     companyVatRatePercent,
     communicationProfile: commProfile,
     paymentStatusResolver: streetRidePaymentStatus,
@@ -63997,6 +64181,19 @@ async function ensureStreetBusinessInvoicePdfArtifact(
       skipped: true,
       reason: safeStr(projection.error, 80) || "projection_failed",
     };
+  }
+  if (projection.invoiceNumberMismatch) {
+    console.log(
+      formatInvoiceNumberMismatchLog(
+        buildInvoiceNumberMismatchDiag({
+          bookingId: safeBookingId,
+          documentId: projection.documentId || binding.document_id,
+          documentNumber: projection.invoiceNumber,
+          bookingInvoiceNumber: findBookingInvoiceNumber(rec),
+          source: `${reason || "ensure"}_projection`,
+        }),
+      ),
+    );
   }
 
   const existing = _invoicePdfMetadataFromRecord(rec);
@@ -64281,6 +64478,13 @@ async function handleCompanyBookingRequestBusinessInvoice({
     console.log(
       `[BUSINESS_INVOICE][REUSED] booking=${bookingMask} doc=${documentId.slice(0, 8)}`,
     );
+    // Stamp Document Core binding on the booking (idempotent; upgrades FLX→INV).
+    await stampBookingInvoiceDocumentCoreBinding(env, scope, safeBookingId, {
+      documentId,
+      documentNumber: invoiceReference,
+      issuedDocument: existingInvoice?.document_record || null,
+      bookingRecord: rec,
+    });
   } else {
     // 5. Persist snapshot + business-invoice intent (never mutate passenger
     //    fields). Only on first issue; the reuse path above skips this write.
@@ -64386,6 +64590,13 @@ async function handleCompanyBookingRequestBusinessInvoice({
         ? `[BUSINESS_INVOICE][REUSED] booking=${bookingMask} doc=${documentId.slice(0, 8)}`
         : `[BUSINESS_INVOICE][ISSUED] booking=${bookingMask} doc=${documentId.slice(0, 8)} paid=${paymentStatus === "paid"}`,
     );
+    // Bind Document Core id + INV number onto the booking before PDF/Billit so
+    // legacy FLX allocation cannot become the booking source-of-truth.
+    await stampBookingInvoiceDocumentCoreBinding(env, scope, safeBookingId, {
+      documentId,
+      documentNumber: invoiceReference,
+      bookingRecord: rec,
+    });
   }
 
   // 7. Ensure ONE Billit SANDBOX order (create/reuse). Non-fatal on failure:
@@ -89635,9 +89846,20 @@ async function persistInvoiceNumberForBooking(env, bookingRecordInfo, invoiceNum
       return { ok: false, skipped: true };
     }
     const existing = findExistingInvoiceNumber(latest);
-    if (existing) {
-      console.log("[INVOICE_SEQ][PERSIST_SKIP] reason=already_exists");
-      return { ok: true, skipped: true, invoice_number: existing };
+    const persistDecision = canPersistInvoiceNumberOnBooking({
+      existing,
+      candidate: invoiceNumber,
+    });
+    if (!persistDecision.persist) {
+      console.log(
+        `[INVOICE_SEQ][PERSIST_SKIP] reason=${safeStr(persistDecision.reason, 60) || "already_exists"}`,
+      );
+      return {
+        ok: true,
+        skipped: true,
+        invoice_number:
+          safeStr(persistDecision.invoice_number, 120) || existing || null,
+      };
     }
     const issuedAt = new Date().toISOString();
     latest.invoice_number = invoiceNumber;
@@ -90408,17 +90630,87 @@ async function generateAndSendInvoice({
                 : null,
           }
         : await loadInvoiceBookingRecord(env, bookingInput);
-    const existingInvoiceNumber =
-      findExistingInvoiceNumber(bookingRecordInfo?.rec) ||
-      findExistingInvoiceNumber(bookingInput);
-    let invoiceNumber = existingInvoiceNumber || "";
+    const existingInvoiceNumberPick = pickReusableInvoiceNumberForGenerator({
+      bookingRecordNumber: findExistingInvoiceNumber(bookingRecordInfo?.rec),
+      bookingInputNumber: findExistingInvoiceNumber(bookingInput),
+      documentCoreNumber:
+        safeStr(bookingInput?.document_core_invoice_number, 120) ||
+        safeStr(bookingInput?.documentCoreInvoiceNumber, 120) ||
+        (isDocumentCoreInvoiceNumber(findExistingInvoiceNumber(bookingInput))
+          ? findExistingInvoiceNumber(bookingInput)
+          : "") ||
+        (isDocumentCoreInvoiceNumber(
+          findExistingInvoiceNumber(bookingRecordInfo?.rec),
+        )
+          ? findExistingInvoiceNumber(bookingRecordInfo?.rec)
+          : ""),
+    });
+    let invoiceNumber = safeStr(existingInvoiceNumberPick.invoice_number, 120) || "";
+    if (existingInvoiceNumberPick.mismatch) {
+      console.log(
+        formatInvoiceNumberMismatchLog(
+          buildInvoiceNumberMismatchDiag({
+            bookingId:
+              bookingRecordInfo?.booking_id ||
+              bookingInput?.bookingId ||
+              bookingInput?.bookingPublicId,
+            documentId:
+              bookingInput?.document_id || bookingInput?.documentId || "",
+            documentNumber: invoiceNumber,
+            bookingInvoiceNumber:
+              existingInvoiceNumberPick.booking_invoice_number,
+            source: "generateAndSendInvoice",
+          }),
+        ),
+      );
+    }
     let allocatedNow = false;
+    const businessInvoiceIntent =
+      safeStr(
+        bookingInput?.invoice_intent ??
+          bookingInput?.invoiceIntent ??
+          bookingRecordInfo?.rec?.invoice_intent ??
+          bookingRecordInfo?.rec?.invoiceIntent,
+        40,
+      ).toLowerCase() === "business_invoice";
     if (invoiceNumber) {
-      console.log("[INVOICE_SEQ][REUSE] source=existing_record");
-    } else {
-      invoiceNumber = await nextInvoiceNumber(env, bookingInput.pickupStartIso, invoiceScope);
+      console.log(
+        `[INVOICE_SEQ][REUSE] source=${safeStr(existingInvoiceNumberPick.source, 40) || "existing_record"}`,
+      );
+    } else if (
+      shouldAllocateLegacyFlxInvoiceNumber({
+        businessInvoiceIntent,
+        hasDocumentCoreInvoice: false,
+        existingInvoiceNumber: "",
+        explicitInvoiceNumber: "",
+      })
+    ) {
+      invoiceNumber = await nextInvoiceNumber(
+        env,
+        bookingInput.pickupStartIso,
+        invoiceScope,
+      );
       allocatedNow = true;
       console.log("[INVOICE_SEQ][ALLOCATED] source=sequence_allocator");
+    } else {
+      console.log(
+        `[INVOICE_SEQ][SKIP_ALLOC] reason=${businessInvoiceIntent ? "business_invoice_requires_document_core" : "no_allocatable_number"}`,
+      );
+      return {
+        ok: false,
+        error: businessInvoiceIntent
+          ? "business_invoice_requires_document_core_number"
+          : "missing_invoice_number",
+        email_sent: false,
+        invoice_pdf_artifact: {
+          ok: false,
+          reason: "missing_invoice_number",
+          key: null,
+          generated_at: null,
+          content_type: null,
+          size_bytes: null,
+        },
+      };
     }
     if (allocatedNow) {
       const persisted = await persistInvoiceNumberForBooking(
@@ -90428,8 +90720,14 @@ async function generateAndSendInvoice({
         invoiceScope,
       );
       if (persisted?.invoice_number && persisted.invoice_number !== invoiceNumber) {
-        invoiceNumber = persisted.invoice_number;
-        console.log("[INVOICE_SEQ][REUSE] source=persisted_record");
+        // Prefer an already-bound Document Core INV over a freshly allocated FLX.
+        if (
+          isDocumentCoreInvoiceNumber(persisted.invoice_number) ||
+          !isDocumentCoreInvoiceNumber(invoiceNumber)
+        ) {
+          invoiceNumber = persisted.invoice_number;
+          console.log("[INVOICE_SEQ][REUSE] source=persisted_record");
+        }
       }
     }
     const invoiceDate = todayNL();

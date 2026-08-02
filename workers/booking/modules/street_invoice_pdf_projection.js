@@ -10,6 +10,11 @@ import {
   legalFormLabelNl,
   formatSellerIdentityPresentationLines,
 } from "./seller_identity.js";
+import {
+  isLegacyFlxInvoiceNumber,
+  isDocumentCoreInvoiceNumber,
+  resolveCanonicalInvoiceNumberBinding,
+} from "./invoice_number_source_of_truth.js";
 
 export const STREET_INVOICE_PDF_PROJECTION_VERSION = "street_pdf_proj_v1";
 
@@ -637,7 +642,15 @@ export function assertStreetInvoicePdfOwnership({
     );
     const expectedNumber = _norm(invoiceNumber);
     if (expectedNumber && docNumber && expectedNumber !== docNumber) {
-      return { ok: false, error: "invoice_number_mismatch" };
+      // Stale booking FLX vs Document Core INV is expected during migration;
+      // Document Core wins in buildStreetInvoicePdfProjection. Hard-fail only
+      // on conflicting non-upgrade numbers (e.g. two different INV values).
+      const flxVsInv =
+        isLegacyFlxInvoiceNumber(expectedNumber) &&
+        isDocumentCoreInvoiceNumber(docNumber);
+      if (!flxVsInv) {
+        return { ok: false, error: "invoice_number_mismatch" };
+      }
     }
   }
   return { ok: true };
@@ -657,13 +670,32 @@ export function buildStreetInvoicePdfProjection({
   communicationProfile = null,
   paymentStatusResolver = null,
 } = {}) {
+  // Document Core document_number is canonical when an issued invoice is linked.
+  let canonicalInvoiceNumber = _norm(invoiceNumber);
+  let invoiceNumberMismatch = false;
+  if (issuedDocument && typeof issuedDocument === "object") {
+    const binding = resolveCanonicalInvoiceNumberBinding({
+      scope,
+      bookingId,
+      bookingRecord,
+      issuedDocument,
+      invoiceReference: invoiceNumber,
+      documentId,
+    });
+    if (!binding.ok) {
+      return { ok: false, error: binding.error || "document_link_invalid" };
+    }
+    canonicalInvoiceNumber = _norm(binding.invoice_number);
+    invoiceNumberMismatch = binding.mismatch === true;
+  }
+
   const ownership = assertStreetInvoicePdfOwnership({
     scope,
     bookingRecord,
     issuedDocument,
     bookingId,
     documentId,
-    invoiceNumber,
+    invoiceNumber: canonicalInvoiceNumber,
   });
   if (!ownership.ok) {
     return { ok: false, error: ownership.error };
@@ -715,7 +747,7 @@ export function buildStreetInvoicePdfProjection({
   );
 
   const resolvedInvoiceNumber =
-    _norm(invoiceNumber) ||
+    _norm(canonicalInvoiceNumber) ||
     _norm(
       issuedDocument?.document_number ??
         issuedDocument?.documentNumber ??
@@ -753,6 +785,7 @@ export function buildStreetInvoicePdfProjection({
     ok: true,
     invoiceNumber: resolvedInvoiceNumber,
     documentId: resolvedDocumentId || null,
+    invoiceNumberMismatch,
     projectionRevision: revision,
     vatRatePercent: vat.ratePercent,
     vatRateFraction: vat.ratePercent / 100,
