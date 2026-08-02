@@ -1081,7 +1081,9 @@ async function persistBillitOrderExportOnDocumentRecord(env, scope, record, bill
 }
 
 /* Persist envelope-only billit_link_status on an issued invoice and optionally
- * write/clear a durable create outbox entry. Never stores tokens/secrets. */
+ * write/clear a durable create outbox entry. Never stores tokens/secrets.
+ * Always re-reads the latest registry record before writing so a concurrent
+ * billit_export persist is not wiped by a stale in-memory snapshot. */
 async function persistBillitLinkAttemptAndMaybeOutbox(env, scope, opts = {}) {
   const options = opts && typeof opts === "object" ? opts : {};
   const documentId = safeStr(options.documentId, 200);
@@ -1112,8 +1114,19 @@ async function persistBillitLinkAttemptAndMaybeOutbox(env, scope, opts = {}) {
   } catch (_) {
     return { ok: false, error: "invalid_registry_key" };
   }
+  // Prefer the latest KV record so billit_export / provider_* written by the
+  // create path are preserved when attaching link-status metadata.
+  let baseRecord = documentRecord;
+  try {
+    const latest = await env.BOOKING_KV.get(key, { type: "json" });
+    if (latest && typeof latest === "object" && !Array.isArray(latest)) {
+      baseRecord = latest;
+    }
+  } catch (_) {
+    baseRecord = documentRecord;
+  }
   const updatedRecord = {
-    ...documentRecord,
+    ...baseRecord,
     billit_link_status: normalized.status,
     updated_at: new Date().toISOString(),
   };
