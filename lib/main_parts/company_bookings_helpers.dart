@@ -28,6 +28,9 @@ class _CompanyBookingOverviewItem {
   final bool isRoundtripParent;
   final String referenceText;
   final String parentReferenceText;
+  /// Canonical server creation timestamp (ISO). Empty when absent on the row.
+  /// Used only for newest-created-first list ordering — never pickup/updated.
+  final String createdAtIso;
   final String pickupIso;
   final String fromAddress;
   final String toAddress;
@@ -86,6 +89,7 @@ class _CompanyBookingOverviewItem {
     required this.isRoundtripParent,
     required this.referenceText,
     required this.parentReferenceText,
+    required this.createdAtIso,
     required this.pickupIso,
     required this.fromAddress,
     required this.toAddress,
@@ -1235,6 +1239,7 @@ class _CompanyBookingOverviewItem {
       'booking.booking_reference',
       'booking.bookingReference',
     ]);
+    final createdAtIso = extractCompanyBookingCreatedAtIso(raw);
     final pickupIso = _firstText(raw, const <String>[
       'pickup_iso',
       'pickupIso',
@@ -1775,6 +1780,7 @@ class _CompanyBookingOverviewItem {
       isRoundtripParent: isRoundtripParent,
       referenceText: referenceText.isEmpty ? bookingId : referenceText,
       parentReferenceText: parentRef.isEmpty ? referenceText : parentRef,
+      createdAtIso: createdAtIso,
       pickupIso: pickupIso,
       fromAddress: fromAddress.isEmpty ? '—' : fromAddress,
       toAddress: toAddress.isEmpty ? '—' : toAddress,

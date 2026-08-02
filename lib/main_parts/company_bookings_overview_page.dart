@@ -2112,10 +2112,16 @@ class _CompanyBookingsOverviewPageState
       debugPrint(
         '[COMPANY_BOOKINGS][PAYMENT_OVERLAY] totalTrips=${overlayMatcher.totalTrips} matched=$overlayMatched paid=$overlayPaid',
       );
-      final parsed = mappedItems
-          .map((entry) => _CompanyBookingOverviewItem.fromMap(entry))
-          .where((entry) => entry.bookingId.trim().isNotEmpty)
-          .toList(growable: false);
+      final parsed = sortCompanyBookingsNewestCreatedFirst(
+        mappedItems
+            .map((entry) => _CompanyBookingOverviewItem.fromMap(entry))
+            .where((entry) => entry.bookingId.trim().isNotEmpty),
+        (item) => CompanyBookingCreatedSortFields(
+          bookingId: item.bookingId,
+          createdAtIso: item.createdAtIso,
+          legId: item.legId,
+        ),
+      );
       final roundtripLegRows = parsed.where((item) => item.isOperationalLeg);
       final roundtripOpenLegs = roundtripLegRows
           .where((item) => item.bucket == _CompanyBookingsFilter.open)

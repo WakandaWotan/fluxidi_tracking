@@ -75947,10 +75947,19 @@ async function listBookingsAuthoritative(
   out.length = 0;
   for (const row of dedupedOut) out.push(row);
 
+  // Company bookings UI sorts client-side by created_at DESC. Keep the
+  // authoritative list ordered the same way before the limit slice so the
+  // newest-created bookings are not dropped in favour of soonest pickups.
   out.sort((a, b) => {
-    const ta = a.pickup_iso ? Date.parse(a.pickup_iso) : Number.POSITIVE_INFINITY;
-    const tb = b.pickup_iso ? Date.parse(b.pickup_iso) : Number.POSITIVE_INFINITY;
-    return ta - tb;
+    const ta = Date.parse(safeStr(a?.created_at ?? a?.createdAt, 80)) || 0;
+    const tb = Date.parse(safeStr(b?.created_at ?? b?.createdAt, 80)) || 0;
+    if (tb !== ta) return tb - ta;
+    const idA = safeStr(a?.booking_id ?? a?.bookingId, 160);
+    const idB = safeStr(b?.booking_id ?? b?.bookingId, 160);
+    if (idA !== idB) return idB.localeCompare(idA);
+    const legA = safeStr(a?.leg_id ?? a?.legId, 200);
+    const legB = safeStr(b?.leg_id ?? b?.legId, 200);
+    return legB.localeCompare(legA);
   });
 
   return { ok: true, items: out.slice(0, lim) };

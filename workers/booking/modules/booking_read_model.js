@@ -1289,10 +1289,29 @@ export function _flattenBookingForRidesList(bookingId, rec) {
     rec,
     assignedVehicleId,
   );
+  // Additive list projection of the record's canonical creation timestamp.
+  // Read-only: never invents a value and never mutates the stored booking.
+  const createdAt = safeStr(
+    rec?.created_at ??
+      rec?.createdAt ??
+      _pick(rec, ["booking", "created_at"], null) ??
+      _pick(rec, ["booking", "createdAt"], null) ??
+      _pick(rec, ["payload", "created_at"], null) ??
+      _pick(rec, ["payload", "createdAt"], null) ??
+      rec?.inserted_at ??
+      rec?.insertedAt,
+    80,
+  );
 
   return {
     booking_id: bookingId,
     pickup_iso: pickupIso,
+    ...(createdAt
+      ? {
+          created_at: createdAt,
+          createdAt,
+        }
+      : {}),
     from,
     to,
     tier,
@@ -1510,6 +1529,13 @@ export function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, op
       _pick(rec, ["booking", "planningReference"], null),
     120,
   );
+  const legCreatedAt = safeStr(
+    leg?.created_at ??
+      leg?.createdAt ??
+      parentRow?.created_at ??
+      parentRow?.createdAt,
+    80,
+  );
   const row = {
     ...parentRow,
     booking_id: parentBookingId,
@@ -1523,6 +1549,12 @@ export function _flattenOperationalLegForRidesList(parentBookingId, rec, leg, op
     isOperationalLeg: true,
     is_roundtrip_parent: isRoundtripParent,
     isRoundtripParent: isRoundtripParent,
+    ...(legCreatedAt
+      ? {
+          created_at: legCreatedAt,
+          createdAt: legCreatedAt,
+        }
+      : {}),
     pickup_iso: legPickupIso || parentRow?.pickup_iso || null,
     pickupIso: legPickupIso || parentRow?.pickup_iso || null,
     from: legFrom ?? parentRow?.from ?? null,
