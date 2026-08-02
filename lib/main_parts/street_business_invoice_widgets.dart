@@ -273,6 +273,14 @@ String streetInvoicePaymentStatusLabel(
         fr: 'Échec de la synchronisation du paiement — réessayer',
         es: 'Falló la sincronización del pago — reintentar',
       );
+    case StreetInvoiceInvoicePaymentStatus.notLinkedToBillit:
+      return _tl(
+        lang,
+        nl: 'Nog niet gekoppeld aan Billit',
+        en: 'Not linked to Billit yet',
+        fr: 'Pas encore lié à Billit',
+        es: 'Aún no vinculado a Billit',
+      );
     case StreetInvoiceInvoicePaymentStatus.outstanding:
       return _tl(
         lang,
@@ -293,6 +301,7 @@ Color streetInvoicePaymentStatusColor(
       return theme.paidText;
     case StreetInvoiceInvoicePaymentStatus.syncInProgress:
     case StreetInvoiceInvoicePaymentStatus.syncFailed:
+    case StreetInvoiceInvoicePaymentStatus.notLinkedToBillit:
       return theme.textSecondary;
     case StreetInvoiceInvoicePaymentStatus.outstanding:
       return theme.unpaidText;

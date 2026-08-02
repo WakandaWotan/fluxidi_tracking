@@ -91,6 +91,13 @@ import {
   buildSafeBillitExportProjection,
   buildReconciledBillitExportFromLiveStatus,
   buildBillitExportPeppolSendPendingEnvelope,
+  resolveBillitPartyIdWithSelfHeal,
+  persistBillitPartySelectionPendingOnConnectionRecord,
+  BILLIT_LINK_STATES,
+  buildBillitCreateOutboxKey,
+  normalizeBillitLinkStatusMetadata,
+  buildSafeBillitLinkStatusProjection,
+  buildBillitCreateOutboxRecord,
 } from "./modules/billit_provider.js";
 import { peppolIdentifierFromBelgianEnterpriseNumber } from "./modules/peppol_readiness.js";
 import {
@@ -937,23 +944,58 @@ async function handleAdminBillitConnectionTest({ request, url, env }) {
     });
   }
 
-  // 11. Persist sanitized party_id metadata so read-only preview routes can
-  // resolve billit_party_id without another Billit call. Uses the latest in-
-  // memory record (including any token refresh applied above).
+  // 11. Persist sanitized party_id when exactly one administration is
+  // available. Multi-admin accounts require explicit selection — never bind
+  // companies[0] silently.
   const recordForResponse = record;
-  const persistedRecord = probe.party_id
-    ? await persistBillitPartyIdOnConnectionRecord(
-        env,
-        scope,
-        recordForResponse,
-        probe.party_id,
-        checkedAt,
-      )
-    : recordForResponse;
+  if (probe.selection_required || probe.company_count > 1) {
+    await persistBillitPartySelectionPendingOnConnectionRecord(
+      env,
+      scope,
+      recordForResponse,
+      { companyCount: probe.company_count, checkedAt },
+    );
+    console.log(
+      `[BILLIT_OAUTH][CONNECTION_TEST][SELECTION_REQUIRED] tenant=${scope.tenant_id} company=${scope.company_id} count=${probe.company_count ?? "-"}`,
+    );
+    return json({
+      ok: false,
+      error: "billit_administration_selection_required",
+      environment: "sandbox",
+      connected: true,
+      status_code: probe.status_code,
+      refreshed,
+      party_id: null,
+      company_count: probe.company_count ?? null,
+      checked_at: checkedAt,
+    });
+  }
+  if (probe.no_administration || !probe.party_id) {
+    console.log(
+      `[BILLIT_OAUTH][CONNECTION_TEST][NO_ADMIN] tenant=${scope.tenant_id} company=${scope.company_id}`,
+    );
+    return json({
+      ok: false,
+      error: "billit_no_administration",
+      environment: "sandbox",
+      connected: true,
+      status_code: probe.status_code,
+      refreshed,
+      party_id: null,
+      company_count: 0,
+      checked_at: checkedAt,
+    });
+  }
+  const persistedRecord = await persistBillitPartyIdOnConnectionRecord(
+    env,
+    scope,
+    recordForResponse,
+    probe.party_id,
+    checkedAt,
+  );
   const partyId =
     safeStr(probe.party_id, 120) ||
     safeStr(persistedRecord.party_id ?? persistedRecord.partyId, 120) ||
-    safeStr(recordForResponse.party_id ?? recordForResponse.partyId, 120) ||
     null;
 
   console.log(
@@ -1036,6 +1078,85 @@ async function persistBillitOrderExportOnDocumentRecord(env, scope, record, bill
   } catch (_) {
     return { ok: false, error: "billit_export_persist_failed" };
   }
+}
+
+/* Persist envelope-only billit_link_status on an issued invoice and optionally
+ * write/clear a durable create outbox entry. Never stores tokens/secrets. */
+async function persistBillitLinkAttemptAndMaybeOutbox(env, scope, opts = {}) {
+  const options = opts && typeof opts === "object" ? opts : {};
+  const documentId = safeStr(options.documentId, 200);
+  const documentRecord =
+    options.documentRecord && typeof options.documentRecord === "object"
+      ? options.documentRecord
+      : null;
+  if (!env?.BOOKING_KV || !documentId || !documentRecord) {
+    return { ok: false, error: "missing_document" };
+  }
+  const normalized = normalizeBillitLinkStatusMetadata({
+    environment: "sandbox",
+    state: options.state,
+    error_code: options.errorCode,
+    retryable: options.retryable === true,
+    order_id: options.orderId,
+    idempotency_key:
+      options.idempotencyKey ||
+      buildBillitSandboxOrderCreateIdempotencyKey(documentId),
+    attempted_at: new Date().toISOString(),
+  });
+  if (!normalized.ok) {
+    return { ok: false, error: normalized.error };
+  }
+  let key;
+  try {
+    key = buildDocumentRegistryKey(scope, documentId);
+  } catch (_) {
+    return { ok: false, error: "invalid_registry_key" };
+  }
+  const updatedRecord = {
+    ...documentRecord,
+    billit_link_status: normalized.status,
+    updated_at: new Date().toISOString(),
+  };
+  try {
+    await env.BOOKING_KV.put(key, JSON.stringify(updatedRecord));
+  } catch (_) {
+    return { ok: false, error: "billit_link_status_persist_failed" };
+  }
+
+  const outboxKey = buildBillitCreateOutboxKey(scope, documentId);
+  if (outboxKey) {
+    if (options.clearOutbox === true || options.state === BILLIT_LINK_STATES.LINKED) {
+      try {
+        await env.BOOKING_KV.delete(outboxKey);
+      } catch (_) {
+        // non-fatal
+      }
+    } else if (options.retryable === true) {
+      const existing = await env.BOOKING_KV.get(outboxKey, { type: "json" }).catch(() => null);
+      const attemptCount =
+        existing && typeof existing === "object"
+          ? Math.max(1, Number(existing.attempt_count) || 1) + 1
+          : 1;
+      const outbox = buildBillitCreateOutboxRecord({
+        scope,
+        documentId,
+        documentNumber: options.documentNumber,
+        bookingId: options.bookingId,
+        errorCode: options.errorCode,
+        idempotencyKey: normalized.status.idempotency_key,
+        invoiceIdempotencyKey: options.invoiceIdempotencyKey,
+        attemptCount,
+      });
+      if (outbox) {
+        try {
+          await env.BOOKING_KV.put(outboxKey, JSON.stringify(outbox));
+        } catch (_) {
+          // non-fatal
+        }
+      }
+    }
+  }
+  return { ok: true, record: updatedRecord, status: normalized.status };
 }
 
 /* Admin-only, SANDBOX-ONLY Billit order create for ONE invoice document (Patch
@@ -3783,13 +3904,9 @@ async function ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, op
     return { ok: false, http_status: 503, body: { ok: false, error: "missing_binding" } };
   }
 
-  // Billit connected + party_id available (read-only).
-  const partyId = await readBillitPartyIdForScope(env, scope);
-  if (!partyId) {
-    return { ok: false, http_status: 409, body: { ok: false, error: "billit_party_id_missing", environment: "sandbox" } };
-  }
-
-  // Ensure the Document Core invoice (reuse or issue-once).
+  // Ensure the Document Core invoice first (reuse or issue-once) so durable
+  // Billit link/attempt status can attach to the canonical invoice even when
+  // PartyID self-heal fails before any Billit POST.
   const invoiceResult = await ensureDocumentCoreInvoiceForPaidBusinessBooking(
     env,
     scope,
@@ -3808,6 +3925,57 @@ async function ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, op
     };
   }
 
+  // Billit connected + PartyID available. When party_id is missing on an
+  // otherwise connected sandbox OAuth record, self-heal via accountInformation
+  // for THIS tenant/company only (never cross-company PartyID reuse).
+  let partyId = await readBillitPartyIdForScope(env, scope);
+  let partyHealed = false;
+  if (!partyId) {
+    const heal = await resolveBillitPartyIdWithSelfHeal(env, scope, config);
+    if (heal.ok && heal.party_id) {
+      partyId = heal.party_id;
+      partyHealed = heal.healed === true;
+    } else {
+      const healError =
+        safeStr(heal.error, 80) || "billit_party_id_missing";
+      const linkState =
+        healError === "billit_administration_selection_required"
+          ? BILLIT_LINK_STATES.AWAITING_ADMINISTRATION_SELECTION
+          : BILLIT_LINK_STATES.AWAITING_PARTY_RESOLUTION;
+      const retryable = heal.retryable === true;
+      await persistBillitLinkAttemptAndMaybeOutbox(env, scope, {
+        documentRecord: invoiceResult.document_record,
+        documentId: invoiceResult.document_id,
+        documentNumber: invoiceResult.document_number,
+        bookingId: bId,
+        state: linkState,
+        errorCode: healError,
+        retryable,
+        invoiceIdempotencyKey: safeStr(
+          invoiceResult.document_record?.idempotency_key ??
+            invoiceResult.document_record?.idempotencyKey,
+          200,
+        ),
+      });
+      return {
+        ok: false,
+        http_status: 409,
+        body: {
+          ok: false,
+          error: healError,
+          environment: "sandbox",
+          retryable,
+          billit_link_state: linkState,
+          party_healed: false,
+          document_id: invoiceResult.document_id,
+          document_number: invoiceResult.document_number,
+          document_type: "invoice",
+          reused_existing_invoice: invoiceResult.reused_existing_invoice === true,
+        },
+      };
+    }
+  }
+
   // Ensure the Billit sandbox order (reuse or create-once). Never sends.
   const billitResult = await ensureBillitSandboxOrderForIssuedInvoice(
     env,
@@ -3817,17 +3985,39 @@ async function ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, op
     { documentId: invoiceResult.document_id, documentNumber: invoiceResult.document_number },
   );
   if (!billitResult.ok) {
-    // Invoice remains issued; Billit create can be retried manually/admin.
+    const createError = safeStr(billitResult.error, 80) || "billit_order_create_failed";
+    const retryable =
+      createError !== "billit_administration_selection_required" &&
+      createError !== "billit_no_administration";
+    await persistBillitLinkAttemptAndMaybeOutbox(env, scope, {
+      documentRecord: invoiceResult.document_record,
+      documentId: invoiceResult.document_id,
+      documentNumber: invoiceResult.document_number,
+      bookingId: bId,
+      state: retryable
+        ? BILLIT_LINK_STATES.CREATE_FAILED
+        : BILLIT_LINK_STATES.CREATE_FAILED,
+      errorCode: createError,
+      retryable,
+      invoiceIdempotencyKey: safeStr(
+        invoiceResult.document_record?.idempotency_key ??
+          invoiceResult.document_record?.idempotencyKey,
+        200,
+      ),
+    });
+    // Invoice remains issued; Billit create can be retried (idempotent).
     return {
       ok: false,
       http_status: billitResult.status || 502,
       body: {
         ok: false,
-        error: billitResult.error,
+        error: createError,
         document_id: invoiceResult.document_id,
         document_number: invoiceResult.document_number,
         document_type: "invoice",
         reused_existing_invoice: invoiceResult.reused_existing_invoice === true,
+        retryable,
+        billit_link_state: BILLIT_LINK_STATES.CREATE_FAILED,
         ...(Array.isArray(billitResult.reasons) ? { reasons: billitResult.reasons } : {}),
         ...(billitResult.status_code ? { status_code: billitResult.status_code } : {}),
         ...(billitResult.billit_error_code ? { billit_error_code: billitResult.billit_error_code } : {}),
@@ -3838,9 +4028,23 @@ async function ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, op
     };
   }
 
+  // Success: mark linked and clear any pending create outbox for this document.
+  await persistBillitLinkAttemptAndMaybeOutbox(env, scope, {
+    documentRecord: billitResult.document_record || invoiceResult.document_record,
+    documentId: invoiceResult.document_id,
+    documentNumber: invoiceResult.document_number,
+    bookingId: bId,
+    state: BILLIT_LINK_STATES.LINKED,
+    errorCode: null,
+    retryable: false,
+    orderId: billitResult.billit_order_id,
+    clearOutbox: true,
+  });
+
   const warnings = [];
   for (const w of invoiceResult.warnings || []) if (w) warnings.push(safeStr(w, 80));
   for (const w of billitResult.warnings || []) if (w) warnings.push(safeStr(w, 80));
+  if (partyHealed) warnings.push("billit_party_id_self_healed");
 
   return {
     ok: true,
@@ -3858,6 +4062,7 @@ async function ensureBillitOrderForPaidBusinessBooking(env, scope, bookingId, op
       billit_status: billitResult.billit_status,
       billit_export: billitResult.billit_export,
       billit_already_created: billitResult.already_created === true,
+      party_healed: partyHealed,
       sent: false,
       peppol_sent: false,
       warnings,
@@ -31665,11 +31870,29 @@ export default {
             );
           }
           await env.BOOKING_KV.put(connKey, JSON.stringify(connectionRecord));
+          // Auto probe accountInformation and persist PartyID when exactly one
+          // administration exists — customers must not need a manual connection
+          // test to leave the connected-without-party_id state.
+          let partyProbeNote = "";
+          try {
+            const heal = await resolveBillitPartyIdWithSelfHeal(env, scope, config);
+            if (heal.ok && heal.party_id) {
+              partyProbeNote = " party=yes";
+            } else if (heal.error === "billit_administration_selection_required") {
+              partyProbeNote = " party=selection_required";
+            } else if (heal.error === "billit_no_administration") {
+              partyProbeNote = " party=no_admin";
+            } else {
+              partyProbeNote = " party=pending";
+            }
+          } catch (_) {
+            partyProbeNote = " party=probe_skipped";
+          }
           try {
             await env.BOOKING_KV.delete(stateKey);
           } catch (_) {}
           console.log(
-            `[BILLIT_OAUTH][CALLBACK][OK] tenant=${scope.tenant_id} company=${scope.company_id} env=${config.environment}`,
+            `[BILLIT_OAUTH][CALLBACK][OK] tenant=${scope.tenant_id} company=${scope.company_id} env=${config.environment}${partyProbeNote}`,
           );
           return _billitCallbackHtml(
             "Billit koppeling voltooid. Je mag dit venster sluiten.",

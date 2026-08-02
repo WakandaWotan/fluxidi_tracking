@@ -1482,9 +1482,33 @@ void main() {
       );
     });
 
-    // STREET-BUSINESS-INVOICE-PDF-PAYMENT-SYNC-1B
+    // RELEASE-P0: unlinked vs syncing must stay separated.
     test(
-      '1B: ridePaid + billitPaid false + updating/syncPending => syncInProgress',
+      'P0: ridePaid + no Billit link => notLinkedToBillit (not syncInProgress)',
+      () {
+        final p = resolveStreetInvoicePaymentPresentation(
+          hasIssuedInvoice: true,
+          ridePaid: true,
+          billitPaid: null,
+          billitUpdating: true,
+          syncPending: true,
+          billitPaymentSyncStatus: '',
+          hasBillitLink: false,
+        );
+        expect(
+          p.invoicePaymentStatus,
+          StreetInvoiceInvoicePaymentStatus.notLinkedToBillit,
+        );
+        expect(p.reason, 'not_linked_to_billit');
+        expect(
+          p.invoicePaymentStatus,
+          isNot(StreetInvoiceInvoicePaymentStatus.syncInProgress),
+        );
+      },
+    );
+
+    test(
+      '1B: ridePaid + billitPaid false + linked + updating => syncInProgress',
       () {
         final p = resolveStreetInvoicePaymentPresentation(
           hasIssuedInvoice: true,
@@ -1492,7 +1516,7 @@ void main() {
           billitPaid: false,
           billitUpdating: true,
           syncPending: true,
-          hasBillitLink: false,
+          hasBillitLink: true,
         );
         expect(
           p.invoicePaymentStatus,
@@ -1516,13 +1540,24 @@ void main() {
         unpaid.invoicePaymentStatus,
         StreetInvoiceInvoicePaymentStatus.outstanding,
       );
-      final paidRide = resolveStreetInvoicePaymentPresentation(
+      final paidRideUnlinked = resolveStreetInvoicePaymentPresentation(
         hasIssuedInvoice: true,
         ridePaid: true,
         billitPaid: false,
+        hasBillitLink: false,
       );
       expect(
-        paidRide.invoicePaymentStatus,
+        paidRideUnlinked.invoicePaymentStatus,
+        StreetInvoiceInvoicePaymentStatus.notLinkedToBillit,
+      );
+      final paidRideLinked = resolveStreetInvoicePaymentPresentation(
+        hasIssuedInvoice: true,
+        ridePaid: true,
+        billitPaid: false,
+        hasBillitLink: true,
+      );
+      expect(
+        paidRideLinked.invoicePaymentStatus,
         StreetInvoiceInvoicePaymentStatus.syncInProgress,
       );
     });
@@ -1533,6 +1568,7 @@ void main() {
           hasIssuedInvoice: true,
           ridePaid: true,
           billitPaid: true,
+          hasBillitLink: true,
         ).invoicePaymentStatus,
         StreetInvoiceInvoicePaymentStatus.paid,
       );
@@ -1542,6 +1578,7 @@ void main() {
           ridePaid: true,
           billitPaid: false,
           billitPaymentSyncStatus: 'synced',
+          hasBillitLink: true,
         ).invoicePaymentStatus,
         StreetInvoiceInvoicePaymentStatus.paid,
       );
@@ -1553,6 +1590,7 @@ void main() {
         ridePaid: true,
         billitPaid: false,
         billitPaymentSyncStatus: 'failed',
+        hasBillitLink: true,
       );
       expect(
         p.invoicePaymentStatus,
@@ -1562,6 +1600,24 @@ void main() {
       expect(
         p.invoicePaymentStatus,
         isNot(StreetInvoiceInvoicePaymentStatus.outstanding),
+      );
+    });
+
+    test('P0: empty sync token without link is not pending forever', () {
+      final p = resolveStreetInvoicePaymentPresentation(
+        hasIssuedInvoice: true,
+        ridePaid: true,
+        billitPaid: null,
+        billitPaymentSyncStatus: '',
+        hasBillitLink: false,
+      );
+      expect(
+        p.invoicePaymentStatus,
+        StreetInvoiceInvoicePaymentStatus.notLinkedToBillit,
+      );
+      expect(
+        streetInvoicePaymentStatusKey(p.invoicePaymentStatus),
+        'notLinkedToBillit',
       );
     });
 
@@ -1606,7 +1662,7 @@ void main() {
       );
       expect(
         c.paymentPresentation.invoicePaymentStatus,
-        StreetInvoiceInvoicePaymentStatus.syncInProgress,
+        StreetInvoiceInvoicePaymentStatus.notLinkedToBillit,
       );
       expect(probeCount, greaterThan(0));
       c.dispose();
@@ -1816,21 +1872,21 @@ void main() {
       expect(r.reason, 'monotonic_retained');
     });
 
-    // (case 3) documents billitPaid=false + updating → syncInProgress.
-    test('paid ride + billit lag → controller resolves syncInProgress', () async {
+    // (case 3) documents billitPaid=false + no order link → notLinkedToBillit.
+    test('paid ride + no Billit link → controller resolves notLinkedToBillit', () async {
       final c = lagController(isPaidBooking: true);
       await c.loadExisting();
       expect(c.rideConfirmedPaid, isTrue);
       expect(
         c.displayInvoicePaymentStatus,
-        StreetInvoiceInvoicePaymentStatus.syncInProgress,
+        StreetInvoiceInvoicePaymentStatus.notLinkedToBillit,
       );
       c.dispose();
     });
 
-    // (case 4) late canonical paid transition flips outstanding → syncInProgress
-    // without recreating the controller.
-    test('late updateCanonicalRidePaymentStatus(true) flips to syncInProgress', () async {
+    // (case 4) late canonical paid transition flips outstanding → notLinked
+    // without recreating the controller (still no Billit order id).
+    test('late updateCanonicalRidePaymentStatus(true) flips to notLinkedToBillit', () async {
       final c = lagController(isPaidBooking: false);
       await c.loadExisting();
       expect(
@@ -1841,7 +1897,7 @@ void main() {
       expect(c.rideConfirmedPaid, isTrue);
       expect(
         c.displayInvoicePaymentStatus,
-        StreetInvoiceInvoicePaymentStatus.syncInProgress,
+        StreetInvoiceInvoicePaymentStatus.notLinkedToBillit,
       );
       c.dispose();
     });
@@ -1855,7 +1911,7 @@ void main() {
       expect(c.rideConfirmedPaid, isTrue);
       expect(
         c.displayInvoicePaymentStatus,
-        StreetInvoiceInvoicePaymentStatus.syncInProgress,
+        StreetInvoiceInvoicePaymentStatus.notLinkedToBillit,
       );
       c.dispose();
     });

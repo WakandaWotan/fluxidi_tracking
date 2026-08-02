@@ -444,6 +444,10 @@ export async function persistBillitPartyIdOnConnectionRecord(
     ...record,
     party_id: safePartyId,
     party_id_checked_at: safeStr(checkedAt, 40) || new Date().toISOString(),
+    party_selection_required: false,
+    party_candidate_count: null,
+    last_error_code: null,
+    last_error_message: null,
     updated_at: new Date().toISOString(),
   };
   try {
@@ -658,40 +662,20 @@ export async function callBillitSandboxConnectionProbe(config, accessToken, env)
       party_id: null,
     };
   }
-  // Safe party id extraction only (no other body fields are surfaced). Billit's
-  // accountInformation returns PartyID nested in the Companies[] array.
-  const companies = isObj && Array.isArray(data.companies)
-    ? data.companies
-    : isObj && Array.isArray(data.Companies)
-      ? data.Companies
-      : [];
-  const firstCompany =
-    companies.length > 0 && companies[0] && typeof companies[0] === "object"
-      ? companies[0]
-      : null;
-  const partyId = isObj
-    ? safeStr(
-        data.PartyID ??
-          data.partyID ??
-          data.party_id ??
-          data.partyId ??
-          data.id ??
-          data.Id ??
-          data.ID ??
-          (firstCompany &&
-            (firstCompany.PartyID ??
-              firstCompany.partyID ??
-              firstCompany.party_id ??
-              firstCompany.partyId)),
-        120,
-      ) || null
-    : null;
+  // Safe administration / PartyID extraction. Never returns raw body fields
+  // beyond a sanitized count + party ids. Multi-administration accounts MUST
+  // NOT silently bind companies[0] — callers decide via selection_required.
+  const resolution = resolveBillitAdministrationsFromAccountInformation(data);
   return {
     ok: true,
     status_code: statusCode,
-    billit_error_code: null,
+    billit_error_code: resolution.error || null,
     billit_error_description: null,
-    party_id: partyId,
+    party_id: resolution.party_id,
+    company_count: resolution.company_count,
+    selection_required: resolution.selection_required === true,
+    no_administration: resolution.no_administration === true,
+    administrations: resolution.administrations,
   };
 }
 
@@ -1642,5 +1626,334 @@ export function buildReconciledBillitExportFromLiveStatus({
     send_pending: false,
     peppol_send_pending: false,
     reconcile_pending: false,
+  };
+}
+
+/* ===================== PartyID administration resolution + self-heal ===================== */
+
+export const BILLIT_LINK_STATES = Object.freeze({
+  AWAITING_PARTY_RESOLUTION: "awaiting_party_resolution",
+  AWAITING_ADMINISTRATION_SELECTION: "awaiting_administration_selection",
+  CREATE_PENDING: "create_pending",
+  CREATE_FAILED: "create_failed",
+  LINKED: "linked",
+  SYNC_PENDING: "sync_pending",
+  SYNC_FAILED: "sync_failed",
+  SYNCED: "synced",
+});
+
+/** Pure: parse accountInformation into a safe multi-admin resolution. */
+export function resolveBillitAdministrationsFromAccountInformation(data) {
+  const isObj = data && typeof data === "object" && !Array.isArray(data);
+  const companies = isObj && Array.isArray(data.companies)
+    ? data.companies
+    : isObj && Array.isArray(data.Companies)
+      ? data.Companies
+      : [];
+  const administrations = [];
+  for (const company of companies) {
+    if (!company || typeof company !== "object" || Array.isArray(company)) continue;
+    const partyId =
+      safeStr(
+        company.PartyID ??
+          company.partyID ??
+          company.party_id ??
+          company.partyId,
+        120,
+      ) || null;
+    if (!partyId) continue;
+    administrations.push({ party_id: partyId });
+  }
+  const rootPartyId = isObj
+    ? safeStr(
+        data.PartyID ??
+          data.partyID ??
+          data.party_id ??
+          data.partyId,
+        120,
+      ) || null
+    : null;
+
+  if (administrations.length === 0) {
+    if (rootPartyId) {
+      return {
+        ok: true,
+        party_id: rootPartyId,
+        company_count: 1,
+        selection_required: false,
+        no_administration: false,
+        administrations: [{ party_id: rootPartyId }],
+        error: null,
+      };
+    }
+    return {
+      ok: false,
+      party_id: null,
+      company_count: 0,
+      selection_required: false,
+      no_administration: true,
+      administrations: [],
+      error: "billit_no_administration",
+    };
+  }
+  if (administrations.length === 1) {
+    return {
+      ok: true,
+      party_id: administrations[0].party_id,
+      company_count: 1,
+      selection_required: false,
+      no_administration: false,
+      administrations,
+      error: null,
+    };
+  }
+  // Multiple administrations: never silently pick [0].
+  return {
+    ok: false,
+    party_id: null,
+    company_count: administrations.length,
+    selection_required: true,
+    no_administration: false,
+    administrations,
+    error: "billit_administration_selection_required",
+  };
+}
+
+export async function persistBillitPartySelectionPendingOnConnectionRecord(
+  env,
+  scope,
+  record,
+  { companyCount = 0, checkedAt = null } = {},
+) {
+  if (!env?.BOOKING_KV) return record;
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    return record;
+  }
+  const connKey = buildBillitOAuthConnectionKey(scope);
+  if (!connKey) return record;
+  const updated = {
+    ...record,
+    party_id: null,
+    party_selection_required: true,
+    party_candidate_count: Number.isFinite(Number(companyCount))
+      ? Number(companyCount)
+      : null,
+    party_id_checked_at: safeStr(checkedAt, 40) || new Date().toISOString(),
+    last_error_code: "billit_administration_selection_required",
+    updated_at: new Date().toISOString(),
+  };
+  try {
+    await env.BOOKING_KV.put(connKey, JSON.stringify(updated));
+    return updated;
+  } catch (_) {
+    return record;
+  }
+}
+
+/**
+ * Resolve PartyID for a scoped connection. When missing, probes accountInformation
+ * with THAT scope's OAuth token only, persists a single PartyID when unambiguous,
+ * and never reads another company connection.
+ */
+export async function resolveBillitPartyIdWithSelfHeal(env, scope, config) {
+  const existing = await readBillitPartyIdForScope(env, scope);
+  if (existing) {
+    return {
+      ok: true,
+      party_id: existing,
+      healed: false,
+      error: null,
+      retryable: false,
+      company_count: 1,
+    };
+  }
+
+  const tokenResult = await acquireBillitSandboxAccessToken(env, scope, config);
+  if (!tokenResult.ok) {
+    return {
+      ok: false,
+      party_id: null,
+      healed: false,
+      error: safeStr(tokenResult.error, 80) || "billit_token_unavailable",
+      retryable: true,
+      company_count: 0,
+    };
+  }
+
+  const probe = await callBillitSandboxConnectionProbe(
+    config,
+    tokenResult.access_token,
+    env,
+  );
+  const checkedAt = new Date().toISOString();
+  const connKey = buildBillitOAuthConnectionKey(scope);
+  let record = null;
+  if (connKey && env?.BOOKING_KV) {
+    try {
+      record = await env.BOOKING_KV.get(connKey, { type: "json" });
+    } catch (_) {
+      record = null;
+    }
+  }
+
+  if (!probe.ok) {
+    return {
+      ok: false,
+      party_id: null,
+      healed: false,
+      error: "billit_connection_probe_failed",
+      retryable: true,
+      company_count: 0,
+      status_code: probe.status_code ?? null,
+    };
+  }
+
+  if (probe.selection_required || probe.company_count > 1) {
+    if (record) {
+      await persistBillitPartySelectionPendingOnConnectionRecord(env, scope, record, {
+        companyCount: probe.company_count,
+        checkedAt,
+      });
+    }
+    return {
+      ok: false,
+      party_id: null,
+      healed: false,
+      error: "billit_administration_selection_required",
+      retryable: false,
+      company_count: probe.company_count || 0,
+    };
+  }
+
+  if (probe.no_administration || !probe.party_id) {
+    return {
+      ok: false,
+      party_id: null,
+      healed: false,
+      error: "billit_no_administration",
+      retryable: false,
+      company_count: 0,
+    };
+  }
+
+  if (record) {
+    await persistBillitPartyIdOnConnectionRecord(
+      env,
+      scope,
+      record,
+      probe.party_id,
+      checkedAt,
+    );
+  }
+  return {
+    ok: true,
+    party_id: probe.party_id,
+    healed: true,
+    error: null,
+    retryable: false,
+    company_count: 1,
+  };
+}
+
+/* ===================== Durable Billit link attempt + create outbox ===================== */
+
+export function buildBillitCreateOutboxKey(scope, documentId) {
+  const tenant = safeStr(scope?.tenant_id ?? scope?.tenantId, 96);
+  const company = safeStr(scope?.company_id ?? scope?.companyId, 96);
+  const doc = safeStr(documentId, 200);
+  if (!tenant || !company || !doc) return null;
+  return `billit_create_outbox:${tenant}:${company}:${doc}`;
+}
+
+export function normalizeBillitLinkStatusMetadata(input = {}) {
+  const src = input && typeof input === "object" ? input : {};
+  const environment = safeStr(src.environment, 24).toLowerCase() || "sandbox";
+  if (environment !== "sandbox") {
+    return { ok: false, error: "billit_link_status_sandbox_only" };
+  }
+  const state = safeStr(src.state, 64);
+  const allowed = new Set(Object.values(BILLIT_LINK_STATES));
+  if (!state || !allowed.has(state)) {
+    return { ok: false, error: "billit_link_status_invalid_state" };
+  }
+  const nowIso = new Date().toISOString();
+  return {
+    ok: true,
+    status: {
+      provider: "billit",
+      environment: "sandbox",
+      state,
+      error_code: safeStr(src.error_code ?? src.errorCode, 80) || null,
+      attempted_at:
+        safeStr(src.attempted_at ?? src.attemptedAt, 40) || nowIso,
+      retryable: src.retryable === true,
+      order_id: safeStr(src.order_id ?? src.orderId, 120) || null,
+      idempotency_key:
+        safeStr(src.idempotency_key ?? src.idempotencyKey, 200) || null,
+      updated_at: nowIso,
+    },
+  };
+}
+
+export function buildSafeBillitLinkStatusProjection(recordOrStatus) {
+  const obj =
+    recordOrStatus && typeof recordOrStatus === "object" && !Array.isArray(recordOrStatus)
+      ? recordOrStatus
+      : null;
+  if (!obj) return null;
+  const st =
+    obj.billit_link_status &&
+    typeof obj.billit_link_status === "object" &&
+    !Array.isArray(obj.billit_link_status)
+      ? obj.billit_link_status
+      : obj;
+  const state = safeStr(st.state, 64);
+  if (!state) return null;
+  return {
+    provider: safeStr(st.provider, 24) || "billit",
+    environment: safeStr(st.environment, 24) || null,
+    state,
+    error_code: safeStr(st.error_code, 80) || null,
+    attempted_at: safeStr(st.attempted_at, 40) || null,
+    retryable: st.retryable === true,
+    order_id: safeStr(st.order_id, 120) || null,
+    idempotency_key: safeStr(st.idempotency_key, 200) || null,
+    updated_at: safeStr(st.updated_at, 40) || null,
+  };
+}
+
+export function buildBillitCreateOutboxRecord({
+  scope,
+  documentId,
+  documentNumber = null,
+  bookingId = null,
+  errorCode = null,
+  idempotencyKey = null,
+  invoiceIdempotencyKey = null,
+  attemptCount = 1,
+} = {}) {
+  const tenant = safeStr(scope?.tenant_id ?? scope?.tenantId, 96);
+  const company = safeStr(scope?.company_id ?? scope?.companyId, 96);
+  const doc = safeStr(documentId, 200);
+  if (!tenant || !company || !doc) return null;
+  const nowIso = new Date().toISOString();
+  return {
+    provider: "billit",
+    environment: "sandbox",
+    tenant_id: tenant,
+    company_id: company,
+    document_id: doc,
+    document_number: safeStr(documentNumber, 80) || null,
+    booking_id: safeStr(bookingId, 200) || null,
+    state: "pending",
+    error_code: safeStr(errorCode, 80) || null,
+    retryable: true,
+    attempt_count: Math.max(1, Number(attemptCount) || 1),
+    idempotency_key:
+      safeStr(idempotencyKey, 200) ||
+      buildBillitSandboxOrderCreateIdempotencyKey(doc),
+    invoice_idempotency_key: safeStr(invoiceIdempotencyKey, 200) || null,
+    created_at: nowIso,
+    updated_at: nowIso,
   };
 }

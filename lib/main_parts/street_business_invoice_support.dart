@@ -870,10 +870,15 @@ enum StreetInvoiceInvoicePaymentStatus {
   paid,
 
   /// Ride is paid; Billit paid sync is still pending / updating.
+  /// Only valid when a Billit order link already exists.
   syncInProgress,
 
   /// Terminal Billit payment-sync failure (retryable — never "outstanding").
   syncFailed,
+
+  /// Invoice issued and ride paid, but not linked to a Billit order yet.
+  /// Distinct from [syncInProgress] — missing export/order_id is NOT syncing.
+  notLinkedToBillit,
 
   /// Ride/invoice truly unpaid / outstanding.
   outstanding,
@@ -920,6 +925,8 @@ String streetInvoicePaymentStatusKey(StreetInvoiceInvoicePaymentStatus status) {
       return 'syncInProgress';
     case StreetInvoiceInvoicePaymentStatus.syncFailed:
       return 'syncFailed';
+    case StreetInvoiceInvoicePaymentStatus.notLinkedToBillit:
+      return 'notLinkedToBillit';
     case StreetInvoiceInvoicePaymentStatus.outstanding:
       return 'outstanding';
   }
@@ -1149,14 +1156,15 @@ void logStreetInvoiceRidePayment({
 
 /// Canonical payment/processing presentation for a street business invoice.
 ///
-/// Priority (STREET-BUSINESS-INVOICE-PDF-PAYMENT-SYNC-1B):
+/// Priority (RELEASE-P0 truthful Billit status):
 ///   1. invoicePaymentConfirmedPaid → [paid]
-///   2. ridePaid && billitPaymentSyncPending → [syncInProgress]
-///   3. !ridePaid && invoice outstanding → [outstanding]
-///   4. terminal sync failure → [syncFailed] (retryable, never outstanding)
+///   2. ridePaid + Billit linked + sync failed → [syncFailed]
+///   3. ridePaid + Billit linked + sync pending → [syncInProgress]
+///   4. ridePaid + no Billit link → [notLinkedToBillit]
+///   5. !ridePaid → [outstanding]
 ///
-/// `billitPaid == false` alone MUST NOT become [outstanding] when the ride is
-/// already paid and Billit is still updating / sync-pending.
+/// Missing `billit_export` / empty sync token / `billitPaid == null` MUST NOT
+/// become [syncInProgress] when there is no Billit order link.
 StreetInvoicePaymentPresentation resolveStreetInvoicePaymentPresentation({
   required bool hasIssuedInvoice,
   required bool ridePaid,
@@ -1178,17 +1186,17 @@ StreetInvoicePaymentPresentation resolveStreetInvoicePaymentPresentation({
   final syncToken = _lower(billitPaymentSyncStatus);
   final invoicePaymentConfirmedPaid =
       billitPaid == true || syncToken == 'synced';
-  final billitSyncFailed = syncToken == 'failed';
-  // Sync is pending when Billit has not confirmed paid yet — including the
-  // explicit `billitPaid == false` lag case while the ride is already paid.
-  final billitPaymentSyncPending =
-      syncPending ||
-      billitUpdating ||
-      syncToken == 'pending' ||
-      syncToken == 'in_progress' ||
-      syncToken.isEmpty ||
-      billitPaid == false ||
-      billitPaid == null;
+  final billitSyncFailed = hasBillitLink && syncToken == 'failed';
+  // Active payment-sync only applies after a Billit order is linked.
+  // Empty/null export fields without a link are "not linked", not syncing.
+  final billitPaymentSyncPending = hasBillitLink &&
+      (syncPending ||
+          billitUpdating ||
+          syncToken == 'pending' ||
+          syncToken == 'in_progress' ||
+          syncToken.isEmpty ||
+          billitPaid == false ||
+          billitPaid == null);
 
   StreetInvoiceInvoicePaymentStatus invoicePay;
   String reason;
@@ -1197,23 +1205,21 @@ StreetInvoicePaymentPresentation resolveStreetInvoicePaymentPresentation({
     invoicePay = StreetInvoiceInvoicePaymentStatus.outstanding;
     reason = 'no_invoice';
   } else if (invoicePaymentConfirmedPaid) {
-    // Priority 1 — definitive paid.
     invoicePay = StreetInvoiceInvoicePaymentStatus.paid;
     reason = billitPaid == true ? 'billit_paid' : 'billit_sync_synced';
   } else if (rideConfirmedPaid && billitSyncFailed) {
-    // Priority 4 — terminal sync failure (retryable), never outstanding.
     invoicePay = StreetInvoiceInvoicePaymentStatus.syncFailed;
     reason = 'payment_sync_failed_retryable';
-  } else if (rideConfirmedPaid && billitPaymentSyncPending) {
-    // Priority 2 — paid ride, Billit still catching up.
+  } else if (rideConfirmedPaid && hasBillitLink && billitPaymentSyncPending) {
     invoicePay = StreetInvoiceInvoicePaymentStatus.syncInProgress;
     reason = 'payment_sync_in_progress';
+  } else if (rideConfirmedPaid && !hasBillitLink) {
+    invoicePay = StreetInvoiceInvoicePaymentStatus.notLinkedToBillit;
+    reason = 'not_linked_to_billit';
   } else if (rideConfirmedPaid) {
-    // Defensive: paid ride without confirmed Billit paid is always syncing.
     invoicePay = StreetInvoiceInvoicePaymentStatus.syncInProgress;
     reason = 'payment_sync_in_progress';
   } else {
-    // Priority 3 — truly unpaid ride/invoice.
     invoicePay = StreetInvoiceInvoicePaymentStatus.outstanding;
     reason = 'invoice_outstanding';
   }
@@ -1482,12 +1488,14 @@ String? streetBusinessInvoicePaymentStatusKey({
   required bool receiptPaid,
   bool paymentSyncInProgress = false,
   bool paymentSyncFailed = false,
+  bool notLinkedToBillit = false,
 }) {
   if (!hasInvoice) return null;
   if (receiptPaid ||
       invoicePaid ||
       paymentSyncInProgress ||
-      paymentSyncFailed) {
+      paymentSyncFailed ||
+      notLinkedToBillit) {
     return 'paid';
   }
   return 'invoicePending';
@@ -1921,6 +1929,10 @@ class StreetBusinessInvoiceController extends ChangeNotifier {
   bool get displayPaymentSyncFailed =>
       displayInvoicePaymentStatus ==
       StreetInvoiceInvoicePaymentStatus.syncFailed;
+
+  bool get displayNotLinkedToBillit =>
+      displayInvoicePaymentStatus ==
+      StreetInvoiceInvoicePaymentStatus.notLinkedToBillit;
 
   /// Language-independent raw inputs + resolved semantic status, so the card
   /// and the detail modal can emit identical bounded diagnostics and prove the

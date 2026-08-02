@@ -31,7 +31,7 @@ import {
   documentReferenceTypePart,
 } from "./parsing_utils.js";
 import { sha256Hex } from "./crypto_utils.js";
-import { buildSafeBillitExportProjection } from "./billit_provider.js";
+import { buildSafeBillitExportProjection, buildSafeBillitLinkStatusProjection } from "./billit_provider.js";
 
 // Internal masking helper — behavior-identical clone of the main worker's
 // `_bookingIntentMask` used for PII-free log lines emitted by
@@ -444,6 +444,8 @@ export function buildIssuedDocumentPublicMetadata(record) {
     // B6b: safe Billit export link projection (envelope-only; null when absent).
     // Never exposes tokens, the raw OAuth record, or the raw Billit response.
     billit_export: buildSafeBillitExportProjection(rec),
+    // RELEASE-P0: durable pre-link / attempt status (safe; no secrets).
+    billit_link_status: buildSafeBillitLinkStatusProjection(rec),
   };
 }
 

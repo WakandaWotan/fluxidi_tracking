@@ -512,10 +512,10 @@ void main() {
             documentNumber: 'INV-2026-000040',
             lifecycleState: 'issued',
             billitEnvironment: 'sandbox',
-            billitOrderId: '',
+            billitOrderId: 'order-linked-1',
             peppolSent: false,
             billitPaid: false,
-            billitPaymentSyncStatus: '',
+            billitPaymentSyncStatus: 'pending',
           ),
         ),
       );
@@ -528,10 +528,36 @@ void main() {
         billitPaid: false,
         billitUpdating: true,
         syncPending: true,
+        hasBillitLink: true,
       );
       expect(
         p.invoicePaymentStatus,
         StreetInvoiceInvoicePaymentStatus.syncInProgress,
+      );
+    });
+
+    test('P0: paid + no Billit link shows not-linked label, not sync', () {
+      final p = resolveStreetInvoicePaymentPresentation(
+        hasIssuedInvoice: true,
+        ridePaid: true,
+        billitPaid: null,
+        billitPaymentSyncStatus: '',
+        hasBillitLink: false,
+      );
+      expect(
+        p.invoicePaymentStatus,
+        StreetInvoiceInvoicePaymentStatus.notLinkedToBillit,
+      );
+      expect(
+        streetInvoicePaymentStatusLabel(AppLanguage.nl, p.invoicePaymentStatus),
+        'Nog niet gekoppeld aan Billit',
+      );
+      expect(
+        streetInvoicePaymentStatusLabel(
+          AppLanguage.nl,
+          StreetInvoiceInvoicePaymentStatus.syncInProgress,
+        ),
+        'Betalingssynchronisatie bezig',
       );
     });
 
@@ -657,6 +683,7 @@ void main() {
         billitPaid: false,
         billitUpdating: true,
         syncPending: true,
+        hasBillitLink: true,
       );
       expect(
         p.invoicePaymentStatus,
@@ -713,6 +740,7 @@ void main() {
         billitPaid: false,
         billitUpdating: true,
         syncPending: true,
+        hasBillitLink: true,
       );
       expect(
         p.invoicePaymentStatus,
@@ -815,7 +843,7 @@ void main() {
     }
 
     testWidgets(
-      'late paid transition: card shows sync label in NL and EN, never outstanding',
+      'late paid transition: card shows not-linked label in NL and EN, never outstanding/sync',
       (tester) async {
         final c = lagController(isPaidBooking: false);
         addTearDown(c.dispose);
@@ -826,23 +854,25 @@ void main() {
           StreetInvoiceInvoicePaymentStatus.outstanding,
         );
 
-        // Receipt later resolves the ride as canonically paid.
+        // Receipt later resolves the ride as canonically paid — still unlinked.
         c.updateCanonicalRidePaymentStatus(true);
         expect(
           c.displayInvoicePaymentStatus,
-          StreetInvoiceInvoicePaymentStatus.syncInProgress,
+          StreetInvoiceInvoicePaymentStatus.notLinkedToBillit,
         );
 
         await _pumpView(tester, controller: c, language: AppLanguage.nl);
-        expect(find.text('Betalingssynchronisatie bezig'), findsOneWidget);
+        expect(find.text('Nog niet gekoppeld aan Billit'), findsOneWidget);
         expect(find.text('Factuur openstaand'), findsNothing);
+        expect(find.text('Betalingssynchronisatie bezig'), findsNothing);
 
         await _pumpView(tester, controller: c, language: AppLanguage.en);
         expect(
-          find.text('Payment synchronization in progress'),
+          find.text('Not linked to Billit yet'),
           findsOneWidget,
         );
         expect(find.text('Invoice outstanding'), findsNothing);
+        expect(find.text('Payment synchronization in progress'), findsNothing);
       },
     );
   });
