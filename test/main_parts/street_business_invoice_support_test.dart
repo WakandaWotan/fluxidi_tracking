@@ -1508,6 +1508,43 @@ void main() {
     );
 
     test(
+      'P0 INV-34: linked + prior pending then paid/synced => paid (no syncInProgress)',
+      () {
+        final before = resolveStreetInvoicePaymentPresentation(
+          hasIssuedInvoice: true,
+          ridePaid: true,
+          billitPaid: null,
+          billitPaymentSyncStatus: '',
+          syncPending: true,
+          hasBillitLink: true,
+        );
+        expect(
+          before.invoicePaymentStatus,
+          StreetInvoiceInvoicePaymentStatus.syncInProgress,
+        );
+        expect(before.reason, 'payment_sync_in_progress');
+
+        final after = resolveStreetInvoicePaymentPresentation(
+          hasIssuedInvoice: true,
+          ridePaid: true,
+          billitPaid: true,
+          billitPaymentSyncStatus: 'synced',
+          syncPending: false,
+          hasBillitLink: true,
+        );
+        expect(
+          after.invoicePaymentStatus,
+          StreetInvoiceInvoicePaymentStatus.paid,
+        );
+        expect(after.reason, 'billit_paid');
+        expect(
+          after.invoicePaymentStatus,
+          isNot(StreetInvoiceInvoicePaymentStatus.syncInProgress),
+        );
+      },
+    );
+
+    test(
       '1B: ridePaid + billitPaid false + linked + updating => syncInProgress',
       () {
         final p = resolveStreetInvoicePaymentPresentation(

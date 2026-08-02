@@ -2163,7 +2163,9 @@ async function handleCompanyBillitSandboxOrderStatus({ request, url, env, docume
     );
   }
 
-  // 9. Map sanitized live fields + soft warnings. No registry write (read-only).
+  // 9. Map sanitized live fields + build warnings.
+  // P0: when Billit already reports paid, persist durable payment-sync fields
+  // onto the existing billit_export so refresh/re-entry converges (no new order).
   const order = readResult.order || {};
   const warnings = [];
   if (!order.order_status) warnings.push("billit_status_unknown");
@@ -2179,6 +2181,29 @@ async function handleCompanyBillitSandboxOrderStatus({ request, url, env, docume
     warnings.push("billit_currency_mismatch");
   }
 
+  let localExportObj = exportObj;
+  if (order.paid === true) {
+    const syncResult = await maybeSyncBillitSandboxOrderPaymentState(
+      env,
+      scope,
+      config,
+      record,
+      {
+        orderId: exportOrderId,
+        partyId: effectivePartyId,
+        accessToken: tokenResult.access_token,
+        tokenRefreshed: tokenResult.refreshed,
+      },
+    );
+    if (syncResult?.billit_export && typeof syncResult.billit_export === "object") {
+      localExportObj = syncResult.billit_export;
+    }
+    for (const w of syncResult?.warnings || []) {
+      const t = safeStr(w, 80);
+      if (t) warnings.push(t);
+    }
+  }
+
   console.log(
     `[COMPANY_BILLIT_ORDER_STATUS][SANDBOX][OK] doc=${docId.slice(0, 8)} order=${exportOrderId ? "yes" : "no"} status=${order.order_status ? "yes" : "no"} refreshed=${tokenResult.refreshed}`,
   );
@@ -2191,7 +2216,7 @@ async function handleCompanyBillitSandboxOrderStatus({ request, url, env, docume
     billit_party_id: effectivePartyId,
     billit_order_id: exportOrderId,
     billit_order_number: order.order_number ?? recordDocNumber,
-    local_status: safeStr(exportObj.status, 40) || null,
+    local_status: safeStr(localExportObj.status, 40) || null,
     billit_status: order.order_status ?? null,
     billit_order_date: order.order_date ?? null,
     billit_expiry_date: order.expiry_date ?? null,
@@ -2203,23 +2228,21 @@ async function handleCompanyBillitSandboxOrderStatus({ request, url, env, docume
     billit_currency: order.currency ?? null,
     billit_order_type: order.order_type ?? null,
     billit_order_direction: order.order_direction ?? null,
-    // Local envelope payment-sync metadata (P1-C-A); read-only, never overwritten.
     local_billit_paid:
-      typeof exportObj.billit_paid === "boolean" ? exportObj.billit_paid : null,
-    local_billit_paid_date: safeStr(exportObj.billit_paid_date, 40) || null,
-    billit_payment_sync_status: safeStr(exportObj.billit_payment_sync_status, 40) || null,
-    billit_payment_synced_at: safeStr(exportObj.billit_payment_synced_at, 40) || null,
-    billit_payment_sync_error: safeStr(exportObj.billit_payment_sync_error, 120) || null,
-    // Local link truth (never overwritten by a live read; read-only route).
-    sent: exportObj.sent === true,
-    peppol_sent: exportObj.peppol_sent === true,
-    send_pending: exportObj.send_pending === true,
-    peppol_send_pending: exportObj.peppol_send_pending === true,
-    reconcile_pending: exportObj.reconcile_pending === true,
-    // Response-only timestamp (B10e-A). NOT persisted to the registry.
+      typeof localExportObj.billit_paid === "boolean" ? localExportObj.billit_paid : null,
+    local_billit_paid_date: safeStr(localExportObj.billit_paid_date, 40) || null,
+    billit_payment_sync_status: safeStr(localExportObj.billit_payment_sync_status, 40) || null,
+    billit_payment_synced_at: safeStr(localExportObj.billit_payment_synced_at, 40) || null,
+    billit_payment_sync_error: safeStr(localExportObj.billit_payment_sync_error, 120) || null,
+    sent: localExportObj.sent === true,
+    peppol_sent: localExportObj.peppol_sent === true,
+    send_pending: localExportObj.send_pending === true,
+    peppol_send_pending: localExportObj.peppol_send_pending === true,
+    reconcile_pending: localExportObj.reconcile_pending === true,
     status_checked_at: new Date().toISOString(),
     warnings,
   });
+}
 }
 
 /* Shared (Patch B11-B) loader + fail-closed gate context for the Billit SANDBOX
@@ -3503,14 +3526,6 @@ async function maybeSyncBillitSandboxOrderPaymentState(
     bookingRec = null;
   }
   const paymentFields = _bookingPaymentFieldsForBillitSync(bookingRec);
-  if (!paymentFields || paymentFields.payment_status !== "paid") {
-    return {
-      ok: false,
-      skipped: true,
-      reason: "booking_not_paid",
-      warnings: ["billit_payment_sync_skipped_not_paid"],
-    };
-  }
 
   const effectiveOrderId = safeStr(orderId, 120) || safeStr(exportObj.order_id, 120);
   const effectivePartyId = safeStr(partyId, 120) || safeStr(exportObj.party_id, 120);
@@ -3524,13 +3539,16 @@ async function maybeSyncBillitSandboxOrderPaymentState(
     effectivePartyId,
     effectiveOrderId,
   );
+  // P0: when Billit already reports paid, persist durable sync even if the
+  // local booking payment projection is missing/stale. Never create a new order.
   if (readResult.ok && readResult.order?.paid === true) {
     const nowIso = new Date().toISOString();
     const mergedExport = mergeBillitExportPaymentSyncFields(exportObj, {
       billit_paid: true,
       billit_paid_date:
         safeStr(readResult.order.paid_date, 40) ||
-        formatBillitPaidDateForPatch(paymentFields.paid_at),
+        formatBillitPaidDateForPatch(paymentFields?.paid_at) ||
+        null,
       billit_payment_sync_status: "synced",
       billit_payment_synced_at: nowIso,
       billit_payment_sync_error: null,
@@ -3550,6 +3568,16 @@ async function maybeSyncBillitSandboxOrderPaymentState(
       reason: "already_paid",
       billit_export: persistResult.ok ? persistResult.export : mergedExport,
       warnings: ["billit_payment_already_paid_in_billit"],
+    };
+  }
+
+  // PATCH path only: require a paid booking before writing payment to Billit.
+  if (!paymentFields || paymentFields.payment_status !== "paid") {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "booking_not_paid",
+      warnings: ["billit_payment_sync_skipped_not_paid"],
     };
   }
 
@@ -3618,6 +3646,62 @@ async function maybeSyncBillitSandboxOrderPaymentState(
     warnings,
     billit_error_code: syncError || null,
   };
+}
+
+
+/* P0: best-effort heal for linked sandbox invoices whose Billit order is already
+ * paid but local billit_export payment-sync fields were never persisted. Used by
+ * company documents list so refresh/re-entry converges without a second create. */
+async function maybeHealIncompleteBillitPaymentSyncForBookingDocuments(
+  env,
+  scope,
+  listedDocuments,
+) {
+  const config = resolveBillitOAuthConfig(env);
+  if (config.environment !== "sandbox" || !config.configured) {
+    return { healed: false };
+  }
+  let healed = false;
+  const docs = Array.isArray(listedDocuments) ? listedDocuments : [];
+  for (const doc of docs) {
+    if (safeStr(doc?.document_type, 40).toLowerCase() !== "invoice") continue;
+    const docId = safeStr(doc?.document_id, 200);
+    const exportProj =
+      doc?.billit_export && typeof doc.billit_export === "object"
+        ? doc.billit_export
+        : null;
+    if (!docId || !exportProj || !safeStr(exportProj.order_id, 120)) continue;
+    if (
+      exportProj.billit_paid === true ||
+      safeStr(exportProj.billit_payment_sync_status, 40) === "synced"
+    ) {
+      continue;
+    }
+    const record = await loadIssuedDocumentRegistryRecordById(env, scope, docId);
+    if (!record) continue;
+    const tokenResult = await acquireBillitSandboxAccessToken(env, scope, config);
+    if (!tokenResult.ok) continue;
+    const syncResult = await maybeSyncBillitSandboxOrderPaymentState(
+      env,
+      scope,
+      config,
+      record,
+      {
+        orderId: safeStr(exportProj.order_id, 120),
+        partyId: safeStr(exportProj.party_id, 120) || undefined,
+        accessToken: tokenResult.access_token,
+        tokenRefreshed: tokenResult.refreshed,
+      },
+    );
+    if (
+      syncResult?.reason === "already_paid" ||
+      syncResult?.billit_export?.billit_paid === true ||
+      safeStr(syncResult?.billit_export?.billit_payment_sync_status, 40) === "synced"
+    ) {
+      healed = true;
+    }
+  }
+  return { healed };
 }
 
 /* Orchestrator (Patch B8a): idempotently ensure a Billit SANDBOX order exists
@@ -32512,7 +32596,7 @@ export default {
               }
             }
 
-            const listed = await listIssuedDocumentsForBooking(
+            let listed = await listIssuedDocumentsForBooking(
               env,
               scope,
               sourceBookingId,
@@ -32520,6 +32604,25 @@ export default {
             if (!listed.ok) {
               const status = listed.error === "missing_binding" ? 503 : 400;
               return json({ ok: false, error: listed.error }, status);
+            }
+            // P0: if Billit already paid but local sync fields missing, heal once
+            // then re-list so street-invoice UI converges on refresh/re-entry.
+            try {
+              const heal = await maybeHealIncompleteBillitPaymentSyncForBookingDocuments(
+                env,
+                scope,
+                listed.documents,
+              );
+              if (heal?.healed) {
+                const relisted = await listIssuedDocumentsForBooking(
+                  env,
+                  scope,
+                  sourceBookingId,
+                );
+                if (relisted.ok) listed = relisted;
+              }
+            } catch (_) {
+              // Non-fatal: keep the original list projection.
             }
             const documents = Array.isArray(listed.documents)
               ? listed.documents

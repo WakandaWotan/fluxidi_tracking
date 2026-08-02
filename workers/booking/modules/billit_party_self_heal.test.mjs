@@ -17,6 +17,7 @@ import {
   persistBillitPartyIdOnConnectionRecord,
   resolveBillitPartyIdWithSelfHeal,
   isBillitCompanySandboxOAuthAllowed,
+  mergeBillitExportPaymentSyncFields,
 } from "./billit_provider.js";
 
 test("1: single administration resolves PartyID", () => {
@@ -297,4 +298,31 @@ test("export preservation: link-status merge keeps existing billit_export", () =
   };
   assert.equal(merged.billit_export.order_id, "3138157");
   assert.equal(merged.billit_link_status.state, "linked");
+});
+
+test("P0 payment sync converge: live paid + prior pending merge => synced paid", () => {
+  const existing = {
+    provider: "billit",
+    environment: "sandbox",
+    order_id: "3138157",
+    order_number: "INV-2026-000034",
+    status: "created",
+    billit_paid: null,
+    billit_payment_sync_status: null,
+    peppol_sent: false,
+    sent: false,
+  };
+  const merged = mergeBillitExportPaymentSyncFields(existing, {
+    billit_paid: true,
+    billit_paid_date: "2026-08-02",
+    billit_payment_sync_status: "synced",
+    billit_payment_synced_at: "2026-08-02T12:00:00.000Z",
+    billit_payment_sync_error: null,
+  });
+  assert.equal(merged.order_id, "3138157");
+  assert.equal(merged.order_number, "INV-2026-000034");
+  assert.equal(merged.billit_paid, true);
+  assert.equal(merged.billit_payment_sync_status, "synced");
+  assert.equal(merged.peppol_sent, false);
+  assert.equal(merged.sent, false);
 });
