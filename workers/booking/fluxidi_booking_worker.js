@@ -107,8 +107,15 @@ import {
   mergeBillitOutboxAttemptResult,
   isBillitOutboxDue,
   normalizeLegacyOutboxRecord,
+  canRequeueBillitOutbox,
+  requeueExhaustedBillitOutbox,
   IN_PROGRESS_STALL_MS as BILLIT_IN_PROGRESS_STALL_MS,
 } from "./modules/billit_export_recovery.js";
+import {
+  todayNLBrussels,
+  DEFAULT_COMPANY_TIMEZONE,
+} from "./modules/brussels_datetime.js";
+import { formatDocumentPhoneDisplay } from "./modules/document_phone_format.js";
 import { peppolIdentifierFromBelgianEnterpriseNumber } from "./modules/peppol_readiness.js";
 import {
   reconcileBillitOrderTotalAgainstDocument,
@@ -254,6 +261,7 @@ import {
   shouldRefreshStreetInvoicePdfArtifact,
   readStoredStreetInvoicePdfProjectionRevision,
   normalizeVatRatePercent,
+  pickCustomerVisibleAddress,
 } from "./modules/street_invoice_pdf_projection.js";
 import {
   isLegacyFlxInvoiceNumber,
@@ -1469,20 +1477,8 @@ async function runBillitDurableExportAttempt(env, scope, opts = {}) {
       existingRaw = null;
     }
     // If a terminal state is already recorded, do not attempt.
-    if (existingRaw && typeof existingRaw === "object") {
-      const st = safeStr(existingRaw.state, 40);
-      if (st === BILLIT_EXPORT_STATES.SYNCED) {
-        return { ok: true, skipped: true, reason: "already_synced" };
-      }
-      if (st === BILLIT_EXPORT_STATES.PERMANENT_ERROR) {
-        return {
-          ok: false,
-          skipped: true,
-          reason: "permanent_error",
-          error_code: safeStr(existingRaw.last_error_code, 120) || null,
-        };
-      }
-    }
+    // Normalize first so legacy "permanent_error after max attempts on
+    // transient upstream" becomes exhausted_retryable and remains recoverable.
     const previous = existingRaw
       ? normalizeLegacyOutboxRecord(existingRaw)
       : buildPendingOutboxRecord({
@@ -1493,6 +1489,20 @@ async function runBillitDurableExportAttempt(env, scope, opts = {}) {
           idempotencyKey: buildBillitSandboxOrderCreateIdempotencyKey(documentId),
           invoiceIdempotencyKey: options.invoiceIdempotencyKey,
         });
+    if (previous && typeof previous === "object") {
+      const st = safeStr(previous.state, 40);
+      if (st === BILLIT_EXPORT_STATES.SYNCED) {
+        return { ok: true, skipped: true, reason: "already_synced" };
+      }
+      if (st === BILLIT_EXPORT_STATES.PERMANENT_ERROR) {
+        return {
+          ok: false,
+          skipped: true,
+          reason: "permanent_error",
+          error_code: safeStr(previous.last_error_code, 120) || null,
+        };
+      }
+    }
     if (outboxKey && previous) {
       const inProgress = markOutboxInProgress(previous);
       try {
@@ -1665,6 +1675,109 @@ async function sweepBillitDurableRecoveryOutbox(env, ctx, options = {}) {
 }
 
 /* ===================== END BILLIT-DURABLE-EXPORT-RECOVERY-P0-1 ===================== */
+
+/**
+ * Admin-only requeue for exhausted_retryable Billit export outboxes.
+ * POST /admin/documents/:documentId/billit-export/requeue
+ *
+ * Only resumes transient upstream exhaustion (5xx/network after max short
+ * backoff). True permanent validation / auth / administration-selection /
+ * payload errors are refused. Preserves the deterministic Idempotent-Key.
+ * Does not mutate Mollie, Peppol, invoice totals, or payment truth.
+ */
+async function handleAdminBillitExportRequeue({ request, url, env, documentId }) {
+  try {
+    _requireAdmin(request, url, env);
+  } catch (err) {
+    const message = String(err?.message || "Unauthorized");
+    return json(
+      {
+        ok: false,
+        error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+      },
+      message === "Unauthorized" ? 401 : 500,
+    );
+  }
+  const docId = safeStr(documentId, 200);
+  if (!docId) return json({ ok: false, error: "missing_document_id" }, 400);
+  if (!env?.BOOKING_KV) return json({ ok: false, error: "missing_binding" }, 503);
+
+  const tenantId =
+    safeStr(url.searchParams.get("tenant_id"), 96) ||
+    safeStr(url.searchParams.get("tenantId"), 96);
+  const companyId =
+    safeStr(url.searchParams.get("company_id"), 96) ||
+    safeStr(url.searchParams.get("companyId"), 96);
+  if (!tenantId || !companyId) {
+    return json({ ok: false, error: "missing_tenant_or_company" }, 400);
+  }
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const outboxKey = buildBillitCreateOutboxKey(scope, docId);
+  if (!outboxKey) return json({ ok: false, error: "invalid_outbox_key" }, 400);
+
+  let raw = null;
+  try {
+    raw = await env.BOOKING_KV.get(outboxKey, { type: "json" });
+  } catch (_) {
+    raw = null;
+  }
+  if (!raw || typeof raw !== "object") {
+    return json({ ok: false, error: "outbox_not_found" }, 404);
+  }
+  const normalized = normalizeLegacyOutboxRecord(raw);
+  const gate = canRequeueBillitOutbox(normalized);
+  if (!gate.ok) {
+    return json(
+      {
+        ok: false,
+        error: "requeue_not_allowed",
+        reason: gate.reason,
+        state: normalized?.state || null,
+      },
+      409,
+    );
+  }
+  const requeued = requeueExhaustedBillitOutbox(normalized);
+  if (!requeued) {
+    return json({ ok: false, error: "requeue_failed" }, 409);
+  }
+  try {
+    await env.BOOKING_KV.put(outboxKey, JSON.stringify(requeued));
+  } catch (_) {
+    return json({ ok: false, error: "outbox_persist_failed" }, 500);
+  }
+  // Best-effort immediate attempt (same idempotency key). Failure leaves the
+  // pending outbox for the cron sweep.
+  let attempt = null;
+  try {
+    attempt = await runBillitDurableExportAttempt(env, scope, {
+      documentId: docId,
+      documentNumber: requeued.document_number,
+      bookingId: requeued.booking_id,
+      invoiceIdempotencyKey: requeued.invoice_idempotency_key,
+      source: "admin_requeue",
+    });
+  } catch (_) {
+    attempt = { ok: false, error_code: "recovery_exception" };
+  }
+  console.log(
+    `[BILLIT_DURABLE_RECOVERY][REQUEUE] document=${docId.slice(0, 8)}… reason=${gate.reason} attempt_ok=${attempt?.ok === true} skipped=${attempt?.skipped === true}`,
+  );
+  return json({
+    ok: true,
+    requeued: true,
+    reason: gate.reason,
+    outbox_state: requeued.state,
+    idempotency_key: requeued.idempotency_key,
+    attempt: {
+      ok: attempt?.ok === true,
+      skipped: attempt?.skipped === true,
+      reason: attempt?.reason || null,
+      error_code: attempt?.error_code || null,
+      billit_order_id: attempt?.billit_order_id || null,
+    },
+  });
+}
 
 /* Admin-only, SANDBOX-ONLY Billit order create for ONE invoice document (Patch
  * B6a). Heavily guarded: explicit confirmation + document_number match, invoice-
@@ -29362,7 +29475,17 @@ async function resolveTenantCommunicationProfile(env, tenantId = null, companyId
     address: sellerComm.address || addressParts.join("\n"),
     vatNumber: sellerComm.vatNumber || business?.vatNumber,
     companyNumber: business?.companyRegistrationNumber || sellerComm.enterpriseNumber,
-    logoUrl: env?.INVOICE_LOGO_URL,
+    // Prefer company-hosted public logo; never invent a CDN URL here.
+    logoUrl:
+      safeStr(business?.publicLogoUrl, 500) ||
+      safeStr(business?.public_logo_url, 500) ||
+      safeStr(env?.INVOICE_LOGO_URL, 500) ||
+      safeStr(env?.INVOICE_LOGO_DATA_URI, 4000) ||
+      "",
+    publicLogoUrl: safeStr(business?.publicLogoUrl, 500) || "",
+    timezone:
+      safeStr(business?.timezone || business?.time_zone || business?.timeZone, 80) ||
+      DEFAULT_COMPANY_TIMEZONE,
     invoiceFooter: business?.invoiceReceiptFooterText || footerTemplate,
     receiptFooter: business?.invoiceReceiptFooterText || footerTemplate,
     locale: business?.locale || "nl",
@@ -32931,6 +33054,39 @@ export default {
           } catch (err) {
             console.log(
               `[BILLIT_ORDER_CREATE][SANDBOX][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+      }
+
+      // POST /admin/documents/:documentId/billit-export/requeue?tenant_id=&company_id=
+      // Safe resume for exhausted_retryable (transient 5xx/network). Never
+      // reopens true permanent validation/auth/admin-selection errors.
+      if (
+        request.method === "POST" &&
+        url.pathname.startsWith("/admin/documents/") &&
+        url.pathname.endsWith("/billit-export/requeue")
+      ) {
+        const segs = url.pathname.split("/").filter(Boolean);
+        if (
+          segs.length === 5 &&
+          segs[0] === "admin" &&
+          segs[1] === "documents" &&
+          segs[3] === "billit-export" &&
+          segs[4] === "requeue"
+        ) {
+          try {
+            const documentId = safeStr(decodeURIComponent(segs[2]), 200) || "";
+            return await handleAdminBillitExportRequeue({
+              request,
+              url,
+              env,
+              documentId,
+            });
+          } catch (err) {
+            console.log(
+              `[BILLIT_EXPORT_REQUEUE][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
             );
             return json({ ok: false, error: "internal_error" }, 500);
           }
@@ -64569,6 +64725,66 @@ async function stampBookingInvoiceDocumentCoreBinding(
  * Document Core + booking projection. Never allocates a new invoice number,
  * never creates/PATCHes Billit, never sends Peppol. Ordinary download stays
  * read-only (handleBookingInvoicePdfGet). */
+async function freezeInvoiceRouteAddressSnapshots(env, bookingId, rec) {
+  if (!env?.BOOKING_KV || !bookingId || !rec || typeof rec !== "object") {
+    return rec;
+  }
+  const booking =
+    rec.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const existingFrom = safeStr(
+    rec.invoice_from_address ?? booking.invoice_from_address,
+    400,
+  );
+  const existingTo = safeStr(
+    rec.invoice_to_address ?? booking.invoice_to_address,
+    400,
+  );
+  const from = existingFrom || pickCustomerVisibleAddress(
+    booking.from_full_address,
+    rec.from_full_address,
+    booking.from_label,
+    rec.from_label,
+    booking.pickup_address,
+    booking.pickupAddress,
+    booking.from,
+    rec.from,
+  );
+  const to = existingTo || pickCustomerVisibleAddress(
+    booking.to_full_address,
+    rec.to_full_address,
+    booking.to_label,
+    rec.to_label,
+    booking.destination_address,
+    booking.dropoff_address,
+    booking.to,
+    rec.to,
+  );
+  // Nothing authoritative to freeze.
+  if (!from && !to) return rec;
+  if (existingFrom && existingTo) return rec; // already frozen
+  if (existingFrom === from && existingTo === to && (existingFrom || existingTo)) {
+    return rec;
+  }
+  const next = { ...rec };
+  if (from && !existingFrom) {
+    next.invoice_from_address = from;
+  }
+  if (to && !existingTo) {
+    next.invoice_to_address = to;
+  }
+  if (next.booking && typeof next.booking === "object") {
+    next.booking = { ...next.booking };
+    if (from && !existingFrom) next.booking.invoice_from_address = from;
+    if (to && !existingTo) next.booking.invoice_to_address = to;
+  }
+  try {
+    await env.BOOKING_KV.put(`booking:${bookingId}`, JSON.stringify(next));
+    return next;
+  } catch (_) {
+    return rec;
+  }
+}
+
 async function ensureStreetBusinessInvoicePdfArtifact(
   env,
   scope,
@@ -64716,6 +64932,15 @@ async function ensureStreetBusinessInvoicePdfArtifact(
     } catch (_) {
       // Non-fatal: generateAndSendInvoice can still reuse invoiceNumber via input.
     }
+  }
+
+  // Freeze customer-visible route addresses onto the booking envelope once
+  // (outside Document Core content_hash). Later PDF regen uses these
+  // snapshots and never reverse-geocodes or prints raw coordinate pairs.
+  try {
+    rec = await freezeInvoiceRouteAddressSnapshots(env, safeBookingId, rec);
+  } catch (_) {
+    // non-fatal — projection still sanitizes coordinates
   }
 
   // Drop the old early number/stamp block — document resolution already done above.
@@ -90484,11 +90709,9 @@ async function persistInvoiceNumberForBooking(env, bookingRecordInfo, invoiceNum
 }
 
 function todayNL() {
-  const d = new Date();
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = String(d.getFullYear());
-  return `${dd}/${mm}/${yyyy}`;
+  // Company-local calendar date (Europe/Brussels). Never use host getDate()
+  // or getUTC* — those mis-date invoices near midnight / DST boundaries.
+  return todayNLBrussels(new Date());
 }
 
 function computeInvoiceBaseLineEx(pricing) {
@@ -90507,14 +90730,15 @@ function renderInvoiceHtml(env, data, commProfile = null) {
   const d = data || {};
   const profile = maybeNormalizeCommunicationProfile(commProfile || {});
 
-  const DEFAULT_LOGO_URL = "https://cdn.shopify.com/s/files/1/0959/4788/2827/files/ChatGPT_Image_9_jan_2026_17_37_39_fef5e6e4-ad29-43cd-b950-c98f77f27e0d.png?v=1768311638";
-  const preserveIssuedSeller =
-    safeStr(d.seller_source || d.sellerSource) === "document_core_seller_snapshot";
+  // Never invent a CDN logo — network failure must not produce a broken image.
+  // Prefer configured company/env logo URL or an embedded data-URI; otherwise omit.
   const LOGO_URL =
     safeStr(profile.logoUrl) ||
-    (preserveIssuedSeller
-      ? ""
-      : safeStr(env?.INVOICE_LOGO_URL) || safeStr(d.logoUrl) || DEFAULT_LOGO_URL);
+    safeStr(profile.publicLogoUrl) ||
+    safeStr(env?.INVOICE_LOGO_URL) ||
+    safeStr(d.logoUrl) ||
+    safeStr(env?.INVOICE_LOGO_DATA_URI) ||
+    "";
   // Never invent Fluxidi Taxi / Fluxidi BV / hardcoded address/VAT fallbacks.
   const sellerPresentationLines = Array.isArray(profile.sellerPresentationLines)
     ? profile.sellerPresentationLines.filter((line) => safeStr(line))
@@ -90531,7 +90755,7 @@ function renderInvoiceHtml(env, data, commProfile = null) {
   const sellerBrand =
     sanitizeTenantString(profile.tradingName || profile.brandName || "", 160) ||
     sanitizeTenantString(profile.legalName || "", 160) ||
-    "—";
+    "";
   const sellerLegal =
     sanitizeTenantString(
       profile.legalEntrepreneurName || profile.legalName || "",
@@ -90542,18 +90766,19 @@ function renderInvoiceHtml(env, data, commProfile = null) {
     safeStr(profile.vatNumberDisplay) ||
     safeStr(profile.vatNumber) ||
     "";
-  const sellerPhone = safeStr(profile.phone) || "";
-  const sellerFooter = preserveIssuedSeller
-    ? safeStr(profile.invoiceFooter) || ""
-    : safeStr(profile.invoiceFooter) ||
-      (sellerBrand && sellerBrand !== "—"
-        ? `Dank u voor het vertrouwen in ${sellerBrand} — wij brengen u in stijl.`
-        : "");
+  const sellerPhone =
+    formatDocumentPhoneDisplay(safeStr(profile.phone)) ||
+    safeStr(profile.phone) ||
+    "";
+  // Only render a configured footer — never invent an outdated slogan.
+  const sellerFooter = safeStr(profile.invoiceFooter) || "";
   const sellerIdentityHtml = sellerPresentationLines.length
     ? sellerPresentationLines
         .map((line) => escapeHtml(String(line)))
         .join("<br>")
-    : `<strong>${escapeHtml(sellerLegal)}</strong>`;
+    : sellerLegal
+      ? `<strong>${escapeHtml(sellerLegal)}</strong>`
+      : "";
   const sellerAddressHtml = escapeHtml(sellerAddress).replace(/\n/g, "<br>");
   const sellerEnterpriseLine = safeStr(profile.enterpriseNumberDisplay)
     ? `Ondernemingsnummer: ${escapeHtml(profile.enterpriseNumberDisplay)}<br>`
@@ -90565,6 +90790,43 @@ function renderInvoiceHtml(env, data, commProfile = null) {
   const sellerBlockHasEnterprise = sellerPresentationLines.some((line) =>
     /Ondernemingsnummer:|Enterprise number:/i.test(String(line)),
   );
+
+  const omitTier = d.omitTier === true || !safeStr(d.tier);
+  const omitService = d.omitService === true || !safeStr(d.service);
+  const omitPaxBags =
+    d.omitPaxBags === true ||
+    (d.paxKnown !== true &&
+      d.bagsKnown !== true &&
+      (d.pax === null || d.pax === undefined || d.pax === "") &&
+      (d.bags === null || d.bags === undefined || d.bags === ""));
+  const paxDisplay =
+    d.paxKnown === true || (d.pax !== null && d.pax !== undefined && d.pax !== "")
+      ? String(toInt(d.pax, 0))
+      : "";
+  const bagsDisplay =
+    d.bagsKnown === true ||
+    (d.bags !== null && d.bags !== undefined && d.bags !== "")
+      ? String(toInt(d.bags, 0))
+      : "";
+  const fromDisplay = safeStr(d.from) || "Niet opgegeven";
+  const toDisplay = safeStr(d.to) || "Niet opgegeven";
+  const missingLabel = "Niet opgegeven";
+  const tierLine = omitTier
+    ? ""
+    : `<strong>Ritniveau:</strong> ${escapeHtml(safeStr(d.tier))}${
+        !omitService ? ` <span class="pill">${escapeHtml(d.service)}</span>` : ""
+      }<br>`;
+  const paxBagsLine = omitPaxBags
+    ? ""
+    : `<strong>Passagiers / Koffers:</strong> ${escapeHtml(
+        paxDisplay || missingLabel,
+      )} / ${escapeHtml(bagsDisplay || missingLabel)}<br>`;
+  const logoHtml = LOGO_URL
+    ? `<img alt="${escapeHtml(sellerBrand || "Fluxidi")}" src="${escapeHtml(LOGO_URL)}">`
+    : "";
+  const taxidienstLabel = omitTier
+    ? `<strong>Taxidienst</strong>`
+    : `<strong>Taxidienst</strong> <span class="muted">(${escapeHtml(safeStr(d.tier))})</span>`;
 
   const vatRatePct = (() => {
     const fromPercent = Number(d.vatRate);
@@ -90856,10 +91118,10 @@ function renderInvoiceHtml(env, data, commProfile = null) {
 
   <div class="header">
     <div class="logo">
-      <img alt="${escapeHtml(sellerBrand)}" src="${escapeHtml(LOGO_URL)}">
+      ${logoHtml}
     </div>
     <div class="company-info">
-      ${sellerPresentationLines.length ? sellerIdentityHtml : `<strong>${escapeHtml(sellerLegal)}</strong>`}<br>
+      ${sellerPresentationLines.length ? sellerIdentityHtml : (sellerLegal ? `<strong>${escapeHtml(sellerLegal)}</strong>` : "")}<br>
       ${sellerAddressHtml}${sellerAddress ? "<br>" : ""}
       ${sellerBlockHasEnterprise ? "" : sellerEnterpriseLine}
       ${sellerBlockHasVat ? "" : (sellerVat ? `BTW: ${escapeHtml(sellerVat)}<br>` : "")}
@@ -90876,19 +91138,19 @@ function renderInvoiceHtml(env, data, commProfile = null) {
     </div>
 
     <div class="box" style="text-align:right;">
-      <strong>Factuurnummer:</strong> <span class="mono">${escapeHtml(safeStr(d.invoiceNumber) || "—")}</span><br>
-      <strong>Factuurdatum:</strong> ${escapeHtml(safeStr(d.invoiceDate) || "—")}<br>
-      <strong>Datum dienst:</strong> ${escapeHtml(safeStr(d.tripDate) || "—")}<br>
+      <strong>Factuurnummer:</strong> <span class="mono">${escapeHtml(safeStr(d.invoiceNumber) || missingLabel)}</span><br>
+      <strong>Factuurdatum:</strong> ${escapeHtml(safeStr(d.invoiceDate) || missingLabel)}<br>
+      <strong>Datum dienst:</strong> ${escapeHtml(safeStr(d.tripDate) || missingLabel)}<br>
 
       <small>
-        <strong>Booking ID:</strong> <span class="mono">${escapeHtml(safeStr(d.bookingPublicId) || safeStr(d.bookingId) || "—")}</span><br>
+        <strong>Booking ID:</strong> <span class="mono">${escapeHtml(safeStr(d.bookingPublicId) || safeStr(d.bookingId) || missingLabel)}</span><br>
         ${rideStatusLine}
         ${paymentLine}
         ${paymentMethodLine}
         ${paymentSourceLine}
-        <strong>Ritniveau:</strong> ${escapeHtml(safeStr(d.tier) || "—")}${safeStr(d.service) ? ` <span class="pill">${escapeHtml(d.service)}</span>` : ""}<br>
-        <strong>Ophaaltijd:</strong> ${escapeHtml(safeStr(d.pickupTime) || "—")}<br>
-        <strong>Passagiers / Koffers:</strong> ${escapeHtml(String(toInt(d.pax, 0)))} / ${escapeHtml(String(toInt(d.bags, 0)))}<br>
+        ${tierLine}
+        <strong>Ophaaltijd:</strong> ${escapeHtml(safeStr(d.pickupTime) || missingLabel)}<br>
+        ${paxBagsLine}
         <strong>Wachttijd:</strong> ${escapeHtml(String(toInt(d.waitMinutes, 0)))} min<br>
         <strong>Retour:</strong> ${d.returnTrip ? "JA" : "NEE"}
       </small>
@@ -90906,8 +91168,8 @@ function renderInvoiceHtml(env, data, commProfile = null) {
       ${hasDisplayStructuredLegs ? `${legRows}${waitingPackageRow}` : `
       <tr>
         <td>
-          <strong>Taxidienst</strong> <span class="muted">(${escapeHtml(safeStr(d.tier) || "—")})</span><br>
-          ${escapeHtml(safeStr(d.from) || "—")} → ${escapeHtml(safeStr(d.to) || "—")}<br>
+          ${taxidienstLabel}<br>
+          ${escapeHtml(fromDisplay)} → ${escapeHtml(toDisplay)}<br>
           ${stopsLine}
           ${returnLine}
           ${kmLine}${minLine}
@@ -91520,15 +91782,27 @@ async function generateAndSendInvoice({
       routeKm: (typeof bookingInput.routeKm === "number") ? bookingInput.routeKm : null,
       routeMinutes: (typeof bookingInput.routeMinutes === "number") ? bookingInput.routeMinutes : null,
 
-      // service
+      // service — preserve nulls so the renderer can omit unknown optionals
       tier: bookingInput.tier || "",
       service: bookingInput.service || "",
-      pax: toInt(bookingInput.pax, 0),
-      bags: toInt(bookingInput.bags, 0),
+      pax:
+        bookingInput.pax === null || bookingInput.pax === undefined
+          ? null
+          : toInt(bookingInput.pax, 0),
+      bags:
+        bookingInput.bags === null || bookingInput.bags === undefined
+          ? null
+          : toInt(bookingInput.bags, 0),
+      paxKnown: bookingInput.paxKnown === true,
+      bagsKnown: bookingInput.bagsKnown === true,
+      omitTier: bookingInput.omitTier === true || !bookingInput.tier,
+      omitService: bookingInput.omitService === true || !bookingInput.service,
+      omitPaxBags: bookingInput.omitPaxBags === true,
       rideStatus: bookingInput.rideStatus || "",
       paymentStatus: bookingInput.paymentStatus || "",
       paymentMethod: bookingInput.paymentMethod || "",
       paymentSource: bookingInput.paymentSource || "",
+      seller_source: bookingInput.seller_source || bookingInput.sellerSource || "",
 
       // customer (buyer/legal identity prefers billing_customer_snapshot, then
       // legacy fields; passenger customerName is left as-is and never used as a

@@ -20,8 +20,19 @@ import {
   normalizePaymentMethodId,
   resolvePaymentMethodTruthFromRecord,
 } from "./payment_method_truth.js";
+import {
+  companyDateTimePartsFromIso,
+  resolveCompanyTimezone,
+  DEFAULT_COMPANY_TIMEZONE,
+} from "./brussels_datetime.js";
+import {
+  pickCustomerVisibleAddress,
+  looksLikeCoordinatePair,
+  formatDocumentPhoneDisplay,
+} from "./document_phone_format.js";
 
 export const STREET_INVOICE_PDF_PROJECTION_VERSION = "street_pdf_proj_v1";
+export { looksLikeCoordinatePair, pickCustomerVisibleAddress, formatDocumentPhoneDisplay };
 
 function _norm(v) {
   return safeStr(v, 400);
@@ -400,32 +411,22 @@ export function resolveInvoiceSellerCommProfile({
   };
 }
 
-function _formatIsoLocalParts(iso) {
-  const text = _norm(iso);
-  if (!text) return { date: "", time: "" };
-  const ms = Date.parse(text);
-  if (!Number.isFinite(ms)) {
-    // Best-effort parse of YYYY-MM-DDTHH:MM
-    const m = text.match(
-      /^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})/,
-    );
-    return m ? { date: m[1], time: m[2] } : { date: "", time: "" };
-  }
-  const d = new Date(ms);
-  const pad = (n) => String(n).padStart(2, "0");
-  // Use UTC components for stable unit tests; renderer localizes display.
-  return {
-    date: `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`,
-    time: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`,
-  };
+function _formatIsoLocalParts(iso, timezone = DEFAULT_COMPANY_TIMEZONE) {
+  // Customer-visible local parts in the company IANA timezone (DST-aware).
+  // Stored timestamps remain UTC ISO; never use getUTC* for display.
+  return companyDateTimePartsFromIso(iso, resolveCompanyTimezone(timezone));
 }
 
 /** Ride / service fields from canonical booking record. */
-export function resolveInvoiceRideProjection(bookingRecord = null) {
+export function resolveInvoiceRideProjection(
+  bookingRecord = null,
+  { timezone = DEFAULT_COMPANY_TIMEZONE } = {},
+) {
   const rec =
     bookingRecord && typeof bookingRecord === "object" ? bookingRecord : {};
   const booking =
     rec.booking && typeof rec.booking === "object" ? rec.booking : {};
+  const tz = resolveCompanyTimezone(timezone);
   const pickupIso = _norm(
     booking.pickupStartIso ||
       booking.pickup_iso ||
@@ -443,8 +444,8 @@ export function resolveInvoiceRideProjection(bookingRecord = null) {
       booking.started_at ||
       rec.trip_started_at,
   );
-  const pickupParts = _formatIsoLocalParts(pickupIso);
-  const startParts = _formatIsoLocalParts(startedIso);
+  const pickupParts = _formatIsoLocalParts(pickupIso, tz);
+  const startParts = _formatIsoLocalParts(startedIso, tz);
   const tier = _norm(
     booking.tier ?? rec.tier ?? booking.ride_tier ?? rec.ride_tier,
   );
@@ -455,23 +456,45 @@ export function resolveInvoiceRideProjection(bookingRecord = null) {
       rec.service_type ??
       booking.serviceType,
   );
+  // Authoritative route snapshot wins over mutable booking.from/to.
+  // Coordinates are never customer-visible; missing → empty (omit / "Niet opgegeven").
+  const from = pickCustomerVisibleAddress(
+    booking.invoice_from_address,
+    rec.invoice_from_address,
+    booking.from_full_address,
+    rec.from_full_address,
+    booking.from_label,
+    rec.from_label,
+    booking.pickup_address,
+    booking.pickupAddress,
+    booking.from,
+    rec.from,
+  );
+  const to = pickCustomerVisibleAddress(
+    booking.invoice_to_address,
+    rec.invoice_to_address,
+    booking.to_full_address,
+    rec.to_full_address,
+    booking.to_label,
+    rec.to_label,
+    booking.destination_address,
+    booking.dropoff_address,
+    booking.to,
+    rec.to,
+  );
   return {
     pickupStartIso: pickupIso,
     tripDate: pickupParts.date || startParts.date || "",
     pickupTime: pickupParts.time || "",
     rideStartTime: startParts.time || "",
     rideStartIso: startedIso,
+    timezone: tz,
     tier,
     service,
-    from: _norm(
-      booking.from || rec.from || booking.pickup_address || booking.pickupAddress,
-    ),
-    to: _norm(
-      booking.to ||
-        rec.to ||
-        booking.destination_address ||
-        booking.dropoff_address,
-    ),
+    from,
+    to,
+    fromMissing: !from,
+    toMissing: !to,
     stops: Array.isArray(booking.stops)
       ? booking.stops
       : Array.isArray(rec.stops)
@@ -479,6 +502,8 @@ export function resolveInvoiceRideProjection(bookingRecord = null) {
         : [],
     pax: _finiteNumber(booking.pax ?? rec.pax),
     bags: _finiteNumber(booking.bags ?? rec.bags),
+    paxKnown: _finiteNumber(booking.pax ?? rec.pax) !== null,
+    bagsKnown: _finiteNumber(booking.bags ?? rec.bags) !== null,
     rideStatus: _norm(rec.status ?? rec.lifecycle_status ?? booking.status),
   };
 }
@@ -696,7 +721,19 @@ export function buildStreetInvoicePdfProjection({
     issuedDocument,
     communicationProfile,
   });
-  const ride = resolveInvoiceRideProjection(bookingRecord);
+  const companyTimezone = resolveCompanyTimezone(
+    communicationProfile?.timezone ||
+      communicationProfile?.time_zone ||
+      DEFAULT_COMPANY_TIMEZONE,
+  );
+  const ride = resolveInvoiceRideProjection(bookingRecord, {
+    timezone: companyTimezone,
+  });
+  // Format seller phone for display without mutating stored identity.
+  if (seller && typeof seller === "object") {
+    const rawPhone = _norm(seller.phone);
+    seller.phone = formatDocumentPhoneDisplay(rawPhone) || rawPhone;
+  }
   const paymentStatus =
     typeof paymentStatusResolver === "function"
       ? _lower(paymentStatusResolver(bookingRecord)) || "unpaid"
@@ -795,11 +832,20 @@ export function buildStreetInvoicePdfProjection({
       pickupTime: ride.pickupTime || ride.rideStartTime,
       from: ride.from,
       to: ride.to,
+      fromMissing: ride.fromMissing === true,
+      toMissing: ride.toMissing === true,
       stops: ride.stops,
       tier: ride.tier,
       service: ride.service,
+      // Keep null when unknown — renderer must not invent 0/0 or "—".
       pax: ride.pax,
       bags: ride.bags,
+      paxKnown: ride.paxKnown === true,
+      bagsKnown: ride.bagsKnown === true,
+      omitTier: !ride.tier,
+      omitService: !ride.service,
+      omitPaxBags: ride.paxKnown !== true && ride.bagsKnown !== true,
+      timezone: ride.timezone || companyTimezone,
       rideStatus: ride.rideStatus,
       paymentStatus,
       paymentMethod: paymentMethodLabel || rawMethod,

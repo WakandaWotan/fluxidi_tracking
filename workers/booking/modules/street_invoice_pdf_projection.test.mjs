@@ -256,7 +256,7 @@ test("C2) new invoice without seller snapshot may use profile", () => {
   assert.equal(seller.brandName, "Profile Brand");
 });
 
-test("D) ride details mapped from booking", () => {
+test("D) ride details mapped from booking (Europe/Brussels summer)", () => {
   const ride = resolveInvoiceRideProjection(
     bookingRec({
       pickup: "2026-08-02T10:30:00.000Z",
@@ -269,9 +269,9 @@ test("D) ride details mapped from booking", () => {
   assert.equal(ride.to, "B");
   assert.equal(ride.tier, "comfort");
   assert.equal(ride.service, "private");
-  assert.ok(ride.tripDate);
-  assert.ok(ride.pickupTime);
-  assert.ok(ride.rideStartTime);
+  assert.equal(ride.tripDate, "2026-08-02");
+  assert.equal(ride.pickupTime, "12:30");
+  assert.equal(ride.rideStartTime, "12:35");
 });
 
 test("D2) missing optional ride fields do not crash", () => {
@@ -279,6 +279,53 @@ test("D2) missing optional ride fields do not crash", () => {
   assert.equal(ride.from, "X");
   assert.equal(ride.tier, "");
   assert.equal(ride.pickupTime, "");
+  assert.equal(ride.pax, null);
+  assert.equal(ride.bags, null);
+  assert.equal(ride.paxKnown, false);
+});
+
+test("D3) authoritative route snapshot wins over mutable coords", () => {
+  const ride = resolveInvoiceRideProjection({
+    booking: {
+      from: "50.772006, 3.669447",
+      to: "3.669447,50.772006",
+      invoice_from_address: "Koekamerstraat 48A, 9688 Schorisse",
+      invoice_to_address: "Scheldestraat 5, 9690 Kluisbergen",
+      pickup_iso: "2026-01-15T10:30:00.000Z",
+    },
+  });
+  assert.equal(ride.from, "Koekamerstraat 48A, 9688 Schorisse");
+  assert.equal(ride.to, "Scheldestraat 5, 9690 Kluisbergen");
+  assert.equal(ride.pickupTime, "11:30"); // winter CET
+});
+
+test("D4) raw coordinate pair is never customer-visible", () => {
+  const ride = resolveInvoiceRideProjection({
+    booking: {
+      from: "50.772006, 3.669447",
+      to: "3.669447,50.772006",
+    },
+  });
+  assert.equal(ride.from, "");
+  assert.equal(ride.to, "");
+  assert.equal(ride.fromMissing, true);
+  assert.equal(ride.toMissing, true);
+});
+
+test("D5) missing address yields empty (omit / Niet opgegeven at render)", () => {
+  const ride = resolveInvoiceRideProjection({ booking: { from: "", to: "Straatrit" } });
+  assert.equal(ride.from, "");
+  assert.equal(ride.to, "");
+});
+
+test("D6) explicit known zero pax remains representable", () => {
+  const ride = resolveInvoiceRideProjection({
+    booking: { from: "A", to: "B", pax: 0, bags: 0 },
+  });
+  assert.equal(ride.pax, 0);
+  assert.equal(ride.bags, 0);
+  assert.equal(ride.paxKnown, true);
+  assert.equal(ride.bagsKnown, true);
 });
 
 test("E1) projection paid refresh decision after unpaid artifact", () => {

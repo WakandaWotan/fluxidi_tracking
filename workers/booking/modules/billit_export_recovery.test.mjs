@@ -17,6 +17,8 @@ import {
   mergeBillitOutboxAttemptResult,
   isBillitOutboxDue,
   normalizeLegacyOutboxRecord,
+  canRequeueBillitOutbox,
+  requeueExhaustedBillitOutbox,
 } from "./billit_export_recovery.js";
 
 const SCOPE = { tenant_id: "t1", company_id: "c1" };
@@ -27,6 +29,7 @@ test("BILLIT_EXPORT_STATES exposes the required vocabulary", () => {
   assert.equal(BILLIT_EXPORT_STATES.IN_PROGRESS, "in_progress");
   assert.equal(BILLIT_EXPORT_STATES.SYNCED, "synced");
   assert.equal(BILLIT_EXPORT_STATES.RETRYABLE_ERROR, "retryable_error");
+  assert.equal(BILLIT_EXPORT_STATES.EXHAUSTED_RETRYABLE, "exhausted_retryable");
   assert.equal(BILLIT_EXPORT_STATES.PERMANENT_ERROR, "permanent_error");
 });
 
@@ -100,16 +103,76 @@ test("computeNextAttemptSchedule: permanent error yields permanent_error with no
   assert.equal(s.max_attempts_reached, false);
 });
 
-test("computeNextAttemptSchedule: max attempts reached is permanent (never loops)", () => {
+test("computeNextAttemptSchedule: max attempts on transient becomes exhausted_retryable (never permanent)", () => {
+  const now = new Date("2026-08-02T18:00:00.000Z");
   const s = computeNextAttemptSchedule({
     attemptCount: MAX_RETRYABLE_ATTEMPTS,
     errorCode: "billit_order_create_failed",
-    statusCode: 500,
+    statusCode: 502,
+    now,
   });
-  assert.equal(s.state, "permanent_error");
-  assert.equal(s.retryable, false);
-  assert.equal(s.next_attempt_at, null);
+  assert.equal(s.state, "exhausted_retryable");
+  assert.equal(s.retryable, true);
   assert.equal(s.max_attempts_reached, true);
+  assert.ok(s.next_attempt_at);
+});
+
+test("requeueExhaustedBillitOutbox resets attempts and preserves idempotency key", () => {
+  const now = new Date("2026-08-02T18:00:00.000Z");
+  const exhausted = {
+    ...buildPendingOutboxRecord({
+      scope: { tenant_id: "t1", company_id: "c1" },
+      documentId: "doc-1",
+      bookingId: "b1",
+      idempotencyKey: "fluxidi-billit-order-create:doc-1:sandbox:v1",
+      now,
+    }),
+    state: "exhausted_retryable",
+    attempt_count: 8,
+    last_error_code: "billit_order_create_failed",
+    last_error_status_code: 502,
+    next_attempt_at: "2026-08-03T18:00:00.000Z",
+  };
+  const rq = requeueExhaustedBillitOutbox(exhausted, { now });
+  assert.equal(rq.state, "pending");
+  assert.equal(rq.attempt_count, 0);
+  assert.equal(rq.next_attempt_at, now.toISOString());
+  assert.equal(
+    rq.idempotency_key,
+    "fluxidi-billit-order-create:doc-1:sandbox:v1",
+  );
+});
+
+test("canRequeueBillitOutbox refuses true permanent validation errors", () => {
+  const perm = {
+    state: "permanent_error",
+    last_error_code: "billit_administration_selection_required",
+    last_error_status_code: 409,
+  };
+  assert.equal(canRequeueBillitOutbox(perm).ok, false);
+  assert.equal(requeueExhaustedBillitOutbox(perm), null);
+});
+
+test("legacy permanent_error after max transient attempts migrates to exhausted_retryable", () => {
+  const now = new Date("2026-08-02T18:00:00.000Z");
+  const legacy = {
+    provider: "billit",
+    environment: "sandbox",
+    tenant_id: "t1",
+    company_id: "c1",
+    document_id: "doc-1",
+    state: "permanent_error",
+    last_error_code: "billit_order_create_failed",
+    last_error_status_code: 502,
+    attempt_count: 8,
+    retryable: false,
+    idempotency_key: "fluxidi-billit-order-create:doc-1:sandbox:v1",
+    created_at: "2026-08-02T17:00:00.000Z",
+    updated_at: "2026-08-02T17:00:00.000Z",
+  };
+  const n = normalizeLegacyOutboxRecord(legacy, { now });
+  assert.equal(n.state, "exhausted_retryable");
+  assert.equal(isBillitOutboxDue(n, { now }), true);
 });
 
 test("buildPendingOutboxRecord: writes state=pending, retryable, immediately due", () => {
