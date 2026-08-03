@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
@@ -5,12 +8,15 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
 
+import 'driver_offline_maps_europe_geocoder.dart';
+import 'driver_offline_maps_europe_selection.dart';
 import 'driver_offline_maps_service.dart';
 import 'nav_backend/driver_navigation_worker_client.dart';
 
 // Future: OFFLINE-C2 download current visible map area from DriverHomePage.
 // Future: OFFLINE-C3 airport presets (Zaventem, Charleroi, Schiphol).
 // Future: OFFLINE-D active route cache / degraded mode when network is lost.
+// FLUXIDI-OFFLINE-MAPS-EUROPE-REGION-EXPANSION-P0-1: Europe search + radius.
 
 enum DriverOfflineMapPresetType { overview, detail }
 
@@ -47,27 +53,8 @@ class DriverOfflineMapPreset {
   }
 }
 
-Map<String, dynamic> driverOfflineMapBboxGeometry({
-  required double westLon,
-  required double southLat,
-  required double eastLon,
-  required double northLat,
-}) {
-  return <String, dynamic>{
-    'type': 'Polygon',
-    'coordinates': <List<List<double>>>[
-      <List<double>>[
-        <double>[westLon, southLat],
-        <double>[eastLon, southLat],
-        <double>[eastLon, northLat],
-        <double>[westLon, northLat],
-        <double>[westLon, southLat],
-      ],
-    ],
-  };
-}
-
-/// Presets shown in the Offline kaarten UI.
+/// Presets shown in the Offline kaarten UI (legacy shortcuts — Europe search
+/// is the primary path).
 List<DriverOfflineMapPreset> driverOfflineMapVisiblePresets() {
   return const <DriverOfflineMapPreset>[
     DriverOfflineMapPreset(
@@ -159,6 +146,7 @@ class DriverOfflineMapsPage extends StatefulWidget {
 
 class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
   final DriverOfflineMapsService _service = DriverOfflineMapsService.shared;
+  final TextEditingController _searchCtrl = TextEditingController();
 
   List<DriverOfflineMapRegionInfo> _regions = const <DriverOfflineMapRegionInfo>[];
   bool _loadingList = true;
@@ -168,6 +156,14 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
   String? _inlineError;
   bool _wifiOnly = true;
 
+  List<DriverOfflineEuropePlace> _searchResults =
+      const <DriverOfflineEuropePlace>[];
+  bool _searchInProgress = false;
+  String? _searchError;
+  DriverOfflineEuropePlace? _selectedPlace;
+  int _selectedRadiusKm = kDriverOfflineEuropeDefaultRadiusKm;
+  Timer? _searchDebounce;
+
   @override
   void initState() {
     super.initState();
@@ -175,6 +171,13 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
       debugPrint('[OFFLINE_MAPS] ui=open');
     }
     _loadRegions();
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   String _tr({
@@ -208,6 +211,129 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
     );
   }
 
+  void _onSearchChanged(String raw) {
+    _searchDebounce?.cancel();
+    final q = raw.trim();
+    if (q.length < 2) {
+      setState(() {
+        _searchResults = const <DriverOfflineEuropePlace>[];
+        _searchError = null;
+        _searchInProgress = false;
+      });
+      return;
+    }
+    _searchDebounce = Timer(const Duration(milliseconds: 450), () {
+      unawaited(_runEuropeSearch(q));
+    });
+  }
+
+  Future<void> _runEuropeSearch(String query) async {
+    if (!mounted) return;
+    setState(() {
+      _searchInProgress = true;
+      _searchError = null;
+    });
+    final lang = switch (appConfig.currentLanguage) {
+      AppLanguage.nl => 'nl',
+      AppLanguage.fr => 'fr',
+      AppLanguage.es => 'es',
+      AppLanguage.de => 'de',
+      AppLanguage.en => 'en',
+    };
+    final results = await searchDriverOfflineEuropePlaces(
+      query: query,
+      languageCode: lang,
+    );
+    if (!mounted) return;
+    setState(() {
+      _searchInProgress = false;
+      _searchResults = results;
+      if (results.isEmpty) {
+        _searchError = _tr(
+          nl: 'Geen Europese plaats gevonden. Probeer stad, gemeente of postcode.',
+          en: 'No European place found. Try a city, municipality or postcode.',
+        );
+      }
+    });
+  }
+
+  Future<void> _onEuropeSelectionConfirmed() async {
+    final place = _selectedPlace;
+    if (place == null || _downloadInProgress || _estimateInProgress) return;
+
+    final validation = validateDriverOfflineEuropeSelection(
+      latitude: place.latitude,
+      longitude: place.longitude,
+      radiusKm: _selectedRadiusKm,
+    );
+    if (!validation.accepted) {
+      setState(() {
+        _inlineError = _tr(
+          nl: 'Dit gebied is te groot of buiten Europa. Kies een kleinere straal.',
+          en: 'This area is too large or outside Europe. Choose a smaller radius.',
+        );
+      });
+      return;
+    }
+
+    final selection = DriverOfflineEuropeSelection(
+      place: place,
+      radiusKm: _selectedRadiusKm,
+    );
+    final existingIds = _regions.map((r) => r.id);
+    if (driverOfflineMapRegionIdAlreadyPresent(
+      candidateRegionId: selection.regionId,
+      existingRegionIds: existingIds,
+    )) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _tr(
+              nl: 'Deze regio is al gedownload.',
+              en: 'This region is already downloaded.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    await _confirmAndDownloadRequest(
+      request: selection.toRegionRequest(wifiOnly: _wifiOnly),
+      titleName: selection.displayName,
+      detailLines: <String>[
+        _tr(
+          nl: 'Land: ${place.countryName} (${place.countryCode.toUpperCase()})',
+          en: 'Country: ${place.countryName} (${place.countryCode.toUpperCase()})',
+        ),
+        _tr(
+          nl: 'Straal: $_selectedRadiusKm km (grensoverschrijdend toegestaan)',
+          en: 'Radius: $_selectedRadiusKm km (cross-border allowed)',
+        ),
+        _tr(
+          nl:
+              'Centrum: ${place.latitude.toStringAsFixed(3)}, '
+              '${place.longitude.toStringAsFixed(3)}',
+          en:
+              'Center: ${place.latitude.toStringAsFixed(3)}, '
+              '${place.longitude.toStringAsFixed(3)}',
+        ),
+        _tr(
+          nl:
+              'Zoom ${selection.minZoom}–${selection.maxZoom} · '
+              'straal-begrenzing (geen exacte gemeentegrens)',
+          en:
+              'Zoom ${selection.minZoom}–${selection.maxZoom} · '
+              'radius boundary (not an exact municipality polygon)',
+        ),
+      ],
+      previewCenterLat: place.latitude,
+      previewCenterLon: place.longitude,
+      previewRadiusKm: _selectedRadiusKm,
+    );
+  }
+
   Future<void> _loadRegions() async {
     setState(() {
       _loadingList = true;
@@ -238,37 +364,66 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
     if (kDebugMode) {
       debugPrint('[OFFLINE_MAPS] ui=preset_selected preset=${preset.slug}');
     }
+    await _confirmAndDownloadRequest(
+      request: _requestForPreset(preset),
+      titleName: preset.localizedDisplayName(_tr),
+      detailLines: <String>[
+        preset.localizedDescription(_tr),
+        _tr(
+          nl: 'Zoom ${preset.minZoom}–${preset.maxZoom} · licht + donker kaartstijl',
+          en: 'Zoom ${preset.minZoom}–${preset.maxZoom} · light + dark map styles',
+        ),
+      ],
+    );
+  }
 
+  Future<void> _confirmAndDownloadRequest({
+    required DriverOfflineMapRegionRequest request,
+    required String titleName,
+    required List<String> detailLines,
+    double? previewCenterLat,
+    double? previewCenterLon,
+    int? previewRadiusKm,
+  }) async {
     setState(() => _estimateInProgress = true);
     DriverOfflineMapEstimate? estimate;
     var estimateFailed = false;
     try {
       await _service.ensureInitialized();
-      estimate = await _service.estimateRegion(_requestForPreset(preset));
-      if (kDebugMode) {
-        debugPrint('[OFFLINE_MAPS] ui=estimate_done preset=${preset.slug}');
-      }
+      estimate = await _service.estimateRegion(request);
     } catch (_) {
       estimateFailed = true;
     } finally {
       if (mounted) setState(() => _estimateInProgress = false);
     }
-
     if (!mounted) return;
+
     final proceed = await _showDownloadConfirmDialog(
-      preset: preset,
+      titleName: titleName,
+      detailLines: detailLines,
       estimate: estimate,
       estimateFailed: estimateFailed,
+      minZoom: request.minZoom,
+      maxZoom: request.maxZoom,
+      previewCenterLat: previewCenterLat,
+      previewCenterLon: previewCenterLon,
+      previewRadiusKm: previewRadiusKm,
     );
     if (proceed == true && mounted) {
-      await _startDownload(preset);
+      await _startDownloadRequest(request);
     }
   }
 
   Future<bool?> _showDownloadConfirmDialog({
-    required DriverOfflineMapPreset preset,
+    required String titleName,
+    required List<String> detailLines,
     required DriverOfflineMapEstimate? estimate,
     required bool estimateFailed,
+    required int minZoom,
+    required int maxZoom,
+    double? previewCenterLat,
+    double? previewCenterLon,
+    int? previewRadiusKm,
   }) {
     final estimateLines = <String>[];
     if (estimate != null) {
@@ -276,10 +431,12 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
         _tr(
           nl:
               'Geschatte download: ${_formatBytes(estimate.transferSizeBytes)} · '
-              'opslag: ${_formatBytes(estimate.storageSizeBytes)}',
+              'opslag: ${_formatBytes(estimate.storageSizeBytes)} '
+              '(schatting ±${(estimate.errorMargin * 100).round()}%)',
           en:
               'Estimated download: ${_formatBytes(estimate.transferSizeBytes)} · '
-              'storage: ${_formatBytes(estimate.storageSizeBytes)}',
+              'storage: ${_formatBytes(estimate.storageSizeBytes)} '
+              '(estimate ±${(estimate.errorMargin * 100).round()}%)',
         ),
       );
     } else if (estimateFailed) {
@@ -304,18 +461,46 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  preset.localizedDisplayName(_tr),
+                  titleName,
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 8),
-                Text(preset.localizedDescription(_tr)),
-                const SizedBox(height: 8),
+                for (final line in detailLines) ...[
+                  Text(line),
+                  const SizedBox(height: 4),
+                ],
                 Text(
                   _tr(
-                    nl: 'Zoom ${preset.minZoom}–${preset.maxZoom} · licht + donker kaartstijl',
-                    en: 'Zoom ${preset.minZoom}–${preset.maxZoom} · light + dark map styles',
+                    nl: 'Zoom $minZoom–$maxZoom · licht + donker kaartstijl',
+                    en: 'Zoom $minZoom–$maxZoom · light + dark map styles',
                   ),
                 ),
+                if (previewCenterLat != null &&
+                    previewCenterLon != null &&
+                    previewRadiusKm != null) ...[
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 120,
+                    width: double.infinity,
+                    child: CustomPaint(
+                      painter: _OfflineRegionPreviewPainter(
+                        radiusKm: previewRadiusKm,
+                      ),
+                      child: Center(
+                        child: Text(
+                          _tr(
+                            nl: 'Voorbeeld · $previewRadiusKm km straal',
+                            en: 'Preview · $previewRadiusKm km radius',
+                          ),
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
                 if (estimateLines.isNotEmpty) ...[
                   const SizedBox(height: 8),
                   Text(estimateLines.join('\n')),
@@ -351,10 +536,10 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
     );
   }
 
-  Future<void> _startDownload(DriverOfflineMapPreset preset) async {
+  Future<void> _startDownloadRequest(DriverOfflineMapRegionRequest request) async {
     if (_downloadInProgress) return;
     if (kDebugMode) {
-      debugPrint('[OFFLINE_MAPS] ui=download_start preset=${preset.slug}');
+      debugPrint('[OFFLINE_MAPS] ui=download_start region=${request.regionId}');
     }
 
     setState(() {
@@ -365,7 +550,7 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
 
     try {
       await _service.downloadRegion(
-        _requestForPreset(preset),
+        request,
         onProgress: (progress) {
           if (!mounted) return;
           setState(() => _downloadProgress = progress);
@@ -373,14 +558,14 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
       );
       if (!mounted) return;
       if (kDebugMode) {
-        debugPrint('[OFFLINE_MAPS] ui=download_done preset=${preset.slug}');
+        debugPrint('[OFFLINE_MAPS] ui=download_done region=${request.regionId}');
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             _tr(
-              nl: 'Kaarttegels gedownload.',
-              en: 'Map tiles downloaded.',
+              nl: 'Kaarttegels gedownload. Status wordt geverifieerd.',
+              en: 'Map tiles downloaded. Status is verified.',
             ),
           ),
         ),
@@ -389,12 +574,12 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
     } catch (_) {
       if (!mounted) return;
       if (kDebugMode) {
-        debugPrint('[OFFLINE_MAPS] ui=fail preset=${preset.slug}');
+        debugPrint('[OFFLINE_MAPS] ui=fail region=${request.regionId}');
       }
       setState(() {
         _inlineError = _tr(
-          nl: 'Download mislukt. Controleer internet en probeer opnieuw.',
-          en: 'Download failed. Check your connection and try again.',
+          nl: 'Download mislukt of onderbroken. Regio is niet als volledig gemarkeerd.',
+          en: 'Download failed or interrupted. Region is not marked complete.',
         );
       });
     } finally {
@@ -871,11 +1056,189 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          _tr(nl: 'Kaartgebieden', en: 'Map areas'),
+                          _tr(
+                            nl: 'Europa — zoek jouw werkgebied',
+                            en: 'Europe — search your operating area',
+                          ),
                           style: TextStyle(
                             color: palette.textPrimary,
                             fontWeight: FontWeight.w800,
                             fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _tr(
+                            nl:
+                                'Zoek een stad, gemeente of postcode in Europa. '
+                                'Download gebruikt een begrensde straal (geen landdownload).',
+                            en:
+                                'Search a city, municipality or postcode in Europe. '
+                                'Download uses a bounded radius (not a whole country).',
+                          ),
+                          style: TextStyle(
+                            color: palette.textMuted,
+                            height: 1.35,
+                            fontSize: 13,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: _searchCtrl,
+                          enabled: !busy,
+                          onChanged: _onSearchChanged,
+                          style: TextStyle(color: palette.textPrimary),
+                          decoration: InputDecoration(
+                            hintText: _tr(
+                              nl: 'Bijv. Lille, Eindhoven, Köln, Madrid…',
+                              en: 'e.g. Lille, Eindhoven, Köln, Madrid…',
+                            ),
+                            hintStyle: TextStyle(color: palette.textMuted),
+                            prefixIcon: Icon(
+                              Icons.search_rounded,
+                              color: palette.accent,
+                            ),
+                            filled: true,
+                            fillColor: palette.surface,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: palette.border),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: palette.border),
+                            ),
+                          ),
+                        ),
+                        if (_searchInProgress) ...[
+                          const SizedBox(height: 10),
+                          LinearProgressIndicator(color: palette.accent),
+                        ],
+                        if (_searchError != null && _searchResults.isEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            _searchError!,
+                            style: TextStyle(
+                              color: palette.textMuted,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                        if (_searchResults.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          ..._searchResults.map((place) {
+                            final selected = _selectedPlace?.mapboxFeatureId ==
+                                    place.mapboxFeatureId &&
+                                _selectedPlace?.primaryName == place.primaryName;
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: Material(
+                                color: selected
+                                    ? palette.accent.withOpacity(0.15)
+                                    : palette.surface,
+                                borderRadius: BorderRadius.circular(12),
+                                child: ListTile(
+                                  enabled: !busy,
+                                  title: Text(
+                                    place.displayLabel,
+                                    style: TextStyle(
+                                      color: palette.textPrimary,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    '${place.latitude.toStringAsFixed(3)}, '
+                                    '${place.longitude.toStringAsFixed(3)} · '
+                                    '${place.placeType}',
+                                    style: TextStyle(
+                                      color: palette.textMuted,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  onTap: () {
+                                    setState(() => _selectedPlace = place);
+                                  },
+                                ),
+                              ),
+                            );
+                          }),
+                        ],
+                        if (_selectedPlace != null) ...[
+                          const SizedBox(height: 10),
+                          Text(
+                            _tr(nl: 'Downloadstraal', en: 'Download radius'),
+                            style: TextStyle(
+                              color: palette.textPrimary,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              for (final km
+                                  in kDriverOfflineEuropeRadiusOptionsKm)
+                                ChoiceChip(
+                                  label: Text('$km km'),
+                                  selected: _selectedRadiusKm == km,
+                                  onSelected: busy
+                                      ? null
+                                      : (_) => setState(
+                                            () => _selectedRadiusKm = km,
+                                          ),
+                                  selectedColor: palette.accent.withOpacity(0.35),
+                                  labelStyle: TextStyle(
+                                    color: palette.textPrimary,
+                                  ),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: double.infinity,
+                            child: FilledButton.icon(
+                              onPressed:
+                                  busy ? null : _onEuropeSelectionConfirmed,
+                              icon: const Icon(Icons.download_rounded, size: 18),
+                              label: Text(
+                                _tr(
+                                  nl: 'Voorbeeld & downloaden',
+                                  en: 'Preview & download',
+                                ),
+                              ),
+                              style: FilledButton.styleFrom(
+                                backgroundColor: palette.accent,
+                                foregroundColor: palette.isDark
+                                    ? palette.background
+                                    : Colors.black,
+                              ),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 20),
+                        Text(
+                          _tr(
+                            nl: 'Snelkoppelingen (bestaand)',
+                            en: 'Shortcuts (existing)',
+                          ),
+                          style: TextStyle(
+                            color: palette.textPrimary,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _tr(
+                            nl:
+                                'Bestaande België- / Maarkedal-regio’s blijven beschikbaar.',
+                            en:
+                                'Existing Belgium / Maarkedal regions remain available.',
+                          ),
+                          style: TextStyle(
+                            color: palette.textMuted,
+                            fontSize: 12,
                           ),
                         ),
                         const SizedBox(height: 10),
@@ -1122,4 +1485,40 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
       },
     );
   }
+}
+
+/// Schematic preview of the selected radius (not live map tiles).
+class _OfflineRegionPreviewPainter extends CustomPainter {
+  _OfflineRegionPreviewPainter({required this.radiusKm});
+
+  final int radiusKm;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final bg = Paint()..color = const Color(0xFF1B2436);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Offset.zero & size,
+        const Radius.circular(10),
+      ),
+      bg,
+    );
+    final border = Paint()
+      ..color = const Color(0xFF4C6FFF)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    final maxR = math.min(size.width, size.height) * 0.42;
+    final r = maxR * (radiusKm / kDriverOfflineEuropeMaxRadiusKm).clamp(0.2, 1.0);
+    final c = Offset(size.width / 2, size.height / 2);
+    canvas.drawCircle(c, r, border);
+    canvas.drawCircle(
+      c,
+      3,
+      Paint()..color = const Color(0xFFE8C57E),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _OfflineRegionPreviewPainter oldDelegate) =>
+      oldDelegate.radiusKm != radiusKm;
 }
