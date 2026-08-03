@@ -7,6 +7,12 @@ preview_urls = false
 [observability.logs]
 enabled = true
 
+# CHIRON-OFFLINE-ARRIVAL-P0: scheduled Chiron drain. A ride stopped while the
+# phone was offline must reach Chiron as Aankomst after connectivity recovery
+# without the app, the Chiron screen, a status poll or an admin action.
+[triggers]
+crons = ["*/5 * * * *"]
+
 # RELEASE-P0-CHIRON-TEST-RUNTIME-GATE-2026-07-31: non-sensitive test-runtime
 # configuration for the official Chiron ACC path. These are the ONLY two
 # environment values required at deploy time to unlock the operator-driven

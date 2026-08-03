@@ -6863,6 +6863,12 @@ function _chironEvaluateSubmitDuplicateGuard(previousStatus, nowMs = Date.now())
   if (state === "verification_required") {
     return { decision: "verification_required" };
   }
+  // CHIRON-OFFLINE-ARRIVAL-P0: Chiron already holds this vertrek (proven by an
+  // exact configured duplicate foutcode). Never re-POST it; the arrival gate
+  // treats this exactly like `synced`.
+  if (state === CHIRON_DEPARTURE_CONFIRMED_EXTERNAL) {
+    return { decision: "already_confirmed_external" };
+  }
   // RELEASE-P0-AUTO-CHIRON-2026-07-31: automatic arrival-submit records this
   // state on an arrival whose paired departure is not yet `synced`. The
   // duplicate guard MUST allow a retry once the departure catches up, so the
@@ -6885,6 +6891,25 @@ function _chironEvaluateSubmitDuplicateGuard(previousStatus, nowMs = Date.now())
     // gets promoted to `verification_required` at write time — but if an
     // older status doc lacks the marker, we conservatively block retries.
     if (previousStatus.failure_kind === "definitive") {
+      // CHIRON-OFFLINE-ARRIVAL-P0: bounded. Without a cap/cooldown the cron
+      // would re-POST a permanently rejected message every tick and the
+      // reconcile pass would keep stopping on it, starving newer rides.
+      const definitiveAttempts = Number(previousStatus.attempt_count);
+      if (
+        Number.isFinite(definitiveAttempts) &&
+        definitiveAttempts >= CHIRON_DEFINITIVE_RETRY_MAX_ATTEMPTS
+      ) {
+        return { decision: "not_retryable" };
+      }
+      const definitiveLastMs = Date.parse(
+        cleanText(previousStatus.last_attempt_at, 64),
+      );
+      if (
+        Number.isFinite(definitiveLastMs) &&
+        Number(nowMs) - definitiveLastMs < CHIRON_DEFINITIVE_RETRY_COOLDOWN_MS
+      ) {
+        return { decision: "not_retryable" };
+      }
       return { decision: "allow" };
     }
     const httpStatus = Number(previousStatus.external_status_code);
@@ -7052,6 +7077,71 @@ function buildChironTaxiritApiPayload(officialPayload) {
 // can return HTTP 200 with a `fouten` array; a non-empty array is a rejection,
 // not a success. Stays backward compatible with the internal test receiver
 // (no `fouten` field) via response_shape. Never surfaces tokens/secrets.
+/**
+ * CHIRON-OFFLINE-ARRIVAL-P0: capture ONLY the structured fout code fields.
+ *
+ * `omschrijving` / `tekst` free text is deliberately never captured, so a
+ * stored export status can prove which code Chiron returned without ever
+ * persisting a human-readable message that could carry ride or customer data.
+ */
+function _chironExtractFoutenCodes(responseBody) {
+  const list =
+    responseBody && typeof responseBody === "object" && Array.isArray(responseBody.fouten)
+      ? responseBody.fouten
+      : [];
+  const codes = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const raw =
+      item.foutcode ?? item.foutCode ?? item.code ?? item.errorCode ?? item.error_code;
+    const code = cleanText(raw, 32).toUpperCase().replace(/[^A-Z0-9_.-]/g, "");
+    if (code && !codes.includes(code)) codes.push(code);
+    if (codes.length >= 10) break;
+  }
+  return codes;
+}
+
+/**
+ * Exact, operator-configured duplicate foutcode(s) for an already-registered
+ * vertrek. Empty by default: without a proven code nothing is ever classified
+ * as a duplicate. No text matching is performed anywhere.
+ */
+function _chironDuplicateVertrekFoutcodes(env) {
+  const raw = cleanText(env?.CHIRON_DUPLICATE_VERTREK_FOUTCODES, 200);
+  if (!raw) return [];
+  const out = [];
+  for (const part of raw.split(",")) {
+    const code = cleanText(part, 32).toUpperCase().replace(/[^A-Z0-9_.-]/g, "");
+    if (code && !out.includes(code)) out.push(code);
+  }
+  return out;
+}
+
+/**
+ * True only when EVERY fout in a 2xx vertrek response is one of the configured
+ * duplicate codes. Any other/extra fout keeps the message a real rejection.
+ */
+function _chironIsDuplicateVertrekRejection({
+  officialStatus = "",
+  foutenCodes = [],
+  foutenCount = 0,
+  externalStatusCode = null,
+  configuredCodes = [],
+} = {}) {
+  if (cleanText(officialStatus, 32).toLowerCase() !== "vertrek") return false;
+  if (!Array.isArray(configuredCodes) || configuredCodes.length === 0) return false;
+  const codes = Array.isArray(foutenCodes) ? foutenCodes : [];
+  if (codes.length === 0) return false;
+  const count = Number(foutenCount);
+  if (!Number.isFinite(count) || count < 1) return false;
+  // Every returned fout must have yielded a structured code AND be a
+  // configured duplicate code — a mixed response is never an acceptance.
+  if (codes.length !== count) return false;
+  const status = Number(externalStatusCode);
+  if (!Number.isFinite(status) || status < 200 || status >= 300) return false;
+  return codes.every((code) => configuredCodes.includes(code));
+}
+
 function parseChironTaxiritSubmitResponse(httpStatus, responseBody) {
   const parsedStatus = Number(httpStatus);
   const statusCode = Number.isFinite(parsedStatus) ? parsedStatus : null;
@@ -7061,6 +7151,7 @@ function parseChironTaxiritSubmitResponse(httpStatus, responseBody) {
     responseBody && typeof responseBody === "object" && !Array.isArray(responseBody);
   const hasFoutenArray = bodyIsObject && Array.isArray(responseBody.fouten);
   const foutenCount = hasFoutenArray ? responseBody.fouten.length : 0;
+  const foutenCodes = hasFoutenArray ? _chironExtractFoutenCodes(responseBody) : [];
   const responseShape = hasFoutenArray
     ? "chiron_taxirit_api_v1"
     : "non_chiron_test_receiver";
@@ -7077,6 +7168,7 @@ function parseChironTaxiritSubmitResponse(httpStatus, responseBody) {
       external_status_code: statusCode,
       external_reference: externalReference,
       fouten_count: foutenCount,
+      fouten_codes: foutenCodes,
       sanitized_error: _chironSanitizeExportError(
         bodyMessage || `HTTP ${statusCode ?? "error"}`,
       ),
@@ -7090,6 +7182,7 @@ function parseChironTaxiritSubmitResponse(httpStatus, responseBody) {
       external_status_code: statusCode,
       external_reference: externalReference,
       fouten_count: foutenCount,
+      fouten_codes: foutenCodes,
       sanitized_error: "chiron_response_contains_errors",
     };
   }
@@ -7107,6 +7200,7 @@ function parseChironTaxiritSubmitResponse(httpStatus, responseBody) {
       external_status_code: statusCode,
       external_reference: externalReference,
       fouten_count: 0,
+      fouten_codes: [],
       sanitized_error: "chiron_response_shape_unexpected",
     };
   }
@@ -7117,6 +7211,7 @@ function parseChironTaxiritSubmitResponse(httpStatus, responseBody) {
     external_status_code: statusCode,
     external_reference: externalReference,
     fouten_count: foutenCount,
+    fouten_codes: foutenCodes,
     sanitized_error: null,
   };
 }
@@ -7607,6 +7702,31 @@ async function handleChironTestflowSubmitOnePost(request, env, origin) {
           response_shape: previousStatus?.response_shape ?? null,
           fouten_count: previousStatus?.fouten_count ?? 0,
           sanitized_error: null,
+        },
+      },
+      200,
+      origin,
+    );
+  }
+  // CHIRON-OFFLINE-ARRIVAL-P0: Chiron already holds this vertrek. Idempotent
+  // success — never a second POST from the admin path either.
+  if (guard.decision === "already_confirmed_external") {
+    return jsonResponse(
+      {
+        ...baseResponse,
+        ok: true,
+        submitted: false,
+        already_confirmed_external: true,
+        sync_state: CHIRON_DEPARTURE_CONFIRMED_EXTERNAL,
+        attempt_count: Number(previousStatus?.attempt_count || 0),
+        export_status_stored: true,
+        chiron_response_sanitized: {
+          ok: false,
+          external_status_code: previousStatus?.external_status_code ?? null,
+          external_reference: previousStatus?.external_reference ?? null,
+          response_shape: previousStatus?.response_shape ?? null,
+          fouten_count: previousStatus?.fouten_count ?? 0,
+          sanitized_error: "chiron_duplicate_vertrek_confirmed",
         },
       },
       200,
@@ -11014,8 +11134,19 @@ const CHIRON_AUTO_SUBMIT_INNER_TIMEOUT_MS = 5000;
 // marker written, final synced/failed never persisted). Must be greater than
 // CHIRON_AUTO_SUBMIT_INNER_TIMEOUT_MS so a live submit is not raced.
 const CHIRON_PENDING_STALE_MS = 60 * 1000;
+// CHIRON-OFFLINE-ARRIVAL-P0: a definitively rejected message may be retried,
+// but never unboundedly — a permanently rejected departure would otherwise be
+// re-POSTed on every cron tick and would stop the whole reconcile pass.
+const CHIRON_DEFINITIVE_RETRY_MAX_ATTEMPTS = 6;
+const CHIRON_DEFINITIVE_RETRY_COOLDOWN_MS = 10 * 60 * 1000;
+// Terminal-but-accepted departure state: Chiron proved (via an exact
+// configured duplicate foutcode) that it already holds this vertrek.
+const CHIRON_DEPARTURE_CONFIRMED_EXTERNAL = "departure_confirmed_external";
 const CHIRON_AUTO_RECONCILE_MAX_EVENTS = 200;
 const CHIRON_AUTO_RECONCILE_MAX_PROCESS = 20;
+// Cron fan-out bound: how many tenant/company scopes one scheduled tick may
+// reconcile. Keeps a single invocation inside Worker CPU/subrequest limits.
+const CHIRON_CRON_MAX_SCOPES_PER_TICK = 25;
 // Throttle: skip an auto-reconcile trigger from the config-status GET if the
 // last automated pass ran less than this many ms ago. Manual admin-path calls
 // bypass the throttle.
@@ -11366,7 +11497,15 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
         ? await _chironReadExportStatus(env, departureStatusKey)
         : null;
       const departureSyncState = cleanText(departureStatus?.sync_state, 32).toLowerCase();
-      if (departureSyncState !== "synced") {
+      // CHIRON-OFFLINE-ARRIVAL-P0: the gate opens for a departure Chiron
+      // actually holds — either our own accepted submit (`synced`) or a
+      // duplicate rejection proving Chiron already registered the vertrek.
+      // Every other state (failed, retryable_failed, verification_required,
+      // young pending, unknown) still blocks.
+      const departureConfirmed =
+        departureSyncState === "synced" ||
+        departureSyncState === CHIRON_DEPARTURE_CONFIRMED_EXTERNAL;
+      if (!departureConfirmed) {
         const arrivalStatusKey = buildChironExportStatusKey(
           tenantSegment,
           companySegment,
@@ -11653,15 +11792,30 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
     const hasChironErrors = Number.isFinite(foutenCount) && foutenCount > 0;
     const acceptedByChiron = postResult.ok === true && !hasChironErrors;
     const ambiguousTransport = postResult.ambiguous === true;
+    // CHIRON-OFFLINE-ARRIVAL-P0: a vertrek Chiron already holds is not a fresh
+    // success and not a real rejection. It gets its own terminal state so the
+    // paired aankomst can proceed, while the response evidence is preserved.
+    const duplicateVertrekConfirmed =
+      !acceptedByChiron &&
+      !ambiguousTransport &&
+      _chironIsDuplicateVertrekRejection({
+        officialStatus,
+        foutenCodes: postResult.fouten_codes,
+        foutenCount: postResult.fouten_count,
+        externalStatusCode: postResult.external_status_code,
+        configuredCodes: _chironDuplicateVertrekFoutcodes(env),
+      });
     const nextSyncState = acceptedByChiron
       ? "synced"
-      : ambiguousTransport
-        ? "verification_required"
-        : "failed";
+      : duplicateVertrekConfirmed
+        ? CHIRON_DEPARTURE_CONFIRMED_EXTERNAL
+        : ambiguousTransport
+          ? "verification_required"
+          : "failed";
     const finalDoc = {
       ...pendingDoc,
       sync_state: nextSyncState,
-      failure_kind: acceptedByChiron
+      failure_kind: acceptedByChiron || duplicateVertrekConfirmed
         ? null
         : ambiguousTransport
           ? "ambiguous"
@@ -11673,15 +11827,31 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
       external_reference: postResult.external_reference ?? null,
       response_shape: postResult.response_shape ?? null,
       fouten_count: postResult.fouten_count ?? null,
-      sanitized_error: postResult.sanitized_error ?? null,
+      fouten_codes: Array.isArray(postResult.fouten_codes)
+        ? postResult.fouten_codes
+        : null,
+      sanitized_error: duplicateVertrekConfirmed
+        ? "chiron_duplicate_vertrek_confirmed"
+        : postResult.sanitized_error ?? null,
+      external_confirmation: duplicateVertrekConfirmed
+        ? {
+            kind: "duplicate_vertrek",
+            confirmed_at: nowIso(),
+            fouten_codes: Array.isArray(postResult.fouten_codes)
+              ? postResult.fouten_codes
+              : [],
+            external_status_code: postResult.external_status_code ?? null,
+          }
+        : null,
       last_attempt_at: nowIso(),
     };
     await _chironWriteExportStatus(env, statusKey, finalDoc);
     pendingStatusKey = null;
 
     // Advance acceptance counters only for ACC/test submits. Production
-    // rides must never inflate the 5/5 acceptance testflow.
-    if (oauthEnv !== "production") {
+    // rides must never inflate the 5/5 acceptance testflow. A duplicate
+    // confirmation is NOT a fresh submit and never advances counters.
+    if (oauthEnv !== "production" && !duplicateVertrekConfirmed) {
       const nextStatusDoc = recordChironTestflowSubmitResult(statusRead.doc, {
         officialStatus,
         ritnummer,
@@ -11699,8 +11869,15 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
       );
     }
 
+    const outcomeLabel = acceptedByChiron
+      ? "OK"
+      : duplicateVertrekConfirmed
+        ? "DUPLICATE_CONFIRMED"
+        : ambiguousTransport
+          ? "AMBIGUOUS"
+          : "FAIL";
     console.log(
-      `[CHIRON_AUTO_SUBMIT][${acceptedByChiron ? "OK" : ambiguousTransport ? "AMBIGUOUS" : "FAIL"}] tenant=${logMask(scope.tenant_id)} company=${logMask(scope.company_id)} ritnummer=${ritnummer} status=${officialStatus} env=${oauthEnv} fouten=${postResult.fouten_count ?? 0} source=${source}`,
+      `[CHIRON_AUTO_SUBMIT][${outcomeLabel}] tenant=${logMask(scope.tenant_id)} company=${logMask(scope.company_id)} ritnummer=${ritnummer} status=${officialStatus} env=${oauthEnv} fouten=${postResult.fouten_count ?? 0} codes=${(postResult.fouten_codes || []).join("|") || "-"} source=${source}`,
     );
 
     return {
@@ -11712,6 +11889,12 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
       ritnummer,
       official_status: officialStatus,
       attempt_count: attemptCount,
+      duplicate_vertrek_confirmed: duplicateVertrekConfirmed,
+      // A repeat of an already-definitive rejection must not stop the whole
+      // reconcile pass (that starved newer rides behind one poisoned ride).
+      repeat_definitive_failure:
+        finalDoc.sync_state === "failed" &&
+        cleanText(previousStatus?.sync_state, 32).toLowerCase() === "failed",
       source,
     };
   } catch (err) {
@@ -11923,6 +12106,8 @@ async function _chironAutoReconcileScopeBestEffort(
         submitOutcome.reason !== "duplicate_guard_already_synced" &&
         submitOutcome.reason !== "already_synced" &&
         submitOutcome.reason !== "duplicate_guard_conflict_pending" &&
+        submitOutcome.reason !== "duplicate_guard_already_confirmed_external" &&
+        submitOutcome.reason !== "duplicate_guard_not_retryable" &&
         submitOutcome.reason !== "waiting_for_departure";
       if (burnsProcessBudget) {
         processed += 1;
@@ -11966,7 +12151,8 @@ async function _chironAutoReconcileScopeBestEffort(
       // requirement: "Stop bij de eerste definitieve Chiron-fout."
       if (
         submitOutcome.sync_state === "failed" &&
-        submitOutcome.reason !== "oauth_failure"
+        submitOutcome.reason !== "oauth_failure" &&
+        submitOutcome.repeat_definitive_failure !== true
       ) {
         outcome.stopped_on_definitive_failure = true;
         break;
@@ -12004,6 +12190,98 @@ async function _chironAutoReconcileScopeBestEffort(
     outcome.error_name = err?.name || null;
     return outcome;
   }
+}
+
+/**
+ * CHIRON-OFFLINE-ARRIVAL-P0: enumerate the tenant/company scopes that have a
+ * Chiron connection document, so a scheduled tick can drain them without any
+ * client request. Bounded and tenant-isolated: each scope only ever reconciles
+ * its own compliance prefix.
+ */
+async function _chironListConnectionScopes(env, maxScopes = CHIRON_CRON_MAX_SCOPES_PER_TICK) {
+  const scopes = [];
+  if (!env?.COMPLIANCE_KV || typeof env.COMPLIANCE_KV.list !== "function") {
+    return scopes;
+  }
+  let cursor = undefined;
+  const seen = new Set();
+  for (let page = 0; page < 20; page += 1) {
+    let listed;
+    try {
+      listed = await env.COMPLIANCE_KV.list({ prefix: "tenant:", cursor });
+    } catch (_) {
+      break;
+    }
+    for (const entry of listed?.keys || []) {
+      const name = cleanText(entry?.name, 512);
+      const m = /^tenant:(.+?):company:(.+?):chiron_connection:v1$/.exec(name);
+      if (!m) continue;
+      const key = `${m[1]}::${m[2]}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      scopes.push({ tenant_id: m[1], company_id: m[2] });
+      if (scopes.length >= maxScopes) return scopes;
+    }
+    if (listed?.list_complete !== false) break;
+    cursor = listed?.cursor;
+    if (!cursor) break;
+  }
+  return scopes;
+}
+
+/**
+ * Scheduled drain. Runs the same bounded per-scope reconcile the status poll
+ * uses, so an arrival parked on `waiting_for_departure` reaches Chiron after
+ * connectivity recovery with no phone, app resume, Chiron screen, status poll
+ * or admin action. Single-flight per scope via the existing throttle marker.
+ */
+async function _chironCronReconcileAllScopesBestEffort(env, options = {}) {
+  const source = cleanText(options.source, 32) || "cron";
+  const summary = { ok: true, source, scopes: 0, ran: 0, skipped_throttled: 0, failed: 0 };
+  try {
+    const scopes = await _chironListConnectionScopes(env);
+    summary.scopes = scopes.length;
+    for (const scope of scopes) {
+      let statusDoc = null;
+      try {
+        const read = await readChironConnectionStatusRaw(
+          env,
+          scope.tenant_id,
+          scope.company_id,
+        );
+        statusDoc = read?.doc || null;
+      } catch (_) {
+        statusDoc = null;
+      }
+      // Same gate + throttle as the status poll: never double-run a scope.
+      if (!_chironShouldRunReconcileFromStatusPoll(statusDoc)) {
+        summary.skipped_throttled += 1;
+        continue;
+      }
+      try {
+        const outcome = await _chironAutoReconcileScopeBestEffort(
+          env,
+          scope.tenant_id,
+          scope.company_id,
+          { source },
+        );
+        summary.ran += 1;
+        if (outcome?.ok !== true) summary.failed += 1;
+      } catch (_) {
+        summary.failed += 1;
+      }
+    }
+    console.log(
+      `[CHIRON_CRON_RECONCILE] scopes=${summary.scopes} ran=${summary.ran} throttled=${summary.skipped_throttled} failed=${summary.failed} source=${source}`,
+    );
+  } catch (err) {
+    summary.ok = false;
+    summary.error_name = err?.name || null;
+    console.log(
+      `[CHIRON_CRON_RECONCILE][EXCEPTION] error_name=${err?.name || "-"} source=${source}`,
+    );
+  }
+  return summary;
 }
 
 function _chironShouldRunReconcileFromStatusPoll(statusDoc) {
@@ -12136,9 +12414,32 @@ export const __testInternals = {
   _chironHaversineDistanceKm,
   CHIRON_AUTO_RECONCILE_MAX_PROCESS,
   CHIRON_PENDING_STALE_MS,
+  // CHIRON-OFFLINE-ARRIVAL-P0
+  CHIRON_DEPARTURE_CONFIRMED_EXTERNAL,
+  CHIRON_DEFINITIVE_RETRY_MAX_ATTEMPTS,
+  CHIRON_DEFINITIVE_RETRY_COOLDOWN_MS,
+  CHIRON_CRON_MAX_SCOPES_PER_TICK,
+  _chironExtractFoutenCodes,
+  _chironDuplicateVertrekFoutcodes,
+  _chironIsDuplicateVertrekRejection,
+  _chironListConnectionScopes,
+  _chironCronReconcileAllScopesBestEffort,
+  parseChironTaxiritSubmitResponse,
 };
 
 export default {
+  // CHIRON-OFFLINE-ARRIVAL-P0: scheduled drain so a ride stopped while offline
+  // reaches Chiron as Aankomst after connectivity recovery without any user
+  // action. Bounded, tenant-isolated, throttled per scope; never throws.
+  async scheduled(event, env, ctx) {
+    const run = _chironCronReconcileAllScopesBestEffort(env, { source: "cron" });
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(run);
+      return;
+    }
+    await run;
+  },
+
   // RELEASE-P0-AUTO-CHIRON-2026-07-31: accept `ctx` so the compliance append +
   // config-status handlers can schedule automatic Chiron submits / bounded
   // reconciles via `ctx.waitUntil`. All existing routes continue to work
