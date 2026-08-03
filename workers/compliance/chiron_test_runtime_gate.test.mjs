@@ -128,10 +128,16 @@ test("live-gate: enabled=false → chiron_not_enabled", () => {
   );
 });
 
-test("live-gate: environment != test → chiron_environment_must_be_test", () => {
+test("live-gate: advisory environment=production + production off → ACC stays OPEN", () => {
+  // FLUXIDI-CHIRON-TEST-CAPTURE-AFTER-FIVE-SUCCESSES-P0-1: after 5/5 the
+  // company may enter production setup (advisory environment=production)
+  // while production_enabled stays false. ACC capture must continue.
   assert.equal(
-    _chironTestflowLiveGate(goodStatus({ environment: "production" }), goodEnv()),
-    "chiron_environment_must_be_test",
+    _chironTestflowLiveGate(
+      goodStatus({ environment: "production", production_enabled: false }),
+      goodEnv(),
+    ),
+    null,
   );
 });
 

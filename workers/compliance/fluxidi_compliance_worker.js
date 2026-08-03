@@ -7194,9 +7194,18 @@ function _chironExportBaseUrlLooksTestOrAcc(env) {
 function _chironTestflowLiveGate(statusPayload, env) {
   if (!statusPayload || typeof statusPayload !== "object") return "missing_connection_status";
   if (statusPayload.enabled !== true) return "chiron_not_enabled";
-  if (cleanText(statusPayload.environment, 32).toLowerCase() !== "test") {
-    return "chiron_environment_must_be_test";
+  // FLUXIDI-CHIRON-TEST-CAPTURE-AFTER-FIVE-SUCCESSES-P0-1:
+  // ACC eligibility must follow the derived effective environment — not the
+  // advisory `environment` field. After 5/5 the company may enter production
+  // setup (environment="production") while production remains disabled; those
+  // later rides must keep flowing to ACC / the Chiron test portal. The 5/5
+  // milestone is readiness only and must never stop test capture.
+  if (_chironDeriveEffectiveChironEnvironment(statusPayload) === "production") {
+    return "effective_environment_is_production";
   }
+  // Projected `production_enabled` is already fail-closed (true only when
+  // every production invariant holds). Keep refusing ACC while that projected
+  // toggle is on so production-on never silently falls back to ACC.
   if (statusPayload.production_enabled === true) return "production_must_be_disabled";
   if (statusPayload.official_submit_enabled === true) return "official_submit_must_be_disabled";
   if (statusPayload.test_credentials_stored !== true) return "missing_test_credentials";
