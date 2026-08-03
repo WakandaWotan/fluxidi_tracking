@@ -292,6 +292,11 @@ import {
   buildFailedInvoiceLogoEmbedRecord,
 } from "./modules/invoice_company_logo_fetch.js";
 import {
+  buildDocumentEmailInlineLogo,
+  buildInvoiceEmailBodies,
+  buildDocumentBrandingSnapshotSummary,
+} from "./modules/document_branding_email.js";
+import {
   isLegacyFlxInvoiceNumber,
   isDocumentCoreInvoiceNumber,
   resolveCanonicalInvoiceNumberBinding,
@@ -91848,6 +91853,8 @@ async function sendInvoiceEmailWithPdf({
   commProfile = null,
   sendCustomerEmail = true,
   customerSkipReason = "",
+  logoEmbed = null,
+  pdfSha256 = "",
 }) {
   const apiKey = safeStr(env.RESEND_API_KEY);
   const emailFrom = safeStr(env.EMAIL_FROM);
@@ -91881,9 +91888,37 @@ async function sendInvoiceEmailWithPdf({
   const attachmentBase64 = bytesToBase64Chunked(pdfBytes);
   const hasAttachment = !!attachmentBase64;
 
+  // Frozen Branding & support logo as CID — never a live remote <img src>.
+  const frozenEmbed =
+    (isUsableInvoiceLogoEmbed(logoEmbed) && logoEmbed) ||
+    (isUsableInvoiceLogoEmbed(profile?.logoEmbed) && profile.logoEmbed) ||
+    null;
+  const logoDataUri = safeStr(
+    frozenEmbed?.data_uri || frozenEmbed?.dataUri || profile?.logoUrl || "",
+    6_000_000,
+  );
+  const inlineLogo = buildDocumentEmailInlineLogo({
+    logoDataUri,
+    companyName: brandName || legalName,
+  });
+  const bodies = buildInvoiceEmailBodies({
+    invoiceNumber,
+    brandName,
+    legalName,
+    footerLine,
+    hasAttachment,
+    logoHtml: inlineLogo.htmlImg || "",
+  });
+  const brandingSummary = buildDocumentBrandingSnapshotSummary({
+    tenantId: profile.tenantId,
+    companyId: profile.companyId,
+    companyName: brandName || legalName,
+    logoEmbed: frozenEmbed,
+  });
+
   if (shouldSendCustomerEmail) {
     console.log(
-      `[EMAIL][INVOICE_CUSTOMER][START] bookingId=${safeStr(invoiceNumber)} providerConfigured=${providerConfigured} hasCustomerEmail=${hasCustomerEmail} attachment_included=${hasAttachment}`,
+      `[EMAIL][INVOICE_CUSTOMER][START] bookingId=${safeStr(invoiceNumber)} providerConfigured=${providerConfigured} hasCustomerEmail=${hasCustomerEmail} attachment_included=${hasAttachment} logo_cid=${inlineLogo.ok ? "yes" : "no"} logo_source=${safeStr(inlineLogo.source, 40)}`,
     );
   } else {
     console.log(
@@ -91911,35 +91946,29 @@ async function sendInvoiceEmailWithPdf({
   }
 
   const subject = `${brandName} factuur ${invoiceNumber}`;
-  const invoiceMessage = hasAttachment
-    ? `In bijlage vindt u uw factuur van ${escapeHtml(brandName)}.`
-    : "Uw betaling werd ontvangen, maar de factuur-PDF kon niet automatisch als bijlage worden toegevoegd. Neem contact op indien u de PDF nodig heeft.";
-  const htmlBody = `
-    <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;line-height:1.6">
-      <h2 style="margin:0 0 10px">Factuur ${escapeHtml(invoiceNumber)}</h2>
-      <p style="margin:0 0 12px;color:#444">
-        ${invoiceMessage}
-      </p>
-      <p style="margin:12px 0 0;color:#666;font-size:12px">
-        ${escapeHtml(footerLine)}
-      </p>
-    </div>
-  `;
-  const payloadFor = (to, mailSubject) => ({
-    from: emailFrom,
-    to: [to],
-    subject: mailSubject,
-    html: htmlBody,
-    ...(replyTo ? { reply_to: replyTo } : {}),
-    ...(hasAttachment ? {
-      attachments: [
-        {
-          filename: `factuur-${invoiceNumber}.pdf`,
-          content: attachmentBase64
-        }
-      ],
-    } : {})
-  });
+  const htmlBody = bodies.htmlBody;
+  const textBody = bodies.textBody;
+  const payloadFor = (to, mailSubject) => {
+    const attachments = [];
+    if (inlineLogo.attachment) {
+      attachments.push(inlineLogo.attachment);
+    }
+    if (hasAttachment) {
+      attachments.push({
+        filename: `factuur-${invoiceNumber}.pdf`,
+        content: attachmentBase64,
+      });
+    }
+    return {
+      from: emailFrom,
+      to: [to],
+      subject: mailSubject,
+      html: htmlBody,
+      text: textBody,
+      ...(replyTo ? { reply_to: replyTo } : {}),
+      ...(attachments.length ? { attachments } : {}),
+    };
+  };
 
   const headers = { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" };
   let customerSend = { sent: false, skipped: false };
@@ -91999,6 +92028,11 @@ async function sendInvoiceEmailWithPdf({
     attachment_included: hasAttachment,
     customer: customerSend,
     admin_copy: adminCopy,
+    logo_cid_included: !!inlineLogo.ok,
+    logo_source: safeStr(inlineLogo.source, 40) || null,
+    document_branding: brandingSummary,
+    pdf_sha256: safeStr(pdfSha256, 128) || null,
+    delivery_owner: "fluxidi_resend",
   };
 }
 
@@ -92469,6 +92503,19 @@ async function generateAndSendInvoice({
           commProfile,
           sendCustomerEmail: emailPolicy?.sendCustomerEmail !== false,
           customerSkipReason: safeStr(emailPolicy?.customerSkipReason || ""),
+          logoEmbed:
+            readFrozenInvoiceLogoEmbed({
+              bookingRecord: bookingRecordInfo?.rec,
+              issuedDocument:
+                bookingRecordInfo?.rec?.document_core ||
+                bookingInput?.document_core ||
+                null,
+            }) ||
+            readFrozenInvoiceLogoEmbed({
+              bookingRecord: bookingInput,
+            }) ||
+            null,
+          pdfSha256: safeStr(artifactResult?.sha256 || artifactResult?.content_sha256, 128),
         });
 
     const documentType = (safeStr(data.customerCompany) || safeStr(data.customerVat)) ? "invoice" : "receipt";

@@ -3616,27 +3616,19 @@ class _ReceiptPdfActionRunner {
     );
   }
 
+  /// Branding & support logo bytes for local receipt PDFs.
+  ///
+  /// Uses the canonical document resolver so an https company logo (common
+  /// after bootstrap) is fetched instead of silently falling back to Fluxidi.
   static Future<Uint8List?> _loadReceiptLogoBytes(String? preferredPath) async {
-    final candidates = <String>[
-      if (preferredPath != null && preferredPath.trim().isNotEmpty)
-        preferredPath.trim(),
-      kFluxidiLogoAsset,
-    ];
-    for (final candidate in candidates) {
-      try {
-        if (candidate.startsWith('assets/')) {
-          final data = await rootBundle.load(candidate);
-          return data.buffer.asUint8List();
-        }
-        final f = File(candidate);
-        if (await f.exists()) {
-          return await f.readAsBytes();
-        }
-      } catch (_) {
-        // Ignore and try next candidate.
-      }
-    }
-    return null;
+    final settings = businessSettingsNotifier.value;
+    final profile = localBackendBusinessProfileNotifier.value;
+    final loaded = await resolveAndLoadDocumentCompanyLogoBytes(
+      localPath: (preferredPath ?? settings.logoAssetPath).trim(),
+      companyLogoUrl: (profile?.publicLogoUrl ?? '').trim(),
+      configuredFluxidiAsset: kFluxidiLogoAsset,
+    );
+    return loaded.bytes;
   }
 
   static Future<Map<String, String>> _buildSellerProfile() async {
@@ -3713,6 +3705,12 @@ class _ReceiptPdfActionRunner {
         ? legacyFooter
         : _receiptText('pdfFooterDefault');
 
+    final logoRef = resolveDocumentCompanyLogoRef(
+      localPath: settings.logoAssetPath.trim(),
+      companyLogoUrl: profile.publicLogoUrl.trim(),
+      configuredFluxidiAsset: kFluxidiLogoAsset,
+      fileExists: (path) => File(path).existsSync(),
+    );
     return <String, String>{
       'companyName': companyName,
       'legalName': legalName,
@@ -3728,7 +3726,8 @@ class _ReceiptPdfActionRunner {
           : settings.supportEmail.trim(),
       'website': profile.website.trim(),
       'footer': footerText,
-      'logoPath': settings.logoAssetPath.trim(),
+      // Canonical Branding & support ref (file or https), never theme artwork.
+      'logoPath': logoRef.ref,
     };
   }
 }
