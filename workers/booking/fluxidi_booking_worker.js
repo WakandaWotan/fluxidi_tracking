@@ -260,6 +260,8 @@ import {
 import {
   buildStreetInvoicePdfProjection,
   shouldRefreshStreetInvoicePdfArtifact,
+  shouldRefreshStreetInvoicePdfOnOpen,
+  buildStreetInvoiceArtifactRevisionTag,
   readStoredStreetInvoicePdfProjectionRevision,
   normalizeVatRatePercent,
   pickCustomerVisibleAddress,
@@ -80200,7 +80202,14 @@ async function _driverSessionCanAccessBookingInvoice(request, rec, env) {
   }
 }
 
-async function handleBookingInvoicePdfGet(request, url, env, bookingId, tenantScope = null) {
+async function handleBookingInvoicePdfGet(
+  request,
+  url,
+  env,
+  bookingId,
+  tenantScope = null,
+  hooks = null,
+) {
   let loaded = null;
   try {
     loaded = await loadBookingRecord(env, bookingId);
@@ -80258,7 +80267,55 @@ async function handleBookingInvoicePdfGet(request, url, env, bookingId, tenantSc
   if (!allowed) {
     return json({ ok: false, error: "forbidden" }, 403);
   }
-  const metadata = _invoicePdfMetadataFromRecord(rec);
+
+  /* FLUXIDI-HISTORICAL-INVOICE-PDF-STALE-ARTIFACT-REFRESH-P0-1:
+   * Derived-artifact freshness gate on the ordinary download. An artifact built
+   * by an older projection version must not stay authoritative just because a
+   * key already exists. Only the derived PDF is rebuilt — the issued Document
+   * Core record, invoice number, totals, VAT and payment truth are untouched,
+   * and only the single requested invoice is ever considered. */
+  let record = rec;
+  const openDecision = shouldRefreshStreetInvoicePdfOnOpen({
+    existingPdfExists: _invoicePdfMetadataFromRecord(record).exists === true,
+    storedProjectionRevision:
+      readStoredStreetInvoicePdfProjectionRevision(record),
+  });
+  if (openDecision.refresh) {
+    const ensureImpl =
+      typeof hooks?.ensureInvoicePdfArtifactImpl === "function"
+        ? hooks.ensureInvoicePdfArtifactImpl
+        : ensureStreetBusinessInvoicePdfArtifact;
+    let outcome = null;
+    try {
+      outcome = await ensureImpl(
+        env,
+        resolveBookingTenantScopeFromRecord(record),
+        bookingId,
+        record,
+        { reason: "ensure" },
+      );
+    } catch (err) {
+      outcome = {
+        ok: false,
+        reason: safeStr(err?.message || err, 80) || "open_refresh_error",
+      };
+    }
+    console.log(
+      `[INVOICE_ARTIFACT][OPEN_REFRESH] bookingId=${safeStr(bookingId, 80)} trigger=${openDecision.reason} ok=${outcome?.ok === true} skipped=${outcome?.skipped === true} reason=${safeStr(outcome?.reason, 60) || "-"}`,
+    );
+    if (outcome?.ok === true && outcome?.skipped !== true) {
+      try {
+        const reloaded = await loadBookingRecord(env, bookingId);
+        if (reloaded?.rec && typeof reloaded.rec === "object") {
+          record = reloaded.rec;
+        }
+      } catch (_) {
+        // Refresh persisted but reload failed: serve the record we already hold.
+      }
+    }
+  }
+
+  const metadata = _invoicePdfMetadataFromRecord(record);
   if (!metadata.exists) {
     return json({
       ok: false,
@@ -80279,12 +80336,20 @@ async function handleBookingInvoicePdfGet(request, url, env, bookingId, tenantSc
     if (!bytes.length) {
       return json({ ok: false, error: "invoice_pdf_empty" }, 404);
     }
-    const invoiceNumber = safeStr(findExistingInvoiceNumber(rec), 120) || safeStr(bookingId, 120) || "invoice";
+    const invoiceNumber = safeStr(findExistingInvoiceNumber(record), 120) || safeStr(bookingId, 120) || "invoice";
     const safeInvoicePart = _safeArtifactPathSegment(invoiceNumber, "invoice");
     const contentType = safeStr(
       metadata.content_type || object?.httpMetadata?.contentType,
       120,
     ) || "application/pdf";
+    // Lets the client key its local cache on the served artifact so superseded
+    // bytes can never be reused after a refresh.
+    const artifactRevision = buildStreetInvoiceArtifactRevisionTag({
+      projectionRevision:
+        readStoredStreetInvoicePdfProjectionRevision(record),
+      sha256: metadata.sha256 || "",
+      generatedAt: metadata.generated_at || "",
+    });
     return new Response(bytes, {
       status: 200,
       headers: {
@@ -80294,6 +80359,10 @@ async function handleBookingInvoicePdfGet(request, url, env, bookingId, tenantSc
         Pragma: "no-cache",
         "X-Content-Type-Options": "nosniff",
         "Content-Length": String(bytes.length),
+        ETag: `"${artifactRevision}"`,
+        "X-Fluxidi-Invoice-Artifact-Revision": artifactRevision,
+        "Access-Control-Expose-Headers":
+          "ETag, X-Fluxidi-Invoice-Artifact-Revision, Content-Disposition",
         ...corsHeaders(),
       },
     });
@@ -80303,6 +80372,8 @@ async function handleBookingInvoicePdfGet(request, url, env, bookingId, tenantSc
     return json({ ok: false, error: "invoice_pdf_read_failed" }, 500);
   }
 }
+// Hermetic stale-artifact refresh tests only (ensure impl is injected).
+export { handleBookingInvoicePdfGet };
 
 function _invoiceRoundtripLegsForReceiptPdf(rec, booking = {}) {
   const bookingObj = booking && typeof booking === "object" ? booking : {};

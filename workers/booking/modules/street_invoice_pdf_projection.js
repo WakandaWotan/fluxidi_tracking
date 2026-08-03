@@ -575,6 +575,68 @@ export function buildStreetInvoicePdfProjectionRevision({
   ].join(";");
 }
 
+/** Version token of a stored projection revision ("" when unrecognizable). */
+export function readStreetInvoicePdfProjectionVersion(revision) {
+  const first = _norm(revision).split(";")[0].trim();
+  return /^street_pdf_proj_v\d+$/.test(first) ? first : "";
+}
+
+/** True when a stored artifact was produced by the current projection version. */
+export function isStreetInvoicePdfArtifactVersionCurrent(storedRevision) {
+  return (
+    readStreetInvoicePdfProjectionVersion(storedRevision) ===
+    STREET_INVOICE_PDF_PROJECTION_VERSION
+  );
+}
+
+/**
+ * Read-path decision for opening an invoice: whether the derived PDF artifact
+ * must be refreshed before it is served.
+ *
+ * Only the derived artifact is in scope — the issued Document Core record is
+ * never rewritten, and this never applies to more than the requested invoice.
+ */
+export function shouldRefreshStreetInvoicePdfOnOpen({
+  existingPdfExists = false,
+  storedProjectionRevision = "",
+  refreshAttempted = false,
+} = {}) {
+  if (refreshAttempted === true) {
+    return { refresh: false, reason: "refresh_already_attempted" };
+  }
+  if (!existingPdfExists) {
+    return { refresh: true, reason: "missing_artifact" };
+  }
+  if (!isStreetInvoicePdfArtifactVersionCurrent(storedProjectionRevision)) {
+    return {
+      refresh: true,
+      reason: _norm(storedProjectionRevision)
+        ? "stale_projection_version"
+        : "unknown_projection_version",
+    };
+  }
+  return { refresh: false, reason: "artifact_version_current" };
+}
+
+/**
+ * Stable client-facing revision tag for a stored PDF artifact. Changes whenever
+ * the projection version or the persisted bytes change, so clients can key a
+ * cache entry on it without ever reusing superseded bytes.
+ */
+export function buildStreetInvoiceArtifactRevisionTag({
+  projectionRevision = "",
+  sha256 = "",
+  generatedAt = "",
+} = {}) {
+  const version =
+    readStreetInvoicePdfProjectionVersion(projectionRevision) ||
+    "street_pdf_proj_unknown";
+  const digest = _lower(sha256).replace(/[^a-f0-9]/g, "").slice(0, 16);
+  if (digest) return `${version}.${digest}`;
+  const stamp = _norm(generatedAt).replace(/[^0-9A-Za-z]/g, "").slice(0, 16);
+  return stamp ? `${version}.${stamp}` : version;
+}
+
 /**
  * Whether an existing PDF should be rebuilt for payment/projection convergence.
  * Ordinary ensure skips when key exists and revision matches.

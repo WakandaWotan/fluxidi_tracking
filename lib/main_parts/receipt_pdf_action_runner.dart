@@ -99,15 +99,58 @@ class _ReceiptPdfActionRunner {
         await receiptsDir.create(recursive: true);
       }
 
-      final fileName = _sanitizeFilePart('${_customerReference(item)}_invoice');
+      // Revision-scoped name: bytes from an older PDF projection can never be
+      // reused or shared once the server refreshed the derived artifact.
+      final reference = _customerReference(item);
+      final fileName = invoicePdfCacheFileName(
+        reference: reference,
+        artifactRevision: resolveInvoicePdfArtifactRevision(
+          artifactRevisionHeader:
+              response.headers[kInvoicePdfArtifactRevisionHeader],
+          etag: response.headers['etag'],
+          bytes: bytes,
+        ),
+      );
       final file = File(
-        '${receiptsDir.path}${Platform.pathSeparator}$fileName.pdf',
+        '${receiptsDir.path}${Platform.pathSeparator}$fileName',
       );
       await file.writeAsBytes(bytes, flush: true);
+      await _pruneSupersededInvoicePdfCacheFiles(
+        directory: receiptsDir,
+        reference: reference,
+        currentFileName: fileName,
+      );
       return _ReceiptPdfBundle(bytes: bytes, file: file);
     } catch (err) {
       debugPrint('[PDF][BACKEND_FETCH][ERROR] $err');
       return null;
+    }
+  }
+
+  static Future<void> _pruneSupersededInvoicePdfCacheFiles({
+    required Directory directory,
+    required String reference,
+    required String currentFileName,
+  }) async {
+    try {
+      await for (final entity in directory.list(followLinks: false)) {
+        if (entity is! File) continue;
+        final name = entity.uri.pathSegments.last;
+        if (!isSupersededInvoicePdfCacheFile(
+          fileName: name,
+          reference: reference,
+          currentFileName: currentFileName,
+        )) {
+          continue;
+        }
+        try {
+          await entity.delete();
+        } catch (_) {
+          // Best-effort cleanup; a leftover file is never read back.
+        }
+      }
+    } catch (err) {
+      debugPrint('[PDF][BACKEND_FETCH][PRUNE_SKIP] $err');
     }
   }
 

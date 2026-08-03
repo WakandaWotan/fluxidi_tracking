@@ -17,6 +17,10 @@ import {
   readStoredStreetInvoicePdfProjectionRevision,
   STREET_INVOICE_PDF_PROJECTION_VERSION,
   fingerprintCustomerRouteText,
+  readStreetInvoicePdfProjectionVersion,
+  isStreetInvoicePdfArtifactVersionCurrent,
+  shouldRefreshStreetInvoicePdfOnOpen,
+  buildStreetInvoiceArtifactRevisionTag,
 } from "./street_invoice_pdf_projection.js";
 
 const SCOPE = { tenant_id: "t1", company_id: "c1" };
@@ -548,4 +552,118 @@ test("G4) full projection invoiceInput never carries raw coordinates", () => {
   assert.equal(built.invoiceInput.fromMissing, true);
   assert.equal(built.invoiceInput.toMissing, true);
   assert.equal(/^-?\d+\.\d+\s*,\s*-?\d+\.\d+$/.test(String(built.invoiceInput.from)), false);
+});
+
+/* FLUXIDI-HISTORICAL-INVOICE-PDF-STALE-ARTIFACT-REFRESH-P0-1 */
+
+test("H1) projection version is parsed from a stored revision", () => {
+  assert.equal(
+    readStreetInvoicePdfProjectionVersion("street_pdf_proj_v1;pay=paid;vat=6"),
+    "street_pdf_proj_v1",
+  );
+  assert.equal(
+    readStreetInvoicePdfProjectionVersion(
+      `${STREET_INVOICE_PDF_PROJECTION_VERSION};pay=paid`,
+    ),
+    STREET_INVOICE_PDF_PROJECTION_VERSION,
+  );
+  assert.equal(readStreetInvoicePdfProjectionVersion(""), "");
+  assert.equal(readStreetInvoicePdfProjectionVersion("pay=paid;vat=6"), "");
+  assert.equal(readStreetInvoicePdfProjectionVersion(null), "");
+});
+
+test("H2) pre-v2 artifacts are stale, current-version artifacts are not", () => {
+  assert.equal(
+    isStreetInvoicePdfArtifactVersionCurrent("street_pdf_proj_v1;pay=paid"),
+    false,
+  );
+  assert.equal(
+    isStreetInvoicePdfArtifactVersionCurrent(
+      `${STREET_INVOICE_PDF_PROJECTION_VERSION};pay=paid`,
+    ),
+    true,
+  );
+  assert.equal(isStreetInvoicePdfArtifactVersionCurrent(""), false);
+});
+
+test("H3) opening a pre-v2 artifact requests exactly one refresh", () => {
+  const stale = shouldRefreshStreetInvoicePdfOnOpen({
+    existingPdfExists: true,
+    storedProjectionRevision: "street_pdf_proj_v1;pay=paid;vat=6",
+  });
+  assert.equal(stale.refresh, true);
+  assert.equal(stale.reason, "stale_projection_version");
+
+  // Once attempted, the same open must not loop into another refresh.
+  const retry = shouldRefreshStreetInvoicePdfOnOpen({
+    existingPdfExists: true,
+    storedProjectionRevision: "street_pdf_proj_v1;pay=paid;vat=6",
+    refreshAttempted: true,
+  });
+  assert.equal(retry.refresh, false);
+  assert.equal(retry.reason, "refresh_already_attempted");
+});
+
+test("H4) current artifact is reused; missing/unknown artifacts refresh", () => {
+  const current = shouldRefreshStreetInvoicePdfOnOpen({
+    existingPdfExists: true,
+    storedProjectionRevision: `${STREET_INVOICE_PDF_PROJECTION_VERSION};pay=paid`,
+  });
+  assert.equal(current.refresh, false);
+  assert.equal(current.reason, "artifact_version_current");
+
+  const missing = shouldRefreshStreetInvoicePdfOnOpen({
+    existingPdfExists: false,
+    storedProjectionRevision: `${STREET_INVOICE_PDF_PROJECTION_VERSION};pay=paid`,
+  });
+  assert.equal(missing.refresh, true);
+  assert.equal(missing.reason, "missing_artifact");
+
+  const unknown = shouldRefreshStreetInvoicePdfOnOpen({
+    existingPdfExists: true,
+    storedProjectionRevision: "",
+  });
+  assert.equal(unknown.refresh, true);
+  assert.equal(unknown.reason, "unknown_projection_version");
+});
+
+test("H5) artifact revision tag changes with version and with bytes", () => {
+  const v1 = buildStreetInvoiceArtifactRevisionTag({
+    projectionRevision: "street_pdf_proj_v1;pay=paid",
+    sha256: "AA11BB22CC33DD44EE55",
+  });
+  const v2 = buildStreetInvoiceArtifactRevisionTag({
+    projectionRevision: `${STREET_INVOICE_PDF_PROJECTION_VERSION};pay=paid`,
+    sha256: "AA11BB22CC33DD44EE55",
+  });
+  const v2OtherBytes = buildStreetInvoiceArtifactRevisionTag({
+    projectionRevision: `${STREET_INVOICE_PDF_PROJECTION_VERSION};pay=paid`,
+    sha256: "99ff88ee77dd66cc55bb",
+  });
+
+  assert.equal(v1, "street_pdf_proj_v1.aa11bb22cc33dd44");
+  assert.notEqual(v2, v1);
+  assert.notEqual(v2OtherBytes, v2);
+  // Deterministic for identical inputs.
+  assert.equal(
+    v2,
+    buildStreetInvoiceArtifactRevisionTag({
+      projectionRevision: `${STREET_INVOICE_PDF_PROJECTION_VERSION};pay=paid`,
+      sha256: "aa11bb22cc33dd44ee55",
+    }),
+  );
+  // Falls back to the generation stamp, then to the bare version.
+  const stamped = buildStreetInvoiceArtifactRevisionTag({
+    projectionRevision: STREET_INVOICE_PDF_PROJECTION_VERSION,
+    generatedAt: "2026-07-20T12:30:00.000Z",
+  });
+  assert.equal(
+    stamped.startsWith(`${STREET_INVOICE_PDF_PROJECTION_VERSION}.20260720T1230`),
+    true,
+    `unexpected stamped revision tag: ${stamped}`,
+  );
+  assert.equal(
+    buildStreetInvoiceArtifactRevisionTag({}),
+    "street_pdf_proj_unknown",
+  );
 });
