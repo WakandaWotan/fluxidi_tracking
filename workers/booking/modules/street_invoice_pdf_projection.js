@@ -32,7 +32,9 @@ import {
 } from "./document_phone_format.js";
 import { resolveIssuedRouteAddressSnapshot } from "./invoice_route_address.js";
 
-export const STREET_INVOICE_PDF_PROJECTION_VERSION = "street_pdf_proj_v1";
+// v2: include route fingerprint so stale PDFs with raw coordinates / missing
+// frozen addresses refresh without rewriting Document Core snapshots.
+export const STREET_INVOICE_PDF_PROJECTION_VERSION = "street_pdf_proj_v2";
 export { looksLikeCoordinatePair, pickCustomerVisibleAddress, formatDocumentPhoneDisplay };
 
 function _norm(v) {
@@ -524,6 +526,21 @@ export function formatFluxidiPaymentMethodLabel(paymentMethod) {
   return formatPaymentMethodLabelNl(id);
 }
 
+/**
+ * Compact stable fingerprint for customer-visible route text.
+ * Coordinates are never fingerprinted as addresses — they collapse to "-".
+ */
+export function fingerprintCustomerRouteText(from = "", to = "") {
+  const clean = (v) => {
+    const s = _norm(v);
+    if (!s) return "-";
+    if (looksLikeCoordinatePair(s)) return "-";
+    // Keep revision strings short/stable.
+    return s.length > 96 ? `${s.slice(0, 96)}…` : s;
+  };
+  return `${clean(from)}>${clean(to)}`;
+}
+
 export function buildStreetInvoicePdfProjectionRevision({
   paymentStatus = "",
   vatRatePercent = null,
@@ -536,7 +553,12 @@ export function buildStreetInvoicePdfProjectionRevision({
   pickupTime = "",
   tier = "",
   service = "",
+  from = "",
+  to = "",
+  routeFingerprint = "",
 } = {}) {
+  const route =
+    _norm(routeFingerprint) || fingerprintCustomerRouteText(from, to);
   return [
     STREET_INVOICE_PDF_PROJECTION_VERSION,
     `pay=${_lower(paymentStatus) || "unpaid"}`,
@@ -549,6 +571,7 @@ export function buildStreetInvoicePdfProjectionRevision({
     `trip=${_norm(tripDate)}|${_norm(pickupTime)}`,
     `tier=${_norm(tier)}`,
     `svc=${_norm(service)}`,
+    `route=${route || "-"}`,
   ].join(";");
 }
 
@@ -802,6 +825,8 @@ export function buildStreetInvoicePdfProjection({
     pickupTime: ride.pickupTime,
     tier: ride.tier,
     service: ride.service,
+    from: ride.from,
+    to: ride.to,
   });
 
   return {

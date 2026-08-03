@@ -15,6 +15,8 @@ import {
   assertStreetInvoicePdfOwnership,
   buildStreetInvoicePdfProjectionRevision,
   readStoredStreetInvoicePdfProjectionRevision,
+  STREET_INVOICE_PDF_PROJECTION_VERSION,
+  fingerprintCustomerRouteText,
 } from "./street_invoice_pdf_projection.js";
 
 const SCOPE = { tenant_id: "t1", company_id: "c1" };
@@ -462,4 +464,88 @@ test("F4) stored revision reader", () => {
     }),
     "abc",
   );
+});
+
+test("G1) projection revision v2 fingerprints frozen route addresses", () => {
+  assert.equal(STREET_INVOICE_PDF_PROJECTION_VERSION, "street_pdf_proj_v2");
+  const rev = buildStreetInvoicePdfProjectionRevision({
+    paymentStatus: "paid",
+    vatRatePercent: 6,
+    totalInclCents: 500,
+    vatCents: 30,
+    subtotalExCents: 470,
+    sellerSource: "document_core_seller_snapshot",
+    paymentMethodLabel: "QR-betaling",
+    from: "Koekamerstraat 48A, 9688 Schorisse",
+    to: "Scheldestraat 5, 9690 Kluisbergen",
+  });
+  assert.ok(rev.startsWith("street_pdf_proj_v2;"));
+  assert.match(rev, /route=Koekamerstraat 48A, 9688 Schorisse>Scheldestraat 5, 9690 Kluisbergen/);
+});
+
+test("G2) coordinates are not fingerprinted as customer route text", () => {
+  assert.equal(
+    fingerprintCustomerRouteText("50.772006, 3.669447", "Scheldestraat 5"),
+    "->Scheldestraat 5",
+  );
+});
+
+test("G3) address backfill changes revision so stale coord PDF refreshes", () => {
+  const stale = buildStreetInvoicePdfProjectionRevision({
+    paymentStatus: "paid",
+    vatRatePercent: 6,
+    totalInclCents: 500,
+    vatCents: 30,
+    subtotalExCents: 470,
+    sellerSource: "document_core_seller_snapshot",
+    paymentMethodLabel: "QR-betaling",
+    from: "",
+    to: "",
+  });
+  const fixed = buildStreetInvoicePdfProjectionRevision({
+    paymentStatus: "paid",
+    vatRatePercent: 6,
+    totalInclCents: 500,
+    vatCents: 30,
+    subtotalExCents: 470,
+    sellerSource: "document_core_seller_snapshot",
+    paymentMethodLabel: "QR-betaling",
+    from: "Koekamerstraat 48A, 9688 Schorisse",
+    to: "Scheldestraat 5, 9690 Kluisbergen",
+  });
+  const decision = shouldRefreshStreetInvoicePdfArtifact({
+    existingPdfExists: true,
+    storedProjectionRevision: stale,
+    nextProjectionRevision: fixed,
+    reason: "ensure",
+  });
+  assert.equal(decision.refresh, true);
+  assert.equal(decision.reason, "projection_changed");
+});
+
+test("G4) full projection invoiceInput never carries raw coordinates", () => {
+  const base = bookingRec();
+  const built = buildStreetInvoicePdfProjection({
+    scope: SCOPE,
+    bookingId: "street_1",
+    bookingRecord: {
+      ...base,
+      from: "50.772006, 3.669447",
+      to: "3.669447,50.772006",
+      booking: {
+        ...base.booking,
+        from: "50.772006, 3.669447",
+        to: "3.669447,50.772006",
+      },
+    },
+    issuedDocument: issuedDoc(),
+    invoiceNumber: "INV-2026-000034",
+    documentId: "doc-1",
+  });
+  assert.equal(built.ok, true);
+  assert.equal(built.invoiceInput.from, "");
+  assert.equal(built.invoiceInput.to, "");
+  assert.equal(built.invoiceInput.fromMissing, true);
+  assert.equal(built.invoiceInput.toMissing, true);
+  assert.equal(/^-?\d+\.\d+\s*,\s*-?\d+\.\d+$/.test(String(built.invoiceInput.from)), false);
 });

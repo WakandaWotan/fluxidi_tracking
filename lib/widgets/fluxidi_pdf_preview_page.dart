@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -11,19 +12,19 @@ import 'package:share_plus/share_plus.dart';
 ///
 /// The page rasterizes every PDF page to a PNG through the `printing`
 /// platform channel and renders the results with pinch-to-zoom, double-tap
-/// zoom, panning while zoomed, and native vertical scrolling between pages.
+/// zoom, clamped panning while zoomed, and vertical document scrolling.
 /// Share and print actions live in the AppBar and reuse the original PDF
 /// bytes (never the raster) so quality and vector selection are preserved.
 ///
 /// Design notes:
-///  * No `PageView` wraps the pages. Horizontal swipe gestures from a
-///    `PageView` compete with `InteractiveViewer` scale gestures on Android
-///    phones, which historically broke pinch-to-zoom in this app. A vertical
-///    `ListView` with per-page `InteractiveViewer` avoids that conflict.
-///  * Each page owns its own `TransformationController` so zoom state does
-///    not bleed between pages.
-///  * No `WebView`, no external Android intent — the viewer is a plain
-///    Flutter widget so back navigation, share, and print stay in-app.
+///  * No `PageView` — horizontal PageView historically competed with pinch
+///    zoom on Android phones.
+///  * One `InteractiveViewer` owns the whole document (all pages in a column)
+///    so zoom does not detach pages into independent floating canvases.
+///  * Fit-width is identity scale (`minScale == 1`). At fit-width, vertical
+///    pan scrolls the document; when zoomed, pan moves within clamped bounds.
+///  * Viewer page count equals `Printing.raster` page count (never invents
+///    duplicate pages).
 class FluxidiPdfPreviewPage extends StatefulWidget {
   const FluxidiPdfPreviewPage({
     super.key,
@@ -108,25 +109,87 @@ class _FluxidiPdfPreviewPageState extends State<FluxidiPdfPreviewPage> {
   }
 }
 
-/// Presentational widget that renders already-rasterized PDF page PNGs with
-/// reliable Android pinch-to-zoom, double-tap-to-zoom, panning while zoomed,
-/// and normal vertical scrolling between pages.
+/// Pure helpers for zoom / clamp math — unit-tested without a full widget tree.
+@visibleForTesting
+Matrix4 fluxidiPdfDoubleTapMatrix({
+  required Offset focalPoint,
+  required double scale,
+}) {
+  final s = scale;
+  return Matrix4.identity()
+    ..translate(-focalPoint.dx * (s - 1), -focalPoint.dy * (s - 1))
+    ..scale(s);
+}
+
+@visibleForTesting
+Matrix4 fluxidiPdfClampTransform({
+  required Matrix4 current,
+  required Size viewport,
+  required Size content,
+  double edgeKeepFraction = 0.2,
+}) {
+  final values = current.storage;
+  final scale = values[0].abs() < 1e-9 ? 1.0 : values[0].abs();
+  var tx = values[12];
+  var ty = values[13];
+
+  final scaledW = content.width * scale;
+  final scaledH = content.height * scale;
+  final keepX = viewport.width * edgeKeepFraction;
+  final keepY = viewport.height * edgeKeepFraction;
+
+  // Horizontal: keep at least [keepX] of the page inside the viewport.
+  if (scaledW <= viewport.width) {
+    tx = (viewport.width - scaledW) / 2;
+  } else {
+    final minTx = viewport.width - scaledW - keepX;
+    final maxTx = keepX;
+    tx = tx.clamp(minTx, maxTx);
+  }
+
+  // Vertical: allow scrolling the document but never lose the page entirely.
+  if (scaledH <= viewport.height) {
+    ty = math.min(ty, keepY);
+    ty = math.max(ty, viewport.height - scaledH - keepY);
+    // Prefer top-aligned for short single-page docs at fit-width.
+    if (scale <= 1.01) {
+      ty = 0;
+    }
+  } else {
+    final minTy = viewport.height - scaledH - keepY;
+    final maxTy = keepY;
+    ty = ty.clamp(minTy, maxTy);
+  }
+
+  return Matrix4.identity()
+    ..translate(tx, ty)
+    ..scale(scale);
+}
+
+/// Count `/Type /Page` dictionaries in raw PDF bytes (not `/Pages`).
+@visibleForTesting
+int countPdfPageObjects(Uint8List bytes) {
+  final text = String.fromCharCodes(bytes);
+  final re = RegExp(r'/Type\s*/Page(?![s\w])');
+  return re.allMatches(text).length;
+}
+
+/// Presentational widget that renders already-rasterized PDF page PNGs.
 ///
-/// Kept as a public widget so widget tests can drive it with synthetic PNG
-/// bytes without invoking the platform PDF rasterizer.
+/// Kept public so widget tests can drive it with synthetic PNG bytes without
+/// invoking the platform PDF rasterizer.
 class FluxidiPdfPagesView extends StatefulWidget {
   const FluxidiPdfPagesView({
     super.key,
     required this.pages,
-    this.minScale = 0.75,
+    this.minScale = 1.0,
     this.maxScale = 6.0,
     this.doubleTapScale = 2.5,
     this.backgroundColor = const Color(0xFF101010),
     this.pageColor = Colors.white,
-    // Approximate A4 portrait ratio (width / height). Rasterized PDF pages
-    // sit inside a slot of this aspect and fit via BoxFit.contain, so the
-    // full page is always visible at scale 1×.
     this.pageAspectRatio = 1 / 1.4142,
+    this.pageSpacing = 10,
+    this.horizontalPadding = 8,
   });
 
   final List<Uint8List> pages;
@@ -136,6 +199,8 @@ class FluxidiPdfPagesView extends StatefulWidget {
   final Color backgroundColor;
   final Color pageColor;
   final double pageAspectRatio;
+  final double pageSpacing;
+  final double horizontalPadding;
 
   @override
   State<FluxidiPdfPagesView> createState() => FluxidiPdfPagesViewState();
@@ -143,104 +208,148 @@ class FluxidiPdfPagesView extends StatefulWidget {
 
 @visibleForTesting
 class FluxidiPdfPagesViewState extends State<FluxidiPdfPagesView> {
-  late List<TransformationController> _controllers;
-  late List<TapDownDetails?> _lastDoubleTapDown;
-
-  @override
-  void initState() {
-    super.initState();
-    _rebuildControllers(widget.pages.length);
-  }
-
-  @override
-  void didUpdateWidget(covariant FluxidiPdfPagesView oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.pages.length != widget.pages.length) {
-      _disposeControllers();
-      _rebuildControllers(widget.pages.length);
-    }
-  }
+  final TransformationController _controller = TransformationController();
+  TapDownDetails? _lastDoubleTapDown;
+  Size _viewport = Size.zero;
+  Size _content = Size.zero;
+  bool _zoomed = false;
 
   @override
   void dispose() {
-    _disposeControllers();
+    _controller.dispose();
     super.dispose();
   }
 
-  void _rebuildControllers(int count) {
-    _controllers = List<TransformationController>.generate(
-      count,
-      (_) => TransformationController(),
-      growable: false,
-    );
-    _lastDoubleTapDown = List<TapDownDetails?>.filled(count, null);
+  @visibleForTesting
+  TransformationController get transformationController => _controller;
+
+  @visibleForTesting
+  bool get isZoomed => _zoomed;
+
+  @visibleForTesting
+  void debugTriggerDoubleTap(Offset localPosition) {
+    _lastDoubleTapDown = TapDownDetails(localPosition: localPosition);
+    _handleDoubleTap();
   }
 
-  void _disposeControllers() {
-    for (final c in _controllers) {
-      c.dispose();
+  @visibleForTesting
+  void debugSetViewportAndContent({
+    required Size viewport,
+    required Size content,
+  }) {
+    _viewport = viewport;
+    _content = content;
+  }
+
+  void _syncZoomedFlag() {
+    final scale = _controller.value.getMaxScaleOnAxis();
+    final next = scale > 1.01;
+    if (next != _zoomed && mounted) {
+      setState(() => _zoomed = next);
+    } else {
+      _zoomed = next;
     }
   }
 
-  @visibleForTesting
-  TransformationController controllerAt(int index) => _controllers[index];
-
-  @visibleForTesting
-  void debugTriggerDoubleTap(int index, Offset localPosition) {
-    _lastDoubleTapDown[index] = TapDownDetails(localPosition: localPosition);
-    _handleDoubleTap(index);
+  void _clampCurrent() {
+    if (_viewport == Size.zero || _content == Size.zero) return;
+    final clamped = fluxidiPdfClampTransform(
+      current: _controller.value,
+      viewport: _viewport,
+      content: _content,
+    );
+    if (clamped != _controller.value) {
+      _controller.value = clamped;
+    }
+    _syncZoomedFlag();
   }
 
-  void _handleDoubleTap(int index) {
-    final controller = _controllers[index];
-    final details = _lastDoubleTapDown[index];
-    final zoomedIn = controller.value != Matrix4.identity();
-    if (zoomedIn || details == null) {
-      controller.value = Matrix4.identity();
+  void _handleDoubleTap() {
+    final details = _lastDoubleTapDown;
+    final scale = _controller.value.getMaxScaleOnAxis();
+    if (scale > 1.01 || details == null) {
+      _controller.value = Matrix4.identity();
+      _syncZoomedFlag();
       return;
     }
-    final position = details.localPosition;
-    final scale = widget.doubleTapScale;
-    controller.value = Matrix4.identity()
-      ..translate(-position.dx * (scale - 1), -position.dy * (scale - 1))
-      ..scale(scale);
+    _controller.value = fluxidiPdfDoubleTapMatrix(
+      focalPoint: details.localPosition,
+      scale: widget.doubleTapScale,
+    );
+    _clampCurrent();
+  }
+
+  double _pageHeightForWidth(double width) {
+    if (widget.pageAspectRatio <= 0) return width * 1.4142;
+    return width / widget.pageAspectRatio;
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return ColoredBox(
       color: widget.backgroundColor,
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-        itemCount: widget.pages.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 12),
-        itemBuilder: (context, index) {
-          final page = widget.pages[index];
-          final controller = _controllers[index];
-          return AspectRatio(
-            aspectRatio: widget.pageAspectRatio,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onDoubleTapDown: (details) =>
-                  _lastDoubleTapDown[index] = details,
-              onDoubleTap: () => _handleDoubleTap(index),
-              child: InteractiveViewer(
-                transformationController: controller,
-                minScale: widget.minScale,
-                maxScale: widget.maxScale,
-                boundaryMargin: const EdgeInsets.all(200),
-                panEnabled: true,
-                scaleEnabled: true,
-                child: Container(
-                  color: widget.pageColor,
-                  padding: const EdgeInsets.all(8),
-                  child: Image.memory(
-                    page,
-                    fit: BoxFit.contain,
-                    gaplessPlayback: true,
-                    filterQuality: FilterQuality.high,
-                  ),
-                ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final viewport = Size(constraints.maxWidth, constraints.maxHeight);
+          final pageWidth =
+              math.max(1.0, viewport.width - widget.horizontalPadding * 2);
+          final pageHeight = _pageHeightForWidth(pageWidth);
+          final pageCount = widget.pages.length;
+          final contentHeight = pageCount <= 0
+              ? 0.0
+              : pageCount * pageHeight +
+                  math.max(0, pageCount - 1) * widget.pageSpacing;
+          final content = Size(pageWidth, contentHeight);
+          _viewport = viewport;
+          _content = content;
+
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onDoubleTapDown: (details) => _lastDoubleTapDown = details,
+            onDoubleTap: _handleDoubleTap,
+            child: InteractiveViewer(
+              transformationController: _controller,
+              minScale: widget.minScale,
+              maxScale: widget.maxScale,
+              // Limited margin so zoomed content cannot drift into a huge
+              // empty canvas / leave the viewport almost empty.
+              boundaryMargin: EdgeInsets.symmetric(
+                horizontal: viewport.width * 0.25,
+                vertical: viewport.height * 0.25,
+              ),
+              constrained: false,
+              clipBehavior: Clip.hardEdge,
+              panEnabled: true,
+              scaleEnabled: true,
+              alignment: Alignment.topCenter,
+              onInteractionEnd: (_) => _clampCurrent(),
+              onInteractionUpdate: (_) => _syncZoomedFlag(),
+              child: SizedBox(
+                width: pageWidth,
+                child: pageCount == 0
+                    ? const SizedBox.shrink()
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (var i = 0; i < pageCount; i++) ...[
+                            if (i > 0)
+                              SizedBox(height: widget.pageSpacing),
+                            SizedBox(
+                              width: pageWidth,
+                              height: pageHeight,
+                              child: ColoredBox(
+                                color: widget.pageColor,
+                                child: Image.memory(
+                                  widget.pages[i],
+                                  fit: BoxFit.contain,
+                                  gaplessPlayback: true,
+                                  filterQuality: FilterQuality.high,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
               ),
             ),
           );

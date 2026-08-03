@@ -116,6 +116,7 @@ import {
   DEFAULT_COMPANY_TIMEZONE,
 } from "./modules/brussels_datetime.js";
 import { formatDocumentPhoneDisplay } from "./modules/document_phone_format.js";
+import { buildInvoicePrintCss } from "./modules/invoice_print_layout.js";
 import { peppolIdentifierFromBelgianEnterpriseNumber } from "./modules/peppol_readiness.js";
 import {
   reconcileBillitOrderTotalAgainstDocument,
@@ -91064,9 +91065,12 @@ function renderInvoiceHtml(env, data, commProfile = null) {
     (d.bags !== null && d.bags !== undefined && d.bags !== "")
       ? String(toInt(d.bags, 0))
       : "";
-  const fromDisplay = safeStr(d.from) || "Niet opgegeven";
-  const toDisplay = safeStr(d.to) || "Niet opgegeven";
+  // Never expose raw lat/lon on customer PDFs. Prefer frozen projection text;
+  // fall back to neutral wording when no usable address exists.
   const missingLabel = "Niet opgegeven";
+  const fromDisplay =
+    pickCustomerVisibleAddress(d.from) || missingLabel;
+  const toDisplay = pickCustomerVisibleAddress(d.to) || missingLabel;
   const tierLine = omitTier
     ? ""
     : `<strong>Ritniveau:</strong> ${escapeHtml(safeStr(d.tier))}${
@@ -91192,8 +91196,8 @@ function renderInvoiceHtml(env, data, commProfile = null) {
             legType,
             label: safeStr(leg.label) || (legType === "return" ? "Terugrit" : "Heenrit"),
             pickupText: safeStr(leg.pickup_text || leg.pickupText || leg.pickup_iso || leg.pickupIso),
-            from: safeStr(leg.from),
-            to: safeStr(leg.to),
+            from: pickCustomerVisibleAddress(leg.from),
+            to: pickCustomerVisibleAddress(leg.to),
             distanceKm: Number.isFinite(Number(leg.distance_km ?? leg.distanceKm)) ? Number(leg.distance_km ?? leg.distanceKm) : null,
             durationMin: Number.isFinite(Number(leg.duration_min ?? leg.durationMin)) ? Number(leg.duration_min ?? leg.durationMin) : null,
             priceInclVat,
@@ -91242,7 +91246,7 @@ function renderInvoiceHtml(env, data, commProfile = null) {
         <td>
           <strong>${escapeHtml(leg.label)}</strong><br>
           ${pickupLine}
-          ${escapeHtml(leg.from || "—")} → ${escapeHtml(leg.to || "—")}<br>
+          ${escapeHtml(leg.from || missingLabel)} → ${escapeHtml(leg.to || missingLabel)}<br>
           ${distanceLine}${durationLine}${distanceLine || durationLine ? "<br>" : ""}
           <span class="muted">Status: ${escapeHtml(statusNl(leg.status))}</span>
         </td>
@@ -91265,111 +91269,11 @@ function renderInvoiceHtml(env, data, commProfile = null) {
 <head>
   <meta charset="UTF-8" />
   <title>${escapeHtml(documentTitle)} ${escapeHtml(d.invoiceNumber || "")}</title>
+  <style>
+${buildInvoicePrintCss()}
+  </style>
 </head>
 <body>
-<p>&nbsp;</p>
-<style>
-  body {
-    font-family: Arial, Helvetica, sans-serif;
-    background: #ffffff;
-    margin: 0;
-    padding: 0;
-    color: #111;
-  }
-
-  .invoice-wrapper {
-    max-width: 820px;
-    margin: 36px auto;
-    padding: 32px;
-    border: 1px solid #ddd;
-  }
-
-  .header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 2px solid #f0c400;
-    padding-bottom: 14px;
-    margin-bottom: 22px;
-    gap: 16px;
-  }
-
-  .logo img { height: 160px; object-fit: contain; }
-
-  .company-info {
-    text-align: right;
-    font-size: 13px;
-    line-height: 1.6;
-  }
-
-  h1 { font-size: 26px; margin: 0 0 14px 0; }
-
-  .meta {
-    display: flex;
-    justify-content: space-between;
-    margin-bottom: 18px;
-    font-size: 14px;
-    gap: 18px;
-  }
-
-  .box { width: 48%; }
-  .box strong { display: block; margin-bottom: 6px; }
-  .meta small { color: #444; display:block; margin-top:6px; line-height:1.5; }
-
-  .pill {
-    display: inline-block;
-    padding: 4px 10px;
-    border-radius: 999px;
-    background: #fff6cc;
-    border: 1px solid #f0c400;
-    font-size: 12px;
-    margin-left: 8px;
-  }
-
-  table { width: 100%; border-collapse: collapse; margin-top: 18px; }
-
-  table th {
-    background: #f5f5f5;
-    text-align: left;
-    padding: 10px;
-    font-size: 14px;
-    border-bottom: 2px solid #ddd;
-  }
-
-  table td {
-    padding: 10px;
-    font-size: 14px;
-    border-bottom: 1px solid #eee;
-    vertical-align: top;
-  }
-
-  .muted { color: #555; }
-  .right { text-align:right; }
-  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-
-  .totals {
-    margin-top: 18px;
-    width: 100%;
-    max-width: 340px;
-    margin-left: auto;
-  }
-
-  .totals td { padding: 6px 10px; }
-  .totals tr:last-child td {
-    font-weight: bold;
-    font-size: 16px;
-    border-top: 2px solid #000;
-  }
-
-  .footer {
-    margin-top: 34px;
-    font-size: 12px;
-    color: #555;
-    text-align: center;
-    line-height: 1.6;
-  }
-</style>
-
 <div class="invoice-wrapper">
 
   <div class="header">
@@ -91437,6 +91341,7 @@ function renderInvoiceHtml(env, data, commProfile = null) {
     </tbody>
   </table>
 
+  <div class="closing">
   <table class="totals">
     <tbody>
       <tr>
@@ -91457,6 +91362,7 @@ function renderInvoiceHtml(env, data, commProfile = null) {
   <div class="footer">
     BTW aangerekend volgens de Belgische BTW-wetgeving (personenvervoer).<br>
     ${escapeHtml(sellerFooter)}
+  </div>
   </div>
 
 </div>
@@ -91505,7 +91411,11 @@ async function renderPdfFromHtml(htmlString, env) {
         source: String(htmlString || ""),
         landscape: false,
         use_print: true,
-        sandbox: false
+        sandbox: false,
+        // Keep A4 margins aligned with @page CSS; avoid a near-empty trailing
+        // page when only a few pixels of footer overflow.
+        margin: "10mm",
+        format: "A4",
       })
     });
 
