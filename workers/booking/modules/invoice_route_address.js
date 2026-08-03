@@ -307,6 +307,7 @@ export function applyResolvedRouteAddressToBooking(
 
 /**
  * Prefer Document Core envelope `route_address_snapshot` over mutable booking.
+ * Never returns raw coordinate pairs as customer-visible text.
  */
 export function resolveIssuedRouteAddressSnapshot(
   issuedDocument = null,
@@ -319,10 +320,20 @@ export function resolveIssuedRouteAddressSnapshot(
     typeof doc.route_address_snapshot === "object"
       ? doc.route_address_snapshot
       : null;
-  if (snap && (snap.from_address || snap.to_address || snap.invoice_from_address)) {
+  if (snap && (snap.from_address || snap.to_address || snap.invoice_from_address || snap.invoice_to_address)) {
+    const from = pickCustomerVisibleAddress(
+      snap.from_address,
+      snap.invoice_from_address,
+    );
+    const to = pickCustomerVisibleAddress(
+      snap.to_address,
+      snap.invoice_to_address,
+    );
+    // Snapshot present (even if both sides omit after coord filter) still wins
+    // over mutable booking so post-issue edits cannot change the export.
     return {
-      from: _safe(snap.from_address || snap.invoice_from_address, 400),
-      to: _safe(snap.to_address || snap.invoice_to_address, 400),
+      from,
+      to,
       source: "document_core_route_address_snapshot",
       snapshot: snap,
     };
@@ -334,5 +345,115 @@ export function resolveIssuedRouteAddressSnapshot(
     to,
     source: from || to ? "booking_envelope" : "missing",
     snapshot: bookingRecord?.route_address_snapshot || null,
+  };
+}
+
+/**
+ * Shared pickup/dropoff projection for Fluxidi PDF and Billit export.
+ * Pure: never reverse-geocodes; never invents addresses.
+ *
+ * @param {object|null} issuedDocument Document Core record (preferred SoT)
+ * @param {object|null} bookingRecord Mutable booking fallback only when snapshot absent
+ * @param {{ missingLabel?: string }} [opts] When set (e.g. "Niet opgegeven"),
+ *   missing sides use that label; otherwise empty string (omit).
+ */
+export function projectInvoiceRouteAddressesForExport(
+  issuedDocument = null,
+  bookingRecord = null,
+  opts = {},
+) {
+  const missingLabel =
+    opts && typeof opts.missingLabel === "string" ? opts.missingLabel : "";
+  const resolved = resolveIssuedRouteAddressSnapshot(
+    issuedDocument,
+    bookingRecord,
+  );
+  const pickup = resolved.from || "";
+  const dropoff = resolved.to || "";
+  return {
+    pickup,
+    dropoff,
+    pickup_display: pickup || missingLabel || "",
+    dropoff_display: dropoff || missingLabel || "",
+    source: resolved.source,
+    snapshot: resolved.snapshot,
+  };
+}
+
+/**
+ * Billit / provider-neutral Taxirit line description with frozen route text.
+ * Never embeds raw coordinate pairs. Caps at 240 chars (Billit Description).
+ */
+export function formatBillitTaxiritLineDescription({
+  legSuffix = null,
+  pickup = "",
+  dropoff = "",
+  missingLabel = "Niet opgegeven",
+  maxLen = 240,
+} = {}) {
+  const base =
+    legSuffix === "return"
+      ? "Taxirit - terugrit"
+      : legSuffix === "outbound" || legSuffix === "heenrit"
+        ? "Taxirit - heenrit"
+        : legSuffix
+          ? `Taxirit - ${String(legSuffix).slice(0, 40)}`
+          : "Taxirit";
+  const from = pickCustomerVisibleAddress(pickup);
+  const to = pickCustomerVisibleAddress(dropoff);
+  if (!from && !to) return base.slice(0, maxLen);
+  const left = from || missingLabel || "Niet opgegeven";
+  const right = to || missingLabel || "Niet opgegeven";
+  const full = `${base}: ${left} → ${right}`;
+  if (full.length <= maxLen) return full;
+  return full.slice(0, maxLen);
+}
+
+/**
+ * Enrich provider-neutral line items so Taxirit descriptions carry the same
+ * frozen route as the Fluxidi invoice PDF. Custom non-Taxirit descriptions are
+ * left untouched; route_addresses is still returned for structured parity.
+ */
+export function enrichProviderNeutralLineItemsWithRoute(
+  lineItems,
+  issuedDocument = null,
+  bookingRecord = null,
+  { legType = null } = {},
+) {
+  const route = projectInvoiceRouteAddressesForExport(
+    issuedDocument,
+    bookingRecord,
+  );
+  const items = Array.isArray(lineItems) ? lineItems : [];
+  const enriched = items.map((li) => {
+    if (!li || typeof li !== "object" || Array.isArray(li)) return li;
+    const desc = String(li.description || "").trim();
+    const isTaxirit =
+      !desc ||
+      /^Taxirit(\b|$)/i.test(desc) ||
+      /^Creditnota taxirit(\b|$)/i.test(desc);
+    if (!isTaxirit) return { ...li };
+    const isCredit = /^Creditnota/i.test(desc);
+    const baseDesc = formatBillitTaxiritLineDescription({
+      legSuffix: legType,
+      pickup: route.pickup,
+      dropoff: route.dropoff,
+    });
+    return {
+      ...li,
+      description: isCredit
+        ? baseDesc.replace(/^Taxirit/, "Creditnota taxirit")
+        : baseDesc,
+    };
+  });
+  return {
+    line_items: enriched,
+    route_addresses: {
+      pickup: route.pickup || null,
+      dropoff: route.dropoff || null,
+      pickup_display: route.pickup_display || null,
+      dropoff_display: route.dropoff_display || null,
+      source: route.source,
+    },
   };
 }

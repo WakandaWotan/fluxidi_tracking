@@ -270,6 +270,9 @@ import {
   applyResolvedRouteAddressToBooking,
   buildRouteAddressSnapshot,
   resolveIssuedRouteAddressSnapshot,
+  projectInvoiceRouteAddressesForExport,
+  formatBillitTaxiritLineDescription,
+  enrichProviderNeutralLineItemsWithRoute,
 } from "./modules/invoice_route_address.js";
 import {
   resolveInvoiceLogoSrc,
@@ -6105,6 +6108,12 @@ export {
   runBillitDurableExportAttempt,
   sweepBillitDurableRecoveryOutbox,
   persistPendingBillitExportOutboxOnce,
+};
+// Hermetic Billit route-snapshot parity tests only (pure mappers).
+export {
+  buildDocumentExportPreview,
+  buildBillitPayloadPreviewFromProviderNeutralDocument,
+  buildBillitOfficialOrderRequestPreview,
 };
 
 async function handleAdminBookingBillitAutoCreateSandbox({ request, url, env, bookingId }) {
@@ -85228,25 +85237,37 @@ function buildDocumentExportPreview(record, classification, displayOverlay = nul
   // carries no stored line items. Display-only (export-preview); NEVER
   // persisted to KV. Leg-first: one line item for the bound operational leg.
   // Returns [] when totals lack any monetary anchor.
-  function _synthesizeProviderNeutralLineItems(docTypeArg, totalsArg, legType, cur) {
+  function _synthesizeProviderNeutralLineItems(
+    docTypeArg,
+    totalsArg,
+    legType,
+    cur,
+    routePickup = "",
+    routeDropoff = "",
+  ) {
     if (!totalsArg) return [];
     const legSuffix =
       legType === "return"
-        ? "terugrit"
+        ? "return"
         : legType === "outbound"
-          ? "heenrit"
+          ? "outbound"
           : null;
     const subtotal = _firstFiniteNumberOrNull(totalsArg.subtotal_ex_vat);
     const vatAmount = _firstFiniteNumberOrNull(totalsArg.vat_amount);
     const totalIncl = _firstFiniteNumberOrNull(totalsArg.total_incl_vat);
     const vatRate = _normalizeVatRatePercentOrNull(totalsArg.vat_rate_percent);
+    // Same frozen Document Core route_address_snapshot as Fluxidi PDF projection.
+    const taxiritDescription = formatBillitTaxiritLineDescription({
+      legSuffix,
+      pickup: routePickup,
+      dropoff: routeDropoff,
+    });
 
     if (docTypeArg === "invoice") {
       if (subtotal === null && totalIncl === null) return [];
-      const description = legSuffix ? `Taxirit - ${legSuffix}` : "Taxirit";
       return [
         {
-          description,
+          description: taxiritDescription,
           quantity: 1,
           unit_price_ex_vat: subtotal,
           line_total_ex_vat: subtotal,
@@ -85268,9 +85289,10 @@ function buildDocumentExportPreview(record, classification, displayOverlay = nul
       );
       const lineTotalIncl = creditedIncl !== null ? creditedIncl : totalIncl;
       if (lineTotalIncl === null && subtotal === null) return [];
-      const description = legSuffix
-        ? `Creditnota taxirit - ${legSuffix}`
-        : "Creditnota taxirit";
+      const description = taxiritDescription.replace(
+        /^Taxirit/,
+        "Creditnota taxirit",
+      );
       return [
         {
           description,
@@ -85390,6 +85412,19 @@ function buildDocumentExportPreview(record, classification, displayOverlay = nul
     ? _buildSingleTaxBreakdownEntry(totals, currency)
     : [];
 
+  // FLUXIDI-BILLIT-ROUTE-SNAPSHOT-PARITY-P0-1: same frozen Document Core
+  // route_address_snapshot as Fluxidi PDF. Pure projection only — never
+  // reverse-geocodes during Billit/export preview. Mutable booking.from/to
+  // are not consulted when the issued snapshot is present.
+  const exportRoute = projectInvoiceRouteAddressesForExport(rec, null);
+  let routeAddressesPreview = {
+    pickup: exportRoute.pickup || null,
+    dropoff: exportRoute.dropoff || null,
+    pickup_display: exportRoute.pickup_display || null,
+    dropoff_display: exportRoute.dropoff_display || null,
+    source: exportRoute.source,
+  };
+
   // Provider-neutral line items for invoice / credit_note. Prefer line items
   // already stored on the registry record; only synthesize a minimal,
   // display-only fallback from totals + leg binding when none are stored. This
@@ -85411,7 +85446,18 @@ function buildDocumentExportPreview(record, classification, displayOverlay = nul
         totals,
         sourceLegType,
         currency,
+        exportRoute.pickup,
+        exportRoute.dropoff,
       );
+    } else {
+      const enriched = enrichProviderNeutralLineItemsWithRoute(
+        lineItems,
+        rec,
+        null,
+        { legType: sourceLegType },
+      );
+      lineItems = enriched.line_items;
+      routeAddressesPreview = enriched.route_addresses;
     }
   }
 
@@ -85471,6 +85517,8 @@ function buildDocumentExportPreview(record, classification, displayOverlay = nul
     totals,
     tax_breakdown: taxBreakdown,
     line_items: lineItems,
+    // Same frozen pickup/dropoff SoT as Fluxidi street invoice PDF.
+    route_addresses: routeAddressesPreview,
     attachments: [],
     notes,
     not_exported_reason: notExportedReason,
@@ -85547,6 +85595,10 @@ function buildBillitPayloadPreviewFromProviderNeutralDocument(docPreview, scope)
       ? pnp.customer
       : null;
   const lineItemsRaw = Array.isArray(pnp.line_items) ? pnp.line_items : [];
+  const routeAddressesRaw =
+    pnp.route_addresses && typeof pnp.route_addresses === "object"
+      ? pnp.route_addresses
+      : null;
 
   function _numOrNull(value) {
     if (value === null || value === undefined || value === "") return null;
@@ -85796,6 +85848,18 @@ function buildBillitPayloadPreviewFromProviderNeutralDocument(docPreview, scope)
     lines,
     totals,
     references,
+    // Frozen Document Core route (display/parity); never reverse-geocoded here.
+    route_addresses: routeAddressesRaw
+      ? {
+          pickup: safeStr(routeAddressesRaw.pickup, 400) || null,
+          dropoff: safeStr(routeAddressesRaw.dropoff, 400) || null,
+          pickup_display:
+            safeStr(routeAddressesRaw.pickup_display, 400) || null,
+          dropoff_display:
+            safeStr(routeAddressesRaw.dropoff_display, 400) || null,
+          source: safeStr(routeAddressesRaw.source, 80) || null,
+        }
+      : null,
     peppol,
     warnings,
     unsupported_fields: unsupportedFields,
