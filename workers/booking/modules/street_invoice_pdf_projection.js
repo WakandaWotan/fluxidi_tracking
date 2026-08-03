@@ -30,6 +30,7 @@ import {
   looksLikeCoordinatePair,
   formatDocumentPhoneDisplay,
 } from "./document_phone_format.js";
+import { resolveIssuedRouteAddressSnapshot } from "./invoice_route_address.js";
 
 export const STREET_INVOICE_PDF_PROJECTION_VERSION = "street_pdf_proj_v1";
 export { looksLikeCoordinatePair, pickCustomerVisibleAddress, formatDocumentPhoneDisplay };
@@ -420,7 +421,7 @@ function _formatIsoLocalParts(iso, timezone = DEFAULT_COMPANY_TIMEZONE) {
 /** Ride / service fields from canonical booking record. */
 export function resolveInvoiceRideProjection(
   bookingRecord = null,
-  { timezone = DEFAULT_COMPANY_TIMEZONE } = {},
+  { timezone = DEFAULT_COMPANY_TIMEZONE, issuedDocument = null } = {},
 ) {
   const rec =
     bookingRecord && typeof bookingRecord === "object" ? bookingRecord : {};
@@ -456,32 +457,36 @@ export function resolveInvoiceRideProjection(
       rec.service_type ??
       booking.serviceType,
   );
-  // Authoritative route snapshot wins over mutable booking.from/to.
-  // Coordinates are never customer-visible; missing → empty (omit / "Niet opgegeven").
-  const from = pickCustomerVisibleAddress(
-    booking.invoice_from_address,
-    rec.invoice_from_address,
-    booking.from_full_address,
-    rec.from_full_address,
-    booking.from_label,
-    rec.from_label,
-    booking.pickup_address,
-    booking.pickupAddress,
-    booking.from,
-    rec.from,
-  );
-  const to = pickCustomerVisibleAddress(
-    booking.invoice_to_address,
-    rec.invoice_to_address,
-    booking.to_full_address,
-    rec.to_full_address,
-    booking.to_label,
-    rec.to_label,
-    booking.destination_address,
-    booking.dropoff_address,
-    booking.to,
-    rec.to,
-  );
+  // Issued Document Core route_address_snapshot wins over mutable booking.
+  const issuedRoute = resolveIssuedRouteAddressSnapshot(issuedDocument, rec);
+  const from =
+    issuedRoute.from ||
+    pickCustomerVisibleAddress(
+      booking.invoice_from_address,
+      rec.invoice_from_address,
+      booking.from_full_address,
+      rec.from_full_address,
+      booking.from_label,
+      rec.from_label,
+      booking.pickup_address,
+      booking.pickupAddress,
+      booking.from,
+      rec.from,
+    );
+  const to =
+    issuedRoute.to ||
+    pickCustomerVisibleAddress(
+      booking.invoice_to_address,
+      rec.invoice_to_address,
+      booking.to_full_address,
+      rec.to_full_address,
+      booking.to_label,
+      rec.to_label,
+      booking.destination_address,
+      booking.dropoff_address,
+      booking.to,
+      rec.to,
+    );
   return {
     pickupStartIso: pickupIso,
     tripDate: pickupParts.date || startParts.date || "",
@@ -495,6 +500,7 @@ export function resolveInvoiceRideProjection(
     to,
     fromMissing: !from,
     toMissing: !to,
+    routeAddressSource: issuedRoute.source,
     stops: Array.isArray(booking.stops)
       ? booking.stops
       : Array.isArray(rec.stops)
@@ -728,6 +734,7 @@ export function buildStreetInvoicePdfProjection({
   );
   const ride = resolveInvoiceRideProjection(bookingRecord, {
     timezone: companyTimezone,
+    issuedDocument,
   });
   // Format seller phone for display without mutating stored identity.
   if (seller && typeof seller === "object") {

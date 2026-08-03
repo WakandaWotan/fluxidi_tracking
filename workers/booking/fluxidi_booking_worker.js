@@ -264,6 +264,18 @@ import {
   pickCustomerVisibleAddress,
 } from "./modules/street_invoice_pdf_projection.js";
 import {
+  extractRouteCoordinates,
+  resolveHumanRouteAddress,
+  needsReverseGeocode,
+  applyResolvedRouteAddressToBooking,
+  buildRouteAddressSnapshot,
+  resolveIssuedRouteAddressSnapshot,
+} from "./modules/invoice_route_address.js";
+import {
+  resolveInvoiceLogoSrc,
+  buildFluxidiInvoiceLogoDataUri,
+} from "./modules/invoice_logo_embedded.js";
+import {
   isLegacyFlxInvoiceNumber,
   isDocumentCoreInvoiceNumber,
   resolveCanonicalInvoiceNumberBinding,
@@ -64349,6 +64361,32 @@ async function createDirectRideBookingBestEffort(
   // payment-shadow guard, even if the id were ever classified UUID-like.
   const fromText = originLabel || "Straatrit";
   const toText = destLabel || "Straatrit";
+  const originLat = Number(
+    origin?.lat ?? origin?.latitude ?? origin?.Lat ?? origin?.Latitude,
+  );
+  const originLng = Number(
+    origin?.lon ??
+      origin?.lng ??
+      origin?.longitude ??
+      origin?.Lon ??
+      origin?.Lng,
+  );
+  const destLat = Number(
+    destination?.lat ??
+      destination?.latitude ??
+      destination?.Lat ??
+      destination?.Latitude,
+  );
+  const destLng = Number(
+    destination?.lon ??
+      destination?.lng ??
+      destination?.longitude ??
+      destination?.Lon ??
+      destination?.Lng,
+  );
+  const hasOriginCoords =
+    Number.isFinite(originLat) && Number.isFinite(originLng);
+  const hasDestCoords = Number.isFinite(destLat) && Number.isFinite(destLng);
   const bookingId = _makeStreetRideBookingId(Date.now());
 
   const rec = {
@@ -64376,6 +64414,28 @@ async function createDirectRideBookingBestEffort(
     createdAt: nowIsoStr,
     updated_at: nowIsoStr,
     updatedAt: nowIsoStr,
+    ...(hasOriginCoords
+      ? { from_lat: originLat, from_lng: originLng, from_lon: originLng }
+      : {}),
+    ...(hasDestCoords
+      ? { to_lat: destLat, to_lng: destLng, to_lon: destLng }
+      : {}),
+    // Prefer human labels when available; never invent invoice_* yet — freeze
+    // + reverse-geocode happens once before PDF/invoice issue.
+    ...(pickCustomerVisibleAddress(originLabel)
+      ? {
+          from_label: pickCustomerVisibleAddress(originLabel),
+          invoice_from_address: pickCustomerVisibleAddress(originLabel),
+          invoice_from_address_source: "origin_label",
+        }
+      : {}),
+    ...(pickCustomerVisibleAddress(destLabel)
+      ? {
+          to_label: pickCustomerVisibleAddress(destLabel),
+          invoice_to_address: pickCustomerVisibleAddress(destLabel),
+          invoice_to_address_source: "destination_label",
+        }
+      : {}),
     booking: {
       tenant_id,
       company_id,
@@ -64391,6 +64451,22 @@ async function createDirectRideBookingBestEffort(
       assigned_driver_id: safeDriverId,
       ...(safeVehicleId ? { assigned_vehicle_id: safeVehicleId } : {}),
       customer_name: "Straatrit",
+      ...(hasOriginCoords
+        ? { from_lat: originLat, from_lng: originLng }
+        : {}),
+      ...(hasDestCoords ? { to_lat: destLat, to_lng: destLng } : {}),
+      ...(pickCustomerVisibleAddress(originLabel)
+        ? {
+            from_label: pickCustomerVisibleAddress(originLabel),
+            invoice_from_address: pickCustomerVisibleAddress(originLabel),
+          }
+        : {}),
+      ...(pickCustomerVisibleAddress(destLabel)
+        ? {
+            to_label: pickCustomerVisibleAddress(destLabel),
+            invoice_to_address: pickCustomerVisibleAddress(destLabel),
+          }
+        : {}),
     },
     quote: {
       from: fromText,
@@ -64729,59 +64805,158 @@ async function freezeInvoiceRouteAddressSnapshots(env, bookingId, rec) {
   if (!env?.BOOKING_KV || !bookingId || !rec || typeof rec !== "object") {
     return rec;
   }
-  const booking =
-    rec.booking && typeof rec.booking === "object" ? rec.booking : {};
-  const existingFrom = safeStr(
-    rec.invoice_from_address ?? booking.invoice_from_address,
-    400,
-  );
-  const existingTo = safeStr(
-    rec.invoice_to_address ?? booking.invoice_to_address,
-    400,
-  );
-  const from = existingFrom || pickCustomerVisibleAddress(
-    booking.from_full_address,
-    rec.from_full_address,
-    booking.from_label,
-    rec.from_label,
-    booking.pickup_address,
-    booking.pickupAddress,
-    booking.from,
-    rec.from,
-  );
-  const to = existingTo || pickCustomerVisibleAddress(
-    booking.to_full_address,
-    rec.to_full_address,
-    booking.to_label,
-    rec.to_label,
-    booking.destination_address,
-    booking.dropoff_address,
-    booking.to,
-    rec.to,
-  );
-  // Nothing authoritative to freeze.
-  if (!from && !to) return rec;
-  if (existingFrom && existingTo) return rec; // already frozen
-  if (existingFrom === from && existingTo === to && (existingFrom || existingTo)) {
-    return rec;
+  let next = rec;
+  const nowIso = new Date().toISOString();
+
+  // 1) Prefer already-known human addresses (no geocoder).
+  const humanFrom = resolveHumanRouteAddress(next, "from");
+  const humanTo = resolveHumanRouteAddress(next, "to");
+  if (humanFrom || humanTo) {
+    next = applyResolvedRouteAddressToBooking(next, {
+      fromAddress: humanFrom || null,
+      toAddress: humanTo || null,
+      fromSource: humanFrom ? "existing_human_label" : null,
+      toSource: humanTo ? "existing_human_label" : null,
+      fromLat: extractRouteCoordinates(next, "from")?.lat,
+      fromLng: extractRouteCoordinates(next, "from")?.lng,
+      toLat: extractRouteCoordinates(next, "to")?.lat,
+      toLng: extractRouteCoordinates(next, "to")?.lng,
+      resolvedAt: nowIso,
+    });
   }
-  const next = { ...rec };
-  if (from && !existingFrom) {
-    next.invoice_from_address = from;
+
+  // 2) Resolve missing sides once via Mapbox reverse geocode. Failure must
+  // never block invoice/payment — leave address empty ("Niet opgegeven").
+  const token = safeStr(env?.MAPBOX_TOKEN, 200);
+  async function _resolveSide(side) {
+    if (!needsReverseGeocode(next, side)) return null;
+    const coords = extractRouteCoordinates(next, side);
+    if (!coords || !token) return null;
+    try {
+      const normalized = await _reverseGeocodePublicAddress({
+        lat: coords.lat,
+        lng: coords.lng,
+        lang: "nl",
+        countryCode: "BE",
+        token,
+      });
+      const address = pickCustomerVisibleAddress(
+        normalized?.full_address,
+        normalized?.formatted_address,
+        normalized?.place_name,
+        normalized?.address,
+        normalized?.label,
+        normalized?.name,
+      );
+      if (!address) return null;
+      return { address, lat: coords.lat, lng: coords.lng };
+    } catch (_) {
+      return null;
+    }
   }
-  if (to && !existingTo) {
-    next.invoice_to_address = to;
+
+  const fromResolved = await _resolveSide("from");
+  const toResolved = await _resolveSide("to");
+  if (fromResolved || toResolved) {
+    next = applyResolvedRouteAddressToBooking(next, {
+      fromAddress: fromResolved?.address || null,
+      toAddress: toResolved?.address || null,
+      fromSource: fromResolved ? "mapbox_reverse_geocode" : null,
+      toSource: toResolved ? "mapbox_reverse_geocode" : null,
+      fromLat: fromResolved?.lat ?? extractRouteCoordinates(next, "from")?.lat,
+      fromLng: fromResolved?.lng ?? extractRouteCoordinates(next, "from")?.lng,
+      toLat: toResolved?.lat ?? extractRouteCoordinates(next, "to")?.lat,
+      toLng: toResolved?.lng ?? extractRouteCoordinates(next, "to")?.lng,
+      resolvedAt: nowIso,
+    });
   }
-  if (next.booking && typeof next.booking === "object") {
-    next.booking = { ...next.booking };
-    if (from && !existingFrom) next.booking.invoice_from_address = from;
-    if (to && !existingTo) next.booking.invoice_to_address = to;
+
+  // Ensure supporting coordinates are stored even when geocode fails.
+  const fromCoords = extractRouteCoordinates(next, "from");
+  const toCoords = extractRouteCoordinates(next, "to");
+  if (fromCoords || toCoords) {
+    next = applyResolvedRouteAddressToBooking(next, {
+      fromLat: fromCoords?.lat,
+      fromLng: fromCoords?.lng,
+      toLat: toCoords?.lat,
+      toLng: toCoords?.lng,
+      resolvedAt: nowIso,
+    });
   }
+
+  if (next === rec) return rec;
   try {
     await env.BOOKING_KV.put(`booking:${bookingId}`, JSON.stringify(next));
     return next;
   } catch (_) {
     return rec;
+  }
+}
+
+/**
+ * Envelope-only Document Core stamp: freeze route_address_snapshot onto an
+ * issued invoice registry record without touching content_hash / immutable
+ * financial identity. Idempotent — existing snapshot wins.
+ */
+async function stampDocumentCoreRouteAddressSnapshot(
+  env,
+  scope,
+  documentId,
+  bookingRecord,
+) {
+  if (!env?.BOOKING_KV || !documentId || !scope) {
+    return { ok: false, skipped: true, reason: "missing_input" };
+  }
+  let key;
+  try {
+    key = buildDocumentRegistryKey(scope, documentId);
+  } catch (_) {
+    return { ok: false, skipped: true, reason: "invalid_key" };
+  }
+  let doc = null;
+  try {
+    doc = await env.BOOKING_KV.get(key, { type: "json" });
+  } catch (_) {
+    doc = null;
+  }
+  if (!doc || typeof doc !== "object") {
+    return { ok: false, skipped: true, reason: "document_not_found" };
+  }
+  if (
+    doc.route_address_snapshot &&
+    typeof doc.route_address_snapshot === "object" &&
+    (doc.route_address_snapshot.from_address ||
+      doc.route_address_snapshot.to_address ||
+      doc.route_address_snapshot.invoice_from_address)
+  ) {
+    return { ok: true, skipped: true, reason: "already_frozen", record: doc };
+  }
+  const snap =
+    bookingRecord?.route_address_snapshot &&
+    typeof bookingRecord.route_address_snapshot === "object"
+      ? bookingRecord.route_address_snapshot
+      : buildRouteAddressSnapshot({
+          fromAddress: resolveHumanRouteAddress(bookingRecord, "from"),
+          toAddress: resolveHumanRouteAddress(bookingRecord, "to"),
+          fromLat: extractRouteCoordinates(bookingRecord, "from")?.lat,
+          fromLng: extractRouteCoordinates(bookingRecord, "from")?.lng,
+          toLat: extractRouteCoordinates(bookingRecord, "to")?.lat,
+          toLng: extractRouteCoordinates(bookingRecord, "to")?.lng,
+          fromSource:
+            bookingRecord?.invoice_from_address_source || "booking_envelope",
+          toSource:
+            bookingRecord?.invoice_to_address_source || "booking_envelope",
+        });
+  const updated = {
+    ...doc,
+    route_address_snapshot: snap,
+    updated_at: new Date().toISOString(),
+  };
+  try {
+    await env.BOOKING_KV.put(key, JSON.stringify(updated));
+    return { ok: true, skipped: false, record: updated };
+  } catch (_) {
+    return { ok: false, skipped: true, reason: "persist_failed" };
   }
 }
 
@@ -64941,6 +65116,18 @@ async function ensureStreetBusinessInvoicePdfArtifact(
     rec = await freezeInvoiceRouteAddressSnapshots(env, safeBookingId, rec);
   } catch (_) {
     // non-fatal — projection still sanitizes coordinates
+  }
+  // Envelope-only Document Core freeze of the same route snapshot (idempotent).
+  try {
+    const docId =
+      safeStr(resolvedDocumentId, 200) ||
+      safeStr(binding.document_id, 200) ||
+      "";
+    if (docId) {
+      await stampDocumentCoreRouteAddressSnapshot(env, scope, docId, rec);
+    }
+  } catch (_) {
+    // non-fatal
   }
 
   // Drop the old early number/stamp block — document resolution already done above.
@@ -90731,14 +90918,19 @@ function renderInvoiceHtml(env, data, commProfile = null) {
   const profile = maybeNormalizeCommunicationProfile(commProfile || {});
 
   // Never invent a CDN logo — network failure must not produce a broken image.
-  // Prefer configured company/env logo URL or an embedded data-URI; otherwise omit.
-  const LOGO_URL =
-    safeStr(profile.logoUrl) ||
-    safeStr(profile.publicLogoUrl) ||
-    safeStr(env?.INVOICE_LOGO_URL) ||
-    safeStr(d.logoUrl) ||
-    safeStr(env?.INVOICE_LOGO_DATA_URI) ||
-    "";
+  // Prefer embedded data URIs / packaged Fluxidi SVG; HTTPS only if explicitly allowed.
+  const LOGO_URL = resolveInvoiceLogoSrc({
+    profileLogoUrl: safeStr(profile.logoUrl),
+    publicLogoUrl: safeStr(profile.publicLogoUrl),
+    envLogoUrl: safeStr(env?.INVOICE_LOGO_URL),
+    envLogoDataUri: safeStr(env?.INVOICE_LOGO_DATA_URI),
+    dataLogoUrl: safeStr(d.logoUrl),
+    sellerBrand:
+      sanitizeTenantString(profile.tradingName || profile.brandName || "", 160) ||
+      sanitizeTenantString(profile.legalName || "", 160),
+    allowExternalHttpsLogo: env?.INVOICE_ALLOW_EXTERNAL_LOGO_URL === "1",
+    packagedDataUri: buildFluxidiInvoiceLogoDataUri(),
+  });
   // Never invent Fluxidi Taxi / Fluxidi BV / hardcoded address/VAT fallbacks.
   const sellerPresentationLines = Array.isArray(profile.sellerPresentationLines)
     ? profile.sellerPresentationLines.filter((line) => safeStr(line))

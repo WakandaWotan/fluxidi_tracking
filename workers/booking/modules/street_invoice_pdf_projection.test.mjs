@@ -299,6 +299,29 @@ test("D3) authoritative route snapshot wins over mutable coords", () => {
   assert.equal(ride.pickupTime, "11:30"); // winter CET
 });
 
+test("D3b) issued Document Core route snapshot wins over booking edits", () => {
+  const ride = resolveInvoiceRideProjection(
+    {
+      booking: {
+        from: "50.1, 3.2",
+        invoice_from_address: "Mutated After Issue",
+        to: "Mutated To",
+      },
+    },
+    {
+      issuedDocument: {
+        route_address_snapshot: {
+          from_address: "Issued Frozen From",
+          to_address: "Issued Frozen To",
+        },
+      },
+    },
+  );
+  assert.equal(ride.from, "Issued Frozen From");
+  assert.equal(ride.to, "Issued Frozen To");
+  assert.equal(ride.routeAddressSource, "document_core_route_address_snapshot");
+});
+
 test("D4) raw coordinate pair is never customer-visible", () => {
   const ride = resolveInvoiceRideProjection({
     booking: {
