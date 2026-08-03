@@ -204,16 +204,42 @@ void main() {
       );
     });
 
-    test('authoritative GET uses resolveInCarPaymentAuthHeaders '
+    test('authoritative GET uses company-first Mollie street status auth '
         '(not admin-token-only)', () {
+      // Product owner: resolveMollieStreetStatusAuthHeaders (company-first).
+      // Cash/QR mark-paid retains resolveInCarPaymentAuthHeaders elsewhere.
       final body = _extractMethodBody(
         receiptSource,
         'Future<Map<String, dynamic>?> _fetchAuthoritativePaymentFields(',
       );
-      expect(body, contains('resolveInCarPaymentAuthHeaders()'));
-      expect(body, contains('InCarPaymentAuthMode.none'));
+      expect(body, contains('resolveMollieStreetStatusAuthHeaders()'));
+      expect(body, contains('MollieStreetStatusAuthMode.none'));
+      expect(body, isNot(contains('resolveInCarPaymentAuthHeaders()')));
       expect(body, isNot(contains("headers['x-admin-token']")));
       expect(body, isNot(contains('kAdminToken')));
+    });
+
+    test('cash / QR mark-paid retain driver-first in-car auth helper', () {
+      // Persist paths must keep resolveInCarPaymentAuthHeaders (driver-first).
+      // Authoritative status GET intentionally uses the Mollie street helper.
+      expect(
+        receiptSource.contains('resolveInCarPaymentAuthHeaders()'),
+        isTrue,
+      );
+      final persistBody = _extractMethodBody(
+        receiptSource,
+        'Future<void> _persistInCarPayment(',
+      );
+      expect(persistBody, contains('resolveInCarPaymentAuthHeaders()'));
+      expect(persistBody, contains('InCarPaymentAuthMode.none'));
+      expect(persistBody, contains('final headers = authHeaders.headers'));
+      // Booking-worker mark-paid must not invent an admin-token-only header map.
+      expect(
+        persistBody.contains(
+          "headers['x-admin-token'] = kAdminToken",
+        ),
+        isFalse,
+      );
     });
 
     test('reload resolver uses the pure precedence helpers', () {

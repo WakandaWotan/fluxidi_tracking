@@ -55,18 +55,17 @@ void main() {
       strippedSource = _stripDartComments(dashboardSource);
     });
 
-    test('_renderableSyncStateChipLabel helper is defined and returns null '
-        'for hide-cases (not_configured / unknown / empty)', () {
+    test('_renderableSyncStateChipLabel helper accepts nullable input and '
+        'delegates hide/show to classifyChironSyncState', () {
+      // Product contract: String? raw — null/empty/unknown hide via classifier.
       expect(
         strippedSource.contains(
-          "String? _renderableSyncStateChipLabel(String raw)",
+          'String? _renderableSyncStateChipLabel(String? raw)',
         ),
         isTrue,
         reason:
-            '_renderableSyncStateChipLabel must exist so callers can hide the chip',
+            '_renderableSyncStateChipLabel must accept nullable sync state',
       );
-      // The helper must NOT contain a `case not_configured` branch that
-      // returns a non-null string: it must fall through to `return null`.
       final helperStart = strippedSource.indexOf(
         'String? _renderableSyncStateChipLabel',
       );
@@ -75,24 +74,13 @@ void main() {
         helperStart,
       );
       final helperBody = strippedSource.substring(helperStart, helperEnd);
-      expect(
-        helperBody.contains("case 'not_configured'"),
-        isFalse,
-        reason:
-            'not_configured must NOT map to a renderable label (fall-through '
-            'to default → null)',
-      );
-      expect(
-        helperBody.contains("case 'unknown'"),
-        isFalse,
-        reason:
-            'unknown must NOT map to a renderable label (fall-through to '
-            'default → null)',
-      );
-      // Genuine states must remain visible.
-      expect(helperBody.contains("case 'synced'"), isTrue);
-      expect(helperBody.contains("case 'pending'"), isTrue);
-      expect(helperBody.contains("case 'failed'"), isTrue);
+      expect(helperBody.contains('classifyChironSyncState(raw)'), isTrue);
+      expect(helperBody.contains('if (!presentation.showChip) return null'),
+          isTrue);
+      // No local switch that could diverge from the shared classifier.
+      expect(helperBody.contains("case 'not_configured'"), isFalse);
+      expect(helperBody.contains("case 'unknown'"), isFalse);
+      expect(helperBody.contains("case 'synced'"), isFalse);
     });
 
     test(
@@ -180,50 +168,49 @@ void main() {
     });
 
     test('reset compliance events control remains hidden in release mode', () {
-      // Must find a `!kReleaseMode` gate immediately preceding the
-      // "Clear backend test events" tooltip so the button is not rendered
-      // in release builds.
-      final resetTooltipAnchor = stripped.indexOf(
-        "'Clear backend test events'",
-      );
+      // Structural: IconButton onPressed owner sits inside if (!kReleaseMode).
+      final onPressedNeedle = ': _resetRemoteComplianceEvents';
+      final onPressedIdx = stripped.indexOf(onPressedNeedle);
       expect(
-        resetTooltipAnchor > 0,
+        onPressedIdx > 0,
         isTrue,
-        reason: 'reset compliance events tooltip must remain in source',
+        reason: 'reset compliance events onPressed owner must remain',
       );
-      final windowStart = (resetTooltipAnchor - 200)
-          .clamp(0, stripped.length)
-          .toInt();
-      final window = stripped.substring(windowStart, resetTooltipAnchor);
+      final before = stripped.substring(0, onPressedIdx);
+      final gateIdx = before.lastIndexOf('if (!kReleaseMode)');
+      expect(gateIdx, greaterThan(0));
+      final window = stripped.substring(gateIdx, onPressedIdx + onPressedNeedle.length);
       expect(
-        window.contains('!kReleaseMode'),
+        window.contains('_resetRemoteComplianceEvents'),
         isTrue,
         reason:
             'reset compliance events button must remain gated by !kReleaseMode',
       );
+      expect(window.contains('if (kReleaseMode)'), isFalse);
     });
 
     test('Chiron testflow reset control remains hidden in release mode', () {
-      // The button label `'Reset testflow',` (with trailing comma inside an
-      // `en:` arg) is the OutlinedButton child; the earlier `'Reset testflow?'`
-      // is the confirmation-dialog title, which is only reachable via the
-      // button and does not itself need the gate.
-      final testflowAnchor = stripped.indexOf("'Reset testflow',");
+      // Structural: OutlinedButton onPressed owner sits inside if (!kReleaseMode).
+      // Do not anchor on dialog-title / button-label copy (fragile lookback).
+      const onPressedNeedle =
+          'onPressed: _resettingTestflow ? null : _resetTestflow';
+      final onPressedIdx = stripped.indexOf(onPressedNeedle);
       expect(
-        testflowAnchor > 0,
+        onPressedIdx > 0,
         isTrue,
-        reason: 'Reset testflow button label must remain in source',
+        reason: 'Testflow reset onPressed owner must remain',
       );
-      final windowStart = (testflowAnchor - 800)
-          .clamp(0, stripped.length)
-          .toInt();
-      final window = stripped.substring(windowStart, testflowAnchor);
+      final before = stripped.substring(0, onPressedIdx);
+      final gateIdx = before.lastIndexOf('if (!kReleaseMode)');
+      expect(gateIdx, greaterThan(0));
+      final window = stripped.substring(gateIdx, onPressedIdx + onPressedNeedle.length);
       expect(
-        window.contains('!kReleaseMode'),
+        window.contains('_resetTestflow'),
         isTrue,
         reason:
             'Chiron testflow reset control must remain gated by !kReleaseMode',
       );
+      expect(window.contains('if (kReleaseMode)'), isFalse);
     });
   });
 

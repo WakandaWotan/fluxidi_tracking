@@ -18,11 +18,25 @@ String _stripComments(String src) {
       .join('\n');
 }
 
-bool _gatePrecedes(String src, String marker, {int lookback = 800}) {
-  final idx = src.indexOf(marker);
-  if (idx < 0) return false;
-  final start = (idx - lookback).clamp(0, src.length);
-  return src.substring(start, idx).contains('!kReleaseMode');
+/// True when [onPressedNeedle] appears inside an `if (!kReleaseMode)` branch
+/// that also mentions [callbackNeedle] (the destructive callback owner).
+bool _callbackIsReleaseGated(
+  String src, {
+  required String callbackNeedle,
+  required String onPressedNeedle,
+}) {
+  final onPressedIdx = src.indexOf(onPressedNeedle);
+  if (onPressedIdx < 0) return false;
+  // Walk backwards from the onPressed site to the nearest `if (!kReleaseMode)`.
+  final before = src.substring(0, onPressedIdx);
+  final gateIdx = before.lastIndexOf('if (!kReleaseMode)');
+  if (gateIdx < 0) return false;
+  final window = src.substring(gateIdx, onPressedIdx + onPressedNeedle.length);
+  if (!window.contains(callbackNeedle)) return false;
+  // Ensure no intervening `if (kReleaseMode)` flips the polarity.
+  final nestedRelease = window.lastIndexOf('if (kReleaseMode)');
+  if (nestedRelease > 0) return false;
+  return true;
 }
 
 void main() {
@@ -43,15 +57,33 @@ void main() {
   });
 
   test('17. backend wipe + testflow reset remain !kReleaseMode', () {
-    final src = _read(dashboard);
+    final src = _stripComments(_read(dashboard));
+    // Structural contract: the onPressed owners that invoke destructive
+    // callbacks must sit inside an `if (!kReleaseMode)` branch. Do not
+    // anchor on dialog-title copy (that text lives in ungated dialog
+    // classes reachable only after the gated button).
     expect(
-      _gatePrecedes(src, "en: 'Reset testflow'"),
+      _callbackIsReleaseGated(
+        src,
+        callbackNeedle: '_resetTestflow',
+        onPressedNeedle: 'onPressed: _resettingTestflow ? null : _resetTestflow',
+      ),
       isTrue,
+      reason: 'Testflow reset button must be wrapped in if (!kReleaseMode)',
     );
     expect(
-      _gatePrecedes(src, "en: 'Clear backend test events'"),
+      _callbackIsReleaseGated(
+        src,
+        callbackNeedle: '_resetRemoteComplianceEvents',
+        onPressedNeedle: ': _resetRemoteComplianceEvents',
+      ),
       isTrue,
+      reason:
+          'Clear backend test events control must be wrapped in if (!kReleaseMode)',
     );
+    // Dialog title strings alone must not imply release exposure.
+    expect(src.contains("en: 'Reset testflow'"), isTrue);
+    expect(src.contains("en: 'Clear backend test events'"), isTrue);
   });
 
   test('18. ACC connection test retained with company-admin labelling + safe errors', () {

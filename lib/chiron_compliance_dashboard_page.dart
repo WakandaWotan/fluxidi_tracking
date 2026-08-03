@@ -11871,16 +11871,6 @@ class _RemoteComplianceEventsSectionState
     return (label: _localizedReferenceLabel(), value: '—');
   }
 
-  String _dossierGroupKey(RemoteComplianceEvent e, int index) {
-    return chironCanonicalRideKey(
-      bookingId: e.bookingId,
-      tripId: e.tripId,
-      eventId: e.eventId,
-      index: index,
-      isMeaningfulIdentity: _isMeaningfulIdentity,
-    );
-  }
-
   bool _isLegScopedEvent(RemoteComplianceEvent event) {
     if (event.legType.trim().isNotEmpty) return true;
     if (event.legId.trim().isNotEmpty) return true;
