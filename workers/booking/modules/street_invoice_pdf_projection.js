@@ -569,8 +569,61 @@ export function fingerprintSellerLogoRef(raw = "") {
     hash ^= s.charCodeAt(i) & 0xff;
     hash = (hash * 0x01000193) >>> 0;
   }
-  const kind = s.toLowerCase().startsWith("data:image/") ? "d" : "u";
+  const lower = s.toLowerCase();
+  // d = data URI, s = frozen sha digest, u = media URL / other ref.
+  let kind = "u";
+  if (lower.startsWith("data:image/")) kind = "d";
+  else if (lower.startsWith("sha:")) kind = "s";
   return `${kind}${hash.toString(16).padStart(8, "0")}`;
+}
+
+/** Extract the `logo=` token from a stored projection revision. */
+export function extractLogoFingerprintFromProjectionRevision(revision = "") {
+  const m = /(?:^|;)logo=([^;]*)/.exec(_norm(revision));
+  return m ? _norm(m[1], 40) : "";
+}
+
+/**
+ * True when the stored PDF's logo fingerprint does not match the logo identity
+ * that would be projected now (typical INV-2026-000038 case: frozen embed
+ * exists on the booking but the artifact was still built from a URL ref).
+ */
+export function invoiceArtifactNeedsLogoProjectionRefresh({
+  storedProjectionRevision = "",
+  frozenEmbed = null,
+  sellerLogoRef = "",
+} = {}) {
+  const storedFp = extractLogoFingerprintFromProjectionRevision(
+    storedProjectionRevision,
+  );
+  if (!storedFp || storedFp === "none") {
+    // No logo token / empty logo — still refresh when a usable embed exists so
+    // an empty header slot cannot stay authoritative.
+    if (
+      frozenEmbed &&
+      typeof frozenEmbed === "object" &&
+      !frozenEmbed.failed &&
+      (frozenEmbed.data_uri || frozenEmbed.dataUri || frozenEmbed.sha256)
+    ) {
+      return true;
+    }
+    return false;
+  }
+  let expectedRef = "";
+  if (
+    frozenEmbed &&
+    typeof frozenEmbed === "object" &&
+    !frozenEmbed.failed &&
+    (frozenEmbed.sha256 || frozenEmbed.data_uri || frozenEmbed.dataUri)
+  ) {
+    expectedRef = frozenEmbed.sha256
+      ? `sha:${_norm(frozenEmbed.sha256, 80)}`
+      : _norm(frozenEmbed.data_uri ?? frozenEmbed.dataUri, 400000);
+  } else {
+    expectedRef = _norm(sellerLogoRef, 2000);
+  }
+  if (!expectedRef) return false;
+  return fingerprintSellerLogoRef(expectedRef) !== storedFp;
 }
 
 export function buildStreetInvoicePdfProjectionRevision({
@@ -637,8 +690,12 @@ export function isStreetInvoicePdfArtifactVersionCurrent(storedRevision) {
 export function shouldRefreshStreetInvoicePdfOnOpen({
   existingPdfExists = false,
   storedProjectionRevision = "",
+  nextProjectionRevision = "",
   refreshAttempted = false,
   needsCompanyLogoEmbed = false,
+  logoProjectionMismatch = false,
+  frozenEmbed = null,
+  sellerLogoRef = "",
 } = {}) {
   if (refreshAttempted === true) {
     return { refresh: false, reason: "refresh_already_attempted" };
@@ -656,6 +713,21 @@ export function shouldRefreshStreetInvoicePdfOnOpen({
   }
   if (needsCompanyLogoEmbed === true) {
     return { refresh: true, reason: "company_logo_embed_pending" };
+  }
+  const stored = _norm(storedProjectionRevision);
+  const next = _norm(nextProjectionRevision);
+  if (stored && next && stored !== next) {
+    return { refresh: true, reason: "projection_changed" };
+  }
+  const logoMismatch =
+    logoProjectionMismatch === true ||
+    invoiceArtifactNeedsLogoProjectionRefresh({
+      storedProjectionRevision,
+      frozenEmbed,
+      sellerLogoRef,
+    });
+  if (logoMismatch) {
+    return { refresh: true, reason: "logo_projection_mismatch" };
   }
   return { refresh: false, reason: "artifact_version_current" };
 }

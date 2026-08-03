@@ -24,7 +24,7 @@ final Uint8List _pixel = Uint8List.fromList(<int>[
 ]);
 
 void main() {
-  group('initial geometry is undistorted and centered', () {
+  group('initial geometry is undistorted and top-aligned', () {
     const layouts = <String, Size>{
       'phone portrait': Size(390, 844),
       'phone landscape': Size(844, 390),
@@ -51,39 +51,27 @@ void main() {
       });
     });
 
-    test('a short document is centered, not pinned to the top', () {
-      // 390x844 phone: an A4 page at 374 wide is ~529 tall, leaving ~315 spare.
+    test('a short document is top-aligned, not vertically centred', () {
+      // 390x844 phone: an A4 page at 374 wide is ~529 tall; leftover height is
+      // reached by scrolling — never a large grey band above the first page.
       final layout = fluxidiPdfInitialLayout(
         viewport: const Size(390, 844),
         pageCount: 1,
         pageAspectRatio: _a4Ratio,
       );
       expect(layout.contentHeight, lessThan(844));
-      expect(layout.leadingPad, greaterThan(0));
-      expect(
-        layout.leadingPad,
-        closeTo((844 - layout.contentHeight) / 2, 0.001),
-        reason: 'the surround must be symmetric above and below',
-      );
+      expect(layout.leadingPad, 0);
     });
 
-    test('no phone geometry leaves a majority dead area below the page', () {
+    test('no phone geometry inserts a top grey band above the first page', () {
       for (final viewport in layouts.values) {
         final layout = fluxidiPdfInitialLayout(
           viewport: viewport,
           pageCount: 1,
           pageAspectRatio: _a4Ratio,
         );
-        final occupied = layout.contentHeight / viewport.height;
-        final belowFraction = layout.leadingPad / viewport.height;
-        // Whatever is left over is split evenly, so the gap under the page can
-        // never exceed half the leftover - the old top-anchored dead band.
-        expect(
-          belowFraction,
-          lessThan(0.5),
-          reason: '$viewport leaves too much space on one side',
-        );
-        expect(occupied, greaterThan(0.0));
+        expect(layout.leadingPad, 0, reason: '$viewport');
+        expect(layout.contentHeight / viewport.height, greaterThan(0.0));
       }
     });
 

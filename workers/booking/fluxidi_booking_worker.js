@@ -286,6 +286,7 @@ import {
   readFrozenInvoiceLogoEmbed,
   readInvoiceLogoEmbedAttempt,
   invoiceNeedsCompanyLogoEmbed,
+  invoiceLogoEmbedAllowsRetry,
   formatInvoiceLogoEmbedDiagnostic,
   isUsableInvoiceLogoEmbed,
   buildFailedInvoiceLogoEmbedRecord,
@@ -58274,7 +58275,7 @@ async function handleBooking(payload, env, request, options = {}) {
     let resolvedAssignedDriver = null;
     let allocatorAssignedVehicleId = null;
     const stop_count = stops.length;
-    
+
 
     const biz = normalizeBusiness(payload);
     // 2G-* OPTIONAL billing customer identity (future Peppol / Billit readiness).
@@ -58797,7 +58798,7 @@ async function handleBooking(payload, env, request, options = {}) {
     const duration_route_min = Math.round((routeOut?.route?.duration || 0) / 60);
 
     // Return planning (optional)
-    
+
     const ret = normalizeReturnEnabled(payload, wait_min);
     if (!pricingProfile.return_enabled) {
       ret.enabled = false;
@@ -61241,7 +61242,7 @@ Retour route: ${return_from || to} → ${return_to || from}`,
     // Business invoice intent is persisted and finalized only after paid confirmation.
     let invoice = null;
 
-    
+
     // Push notification (best-effort)
     const push = await sendPushbulletNote(env, {
       title: `Nieuwe booking ${booking.bookingId} — ${date} ${time}`,
@@ -65039,7 +65040,14 @@ async function stampBookingInvoiceLogoEmbed(env, bookingId, rec, embed) {
   if (isUsableInvoiceLogoEmbed(existing)) {
     return { ok: true, skipped: true, reason: "already_frozen", rec };
   }
-  if (existing && typeof existing === "object" && existing.failed === true) {
+  // Permanent failed attempts stay frozen; temporary failures may be
+  // overwritten after the bounded cooldown (see invoiceLogoEmbedAllowsRetry).
+  if (
+    existing &&
+    typeof existing === "object" &&
+    existing.failed === true &&
+    !invoiceLogoEmbedAllowsRetry(existing)
+  ) {
     return { ok: true, skipped: true, reason: "failed_already_recorded", rec };
   }
   const next = {
@@ -80579,11 +80587,17 @@ async function handleBookingInvoicePdfGet(
     companyId: openScope?.company_id,
     env,
   });
+  // INV-2026-000038 class: frozen embed may already exist on the booking while
+  // the stored PDF still fingerprints a URL/empty logo. Pass the frozen embed
+  // so open refresh detects logo_projection_mismatch and regenerates once
+  // (reuse_frozen_embed → zero media fetches after success).
   const openDecision = shouldRefreshStreetInvoicePdfOnOpen({
     existingPdfExists: _invoicePdfMetadataFromRecord(record).exists === true,
     storedProjectionRevision:
       readStoredStreetInvoicePdfProjectionRevision(record),
     needsCompanyLogoEmbed: openNeedsLogoEmbed,
+    frozenEmbed: openFrozenLogo || openLogoAttempt,
+    sellerLogoRef: openLogoRef,
   });
   if (openDecision.refresh) {
     const ensureImpl =
@@ -90628,7 +90642,7 @@ async function sendBookingEmails({ env, booking }) {
   };
 }
 
-function renderOwnerEmailHtml(b, commProfile = null) { 
+function renderOwnerEmailHtml(b, commProfile = null) {
   const brandName = safeBrandName(commProfile?.brandName, "Fluxidi Taxi");
   const route = renderRouteTextWithReturn(b);
 

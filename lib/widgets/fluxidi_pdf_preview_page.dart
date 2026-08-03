@@ -169,8 +169,9 @@ Matrix4 fluxidiPdfClampTransform({
 /// Initial, undistorted page geometry for the available viewport.
 ///
 /// A4 cannot fill both axes of a phone without cropping or stretching, so the
-/// page keeps its aspect ratio at fit-width and any leftover height becomes a
-/// symmetric surround instead of dead space below a top-anchored page.
+/// page keeps its aspect ratio at fit-width. The first page is top-aligned
+/// immediately below the toolbar — leftover height is reached by scrolling to
+/// the document end (never a large grey band above the page).
 @visibleForTesting
 ({double pageWidth, double pageHeight, double leadingPad, double contentHeight})
 fluxidiPdfInitialLayout({
@@ -187,11 +188,8 @@ fluxidiPdfInitialLayout({
   final stackHeight = pages == 0
       ? 0.0
       : pages * pageHeight + math.max(0, pages - 1) * pageSpacing;
-  // Centre a document that is shorter than the viewport; never push a taller
-  // document down, which would hide its first page.
-  final leadingPad = stackHeight <= 0 || stackHeight >= viewport.height
-      ? 0.0
-      : (viewport.height - stackHeight) / 2;
+  // Fit-width + top-aligned: never vertically centre the first page.
+  const leadingPad = 0.0;
   return (
     pageWidth: pageWidth,
     pageHeight: pageHeight,

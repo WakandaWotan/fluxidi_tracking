@@ -14,6 +14,21 @@ import { isUsableInvoiceLogoDataUri } from "./invoice_logo_embedded.js";
 export const INVOICE_COMPANY_LOGO_MAX_BYTES = 256 * 1024;
 export const INVOICE_COMPANY_LOGO_FETCH_TIMEOUT_MS = 4000;
 export const INVOICE_COMPANY_LOGO_EMBED_VERSION = 1;
+/** Cooldown before a temporary logo-fetch failure may be retried on open/ensure. */
+export const INVOICE_COMPANY_LOGO_RETRY_COOLDOWN_MS = 15 * 60 * 1000;
+/** Temporary failures — may retry after the cooldown. Permanent ones may not. */
+export const INVOICE_COMPANY_LOGO_RETRYABLE_REASONS = new Set([
+  "logo_fetch_timeout",
+  "public_media_unavailable",
+  "logo_not_found",
+  "public_media_read_error",
+  "public_media_unsupported_body",
+  "public_media_body_error",
+  "fetch_unavailable",
+  "logo_load_failed",
+  "https_fetch_failed",
+  "redirect_host_not_approved",
+]);
 
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const JPEG_MAGIC = [0xff, 0xd8, 0xff];
@@ -781,6 +796,25 @@ export async function resolveAndEmbedInvoiceCompanyLogo({
 }
 
 /**
+ * Whether a prior failed embed attempt may be retried (bounded).
+ * Permanent invalid-logo failures stay suppressed; temporary ones cool down.
+ */
+export function invoiceLogoEmbedAllowsRetry(existingEmbed, nowMs = Date.now()) {
+  if (!existingEmbed || typeof existingEmbed !== "object") return true;
+  if (isUsableInvoiceLogoEmbed(existingEmbed)) return false;
+  if (existingEmbed.failed !== true && existingEmbed.attempted !== true) {
+    return true;
+  }
+  const reason = _norm(existingEmbed.reason, 80);
+  if (!INVOICE_COMPANY_LOGO_RETRYABLE_REASONS.has(reason)) {
+    return false;
+  }
+  const frozenAt = Date.parse(String(existingEmbed.frozen_at || ""));
+  if (!Number.isFinite(frozenAt)) return true;
+  return nowMs - frozenAt >= INVOICE_COMPANY_LOGO_RETRY_COOLDOWN_MS;
+}
+
+/**
  * True when projection still needs a one-shot company-logo embed.
  * Used by the authenticated single-invoice open/ensure path — never bulk.
  */
@@ -790,13 +824,16 @@ export function invoiceNeedsCompanyLogoEmbed({
   tenantId = "",
   companyId = "",
   env = null,
+  nowMs = Date.now(),
 } = {}) {
   if (isUsableInvoiceLogoEmbed(existingEmbed)) return false;
-  // A prior failed attempt is frozen too — do not loop forever on open.
+  // Prior failed attempts: permanent failures stay suppressed; temporary ones
+  // may retry after INVOICE_COMPANY_LOGO_RETRY_COOLDOWN_MS (never every open).
   if (
     existingEmbed &&
     typeof existingEmbed === "object" &&
-    (existingEmbed.failed === true || existingEmbed.attempted === true)
+    (existingEmbed.failed === true || existingEmbed.attempted === true) &&
+    !invoiceLogoEmbedAllowsRetry(existingEmbed, nowMs)
   ) {
     return false;
   }
