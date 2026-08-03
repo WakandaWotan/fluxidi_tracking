@@ -4244,31 +4244,57 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                               _topBar(context, profile),
                                         ),
                                         const Spacer(),
-                                        Text(
-                                          _timeAwareGreeting(),
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.w800,
-                                            fontSize: headerTitleFontSize,
+                                        // Reserve space so greeting never
+                                        // collides with the theme-cycle chip
+                                        // at the lower-right of the header.
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            right: BusinessHomeHeaderThemeRegion
+                                                .textRightReserve,
                                           ),
-                                        ),
-                                        SizedBox(height: headerTextBottomGap),
-                                        Text(
-                                          _t(
-                                            nl: 'Bedrijfsoverzicht',
-                                            en: 'Business overview',
-                                            fr: 'Aperçu de l’entreprise',
-                                            es: 'Resumen de empresa',
-                                          ),
-                                          style: TextStyle(
-                                            color: Colors.white.withOpacity(
-                                              0.78,
-                                            ),
-                                            fontSize: headerSubtitleFontSize,
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                _timeAwareGreeting(),
+                                                style: TextStyle(
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.w800,
+                                                  fontSize: headerTitleFontSize,
+                                                ),
+                                              ),
+                                              SizedBox(
+                                                height: headerTextBottomGap,
+                                              ),
+                                              Text(
+                                                _t(
+                                                  nl: 'Bedrijfsoverzicht',
+                                                  en: 'Business overview',
+                                                  fr: 'Aperçu de l’entreprise',
+                                                  es: 'Resumen de empresa',
+                                                ),
+                                                style: TextStyle(
+                                                  color: Colors.white
+                                                      .withOpacity(0.78),
+                                                  fontSize:
+                                                      headerSubtitleFontSize,
+                                                ),
+                                              ),
+                                            ],
                                           ),
                                         ),
                                       ],
                                     ),
+                                  ),
+                                ),
+                                // FLUXIDI-BUSINESS-HEADER-THEME-CYCLE-SHORTCUT-P1-1:
+                                // lower-right of header, immediately above KPI.
+                                Positioned(
+                                  right: headerContentPadding.right,
+                                  bottom: headerContentPadding.bottom,
+                                  child: const BusinessThemeCycleButton(
+                                    heroOverlay: true,
                                   ),
                                 ),
                               ],
@@ -4282,29 +4308,49 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                           ),
                           const SizedBox(height: 12),
                           _panel(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                            child: Stack(
                               children: [
-                                Text(
-                                  _timeAwareGreeting(),
-                                  style: TextStyle(
-                                    color: _businessThemePalette.textPrimary,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 19,
+                                Padding(
+                                  padding: const EdgeInsets.only(
+                                    right: BusinessHomeHeaderThemeRegion
+                                        .textRightReserve,
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        _timeAwareGreeting(),
+                                        style: TextStyle(
+                                          color: _businessThemePalette
+                                              .textPrimary,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 19,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        _t(
+                                          nl: 'Bedrijfsoverzicht',
+                                          en: 'Business overview',
+                                          fr: 'Aperçu de l’entreprise',
+                                          es: 'Resumen de empresa',
+                                        ),
+                                        style: TextStyle(
+                                          color:
+                                              _businessThemePalette.textMuted,
+                                          fontSize: 12.5,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  _t(
-                                    nl: 'Bedrijfsoverzicht',
-                                    en: 'Business overview',
-                                    fr: 'Aperçu de l’entreprise',
-                                    es: 'Resumen de empresa',
-                                  ),
-                                  style: TextStyle(
-                                    color: _businessThemePalette.textMuted,
-                                    fontSize: 12.5,
-                                  ),
+                                // FLUXIDI-BUSINESS-HEADER-THEME-CYCLE-SHORTCUT-P1-1:
+                                // lower-right of phone header panel, above KPI.
+                                const Positioned(
+                                  right: 0,
+                                  bottom: 0,
+                                  child: BusinessThemeCycleButton(),
                                 ),
                               ],
                             ),

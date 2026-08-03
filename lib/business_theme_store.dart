@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'business_theme_cycle.dart';
 import 'business_theme_palette.dart';
 import 'customer_theme_palette.dart';
 
@@ -150,6 +151,19 @@ Future<void> saveBusinessThemePreference(BusinessThemeVariant variant) async {
   } catch (_) {
     // Keep in-memory value when persistence temporarily fails.
   }
+}
+
+/// One-tap advance for the business header theme shortcut.
+///
+/// Reads the live [businessThemeNotifier] value, advances exactly one step in
+/// [kBusinessThemeCycleOrder], and persists via [saveBusinessThemePreference]
+/// so the full theme settings screen stays in sync. Notifier update is
+/// synchronous inside [saveBusinessThemePreference], so rapid taps advance
+/// deterministically without a second theme owner.
+Future<BusinessThemeVariant> cycleBusinessThemePreference() async {
+  final next = nextBusinessThemeVariant(businessThemeNotifier.value);
+  await saveBusinessThemePreference(next);
+  return next;
 }
 
 Future<void> loadBusinessPublishedCustomerThemePreference() async {
