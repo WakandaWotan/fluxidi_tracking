@@ -716,9 +716,18 @@ void main() {
         isFalse,
         reason: 'artwork must not read the legacy appearance owner',
       );
-      expect(home.contains('AnnotatedRegion<SystemUiOverlayStyle>'), isTrue);
+      // Root Scaffold / status-bar chrome live in BusinessThemeRootCanvas so the
+      // navy page gradient rebuilds with the same preset as cards/artwork.
+      expect(home.contains('BusinessThemeRootCanvas('), isTrue);
       expect(
         home.contains('applyBusinessThemeSystemUiOverlay(_businessThemePalette)'),
+        isTrue,
+      );
+      final rootCanvas = File(
+        'lib/widgets/business_theme_root_canvas.dart',
+      ).readAsStringSync();
+      expect(
+        rootCanvas.contains('AnnotatedRegion<SystemUiOverlayStyle>'),
         isTrue,
       );
     });

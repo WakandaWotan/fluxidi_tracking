@@ -3952,64 +3952,13 @@ class _BusinessHomePageState extends State<BusinessHomePage>
 
   @override
   Widget build(BuildContext context) {
-    final themeVariant = businessThemeNotifier.value;
-    final isExecutiveGold = themeVariant == BusinessThemeVariant.executiveGold;
-    final isCleanProfessional =
-        themeVariant == BusinessThemeVariant.cleanProfessional;
-    final isCorporateBlue = themeVariant == BusinessThemeVariant.corporateBlue;
-    final overlayStyle = systemUiOverlayStyleForBusinessTheme(
-      _businessThemePalette,
-    );
+    // Root Scaffold / page gradient are owned by [BusinessThemeRootCanvas],
+    // which rebuilds from [businessThemeNotifier] / [activeBusinessThemePreset].
+    // Do not snapshot Corporate Blue hardcodes outside that listenable — that
+    // left the navy canvas stuck after e6c5941 while cards/artwork updated.
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
-      builder: (context, _, __) => AnnotatedRegion<SystemUiOverlayStyle>(
-        value: overlayStyle,
-        child: Scaffold(
-        backgroundColor: isCorporateBlue
-            ? const Color(0xFF0A1324)
-            : !isExecutiveGold
-            ? _businessThemePalette.background
-            : const Color(0xFF07080C),
-        body: SafeArea(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: isCorporateBlue
-                    ? const [
-                        Color(0xFF13213A),
-                        Color(0xFF0A1324),
-                        Color(0xFF0A1324),
-                      ]
-                    : !isExecutiveGold
-                    ? <Color>[
-                        _businessThemePalette.background,
-                        _businessThemePalette.background,
-                        _businessThemePalette.surfaceAlt,
-                      ]
-                    : const [
-                        Color(0xFF101010),
-                        Color(0xFF07080C),
-                        Color(0xFF07080C),
-                      ],
-              ),
-              border: Border.all(
-                color: !isExecutiveGold
-                    ? _businessThemePalette.accent.withOpacity(0.34)
-                    : Colors.transparent,
-                width: !isExecutiveGold ? 1.2 : 0,
-              ),
-              boxShadow: !isExecutiveGold
-                  ? [
-                      BoxShadow(
-                        color: _businessThemePalette.accent.withOpacity(0.16),
-                        blurRadius: 16,
-                        spreadRadius: 0.2,
-                      ),
-                    ]
-                  : null,
-            ),
+      builder: (context, _, __) => BusinessThemeRootCanvas(
             child: ValueListenableBuilder<CompanyProfile?>(
               valueListenable: companyProfileNotifier,
               builder: (context, profile, _) {
@@ -4075,18 +4024,6 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     : isTabletPortrait
                     ? clampDouble(H * 0.23, 300.0, 360.0)
                     : null;
-                final businessHeaderAsset = _businessImageAsset(
-                  executiveGoldAsset:
-                      'assets/fluxidi/zakelijke_tablet_header_foto.png',
-                  corporateBlueAsset:
-                      'assets/Corporate BLEU Compagny/company_header_fleet_corporate_blue.png',
-                  cleanProfessionalAsset:
-                      'assets/Clean & Professional Compagny/company_header_fleet_clean_professional.png',
-                  emeraldIvoryAsset:
-                      'assets/Emerald_Ivory_Company/company_header_emerald_ivory.png',
-                  fluxidiNeonRushAsset:
-                      'assets/🥇 Fluxidi Neon Rush/company_header_fleet_neon_rush.png',
-                );
                 final businessQuickActionCardHeight = isTabletLandscape
                     // Proportionally taller quick action cards in tablet
                     // landscape so the 5-column row takes a larger share of
@@ -4156,7 +4093,25 @@ class _BusinessHomePageState extends State<BusinessHomePage>
 
                 return ValueListenableBuilder<BusinessThemeVariant>(
                   valueListenable: businessThemeNotifier,
-                  builder: (context, _, __) {
+                  builder: (context, themeVariant, __) {
+                    // Live flags from the same notifier that owns cards/artwork
+                    // and the root canvas — never snapshot outside this builder.
+                    final isExecutiveGold =
+                        themeVariant == BusinessThemeVariant.executiveGold;
+                    final isCleanProfessional = themeVariant ==
+                        BusinessThemeVariant.cleanProfessional;
+                    final businessHeaderAsset = _businessImageAsset(
+                      executiveGoldAsset:
+                          'assets/fluxidi/zakelijke_tablet_header_foto.png',
+                      corporateBlueAsset:
+                          'assets/Corporate BLEU Compagny/company_header_fleet_corporate_blue.png',
+                      cleanProfessionalAsset:
+                          'assets/Clean & Professional Compagny/company_header_fleet_clean_professional.png',
+                      emeraldIvoryAsset:
+                          'assets/Emerald_Ivory_Company/company_header_emerald_ivory.png',
+                      fluxidiNeonRushAsset:
+                          'assets/🥇 Fluxidi Neon Rush/company_header_fleet_neon_rush.png',
+                    );
                     return ListView(
                       padding: EdgeInsets.fromLTRB(
                         16,
@@ -5185,9 +5140,6 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 );
               },
             ),
-          ),
-        ),
-        ),
       ),
     );
   }
