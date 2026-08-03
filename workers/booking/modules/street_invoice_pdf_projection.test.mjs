@@ -21,7 +21,12 @@ import {
   isStreetInvoicePdfArtifactVersionCurrent,
   shouldRefreshStreetInvoicePdfOnOpen,
   buildStreetInvoiceArtifactRevisionTag,
+  invoiceArtifactNeedsLogoProjectionRefresh,
+  markStreetInvoicePdfProjectionLogoFlattened,
+  STREET_INVOICE_PDF_LOGO_FLAT_TOKEN,
+  fingerprintSellerLogoRef,
 } from "./street_invoice_pdf_projection.js";
+import { bytesToInvoiceLogoDataUri } from "./invoice_company_logo_fetch.js";
 
 const SCOPE = { tenant_id: "t1", company_id: "c1" };
 
@@ -667,3 +672,83 @@ test("H5) artifact revision tag changes with version and with bytes", () => {
     "street_pdf_proj_unknown",
   );
 });
+
+// LATE-INVOICE-BILLIT-BRANDING-P0 — INV-2026-000039 class: frozen RGBA logo
+// already embedded but PDFShift soft-mask made it invisible.
+const RGBA_PNG_BYTES = Uint8Array.from(
+  Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64",
+  ),
+);
+
+test("LATE-INVOICE P0) RGBA frozen embed without flat=1 forces open refresh", () => {
+  const dataUri = bytesToInvoiceLogoDataUri(RGBA_PNG_BYTES, "image/png");
+  const embed = {
+    data_uri: dataUri,
+    sha256: "a9b75e03e520f3be6785cc7ad72f0a63499ff0fa69c1bb7bcdc4d9855221ce26",
+    mime: "image/png",
+    failed: false,
+  };
+  const stored = [
+    STREET_INVOICE_PDF_PROJECTION_VERSION,
+    "logo=sha:a9b75e03",
+    "pay=paid",
+    "vat=6",
+    "incl=680",
+  ].join(";");
+  assert.equal(
+    invoiceArtifactNeedsLogoProjectionRefresh({
+      storedProjectionRevision: stored,
+      frozenEmbed: embed,
+    }),
+    true,
+  );
+  const decision = shouldRefreshStreetInvoicePdfOnOpen({
+    existingPdfExists: true,
+    storedProjectionRevision: stored,
+    needsCompanyLogoEmbed: false,
+    frozenEmbed: embed,
+  });
+  assert.equal(decision.refresh, true);
+  assert.equal(decision.reason, "logo_projection_mismatch");
+});
+
+test("LATE-INVOICE P0) flat=1 marker makes flatten refresh idempotent", () => {
+  const sha =
+    "a9b75e03e520f3be6785cc7ad72f0a63499ff0fa69c1bb7bcdc4d9855221ce26";
+  const dataUri = bytesToInvoiceLogoDataUri(RGBA_PNG_BYTES, "image/png");
+  const embed = {
+    data_uri: dataUri,
+    sha256: sha,
+    mime: "image/png",
+    failed: false,
+  };
+  const logoFp = fingerprintSellerLogoRef(`sha:${sha}`);
+  const base = [
+    STREET_INVOICE_PDF_PROJECTION_VERSION,
+    `logo=${logoFp}`,
+    "pay=paid",
+  ].join(";");
+  const flattened = markStreetInvoicePdfProjectionLogoFlattened(base);
+  assert.equal(flattened.includes(STREET_INVOICE_PDF_LOGO_FLAT_TOKEN), true);
+  assert.equal(
+    markStreetInvoicePdfProjectionLogoFlattened(flattened),
+    flattened,
+  );
+  assert.equal(
+    invoiceArtifactNeedsLogoProjectionRefresh({
+      storedProjectionRevision: flattened,
+      frozenEmbed: embed,
+    }),
+    false,
+  );
+  const decision = shouldRefreshStreetInvoicePdfOnOpen({
+    existingPdfExists: true,
+    storedProjectionRevision: flattened,
+    needsCompanyLogoEmbed: false,
+    frozenEmbed: embed,
+  });
+  assert.equal(decision.refresh, false);
+});
+

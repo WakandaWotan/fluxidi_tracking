@@ -265,7 +265,13 @@ import {
   readStoredStreetInvoicePdfProjectionRevision,
   normalizeVatRatePercent,
   pickCustomerVisibleAddress,
+  invoiceArtifactNeedsLogoProjectionRefresh,
+  markStreetInvoicePdfProjectionLogoFlattened,
 } from "./modules/street_invoice_pdf_projection.js";
+import {
+  flattenInvoiceLogoDataUriForPdf,
+  invoiceLogoDataUriNeedsPdfFlatten,
+} from "./modules/invoice_logo_pdf_flatten.js";
 import {
   extractRouteCoordinates,
   resolveHumanRouteAddress,
@@ -65368,6 +65374,22 @@ async function ensureStreetBusinessInvoicePdfArtifact(
       reason: "company_logo_embed_pending",
     };
   }
+  // LATE-INVOICE-BILLIT-BRANDING-P0: INV-2026-000039 class — frozen RGBA logo
+  // already embedded but PDFShift soft-mask made it invisible. Force one
+  // opaque-flatten rebuild when the stored revision lacks flat=1.
+  if (
+    !refreshDecision.refresh &&
+    invoiceArtifactNeedsLogoProjectionRefresh({
+      storedProjectionRevision: storedRevision,
+      frozenEmbed: frozenLogo,
+      sellerLogoRef: logoRefForEmbed,
+    })
+  ) {
+    refreshDecision = {
+      refresh: true,
+      reason: "logo_pdf_alpha_flatten",
+    };
+  }
   if (!refreshDecision.refresh) {
     return {
       ok: true,
@@ -65484,6 +65506,28 @@ async function ensureStreetBusinessInvoicePdfArtifact(
       }
     }
     void err;
+  }
+
+  // PDFShift rasterizes RGBA PNGs with a broken soft mask (field INV-2026-000039:
+  // 664×145 logo present but fully transparent). Flatten onto white for the
+  // PDF HTML only; the canonical frozen embed keeps its original alpha bytes.
+  try {
+    const pdfLogoUrl = safeStr(sellerCommProfile?.logoUrl, 400000);
+    if (invoiceLogoDataUriNeedsPdfFlatten(pdfLogoUrl)) {
+      const flatUri = await flattenInvoiceLogoDataUriForPdf(pdfLogoUrl);
+      if (flatUri && flatUri !== pdfLogoUrl) {
+        sellerCommProfile = {
+          ...(sellerCommProfile && typeof sellerCommProfile === "object"
+            ? sellerCommProfile
+            : {}),
+          logoUrl: flatUri,
+        };
+        projectionRevision =
+          markStreetInvoicePdfProjectionLogoFlattened(projectionRevision);
+      }
+    }
+  } catch (_) {
+    // Fail-open: keep prior logo bytes rather than blocking invoice PDF.
   }
 
   try {

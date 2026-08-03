@@ -451,6 +451,63 @@ void main() {
         1,
       );
     });
+
+    test('LATE-INVOICE: local pending invoice hides empty-state copy', () {
+      expect(
+        shouldShowBookingDocumentsEmptyState(
+          visibleDocumentCount: 0,
+          hasPendingLocalIssuedInvoice: true,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldShowBookingDocumentsEmptyState(
+          visibleDocumentCount: 0,
+          hasPendingLocalIssuedInvoice: false,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldInjectLocalIssuedInvoiceDocument(
+          localDocumentId: '9230012e-6cf8-4add-bf8f-a7a9920b6ab9',
+          visibleBackendDocumentIds: const <String>[],
+        ),
+        isTrue,
+      );
+      expect(
+        shouldInjectLocalIssuedInvoiceDocument(
+          localDocumentId: '9230012e-6cf8-4add-bf8f-a7a9920b6ab9',
+          visibleBackendDocumentIds: const <String>[
+            '9230012e-6cf8-4add-bf8f-a7a9920b6ab9',
+          ],
+        ),
+        isFalse,
+      );
+    });
+
+    test('LATE-INVOICE: issue snapshot carries Billit proof fields', () {
+      final snap = StreetInvoiceLocalIssuedSnapshot.fromIssueResponse(
+        const StreetBusinessInvoiceResponse(
+          ok: true,
+          bookingId: 'street_1785768346529_2p5ohae0',
+          documentId: '9230012e-6cf8-4add-bf8f-a7a9920b6ab9',
+          invoiceReference: 'INV-2026-000039',
+          reused: false,
+          paymentStatus: 'paid',
+          billitEnvironment: 'sandbox',
+          billitOrderId: '3144444',
+          billitOrderReused: false,
+          billitPaymentSyncStatus: 'synced',
+          peppolSent: false,
+          warnings: <String>[],
+          paymentReconciliation: '',
+        ),
+      );
+      expect(snap.invoiceReference, 'INV-2026-000039');
+      expect(snap.billitOrderId, '3144444');
+      expect(snap.hasBillitLink, isTrue);
+      expect(snap.billitPaid, isTrue);
+    });
   });
 
   group('honest billit status (section 3)', () {

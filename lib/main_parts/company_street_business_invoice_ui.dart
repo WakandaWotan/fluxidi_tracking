@@ -19,9 +19,9 @@ part of '../main.dart';
 /// creates a second invoice engine — it calls the already-live Booking Worker
 /// route `POST /company/bookings/:bookingId/request-business-invoice`.
 
-/// Per-booking record of a locally-issued invoice document id, shared with the
-/// read-only `_BookingDocumentsSection` so the "Documenten" count never shows 0
-/// while the eventually-consistent documents index is still catching up.
+/// Per-booking record of a locally-issued invoice, shared with the read-only
+/// `_BookingDocumentsSection` so the "Documenten" count and list stay honest
+/// (and Billit status remains visible) while the documents index catches up.
 class _StreetInvoiceLocalIndex {
   _StreetInvoiceLocalIndex._();
 
@@ -29,6 +29,8 @@ class _StreetInvoiceLocalIndex {
 
   final Map<String, ValueNotifier<String>> _byBooking =
       <String, ValueNotifier<String>>{};
+  final Map<String, StreetInvoiceLocalIssuedSnapshot> _snapshots =
+      <String, StreetInvoiceLocalIssuedSnapshot>{};
 
   ValueNotifier<String> notifierFor(String bookingId) =>
       _byBooking.putIfAbsent(bookingId.trim(), () => ValueNotifier<String>(''));
@@ -36,10 +38,40 @@ class _StreetInvoiceLocalIndex {
   String issuedInvoiceDocId(String bookingId) =>
       _byBooking[bookingId.trim()]?.value ?? '';
 
-  void registerIssuedInvoice(String bookingId, String documentId) {
+  StreetInvoiceLocalIssuedSnapshot? snapshotFor(String bookingId) =>
+      _snapshots[bookingId.trim()];
+
+  void registerIssuedInvoice(
+    String bookingId, {
+    required String documentId,
+    StreetInvoiceLocalIssuedSnapshot? snapshot,
+  }) {
     final id = documentId.trim();
     if (id.isEmpty) return;
-    notifierFor(bookingId).value = id;
+    final key = bookingId.trim();
+    final resolved =
+        snapshot ??
+        StreetInvoiceLocalIssuedSnapshot(documentId: id);
+    _snapshots[key] = resolved.documentId.trim().isEmpty
+        ? StreetInvoiceLocalIssuedSnapshot(
+            documentId: id,
+            invoiceReference: resolved.invoiceReference,
+            billitEnvironment: resolved.billitEnvironment,
+            billitOrderId: resolved.billitOrderId,
+            billitPaymentSyncStatus: resolved.billitPaymentSyncStatus,
+            peppolSent: resolved.peppolSent,
+            billitPaid: resolved.billitPaid,
+          )
+        : StreetInvoiceLocalIssuedSnapshot(
+            documentId: id,
+            invoiceReference: resolved.invoiceReference,
+            billitEnvironment: resolved.billitEnvironment,
+            billitOrderId: resolved.billitOrderId,
+            billitPaymentSyncStatus: resolved.billitPaymentSyncStatus,
+            peppolSent: resolved.peppolSent,
+            billitPaid: resolved.billitPaid,
+          );
+    notifierFor(key).value = id;
   }
 }
 
@@ -128,9 +160,17 @@ class _StreetBusinessInvoiceActionState
       _localIndexNotified = true;
       final docId = _controller.displayDocumentId;
       if (docId.isNotEmpty) {
+        final issued = _controller.issuedResponse;
+        final indexed = _controller.indexedInvoice;
+        final snapshot = issued != null
+            ? StreetInvoiceLocalIssuedSnapshot.fromIssueResponse(issued)
+            : (indexed != null
+                  ? StreetInvoiceLocalIssuedSnapshot.fromDocSummary(indexed)
+                  : StreetInvoiceLocalIssuedSnapshot(documentId: docId));
         _StreetInvoiceLocalIndex.instance.registerIssuedInvoice(
           widget.bookingId,
-          docId,
+          documentId: docId,
+          snapshot: snapshot,
         );
       }
       _BookingDocumentsRefreshBus.instance.requestRefresh(widget.bookingId);

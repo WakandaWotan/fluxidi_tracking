@@ -215,6 +215,7 @@ test("6) reopening a frozen artifact performs zero logo network fetches", async 
     paymentStatus: "paid",
     sellerLogoRef: `sha:${embed.sha256}`,
   });
+  // RGBA logos need one opaque-flatten repair (INV-2026-000039) until flat=1.
   assert.equal(
     shouldRefreshStreetInvoicePdfOnOpen({
       existingPdfExists: true,
@@ -222,8 +223,19 @@ test("6) reopening a frozen artifact performs zero logo network fetches", async 
       needsCompanyLogoEmbed: false,
       frozenEmbed: embed,
     }).refresh,
+    true,
+    "RGBA frozen embed without flat=1 must refresh once for PDFShift",
+  );
+  const flattenedRevision = `${matchingRevision};flat=1`;
+  assert.equal(
+    shouldRefreshStreetInvoicePdfOnOpen({
+      existingPdfExists: true,
+      storedProjectionRevision: flattenedRevision,
+      needsCompanyLogoEmbed: false,
+      frozenEmbed: embed,
+    }).refresh,
     false,
-    "matching frozen logo fingerprint must not re-refresh",
+    "matching frozen logo fingerprint + flat=1 must not re-refresh",
   );
 });
 

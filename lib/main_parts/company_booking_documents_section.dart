@@ -337,6 +337,49 @@ bool _bookingDocumentMatchesLegFilter(
   );
 }
 
+/// Builds a display-only Documents row from a just-issued street invoice
+/// snapshot so Billit status is visible before the documents GET catches up.
+_BookingDocumentMetadata _bookingDocumentFromLocalIssuedSnapshot(
+  StreetInvoiceLocalIssuedSnapshot snap,
+  String bookingId,
+) {
+  final hasBillit = snap.hasBillitLink || snap.billitEnvironment.isNotEmpty;
+  return _BookingDocumentMetadata(
+    documentId: snap.documentId,
+    documentType: 'invoice',
+    documentNumber: snap.invoiceReference,
+    proofReference: '',
+    lifecycleState: 'issued',
+    documentStatus: 'issued',
+    issueTimestamp: '',
+    currency: 'EUR',
+    contentHash: '',
+    sourceBookingId: bookingId,
+    sourceLegId: '',
+    sourceLegType: '',
+    billitExport: hasBillit
+        ? _BillitExportMetadata(
+            status: snap.billitOrderId.isNotEmpty ? 'created' : '',
+            environment: snap.billitEnvironment,
+            orderId: snap.billitOrderId,
+            orderNumber: '',
+            sent: false,
+            peppolSent: snap.peppolSent,
+            billitStatus: '',
+            billitIsSent: null,
+            billitPaid: snap.billitPaid,
+            transportType: '',
+            sentAt: '',
+            peppolSentAt: '',
+            statusCheckedAt: '',
+            reconcilePending:
+                snap.billitPaymentSyncStatus.toLowerCase() == 'pending' ||
+                snap.billitPaymentSyncStatus.toLowerCase() == 'syncing',
+          )
+        : null,
+  );
+}
+
 /// Compact, read-only "Documenten" section shown on a company/admin booking
 /// card. Lazily fetches issued documents for the booking the first time the
 /// section is expanded so a long bookings list never fires a request per row.
@@ -423,6 +466,27 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       .issuedInvoiceDocId(widget.bookingId)
       .isNotEmpty;
 
+  /// Backend-filtered docs plus a synthetic local invoice row when the index
+  /// lags (count=1 / empty list field bug). Never mutates [_documents].
+  List<_BookingDocumentMetadata> get _documentsForDisplay {
+    final base = _filteredDocuments;
+    final snap = _StreetInvoiceLocalIndex.instance.snapshotFor(widget.bookingId);
+    if (snap == null) return base;
+    if (!shouldInjectLocalIssuedInvoiceDocument(
+      localDocumentId: snap.documentId,
+      visibleBackendDocumentIds: base.map((d) => d.documentId),
+    )) {
+      return base;
+    }
+    // Leg-filtered cards hide booking-level invoices without leg meta; do not
+    // inject a synthetic row there (keeps count/list semantics aligned).
+    if (_hasLegFilter) return base;
+    return <_BookingDocumentMetadata>[
+      ...base,
+      _bookingDocumentFromLocalIssuedSnapshot(snap, widget.bookingId),
+    ];
+  }
+
   /// Display-only count that includes a locally-successful invoice until the
   /// backend index exposes it. Never mutates [_documents].
   int _displayedDocumentCount() {
@@ -432,9 +496,12 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     final present =
         localId.isNotEmpty &&
         _filteredDocuments.any((d) => d.documentId == localId);
+    // With an active leg filter, a booking-level invoice is not visible in the
+    // list — do not inflate the count either (LATE-INVOICE Documents consistency).
+    final hasLocalForCount = localId.isNotEmpty && !_hasLegFilter;
     return deriveDisplayedDocumentCount(
       backendVisibleCount: _filteredDocuments.length,
-      hasLocalIssuedInvoice: localId.isNotEmpty,
+      hasLocalIssuedInvoice: hasLocalForCount,
       localInvoiceInBackend: present,
     );
   }
@@ -1715,7 +1782,13 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
         ),
       );
     }
-    if (_filteredDocuments.isEmpty) {
+    final visible = _documentsForDisplay;
+    // Synthetic local invoice (if any) is already merged into [visible], so
+    // count=1 can never coexist with the empty-state copy.
+    if (shouldShowBookingDocumentsEmptyState(
+      visibleDocumentCount: visible.length,
+      hasPendingLocalIssuedInvoice: false,
+    )) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Text(
@@ -1739,7 +1812,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (final doc in _filteredDocuments) _buildDocumentRow(tokens, doc),
+        for (final doc in visible) _buildDocumentRow(tokens, doc),
       ],
     );
   }

@@ -1266,6 +1266,86 @@ int deriveDisplayedDocumentCount({
   return base;
 }
 
+/// Snapshot of a just-issued street business invoice kept in the app until the
+/// booking Documents GET catches up. Carries enough Billit fields for the
+/// Documents row to show link/status without inventing a second invoice.
+@immutable
+class StreetInvoiceLocalIssuedSnapshot {
+  final String documentId;
+  final String invoiceReference;
+  final String billitEnvironment;
+  final String billitOrderId;
+  final String billitPaymentSyncStatus;
+  final bool peppolSent;
+  final bool? billitPaid;
+
+  const StreetInvoiceLocalIssuedSnapshot({
+    required this.documentId,
+    this.invoiceReference = '',
+    this.billitEnvironment = '',
+    this.billitOrderId = '',
+    this.billitPaymentSyncStatus = '',
+    this.peppolSent = false,
+    this.billitPaid,
+  });
+
+  factory StreetInvoiceLocalIssuedSnapshot.fromIssueResponse(
+    StreetBusinessInvoiceResponse response,
+  ) {
+    return StreetInvoiceLocalIssuedSnapshot(
+      documentId: response.documentId,
+      invoiceReference: response.invoiceReference,
+      billitEnvironment: response.billitEnvironment,
+      billitOrderId: response.billitOrderId,
+      billitPaymentSyncStatus: response.billitPaymentSyncStatus,
+      peppolSent: response.peppolSent,
+      billitPaid: response.isPaid ? true : null,
+    );
+  }
+
+  factory StreetInvoiceLocalIssuedSnapshot.fromDocSummary(
+    StreetInvoiceDocSummary summary,
+  ) {
+    return StreetInvoiceLocalIssuedSnapshot(
+      documentId: summary.documentId,
+      invoiceReference: summary.documentNumber,
+      billitEnvironment: summary.billitEnvironment,
+      billitOrderId: summary.billitOrderId,
+      billitPaymentSyncStatus: summary.billitPaymentSyncStatus,
+      peppolSent: summary.peppolSent,
+      billitPaid: summary.billitPaid,
+    );
+  }
+
+  bool get hasBillitLink => billitOrderId.trim().isNotEmpty;
+}
+
+/// True when Documents should show the empty-state copy. A locally-issued
+/// invoice that is not yet in the backend list must not show
+/// "Nog geen documenten…" while the count already reads 1.
+bool shouldShowBookingDocumentsEmptyState({
+  required int visibleDocumentCount,
+  required bool hasPendingLocalIssuedInvoice,
+}) {
+  if (visibleDocumentCount > 0) return false;
+  if (hasPendingLocalIssuedInvoice) return false;
+  return true;
+}
+
+/// Whether [localDocumentId] should be injected as a synthetic Documents row
+/// (backend list lag). Never doubles when the id is already visible.
+bool shouldInjectLocalIssuedInvoiceDocument({
+  required String localDocumentId,
+  required Iterable<String> visibleBackendDocumentIds,
+}) {
+  final id = localDocumentId.trim();
+  if (id.isEmpty) return false;
+  for (final existing in visibleBackendDocumentIds) {
+    if (existing.trim() == id) return false;
+  }
+  return true;
+}
+
 /// Width (dp) at/below which the document actions stack vertically as
 /// full-width touch targets (phone). Above it, actions may sit side-by-side
 /// (tablet/wide), matching the existing company-bookings card breakpoint.

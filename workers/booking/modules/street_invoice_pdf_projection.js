@@ -35,10 +35,13 @@ import {
   isUsableInvoiceLogoEmbed,
   readFrozenInvoiceLogoEmbed,
 } from "./invoice_company_logo_fetch.js";
+import { invoiceLogoDataUriNeedsPdfFlatten } from "./invoice_logo_pdf_flatten.js";
 
 // v2: include route fingerprint so stale PDFs with raw coordinates / missing
 // frozen addresses refresh without rewriting Document Core snapshots.
 export const STREET_INVOICE_PDF_PROJECTION_VERSION = "street_pdf_proj_v2";
+/** Revision marker: PDF logo was flattened onto opaque white for PDFShift. */
+export const STREET_INVOICE_PDF_LOGO_FLAT_TOKEN = "flat=1";
 export { looksLikeCoordinatePair, pickCustomerVisibleAddress, formatDocumentPhoneDisplay };
 
 function _norm(v) {
@@ -593,9 +596,22 @@ export function invoiceArtifactNeedsLogoProjectionRefresh({
   frozenEmbed = null,
   sellerLogoRef = "",
 } = {}) {
-  const storedFp = extractLogoFingerprintFromProjectionRevision(
-    storedProjectionRevision,
+  const storedRevision = _norm(storedProjectionRevision);
+  const frozenUri = _norm(
+    frozenEmbed?.data_uri ?? frozenEmbed?.dataUri,
+    400000,
   );
+  // LATE-INVOICE-BILLIT-BRANDING-P0: INV-2026-000039 class — frozen RGBA logo
+  // was embedded, but PDFShift produced a fully-transparent soft mask. Any
+  // stored artifact that still lacks the opaque-flatten marker must refresh.
+  if (
+    frozenUri &&
+    invoiceLogoDataUriNeedsPdfFlatten(frozenUri) &&
+    !storedRevision.includes(STREET_INVOICE_PDF_LOGO_FLAT_TOKEN)
+  ) {
+    return true;
+  }
+  const storedFp = extractLogoFingerprintFromProjectionRevision(storedRevision);
   if (!storedFp || storedFp === "none") {
     // No logo token / empty logo — still refresh when a usable embed exists so
     // an empty header slot cannot stay authoritative.
@@ -624,6 +640,14 @@ export function invoiceArtifactNeedsLogoProjectionRefresh({
   }
   if (!expectedRef) return false;
   return fingerprintSellerLogoRef(expectedRef) !== storedFp;
+}
+
+/** Append the opaque-flatten marker to a projection revision (idempotent). */
+export function markStreetInvoicePdfProjectionLogoFlattened(revision = "") {
+  const base = _norm(revision);
+  if (!base) return STREET_INVOICE_PDF_LOGO_FLAT_TOKEN;
+  if (base.includes(STREET_INVOICE_PDF_LOGO_FLAT_TOKEN)) return base;
+  return `${base};${STREET_INVOICE_PDF_LOGO_FLAT_TOKEN}`;
 }
 
 export function buildStreetInvoicePdfProjectionRevision({

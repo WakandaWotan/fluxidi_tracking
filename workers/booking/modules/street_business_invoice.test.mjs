@@ -1058,3 +1058,76 @@ test("1A-GATE8: existing invoice without order + auto-create off => no create", 
   assert.equal(gate.action, "none");
   assert.equal(gate.reason, "existing_invoice_no_order_auto_create_off");
 });
+
+// LATE-INVOICE-BILLIT-BRANDING-P0 acceptance: paid ride → late business invoice
+// uses the same canonical pipeline (stable idempotency, reuse, Billit status
+// exposed, no payment/total mutation).
+test("LATE-INVOICE P0) paid-then-late invoice is idempotent and Billit-proven", () => {
+  const bookingId = "street_1785768346529_2p5ohae0";
+  const rec = completedStreetBooking({
+    booking_id: bookingId,
+    payment_status: "paid",
+    price_incl_vat: 6.8,
+    price_ex_vat: 6.415,
+    price_vat: 0.385,
+    vat_rate_percent: 6,
+  });
+  assert.equal(streetRidePaymentStatus(rec), "paid");
+  assert.equal(rec.price_incl_vat, 6.8);
+
+  const key1 = streetRideInvoiceIdempotencyKey({
+    tenantId: TENANT,
+    companyId: COMPANY,
+    bookingId,
+  });
+  const key2 = streetRideInvoiceIdempotencyKey({
+    tenantId: TENANT,
+    companyId: COMPANY,
+    bookingId,
+  });
+  assert.equal(key1, key2);
+  assert.match(key1, /^inv-auto:/);
+
+  const existingSnapshot = buildStreetBillingCustomerSnapshot({
+    normalized: READY_NORMALIZED,
+    actorRole: "company_business_invoice",
+    nowIso: "2026-08-03T18:54:28.000Z",
+  });
+  const retrySnapshot = buildStreetBillingCustomerSnapshot({
+    normalized: READY_NORMALIZED,
+    actorRole: "company_business_invoice",
+    nowIso: "2026-08-03T19:10:00.000Z",
+  });
+  const decision = resolveBusinessInvoiceRetryDecision({
+    existingInvoice: {
+      document_id: "9230012e-6cf8-4add-bf8f-a7a9920b6ab9",
+      document_number: "INV-2026-000039",
+    },
+    existingSnapshot,
+    requestedSnapshot: retrySnapshot,
+  });
+  assert.equal(decision.action, "reuse");
+
+  const resp = buildBusinessInvoiceResponse({
+    bookingId,
+    documentId: "9230012e-6cf8-4add-bf8f-a7a9920b6ab9",
+    invoiceReference: "INV-2026-000039",
+    reused: true,
+    paymentStatus: "paid",
+    billitEnvironment: "sandbox",
+    billitOrderId: "3144444",
+    billitOrderReused: true,
+    billitPaymentSyncStatus: "synced",
+    peppolSent: false,
+  });
+  assert.equal(resp.ok, true);
+  assert.equal(resp.invoice_reference, "INV-2026-000039");
+  assert.equal(resp.billit_order_id, "3144444");
+  assert.equal(resp.billit_payment_sync_status, "synced");
+  assert.equal(resp.payment_status, "paid");
+  assert.equal(resp.reused, true);
+  // Authoritative ride total is never carried/mutated by the issue response.
+  assert.equal("total" in resp, false);
+  assert.equal(streetRidePaymentStatus(rec), "paid");
+  assert.equal(rec.price_incl_vat, 6.8);
+});
