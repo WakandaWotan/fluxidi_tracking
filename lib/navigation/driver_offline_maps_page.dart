@@ -8,6 +8,7 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
 
+import 'driver_offline_maps_download_feedback.dart';
 import 'driver_offline_maps_europe_geocoder.dart';
 import 'driver_offline_maps_europe_selection.dart';
 import 'driver_offline_maps_service.dart';
@@ -129,23 +130,48 @@ DriverOfflineMapPreset driverOfflineMapBrusselsTestPreset() {
   );
 }
 
+/// Europe place lookup used by the offline page. Defaults to the Mapbox
+/// geocoder; overridden only by tests so the selection flow stays deterministic.
+typedef DriverOfflineEuropePlaceSearch =
+    Future<List<DriverOfflineEuropePlace>> Function({
+      required String query,
+      String languageCode,
+    });
+
 /// Chauffeur-facing offline basemap management (tiles only, not full navigation).
 class DriverOfflineMapsPage extends StatefulWidget {
   const DriverOfflineMapsPage({
     super.key,
     this.themeListenable,
     this.routeCorridorMetadata,
+    this.service,
+    this.mapboxConfigured,
+    this.placeSearch,
+    this.searchDebounce,
   });
 
   final ValueListenable<DriverThemeVariant>? themeListenable;
   final NavigationWorkerOfflineCorridorMetadata? routeCorridorMetadata;
+
+  /// Defaults to [DriverOfflineMapsService.shared]; overridden only by tests.
+  final DriverOfflineMapsDownloadPort? service;
+
+  /// Defaults to whether a Mapbox token was compiled in.
+  final bool? mapboxConfigured;
+
+  /// Defaults to [searchDriverOfflineEuropePlaces]; overridden only by tests.
+  final DriverOfflineEuropePlaceSearch? placeSearch;
+
+  /// Debounce before a search runs. Overridden only by tests.
+  final Duration? searchDebounce;
 
   @override
   State<DriverOfflineMapsPage> createState() => _DriverOfflineMapsPageState();
 }
 
 class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
-  final DriverOfflineMapsService _service = DriverOfflineMapsService.shared;
+  late final DriverOfflineMapsDownloadPort _service =
+      widget.service ?? DriverOfflineMapsService.shared;
   final TextEditingController _searchCtrl = TextEditingController();
 
   List<DriverOfflineMapRegionInfo> _regions = const <DriverOfflineMapRegionInfo>[];
@@ -200,6 +226,51 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
     }
   }
 
+  bool get _mapboxConfigured =>
+      widget.mapboxConfigured ?? kMapboxToken.trim().isNotEmpty;
+
+  /// Emits a PII-safe diagnostic line: no token, no raw exception, no address.
+  void _logOfflineDiagnostic({
+    required String phase,
+    required String regionId,
+    int? radiusKm,
+    DriverOfflineMapFailureCategory? category,
+    int? completedResourceCount,
+    int? requiredResourceCount,
+    int? erroredResourceCount,
+    String completionState = '',
+  }) {
+    if (!kDebugMode) return;
+    debugPrint(
+      buildDriverOfflineMapDiagnostic(
+        phase: phase,
+        regionId: regionId,
+        radiusKm: radiusKm,
+        category: category,
+        completedResourceCount: completedResourceCount,
+        requiredResourceCount: requiredResourceCount,
+        erroredResourceCount: erroredResourceCount,
+        completionState: completionState,
+      ),
+    );
+  }
+
+  /// Single place that turns a failure category into visible driver feedback.
+  void _showFailure(
+    DriverOfflineMapFailureCategory category, {
+    bool inline = true,
+  }) {
+    if (!mounted) return;
+    final message = driverOfflineMapFailureMessage(
+      category: category,
+      language: appConfig.currentLanguage,
+    );
+    if (inline) {
+      setState(() => _inlineError = message);
+    }
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   DriverOfflineMapRegionRequest _requestForPreset(DriverOfflineMapPreset preset) {
     return DriverOfflineMapRegionRequest(
       displayName: preset.localizedDisplayName(_tr),
@@ -219,12 +290,17 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
         _searchResults = const <DriverOfflineEuropePlace>[];
         _searchError = null;
         _searchInProgress = false;
+        // Clearing the query clears the selection, so the radius controls can
+        // never describe a place the driver can no longer see.
+        _selectedPlace = null;
+        _inlineError = null;
       });
       return;
     }
-    _searchDebounce = Timer(const Duration(milliseconds: 450), () {
-      unawaited(_runEuropeSearch(q));
-    });
+    _searchDebounce = Timer(
+      widget.searchDebounce ?? const Duration(milliseconds: 450),
+      () => unawaited(_runEuropeSearch(q)),
+    );
   }
 
   Future<void> _runEuropeSearch(String query) async {
@@ -240,14 +316,23 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
       AppLanguage.de => 'de',
       AppLanguage.en => 'en',
     };
-    final results = await searchDriverOfflineEuropePlaces(
-      query: query,
-      languageCode: lang,
-    );
+    final search = widget.placeSearch ?? searchDriverOfflineEuropePlaces;
+    final results = await search(query: query, languageCode: lang);
     if (!mounted) return;
+    final previous = _selectedPlace;
+    final selectionStillListed = previous == null ||
+        driverOfflineMapSelectionStillListed(
+          selectedFeatureId: previous.mapboxFeatureId,
+          selectedPrimaryName: previous.primaryName,
+          resultFeatureIds: results.map((p) => p.mapboxFeatureId),
+          resultPrimaryNames: results.map((p) => p.primaryName),
+        );
     setState(() {
       _searchInProgress = false;
       _searchResults = results;
+      if (!selectionStillListed) {
+        _selectedPlace = null;
+      }
       if (results.isEmpty) {
         _searchError = _tr(
           nl: 'Geen Europese plaats gevonden. Probeer stad, gemeente of postcode.',
@@ -258,8 +343,31 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
   }
 
   Future<void> _onEuropeSelectionConfirmed() async {
+    // A tap always ends in feedback: instruction, error, preview or progress.
+    if (_downloadInProgress || _estimateInProgress) return;
+
     final place = _selectedPlace;
-    if (place == null || _downloadInProgress || _estimateInProgress) return;
+    if (place == null) {
+      _logOfflineDiagnostic(
+        phase: 'cta',
+        regionId: '',
+        radiusKm: _selectedRadiusKm,
+        category: DriverOfflineMapFailureCategory.noSelection,
+      );
+      _showFailure(DriverOfflineMapFailureCategory.noSelection);
+      return;
+    }
+
+    if (!_mapboxConfigured) {
+      _logOfflineDiagnostic(
+        phase: 'cta',
+        regionId: '',
+        radiusKm: _selectedRadiusKm,
+        category: DriverOfflineMapFailureCategory.mapboxConfiguration,
+      );
+      _showFailure(DriverOfflineMapFailureCategory.mapboxConfiguration);
+      return;
+    }
 
     final validation = validateDriverOfflineEuropeSelection(
       latitude: place.latitude,
@@ -267,12 +375,13 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
       radiusKm: _selectedRadiusKm,
     );
     if (!validation.accepted) {
-      setState(() {
-        _inlineError = _tr(
-          nl: 'Dit gebied is te groot of buiten Europa. Kies een kleinere straal.',
-          en: 'This area is too large or outside Europe. Choose a smaller radius.',
-        );
-      });
+      _logOfflineDiagnostic(
+        phase: 'validate',
+        regionId: '',
+        radiusKm: _selectedRadiusKm,
+        category: DriverOfflineMapFailureCategory.regionTooLarge,
+      );
+      _showFailure(DriverOfflineMapFailureCategory.regionTooLarge);
       return;
     }
 
@@ -285,21 +394,21 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
       candidateRegionId: selection.regionId,
       existingRegionIds: existingIds,
     )) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _tr(
-              nl: 'Deze regio is al gedownload.',
-              en: 'This region is already downloaded.',
-            ),
-          ),
-        ),
+      _logOfflineDiagnostic(
+        phase: 'duplicate',
+        regionId: selection.regionId,
+        radiusKm: _selectedRadiusKm,
+        category: DriverOfflineMapFailureCategory.duplicateRegion,
+      );
+      _showFailure(
+        DriverOfflineMapFailureCategory.duplicateRegion,
+        inline: false,
       );
       return;
     }
 
     await _confirmAndDownloadRequest(
+      radiusKm: _selectedRadiusKm,
       request: selection.toRegionRequest(wifiOnly: _wifiOnly),
       titleName: selection.displayName,
       detailLines: <String>[
@@ -361,11 +470,22 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
 
   Future<void> _onPresetSelected(DriverOfflineMapPreset preset) async {
     if (_downloadInProgress || _estimateInProgress) return;
-    if (kDebugMode) {
-      debugPrint('[OFFLINE_MAPS] ui=preset_selected preset=${preset.slug}');
+    final request = _requestForPreset(preset);
+    if (!_mapboxConfigured) {
+      _logOfflineDiagnostic(
+        phase: 'preset_selected',
+        regionId: request.regionId,
+        category: DriverOfflineMapFailureCategory.mapboxConfiguration,
+      );
+      _showFailure(DriverOfflineMapFailureCategory.mapboxConfiguration);
+      return;
     }
+    _logOfflineDiagnostic(
+      phase: 'preset_selected',
+      regionId: request.regionId,
+    );
     await _confirmAndDownloadRequest(
-      request: _requestForPreset(preset),
+      request: request,
       titleName: preset.localizedDisplayName(_tr),
       detailLines: <String>[
         preset.localizedDescription(_tr),
@@ -381,28 +501,75 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
     required DriverOfflineMapRegionRequest request,
     required String titleName,
     required List<String> detailLines,
+    int? radiusKm,
     double? previewCenterLat,
     double? previewCenterLon,
     int? previewRadiusKm,
   }) async {
-    setState(() => _estimateInProgress = true);
+    setState(() {
+      _estimateInProgress = true;
+      _inlineError = null;
+    });
     DriverOfflineMapEstimate? estimate;
-    var estimateFailed = false;
+    DriverOfflineMapFailureCategory? estimateFailure;
+    // Both awaits are bounded. An unbounded platform call was the silent no-op:
+    // the page stayed busy and the preview below was never reached.
     try {
-      await _service.ensureInitialized();
-      estimate = await _service.estimateRegion(request);
-    } catch (_) {
-      estimateFailed = true;
-    } finally {
-      if (mounted) setState(() => _estimateInProgress = false);
+      await _service.ensureInitialized().timeout(
+        kDriverOfflineMapInitTimeout,
+      );
+    } catch (err) {
+      estimateFailure = classifyDriverOfflineMapFailure(
+        error: err,
+        phase: 'init',
+        mapboxConfigured: _mapboxConfigured,
+        wifiOnlyRequested: _wifiOnly,
+      );
+    }
+    if (estimateFailure == null) {
+      try {
+        estimate = await _service
+            .estimateRegion(request)
+            .timeout(kDriverOfflineMapEstimateTimeout);
+      } catch (err) {
+        estimateFailure = classifyDriverOfflineMapFailure(
+          error: err,
+          phase: 'estimate',
+          mapboxConfigured: _mapboxConfigured,
+          wifiOnlyRequested: _wifiOnly,
+        );
+      }
+    }
+    if (mounted) setState(() => _estimateInProgress = false);
+    if (estimateFailure != null) {
+      _logOfflineDiagnostic(
+        phase: 'estimate',
+        regionId: request.regionId,
+        radiusKm: radiusKm,
+        category: estimateFailure,
+      );
     }
     if (!mounted) return;
+
+    // Configuration and connectivity failures would also fail the download, so
+    // they surface immediately instead of leading into a doomed confirmation.
+    if (estimateFailure == DriverOfflineMapFailureCategory.mapboxConfiguration ||
+        estimateFailure == DriverOfflineMapFailureCategory.noInternet) {
+      _showFailure(estimateFailure!);
+      return;
+    }
 
     final proceed = await _showDownloadConfirmDialog(
       titleName: titleName,
       detailLines: detailLines,
       estimate: estimate,
-      estimateFailed: estimateFailed,
+      estimateFailed: estimateFailure != null,
+      estimateFailureMessage: estimateFailure == null
+          ? null
+          : driverOfflineMapFailureMessage(
+              category: estimateFailure,
+              language: appConfig.currentLanguage,
+            ),
       minZoom: request.minZoom,
       maxZoom: request.maxZoom,
       previewCenterLat: previewCenterLat,
@@ -410,7 +577,7 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
       previewRadiusKm: previewRadiusKm,
     );
     if (proceed == true && mounted) {
-      await _startDownloadRequest(request);
+      await _startDownloadRequest(request, radiusKm: radiusKm);
     }
   }
 
@@ -421,6 +588,7 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
     required bool estimateFailed,
     required int minZoom,
     required int maxZoom,
+    String? estimateFailureMessage,
     double? previewCenterLat,
     double? previewCenterLon,
     int? previewRadiusKm,
@@ -441,10 +609,12 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
       );
     } else if (estimateFailed) {
       estimateLines.add(
-        _tr(
-          nl: 'Grootte kon niet worden geschat. Download kan veel data gebruiken.',
-          en: 'Could not estimate size. Download may use significant data.',
-        ),
+        estimateFailureMessage ??
+            _tr(
+              nl:
+                  'Grootte kon niet worden geschat. Download kan veel data gebruiken.',
+              en: 'Could not estimate size. Download may use significant data.',
+            ),
       );
     }
 
@@ -527,6 +697,7 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
               child: Text(_tr(nl: 'Annuleren', en: 'Cancel')),
             ),
             FilledButton(
+              key: const Key('offline_confirm_download'),
               onPressed: () => Navigator.pop(ctx, true),
               child: Text(_tr(nl: 'Downloaden', en: 'Download')),
             ),
@@ -536,52 +707,82 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
     );
   }
 
-  Future<void> _startDownloadRequest(DriverOfflineMapRegionRequest request) async {
+  Future<void> _startDownloadRequest(
+    DriverOfflineMapRegionRequest request, {
+    int? radiusKm,
+  }) async {
+    // Single-flight: a second tap while a download runs is intentionally ignored
+    // here, because the button already renders a downloading state.
     if (_downloadInProgress) return;
-    if (kDebugMode) {
-      debugPrint('[OFFLINE_MAPS] ui=download_start region=${request.regionId}');
-    }
 
     setState(() {
       _downloadInProgress = true;
       _downloadProgress = null;
       _inlineError = null;
     });
+    _logOfflineDiagnostic(
+      phase: 'download_start',
+      regionId: request.regionId,
+      radiusKm: radiusKm,
+    );
 
+    DriverOfflineMapProgress? lastProgress;
     try {
-      await _service.downloadRegion(
+      final info = await _service.downloadRegion(
         request,
         onProgress: (progress) {
+          lastProgress = progress;
           if (!mounted) return;
           setState(() => _downloadProgress = progress);
         },
       );
       if (!mounted) return;
-      if (kDebugMode) {
-        debugPrint('[OFFLINE_MAPS] ui=download_done region=${request.regionId}');
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _tr(
-              nl: 'Kaarttegels gedownload. Status wordt geverifieerd.',
-              en: 'Map tiles downloaded. Status is verified.',
-            ),
-          ),
+      _logOfflineDiagnostic(
+        phase: 'download_done',
+        regionId: request.regionId,
+        radiusKm: radiusKm,
+        completedResourceCount: info.completedResourceCount,
+        requiredResourceCount: info.requiredResourceCount,
+        erroredResourceCount: info.erroredResourceCount,
+        completionState: driverOfflineMapCompletionStatusToken(
+          info.completionStatus,
         ),
       );
-      await _loadRegions();
-    } catch (_) {
-      if (!mounted) return;
-      if (kDebugMode) {
-        debugPrint('[OFFLINE_MAPS] ui=fail region=${request.regionId}');
-      }
-      setState(() {
-        _inlineError = _tr(
-          nl: 'Download mislukt of onderbroken. Regio is niet als volledig gemarkeerd.',
-          en: 'Download failed or interrupted. Region is not marked complete.',
+      if (info.completionStatus ==
+          DriverOfflineMapCompletionStatus.completedWithErrors) {
+        // Resource errors must never read as a clean success.
+        _showFailure(DriverOfflineMapFailureCategory.tileRegionResourceError);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _tr(
+                nl: 'Kaarttegels gedownload. Status wordt geverifieerd.',
+                en: 'Map tiles downloaded. Status is verified.',
+              ),
+            ),
+          ),
         );
-      });
+      }
+      await _loadRegions();
+    } catch (err) {
+      if (!mounted) return;
+      final category = classifyDriverOfflineMapFailure(
+        error: err,
+        phase: 'download',
+        mapboxConfigured: _mapboxConfigured,
+        wifiOnlyRequested: _wifiOnly,
+      );
+      _logOfflineDiagnostic(
+        phase: 'download_fail',
+        regionId: request.regionId,
+        radiusKm: radiusKm,
+        category: category,
+        completedResourceCount: lastProgress?.completedResourceCount,
+        requiredResourceCount: lastProgress?.requiredResourceCount,
+        completionState: 'not_complete',
+      );
+      _showFailure(category);
     } finally {
       if (mounted) {
         setState(() {
@@ -810,8 +1011,10 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
   Widget _infoCard({
     required DriverThemePalette palette,
     required Widget child,
+    Key? key,
   }) {
     return Container(
+      key: key,
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -882,6 +1085,7 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
+              key: Key('offline_preset_download_${preset.slug}'),
               onPressed: busy ? null : () => _onPresetSelected(preset),
               icon: const Icon(Icons.download_rounded, size: 18),
               label: Text(_tr(nl: 'Downloaden', en: 'Download')),
@@ -890,6 +1094,92 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                 foregroundColor:
                     palette.isDark ? palette.background : Colors.black,
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _europeCtaLabel(DriverOfflineMapCtaState state) {
+    switch (state) {
+      case DriverOfflineMapCtaState.estimating:
+        return _tr(
+          nl: 'Voorbeeld voorbereiden…',
+          en: 'Preparing preview…',
+        );
+      case DriverOfflineMapCtaState.downloading:
+        return _tr(nl: 'Bezig met downloaden…', en: 'Downloading…');
+      case DriverOfflineMapCtaState.needsSelection:
+      case DriverOfflineMapCtaState.ready:
+        return _tr(
+          nl: 'Voorbeeld & downloaden',
+          en: 'Preview & download',
+        );
+    }
+  }
+
+  /// Keeps the chosen place and country visible next to the radius controls,
+  /// or states plainly that nothing is selected yet.
+  Widget _selectedPlaceSummary({required DriverThemePalette palette}) {
+    final place = _selectedPlace;
+    if (place == null) {
+      return Row(
+        key: const Key('offline_europe_selection_empty'),
+        children: [
+          Icon(Icons.info_outline_rounded, size: 16, color: palette.textMuted),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              driverOfflineMapFailureMessage(
+                category: DriverOfflineMapFailureCategory.noSelection,
+                language: appConfig.currentLanguage,
+              ),
+              style: TextStyle(color: palette.textMuted, fontSize: 12),
+            ),
+          ),
+        ],
+      );
+    }
+    return Container(
+      key: const Key('offline_europe_selection_summary'),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: palette.accent.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: palette.accent.withOpacity(0.5)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.place_rounded, size: 18, color: palette.accent),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _tr(
+                    nl: 'Gekozen plaats',
+                    en: 'Selected place',
+                  ),
+                  style: TextStyle(color: palette.textMuted, fontSize: 11),
+                ),
+                Text(
+                  '${place.primaryName} · ${place.countryName}',
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  _tr(
+                    nl: 'Straal $_selectedRadiusKm km',
+                    en: 'Radius $_selectedRadiusKm km',
+                  ),
+                  style: TextStyle(color: palette.textMuted, fontSize: 12),
+                ),
+              ],
             ),
           ),
         ],
@@ -910,6 +1200,11 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
             final progressFraction = progress?.fraction;
             final presets = driverOfflineMapVisiblePresets();
             final busy = _downloadInProgress || _estimateInProgress;
+            final ctaState = resolveDriverOfflineMapCtaState(
+              hasSelection: _selectedPlace != null,
+              estimateInProgress: _estimateInProgress,
+              downloadInProgress: _downloadInProgress,
+            );
 
             return Scaffold(
               backgroundColor: palette.background,
@@ -1084,6 +1379,7 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                         ),
                         const SizedBox(height: 10),
                         TextField(
+                          key: const Key('offline_europe_search_field'),
                           controller: _searchCtrl,
                           enabled: !busy,
                           onChanged: _onSearchChanged,
@@ -1138,7 +1434,11 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                                     : palette.surface,
                                 borderRadius: BorderRadius.circular(12),
                                 child: ListTile(
+                                  key: Key(
+                                    'offline_europe_result_${place.primaryName}',
+                                  ),
                                   enabled: !busy,
+                                  selected: selected,
                                   title: Text(
                                     place.displayLabel,
                                     style: TextStyle(
@@ -1163,59 +1463,66 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                             );
                           }),
                         ],
-                        if (_selectedPlace != null) ...[
-                          const SizedBox(height: 10),
-                          Text(
-                            _tr(nl: 'Downloadstraal', en: 'Download radius'),
-                            style: TextStyle(
-                              color: palette.textPrimary,
-                              fontWeight: FontWeight.w700,
-                            ),
+                        // The selection summary, radius controls and CTA stay
+                        // mounted with or without a selection: a hidden CTA and
+                        // a CTA that silently returns are equally confusing.
+                        const SizedBox(height: 10),
+                        _selectedPlaceSummary(palette: palette),
+                        const SizedBox(height: 10),
+                        Text(
+                          _tr(nl: 'Downloadstraal', en: 'Download radius'),
+                          style: TextStyle(
+                            color: palette.textPrimary,
+                            fontWeight: FontWeight.w700,
                           ),
-                          const SizedBox(height: 8),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              for (final km
-                                  in kDriverOfflineEuropeRadiusOptionsKm)
-                                ChoiceChip(
-                                  label: Text('$km km'),
-                                  selected: _selectedRadiusKm == km,
-                                  onSelected: busy
-                                      ? null
-                                      : (_) => setState(
-                                            () => _selectedRadiusKm = km,
-                                          ),
-                                  selectedColor: palette.accent.withOpacity(0.35),
-                                  labelStyle: TextStyle(
-                                    color: palette.textPrimary,
-                                  ),
-                                ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          SizedBox(
-                            width: double.infinity,
-                            child: FilledButton.icon(
-                              onPressed:
-                                  busy ? null : _onEuropeSelectionConfirmed,
-                              icon: const Icon(Icons.download_rounded, size: 18),
-                              label: Text(
-                                _tr(
-                                  nl: 'Voorbeeld & downloaden',
-                                  en: 'Preview & download',
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final km in kDriverOfflineEuropeRadiusOptionsKm)
+                              ChoiceChip(
+                                label: Text('$km km'),
+                                selected: _selectedRadiusKm == km,
+                                onSelected: busy
+                                    ? null
+                                    : (_) => setState(
+                                          () => _selectedRadiusKm = km,
+                                        ),
+                                selectedColor: palette.accent.withOpacity(0.35),
+                                labelStyle: TextStyle(
+                                  color: palette.textPrimary,
                                 ),
                               ),
-                              style: FilledButton.styleFrom(
-                                backgroundColor: palette.accent,
-                                foregroundColor: palette.isDark
-                                    ? palette.background
-                                    : Colors.black,
-                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            key: const Key('offline_europe_cta'),
+                            onPressed: driverOfflineMapCtaIsTappable(ctaState)
+                                ? _onEuropeSelectionConfirmed
+                                : null,
+                            icon: ctaState == DriverOfflineMapCtaState.estimating
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.download_rounded, size: 18),
+                            label: Text(_europeCtaLabel(ctaState)),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: palette.accent,
+                              foregroundColor: palette.isDark
+                                  ? palette.background
+                                  : Colors.black,
                             ),
                           ),
-                        ],
+                        ),
                         const SizedBox(height: 20),
                         Text(
                           _tr(
@@ -1262,9 +1569,49 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                             minimumSize: const Size.fromHeight(44),
                           ),
                         ),
+                        // Estimating used to render nothing at all, which is
+                        // what made a slow or stalled estimate look like a
+                        // dead button.
+                        if (_estimateInProgress) ...[
+                          const SizedBox(height: 16),
+                          _infoCard(
+                            key: const Key('offline_preparing_card'),
+                            palette: palette,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _tr(
+                                    nl: 'Voorbeeld voorbereiden…',
+                                    en: 'Preparing preview…',
+                                  ),
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  _tr(
+                                    nl:
+                                        'Grootte van het kaartgebied wordt geschat.',
+                                    en: 'Estimating the map area size.',
+                                  ),
+                                  style: TextStyle(
+                                    color: palette.textMuted,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                LinearProgressIndicator(color: palette.accent),
+                              ],
+                            ),
+                          ),
+                        ],
                         if (_downloadInProgress) ...[
                           const SizedBox(height: 16),
                           _infoCard(
+                            key: const Key('offline_download_progress_card'),
                             palette: palette,
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,

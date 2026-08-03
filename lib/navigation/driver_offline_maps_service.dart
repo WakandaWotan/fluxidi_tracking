@@ -343,8 +343,34 @@ String driverOfflineMapSlugFromDisplayName(String input) {
   return slug;
 }
 
+/// The offline map-tile operations the driver UI depends on.
+///
+/// [DriverOfflineMapsService] is the only production implementation; this exists
+/// so the page can be driven deterministically in tests without a live Mapbox
+/// TileStore. It is a seam, not a second download service.
+abstract interface class DriverOfflineMapsDownloadPort {
+  Future<void> ensureInitialized();
+
+  Future<DriverOfflineMapEstimate> estimateRegion(
+    DriverOfflineMapRegionRequest request, {
+    DriverOfflineMapProgressCallback? onProgress,
+  });
+
+  Future<DriverOfflineMapRegionInfo> downloadRegion(
+    DriverOfflineMapRegionRequest request, {
+    DriverOfflineMapProgressCallback? onProgress,
+  });
+
+  Future<List<DriverOfflineMapRegionInfo>> listDownloadedRegions();
+
+  Future<void> deleteRegion(
+    String regionId, {
+    DriverOfflineMapProgressCallback? onProgress,
+  });
+}
+
 /// Wraps Mapbox [mb.OfflineManager] and [mb.TileStore] for driver offline basemaps.
-class DriverOfflineMapsService {
+class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
   DriverOfflineMapsService._();
 
   static final DriverOfflineMapsService shared = DriverOfflineMapsService._();
@@ -354,6 +380,7 @@ class DriverOfflineMapsService {
   Future<void>? _initFuture;
 
   /// Lazily creates Mapbox offline manager and default tile store.
+  @override
   Future<void> ensureInitialized() {
     _initFuture ??= _initialize();
     return _initFuture!;
@@ -397,6 +424,7 @@ class DriverOfflineMapsService {
   }
 
   /// Estimates transfer and on-disk size for [request] without mutating regions.
+  @override
   Future<DriverOfflineMapEstimate> estimateRegion(
     DriverOfflineMapRegionRequest request, {
     DriverOfflineMapProgressCallback? onProgress,
@@ -464,6 +492,7 @@ class DriverOfflineMapsService {
   ///
   /// Loads one style pack per entry in [DriverOfflineMapRegionRequest.styleUris],
   /// then loads a single tile region with matching descriptors.
+  @override
   Future<DriverOfflineMapRegionInfo> downloadRegion(
     DriverOfflineMapRegionRequest request, {
     DriverOfflineMapProgressCallback? onProgress,
@@ -545,6 +574,7 @@ class DriverOfflineMapsService {
   }
 
   /// Lists Fluxidi-managed offline regions (metadata source or id prefix).
+  @override
   Future<List<DriverOfflineMapRegionInfo>> listDownloadedRegions() async {
     await ensureInitialized();
     try {
@@ -570,6 +600,7 @@ class DriverOfflineMapsService {
   }
 
   /// Removes a tile region by id. Does not remove shared style packs.
+  @override
   Future<void> deleteRegion(
     String regionId, {
     DriverOfflineMapProgressCallback? onProgress,
