@@ -20,6 +20,7 @@ import 'package:fluxidi_tracking/payment/mollie_capability_status.dart';
 import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
 import 'package:fluxidi_tracking/payment/payment_method_logo.dart';
 import 'package:fluxidi_tracking/payment/payment_method_resolver.dart';
+import 'package:fluxidi_tracking/pricing/pricing_setup_completeness.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
@@ -9647,16 +9648,121 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   }
 
   _SetupStatus _pricingStatus() {
-    final checks = <bool>[
-      _validPositiveNumber(_baseFareCtrl.text),
-      _validPositiveNumber(_perKmCtrl.text),
-      _validPositiveNumber(_perMinCtrl.text),
-      _validPositiveNumber(_minimumFareCtrl.text),
-    ];
-    final score = checks.where((v) => v).length;
-    if (score == checks.length) return _SetupStatus.complete;
-    if (score >= 1) return _SetupStatus.attention;
-    return _SetupStatus.incomplete;
+    return _mapPricingCompletenessKind(_pricingCompleteness().kind);
+  }
+
+  PricingSetupCompleteness _pricingCompleteness() {
+    return evaluatePricingSetupCompleteness(
+      baseFare: _baseFareCtrl.text,
+      perKm: _perKmCtrl.text,
+      perMinute: _perMinCtrl.text,
+      minimumFare: _minimumFareCtrl.text,
+    );
+  }
+
+  _SetupStatus _mapPricingCompletenessKind(PricingSetupCompletenessKind kind) {
+    switch (kind) {
+      case PricingSetupCompletenessKind.complete:
+        return _SetupStatus.complete;
+      case PricingSetupCompletenessKind.attention:
+        return _SetupStatus.attention;
+      case PricingSetupCompletenessKind.incomplete:
+        return _SetupStatus.incomplete;
+    }
+  }
+
+  String _pricingSetupReasonLabel(String key) {
+    switch (key) {
+      case PricingSetupReasonKey.baseFareMissing:
+        return _t(
+          nl: 'Basistarief ontbreekt',
+          en: 'Base fare is missing',
+          fr: 'Tarif de base manquant',
+          es: 'Falta la tarifa base',
+        );
+      case PricingSetupReasonKey.baseFareInvalid:
+        return _t(
+          nl: 'Basistarief is ongeldig',
+          en: 'Base fare is invalid',
+          fr: 'Tarif de base invalide',
+          es: 'Tarifa base no válida',
+        );
+      case PricingSetupReasonKey.perKmMissing:
+        return _t(
+          nl: 'Prijs per km ontbreekt',
+          en: 'Price per km is missing',
+          fr: 'Prix par km manquant',
+          es: 'Falta el precio por km',
+        );
+      case PricingSetupReasonKey.perKmInvalid:
+        return _t(
+          nl: 'Prijs per km is ongeldig',
+          en: 'Price per km is invalid',
+          fr: 'Prix par km invalide',
+          es: 'Precio por km no válido',
+        );
+      case PricingSetupReasonKey.perMinuteMissing:
+        return _t(
+          nl: 'Prijs per minuut ontbreekt',
+          en: 'Price per minute is missing',
+          fr: 'Prix par minute manquant',
+          es: 'Falta el precio por minuto',
+        );
+      case PricingSetupReasonKey.perMinuteInvalid:
+        return _t(
+          nl: 'Prijs per minuut is ongeldig',
+          en: 'Price per minute is invalid',
+          fr: 'Prix par minute invalide',
+          es: 'Precio por minuto no válido',
+        );
+      case PricingSetupReasonKey.minimumFareMissing:
+        return _t(
+          nl: 'Minimumtarief ontbreekt',
+          en: 'Minimum fare is missing',
+          fr: 'Tarif minimum manquant',
+          es: 'Falta la tarifa mínima',
+        );
+      case PricingSetupReasonKey.minimumFareInvalid:
+        return _t(
+          nl: 'Minimumtarief is ongeldig',
+          en: 'Minimum fare is invalid',
+          fr: 'Tarif minimum invalide',
+          es: 'Tarifa mínima no válida',
+        );
+      default:
+        return _t(
+          nl: 'Kernprijzen onvolledig',
+          en: 'Core prices incomplete',
+          fr: 'Prix clés incomplets',
+          es: 'Precios clave incompletos',
+        );
+    }
+  }
+
+  String _pricingSetupSubtitle() {
+    final result = _pricingCompleteness();
+    if (result.isComplete) {
+      return _t(
+        nl: 'Basistarief en kernprijzen',
+        en: 'Base fare and core prices',
+        fr: 'Tarif de base et prix clés',
+        es: 'Tarifa base y precios clave',
+      );
+    }
+    if (result.reasonKeys.isEmpty) {
+      return _t(
+        nl: 'Basistarief en kernprijzen',
+        en: 'Base fare and core prices',
+        fr: 'Tarif de base et prix clés',
+        es: 'Tarifa base y precios clave',
+      );
+    }
+    return _pricingSetupReasonLabel(result.reasonKeys.first);
+  }
+
+  void _onPricingFieldEdited(String _) {
+    if (!mounted) return;
+    setState(() {});
   }
 
   _SetupStatus _cancellationPolicySetupStatus() {
@@ -9829,12 +9935,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           fr: 'Paramètres tarifaires',
           es: 'Ajustes de precio',
         ),
-        subtitle: _t(
-          nl: 'Basistarief en kernprijzen',
-          en: 'Base fare and core prices',
-          fr: 'Tarif de base et prix clés',
-          es: 'Tarifa base y precios clave',
-        ),
+        subtitle: _pricingSetupSubtitle(),
         icon: Icons.local_offer_outlined,
         status: _pricingStatus(),
       ),
@@ -12002,12 +12103,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                     fr: 'Moteur tarifaire',
                     es: 'Motor de precios',
                   ),
-                  subtitle: _t(
-                    nl: 'Basistarieven en toeslagen',
-                    en: 'Base rates and surcharges',
-                    fr: 'Tarifs de base et suppléments',
-                    es: 'Tarifas base y recargos',
-                  ),
+                  subtitle: _pricingSetupSubtitle(),
                   status: _pricingStatus(),
                   child: Column(
                     children: [
@@ -12019,6 +12115,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           fr: 'Tarif de base',
                           es: 'Tarifa base',
                         ),
+                        onChanged: _onPricingFieldEdited,
                       ),
                       _txt(
                         _perKmCtrl,
@@ -12028,6 +12125,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           fr: 'Prix par km',
                           es: 'Precio por km',
                         ),
+                        onChanged: _onPricingFieldEdited,
                       ),
                       _txt(
                         _perMinCtrl,
@@ -12037,6 +12135,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           fr: 'Prix par minute',
                           es: 'Precio por minuto',
                         ),
+                        onChanged: _onPricingFieldEdited,
                       ),
                       _txt(
                         _minimumFareCtrl,
@@ -12046,6 +12145,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           fr: 'Tarif minimum',
                           es: 'Tarifa minima',
                         ),
+                        onChanged: _onPricingFieldEdited,
                       ),
                       _txt(
                         _waitPerMinCtrl,
@@ -12055,6 +12155,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           fr: 'Tarif d attente par minute',
                           es: 'Tarifa de espera por minuto',
                         ),
+                        onChanged: _onPricingFieldEdited,
                       ),
                       Builder(
                         builder: (_) {
