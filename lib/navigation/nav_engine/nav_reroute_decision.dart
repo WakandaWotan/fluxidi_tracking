@@ -62,6 +62,14 @@ class NavRerouteDecisionConfig {
   static const double strongEvidenceMinSnapM = 80.0;
   static const double severeEvidenceMinSnapM = 110.0;
   static const double goodAccuracyMaxM = 15.0;
+
+  /// Mid-band accuracy may join wrong-street / strong-mismatch only when
+  /// heading + growth + speed + multi-sample evidence are already strong.
+  static const double strongMismatchRelaxedAccuracyMaxM = 35.0;
+  static const Duration debounceStrongGrowingMismatch = Duration(
+    milliseconds: 500,
+  );
+
   static const Duration strongEvidenceMinDuration = Duration(milliseconds: 1500);
   static const int strongEvidenceMinSamples = 2;
   static const int severeEvidenceMinSamples = 2;
@@ -159,6 +167,12 @@ class NavRerouteDecisionTickOutput {
   final bool requestInFlight;
   final int routeVersion;
 
+  /// Early banner adaptation before full off-route confirm.
+  final bool strongMismatchSuspected;
+
+  /// Proven strong growing mismatch (forced_detour / wrong_street family).
+  final bool strongMismatchConfirmed;
+
   const NavRerouteDecisionTickOutput({
     required this.offRouteLikely,
     required this.offRouteReason,
@@ -182,6 +196,8 @@ class NavRerouteDecisionTickOutput {
     this.strongEvidenceDurationMs,
     this.requestInFlight = false,
     this.routeVersion = 0,
+    this.strongMismatchSuspected = false,
+    this.strongMismatchConfirmed = false,
   });
 }
 
@@ -477,12 +493,20 @@ class NavRerouteDecisionTracker {
             !strongOppositeDirection &&
             !oppositeDirection);
 
+    final strongMismatchSuspected = progress.strongMismatchSuspected ||
+        (wrongStreetEval.observation && !wrongStreetConfirmed);
+    final strongMismatchConfirmed = forcedDetour ||
+        wrongStreetConfirmed ||
+        (progress.routeDeviationReason == 'forced_detour' &&
+            progress.routeDeviationLikely);
+
     final debounceRequired = navRerouteDebounceFor(
       offRouteReason: offRouteReason,
       progress: progress,
-      fastPathReady: fastPathReady,
+      fastPathReady: fastPathReady || strongMismatchConfirmed,
       strongEvidence: observationStrong,
       wrongStreetConfirmed: wrongStreetConfirmed,
+      strongGrowingMismatch: strongMismatchConfirmed,
     );
 
     var debounceStarted = false;
@@ -522,7 +546,9 @@ class NavRerouteDecisionTracker {
       debounceStarted: debounceStarted,
       cooldownKind: cooldownEval.kind,
       cooldownRemainingMs: cooldownEval.remainingMs,
-      fastPathEligible: cooldownEval.fastPathEligible || fastPathReady,
+      fastPathEligible: cooldownEval.fastPathEligible ||
+          fastPathReady ||
+          strongMismatchConfirmed,
       blockedReason: blockedReason,
       strongSampleCount: strongSampleCount,
       wrongStreetSampleCount: wrongStreetSampleCount,
@@ -531,6 +557,8 @@ class NavRerouteDecisionTracker {
       strongEvidenceDurationMs: strongDurMs,
       requestInFlight: input.isRerouting,
       routeVersion: input.routeVersion,
+      strongMismatchSuspected: strongMismatchSuspected,
+      strongMismatchConfirmed: strongMismatchConfirmed,
     );
   }
 
@@ -571,6 +599,30 @@ class NavRerouteWrongStreetEval {
   );
 }
 
+/// Uncertainty-aware GPS accuracy gate for wrong-street observation.
+/// Good accuracy (≤15 m) always participates. Mid-band (≤35 m) only when
+/// heading, speed, growth and at least one evidence sample already agree.
+bool navRerouteAccuracyAllowsWrongStreetObservation({
+  required double? accuracyM,
+  required double speedKmh,
+  required bool snapGrowing,
+  required double? headingDeltaDeg,
+  required int evidenceSamples,
+}) {
+  if (accuracyM == null || !accuracyM.isFinite) return true;
+  if (accuracyM <= NavRerouteDecisionConfig.goodAccuracyMaxM) return true;
+  if (accuracyM > NavRerouteDecisionConfig.strongMismatchRelaxedAccuracyMaxM) {
+    return false;
+  }
+  final headingOk = headingDeltaDeg != null &&
+      headingDeltaDeg.isFinite &&
+      headingDeltaDeg >= NavRerouteDecisionConfig.wrongStreetHeadingMinDeg;
+  return speedKmh >= NavRerouteDecisionConfig.minMovementSpeedKmh &&
+      snapGrowing &&
+      headingOk &&
+      evidenceSamples >= 1;
+}
+
 NavRerouteWrongStreetEval navRerouteEvaluateWrongStreet({
   required NavRouteProgressOutput progress,
   required double snapDistanceM,
@@ -585,9 +637,16 @@ NavRerouteWrongStreetEval navRerouteEvaluateWrongStreet({
       speedKmh > NavRerouteDecisionConfig.wrongStreetMaxSpeedKmh) {
     return NavRerouteWrongStreetEval.none;
   }
-  if (accuracyM != null &&
-      accuracyM.isFinite &&
-      accuracyM > NavRerouteDecisionConfig.goodAccuracyMaxM) {
+  if (!navRerouteAccuracyAllowsWrongStreetObservation(
+    accuracyM: accuracyM,
+    speedKmh: speedKmh,
+    snapGrowing: snapGrowing || progress.strongMismatchSuspected,
+    headingDeltaDeg: progress.headingDeltaDeg,
+    evidenceSamples: math.max(
+      wrongStreetSampleCount,
+      progress.strongMismatchSampleCount,
+    ),
+  )) {
     return NavRerouteWrongStreetEval.none;
   }
 
@@ -941,12 +1000,17 @@ Duration navRerouteDebounceFor({
   bool fastPathReady = false,
   bool strongEvidence = false,
   bool wrongStreetConfirmed = false,
+  bool strongGrowingMismatch = false,
 }) {
   if (offRouteReason == 'wrong_street' && wrongStreetConfirmed) {
     return NavRerouteDecisionConfig.debounceWrongStreetConfirmed;
   }
   if (offRouteReason == 'wrong_street' || offRouteReason == 'forced_detour') {
     return NavRerouteDecisionConfig.debounceWrongStreetConfirm;
+  }
+  if (strongGrowingMismatch || progress.strongMismatchSuspected) {
+    // Proven / strongly suspected growing mismatch: fast-path band only.
+    return NavRerouteDecisionConfig.debounceStrongGrowingMismatch;
   }
   if (offRouteReason == 'opposite_direction_strong') {
     return NavRerouteDecisionConfig.debounceStrongOpposite;
@@ -960,6 +1024,7 @@ Duration navRerouteDebounceFor({
   if (progress.offRouteLikely) {
     final snapDist = progress.snapDistanceM;
     final conf = progress.confidence;
+    // Long 2500 ms debounce remains only for ambiguous low-confidence jitter.
     if (snapDist > 55.0 && conf < 45.0) {
       return NavRerouteDecisionConfig.debounceSnapLowConfidence;
     }

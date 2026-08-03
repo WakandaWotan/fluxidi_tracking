@@ -303,7 +303,7 @@ void main() {
       report = _run(NavReplayFixtures.sideStreetDeparture());
     });
 
-    test('departure is detected via wrong-street / snap, not opposite-direction',
+    test('departure is detected via forced_detour / wrong-street / snap, not opposite-direction',
         () {
       expect(report.firstOffRouteIndex, isNotNull);
       expect(
@@ -317,7 +317,7 @@ void main() {
       final first = report.results[report.firstOffRouteIndex!];
       expect(
         first.offRouteReason,
-        anyOf('wrong_street', 'snap_distance'),
+        anyOf('forced_detour', 'wrong_street', 'snap_distance'),
       );
     });
 

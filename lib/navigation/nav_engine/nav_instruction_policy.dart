@@ -17,6 +17,8 @@ class NavInstructionPolicyInput {
   final bool oppositeDirectionLikely;
   final bool backwardProgressLikely;
   final bool reroutePending;
+  /// Early strong-mismatch suspicion (before full off-route confirm).
+  final bool strongMismatchSuspected;
   final bool forwardProgress;
   final bool predictionActive;
   final double? speedKmh;
@@ -37,19 +39,22 @@ class NavInstructionPolicyInput {
     this.oppositeDirectionLikely = false,
     this.backwardProgressLikely = false,
     this.reroutePending = false,
+    this.strongMismatchSuspected = false,
     this.forwardProgress = true,
     this.predictionActive = false,
     this.speedKmh,
   });
 
   /// NAV-R12-E2: true while the route is adapting — old-route maneuvers may
-  /// not be shown confidently.
+  /// not be shown confidently. Includes early strong-mismatch suspicion so
+  /// stale U-turns are suppressed before the Directions response.
   bool get routeAdaptationActive =>
       offRouteLikely ||
       routeDeviationLikely ||
       oppositeDirectionLikely ||
       backwardProgressLikely ||
-      reroutePending;
+      reroutePending ||
+      strongMismatchSuspected;
 }
 
 /// Resolved instruction text and display flags for the nav banner.
@@ -195,6 +200,7 @@ class DriverNavInstructionPolicy {
     if (input.oppositeDirectionLikely) return 'opposite_direction';
     if (input.backwardProgressLikely) return 'backward_progress';
     if (input.routeDeviationLikely) return 'route_deviation';
+    if (input.strongMismatchSuspected) return 'strong_mismatch_suspected';
     return 'off_route';
   }
 

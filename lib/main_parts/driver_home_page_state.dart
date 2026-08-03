@@ -1086,6 +1086,12 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _lastRerouteFailed = false;
   String? _rerouteReason;
   DateTime? _offRouteRerouteDebounceStartedAt;
+  // FLUXIDI-REROUTE-DETERMINISTIC-FASTPATH-P0-1 field telemetry anchors.
+  DateTime? _rerouteSuspectedAt;
+  DateTime? _rerouteConfirmedAt;
+  DateTime? _rerouteTriggerAt;
+  String? _lastNavRerouteCandidateSignature;
+  String? _lastNavRerouteBannerSignature;
   // Legacy constants retained for call-site readability; live policy lives in
   // [NavRerouteDecisionConfig] / [navRerouteEvaluateCooldown].
   static const Duration _rerouteCooldown = Duration(seconds: 12);
@@ -1360,6 +1366,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     _lastRerouteFailed = false;
     _rerouteReason = null;
     _offRouteRerouteDebounceStartedAt = null;
+    _rerouteSuspectedAt = null;
+    _rerouteConfirmedAt = null;
+    _rerouteTriggerAt = null;
+    _lastNavRerouteCandidateSignature = null;
+    _lastNavRerouteBannerSignature = null;
     _lastRerouteDecision = null;
     _rerouteDecision.reset();
     // FLUXIDI NAV-STREETLEVEL-FLUID-MOTION-2 (Phase 1, Part F): clear the
@@ -17837,6 +17848,12 @@ class _DriverHomePageState extends State<DriverHomePage>
       ),
     );
     final decision = _lastRerouteDecision!;
+    _logNavRerouteCandidateAndTransition(
+      pos: pos,
+      progress: progress,
+      snapDistance: snapDistance.isFinite ? snapDistance : double.infinity,
+      decision: decision,
+    );
     if (decision.eligible) {
       _rerouteDecisionEligibleAt ??= DateTime.now();
       _offRouteRerouteDebounceStartedAt ??= _rerouteDecisionEligibleAt;
@@ -18002,6 +18019,86 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   /// NAV-LATENCY-1 (Part E): bounded, PII-safe reroute timing chain. Reroutes
   /// are infrequent events, so each phase is emitted once (no coordinates).
+  void _logNavRerouteCandidateAndTransition({
+    required geo.Position pos,
+    required NavRouteProgressOutput? progress,
+    required double snapDistance,
+    required NavRerouteDecisionTickOutput decision,
+  }) {
+    final now = DateTime.now();
+    final suspected = decision.strongMismatchSuspected ||
+        (progress?.strongMismatchSuspected ?? false);
+    final confirmed = decision.strongMismatchConfirmed || decision.offRouteLikely;
+    if (suspected) {
+      _rerouteSuspectedAt ??= now;
+    } else if (!confirmed) {
+      _rerouteSuspectedAt = null;
+      _rerouteConfirmedAt = null;
+    }
+    if (confirmed) {
+      _rerouteConfirmedAt ??= now;
+    }
+    if (decision.shouldTrigger) {
+      _rerouteTriggerAt ??= now;
+    }
+    final headingDelta = progress?.headingDeltaDeg;
+    final accuracyM = pos.accuracy.isFinite ? pos.accuracy : null;
+    final growStreak = progress?.strongMismatchSampleCount ??
+        decision.wrongStreetSampleCount;
+    final candidateSig =
+        '${decision.offRouteReason}|$suspected|$confirmed|'
+        '${decision.samplesOffRoute}|${navRerouteDistanceBucket(snapDistance)}|'
+        '${navRerouteHeadingDeltaBucket(headingDelta)}';
+    if (candidateSig != _lastNavRerouteCandidateSignature) {
+      _lastNavRerouteCandidateSignature = candidateSig;
+      _logNavBounded(
+        'NAV_REROUTE_CANDIDATE',
+        'reason=${decision.offRouteReason} '
+            'speedBucket=${navRerouteMovementBucket(_speedKmhFor(pos))} '
+            'accuracyBucket=${navRerouteAccuracyBucket(accuracyM)} '
+            'snapDistanceBucket=${navRerouteDistanceBucket(snapDistance)} '
+            'snapGrowthSamples=$growStreak '
+            'headingDeltaBucket=${navRerouteHeadingDeltaBucket(headingDelta)} '
+            'forwardProgress=${progress?.forwardProgress ?? true} '
+            'consecutiveSamples=${decision.samplesOffRoute} '
+            'suspected=$suspected confirmed=$confirmed',
+        intervalMs: 800,
+      );
+    }
+    if (suspected || confirmed || decision.shouldTrigger || decision.eligible) {
+      _logNavBounded(
+        'NAV_REROUTE_TRANSITION',
+        'suspectedAgeMs=${_rerouteSuspectedAt == null ? -1 : now.difference(_rerouteSuspectedAt!).inMilliseconds} '
+            'confirmedAgeMs=${_rerouteConfirmedAt == null ? -1 : now.difference(_rerouteConfirmedAt!).inMilliseconds} '
+            'triggerAgeMs=${_rerouteTriggerAt == null ? -1 : now.difference(_rerouteTriggerAt!).inMilliseconds} '
+            'requestStartedAgeMs=${_rerouteRequestStartedAt == null ? -1 : now.difference(_rerouteRequestStartedAt!).inMilliseconds} '
+            'debounceMs=${decision.debounceRequired.inMilliseconds} '
+            'blockedReason=${decision.blockedReason} '
+            'shouldTrigger=${decision.shouldTrigger} '
+            'eligible=${decision.eligible}',
+        intervalMs: 800,
+      );
+    }
+  }
+
+  void _logNavRerouteBannerDiag({
+    required String state,
+    required String reason,
+  }) {
+    final sig = '$state|$reason|$_routeStepsVersion';
+    if (sig == _lastNavRerouteBannerSignature) return;
+    _lastNavRerouteBannerSignature = sig;
+    _logNavBounded(
+      'NAV_REROUTE_BANNER',
+      'bannerState=$state reason=$reason '
+          'staleSuppressed=${state == 'suppressed_stale' || state == 'route_adaptation'} '
+          'adaptationShown=${state == 'route_adaptation'} '
+          'ownershipAccepted=$_rerouteOwnershipAccepted '
+          'routeVersion=$_routeStepsVersion',
+      intervalMs: 1,
+    );
+  }
+
   void _logNavLatencyReroute({
     required String phase,
     required String reason,
@@ -18365,6 +18462,20 @@ class _DriverHomePageState extends State<DriverHomePage>
           result: 'success',
           reason: reason,
           routeReplaced: true,
+        );
+        final candidateToAppliedMs = _rerouteSuspectedAt == null
+            ? totalDurationMs
+            : DateTime.now().difference(_rerouteSuspectedAt!).inMilliseconds;
+        _logNavBounded(
+          'NAV_REROUTE_RESULT',
+          'requestGeneration=${_routeRequestGeneration.latest} '
+              'requestDurationMs=$totalDurationMs '
+              'staleRejected=0 '
+              'parseApplyDurationMs=$totalDurationMs '
+              'candidateToAppliedMs=$candidateToAppliedMs '
+              'result=success reason=$reason '
+              'oldRouteVersion=$oldRouteVersion '
+              'newRouteVersion=$_routeStepsVersion',
         );
         _logNavLatencyReroute(
           phase: 'route_applied',
@@ -21194,11 +21305,14 @@ class _DriverHomePageState extends State<DriverHomePage>
   /// flight). Mirrors NavInstructionPolicyInput.routeAdaptationActive.
   bool _navRouteAdaptationActive() {
     final progress = _lastNavRouteProgress;
+    final decision = _lastRerouteDecision;
     return _isRerouting ||
         (progress?.offRouteLikely ?? _offRouteLikely) ||
         (progress?.routeDeviationLikely ?? false) ||
         (progress?.oppositeDirectionLikely ?? false) ||
-        (progress?.backwardProgressLikely ?? false);
+        (progress?.backwardProgressLikely ?? false) ||
+        (progress?.strongMismatchSuspected ?? false) ||
+        (decision?.strongMismatchSuspected ?? false);
   }
 
   /// NAV-R12-E2: bounded, PII-safe banner decision diagnostics (no lat/lng).
@@ -21222,6 +21336,9 @@ class _DriverHomePageState extends State<DriverHomePage>
           'routeVersion=$_routeStepsVersion',
       intervalMs: changed ? 1 : 2000,
     );
+    if (changed) {
+      _logNavRerouteBannerDiag(state: state, reason: reason);
+    }
   }
 
   void _updateNextNavInstruction(geo.Position pos) {
@@ -30257,6 +30374,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       backwardProgressLikely:
           _lastNavRouteProgress?.backwardProgressLikely ?? false,
       reroutePending: _isRerouting && !_rerouteOwnershipAccepted,
+      strongMismatchSuspected:
+          (_lastNavRouteProgress?.strongMismatchSuspected ?? false) ||
+          (_lastRerouteDecision?.strongMismatchSuspected ?? false),
       forwardProgress: _lastNavRouteProgress?.forwardProgress ?? true,
       predictionActive: _lastNavMotionPrediction?.predictionActive ?? false,
       routeConfidence: _lastNavRouteProgress?.confidence,

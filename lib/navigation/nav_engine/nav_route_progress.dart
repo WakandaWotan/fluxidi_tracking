@@ -62,6 +62,13 @@ class NavRouteProgressOutput {
   /// reliable moving fixes.
   final bool backwardProgressLikely;
 
+  /// FLUXIDI-REROUTE-DETERMINISTIC-FASTPATH-P0-1: heading mismatch + growing
+  /// separation suspected (banner adaptation) before full off-route confirm.
+  final bool strongMismatchSuspected;
+
+  /// Consecutive samples with growing snap under a heading mismatch.
+  final int strongMismatchSampleCount;
+
   final String reason;
 
   const NavRouteProgressOutput({
@@ -79,6 +86,8 @@ class NavRouteProgressOutput {
     this.routeDeviationReason = 'none',
     this.headingDeltaDeg,
     this.backwardProgressLikely = false,
+    this.strongMismatchSuspected = false,
+    this.strongMismatchSampleCount = 0,
     required this.reason,
   });
 }
@@ -134,6 +143,14 @@ class DriverNavRouteProgress {
   static const double _forcedDetourMinDisplacementM = 2.0;
   static const int _forcedDetourStreakThreshold = 2;
 
+  // FLUXIDI-REROUTE-DETERMINISTIC-FASTPATH-P0-1: strong growing mismatch
+  // while old corridor still nearby (snap often 8–40 m, not yet >58 m).
+  static const double _strongMismatchMinSnapM = 8.0;
+  static const double _strongMismatchGrowDeltaM = 2.0;
+  static const double _strongMismatchMinSpeedKmh = 5.0;
+  static const int _strongMismatchSuspectStreak = 1;
+  static const int _strongMismatchConfirmStreak = 2;
+
   int? _previousSegmentIndex;
   int? _lastReliableSegmentIndex;
   double? _lastDistanceAlongRouteM;
@@ -141,6 +158,8 @@ class DriverNavRouteProgress {
   int _oppositeHeadingStreak = 0;
   int _backwardProgressStreak = 0;
   int _forcedDetourStreak = 0;
+  int _strongMismatchStreak = 0;
+  double? _lastSnapDistanceForMismatchM;
   bool _routeWasReset = true;
   double? _lastRawLatitude;
   double? _lastRawLongitude;
@@ -155,6 +174,8 @@ class DriverNavRouteProgress {
     _oppositeHeadingStreak = 0;
     _backwardProgressStreak = 0;
     _forcedDetourStreak = 0;
+    _strongMismatchStreak = 0;
+    _lastSnapDistanceForMismatchM = null;
     _routeWasReset = true;
     _lastRawLatitude = null;
     _lastRawLongitude = null;
@@ -177,6 +198,7 @@ class DriverNavRouteProgress {
     _lastDistanceAlongRouteM = distanceAlongRouteM;
     _lastRawLatitude = snappedLatitude;
     _lastRawLongitude = snappedLongitude;
+    _lastSnapDistanceForMismatchM = 0.0;
     _routeWasReset = false;
   }
 
@@ -362,16 +384,53 @@ class DriverNavRouteProgress {
             speedKmh >= _deviationMinSpeedKmh);
     final forcedDetourSnap = candidate.snapDistanceM >= _forcedDetourMinSnapM ||
         (candidate.snapDistanceM >= 6.0 && !forwardProgress);
+
+    // Strong growing mismatch: deliberate turn with growing separation that
+    // must NOT wait for the classic snap >58 m off-route floor.
+    final prevSnapForMismatch = _lastSnapDistanceForMismatchM;
+    final snapGrowingVsPrev = prevSnapForMismatch != null &&
+        candidate.snapDistanceM.isFinite &&
+        candidate.snapDistanceM >= prevSnapForMismatch + _strongMismatchGrowDeltaM;
+    final strongMismatchMotion = accuracyOk &&
+        speedKmh >= _strongMismatchMinSpeedKmh &&
+        (stepDisplacementM >= _forcedDetourMinDisplacementM ||
+            speedKmh >= _deviationMinSpeedKmh);
+    final strongMismatchGeometry = forcedDetourHeading &&
+        candidate.snapDistanceM >= _strongMismatchMinSnapM &&
+        (snapGrowingVsPrev ||
+            candidate.snapDistanceM >= _forcedDetourMinSnapM ||
+            !forwardProgress);
     if (!oppositeDirectionLikely &&
+        strongMismatchMotion &&
+        strongMismatchGeometry) {
+      _strongMismatchStreak += 1;
+    } else if (speedKmh < _stationarySpeedKmh ||
+        !forcedDetourHeading ||
+        candidate.snapDistanceM < _strongMismatchMinSnapM) {
+      _strongMismatchStreak = 0;
+    }
+    if (candidate.snapDistanceM.isFinite) {
+      _lastSnapDistanceForMismatchM = candidate.snapDistanceM;
+    }
+    final strongMismatchSuspected =
+        _strongMismatchStreak >= _strongMismatchSuspectStreak &&
         forcedDetourHeading &&
-        forcedDetourMotion &&
-        forcedDetourSnap) {
+        candidate.snapDistanceM >= _strongMismatchMinSnapM &&
+        speedKmh >= _strongMismatchMinSpeedKmh;
+    final strongMismatchConfirmed =
+        _strongMismatchStreak >= _strongMismatchConfirmStreak &&
+        strongMismatchSuspected;
+
+    if (!oppositeDirectionLikely &&
+        ((forcedDetourHeading && forcedDetourMotion && forcedDetourSnap) ||
+            strongMismatchConfirmed)) {
       _forcedDetourStreak += 1;
     } else if (speedKmh < _stationarySpeedKmh || !forcedDetourHeading) {
       _forcedDetourStreak = 0;
     }
     final forcedDetourLikely =
-        _forcedDetourStreak >= _forcedDetourStreakThreshold;
+        _forcedDetourStreak >= _forcedDetourStreakThreshold ||
+        strongMismatchConfirmed;
 
     var routeDeviationLikely =
         oppositeDirectionLikely || backwardProgressLikely || forcedDetourLikely;
@@ -443,6 +502,8 @@ class DriverNavRouteProgress {
       routeDeviationReason: routeDeviationReason,
       headingDeltaDeg: headingDeltaDeg,
       backwardProgressLikely: backwardProgressLikely,
+      strongMismatchSuspected: strongMismatchSuspected,
+      strongMismatchSampleCount: _strongMismatchStreak,
       reason: reason,
     );
   }
