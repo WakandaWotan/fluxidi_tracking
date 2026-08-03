@@ -129,7 +129,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     String? emeraldIvoryAsset,
     String? fluxidiNeonRushAsset,
   }) {
-    switch (businessThemeNotifier.value) {
+    // Artwork packs follow the independent appearance preference — never the
+    // color-theme shortcut owner ([businessThemeNotifier]).
+    switch (businessAppearanceNotifier.value) {
       case BusinessThemeVariant.executiveGold:
         return executiveGoldAsset;
       case BusinessThemeVariant.corporateBlue:
@@ -334,6 +336,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      applyBusinessThemeSystemUiOverlay(_businessThemePalette);
       _guardBusinessAccessOrRedirect(reason: 'business_home_resume');
       unawaited(
         _refreshDashboardKpis(reason: BusinessKpiCycleReason.resume),
@@ -3973,9 +3976,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     final isCleanProfessional =
         themeVariant == BusinessThemeVariant.cleanProfessional;
     final isCorporateBlue = themeVariant == BusinessThemeVariant.corporateBlue;
+    final overlayStyle = systemUiOverlayStyleForBusinessTheme(
+      _businessThemePalette,
+    );
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: appLanguageNotifier,
-      builder: (context, _, __) => Scaffold(
+      builder: (context, _, __) => AnnotatedRegion<SystemUiOverlayStyle>(
+        value: overlayStyle,
+        child: Scaffold(
         backgroundColor: isCorporateBlue
             ? const Color(0xFF0A1324)
             : !isExecutiveGold
@@ -5197,6 +5205,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               },
             ),
           ),
+        ),
         ),
       ),
     );

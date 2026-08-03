@@ -347,7 +347,7 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
                   paletteForBusinessTheme(variant).accent,
                 ],
                 onTap: () async {
-                  await saveBusinessThemePreference(variant);
+                  await saveBusinessThemeAndAppearancePreset(variant);
                   _showSavedSnack(
                     'Bedrijfsthema opgeslagen: ${_labelForBusiness(variant)}',
                   );

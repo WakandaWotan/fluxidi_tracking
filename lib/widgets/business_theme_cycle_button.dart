@@ -5,10 +5,11 @@ import 'package:fluxidi_tracking/business_theme_cycle.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 
-/// Compact one-tap control that cycles the company/business presentation theme.
+/// Compact one-tap control that cycles the company/business **color** theme.
 ///
-/// Reuses [businessThemeNotifier] + [saveBusinessThemePreference] — no second
-/// theme owner. Single tap only; no menu, dialog, or SnackBar loop.
+/// Reuses [businessThemeNotifier] + [saveBusinessThemePreference] only — never
+/// mutates [businessAppearanceNotifier] / Quick Actions artwork packs.
+/// Single tap only; no menu, dialog, or SnackBar loop.
 class BusinessThemeCycleButton extends StatelessWidget {
   const BusinessThemeCycleButton({
     super.key,

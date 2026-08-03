@@ -38,6 +38,14 @@ const DriverHomeMobileLayout _kDefaultDriverHomeMobileLayout =
 final ValueNotifier<BusinessThemeVariant> businessThemeNotifier =
     ValueNotifier<BusinessThemeVariant>(_kDefaultBusinessTheme);
 
+/// Independent business appearance / artwork pack preference.
+///
+/// Uses the same [BusinessThemeVariant] identifiers as artwork pack keys, but
+/// is persisted and updated separately from [businessThemeNotifier] (colors).
+/// The header theme-cycle shortcut must never mutate this notifier.
+final ValueNotifier<BusinessThemeVariant> businessAppearanceNotifier =
+    ValueNotifier<BusinessThemeVariant>(_kDefaultBusinessTheme);
+
 /// Selected mobile (phone-portrait) Business Home layout. Defaults to
 /// [BusinessHomeMobileLayout.compact] so existing installs keep the current
 /// behavior until the user opts in to the visual layout.
@@ -65,6 +73,7 @@ businessPublishedCustomerThemeNotifier = ValueNotifier<CustomerThemeVariant>(
 
 const String _businessThemeStateDirName = 'business_state';
 const String _businessThemeFileName = 'business_theme_v1.json';
+const String _businessAppearanceFileName = 'business_appearance_v1.json';
 const String _publishedCustomerThemeFileName =
     'business_published_customer_theme_v1.json';
 const String _businessHomeMobileLayoutFileName =
@@ -153,13 +162,68 @@ Future<void> saveBusinessThemePreference(BusinessThemeVariant variant) async {
   }
 }
 
+Future<void> loadBusinessAppearancePreference() async {
+  try {
+    final file = await _businessThemeFile(_businessAppearanceFileName);
+    if (!await file.exists()) {
+      // Migration: seed appearance from the current color theme so existing
+      // installs keep their current artwork pack after the colors/appearance
+      // split. Do not invent a second default independently.
+      businessAppearanceNotifier.value = businessThemeNotifier.value;
+      await saveBusinessAppearancePreference(businessAppearanceNotifier.value);
+      return;
+    }
+    final raw = await file.readAsString();
+    if (raw.trim().isEmpty) {
+      businessAppearanceNotifier.value = businessThemeNotifier.value;
+      return;
+    }
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) {
+      businessAppearanceNotifier.value = businessThemeNotifier.value;
+      return;
+    }
+    final variantRaw = (decoded['variant'] ?? '').toString();
+    businessAppearanceNotifier.value =
+        _businessThemeVariantFromStorage(variantRaw);
+  } catch (_) {
+    businessAppearanceNotifier.value = businessThemeNotifier.value;
+  }
+}
+
+Future<void> saveBusinessAppearancePreference(
+  BusinessThemeVariant variant,
+) async {
+  businessAppearanceNotifier.value = variant;
+  try {
+    final file = await _businessThemeFile(_businessAppearanceFileName);
+    final payload = <String, dynamic>{
+      'variant': variant.name,
+      'updatedAt': DateTime.now().toUtc().toIso8601String(),
+    };
+    await file.writeAsString(jsonEncode(payload), flush: true);
+  } catch (_) {
+    // Keep in-memory value when persistence temporarily fails.
+  }
+}
+
+/// Settings-page preset selection: color theme + appearance pack together.
+///
+/// Preserves the historical "Thema's & uitstraling" card behavior where picking
+/// a business theme applies both palette and artwork. The header shortcut must
+/// call [saveBusinessThemePreference] / [cycleBusinessThemePreference] only.
+Future<void> saveBusinessThemeAndAppearancePreset(
+  BusinessThemeVariant variant,
+) async {
+  await saveBusinessThemePreference(variant);
+  await saveBusinessAppearancePreference(variant);
+}
+
 /// One-tap advance for the business header theme shortcut.
 ///
-/// Reads the live [businessThemeNotifier] value, advances exactly one step in
-/// [kBusinessThemeCycleOrder], and persists via [saveBusinessThemePreference]
-/// so the full theme settings screen stays in sync. Notifier update is
-/// synchronous inside [saveBusinessThemePreference], so rapid taps advance
-/// deterministically without a second theme owner.
+/// Colors only: advances [businessThemeNotifier] via
+/// [saveBusinessThemePreference]. Never mutates
+/// [businessAppearanceNotifier] / artwork packs.
 Future<BusinessThemeVariant> cycleBusinessThemePreference() async {
   final next = nextBusinessThemeVariant(businessThemeNotifier.value);
   await saveBusinessThemePreference(next);

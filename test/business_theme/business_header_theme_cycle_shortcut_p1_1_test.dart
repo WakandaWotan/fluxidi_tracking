@@ -33,6 +33,7 @@ void main() {
       (call) async => tempDir.path,
     );
     businessThemeNotifier.value = BusinessThemeVariant.executiveGold;
+    businessAppearanceNotifier.value = BusinessThemeVariant.executiveGold;
     customerThemeNotifier.value = CustomerThemeVariant.premiumLight;
   });
 
