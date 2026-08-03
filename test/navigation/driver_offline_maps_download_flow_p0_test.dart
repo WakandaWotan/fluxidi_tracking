@@ -50,6 +50,7 @@ class _FakeOfflinePort implements DriverOfflineMapsDownloadPort {
     this.hangEstimate = false,
     this.completionStatus = DriverOfflineMapCompletionStatus.complete,
     this.erroredResourceCount = 0,
+    this.estimateOverride,
   });
 
   Object? estimateError;
@@ -59,6 +60,8 @@ class _FakeOfflinePort implements DriverOfflineMapsDownloadPort {
   bool hangEstimate;
   DriverOfflineMapCompletionStatus completionStatus;
   int erroredResourceCount;
+  /// When set, returned instead of the finite default (tests non-finite margins).
+  DriverOfflineMapEstimate? estimateOverride;
 
   int initCalls = 0;
   final List<DriverOfflineMapRegionRequest> estimateRequests =
@@ -86,11 +89,12 @@ class _FakeOfflinePort implements DriverOfflineMapsDownloadPort {
     }
     if (estimateDelay > Duration.zero) await Future<void>.delayed(estimateDelay);
     if (estimateError != null) throw estimateError!;
-    return const DriverOfflineMapEstimate(
-      transferSizeBytes: 41943040,
-      storageSizeBytes: 52428800,
-      errorMargin: 0.15,
-    );
+    return estimateOverride ??
+        const DriverOfflineMapEstimate(
+          transferSizeBytes: 41943040,
+          storageSizeBytes: 52428800,
+          errorMargin: 0.15,
+        );
   }
 
   @override
@@ -888,5 +892,203 @@ void main() {
         expect(tester.takeException(), isNull);
       });
     }
+  });
+
+  // FLUXIDI-OFFLINE-MAP-NONFINITE-ESTIMATE-DIALOG-P0-2
+  group('non-finite estimate confirmation stays open', () {
+    Future<void> openEuropeConfirm(
+      WidgetTester tester,
+      _FakeOfflinePort port,
+    ) async {
+      await _pumpPage(tester, port: port);
+      await _searchAndSelectRonse(tester);
+      await _tap(tester, _cta);
+    }
+
+    testWidgets('NaN errorMargin opens dialog and allows confirmed download', (
+      tester,
+    ) async {
+      final port = _FakeOfflinePort(
+        estimateOverride: const DriverOfflineMapEstimate(
+          transferSizeBytes: 41943040,
+          storageSizeBytes: 52428800,
+          errorMargin: double.nan,
+        ),
+      );
+      await openEuropeConfirm(tester, port);
+
+      expect(tester.takeException(), isNull);
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.textContaining('Geschatte download'), findsWidgets);
+      expect(find.textContaining('Infinity'), findsNothing);
+      expect(find.textContaining('NaN'), findsNothing);
+      expect(_confirmDownload, findsOneWidget);
+
+      await _tap(tester, _confirmDownload);
+      expect(port.downloadRequests.length, 1);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('positive Infinity errorMargin opens dialog safely', (
+      tester,
+    ) async {
+      final port = _FakeOfflinePort(
+        estimateOverride: const DriverOfflineMapEstimate(
+          transferSizeBytes: 41943040,
+          storageSizeBytes: 52428800,
+          errorMargin: double.infinity,
+        ),
+      );
+      await openEuropeConfirm(tester, port);
+      expect(tester.takeException(), isNull);
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.textContaining('±'), findsNothing);
+      await _tap(tester, _confirmDownload);
+      expect(port.downloadRequests.length, 1);
+    });
+
+    testWidgets('negative Infinity errorMargin opens dialog safely', (
+      tester,
+    ) async {
+      final port = _FakeOfflinePort(
+        estimateOverride: const DriverOfflineMapEstimate(
+          transferSizeBytes: 41943040,
+          storageSizeBytes: 52428800,
+          errorMargin: double.negativeInfinity,
+        ),
+      );
+      await openEuropeConfirm(tester, port);
+      expect(tester.takeException(), isNull);
+      expect(find.byType(AlertDialog), findsOneWidget);
+    });
+
+    testWidgets('negative byte estimate shows unavailable and still confirms', (
+      tester,
+    ) async {
+      final port = _FakeOfflinePort(
+        estimateOverride: const DriverOfflineMapEstimate(
+          transferSizeBytes: -1,
+          storageSizeBytes: -1,
+          errorMargin: 0.15,
+        ),
+      );
+      await openEuropeConfirm(tester, port);
+      expect(tester.takeException(), isNull);
+      expect(
+        find.text('Geschatte downloadgrootte niet beschikbaar'),
+        findsOneWidget,
+      );
+      await _tap(tester, _confirmDownload);
+      expect(port.downloadRequests.length, 1);
+      expect(
+        port.downloadRequests.single.regionId,
+        isNot(equals('complete')),
+        reason: 'unavailable estimate must not fake a completed download',
+      );
+    });
+
+    testWidgets('missing estimate opens dialog; busy state is released', (
+      tester,
+    ) async {
+      final port = _FakeOfflinePort(
+        estimateError: TimeoutException('estimate hung'),
+      );
+      await openEuropeConfirm(tester, port);
+      expect(tester.takeException(), isNull);
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.byKey(const Key('offline_preparing_card')), findsNothing);
+
+      // Dismiss and prove CTA is usable again (busy released).
+      await _tap(tester, find.text('Annuleren'));
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(tester.widget<FilledButton>(_cta).onPressed, isNotNull);
+    });
+
+    testWidgets('11+12) rapid second tap remains single-flight after NaN margin', (
+      tester,
+    ) async {
+      final port = _FakeOfflinePort(
+        estimateDelay: const Duration(milliseconds: 400),
+        estimateOverride: const DriverOfflineMapEstimate(
+          transferSizeBytes: 41943040,
+          storageSizeBytes: 52428800,
+          errorMargin: double.nan,
+        ),
+      );
+      await _pumpPage(tester, port: port);
+      await _searchAndSelectRonse(tester);
+
+      await _tap(tester, _cta, settle: false);
+      await _tap(tester, _cta, settle: false);
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pumpAndSettle();
+
+      expect(port.estimateRequests.length, 1);
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('14) legacy Belgium handles Infinity margin', (tester) async {
+      final port = _FakeOfflinePort(
+        estimateOverride: const DriverOfflineMapEstimate(
+          transferSizeBytes: 41943040,
+          storageSizeBytes: 52428800,
+          errorMargin: double.infinity,
+        ),
+      );
+      await _pumpPage(tester, port: port, surface: const Size(390, 1600));
+      await _tap(
+        tester,
+        find.byKey(const Key('offline_preset_download_belgium_base')),
+      );
+      expect(tester.takeException(), isNull);
+      expect(find.byType(AlertDialog), findsOneWidget);
+      await _tap(tester, _confirmDownload);
+      expect(port.downloadRequests.length, 1);
+    });
+
+    testWidgets('15) legacy Maarkedal handles NaN margin', (tester) async {
+      final port = _FakeOfflinePort(
+        estimateOverride: const DriverOfflineMapEstimate(
+          transferSizeBytes: 41943040,
+          storageSizeBytes: 52428800,
+          errorMargin: double.nan,
+        ),
+      );
+      await _pumpPage(tester, port: port, surface: const Size(390, 1600));
+      await _tap(
+        tester,
+        find.byKey(
+          const Key('offline_preset_download_maarkedal_vlaamse_ardennen'),
+        ),
+      );
+      expect(tester.takeException(), isNull);
+      expect(find.byType(AlertDialog), findsOneWidget);
+      await _tap(tester, _confirmDownload);
+      expect(port.downloadRequests.length, 1);
+    });
+
+    testWidgets('16) phone and tablet confirm dialogs survive Infinity margin', (
+      tester,
+    ) async {
+      for (final size in <Size>[
+        const Size(390, 844),
+        const Size(834, 1194),
+      ]) {
+        final port = _FakeOfflinePort(
+          estimateOverride: const DriverOfflineMapEstimate(
+            transferSizeBytes: 41943040,
+            storageSizeBytes: 52428800,
+            errorMargin: double.infinity,
+          ),
+        );
+        await _pumpPage(tester, port: port, surface: size);
+        await _searchAndSelectRonse(tester);
+        await _tap(tester, _cta);
+        expect(tester.takeException(), isNull);
+        expect(find.byType(AlertDialog), findsOneWidget);
+        await _tap(tester, find.text('Annuleren'));
+      }
+    });
   });
 }

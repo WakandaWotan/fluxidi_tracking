@@ -400,6 +400,9 @@ String driverOfflineMapRegionIdHash(String regionId) {
 }
 
 /// Builds the PII-safe diagnostic line for one offline-download phase.
+///
+/// Optional estimate fields are finite/non-finite classifications only — never
+/// raw byte counts, tokens, URLs or SDK objects.
 String buildDriverOfflineMapDiagnostic({
   required String phase,
   required String regionId,
@@ -409,6 +412,9 @@ String buildDriverOfflineMapDiagnostic({
   int? requiredResourceCount,
   int? erroredResourceCount,
   String completionState = '',
+  bool? estimateAvailable,
+  String estimateFinite = '',
+  String marginFinite = '',
 }) {
   final parts = <String>[
     'phase=${redactDriverOfflineMapDiagnostic(phase.trim()).replaceAll(' ', '_')}',
@@ -419,6 +425,9 @@ String buildDriverOfflineMapDiagnostic({
     'required=${requiredResourceCount ?? '-'}',
     'errored=${erroredResourceCount ?? '-'}',
     'completion=${completionState.trim().isEmpty ? '-' : completionState.trim()}',
+    'estimate=${estimateAvailable == null ? '-' : (estimateAvailable ? 'yes' : 'no')}',
+    'estimate_finite=${estimateFinite.trim().isEmpty ? '-' : estimateFinite.trim()}',
+    'margin_finite=${marginFinite.trim().isEmpty ? '-' : marginFinite.trim()}',
   ];
   return '[OFFLINE_MAPS] ${parts.join(' ')}';
 }

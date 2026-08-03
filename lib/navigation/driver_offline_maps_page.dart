@@ -9,6 +9,7 @@ import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
 
 import 'driver_offline_maps_download_feedback.dart';
+import 'driver_offline_maps_estimate_format.dart';
 import 'driver_offline_maps_europe_geocoder.dart';
 import 'driver_offline_maps_europe_selection.dart';
 import 'driver_offline_maps_service.dart';
@@ -239,6 +240,9 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
     int? requiredResourceCount,
     int? erroredResourceCount,
     String completionState = '',
+    bool? estimateAvailable,
+    String estimateFinite = '',
+    String marginFinite = '',
   }) {
     if (!kDebugMode) return;
     debugPrint(
@@ -251,6 +255,9 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
         requiredResourceCount: requiredResourceCount,
         erroredResourceCount: erroredResourceCount,
         completionState: completionState,
+        estimateAvailable: estimateAvailable,
+        estimateFinite: estimateFinite,
+        marginFinite: marginFinite,
       ),
     );
   }
@@ -575,6 +582,8 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
       previewCenterLat: previewCenterLat,
       previewCenterLon: previewCenterLon,
       previewRadiusKm: previewRadiusKm,
+      regionIdForDiag: request.regionId,
+      radiusKmForDiag: radiusKm,
     );
     if (proceed == true && mounted) {
       await _startDownloadRequest(request, radiusKm: radiusKm);
@@ -592,119 +601,168 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
     double? previewCenterLat,
     double? previewCenterLon,
     int? previewRadiusKm,
-  }) {
+    String regionIdForDiag = '',
+    int? radiusKmForDiag,
+  }) async {
+    // Bound every estimate-derived conversion before the dialog builds.
+    // Field crash: non-finite TileRegionEstimateResult.errorMargin made
+    // `.round()` throw "Infinity or NaN toInt".
     final estimateLines = <String>[];
-    if (estimate != null) {
-      estimateLines.add(
-        _tr(
-          nl:
-              'Geschatte download: ${_formatBytes(estimate.transferSizeBytes)} · '
-              'opslag: ${_formatBytes(estimate.storageSizeBytes)} '
-              '(schatting ±${(estimate.errorMargin * 100).round()}%)',
-          en:
-              'Estimated download: ${_formatBytes(estimate.transferSizeBytes)} · '
-              'storage: ${_formatBytes(estimate.storageSizeBytes)} '
-              '(estimate ±${(estimate.errorMargin * 100).round()}%)',
-        ),
+    try {
+      if (estimate != null) {
+        _logOfflineDiagnostic(
+          phase: 'confirm_estimate',
+          regionId: regionIdForDiag,
+          radiusKm: radiusKmForDiag,
+          estimateAvailable: true,
+          estimateFinite: offlineMapEstimateFiniteClassToken(
+            classifyOfflineMapEstimateNumber(estimate.transferSizeBytes),
+          ),
+          marginFinite: offlineMapEstimateFiniteClassToken(
+            classifyOfflineMapEstimateNumber(estimate.errorMargin),
+          ),
+        );
+        estimateLines.add(
+          formatOfflineMapEstimateConfirmLine(
+            language: appConfig.currentLanguage,
+            transferSizeBytes: estimate.transferSizeBytes,
+            storageSizeBytes: estimate.storageSizeBytes,
+            errorMargin: estimate.errorMargin,
+          ),
+        );
+      } else if (estimateFailed) {
+        _logOfflineDiagnostic(
+          phase: 'confirm_estimate',
+          regionId: regionIdForDiag,
+          radiusKm: radiusKmForDiag,
+          estimateAvailable: false,
+          estimateFinite: 'missing',
+          marginFinite: 'missing',
+        );
+        estimateLines.add(
+          estimateFailureMessage ??
+              offlineMapEstimateUnavailableLabel(appConfig.currentLanguage),
+        );
+      }
+    } catch (_) {
+      // Formatting must never suppress the dialog or leave buttons busy.
+      if (mounted) {
+        setState(() {
+          _estimateInProgress = false;
+          _downloadInProgress = false;
+        });
+      }
+      _logOfflineDiagnostic(
+        phase: 'confirm_estimate_format_error',
+        regionId: regionIdForDiag,
+        radiusKm: radiusKmForDiag,
+        estimateAvailable: estimate != null,
+        estimateFinite: 'error',
+        marginFinite: 'error',
       );
-    } else if (estimateFailed) {
-      estimateLines.add(
-        estimateFailureMessage ??
-            _tr(
-              nl:
-                  'Grootte kon niet worden geschat. Download kan veel data gebruiken.',
-              en: 'Could not estimate size. Download may use significant data.',
-            ),
-      );
+      estimateLines
+        ..clear()
+        ..add(offlineMapEstimateUnavailableLabel(appConfig.currentLanguage));
     }
 
-    return showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: Text(
-            _tr(nl: 'Kaartgebied downloaden?', en: 'Download map area?'),
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  titleName,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 8),
-                for (final line in detailLines) ...[
-                  Text(line),
-                  const SizedBox(height: 4),
-                ],
-                Text(
-                  _tr(
-                    nl: 'Zoom $minZoom–$maxZoom · licht + donker kaartstijl',
-                    en: 'Zoom $minZoom–$maxZoom · light + dark map styles',
+    try {
+      return await showDialog<bool>(
+        context: context,
+        builder: (ctx) {
+          return AlertDialog(
+            title: Text(
+              _tr(nl: 'Kaartgebied downloaden?', en: 'Download map area?'),
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    titleName,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
-                ),
-                if (previewCenterLat != null &&
-                    previewCenterLon != null &&
-                    previewRadiusKm != null) ...[
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    height: 120,
-                    width: double.infinity,
-                    child: CustomPaint(
-                      painter: _OfflineRegionPreviewPainter(
-                        radiusKm: previewRadiusKm,
-                      ),
-                      child: Center(
-                        child: Text(
-                          _tr(
-                            nl: 'Voorbeeld · $previewRadiusKm km straal',
-                            en: 'Preview · $previewRadiusKm km radius',
-                          ),
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                  const SizedBox(height: 8),
+                  for (final line in detailLines) ...[
+                    Text(line),
+                    const SizedBox(height: 4),
+                  ],
+                  Text(
+                    _tr(
+                      nl: 'Zoom $minZoom–$maxZoom · licht + donker kaartstijl',
+                      en: 'Zoom $minZoom–$maxZoom · light + dark map styles',
+                    ),
+                  ),
+                  if (previewCenterLat != null &&
+                      previewCenterLon != null &&
+                      previewRadiusKm != null) ...[
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      height: 120,
+                      width: double.infinity,
+                      child: CustomPaint(
+                        painter: _OfflineRegionPreviewPainter(
+                          radiusKm: previewRadiusKm,
+                        ),
+                        child: Center(
+                          child: Text(
+                            _tr(
+                              nl: 'Voorbeeld · $previewRadiusKm km straal',
+                              en: 'Preview · $previewRadiusKm km radius',
+                            ),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                       ),
                     ),
+                  ],
+                  if (estimateLines.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(estimateLines.join('\n')),
+                  ],
+                  const SizedBox(height: 12),
+                  Text(
+                    _tr(
+                      nl:
+                          'Gebruik bij voorkeur Wi‑Fi. Dit gebruikt opslag en mobiele data.\n\n'
+                          'Dit houdt alleen de straatkaart zichtbaar bij zwak signaal. '
+                          'Nieuwe routes en herberekenen hebben nog internet nodig.',
+                      en:
+                          'Wi‑Fi is recommended. This uses storage and mobile data.\n\n'
+                          'This only keeps the street map visible when signal is weak. '
+                          'New routes and recalculation still need internet.',
+                    ),
                   ),
                 ],
-                if (estimateLines.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(estimateLines.join('\n')),
-                ],
-                const SizedBox(height: 12),
-                Text(
-                  _tr(
-                    nl:
-                        'Gebruik bij voorkeur Wi‑Fi. Dit gebruikt opslag en mobiele data.\n\n'
-                        'Dit houdt alleen de straatkaart zichtbaar bij zwak signaal. '
-                        'Nieuwe routes en herberekenen hebben nog internet nodig.',
-                    en:
-                        'Wi‑Fi is recommended. This uses storage and mobile data.\n\n'
-                        'This only keeps the street map visible when signal is weak. '
-                        'New routes and recalculation still need internet.',
-                  ),
-                ),
-              ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(_tr(nl: 'Annuleren', en: 'Cancel')),
-            ),
-            FilledButton(
-              key: const Key('offline_confirm_download'),
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(_tr(nl: 'Downloaden', en: 'Download')),
-            ),
-          ],
-        );
-      },
-    );
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text(_tr(nl: 'Annuleren', en: 'Cancel')),
+              ),
+              FilledButton(
+                key: const Key('offline_confirm_download'),
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text(_tr(nl: 'Downloaden', en: 'Download')),
+              ),
+            ],
+          );
+        },
+      );
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _estimateInProgress = false;
+          _downloadInProgress = false;
+        });
+        _showFailure(DriverOfflineMapFailureCategory.unknown);
+      }
+      return false;
+    }
   }
 
   Future<void> _startDownloadRequest(
@@ -1643,7 +1701,7 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                                     ),
                                     const SizedBox(height: 6),
                                     Text(
-                                      '${(progressFraction * 100).round()}%',
+                                      '${safeOfflineMapPercent(progressFraction) ?? '—'}%',
                                       style:
                                           TextStyle(color: palette.textMuted),
                                     ),

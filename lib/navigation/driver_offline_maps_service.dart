@@ -266,11 +266,17 @@ class DriverOfflineMapEstimate {
     required this.errorMargin,
   });
 
+  /// Normalizes SDK estimate fields. Non-finite / negative margins become
+  /// [double.nan] so UI formatters omit the ±% clause instead of crashing on
+  /// `.round()` / `.toInt()`. Negative byte counts collapse to 0.
   factory DriverOfflineMapEstimate.fromSdk(mb.TileRegionEstimateResult result) {
+    final margin = result.errorMargin;
+    final safeMargin =
+        margin.isFinite && !margin.isNaN && margin >= 0 ? margin : double.nan;
     return DriverOfflineMapEstimate(
-      transferSizeBytes: result.transferSize,
-      storageSizeBytes: result.storageSize,
-      errorMargin: result.errorMargin,
+      transferSizeBytes: result.transferSize < 0 ? 0 : result.transferSize,
+      storageSizeBytes: result.storageSize < 0 ? 0 : result.storageSize,
+      errorMargin: safeMargin,
     );
   }
 }
