@@ -15341,6 +15341,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     required double speedKmh,
     required NavRouteProgressOutput? progress,
     required bool directAdjust,
+    bool forceVehicleCenter = false,
   }) {
     final seedZoom = _lastDriverCockpitAppliedZoom ?? policyZoom;
     final seedPitch = _lastDriverCockpitAppliedPitch ?? policyPitch;
@@ -15356,7 +15357,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       segmentIndex: progress?.segmentIndex,
       snappedLat: progress?.snappedLatitude,
       snappedLon: progress?.snappedLongitude,
-      hasReliableSnap: progress?.hasReliableSnap ?? false,
+      // Stale snap must not re-own center while force-raw / mismatch is active.
+      hasReliableSnap: forceVehicleCenter
+          ? false
+          : (progress?.hasReliableSnap ?? false),
+      forceVehicleCenter: forceVehicleCenter,
     );
     final hudSize = driverCockpitFixedHudIconSize(isTablet: isTablet);
     // NAV-VEHICLE-MODE-CAR-ARROW-1 (Phase 7): use the same Street Level marker
@@ -20771,6 +20776,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     // NAV-R12-E1: pure target decision — deviation prefers the freshest
     // raw/live position, prediction only when confident and fresh.
     final progress = _lastNavRouteProgress;
+    final strongMismatchSuspected =
+        (progress?.strongMismatchSuspected ?? false) ||
+        (_lastRerouteDecision?.strongMismatchSuspected ?? false);
     final targetDecision = NavCameraTargetPolicy.resolve(
       NavCameraTargetInput(
         followMode: _cameraMode == _CameraMode.follow,
@@ -20779,6 +20787,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         oppositeDirectionLikely: progress?.oppositeDirectionLikely ?? false,
         backwardProgressLikely: progress?.backwardProgressLikely ?? false,
         offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
+        strongMismatchSuspected: strongMismatchSuspected,
         hasReliableSnap: progress?.hasReliableSnap ?? false,
         predictionActive: _lastNavMotionPrediction?.predictionActive ?? false,
         predictionAgeMs: _gapSinceLastNavEngineMs(),
@@ -20833,19 +20842,26 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (_cameraMode == _CameraMode.follow &&
         _liveRideActive &&
         navPresentation.useDriverCockpitCamera) {
+      // During mismatch / force-raw, planned-route tangent must not own
+      // heading-up — follow actual travel evidence until the new route applies.
+      final bearingOffRoute = (progress?.offRouteLikely ?? _offRouteLikely) ||
+          targetDecision.forceRawTarget ||
+          strongMismatchSuspected;
       final routeLocked = resolveDriverRouteBearing(
         DriverRouteBearingInput(
           routeCoords: _routeCoords,
           segmentIndex: progress?.segmentIndex,
           snappedLat: progress?.snappedLatitude,
           snappedLon: progress?.snappedLongitude,
-          hasReliableSnap: progress?.hasReliableSnap ?? false,
+          hasReliableSnap: bearingOffRoute
+              ? false
+              : (progress?.hasReliableSnap ?? false),
           gpsHeadingDeg: pos.heading.isFinite && pos.heading >= 0
               ? pos.heading
               : null,
           previousBearingDeg: prevBearing,
           routeConfidence: progress?.confidence,
-          offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
+          offRouteLikely: bearingOffRoute,
           forwardProgress: progress?.forwardProgress ?? true,
           speedKmh: speedKmh,
           maxStepDeg: instantCockpitBearing
@@ -20971,6 +20987,11 @@ class _DriverHomePageState extends State<DriverHomePage>
         speedKmh: speedKmh,
         progress: progress,
         directAdjust: directAdjust,
+        forceVehicleCenter: targetDecision.forceRawTarget ||
+            strongMismatchSuspected ||
+            // Prepared preview keeps phase target; never force-raw there.
+            (_navFixedHudPhase != NavFixedHudPhase.preparedRoute &&
+                (progress?.routeDeviationLikely ?? false)),
       );
       cameraZoom = cockpit.zoom;
       cameraPitch = cockpit.pitch;

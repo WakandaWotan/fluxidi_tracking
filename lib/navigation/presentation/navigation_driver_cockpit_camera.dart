@@ -62,6 +62,10 @@ class DriverCockpitCameraLookaheadInput {
   final double? snappedLat;
   final double? snappedLon;
   final bool hasReliableSnap;
+  /// When true, center on [vehicleLat]/[vehicleLon] even if a reliable snap
+  /// exists — used during deviation / strong mismatch so the old route cannot
+  /// pull the camera sideways under the fixed HUD vehicle.
+  final bool forceVehicleCenter;
   final double? previousCenterLat;
   final double? previousCenterLon;
 
@@ -75,6 +79,7 @@ class DriverCockpitCameraLookaheadInput {
     this.snappedLat,
     this.snappedLon,
     this.hasReliableSnap = false,
+    this.forceVehicleCenter = false,
     this.previousCenterLat,
     this.previousCenterLon,
   });
@@ -961,7 +966,12 @@ DriverCockpitCameraProfileOutput resolveDriverCockpitCameraProfile(
   // NAV-PRES-3D-FIX: the camera center IS the vehicle. Route lookahead is
   // intentionally not used for centering, so +/- can never move the car
   // away from the blue route line.
+  // FLUXIDI-NAV-FIXED-VEHICLE-HEADING-UP-OWNERSHIP-P0-1: during deviation /
+  // strong mismatch, never re-center on a stale route snap — that pulled the
+  // road sideways under the screen-fixed HUD (car appeared beside the road /
+  // road looked diagonal).
   final hasSnap =
+      !lookahead.forceVehicleCenter &&
       lookahead.hasReliableSnap &&
       lookahead.snappedLat != null &&
       lookahead.snappedLon != null;
@@ -971,7 +981,11 @@ DriverCockpitCameraProfileOutput resolveDriverCockpitCameraProfile(
     padding: padding,
     centerLat: hasSnap ? lookahead.snappedLat : lookahead.vehicleLat,
     centerLon: hasSnap ? lookahead.snappedLon : lookahead.vehicleLon,
-    centerMode: hasSnap ? 'vehicle_anchor' : 'vehicle_center',
+    centerMode: hasSnap
+        ? 'vehicle_anchor'
+        : (lookahead.forceVehicleCenter
+            ? 'vehicle_center_raw'
+            : 'vehicle_center'),
     anchorFraction: anchorFraction,
     targetZoom: targetZoom,
     targetPitch: targetPitch,

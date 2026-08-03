@@ -63,6 +63,20 @@ void main() {
       expect(d.reason, 'off_route');
     });
 
+    test('strong mismatch suspicion forces raw live before full off-route', () {
+      final d = NavCameraTargetPolicy.resolve(
+        const NavCameraTargetInput(
+          followMode: true,
+          strongMismatchSuspected: true,
+          hasReliableSnap: true,
+          cameraScore: 90,
+        ),
+      );
+      expect(d.source, NavCameraTargetSource.rawLive);
+      expect(d.forceRawTarget, isTrue);
+      expect(d.reason, 'route_adaptation_mismatch');
+    });
+
     test('prediction is never used during deviation, even when fresh', () {
       final d = NavCameraTargetPolicy.resolve(
         const NavCameraTargetInput(

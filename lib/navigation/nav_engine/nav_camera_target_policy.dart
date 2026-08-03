@@ -19,6 +19,8 @@ class NavCameraTargetInput {
   final bool oppositeDirectionLikely;
   final bool backwardProgressLikely;
   final bool offRouteLikely;
+  /// Early strong-mismatch suspicion (before full off-route confirm).
+  final bool strongMismatchSuspected;
   final bool hasReliableSnap;
   final bool predictionActive;
 
@@ -36,6 +38,7 @@ class NavCameraTargetInput {
     this.oppositeDirectionLikely = false,
     this.backwardProgressLikely = false,
     this.offRouteLikely = false,
+    this.strongMismatchSuspected = false,
     this.hasReliableSnap = false,
     this.predictionActive = false,
     this.predictionAgeMs,
@@ -46,7 +49,8 @@ class NavCameraTargetInput {
       routeDeviationLikely ||
       oppositeDirectionLikely ||
       backwardProgressLikely ||
-      offRouteLikely;
+      offRouteLikely ||
+      strongMismatchSuspected;
 }
 
 class NavCameraTargetDecision {
@@ -144,6 +148,7 @@ class NavCameraTargetPolicy {
     if (input.oppositeDirectionLikely) return 'route_adaptation_opposite';
     if (input.backwardProgressLikely) return 'route_adaptation_backward';
     if (input.routeDeviationLikely) return 'route_adaptation';
+    if (input.strongMismatchSuspected) return 'route_adaptation_mismatch';
     return 'off_route';
   }
 }
