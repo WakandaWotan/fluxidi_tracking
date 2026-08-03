@@ -38,13 +38,19 @@ const DriverHomeMobileLayout _kDefaultDriverHomeMobileLayout =
 final ValueNotifier<BusinessThemeVariant> businessThemeNotifier =
     ValueNotifier<BusinessThemeVariant>(_kDefaultBusinessTheme);
 
-/// Independent business appearance / artwork pack preference.
+/// Compatibility mirror of [businessThemeNotifier], never an independent owner.
 ///
-/// Uses the same [BusinessThemeVariant] identifiers as artwork pack keys, but
-/// is persisted and updated separately from [businessThemeNotifier] (colors).
-/// The header theme-cycle shortcut must never mutate this notifier.
+/// A business theme is one complete preset: palette, borders, typography,
+/// system overlay and artwork. Advancing colors and artwork separately is what
+/// let Clean Professional render Neon Rush artwork, so this notifier now only
+/// ever holds the same value as [businessThemeNotifier]. It is kept so existing
+/// readers keep compiling; new code should read [businessThemeNotifier] or call
+/// [activeBusinessThemePreset].
 final ValueNotifier<BusinessThemeVariant> businessAppearanceNotifier =
     ValueNotifier<BusinessThemeVariant>(_kDefaultBusinessTheme);
+
+/// The single owner of the complete active preset (colors *and* artwork).
+BusinessThemeVariant activeBusinessThemePreset() => businessThemeNotifier.value;
 
 /// Selected mobile (phone-portrait) Business Home layout. Defaults to
 /// [BusinessHomeMobileLayout.compact] so existing installs keep the current
@@ -124,79 +130,12 @@ DriverHomeMobileLayout _driverHomeMobileLayoutFromStorage(String raw) {
   return _kDefaultDriverHomeMobileLayout;
 }
 
-Future<void> loadBusinessThemePreference() async {
-  try {
-    final file = await _businessThemeFile(_businessThemeFileName);
-    if (!await file.exists()) {
-      businessThemeNotifier.value = _kDefaultBusinessTheme;
-      return;
-    }
-    final raw = await file.readAsString();
-    if (raw.trim().isEmpty) {
-      businessThemeNotifier.value = _kDefaultBusinessTheme;
-      return;
-    }
-    final decoded = jsonDecode(raw);
-    if (decoded is! Map) {
-      businessThemeNotifier.value = _kDefaultBusinessTheme;
-      return;
-    }
-    final variantRaw = (decoded['variant'] ?? '').toString();
-    businessThemeNotifier.value = _businessThemeVariantFromStorage(variantRaw);
-  } catch (_) {
-    businessThemeNotifier.value = _kDefaultBusinessTheme;
-  }
-}
-
-Future<void> saveBusinessThemePreference(BusinessThemeVariant variant) async {
-  businessThemeNotifier.value = variant;
-  try {
-    final file = await _businessThemeFile(_businessThemeFileName);
-    final payload = <String, dynamic>{
-      'variant': variant.name,
-      'updatedAt': DateTime.now().toUtc().toIso8601String(),
-    };
-    await file.writeAsString(jsonEncode(payload), flush: true);
-  } catch (_) {
-    // Keep in-memory value when persistence temporarily fails.
-  }
-}
-
-Future<void> loadBusinessAppearancePreference() async {
-  try {
-    final file = await _businessThemeFile(_businessAppearanceFileName);
-    if (!await file.exists()) {
-      // Migration: seed appearance from the current color theme so existing
-      // installs keep their current artwork pack after the colors/appearance
-      // split. Do not invent a second default independently.
-      businessAppearanceNotifier.value = businessThemeNotifier.value;
-      await saveBusinessAppearancePreference(businessAppearanceNotifier.value);
-      return;
-    }
-    final raw = await file.readAsString();
-    if (raw.trim().isEmpty) {
-      businessAppearanceNotifier.value = businessThemeNotifier.value;
-      return;
-    }
-    final decoded = jsonDecode(raw);
-    if (decoded is! Map) {
-      businessAppearanceNotifier.value = businessThemeNotifier.value;
-      return;
-    }
-    final variantRaw = (decoded['variant'] ?? '').toString();
-    businessAppearanceNotifier.value =
-        _businessThemeVariantFromStorage(variantRaw);
-  } catch (_) {
-    businessAppearanceNotifier.value = businessThemeNotifier.value;
-  }
-}
-
-Future<void> saveBusinessAppearancePreference(
+Future<void> _writeBusinessThemeVariantFile(
+  String fileName,
   BusinessThemeVariant variant,
 ) async {
-  businessAppearanceNotifier.value = variant;
   try {
-    final file = await _businessThemeFile(_businessAppearanceFileName);
+    final file = await _businessThemeFile(fileName);
     final payload = <String, dynamic>{
       'variant': variant.name,
       'updatedAt': DateTime.now().toUtc().toIso8601String(),
@@ -207,26 +146,133 @@ Future<void> saveBusinessAppearancePreference(
   }
 }
 
-/// Settings-page preset selection: color theme + appearance pack together.
+/// Canonical, atomic application of one complete business theme preset.
 ///
-/// Preserves the historical "Thema's & uitstraling" card behavior where picking
-/// a business theme applies both palette and artwork. The header shortcut must
-/// call [saveBusinessThemePreference] / [cycleBusinessThemePreference] only.
+/// Both notifiers move in the same synchronous step *before* any await, so no
+/// frame and no rapid second press can observe one preset's colors alongside
+/// another preset's artwork. Persistence writes the value that is live at write
+/// time, so however concurrent writes interleave they converge on the preset the
+/// user actually ended on.
+///
+/// Company-owned branding is out of scope here: the uploaded company logo,
+/// company name, identity, booking/KPI, pricing and subscription state are
+/// never read or written by this path.
+Future<void> applyBusinessThemePreset(BusinessThemeVariant variant) async {
+  businessThemeNotifier.value = variant;
+  businessAppearanceNotifier.value = variant;
+  await _persistActiveBusinessThemePreset();
+}
+
+bool _businessThemeWriteInFlight = false;
+bool _businessThemeWriteSuperseded = false;
+
+/// Serialized, coalescing persistence of the live preset.
+///
+/// Rapid presses used to run overlapping writes against the same file, which
+/// interleaved their JSON and left a corrupt preset on disk. Only one write runs
+/// at a time; a press that arrives during a write marks the result superseded, so
+/// one more pass runs afterwards and persists whatever preset is live then. The
+/// stored value therefore converges on the preset the user actually ended on.
+Future<void> _persistActiveBusinessThemePreset() async {
+  if (_businessThemeWriteInFlight) {
+    _businessThemeWriteSuperseded = true;
+    return;
+  }
+  _businessThemeWriteInFlight = true;
+  try {
+    do {
+      _businessThemeWriteSuperseded = false;
+      final preset = businessThemeNotifier.value;
+      await _writeBusinessThemeVariantFile(_businessThemeFileName, preset);
+      await _writeBusinessThemeVariantFile(_businessAppearanceFileName, preset);
+    } while (_businessThemeWriteSuperseded);
+  } finally {
+    _businessThemeWriteInFlight = false;
+  }
+}
+
+/// Clears the in-flight write latch between tests.
+@visibleForTesting
+void resetBusinessThemePersistenceLatchForTest() {
+  _businessThemeWriteInFlight = false;
+  _businessThemeWriteSuperseded = false;
+}
+
+Future<void> loadBusinessThemePreference() async {
+  var restored = _kDefaultBusinessTheme;
+  try {
+    final file = await _businessThemeFile(_businessThemeFileName);
+    if (await file.exists()) {
+      final raw = await file.readAsString();
+      if (raw.trim().isNotEmpty) {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          restored = _businessThemeVariantFromStorage(
+            (decoded['variant'] ?? '').toString(),
+          );
+        }
+      }
+    }
+  } catch (_) {
+    restored = _kDefaultBusinessTheme;
+  }
+  // Restore the complete preset: artwork can never come back stale.
+  businessThemeNotifier.value = restored;
+  businessAppearanceNotifier.value = restored;
+}
+
+/// Applies [variant] as a complete preset.
+///
+/// Retained name for existing callers; colors and artwork are inseparable, so
+/// this is [applyBusinessThemePreset].
+Future<void> saveBusinessThemePreference(BusinessThemeVariant variant) =>
+    applyBusinessThemePreset(variant);
+
+/// Kept for startup ordering compatibility.
+///
+/// The appearance file is no longer an independent truth source. It converges
+/// onto the restored preset and is healed on disk, so a legacy stale artwork
+/// value from the colors-only split cannot survive a restart.
+Future<void> loadBusinessAppearancePreference() async {
+  final preset = businessThemeNotifier.value;
+  businessAppearanceNotifier.value = preset;
+  var storedMatchesPreset = false;
+  try {
+    final file = await _businessThemeFile(_businessAppearanceFileName);
+    if (await file.exists()) {
+      final decoded = jsonDecode(await file.readAsString());
+      storedMatchesPreset =
+          decoded is Map &&
+          _businessThemeVariantFromStorage(
+                (decoded['variant'] ?? '').toString(),
+              ) ==
+              preset;
+    }
+  } catch (_) {
+    storedMatchesPreset = false;
+  }
+  if (!storedMatchesPreset) {
+    await _persistActiveBusinessThemePreset();
+  }
+}
+
+/// Applies [variant] as a complete preset.
+///
+/// Retained name for existing callers; artwork is not separately selectable.
+Future<void> saveBusinessAppearancePreference(BusinessThemeVariant variant) =>
+    applyBusinessThemePreset(variant);
+
+/// Settings-page preset selection. Same canonical path as the header shortcut.
 Future<void> saveBusinessThemeAndAppearancePreset(
   BusinessThemeVariant variant,
-) async {
-  await saveBusinessThemePreference(variant);
-  await saveBusinessAppearancePreference(variant);
-}
+) => applyBusinessThemePreset(variant);
 
 /// One-tap advance for the business header theme shortcut.
 ///
-/// Colors only: advances [businessThemeNotifier] via
-/// [saveBusinessThemePreference]. Never mutates
-/// [businessAppearanceNotifier] / artwork packs.
+/// Applies the next complete preset — palette, overlay and artwork together.
 Future<BusinessThemeVariant> cycleBusinessThemePreference() async {
   final next = nextBusinessThemeVariant(businessThemeNotifier.value);
-  await saveBusinessThemePreference(next);
+  await applyBusinessThemePreset(next);
   return next;
 }
 

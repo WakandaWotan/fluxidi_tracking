@@ -129,20 +129,17 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     String? emeraldIvoryAsset,
     String? fluxidiNeonRushAsset,
   }) {
-    // Artwork packs follow the independent appearance preference — never the
-    // color-theme shortcut owner ([businessThemeNotifier]).
-    switch (businessAppearanceNotifier.value) {
-      case BusinessThemeVariant.executiveGold:
-        return executiveGoldAsset;
-      case BusinessThemeVariant.corporateBlue:
-        return corporateBlueAsset ?? executiveGoldAsset;
-      case BusinessThemeVariant.cleanProfessional:
-        return cleanProfessionalAsset ?? executiveGoldAsset;
-      case BusinessThemeVariant.emeraldIvory:
-        return emeraldIvoryAsset ?? executiveGoldAsset;
-      case BusinessThemeVariant.fluxidiNeonRush:
-        return fluxidiNeonRushAsset ?? executiveGoldAsset;
-    }
+    // Theme-owned artwork resolves from the same preset as the palette above,
+    // through the one canonical mapping, so a screen can never combine one
+    // preset's colors with another preset's images.
+    return businessThemePresetAsset(
+      preset: activeBusinessThemePreset(),
+      executiveGold: executiveGoldAsset,
+      corporateBlue: corporateBlueAsset,
+      cleanProfessional: cleanProfessionalAsset,
+      emeraldIvory: emeraldIvoryAsset,
+      fluxidiNeonRush: fluxidiNeonRushAsset,
+    );
   }
 
   void _guardBusinessAccessOrRedirect({required String reason}) {
