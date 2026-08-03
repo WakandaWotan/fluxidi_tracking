@@ -6835,7 +6835,7 @@ async function _chironBuildExportDryRunPayloadResponse(
 //                                          resolve via the portaal first
 //   { decision: "not_retryable" }        — a prior failure whose cause is
 //                                          unclear; blocks automatic retry
-function _chironEvaluateSubmitDuplicateGuard(previousStatus) {
+function _chironEvaluateSubmitDuplicateGuard(previousStatus, nowMs = Date.now()) {
   if (!previousStatus || typeof previousStatus !== "object") {
     return { decision: "allow" };
   }
@@ -6844,6 +6844,20 @@ function _chironEvaluateSubmitDuplicateGuard(previousStatus) {
     return { decision: "already_synced" };
   }
   if (state === "pending") {
+    // FLUXIDI-CHIRON-DEPARTURE-WITHOUT-ARRIVAL-TRACE-P0-2: stale pending is
+    // not an in-flight submit. Field shape: attempt_count>=1, sanitized_error
+    // null, external_status_code null, last_attempt_at minutes/hours ago —
+    // arrival stays waiting_for_departure forever while conflict_pending
+    // blocks every reconcile retry of the paired departure.
+    const lastAttemptMs = Date.parse(
+      cleanText(previousStatus.last_attempt_at, 64),
+    );
+    const ageMs = Number.isFinite(lastAttemptMs)
+      ? Number(nowMs) - lastAttemptMs
+      : Number.POSITIVE_INFINITY;
+    if (Number.isFinite(ageMs) && ageMs >= CHIRON_PENDING_STALE_MS) {
+      return { decision: "allow", stale_pending: true };
+    }
     return { decision: "conflict_pending" };
   }
   if (state === "verification_required") {
@@ -10995,6 +11009,11 @@ const CHIRON_TESTFLOW_AUTO_RECONCILE_PATH = "/admin/chiron/testflow/auto-reconci
 // invocation can blow the Worker CPU / subrequest budgets even at 1000
 // companies.
 const CHIRON_AUTO_SUBMIT_INNER_TIMEOUT_MS = 5000;
+// FLUXIDI-CHIRON-DEPARTURE-WITHOUT-ARRIVAL-TRACE-P0-2: a `pending` export
+// status older than this is treated as a crashed in-flight write (pending
+// marker written, final synced/failed never persisted). Must be greater than
+// CHIRON_AUTO_SUBMIT_INNER_TIMEOUT_MS so a live submit is not raced.
+const CHIRON_PENDING_STALE_MS = 60 * 1000;
 const CHIRON_AUTO_RECONCILE_MAX_EVENTS = 200;
 const CHIRON_AUTO_RECONCILE_MAX_PROCESS = 20;
 // Throttle: skip an auto-reconcile trigger from the config-status GET if the
@@ -11228,6 +11247,10 @@ function _chironPairedDepartureIdempotencyKeyForArrivalDraft(
 async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
   const source = cleanText(options.source, 32) || "auto_submit";
   const logMask = (v) => _chironMaskScopeId(cleanText(v, 128));
+  // Track a written pending marker so an unexpected exception cannot leave
+  // sync_state=pending permanently (conflict_pending forever).
+  let pendingStatusKey = null;
+  let pendingDocSnapshot = null;
   try {
     const statusRead = await readChironConnectionStatusRaw(
       env,
@@ -11536,6 +11559,8 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
       effective_environment: effectiveEnvForThisEvent,
     };
     await _chironWriteExportStatus(env, statusKey, pendingDoc);
+    pendingStatusKey = statusKey;
+    pendingDocSnapshot = pendingDoc;
 
     // RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: OAuth + taxirit URL follow the
     // per-ride environment stamp. Production NEVER falls back to ACC — a
@@ -11569,11 +11594,13 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
           last_attempt_at: nowIso(),
         };
         await _chironWriteExportStatus(env, statusKey, failedDoc);
+        pendingStatusKey = null;
       } else {
         try {
           await env.COMPLIANCE_KV.delete(statusKey);
+          pendingStatusKey = null;
         } catch (_) {
-          // leave pending; duplicate guard backs off
+          // leave pending; duplicate guard backs off until stale
         }
       }
       console.log(
@@ -11600,6 +11627,7 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
         last_attempt_at: nowIso(),
       };
       await _chironWriteExportStatus(env, statusKey, failedDoc);
+      pendingStatusKey = null;
       return {
         ok: false,
         skipped: false,
@@ -11649,6 +11677,7 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
       last_attempt_at: nowIso(),
     };
     await _chironWriteExportStatus(env, statusKey, finalDoc);
+    pendingStatusKey = null;
 
     // Advance acceptance counters only for ACC/test submits. Production
     // rides must never inflate the 5/5 acceptance testflow.
@@ -11686,6 +11715,21 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
       source,
     };
   } catch (err) {
+    // Never leave a dangling pending marker: that permanently blocks retries
+    // via conflict_pending and freezes the paired arrival on waiting_for_departure.
+    if (pendingStatusKey && pendingDocSnapshot) {
+      try {
+        await _chironWriteExportStatus(env, pendingStatusKey, {
+          ...pendingDocSnapshot,
+          sync_state: "retryable_failed",
+          failure_kind: "retryable",
+          sanitized_error: "auto_submit_internal_exception",
+          last_attempt_at: nowIso(),
+        });
+      } catch (_) {
+        // Best-effort; stale-pending guard is the backstop.
+      }
+    }
     console.log(
       `[CHIRON_AUTO_SUBMIT][EXCEPTION] source=${source} error_name=${err?.name || "-"} error_message=${cleanText(err?.message, 120) || "-"}`,
     );
@@ -11872,9 +11916,14 @@ async function _chironAutoReconcileScopeBestEffort(
       // historical events must not consume the per-pass process budget, or
       // post-5/5 ACC rides never get a reconcile retry after a one-shot
       // append failure.
+      // FLUXIDI-CHIRON-DEPARTURE-WITHOUT-ARRIVAL-TRACE-P0-2: fresh
+      // conflict_pending and waiting_for_departure also make no forward
+      // progress — do not starve newer/retryable rides for them.
       const burnsProcessBudget =
         submitOutcome.reason !== "duplicate_guard_already_synced" &&
-        submitOutcome.reason !== "already_synced";
+        submitOutcome.reason !== "already_synced" &&
+        submitOutcome.reason !== "duplicate_guard_conflict_pending" &&
+        submitOutcome.reason !== "waiting_for_departure";
       if (burnsProcessBudget) {
         processed += 1;
         outcome.processed += 1;
@@ -12086,6 +12135,7 @@ export const __testInternals = {
   _chironNormalizeValidDistanceKm,
   _chironHaversineDistanceKm,
   CHIRON_AUTO_RECONCILE_MAX_PROCESS,
+  CHIRON_PENDING_STALE_MS,
 };
 
 export default {
