@@ -9,10 +9,28 @@
 // Never log or print the raw data URI in operational summaries.
 
 /**
- * Compact monochrome Fluxidi wordmark (SVG paths only — no <text>).
- * viewBox sized for CSS height ~48px without crowding the seller column.
+ * Fluxidi emblem: an "F" monogram inside a filled disc. Geometry only — no
+ * <text>, and deliberately no letter-shaped wordmark.
+ *
+ * FLUXIDI-CANONICAL-COMPANY-LOGO-AND-INVOICE-PRESENTATION-P0-1: the previous
+ * version carried a hand-authored "wordmark" whose glyph paths did not spell
+ * FLUXIDI. Decoded left to right its sub-paths draw I, N, E, L, I, V, I, O, A,
+ * so every invoice rendered the monogram followed by the nonsense string
+ * "INELIVIA". Letter shapes are not authored by hand here again: the seller name
+ * is real HTML text in the invoice header, which no PDF engine can garble.
  */
-export const FLUXIDI_INVOICE_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="280" height="56" viewBox="0 0 280 56" role="img" aria-label="Fluxidi"><rect width="280" height="56" fill="none"/><circle cx="24" cy="28" r="16" fill="#111111"/><path fill="#FFFFFF" d="M18.2 20.5h10.6v2.7H21.5v2.2h6.5v2.6H21.5v4.9h-3.3V20.5z"/><path fill="#111111" d="M48 18.2h3.2v19.6H48zm7.4 0h3.1l7.6 12.4V18.2h3.1v19.6h-3.1l-7.6-12.4v12.4h-3.1zm17.8 0h12.2v2.8h-9v5.2h8.2v2.7h-8.2v6.1h9.2v2.8H73.2zm16.6 0h3.2v16.8h8.4v2.8H89.8zm15.2 0h3.2v19.6h-3.2zm7.2 0h3.4l4.6 12.8 4.6-12.8h3.4l-6.6 19.6h-2.8zm16.8 0h3.2v19.6h-3.2zm5.6 9.6c0-6.2 4.4-10 10.2-10 5.8 0 10.2 3.8 10.2 10s-4.4 10-10.2 10c-5.8 0-10.2-3.8-10.2-10zm3.3 0c0 4.4 2.8 7.1 6.9 7.1s6.9-2.7 6.9-7.1-2.8-7.1-6.9-7.1-6.9 2.7-6.9 7.1zm20.1-9.6h3.2l7.2 19.6h-3.3l-1.5-4.2h-8.1l-1.5 4.2h-3.2zm1.6 12.6h5.5l-2.7-7.6z"/></svg>`;
+export const FLUXIDI_INVOICE_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" viewBox="0 0 56 56" role="img" aria-label="Fluxidi"><rect width="56" height="56" fill="none"/><circle cx="28" cy="28" r="26" fill="#111111"/><path fill="#F0C400" d="M20.5 15.5h17v5.4H26.4v5.1h9.9v5.3H26.4v14.2h-5.9V15.5z"/></svg>`;
+
+/**
+ * Sub-path shapes that spelled the bogus "INELIVIA" wordmark.
+ *
+ * Kept only so a regression test can assert they never come back.
+ */
+export const REJECTED_INVOICE_LOGO_WORDMARK_MARKERS = Object.freeze([
+  "M48 18.2h3.2v19.6H48z",
+  "h3.1l7.6 12.4V18.2h3.1v19.6h-3.1l-7.6-12.4v12.4h-3.1z",
+  "h12.2v2.8h-9v5.2h8.2v2.7h-8.2v6.1h9.2v2.8H73.2z",
+]);
 
 function _toBase64Utf8(text) {
   // Prefer Buffer in Node tests; fall back to btoa for Workers.
@@ -160,5 +178,17 @@ export function packagedInvoiceLogoUsesPathWordmark() {
   return (
     /<path[\s>]/i.test(FLUXIDI_INVOICE_LOGO_SVG) &&
     !/<text[\s>]/i.test(FLUXIDI_INVOICE_LOGO_SVG)
+  );
+}
+
+/**
+ * True when the packaged mark is a geometry-only emblem: no <text> nodes and
+ * none of the hand-authored letter paths that rendered as "INELIVIA".
+ */
+export function packagedInvoiceLogoIsGeometryOnly() {
+  if (/<text[\s>]/i.test(FLUXIDI_INVOICE_LOGO_SVG)) return false;
+  if (!/<path[\s>]/i.test(FLUXIDI_INVOICE_LOGO_SVG)) return false;
+  return !REJECTED_INVOICE_LOGO_WORDMARK_MARKERS.some((marker) =>
+    FLUXIDI_INVOICE_LOGO_SVG.includes(marker),
   );
 }

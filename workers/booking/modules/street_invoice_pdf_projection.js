@@ -541,6 +541,25 @@ export function fingerprintCustomerRouteText(from = "", to = "") {
   return `${clean(from)}>${clean(to)}`;
 }
 
+/**
+ * Compact stable fingerprint of the seller logo reference.
+ *
+ * Part of the projection revision so a company logo change is visible to the
+ * derived-artifact refresh gate, while the value itself never lands in the
+ * revision string (a logo data URI would be enormous).
+ */
+export function fingerprintSellerLogoRef(raw = "") {
+  const s = _norm(raw);
+  if (!s) return "none";
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < s.length; i += 1) {
+    hash ^= s.charCodeAt(i) & 0xff;
+    hash = (hash * 0x01000193) >>> 0;
+  }
+  const kind = s.toLowerCase().startsWith("data:image/") ? "d" : "u";
+  return `${kind}${hash.toString(16).padStart(8, "0")}`;
+}
+
 export function buildStreetInvoicePdfProjectionRevision({
   paymentStatus = "",
   vatRatePercent = null,
@@ -556,11 +575,13 @@ export function buildStreetInvoicePdfProjectionRevision({
   from = "",
   to = "",
   routeFingerprint = "",
+  sellerLogoRef = "",
 } = {}) {
   const route =
     _norm(routeFingerprint) || fingerprintCustomerRouteText(from, to);
   return [
     STREET_INVOICE_PDF_PROJECTION_VERSION,
+    `logo=${fingerprintSellerLogoRef(sellerLogoRef)}`,
     `pay=${_lower(paymentStatus) || "unpaid"}`,
     `vat=${vatRatePercent == null ? "-" : String(vatRatePercent)}`,
     `incl=${totalInclCents == null ? "-" : String(totalInclCents)}`,
@@ -889,6 +910,7 @@ export function buildStreetInvoicePdfProjection({
     service: ride.service,
     from: ride.from,
     to: ride.to,
+    sellerLogoRef: seller.logoUrl,
   });
 
   return {

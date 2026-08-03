@@ -330,7 +330,39 @@ export function buildSellerSnapshotFromBusinessProfile(profile = null) {
     country_code: identity.country_code || null,
     address_is_visitor:
       identity.address_is_visitor === null ? null : identity.address_is_visitor,
+    // FLUXIDI-CANONICAL-COMPANY-LOGO-AND-INVOICE-PRESENTATION-P0-1:
+    // freeze the company's own logo with the issued seller identity so a later
+    // profile logo change never rewrites an already issued invoice.
+    logo_url: sellerSnapshotLogoRefFromProfile(profile),
   };
+}
+
+/**
+ * Canonical company logo reference for a seller snapshot.
+ *
+ * Only a company-owned reference is captured: a packaged Fluxidi asset means the
+ * company has not set a logo, and theme artwork is never branding.
+ */
+export function sellerSnapshotLogoRefFromProfile(profile = null) {
+  const p = profile && typeof profile === "object" ? profile : {};
+  const raw = String(
+    p.publicLogoUrl ??
+      p.public_logo_url ??
+      p.logoUrl ??
+      p.logo_url ??
+      "",
+  ).trim();
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  if (lower.includes("fluxidi_logo.png")) return null;
+  if (lower.startsWith("assets/")) return null;
+  const usable =
+    lower.startsWith("https://") ||
+    lower.startsWith("http://") ||
+    lower.startsWith("data:image/") ||
+    lower.startsWith("/public/media/") ||
+    lower.startsWith("public-media/");
+  return usable ? raw.slice(0, 2000) : null;
 }
 
 export function validateSellerIdentityForInvoiceIssuance(profile = null) {

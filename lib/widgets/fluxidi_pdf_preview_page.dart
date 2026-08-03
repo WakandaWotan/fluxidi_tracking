@@ -166,6 +166,40 @@ Matrix4 fluxidiPdfClampTransform({
     ..scale(scale);
 }
 
+/// Initial, undistorted page geometry for the available viewport.
+///
+/// A4 cannot fill both axes of a phone without cropping or stretching, so the
+/// page keeps its aspect ratio at fit-width and any leftover height becomes a
+/// symmetric surround instead of dead space below a top-anchored page.
+@visibleForTesting
+({double pageWidth, double pageHeight, double leadingPad, double contentHeight})
+fluxidiPdfInitialLayout({
+  required Size viewport,
+  required int pageCount,
+  double pageAspectRatio = 1 / 1.4142,
+  double horizontalPadding = 8,
+  double pageSpacing = 10,
+}) {
+  final ratio = pageAspectRatio <= 0 ? 1 / 1.4142 : pageAspectRatio;
+  final pageWidth = math.max(1.0, viewport.width - horizontalPadding * 2);
+  final pageHeight = pageWidth / ratio;
+  final pages = pageCount <= 0 ? 0 : pageCount;
+  final stackHeight = pages == 0
+      ? 0.0
+      : pages * pageHeight + math.max(0, pages - 1) * pageSpacing;
+  // Centre a document that is shorter than the viewport; never push a taller
+  // document down, which would hide its first page.
+  final leadingPad = stackHeight <= 0 || stackHeight >= viewport.height
+      ? 0.0
+      : (viewport.height - stackHeight) / 2;
+  return (
+    pageWidth: pageWidth,
+    pageHeight: pageHeight,
+    leadingPad: leadingPad,
+    contentHeight: stackHeight,
+  );
+}
+
 /// Count `/Type /Page` dictionaries in raw PDF bytes (not `/Pages`).
 @visibleForTesting
 int countPdfPageObjects(Uint8List bytes) {
@@ -185,7 +219,8 @@ class FluxidiPdfPagesView extends StatefulWidget {
     this.minScale = 1.0,
     this.maxScale = 6.0,
     this.doubleTapScale = 2.5,
-    this.backgroundColor = const Color(0xFF101010),
+    // Neutral surround that frames the document instead of a near-black void.
+    this.backgroundColor = const Color(0xFF33363B),
     this.pageColor = Colors.white,
     this.pageAspectRatio = 1 / 1.4142,
     this.pageSpacing = 10,
@@ -291,14 +326,17 @@ class FluxidiPdfPagesViewState extends State<FluxidiPdfPagesView> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final viewport = Size(constraints.maxWidth, constraints.maxHeight);
-          final pageWidth =
-              math.max(1.0, viewport.width - widget.horizontalPadding * 2);
-          final pageHeight = _pageHeightForWidth(pageWidth);
           final pageCount = widget.pages.length;
-          final contentHeight = pageCount <= 0
-              ? 0.0
-              : pageCount * pageHeight +
-                  math.max(0, pageCount - 1) * widget.pageSpacing;
+          final layout = fluxidiPdfInitialLayout(
+            viewport: viewport,
+            pageCount: pageCount,
+            pageAspectRatio: widget.pageAspectRatio,
+            horizontalPadding: widget.horizontalPadding,
+            pageSpacing: widget.pageSpacing,
+          );
+          final pageWidth = layout.pageWidth;
+          final pageHeight = layout.pageHeight;
+          final contentHeight = layout.contentHeight;
           final content = Size(pageWidth, contentHeight);
           _viewport = viewport;
           _content = content;
@@ -331,6 +369,8 @@ class FluxidiPdfPagesViewState extends State<FluxidiPdfPagesView> {
                     : Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (layout.leadingPad > 0)
+                            SizedBox(height: layout.leadingPad),
                           for (var i = 0; i < pageCount; i++) ...[
                             if (i > 0)
                               SizedBox(height: widget.pageSpacing),

@@ -82,6 +82,39 @@ export function shortInvoiceFitsOneA4Page(opts = {}) {
   );
 }
 
+/**
+ * Total inter-block vertical spacing the compact composition spends between the
+ * header and the footer, in CSS px.
+ *
+ * The one-page fix only removed the oversized logo; the page still read as
+ * sparse because these gaps were tuned for a two-page layout. This is asserted
+ * by tests so the spacing cannot silently drift back up.
+ */
+export const INVOICE_COMPACT_BLOCK_SPACING_PX = Object.freeze({
+  headerPaddingBottom: 8,
+  headerMarginBottom: 12,
+  titleMarginBottom: 10,
+  metaMarginBottom: 10,
+  tableMarginTop: 6,
+  totalsMarginTop: 10,
+  footerMarginTop: 12,
+});
+
+/** Legacy (sparse) spacing, retained for before/after proof tests only. */
+export const LEGACY_INVOICE_BLOCK_SPACING_PX = Object.freeze({
+  headerPaddingBottom: 10,
+  headerMarginBottom: 16,
+  titleMarginBottom: 12,
+  metaMarginBottom: 14,
+  tableMarginTop: 12,
+  totalsMarginTop: 14,
+  footerMarginTop: 18,
+});
+
+export function totalInvoiceBlockSpacingPx(spacing) {
+  return Object.values(spacing).reduce((sum, v) => sum + Number(v || 0), 0);
+}
+
 /** Shared invoice print CSS injected into renderInvoiceHtml. */
 export function buildInvoicePrintCss({
   logoHeightPx = INVOICE_LOGO_CSS_HEIGHT_PX,
@@ -118,8 +151,8 @@ export function buildInvoicePrintCss({
     justify-content: space-between;
     align-items: flex-start;
     border-bottom: 2px solid #f0c400;
-    padding-bottom: 10px;
-    margin-bottom: 16px;
+    padding-bottom: 8px;
+    margin-bottom: 12px;
     gap: 12px;
   }
 
@@ -144,12 +177,12 @@ export function buildInvoicePrintCss({
     min-width: 0;
   }
 
-  h1 { font-size: 22px; margin: 0 0 12px 0; }
+  h1 { font-size: 21px; margin: 0 0 10px 0; }
 
   .meta {
     display: flex;
     justify-content: space-between;
-    margin-bottom: 14px;
+    margin-bottom: 10px;
     font-size: 13px;
     gap: 14px;
   }
@@ -168,7 +201,9 @@ export function buildInvoicePrintCss({
     margin-left: 6px;
   }
 
-  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  /* Compact composition: the order line follows the metadata directly instead
+     of leaving a large empty band in the middle of the page. */
+  table { width: 100%; border-collapse: collapse; margin-top: 6px; }
 
   table th {
     background: #f5f5f5;
@@ -190,7 +225,7 @@ export function buildInvoicePrintCss({
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
 
   .totals {
-    margin-top: 14px;
+    margin-top: 10px;
     width: 100%;
     max-width: 340px;
     margin-left: auto;
@@ -211,7 +246,7 @@ export function buildInvoicePrintCss({
   }
 
   .footer {
-    margin-top: 18px;
+    margin-top: 12px;
     font-size: 11px;
     color: #555;
     text-align: center;

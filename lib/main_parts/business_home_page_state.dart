@@ -2930,52 +2930,36 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     return null;
   }
 
+  /// Canonical resolution shared with the branding settings page, so the two
+  /// surfaces can never disagree about whether a company logo is set.
   ({String ref, String source}) _resolveBusinessHomeLogoRef({
     required BusinessSettingsState businessSettings,
     required BackendBusinessProfile? backendProfile,
   }) {
-    final rawLocal = businessSettings.logoAssetPath;
-    final rawPublic = backendProfile?.publicLogoUrl ?? '';
-    final hasCompanyLogo =
-        rawLocal.trim().isNotEmpty &&
-        !_isDefaultFluxidiLogoRefForBusinessHome(rawLocal);
-    final hasPublicLogo =
-        rawPublic.trim().isNotEmpty &&
-        !_isDefaultFluxidiLogoRefForBusinessHome(rawPublic);
-
-    final localLogo = hasCompanyLogo
-        ? _normalizeBusinessHomeLogoRef(rawLocal)
-        : null;
-    if (localLogo != null) {
-      if (kDebugMode) {
-        debugPrint(
-          '[COMPANY_LOGO] surface=business_home source=business_local '
-          'hasCompanyLogo=true hasPublicLogo=$hasPublicLogo',
-        );
-      }
-      return (ref: localLogo, source: 'business_local');
+    final canonical = resolveCompanyLogoRef(
+      localPath: businessSettings.logoAssetPath,
+      publicUrl: backendProfile?.publicLogoUrl ?? '',
+      configuredFluxidiAsset: kFluxidiLogoAsset,
+      fluxidiFallbackAsset: kFluxidiLogoAsset,
+      resolvePublicUrl: resolvePublicHttpsMediaUrl,
+      fileExists: (path) {
+        try {
+          return File(path).existsSync();
+        } catch (_) {
+          return false;
+        }
+      },
+      isWeb: kIsWeb,
+    );
+    switch (canonical.source) {
+      case CompanyLogoSource.localBranding:
+        return (ref: canonical.ref, source: 'business_local');
+      case CompanyLogoSource.publicProfile:
+        return (ref: canonical.ref, source: 'public_backend');
+      case CompanyLogoSource.fluxidiFallback:
+      case CompanyLogoSource.none:
+        return (ref: kFluxidiLogoAsset, source: 'fallback');
     }
-
-    final publicLogo = hasPublicLogo
-        ? _normalizeBusinessHomeLogoRef(rawPublic)
-        : null;
-    if (publicLogo != null) {
-      if (kDebugMode) {
-        debugPrint(
-          '[COMPANY_LOGO] surface=business_home source=public_backend '
-          'hasCompanyLogo=false hasPublicLogo=true',
-        );
-      }
-      return (ref: publicLogo, source: 'public_backend');
-    }
-
-    if (kDebugMode) {
-      debugPrint(
-        '[COMPANY_LOGO] surface=business_home source=fallback '
-        'hasCompanyLogo=false hasPublicLogo=false',
-      );
-    }
-    return (ref: kFluxidiLogoAsset, source: 'fallback');
   }
 
   Widget _businessHomeFluxidiLogoFallback({required double width}) {

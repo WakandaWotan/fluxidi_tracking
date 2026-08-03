@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/airport/airport_catalog.generated.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/branding/company_logo_ref.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_page.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
@@ -7198,37 +7199,53 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return ValueListenableBuilder<CompanyProfile?>(
       valueListenable: companyProfileNotifier,
       builder: (context, _, __) {
-        final effectiveRef = _effectiveCompanyLogoRef(_logoPathCtrl.text);
-        final ref = effectiveRef ?? '';
-        final showImage = ref.isNotEmpty;
+        // Canonical resolution, shared with the business dashboard. The stored
+        // reference may be a packaged asset, an on-device file written by the
+        // picker, or the company's public https URL after startup bootstrap —
+        // all three must render here.
+        final resolved = resolveCompanyLogoRef(
+          localPath: _effectiveCompanyLogoRef(_logoPathCtrl.text) ?? '',
+          publicUrl: _publicLogoUrlCtrl.text,
+          configuredFluxidiAsset: appConfig.logoAsset,
+          resolvePublicUrl: resolvePublicHttpsMediaUrl,
+          isWeb: kIsWeb,
+        );
+        final ref = resolved.ref;
+        final showImage = resolved.isCompanyOwned;
         final logoUnsetForPreview = !showImage;
 
         Widget previewChild;
         if (!showImage) {
           previewChild = _logoPlaceholder();
-        } else if (_isAssetRef(ref)) {
-          previewChild = ClipRRect(
-            borderRadius: BorderRadius.circular(11),
-            child: Image.asset(
-              ref,
-              fit: BoxFit.contain,
-              errorBuilder: (_, __, ___) => _logoPlaceholder(),
-            ),
-          );
         } else {
+          Widget image;
+          switch (resolved.kind) {
+            case CompanyLogoRefKind.asset:
+              image = Image.asset(
+                ref,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => _logoUnavailableNotice(),
+              );
+            case CompanyLogoRefKind.network:
+              image = Image.network(
+                ref,
+                fit: BoxFit.contain,
+                loadingBuilder: (_, child, progress) =>
+                    progress == null ? child : _logoLoadingNotice(),
+                errorBuilder: (_, __, ___) => _logoUnavailableNotice(),
+              );
+            case CompanyLogoRefKind.file:
+              image = Image.file(
+                File(ref),
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => _logoUnavailableNotice(),
+              );
+            case CompanyLogoRefKind.none:
+              image = _logoPlaceholder();
+          }
           previewChild = ClipRRect(
             borderRadius: BorderRadius.circular(11),
-            child: kIsWeb
-                ? Image.network(
-                    ref,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => _logoPlaceholder(),
-                  )
-                : Image.file(
-                    File(ref),
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => _logoPlaceholder(),
-                  ),
+            child: image,
           );
         }
 
@@ -7326,6 +7343,47 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       },
     );
   }
+
+  /// Bounded notice for a logo that is set but currently cannot be shown.
+  ///
+  /// Never claims the company has no logo: that is a different fact and saying
+  /// it here is what made a stored logo look lost after a restart.
+  Widget _logoBoundedNotice({required IconData icon, required String label}) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 28, color: _textMuted),
+          const SizedBox(height: 6),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: _textMuted, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _logoLoadingNotice() => _logoBoundedNotice(
+    icon: Icons.downloading_outlined,
+    label: _t(
+      nl: 'Bedrijfslogo laden…',
+      en: 'Loading company logo…',
+      fr: 'Chargement du logo…',
+      es: 'Cargando el logotipo…',
+    ),
+  );
+
+  Widget _logoUnavailableNotice() => _logoBoundedNotice(
+    icon: Icons.image_not_supported_outlined,
+    label: _t(
+      nl: 'Bedrijfslogo kon niet worden geladen. Het blijft opgeslagen.',
+      en: 'Company logo could not be loaded. It is still saved.',
+      fr: 'Le logo n’a pas pu être chargé. Il reste enregistré.',
+      es: 'No se pudo cargar el logotipo. Sigue guardado.',
+    ),
+  );
 
   Widget _logoPlaceholder() {
     return Center(
