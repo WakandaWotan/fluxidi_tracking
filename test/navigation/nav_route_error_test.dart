@@ -9,6 +9,10 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/navigation/nav_route_error.dart';
 
 // A tiny translate helper mirroring the app's DriverNavTranslate signature.
+// Supported product UI locales are NL/EN/FR/ES. [AppLanguage.de] exists on the
+// enum for legacy/fallback paths and must resolve to English — the same rule as
+// [mapboxDirectionsLanguageCode] and LocalizedString.of — without inventing DE
+// navigation copy in this fixture.
 String Function({
   required String nl,
   required String en,
@@ -25,6 +29,8 @@ String Function({
         return fr;
       case AppLanguage.es:
         return es;
+      case AppLanguage.de:
+        return en;
     }
   };
 }
@@ -179,11 +185,27 @@ void main() {
   });
 
   group('locale parity (Directions language)', () {
-    test('nl->nl, fr->fr, en->en, es->es', () {
+    test('nl->nl, fr->fr, en->en, es->es; de falls back to en', () {
       expect(mapboxDirectionsLanguageCode(AppLanguage.nl), 'nl');
       expect(mapboxDirectionsLanguageCode(AppLanguage.fr), 'fr');
       expect(mapboxDirectionsLanguageCode(AppLanguage.en), 'en');
       expect(mapboxDirectionsLanguageCode(AppLanguage.es), 'es');
+      // Enum includes de, but product Directions language falls back to en
+      // (no incomplete German navigation localization).
+      expect(mapboxDirectionsLanguageCode(AppLanguage.de), 'en');
+    });
+
+    test('nav route error DE fixture uses English copy, not fabricated DE', () {
+      final de = navRouteErrorMessage(
+        NavRouteErrorKind.offline,
+        tr: trFor(AppLanguage.de),
+      );
+      final en = navRouteErrorMessage(
+        NavRouteErrorKind.offline,
+        tr: trFor(AppLanguage.en),
+      );
+      expect(de.message, en.message);
+      expect(de.retryLabel, en.retryLabel);
     });
   });
 
