@@ -67,13 +67,14 @@ test("invalid external URL is not used when HTTPS disallowed; Fluxidi still embe
   assert.ok(src.startsWith("data:image/"));
 });
 
-test("non-Fluxidi seller without embedded logo omits (no broken src)", () => {
+test("non-Fluxidi seller without embedded logo uses Fluxidi monogram (never broken src)", () => {
   const src = resolveInvoiceLogoSrc({
     publicLogoUrl: "https://other-tenant.example/logo.png",
     sellerBrand: "Other Taxi BV",
     allowExternalHttpsLogo: false,
   });
-  assert.equal(src, "");
+  assert.ok(src.startsWith("data:image/"));
+  assert.equal(isUsableInvoiceLogoDataUri(src), true);
 });
 
 test("HTTPS allowed only when intentionally enabled", () => {

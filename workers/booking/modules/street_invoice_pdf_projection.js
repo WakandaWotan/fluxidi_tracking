@@ -31,6 +31,10 @@ import {
   formatDocumentPhoneDisplay,
 } from "./document_phone_format.js";
 import { resolveIssuedRouteAddressSnapshot } from "./invoice_route_address.js";
+import {
+  isUsableInvoiceLogoEmbed,
+  readFrozenInvoiceLogoEmbed,
+} from "./invoice_company_logo_fetch.js";
 
 // v2: include route fingerprint so stale PDFs with raw coordinates / missing
 // frozen addresses refresh without rewriting Document Core snapshots.
@@ -340,7 +344,15 @@ export function resolveInvoiceSellerCommProfile({
       address,
       phone,
       invoiceEmail: email,
-      logoUrl: _norm(seller?.logo_url ?? seller?.logoUrl),
+      // Prefer an already-frozen embedded logo (immutable bytes) over the
+      // mutable HTTPS media reference captured at issue time.
+      logoUrl: _norm(
+        seller?.logo_data_uri ??
+          seller?.logoDataUri ??
+          seller?.logo_url ??
+          seller?.logoUrl,
+      ),
+      logoRef: _norm(seller?.logo_url ?? seller?.logoUrl),
       invoiceFooter: _norm(seller?.invoice_footer ?? seller?.invoiceFooter),
       addressIsVisitor:
         seller?.address_is_visitor === true ||
@@ -403,6 +415,7 @@ export function resolveInvoiceSellerCommProfile({
     phone: _norm(profile.phone),
     invoiceEmail: _norm(profile.invoiceEmail ?? profile.invoice_email),
     logoUrl: _norm(profile.logoUrl ?? profile.logo_url),
+    logoRef: _norm(profile.logoUrl ?? profile.logo_url),
     invoiceFooter: _norm(profile.invoiceFooter ?? profile.invoice_footer),
     addressIsVisitor:
       profile.addressIsVisitor === true || profile.address_is_visitor === true
@@ -616,11 +629,16 @@ export function isStreetInvoicePdfArtifactVersionCurrent(storedRevision) {
  *
  * Only the derived artifact is in scope — the issued Document Core record is
  * never rewritten, and this never applies to more than the requested invoice.
+ *
+ * FLUXIDI-INVOICE-COMPANY-LOGO-FETCH-AND-EMBED-P0-2: when a company logo media
+ * reference exists but has not yet been frozen into the artifact, refresh once
+ * so the Branding & support logo is embedded. Never bulk-regenerates history.
  */
 export function shouldRefreshStreetInvoicePdfOnOpen({
   existingPdfExists = false,
   storedProjectionRevision = "",
   refreshAttempted = false,
+  needsCompanyLogoEmbed = false,
 } = {}) {
   if (refreshAttempted === true) {
     return { refresh: false, reason: "refresh_already_attempted" };
@@ -635,6 +653,9 @@ export function shouldRefreshStreetInvoicePdfOnOpen({
         ? "stale_projection_version"
         : "unknown_projection_version",
     };
+  }
+  if (needsCompanyLogoEmbed === true) {
+    return { refresh: true, reason: "company_logo_embed_pending" };
   }
   return { refresh: false, reason: "artifact_version_current" };
 }
@@ -833,6 +854,16 @@ export function buildStreetInvoicePdfProjection({
     issuedDocument,
     communicationProfile,
   });
+  // Prefer an already-frozen company-logo embed so PDF generation never
+  // re-fetches media and later profile logo changes cannot rewrite history.
+  const frozenLogo = readFrozenInvoiceLogoEmbed({
+    bookingRecord,
+    issuedDocument,
+  });
+  if (seller && typeof seller === "object" && isUsableInvoiceLogoEmbed(frozenLogo)) {
+    seller.logoUrl = frozenLogo.data_uri || frozenLogo.dataUri;
+    seller.logoEmbedSha256 = frozenLogo.sha256 || null;
+  }
   const companyTimezone = resolveCompanyTimezone(
     communicationProfile?.timezone ||
       communicationProfile?.time_zone ||
@@ -910,7 +941,10 @@ export function buildStreetInvoicePdfProjection({
     service: ride.service,
     from: ride.from,
     to: ride.to,
-    sellerLogoRef: seller.logoUrl,
+    // Fingerprint frozen bytes when present; otherwise the media reference.
+    sellerLogoRef: seller.logoEmbedSha256
+      ? `sha:${seller.logoEmbedSha256}`
+      : seller.logoRef || seller.logoUrl,
   });
 
   return {

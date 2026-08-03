@@ -96,12 +96,15 @@ test("E) a corrupt company logo falls back safely, never to a broken src", () =>
   assert.equal(src.startsWith("data:image/"), true);
 });
 
-test("F) an external https logo is never fetched during rendering by default", () => {
+test("F) an external https logo is never used as a live <img src> by default", () => {
   const src = resolveInvoiceLogoSrc({
     profileLogoUrl: COMPANY_LOGO_URL,
     sellerBrand: "Some Other Company BVBA",
   });
-  assert.equal(src, "", "non-Fluxidi seller with only an https logo omits <img>");
+  // Without server-side embed, fall back to the packaged monogram — never a
+  // network-dependent https src that can render a broken image.
+  assert.equal(src.startsWith("data:image/"), true);
+  assert.equal(src.includes("https://"), false);
 
   const allowed = resolveInvoiceLogoSrc({
     profileLogoUrl: COMPANY_LOGO_URL,
@@ -121,7 +124,10 @@ test("G) theme artwork can never become an invoice logo", () => {
       profileLogoUrl: artwork,
       sellerBrand: "Some Other Company BVBA",
     });
-    assert.equal(src, "", `theme artwork leaked into the invoice: ${artwork}`);
+    // Theme paths are not usable data URIs — resolver falls back to monogram,
+    // never treats artwork as a company logo source.
+    assert.equal(src.includes(artwork), false, `theme artwork leaked: ${artwork}`);
+    assert.equal(isUsableInvoiceLogoDataUri(src), true);
     assert.equal(sellerSnapshotLogoRefFromProfile({ logoUrl: artwork }), null);
   }
 });

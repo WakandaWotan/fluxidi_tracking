@@ -282,6 +282,15 @@ import {
   buildFluxidiInvoiceLogoDataUri,
 } from "./modules/invoice_logo_embedded.js";
 import {
+  resolveAndEmbedInvoiceCompanyLogo,
+  readFrozenInvoiceLogoEmbed,
+  readInvoiceLogoEmbedAttempt,
+  invoiceNeedsCompanyLogoEmbed,
+  formatInvoiceLogoEmbedDiagnostic,
+  isUsableInvoiceLogoEmbed,
+  buildFailedInvoiceLogoEmbedRecord,
+} from "./modules/invoice_company_logo_fetch.js";
+import {
   isLegacyFlxInvoiceNumber,
   isDocumentCoreInvoiceNumber,
   resolveCanonicalInvoiceNumberBinding,
@@ -64972,6 +64981,80 @@ async function stampDocumentCoreRouteAddressSnapshot(
   }
 }
 
+/**
+ * Envelope-only Document Core stamp: freeze seller_logo_embed onto an issued
+ * invoice registry record without touching content_hash / immutable financial
+ * identity. Idempotent — existing usable embed wins.
+ */
+async function stampDocumentCoreSellerLogoEmbed(
+  env,
+  scope,
+  documentId,
+  embed,
+) {
+  if (!env?.BOOKING_KV || !documentId || !scope || !isUsableInvoiceLogoEmbed(embed)) {
+    return { ok: false, skipped: true, reason: "missing_input" };
+  }
+  let key;
+  try {
+    key = buildDocumentRegistryKey(scope, documentId);
+  } catch (_) {
+    return { ok: false, skipped: true, reason: "invalid_key" };
+  }
+  let doc = null;
+  try {
+    doc = await env.BOOKING_KV.get(key, { type: "json" });
+  } catch (_) {
+    doc = null;
+  }
+  if (!doc || typeof doc !== "object") {
+    return { ok: false, skipped: true, reason: "document_not_found" };
+  }
+  if (isUsableInvoiceLogoEmbed(doc.seller_logo_embed)) {
+    return { ok: true, skipped: true, reason: "already_frozen", record: doc };
+  }
+  const updated = {
+    ...doc,
+    seller_logo_embed: embed,
+    updated_at: new Date().toISOString(),
+  };
+  try {
+    await env.BOOKING_KV.put(key, JSON.stringify(updated));
+    return { ok: true, skipped: false, record: updated };
+  } catch (_) {
+    return { ok: false, skipped: true, reason: "persist_failed" };
+  }
+}
+
+/**
+ * Booking-envelope freeze of the embedded company logo. Existing usable embed
+ * wins so later profile logo changes cannot rewrite history. A failed attempt
+ * record also wins so open refresh cannot loop forever.
+ */
+async function stampBookingInvoiceLogoEmbed(env, bookingId, rec, embed) {
+  if (!env?.BOOKING_KV || !bookingId || !embed || typeof embed !== "object") {
+    return { ok: false, skipped: true, reason: "missing_input", rec };
+  }
+  const existing = rec?.invoice_logo_embed;
+  if (isUsableInvoiceLogoEmbed(existing)) {
+    return { ok: true, skipped: true, reason: "already_frozen", rec };
+  }
+  if (existing && typeof existing === "object" && existing.failed === true) {
+    return { ok: true, skipped: true, reason: "failed_already_recorded", rec };
+  }
+  const next = {
+    ...(rec && typeof rec === "object" ? rec : {}),
+    invoice_logo_embed: embed,
+    updated_at: new Date().toISOString(),
+  };
+  try {
+    await env.BOOKING_KV.put(`booking:${bookingId}`, JSON.stringify(next));
+    return { ok: true, skipped: false, rec: next };
+  } catch (_) {
+    return { ok: false, skipped: true, reason: "persist_failed", rec };
+  }
+}
+
 async function ensureStreetBusinessInvoicePdfArtifact(
   env,
   scope,
@@ -65218,13 +65301,60 @@ async function ensureStreetBusinessInvoicePdfArtifact(
 
   const existing = _invoicePdfMetadataFromRecord(rec);
   const storedRevision = readStoredStreetInvoicePdfProjectionRevision(rec);
-  const refreshDecision = shouldRefreshStreetInvoicePdfArtifact({
+  let logoRefForEmbed =
+    safeStr(projection.sellerCommProfile?.logoRef, 2000) ||
+    safeStr(projection.sellerCommProfile?.logoUrl, 2000);
+  const frozenLogo = readFrozenInvoiceLogoEmbed({
+    bookingRecord: rec,
+    issuedDocument: resolvedIssued,
+  });
+  const logoEmbedAttempt = readInvoiceLogoEmbedAttempt({
+    bookingRecord: rec,
+    issuedDocument: resolvedIssued,
+  });
+  // Historical invoices without a logo on the seller snapshot may still embed
+  // the current Branding & support logo once (single-invoice ensure only).
+  if (
+    !logoRefForEmbed &&
+    !isUsableInvoiceLogoEmbed(frozenLogo) &&
+    !String(logoRefForEmbed || "").toLowerCase().startsWith("data:image/")
+  ) {
+    try {
+      const businessProfile = await loadBusinessProfile(env, {
+        tenant_id: scope?.tenant_id,
+        company_id: scope?.company_id,
+      });
+      logoRefForEmbed = safeStr(
+        businessProfile?.publicLogoUrl ??
+          businessProfile?.public_logo_url ??
+          businessProfile?.logoUrl ??
+          businessProfile?.logo_url,
+        2000,
+      );
+    } catch (_) {
+      logoRefForEmbed = "";
+    }
+  }
+  const needsLogoEmbed = invoiceNeedsCompanyLogoEmbed({
+    sellerLogoRef: logoRefForEmbed,
+    existingEmbed: logoEmbedAttempt || frozenLogo,
+    tenantId: scope?.tenant_id ?? scope?.tenantId,
+    companyId: scope?.company_id ?? scope?.companyId,
+    env,
+  });
+  let refreshDecision = shouldRefreshStreetInvoicePdfArtifact({
     existingPdfExists: existing.exists === true,
     forceRefresh: forceRefresh === true,
     storedProjectionRevision: storedRevision,
     nextProjectionRevision: projection.projectionRevision,
     reason,
   });
+  if (!refreshDecision.refresh && needsLogoEmbed) {
+    refreshDecision = {
+      refresh: true,
+      reason: "company_logo_embed_pending",
+    };
+  }
   if (!refreshDecision.refresh) {
     return {
       ok: true,
@@ -65233,6 +65363,114 @@ async function ensureStreetBusinessInvoicePdfArtifact(
       key: existing.key || null,
       projection_revision: storedRevision || projection.projectionRevision,
     };
+  }
+
+  // FLUXIDI-INVOICE-COMPANY-LOGO-FETCH-AND-EMBED-P0-2:
+  // Resolve + embed the canonical Branding & support logo into the seller
+  // profile used for this PDF. Failures fall back to company-name + Fluxidi
+  // monogram; generation must still succeed.
+  let sellerCommProfile = projection.sellerCommProfile;
+  let projectionRevision = projection.projectionRevision;
+  try {
+    const embedResult = await resolveAndEmbedInvoiceCompanyLogo({
+      env,
+      logoRef: logoRefForEmbed,
+      tenantId: scope?.tenant_id ?? scope?.tenantId,
+      companyId: scope?.company_id ?? scope?.companyId,
+      existingEmbed: frozenLogo,
+    });
+    console.log(formatInvoiceLogoEmbedDiagnostic(embedResult.diagnostic));
+    if (embedResult.ok && isUsableInvoiceLogoEmbed(embedResult.embed)) {
+      const stampedBooking = await stampBookingInvoiceLogoEmbed(
+        env,
+        safeBookingId,
+        rec,
+        embedResult.embed,
+      );
+      if (stampedBooking?.rec && typeof stampedBooking.rec === "object") {
+        rec = stampedBooking.rec;
+      }
+      const docId =
+        safeStr(projection.documentId, 200) ||
+        safeStr(binding.document_id, 200) ||
+        safeStr(resolvedDocumentId, 200) ||
+        "";
+      if (docId) {
+        const stampedDoc = await stampDocumentCoreSellerLogoEmbed(
+          env,
+          scope,
+          docId,
+          embedResult.embed,
+        );
+        if (stampedDoc?.record && typeof stampedDoc.record === "object") {
+          resolvedIssued = stampedDoc.record;
+        }
+      }
+      // Rebuild projection so revision fingerprints the frozen bytes.
+      const rebuilt = buildStreetInvoicePdfProjection({
+        scope,
+        bookingId: safeBookingId,
+        bookingRecord: rec,
+        issuedDocument: resolvedIssued,
+        invoiceNumber,
+        documentId: docId || binding.document_id || resolvedDocumentId,
+        companyVatRatePercent,
+        communicationProfile: commProfile,
+        paymentStatusResolver: streetRidePaymentStatus,
+      });
+      if (rebuilt?.ok) {
+        sellerCommProfile = rebuilt.sellerCommProfile;
+        projectionRevision = rebuilt.projectionRevision;
+      } else {
+        sellerCommProfile = {
+          ...(sellerCommProfile && typeof sellerCommProfile === "object"
+            ? sellerCommProfile
+            : {}),
+          logoUrl: embedResult.data_uri,
+          logoEmbedSha256: embedResult.embed.sha256 || null,
+        };
+      }
+    } else if (logoRefForEmbed) {
+      // Record the failed attempt so authenticated opens do not loop forever.
+      const failed = buildFailedInvoiceLogoEmbedRecord({
+        reason: embedResult?.reason || "embed_failed",
+        keyFingerprint: embedResult?.diagnostic?.key_fp || null,
+      });
+      const stampedBooking = await stampBookingInvoiceLogoEmbed(
+        env,
+        safeBookingId,
+        rec,
+        failed,
+      );
+      if (stampedBooking?.rec && typeof stampedBooking.rec === "object") {
+        rec = stampedBooking.rec;
+      }
+    }
+  } catch (err) {
+    console.log(
+      formatInvoiceLogoEmbedDiagnostic({
+        reason: "embed_exception",
+      }),
+    );
+    if (logoRefForEmbed) {
+      try {
+        const failed = buildFailedInvoiceLogoEmbedRecord({
+          reason: "embed_exception",
+        });
+        const stampedBooking = await stampBookingInvoiceLogoEmbed(
+          env,
+          safeBookingId,
+          rec,
+          failed,
+        );
+        if (stampedBooking?.rec && typeof stampedBooking.rec === "object") {
+          rec = stampedBooking.rec;
+        }
+      } catch (_) {
+        // non-fatal
+      }
+    }
+    void err;
   }
 
   try {
@@ -65244,7 +65482,7 @@ async function ensureStreetBusinessInvoicePdfArtifact(
         booking_id: safeBookingId,
         rec,
       },
-      commProfileOverride: projection.sellerCommProfile,
+      commProfileOverride: sellerCommProfile,
       emailPolicy: {
         skipEmailDelivery: true,
         sendCustomerEmail: false,
@@ -65255,7 +65493,7 @@ async function ensureStreetBusinessInvoicePdfArtifact(
             ? "street_business_invoice_pdf_paid_refresh"
             : "street_business_invoice_pdf_ensure",
       },
-      projectionRevision: projection.projectionRevision,
+      projectionRevision,
     });
     const artifactOk = result?.invoice_pdf_artifact?.ok === true;
     if (!artifactOk) {
@@ -65272,7 +65510,7 @@ async function ensureStreetBusinessInvoicePdfArtifact(
       skipped: false,
       reason: reason === "paid_refresh" ? "refreshed_paid" : "persisted",
       key: safeStr(result?.invoice_pdf_artifact?.key, 1024) || null,
-      projection_revision: projection.projectionRevision,
+      projection_revision: projectionRevision,
       invoice_number: projection.invoiceNumber,
       document_id: projection.documentId,
     };
@@ -80274,11 +80512,78 @@ async function handleBookingInvoicePdfGet(
    * key already exists. Only the derived PDF is rebuilt — the issued Document
    * Core record, invoice number, totals, VAT and payment truth are untouched,
    * and only the single requested invoice is ever considered. */
+  /* FLUXIDI-INVOICE-COMPANY-LOGO-FETCH-AND-EMBED-P0-2:
+   * When a company logo media reference exists but has not yet been frozen into
+   * the artifact, refresh once so Branding & support bytes are embedded. */
   let record = rec;
+  let openIssuedDocument = null;
+  const openScope = resolveBookingTenantScopeFromRecord(record);
+  const openFrozenLogo = readFrozenInvoiceLogoEmbed({ bookingRecord: record });
+  const openLogoAttempt = readInvoiceLogoEmbedAttempt({ bookingRecord: record });
+  let openLogoRef = safeStr(record?.invoice_logo_ref || record?.invoiceLogoRef, 2000);
+  if (!isUsableInvoiceLogoEmbed(openFrozenLogo) && !(openLogoAttempt?.failed === true)) {
+    const docId = safeStr(
+      record?.invoice_document_id ??
+        record?.invoiceDocumentId ??
+        record?.document_id ??
+        record?.documentId,
+      200,
+    );
+    if (docId && env?.BOOKING_KV && openScope?.tenant_id && openScope?.company_id) {
+      try {
+        openIssuedDocument = await loadIssuedDocumentRegistryRecordById(
+          env,
+          openScope,
+          docId,
+        );
+      } catch (_) {
+        openIssuedDocument = null;
+      }
+      const seller =
+        openIssuedDocument?.seller_snapshot ||
+        openIssuedDocument?.immutable_snapshot?.seller_snapshot ||
+        null;
+      openLogoRef =
+        safeStr(seller?.logo_url ?? seller?.logoUrl, 2000) || openLogoRef;
+    }
+    // Historical invoices without a logo snapshot may resolve the current
+    // Branding & support logo once via the single-invoice refresh path.
+    if (!openLogoRef && openScope?.tenant_id && openScope?.company_id) {
+      try {
+        const businessProfile = await loadBusinessProfile(env, {
+          tenant_id: openScope.tenant_id,
+          company_id: openScope.company_id,
+        });
+        openLogoRef = safeStr(
+          businessProfile?.publicLogoUrl ??
+            businessProfile?.public_logo_url ??
+            businessProfile?.logoUrl ??
+            businessProfile?.logo_url,
+          2000,
+        );
+      } catch (_) {
+        // leave empty — monogram fallback
+      }
+    }
+  }
+  const openNeedsLogoEmbed = invoiceNeedsCompanyLogoEmbed({
+    sellerLogoRef: openLogoRef,
+    existingEmbed:
+      openLogoAttempt ||
+      openFrozenLogo ||
+      readInvoiceLogoEmbedAttempt({
+        bookingRecord: record,
+        issuedDocument: openIssuedDocument,
+      }),
+    tenantId: openScope?.tenant_id,
+    companyId: openScope?.company_id,
+    env,
+  });
   const openDecision = shouldRefreshStreetInvoicePdfOnOpen({
     existingPdfExists: _invoicePdfMetadataFromRecord(record).exists === true,
     storedProjectionRevision:
       readStoredStreetInvoicePdfProjectionRevision(record),
+    needsCompanyLogoEmbed: openNeedsLogoEmbed,
   });
   if (openDecision.refresh) {
     const ensureImpl =
@@ -80289,10 +80594,10 @@ async function handleBookingInvoicePdfGet(
     try {
       outcome = await ensureImpl(
         env,
-        resolveBookingTenantScopeFromRecord(record),
+        openScope,
         bookingId,
         record,
-        { reason: "ensure" },
+        { reason: "ensure", issuedDocument: openIssuedDocument },
       );
     } catch (err) {
       outcome = {

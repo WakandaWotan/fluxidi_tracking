@@ -118,9 +118,14 @@ export function buildFluxidiInvoiceLogoDataUri() {
  * Resolve the logo URL for invoice HTML.
  * Priority:
  *   1) company/profile/env logo when it is a usable embedded data URI
- *   2) packaged Fluxidi embedded fallback when seller is Fluxidi
+ *   2) packaged Fluxidi embedded fallback when no usable company logo exists
  *   3) HTTPS company/env logo only when allowExternalHttpsLogo === true
+ *      (legacy escape hatch — prefer server-side fetch+embed instead)
  *   4) otherwise empty (omit <img>, never broken src)
+ *
+ * FLUXIDI-INVOICE-COMPANY-LOGO-FETCH-AND-EMBED-P0-2: HTTPS company logos must
+ * be fetched and converted to a data URI *before* this resolver runs. This
+ * function never performs network I/O.
  */
 export function resolveInvoiceLogoSrc({
   profileLogoUrl = "",
@@ -144,20 +149,27 @@ export function resolveInvoiceLogoSrc({
     if (c.startsWith("data:image/") && isUsableInvoiceLogoDataUri(c)) return c;
   }
 
-  const brand = String(sellerBrand || "").trim().toLowerCase();
-  const isFluxidiSeller =
-    !brand ||
-    brand === "fluxidi" ||
-    brand.includes("fluxidi") ||
-    brand.includes("vanrokeghem");
+  const packaged =
+    typeof packagedDataUri === "string" &&
+    isUsableInvoiceLogoDataUri(packagedDataUri)
+      ? packagedDataUri
+      : buildFluxidiInvoiceLogoDataUri();
 
-  if (isFluxidiSeller) {
-    const packaged =
-      typeof packagedDataUri === "string" &&
-      isUsableInvoiceLogoDataUri(packagedDataUri)
-        ? packagedDataUri
-        : buildFluxidiInvoiceLogoDataUri();
-    if (packaged) return packaged;
+  // Prefer the packaged Fluxidi monogram over a live HTTPS <img src> so PDF
+  // viewing never depends on network. Company HTTPS must be embedded upstream.
+  if (packaged) {
+    // Only skip packaged fallback when an explicit external HTTPS escape hatch
+    // is enabled *and* the seller is not relying on Fluxidi branding defaults.
+    const brand = String(sellerBrand || "").trim().toLowerCase();
+    const isFluxidiSeller =
+      !brand ||
+      brand === "fluxidi" ||
+      brand.includes("fluxidi") ||
+      brand.includes("vanrokeghem");
+
+    if (!allowExternalHttpsLogo || isFluxidiSeller) {
+      return packaged;
+    }
   }
 
   if (allowExternalHttpsLogo) {
@@ -165,7 +177,7 @@ export function resolveInvoiceLogoSrc({
       if (c.startsWith("https://") || c.startsWith("http://")) return c;
     }
   }
-  return "";
+  return packaged || "";
 }
 
 /** Approximate UTF-8 byte size of the packaged SVG source (not the data URI). */
