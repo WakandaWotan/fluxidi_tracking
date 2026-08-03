@@ -27,6 +27,12 @@ crons = ["*/5 * * * *"]
 CHIRON_EXPORT_MODE = "test"
 CHIRON_EXPORT_BASE_URL = "https://mow-acc.api.vlaanderen.be/chiron/taxirit"
 
+# CHIRON-OFFLINE-ARRIVAL-P0: intentionally NOT set. CH1303 is an *update*
+# conflict ("Vertrektijdstip kreeg een nieuwe waarde"), not an already-exists
+# acknowledgement, so it may never imply acceptance. The duplicate-confirmation
+# path stays fail-closed until a narrowly proven code exists.
+# CHIRON_DUPLICATE_VERTREK_FOUTCODES = ""
+
 # Append-only compliance event storage.
 [[kv_namespaces]]
 binding = "COMPLIANCE_KV"

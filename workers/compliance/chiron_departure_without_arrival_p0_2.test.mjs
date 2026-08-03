@@ -236,8 +236,11 @@ test("6) official arrival draft is payload-ready with afstand 1.66 and EUR 7.90"
   assert.equal(draft?.payload?.afstand, 1.66);
   assert.equal(draft?.payload?.kostprijs, 7.9);
   assert.equal(draft?.payload?.ritnummer, BOOKING);
-  assert.equal(draft?.payload?.vertrektijdstip, "2026-08-03T14:17:54.831478Z");
-  assert.equal(draft?.payload?.aankomsttijdstip, "2026-08-03T14:21:39.241532Z");
+  // CHIRON-OFFLINE-ARRIVAL-P0-2: the microsecond-precision source values
+  // (.831478 / .241532) are canonicalized to the millisecond precision Chiron
+  // stores, so a replay cannot read as a changed Vertrektijdstip (CH1303).
+  assert.equal(draft?.payload?.vertrektijdstip, "2026-08-03T14:17:54.831Z");
+  assert.equal(draft?.payload?.aankomsttijdstip, "2026-08-03T14:21:39.241Z");
   assert.equal((draft?.validation?.missing || []).includes("afstand"), false);
   assert.equal((draft?.validation?.missing || []).includes("kostprijs"), false);
 });

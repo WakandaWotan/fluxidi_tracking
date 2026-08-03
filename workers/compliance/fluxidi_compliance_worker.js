@@ -3325,6 +3325,44 @@ function normalizeChironCoordinate(value, kind) {
   return num;
 }
 
+const CHIRON_DATETIME_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2})(?::(\d{2}))?(?:[.,](\d+))?(Z|z|[+-]\d{2}:?\d{2})?$/;
+
+/**
+ * CHIRON-OFFLINE-ARRIVAL-P0-2: canonicalize a Chiron datetime to UTC ISO-8601
+ * with EXACTLY three fractional digits.
+ *
+ * Field-proven drift class: the Flutter client serializes Dart `DateTime` with
+ * microsecond precision (`2026-08-03T14:17:54.831478Z`). Chiron stores
+ * milliseconds (`14:17:54.831`), so every replay of the higher-precision source
+ * value reads as a *changed* Vertrektijdstip and Chiron answers CH1303
+ * ("Vertrektijdstip kreeg een nieuwe waarde … (oude waarde is …)"). The
+ * departure then never leaves `failed` and the paired Aankomst stays parked
+ * behind the arrival gate.
+ *
+ * The fraction is TRUNCATED, never rounded: Chiron truncated `.431816` to
+ * `.431`, so rounding to `.432` would itself be a value change.
+ *
+ * A value without an explicit offset is read as UTC — every field feeding this
+ * helper is a `*_at_utc` timestamp. Unparseable input returns null (fail-closed:
+ * required-field validation reports it missing instead of shipping a value
+ * Chiron would reject).
+ */
+function chironCanonicalDateTimeMs(value) {
+  const raw = cleanText(value, 64);
+  if (!raw) return null;
+  const match = CHIRON_DATETIME_PATTERN.exec(raw);
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second, fraction, zone] = match;
+  const millis = `${fraction || ""}000`.slice(0, 3);
+  const offset = !zone || zone === "z" ? "Z" : zone;
+  const ms = Date.parse(
+    `${year}-${month}-${day}T${hour}:${minute}:${second || "00"}.${millis}${offset}`,
+  );
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms).toISOString();
+}
+
 function _chironOfficialRegistratieFieldKeys() {
   return [
     "kbo_number",
@@ -4943,14 +4981,13 @@ function _chironResolveOfficialVertrekTijdstip(event, blueprint) {
     event?.timestamps && typeof event.timestamps === "object" && !Array.isArray(event.timestamps)
       ? event.timestamps
       : {};
-  return (
-    cleanText(
-      timestamps.started_at_utc ??
-        timestamps.event_at_utc ??
-        blueprint?.occurred_at_utc ??
-        event?.created_at_utc,
-      64,
-    ) || null
+  // CHIRON-OFFLINE-ARRIVAL-P0-2: canonicalized to millisecond precision so the
+  // first submit and every replay carry a byte-identical Vertrektijdstip.
+  return chironCanonicalDateTimeMs(
+    timestamps.started_at_utc ??
+      timestamps.event_at_utc ??
+      blueprint?.occurred_at_utc ??
+      event?.created_at_utc,
   );
 }
 
@@ -4959,14 +4996,11 @@ function _chironResolveOfficialAankomstTijdstip(event, blueprint) {
     event?.timestamps && typeof event.timestamps === "object" && !Array.isArray(event.timestamps)
       ? event.timestamps
       : {};
-  return (
-    cleanText(
-      timestamps.stopped_at_utc ??
-        timestamps.event_at_utc ??
-        blueprint?.occurred_at_utc ??
-        event?.created_at_utc,
-      64,
-    ) || null
+  return chironCanonicalDateTimeMs(
+    timestamps.stopped_at_utc ??
+      timestamps.event_at_utc ??
+      blueprint?.occurred_at_utc ??
+      event?.created_at_utc,
   );
 }
 
@@ -5333,7 +5367,7 @@ function buildChironOfficialPayloadDraft(event, blueprint, scope, officialStatus
     hydrated?.driver || hydrateChironOfficialDriverIdentity(safeEvent, safeBlueprint);
 
   const payload = {
-    broncreatiedatum: cleanText(safeEvent.created_at_utc, 64) || null,
+    broncreatiedatum: chironCanonicalDateTimeMs(safeEvent.created_at_utc),
     ritnummer: _chironResolveOfficialRitnummer(safeEvent, safeBlueprint),
     registratie: business.registratie || null,
     naam: business.naam || null,
@@ -6835,7 +6869,7 @@ async function _chironBuildExportDryRunPayloadResponse(
 //                                          resolve via the portaal first
 //   { decision: "not_retryable" }        — a prior failure whose cause is
 //                                          unclear; blocks automatic retry
-function _chironEvaluateSubmitDuplicateGuard(previousStatus, nowMs = Date.now()) {
+function _chironEvaluateSubmitDuplicateGuard(previousStatus, nowMs = Date.now(), options = {}) {
   if (!previousStatus || typeof previousStatus !== "object") {
     return { decision: "allow" };
   }
@@ -6891,22 +6925,42 @@ function _chironEvaluateSubmitDuplicateGuard(previousStatus, nowMs = Date.now())
     // gets promoted to `verification_required` at write time — but if an
     // older status doc lacks the marker, we conservatively block retries.
     if (previousStatus.failure_kind === "definitive") {
-      // CHIRON-OFFLINE-ARRIVAL-P0: bounded. Without a cap/cooldown the cron
-      // would re-POST a permanently rejected message every tick and the
-      // reconcile pass would keep stopping on it, starving newer rides.
-      const definitiveAttempts = Number(previousStatus.attempt_count);
-      if (
-        Number.isFinite(definitiveAttempts) &&
-        definitiveAttempts >= CHIRON_DEFINITIVE_RETRY_MAX_ATTEMPTS
-      ) {
-        return { decision: "not_retryable" };
-      }
+      // The cooldown always applies, so no rejected message can be re-POSTed on
+      // every cron tick.
       const definitiveLastMs = Date.parse(
         cleanText(previousStatus.last_attempt_at, 64),
       );
       if (
         Number.isFinite(definitiveLastMs) &&
         Number(nowMs) - definitiveLastMs < CHIRON_DEFINITIVE_RETRY_COOLDOWN_MS
+      ) {
+        return { decision: "not_retryable" };
+      }
+      // CHIRON-OFFLINE-ARRIVAL-P0-2: the attempt cap exists to stop re-POSTing
+      // a body Chiron already rejected. A body that differs from the rejected
+      // one is not that repeat — it is a corrected message (e.g. a
+      // Vertrektijdstip now serialized at the millisecond precision Chiron
+      // stores) and gets a fresh budget. Still bounded: the payload is derived
+      // deterministically, so the very next attempt fingerprints identically
+      // and falls back under the cap.
+      const outboundFingerprint = cleanText(options?.outboundFingerprint, 64);
+      const priorFingerprint = cleanText(previousStatus.outbound_fingerprint, 64);
+      if (outboundFingerprint && priorFingerprint !== outboundFingerprint) {
+        return { decision: "allow", outbound_payload_changed: true };
+      }
+      // CHIRON-OFFLINE-ARRIVAL-P0: bounded. Without a cap the cron would keep
+      // re-POSTing a permanently rejected message and the reconcile pass would
+      // keep stopping on it, starving newer rides. Counted per outbound body
+      // when the doc carries that counter, else per total attempt (legacy docs).
+      const perPayloadAttempts = Number(
+        previousStatus.outbound_fingerprint_definitive_attempts,
+      );
+      const definitiveAttempts = Number.isFinite(perPayloadAttempts)
+        ? perPayloadAttempts
+        : Number(previousStatus.attempt_count);
+      if (
+        Number.isFinite(definitiveAttempts) &&
+        definitiveAttempts >= CHIRON_DEFINITIVE_RETRY_MAX_ATTEMPTS
       ) {
         return { decision: "not_retryable" };
       }
@@ -6953,6 +7007,105 @@ async function _chironWriteExportStatus(env, statusKey, statusDoc) {
   }
 }
 
+// CHIRON-OFFLINE-ARRIVAL-P0-2: fields Chiron registers once per ritnummer and
+// then compares on every later message for that ritnummer. Changing one of them
+// on a replay is an UPDATE, not a retry, and Chiron rejects it — CH1303
+// "Vertrektijdstip kreeg een nieuwe waarde … (oude waarde is …)". The first
+// attempt freezes them on the export status doc; every later attempt re-sends
+// the frozen values, so retries are byte-equivalent for these fields.
+//
+// Improvable fields (coordinates, afstand, kostprijs, kentekenplaat,
+// bestuurderspasnummer) are deliberately NOT frozen: late hydration of a
+// missing coordinate or the final fare must still reach Chiron.
+const CHIRON_FROZEN_OUTBOUND_FIELDS = [
+  "broncreatiedatum",
+  "vertrektijdstip",
+  "aankomsttijdstip",
+];
+
+/**
+ * Apply the frozen immutable fields to a freshly built official payload.
+ *
+ * `inheritFrom` is the paired departure's export status doc when submitting an
+ * aankomst: the arrival body re-states `vertrektijdstip`, so it must repeat the
+ * exact value Chiron already holds for this ritnummer instead of re-deriving it
+ * from its own (possibly differently serialized) source event.
+ *
+ * Returns the payload to send, the snapshot to persist, and the names of the
+ * fields whose freshly derived value disagreed with the frozen one. Only field
+ * names are reported — never response text, credentials or ride content.
+ */
+function _chironFreezeOutboundImmutableFields(officialPayload, options = {}) {
+  const safePayload =
+    officialPayload && typeof officialPayload === "object" && !Array.isArray(officialPayload)
+      ? officialPayload
+      : {};
+  const previousFields = options?.previousStatus?.outbound_frozen?.fields;
+  const inheritedFields = options?.inheritFrom?.outbound_frozen?.fields;
+  const payload = { ...safePayload };
+  const fields = {};
+  const drift = [];
+
+  for (const field of CHIRON_FROZEN_OUTBOUND_FIELDS) {
+    const fresh = chironCanonicalDateTimeMs(payload[field]);
+    if (fresh === null && !cleanText(payload[field], 64)) continue;
+    const previous = cleanText(previousFields?.[field], 64) || null;
+    const inherited =
+      field === "vertrektijdstip" ? cleanText(inheritedFields?.[field], 64) || null : null;
+    const frozen = previous || inherited || fresh;
+    if (!frozen) continue;
+    fields[field] = frozen;
+    payload[field] = frozen;
+    if (fresh !== null && fresh !== frozen) drift.push(field);
+  }
+
+  return {
+    payload,
+    frozen: {
+      shape: "chiron_taxirit_api_v1",
+      frozen_at: cleanText(options?.frozenAt, 64) || nowIso(),
+      fields,
+    },
+    drift,
+  };
+}
+
+function _chironStableJsonString(value) {
+  if (value === null || value === undefined) return "null";
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => _chironStableJsonString(item)).join(",")}]`;
+  }
+  if (typeof value === "object") {
+    const keys = Object.keys(value).sort();
+    return `{${keys
+      .map((key) => `${JSON.stringify(key)}:${_chironStableJsonString(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * CHIRON-OFFLINE-ARRIVAL-P0-2: stable fingerprint of the exact outbound Chiron
+ * body. Persisted next to the attempt counters so an export status doc proves
+ * whether a retry re-sent the same bytes. Also lets the duplicate guard tell a
+ * pointless repeat of a rejected body apart from a genuinely corrected one.
+ * Non-cryptographic on purpose: this is drift detection, never a security
+ * boundary, and it must stay synchronous inside the guard.
+ */
+function _chironOutboundFingerprint(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const json = _chironStableJsonString(body);
+  let hashA = 0x811c9dc5;
+  let hashB = 0x1000193;
+  for (let i = 0; i < json.length; i += 1) {
+    const code = json.charCodeAt(i);
+    hashA = Math.imul(hashA ^ code, 0x1000193) >>> 0;
+    hashB = Math.imul(hashB + code, 0x85ebca6b) >>> 0;
+  }
+  const hex = `${hashA.toString(16).padStart(8, "0")}${hashB.toString(16).padStart(8, "0")}`;
+  return `fnv1a_${hex}_${json.length}`;
+}
+
 // Chiron Connect 4A0: numeric coercion helpers for the official Rit API body.
 // Coordinates stay raw numbers; afstand/kostprijs are rounded to the decimal
 // precision the Chiron technical manual r3.0 expects.
@@ -6960,6 +7113,16 @@ function _chironApiNumber(value) {
   if (value === null || value === undefined || value === "") return null;
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
+}
+
+// CHIRON-OFFLINE-ARRIVAL-P0-2: wire datetime coercion. Returns null for an
+// absent value, the canonical millisecond UTC string for a parseable one, and
+// `false` for a present-but-unparseable value so the caller can fail closed.
+function _chironWireDateTime(value) {
+  const raw = cleanText(value, 64);
+  if (!raw) return null;
+  const canonical = chironCanonicalDateTimeMs(raw);
+  return canonical === null ? false : canonical;
 }
 
 function _chironApiRoundedNumber(value, maxDecimals) {
@@ -6992,7 +7155,15 @@ function buildChironTaxiritApiPayload(officialPayload) {
   const ritnummer = cleanText(officialPayload.ritnummer, 256);
   const registratieDisplay = cleanText(officialPayload.registratie, 64);
   const naam = cleanText(officialPayload.naam, 256);
-  const broncreatiedatum = cleanText(officialPayload.broncreatiedatum, 64);
+
+  // CHIRON-OFFLINE-ARRIVAL-P0-2: this serializer is the single wire chokepoint,
+  // so every datetime is canonicalized to millisecond precision here as well.
+  // A draft built before this fix (or by another code path) can therefore never
+  // put sub-millisecond digits on the wire. Fail-closed like the KBO/plate
+  // canonicalizers: a present-but-unparseable datetime aborts serialization
+  // instead of shipping a value Chiron reads as a changed field.
+  const broncreatiedatum = _chironWireDateTime(officialPayload.broncreatiedatum);
+  if (broncreatiedatum === false) return null;
 
   // RELEASE-P0-CHIRON-REGISTRATION-KBO-CANONICAL-2026-07-31: emit digits-only
   // KBO on the wire to match the OAuth-authenticated subject. Fail-closed
@@ -7033,7 +7204,8 @@ function buildChironTaxiritApiPayload(officialPayload) {
       if (!nummerplaat) return null;
     }
     const bestuurderspasnummer = cleanText(officialPayload.bestuurderspasnummer, 64);
-    const vertrektijdstip = cleanText(officialPayload.vertrektijdstip, 64);
+    const vertrektijdstip = _chironWireDateTime(officialPayload.vertrektijdstip);
+    if (vertrektijdstip === false) return null;
     const vLng = _chironApiNumber(officialPayload.vertrekpunt_lengtegraad);
     const vLat = _chironApiNumber(officialPayload.vertrekpunt_breedtegraad);
 
@@ -7054,7 +7226,8 @@ function buildChironTaxiritApiPayload(officialPayload) {
   }
 
   if (status === "aankomst") {
-    const aankomsttijdstip = cleanText(officialPayload.aankomsttijdstip, 64);
+    const aankomsttijdstip = _chironWireDateTime(officialPayload.aankomsttijdstip);
+    if (aankomsttijdstip === false) return null;
     const aLng = _chironApiNumber(officialPayload.aankomstpunt_lengtegraad);
     const aLat = _chironApiNumber(officialPayload.aankomstpunt_breedtegraad);
     const afstand = _chironApiRoundedNumber(officialPayload.afstand, 3);
@@ -7102,6 +7275,19 @@ function _chironExtractFoutenCodes(responseBody) {
 }
 
 /**
+ * CHIRON-OFFLINE-ARRIVAL-P0-2: codes that may NEVER imply acceptance, whatever
+ * an operator configures.
+ *
+ * CH1303 is an update conflict — "Vertrektijdstip kreeg een nieuwe waarde …
+ * (oude waarde is …)" in the official Chiron Foutenlijst. It proves Chiron holds
+ * a DIFFERENT value for a field we just re-sent, so it must keep the departure
+ * failed and the arrival gate shut. The real cause is outbound value drift and
+ * is fixed by canonicalizing/freezing the payload, never by reinterpreting the
+ * fout as a duplicate acknowledgement.
+ */
+const CHIRON_NEVER_CONFIRMING_FOUTCODES = ["CH1303"];
+
+/**
  * Exact, operator-configured duplicate foutcode(s) for an already-registered
  * vertrek. Empty by default: without a proven code nothing is ever classified
  * as a duplicate. No text matching is performed anywhere.
@@ -7112,7 +7298,9 @@ function _chironDuplicateVertrekFoutcodes(env) {
   const out = [];
   for (const part of raw.split(",")) {
     const code = cleanText(part, 32).toUpperCase().replace(/[^A-Z0-9_.-]/g, "");
-    if (code && !out.includes(code)) out.push(code);
+    if (!code || out.includes(code)) continue;
+    if (CHIRON_NEVER_CONFIRMING_FOUTCODES.includes(code)) continue;
+    out.push(code);
   }
   return out;
 }
@@ -7130,6 +7318,12 @@ function _chironIsDuplicateVertrekRejection({
 } = {}) {
   if (cleanText(officialStatus, 32).toLowerCase() !== "vertrek") return false;
   if (!Array.isArray(configuredCodes) || configuredCodes.length === 0) return false;
+  // Defense in depth: a never-confirming code (CH1303) can never acknowledge a
+  // vertrek, even if it reaches this call site directly.
+  const allowed = configuredCodes.filter(
+    (code) => !CHIRON_NEVER_CONFIRMING_FOUTCODES.includes(code),
+  );
+  if (allowed.length === 0) return false;
   const codes = Array.isArray(foutenCodes) ? foutenCodes : [];
   if (codes.length === 0) return false;
   const count = Number(foutenCount);
@@ -7139,7 +7333,7 @@ function _chironIsDuplicateVertrekRejection({
   if (codes.length !== count) return false;
   const status = Number(externalStatusCode);
   if (!Number.isFinite(status) || status < 200 || status >= 300) return false;
-  return codes.every((code) => configuredCodes.includes(code));
+  return codes.every((code) => allowed.includes(code));
 }
 
 function parseChironTaxiritSubmitResponse(httpStatus, responseBody) {
@@ -8384,12 +8578,6 @@ async function handleChironExportTest(request, env, origin) {
     const officialIdempotencyKey = cleanText(officialDraft.idempotency_key, 256);
     if (!officialIdempotencyKey) continue;
 
-    // Chiron Connect 4A0: serialize the flat official draft into the nested
-    // official Chiron Rit API body just before submit. If serialization fails
-    // (unexpected for a "ready" payload) we never submit a malformed body.
-    const chironApiPayload = buildChironTaxiritApiPayload(officialPayload);
-    if (!chironApiPayload) continue;
-
     // Status / dedupe key is keyed on the official idempotency key so
     // outbound and return legs of a roundtrip get distinct entries (3B)
     // and re-runs against the same ritnummer/status combination collapse
@@ -8401,11 +8589,26 @@ async function handleChironExportTest(request, env, origin) {
     );
     const previousStatus = await _chironReadExportStatus(env, statusKey);
 
+    // Chiron Connect 4A0: serialize the flat official draft into the nested
+    // official Chiron Rit API body just before submit. If serialization fails
+    // (unexpected for a "ready" payload) we never submit a malformed body.
+    // CHIRON-OFFLINE-ARRIVAL-P0-2: the operator batch honours the same frozen
+    // immutable fields as auto-submit, so an operator re-run cannot change a
+    // value Chiron already registered for this ritnummer.
+    const freeze = _chironFreezeOutboundImmutableFields(officialPayload, {
+      previousStatus,
+    });
+    const chironApiPayload = buildChironTaxiritApiPayload(freeze.payload);
+    if (!chironApiPayload) continue;
+    const outboundFingerprint = _chironOutboundFingerprint(chironApiPayload);
+
     // RELEASE-P0-OFFICIAL-CHIRON-OAUTH-SUBMIT-2026-07-31: batch export must
     // NEVER re-POST an event whose duplicate-guard forbids resubmission
     // (already synced, still pending, awaiting operator verification, or
     // otherwise not-retryable). Skip and record the reason.
-    const guard = _chironEvaluateSubmitDuplicateGuard(previousStatus);
+    const guard = _chironEvaluateSubmitDuplicateGuard(previousStatus, Date.now(), {
+      outboundFingerprint,
+    });
     if (guard.decision !== "allow") {
       exportAttempts.push({
         event_id: payload.event_id,
@@ -8443,6 +8646,9 @@ async function handleChironExportTest(request, env, origin) {
       last_attempt_at: nowIso,
       attempt_count: attemptCount,
       sanitized_error: null,
+      outbound_frozen: freeze.frozen,
+      outbound_fingerprint: outboundFingerprint,
+      immutable_field_drift: freeze.drift.length ? freeze.drift : null,
     };
     await _chironWriteExportStatus(env, statusKey, pendingDoc);
 
@@ -8510,6 +8716,10 @@ async function handleChironExportTest(request, env, origin) {
       fouten_count: postResult.fouten_count ?? null,
       sanitized_error: postResult.sanitized_error ?? null,
       last_attempt_at: new Date().toISOString(),
+      outbound_fingerprint_definitive_attempts:
+        cleanText(previousStatus?.outbound_fingerprint, 64) === outboundFingerprint
+          ? Number(previousStatus?.outbound_fingerprint_definitive_attempts || 0) + 1
+          : 1,
     };
     await _chironWriteExportStatus(env, statusKey, finalDoc);
 
@@ -11475,6 +11685,11 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
     const tenantSegment = safeSegment(scope.tenant_id, "");
     const companySegment = safeSegment(scope.company_id, "");
 
+    // CHIRON-OFFLINE-ARRIVAL-P0-2: read once, reused for the arrival gate, the
+    // environment stamp and the frozen `vertrektijdstip` the arrival body has to
+    // repeat.
+    let pairedDepartureStatus = null;
+
     // Arrival sequence gate: only allowed when the paired departure is
     // already `synced`. When departure is pending / verification_required /
     // failed we record a `waiting_for_departure` marker on the arrival's
@@ -11493,9 +11708,10 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
             departureIdempotencyKey,
           )
         : null;
-      const departureStatus = departureStatusKey
+      pairedDepartureStatus = departureStatusKey
         ? await _chironReadExportStatus(env, departureStatusKey)
         : null;
+      const departureStatus = pairedDepartureStatus;
       const departureSyncState = cleanText(departureStatus?.sync_state, 32).toLowerCase();
       // CHIRON-OFFLINE-ARRIVAL-P0: the gate opens for a departure Chiron
       // actually holds — either our own accepted submit (`synced`) or a
@@ -11585,7 +11801,29 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
       officialIdempotencyKey,
     );
     const previousStatus = await _chironReadExportStatus(env, statusKey);
-    const guard = _chironEvaluateSubmitDuplicateGuard(previousStatus);
+
+    // CHIRON-OFFLINE-ARRIVAL-P0-2: build the exact outbound body BEFORE the
+    // duplicate guard runs. The guard needs its fingerprint to tell a pointless
+    // repeat of a rejected body apart from a corrected one.
+    const freeze = _chironFreezeOutboundImmutableFields(officialPayload, {
+      previousStatus,
+      inheritFrom: messageType === "arrival" ? pairedDepartureStatus : null,
+    });
+    const chironApiPayload = buildChironTaxiritApiPayload(freeze.payload);
+    if (!chironApiPayload) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: "official_payload_serialization_failed",
+        message_type: messageType,
+        source,
+      };
+    }
+    const outboundFingerprint = _chironOutboundFingerprint(chironApiPayload);
+
+    const guard = _chironEvaluateSubmitDuplicateGuard(previousStatus, Date.now(), {
+      outboundFingerprint,
+    });
     if (guard.decision !== "allow") {
       // RELEASE-P0-AUTO-CHIRON-2026-07-31: when the duplicate guard reports the
       // idempotency key is `already_synced` but the testflow counters have NOT
@@ -11631,17 +11869,6 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
       };
     }
 
-    const chironApiPayload = buildChironTaxiritApiPayload(officialPayload);
-    if (!chironApiPayload) {
-      return {
-        ok: false,
-        skipped: true,
-        reason: "official_payload_serialization_failed",
-        message_type: messageType,
-        source,
-      };
-    }
-
     // RELEASE-P0-CHIRON-STATE-MACHINE-2026-07-31: per-ride environment
     // ownership. Depart-events stamp the current effective Chiron environment
     // on the export status doc; the arrival read path inherits that stamp so a
@@ -11652,23 +11879,10 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
     // URL selection and never falls back to ACC.
     let effectiveEnvForThisEvent;
     if (messageType === "arrival") {
-      // Recompute the paired departure's inherited env (the branch above only
-      // wrote it for the waiting_for_departure case; here we know departure
-      // IS synced so we still honor its stored environment stamp).
-      const departureIdempotencyKey =
-        _chironPairedDepartureIdempotencyKeyForArrivalDraft(scope, officialPayload);
-      const departureStatusKey = departureIdempotencyKey
-        ? buildChironExportStatusKey(
-            tenantSegment,
-            companySegment,
-            departureIdempotencyKey,
-          )
-        : null;
-      const departureStatus = departureStatusKey
-        ? await _chironReadExportStatus(env, departureStatusKey)
-        : null;
+      // The arrival gate above already read the paired departure doc; here we
+      // know departure IS confirmed and we still honor its environment stamp.
       effectiveEnvForThisEvent =
-        cleanText(departureStatus?.effective_environment, 32).toLowerCase() ||
+        cleanText(pairedDepartureStatus?.effective_environment, 32).toLowerCase() ||
         _chironDeriveEffectiveChironEnvironment(statusPayload);
     } else {
       effectiveEnvForThisEvent = _chironDeriveEffectiveChironEnvironment(statusPayload);
@@ -11696,10 +11910,21 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
       auto_submit: true,
       auto_submit_source: source,
       effective_environment: effectiveEnvForThisEvent,
+      // CHIRON-OFFLINE-ARRIVAL-P0-2: the immutable fields Chiron compares are
+      // frozen on the first attempt and re-sent verbatim afterwards; the
+      // fingerprint proves whether a retry carried the same bytes.
+      outbound_frozen: freeze.frozen,
+      outbound_fingerprint: outboundFingerprint,
+      immutable_field_drift: freeze.drift.length ? freeze.drift : null,
     };
     await _chironWriteExportStatus(env, statusKey, pendingDoc);
     pendingStatusKey = statusKey;
     pendingDocSnapshot = pendingDoc;
+    if (freeze.drift.length) {
+      console.log(
+        `[CHIRON_AUTO_SUBMIT][IMMUTABLE_DRIFT_BLOCKED] tenant=${logMask(scope.tenant_id)} company=${logMask(scope.company_id)} ritnummer=${ritnummer} status=${officialStatus} fields=${freeze.drift.join("|")} source=${source}`,
+      );
+    }
 
     // RELEASE-P0-CHIRON-SELF-SERVICE-2026-07-31: OAuth + taxirit URL follow the
     // per-ride environment stamp. Production NEVER falls back to ACC — a
@@ -11844,6 +12069,13 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
           }
         : null,
       last_attempt_at: nowIso(),
+      // Definitive-rejection budget is counted per outbound body: a corrected
+      // payload starts at 1, an identical re-rejection keeps counting up to
+      // CHIRON_DEFINITIVE_RETRY_MAX_ATTEMPTS.
+      outbound_fingerprint_definitive_attempts:
+        cleanText(previousStatus?.outbound_fingerprint, 64) === outboundFingerprint
+          ? Number(previousStatus?.outbound_fingerprint_definitive_attempts || 0) + 1
+          : 1,
     };
     await _chironWriteExportStatus(env, statusKey, finalDoc);
     pendingStatusKey = null;
@@ -12425,6 +12657,13 @@ export const __testInternals = {
   _chironListConnectionScopes,
   _chironCronReconcileAllScopesBestEffort,
   parseChironTaxiritSubmitResponse,
+  // CHIRON-OFFLINE-ARRIVAL-P0-2
+  CHIRON_NEVER_CONFIRMING_FOUTCODES,
+  CHIRON_FROZEN_OUTBOUND_FIELDS,
+  chironCanonicalDateTimeMs,
+  _chironFreezeOutboundImmutableFields,
+  _chironOutboundFingerprint,
+  buildChironOfficialPayloadDraft,
 };
 
 export default {
