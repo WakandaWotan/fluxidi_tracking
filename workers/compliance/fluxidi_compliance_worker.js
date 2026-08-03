@@ -3664,6 +3664,66 @@ function isValidChironDistance(value) {
   return num > 0;
 }
 
+/**
+ * Money-style 2-decimal normalization that rejects distances that round to 0.
+ *
+ * FLUXIDI-CHIRON-MISSING-POST-ACCEPTANCE-RIDE-P0-1: a client can post a
+ * near-zero `km_total` (e.g. metres mislabeled as km). `normalizeChironMoney`
+ * rounds that to 0.00, which must not be treated as a usable Chiron `afstand`.
+ */
+function _chironNormalizeValidDistanceKm(value) {
+  const normalized = normalizeChironMoney(value);
+  return isValidChironDistance(normalized) ? normalized : null;
+}
+
+/**
+ * Great-circle distance in km between two WGS84 points. Returns null when the
+ * inputs are not a usable coordinate pair. Never invents coordinates.
+ */
+function _chironHaversineDistanceKm(lng1, lat1, lng2, lat2) {
+  if (
+    !_chironValidTrustedCoordPair(lng1, lat1) ||
+    !_chironValidTrustedCoordPair(lng2, lat2)
+  ) {
+    return null;
+  }
+  const toRad = (deg) => (Number(deg) * Math.PI) / 180;
+  const φ1 = toRad(lat1);
+  const φ2 = toRad(lat2);
+  const Δφ = toRad(Number(lat2) - Number(lat1));
+  const Δλ = toRad(Number(lng2) - Number(lng1));
+  const sinΔφ = Math.sin(Δφ / 2);
+  const sinΔλ = Math.sin(Δλ / 2);
+  const a =
+    sinΔφ * sinΔφ + Math.cos(φ1) * Math.cos(φ2) * sinΔλ * sinΔλ;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
+  const km = 6371 * c;
+  if (!Number.isFinite(km) || km <= 0) return null;
+  return km;
+}
+
+/**
+ * Resolve a renderer-safe aankomst afstand: prefer a positive fare distance,
+ * else a trusted sibling distance, else haversine of the ride's own coords.
+ */
+function _chironResolveOfficialAfstandKm({
+  fareDistanceKm = null,
+  trustedDistanceKm = null,
+  pickupLng = null,
+  pickupLat = null,
+  dropoffLng = null,
+  dropoffLat = null,
+} = {}) {
+  const fromFare = _chironNormalizeValidDistanceKm(fareDistanceKm);
+  if (fromFare != null) return fromFare;
+  const fromTrusted = _chironNormalizeValidDistanceKm(trustedDistanceKm);
+  if (fromTrusted != null) return fromTrusted;
+  const fromCoords = _chironNormalizeValidDistanceKm(
+    _chironHaversineDistanceKm(pickupLng, pickupLat, dropoffLng, dropoffLat),
+  );
+  return fromCoords;
+}
+
 // === Chiron-6B-3A: anti-placeholder + format readiness helpers ===
 
 const CHIRON_PLACEHOLDER_KEYWORDS = [
@@ -5330,11 +5390,17 @@ function buildChironOfficialPayloadDraft(event, blueprint, scope, officialStatus
     }
     payload.aankomstpunt_lengtegraad = aLng;
     payload.aankomstpunt_breedtegraad = aLat;
-    let afstand = normalizeChironMoney(fare.distance_km);
-    if (!isValidChironDistance(afstand) && isValidChironDistance(trustedRide.distanceKm)) {
-      afstand = normalizeChironMoney(trustedRide.distanceKm);
-    }
-    payload.afstand = afstand;
+    // FLUXIDI-CHIRON-MISSING-POST-ACCEPTANCE-RIDE-P0-1: never let a near-zero
+    // km_total that rounds to 0.00 block ACC aankomst when the ride already
+    // carries a usable pickup/dropoff coordinate pair.
+    payload.afstand = _chironResolveOfficialAfstandKm({
+      fareDistanceKm: fare.distance_km,
+      trustedDistanceKm: trustedRide.distanceKm,
+      pickupLng: payload.vertrekpunt_lengtegraad ?? pickup?.lng,
+      pickupLat: payload.vertrekpunt_breedtegraad ?? pickup?.lat,
+      dropoffLng: aLng,
+      dropoffLat: aLat,
+    });
     payload.kostprijs = normalizeChironMoney(fare.total_amount);
   }
 
@@ -5675,8 +5741,23 @@ function _chironTrustedRideCandidateFromEvent(event, blueprint) {
     candidate.dropoffLng = normalizeChironCoordinate(dropoff.lng, "lng");
     candidate.dropoffLat = normalizeChironCoordinate(dropoff.lat, "lat");
   }
-  if (isValidChironDistance(fare?.distance_km)) {
-    candidate.distanceKm = normalizeChironMoney(fare.distance_km);
+  const fareDistance = _chironNormalizeValidDistanceKm(fare?.distance_km);
+  if (fareDistance != null) {
+    candidate.distanceKm = fareDistance;
+  } else if (
+    candidate.pickupLng !== null &&
+    candidate.pickupLat !== null &&
+    candidate.dropoffLng !== null &&
+    candidate.dropoffLat !== null
+  ) {
+    // Same near-zero km_total class as aankomst: derive distance from the
+    // event's own trusted coordinates instead of storing a rounded 0.
+    candidate.distanceKm = _chironResolveOfficialAfstandKm({
+      pickupLng: candidate.pickupLng,
+      pickupLat: candidate.pickupLat,
+      dropoffLng: candidate.dropoffLng,
+      dropoffLat: candidate.dropoffLat,
+    });
   }
   return candidate;
 }
@@ -11753,11 +11834,31 @@ async function _chironAutoReconcileScopeBestEffort(
       if (!messageType) continue;
       const eventAtMs = Date.parse(cleanText(event.created_at_utc, 64));
       if (!Number.isFinite(eventAtMs) || eventAtMs < effectiveFloorMs) continue;
-      candidates.push({ key, event, eventAtMs, messageType });
+      candidates.push({
+        key,
+        event,
+        eventAtMs,
+        messageType,
+        bookingId: cleanText(event.booking_id, 128) || "",
+      });
     }
-    // Process oldest first so a leg's departure is always attempted before
-    // its paired arrival on the same reconciler pass.
-    candidates.sort((a, b) => a.eventAtMs - b.eventAtMs);
+    // FLUXIDI-CHIRON-MISSING-POST-ACCEPTANCE-RIDE-P0-1: prefer newer bookings
+    // so post-acceptance ACC rides are not starved by a long already-synced
+    // history inside the process budget. Within one booking, departure still
+    // runs before arrival.
+    candidates.sort((a, b) => {
+      if (a.bookingId && a.bookingId === b.bookingId) {
+        if (a.messageType !== b.messageType) {
+          return a.messageType === "departure" ? -1 : 1;
+        }
+        return a.eventAtMs - b.eventAtMs;
+      }
+      if (b.eventAtMs !== a.eventAtMs) return b.eventAtMs - a.eventAtMs;
+      if (a.messageType !== b.messageType) {
+        return a.messageType === "departure" ? -1 : 1;
+      }
+      return 0;
+    });
 
     let processed = 0;
     for (const c of candidates) {
@@ -11767,33 +11868,47 @@ async function _chironAutoReconcileScopeBestEffort(
         source,
         preloadedContextEntries: contextEntries,
       });
-      processed += 1;
-      outcome.processed += 1;
+      // FLUXIDI-CHIRON-MISSING-POST-ACCEPTANCE-RIDE-P0-1: already-synced
+      // historical events must not consume the per-pass process budget, or
+      // post-5/5 ACC rides never get a reconcile retry after a one-shot
+      // append failure.
+      const burnsProcessBudget =
+        submitOutcome.reason !== "duplicate_guard_already_synced" &&
+        submitOutcome.reason !== "already_synced";
+      if (burnsProcessBudget) {
+        processed += 1;
+        outcome.processed += 1;
+      }
       if (submitOutcome.ok === true && submitOutcome.skipped !== true) {
         outcome.submitted += 1;
       } else if (submitOutcome.reason === "waiting_for_departure") {
         outcome.waiting_for_departure += 1;
-      } else if (submitOutcome.reason === "duplicate_guard_already_synced") {
+      } else if (
+        submitOutcome.reason === "duplicate_guard_already_synced" ||
+        submitOutcome.reason === "already_synced"
+      ) {
         outcome.already_synced += 1;
       } else if (submitOutcome.skipped === true) {
         outcome.skipped += 1;
       } else if (submitOutcome.ok !== true) {
         outcome.failed += 1;
       }
-      outcome.events.push({
-        key: c.key,
-        event_type: cleanText(c.event?.event_type, 64) || null,
-        message_type: c.messageType,
-        booking_id: cleanText(c.event?.booking_id, 128) || null,
-        leg_type:
-          cleanText(c.event?.leg_type ?? c.event?.legType, 32) || null,
-        created_at_utc: cleanText(c.event?.created_at_utc, 64) || null,
-        ok: submitOutcome.ok === true,
-        skipped: submitOutcome.skipped === true,
-        reason: cleanText(submitOutcome.reason, 96) || null,
-        sync_state: cleanText(submitOutcome.sync_state, 32) || null,
-        ritnummer: cleanText(submitOutcome.ritnummer, 96) || null,
-      });
+      if (outcome.events.length < CHIRON_AUTO_RECONCILE_MAX_PROCESS * 3) {
+        outcome.events.push({
+          key: c.key,
+          event_type: cleanText(c.event?.event_type, 64) || null,
+          message_type: c.messageType,
+          booking_id: cleanText(c.event?.booking_id, 128) || null,
+          leg_type:
+            cleanText(c.event?.leg_type ?? c.event?.legType, 32) || null,
+          created_at_utc: cleanText(c.event?.created_at_utc, 64) || null,
+          ok: submitOutcome.ok === true,
+          skipped: submitOutcome.skipped === true,
+          reason: cleanText(submitOutcome.reason, 96) || null,
+          sync_state: cleanText(submitOutcome.sync_state, 32) || null,
+          ritnummer: cleanText(submitOutcome.ritnummer, 96) || null,
+        });
+      }
 
       // Hard stop on unrecoverable Chiron rejection so the reconciler never
       // loops on the same failure. `_chironAutoSubmitOneEvent` already wrote
@@ -11965,6 +12080,12 @@ export const __testInternals = {
   getChironTestflowProgress,
   CHIRON_OAUTH_TOKEN_URL_BY_ENVIRONMENT,
   CHIRON_TAXIRIT_URL_BY_ENVIRONMENT,
+  // FLUXIDI-CHIRON-MISSING-POST-ACCEPTANCE-RIDE-P0-1
+  _chironBuildOfficialDraftForSingleEvent,
+  _chironResolveOfficialAfstandKm,
+  _chironNormalizeValidDistanceKm,
+  _chironHaversineDistanceKm,
+  CHIRON_AUTO_RECONCILE_MAX_PROCESS,
 };
 
 export default {
