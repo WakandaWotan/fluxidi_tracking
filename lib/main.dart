@@ -109,6 +109,7 @@ import 'navigation/driver_navigation_formatters.dart';
 import 'navigation/driver_navigation_draw_state.dart';
 import 'navigation/driver_navigation_directions_request.dart';
 import 'navigation/nav_route_error.dart';
+import 'navigation/nav_external_fallback_policy.dart';
 import 'navigation/driver_navigation_geometry.dart';
 import 'navigation/driver_navigation_instruction_state.dart';
 import 'navigation/presentation/maneuver_presentation.dart';

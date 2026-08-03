@@ -971,6 +971,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   // retry whose generation != this is stale and must not fire.
   int _navRouteRetryGeneration = 0;
   Timer? _navRouteRetryTimer;
+  // FLUXIDI-EXTERNAL-NAV-FALLBACK-POPUP-LOOP-P0-1: sticky per navigation
+  // attempt. App resume / GPS / reroute callbacks must not clear this.
+  final NavExternalFallbackLatch _externalNavFallbackLatch =
+      NavExternalFallbackLatch();
   double _uiArrowBearing = 0.0;
   _RouteSnap? _lastRouteSnap;
   double? _lastMovementBearing;
@@ -1314,6 +1318,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       _routeCoords = [];
       _routeKm = null;
       _routeDurationSec = null;
+      // New ride / cleared session: allow a fresh terminal-fallback attempt.
+      // App resume must never call this path solely to reopen the prompt.
+      _resetExternalNavFallbackLatchForNewAttempt(reason: 'route_cleared');
     }
     _routeSteps = const <_NavStep>[];
     _nextStepIndex = 0;
@@ -1854,6 +1861,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         ),
       );
       return false;
+    }
+
+    // Initial (non-reroute) activation opens a new navigation attempt latch.
+    // Successful mid-ride reroutes must not reset the sticky dismissal.
+    if (!_isRerouting) {
+      _resetExternalNavFallbackLatchForNewAttempt(reason: 'route_activated');
     }
 
     // RELEASE-P0: reject a reroute package that cannot initialize forward
@@ -18577,13 +18590,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         ),
       );
       if (!ok) {
-        _toast(
-          _tr(
-            nl: 'Route bijwerken mislukt. Probeer Google Maps of Waze.',
-            en: 'Could not update route. Try Google Maps or Waze.',
-            fr: 'Mise a jour de l\'itineraire impossible. Essayez Google Maps ou Waze.',
-            es: 'No se pudo actualizar la ruta. Prueba Google Maps o Waze.',
-          ),
+        // FLUXIDI-EXTERNAL-NAV-FALLBACK-POPUP-LOOP-P0-1: never auto-recommend
+        // Waze/Google on reroute failure. Fluxidi keeps the prior route and
+        // retries in-app; external maps stay behind the manual More actions.
+        _maybeAutoPromptExternalNavFallback(
+          reason: 'reroute_failed',
+          failureIsTerminal: false,
+          transientNavigationSignal: true,
         );
       }
       if (mounted) setState(() {});
@@ -22281,6 +22294,71 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  /// FLUXIDI-EXTERNAL-NAV-FALLBACK-POPUP-LOOP-P0-1: single owner for any
+  /// automatic Waze/Google recommendation. Almost always a no-op under the
+  /// release policy; never invoked from build, GPS ticks, or reroute loops
+  /// without going through [resolveExternalNavAutoPrompt] + the session latch.
+  void _maybeAutoPromptExternalNavFallback({
+    required String reason,
+    required bool failureIsTerminal,
+    bool transientNavigationSignal = false,
+  }) {
+    final activeNav =
+        _liveRideActive ||
+        _cameraMode == _CameraMode.follow ||
+        _routePhase == _RideRoutePhase.toPickup ||
+        _routePhase == _RideRoutePhase.trip;
+    final hasUsable =
+        _hasValidActiveRoute || _routeCoords.length >= 2;
+    final decision = resolveExternalNavAutoPrompt(
+      NavExternalFallbackPromptInput(
+        navigationSuccessfullyStarted:
+            hasUsable || _liveRideActive || activeNav,
+        hasUsableRoute: hasUsable,
+        failureIsTerminal: failureIsTerminal,
+        fluxidiCanProvideNavigation: hasUsable || activeNav,
+        driverInActiveNavigation: activeNav,
+        alreadyShownOrDismissedThisAttempt:
+            _externalNavFallbackLatch.isLatched,
+        transientNavigationSignal: transientNavigationSignal,
+      ),
+    );
+    _logNavBounded(
+      'NAV_EXTERNAL_FALLBACK',
+      'show=${decision.shouldShow ? 1 : 0} reason=${decision.reason} '
+          'caller=$reason latch=${_externalNavFallbackLatch.isLatched ? 1 : 0} '
+          'attempt=${_externalNavFallbackLatch.attemptId}',
+      intervalMs: 2000,
+    );
+    if (!decision.shouldShow) return;
+    if (!_externalNavFallbackLatch.tryBeginPresentation()) return;
+    if (!mounted) {
+      _externalNavFallbackLatch.cancelInFlight();
+      return;
+    }
+    _externalNavFallbackLatch.markShownOrDismissed();
+    _toast(
+      _tr(
+        nl: 'Navigatie kon niet worden gestart. Open Waze of Google Maps via Meer.',
+        en: 'Navigation could not start. Open Waze or Google Maps from More.',
+        fr: 'La navigation n’a pas pu démarrer. Ouvrez Waze ou Google Maps via Plus.',
+        es: 'No se pudo iniciar la navegación. Abre Waze o Google Maps en Más.',
+      ),
+    );
+  }
+
+  void _resetExternalNavFallbackLatchForNewAttempt({
+    required String reason,
+  }) {
+    _externalNavFallbackLatch.beginNewNavigationAttempt();
+    _logNavBounded(
+      'NAV_EXTERNAL_FALLBACK',
+      'event=attempt_reset reason=$reason '
+          'attempt=${_externalNavFallbackLatch.attemptId}',
+      intervalMs: 500,
+    );
+  }
+
   _ExternalNavTarget? _resolveExternalNavTarget() {
     if (_directRideDestinationPoint != null) {
       return _ExternalNavTarget(
@@ -23583,9 +23661,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     final copy = navRouteErrorMessage(kind, tr: _tr);
     if (isReroute && _hasValidActiveRoute) {
       // Reroute failure with an existing valid route: the old route, its version
-      // and banner ownership remain authoritative. Only a compact, bounded,
-      // sanitized warning is surfaced — no route/banner state is cleared here.
-      _toast(copy.message);
+      // and banner ownership remain authoritative. No driver popup — temporary
+      // network/Directions failures must not interrupt active guidance
+      // (FLUXIDI-EXTERNAL-NAV-FALLBACK-POPUP-LOOP-P0-1).
       return;
     }
     // Initial failure (no valid route): enter a sanitized connectivity/retry
