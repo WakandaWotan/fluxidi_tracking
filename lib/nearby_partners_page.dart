@@ -11,6 +11,7 @@ import 'calculator_page.dart';
 import 'customer_profile_store.dart';
 import 'customer_theme_palette.dart';
 import 'customer_theme_store.dart';
+import 'nearby/nearby_partner_hero_media.dart';
 import 'partner_public_profile_page.dart';
 
 typedef CustomerProfileBackendSync =
@@ -876,9 +877,14 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     ]);
     final distanceKm = _mapDoubleAny(p, const ['distance_km', 'distanceKm']);
 
-    Widget fallbackStrip({double height = 66}) {
+    final mediaHeight = nearbyPartnerHeroMediaHeight(
+      MediaQuery.sizeOf(context).width,
+    );
+
+    Widget fallbackStrip({double? height}) {
+      final h = height ?? mediaHeight;
       return Container(
-        height: height,
+        height: h,
         padding: const EdgeInsets.symmetric(horizontal: 11),
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -942,73 +948,12 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(11),
-                  child: heroUrl.isNotEmpty
-                      ? Stack(
-                          children: [
-                            Image.network(
-                              heroUrl,
-                              height: 90,
-                              width: double.infinity,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) =>
-                                  fallbackStrip(height: 90),
-                            ),
-                            Positioned.fill(
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [
-                                      Colors.black.withOpacity(0.12),
-                                      Colors.black.withOpacity(0.55),
-                                    ],
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            if (logoUrl.isNotEmpty)
-                              Positioned(
-                                left: 10,
-                                bottom: 8,
-                                child: CircleAvatar(
-                                  radius: 14,
-                                  backgroundColor: Colors.black.withOpacity(
-                                    0.82,
-                                  ),
-                                  foregroundImage: NetworkImage(logoUrl),
-                                ),
-                              ),
-                          ],
-                        )
-                      : logoUrl.isNotEmpty
-                      ? Container(
-                          height: 90,
-                          width: double.infinity,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                _panel,
-                                _card,
-                                _gold.withOpacity(_isDarkTheme ? 0.20 : 0.14),
-                              ],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                          ),
-                          alignment: Alignment.center,
-                          child: Image.network(
-                            logoUrl,
-                            width: 56,
-                            height: 56,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) =>
-                                fallbackStrip(height: 90),
-                          ),
-                        )
-                      : fallbackStrip(),
+                NearbyPartnerHeroMedia(
+                  height: mediaHeight,
+                  backgroundColor: _panel,
+                  heroUrl: heroUrl,
+                  logoUrl: logoUrl,
+                  fallback: fallbackStrip(height: mediaHeight),
                 ),
                 const SizedBox(height: 8),
                 Row(
