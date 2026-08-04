@@ -64827,6 +64827,25 @@ async function finalizeDirectRideBookingBestEffort(
     console.log(
       `[BOOKING][STREET_RIDE_FINALIZE] booking=${_bookingIntentMask(safeBookingId)} trip=${_bookingIntentMask(safeTripId)} status=COMPLETED`,
     );
+    // Ordinary ritbon address freeze: persist human-readable pickup/dropoff
+    // once (incl. reverse-geocode when only coords exist). Does NOT issue or
+    // refresh a business invoice PDF / Billit order.
+    try {
+      let freezeRec = rec;
+      try {
+        const reloaded = await loadBookingRecord(env, safeBookingId);
+        if (reloaded?.rec && typeof reloaded.rec === "object") {
+          freezeRec = reloaded.rec;
+        }
+      } catch (_) {
+        // keep pre-status stamp
+      }
+      await freezeInvoiceRouteAddressSnapshots(env, safeBookingId, freezeRec);
+    } catch (freezeErr) {
+      console.log(
+        `[BOOKING][STREET_RIDE_FINALIZE][ROUTE_ADDRESS] booking=${_bookingIntentMask(safeBookingId)} freeze=skipped err=${String(freezeErr?.message || freezeErr).slice(0, 120)}`,
+      );
+    }
   }
   return result;
 }
@@ -80646,6 +80665,31 @@ async function getBookingAuthoritative(bookingId, env, tenantScope = null, prelo
   );
   if (plannedTripCompletionRepair?.changed === true && plannedTripCompletionRepair?.rec) {
     rec = plannedTripCompletionRepair.rec;
+  }
+  // Lazy historical repair for ordinary receipts: when a completed booking
+  // still lacks human-readable route labels but has coordinates, freeze once.
+  // Never creates invoices / Billit orders / Peppol traffic.
+  try {
+    const status = String(
+      rec?.status || rec?.booking?.status || "",
+    ).toUpperCase();
+    const completed =
+      status === "COMPLETED" ||
+      status === "STOPPED" ||
+      rec?.street_ride_fare_finalized === true;
+    if (
+      completed &&
+      (needsReverseGeocode(rec, "from") || needsReverseGeocode(rec, "to"))
+    ) {
+      const frozen = await freezeInvoiceRouteAddressSnapshots(
+        env,
+        bookingId,
+        rec,
+      );
+      if (frozen && typeof frozen === "object") rec = frozen;
+    }
+  } catch (_) {
+    // best-effort only
   }
   enrichBookingRecordOperationalLegsForReadModel(rec, bookingId);
   return {

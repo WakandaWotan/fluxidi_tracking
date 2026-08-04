@@ -364,9 +364,18 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       sourceTag: 'trip_history_open_receipt_cache',
     );
     final before = _referencePresenceForItem(enriched);
-    if (before.hasPlanning ||
-        before.hasPublicBooking ||
-        before.hasRealReceipt) {
+    final routeResolved = resolveReceiptRouteAddresses(
+      rawSource: enriched.rawSource,
+      bookingDetails: enriched.bookingDetails,
+      origin: enriched.origin,
+      destination: enriched.destination,
+    );
+    final needsRouteAddressFetch =
+        routeResolved.from == null || routeResolved.to == null;
+    if ((before.hasPlanning ||
+            before.hasPublicBooking ||
+            before.hasRealReceipt) &&
+        !needsRouteAddressFetch) {
       debugPrint(
         '[DRIVER_HISTORY][REF_FETCH] booking=${_safeRefPreview(_canonicalBookingIdFromItem(enriched))} foundPlanning=${before.hasPlanning} foundPublic=${before.hasPublicBooking} foundReceipt=${before.hasRealReceipt} source=already_present',
       );
@@ -407,6 +416,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       final booking = record is Map ? record['booking'] : null;
       final authoritative = <String, dynamic>{
         ...decoded,
+        if (record is Map) ...Map<String, dynamic>.from(record),
         if (record is Map) 'record': Map<String, dynamic>.from(record),
         if (booking is Map) 'booking': Map<String, dynamic>.from(booking),
         'booking_id': bookingId,
@@ -428,6 +438,14 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
         canonicalBookingId: bookingId,
         tripId: enriched.tripId,
         sourceTag: 'trip_history_open_receipt_booking_detail_fetch_details',
+      );
+      mergeReceiptRouteAddressFields(
+        target: mergedRawSource,
+        authoritative: authoritative,
+      );
+      mergeReceiptRouteAddressFields(
+        target: mergedBookingDetails,
+        authoritative: authoritative,
       );
       if (mergedBookingDetails.isNotEmpty) {
         mergedRawSource['booking_details'] = mergedBookingDetails;

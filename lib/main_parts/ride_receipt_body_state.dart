@@ -981,8 +981,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   bool _isPlaceholderRouteLabel(String? value) {
     final text = value?.trim();
     if (text == null || text.isEmpty) return true;
-    if (text == '-' || text == '—') return true;
-    if (_looksLikeMapLiteralRoute(text)) return true;
+    if (receiptIsNonAddressRoutePlaceholder(text)) return true;
     final lower = text.toLowerCase();
     if (lower == _receiptText('currentLocation').toLowerCase()) return true;
     // Localized fallback labels from `_sanitizeCustomerFacingRouteLabel` are
@@ -1048,168 +1047,22 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   }
 
   ({String from, String to}) _resolvedRouteForPdf() {
-    final normalizedFrom = _isPlaceholderRouteLabel(item.origin)
-        ? null
-        : item.origin.trim();
-    final normalizedTo = _isPlaceholderRouteLabel(item.destination)
-        ? null
-        : item.destination.trim();
-
-    String? pickLabel(List<List<String>> paths) {
-      for (final path in paths) {
-        final raw = _detailAt(path);
-        final text = _resolveRouteValueText(raw);
-        if (text != null) return text;
-      }
-      return null;
-    }
-
-    final rawFrom = pickLabel(const [
-      // Top-level mirrored by the hydration bridge — strongest signal.
-      ['from'],
-      ['pickup'],
-      ['origin'],
-      ['pickup_address'],
-      ['pickupAddress'],
-      ['pickup_from'],
-      ['pickupFrom'],
-      ['pickup_label'],
-      ['pickupLabel'],
-      ['requested_from'],
-      ['requestedFrom'],
-      ['pickupLocation'],
-      ['pickup_location'],
-      ['start_address'],
-      ['startAddress'],
-      // Booking subtree (requested booking route).
-      ['booking', 'from'],
-      ['booking', 'pickup'],
-      ['booking', 'origin'],
-      ['booking', 'pickup_address'],
-      ['booking', 'pickupAddress'],
-      ['booking', 'pickup_from'],
-      ['booking', 'pickupFrom'],
-      ['booking', 'pickup_label'],
-      ['booking', 'pickupLabel'],
-      ['booking', 'requested_from'],
-      ['booking', 'requestedFrom'],
-      // Authoritative record subtree returned by /bookings/{id}.
-      ['record', 'from'],
-      ['record', 'pickup'],
-      ['record', 'origin'],
-      ['record', 'pickup_address'],
-      ['record', 'pickup_from'],
-      ['record', 'pickup_label'],
-      ['record', 'requested_from'],
-      ['record', 'requestedFrom'],
-      ['record', 'booking', 'from'],
-      ['record', 'booking', 'pickup'],
-      ['record', 'booking', 'origin'],
-      ['record', 'booking', 'pickup_address'],
-      ['record', 'booking', 'pickup_from'],
-      // booking_details mirrors / nested.
-      ['booking_details', 'from'],
-      ['booking_details', 'pickup'],
-      ['booking_details', 'origin'],
-      ['booking_details', 'pickup_address'],
-      ['record', 'booking_details', 'from'],
-      ['record', 'booking_details', 'pickup'],
-      ['record', 'booking_details', 'origin'],
-      ['record', 'booking_details', 'pickup_address'],
-      ['record', 'booking', 'booking_details', 'from'],
-      ['record', 'booking', 'booking_details', 'pickup'],
-      // Quote / payload (planned online bookings often originate here).
-      ['quote', 'inputs', 'from'],
-      ['quote', 'inputs', 'pickup'],
-      ['record', 'quote', 'inputs', 'from'],
-      ['record', 'quote', 'inputs', 'pickup'],
-      ['payload', 'from'],
-      ['payload', 'pickup'],
-      ['payload', 'pickup_address'],
-      ['payload', 'booking', 'from'],
-      ['record', 'payload', 'from'],
-      ['record', 'payload', 'pickup'],
-      ['record', 'payload', 'pickup_address'],
-    ]);
-    final rawTo = pickLabel(const [
-      ['to'],
-      ['destination'],
-      ['dropoff'],
-      ['destination_address'],
-      ['destinationAddress'],
-      ['dropoff_address'],
-      ['dropoffAddress'],
-      ['dropoff_to'],
-      ['dropoffTo'],
-      ['dropoff_label'],
-      ['dropoffLabel'],
-      ['requested_to'],
-      ['requestedTo'],
-      ['end_address'],
-      ['endAddress'],
-      ['booking', 'to'],
-      ['booking', 'destination'],
-      ['booking', 'dropoff'],
-      ['booking', 'destination_address'],
-      ['booking', 'destinationAddress'],
-      ['booking', 'dropoff_address'],
-      ['booking', 'dropoffAddress'],
-      ['booking', 'dropoff_to'],
-      ['booking', 'dropoffTo'],
-      ['booking', 'dropoff_label'],
-      ['booking', 'dropoffLabel'],
-      ['booking', 'requested_to'],
-      ['booking', 'requestedTo'],
-      ['record', 'to'],
-      ['record', 'destination'],
-      ['record', 'dropoff'],
-      ['record', 'destination_address'],
-      ['record', 'dropoff_address'],
-      ['record', 'dropoff_to'],
-      ['record', 'dropoff_label'],
-      ['record', 'requested_to'],
-      ['record', 'requestedTo'],
-      ['record', 'booking', 'to'],
-      ['record', 'booking', 'destination'],
-      ['record', 'booking', 'dropoff'],
-      ['record', 'booking', 'destination_address'],
-      ['record', 'booking', 'dropoff_to'],
-      ['booking_details', 'to'],
-      ['booking_details', 'destination'],
-      ['booking_details', 'dropoff'],
-      ['booking_details', 'destination_address'],
-      ['record', 'booking_details', 'to'],
-      ['record', 'booking_details', 'destination'],
-      ['record', 'booking_details', 'dropoff'],
-      ['record', 'booking_details', 'destination_address'],
-      ['record', 'booking', 'booking_details', 'to'],
-      ['record', 'booking', 'booking_details', 'destination'],
-      ['quote', 'inputs', 'to'],
-      ['quote', 'inputs', 'destination'],
-      ['record', 'quote', 'inputs', 'to'],
-      ['record', 'quote', 'inputs', 'destination'],
-      ['payload', 'to'],
-      ['payload', 'destination'],
-      ['payload', 'destination_address'],
-      ['payload', 'booking', 'to'],
-      ['record', 'payload', 'to'],
-      ['record', 'payload', 'destination'],
-      ['record', 'payload', 'destination_address'],
-    ]);
-
+    final resolved = resolveReceiptRouteAddresses(
+      rawSource: item.rawSource,
+      bookingDetails: item.bookingDetails,
+      origin: item.origin,
+      destination: item.destination,
+    );
     final from = _sanitizeCustomerFacingRouteLabel(
-      normalizedFrom ?? rawFrom ?? _receiptText('currentLocation'),
+      resolved.from ?? _receiptText('currentLocation'),
       isFromField: true,
     );
     final to = _sanitizeCustomerFacingRouteLabel(
-      normalizedTo ?? rawTo ?? '-',
+      resolved.to ?? '-',
       isFromField: false,
     );
-    final source = (normalizedFrom != null || normalizedTo != null)
-        ? 'normalized'
-        : ((rawFrom != null || rawTo != null) ? 'raw' : 'fallback');
     debugPrint(
-      '[PDF][ROUTE] fromFound=${from != _receiptText('currentLocation')} toFound=${to != '-'} source=$source',
+      '[PDF][ROUTE] fromFound=${resolved.from != null} toFound=${resolved.to != null} source=${resolved.source}',
     );
     return (from: from, to: to);
   }
@@ -2863,11 +2716,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
               children: [
                 if (logoBytes != null)
                   pw.Container(
-                    width: 82,
-                    height: 82,
-                    decoration: pw.BoxDecoration(
-                      border: pw.Border.all(color: PdfColors.grey300),
-                    ),
+                    width: kReceiptPdfLogoBoxWidth,
+                    height: kReceiptPdfLogoBoxHeight,
+                    color: PdfColors.white,
                     child: pw.Image(
                       pw.MemoryImage(logoBytes),
                       fit: pw.BoxFit.contain,

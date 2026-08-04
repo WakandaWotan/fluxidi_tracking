@@ -1,0 +1,3 @@
+Business invoice logo CSS remains INVOICE_LOGO_CSS_HEIGHT_PX=48.
+No invoice PDF regeneration in this change.
+Prior opaque-RGB acceptance (INV-039/040) remains the invoice visual baseline.

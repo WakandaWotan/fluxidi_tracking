@@ -1192,17 +1192,7 @@ String _localizedRideStatus(String? raw) {
 }
 
 bool _looksLikeCoordinatePair(String? value) {
-  final text = value?.trim();
-  if (text == null || text.isEmpty) return false;
-  final normalized = text.replaceAll(RegExp(r'\s+'), ' ');
-  final match = RegExp(
-    r'^([+-]?\d{1,2}(?:\.\d+)?)\s*[,;\s]\s*([+-]?\d{1,3}(?:\.\d+)?)$',
-  ).firstMatch(normalized);
-  if (match == null) return false;
-  final lat = double.tryParse(match.group(1)!);
-  final lon = double.tryParse(match.group(2)!);
-  if (lat == null || lon == null) return false;
-  return lat.abs() <= 90.0 && lon.abs() <= 180.0;
+  return receiptLooksLikeCoordinatePair(value);
 }
 
 String _receiptStartPointFallback() {
@@ -1235,6 +1225,6 @@ String _sanitizeCustomerFacingRouteLabel(
   if (text.toLowerCase() == _receiptText('currentLocation').toLowerCase()) {
     return fallback;
   }
-  if (_looksLikeCoordinatePair(text)) return fallback;
+  if (receiptIsNonAddressRoutePlaceholder(text)) return fallback;
   return text;
 }

@@ -588,6 +588,11 @@ class _TripHistoryItem {
       'booking_details.invoiceEmail',
     ]);
     final fromResolved = _resolveRouteLabel(json, const <String>[
+      'route_address_snapshot.from_address',
+      'route_address_snapshot.invoice_from_address',
+      'invoice_from_address',
+      'from_full_address',
+      'from_label',
       'from',
       'pickup',
       'pickup_address',
@@ -597,22 +602,40 @@ class _TripHistoryItem {
       'origin',
       'start_address',
       'startAddress',
+      'booking.route_address_snapshot.from_address',
+      'booking.invoice_from_address',
+      'booking.from_full_address',
+      'booking.from_label',
       'booking.from',
       'booking.pickup',
       'booking.pickup_address',
       'booking.pickupAddress',
+      'record.invoice_from_address',
+      'record.from_full_address',
+      'record.from_label',
       'record.from',
+      'record.booking.invoice_from_address',
+      'record.booking.from_full_address',
+      'record.booking.from_label',
       'record.booking.from',
       'record.booking.pickup',
       'payload.from',
       'payload.booking.from',
       'quote.inputs.from',
+      'booking_details.invoice_from_address',
+      'booking_details.from_full_address',
+      'booking_details.from_label',
       'booking_details.from',
       'booking_details.pickup',
       'booking_details.pickup_address',
       'booking_details.pickupAddress',
     ]);
     final toResolved = _resolveRouteLabel(json, const <String>[
+      'route_address_snapshot.to_address',
+      'route_address_snapshot.invoice_to_address',
+      'invoice_to_address',
+      'to_full_address',
+      'to_label',
       'to',
       'destination',
       'destination_address',
@@ -622,16 +645,29 @@ class _TripHistoryItem {
       'dropoffAddress',
       'end_address',
       'endAddress',
+      'booking.route_address_snapshot.to_address',
+      'booking.invoice_to_address',
+      'booking.to_full_address',
+      'booking.to_label',
       'booking.to',
       'booking.destination',
       'booking.destination_address',
       'booking.destinationAddress',
+      'record.invoice_to_address',
+      'record.to_full_address',
+      'record.to_label',
       'record.to',
+      'record.booking.invoice_to_address',
+      'record.booking.to_full_address',
+      'record.booking.to_label',
       'record.booking.to',
       'record.booking.destination',
       'payload.to',
       'payload.booking.to',
       'quote.inputs.to',
+      'booking_details.invoice_to_address',
+      'booking_details.to_full_address',
+      'booking_details.to_label',
       'booking_details.to',
       'booking_details.destination',
       'booking_details.destination_address',
@@ -683,10 +719,19 @@ class _TripHistoryItem {
   static String _placeLabel(dynamic value, String fallback) {
     if (value is Map) {
       final label = value['label']?.toString().trim();
-      if (label != null && label.isNotEmpty) return label;
-      final lat = value['lat'];
-      final lon = value['lon'];
-      if (lat != null && lon != null) return '$lat, $lon';
+      if (label != null &&
+          label.isNotEmpty &&
+          !receiptIsNonAddressRoutePlaceholder(label)) {
+        return label;
+      }
+      // Never synthesize raw coordinates as a customer-facing place label.
+      return fallback;
+    }
+    final text = value?.toString().trim();
+    if (text != null &&
+        text.isNotEmpty &&
+        !receiptIsNonAddressRoutePlaceholder(text)) {
+      return text;
     }
     return fallback;
   }
@@ -763,14 +808,32 @@ class _TripHistoryItem {
     if (value is String) {
       final text = value.trim();
       if (text.isEmpty || text == '—') return null;
+      if (receiptIsNonAddressRoutePlaceholder(text)) return null;
       return text;
     }
     if (value is Map) {
-      final label = value['label']?.toString().trim();
-      if (label != null && label.isNotEmpty && label != '—') return label;
+      for (final key in const <String>[
+        'label',
+        'address',
+        'formatted_address',
+        'formattedAddress',
+        'full_address',
+        'fullAddress',
+        'name',
+        'text',
+        'value',
+      ]) {
+        final inner = value[key]?.toString().trim();
+        if (inner == null || inner.isEmpty || inner == '—') continue;
+        if (receiptIsNonAddressRoutePlaceholder(inner)) continue;
+        return inner;
+      }
+      return null;
     }
+    if (value is Iterable) return null;
     final fallback = value.toString().trim();
     if (fallback.isEmpty || fallback == '—') return null;
+    if (receiptIsNonAddressRoutePlaceholder(fallback)) return null;
     return fallback;
   }
 
