@@ -12,6 +12,7 @@
 //   POST /offline-corridor/metadata
 
 import {
+  bearingsFromHeadingDeg,
   buildMapboxDirectionsSearchParams,
   buildRouteCacheKeyMaterial,
   extractManeuvers,
@@ -349,15 +350,6 @@ async function writeRouteCache(cacheRequest, payload, ttlSeconds) {
 // ---------------------------------------------------------------------------
 // Mapbox Directions proxy (token stays server-side)
 // ---------------------------------------------------------------------------
-
-function bearingsFromHeadingDeg(headingDeg) {
-  const n = Number(headingDeg);
-  if (!Number.isFinite(n) || n < 0) return "";
-  let h = n % 360;
-  if (h < 0) h += 360;
-  // Origin constrained to travel direction; destination unconstrained.
-  return `${h.toFixed(1)},45;`;
-}
 
 async function fetchMapboxDirections({
   token,
