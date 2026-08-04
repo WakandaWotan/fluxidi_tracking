@@ -350,6 +350,15 @@ async function writeRouteCache(cacheRequest, payload, ttlSeconds) {
 // Mapbox Directions proxy (token stays server-side)
 // ---------------------------------------------------------------------------
 
+function bearingsFromHeadingDeg(headingDeg) {
+  const n = Number(headingDeg);
+  if (!Number.isFinite(n) || n < 0) return "";
+  let h = n % 360;
+  if (h < 0) h += 360;
+  // Origin constrained to travel direction; destination unconstrained.
+  return `${h.toFixed(1)},45;`;
+}
+
 async function fetchMapboxDirections({
   token,
   origin,
@@ -357,15 +366,18 @@ async function fetchMapboxDirections({
   profile,
   language,
   avoid,
+  headingDeg,
 }) {
   const coords = `${origin.lng},${origin.lat};${destination.lng},${destination.lat}`;
   const avoidKey = stableAvoidKey(avoid);
   // NAV-SIGNAL-P0A-WORKER-PARITY-1: match Flutter direct live Directions params
   // (banner_instructions + roundabout_exits). Voice intentionally omitted.
+  // NAV-REROUTE-CURRENT-POSITION-HEADING-P0: pass origin bearings when known.
   const params = buildMapboxDirectionsSearchParams({
     language,
     accessToken: token,
     avoidKey,
+    bearings: bearingsFromHeadingDeg(headingDeg),
   });
 
   const url =
@@ -587,6 +599,9 @@ async function handleRoute(request, env, { kind = "route" } = {}) {
     }
   }
 
+  const headingRaw = body.heading_deg ?? body.headingDeg ?? body.heading;
+  const headingDeg = Number(headingRaw);
+
   if (!routePayload) {
     const mapbox = await fetchMapboxDirections({
       token: tokenResult.token,
@@ -595,6 +610,7 @@ async function handleRoute(request, env, { kind = "route" } = {}) {
       profile,
       language: navigationLanguage,
       avoid,
+      headingDeg: Number.isFinite(headingDeg) && headingDeg >= 0 ? headingDeg : undefined,
     });
 
     if (!mapbox.ok) {

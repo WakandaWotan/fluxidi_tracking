@@ -101,6 +101,8 @@ export function buildMapboxDirectionsSearchParams({
   language,
   accessToken,
   avoidKey = "",
+  /** Optional Mapbox bearings string, e.g. "90.0,45;" (origin only). */
+  bearings = "",
 }) {
   const params = new URLSearchParams({
     geometries: "geojson",
@@ -114,6 +116,10 @@ export function buildMapboxDirectionsSearchParams({
   });
   if (avoidKey) {
     params.set("exclude", avoidKey);
+  }
+  const bearingsText = typeof bearings === "string" ? bearings.trim() : "";
+  if (bearingsText) {
+    params.set("bearings", bearingsText);
   }
   return params;
 }

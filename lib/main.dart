@@ -140,6 +140,7 @@ import 'navigation/nav_engine/nav_camera_policy.dart';
 import 'navigation/nav_engine/nav_camera_view_mode.dart';
 import 'navigation/nav_engine/nav_adaptive_cadence.dart';
 import 'navigation/nav_engine/nav_reroute_decision.dart';
+import 'navigation/nav_engine/nav_reroute_coordinator.dart';
 import 'navigation/nav_engine/nav_reroute_apply_progress.dart';
 import 'navigation/nav_engine/nav_reroute_apply_generation.dart';
 import 'navigation/nav_engine/nav_reroute_stabilization.dart';

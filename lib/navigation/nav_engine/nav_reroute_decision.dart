@@ -26,11 +26,13 @@ class NavRerouteDecisionConfig {
   static const Duration debounceWrongStreetConfirmed = Duration.zero;
   static const Duration debounceWrongStreetConfirm = Duration(milliseconds: 250);
   static const Duration debounceStrongUrban = Duration(milliseconds: 500);
+  /// NAV-REROUTE-CURRENT-POSITION-HEADING-P0: genuine wrong turns should
+  /// confirm around ~1 s with consecutive reliable fixes — not 1.8–2.5 s.
   static const Duration debounceSnapLowConfidence = Duration(
-    milliseconds: 1200,
+    milliseconds: 800,
   );
-  static const Duration debounceSnapMedium = Duration(milliseconds: 1800);
-  static const Duration debounceDefault = Duration(milliseconds: 2500);
+  static const Duration debounceSnapMedium = Duration(milliseconds: 1000);
+  static const Duration debounceDefault = Duration(milliseconds: 1200);
 
   static const double minMovementSpeedKmh = 5.0;
   static const double minDeviationSpeedKmh = 8.0;
