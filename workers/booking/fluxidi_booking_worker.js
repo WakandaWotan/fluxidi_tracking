@@ -31326,6 +31326,102 @@ async function handleScopedBookingTestResetApply(request, url, env) {
 }
 
 
+async function repairOpaqueRgbInvoiceLogosOnce(env) {
+  // INVOICE-LOGO-BLACK-RECTANGLE P0 — one-shot historical repair for the two
+  // field invoices that still carry flat=1/nosmask=1 black-rectangle PDFs.
+  // Idempotent: skips when the ops marker is set or when each booking already
+  // has opaque_rgb_logo=1. Never creates invoices or Billit orders.
+  const OPS_KEY = "ops:invoice_opaque_rgb_logo_repair_v1";
+  if (!env?.BOOKING_KV || typeof env.BOOKING_KV.get !== "function") {
+    return { ok: false, reason: "missing_booking_kv" };
+  }
+  try {
+    const already = await env.BOOKING_KV.get(OPS_KEY, { type: "json" });
+    if (already?.done === true) {
+      return { ok: true, skipped: true, reason: "already_done" };
+    }
+  } catch (_) {
+    // continue
+  }
+  const targets = [
+    {
+      bookingId: "street_1785768346529_2p5ohae0",
+      invoiceNumber: "INV-2026-000039",
+      tenantId: "fluxidi_fluxidi_ddmh9g",
+      companyId: "fluxidi_fluxidi_ddmh9g",
+    },
+    {
+      bookingId: "street_1785819368565_6bb22fdh",
+      invoiceNumber: "INV-2026-000040",
+      tenantId: "fluxidi_fluxidi_ddmh9g",
+      companyId: "fluxidi_fluxidi_ddmh9g",
+    },
+  ];
+  const results = [];
+  for (const t of targets) {
+    try {
+      const key = `booking:${t.bookingId}`;
+      const rec = await env.BOOKING_KV.get(key, { type: "json" });
+      if (!rec || typeof rec !== "object") {
+        results.push({ bookingId: t.bookingId, ok: false, reason: "missing_booking" });
+        continue;
+      }
+      const storedRev = readStoredStreetInvoicePdfProjectionRevision(rec);
+      if (String(storedRev || "").includes("opaque_rgb_logo=1")) {
+        results.push({ bookingId: t.bookingId, ok: true, skipped: true, reason: "already_opaque" });
+        continue;
+      }
+      const scope = {
+        tenant_id: t.tenantId,
+        company_id: t.companyId,
+      };
+      const out = await ensureStreetBusinessInvoicePdfArtifact(
+        env,
+        scope,
+        t.bookingId,
+        rec,
+        {
+          reason: "opaque_rgb_logo_repair",
+          invoiceNumber: t.invoiceNumber,
+          forceRefresh: false,
+        },
+      );
+      results.push({
+        bookingId: t.bookingId,
+        ok: out?.ok === true,
+        skipped: out?.skipped === true,
+        reason: out?.reason || null,
+        projection_revision: out?.projection_revision || null,
+      });
+    } catch (err) {
+      results.push({
+        bookingId: t.bookingId,
+        ok: false,
+        reason: String(err?.message || err).slice(0, 120),
+      });
+    }
+  }
+  const allOk = results.every((r) => r.ok === true);
+  if (allOk) {
+    try {
+      await env.BOOKING_KV.put(
+        OPS_KEY,
+        JSON.stringify({
+          done: true,
+          at: new Date().toISOString(),
+          results,
+        }),
+      );
+    } catch (_) {
+      // non-fatal
+    }
+  }
+  console.log(
+    `[INVOICE_LOGO][OPAQUE_RGB_REPAIR] ok=${allOk} ${JSON.stringify(results)}`,
+  );
+  return { ok: allOk, results };
+}
+
 export default {
   // BILLIT-DURABLE-EXPORT-RECOVERY-P0-1: cron-triggered sweep of the durable
   // Billit export outbox. Runs bounded work per invocation. Failure of the
@@ -31350,6 +31446,19 @@ export default {
           } catch (_) {
             // best-effort logging
           }
+        }),
+      );
+      // INVOICE-LOGO-BLACK-RECTANGLE P0: one-shot opaque-RGB repair for
+      // INV-039 / INV-040. Idempotent after opaque_rgb_logo=1 is stamped.
+      ctx.waitUntil(
+        repairOpaqueRgbInvoiceLogosOnce(env).catch((err) => {
+          try {
+            console.log(
+              `[INVOICE_LOGO][OPAQUE_RGB_REPAIR_ERROR] ${String(
+                err?.message || err,
+              )}`,
+            );
+          } catch (_) {}
         }),
       );
     } catch (err) {
