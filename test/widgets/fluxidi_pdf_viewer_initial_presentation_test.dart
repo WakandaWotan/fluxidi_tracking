@@ -41,18 +41,18 @@ void main() {
           pageAspectRatio: _a4Ratio,
         );
         expect(
-          layout.pageWidth / layout.pageHeight,
+          layout.pageWidth / layout.pageHeights.first,
           closeTo(_a4Ratio, 0.0001),
           reason: '$name must not stretch or crop the page',
         );
-        expect(layout.pageWidth, closeTo(viewport.width - 16, 0.001));
+        expect(layout.pageWidth, closeTo(viewport.width, 0.001));
         expect(layout.pageWidth, greaterThan(0));
-        expect(layout.pageHeight, greaterThan(0));
+        expect(layout.pageHeights.first, greaterThan(0));
       });
     });
 
     test('a short document is top-aligned, not vertically centred', () {
-      // 390x844 phone: an A4 page at 374 wide is ~529 tall; leftover height is
+      // 390x844 phone: an A4 page at 390 wide is ~551 tall; leftover height is
       // reached by scrolling — never a large grey band above the first page.
       final layout = fluxidiPdfInitialLayout(
         viewport: const Size(390, 844),
@@ -104,7 +104,7 @@ void main() {
       );
       expect(three.contentHeight, closeTo(one.contentHeight * 3 + 20, 0.001));
       expect(three.pageWidth, one.pageWidth);
-      expect(three.pageHeight, one.pageHeight);
+      expect(three.pageHeights.first, one.pageHeights.first);
     });
 
     test('an empty document has no content and no padding', () {
@@ -190,7 +190,7 @@ void main() {
       final clamped = fluxidiPdfClampTransform(
         current: controller.value,
         viewport: const Size(390, 844),
-        content: const Size(374, 529),
+        content: const Size(390, 551),
       );
       expect(clamped.storage[12], closeTo(controller.value.storage[12], 400));
     });

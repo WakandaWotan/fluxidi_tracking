@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 import {
   flattenInvoiceLogoDataUriForPdf,
   invoiceLogoDataUriNeedsPdfFlatten,
+  invoicePdfHasLogoSoftMask,
+  stripInvoicePdfLogoSoftMasks,
   __testInternals,
 } from "./invoice_logo_pdf_flatten.js";
+import fs from "node:fs";
 
 // Classic 1×1 RGBA PNG (colorType 6) — same family as INV-2026-000039 logo.
 const RGBA_1X1_B64 =
@@ -50,6 +53,26 @@ test("LATE-INVOICE P0) already-opaque PNG is returned unchanged", async () => {
   assert.equal(invoiceLogoDataUriNeedsPdfFlatten(opaqueUri), false);
   const out = await flattenInvoiceLogoDataUriForPdf(opaqueUri);
   assert.equal(out, opaqueUri);
+});
+
+test("INVOICE-PDF-APP-LOGO P0) strip soft mask from INV-040-class PDF bytes", () => {
+  const path = "C:/_flutter_work/inv040_artifact.pdf";
+  if (!fs.existsSync(path)) {
+    // Unit fixture when field PDF is unavailable: synthetic Image+SMask dict.
+    const synthetic = Buffer.from(
+      "%PDF-1.4\n6 0 obj<< /Type /XObject /Subtype /Image /Width 10 /Height 10 /SMask 8 0 R /Length 1 >>stream\nx\nendstream\nendobj\n",
+    );
+    assert.equal(invoicePdfHasLogoSoftMask(synthetic), true);
+    const out = stripInvoicePdfLogoSoftMasks(synthetic);
+    assert.equal(invoicePdfHasLogoSoftMask(out), false);
+    return;
+  }
+  const pdf = fs.readFileSync(path);
+  assert.equal(invoicePdfHasLogoSoftMask(pdf), true);
+  const out = stripInvoicePdfLogoSoftMasks(pdf);
+  assert.equal(invoicePdfHasLogoSoftMask(out), false);
+  assert.notEqual(out.length, pdf.length);
+  assert.equal(Buffer.from(out).includes(Buffer.from("/SMask ")), false);
 });
 
 test("LATE-INVOICE P0) semi-transparent red composites onto white", async () => {

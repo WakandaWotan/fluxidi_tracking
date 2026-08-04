@@ -299,6 +299,56 @@ export function invoiceLogoDataUriNeedsPdfFlatten(dataUri) {
   return colorType === 4 || colorType === 6;
 }
 
+/**
+ * True when a PDFShift invoice PDF still attaches a soft mask to an image
+ * XObject (INV-2026-000040: RGB logo ink present, but SMask avg α≈16 →
+ * logo invisible in Fluxidi viewers while Billit's own PDF shows it).
+ */
+export function invoicePdfHasLogoSoftMask(pdfBytes) {
+  const bytes =
+    pdfBytes instanceof Uint8Array
+      ? pdfBytes
+      : pdfBytes
+        ? new Uint8Array(pdfBytes)
+        : null;
+  if (!bytes || bytes.length < 32) return false;
+  // Dictionaries are ASCII; streams are binary — search the raw buffer as latin1.
+  let text = "";
+  const limit = Math.min(bytes.length, 2_000_000);
+  for (let i = 0; i < limit; i += 1) text += String.fromCharCode(bytes[i]);
+  return (
+    /\/Subtype\s*\/Image[\s\S]{0,400}\/SMask\s+\d+\s+0\s+R/.test(text) ||
+    /\/SMask\s+\d+\s+0\s+R[\s\S]{0,400}\/Subtype\s*\/Image/.test(text)
+  );
+}
+
+/**
+ * Remove `/SMask N 0 R` from image dictionaries so the already-composited RGB
+ * logo pixels paint fully opaque. Does not rewrite page content, totals, or
+ * text — only drops the broken PDFShift alpha mask.
+ */
+export function stripInvoicePdfLogoSoftMasks(pdfBytes) {
+  const bytes =
+    pdfBytes instanceof Uint8Array
+      ? pdfBytes
+      : pdfBytes
+        ? new Uint8Array(pdfBytes)
+        : new Uint8Array(0);
+  if (!bytes.length) return bytes;
+  let text = "";
+  for (let i = 0; i < bytes.length; i += 1) {
+    text += String.fromCharCode(bytes[i] & 0xff);
+  }
+  if (!/\/SMask\s+\d+\s+0\s+R/.test(text)) return bytes;
+  const cleaned = text.replace(/\/SMask\s+\d+\s+0\s+R/g, "");
+  if (cleaned === text) return bytes;
+  const out = new Uint8Array(cleaned.length);
+  for (let i = 0; i < cleaned.length; i += 1) {
+    out[i] = cleaned.charCodeAt(i) & 0xff;
+  }
+  return out;
+}
+
 export const __testInternals = {
   _decodePngRgbaOrRgb,
   _encodePngRgb,

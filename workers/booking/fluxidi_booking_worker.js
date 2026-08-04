@@ -267,10 +267,13 @@ import {
   pickCustomerVisibleAddress,
   invoiceArtifactNeedsLogoProjectionRefresh,
   markStreetInvoicePdfProjectionLogoFlattened,
+  markStreetInvoicePdfProjectionLogoNoSmask,
 } from "./modules/street_invoice_pdf_projection.js";
 import {
   flattenInvoiceLogoDataUriForPdf,
   invoiceLogoDataUriNeedsPdfFlatten,
+  invoicePdfHasLogoSoftMask,
+  stripInvoicePdfLogoSoftMasks,
 } from "./modules/invoice_logo_pdf_flatten.js";
 import {
   extractRouteCoordinates,
@@ -65529,6 +65532,10 @@ async function ensureStreetBusinessInvoicePdfArtifact(
   } catch (_) {
     // Fail-open: keep prior logo bytes rather than blocking invoice PDF.
   }
+  // INV-2026-000040: PDFShift still attaches a near-transparent SMask even
+  // after RGB flatten — mark nosmask so the strip pass is persisted once.
+  projectionRevision =
+    markStreetInvoicePdfProjectionLogoNoSmask(projectionRevision);
 
   try {
     const result = await generateAndSendInvoice({
@@ -92490,6 +92497,22 @@ async function generateAndSendInvoice({
         `[INVOICE_GEN] bookingId=${safeStr(data.bookingPublicId || data.bookingId)} pdfGenerated=false pdfError=${safeStr(pdfErr?.message || pdfErr).slice(0, 160)}`,
       );
       pdfBytes = null;
+    }
+    // INVOICE-PDF-APP-LOGO-AND-FIT-WIDTH-P0: PDFShift may still attach a broken
+    // soft mask after RGB flatten (field INV-2026-000040). Strip SMask so the
+    // composited logo paints opaque in Fluxidi viewers. Billit keeps its own PDF.
+    if (pdfBytes && pdfBytes.length && invoicePdfHasLogoSoftMask(pdfBytes)) {
+      try {
+        const stripped = stripInvoicePdfLogoSoftMasks(pdfBytes);
+        if (stripped && stripped.length) {
+          pdfBytes = stripped;
+          console.log(
+            `[INVOICE_GEN] bookingId=${safeStr(data.bookingPublicId || data.bookingId)} pdfLogoSoftMaskStripped=true`,
+          );
+        }
+      } catch (_) {
+        // fail-open: keep PDFShift bytes
+      }
     }
     console.log(
       `[INVOICE_GEN] bookingId=${safeStr(data.bookingPublicId || data.bookingId)} pdfGenerated=${!!(pdfBytes && pdfBytes.length)} pdfProviderConfigured=${pdfProviderConfigured}`,

@@ -226,7 +226,7 @@ test("6) reopening a frozen artifact performs zero logo network fetches", async 
     true,
     "RGBA frozen embed without flat=1 must refresh once for PDFShift",
   );
-  const flattenedRevision = `${matchingRevision};flat=1`;
+  const flattenedRevision = `${matchingRevision};flat=1;nosmask=1`;
   assert.equal(
     shouldRefreshStreetInvoicePdfOnOpen({
       existingPdfExists: true,
@@ -235,7 +235,7 @@ test("6) reopening a frozen artifact performs zero logo network fetches", async 
       frozenEmbed: embed,
     }).refresh,
     false,
-    "matching frozen logo fingerprint + flat=1 must not re-refresh",
+    "matching frozen logo fingerprint + flat=1 + nosmask=1 must not re-refresh",
   );
 });
 

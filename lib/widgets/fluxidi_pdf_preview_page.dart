@@ -1,11 +1,31 @@
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
+
+/// One rasterized PDF page plus its pixel size (for true fit-to-width layout).
+@immutable
+class FluxidiPdfRasterPage {
+  const FluxidiPdfRasterPage({
+    required this.bytes,
+    required this.widthPx,
+    required this.heightPx,
+  });
+
+  final Uint8List bytes;
+  final int widthPx;
+  final int heightPx;
+
+  double get aspectRatio {
+    if (widthPx <= 0 || heightPx <= 0) return 1 / 1.4142;
+    return widthPx / heightPx;
+  }
+}
 
 /// Shared, testable in-app PDF preview page used by ride receipts, business
 /// invoice PDFs, credit notes, and refund proofs.
@@ -21,8 +41,10 @@ import 'package:share_plus/share_plus.dart';
 ///    zoom on Android phones.
 ///  * One `InteractiveViewer` owns the whole document (all pages in a column)
 ///    so zoom does not detach pages into independent floating canvases.
-///  * Fit-width is identity scale (`minScale == 1`). At fit-width, vertical
-///    pan scrolls the document; when zoomed, pan moves within clamped bounds.
+///  * Fit-width is identity scale (`minScale == 1`) with near-zero horizontal
+///    padding so the A4 page fills the usable phone width.
+///  * Page aspect ratio comes from the raster pixels (not a hard-coded A4
+///    guess) so `BoxFit.contain` does not letterbox the page smaller.
 ///  * Viewer page count equals `Printing.raster` page count (never invents
 ///    duplicate pages).
 class FluxidiPdfPreviewPage extends StatefulWidget {
@@ -48,15 +70,17 @@ class FluxidiPdfPreviewPage extends StatefulWidget {
 }
 
 class _FluxidiPdfPreviewPageState extends State<FluxidiPdfPreviewPage> {
-  late final Future<List<Uint8List>> _pagesFuture = _renderPages();
+  late final Future<List<FluxidiPdfRasterPage>> _pagesFuture = _renderPages();
 
-  Future<List<Uint8List>> _renderPages() async {
-    final pages = <Uint8List>[];
+  Future<List<FluxidiPdfRasterPage>> _renderPages() async {
+    final pages = <FluxidiPdfRasterPage>[];
     await for (final page in Printing.raster(
       widget.bytes,
       dpi: widget.rasterDpi,
     )) {
-      pages.add(await page.toPng());
+      final png = await page.toPng();
+      final sized = await decodeFluxidiPdfRasterPage(png);
+      pages.add(sized);
     }
     return pages;
   }
@@ -78,7 +102,9 @@ class _FluxidiPdfPreviewPageState extends State<FluxidiPdfPreviewPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.title),
+        toolbarHeight: 48,
+        titleSpacing: 8,
+        title: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
             tooltip: widget.shareTooltip,
@@ -92,13 +118,13 @@ class _FluxidiPdfPreviewPageState extends State<FluxidiPdfPreviewPage> {
           ),
         ],
       ),
-      body: FutureBuilder<List<Uint8List>>(
+      body: FutureBuilder<List<FluxidiPdfRasterPage>>(
         future: _pagesFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
           }
-          final pages = snapshot.data ?? const <Uint8List>[];
+          final pages = snapshot.data ?? const <FluxidiPdfRasterPage>[];
           if (pages.isEmpty) {
             return Center(child: Text(widget.generationFailedLabel));
           }
@@ -107,6 +133,21 @@ class _FluxidiPdfPreviewPageState extends State<FluxidiPdfPreviewPage> {
       ),
     );
   }
+}
+
+/// Decode PNG raster bytes to a sized page (used by the preview page and tests).
+@visibleForTesting
+Future<FluxidiPdfRasterPage> decodeFluxidiPdfRasterPage(Uint8List png) async {
+  final codec = await ui.instantiateImageCodec(png);
+  final frame = await codec.getNextFrame();
+  final image = frame.image;
+  final page = FluxidiPdfRasterPage(
+    bytes: png,
+    widthPx: image.width,
+    heightPx: image.height,
+  );
+  image.dispose();
+  return page;
 }
 
 /// Pure helpers for zoom / clamp math — unit-tested without a full widget tree.
@@ -173,26 +214,43 @@ Matrix4 fluxidiPdfClampTransform({
 /// immediately below the toolbar — leftover height is reached by scrolling to
 /// the document end (never a large grey band above the page).
 @visibleForTesting
-({double pageWidth, double pageHeight, double leadingPad, double contentHeight})
+({
+  double pageWidth,
+  List<double> pageHeights,
+  double leadingPad,
+  double contentHeight,
+})
 fluxidiPdfInitialLayout({
   required Size viewport,
   required int pageCount,
   double pageAspectRatio = 1 / 1.4142,
-  double horizontalPadding = 8,
-  double pageSpacing = 10,
+  List<double>? pageAspectRatios,
+  // Near-zero pad so A4 fills usable phone width (field: page looked too small).
+  double horizontalPadding = 0,
+  double pageSpacing = 8,
 }) {
-  final ratio = pageAspectRatio <= 0 ? 1 / 1.4142 : pageAspectRatio;
+  final fallbackRatio = pageAspectRatio <= 0 ? 1 / 1.4142 : pageAspectRatio;
   final pageWidth = math.max(1.0, viewport.width - horizontalPadding * 2);
-  final pageHeight = pageWidth / ratio;
   final pages = pageCount <= 0 ? 0 : pageCount;
-  final stackHeight = pages == 0
+  final heights = <double>[];
+  for (var i = 0; i < pages; i++) {
+    final ratio =
+        (pageAspectRatios != null &&
+            i < pageAspectRatios.length &&
+            pageAspectRatios[i] > 0)
+        ? pageAspectRatios[i]
+        : fallbackRatio;
+    heights.add(pageWidth / ratio);
+  }
+  final stackHeight = heights.isEmpty
       ? 0.0
-      : pages * pageHeight + math.max(0, pages - 1) * pageSpacing;
+      : heights.reduce((a, b) => a + b) +
+            math.max(0, heights.length - 1) * pageSpacing;
   // Fit-width + top-aligned: never vertically centre the first page.
   const leadingPad = 0.0;
   return (
     pageWidth: pageWidth,
-    pageHeight: pageHeight,
+    pageHeights: heights,
     leadingPad: leadingPad,
     contentHeight: stackHeight,
   );
@@ -221,11 +279,13 @@ class FluxidiPdfPagesView extends StatefulWidget {
     this.backgroundColor = const Color(0xFF33363B),
     this.pageColor = Colors.white,
     this.pageAspectRatio = 1 / 1.4142,
-    this.pageSpacing = 10,
-    this.horizontalPadding = 8,
+    this.pageSpacing = 8,
+    this.horizontalPadding = 0,
   });
 
-  final List<Uint8List> pages;
+  /// Prefer [FluxidiPdfRasterPage] (pixel-accurate fit-width). Raw [Uint8List]
+  /// pages remain accepted for older call sites / tests (A4 aspect fallback).
+  final List<Object> pages;
   final double minScale;
   final double maxScale;
   final double doubleTapScale;
@@ -312,28 +372,39 @@ class FluxidiPdfPagesViewState extends State<FluxidiPdfPagesView> {
     _clampCurrent();
   }
 
-  double _pageHeightForWidth(double width) {
-    if (widget.pageAspectRatio <= 0) return width * 1.4142;
-    return width / widget.pageAspectRatio;
+  List<FluxidiPdfRasterPage> get _normalizedPages {
+    return widget.pages.map((raw) {
+      if (raw is FluxidiPdfRasterPage) return raw;
+      if (raw is Uint8List) {
+        return FluxidiPdfRasterPage(bytes: raw, widthPx: 0, heightPx: 0);
+      }
+      throw ArgumentError(
+        'FluxidiPdfPagesView.pages must be FluxidiPdfRasterPage or Uint8List',
+      );
+    }).toList(growable: false);
   }
 
   @override
   Widget build(BuildContext context) {
+    final normalized = _normalizedPages;
     return ColoredBox(
       color: widget.backgroundColor,
       child: LayoutBuilder(
         builder: (context, constraints) {
           final viewport = Size(constraints.maxWidth, constraints.maxHeight);
-          final pageCount = widget.pages.length;
+          final pageCount = normalized.length;
+          final ratios = normalized
+              .map((p) => p.aspectRatio)
+              .toList(growable: false);
           final layout = fluxidiPdfInitialLayout(
             viewport: viewport,
             pageCount: pageCount,
             pageAspectRatio: widget.pageAspectRatio,
+            pageAspectRatios: ratios,
             horizontalPadding: widget.horizontalPadding,
             pageSpacing: widget.pageSpacing,
           );
           final pageWidth = layout.pageWidth;
-          final pageHeight = layout.pageHeight;
           final contentHeight = layout.contentHeight;
           final content = Size(pageWidth, contentHeight);
           _viewport = viewport;
@@ -347,11 +418,10 @@ class FluxidiPdfPagesViewState extends State<FluxidiPdfPagesView> {
               transformationController: _controller,
               minScale: widget.minScale,
               maxScale: widget.maxScale,
-              // Limited margin so zoomed content cannot drift into a huge
-              // empty canvas / leave the viewport almost empty.
+              // Tight margin: keep zoom usable without shrinking fit-width.
               boundaryMargin: EdgeInsets.symmetric(
-                horizontal: viewport.width * 0.25,
-                vertical: viewport.height * 0.25,
+                horizontal: viewport.width * 0.08,
+                vertical: viewport.height * 0.12,
               ),
               constrained: false,
               clipBehavior: Clip.hardEdge,
@@ -374,12 +444,13 @@ class FluxidiPdfPagesViewState extends State<FluxidiPdfPagesView> {
                               SizedBox(height: widget.pageSpacing),
                             SizedBox(
                               width: pageWidth,
-                              height: pageHeight,
+                              height: layout.pageHeights[i],
                               child: ColoredBox(
                                 color: widget.pageColor,
                                 child: Image.memory(
-                                  widget.pages[i],
-                                  fit: BoxFit.contain,
+                                  normalized[i].bytes,
+                                  fit: BoxFit.fitWidth,
+                                  alignment: Alignment.topCenter,
                                   gaplessPlayback: true,
                                   filterQuality: FilterQuality.high,
                                 ),

@@ -40,9 +40,9 @@ void main() {
           pageCount: 1,
           pageAspectRatio: _a4Ratio,
         );
-        expect(layout.pageWidth, closeTo(viewport.width - 16, 0.001));
+        expect(layout.pageWidth, closeTo(viewport.width, 0.001));
         expect(
-          layout.pageWidth / layout.pageHeight,
+          layout.pageWidth / layout.pageHeights.first,
           closeTo(_a4Ratio, 0.0001),
           reason: '$name must preserve A4 and never stretch/crop',
         );
@@ -134,7 +134,7 @@ void main() {
           ..translate(-5000.0, -5000.0)
           ..scale(2.5),
         viewport: const Size(390, 844),
-        content: const Size(374, 529),
+        content: const Size(390, 551),
       );
       expect(clamped.storage[0].abs(), closeTo(2.5, 0.001));
       expect(clamped.storage[12].abs(), lessThan(5000));
@@ -152,7 +152,7 @@ void main() {
         pageCount: 1,
       );
       expect(layout.leadingPad, 0);
-      expect(layout.pageWidth, closeTo(374, 0.001));
+      expect(layout.pageWidth, closeTo(390, 0.001));
     });
 
     // Test 23.

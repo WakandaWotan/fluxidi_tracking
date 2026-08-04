@@ -23,7 +23,9 @@ import {
   buildStreetInvoiceArtifactRevisionTag,
   invoiceArtifactNeedsLogoProjectionRefresh,
   markStreetInvoicePdfProjectionLogoFlattened,
+  markStreetInvoicePdfProjectionLogoNoSmask,
   STREET_INVOICE_PDF_LOGO_FLAT_TOKEN,
+  STREET_INVOICE_PDF_LOGO_NOSMASK_TOKEN,
   fingerprintSellerLogoRef,
 } from "./street_invoice_pdf_projection.js";
 import { bytesToInvoiceLogoDataUri } from "./invoice_company_logo_fetch.js";
@@ -736,16 +738,29 @@ test("LATE-INVOICE P0) flat=1 marker makes flatten refresh idempotent", () => {
     markStreetInvoicePdfProjectionLogoFlattened(flattened),
     flattened,
   );
+  // flat=1 alone still refreshes once for INV-040 soft-mask strip (nosmask).
   assert.equal(
     invoiceArtifactNeedsLogoProjectionRefresh({
       storedProjectionRevision: flattened,
+      frozenEmbed: embed,
+    }),
+    true,
+  );
+  const withNoSmask = markStreetInvoicePdfProjectionLogoNoSmask(flattened);
+  assert.equal(
+    withNoSmask.includes(STREET_INVOICE_PDF_LOGO_NOSMASK_TOKEN),
+    true,
+  );
+  assert.equal(
+    invoiceArtifactNeedsLogoProjectionRefresh({
+      storedProjectionRevision: withNoSmask,
       frozenEmbed: embed,
     }),
     false,
   );
   const decision = shouldRefreshStreetInvoicePdfOnOpen({
     existingPdfExists: true,
-    storedProjectionRevision: flattened,
+    storedProjectionRevision: withNoSmask,
     needsCompanyLogoEmbed: false,
     frozenEmbed: embed,
   });

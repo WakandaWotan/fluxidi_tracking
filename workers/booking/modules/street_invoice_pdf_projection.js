@@ -42,6 +42,11 @@ import { invoiceLogoDataUriNeedsPdfFlatten } from "./invoice_logo_pdf_flatten.js
 export const STREET_INVOICE_PDF_PROJECTION_VERSION = "street_pdf_proj_v2";
 /** Revision marker: PDF logo was flattened onto opaque white for PDFShift. */
 export const STREET_INVOICE_PDF_LOGO_FLAT_TOKEN = "flat=1";
+/**
+ * Revision marker: PDFShift soft-mask entries were stripped so the composited
+ * RGB logo paints opaque (INV-2026-000040 class — flat=1 alone is not enough).
+ */
+export const STREET_INVOICE_PDF_LOGO_NOSMASK_TOKEN = "nosmask=1";
 export { looksLikeCoordinatePair, pickCustomerVisibleAddress, formatDocumentPhoneDisplay };
 
 function _norm(v) {
@@ -611,6 +616,18 @@ export function invoiceArtifactNeedsLogoProjectionRefresh({
   ) {
     return true;
   }
+  // INVOICE-PDF-APP-LOGO-AND-FIT-WIDTH-P0: INV-2026-000040 — flatten ran
+  // (flat=1) but PDFShift still attached a near-transparent SMask. Refresh
+  // once more to strip soft masks when a frozen company logo exists.
+  if (
+    frozenEmbed &&
+    typeof frozenEmbed === "object" &&
+    !frozenEmbed.failed &&
+    (frozenEmbed.sha256 || frozenUri) &&
+    !storedRevision.includes(STREET_INVOICE_PDF_LOGO_NOSMASK_TOKEN)
+  ) {
+    return true;
+  }
   const storedFp = extractLogoFingerprintFromProjectionRevision(storedRevision);
   if (!storedFp || storedFp === "none") {
     // No logo token / empty logo — still refresh when a usable embed exists so
@@ -648,6 +665,14 @@ export function markStreetInvoicePdfProjectionLogoFlattened(revision = "") {
   if (!base) return STREET_INVOICE_PDF_LOGO_FLAT_TOKEN;
   if (base.includes(STREET_INVOICE_PDF_LOGO_FLAT_TOKEN)) return base;
   return `${base};${STREET_INVOICE_PDF_LOGO_FLAT_TOKEN}`;
+}
+
+/** Append the soft-mask-stripped marker (idempotent). */
+export function markStreetInvoicePdfProjectionLogoNoSmask(revision = "") {
+  const base = _norm(revision);
+  if (!base) return STREET_INVOICE_PDF_LOGO_NOSMASK_TOKEN;
+  if (base.includes(STREET_INVOICE_PDF_LOGO_NOSMASK_TOKEN)) return base;
+  return `${base};${STREET_INVOICE_PDF_LOGO_NOSMASK_TOKEN}`;
 }
 
 export function buildStreetInvoicePdfProjectionRevision({
