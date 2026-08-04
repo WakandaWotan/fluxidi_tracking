@@ -21,6 +21,109 @@ enum DriverKpiViewState { idle, loading, loaded, empty, error }
 typedef DriverKpiRidesFetcher =
     Future<List<DriverKpiRideRecord>> Function(DriverKpiPeriod period);
 
+/// Canonical route name for the chauffeur performance/KPI page.
+///
+/// Driver-home ("Mijn prestaties") and company Drivers → Rapporten must push
+/// the same [DriverKpiPage] under this name so both entry points converge.
+const String kDriverKpiRouteName = 'driver_kpi';
+
+/// Navigation contract for opening [DriverKpiPage].
+///
+/// Carries the selected chauffeur's canonical `driver_id` plus the active
+/// tenant/company scope. Auth mode is diagnostic/context only — KPI numbers
+/// always come from the same `/trips/history` pipeline for [driverKey].
+class DriverKpiRouteArgs {
+  const DriverKpiRouteArgs({
+    required this.driverKey,
+    required this.authMode,
+    required this.tenantId,
+    required this.companyId,
+  });
+
+  final String driverKey;
+  final DriverKpiAuthMode authMode;
+  final String tenantId;
+  final String companyId;
+
+  bool get hasDriver => driverKey.trim().isNotEmpty;
+
+  bool get hasCompanyScope =>
+      tenantId.trim().isNotEmpty && companyId.trim().isNotEmpty;
+}
+
+/// Company Drivers / Chauffeurs beheren → Rapporten / Prestaties.
+DriverKpiRouteArgs driverKpiRouteArgsForCompanyDriver({
+  required String driverId,
+  required String tenantId,
+  required String companyId,
+}) {
+  return DriverKpiRouteArgs(
+    driverKey: driverId.trim(),
+    authMode: DriverKpiAuthMode.companyAdmin,
+    tenantId: tenantId.trim(),
+    companyId: companyId.trim(),
+  );
+}
+
+/// Driver-home / business-preview → Mijn prestaties.
+DriverKpiRouteArgs driverKpiRouteArgsForDriverHome({
+  required String driverId,
+  required bool companyAdminPreview,
+  required String tenantId,
+  required String companyId,
+}) {
+  return DriverKpiRouteArgs(
+    driverKey: driverId.trim(),
+    authMode: companyAdminPreview
+        ? DriverKpiAuthMode.companyAdmin
+        : DriverKpiAuthMode.driver,
+    tenantId: tenantId.trim(),
+    companyId: companyId.trim(),
+  );
+}
+
+/// Builds the single Material route used by every KPI entry point.
+MaterialPageRoute<void> buildDriverKpiPageRoute({
+  required DriverKpiRouteArgs args,
+  required DriverKpiRidesFetcher fetchRides,
+  Color accentColor = const Color(0xFFF5C400),
+  DateTime Function()? clock,
+  void Function(String message)? logger,
+}) {
+  return MaterialPageRoute<void>(
+    settings: RouteSettings(name: kDriverKpiRouteName, arguments: args),
+    builder: (_) => DriverKpiPage(
+      fetchRides: fetchRides,
+      authMode: args.authMode,
+      driverKey: args.driverKey,
+      hasDriver: args.hasDriver,
+      accentColor: accentColor,
+      clock: clock,
+      logger: logger,
+    ),
+  );
+}
+
+/// Pushes the canonical [DriverKpiPage]. Returns when the page is popped.
+Future<void> pushDriverKpiPage(
+  BuildContext context, {
+  required DriverKpiRouteArgs args,
+  required DriverKpiRidesFetcher fetchRides,
+  Color accentColor = const Color(0xFFF5C400),
+  DateTime Function()? clock,
+  void Function(String message)? logger,
+}) {
+  return Navigator.of(context).push<void>(
+    buildDriverKpiPageRoute(
+      args: args,
+      fetchRides: fetchRides,
+      accentColor: accentColor,
+      clock: clock,
+      logger: logger,
+    ),
+  );
+}
+
 class DriverKpiController extends ChangeNotifier {
   DriverKpiController({
     required DriverKpiRidesFetcher fetchRides,

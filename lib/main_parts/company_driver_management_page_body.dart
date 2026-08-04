@@ -3443,7 +3443,9 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
         border: Border.all(color: _border.withOpacity(_isDark ? 0.42 : 0.92)),
       ),
       child: SizedBox(
-        height: 248,
+        // Extra height reserved for the Rapporten action that opens the
+        // existing DriverKpiPage for this chauffeur.
+        height: 310,
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -3793,6 +3795,33 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                           en: 'Temporary pairing QR',
                           fr: 'QR de liaison temporaire',
                           es: 'QR temporal de vinculación',
+                        ),
+                        style: const TextStyle(
+                          fontSize: 15.8,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: () =>
+                          unawaited(_openCompanyDriverKpiPage(context, driver)),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(0, 52),
+                        foregroundColor: _gold.withOpacity(0.98),
+                        side: BorderSide(color: _gold.withOpacity(0.34)),
+                        backgroundColor: _subPanelBg,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.insights_outlined, size: 20),
+                      label: Text(
+                        _t(
+                          nl: 'Rapporten',
+                          en: 'Reports',
+                          fr: 'Rapports',
+                          es: 'Informes',
                         ),
                         style: const TextStyle(
                           fontSize: 15.8,
@@ -4189,6 +4218,23 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   _openPortraitDriverCodeActions(context, driver);
                 },
               ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.insights_outlined, color: actionIconColor),
+                title: Text(
+                  _t(
+                    nl: 'Rapporten',
+                    en: 'Reports',
+                    fr: 'Rapports',
+                    es: 'Informes',
+                  ),
+                  style: TextStyle(color: _textPrimary),
+                ),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  unawaited(_openCompanyDriverKpiPage(context, driver));
+                },
+              ),
             ],
           ),
         ),
@@ -4359,6 +4405,150 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   onTap: () {
                     Navigator.of(sheetContext).pop();
                     _openPortraitDriverCodeActions(context, driver);
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Opens the existing [DriverKpiPage] for [driver] under active company scope.
+  Future<void> _openCompanyDriverKpiPage(
+    BuildContext context,
+    DriverProfile driver,
+  ) async {
+    final driverId = driver.id.trim();
+    if (driverId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Chauffeur-id ontbreekt.',
+              en: 'Driver id is missing.',
+              fr: 'Identifiant chauffeur manquant.',
+              es: 'Falta el id del conductor.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final scope = _activeCompanyScopeForDriverDelete(driver);
+    if (scope == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Bedrijfscontext ontbreekt voor rapporten.',
+              en: 'Company scope is missing for reports.',
+              fr: 'Contexte entreprise manquant pour les rapports.',
+              es: 'Falta el alcance de empresa para informes.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final args = driverKpiRouteArgsForCompanyDriver(
+      driverId: driverId,
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+    );
+    final scopeSource =
+        (activeCompanySessionNotifier.value?.companyId.trim() ?? '').isNotEmpty
+        ? 'company_session'
+        : 'company_profile';
+    if (!context.mounted) return;
+    await pushDriverKpiPage(
+      context,
+      args: args,
+      accentColor: _gold,
+      fetchRides: (_) => fetchDriverKpiRidesFromTripsHistory(
+        tenantId: args.tenantId,
+        companyId: args.companyId,
+        driverId: args.driverKey,
+        scopeSource: scopeSource,
+        fetchContext: 'company_drivers_reports',
+      ),
+    );
+  }
+
+  Future<void> _openPortraitDriverReportsPicker(
+    BuildContext context,
+    List<DriverProfile> visible,
+  ) async {
+    if (visible.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Geen chauffeurs beschikbaar.',
+              en: 'No drivers available.',
+              fr: 'Aucun chauffeur disponible.',
+              es: 'No hay conductores disponibles.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    if (visible.length == 1) {
+      await _openCompanyDriverKpiPage(context, visible.first);
+      return;
+    }
+    final isCleanProfessional = _isCleanProfessional;
+    final titleTextColor = isCleanProfessional ? _textPrimary : Colors.white;
+    final itemTextColor = isCleanProfessional ? _textPrimary : Colors.white;
+    final subtitleTextColor = isCleanProfessional
+        ? _textSecondary
+        : Colors.white.withOpacity(0.62);
+    final trailingColor = isCleanProfessional
+        ? _textSecondary.withOpacity(0.92)
+        : _textMuted.withOpacity(0.72);
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: _panelBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _t(
+                  nl: 'Kies chauffeur voor rapporten',
+                  en: 'Select driver for reports',
+                  fr: 'Sélectionnez le chauffeur pour les rapports',
+                  es: 'Selecciona conductor para informes',
+                ),
+                style: TextStyle(
+                  color: titleTextColor,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ...visible.map(
+                (driver) => ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                    _displayDriverName(driver.fullName),
+                    style: TextStyle(color: itemTextColor),
+                  ),
+                  subtitle: Text(
+                    _driverCodeStatusLabel(driver),
+                    style: TextStyle(color: subtitleTextColor),
+                  ),
+                  trailing: Icon(Icons.chevron_right, color: trailingColor),
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    unawaited(_openCompanyDriverKpiPage(context, driver));
                   },
                 ),
               ),
@@ -5862,20 +6052,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                                   fr: 'Rapports',
                                   es: 'Informes',
                                 ),
-                                onTap: () {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                        _t(
-                                          nl: 'Chauffeurprestaties komen binnenkort.',
-                                          en: 'Driver performance is coming soon.',
-                                          fr: 'Les performances chauffeur arrivent bientôt.',
-                                          es: 'El rendimiento del conductor llegará pronto.',
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                },
+                                onTap: () => _openPortraitDriverReportsPicker(
+                                  context,
+                                  visible,
+                                ),
                               ),
                             ),
                             Expanded(

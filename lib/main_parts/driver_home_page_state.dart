@@ -34155,74 +34155,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   // FASE 12 — Driver KPI ("My performance").
   //
   // KPIs reuse the SAME canonical per-driver source as ride history
-  // (`/trips/history` scoped to the effective driver) so a ride can never be
-  // double-counted across bookings/receipts/invoices/payments: we read one
-  // canonical row per ride and dedupe by trip id in the aggregator.
-  DriverKpiPaymentState _driverKpiPaymentStateForTrip(_TripHistoryItem item) {
-    final details = item.bookingDetails;
-    String pick(List<String> keys) {
-      for (final key in keys) {
-        final value = details[key];
-        final text = value?.toString().trim() ?? '';
-        if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
-      }
-      return '';
-    }
-
-    final invoiceStatus = pick(<String>[
-      'business_invoice_status',
-      'businessInvoiceStatus',
-      'billit_sync_status',
-      'billitSyncStatus',
-      'invoice_status',
-      'invoiceStatus',
-    ]).toUpperCase();
-    final paymentStatus = pick(<String>['payment_status', 'paymentStatus']);
-
-    // "Invoice created" is not automatically "paid": a business invoice still
-    // syncing/awaiting settlement is reported separately as in-processing.
-    final invoiceProcessing =
-        invoiceStatus.contains('SYNC') ||
-        invoiceStatus.contains('PENDING') ||
-        invoiceStatus.contains('PROCESSING') ||
-        invoiceStatus.contains('QUEUED');
-    if (invoiceProcessing &&
-        !_CompanyBookingOverviewItem.isPaidPaymentStatus(paymentStatus)) {
-      return DriverKpiPaymentState.invoiceInProcessing;
-    }
-    if (_CompanyBookingOverviewItem.isPaidPaymentStatus(paymentStatus)) {
-      return DriverKpiPaymentState.paid;
-    }
-    if (_CompanyBookingOverviewItem.isExplicitNotPaidPaymentStatus(
-      paymentStatus,
-    )) {
-      return DriverKpiPaymentState.outstanding;
-    }
-    return DriverKpiPaymentState.unknown;
-  }
-
-  DriverKpiRideRecord _driverKpiRecordFromTrip(_TripHistoryItem item) {
-    DateTime? parseIso(String? iso) {
-      final text = iso?.trim();
-      if (text == null || text.isEmpty) return null;
-      return DateTime.tryParse(text)?.toLocal();
-    }
-
-    final cancelled = _CompanyBookingOverviewItem._isCancelledStatus(
-      item.status,
-    );
-    return DriverKpiRideRecord(
-      rideId: item.tripId.trim(),
-      startedAt: parseIso(item.startedAt),
-      stoppedAt: parseIso(item.stoppedAt),
-      amountEur: item.totalEur ?? 0.0,
-      kmTotal: item.kmTotal,
-      isCompleted: !cancelled,
-      isCancelled: cancelled,
-      paymentState: _driverKpiPaymentStateForTrip(item),
-    );
-  }
-
+  // (`/trips/history` scoped to the effective driver) via
+  // [fetchDriverKpiRidesFromTripsHistory] so company Drivers → Rapporten and
+  // this entry point share one pipeline.
   Future<List<DriverKpiRideRecord>> _fetchDriverKpiRides(
     DriverKpiPeriod period,
   ) async {
@@ -34231,63 +34166,13 @@ class _DriverHomePageState extends State<DriverHomePage>
       throw StateError('driver_kpi_scope_missing');
     }
     final driverId = _effectiveActiveDriverIdForRideScope().trim();
-    if (driverId.isEmpty) {
-      return const <DriverKpiRideRecord>[];
-    }
-    final headers = await _tripsHistoryAuthHeaders(
-      scopeSource: strictScope.source,
+    return fetchDriverKpiRidesFromTripsHistory(
+      tenantId: strictScope.tenantId,
+      companyId: strictScope.companyId,
       driverId: driverId,
+      scopeSource: strictScope.source,
       fetchContext: 'driver_kpi_page',
     );
-    final uri = Uri.parse(
-      '$kWorkerBaseUrl$kTripsHistoryPath'
-      '?tenant_id=${Uri.encodeQueryComponent(strictScope.tenantId)}'
-      '&company_id=${Uri.encodeQueryComponent(strictScope.companyId)}'
-      '&tenantId=${Uri.encodeQueryComponent(strictScope.tenantId)}'
-      '&companyId=${Uri.encodeQueryComponent(strictScope.companyId)}'
-      '&driver_id=${Uri.encodeQueryComponent(driverId)}'
-      '&limit=300',
-    );
-    final res = await http
-        .get(uri, headers: headers)
-        .timeout(const Duration(seconds: 12));
-    if (res.statusCode != 200) {
-      throw Exception('HTTP ${res.statusCode}');
-    }
-    final decoded = jsonDecode(res.body);
-    if (decoded is! Map || decoded['ok'] != true) {
-      throw Exception('invalid_driver_kpi_response');
-    }
-    final trips = decoded['trips'];
-    if (trips is! List) return const <DriverKpiRideRecord>[];
-    final tripItems = trips
-        .whereType<Map>()
-        .map((e) => _TripHistoryItem.fromJson(Map<String, dynamic>.from(e)))
-        .where((e) => e.tripId.trim().isNotEmpty)
-        // Hard driver-scope guard: never mix another driver's rides into KPIs.
-        .where(
-          (e) =>
-              e.driverId.trim().isEmpty || e.driverId.trim() == driverId,
-        )
-        .toList(growable: false);
-    // STREET-RIDE-HISTORY-DUPLICATE-ZERO-BOOKING-1A: a street ride's planned
-    // operational-leg shadow must not count as a second KPI ride. Collapse it
-    // into the canonical direct trip using relational ids only (worker hint +
-    // booking_id/parent_booking_id/operational-leg fallback).
-    final canonicalTripItems = canonicalizeStreetHistory<_TripHistoryItem>(
-      tripItems,
-      tripId: (item) => item.tripId,
-      kind: (item) => item.kind,
-      bookingId: (item) => item.bookingId ?? '',
-      parentBookingId: (item) => item.parentBookingId,
-      linkedTrackingTripId: (item) => item.linkedTrackingTripId,
-      isOperationalLeg: (item) => item.isOperationalLeg,
-      workerShadowHint: (item) => item.workerOperationalShadowHint,
-      onLog: (log) => debugPrint(log.toLogLine()),
-    );
-    return canonicalTripItems
-        .map(_driverKpiRecordFromTrip)
-        .toList(growable: false);
   }
 
   Color _driverKpiAccentColor() {
@@ -34307,20 +34192,19 @@ class _DriverHomePageState extends State<DriverHomePage>
     // Make sure the effective-driver scope is current before scoping KPIs.
     _syncDriverRideScopeContext(reason: 'driver_kpi_open');
     final driverId = _effectiveActiveDriverIdForRideScope().trim();
-    final authMode = _isBusinessPreviewMode
-        ? DriverKpiAuthMode.companyAdmin
-        : DriverKpiAuthMode.driver;
+    final strictScope = _strictDriverHistoryScopeIdsWithSource();
     if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => DriverKpiPage(
-          fetchRides: _fetchDriverKpiRides,
-          authMode: authMode,
-          driverKey: driverId,
-          hasDriver: driverId.isNotEmpty,
-          accentColor: _driverKpiAccentColor(),
-        ),
-      ),
+    final args = driverKpiRouteArgsForDriverHome(
+      driverId: driverId,
+      companyAdminPreview: _isBusinessPreviewMode,
+      tenantId: strictScope?.tenantId ?? '',
+      companyId: strictScope?.companyId ?? '',
+    );
+    await pushDriverKpiPage(
+      context,
+      args: args,
+      fetchRides: _fetchDriverKpiRides,
+      accentColor: _driverKpiAccentColor(),
     );
   }
 

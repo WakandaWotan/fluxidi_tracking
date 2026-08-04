@@ -235,6 +235,7 @@ part 'main_parts/driver_receipt_business_invoice_ui.dart';
 part 'document_core/company_credit_note_draft_builder.dart';
 part 'main_parts/bookings_hub_page.dart';
 part 'main_parts/company_driver_management_page_body.dart';
+part 'main_parts/driver_kpi_fetch.dart';
 part 'main_parts/ride_receipt_body_state.dart';
 part 'main_parts/business_home_page_state.dart';
 part 'main_parts/role_entry_page.dart';
