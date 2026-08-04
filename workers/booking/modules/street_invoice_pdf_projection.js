@@ -47,6 +47,12 @@ export const STREET_INVOICE_PDF_LOGO_FLAT_TOKEN = "flat=1";
  * RGB logo paints opaque (INV-2026-000040 class — flat=1 alone is not enough).
  */
 export const STREET_INVOICE_PDF_LOGO_NOSMASK_TOKEN = "nosmask=1";
+/**
+ * Revision marker: verified opaque RGB logo on white survived PDFShift and
+ * pixel verification (INVOICE-LOGO-BLACK-RECTANGLE P0). flat=1 / nosmask=1
+ * alone are outdated — they did not prove the embedded bitmap was intact.
+ */
+export const STREET_INVOICE_PDF_LOGO_OPAQUE_RGB_TOKEN = "opaque_rgb_logo=1";
 export { looksLikeCoordinatePair, pickCustomerVisibleAddress, formatDocumentPhoneDisplay };
 
 function _norm(v) {
@@ -606,6 +612,22 @@ export function invoiceArtifactNeedsLogoProjectionRefresh({
     frozenEmbed?.data_uri ?? frozenEmbed?.dataUri,
     400000,
   );
+  const hasUsableFrozen =
+    frozenEmbed &&
+    typeof frozenEmbed === "object" &&
+    !frozenEmbed.failed &&
+    (frozenEmbed.sha256 || frozenUri);
+
+  // INVOICE-LOGO-BLACK-RECTANGLE P0: any frozen company logo without the
+  // verified opaque-RGB marker is outdated — including flat=1 and/or
+  // nosmask=1 artifacts that still rendered as a black rectangle because the
+  // data URI was truncated before PDFShift.
+  if (
+    hasUsableFrozen &&
+    !storedRevision.includes(STREET_INVOICE_PDF_LOGO_OPAQUE_RGB_TOKEN)
+  ) {
+    return true;
+  }
   // LATE-INVOICE-BILLIT-BRANDING-P0: INV-2026-000039 class — frozen RGBA logo
   // was embedded, but PDFShift produced a fully-transparent soft mask. Any
   // stored artifact that still lacks the opaque-flatten marker must refresh.
@@ -620,10 +642,7 @@ export function invoiceArtifactNeedsLogoProjectionRefresh({
   // (flat=1) but PDFShift still attached a near-transparent SMask. Refresh
   // once more to strip soft masks when a frozen company logo exists.
   if (
-    frozenEmbed &&
-    typeof frozenEmbed === "object" &&
-    !frozenEmbed.failed &&
-    (frozenEmbed.sha256 || frozenUri) &&
+    hasUsableFrozen &&
     !storedRevision.includes(STREET_INVOICE_PDF_LOGO_NOSMASK_TOKEN)
   ) {
     return true;
@@ -673,6 +692,14 @@ export function markStreetInvoicePdfProjectionLogoNoSmask(revision = "") {
   if (!base) return STREET_INVOICE_PDF_LOGO_NOSMASK_TOKEN;
   if (base.includes(STREET_INVOICE_PDF_LOGO_NOSMASK_TOKEN)) return base;
   return `${base};${STREET_INVOICE_PDF_LOGO_NOSMASK_TOKEN}`;
+}
+
+/** Append the verified opaque-RGB logo marker (idempotent). */
+export function markStreetInvoicePdfProjectionLogoOpaqueRgb(revision = "") {
+  const base = _norm(revision);
+  if (!base) return STREET_INVOICE_PDF_LOGO_OPAQUE_RGB_TOKEN;
+  if (base.includes(STREET_INVOICE_PDF_LOGO_OPAQUE_RGB_TOKEN)) return base;
+  return `${base};${STREET_INVOICE_PDF_LOGO_OPAQUE_RGB_TOKEN}`;
 }
 
 export function buildStreetInvoicePdfProjectionRevision({

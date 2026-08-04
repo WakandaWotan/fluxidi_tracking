@@ -24,6 +24,8 @@ import {
   invoiceArtifactNeedsLogoProjectionRefresh,
   markStreetInvoicePdfProjectionLogoFlattened,
   markStreetInvoicePdfProjectionLogoNoSmask,
+  markStreetInvoicePdfProjectionLogoOpaqueRgb,
+  STREET_INVOICE_PDF_LOGO_OPAQUE_RGB_TOKEN,
   STREET_INVOICE_PDF_LOGO_FLAT_TOKEN,
   STREET_INVOICE_PDF_LOGO_NOSMASK_TOKEN,
   fingerprintSellerLogoRef,
@@ -716,7 +718,7 @@ test("LATE-INVOICE P0) RGBA frozen embed without flat=1 forces open refresh", ()
   assert.equal(decision.reason, "logo_projection_mismatch");
 });
 
-test("LATE-INVOICE P0) flat=1 marker makes flatten refresh idempotent", () => {
+test("LATE-INVOICE P0) flat=1 / nosmask=1 alone still refresh for opaque_rgb_logo", () => {
   const sha =
     "a9b75e03e520f3be6785cc7ad72f0a63499ff0fa69c1bb7bcdc4d9855221ce26";
   const dataUri = bytesToInvoiceLogoDataUri(RGBA_PNG_BYTES, "image/png");
@@ -738,7 +740,7 @@ test("LATE-INVOICE P0) flat=1 marker makes flatten refresh idempotent", () => {
     markStreetInvoicePdfProjectionLogoFlattened(flattened),
     flattened,
   );
-  // flat=1 alone still refreshes once for INV-040 soft-mask strip (nosmask).
+  // flat=1 alone still refreshes (nosmask + opaque_rgb_logo).
   assert.equal(
     invoiceArtifactNeedsLogoProjectionRefresh({
       storedProjectionRevision: flattened,
@@ -751,16 +753,30 @@ test("LATE-INVOICE P0) flat=1 marker makes flatten refresh idempotent", () => {
     withNoSmask.includes(STREET_INVOICE_PDF_LOGO_NOSMASK_TOKEN),
     true,
   );
+  // INVOICE-LOGO-BLACK-RECTANGLE P0: flat=1;nosmask=1 is outdated without
+  // opaque_rgb_logo=1 (truncated data URI still produced a black rectangle).
   assert.equal(
     invoiceArtifactNeedsLogoProjectionRefresh({
       storedProjectionRevision: withNoSmask,
+      frozenEmbed: embed,
+    }),
+    true,
+  );
+  const withOpaque = markStreetInvoicePdfProjectionLogoOpaqueRgb(withNoSmask);
+  assert.equal(
+    withOpaque.includes(STREET_INVOICE_PDF_LOGO_OPAQUE_RGB_TOKEN),
+    true,
+  );
+  assert.equal(
+    invoiceArtifactNeedsLogoProjectionRefresh({
+      storedProjectionRevision: withOpaque,
       frozenEmbed: embed,
     }),
     false,
   );
   const decision = shouldRefreshStreetInvoicePdfOnOpen({
     existingPdfExists: true,
-    storedProjectionRevision: withNoSmask,
+    storedProjectionRevision: withOpaque,
     needsCompanyLogoEmbed: false,
     frozenEmbed: embed,
   });

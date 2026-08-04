@@ -215,7 +215,7 @@ test("6) reopening a frozen artifact performs zero logo network fetches", async 
     paymentStatus: "paid",
     sellerLogoRef: `sha:${embed.sha256}`,
   });
-  // RGBA logos need one opaque-flatten repair (INV-2026-000039) until flat=1.
+  // RGBA logos need opaque-RGB repair until opaque_rgb_logo=1.
   assert.equal(
     shouldRefreshStreetInvoicePdfOnOpen({
       existingPdfExists: true,
@@ -224,18 +224,40 @@ test("6) reopening a frozen artifact performs zero logo network fetches", async 
       frozenEmbed: embed,
     }).refresh,
     true,
-    "RGBA frozen embed without flat=1 must refresh once for PDFShift",
+    "RGBA frozen embed without opaque_rgb_logo=1 must refresh",
   );
-  const flattenedRevision = `${matchingRevision};flat=1;nosmask=1`;
+  const flatOnly = `${matchingRevision};flat=1`;
   assert.equal(
     shouldRefreshStreetInvoicePdfOnOpen({
       existingPdfExists: true,
-      storedProjectionRevision: flattenedRevision,
+      storedProjectionRevision: flatOnly,
+      needsCompanyLogoEmbed: false,
+      frozenEmbed: embed,
+    }).refresh,
+    true,
+    "flat=1 alone must refresh",
+  );
+  const nosmaskOnly = `${matchingRevision};flat=1;nosmask=1`;
+  assert.equal(
+    shouldRefreshStreetInvoicePdfOnOpen({
+      existingPdfExists: true,
+      storedProjectionRevision: nosmaskOnly,
+      needsCompanyLogoEmbed: false,
+      frozenEmbed: embed,
+    }).refresh,
+    true,
+    "flat=1;nosmask=1 without opaque_rgb_logo=1 must refresh",
+  );
+  const opaqueRevision = `${matchingRevision};flat=1;nosmask=1;opaque_rgb_logo=1`;
+  assert.equal(
+    shouldRefreshStreetInvoicePdfOnOpen({
+      existingPdfExists: true,
+      storedProjectionRevision: opaqueRevision,
       needsCompanyLogoEmbed: false,
       frozenEmbed: embed,
     }).refresh,
     false,
-    "matching frozen logo fingerprint + flat=1 + nosmask=1 must not re-refresh",
+    "matching frozen logo + opaque_rgb_logo=1 must not re-refresh",
   );
 });
 

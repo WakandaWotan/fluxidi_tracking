@@ -268,12 +268,14 @@ import {
   invoiceArtifactNeedsLogoProjectionRefresh,
   markStreetInvoicePdfProjectionLogoFlattened,
   markStreetInvoicePdfProjectionLogoNoSmask,
+  markStreetInvoicePdfProjectionLogoOpaqueRgb,
 } from "./modules/street_invoice_pdf_projection.js";
 import {
-  flattenInvoiceLogoDataUriForPdf,
-  invoiceLogoDataUriNeedsPdfFlatten,
   invoicePdfHasLogoSoftMask,
   stripInvoicePdfLogoSoftMasks,
+  normalizeInvoiceLogoToOpaqueRgbDataUri,
+  hardenInvoicePdfLogoArtifact,
+  sanitizeInvoiceLogoUrlForProfile,
 } from "./modules/invoice_logo_pdf_flatten.js";
 import {
   extractRouteCoordinates,
@@ -29437,7 +29439,11 @@ function maybeNormalizeCommunicationProfile(raw) {
     address: sanitizeTenantString(source.address, 280),
     vatNumber: sanitizeTenantString(source.vatNumber, 64),
     companyNumber: sanitizeTenantString(source.companyNumber, 80),
-    logoUrl: sanitizeTenantString(source.logoUrl, 1000),
+    // INVOICE-LOGO-BLACK-RECTANGLE P0: never truncate data:image… logo URIs to
+    // 1000 chars — that kept a valid IHDR (664×145) with a corrupt IDAT and
+    // PDFShift painted a solid black rectangle while flat=1/nosmask=1 claimed
+    // the logo was repaired.
+    logoUrl: sanitizeInvoiceLogoUrlForProfile(source.logoUrl),
     invoiceFooter: sanitizeTenantString(source.invoiceFooter, 2000),
     receiptFooter: sanitizeTenantString(source.receiptFooter, 2000),
     locale,
@@ -65512,28 +65518,50 @@ async function ensureStreetBusinessInvoicePdfArtifact(
   }
 
   // PDFShift rasterizes RGBA PNGs with a broken soft mask (field INV-2026-000039:
-  // 664×145 logo present but fully transparent). Flatten onto white for the
-  // PDF HTML only; the canonical frozen embed keeps its original alpha bytes.
+  // 664×145 logo present but fully transparent). Normalize onto opaque white
+  // for the PDF HTML only; the canonical frozen embed keeps its original alpha.
+  // Fail closed when a usable frozen logo cannot be verified opaque — never
+  // mark flat/opaque markers for a broken bitmap.
+  let opaqueLogoReady = false;
   try {
-    const pdfLogoUrl = safeStr(sellerCommProfile?.logoUrl, 400000);
-    if (invoiceLogoDataUriNeedsPdfFlatten(pdfLogoUrl)) {
-      const flatUri = await flattenInvoiceLogoDataUriForPdf(pdfLogoUrl);
-      if (flatUri && flatUri !== pdfLogoUrl) {
+    const pdfLogoUrl = String(sellerCommProfile?.logoUrl || "").trim();
+    if (pdfLogoUrl.startsWith("data:image/")) {
+      const normalized = await normalizeInvoiceLogoToOpaqueRgbDataUri(pdfLogoUrl);
+      if (normalized.ok && normalized.data_uri) {
         sellerCommProfile = {
           ...(sellerCommProfile && typeof sellerCommProfile === "object"
             ? sellerCommProfile
             : {}),
-          logoUrl: flatUri,
+          logoUrl: normalized.data_uri,
         };
         projectionRevision =
           markStreetInvoicePdfProjectionLogoFlattened(projectionRevision);
+        opaqueLogoReady = true;
+      } else {
+        console.log(
+          `[INVOICE_LOGO][OPAQUE_RGB] bookingId=${safeBookingId} normalize_failed reason=${safeStr(normalized?.reason, 80)}`,
+        );
       }
     }
-  } catch (_) {
-    // Fail-open: keep prior logo bytes rather than blocking invoice PDF.
+  } catch (err) {
+    console.log(
+      `[INVOICE_LOGO][OPAQUE_RGB] bookingId=${safeBookingId} normalize_exception=${safeStr(err?.message || err, 120)}`,
+    );
   }
-  // INV-2026-000040: PDFShift still attaches a near-transparent SMask even
-  // after RGB flatten — mark nosmask so the strip pass is persisted once.
+  if (
+    isUsableInvoiceLogoEmbed(frozenLogo) &&
+    !opaqueLogoReady
+  ) {
+    return {
+      ok: false,
+      skipped: false,
+      reason: "opaque_logo_normalize_failed",
+      key: existing.key || null,
+      projection_revision: storedRevision || projection.projectionRevision,
+    };
+  }
+  // INV-2026-000040: PDFShift may still attach a soft mask; harden+verify
+  // inside generateAndSendInvoice before R2 persist marks opaque_rgb_logo=1.
   projectionRevision =
     markStreetInvoicePdfProjectionLogoNoSmask(projectionRevision);
 
@@ -65558,6 +65586,7 @@ async function ensureStreetBusinessInvoicePdfArtifact(
             : "street_business_invoice_pdf_ensure",
       },
       projectionRevision,
+      requireOpaqueRgbLogoVerification: opaqueLogoReady,
     });
     const artifactOk = result?.invoice_pdf_artifact?.ok === true;
     if (!artifactOk) {
@@ -92094,6 +92123,7 @@ async function generateAndSendInvoice({
   bookingRecordInfoOverride = null,
   commProfileOverride = null,
   projectionRevision = "",
+  requireOpaqueRgbLogoVerification = false,
 }) {
   try {
     const bookingInput = booking && typeof booking === "object" ? booking : {};
@@ -92110,10 +92140,62 @@ async function generateAndSendInvoice({
     const invoiceScope = invoiceTenantId && invoiceCompanyId
       ? { tenant_id: invoiceTenantId, company_id: invoiceCompanyId }
       : null;
-    const commProfile =
+    let commProfile =
       commProfileOverride && typeof commProfileOverride === "object"
         ? maybeNormalizeCommunicationProfile(commProfileOverride)
         : await resolveTenantCommunicationProfile(env, invoiceTenantId, invoiceCompanyId);
+    // INVOICE-LOGO-BLACK-RECTANGLE P0: normalize AFTER profile sanitization so
+    // a prior 1000-char truncation cannot reopen the black-rectangle path.
+    // Also re-normalize when the override already carried an opaque URI.
+    let opaqueRgbLogoVerified = false;
+    try {
+      const logoCandidate = String(commProfile?.logoUrl || "").trim();
+      if (logoCandidate.startsWith("data:image/")) {
+        const normalized = await normalizeInvoiceLogoToOpaqueRgbDataUri(logoCandidate);
+        if (normalized.ok && normalized.data_uri) {
+          commProfile = {
+            ...(commProfile && typeof commProfile === "object" ? commProfile : {}),
+            logoUrl: normalized.data_uri,
+          };
+          opaqueRgbLogoVerified = true;
+          projectionRevision =
+            markStreetInvoicePdfProjectionLogoFlattened(projectionRevision);
+        } else if (requireOpaqueRgbLogoVerification) {
+          return {
+            ok: false,
+            error: "opaque_logo_normalize_failed",
+            reason: safeStr(normalized?.reason, 80) || "opaque_logo_normalize_failed",
+            email_sent: false,
+            invoice_pdf_artifact: {
+              ok: false,
+              reason: safeStr(normalized?.reason, 80) || "opaque_logo_normalize_failed",
+              key: null,
+              generated_at: null,
+              content_type: null,
+              size_bytes: null,
+            },
+          };
+        }
+      }
+    } catch (normErr) {
+      if (requireOpaqueRgbLogoVerification) {
+        return {
+          ok: false,
+          error: "opaque_logo_normalize_failed",
+          reason: "normalize_exception",
+          email_sent: false,
+          invoice_pdf_artifact: {
+            ok: false,
+            reason: "normalize_exception",
+            key: null,
+            generated_at: null,
+            content_type: null,
+            size_bytes: null,
+          },
+        };
+      }
+      void normErr;
+    }
     const profileMissing = !safeStr(commProfile?.brandName) && !safeStr(commProfile?.legalName);
     const bookingRecordInfo =
       bookingRecordInfoOverride &&
@@ -92498,20 +92580,75 @@ async function generateAndSendInvoice({
       );
       pdfBytes = null;
     }
-    // INVOICE-PDF-APP-LOGO-AND-FIT-WIDTH-P0: PDFShift may still attach a broken
-    // soft mask after RGB flatten (field INV-2026-000040). Strip SMask so the
-    // composited logo paints opaque in Fluxidi viewers. Billit keeps its own PDF.
-    if (pdfBytes && pdfBytes.length && invoicePdfHasLogoSoftMask(pdfBytes)) {
+    // INVOICE-LOGO-BLACK-RECTANGLE P0: harden + pixel-verify the logo before
+    // any R2 write. Strip /SMask only when the RGB plane already has white
+    // background + visible ink. Never overwrite a good artifact with a black
+    // rectangle. Billit keeps its own PDF.
+    let logoHardenedRevision = String(projectionRevision || "").trim();
+    if (pdfBytes && pdfBytes.length && (opaqueRgbLogoVerified || requireOpaqueRgbLogoVerification)) {
+      try {
+        const hardened = await hardenInvoicePdfLogoArtifact(pdfBytes);
+        if (!hardened.ok) {
+          console.log(
+            `[INVOICE_GEN] bookingId=${safeStr(data.bookingPublicId || data.bookingId)} pdfLogoVerify=false reason=${safeStr(hardened.reason, 80)}`,
+          );
+          if (requireOpaqueRgbLogoVerification || opaqueRgbLogoVerified) {
+            return {
+              ok: false,
+              error: "invoice_logo_verification_failed",
+              reason: safeStr(hardened.reason, 80) || "invoice_logo_verification_failed",
+              email_sent: false,
+              invoice_pdf_artifact: {
+                ok: false,
+                reason: safeStr(hardened.reason, 80) || "invoice_logo_verification_failed",
+                key: null,
+                generated_at: null,
+                content_type: null,
+                size_bytes: null,
+              },
+            };
+          }
+        } else {
+          pdfBytes = hardened.pdfBytes;
+          logoHardenedRevision = markStreetInvoicePdfProjectionLogoNoSmask(
+            markStreetInvoicePdfProjectionLogoFlattened(logoHardenedRevision),
+          );
+          logoHardenedRevision =
+            markStreetInvoicePdfProjectionLogoOpaqueRgb(logoHardenedRevision);
+          console.log(
+            `[INVOICE_GEN] bookingId=${safeStr(data.bookingPublicId || data.bookingId)} pdfLogoVerify=true opaque_rgb_logo=1`,
+          );
+        }
+      } catch (verifyErr) {
+        console.log(
+          `[INVOICE_GEN] bookingId=${safeStr(data.bookingPublicId || data.bookingId)} pdfLogoVerify=exception ${safeStr(verifyErr?.message || verifyErr, 120)}`,
+        );
+        if (requireOpaqueRgbLogoVerification || opaqueRgbLogoVerified) {
+          return {
+            ok: false,
+            error: "invoice_logo_verification_failed",
+            reason: "logo_verify_exception",
+            email_sent: false,
+            invoice_pdf_artifact: {
+              ok: false,
+              reason: "logo_verify_exception",
+              key: null,
+              generated_at: null,
+              content_type: null,
+              size_bytes: null,
+            },
+          };
+        }
+      }
+    } else if (pdfBytes && pdfBytes.length && invoicePdfHasLogoSoftMask(pdfBytes)) {
+      // Legacy path without an opaque company logo: keep prior strip behavior.
       try {
         const stripped = stripInvoicePdfLogoSoftMasks(pdfBytes);
         if (stripped && stripped.length) {
           pdfBytes = stripped;
-          console.log(
-            `[INVOICE_GEN] bookingId=${safeStr(data.bookingPublicId || data.bookingId)} pdfLogoSoftMaskStripped=true`,
-          );
         }
       } catch (_) {
-        // fail-open: keep PDFShift bytes
+        // fail-open
       }
     }
     console.log(
@@ -92523,6 +92660,7 @@ async function generateAndSendInvoice({
         invoiceNumber,
         pdfBytes,
         projectionRevision:
+          safeStr(logoHardenedRevision, 500) ||
           safeStr(projectionRevision, 500) ||
           safeStr(bookingInput.street_pdf_projection_revision, 500) ||
           "",
