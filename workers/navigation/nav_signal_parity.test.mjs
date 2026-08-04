@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  bearingsFromHeadingDeg,
   buildMapboxDirectionsSearchParams,
   buildRouteCacheKeyMaterial,
   extractManeuvers,
@@ -303,6 +304,59 @@ describe("NAV-SIGNAL-P0A1-WORKER-LANGUAGE-PARITY", () => {
     assert.equal(routePlan.params.get("banner_instructions"), "true");
     assert.equal(reroutePlan.params.get("roundabout_exits"), "true");
     assert.equal(routePlan.params.get("voice_instructions"), null);
+  });
+
+  it("NAV-REROUTE-P0) /reroute forwards heading as Mapbox bearings; /route does not", () => {
+    assert.equal(bearingsFromHeadingDeg(175.5), "175.5,45;");
+    assert.equal(bearingsFromHeadingDeg(-1), "");
+    assert.equal(bearingsFromHeadingDeg(Number.NaN), "");
+
+    const withHeading = buildMapboxDirectionsSearchParams({
+      language: "nl",
+      accessToken: "test-token",
+      bearings: bearingsFromHeadingDeg(90),
+    });
+    assert.equal(withHeading.get("bearings"), "90.0,45;");
+    assert.equal(withHeading.get("banner_instructions"), "true");
+
+    const without = buildMapboxDirectionsSearchParams({
+      language: "nl",
+      accessToken: "test-token",
+    });
+    assert.equal(without.get("bearings"), null);
+
+    const reroutePlan = planWorkerMapboxDirectionsRequest({
+      kind: "reroute",
+      bodyLanguage: "nl",
+      countryLanguageHint: "nl",
+      headingDeg: 175.5,
+    });
+    assert.equal(reroutePlan.kind, "reroute");
+    assert.equal(reroutePlan.params.get("bearings"), "175.5,45;");
+    assert.equal(reroutePlan.bearings, "175.5,45;");
+
+    const routePlan = planWorkerMapboxDirectionsRequest({
+      kind: "route",
+      bodyLanguage: "nl",
+      countryLanguageHint: "nl",
+      headingDeg: 175.5,
+    });
+    assert.equal(routePlan.kind, "route");
+    assert.equal(routePlan.params.get("bearings"), null);
+    assert.equal(routePlan.bearings, "");
+  });
+
+  it("NAV-REROUTE-P0) destination/origin coords stay caller-owned (same dest contract)", () => {
+    // Worker parse uses body.current + body.destination; this parity helper only
+    // builds Mapbox query params. Prove normal route params remain stable.
+    const params = buildMapboxDirectionsSearchParams({
+      language: "en",
+      accessToken: "tok",
+    });
+    assert.equal(params.get("alternatives"), "false");
+    assert.equal(params.get("overview"), "full");
+    assert.equal(params.get("steps"), "true");
+    assert.equal(params.get("geometries"), "geojson");
   });
 
   it("H) cache keys differ for otherwise identical NL and EN requests", () => {

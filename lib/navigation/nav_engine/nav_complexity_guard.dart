@@ -640,20 +640,21 @@ class NavComplexityGuard {
       qualitySignals.add('rapid_instruction_churn');
     }
 
-    // NAV-COMPLEXITY-HEADING-CONFLICT-GATE-P0-1: a raw single-sample bearing
-    // spike on a curvy local road must never activate the caution. Require:
-    //   1. consecutive conflict samples >= sustainedHeadingConflictMinConsecutive
-    //   2. AND at least one independent quality signal on this same tick
-    //      (low_confidence, high_snap_distance, or offroute_uncertain).
-    // Repeated prediction is explicitly excluded as corroboration below.
+    // NAV-REROUTE-CURRENT-POSITION-HEADING-P0: ordinary reroute churn must not
+    // surface "Complexe verkeerssituatie". While a reroute is pending, heading
+    // vs the *old* route is expected to conflict — that is not structural
+    // complexity. Skip heading_route_conflict activation during reroutePending.
     final headingDelta = input.headingDeltaDeg;
     final headingConflictSustained =
         headingConflictConsecutive >= sustainedHeadingConflictMinConsecutive;
     final supportingQualityPresent =
         qualitySignals.contains('low_confidence') ||
         qualitySignals.contains('high_snap_distance') ||
-        qualitySignals.contains('offroute_uncertain');
-    if (headingConflictSustained && supportingQualityPresent) {
+        (!input.reroutePending &&
+            qualitySignals.contains('offroute_uncertain'));
+    if (!input.reroutePending &&
+        headingConflictSustained &&
+        supportingQualityPresent) {
       structuralSignals.add('heading_route_conflict');
     }
 

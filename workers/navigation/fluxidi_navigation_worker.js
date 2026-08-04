@@ -12,6 +12,7 @@
 //   POST /offline-corridor/metadata
 
 import {
+  bearingsFromHeadingDeg,
   buildMapboxDirectionsSearchParams,
   buildRouteCacheKeyMaterial,
   extractManeuvers,
@@ -357,15 +358,18 @@ async function fetchMapboxDirections({
   profile,
   language,
   avoid,
+  headingDeg,
 }) {
   const coords = `${origin.lng},${origin.lat};${destination.lng},${destination.lat}`;
   const avoidKey = stableAvoidKey(avoid);
   // NAV-SIGNAL-P0A-WORKER-PARITY-1: match Flutter direct live Directions params
   // (banner_instructions + roundabout_exits). Voice intentionally omitted.
+  // NAV-REROUTE-CURRENT-POSITION-HEADING-P0: pass origin bearings when known.
   const params = buildMapboxDirectionsSearchParams({
     language,
     accessToken: token,
     avoidKey,
+    bearings: bearingsFromHeadingDeg(headingDeg),
   });
 
   const url =
@@ -587,6 +591,9 @@ async function handleRoute(request, env, { kind = "route" } = {}) {
     }
   }
 
+  const headingRaw = body.heading_deg ?? body.headingDeg ?? body.heading;
+  const headingDeg = Number(headingRaw);
+
   if (!routePayload) {
     const mapbox = await fetchMapboxDirections({
       token: tokenResult.token,
@@ -595,6 +602,7 @@ async function handleRoute(request, env, { kind = "route" } = {}) {
       profile,
       language: navigationLanguage,
       avoid,
+      headingDeg: Number.isFinite(headingDeg) && headingDeg >= 0 ? headingDeg : undefined,
     });
 
     if (!mapbox.ok) {

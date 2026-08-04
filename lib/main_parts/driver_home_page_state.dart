@@ -1062,6 +1062,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   final NavRerouteDecisionTracker _rerouteDecision =
       NavRerouteDecisionTracker();
   NavRerouteDecisionTickOutput? _lastRerouteDecision;
+  /// NAV-REROUTE-CURRENT-POSITION-HEADING-P0: single reroute lifecycle owner.
+  final NavRerouteCoordinator _navRerouteCoordinator = NavRerouteCoordinator();
+  int _activeRerouteRequestGeneration = 0;
   // NAV-R12-B: why the route-adaptation state is active — 'none'
   // | 'opposite_direction' | 'opposite_direction_strong'
   // | 'backward_progress' | 'snap_distance'.
@@ -1910,6 +1913,23 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
     }
 
+    // NAV-REROUTE-CURRENT-POSITION-HEADING-P0: stale coordinator generation
+    // must never install geometry/maneuvers after a newer confirm.
+    if (_isRerouting &&
+        !_navRerouteCoordinator.acceptResponseGeneration(
+          _activeRerouteRequestGeneration,
+        )) {
+      debugPrint(
+        formatNavRouteApplyDiag(
+          requestGeneration: context.requestGeneration,
+          latestGeneration: _routeRequestGeneration.latest,
+          accepted: false,
+          reason: DriverRouteRejectReason.staleGeneration,
+        ),
+      );
+      return false;
+    }
+
     // NAV-SIGNAL-P0B2: content version and render epoch advance together on
     // accept, but remain distinct concepts (values need not stay equal forever).
     _routeStepsVersion += 1;
@@ -1921,6 +1941,19 @@ class _DriverHomePageState extends State<DriverHomePage>
     // NAV-REROUTE-P0: accepted package ownership clears complexity/reroute
     // warning state even if the async request Future has not finished.
     if (_isRerouting) {
+      final firstStep = package.navSteps.isNotEmpty
+          ? package.navSteps.first
+          : null;
+      final deadEnd = NavRerouteCoordinator.looksLikeDeadEndUturn(
+        maneuverType: firstStep?.type,
+        maneuverModifier: firstStep?.modifier,
+        instructionText: firstStep?.instruction,
+      );
+      _navRerouteCoordinator.activateAtomic(
+        responseGeneration: _activeRerouteRequestGeneration,
+        at: acceptedAt,
+        deadEndUturn: deadEnd,
+      );
       _rerouteOwnershipAccepted = true;
       _lastRerouteSuccessAt = acceptedAt;
       _lastRerouteFailed = false;
@@ -17101,7 +17134,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
       // Transport cleanup must not keep complexity in reroute warning state
       // after the accepted package already owns the new route version.
-      reroutePending: _isRerouting && !_rerouteOwnershipAccepted,
+      // NAV-REROUTE-CURRENT-POSITION-HEADING-P0: coordinator suppresses
+      // complexity churn while old guidance is invalidated / requesting.
+      reroutePending:
+          (_isRerouting && !_rerouteOwnershipAccepted) ||
+          _navRerouteCoordinator.suppressComplexityCaution,
       headingDeltaDeg: progress?.headingDeltaDeg ?? _navHeadingDeltaDegFor(pos),
       predictionActive: prediction?.predictionActive ?? false,
       gapBridgeMs: _gapSinceLastNavEngineMs(),
@@ -18366,19 +18403,90 @@ class _DriverHomePageState extends State<DriverHomePage>
     return _routePhase == _RideRoutePhase.toPickup ? 'toPickup' : 'toDropoff';
   }
 
+  NavRerouteRequestOrigin? _navRerouteOriginFromLastPos() {
+    final pos = _lastPos;
+    if (pos == null) return null;
+    final heading = pos.heading.isFinite && pos.heading >= 0
+        ? pos.heading
+        : (_lastMovementBearing ?? 0.0);
+    final snap = _lastRouteSnap;
+    final matchedOk =
+        snap != null &&
+        (_lastNavRouteProgress?.confidence ?? 0) >= 55 &&
+        !_offRouteLikely;
+    return NavRerouteRequestOrigin(
+      latitude: pos.latitude,
+      longitude: pos.longitude,
+      headingDeg: heading,
+      mapMatchedLatitude: matchedOk ? snap.point.lat : null,
+      mapMatchedLongitude: matchedOk ? snap.point.lon : null,
+      accuracyM: pos.accuracy.isFinite ? pos.accuracy : null,
+      speedKmh: _speedKmhFor(pos),
+    );
+  }
+
+  NavRerouteDestination? _navRerouteDestinationFromActiveRoute() {
+    if (_routeCoords.length < 2) return null;
+    final last = _routeCoords.last;
+    return NavRerouteDestination(latitude: last.lat, longitude: last.lon);
+  }
+
+  void _invalidateOldRouteGuidanceForReroute({required String reason}) {
+    // Release old maneuver guidance immediately after confirm — do not keep
+    // navigating along the obsolete route while the request is in flight.
+    _activeBanner = null;
+    _activeLaneGuidance = null;
+    _nextNavInstruction = null;
+    _nextNavStreet = null;
+    _nextNavDistanceM = null;
+    _nextNavType = null;
+    _nextNavModifier = null;
+    _navInstructionSnapshot = NavInstructionSnapshot.none;
+    _useMatchedVisual = false;
+    _logNavBounded(
+      'NAV_REROUTE_COORD',
+      'event=old_guidance_invalidated reason=$reason '
+          '${_navRerouteCoordinator.latency.toDiagLine(
+            navigationSessionGeneration:
+                _navRerouteCoordinator.navigationSessionGeneration,
+            rerouteGeneration: _navRerouteCoordinator.rerouteGeneration,
+            routeVersion: _routeStepsVersion,
+          )}',
+      intervalMs: 400,
+    );
+  }
+
   Future<void> _triggerOffRouteReroute({
     required String reason,
     bool forceFollowUp = false,
   }) async {
+    final origin = _navRerouteOriginFromLastPos();
+    final dest = _navRerouteDestinationFromActiveRoute();
+    if (origin == null || dest == null) {
+      _logNavR17RerouteApply(
+        result: 'skipped',
+        reason: 'missing_origin_or_destination',
+        routeReplaced: false,
+      );
+      return;
+    }
+
     if (_isRerouting) {
       // Latest-wins: invalidate any in-flight package via a new generation and
       // queue one follow-up using the latest real position after clear.
       _routeRequestGeneration.begin();
       _pendingRerouteAfterInFlight = true;
       _pendingRerouteReason = reason;
+      _navRerouteCoordinator.confirmOffRoute(
+        reason: reason,
+        origin: origin,
+        dest: dest,
+      );
+      _invalidateOldRouteGuidanceForReroute(reason: reason);
       _logNavBounded(
         'NAV_R17_REROUTE_APPLY',
-        'result=supersede_inflight reason=$reason gen=${_routeRequestGeneration.latest}',
+        'result=supersede_inflight reason=$reason gen=${_routeRequestGeneration.latest} '
+            'rerouteGen=${_navRerouteCoordinator.rerouteGeneration}',
         intervalMs: 800,
       );
       return;
@@ -18391,6 +18499,18 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       return;
     }
+
+    final rerouteGen = _navRerouteCoordinator.confirmOffRoute(
+      reason: reason,
+      origin: origin,
+      dest: dest,
+    );
+    _activeRerouteRequestGeneration = rerouteGen;
+    _invalidateOldRouteGuidanceForReroute(reason: reason);
+    _navRerouteCoordinator.beginRequest(
+      expectedGeneration: rerouteGen,
+      origin: origin,
+    );
 
     _isRerouting = true;
     _pendingRerouteAfterInFlight = false;
@@ -21376,6 +21496,46 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   void _updateNextNavInstruction(geo.Position pos) {
+    // NAV-REROUTE-CURRENT-POSITION-HEADING-P0: after confirmed deviation, do
+    // not keep advancing old-route maneuvers while recalculating.
+    if (_navRerouteCoordinator.freezeOldRouteProgress &&
+        !_rerouteOwnershipAccepted) {
+      final deadEndText = _navRerouteCoordinator.deadEndUturnInstruction(
+        currentHeadingDeg: pos.heading.isFinite && pos.heading >= 0
+            ? pos.heading
+            : (_lastMovementBearing ?? 0.0),
+        tr: _tr,
+      );
+      if (deadEndText != null) {
+        _nextNavInstruction = deadEndText;
+        _nextNavType = 'turn';
+        _nextNavModifier = 'uturn';
+      } else {
+        _activeBanner = null;
+        _activeLaneGuidance = null;
+        _nextNavInstruction = null;
+        _nextNavStreet = null;
+        _nextNavDistanceM = null;
+        _nextNavType = null;
+        _nextNavModifier = null;
+        _navInstructionSnapshot = NavInstructionSnapshot.none;
+      }
+      return;
+    }
+    // Stable dead-end U-turn while still plunging into the cul-de-sac.
+    final deadEndHold = _navRerouteCoordinator.deadEndUturnInstruction(
+      currentHeadingDeg: pos.heading.isFinite && pos.heading >= 0
+          ? pos.heading
+          : (_lastMovementBearing ?? 0.0),
+      tr: _tr,
+    );
+    if (deadEndHold != null) {
+      _nextNavInstruction = deadEndHold;
+      _nextNavType = 'turn';
+      _nextNavModifier = 'uturn';
+      _activeLaneGuidance = null;
+      return;
+    }
     final nextInstruction = computeDriverNextNavInstruction(
       routeSteps: _routeSteps,
       nextStepIndex: _nextStepIndex,
@@ -21580,6 +21740,12 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (originPos == null) return false;
       final fromLL = _LonLat(originPos.longitude, originPos.latitude);
       final package = await _directionsRoute(fromLL, toLL);
+      if (_isRerouting &&
+          !_navRerouteCoordinator.acceptResponseGeneration(
+            _activeRerouteRequestGeneration,
+          )) {
+        return false;
+      }
       if (!_tryActivatePreparedDriverRoute(
         context: request,
         package: package,
@@ -23585,13 +23751,45 @@ class _DriverHomePageState extends State<DriverHomePage>
     return _LonLat(lon, lat);
   }
 
+  double? _navRerouteHeadingDegForRequest() {
+    if (!_isRerouting) return null;
+    final fromCoordinator = _navRerouteCoordinator.requestOrigin?.headingDeg;
+    if (fromCoordinator != null && fromCoordinator.isFinite) {
+      return fromCoordinator;
+    }
+    final pos = _lastPos;
+    if (pos != null && pos.heading.isFinite && pos.heading >= 0) {
+      return pos.heading;
+    }
+    final movement = _lastMovementBearing;
+    if (movement != null && movement.isFinite) return movement;
+    return null;
+  }
+
   /// NAV-SIGNAL-P0B: fetch+parse only. Never mutates active navigation state.
   Future<DriverPreparedRoutePackage> _directionsRoute(
     _LonLat from,
     _LonLat to,
   ) async {
-    final workerParsed = await _tryNavigationWorkerDirectionsRoute(from, to);
+    // NAV-REROUTE-CURRENT-POSITION-HEADING-P0: refresh origin/heading at send.
+    var origin = from;
+    if (_isRerouting) {
+      final live = _navRerouteOriginFromLastPos();
+      if (live != null) {
+        _navRerouteCoordinator.requestOrigin = live;
+        origin = _LonLat(live.longitude, live.latitude);
+      }
+    }
+    final workerParsed = await _tryNavigationWorkerDirectionsRoute(origin, to);
     if (workerParsed != null) {
+      if (_isRerouting) {
+        _navRerouteCoordinator.noteResponseReceived(
+          responseGeneration: _activeRerouteRequestGeneration,
+        );
+        _navRerouteCoordinator.noteRouteParsed(
+          responseGeneration: _activeRerouteRequestGeneration,
+        );
+      }
       return prepareDriverRoutePackage(
         parsed: workerParsed,
         source: _isRerouting
@@ -23602,10 +23800,11 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     final lang = _mapboxDirectionsLanguageCode();
     final uri = buildDriverDirectionsUri(
-      from: from,
+      from: origin,
       to: to,
       languageCode: lang,
       accessToken: kMapboxToken,
+      originHeadingDeg: _navRerouteHeadingDegForRequest(),
     );
 
     final res = await http.get(uri).timeout(const Duration(seconds: 15));
@@ -23816,6 +24015,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           tripId: tripId,
           reason: _rerouteReason ?? 'unknown',
           language: language,
+          headingDeg: _navRerouteHeadingDegForRequest(),
         );
       } else {
         workerResult = await client.route(
@@ -30594,7 +30794,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   /// The one localized recalculation/loading copy. Shared by the main nav
   /// banner and the Tellers guidance overlay so neither invents its own string.
   String _navLoadingBannerText() {
-    return _isRerouting
+    final recalculating =
+        _isRerouting || _navRerouteCoordinator.showRecalculatingBanner;
+    return recalculating
         ? _tr(
             nl: 'Route herberekenen…',
             en: 'Recalculating route…',
@@ -34155,74 +34357,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   // FASE 12 — Driver KPI ("My performance").
   //
   // KPIs reuse the SAME canonical per-driver source as ride history
-  // (`/trips/history` scoped to the effective driver) so a ride can never be
-  // double-counted across bookings/receipts/invoices/payments: we read one
-  // canonical row per ride and dedupe by trip id in the aggregator.
-  DriverKpiPaymentState _driverKpiPaymentStateForTrip(_TripHistoryItem item) {
-    final details = item.bookingDetails;
-    String pick(List<String> keys) {
-      for (final key in keys) {
-        final value = details[key];
-        final text = value?.toString().trim() ?? '';
-        if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
-      }
-      return '';
-    }
-
-    final invoiceStatus = pick(<String>[
-      'business_invoice_status',
-      'businessInvoiceStatus',
-      'billit_sync_status',
-      'billitSyncStatus',
-      'invoice_status',
-      'invoiceStatus',
-    ]).toUpperCase();
-    final paymentStatus = pick(<String>['payment_status', 'paymentStatus']);
-
-    // "Invoice created" is not automatically "paid": a business invoice still
-    // syncing/awaiting settlement is reported separately as in-processing.
-    final invoiceProcessing =
-        invoiceStatus.contains('SYNC') ||
-        invoiceStatus.contains('PENDING') ||
-        invoiceStatus.contains('PROCESSING') ||
-        invoiceStatus.contains('QUEUED');
-    if (invoiceProcessing &&
-        !_CompanyBookingOverviewItem.isPaidPaymentStatus(paymentStatus)) {
-      return DriverKpiPaymentState.invoiceInProcessing;
-    }
-    if (_CompanyBookingOverviewItem.isPaidPaymentStatus(paymentStatus)) {
-      return DriverKpiPaymentState.paid;
-    }
-    if (_CompanyBookingOverviewItem.isExplicitNotPaidPaymentStatus(
-      paymentStatus,
-    )) {
-      return DriverKpiPaymentState.outstanding;
-    }
-    return DriverKpiPaymentState.unknown;
-  }
-
-  DriverKpiRideRecord _driverKpiRecordFromTrip(_TripHistoryItem item) {
-    DateTime? parseIso(String? iso) {
-      final text = iso?.trim();
-      if (text == null || text.isEmpty) return null;
-      return DateTime.tryParse(text)?.toLocal();
-    }
-
-    final cancelled = _CompanyBookingOverviewItem._isCancelledStatus(
-      item.status,
-    );
-    return DriverKpiRideRecord(
-      rideId: item.tripId.trim(),
-      startedAt: parseIso(item.startedAt),
-      stoppedAt: parseIso(item.stoppedAt),
-      amountEur: item.totalEur ?? 0.0,
-      kmTotal: item.kmTotal,
-      isCompleted: !cancelled,
-      isCancelled: cancelled,
-      paymentState: _driverKpiPaymentStateForTrip(item),
-    );
-  }
-
+  // (`/trips/history` scoped to the effective driver) via
+  // [fetchDriverKpiRidesFromTripsHistory] so company Drivers → Rapporten and
+  // this entry point share one pipeline.
   Future<List<DriverKpiRideRecord>> _fetchDriverKpiRides(
     DriverKpiPeriod period,
   ) async {
@@ -34231,63 +34368,13 @@ class _DriverHomePageState extends State<DriverHomePage>
       throw StateError('driver_kpi_scope_missing');
     }
     final driverId = _effectiveActiveDriverIdForRideScope().trim();
-    if (driverId.isEmpty) {
-      return const <DriverKpiRideRecord>[];
-    }
-    final headers = await _tripsHistoryAuthHeaders(
-      scopeSource: strictScope.source,
+    return fetchDriverKpiRidesFromTripsHistory(
+      tenantId: strictScope.tenantId,
+      companyId: strictScope.companyId,
       driverId: driverId,
+      scopeSource: strictScope.source,
       fetchContext: 'driver_kpi_page',
     );
-    final uri = Uri.parse(
-      '$kWorkerBaseUrl$kTripsHistoryPath'
-      '?tenant_id=${Uri.encodeQueryComponent(strictScope.tenantId)}'
-      '&company_id=${Uri.encodeQueryComponent(strictScope.companyId)}'
-      '&tenantId=${Uri.encodeQueryComponent(strictScope.tenantId)}'
-      '&companyId=${Uri.encodeQueryComponent(strictScope.companyId)}'
-      '&driver_id=${Uri.encodeQueryComponent(driverId)}'
-      '&limit=300',
-    );
-    final res = await http
-        .get(uri, headers: headers)
-        .timeout(const Duration(seconds: 12));
-    if (res.statusCode != 200) {
-      throw Exception('HTTP ${res.statusCode}');
-    }
-    final decoded = jsonDecode(res.body);
-    if (decoded is! Map || decoded['ok'] != true) {
-      throw Exception('invalid_driver_kpi_response');
-    }
-    final trips = decoded['trips'];
-    if (trips is! List) return const <DriverKpiRideRecord>[];
-    final tripItems = trips
-        .whereType<Map>()
-        .map((e) => _TripHistoryItem.fromJson(Map<String, dynamic>.from(e)))
-        .where((e) => e.tripId.trim().isNotEmpty)
-        // Hard driver-scope guard: never mix another driver's rides into KPIs.
-        .where(
-          (e) =>
-              e.driverId.trim().isEmpty || e.driverId.trim() == driverId,
-        )
-        .toList(growable: false);
-    // STREET-RIDE-HISTORY-DUPLICATE-ZERO-BOOKING-1A: a street ride's planned
-    // operational-leg shadow must not count as a second KPI ride. Collapse it
-    // into the canonical direct trip using relational ids only (worker hint +
-    // booking_id/parent_booking_id/operational-leg fallback).
-    final canonicalTripItems = canonicalizeStreetHistory<_TripHistoryItem>(
-      tripItems,
-      tripId: (item) => item.tripId,
-      kind: (item) => item.kind,
-      bookingId: (item) => item.bookingId ?? '',
-      parentBookingId: (item) => item.parentBookingId,
-      linkedTrackingTripId: (item) => item.linkedTrackingTripId,
-      isOperationalLeg: (item) => item.isOperationalLeg,
-      workerShadowHint: (item) => item.workerOperationalShadowHint,
-      onLog: (log) => debugPrint(log.toLogLine()),
-    );
-    return canonicalTripItems
-        .map(_driverKpiRecordFromTrip)
-        .toList(growable: false);
   }
 
   Color _driverKpiAccentColor() {
@@ -34307,20 +34394,19 @@ class _DriverHomePageState extends State<DriverHomePage>
     // Make sure the effective-driver scope is current before scoping KPIs.
     _syncDriverRideScopeContext(reason: 'driver_kpi_open');
     final driverId = _effectiveActiveDriverIdForRideScope().trim();
-    final authMode = _isBusinessPreviewMode
-        ? DriverKpiAuthMode.companyAdmin
-        : DriverKpiAuthMode.driver;
+    final strictScope = _strictDriverHistoryScopeIdsWithSource();
     if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => DriverKpiPage(
-          fetchRides: _fetchDriverKpiRides,
-          authMode: authMode,
-          driverKey: driverId,
-          hasDriver: driverId.isNotEmpty,
-          accentColor: _driverKpiAccentColor(),
-        ),
-      ),
+    final args = driverKpiRouteArgsForDriverHome(
+      driverId: driverId,
+      companyAdminPreview: _isBusinessPreviewMode,
+      tenantId: strictScope?.tenantId ?? '',
+      companyId: strictScope?.companyId ?? '',
+    );
+    await pushDriverKpiPage(
+      context,
+      args: args,
+      fetchRides: _fetchDriverKpiRides,
+      accentColor: _driverKpiAccentColor(),
     );
   }
 

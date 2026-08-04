@@ -70,6 +70,18 @@ export function buildRouteCacheKeyMaterial({
 }
 
 /**
+ * Mapbox bearings query value from vehicle heading (origin constrained;
+ * destination unconstrained). Matches Flutter NavRerouteCoordinator.
+ */
+export function bearingsFromHeadingDeg(headingDeg) {
+  const n = Number(headingDeg);
+  if (!Number.isFinite(n) || n < 0) return "";
+  let h = n % 360;
+  if (h < 0) h += 360;
+  return `${h.toFixed(1)},45;`;
+}
+
+/**
  * Plans the effective Mapbox Directions query language + params for a
  * worker /route or /reroute request (shared builder; no network).
  */
@@ -79,20 +91,25 @@ export function planWorkerMapboxDirectionsRequest({
   countryLanguageHint,
   accessToken = "test-token",
   avoidKey = "",
+  headingDeg,
 } = {}) {
   const language = resolveMapboxDirectionsLanguage({
     bodyLanguage,
     countryLanguageHint,
   });
+  const bearings =
+    kind === "reroute" ? bearingsFromHeadingDeg(headingDeg) : "";
   const params = buildMapboxDirectionsSearchParams({
     language,
     accessToken,
     avoidKey,
+    bearings,
   });
   return {
     kind: kind === "reroute" ? "reroute" : "route",
     language,
     params,
+    bearings,
   };
 }
 
@@ -101,6 +118,8 @@ export function buildMapboxDirectionsSearchParams({
   language,
   accessToken,
   avoidKey = "",
+  /** Optional Mapbox bearings string, e.g. "90.0,45;" (origin only). */
+  bearings = "",
 }) {
   const params = new URLSearchParams({
     geometries: "geojson",
@@ -114,6 +133,10 @@ export function buildMapboxDirectionsSearchParams({
   });
   if (avoidKey) {
     params.set("exclude", avoidKey);
+  }
+  const bearingsText = typeof bearings === "string" ? bearings.trim() : "";
+  if (bearingsText) {
+    params.set("bearings", bearingsText);
   }
   return params;
 }

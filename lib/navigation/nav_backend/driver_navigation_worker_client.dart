@@ -618,10 +618,12 @@ class DriverNavigationWorkerClient {
     String? tripId,
     String reason = 'unknown',
     String? language,
+    double? headingDeg,
   }) async {
     final countryCode = _normalizeCountry(country);
     final navigationLanguage = normalizeNavigationWorkerLanguage(language);
-    final rerouteReason = normalizeNavigationWorkerRerouteReason(reason);    final body = <String, dynamic>{
+    final rerouteReason = normalizeNavigationWorkerRerouteReason(reason);
+    final body = <String, dynamic>{
       'current': {'lat': current.lat, 'lng': current.lon},
       'destination': {'lat': destination.lat, 'lng': destination.lon},
       'country': countryCode,
@@ -629,6 +631,9 @@ class DriverNavigationWorkerClient {
       'reason': rerouteReason,
       if (navigationLanguage != null) 'language': navigationLanguage,
       if (tripId != null && tripId.trim().isNotEmpty) 'trip_id': tripId.trim(),
+      // NAV-REROUTE-CURRENT-POSITION-HEADING-P0: travel direction for Mapbox.
+      if (headingDeg != null && headingDeg.isFinite && headingDeg >= 0)
+        'heading_deg': headingDeg,
     };
     final json = await _postJson(
       '/reroute',

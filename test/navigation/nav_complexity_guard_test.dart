@@ -1156,8 +1156,11 @@ void main() {
     );
 
     test(
-      '11) heading conflict for >=3 samples + off-route uncertainty => warning allowed',
+      '11) heading conflict + off-route while reroute pending does NOT warn',
       () {
+        // NAV-REROUTE-CURRENT-POSITION-HEADING-P0: ordinary reroute churn
+        // (heading vs old route + offroute_uncertain) must not surface
+        // "Complexe verkeerssituatie".
         final guard = NavComplexityGuard();
         NavComplexityGuardState state = NavComplexityGuardState.inactive;
         var t = DateTime(2026, 1, 1, 12);
@@ -1180,9 +1183,42 @@ void main() {
             ),
           );
         }
+        expect(state.active, isFalse);
+        expect(
+          state.decision.triggerRules,
+          isNot(contains('heading_route_conflict')),
+        );
+        expect(state.decision.qualityRules, contains('offroute_uncertain'));
+      },
+    );
+
+    test(
+      '11b) heading conflict + off-route without reroute pending still allowed',
+      () {
+        final guard = NavComplexityGuard();
+        NavComplexityGuardState state = NavComplexityGuardState.inactive;
+        var t = DateTime(2026, 1, 1, 12);
+        for (var i = 0; i < 8; i++) {
+          t = t.add(const Duration(milliseconds: 500));
+          state = guard.update(
+            _input(
+              timestamp: t,
+              overallConfidence: 75.0,
+              trustInstruction: true,
+              trustBearing: true,
+              snapDistanceM: 8.0,
+              offRouteLikely: true,
+              reroutePending: false,
+              headingDeltaDeg: 85.0,
+              speedKmh: 22.0,
+              maneuverType: 'turn',
+              maneuverModifier: 'left',
+              distanceToManeuverM: 300.0,
+            ),
+          );
+        }
         expect(state.active, isTrue);
         expect(state.decision.triggerRules, contains('heading_route_conflict'));
-        expect(state.decision.qualityRules, contains('offroute_uncertain'));
       },
     );
 
