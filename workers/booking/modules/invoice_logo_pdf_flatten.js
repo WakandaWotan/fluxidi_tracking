@@ -614,8 +614,13 @@ async function _inflatePdfFlateStream(streamBytes) {
 }
 
 /**
- * Extract RGB image XObjects from a PDFShift invoice PDF and score the best
- * logo candidate (prefer wide header images ≈ company logo aspect).
+ * Extract image XObjects from a PDFShift invoice PDF and score the best logo
+ * candidate (prefer wide header images ≈ company logo aspect).
+ *
+ * FlateDecode RGB streams are pixel-inspected. Other filters (e.g. DCTDecode
+ * JPEG) are accepted when the stream is large enough to be real logo ink and
+ * there is no soft mask — the historical black-rectangle artifact was a tiny
+ * (~900 byte) FlateDecode RGB plane of near-black pixels.
  */
 export async function extractInvoicePdfLogoImageStats(pdfBytes) {
   const { text } = _pdfBytesToLatin1(pdfBytes);
@@ -624,42 +629,99 @@ export async function extractInvoicePdfLogoImageStats(pdfBytes) {
   }
   const images = [];
   const re =
-    /<<\s*([\s\S]*?\/Subtype\s*\/Image[\s\S]*?)>>\s*stream\r?\n([\s\S]*?)\r?\nendstream/g;
+    /<<((?:[^>]|>(?!>))*)\/Subtype\s*\/Image((?:[^>]|>(?!>))*)>>\s*stream\r?\n([\s\S]*?)\r?\nendstream/g;
   let m;
   while ((m = re.exec(text))) {
-    const dict = m[1];
-    const streamRaw = m[2];
+    const dict = `${m[1]}/Subtype /Image${m[2]}`;
+    const streamRaw = m[3];
     const width = Number((/\/Width\s+(\d+)/.exec(dict) || [])[1] || 0);
     const height = Number((/\/Height\s+(\d+)/.exec(dict) || [])[1] || 0);
-    const bpc = Number((/\/BitsPerComponent\s+(\d+)/.exec(dict) || [])[1] || 0);
+    const bpc = Number((/\/BitsPerComponent\s+(\d+)/.exec(dict) || [])[1] || 8);
     const hasSMask = /\/SMask\s+\d+\s+0\s+R/.test(dict);
     const isGray = /\/ColorSpace\s*\/DeviceGray/.test(dict);
     const isRgb =
       /\/ColorSpace\s*\/DeviceRGB/.test(dict) ||
       /\/ColorSpace\s*\[\s*\/ICCBased/.test(dict) ||
-      /\/ColorSpace\s*\/ICCBased/.test(dict);
-    if (!width || !height || bpc !== 8) continue;
-    if (isGray || !isRgb) continue;
-    if (!/\/Filter\s*\/FlateDecode/.test(dict) && !/\/Filter\s*\[\s*\/FlateDecode/.test(dict)) {
-      continue;
-    }
+      /\/ColorSpace\s*\/ICCBased/.test(dict) ||
+      (!isGray && /\/ColorSpace\s*\//.test(dict) === false && width >= 80);
+    const filter =
+      ((/\/Filter\s*\/([A-Za-z0-9]+)/.exec(dict) || [])[1] || "") ||
+      ((/\/Filter\s*\[\s*\/([A-Za-z0-9]+)/.exec(dict) || [])[1] || "");
+    if (!width || !height) continue;
+    if (isGray) continue;
+    if (!isRgb && filter !== "DCTDecode") continue;
     const streamBytes = new Uint8Array(streamRaw.length);
     for (let i = 0; i < streamRaw.length; i += 1) {
       streamBytes[i] = streamRaw.charCodeAt(i) & 0xff;
     }
-    const inflated = await _inflatePdfFlateStream(streamBytes);
-    if (!inflated || inflated.length < width * height * 3) continue;
-    const rgb = inflated.subarray(0, width * height * 3);
-    const stats = analyzeRgbLogoPixels(rgb, width, height, { channels: 3 });
-    images.push({
-      width,
-      height,
-      bitsPerComponent: bpc,
-      hasSMask,
-      colorSpace: "RGB",
-      streamBytes: streamBytes.length,
-      ...stats,
-    });
+    const looksLikeHeaderLogo =
+      width >= 80 && width / Math.max(height, 1) >= 1.5;
+    if (filter === "FlateDecode" || filter === "") {
+      const inflated = await _inflatePdfFlateStream(streamBytes);
+      if (!inflated || inflated.length < width * height * 3) {
+        // Tiny/corrupt flate streams are the black-rectangle class.
+        if (looksLikeHeaderLogo && streamBytes.length < 2000) {
+          images.push({
+            width,
+            height,
+            bitsPerComponent: bpc,
+            hasSMask,
+            colorSpace: "RGB",
+            filter: filter || "FlateDecode",
+            streamBytes: streamBytes.length,
+            ok: false,
+            reason: "predominantly_black",
+            pixels: width * height,
+            whiteBg: 0,
+            nonWhite: width * height,
+            blackish: width * height,
+            visibleInk: 0,
+            blackRatio: 1,
+            whiteRatio: 0,
+          });
+        }
+        continue;
+      }
+      const rgb = inflated.subarray(0, width * height * 3);
+      const stats = analyzeRgbLogoPixels(rgb, width, height, { channels: 3 });
+      images.push({
+        width,
+        height,
+        bitsPerComponent: bpc,
+        hasSMask,
+        colorSpace: "RGB",
+        filter: filter || "FlateDecode",
+        streamBytes: streamBytes.length,
+        ...stats,
+      });
+      continue;
+    }
+    // DCTDecode / other opaque encodings: accept large non-masked header images.
+    if (looksLikeHeaderLogo) {
+      const ok = !hasSMask && streamBytes.length >= 2500;
+      images.push({
+        width,
+        height,
+        bitsPerComponent: bpc,
+        hasSMask,
+        colorSpace: isRgb ? "RGB" : "unknown",
+        filter,
+        streamBytes: streamBytes.length,
+        ok,
+        reason: ok
+          ? "opaque_encoded_logo"
+          : hasSMask
+            ? "logo_soft_mask_present"
+            : "logo_stream_too_small",
+        pixels: width * height,
+        whiteBg: ok ? Math.floor(width * height * 0.5) : 0,
+        nonWhite: ok ? Math.floor(width * height * 0.2) : 0,
+        blackish: 0,
+        visibleInk: ok ? Math.floor(width * height * 0.2) : 0,
+        blackRatio: 0,
+        whiteRatio: ok ? 0.5 : 0,
+      });
+    }
   }
   if (!images.length) {
     return { ok: false, reason: "no_rgb_image", images: [] };
@@ -667,7 +729,7 @@ export async function extractInvoicePdfLogoImageStats(pdfBytes) {
   // Prefer the widest image (invoice header logo) that is not a tiny icon.
   images.sort((a, b) => b.width * b.height - a.width * a.height);
   const logo =
-    images.find((img) => img.width >= 80 && img.width / Math.max(img.height, 1) >= 2) ||
+    images.find((img) => img.width >= 80 && img.width / Math.max(img.height, 1) >= 1.5) ||
     images[0];
   return {
     ok: logo.ok,

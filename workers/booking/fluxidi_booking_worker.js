@@ -31481,6 +31481,47 @@ export default {
         return new Response(null, { headers: corsHeaders() });
       }
 
+      // INVOICE-LOGO-BLACK-RECTANGLE P0 — one-shot ops trigger.
+      // Auth: x-admin-token OR matching one-time KV trigger token.
+      if (
+        url.pathname === "/admin/ops/opaque-rgb-logo-repair" &&
+        request.method === "POST"
+      ) {
+        let authorized = false;
+        try {
+          _requireAdmin(request, url, env);
+          authorized = true;
+        } catch (_) {
+          authorized = false;
+        }
+        if (!authorized) {
+          const provided = String(
+            request.headers.get("x-ops-trigger-token") ||
+              url.searchParams.get("token") ||
+              "",
+          ).trim();
+          try {
+            const expected = await env.BOOKING_KV.get(
+              "ops:opaque_rgb_repair_trigger_token",
+              { type: "text" },
+            );
+            if (provided && expected && provided === expected) {
+              authorized = true;
+              try {
+                await env.BOOKING_KV.delete("ops:opaque_rgb_repair_trigger_token");
+              } catch (_) {}
+            }
+          } catch (_) {
+            authorized = false;
+          }
+        }
+        if (!authorized) {
+          return json({ ok: false, error: "Unauthorized" }, 401);
+        }
+        const result = await repairOpaqueRgbInvoiceLogosOnce(env);
+        return json({ ok: result?.ok === true, ...result });
+      }
+
       // RELEASE-P0 Option A′ — human booking ID allocator admin (admin token).
       if (
         url.pathname === "/admin/booking-id-allocator/status" &&
