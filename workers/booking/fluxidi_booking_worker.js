@@ -248,9 +248,12 @@ import {
 } from "./modules/pos_terminal_payment.mjs";
 import {
   CONSUMER_SALE_KIND,
+  buildConsumerConversionCreditIdempotencyKey,
+  buildConsumerConversionLinkTrail,
   buildConsumerSaleDocumentMetadata,
   buildConsumerSaleIdempotencyKey,
   consumerSalePeppolPolicy,
+  creditNoteTotalsMatchConsumerSale,
   hasBusinessInvoiceIntent,
   isConsumerSaleEligibleRecord,
   resolveConsumerSaleAmount,
@@ -3863,9 +3866,16 @@ function _documentIsConsumerSale(rec) {
 }
 
 function _documentIsSuperseded(rec) {
-  if (rec?.superseded === true || rec?.active_revenue === false) return true;
+  if (rec?.superseded === true || rec?.credited === true || rec?.active_revenue === false) {
+    return true;
+  }
   const life = safeStr(rec?.lifecycle_state ?? rec?.lifecycleState, 40).toLowerCase();
-  return life === "superseded" || life === "void" || life === "cancelled";
+  return (
+    life === "superseded" ||
+    life === "credited" ||
+    life === "void" ||
+    life === "cancelled"
+  );
 }
 
 async function findExistingConsumerSaleDocumentForBooking(
@@ -4327,45 +4337,552 @@ async function maybeSyncConsumerBillitSaleAfterPaid(
   return { handled: true, ok: true, skipped: true, reason: gate.reason };
 }
 
-async function supersedeConsumerSaleForBusinessConversion(
+async function findExistingConversionCreditNoteForBooking(
   env,
   scope,
   bookingId,
-  { consumerDocument = null } = {},
+  { sourceLegId = null, sourceInvoiceDocumentId = null } = {},
 ) {
-  const decision = resolveConsumerToBusinessConversionDecision({
-    hasConsumerSale: !!consumerDocument?.document_id,
-    consumerSaleSuperseded: consumerDocument?.superseded === true,
-    consumerBillitOrderId: consumerDocument?.billit_order_id || "",
-  });
-  if (!decision.requires_consumer_supersede) {
-    return { ok: true, decision };
+  const listed = await listIssuedDocumentRecordsForBooking(env, scope, bookingId);
+  if (!listed || listed.ok !== true || !Array.isArray(listed.records)) {
+    return null;
   }
+  const wantLegId = safeStr(sourceLegId, 200) || null;
+  const wantSourceDoc = safeStr(sourceInvoiceDocumentId, 200) || null;
+  const matches = listed.records.filter((rec) => {
+    const type = safeStr(rec?.document_type ?? rec?.documentType, 40).toLowerCase();
+    if (type !== "credit_note") return false;
+    const kind = safeStr(rec?.fluxidi_sale_kind ?? rec?.conversion_kind, 40).toLowerCase();
+    if (kind && kind !== "consumer_conversion_credit") return false;
+    if (wantLegId) {
+      const recLegId = safeStr(rec?.source_leg_id ?? rec?.sourceLegId, 200) || null;
+      if (recLegId && recLegId !== wantLegId) return false;
+    }
+    if (wantSourceDoc) {
+      const src =
+        safeStr(
+          rec?.source_invoice_document_id ?? rec?.sourceInvoiceDocumentId,
+          200,
+        ) || null;
+      if (src && src !== wantSourceDoc) return false;
+    }
+    return true;
+  });
+  if (matches.length === 0) return null;
+  matches.sort((a, b) => {
+    const at = safeStr(a?.issue_timestamp ?? a?.issueTimestamp, 40);
+    const bt = safeStr(b?.issue_timestamp ?? b?.issueTimestamp, 40);
+    return at < bt ? -1 : at > bt ? 1 : 0;
+  });
+  const record = matches[0];
+  const exportObj =
+    record?.billit_export && typeof record.billit_export === "object"
+      ? record.billit_export
+      : null;
+  return {
+    ok: true,
+    document_record: record,
+    document_id: safeStr(record?.document_id ?? record?.documentId, 200) || null,
+    document_number:
+      safeStr(record?.document_number ?? record?.documentNumber, 80) || null,
+    billit_order_id: safeStr(exportObj?.order_id, 120) || null,
+  };
+}
+
+/**
+ * Billit sandbox create for CreditNote (conversion only).
+ * General invoice auto-create remains Invoice-gated elsewhere.
+ */
+async function ensureBillitSandboxCreditNoteOrder(
+  env,
+  scope,
+  config,
+  documentRecord,
+  { documentId, documentNumber } = {},
+) {
+  const warnings = [];
+  const docId = safeStr(documentId, 200);
+  const recordDocNumber = safeStr(documentNumber, 80);
+  const existingProjection = buildSafeBillitExportProjection(documentRecord);
+  if (
+    existingProjection &&
+    existingProjection.order_id &&
+    safeStr(documentRecord?.billit_export?.environment, 24).toLowerCase() === "sandbox"
+  ) {
+    return {
+      ok: true,
+      already_created: true,
+      billit_order_id: existingProjection.order_id,
+      billit_order_number: existingProjection.order_number,
+      billit_status: existingProjection.status || "created",
+      billit_export: existingProjection,
+      warnings: ["billit_credit_order_already_linked"],
+    };
+  }
+
+  let businessProfile = null;
   try {
-    const record = consumerDocument?.document_record;
+    businessProfile = await loadBusinessProfile(env, scope, {
+      allowTenantLegacyFallback: true,
+    });
+  } catch (_) {
+    businessProfile = null;
+  }
+  const classification = classifyDocumentExportReadiness(documentRecord, businessProfile);
+  const docPreview = buildDocumentExportPreview(documentRecord, classification, null);
+  const billitEnvironment = "sandbox";
+  const billitPayloadPreview = buildBillitPayloadPreviewFromProviderNeutralDocument(
+    docPreview,
+    { ...scope, billit_environment: billitEnvironment },
+  );
+  const billitPartyId = await readBillitPartyIdForScope(env, scope);
+  const paymentTermsDays = normalizeBillitPaymentTermsDays(
+    businessProfile?.payment_terms_days,
+  );
+  const officialPreview = buildBillitOfficialOrderRequestPreview(billitPayloadPreview, {
+    party_id: billitPartyId,
+    environment_hint: billitEnvironment,
+    payment_terms_days: paymentTermsDays,
+    payment_terms_source: "platform_default",
+  });
+  if (!officialPreview || officialPreview.readiness?.ready !== true) {
+    return {
+      ok: false,
+      status: 409,
+      error: "billit_credit_order_not_ready",
+      reasons: Array.isArray(officialPreview?.readiness?.reasons)
+        ? officialPreview.readiness.reasons
+        : [],
+    };
+  }
+  if (safeStr(officialPreview.body?.OrderType, 40) !== "CreditNote") {
+    return { ok: false, status: 409, error: "billit_order_type_not_credit_note" };
+  }
+  const idempotencyKey = buildBillitSandboxOrderCreateIdempotencyKey(docId);
+  const createRequest = buildBillitOfficialOrderCreateRequestFromPreview(officialPreview, {
+    idempotency_key: idempotencyKey,
+  });
+  const tokenResult = await acquireBillitSandboxAccessToken(env, scope, config);
+  if (!tokenResult.ok) {
+    return { ok: false, status: 409, error: tokenResult.error || "billit_token_unavailable" };
+  }
+  const createRes = await postBillitSandboxOrderCreate(
+    config,
+    tokenResult.access_token,
+    billitPartyId,
+    createRequest,
+  );
+  if (!createRes?.ok) {
+    return {
+      ok: false,
+      status: 502,
+      error: safeStr(createRes?.billit_error_code, 80) || "billit_credit_create_failed",
+      warnings,
+    };
+  }
+  const summary = createRes.summary || {
+    billit_order_id: null,
+    billit_order_number: null,
+    billit_status: null,
+  };
+  const orderId = safeStr(summary.billit_order_id, 120);
+  if (!orderId) {
+    return { ok: false, status: 502, error: "billit_credit_order_id_missing" };
+  }
+  const normalizedExport = normalizeBillitExportMetadata({
+    environment: "sandbox",
+    party_id: billitPartyId,
+    order_id: orderId,
+    order_number: recordDocNumber || summary.billit_order_number,
+    idempotency_key: idempotencyKey,
+    source: "consumer_conversion_credit",
+    sent: false,
+    peppol_sent: false,
+  });
+  let exportProjection = null;
+  if (normalizedExport?.ok) {
+    try {
+      const persistResult = await persistBillitOrderExportOnDocumentRecord(
+        env,
+        scope,
+        documentRecord,
+        normalizedExport.export,
+      );
+      exportProjection =
+        buildSafeBillitExportProjection(persistResult?.record || normalizedExport.export) ||
+        normalizedExport.export;
+    } catch (_) {
+      exportProjection = normalizedExport.export;
+    }
+  }
+  return {
+    ok: true,
+    already_created: false,
+    billit_order_id: orderId,
+    billit_order_number: summary.billit_order_number,
+    billit_status: summary.billit_status || "created",
+    billit_export: exportProjection,
+    warnings,
+  };
+}
+
+/**
+ * CONSUMER-BILLIT-TO-BUSINESS-CREDIT-CONVERSION-1
+ * Credit the consumer Billit Invoice before any business invoice is created.
+ */
+async function creditConsumerSaleBeforeBusinessConversion(
+  env,
+  scope,
+  bookingId,
+  {
+    consumerDocument = null,
+    sourceLegId = null,
+    sourceLegType = null,
+    bookingRec = null,
+  } = {},
+) {
+  const maskedBooking = _bookingIntentMask(bookingId);
+  const consumer = consumerDocument;
+  const hasConsumer =
+    !!consumer?.document_id && !!safeStr(consumer?.billit_order_id, 120);
+  const existingCredit = await findExistingConversionCreditNoteForBooking(
+    env,
+    scope,
+    bookingId,
+    {
+      sourceLegId,
+      sourceInvoiceDocumentId: consumer?.document_id || null,
+    },
+  );
+  const conversionMarker =
+    bookingRec?.consumer_sale?.conversion &&
+    typeof bookingRec.consumer_sale.conversion === "object"
+      ? bookingRec.consumer_sale.conversion
+      : {};
+  const decision = resolveConsumerToBusinessConversionDecision({
+    hasConsumerSale: !!consumer?.document_id,
+    consumerSaleSuperseded:
+      consumer?.superseded === true || bookingRec?.consumer_sale?.superseded === true,
+    consumerBillitOrderId: consumer?.billit_order_id || "",
+    hasCreditNoteDocument: !!existingCredit?.document_id || !!conversionMarker.credit_document_id,
+    hasCreditNoteBillitOrder:
+      !!existingCredit?.billit_order_id || !!conversionMarker.credit_billit_order_id,
+    creditFailed: conversionMarker.step === "credit_failed",
+  });
+
+  if (!hasConsumer && decision.action === "create_business") {
+    return { ok: true, decision, skipped: true, reason: "no_consumer_billit_sale" };
+  }
+  if (decision.action === "reuse_business" || decision.allow_business_invoice === true) {
+    if (
+      decision.action === "resume_business_after_credit" ||
+      decision.action === "reuse_business"
+    ) {
+      return {
+        ok: true,
+        decision,
+        credit_document_id:
+          existingCredit?.document_id || conversionMarker.credit_document_id || null,
+        credit_billit_order_id:
+          existingCredit?.billit_order_id || conversionMarker.credit_billit_order_id || null,
+        allow_business_invoice: true,
+      };
+    }
+  }
+  if (decision.allow_business_invoice === true && !decision.requires_credit_note) {
+    return { ok: true, decision, allow_business_invoice: true };
+  }
+
+  // --- Issue / ensure credit note ---
+  const amount = resolveConsumerSaleAmount(bookingRec || {}, {
+    legId: sourceLegId,
+    legType: sourceLegType,
+  });
+  if (!amount.ok) {
+    await stampConsumerSaleMarkersOnBooking(env, bookingId, {
+      conversion: {
+        ...conversionMarker,
+        step: "credit_failed",
+        error: amount.error || "amount_unavailable",
+        updated_at: new Date().toISOString(),
+      },
+    });
+    return {
+      ok: false,
+      decision,
+      allow_business_invoice: false,
+      error: amount.error || "amount_unavailable",
+    };
+  }
+  const vat = resolveConsumerSaleVatFromSnapshot(bookingRec || {}, null);
+  if (!vat.ok) {
+    await stampConsumerSaleMarkersOnBooking(env, bookingId, {
+      conversion: {
+        ...conversionMarker,
+        step: "credit_failed",
+        error: "vat_rate_unavailable",
+        updated_at: new Date().toISOString(),
+      },
+    });
+    return {
+      ok: false,
+      decision,
+      allow_business_invoice: false,
+      error: "vat_rate_unavailable",
+    };
+  }
+
+  const creditIdem = buildConsumerConversionCreditIdempotencyKey({
+    tenantId: scope.tenant_id,
+    companyId: scope.company_id,
+    bookingId,
+    legId: sourceLegId,
+  });
+  if (!creditIdem) {
+    return {
+      ok: false,
+      decision,
+      allow_business_invoice: false,
+      error: "credit_idempotency_unavailable",
+    };
+  }
+
+  let creditDocumentId = existingCredit?.document_id || null;
+  let creditDocumentNumber = existingCredit?.document_number || null;
+  let creditRecord = existingCredit?.document_record || null;
+
+  if (!creditDocumentId) {
+    const expectedTotals = {
+      total_incl_vat: Number(amount.value),
+      vat_rate_percent: vat.vat_rate_percent,
+    };
+    const match = creditNoteTotalsMatchConsumerSale({
+      consumerCents: amount.cents,
+      consumerVatRatePercent: vat.vat_rate_percent,
+      consumerCurrency: amount.currency,
+      creditCents: amount.cents,
+      creditVatRatePercent: vat.vat_rate_percent,
+      creditCurrency: amount.currency,
+    });
+    if (!match.ok) {
+      return {
+        ok: false,
+        decision,
+        allow_business_invoice: false,
+        error: match.error,
+      };
+    }
+
+    const creditBody = {
+      canonical_booking_id: bookingId,
+      source_booking_id: bookingId,
+      currency: amount.currency,
+      expected_totals: expectedTotals,
+      vat_rate_percent: vat.vat_rate_percent,
+      idempotency_key: creditIdem,
+      created_by_role: "system_consumer_conversion",
+      source_invoice_reference:
+        safeStr(consumer?.document_number, 80) ||
+        safeStr(consumer?.document_record?.document_number, 80) ||
+        null,
+      source_invoice_document_id: consumer?.document_id || null,
+      fluxidi_sale_kind: "consumer_conversion_credit",
+      conversion_kind: "consumer_conversion_credit",
+    };
+    if (sourceLegId) creditBody.source_leg_id = sourceLegId;
+    if (sourceLegType) creditBody.source_leg_type = sourceLegType;
+
+    const issueResp = await _issueCreditNoteCore({
+      env,
+      body: creditBody,
+      scope,
+      scopeForBookingMatch: { ...scope, hasScope: true },
+      createdByRoleOverride: "system_consumer_conversion",
+      routeLabel: "CONSUMER_TO_BUSINESS_CREDIT",
+    });
+    let issueData = null;
+    try {
+      issueData = await issueResp.json();
+    } catch (_) {
+      issueData = null;
+    }
+    if (!issueResp.ok || !issueData || issueData.ok !== true) {
+      await stampConsumerSaleMarkersOnBooking(env, bookingId, {
+        conversion: {
+          ...conversionMarker,
+          step: "credit_failed",
+          error: safeStr(issueData?.error, 80) || "credit_issue_failed",
+          consumer_document_id: consumer?.document_id || null,
+          consumer_billit_order_id: consumer?.billit_order_id || null,
+          updated_at: new Date().toISOString(),
+        },
+      });
+      console.log(
+        `[CONSUMER_CONVERSION][CREDIT_FAIL] booking=${maskedBooking} error=${safeStr(issueData?.error, 80) || "credit_issue_failed"}`,
+      );
+      return {
+        ok: false,
+        decision,
+        allow_business_invoice: false,
+        error: safeStr(issueData?.error, 80) || "credit_issue_failed",
+        superseded: false,
+      };
+    }
+    creditDocumentId = safeStr(issueData.document_id, 200) || null;
+    creditDocumentNumber = safeStr(issueData.document_number, 80) || null;
+    creditRecord =
+      (await loadIssuedDocumentRegistryRecordById(env, scope, creditDocumentId)) ||
+      null;
+    if (creditRecord && typeof creditRecord === "object") {
+      creditRecord.fluxidi_sale_kind = "consumer_conversion_credit";
+      creditRecord.conversion_kind = "consumer_conversion_credit";
+      creditRecord.source_invoice_document_id = consumer?.document_id || null;
+      creditRecord.source_invoice_reference =
+        creditBody.source_invoice_reference || creditRecord.source_invoice_reference;
+      creditRecord.peppol_applicable = false;
+      creditRecord.peppol_required = false;
+      const docKey = safeStr(creditRecord.kv_key ?? creditRecord.key, 240);
+      if (docKey) {
+        try {
+          await env.BOOKING_KV.put(docKey, JSON.stringify(creditRecord));
+        } catch (_) {}
+      }
+    }
+  }
+
+  // Ensure Billit CreditNote order (Income CreditNote).
+  let creditBillitOrderId = existingCredit?.billit_order_id || null;
+  const config = resolveBillitOAuthConfig(env);
+  if (config.environment !== "sandbox") {
+    await stampConsumerSaleMarkersOnBooking(env, bookingId, {
+      conversion: {
+        ...conversionMarker,
+        step: "credit_failed",
+        error: "config_not_sandbox",
+        credit_document_id: creditDocumentId,
+        updated_at: new Date().toISOString(),
+      },
+    });
+    return {
+      ok: false,
+      decision,
+      allow_business_invoice: false,
+      error: "config_not_sandbox",
+      superseded: false,
+    };
+  }
+  if (!creditBillitOrderId && creditRecord) {
+    const billit = await ensureBillitSandboxCreditNoteOrder(
+      env,
+      scope,
+      config,
+      creditRecord,
+      { documentId: creditDocumentId, documentNumber: creditDocumentNumber },
+    );
+    if (!billit?.ok || !safeStr(billit.billit_order_id, 120)) {
+      await stampConsumerSaleMarkersOnBooking(env, bookingId, {
+        conversion: {
+          ...conversionMarker,
+          step: "credit_failed",
+          error: safeStr(billit?.error, 80) || "billit_credit_create_failed",
+          credit_document_id: creditDocumentId,
+          consumer_document_id: consumer?.document_id || null,
+          consumer_billit_order_id: consumer?.billit_order_id || null,
+          updated_at: new Date().toISOString(),
+        },
+      });
+      console.log(
+        `[CONSUMER_CONVERSION][BILLIT_CREDIT_FAIL] booking=${maskedBooking} error=${safeStr(billit?.error, 80) || "billit_credit_create_failed"}`,
+      );
+      return {
+        ok: false,
+        decision,
+        allow_business_invoice: false,
+        error: safeStr(billit?.error, 80) || "billit_credit_create_failed",
+        superseded: false,
+        credit_document_id: creditDocumentId,
+      };
+    }
+    creditBillitOrderId = safeStr(billit.billit_order_id, 120);
+  }
+
+  // Credit succeeded → mark consumer credited/superseded (never before).
+  try {
+    const record = consumer?.document_record;
     if (record && typeof record === "object") {
       record.superseded = true;
+      record.credited = true;
       record.active_revenue = false;
-      record.lifecycle_state = "superseded";
-      record.superseded_reason = "converted_to_business_invoice";
+      record.lifecycle_state = "credited";
+      record.superseded_reason = "credited_for_business_invoice_conversion";
       record.superseded_at = new Date().toISOString();
+      record.credit_document_id = creditDocumentId;
+      record.credit_billit_order_id = creditBillitOrderId;
       const docKey = safeStr(record.kv_key ?? record.key, 240);
       if (docKey) {
         await env.BOOKING_KV.put(docKey, JSON.stringify(record));
       }
     }
-    await stampConsumerSaleMarkersOnBooking(env, bookingId, {
-      superseded: true,
-      active_revenue: false,
-      status: "superseded",
-      conversion: decision.action,
-      accounting_note: decision.accounting_note,
-      previous_billit_order_id: decision.previous_consumer_order_id,
-    });
-  } catch (_) {
-    // fail-open for business path but markers are best-effort
-  }
-  return { ok: true, decision };
+  } catch (_) {}
+
+  const linkTrail = buildConsumerConversionLinkTrail({
+    bookingId,
+    legId: sourceLegId,
+    consumerDocumentId: consumer?.document_id,
+    consumerBillitOrderId: consumer?.billit_order_id,
+    creditDocumentId,
+    creditBillitOrderId,
+    paymentMethod: bookingRec?.payment_method ?? bookingRec?.paymentMethod,
+    paymentProvider: bookingRec?.payment_provider ?? bookingRec?.paymentProvider,
+    paymentStatus: bookingRec?.payment_status ?? bookingRec?.paymentStatus,
+  });
+
+  await stampConsumerSaleMarkersOnBooking(env, bookingId, {
+    superseded: true,
+    credited: true,
+    active_revenue: false,
+    status: "credited",
+    conversion: {
+      step: "credit_done",
+      action: "credit_then_business",
+      credit_document_id: creditDocumentId,
+      credit_document_number: creditDocumentNumber,
+      credit_billit_order_id: creditBillitOrderId,
+      consumer_document_id: consumer?.document_id || null,
+      consumer_billit_order_id: consumer?.billit_order_id || null,
+      link_trail: linkTrail,
+      updated_at: new Date().toISOString(),
+    },
+  });
+
+  console.log(
+    `[CONSUMER_CONVERSION][CREDIT_OK] booking=${maskedBooking} credit_doc=${_bookingIntentMask(creditDocumentId)} credit_order=${_bookingIntentMask(creditBillitOrderId)} consumer_order=${_bookingIntentMask(consumer?.billit_order_id)}`,
+  );
+
+  return {
+    ok: true,
+    decision: {
+      ...decision,
+      action: "resume_business_after_credit",
+      allow_business_invoice: true,
+      step: "issue_business_invoice",
+    },
+    allow_business_invoice: true,
+    credit_document_id: creditDocumentId,
+    credit_billit_order_id: creditBillitOrderId,
+    link_trail: linkTrail,
+    superseded: true,
+  };
+}
+
+/** @deprecated name kept as thin wrapper for call-site clarity during conversion. */
+async function supersedeConsumerSaleForBusinessConversion(
+  env,
+  scope,
+  bookingId,
+  options = {},
+) {
+  return creditConsumerSaleBeforeBusinessConversion(env, scope, bookingId, options);
 }
 
 /* Pure builder (Patch B8a) for the body expected by _issueInvoiceCore. It NEVER
@@ -66822,16 +67339,48 @@ async function handleCompanyBookingRequestBusinessInvoice({
   });
 
   // 4. Existing invoice + stored snapshot -> retry decision.
-  // Consumer sales use the same Document Core invoice type but must be
-  // superseded before a business invoice is issued (no double revenue).
+  // Consumer Billit sales must be credited (Income CreditNote) before a
+  // business invoice is issued. Failure before credit blocks business create.
   const existingConsumerSale = await findExistingConsumerSaleDocumentForBooking(
     env,
     scope,
     safeBookingId,
   );
-  if (existingConsumerSale?.document_id) {
-    await supersedeConsumerSaleForBusinessConversion(env, scope, safeBookingId, {
-      consumerDocument: existingConsumerSale,
+  if (existingConsumerSale?.document_id && existingConsumerSale?.billit_order_id) {
+    const conversion = await creditConsumerSaleBeforeBusinessConversion(
+      env,
+      scope,
+      safeBookingId,
+      {
+        consumerDocument: existingConsumerSale,
+        bookingRec: rec,
+      },
+    );
+    if (!conversion?.ok || conversion.allow_business_invoice !== true) {
+      console.log(
+        `[BUSINESS_INVOICE][CONFLICT] booking=${bookingMask} reason=consumer_credit_required error=${safeStr(conversion?.error, 80) || "credit_failed"}`,
+      );
+      return json(
+        {
+          ok: false,
+          error: "consumer_sale_credit_required",
+          credit_error: safeStr(conversion?.error, 80) || "credit_failed",
+          message:
+            "De particuliere Billit-verkoop moet eerst worden gecrediteerd voordat een zakelijke factuur wordt aangemaakt.",
+        },
+        409,
+      );
+    }
+  } else if (existingConsumerSale?.document_id) {
+    // Document without Billit order: supersede locally, no credit needed.
+    await stampConsumerSaleMarkersOnBooking(env, safeBookingId, {
+      superseded: true,
+      active_revenue: false,
+      status: "superseded",
+      conversion: {
+        step: "superseded_without_billit_order",
+        updated_at: nowIso,
+      },
     });
   }
   const existingInvoice = await findExistingInvoiceDocumentForBooking(
@@ -67055,6 +67604,35 @@ async function handleCompanyBookingRequestBusinessInvoice({
             console.log(
               `[BUSINESS_INVOICE][PAID_SYNC] booking=${bookingMask} status=${billitPaymentSyncStatus || "-"}`,
             );
+          }
+          // Conversion trail: link business invoice to prior consumer credit.
+          try {
+            const prior = rec?.consumer_sale?.conversion;
+            if (prior && typeof prior === "object" && prior.credit_billit_order_id) {
+              await stampConsumerSaleMarkersOnBooking(env, safeBookingId, {
+                conversion: {
+                  ...prior,
+                  step: "business_done",
+                  business_document_id: documentId,
+                  business_billit_order_id: billitOrderId,
+                  link_trail: buildConsumerConversionLinkTrail({
+                    bookingId: safeBookingId,
+                    consumerDocumentId: prior.consumer_document_id,
+                    consumerBillitOrderId: prior.consumer_billit_order_id,
+                    creditDocumentId: prior.credit_document_id,
+                    creditBillitOrderId: prior.credit_billit_order_id,
+                    businessDocumentId: documentId,
+                    businessBillitOrderId: billitOrderId,
+                    paymentMethod: rec?.payment_method ?? rec?.paymentMethod,
+                    paymentProvider: rec?.payment_provider ?? rec?.paymentProvider,
+                    paymentStatus,
+                  }),
+                  updated_at: new Date().toISOString(),
+                },
+              });
+            }
+          } catch (_) {
+            // non-fatal trail stamp
           }
         } else {
           warnings.push(safeStr(billit?.error, 80) || "billit_order_unavailable");

@@ -333,13 +333,16 @@ export function resolveConsumerSalePaymentSyncGate({
 }
 
 /**
- * Conversion from consumer sale → business invoice.
+ * Conversion from consumer sale → business invoice via Income CreditNote.
  *
- * Billit in this codebase has no replace/reclassify API and CreditNote create
- * is not wired. Safe interim strategy:
- *   - mark consumer sale superseded (inactive revenue)
- *   - issue a separate business invoice identity
- *   - never count both as active revenue for the same booking/leg
+ * Pipeline (idempotent resume):
+ *   1. issue Document Core credit_note + Billit OrderType CreditNote
+ *      matching the consumer invoice ground/VAT/totals exactly
+ *   2. only then mark consumer sale credited/superseded
+ *   3. issue exactly one business invoice (Peppol only there)
+ *
+ * If credit fails: do not supersede and do not create a business invoice.
+ * If credit succeeded and business failed: resume business only.
  */
 export function resolveConsumerToBusinessConversionDecision({
   hasConsumerSale = false,
@@ -347,41 +350,181 @@ export function resolveConsumerToBusinessConversionDecision({
   hasActiveBusinessInvoice = false,
   consumerBillitOrderId = "",
   businessBillitOrderId = "",
+  hasCreditNoteDocument = false,
+  hasCreditNoteBillitOrder = false,
+  creditFailed = false,
 } = {}) {
   if (hasActiveBusinessInvoice && _str(businessBillitOrderId, 120)) {
     return {
       action: "reuse_business",
       reason: "business_invoice_already_active",
       double_revenue_risk: false,
+      step: "done",
+      requires_credit_note: false,
+      requires_consumer_supersede: false,
+      allow_business_invoice: true,
+      peppol_on_business_only: true,
     };
   }
-  if (!hasConsumerSale) {
+  if (!hasConsumerSale && !_str(consumerBillitOrderId, 120)) {
     return {
       action: "create_business",
       reason: "no_consumer_sale",
       double_revenue_risk: false,
+      step: "create_business_only",
+      requires_credit_note: false,
       requires_consumer_supersede: false,
+      allow_business_invoice: true,
+      peppol_on_business_only: true,
     };
   }
-  if (consumerSaleSuperseded) {
+
+  // Credit already on Billit (or consumer already credited): resume business.
+  if (
+    hasCreditNoteBillitOrder ||
+    (consumerSaleSuperseded && hasCreditNoteDocument)
+  ) {
     return {
-      action: "create_business",
-      reason: "consumer_already_superseded",
+      action: "resume_business_after_credit",
+      reason: "credit_note_already_registered",
       double_revenue_risk: false,
-      requires_consumer_supersede: false,
+      step: "issue_business_invoice",
+      requires_credit_note: false,
+      requires_consumer_supersede: !consumerSaleSuperseded,
+      allow_business_invoice: true,
       previous_consumer_order_id: _str(consumerBillitOrderId, 120) || null,
-      accounting_note:
-        "Consumer sale already superseded; business invoice may proceed. Manual Billit credit of the superseded Invoice may still be required in the accountant workflow when the API cannot auto-credit.",
+      peppol_on_business_only: true,
     };
   }
+
+  if (creditFailed && !hasCreditNoteBillitOrder) {
+    return {
+      action: "block_until_credit_succeeds",
+      reason: "credit_note_failed",
+      double_revenue_risk: false,
+      step: "issue_credit_note",
+      requires_credit_note: true,
+      requires_consumer_supersede: false,
+      allow_business_invoice: false,
+      previous_consumer_order_id: _str(consumerBillitOrderId, 120) || null,
+      peppol_on_business_only: true,
+    };
+  }
+
+  if (hasCreditNoteDocument && !hasCreditNoteBillitOrder) {
+    return {
+      action: "ensure_credit_billit_order",
+      reason: "credit_document_missing_billit_order",
+      double_revenue_risk: false,
+      step: "ensure_credit_billit_order",
+      requires_credit_note: true,
+      requires_consumer_supersede: false,
+      allow_business_invoice: false,
+      previous_consumer_order_id: _str(consumerBillitOrderId, 120) || null,
+      peppol_on_business_only: true,
+    };
+  }
+
   return {
-    action: "supersede_consumer_then_create_business",
-    reason: "convert_consumer_to_business",
+    action: "credit_then_business",
+    reason: "convert_consumer_via_credit_note",
     double_revenue_risk: false,
+    step: "issue_credit_note",
+    requires_credit_note: true,
     requires_consumer_supersede: true,
+    allow_business_invoice: false, // only after credit succeeds
     previous_consumer_order_id: _str(consumerBillitOrderId, 120) || null,
+    peppol_on_business_only: true,
     accounting_note:
-      "Billit API in this integration cannot reclassify Invoice→business Peppol invoice in-place. Fluxidi supersedes the consumer sale (inactive revenue) then issues a distinct business invoice. Accountant may still need a Billit credit note against the superseded consumer Invoice when CreditNote create is not automated.",
+      "Consumer Billit Invoice is reversed with an Income CreditNote for the same VAT/totals, then a distinct business invoice is issued. Peppol applies only to the business invoice.",
+  };
+}
+
+export function buildConsumerConversionCreditIdempotencyKey({
+  tenantId,
+  companyId,
+  bookingId,
+  legId = null,
+} = {}) {
+  const t = _str(tenantId, 96);
+  const c = _str(companyId, 96);
+  const b = _str(bookingId, 160);
+  if (!t || !c || !b) return null;
+  const leg = _str(legId, 160) || "main";
+  return `cn-consumer-convert:${t}:${c}:${b}:${leg}:v1`;
+}
+
+export function creditNoteTotalsMatchConsumerSale({
+  consumerCents = null,
+  consumerVatRatePercent = null,
+  consumerCurrency = "EUR",
+  creditCents = null,
+  creditVatRatePercent = null,
+  creditCurrency = "EUR",
+} = {}) {
+  if (!Number.isInteger(consumerCents) || !(consumerCents > 0)) {
+    return { ok: false, error: "consumer_amount_invalid" };
+  }
+  if (!Number.isInteger(creditCents) || creditCents !== consumerCents) {
+    return { ok: false, error: "credit_amount_mismatch" };
+  }
+  const cCur = _str(consumerCurrency, 8).toUpperCase() || "EUR";
+  const nCur = _str(creditCurrency, 8).toUpperCase() || "EUR";
+  if (cCur !== nCur) {
+    return { ok: false, error: "credit_currency_mismatch" };
+  }
+  const cVat = Number(consumerVatRatePercent);
+  const nVat = Number(creditVatRatePercent);
+  if (!Number.isFinite(cVat) || !Number.isFinite(nVat) || cVat !== nVat) {
+    return { ok: false, error: "credit_vat_mismatch" };
+  }
+  return { ok: true };
+}
+
+export function buildConsumerConversionLinkTrail({
+  bookingId,
+  legId = null,
+  consumerDocumentId = null,
+  consumerBillitOrderId = null,
+  creditDocumentId = null,
+  creditBillitOrderId = null,
+  businessDocumentId = null,
+  businessBillitOrderId = null,
+  paymentMethod = null,
+  paymentProvider = null,
+  paymentStatus = null,
+} = {}) {
+  return {
+    booking_id: _str(bookingId, 160) || null,
+    leg_id: _str(legId, 160) || null,
+    consumer_document_id: _str(consumerDocumentId, 200) || null,
+    consumer_billit_order_id: _str(consumerBillitOrderId, 120) || null,
+    credit_document_id: _str(creditDocumentId, 200) || null,
+    credit_billit_order_id: _str(creditBillitOrderId, 120) || null,
+    business_document_id: _str(businessDocumentId, 200) || null,
+    business_billit_order_id: _str(businessBillitOrderId, 120) || null,
+    payment_method: _lower(paymentMethod, 40) || null,
+    payment_provider: _lower(paymentProvider, 40) || null,
+    payment_status: _lower(paymentStatus, 40) || null,
+    second_cashflow: false,
+    peppol_on: "business_invoice_only",
+  };
+}
+
+export function activeRevenueDocumentsAfterConversion({
+  consumerSuperseded = false,
+  creditNotePresent = false,
+  businessInvoicePresent = false,
+} = {}) {
+  const active = [];
+  if (!consumerSuperseded) active.push("consumer_sale");
+  // Credit notes reverse revenue; they are not an additional active sale.
+  void creditNotePresent;
+  if (businessInvoicePresent) active.push("business_invoice");
+  return {
+    active,
+    ok: active.length <= 1,
+    double_active_sales: active.length > 1,
   };
 }
 

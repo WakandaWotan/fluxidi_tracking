@@ -7,10 +7,14 @@ import assert from "node:assert/strict";
 import {
   CONSUMER_SALE_BILLIT_ORDER_TYPE,
   CONSUMER_SALE_KIND,
+  activeRevenueDocumentsAfterConversion,
+  buildConsumerConversionCreditIdempotencyKey,
+  buildConsumerConversionLinkTrail,
   buildConsumerSaleDocumentMetadata,
   buildConsumerSaleIdempotencyKey,
   consumerSalePeppolPolicy,
   consumerSalePresentation,
+  creditNoteTotalsMatchConsumerSale,
   hasBusinessInvoiceIntent,
   isActiveRevenueDocument,
   isConsumerSaleEligibleRecord,
@@ -207,15 +211,80 @@ test("13. heen/terugrit must not register parent total AND legs", () => {
   assert.equal(good.strategy, "per_leg");
 });
 
-test("14. conversion to business invoice never double-counts active revenue", () => {
+test("14. conversion credits consumer before business invoice", () => {
+  // 1. consumer invoice → credit then business
   const d = resolveConsumerToBusinessConversionDecision({
     hasConsumerSale: true,
     consumerBillitOrderId: "ord_c",
   });
-  assert.equal(d.action, "supersede_consumer_then_create_business");
-  assert.equal(d.double_revenue_risk, false);
-  assert.equal(d.requires_consumer_supersede, true);
-  assert.ok(String(d.accounting_note || "").includes("credit"));
+  assert.equal(d.action, "credit_then_business");
+  assert.equal(d.requires_credit_note, true);
+  assert.equal(d.allow_business_invoice, false);
+  assert.equal(d.peppol_on_business_only, true);
+
+  // 2. identical amounts/VAT on credit
+  assert.equal(
+    creditNoteTotalsMatchConsumerSale({
+      consumerCents: 4250,
+      consumerVatRatePercent: 6,
+      consumerCurrency: "EUR",
+      creditCents: 4250,
+      creditVatRatePercent: 6,
+      creditCurrency: "EUR",
+    }).ok,
+    true,
+  );
+  assert.equal(
+    creditNoteTotalsMatchConsumerSale({
+      consumerCents: 4250,
+      consumerVatRatePercent: 6,
+      consumerCurrency: "EUR",
+      creditCents: 4250,
+      creditVatRatePercent: 21,
+      creditCurrency: "EUR",
+    }).error,
+    "credit_vat_mismatch",
+  );
+
+  // 3. retry after credit: resume business only (no second credit)
+  const resume = resolveConsumerToBusinessConversionDecision({
+    hasConsumerSale: true,
+    consumerBillitOrderId: "ord_c",
+    hasCreditNoteDocument: true,
+    hasCreditNoteBillitOrder: true,
+    consumerSaleSuperseded: true,
+  });
+  assert.equal(resume.action, "resume_business_after_credit");
+  assert.equal(resume.requires_credit_note, false);
+  assert.equal(resume.allow_business_invoice, true);
+
+  // 4. credit failed → no business invoice
+  const blocked = resolveConsumerToBusinessConversionDecision({
+    hasConsumerSale: true,
+    consumerBillitOrderId: "ord_c",
+    creditFailed: true,
+  });
+  assert.equal(blocked.allow_business_invoice, false);
+  assert.equal(blocked.action, "block_until_credit_succeeds");
+
+  // 5. after credit, only business is active revenue
+  const active = activeRevenueDocumentsAfterConversion({
+    consumerSuperseded: true,
+    creditNotePresent: true,
+    businessInvoicePresent: true,
+  });
+  assert.equal(active.ok, true);
+  assert.deepEqual(active.active, ["business_invoice"]);
+
+  // 7. Peppol only on business
+  assert.equal(d.peppol_on_business_only, true);
+
+  // 11. no consumer → unchanged business flow
+  const plain = resolveConsumerToBusinessConversionDecision({
+    hasConsumerSale: false,
+  });
+  assert.equal(plain.action, "create_business");
+  assert.equal(plain.requires_credit_note, false);
 
   assert.equal(
     isActiveRevenueDocument({
@@ -224,6 +293,33 @@ test("14. conversion to business invoice never double-counts active revenue", ()
     }),
     false,
   );
+
+  // link trail + per-leg idempotency (8/9)
+  const k1 = buildConsumerConversionCreditIdempotencyKey({
+    tenantId: "T1",
+    companyId: "C1",
+    bookingId: "bk1",
+    legId: "leg_out",
+  });
+  const k2 = buildConsumerConversionCreditIdempotencyKey({
+    tenantId: "T1",
+    companyId: "C1",
+    bookingId: "bk1",
+    legId: "leg_ret",
+  });
+  assert.notEqual(k1, k2);
+  const trail = buildConsumerConversionLinkTrail({
+    bookingId: "bk1",
+    consumerBillitOrderId: "ord_c",
+    creditBillitOrderId: "ord_cn",
+    businessBillitOrderId: "ord_b",
+    paymentMethod: "pointofsale",
+    paymentProvider: "mollie",
+    paymentStatus: "paid",
+  });
+  assert.equal(trail.second_cashflow, false);
+  assert.equal(trail.peppol_on, "business_invoice_only");
+  assert.equal(trail.payment_method, "pointofsale");
 });
 
 test("15. foreign tenant cannot share consumer idempotency identity", () => {
