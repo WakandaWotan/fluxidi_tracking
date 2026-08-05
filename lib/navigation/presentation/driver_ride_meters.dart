@@ -11,6 +11,7 @@ import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/navigation/presentation/driver_tellers_guidance.dart';
 import 'package:fluxidi_tracking/navigation/presentation/driver_tellers_layout_geometry.dart';
 import 'package:fluxidi_tracking/navigation/presentation/maneuver_presentation.dart';
+import 'package:fluxidi_tracking/navigation/presentation/nav_signage_tablet_readability.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_marker_choice.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_presentation_flags.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_vehicle_choice_selector.dart';
@@ -792,6 +793,13 @@ class _DriverRideMetersContent extends StatelessWidget {
     switch (guidance.phase) {
       case DriverTellersGuidancePhase.instruction:
         final p = guidance.presentation!;
+        // NAV-SIGNAGE-FIELD-QUALITY-P0-1: Tellers + navigatie split on tablet
+        // must use dedicated split readability metrics — never phone-mini.
+        final splitReadability = isTablet
+            ? NavSignageTabletReadabilityMetrics.forSplitNav(
+                availableBannerWidth: layout.maxWidth,
+              )
+            : null;
         card = DriverTurnInstructionBanner(
           // Lighter and smaller than the primary navigation banner, but the
           // same widget, the same icon resolver and the same localized text.
@@ -805,6 +813,7 @@ class _DriverRideMetersContent extends StatelessWidget {
           secondaryText: p.secondaryInstruction,
           icon: driverManeuverVisualIconData(p.maneuverVisual),
           presentation: p,
+          tabletReadability: splitReadability,
           themeListenable: themeListenable,
         );
       case DriverTellersGuidancePhase.loading:

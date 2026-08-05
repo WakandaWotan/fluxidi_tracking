@@ -148,7 +148,7 @@ void main() {
       );
     });
 
-    test('route endpoints are always owned, plain guidance never is', () {
+    test('route endpoints and plain continue guidance are always owned', () {
       expect(
         classifyNavManeuverActivation(type: 'arrive', modifier: ''),
         NavManeuverActivationClass.alwaysActive,
@@ -157,13 +157,23 @@ void main() {
         classifyNavManeuverActivation(type: 'depart', modifier: ''),
         NavManeuverActivationClass.alwaysActive,
       );
-      for (final type in <String>['continue', 'new name', 'notification', '']) {
+      for (final type in <String>['continue', 'new name', 'notification']) {
         expect(
           classifyNavManeuverActivation(type: type, modifier: 'straight'),
-          NavManeuverActivationClass.followOnly,
-          reason: '$type describes no maneuver to sign',
+          NavManeuverActivationClass.alwaysActive,
+          reason: '$type+straight owns the upright straight plate',
+        );
+        expect(
+          classifyNavManeuverActivation(type: type, modifier: ''),
+          NavManeuverActivationClass.alwaysActive,
+          reason: '$type without modifier owns the upright straight plate',
         );
       }
+      // Truly unclassified types stay follow-only.
+      expect(
+        classifyNavManeuverActivation(type: '', modifier: ''),
+        NavManeuverActivationClass.followOnly,
+      );
     });
   });
 
@@ -183,10 +193,18 @@ void main() {
       expect(_resolve(step: roundabout, distance: 250).isActive, isTrue);
     });
 
-    test('follow-only guidance never activates, at any distance', () {
+    test('continue+straight is always active at any distance', () {
       final cont = _step(type: 'continue', modifier: 'straight');
       for (final d in <double>[0, 1, 50, 200, 300, 5000]) {
-        expect(_resolve(step: cont, distance: d).isActive, isFalse);
+        expect(_resolve(step: cont, distance: d).isActive, isTrue);
+        expect(_resolve(step: cont, distance: d).showFollowRoute, isFalse);
+      }
+    });
+
+    test('truly unclassified follow-only never activates', () {
+      final unknown = _step(type: 'unmapped_engine_event', modifier: '');
+      for (final d in <double>[0, 1, 50, 200, 300, 5000]) {
+        expect(_resolve(step: unknown, distance: d).isActive, isFalse);
       }
     });
 

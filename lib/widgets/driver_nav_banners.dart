@@ -628,30 +628,24 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     );
   }
 
-  // NAV-ROUNDABOUT-LANE-CLARITY-P0-2026-07-31: primary instruction is the
-  // most important glanceable line. For roundabouts we now emit "Neem de
-  // Nde afslag" as primary, and it must NEVER be ellipsized — because the
-  // ordinal ("2de", "3de", ...) is exactly the info the driver needs. When
-  // the maneuver is a roundabout we swap to `TextOverflow.visible` and
-  // allow up to 2 lines. Non-roundabout branches keep the historic
-  // 1-line-with-ellipsis behavior so wording changes cannot regress other
-  // maneuver types.
-  bool get _preserveFullPrimary =>
+  // NAV-SIGNAGE-FIELD-QUALITY-P0-1: the external primary line is the only
+  // textual instruction (sign plates are captionless). Never ellipsize the
+  // main maneuver — including arrival ("Bestemming bereikt") and ordinary
+  // turns. Only the secondary street/destination line may truncate.
+  bool get _isRoundaboutPrimary =>
       presentation != null &&
       presentation!.maneuverVisual == ManeuverVisual.roundabout;
 
   Widget _buildPrimaryText(DriverThemePalette palette, {int? maxLines}) {
-    final resolvedMaxLines = _preserveFullPrimary
-        ? math.max(2, maxLines ?? _primaryMaxLines)
-        : (maxLines ?? _primaryMaxLines);
-    final overflow = _preserveFullPrimary
-        ? TextOverflow.visible
-        : TextOverflow.ellipsis;
+    final base = maxLines ?? _primaryMaxLines;
+    final resolvedMaxLines = (isArrival || _isRoundaboutPrimary)
+        ? math.max(2, base)
+        : base;
     return Text(
       primaryText,
       maxLines: resolvedMaxLines,
       softWrap: true,
-      overflow: overflow,
+      overflow: TextOverflow.visible,
       style: TextStyle(
         fontSize: _primaryFontSize,
         fontWeight: FontWeight.w900,

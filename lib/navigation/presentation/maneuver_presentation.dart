@@ -205,6 +205,15 @@ ManeuverVisual resolveDriverManeuverVisual(NavInstructionSnapshot snapshot) {
     return _driverManeuverVisualFromModifier(mod) ?? ManeuverVisual.followRoute;
   }
 
+  // NAV-SIGNAGE-FIELD-QUALITY-P0-1: plain continue guidance is visually
+  // `straight` (upright arrow). Slight/left/right modifiers stay specific;
+  // geometry bends alone never become slight/curve.
+  if (t.contains('continue') ||
+      t.contains('new name') ||
+      t.contains('notification')) {
+    return _driverManeuverVisualFromModifier(mod) ?? ManeuverVisual.straight;
+  }
+
   final fromModifier = _driverManeuverVisualFromModifier(mod);
   if (fromModifier != null) return fromModifier;
 

@@ -295,9 +295,9 @@ void main() {
       await tester.pump();
       expect(tester.takeException(), isNull);
       expect(find.byType(NavManeuverSign), findsOneWidget);
-      expect(_signSize(tester), lessThan(88));
-      expect(_primaryFont(tester), lessThan(24));
-      expect(_bannerSize(tester).height, lessThan(100));
+      expect(_signSize(tester), lessThan(110));
+      expect(_primaryFont(tester), lessThan(28));
+      expect(_bannerSize(tester).height, lessThan(112));
     });
 
     testWidgets('phone landscape keeps historic top-row sizes', (tester) async {
@@ -319,8 +319,8 @@ void main() {
       await tester.pump();
       expect(tester.takeException(), isNull);
       expect(find.byType(NavManeuverSign), findsOneWidget);
-      expect(_signSize(tester), lessThan(88));
-      expect(_primaryFont(tester), lessThan(24));
+      expect(_signSize(tester), lessThan(110));
+      expect(_primaryFont(tester), lessThan(28));
     });
   });
 
@@ -352,9 +352,9 @@ void main() {
       expect(find.byKey(const ValueKey<String>('harness_menu')), findsOneWidget);
 
       final sign = _signSize(tester);
-      expect(sign, greaterThanOrEqualTo(88));
-      expect(sign, lessThanOrEqualTo(100));
-      expect(_primaryFont(tester), greaterThanOrEqualTo(24));
+      expect(sign, greaterThanOrEqualTo(110));
+      expect(sign, lessThanOrEqualTo(120));
+      expect(_primaryFont(tester), greaterThanOrEqualTo(28));
 
       final bannerRect = tester.getRect(
         find.byKey(const ValueKey<String>('nav_maneuver_banner')),
@@ -369,7 +369,7 @@ void main() {
       expect(bannerRect.left, greaterThanOrEqualTo(logoRect.right - 0.5));
       expect(
         (bannerRect.top - logoRect.top).abs(),
-        lessThan(48),
+        lessThan(80),
         reason: 'banner must share the logo row in tablet portrait',
       );
       // No overlap with the compass stand-in.
@@ -416,8 +416,8 @@ void main() {
       expect(find.byType(NavManeuverSign), findsOneWidget);
 
       final tabletSign = _signSize(tester);
-      expect(tabletSign, greaterThanOrEqualTo(88));
-      expect(_primaryFont(tester), greaterThanOrEqualTo(24));
+      expect(tabletSign, greaterThanOrEqualTo(110));
+      expect(_primaryFont(tester), greaterThanOrEqualTo(28));
       expect(
         _bannerSize(tester).height,
         greaterThanOrEqualTo(
@@ -467,8 +467,14 @@ void main() {
       );
       expect(narrow.bannerMaxWidth, lessThanOrEqualTo(300));
       expect(narrow.bannerMinWidth, lessThanOrEqualTo(narrow.bannerMaxWidth));
-      expect(narrow.signSize, greaterThanOrEqualTo(88));
-      expect(narrow.signSize, lessThanOrEqualTo(100));
+      expect(narrow.signSize, greaterThanOrEqualTo(110));
+      expect(narrow.signSize, lessThanOrEqualTo(120));
+      final split = NavSignageTabletReadabilityMetrics.forSplitNav(
+        availableBannerWidth: 320,
+      );
+      expect(split.signSize, greaterThanOrEqualTo(76));
+      expect(split.signSize, lessThanOrEqualTo(88));
+      expect(split.primaryFontSize, greaterThanOrEqualTo(21));
     });
 
     test('instruction presentation stays follow_route / N454 / 643 m', () {

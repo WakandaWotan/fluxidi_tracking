@@ -82,6 +82,17 @@ NavManeuverActivationClass classifyNavManeuverActivation({
   if (t.contains('turn') || t.contains('end of road') || _hasDirection(m)) {
     return NavManeuverActivationClass.ordinary;
   }
+  // NAV-SIGNAGE-FIELD-QUALITY-P0-1: Mapbox `continue` / `new name` /
+  // `notification` without a real lateral maneuver is upright "straight"
+  // guidance ("Volg de route" / "Ga rechtdoor"). It must own the banner and
+  // resolve to the straight plate — never the curved follow_route glyph that
+  // only exists for true unclassified / policy fallbacks. Road geometry that
+  // merely bends does not change this class.
+  if (t.contains('continue') ||
+      t.contains('new name') ||
+      t.contains('notification')) {
+    return NavManeuverActivationClass.alwaysActive;
+  }
   return NavManeuverActivationClass.followOnly;
 }
 
