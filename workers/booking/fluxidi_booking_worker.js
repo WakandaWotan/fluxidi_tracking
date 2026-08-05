@@ -233,6 +233,20 @@ import {
   _adminPosTerminalResponseTerminal,
 } from "./modules/mollie_connect.js";
 import {
+  resolveDriverPosTerminalAmount,
+  classifyMolliePosStatus,
+  molliePosStatusIsPaid,
+  selectServerSidePosTerminal,
+  posTerminalSnapshotModeMatches,
+  maskPosTerminalId,
+  posTerminalIdempotencyDecision,
+  posTerminalDiagnosticsLine,
+  buildScopedDriverPosPaymentIntentKey,
+  isBookingAlreadyPaid,
+  shouldMarkBookingPaidFromPosStatus,
+  shouldTriggerBillitSyncOnPosPaid,
+} from "./modules/pos_terminal_payment.mjs";
+import {
   _adminTokenFromRequest,
   _requireAdmin,
   _scopeText,
@@ -32801,6 +32815,148 @@ export default {
           },
           200,
         );
+      }
+
+      // TAP-TO-PAY-SERVER-CONTRACT-1: driver-safe POS terminal payment start.
+      // Server selects terminal + amount; client amount/terminal id ignored.
+      if (
+        url.pathname === "/driver/mollie/terminal-payment/start" &&
+        request.method === "POST"
+      ) {
+        const body = await safeJson(request);
+        const trusted = await _resolveTrustedBookingActor(request, url, env, body);
+        if (!trusted.ok) return trusted.response;
+        if (
+          trusted.auth_mode !== "admin_token" &&
+          !trusted.driver_session &&
+          !trusted.company_session
+        ) {
+          return json({ ok: false, error: "unauthorized" }, 401);
+        }
+        const bookingId = safeStr(body?.booking_id ?? body?.bookingId, 160);
+        if (!bookingId) {
+          return json({ ok: false, error: "booking_id_required" }, 400);
+        }
+
+        let preloadedRec = null;
+        try {
+          const loaded = await loadBookingRecord(env, bookingId);
+          preloadedRec = loaded?.rec || null;
+        } catch (loadErr) {
+          if (String(loadErr?.message || "") === "Booking not found") {
+            return _opaqueBookingNotFoundResponse();
+          }
+          throw loadErr;
+        }
+        if (!preloadedRec) return _opaqueBookingNotFoundResponse();
+        const recordScope = resolveBookingTenantScopeFromRecord(preloadedRec);
+        if (!recordScope?.tenant_id || !recordScope?.company_id) {
+          return _opaqueBookingNotFoundResponse();
+        }
+        const tenantScope = {
+          tenant_id: recordScope.tenant_id,
+          company_id: recordScope.company_id,
+          hasScope: true,
+        };
+        if (trusted.company_session) {
+          if (
+            trusted.company_session.tenant_id !== tenantScope.tenant_id ||
+            trusted.company_session.company_id !== tenantScope.company_id
+          ) {
+            return _opaqueBookingNotFoundResponse();
+          }
+        } else if (trusted.driver_session) {
+          if (
+            trusted.driver_session.tenant_id !== tenantScope.tenant_id ||
+            trusted.driver_session.company_id !== tenantScope.company_id
+          ) {
+            return _opaqueBookingNotFoundResponse();
+          }
+        } else if (trusted.auth_mode !== "admin_token") {
+          return json({ ok: false, error: "unauthorized" }, 401);
+        }
+
+        const out = await startDriverPosTerminalPaymentAuthoritative(
+          bookingId,
+          env,
+          request,
+          tenantScope,
+          { body, preloadedRec },
+        );
+        let statusCode = out?.ok ? 200 : 400;
+        if (out?.error === "booking_not_found") statusCode = 404;
+        else if (out?.error === "forbidden") statusCode = 403;
+        else if (out?.error === "unauthorized") statusCode = 401;
+        else if (out?.error === "payment_already_paid") statusCode = 409;
+        return json(out, statusCode);
+      }
+
+      if (
+        url.pathname === "/driver/mollie/terminal-payment/status" &&
+        request.method === "POST"
+      ) {
+        const body = await safeJson(request);
+        const trusted = await _resolveTrustedBookingActor(request, url, env, body);
+        if (!trusted.ok) return trusted.response;
+        if (
+          trusted.auth_mode !== "admin_token" &&
+          !trusted.driver_session &&
+          !trusted.company_session
+        ) {
+          return json({ ok: false, error: "unauthorized" }, 401);
+        }
+        const bookingId = safeStr(body?.booking_id ?? body?.bookingId, 160);
+        if (!bookingId) {
+          return json({ ok: false, error: "booking_id_required" }, 400);
+        }
+        let preloadedRec = null;
+        try {
+          const loaded = await loadBookingRecord(env, bookingId);
+          preloadedRec = loaded?.rec || null;
+        } catch (loadErr) {
+          if (String(loadErr?.message || "") === "Booking not found") {
+            return _opaqueBookingNotFoundResponse();
+          }
+          throw loadErr;
+        }
+        if (!preloadedRec) return _opaqueBookingNotFoundResponse();
+        const recordScope = resolveBookingTenantScopeFromRecord(preloadedRec);
+        if (!recordScope?.tenant_id || !recordScope?.company_id) {
+          return _opaqueBookingNotFoundResponse();
+        }
+        const tenantScope = {
+          tenant_id: recordScope.tenant_id,
+          company_id: recordScope.company_id,
+          hasScope: true,
+        };
+        if (trusted.company_session) {
+          if (
+            trusted.company_session.tenant_id !== tenantScope.tenant_id ||
+            trusted.company_session.company_id !== tenantScope.company_id
+          ) {
+            return _opaqueBookingNotFoundResponse();
+          }
+        } else if (trusted.driver_session) {
+          if (
+            trusted.driver_session.tenant_id !== tenantScope.tenant_id ||
+            trusted.driver_session.company_id !== tenantScope.company_id
+          ) {
+            return _opaqueBookingNotFoundResponse();
+          }
+        } else if (trusted.auth_mode !== "admin_token") {
+          return json({ ok: false, error: "unauthorized" }, 401);
+        }
+
+        const out = await reconcileDriverPosTerminalPaymentAuthoritative(
+          bookingId,
+          env,
+          tenantScope,
+          { body },
+        );
+        let statusCode = out?.ok ? 200 : 400;
+        if (out?.error === "booking_not_found") statusCode = 404;
+        else if (out?.error === "forbidden") statusCode = 403;
+        return json(out, statusCode);
       }
 
       if (url.pathname === "/admin/mollie/connect/disconnect" && request.method === "POST") {
@@ -79960,6 +80116,430 @@ function _applyCheckoutResumeFieldsToCanonicalRecord(rec, {
   }
 }
 
+// TAP-TO-PAY-SERVER-CONTRACT-1 — driver Mollie Point-of-Sale terminal payment.
+// Amount + terminal are server-authoritative. Client amount/terminal id ignored.
+async function startDriverPosTerminalPaymentAuthoritative(
+  bookingId,
+  env,
+  request,
+  tenantScope,
+  options = {},
+) {
+  if (!tenantScope?.hasScope) return missingTenantScopeError();
+  if (!env?.BOOKING_KV) return { ok: false, error: "missing_booking_kv" };
+
+  const body = options?.body && typeof options.body === "object" ? options.body : {};
+  const legId =
+    safeStr(body?.leg_id ?? body?.legId, 160) || null;
+  const legType =
+    safeStr(body?.leg_type ?? body?.legType, 32) || null;
+
+  let rec = options?.preloadedRec && typeof options.preloadedRec === "object"
+    ? options.preloadedRec
+    : null;
+  if (!rec) {
+    try {
+      const loaded = await loadBookingRecord(env, bookingId);
+      rec = loaded?.rec || null;
+    } catch (err) {
+      if (String(err?.message || "") === "Booking not found") {
+        return { ok: false, error: "booking_not_found" };
+      }
+      return { ok: false, error: "booking_lookup_failed" };
+    }
+  }
+  if (!rec) return { ok: false, error: "booking_not_found" };
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
+  if (isBookingAlreadyPaid(rec)) {
+    return { ok: false, error: "payment_already_paid" };
+  }
+
+  const amountResolution = resolveDriverPosTerminalAmount(rec, {
+    legId,
+    legType,
+    // Client amount is never authoritative; server amount always wins.
+    clientAmountRaw: body?.amount ?? body?.total_eur ?? body?.totalEur,
+  });
+  if (!amountResolution?.ok) {
+    return {
+      ok: false,
+      error: amountResolution?.error || "amount_unavailable",
+      ...(amountResolution?.canonical_amount != null
+        ? { canonical_amount: amountResolution.canonical_amount }
+        : {}),
+    };
+  }
+
+  let credentials = null;
+  try {
+    credentials = await resolveCompanyMollieConnectCredentials(env, tenantScope, {
+      purpose: "driver_pos_terminal_payment_start",
+    });
+  } catch (_) {
+    credentials = { ok: false, error: "company_mollie_credentials_unavailable" };
+  }
+  if (!credentials?.ok || !_isCompanyMollieOAuthCredentials(credentials)) {
+    credentials = null;
+    return { ok: false, error: "company_mollie_credentials_unavailable" };
+  }
+  const companyMollieProfileId = _companyMollieProfileId(credentials);
+  if (!companyMollieProfileId) {
+    credentials = null;
+    return { ok: false, error: "company_mollie_credentials_unavailable" };
+  }
+
+  const snapshotKey = buildScopedMollieTerminalsSnapshotKey({
+    ...tenantScope,
+    testmode: false,
+  });
+  const snapshot = snapshotKey
+    ? await env.BOOKING_KV.get(snapshotKey, { type: "json" })
+    : null;
+  if (!snapshot || typeof snapshot !== "object") {
+    credentials = null;
+    return { ok: false, error: "terminal_snapshot_not_synced" };
+  }
+  if (!posTerminalSnapshotModeMatches(snapshot, { expectTestmode: false })) {
+    credentials = null;
+    return { ok: false, error: "terminal_snapshot_mode_mismatch" };
+  }
+  const terminals = Array.isArray(snapshot.terminals)
+    ? snapshot.terminals
+        .map(_sanitizeMollieTerminalForSnapshot)
+        .filter((t) => !!t?.id)
+    : [];
+  const defaultTerminalId = safeStr(
+    snapshot.default_terminal_id ??
+      snapshot.defaultTerminalId ??
+      snapshot.selected_terminal_id ??
+      snapshot.selectedTerminalId,
+    120,
+  );
+  const selected = selectServerSidePosTerminal(terminals, {
+    profileId: companyMollieProfileId,
+    defaultTerminalId,
+  });
+  if (!selected?.ok) {
+    credentials = null;
+    return { ok: false, error: selected?.error || "terminal_not_configured" };
+  }
+  const terminal = selected.terminal;
+  const terminalId = safeStr(terminal.id, 120);
+  const intentKey = buildScopedDriverPosPaymentIntentKey(
+    tenantScope,
+    bookingId,
+    legId,
+  );
+  if (!intentKey) {
+    credentials = null;
+    return { ok: false, error: "missing_scope" };
+  }
+
+  const existingIntent = await env.BOOKING_KV.get(intentKey, { type: "json" });
+  const idem = posTerminalIdempotencyDecision(existingIntent);
+  if (idem.action === "reuse") {
+    credentials = null;
+    console.log(
+      posTerminalDiagnosticsLine({
+        phase: "start_reuse",
+        amountCents: amountResolution.cents,
+        currency: amountResolution.currency,
+        providerStatus: idem.status,
+        reason: "idempotent_open_intent",
+        referencePresent: true,
+      }),
+    );
+    return {
+      ok: true,
+      status: "existing_open",
+      payment_id: idem.paymentId,
+      mollie_status: idem.status,
+      tenant_id: tenantScope.tenant_id,
+      company_id: tenantScope.company_id,
+      booking_id: bookingId,
+      leg_id: legId,
+      amount: {
+        currency: amountResolution.currency,
+        value: amountResolution.value,
+      },
+      amount_source: amountResolution.source,
+      terminal_id_masked: maskPosTerminalId(terminalId),
+      selection: selected.selection,
+    };
+  }
+
+  const base = getBaseUrl(request);
+  const amount = {
+    currency: amountResolution.currency,
+    value: amountResolution.value,
+  };
+  const description = _sanitizeAdminPosTerminalDescription(
+    `Fluxidi Tap to Pay ${bookingId}`,
+  );
+  const mollieCreateBody = {
+    amount,
+    description,
+    method: "pointofsale",
+    terminalId,
+    webhookUrl: `${base}/webhook/mollie`,
+    metadata: {
+      bookingId,
+      tenantId: tenantScope.tenant_id,
+      companyId: tenantScope.company_id,
+      legId: legId || undefined,
+      legType: legType || undefined,
+      payment_channel: "pos_terminal",
+      payment_source: "tap_to_pay",
+      payment_method: "pointofsale",
+      terminal_id: terminalId,
+      fluxidi_pos_version: "POS-DRV-1",
+      pos_intent_key: intentKey,
+    },
+    profileId: companyMollieProfileId,
+  };
+  const idempotencyKey = safeStr(intentKey, 240).replace(/[^a-zA-Z0-9_-]+/g, "_");
+  let mollieRes = null;
+  let mollie = {};
+  try {
+    mollieRes = await fetch(_mollieCreatePaymentApiUrl(), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${credentials.apiKey}`,
+        "Content-Type": "application/json",
+        ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+      },
+      body: JSON.stringify(mollieCreateBody),
+    });
+    const txt = await mollieRes.text();
+    try {
+      mollie = txt ? JSON.parse(txt) : {};
+    } catch (_) {
+      mollie = {};
+    }
+  } catch (_) {
+    credentials = null;
+    return { ok: false, error: "mollie_terminal_payment_create_failed" };
+  }
+  const paymentId = safeStr(mollie?.id, 160);
+  const mollieStatus = safeStr(mollie?.status, 40) || "created";
+  if (!mollieRes?.ok || !paymentId) {
+    credentials = null;
+    console.log(
+      posTerminalDiagnosticsLine({
+        phase: "start_fail",
+        amountCents: amountResolution.cents,
+        currency: amountResolution.currency,
+        providerCode: safeStr(mollie?.detail || mollie?.code, 80) || "create_failed",
+        reason: "mollie_create_failed",
+      }),
+    );
+    return { ok: false, error: "mollie_terminal_payment_create_failed" };
+  }
+
+  const nowIso = new Date().toISOString();
+  await env.BOOKING_KV.put(
+    intentKey,
+    JSON.stringify({
+      version: 1,
+      source: "driver_mollie_terminal_payment_start",
+      tenant_id: tenantScope.tenant_id,
+      company_id: tenantScope.company_id,
+      booking_id: bookingId,
+      leg_id: legId,
+      leg_type: legType,
+      terminal_id: terminalId,
+      amount,
+      amount_source: amountResolution.source,
+      payment_id: paymentId,
+      paymentId,
+      status: mollieStatus,
+      mollie_status: mollieStatus,
+      profile_id: companyMollieProfileId,
+      billit_sync_triggered: false,
+      created_at: nowIso,
+      updated_at: nowIso,
+    }),
+    { expirationTtl: ADMIN_MOLLIE_TERMINAL_PAYMENT_INTENT_TTL_SECONDS },
+  );
+  credentials = null;
+  console.log(
+    posTerminalDiagnosticsLine({
+      phase: "start_ok",
+      amountCents: amountResolution.cents,
+      currency: amountResolution.currency,
+      providerStatus: mollieStatus,
+      referencePresent: true,
+      reason: amountResolution.source,
+    }),
+  );
+  return {
+    ok: true,
+    status: "created",
+    payment_id: paymentId,
+    mollie_status: mollieStatus,
+    tenant_id: tenantScope.tenant_id,
+    company_id: tenantScope.company_id,
+    booking_id: bookingId,
+    leg_id: legId,
+    amount,
+    amount_source: amountResolution.source,
+    terminal_id_masked: maskPosTerminalId(terminalId),
+    selection: selected.selection,
+  };
+}
+
+async function reconcileDriverPosTerminalPaymentAuthoritative(
+  bookingId,
+  env,
+  tenantScope,
+  options = {},
+) {
+  if (!tenantScope?.hasScope) return missingTenantScopeError();
+  if (!env?.BOOKING_KV) return { ok: false, error: "missing_booking_kv" };
+
+  const body = options?.body && typeof options.body === "object" ? options.body : {};
+  const legId = safeStr(body?.leg_id ?? body?.legId, 160) || null;
+  const paymentIdHint = safeStr(body?.payment_id ?? body?.paymentId, 160) || null;
+
+  let rec = null;
+  try {
+    const loaded = await loadBookingRecord(env, bookingId);
+    rec = loaded?.rec || null;
+  } catch (err) {
+    if (String(err?.message || "") === "Booking not found") {
+      return { ok: false, error: "booking_not_found" };
+    }
+    return { ok: false, error: "booking_lookup_failed" };
+  }
+  if (!rec) return { ok: false, error: "booking_not_found" };
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
+
+  const intentKey = buildScopedDriverPosPaymentIntentKey(
+    tenantScope,
+    bookingId,
+    legId,
+  );
+  if (!intentKey) return { ok: false, error: "missing_scope" };
+  const intent = await env.BOOKING_KV.get(intentKey, { type: "json" });
+  const paymentId =
+    paymentIdHint ||
+    safeStr(intent?.payment_id ?? intent?.paymentId, 160) ||
+    "";
+  if (!paymentId) {
+    return { ok: false, error: "pos_payment_not_found" };
+  }
+
+  let credentials = null;
+  try {
+    credentials = await resolveCompanyMollieConnectCredentials(env, tenantScope, {
+      purpose: "driver_pos_terminal_payment_status",
+    });
+  } catch (_) {
+    credentials = { ok: false };
+  }
+  if (!credentials?.ok) {
+    credentials = null;
+    return { ok: false, error: "company_mollie_credentials_unavailable" };
+  }
+
+  let mollieFetch = null;
+  try {
+    mollieFetch = await mollieFetchPayment(paymentId, env, credentials);
+  } catch (_) {
+    credentials = null;
+    return { ok: false, error: "mollie_payment_fetch_failed" };
+  }
+  credentials = null;
+  if (!mollieFetch?.ok) {
+    return { ok: false, error: "mollie_payment_fetch_failed" };
+  }
+  const mollieStatus = safeStr(mollieFetch.data?.status, 40);
+  const classified = classifyMolliePosStatus(mollieStatus);
+
+  if (intent && typeof intent === "object") {
+    intent.mollie_status = mollieStatus;
+    intent.status = mollieStatus;
+    intent.updated_at = new Date().toISOString();
+    await env.BOOKING_KV.put(intentKey, JSON.stringify(intent), {
+      expirationTtl: ADMIN_MOLLIE_TERMINAL_PAYMENT_INTENT_TTL_SECONDS,
+    });
+  }
+
+  const wasAlreadyPaid = isBookingAlreadyPaid(rec);
+  let paymentWritten = false;
+  let billitSyncTriggered = false;
+
+  if (shouldMarkBookingPaidFromPosStatus(mollieStatus) && !wasAlreadyPaid) {
+    const intentAmountRaw = intent?.amount?.value ?? intent?.amount?.amount;
+    const intentAmountNum = Number(intentAmountRaw);
+    const mark = await updateBookingPaymentAuthoritative(
+      bookingId,
+      {
+        payment_status: "paid",
+        payment_method: "pointofsale",
+        payment_source: "tap_to_pay",
+        payment_provider: "mollie",
+        payment_id: paymentId,
+        paid_at: new Date().toISOString(),
+        ...(Number.isFinite(intentAmountNum)
+          ? {
+              amount: intentAmountNum,
+              currency: safeStr(intent?.amount?.currency, 8) || "EUR",
+            }
+          : {}),
+      },
+      env,
+      null,
+      tenantScope,
+    );
+    paymentWritten = mark?.ok === true;
+    billitSyncTriggered = shouldTriggerBillitSyncOnPosPaid({
+      wasAlreadyPaid: false,
+      newlyPaid: paymentWritten,
+    });
+    if (intent && typeof intent === "object") {
+      intent.billit_sync_triggered =
+        !!intent.billit_sync_triggered || billitSyncTriggered;
+      intent.paid_written_at = new Date().toISOString();
+      await env.BOOKING_KV.put(intentKey, JSON.stringify(intent), {
+        expirationTtl: ADMIN_MOLLIE_TERMINAL_PAYMENT_INTENT_TTL_SECONDS,
+      });
+    }
+  }
+
+  console.log(
+    posTerminalDiagnosticsLine({
+      phase: "status",
+      amountCents: intent?.amount?.value
+        ? Math.round(Number(intent.amount.value) * 100)
+        : 0,
+      currency: intent?.amount?.currency || "EUR",
+      providerStatus: mollieStatus,
+      paymentWritten,
+      reason: classified,
+      referencePresent: true,
+      callbackPresent: false,
+    }),
+  );
+
+  return {
+    ok: true,
+    booking_id: bookingId,
+    leg_id: legId,
+    payment_id: paymentId,
+    mollie_status: mollieStatus,
+    classified_status: classified,
+    paid: molliePosStatusIsPaid(mollieStatus) || wasAlreadyPaid,
+    payment_written: paymentWritten,
+    already_paid: wasAlreadyPaid,
+    billit_sync_triggered: billitSyncTriggered,
+  };
+}
+
 async function createStreetRideCheckoutAuthoritative(
   bookingId,
   env,
@@ -82702,11 +83282,45 @@ async function updateBookingPaymentAuthoritative(
 
   rec.updatedAt = new Date().toISOString();
 
+  // Tap-to-Pay / POS is a real Mollie payment: honor explicit provider and
+  // POS source/method tokens so we never store provider=manual for paid POS.
   const paymentMode =
-    source === "mollie" || method === "mollie" || source === "online_payment"
+    source === "mollie" ||
+    method === "mollie" ||
+    source === "online_payment" ||
+    providerRaw === "mollie" ||
+    source === "tap_to_pay" ||
+    method === "pointofsale" ||
+    method === "point_of_sale" ||
+    method === "tap_to_pay"
       ? "mollie"
       : "manual";
   const paymentProvider = paymentMode === "mollie" ? "mollie" : "manual";
+  const providerPaymentId = asText(
+    payment?.payment_id ||
+      payment?.paymentId ||
+      payment?.mollie_payment_id ||
+      payment?.molliePaymentId,
+  );
+  if (providerPaymentId) {
+    rec.payment_id = providerPaymentId;
+    rec.paymentId = providerPaymentId;
+    rec.mollie_payment_id = providerPaymentId;
+    rec.molliePaymentId = providerPaymentId;
+    rec.mollie =
+      rec.mollie && typeof rec.mollie === "object" ? { ...rec.mollie } : {};
+    rec.mollie.id = providerPaymentId;
+    rec.mollie.payment_id = providerPaymentId;
+    if (normalizedStatus) {
+      rec.mollie.status = normalizedStatus;
+    }
+    if (rec.booking && typeof rec.booking === "object") {
+      rec.booking.payment_id = providerPaymentId;
+      rec.booking.paymentId = providerPaymentId;
+      rec.booking.mollie_payment_id = providerPaymentId;
+      rec.booking.molliePaymentId = providerPaymentId;
+    }
+  }
   const invoiceContext = _invoiceLifecycleContextFromRecord(rec);
   _applyPaymentInvoiceLifecycleToRecord(rec, {
     paymentMode,

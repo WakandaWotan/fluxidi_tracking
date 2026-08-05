@@ -86,6 +86,10 @@ const ALIASES = Object.freeze({
   in_vehicle: "in_vehicle_card",
   manual: "in_vehicle_card",
   pay_in_car: "in_vehicle_card",
+  pointofsale: "in_vehicle_card",
+  point_of_sale: "in_vehicle_card",
+  tap_to_pay: "in_vehicle_card",
+  tap2pay: "in_vehicle_card",
 });
 
 /** Methods that are concrete (more specific than online_payment). */
