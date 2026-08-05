@@ -1,19 +1,24 @@
 # ============================================================================
 # FLUXIDI FIELD BUILD — GSM
-# Exact commit: d273be4fe26e72af6dc5521879a73fc1bbc5f82b
-# Clean detached worktree. Dirty hoofdrepository blijft onaangeraakt.
+# Exact commit: 8f72b2fedfbf17976d461d7c0f87556f87430516
+# Clean integration worktree. Dirty hoofdrepository blijft onaangeraakt.
 # Exact 12 dart-defines, NO ADMIN_TOKEN, NO LEARNING_SERVICE_TOKEN.
+#
+# PIN NOTE: PHONE-PIN-FINAL-8F72B2F-1
+# App head includes full product basis, PNG nav, planned fixed price,
+# Tap to Pay, consumer Billit sale + credit→business conversion,
+# seller_source fix, and tablet changes with phone regression guards.
 # ============================================================================
 
 $ErrorActionPreference = 'Stop'
 
 # --- Vaste instellingen ---
 $repo         = 'C:\_flutter_work\fluxidi_tracking'
-$worktree     = 'C:\_flutter_work\fluxidi_tracking_field_4639249_phone'
+$worktree     = 'C:\_flutter_work\fluxidi_tracking_phone_release_full'
 $device       = 'SG7XLZ7TKRLZOJTG'
 $adb          = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-$requiredHead = 'd273be4fe26e72af6dc5521879a73fc1bbc5f82b'
-$branch       = 'fix/dispatch-deterministic-origin-leg'
+$requiredHead = '8f72b2fedfbf17976d461d7c0f87556f87430516'
+$branch       = 'release/full-phone-integration-20260804'
 
 function Assert-LastExitCode {
     param(
