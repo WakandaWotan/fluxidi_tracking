@@ -206,6 +206,9 @@ class _BookingDocumentMetadata {
   final String sourceBookingId;
   final String sourceLegId;
   final String sourceLegType;
+  /// CONSUMER-BILLIT-DOCUMENT-UI-1: Fluxidi sale kind (`consumer_sale` vs business).
+  final String fluxidiSaleKind;
+  final bool? peppolApplicable;
   // B10c: safe read-only Billit export projection (null when the document has no
   // meaningful Billit export). Existing documents without it render unchanged.
   final _BillitExportMetadata? billitExport;
@@ -223,6 +226,8 @@ class _BookingDocumentMetadata {
     required this.sourceBookingId,
     required this.sourceLegId,
     required this.sourceLegType,
+    this.fluxidiSaleKind = '',
+    this.peppolApplicable,
     this.billitExport,
   });
 
@@ -272,6 +277,12 @@ class _BookingDocumentMetadata {
       }
     }
 
+    final peppolApplicableRaw =
+        json['peppol_applicable'] ?? json['peppolApplicable'];
+    bool? peppolApplicable;
+    if (peppolApplicableRaw == true) peppolApplicable = true;
+    if (peppolApplicableRaw == false) peppolApplicable = false;
+
     return _BookingDocumentMetadata(
       documentId: readAny(const ['document_id', 'documentId']),
       documentType: readAny(const ['document_type', 'documentType']),
@@ -285,6 +296,13 @@ class _BookingDocumentMetadata {
       sourceBookingId: readAny(const ['source_booking_id', 'sourceBookingId']),
       sourceLegId: sourceLegId,
       sourceLegType: sourceLegType,
+      fluxidiSaleKind: readAny(const [
+        'fluxidi_sale_kind',
+        'fluxidiSaleKind',
+        'sale_kind',
+        'saleKind',
+      ]),
+      peppolApplicable: peppolApplicable,
       billitExport: billitExport,
     );
   }
@@ -306,9 +324,13 @@ class _BookingDocumentMetadata {
       sourceBookingId: sourceBookingId,
       sourceLegId: sourceLegId,
       sourceLegType: sourceLegType,
+      fluxidiSaleKind: fluxidiSaleKind,
+      peppolApplicable: peppolApplicable,
       billitExport: export,
     );
   }
+
+  bool get isConsumerSale => isConsumerSaleKind(fluxidiSaleKind);
 
   /// Best human-facing reference for the row title (credit notes carry a
   /// document number, refund proofs a proof reference).
@@ -357,6 +379,8 @@ _BookingDocumentMetadata _bookingDocumentFromLocalIssuedSnapshot(
     sourceBookingId: bookingId,
     sourceLegId: '',
     sourceLegType: '',
+    fluxidiSaleKind: '',
+    peppolApplicable: null,
     billitExport: hasBillit
         ? _BillitExportMetadata(
             status: snap.billitOrderId.isNotEmpty ? 'created' : '',
@@ -681,6 +705,11 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
 
   /// B12-G2: mirrors backend/company send eligibility for readiness fetch.
   bool _shouldFetchPeppolReadiness(_BookingDocumentMetadata doc) {
+    final peppol = resolvePeppolUiPolicy(
+      saleKind: doc.fluxidiSaleKind,
+      peppolApplicable: doc.peppolApplicable,
+    );
+    if (!peppol.applicable) return false;
     final export = doc.billitExport;
     if (export == null) return false;
     return shouldFetchBookingPeppolReadiness(
@@ -926,6 +955,11 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   /// been sent / Peppol-sent. Mirrors the backend eligibility of
   /// `POST /company/documents/:documentId/billit-order/send/sandbox`.
   bool _shouldShowBillitPeppolSend(_BookingDocumentMetadata doc) {
+    final peppol = resolvePeppolUiPolicy(
+      saleKind: doc.fluxidiSaleKind,
+      peppolApplicable: doc.peppolApplicable,
+    );
+    if (!peppol.showSendAction) return false;
     final export = doc.billitExport;
     if (export == null) return false;
     if (doc.documentType.trim().toLowerCase() != 'invoice') return false;
@@ -1545,18 +1579,29 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     await _sendBillitPeppolSandbox(doc);
   }
 
-  String _localizedDocumentType(String type) {
-    switch (type.toLowerCase()) {
+  String _localizedDocumentTypeForDoc(_BookingDocumentMetadata doc) {
+    final key = consumerOrBusinessDocumentLabelKey(
+      saleKind: doc.fluxidiSaleKind,
+      documentType: doc.documentType,
+    );
+    switch (key) {
+      case 'consumerSale':
+        return _tr(
+          nl: 'Particuliere verkoop',
+          en: 'Private sale',
+          fr: 'Vente particulière',
+          es: 'Venta particular',
+        );
       case 'invoice':
         return _tr(nl: 'Factuur', en: 'Invoice', fr: 'Facture', es: 'Factura');
-      case 'credit_note':
+      case 'creditNote':
         return _tr(
           nl: 'Creditnota',
           en: 'Credit note',
           fr: 'Note de crédit',
           es: 'Nota de crédito',
         );
-      case 'refund_proof':
+      case 'refundProof':
         return _tr(
           nl: 'Terugbetalingsbewijs',
           en: 'Refund proof',
@@ -1564,15 +1609,35 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
           es: 'Justificante de reembolso',
         );
       default:
-        return type.isEmpty
+        return doc.documentType.isEmpty
             ? _tr(
                 nl: 'Document',
                 en: 'Document',
                 fr: 'Document',
                 es: 'Documento',
               )
-            : type;
+            : doc.documentType;
     }
+  }
+
+  String _localizedDocumentType(String type) {
+    // Backward-compatible helper for call sites without sale-kind metadata.
+    return _localizedDocumentTypeForDoc(
+      _BookingDocumentMetadata(
+        documentId: '',
+        documentType: type,
+        documentNumber: '',
+        proofReference: '',
+        lifecycleState: '',
+        documentStatus: '',
+        issueTimestamp: '',
+        currency: '',
+        contentHash: '',
+        sourceBookingId: '',
+        sourceLegId: '',
+        sourceLegType: '',
+      ),
+    );
   }
 
   /// Customer-facing leg label. Maps the technical `outbound`/`return` leg type
@@ -1821,13 +1886,37 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     _CompanyBookingsThemeTokens tokens,
     _BookingDocumentMetadata doc,
   ) {
-    final typeLabel = _localizedDocumentType(doc.documentType);
+    final typeLabel = _localizedDocumentTypeForDoc(doc);
     final lifecycleLabel = _localizedLifecycle(doc);
     final issueDate = _formatIssueDate(doc.issueTimestamp);
     final shortHash = _shortHash(doc.contentHash);
+    final peppol = resolvePeppolUiPolicy(
+      saleKind: doc.fluxidiSaleKind,
+      peppolApplicable: doc.peppolApplicable,
+    );
+    final registeredInBillit =
+        (doc.billitExport?.orderId ?? '').trim().isNotEmpty;
+    final consumerStatus = doc.isConsumerSale
+        ? (registeredInBillit
+              ? _tr(
+                  nl: 'Geregistreerd in Billit',
+                  en: 'Registered in Billit',
+                  fr: 'Enregistré dans Billit',
+                  es: 'Registrado en Billit',
+                )
+              : null)
+        : null;
 
     final metaParts = <String>[
       typeLabel,
+      if (consumerStatus != null) consumerStatus,
+      if (peppol.showNotApplicable)
+        _tr(
+          nl: 'Peppol niet van toepassing',
+          en: 'Peppol not applicable',
+          fr: 'Peppol non applicable',
+          es: 'Peppol no aplicable',
+        ),
       if (doc.currency.isNotEmpty) doc.currency.toUpperCase(),
       if (issueDate.isNotEmpty) issueDate,
     ];
@@ -1907,7 +1996,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
           if (doc.billitExport != null)
             _buildBillitStatusBlock(tokens, doc, doc.billitExport!),
           if (_shouldShowBillitNotLinkedYet(doc))
-            _buildBillitNotLinkedYetBlock(tokens),
+            _buildBillitNotLinkedYetBlock(tokens, doc: doc),
           if (_shouldShowBillitRefresh(doc))
             _buildBillitRefreshButton(tokens, doc),
           if (_shouldShowBillitPeppolSend(doc))
@@ -2031,19 +2120,37 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   /// tells the user anything is wrong — it just makes an otherwise blank card
   /// area explicit and consistent with older invoices that DO show a Billit
   /// block. Existing linked-Billit rows never render this and are unaffected.
-  Widget _buildBillitNotLinkedYetBlock(_CompanyBookingsThemeTokens tokens) {
-    final primary = _tr(
-      nl: 'Nog niet gekoppeld aan Billit',
-      en: 'Not linked to Billit yet',
-      fr: 'Pas encore lié à Billit',
-      es: 'Aún no vinculado a Billit',
-    );
-    final subtext = _tr(
-      nl: 'Peppol is beschikbaar zodra deze factuur in Billit klaarstaat.',
-      en: 'Peppol becomes available once this invoice is ready in Billit.',
-      fr: 'Peppol sera disponible dès que cette facture sera prête dans Billit.',
-      es: 'Peppol estará disponible cuando esta factura esté lista en Billit.',
-    );
+  Widget _buildBillitNotLinkedYetBlock(
+    _CompanyBookingsThemeTokens tokens, {
+    _BookingDocumentMetadata? doc,
+  }) {
+    final isConsumer = doc?.isConsumerSale == true;
+    final primary = isConsumer
+        ? _tr(
+            nl: 'Nog niet geregistreerd in Billit',
+            en: 'Not yet registered in Billit',
+            fr: 'Pas encore enregistré dans Billit',
+            es: 'Aún no registrado en Billit',
+          )
+        : _tr(
+            nl: 'Nog niet gekoppeld aan Billit',
+            en: 'Not linked to Billit yet',
+            fr: 'Pas encore lié à Billit',
+            es: 'Aún no vinculado a Billit',
+          );
+    final subtext = isConsumer
+        ? _tr(
+            nl: 'Peppol is niet van toepassing op particuliere verkoop.',
+            en: 'Peppol does not apply to private sales.',
+            fr: 'Peppol ne s’applique pas aux ventes particulières.',
+            es: 'Peppol no aplica a ventas particulares.',
+          )
+        : _tr(
+            nl: 'Peppol is beschikbaar zodra deze factuur in Billit klaarstaat.',
+            en: 'Peppol becomes available once this invoice is ready in Billit.',
+            fr: 'Peppol sera disponible dès que cette facture sera prête dans Billit.',
+            es: 'Peppol estará disponible cuando esta factura esté lista en Billit.',
+          );
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Column(
