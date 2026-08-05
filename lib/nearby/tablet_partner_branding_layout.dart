@@ -1,17 +1,12 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 
 import 'package:fluxidi_tracking/branding/company_logo_ref.dart';
 
-/// TABLET-PARTNER-BRANDING-LAYOUT-1 / TABLET-PARTNER-MEDIA-POLISH-1:
+/// TABLET-PARTNER-BRANDING-LAYOUT-1 / TABLET-PARTNER-PHOTO-SINGLE-LAYER-1:
 /// tablet-only partner media / logo layouts.
 ///
 /// Gate on logical [Size.shortestSide] only — never device model names.
 const double kTabletPartnerBrandingShortestSide = 600;
-
-/// Subtle blur used to fill contain letterbox zones without a hard double image.
-const double kPartnerTabletPhotoBgBlurSigma = 16;
 
 bool isTabletPartnerBrandingLayout(Size size) =>
     size.shortestSide >= kTabletPartnerBrandingShortestSide;
@@ -121,68 +116,33 @@ class TabletFavoritePartnerLogoMetrics {
   }
 }
 
-/// Tablet photo cell: cover+blur+dim background under a contain foreground.
+/// Tablet photo cell: exactly one cover image, edge-to-edge.
 ///
-/// Keeps the full vehicle visible while eliminating solid letterbox strips.
+/// TABLET-PARTNER-PHOTO-SINGLE-LAYER-1: no blur, dim, second copy, padding,
+/// or inner frame. Outer card/hero [ClipRRect] owns rounding.
 class PartnerTabletPhotoFill extends StatelessWidget {
   const PartnerTabletPhotoFill({
     super.key,
     required this.image,
     this.errorFallback,
-    this.dimOpacity = 0.22,
-    this.blurSigma = kPartnerTabletPhotoBgBlurSigma,
   });
 
-  static const Key backgroundKey = Key('partner_tablet_photo_bg_cover');
-  static const Key foregroundKey = Key('partner_tablet_photo_fg_contain');
-  static const Key stackKey = Key('partner_tablet_photo_fill');
+  /// Single photo image in the tablet photo cell.
+  static const Key imageKey = Key('partner_tablet_photo_single_cover');
 
   final ImageProvider image;
   final Widget? errorFallback;
-  final double dimOpacity;
-  final double blurSigma;
 
   @override
   Widget build(BuildContext context) {
-    return ClipRect(
-      key: stackKey,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // Slightly overscaled so blur softens edges without hard seams.
-          Transform.scale(
-            scale: 1.12,
-            child: ImageFiltered(
-              imageFilter: ui.ImageFilter.blur(
-                sigmaX: blurSigma,
-                sigmaY: blurSigma,
-                tileMode: TileMode.clamp,
-              ),
-              child: Image(
-                key: backgroundKey,
-                image: image,
-                fit: BoxFit.cover,
-                alignment: Alignment.center,
-                width: double.infinity,
-                height: double.infinity,
-                errorBuilder: (_, __, ___) =>
-                    errorFallback ?? const SizedBox.expand(),
-              ),
-            ),
-          ),
-          ColoredBox(color: Colors.black.withOpacity(dimOpacity.clamp(0.0, 0.55))),
-          Image(
-            key: foregroundKey,
-            image: image,
-            fit: BoxFit.contain,
-            alignment: Alignment.center,
-            width: double.infinity,
-            height: double.infinity,
-            errorBuilder: (_, __, ___) =>
-                errorFallback ?? const SizedBox.expand(),
-          ),
-        ],
-      ),
+    return Image(
+      key: imageKey,
+      image: image,
+      fit: BoxFit.cover,
+      alignment: Alignment.center,
+      width: double.infinity,
+      height: double.infinity,
+      errorBuilder: (_, __, ___) => errorFallback ?? const SizedBox.expand(),
     );
   }
 }

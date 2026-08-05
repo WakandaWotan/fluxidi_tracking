@@ -15,7 +15,7 @@ import 'package:fluxidi_tracking/nearby/nearby_partner_hero_media.dart';
 import 'package:fluxidi_tracking/nearby/tablet_partner_branding_layout.dart';
 
 const String _reportDir =
-    'test_reports/tablet_partner_media_polish_20260805';
+    'test_reports/tablet_partner_photo_single_layer_20260805';
 
 /// Minimal valid 1×1 PNG.
 final MemoryImage _tinyPng = MemoryImage(
@@ -216,7 +216,8 @@ void main() {
         find.byKey(const ValueKey<String>('nearby_partner_tablet_media_split')),
         findsNothing,
       );
-      expect(find.byKey(PartnerTabletPhotoFill.stackKey), findsNothing);
+      expect(find.byKey(PartnerTabletPhotoFill.imageKey), findsNothing);
+      expect(find.byType(ImageFiltered), findsNothing);
       expect(find.byType(CircleAvatar), findsOneWidget);
       expect(find.byType(PartnerBrandingLogoPlate), findsNothing);
       expect(tester.widget<Image>(find.byType(Image).first).fit, BoxFit.contain);
@@ -229,7 +230,7 @@ void main() {
   });
 
   group('tablet nearby split', () {
-    testWidgets('tablet partner card uses photo|logo split with contain', (
+    testWidgets('tablet partner card uses photo|logo split with single cover', (
       tester,
     ) async {
       const size = Size(834, 1194);
@@ -291,16 +292,37 @@ void main() {
       expect(find.byType(CircleAvatar), findsNothing);
       expect(find.byType(PartnerBrandingLogoPlate), findsOneWidget);
       expect(find.byKey(PartnerBrandingLogoPlate.imageKey), findsOneWidget);
-      expect(find.byKey(PartnerTabletPhotoFill.stackKey), findsOneWidget);
+      expect(find.byKey(PartnerTabletPhotoFill.imageKey), findsOneWidget);
+      expect(find.byType(ImageFiltered), findsNothing);
+      expect(find.byType(BackdropFilter), findsNothing);
 
-      final bg = tester.widget<Image>(
-        find.byKey(PartnerTabletPhotoFill.backgroundKey),
+      final photoImages = tester
+          .widgetList<Image>(find.byKey(PartnerTabletPhotoFill.imageKey))
+          .toList();
+      expect(photoImages, hasLength(1));
+      expect(photoImages.single.fit, BoxFit.cover);
+      expect(photoImages.single.alignment, Alignment.center);
+
+      final photoFill = find.byKey(PartnerTabletPhotoFill.imageKey);
+      final photoParent = tester.widget<Image>(photoFill);
+      expect(photoParent.width, double.infinity);
+      expect(photoParent.height, double.infinity);
+
+      // No padding / stack overlay inside the photo cell itself.
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('nearby_partner_tablet_photo')),
+          matching: find.byType(Padding),
+        ),
+        findsNothing,
       );
-      final fg = tester.widget<Image>(
-        find.byKey(PartnerTabletPhotoFill.foregroundKey),
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('nearby_partner_tablet_photo')),
+          matching: find.byType(Stack),
+        ),
+        findsNothing,
       );
-      expect(bg.fit, BoxFit.cover);
-      expect(fg.fit, BoxFit.contain);
 
       final clip = tester.widget<ClipRRect>(
         find.byKey(const ValueKey<String>('nearby_partner_tablet_media_split')),
@@ -392,8 +414,13 @@ void main() {
         find.byKey(const ValueKey<String>('nearby_partner_tablet_media_row')),
         findsNWidgets(2),
       );
-      expect(find.byKey(PartnerTabletPhotoFill.backgroundKey), findsNWidgets(2));
-      expect(find.byKey(PartnerTabletPhotoFill.foregroundKey), findsNWidgets(2));
+      expect(find.byKey(PartnerTabletPhotoFill.imageKey), findsNWidgets(2));
+      expect(find.byType(ImageFiltered), findsNothing);
+      for (final img in tester.widgetList<Image>(
+        find.byKey(PartnerTabletPhotoFill.imageKey),
+      )) {
+        expect(img.fit, BoxFit.cover);
+      }
       expect(find.byType(CircleAvatar), findsNothing);
       expect(tester.takeException(), isNull);
       await _writePng(
@@ -517,10 +544,10 @@ void main() {
         find.byKey(const ValueKey<String>('partner_profile_tablet_hero_split')),
         findsNothing,
       );
-      expect(find.byKey(PartnerTabletPhotoFill.stackKey), findsNothing);
+      expect(find.byKey(PartnerTabletPhotoFill.imageKey), findsNothing);
     });
 
-    testWidgets('tablet profile hero uses 55/45 split and contain logo', (
+    testWidgets('tablet profile hero uses 55/45 split and single cover photo', (
       tester,
     ) async {
       const size = Size(834, 1194);
@@ -623,14 +650,13 @@ void main() {
         find.byKey(PartnerBrandingLogoPlate.imageKey),
       );
       expect(logoImage.fit, BoxFit.contain);
+      expect(find.byKey(PartnerTabletPhotoFill.imageKey), findsOneWidget);
       expect(
-        tester.widget<Image>(find.byKey(PartnerTabletPhotoFill.backgroundKey)).fit,
+        tester.widget<Image>(find.byKey(PartnerTabletPhotoFill.imageKey)).fit,
         BoxFit.cover,
       );
-      expect(
-        tester.widget<Image>(find.byKey(PartnerTabletPhotoFill.foregroundKey)).fit,
-        BoxFit.contain,
-      );
+      expect(find.byType(ImageFiltered), findsNothing);
+      expect(find.byType(BackdropFilter), findsNothing);
       expect(tester.takeException(), isNull);
 
       await _writePng(
