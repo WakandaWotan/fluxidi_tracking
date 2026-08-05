@@ -4,6 +4,8 @@ import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/navigation/driver_navigation_models.dart';
 import 'package:fluxidi_tracking/navigation/presentation/maneuver_presentation.dart';
+import 'package:fluxidi_tracking/navigation/presentation/nav_maneuver_sign.dart';
+import 'package:fluxidi_tracking/navigation/presentation/nav_sign_resolver.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_tablet_portrait_nav_layout.dart';
 import 'package:fluxidi_tracking/widgets/driver_nav_banners.dart';
 
@@ -54,6 +56,16 @@ NavInstructionSnapshot _snap({
 
 ResponsiveManeuverPresentation _build(NavInstructionSnapshot snap) {
   return buildResponsiveManeuverPresentation(snapshot: snap, tr: _trNl);
+}
+
+/// NAV-SIGNAGE-VISUAL-RELEASE-GATE: asserts the banner painted exactly the
+/// expected sign plate — the asset-backed replacement for `find.byIcon`.
+void _expectSign(WidgetTester tester, NavSignManeuver expected) {
+  final signs = tester.widgetList<NavManeuverSign>(
+    find.byType(NavManeuverSign),
+  );
+  expect(signs, hasLength(1));
+  expect(signs.single.maneuver, expected);
 }
 
 Widget _wrap(Widget child, {Size size = const Size(400, 800)}) {
@@ -196,7 +208,7 @@ void main() {
     test('slight and sharp variants produce clearly distinct wording', () {
       final slight = _build(_snap(distance: 250, modifier: 'slight left'));
       final sharp = _build(_snap(distance: 250, modifier: 'sharp right'));
-      expect(slight.primaryInstruction, contains('flauw linksaf'));
+      expect(slight.primaryInstruction, contains('Hou licht links'));
       expect(sharp.primaryInstruction, contains('scherp rechtsaf'));
       expect(slight.maneuverVisual, ManeuverVisual.slightLeft);
       expect(sharp.maneuverVisual, ManeuverVisual.sharpRight);
@@ -212,40 +224,53 @@ void main() {
       exitNumber: exit,
     );
 
-    test('5. exit 1 -> "Neem de 1ste afslag"', () {
+    // NAV-ROUNDABOUT-LANE-CLARITY-P0-2026-07-31: when the exit ordinal is
+    // known and we are in the actionable phases (approaching/near/now), the
+    // exit line is PROMOTED to primary. The old approach copy
+    // ("Over 400 m de rotonde op") remains only when the ordinal is
+    // missing — because that is the only situation where the driver still
+    // needs to know the roundabout is coming without an ordinal to act on.
+    test('5. exit 1 → primary "Neem de 1ste afslag" (ordinal promoted)', () {
       final p = _build(round(400, exit: '1'));
       expect(p.maneuverVisual, ManeuverVisual.roundabout);
       expect(p.roundaboutExitNumber, 1);
-      expect(p.primaryInstruction, 'Over 400 m de rotonde op');
-      expect(p.secondaryInstruction, 'Neem de 1ste afslag');
+      expect(p.primaryInstruction, 'Neem de 1ste afslag');
+      // Secondary carries destination info (empty here → collapse).
+      expect(p.secondaryInstruction, '');
+      // Distance chip shown separately because primary no longer carries it.
+      expect(p.distanceLabel, '400 m');
     });
 
-    test('6. exit 2 -> "Neem de 2de afslag"', () {
+    test('6. exit 2 → primary "Neem de 2de afslag" (ordinal promoted)', () {
       final p = _build(round(400, exit: '2'));
       expect(p.roundaboutExitNumber, 2);
-      expect(p.primaryInstruction, 'Over 400 m de rotonde op');
-      expect(p.secondaryInstruction, 'Neem de 2de afslag');
+      expect(p.primaryInstruction, 'Neem de 2de afslag');
+      expect(p.secondaryInstruction, '');
+      expect(p.distanceLabel, '400 m');
     });
 
-    test('7. exit 3 -> "Neem de 3de afslag"', () {
+    test('7. exit 3 → primary "Neem de 3de afslag" (ordinal promoted)', () {
       final p = _build(round(400, exit: '3'));
       expect(p.roundaboutExitNumber, 3);
-      expect(p.secondaryInstruction, 'Neem de 3de afslag');
+      expect(p.primaryInstruction, 'Neem de 3de afslag');
       // 4+ ordinals stay in the same shape.
       expect(driverRoundaboutExitOrdinalDutch(4), '4de');
       expect(driverRoundaboutExitOrdinalDutch(5), '5de');
       expect(driverRoundaboutExitOrdinalDutch(11), '11de');
     });
 
-    test('8. now roundabout phase -> "Op de rotonde"', () {
+    test('8. now-phase with known exit keeps ordinal as primary', () {
       final p = _build(round(40, exit: '2'));
       expect(p.urgencyPhase, ManeuverUrgencyPhase.now);
-      expect(p.primaryInstruction, 'Op de rotonde');
+      // Now-phase must NOT drop back to the generic "Op de rotonde" copy —
+      // the ordinal is the primary actionable instruction.
+      expect(p.primaryInstruction, 'Neem de 2de afslag');
+      // Distance chip disappears in `now` phase (no need to show 40 m).
       expect(p.distanceLabel, '');
-      expect(p.secondaryInstruction, 'Neem de 2de afslag');
+      expect(p.secondaryInstruction, '');
     });
 
-    test('null exitNumber never invents an ordinal', () {
+    test('null exitNumber falls back to approach wording (no invention)', () {
       final p = _build(round(400, exit: null));
       expect(p.roundaboutExitNumber, isNull);
       expect(p.primaryInstruction, 'Over 400 m de rotonde op');
@@ -333,13 +358,13 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.byIcon(Icons.turn_left_rounded), findsOneWidget);
+      _expectSign(tester, NavSignManeuver.turnLeft);
       expect(find.text('Over 250 m linksaf'), findsOneWidget);
       expect(find.text('naar N454'), findsOneWidget);
     });
 
     testWidgets(
-      '11. phone landscape: compact 2-line layout keeps roundabout exit visible',
+      '11. phone landscape: primary exit ordinal + exit-specific icon',
       (tester) async {
         await tester.binding.setSurfaceSize(const Size(800, 380));
         addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -373,12 +398,15 @@ void main() {
         );
         await tester.pump();
 
-        expect(find.byIcon(Icons.roundabout_right_rounded), findsOneWidget);
-        expect(find.text('Over 400 m de rotonde op'), findsOneWidget);
+        // NAV-SIGNAGE-VISUAL-RELEASE-GATE: a known ordinal selects the
+        // exit-specific plate, never the generic roundabout one.
+        _expectSign(tester, NavSignManeuver.roundaboutExit2);
         expect(
           find.text('Neem de 2de afslag'),
           findsOneWidget,
-          reason: 'Roundabout exit line must survive landscape compression.',
+          reason:
+              'Ordinal is the primary line and must be present in '
+              'compressed landscape layout.',
         );
       },
     );
@@ -420,7 +448,7 @@ void main() {
 
         expect(find.text('Over 250 m rechtsaf'), findsOneWidget);
         expect(find.text('naar N454'), findsOneWidget);
-        expect(find.byIcon(Icons.turn_right_rounded), findsOneWidget);
+        _expectSign(tester, NavSignManeuver.turnRight);
       },
     );
 
@@ -459,7 +487,7 @@ void main() {
         );
         await tester.pump();
 
-        expect(find.byIcon(Icons.turn_left_rounded), findsOneWidget);
+        _expectSign(tester, NavSignManeuver.turnLeft);
         expect(find.text('Over 250 m linksaf'), findsOneWidget);
         final secondaryFinder = find.textContaining('naar');
         expect(secondaryFinder, findsOneWidget);
@@ -472,15 +500,16 @@ void main() {
 
   group('NAV-RESPONSIVE-MANEUVER-BANNER-V1 accessibility', () {
     test(
-      'roundabout accessibility label describes distance + maneuver + exit',
+      'roundabout accessibility label describes distance + exit ordinal',
       () {
         final p = _build(
           _snap(distance: 400, type: 'roundabout', exitNumber: '2'),
         );
-        expect(
-          p.accessibilityLabel,
-          'Over 400 m de rotonde op. Neem de 2de afslag.',
-        );
+        // NAV-ROUNDABOUT-LANE-CLARITY-P0-2026-07-31: the ordinal ("Neem de
+        // 2de afslag") is now the primary sentence read by TalkBack. Distance
+        // remains prefixed for orientation because the chip is still shown
+        // in approaching/near phases.
+        expect(p.accessibilityLabel, 'Over 400 m. Neem de 2de afslag.');
       },
     );
 

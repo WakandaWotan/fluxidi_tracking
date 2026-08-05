@@ -20,6 +20,7 @@ import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/navigation/driver_navigation_map_config.dart';
 import 'package:fluxidi_tracking/navigation/driver_navigation_models.dart';
 import 'package:fluxidi_tracking/navigation/presentation/maneuver_presentation.dart';
+import 'package:fluxidi_tracking/navigation/presentation/nav_maneuver_sign.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_tablet_portrait_nav_layout.dart';
 import 'package:fluxidi_tracking/widgets/driver_nav_banners.dart';
 
@@ -203,10 +204,18 @@ double _capFor(_Form form) => DriverNavBannerWidthPolicy.maxWidthFor(
   isLandscape: form.compact,
 );
 
-double _maxIconGlyph(WidgetTester tester) => tester
-    .widgetList<Icon>(find.byType(Icon))
-    .map((i) => i.size ?? 0)
-    .reduce((a, b) => a > b ? a : b);
+/// Presentation-driven banners paint a sign plate instead of a Material icon,
+/// so measure the plate whenever one is mounted.
+double _maxIconGlyph(WidgetTester tester) {
+  final signs = tester
+      .widgetList<NavManeuverSign>(find.byType(NavManeuverSign))
+      .map((s) => s.size);
+  if (signs.isNotEmpty) return signs.reduce((a, b) => a > b ? a : b);
+  return tester
+      .widgetList<Icon>(find.byType(Icon))
+      .map((i) => i.size ?? 0)
+      .reduce((a, b) => a > b ? a : b);
+}
 
 List<DriverNavLaneGuidance> _lanes(int count) {
   return List<DriverNavLaneGuidance>.generate(
@@ -575,16 +584,18 @@ void main() {
   });
 
   group('NAV-MANEUVER-BANNER-COMPACT-WIDTH-POLISH-1 preserved content', () {
-    testWidgets('maneuver icon glyph sizes are unchanged on every form factor',
+    testWidgets('maneuver icon glyph never shrinks on any form factor',
         (tester) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      // Exactly the pre-existing `_iconSize` ladder — narrowing the card must
-      // not shrink the glyph the driver reads at a glance.
-      final expected = <_Form, double>{
-        _phonePortrait: 31,
-        _phoneLandscape: 20,
-        _tabletPortrait: 42,
-        _tabletLandscape: 22,
+      // The glyph is now a sign plate filling the icon box minus its inset,
+      // so it is strictly larger than the Material icon it replaced. Both
+      // numbers are pinned: the plate size, and the legacy floor it must
+      // never fall below.
+      final expected = <_Form, ({double plate, double legacyFloor})>{
+        _phonePortrait: (plate: 46, legacyFloor: 31),
+        _phoneLandscape: (plate: 30, legacyFloor: 20),
+        _tabletPortrait: (plate: 62, legacyFloor: 42),
+        _tabletLandscape: (plate: 34, legacyFloor: 22),
       };
       for (final entry in expected.entries) {
         await _pump(
@@ -592,10 +603,16 @@ void main() {
           [_banner(_shortTurn, form: entry.key)],
           size: entry.key.size,
         );
+        final glyph = _maxIconGlyph(tester);
         expect(
-          _maxIconGlyph(tester),
-          entry.value,
-          reason: '${entry.key.name} icon glyph changed',
+          glyph,
+          entry.value.plate,
+          reason: '${entry.key.name} sign plate changed',
+        );
+        expect(
+          glyph,
+          greaterThanOrEqualTo(entry.value.legacyFloor),
+          reason: '${entry.key.name} glyph shrank below the legacy icon',
         );
       }
 
@@ -613,7 +630,7 @@ void main() {
       );
       expect(
         _maxIconGlyph(tester),
-        kDriverNavBannerPortraitTabletLayout.iconSize,
+        kDriverNavBannerPortraitTabletLayout.iconBoxSize - 6,
       );
     });
 

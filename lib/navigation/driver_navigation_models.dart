@@ -49,10 +49,25 @@ class DriverNavBannerComponent {
 /// Mapbox primary / secondary / sub view with optional component array.
 class DriverNavBannerView {
   final String? text;
+
+  /// Mapbox banner `type`, e.g. `turn`, `roundabout`. Mirrors the maneuver
+  /// type for the stage and is kept so guidance data is never dropped.
+  final String? type;
+
+  /// Mapbox banner `modifier`, e.g. `left`, `slight right`.
+  final String? modifier;
+
+  /// Mapbox banner `degrees`. Only roundabout-like banners carry it; it is the
+  /// angle of the exit measured from the entry.
+  final double? degrees;
+
   final List<DriverNavBannerComponent> components;
 
   const DriverNavBannerView({
     this.text,
+    this.type,
+    this.modifier,
+    this.degrees,
     this.components = const <DriverNavBannerComponent>[],
   });
 
@@ -161,6 +176,12 @@ class DriverNavStep {
   final double? distanceM;
   final int? durationSec;
 
+  /// Mapbox `maneuver.bearing_before` in degrees, when present.
+  final double? bearingBefore;
+
+  /// Mapbox `maneuver.bearing_after` in degrees, when present.
+  final double? bearingAfter;
+
   /// Legacy: first usable banner stage texts (compatibility).
   final DriverNavBannerInstruction? banner;
 
@@ -191,6 +212,8 @@ class DriverNavStep {
     required this.distanceAlongRouteM,
     this.distanceM,
     this.durationSec,
+    this.bearingBefore,
+    this.bearingAfter,
     this.banner,
     this.bannerInstructions = const <DriverNavBannerStage>[],
     this.intersections = const <DriverNavIntersection>[],
@@ -219,6 +242,15 @@ class DriverRouteSnap {
   });
 }
 
+/// Whether [drivingSide] describes left-hand traffic (UK, Ireland).
+///
+/// Mapbox emits `right` or `left` on `step.driving_side`. Casing, padding and a
+/// `left-hand` style suffix are tolerated; anything unrecognised — including a
+/// missing value — falls back to right-hand traffic, which is what the rest of
+/// the supported markets drive.
+bool driverNavDrivesOnLeft(String? drivingSide) =>
+    (drivingSide ?? '').trim().toLowerCase().startsWith('left');
+
 enum NavInstructionSource { banner, step, fallback, loading, none }
 
 class NavInstructionSnapshot {
@@ -236,6 +268,29 @@ class NavInstructionSnapshot {
   final List<DriverNavLaneGuidance> lanes;
   final NavInstructionSource source;
 
+  /// Mapbox `step.driving_side` for the described maneuver (`right` | `left`).
+  /// Decides which way a U-turn and an unlabelled ramp point.
+  final String? drivingSide;
+
+  /// Mapbox `maneuver.bearing_before` of the described maneuver.
+  final double? bearingBefore;
+
+  /// Mapbox `maneuver.bearing_after` of the described maneuver.
+  final double? bearingAfter;
+
+  /// Mapbox banner `degrees` of the described maneuver when the route carried
+  /// it. Never synthesised from bearings — those stay on [bearingBefore] /
+  /// [bearingAfter] as a separate quantity.
+  final double? bannerDegrees;
+
+  /// True when the maneuver owner decided no maneuver may be shown yet, so the
+  /// banner must fall back to plain follow-route. Distinct from [source]:
+  /// the maneuver identity stays intact, it is only not actionable yet.
+  final bool followRouteForced;
+
+  /// True when arrival is confirmed independently of the remaining distance.
+  final bool arrivalConfirmed;
+
   const NavInstructionSnapshot({
     required this.distanceToManeuverMeters,
     required this.primaryText,
@@ -250,7 +305,62 @@ class NavInstructionSnapshot {
     this.exitNumber,
     this.destinationText,
     this.roadRef,
+    this.drivingSide,
+    this.bearingBefore,
+    this.bearingAfter,
+    this.bannerDegrees,
+    this.followRouteForced = false,
+    this.arrivalConfirmed = false,
   });
+
+  /// Rebuild with selective overrides.
+  ///
+  /// Guidance fields are easy to drop when a consumer re-creates a snapshot by
+  /// hand, so every rewrite in the pipeline goes through here.
+  NavInstructionSnapshot copyWith({
+    double? distanceToManeuverMeters,
+    String? primaryText,
+    String? secondaryText,
+    String? subText,
+    String? maneuverType,
+    String? maneuverModifier,
+    String? roadName,
+    String? exitNumber,
+    String? destinationText,
+    String? roadRef,
+    bool? isHighwayLike,
+    List<DriverNavLaneGuidance>? lanes,
+    NavInstructionSource? source,
+    String? drivingSide,
+    double? bearingBefore,
+    double? bearingAfter,
+    double? bannerDegrees,
+    bool? followRouteForced,
+    bool? arrivalConfirmed,
+  }) {
+    return NavInstructionSnapshot(
+      distanceToManeuverMeters:
+          distanceToManeuverMeters ?? this.distanceToManeuverMeters,
+      primaryText: primaryText ?? this.primaryText,
+      secondaryText: secondaryText ?? this.secondaryText,
+      subText: subText ?? this.subText,
+      maneuverType: maneuverType ?? this.maneuverType,
+      maneuverModifier: maneuverModifier ?? this.maneuverModifier,
+      roadName: roadName ?? this.roadName,
+      exitNumber: exitNumber ?? this.exitNumber,
+      destinationText: destinationText ?? this.destinationText,
+      roadRef: roadRef ?? this.roadRef,
+      isHighwayLike: isHighwayLike ?? this.isHighwayLike,
+      lanes: lanes ?? this.lanes,
+      source: source ?? this.source,
+      drivingSide: drivingSide ?? this.drivingSide,
+      bearingBefore: bearingBefore ?? this.bearingBefore,
+      bearingAfter: bearingAfter ?? this.bearingAfter,
+      bannerDegrees: bannerDegrees ?? this.bannerDegrees,
+      followRouteForced: followRouteForced ?? this.followRouteForced,
+      arrivalConfirmed: arrivalConfirmed ?? this.arrivalConfirmed,
+    );
+  }
 
   static const NavInstructionSnapshot none = NavInstructionSnapshot(
     distanceToManeuverMeters: 0,

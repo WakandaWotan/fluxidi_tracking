@@ -69,6 +69,14 @@ flutter:
     # and other navigation assets; the assets/navigation/vehicles/ folder
     # (classic_flying_taxi.glb) is no longer bundled.
     - assets/navigation/
+    # NAV-SIGNAGE-VISUAL-RELEASE-GATE: Fluxidi navigation signs v3. Flutter
+    # asset directories are NOT recursive, so every language directory is
+    # listed explicitly. Only png/<language>/ is bundled - the editable SVG
+    # masters, contact-sheet previews and manifests stay out of the app.
+    - assets/fluxidi_navigation_signs_v3/png/nl/
+    - assets/fluxidi_navigation_signs_v3/png/en/
+    - assets/fluxidi_navigation_signs_v3/png/fr/
+    - assets/fluxidi_navigation_signs_v3/png/es/
     - assets/fluxidi/
     - assets/fluxidi/onboarding/
     - assets/fluxidi/brochures/

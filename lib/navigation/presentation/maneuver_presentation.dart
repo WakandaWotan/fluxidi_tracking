@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../driver_navigation_formatters.dart';
 import '../driver_navigation_models.dart';
+import 'nav_sign_resolver.dart';
 
 /// NAV-RESPONSIVE-MANEUVER-BANNER-V1: distance bands that drive maneuver wording.
 ///
@@ -57,6 +58,16 @@ class ResponsiveManeuverPresentation {
   final bool isArrival;
   final bool isHighwayLike;
 
+  /// NAV-SIGNAGE-VISUAL-RELEASE-GATE: the sign to display, chosen once by
+  /// [resolveNavSign] so every consumer shows the same plate.
+  final NavSignManeuver signManeuver;
+
+  /// Language directory the sign is loaded from, after fallback.
+  final String signLanguageCode;
+
+  /// Why [signManeuver] was chosen. Diagnostics only.
+  final NavSignResolutionSource signResolutionSource;
+
   const ResponsiveManeuverPresentation({
     required this.maneuverVisual,
     required this.distanceLabel,
@@ -67,7 +78,14 @@ class ResponsiveManeuverPresentation {
     required this.isArrival,
     required this.isHighwayLike,
     this.roundaboutExitNumber,
+    this.signManeuver = NavSignManeuver.followRoute,
+    this.signLanguageCode = kNavSignFallbackLanguageCode,
+    this.signResolutionSource = NavSignResolutionSource.safeFallback,
   });
+
+  /// Full bundle path of the sign for this presentation.
+  String get signAssetPath =>
+      navSignAssetPath(languageCode: signLanguageCode, maneuver: signManeuver);
 }
 
 /// NAV-RESPONSIVE-MANEUVER-BANNER-V1: maps a live snapshot to phase.
@@ -165,7 +183,11 @@ ManeuverVisual resolveDriverManeuverVisual(NavInstructionSnapshot snapshot) {
 
   if (t.contains('depart')) return ManeuverVisual.depart;
   if (t.contains('merge')) return ManeuverVisual.merge;
-  if (t.contains('fork')) return ManeuverVisual.fork;
+  // Fork with a directional modifier must show slight/left/right, not a
+  // generic split glyph — otherwise synthesized "Hou licht …" loses its arrow.
+  if (t.contains('fork')) {
+    return _driverManeuverVisualFromModifier(mod) ?? ManeuverVisual.fork;
+  }
   if (t.contains('off ramp') || t.contains('off-ramp')) {
     return ManeuverVisual.offRamp;
   }
@@ -214,13 +236,11 @@ ManeuverVisual resolveDriverManeuverVisual(NavInstructionSnapshot snapshot) {
 /// Returns `null` when the string is missing, blank, or non-numeric. Exit
 /// numbers must never be invented — a null result means the source data does
 /// not supply an ordinal.
-int? resolveDriverRoundaboutExitNumber(String? raw) {
-  final trimmed = (raw ?? '').trim();
-  if (trimmed.isEmpty) return null;
-  final n = int.tryParse(trimmed);
-  if (n == null || n <= 0) return null;
-  return n;
-}
+///
+/// NAV-SIGNAGE-VISUAL-RELEASE-GATE: delegates to [navSignRoundaboutExit] so
+/// the wording and the sign can never disagree about which exit is trusted.
+int? resolveDriverRoundaboutExitNumber(String? raw) =>
+    navSignRoundaboutExit(raw);
 
 /// NAV-RESPONSIVE-MANEUVER-BANNER-V1: Dutch ordinal for roundabout exits.
 ///
@@ -315,17 +335,17 @@ String _directionActionWord({
       );
     case ManeuverVisual.slightLeft:
       return tr(
-        nl: 'flauw linksaf',
-        en: 'slight left',
-        fr: 'légèrement à gauche',
-        es: 'ligeramente a la izquierda',
+        nl: 'Hou licht links',
+        en: 'Keep slight left',
+        fr: 'Serrez légèrement à gauche',
+        es: 'Mantén ligeramente a la izquierda',
       );
     case ManeuverVisual.slightRight:
       return tr(
-        nl: 'flauw rechtsaf',
-        en: 'slight right',
-        fr: 'légèrement à droite',
-        es: 'ligeramente a la derecha',
+        nl: 'Hou licht rechts',
+        en: 'Keep slight right',
+        fr: 'Serrez légèrement à droite',
+        es: 'Mantén ligeramente a la derecha',
       );
     case ManeuverVisual.sharpLeft:
       return tr(
@@ -424,17 +444,17 @@ String _nowPrimary({
       );
     case ManeuverVisual.slightLeft:
       return tr(
-        nl: 'Nu flauw linksaf',
-        en: 'Slight left now',
-        fr: 'Légèrement à gauche maintenant',
-        es: 'Ligeramente a la izquierda ahora',
+        nl: 'Nu licht links houden',
+        en: 'Keep slight left now',
+        fr: 'Serrez à gauche maintenant',
+        es: 'Mantén a la izquierda ahora',
       );
     case ManeuverVisual.slightRight:
       return tr(
-        nl: 'Nu flauw rechtsaf',
-        en: 'Slight right now',
-        fr: 'Légèrement à droite maintenant',
-        es: 'Ligeramente a la derecha ahora',
+        nl: 'Nu licht rechts houden',
+        en: 'Keep slight right now',
+        fr: 'Serrez à droite maintenant',
+        es: 'Mantén a la derecha ahora',
       );
     case ManeuverVisual.sharpLeft:
       return tr(
@@ -598,20 +618,47 @@ String _accessibilityFor({
 
 /// NAV-RESPONSIVE-MANEUVER-BANNER-V1: builds a normalized presentation from a
 /// live snapshot. Pure — no I/O, no navigation-state mutation.
+///
+/// NAV-SIGNAGE-VISUAL-RELEASE-GATE: [languageCode] is the active customer
+/// language and is the only input that selects a sign language. When omitted
+/// the sign falls back to Dutch rather than to a device or company locale.
+/// [drivingSide] and [arrivalConfirmed] override what the snapshot already
+/// carries; production leaves both unset and lets the guidance fields the
+/// maneuver owner stamped on the snapshot decide.
+///
+/// NAV-MANEUVER-OWNER-REBASE-1: when the owner withheld the maneuver — it is
+/// still outside its activation window — the banner shows plain follow-route
+/// wording and the follow-route sign. Activation itself is never decided here.
 ResponsiveManeuverPresentation buildResponsiveManeuverPresentation({
   required NavInstructionSnapshot snapshot,
   required DriverNavTranslate tr,
+  String? languageCode,
+  String? drivingSide,
+  bool? arrivalConfirmed,
 }) {
-  final visual = resolveDriverManeuverVisual(snapshot);
-  final isArrival = visual == ManeuverVisual.arrive;
+  final rawVisual = resolveDriverManeuverVisual(snapshot);
+  final isArrival = rawVisual == ManeuverVisual.arrive;
+  final ownerWithholdsManeuver = snapshot.followRouteForced && !isArrival;
+  final visual = ownerWithholdsManeuver
+      ? ManeuverVisual.followRoute
+      : rawVisual;
   final phase = resolveDriverManeuverUrgencyPhase(
     snapshot.distanceToManeuverMeters,
+  );
+  final sign = resolveNavSign(
+    NavSignEvent.fromSnapshot(
+      snapshot,
+      drivingSide: drivingSide,
+      arrivalConfirmed: arrivalConfirmed,
+    ),
   );
   final distanceLabel = formatManeuverDistance(
     snapshot.distanceToManeuverMeters,
   );
   final exitNumber = resolveDriverRoundaboutExitNumber(snapshot.exitNumber);
-  final isNeutralFallback = snapshot.source == NavInstructionSource.fallback;
+  final isNeutralFallback =
+      snapshot.source == NavInstructionSource.fallback ||
+      ownerWithholdsManeuver;
 
   late final _ManeuverWording wording;
 
@@ -652,26 +699,51 @@ ResponsiveManeuverPresentation buildResponsiveManeuverPresentation({
       showDistanceChip: showChip,
     );
   } else if (visual == ManeuverVisual.roundabout) {
+    // NAV-ROUNDABOUT-LANE-CLARITY-P0-2026-07-31: when the exit ordinal is
+    // known and we are close enough for the driver to act on it (any phase
+    // except `far`), "Neem de Nde afslag" is promoted to the PRIMARY
+    // instruction. The destination road name — the previous primary
+    // approach text — becomes secondary and MAY controllably ellipsize on
+    // the second line. This eliminates the ambiguity where the eye first
+    // read "Over 400 m ...  de rotonde op" and only then found the small
+    // exit ordinal on the next line.
+    //
+    // When the exit ordinal is missing we keep the legacy approach wording
+    // so we never fabricate an ordinal.
     final String primary;
+    final String secondary;
     final bool showChip;
     if (phase == ManeuverUrgencyPhase.now) {
-      primary = _nowPrimary(visual: ManeuverVisual.roundabout, tr: tr);
-      showChip = false;
+      if (exitNumber != null) {
+        primary = _roundaboutExitLine(exitNumber, tr);
+        secondary = _towardLabel(snapshot: snapshot, tr: tr);
+        showChip = false;
+      } else {
+        primary = _nowPrimary(visual: ManeuverVisual.roundabout, tr: tr);
+        secondary = _towardLabel(snapshot: snapshot, tr: tr);
+        showChip = false;
+      }
     } else if (phase == ManeuverUrgencyPhase.far) {
+      // Too far to act on the exit ordinal yet — keep neutral wording.
       primary = _followRouteText(tr);
+      secondary = exitNumber != null
+          ? _roundaboutExitLine(exitNumber, tr)
+          : _towardLabel(snapshot: snapshot, tr: tr);
       showChip = true;
     } else {
-      primary = _roundaboutApproachPrimary(
-        distanceLabel: distanceLabel,
-        tr: tr,
-      );
-      showChip = false;
-    }
-    final String secondary;
-    if (exitNumber != null) {
-      secondary = _roundaboutExitLine(exitNumber, tr);
-    } else {
-      secondary = _towardLabel(snapshot: snapshot, tr: tr);
+      // approaching / near — the exit ordinal IS actionable now.
+      if (exitNumber != null) {
+        primary = _roundaboutExitLine(exitNumber, tr);
+        secondary = _towardLabel(snapshot: snapshot, tr: tr);
+        showChip = true;
+      } else {
+        primary = _roundaboutApproachPrimary(
+          distanceLabel: distanceLabel,
+          tr: tr,
+        );
+        secondary = _towardLabel(snapshot: snapshot, tr: tr);
+        showChip = false;
+      }
     }
     final acc = _accessibilityFor(
       primary: primary,
@@ -688,12 +760,26 @@ ResponsiveManeuverPresentation buildResponsiveManeuverPresentation({
     );
   } else {
     // Turn / merge / fork / ramp / U-turn / straight.
+    // Slight forks: show the directional action during far/approaching so the
+    // arrow is not delayed until maneuver_instruction (PART B).
+    final isSlightFork =
+        visual == ManeuverVisual.slightLeft ||
+        visual == ManeuverVisual.slightRight;
     final String primary;
     final bool showChip;
     switch (phase) {
       case ManeuverUrgencyPhase.far:
-        primary = _followRouteText(tr);
-        showChip = true;
+        if (isSlightFork) {
+          primary = _turnApproachPrimary(
+            distanceLabel: distanceLabel,
+            visual: visual,
+            tr: tr,
+          );
+          showChip = false;
+        } else {
+          primary = _followRouteText(tr);
+          showChip = true;
+        }
         break;
       case ManeuverUrgencyPhase.approaching:
       case ManeuverUrgencyPhase.near:
@@ -735,5 +821,8 @@ ResponsiveManeuverPresentation buildResponsiveManeuverPresentation({
     accessibilityLabel: wording.accessibility,
     isArrival: isArrival,
     isHighwayLike: snapshot.isHighwayLike,
+    signManeuver: sign.maneuver,
+    signLanguageCode: resolveNavSignLanguageCode(languageCode),
+    signResolutionSource: sign.source,
   );
 }

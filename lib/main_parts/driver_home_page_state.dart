@@ -805,6 +805,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       NavStationaryBearingGate();
   double? _navBearingAnchorLat;
   double? _navBearingAnchorLon;
+  // NAV-CAMERA-ZERO-OLD-ROUTE-HOLD-P0: explicit camera-bearing ownership.
+  NavCameraBearingOwner _navCameraBearingOwner =
+      NavCameraBearingOwner.reliableRoute;
+  DateTime? _navCameraNewRouteBlendUntil;
+  String _navCameraLastBearingSource = 'held';
   Timer? _streetlevelFollowPumpTimer;
   int _streetlevelPoseGeneration = 0;
   int _streetlevelCameraGeneration = 0;
@@ -960,6 +965,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   // NAV-SIGNAL-P2B: resolved lane guidance identity (production UI still gated off).
   DriverResolvedLaneGuidance? _activeLaneGuidance;
   String? _lastLaneResolveDiag;
+  // NAV-MANEUVER-OWNER-REBASE-1: the one owner of the visible maneuver, plus
+  // the monotonic tick that lets a delayed write be recognised as stale.
+  NavVisibleManeuverOwner? _navManeuverOwner;
+  int _navProgressEpoch = 0;
+  String? _lastNavManeuverOwnerDiag;
   bool _navStepsLoading = false;
   // NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1: bounded, PII-free route
   // request failure state. Set only when a route request fails AND no valid
@@ -1934,6 +1944,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     // accept, but remain distinct concepts (values need not stay equal forever).
     _routeStepsVersion += 1;
     _routeRenderEpoch += 1;
+    // NAV-MANEUVER-OWNER-REBASE-1: a replaced route replaces its owner. The
+    // maneuver from the old route may never come back on screen.
+    _navManeuverOwner = null;
+    _lastNavManeuverOwnerDiag = null;
     final appliedVersion = _routeStepsVersion;
     final renderEpoch = _routeRenderEpoch;
     final acceptedAt = DateTime.now();
@@ -2078,6 +2092,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       final seedBearing = applyProgress.segmentBearingDeg ??
           navFirstMeaningfulRouteSegmentBearing(_routeCoords);
       if (seedBearing != null) {
+        // NAV-CAMERA-ZERO-OLD-ROUTE-HOLD-P0: seed the *target* from the new
+        // forward segment, but do NOT reset the applied bearing controller —
+        // blend from current travel bearing along the shortest arc so there
+        // is no old-route snap-back or pause.
         final seeded = _navStationaryBearingGate.seedInitialRouteBearing(
           routeTangentBearingDeg: seedBearing,
           routeSegmentIndex: 0,
@@ -2085,7 +2103,6 @@ class _DriverHomePageState extends State<DriverHomePage>
         if (seeded != null) {
           _navBearingAnchorLat = _lastPos?.latitude;
           _navBearingAnchorLon = _lastPos?.longitude;
-          _streetlevelBearingController.reset();
           _logNavBounded(
             'NAV_BEARING_SEED',
             'reason=reroute_apply_forward bearing=${seeded.toStringAsFixed(1)} '
@@ -2094,13 +2111,23 @@ class _DriverHomePageState extends State<DriverHomePage>
           );
         }
       }
+      _navCameraNewRouteBlendUntil = DateTime.now().add(
+        const Duration(milliseconds: kNavCameraNewRouteBlendMs),
+      );
+      _updateNavCameraBearingOwner(
+        reason: 'new_route_accepted',
+        forceInvalidatePassive: true,
+      );
     } else {
       // Non-reroute (initial route): seed from first meaningful segment.
       _seedNavStationaryBearingFromRoute(reason: 'route_applied');
+      _navCameraNewRouteBlendUntil = null;
+      _updateNavCameraBearingOwner(reason: 'route_applied');
     }
 
     // Content consumers: accepted route-steps version only.
     _streetlevelFollowPump.setExpectedRouteGeneration(appliedVersion);
+    _streetlevelFollowPump.setExpectedRenderEpoch(renderEpoch);
     _nativeFollow?.noteRouteGenerationApplied(appliedVersion);
     _logNavR12Banner(state: 're_resolved', reason: 'route_steps_applied');
     debugPrint(
@@ -17926,6 +17953,17 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (!offRoute) {
         _offRouteRerouteDebounceStartedAt = null;
       }
+      // NAV-CAMERA-ZERO-OLD-ROUTE-HOLD-P0: old-route tangent loses camera
+      // authority immediately when deviation flips on — do not wait for
+      // confirmed reroute.
+      if (offRoute) {
+        _updateNavCameraBearingOwner(
+          reason: 'off_route_flip',
+          forceInvalidatePassive: true,
+        );
+      } else {
+        _updateNavCameraBearingOwner(reason: 'off_route_cleared');
+      }
       // NAV-R12-B: rebuild immediately so the route-adaptation banner state
       // shows on the same fix, not only once a route fetch starts.
       if (mounted) setState(() {});
@@ -18085,13 +18123,27 @@ class _DriverHomePageState extends State<DriverHomePage>
         (progress?.strongMismatchSuspected ?? false);
     final confirmed = decision.strongMismatchConfirmed || decision.offRouteLikely;
     if (suspected) {
+      final firstSuspect = _rerouteSuspectedAt == null;
       _rerouteSuspectedAt ??= now;
+      if (firstSuspect) {
+        _updateNavCameraBearingOwner(
+          reason: 'deviation_suspected',
+          forceInvalidatePassive: true,
+        );
+      }
     } else if (!confirmed) {
       _rerouteSuspectedAt = null;
       _rerouteConfirmedAt = null;
     }
     if (confirmed) {
+      final firstConfirm = _rerouteConfirmedAt == null;
       _rerouteConfirmedAt ??= now;
+      if (firstConfirm) {
+        _updateNavCameraBearingOwner(
+          reason: 'deviation_confirmed',
+          forceInvalidatePassive: true,
+        );
+      }
     }
     if (decision.shouldTrigger) {
       _rerouteTriggerAt ??= now;
@@ -18519,6 +18571,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     _rerouteReason = reason;
     _lastRerouteAt = DateTime.now();
     _rerouteRequestStartedAt = _lastRerouteAt;
+    // NAV-CAMERA-ZERO-OLD-ROUTE-HOLD-P0: travel direction owns bearing for
+    // the entire pending window; supersede any old-route passive follow.
+    _updateNavCameraBearingOwner(
+      reason: 'reroute_pending',
+      forceInvalidatePassive: true,
+    );
     _reroutePackagePreparedAt = null;
     // NAV-LATENCY-1 (Part E): capture the deviation-candidate anchor and the
     // pre-reroute route version before they are reset, for atomic-handoff
@@ -18865,16 +18923,27 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
 
-    // NAV-OS-R2: throttle split-line redraws (>=12m progress or >=320ms).
+    // NAV-OS-R2 + presentation smoothness: coalesce GPS-driven trim writes.
     final now = DateTime.now();
     final deltaM = (progressM - _lastRouteLineTrimProgressM).abs();
-    final recentDraw =
-        _lastRouteLineTrimAt != null &&
-        now.difference(_lastRouteLineTrimAt!).inMilliseconds < 320;
-    if (_routeLineProgressTrimmed && deltaM < 12.0 && recentDraw && !force) {
+    final msSinceLast = _lastRouteLineTrimAt == null
+        ? 999999
+        : now.difference(_lastRouteLineTrimAt!).inMilliseconds;
+    final writeDecision = decideNavRouteLineProgressWrite(
+      capturedRenderEpoch: drawEpoch,
+      currentRenderEpoch: _routeRenderEpoch,
+      hasActiveLineAnnotations: _routeLine != null && _routeLineOutline != null,
+      forceRecreate: force && !_routeLineProgressTrimmed,
+      sameRouteVersion: true,
+      progressDeltaM: deltaM,
+      msSinceLastWrite: msSinceLast,
+    );
+    if (writeDecision.kind == NavRouteLineProgressWriteKind.skip && !force) {
       _logNavBounded(
         'NAV_PROGRESS',
-        'progressM=${progressM.toStringAsFixed(1)} routeLineTrimmed=true markerLagM=${_lastMarkerLagM.toStringAsFixed(1)}',
+        'progressM=${progressM.toStringAsFixed(1)} routeLineTrimmed=true '
+            'markerLagM=${_lastMarkerLagM.toStringAsFixed(1)} '
+            'write=skip reason=${writeDecision.reason}',
       );
       return;
     }
@@ -18915,11 +18984,18 @@ class _DriverHomePageState extends State<DriverHomePage>
       _routeLineProgressTrimmed = true;
       _lastRouteLineTrimProgressM = progressM;
       _lastRouteLineTrimAt = now;
+      final preferUpdate =
+          writeDecision.kind == NavRouteLineProgressWriteKind.updateInPlace ||
+          (force &&
+              _routeLine != null &&
+              _routeLineOutline != null &&
+              writeDecision.kind != NavRouteLineProgressWriteKind.recreate);
       await _drawRouteLine(
         remaining,
-        force: true,
+        force: !preferUpdate,
         completedCoords: completed,
         routeRenderEpoch: drawEpoch,
+        preferInPlaceUpdate: preferUpdate,
       );
       final totalM = driverRouteLengthMeters(_routeCoords);
       final remainingM = (totalM - progressM).clamp(0.0, totalM);
@@ -20361,6 +20437,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       _navPoseCadence.add((nowMs - _lastPosePublishAtMs!).toDouble());
     }
     _lastPosePublishAtMs = nowMs;
+    final owner = _resolveNavCameraBearingOwnerNow();
     _streetlevelFollowPump.submit(
       NavStreetlevelPose(
         lat: lat,
@@ -20370,6 +20447,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         timestampMs: nowMs,
         routeGeneration: _routeStepsVersion,
         poseGeneration: _streetlevelPoseGeneration,
+        renderEpoch: _routeRenderEpoch,
+        ownerMode: navCameraBearingOwnerLabel(owner),
       ),
     );
     _ensureStreetlevelFollowPumpRunning();
@@ -20408,6 +20487,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _streetlevelFollowPump.reset();
     _streetlevelBearingController.reset();
     _navStationaryBearingGate.reset();
+    _navCameraBearingOwner = NavCameraBearingOwner.reliableRoute;
+    _navCameraNewRouteBlendUntil = null;
+    _navCameraLastBearingSource = 'held';
     _navBearingAnchorLat = null;
     _navBearingAnchorLon = null;
     _lastStreetlevelPumpCameraAt = null;
@@ -20492,6 +20574,46 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (zoom == null || pitch == null || padding == null) return;
     final pose = _streetlevelFollowPump.acquire();
     if (pose == null) return;
+    // NAV-CAMERA-ZERO-OLD-ROUTE-HOLD-P0: never let routeVersion N / epoch N
+    // commit after N+1 is active (belt-and-braces over pump acquire).
+    final commit = decideNavCameraCommandCommit(
+      candidate: NavCameraCommandToken(
+        routeVersion: pose.routeGeneration,
+        ownerMode: navCameraBearingOwnerFromLabel(pose.ownerMode) ??
+            NavCameraBearingOwner.reliableRoute,
+        poseGeneration: pose.poseGeneration,
+        renderEpoch: pose.renderEpoch,
+        targetTimestampMs: pose.timestampMs,
+        targetBearingDeg: pose.bearingDeg,
+        bearingSource: pose.ownerMode,
+      ),
+      activeRouteVersion: _routeStepsVersion,
+      activeRenderEpoch: _routeRenderEpoch,
+      lastCommittedPoseGeneration: _streetlevelCameraGeneration,
+      activeOwner: _navCameraBearingOwner,
+    );
+    if (!commit.accept) {
+      _streetlevelFollowPump.complete();
+      _logNavBounded(
+        'NAV_CAMERA_OWNER',
+        formatNavCameraOwnerDiag(
+          fromOwner: _navCameraBearingOwner,
+          toOwner: _navCameraBearingOwner,
+          reason: commit.reason,
+          routeVersion: pose.routeGeneration,
+          bearingSource: pose.ownerMode,
+          targetBearing: pose.bearingDeg,
+          appliedBearing:
+              _streetlevelBearingController.appliedBearing ?? pose.bearingDeg,
+          angularDelta: 0,
+          targetAgeMs:
+              DateTime.now().millisecondsSinceEpoch - pose.timestampMs,
+          staleCommandCancelled: commit.staleCommandCancelled,
+        ).replaceFirst('[NAV_CAMERA_OWNER] ', ''),
+        intervalMs: 1,
+      );
+      return;
+    }
     unawaited(_applyStreetlevelPumpCamera(pose, zoom, pitch, padding));
   }
 
@@ -20553,6 +20675,71 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  /// NAV-CAMERA-ZERO-OLD-ROUTE-HOLD-P0: resolve + publish owner transitions.
+  NavCameraBearingOwner _resolveNavCameraBearingOwnerNow() {
+    final progress = _lastNavRouteProgress;
+    final deviationSuspected = _offRouteLikely ||
+        _rerouteSuspectedAt != null ||
+        (progress?.strongMismatchSuspected ?? false) ||
+        (progress?.routeDeviationLikely ?? false) ||
+        (progress?.oppositeDirectionLikely ?? false);
+    final reroutePending = _isRerouting && !_rerouteOwnershipAccepted;
+    final newRouteBlendActive = _navCameraNewRouteBlendUntil != null &&
+        DateTime.now().isBefore(_navCameraNewRouteBlendUntil!);
+    if (_navCameraNewRouteBlendUntil != null && !newRouteBlendActive) {
+      _navCameraNewRouteBlendUntil = null;
+    }
+    final routeMatchReliable = !_offRouteLikely &&
+        (_useMatchedVisual || (progress?.forwardProgress ?? true)) &&
+        !reroutePending;
+    return resolveNavCameraBearingOwner(
+      deviationSuspected: deviationSuspected && !newRouteBlendActive,
+      reroutePending: reroutePending,
+      newRouteBlendActive: newRouteBlendActive,
+      routeMatchReliable: routeMatchReliable,
+    );
+  }
+
+  void _updateNavCameraBearingOwner({
+    required String reason,
+    bool forceInvalidatePassive = false,
+  }) {
+    final next = _resolveNavCameraBearingOwnerNow();
+    final from = _navCameraBearingOwner;
+    if (from == next && !forceInvalidatePassive) return;
+    _navCameraBearingOwner = next;
+    if (forceInvalidatePassive ||
+        (from != next &&
+            (next == NavCameraBearingOwner.deviationSuspected ||
+                next == NavCameraBearingOwner.reroutePending ||
+                next == NavCameraBearingOwner.newRouteAccepted))) {
+      // Supersede old-route passive-follow / flyTo so stale completions cannot
+      // commit after ownership advanced.
+      _cameraInFlightLifecycle.invalidate(reason: 'camera_owner_$reason');
+    }
+    final applied = _streetlevelBearingController.appliedBearing ??
+        _navStationaryBearingGate.acceptedBearing ??
+        0.0;
+    final target = _streetlevelBearingController.lastTargetDeg;
+    _logNavBounded(
+      'NAV_CAMERA_OWNER',
+      formatNavCameraOwnerDiag(
+        fromOwner: from,
+        toOwner: next,
+        reason: reason,
+        routeVersion: _routeStepsVersion,
+        bearingSource: _navCameraLastBearingSource,
+        targetBearing: target,
+        appliedBearing: applied,
+        angularDelta: navBearingShortestDelta(applied, target),
+        targetAgeMs: 0,
+        staleCommandCancelled:
+            _streetlevelFollowPump.staleCommandCancelled > 0,
+      ).replaceFirst('[NAV_CAMERA_OWNER] ', ''),
+      intervalMs: 1,
+    );
+  }
+
   /// NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 2): resolves the
   /// bearing the Street Level camera is allowed to aim at.
   ///
@@ -20562,11 +20749,21 @@ class _DriverHomePageState extends State<DriverHomePage>
   /// so it must not become a camera target. The gate holds the last reliable
   /// bearing until movement is trustworthy; only then does the smoother below
   /// see a moving target.
+  ///
+  /// NAV-CAMERA-ZERO-OLD-ROUTE-HOLD-P0: when deviation is suspected or a
+  /// reroute is pending, route tangent loses authority immediately and the
+  /// predicted/interpolated travel pose owns bearing between GPS samples.
   double _stabilizeStreetlevelCameraBearing({
     required double poseBearingDeg,
     required double speedKmh,
     required double dtMs,
   }) {
+    final owner = _resolveNavCameraBearingOwnerNow();
+    if (owner != _navCameraBearingOwner) {
+      _updateNavCameraBearingOwner(reason: 'owner_resolve');
+    }
+    final allowTangent = navCameraRouteTangentAllowed(owner);
+    final travelAuthority = navCameraTravelAuthority(owner);
     final pos = _lastPos;
     double? displacementM;
     if (pos != null &&
@@ -20581,21 +20778,30 @@ class _DriverHomePageState extends State<DriverHomePage>
     final decision = _navStationaryBearingGate.resolve(
       NavStationaryBearingInput(
         speedKmh: speedKmh,
-        routeTangentBearingDeg: pos == null
-            ? _routeBearingFromProgress(progress)
-            : _resolveForwardRouteBearing(pos),
+        routeTangentBearingDeg: allowTangent
+            ? (pos == null
+                  ? _routeBearingFromProgress(progress)
+                  : _resolveForwardRouteBearing(pos))
+            : null,
         routeSegmentIndex: progress?.segmentIndex,
         gpsHeadingDeg: pos != null && pos.heading.isFinite && pos.heading >= 0
             ? pos.heading
             : null,
         movementBearingDeg: _lastMovementBearing,
+        travelBearingDeg: poseBearingDeg,
         displacementM: displacementM,
         accuracyM: pos != null && pos.accuracy.isFinite && pos.accuracy > 0
             ? pos.accuracy
             : null,
         dtMs: dtMs,
+        allowRouteTangent: allowTangent,
+        travelAuthority: travelAuthority,
+        maxRotationRateDegPerSec: travelAuthority
+            ? kNavCameraTravelMaxRotationRateDegPerSec
+            : kNavBearingMaxRotationRateDegPerSec,
       ),
     );
+    _navCameraLastBearingSource = navBearingSourceLabel(decision.source);
     if (!decision.held && pos != null) {
       _navBearingAnchorLat = pos.latitude;
       _navBearingAnchorLon = pos.longitude;
@@ -20644,10 +20850,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     // dynamically steps between 6 Hz and 10 Hz. First tick uses the
     // adaptive controller's current target as the reference dt so the
     // warm-up frame is not biased by the 16 ms pose-interpolator constant.
+    final travelAuthority = navCameraTravelAuthority(
+      _resolveNavCameraBearingOwnerNow(),
+    );
     final appliedBearing = _streetlevelBearingController.follow(
       targetBearingDeg: targetBearing,
       speedKmh: speedKmh,
       dtMs: dtMs,
+      travelAuthority: travelAuthority,
     );
     _lastStreetlevelPumpCameraAt = now;
     _streetlevelCameraGeneration = pose.poseGeneration;
@@ -21574,6 +21784,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       routeVersion: _routeStepsVersion,
       previousActiveBanner: _activeBanner,
       previousLaneGuidance: _activeLaneGuidance,
+      previousManeuverOwner: _navManeuverOwner,
+      progressEpoch: ++_navProgressEpoch,
       navStepsLoading: _navStepsLoading,
       destinationReached: _navParkingArrivalConfirmed,
     );
@@ -21581,6 +21793,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     _navInstructionSnapshot = snapshot;
     _activeBanner = presentation.activeBanner;
     _activeLaneGuidance = presentation.laneGuidance;
+    _navManeuverOwner = presentation.maneuverOwner;
+    final owner = presentation.maneuverOwner;
+    if (owner != null) {
+      final ownerDiag = formatNavManeuverOwnerDiag(owner);
+      if (_lastNavManeuverOwnerDiag != ownerDiag) {
+        _lastNavManeuverOwnerDiag = ownerDiag;
+        debugPrint(ownerDiag);
+      }
+    }
     final laneDiag = formatNavLaneResolveDiag(presentation.laneGuidance);
     if (_lastLaneResolveDiag != laneDiag) {
       _lastLaneResolveDiag = laneDiag;
@@ -22960,7 +23181,13 @@ class _DriverHomePageState extends State<DriverHomePage>
       snapshotIsLoadingSource:
           snapshot.source == NavInstructionSource.loading,
       presentation: showInstruction
-          ? buildResponsiveManeuverPresentation(snapshot: snapshot, tr: _tr)
+          ? buildResponsiveManeuverPresentation(
+              snapshot: snapshot,
+              tr: _tr,
+              // The active customer language is the only source for the
+              // sign language; device locale never overrides it.
+              languageCode: currentLanguageCode,
+            )
           : null,
       loadingText: _navLoadingBannerText(),
       routeVersion: _routeStepsVersion,
@@ -24659,6 +24886,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     bool force = false,
     List<_LonLat>? completedCoords,
     int? routeRenderEpoch,
+    bool preferInPlaceUpdate = false,
   }) async {
     final drawEpoch = routeRenderEpoch ?? _routeRenderEpoch;
     final drawSession = _navigationSessionGeneration;
@@ -24673,20 +24901,66 @@ class _DriverHomePageState extends State<DriverHomePage>
       lastSignature: _lastRouteDrawSignature,
       lastDrawAt: _lastRouteDrawAt,
       debounce: _routeDrawDebounce,
-      force: force,
+      force: force || preferInPlaceUpdate,
       now: now,
     )) {
       return;
+    }
+
+    final geometry = mb.LineString(
+      coordinates: coords.map((c) => mb.Position(c.lon, c.lat)).toList(),
+    );
+
+    // PART C: trim/progress updates reuse existing polyline annotations.
+    // Reroute / first draw still recreate (preferInPlaceUpdate=false).
+    if (preferInPlaceUpdate &&
+        _routeLine != null &&
+        _routeLineOutline != null &&
+        _isCurrentRouteRenderEpoch(drawEpoch)) {
+      final update = await _runAnnotationTx<bool>(
+        gate: _routeAnnotationGate,
+        kind: NavAnnotationOperationKind.update,
+        nativeOp: () async {
+          if (!_isCurrentRouteRenderEpoch(drawEpoch)) return false;
+          if (_navigationSessionGeneration != drawSession) return false;
+          final line = _routeLine;
+          final outline = _routeLineOutline;
+          if (line == null || outline == null) return false;
+          line.geometry = geometry;
+          outline.geometry = geometry;
+          await mgr.update(line);
+          await mgr.update(outline);
+          final completed = _routeLineCompleted;
+          if (completedCoords != null &&
+              completedCoords.length >= 2 &&
+              completed != null) {
+            completed.geometry = mb.LineString(
+              coordinates: completedCoords
+                  .map((c) => mb.Position(c.lon, c.lat))
+                  .toList(),
+            );
+            await mgr.update(completed);
+          }
+          if (!_isCurrentRouteRenderEpoch(drawEpoch)) return false;
+          _lastRouteDrawSignature = signature;
+          _lastRouteDrawAt = now;
+          return true;
+        },
+      );
+      if (update.ran && update.value == true) {
+        _logNavBounded(
+          'NAV_OS_R2_ROUTE_PROGRESS_LINE',
+          'write=update_in_place points=${coords.length}',
+        );
+        return;
+      }
+      // Fall through to recreate when in-place update is rejected.
     }
 
     // NAV-SIGNAL-P0B1: operation-owned creates; shared refs untouched until commit.
     final previousOutline = _routeLineOutline;
     final previousLine = _routeLine;
     final previousCompleted = _routeLineCompleted;
-
-    final geometry = mb.LineString(
-      coordinates: coords.map((c) => mb.Position(c.lon, c.lat)).toList(),
-    );
 
     // NAV-ANNOTATION-MANAGER-TRANSACTIONAL-LIFECYCLE-2: all route-line native
     // creates AND their orphan/previous deletes run under ONE lease. Disposal
@@ -30770,6 +31044,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     final presentation = buildResponsiveManeuverPresentation(
       snapshot: snapshot,
       tr: _tr,
+      // The active customer language is the only source for the sign
+      // language; device locale never overrides it.
+      languageCode: currentLanguageCode,
     );
     return DriverTurnInstructionBanner(
       themeListenable: _activeDriverThemeListenable,

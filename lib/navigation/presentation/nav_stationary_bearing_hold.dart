@@ -217,9 +217,13 @@ class NavStationaryBearingInput {
     this.routeSegmentIndex,
     this.gpsHeadingDeg,
     this.movementBearingDeg,
+    this.travelBearingDeg,
     this.displacementM,
     this.accuracyM,
     this.dtMs = kNavBearingRotationRateReferenceTickMs,
+    this.allowRouteTangent = true,
+    this.travelAuthority = false,
+    this.maxRotationRateDegPerSec = kNavBearingMaxRotationRateDegPerSec,
   });
 
   final double speedKmh;
@@ -236,6 +240,10 @@ class NavStationaryBearingInput {
   /// Bearing derived from displacement between consecutive fixes.
   final double? movementBearingDeg;
 
+  /// Predicted / interpolated travel bearing between GPS samples. Used when
+  /// route tangent authority is revoked (deviation / reroute-pending).
+  final double? travelBearingDeg;
+
   /// Metres travelled since the last accepted bearing anchor.
   final double? displacementM;
 
@@ -244,6 +252,16 @@ class NavStationaryBearingInput {
 
   /// Wall-clock interval since the previous resolution, for the rate clamp.
   final double dtMs;
+
+  /// When false, old/current route tangent cannot drive the camera bearing.
+  final bool allowRouteTangent;
+
+  /// When true, travel/GPS may unlock immediately on a meaningful heading
+  /// change and uses a higher rotation-rate ceiling.
+  final bool travelAuthority;
+
+  /// Per-resolve rotation-rate ceiling (deg/s).
+  final double maxRotationRateDegPerSec;
 }
 
 /// Outcome of one resolution. [held] is true when the gate deliberately refused
@@ -331,14 +349,28 @@ class NavStationaryBearingGate {
     } else {
       _eligibleStreak = 0;
     }
-    final movingConfident =
+    var movingConfident =
         trustworthy && _eligibleStreak >= kNavBearingMovingConfidenceFixes;
+
+    // NAV-CAMERA-ZERO-OLD-ROUTE-HOLD-P0: under travel authority, a meaningful
+    // heading change unlocks rotation immediately (incl. 180° reversals) even
+    // before the multi-fix confidence streak completes.
+    if (input.travelAuthority &&
+        _accepted != null &&
+        _travelImmediateUnlock(
+          previous: _accepted!,
+          travel: input.travelBearingDeg,
+          gps: input.gpsHeadingDeg,
+          movement: input.movementBearingDeg,
+        )) {
+      movingConfident = true;
+    }
 
     // No bearing established yet: take the route segment as the initial
     // orientation rather than a stationary GPS course.
     if (_accepted == null) {
       final tangent = input.routeTangentBearingDeg;
-      if (tangent != null && tangent.isFinite) {
+      if (input.allowRouteTangent && tangent != null && tangent.isFinite) {
         _accepted = navBearingNormalize(tangent);
         _acceptedSegmentIndex = input.routeSegmentIndex;
         _seeded = true;
@@ -350,14 +382,22 @@ class NavStationaryBearingGate {
           movingConfident: movingConfident,
         );
       }
-      if (movingConfident && navBearingGpsCourseUsable(input.gpsHeadingDeg)) {
-        _accepted = navBearingNormalize(input.gpsHeadingDeg!);
+      final coldTravel = _firstUsableTravel(
+        travel: input.travelBearingDeg,
+        gps: input.gpsHeadingDeg,
+        movement: input.movementBearingDeg,
+      );
+      if (coldTravel != null && (movingConfident || input.travelAuthority)) {
+        _accepted = navBearingNormalize(coldTravel);
         _lastReliableMovingBearing = _accepted;
         return NavStationaryBearingDecision(
           bearingDeg: _accepted!,
-          source: NavBearingSource.gpsCourse,
+          source: navBearingGpsCourseUsable(input.gpsHeadingDeg) &&
+                  coldTravel == input.gpsHeadingDeg
+              ? NavBearingSource.gpsCourse
+              : NavBearingSource.movementDelta,
           held: false,
-          reason: 'cold_start_moving_gps',
+          reason: 'cold_start_travel',
           movingConfident: movingConfident,
         );
       }
@@ -376,7 +416,8 @@ class NavStationaryBearingGate {
 
     // Stationary / creeping / low-confidence: hold. This is the branch that
     // fixes the field bug — with a route loaded and the vehicle parked, the
-    // tangent is NOT allowed to re-target.
+    // tangent is NOT allowed to re-target. Travel authority may still unlock
+    // above via [movingConfident].
     if (!movingConfident) {
       final held = _lastReliableMovingBearing ?? previous;
       _accepted = held;
@@ -391,10 +432,11 @@ class NavStationaryBearingGate {
       );
     }
 
-    // Movement is trustworthy. Prefer the route tangent, but only when the
-    // segment index has not merely oscillated.
+    // Movement is trustworthy. Prefer the route tangent only while ownership
+    // still allows it, and only when the segment index has not merely oscillated.
     final tangent = input.routeTangentBearingDeg;
-    if (tangent != null &&
+    if (input.allowRouteTangent &&
+        tangent != null &&
         tangent.isFinite &&
         navRouteSegmentTangentRetargetAllowed(
           acceptedSegmentIndex: _acceptedSegmentIndex,
@@ -404,6 +446,7 @@ class NavStationaryBearingGate {
       final stepped = navBearingRateClampedStep(
         previousDeg: previous,
         targetDeg: tangent,
+        maxRotationRateDegPerSec: input.maxRotationRateDegPerSec,
         dtMs: input.dtMs,
       );
       _accepted = stepped;
@@ -418,10 +461,37 @@ class NavStationaryBearingGate {
       );
     }
 
+    // When route tangent is revoked (or travel authority is active), the
+    // predicted/interpolated travel pose owns bearing between GPS samples.
+    // Otherwise keep the legacy GPS → displacement fallback order.
+    final preferTravel =
+        !input.allowRouteTangent || input.travelAuthority;
+    if (preferTravel) {
+      final travel = input.travelBearingDeg;
+      if (travel != null && travel.isFinite) {
+        final stepped = navBearingRateClampedStep(
+          previousDeg: previous,
+          targetDeg: travel,
+          maxRotationRateDegPerSec: input.maxRotationRateDegPerSec,
+          dtMs: input.dtMs,
+        );
+        _accepted = stepped;
+        _lastReliableMovingBearing = stepped;
+        return NavStationaryBearingDecision(
+          bearingDeg: stepped,
+          source: NavBearingSource.movementDelta,
+          held: false,
+          reason: 'travel_owns_bearing',
+          movingConfident: movingConfident,
+        );
+      }
+    }
+
     if (navBearingGpsCourseUsable(input.gpsHeadingDeg)) {
       final stepped = navBearingRateClampedStep(
         previousDeg: previous,
         targetDeg: input.gpsHeadingDeg!,
+        maxRotationRateDegPerSec: input.maxRotationRateDegPerSec,
         dtMs: input.dtMs,
       );
       _accepted = stepped;
@@ -430,7 +500,7 @@ class NavStationaryBearingGate {
         bearingDeg: stepped,
         source: NavBearingSource.gpsCourse,
         held: false,
-        reason: 'moving_gps_course',
+        reason: preferTravel ? 'travel_owns_gps' : 'moving_gps_course',
         movingConfident: movingConfident,
       );
     }
@@ -440,6 +510,7 @@ class NavStationaryBearingGate {
       final stepped = navBearingRateClampedStep(
         previousDeg: previous,
         targetDeg: movement,
+        maxRotationRateDegPerSec: input.maxRotationRateDegPerSec,
         dtMs: input.dtMs,
       );
       _accepted = stepped;
@@ -448,7 +519,8 @@ class NavStationaryBearingGate {
         bearingDeg: stepped,
         source: NavBearingSource.movementDelta,
         held: false,
-        reason: 'moving_displacement',
+        reason:
+            preferTravel ? 'travel_owns_displacement' : 'moving_displacement',
         movingConfident: movingConfident,
       );
     }
@@ -460,6 +532,33 @@ class NavStationaryBearingGate {
       reason: 'moving_without_source',
       movingConfident: movingConfident,
     );
+  }
+
+  static bool _travelImmediateUnlock({
+    required double previous,
+    required double? travel,
+    required double? gps,
+    required double? movement,
+  }) {
+    const threshold = 12.0;
+    for (final candidate in <double?>[travel, gps, movement]) {
+      if (candidate == null || !candidate.isFinite) continue;
+      if (navBearingShortestDelta(previous, candidate).abs() >= threshold) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static double? _firstUsableTravel({
+    required double? travel,
+    required double? gps,
+    required double? movement,
+  }) {
+    if (travel != null && travel.isFinite) return travel;
+    if (navBearingGpsCourseUsable(gps)) return gps;
+    if (movement != null && movement.isFinite) return movement;
+    return null;
   }
 
   void reset() {

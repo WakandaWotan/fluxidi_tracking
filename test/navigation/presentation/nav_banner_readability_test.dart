@@ -9,6 +9,7 @@ import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/navigation/driver_navigation_models.dart';
 import 'package:fluxidi_tracking/navigation/presentation/maneuver_presentation.dart';
 import 'package:fluxidi_tracking/navigation/presentation/driver_nav_header_logo_metrics.dart';
+import 'package:fluxidi_tracking/navigation/presentation/nav_maneuver_sign.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_tablet_portrait_nav_layout.dart';
 import 'package:fluxidi_tracking/widgets/driver_nav_banners.dart';
 
@@ -109,7 +110,14 @@ double _primaryFontSize(WidgetTester tester, String contains) {
   return t.style!.fontSize!;
 }
 
+/// NAV-SIGNAGE-VISUAL-RELEASE-GATE: the maneuver glyph is a sign plate when a
+/// presentation drives the banner, and a Material icon otherwise. Measure
+/// whichever one is on screen so the readability floor still applies.
 double _iconGlyphSize(WidgetTester tester) {
+  final signs = tester
+      .widgetList<NavManeuverSign>(find.byType(NavManeuverSign))
+      .map((s) => s.size);
+  if (signs.isNotEmpty) return signs.reduce((a, b) => a > b ? a : b);
   final icons = tester.widgetList<Icon>(find.byType(Icon)).toList();
   return icons.map((i) => i.size ?? 0).reduce((a, b) => a > b ? a : b);
 }
@@ -150,8 +158,18 @@ void main() {
       );
       await tester.pumpWidget(_wrap(_banner(p), size: const Size(390, 844)));
       await tester.pump();
-      final primary = tester.widget<Text>(find.textContaining('rotonde').first);
-      expect(primary.maxLines, lessThanOrEqualTo(1));
+      // NAV-ROUNDABOUT-LANE-CLARITY-P0-2026-07-31: primary is now the
+      // ordinal ("Neem de 2de afslag"). Roundabout primary is allowed up
+      // to 2 lines because the ordinal must never be ellipsized on
+      // narrow layouts — but the text itself fits comfortably on one line
+      // in almost every viewport so the banner stays shallow.
+      final primary = tester.widget<Text>(find.textContaining('afslag').first);
+      expect(primary.maxLines, lessThanOrEqualTo(2));
+      expect(
+        primary.overflow,
+        TextOverflow.visible,
+        reason: 'Roundabout primary must never truncate the ordinal.',
+      );
       expect(_bannerSize(tester).height, lessThanOrEqualTo(120));
       expect(tester.takeException(), isNull);
     });

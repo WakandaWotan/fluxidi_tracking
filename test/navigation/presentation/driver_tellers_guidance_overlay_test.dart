@@ -13,6 +13,7 @@ import 'package:fluxidi_tracking/navigation/driver_navigation_models.dart';
 import 'package:fluxidi_tracking/navigation/presentation/driver_ride_meters.dart';
 import 'package:fluxidi_tracking/navigation/presentation/driver_tellers_guidance.dart';
 import 'package:fluxidi_tracking/navigation/presentation/maneuver_presentation.dart';
+import 'package:fluxidi_tracking/navigation/presentation/nav_maneuver_sign.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_marker_choice.dart';
 import 'package:fluxidi_tracking/widgets/driver_nav_banners.dart';
 
@@ -496,8 +497,13 @@ void main() {
       expect(banner.presentation!.distanceLabel, p.distanceLabel);
       expect(banner.presentation!.maneuverVisual, p.maneuverVisual);
       expect(banner.icon, driverManeuverVisualIconData(p.maneuverVisual));
-      expect(find.byIcon(driverManeuverVisualIconData(p.maneuverVisual)),
-          findsOneWidget);
+      // NAV-SIGNAGE-VISUAL-RELEASE-GATE: the painted glyph is now the sign
+      // plate the resolver picked, not a Material icon.
+      expect(find.byType(NavManeuverSign), findsOneWidget);
+      expect(
+        tester.widget<NavManeuverSign>(find.byType(NavManeuverSign)).assetPath,
+        p.signAssetPath,
+      );
       if (p.secondaryInstruction.trim().isNotEmpty) {
         expect(find.text(p.secondaryInstruction), findsOneWidget);
       }
@@ -550,8 +556,8 @@ void main() {
       expect(find.textContaining('afslag'), findsNothing);
       expect(find.text(p.primaryInstruction), findsOneWidget);
       expect(
-        find.byIcon(driverManeuverVisualIconData(p.maneuverVisual)),
-        findsOneWidget,
+        tester.widget<NavManeuverSign>(find.byType(NavManeuverSign)).assetPath,
+        p.signAssetPath,
       );
     });
 

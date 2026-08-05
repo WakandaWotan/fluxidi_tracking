@@ -10,6 +10,8 @@ import 'driver_navigation_models.dart';
 import 'nav_engine/nav_banner_resolver.dart';
 import 'nav_engine/nav_instruction_policy.dart';
 import 'nav_engine/nav_lane_resolver.dart';
+import 'nav_engine/nav_maneuver_owner.dart';
+import 'nav_engine/nav_slight_fork_guidance.dart';
 
 const double kDriverNavStepPassStraightLineMeters = 32.0;
 const double kDriverNavStepPassRouteBufferMeters = 18.0;
@@ -196,6 +198,11 @@ bool driverTextLooksLikeManeuverAction(String text) {
     'direction',
     'hacia',
     'vers ',
+    'hou licht',
+    'flauw',
+    'keep slight',
+    'keep left',
+    'keep right',
   ];
   for (final marker in markers) {
     if (lower.contains(marker)) return true;
@@ -458,7 +465,9 @@ normalizeDriverInstructionDisplayLines({
     }
 
     // Legacy Mapbox swap: primary is current road context, secondary is target.
+    // Never demote a maneuver action line — left/right must stay primary.
     if (_textLooksLikeRoadContext(primary, step) &&
+        !driverTextLooksLikeManeuverAction(primary) &&
         !driverTextLooksLikeManeuverAction(secondary)) {
       return (
         primary: secondary,
@@ -466,25 +475,26 @@ normalizeDriverInstructionDisplayLines({
         swapped: true,
       );
     }
+    // PART B: when primary is already a directional action, keep it as the
+    // foreground and treat the street/target as secondary. Do not promote
+    // primaryKind=target over a known left/right action.
     if (driverTextLooksLikeManeuverAction(primary) &&
-        !driverTextLooksLikeManeuverAction(secondary) &&
-        !_instructionMentionsTarget(primary, secondary)) {
-      final target = secondary;
-      final context = _currentRoadContextLabel(step, exclude: target);
+        !driverTextLooksLikeManeuverAction(secondary)) {
       return (
-        primary: target,
-        secondary: _dedupeSecondaryLine(target, context),
-        swapped: true,
+        primary: primary,
+        secondary: _dedupeSecondaryLine(primary, secondary),
+        swapped: false,
       );
     }
   }
 
   final maneuverTarget = driverStepManeuverTargetLabel(step);
+  // Only promote the target road when primary is NOT already an action.
   if (maneuverTarget != null &&
       !_labelsReferToSameRoad(primary, maneuverTarget) &&
-      driverNavStepIsTurnLike(step)) {
+      driverNavStepIsTurnLike(step) &&
+      !driverTextLooksLikeManeuverAction(primary)) {
     if (driverTextLooksLikeRoadLabel(primary) ||
-        driverTextLooksLikeManeuverAction(primary) ||
         _textLooksLikeRoadContext(primary, step)) {
       final demoted = secondary.isNotEmpty ? secondary : primary;
       if (!_labelsReferToSameRoad(demoted, maneuverTarget)) {
@@ -513,6 +523,7 @@ normalizeDriverInstructionDisplayLines({
   NavInstructionSnapshot snapshot,
   DriverActiveBanner? activeBanner,
   DriverResolvedLaneGuidance laneGuidance,
+  NavVisibleManeuverOwner? maneuverOwner,
   double? bannerRemainingAlongRouteM,
   double displayDistanceToUpcomingManeuverM,
 })
@@ -528,6 +539,10 @@ buildDriverNavInstructionPresentation({
   int routeVersion = 0,
   DriverActiveBanner? previousActiveBanner,
   DriverResolvedLaneGuidance? previousLaneGuidance,
+  // NAV-MANEUVER-OWNER-REBASE-1: the previous owner and a monotonic tick are
+  // what let a delayed write be recognised and refused.
+  NavVisibleManeuverOwner? previousManeuverOwner,
+  int progressEpoch = 0,
   bool navStepsLoading = false,
   bool? laneGuidanceEnabledForEvaluation,
   // NAV-PARKING-2 Commit 1: when bounded destination-proximity arrival is
@@ -543,6 +558,7 @@ buildDriverNavInstructionPresentation({
       snapshot: empty,
       activeBanner: null,
       laneGuidance: DriverResolvedLaneGuidance.hiddenNone,
+      maneuverOwner: null,
       bannerRemainingAlongRouteM: null,
       displayDistanceToUpcomingManeuverM: 0.0,
     );
@@ -578,6 +594,7 @@ buildDriverNavInstructionPresentation({
           destinationReached: destinationReached,
         ),
       ),
+      maneuverOwner: null,
       bannerRemainingAlongRouteM: null,
       displayDistanceToUpcomingManeuverM: 0.0,
     );
@@ -635,6 +652,32 @@ buildDriverNavInstructionPresentation({
   var primaryText = normalized.primary;
   var secondaryText = normalized.secondary;
   final subText = _trimmedOrNull(active.subText);
+  var maneuverType = active.maneuverType;
+  var maneuverModifier = active.maneuverModifier;
+
+  // PART A: synthesize slight left/right when Mapbox omits a usable modifier
+  // at a genuine fork. Official Mapbox directions always win.
+  final slightFork = resolveSlightForkGuidance(
+    step: maneuverStep,
+    routeCoords: routeCoords,
+  );
+  if (slightFork != null) {
+    maneuverModifier = slightFork.modifier;
+    if (maneuverType.trim().isEmpty ||
+        maneuverType.trim().toLowerCase() == 'notification' ||
+        maneuverType.trim().toLowerCase() == 'new name' ||
+        maneuverType.trim().toLowerCase() == 'continue') {
+      maneuverType = 'fork';
+    }
+    if (!driverTextLooksLikeManeuverAction(primaryText)) {
+      final action = slightFork.primaryText(tr);
+      final previousPrimary = primaryText;
+      primaryText = action;
+      if (secondaryText.isEmpty && previousPrimary.isNotEmpty) {
+        secondaryText = previousPrimary;
+      }
+    }
+  }
 
   if (primaryText.isEmpty) {
     primaryText = _primaryFromManeuverStep(maneuverStep, tr);
@@ -656,13 +699,26 @@ buildDriverNavInstructionPresentation({
     NavBannerResolveSource.generic => NavInstructionSource.fallback,
   };
 
+  // NAV-MANEUVER-OWNER-REBASE-1: activation runs on trusted along-route
+  // remaining when it exists, and on the display distance otherwise. Both are
+  // pure distances — vehicle speed reaches neither.
+  final owner = resolveNavVisibleManeuverOwner(
+    describedStep: maneuverStep,
+    describedStepIndex: active.maneuverStepIndex,
+    traversalStepIndex: active.traversalStepIndex,
+    distanceToManeuverM: bannerRemainingAlongRouteM ?? displayDistanceM,
+    routeVersion: routeVersion,
+    progressEpoch: progressEpoch,
+    previous: previousManeuverOwner,
+  );
+
   final snapshot = NavInstructionSnapshot(
     distanceToManeuverMeters: displayDistanceM,
     primaryText: primaryText,
     secondaryText: secondaryText,
     subText: subText,
-    maneuverType: active.maneuverType,
-    maneuverModifier: active.maneuverModifier,
+    maneuverType: maneuverType,
+    maneuverModifier: maneuverModifier,
     roadName: active.roadName,
     exitNumber: active.exitNumber,
     destinationText: active.destinationText,
@@ -671,11 +727,20 @@ buildDriverNavInstructionPresentation({
     // Snapshot lanes come only from resolved guidance — never flat step.lanes.
     lanes: mapResolvedLanesForDisplay(laneGuidance),
     source: source,
+    // Guidance fields travel with the maneuver the owner settled on, so the
+    // sign and the wording can never describe different steps.
+    drivingSide: maneuverStep.drivingSide,
+    bearingBefore: maneuverStep.bearingBefore,
+    bearingAfter: maneuverStep.bearingAfter,
+    bannerDegrees: navManeuverBannerDegrees(maneuverStep),
+    followRouteForced: owner.showFollowRoute,
+    arrivalConfirmed: destinationReached,
   );
   return (
     snapshot: snapshot,
     activeBanner: active,
     laneGuidance: laneGuidance,
+    maneuverOwner: owner,
     bannerRemainingAlongRouteM: bannerRemainingAlongRouteM,
     displayDistanceToUpcomingManeuverM: displayDistanceM,
   );
@@ -777,21 +842,11 @@ NavInstructionSnapshot applyDriverNavInstructionDisplayLines({
   if (primaryText == snapshotPrimary && secondaryText == snapshotSecondary) {
     return snapshot;
   }
-  return NavInstructionSnapshot(
-    distanceToManeuverMeters: snapshot.distanceToManeuverMeters,
+  // Only the display lines change here; maneuver identity, guidance fields and
+  // ownership state stay exactly as the owner resolved them.
+  return snapshot.copyWith(
     primaryText: primaryText,
     secondaryText: secondaryText,
-    subText: snapshot.subText,
-    // Keep maneuver identity from the snapshot (ownership-resolved).
-    maneuverType: snapshot.maneuverType,
-    maneuverModifier: snapshot.maneuverModifier,
-    roadName: snapshot.roadName,
-    exitNumber: snapshot.exitNumber,
-    destinationText: snapshot.destinationText,
-    roadRef: snapshot.roadRef,
-    isHighwayLike: snapshot.isHighwayLike,
-    lanes: snapshot.lanes,
-    source: snapshot.source,
   );
 }
 
@@ -920,41 +975,24 @@ NavInstructionSnapshot applyDriverNavInstructionPolicyFilter({
       : const <DriverNavLaneGuidance>[];
 
   if (policyOutput.showOriginalInstruction) {
-    return NavInstructionSnapshot(
-      distanceToManeuverMeters: snapshot.distanceToManeuverMeters,
-      primaryText: snapshot.primaryText,
-      secondaryText: snapshot.secondaryText,
-      subText: snapshot.subText,
-      maneuverType: snapshot.maneuverType,
-      maneuverModifier: snapshot.maneuverModifier,
-      roadName: snapshot.roadName,
-      exitNumber: snapshot.exitNumber,
-      destinationText: snapshot.destinationText,
-      roadRef: snapshot.roadRef,
-      isHighwayLike: snapshot.isHighwayLike,
-      lanes: preservedLanes,
-      source: snapshot.source,
-    );
+    return snapshot.copyWith(lanes: preservedLanes);
   }
 
-  return NavInstructionSnapshot(
-    distanceToManeuverMeters: snapshot.distanceToManeuverMeters,
+  return snapshot.copyWith(
     primaryText: displayText,
     secondaryText: '',
-    subText: snapshot.subText,
     maneuverType: policyOutput.isNeutralFallback
         ? 'continue'
         : snapshot.maneuverType,
     maneuverModifier: policyOutput.isNeutralFallback
         ? 'straight'
         : snapshot.maneuverModifier,
-    roadName: snapshot.roadName,
-    exitNumber: snapshot.exitNumber,
-    destinationText: snapshot.destinationText,
-    roadRef: snapshot.roadRef,
-    isHighwayLike: snapshot.isHighwayLike,
     lanes: const <DriverNavLaneGuidance>[],
-    source: snapshot.source,
+    // A neutral policy fallback describes no maneuver at all, so the sign layer
+    // must not keep showing the maneuver the owner had settled on.
+    followRouteForced: policyOutput.isNeutralFallback
+        ? true
+        : snapshot.followRouteForced,
   );
 }
 

@@ -80,18 +80,18 @@ String driverShortNavAction(
   final mod = (modifier ?? '').toLowerCase();
   if (mod.contains('slight left')) {
     return tr(
-      nl: 'flauw linksaf',
-      en: 'slight left',
-      fr: 'légèrement à gauche',
-      es: 'ligeramente a la izquierda',
+      nl: 'Hou licht links',
+      en: 'Keep slight left',
+      fr: 'Serrez légèrement à gauche',
+      es: 'Mantén ligeramente a la izquierda',
     );
   }
   if (mod.contains('slight right')) {
     return tr(
-      nl: 'flauw rechtsaf',
-      en: 'slight right',
-      fr: 'légèrement à droite',
-      es: 'ligeramente a la derecha',
+      nl: 'Hou licht rechts',
+      en: 'Keep slight right',
+      fr: 'Serrez légèrement à droite',
+      es: 'Mantén ligeramente a la derecha',
     );
   }
   if (mod.contains('left')) {
@@ -381,6 +381,11 @@ String driverLaneSemanticLabel(
 /// When the master feature gate is on, returns the snapshot list 1:1 so
 /// displayed column count equals resolver column count. Empty/unsupported
 /// indications remain as visible neutral columns (never dropped).
+///
+/// NAV-ROUNDABOUT-LANE-CLARITY-P0-2026-07-31: when [driverNavLanesHaveConfidence]
+/// returns false the strip is suppressed entirely to prevent a misleading
+/// panel of purely "unknown" pills that could look like guidance the source
+/// data never provided.
 List<DriverNavLaneGuidance> driverNavLanesForBannerDisplay(
   List<DriverNavLaneGuidance> lanes, {
   bool? featureEnabled,
@@ -388,5 +393,29 @@ List<DriverNavLaneGuidance> driverNavLanesForBannerDisplay(
   final enabled = featureEnabled ?? driverNavLaneGuidanceFeatureEnabled;
   if (!enabled) return const <DriverNavLaneGuidance>[];
   if (lanes.isEmpty) return const <DriverNavLaneGuidance>[];
+  if (!driverNavLanesHaveConfidence(lanes)) {
+    return const <DriverNavLaneGuidance>[];
+  }
   return List<DriverNavLaneGuidance>.unmodifiable(lanes);
+}
+
+/// NAV-ROUNDABOUT-LANE-CLARITY-P0-2026-07-31: true iff the incoming lane list
+/// carries enough source-data confidence to render meaningful guidance.
+///
+/// A lane row is only "confident" when at least one lane carries a concrete
+/// `valid=true`, `valid=false`, or `active=true` signal. When every lane in
+/// the list is `unknown` (valid=null AND active=null) we treat the row as
+/// uncertain and the caller must not render a lane strip — otherwise the
+/// driver would see a bar of neutral arrows that suggests guidance that the
+/// data never provided.
+///
+/// Empty list is not confident by definition (nothing to render).
+bool driverNavLanesHaveConfidence(List<DriverNavLaneGuidance> lanes) {
+  if (lanes.isEmpty) return false;
+  for (final lane in lanes) {
+    if (lane.valid == true || lane.valid == false || lane.active == true) {
+      return true;
+    }
+  }
+  return false;
 }

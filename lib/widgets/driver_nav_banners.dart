@@ -8,6 +8,7 @@ import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/navigation/driver_navigation_formatters.dart';
 import 'package:fluxidi_tracking/navigation/driver_navigation_models.dart';
 import 'package:fluxidi_tracking/navigation/presentation/maneuver_presentation.dart';
+import 'package:fluxidi_tracking/navigation/presentation/nav_maneuver_sign.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_lane_guidance_strip.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_tablet_portrait_nav_layout.dart';
 
@@ -491,23 +492,56 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     );
   }
 
+  // NAV-SIGNAGE-VISUAL-RELEASE-GATE: the sign plates are drawn as a gold arrow
+  // over a light plate, so they need a light surface. Painting one on the gold
+  // accent would hide the arrow entirely. The box keeps its size and radius so
+  // banner layout is unchanged; only the fill differs.
+  static const Color _signPlateSurface = Color(0xFFFFFFFF);
+
+  double get _signPlateInset => compact ? 2 : 3;
+
   Widget _buildManeuverIcon(DriverThemePalette palette) {
+    final presentation = this.presentation;
+    final radius = BorderRadius.circular(compact ? 12 : 14);
+    if (presentation != null) {
+      return Container(
+        width: _iconBoxSize,
+        height: _iconBoxSize,
+        padding: EdgeInsets.all(_signPlateInset),
+        decoration: BoxDecoration(
+          color: _signPlateSurface,
+          borderRadius: radius,
+          // The highway cue moves to the border now that the fill is fixed.
+          border: Border.all(
+            color: isHighwayLike
+                ? const Color(0xFFFFD36A)
+                : palette.textPrimary.withOpacity(0.80),
+            width: isHighwayLike ? 2.0 : 1.4,
+          ),
+        ),
+        alignment: Alignment.center,
+        child: NavManeuverSign(
+          maneuver: presentation.signManeuver,
+          languageCode: presentation.signLanguageCode,
+          size: _iconBoxSize - (_signPlateInset * 2),
+        ),
+      );
+    }
+    // Legacy callers that pass a raw IconData without a presentation model.
+    final iconGlyphColor = palette.isDark ? Colors.black : Colors.white;
     return Container(
       width: _iconBoxSize,
       height: _iconBoxSize,
       decoration: BoxDecoration(
         color: isHighwayLike ? const Color(0xFFFFD36A) : palette.accent,
-        borderRadius: BorderRadius.circular(compact ? 12 : 14),
+        borderRadius: radius,
         border: Border.all(
           color: palette.textPrimary.withOpacity(0.80),
           width: 1.4,
         ),
       ),
-      child: Icon(
-        icon,
-        size: _iconSize,
-        color: palette.isDark ? Colors.black : Colors.white,
-      ),
+      alignment: Alignment.center,
+      child: Icon(icon, size: _iconSize, color: iconGlyphColor),
     );
   }
 
@@ -525,10 +559,18 @@ class DriverTurnInstructionBanner extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: palette.textPrimary.withOpacity(0.20)),
       ),
+      // NAV-ROUNDABOUT-LANE-CLARITY-P0-2026-07-31: the distance chip must
+      // NEVER truncate. Distance labels are always short (e.g. "400 m",
+      // "1.2 km", "In 400 m") so `TextOverflow.visible` + `softWrap: false`
+      // preserves the whole label and lets the chip grow to its natural
+      // intrinsic width. On the extreme edge of a narrow phone we fall
+      // back to visible overflow rather than an ellipsis, so the driver
+      // always sees the full distance.
       child: Text(
         label,
         maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+        softWrap: false,
+        overflow: TextOverflow.visible,
         style: TextStyle(
           fontSize: _distanceFontSize,
           fontWeight: FontWeight.w900,
@@ -539,11 +581,30 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     );
   }
 
+  // NAV-ROUNDABOUT-LANE-CLARITY-P0-2026-07-31: primary instruction is the
+  // most important glanceable line. For roundabouts we now emit "Neem de
+  // Nde afslag" as primary, and it must NEVER be ellipsized — because the
+  // ordinal ("2de", "3de", ...) is exactly the info the driver needs. When
+  // the maneuver is a roundabout we swap to `TextOverflow.visible` and
+  // allow up to 2 lines. Non-roundabout branches keep the historic
+  // 1-line-with-ellipsis behavior so wording changes cannot regress other
+  // maneuver types.
+  bool get _preserveFullPrimary =>
+      presentation != null &&
+      presentation!.maneuverVisual == ManeuverVisual.roundabout;
+
   Widget _buildPrimaryText(DriverThemePalette palette, {int? maxLines}) {
+    final resolvedMaxLines = _preserveFullPrimary
+        ? math.max(2, maxLines ?? _primaryMaxLines)
+        : (maxLines ?? _primaryMaxLines);
+    final overflow = _preserveFullPrimary
+        ? TextOverflow.visible
+        : TextOverflow.ellipsis;
     return Text(
       primaryText,
-      maxLines: maxLines ?? _primaryMaxLines,
-      overflow: TextOverflow.ellipsis,
+      maxLines: resolvedMaxLines,
+      softWrap: true,
+      overflow: overflow,
       style: TextStyle(
         fontSize: _primaryFontSize,
         fontWeight: FontWeight.w900,

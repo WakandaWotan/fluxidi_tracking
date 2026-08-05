@@ -147,6 +147,7 @@ void main() {
           type: 'roundabout',
           primary: 'Take the 2nd exit',
           exitNumber: '2',
+          roadRef: 'N425',
         ),
       );
       await tester.pumpWidget(
@@ -155,14 +156,22 @@ void main() {
       await tester.pump();
       final h2 = _bannerSize(tester).height;
 
-      expect(find.textContaining('rotonde'), findsOneWidget);
+      // NAV-ROUNDABOUT-LANE-CLARITY-P0-2026-07-31: primary = ordinal, and
+      // the destination road (roadRef) is the secondary. The word
+      // "rotonde" no longer appears in either line because "Neem de N-de
+      // afslag" (+ "naar N425") is a stronger, glanceable pair.
       expect(find.textContaining('afslag'), findsOneWidget);
+      expect(find.textContaining('N425'), findsOneWidget);
       expect(h2, greaterThanOrEqualTo(h1));
-      expect(h2 - h1, lessThanOrEqualTo(40),
+      // NAV-ROUNDABOUT-LANE-CLARITY-P0-2026-07-31: the roundabout banner
+      // now carries THREE deliberate elements (distance chip + ordinal
+      // primary + destination secondary) instead of the pre-P0 two, so
+      // the vertical delta is a few px larger than the old 40 px ceiling.
+      // The empty-band guard is what matters — 55 px is still a compact
+      // three-row card, never a large empty band.
+      expect(h2 - h1, lessThanOrEqualTo(55),
           reason: 'Second line may grow, but must not leave a large empty band');
-      expect(h2, lessThanOrEqualTo(110));
-      // Prove the second line is present as its own Text (not collapsed away).
-      expect(find.textContaining('afslag'), findsOneWidget);
+      expect(h2, lessThanOrEqualTo(115));
     });
 
     testWidgets('missing subtitle collapses (zero reserved line)', (

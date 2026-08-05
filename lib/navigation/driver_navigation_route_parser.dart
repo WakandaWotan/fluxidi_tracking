@@ -135,7 +135,20 @@ DriverNavBannerView? _parseBannerView(dynamic raw) {
     }
   }
   if ((text == null || text.isEmpty) && components.isEmpty) return null;
-  return DriverNavBannerView(text: text, components: components);
+  return DriverNavBannerView(
+    text: text,
+    type: _trimmedString(raw['type']),
+    modifier: _trimmedString(raw['modifier']),
+    degrees: _finiteDouble(raw['degrees']),
+    components: components,
+  );
+}
+
+/// Numeric guidance values are only kept when they are real finite numbers.
+double? _finiteDouble(dynamic raw) {
+  final value = raw is num ? raw.toDouble() : double.tryParse('$raw');
+  if (value == null || !value.isFinite) return null;
+  return value;
 }
 
 /// NAV-SIGNAL-P1: parse every usable banner stage; skip malformed entries.
@@ -381,6 +394,12 @@ DriverRouteParseResult parseDriverDirectionsResponse({
           ),
           distanceM: stepDistance,
           durationSec: stepDuration,
+          bearingBefore: _finiteDouble(
+            maneuver['bearing_before'] ?? maneuver['bearingBefore'],
+          ),
+          bearingAfter: _finiteDouble(
+            maneuver['bearing_after'] ?? maneuver['bearingAfter'],
+          ),
           banner: banner,
           bannerInstructions: bannerInstructions,
           intersections: intersections,

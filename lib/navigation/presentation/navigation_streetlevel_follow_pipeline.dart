@@ -155,6 +155,8 @@ class NavStreetlevelPose {
     required this.timestampMs,
     required this.routeGeneration,
     required this.poseGeneration,
+    this.renderEpoch = 0,
+    this.ownerMode = 'reliable_route',
   });
 
   /// Snapped display coordinate (same point the vehicle marker/model uses).
@@ -170,6 +172,12 @@ class NavStreetlevelPose {
   final int timestampMs;
   final int routeGeneration;
   final int poseGeneration;
+
+  /// Route render epoch stamped at publish time for stale rejection.
+  final int renderEpoch;
+
+  /// Camera-bearing owner mode label at publish time (PII-free).
+  final String ownerMode;
 }
 
 /// PART B / E / F — the ONE authoritative heading smoothing stage for
@@ -196,8 +204,11 @@ class NavStreetlevelBearingController {
     required double targetBearingDeg,
     required double speedKmh,
     double dtMs = kNavStreetlevelBearingReferenceTickMs,
+    bool travelAuthority = false,
   }) {
     final target = _normalizeBearing(targetBearingDeg);
+    // Latest-wins retarget: every call replaces the pending target; there is
+    // no animation queue and no delayed completion from an older target.
     _lastTargetDeg = target;
     final prev = _appliedBearing;
     if (prev == null || !prev.isFinite) {
@@ -208,7 +219,12 @@ class NavStreetlevelBearingController {
     final delta = navStreetlevelShortestBearingDelta(prev, target);
     final ad = delta.abs();
     // PART F: ignore sub-deadband wobble so noisy heading does not spin.
-    if (ad < kNavStreetlevelBearingJitterDeadbandDeg) {
+    // Under travel authority keep a slightly tighter noise floor so sustained
+    // real changes are not over-smoothed while GPS jitter stays filtered.
+    final deadband = travelAuthority
+        ? math.min(kNavStreetlevelBearingJitterDeadbandDeg, 2.0)
+        : kNavStreetlevelBearingJitterDeadbandDeg;
+    if (ad < deadband) {
       _lastAppliedDeltaDeg = 0.0;
       return prev;
     }
@@ -219,9 +235,22 @@ class NavStreetlevelBearingController {
       0.25,
       4.0,
     );
-    final maxStep =
+    var maxStep =
         navStreetlevelBearingMaxStepDeg(deltaDeg: delta, speedKmh: speedKmh) *
         dtScale;
+    // NAV-CAMERA-ZERO-OLD-ROUTE-HOLD-P0: travel authority must begin a
+    // meaningful heading change within ~100 ms and start 180° reversals
+    // immediately — raise the per-tick ceiling for medium/large deltas.
+    if (travelAuthority) {
+      final travelCap = ad >= 90.0
+          ? 90.0
+          : ad >= 45.0
+          ? 55.0
+          : ad >= 20.0
+          ? 28.0
+          : 14.0;
+      maxStep = math.max(maxStep, travelCap * dtScale);
+    }
     final double next;
     if (ad <= maxStep) {
       next = target;
@@ -254,6 +283,8 @@ class NavStreetlevelFollowPump {
   int _droppedStaleTargets = 0;
   int _coalescedCount = 0;
   int _expectedRouteGeneration = -1;
+  int _expectedRenderEpoch = -1;
+  int _staleCommandCancelled = 0;
 
   bool get inFlight => _inFlight;
   int get droppedStaleTargets => _droppedStaleTargets;
@@ -264,6 +295,8 @@ class NavStreetlevelFollowPump {
   NavStreetlevelPose? get latest => _latest;
   int get lastConsumedGeneration => _lastConsumedGeneration;
   int get expectedRouteGeneration => _expectedRouteGeneration;
+  int get expectedRenderEpoch => _expectedRenderEpoch;
+  int get staleCommandCancelled => _staleCommandCancelled;
 
   /// PART C / PART E — declare the current authoritative route generation.
   /// After a reroute handoff the widget bumps this; poses still tagged with an
@@ -272,6 +305,14 @@ class NavStreetlevelFollowPump {
   void setExpectedRouteGeneration(int routeGeneration) {
     if (routeGeneration > _expectedRouteGeneration) {
       _expectedRouteGeneration = routeGeneration;
+    }
+  }
+
+  /// NAV-CAMERA-ZERO-OLD-ROUTE-HOLD-P0: reject poses from a superseded render
+  /// epoch so routeVersion N / epoch N cannot commit after N+1 is active.
+  void setExpectedRenderEpoch(int renderEpoch) {
+    if (renderEpoch > _expectedRenderEpoch) {
+      _expectedRenderEpoch = renderEpoch;
     }
   }
 
@@ -301,6 +342,14 @@ class NavStreetlevelFollowPump {
         pose.routeGeneration < _expectedRouteGeneration) {
       _lastConsumedGeneration = pose.poseGeneration;
       _droppedStaleTargets += 1;
+      _staleCommandCancelled += 1;
+      return null;
+    }
+    if (_expectedRenderEpoch >= 0 &&
+        pose.renderEpoch < _expectedRenderEpoch) {
+      _lastConsumedGeneration = pose.poseGeneration;
+      _droppedStaleTargets += 1;
+      _staleCommandCancelled += 1;
       return null;
     }
     _inFlight = true;
@@ -320,6 +369,8 @@ class NavStreetlevelFollowPump {
     _droppedStaleTargets = 0;
     _coalescedCount = 0;
     _expectedRouteGeneration = -1;
+    _expectedRenderEpoch = -1;
+    _staleCommandCancelled = 0;
   }
 }
 
