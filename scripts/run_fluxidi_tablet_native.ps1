@@ -1,22 +1,23 @@
 # ============================================================================
 # FLUXIDI FIELD BUILD — Tablet
-# Exact commit: d273be4fe26e72af6dc5521879a73fc1bbc5f82b
-# Clean detached worktree. Dirty hoofdrepository blijft onaangeraakt.
+# Exact commit: 6a63dedb9179cce87dbc217069dbe8cd62e1fb52
+# Clean integration worktree. Dirty hoofdrepository blijft onaangeraakt.
 # Exact 12 dart-defines, NO ADMIN_TOKEN, NO LEARNING_SERVICE_TOKEN.
 #
-# PIN NOTE: never leave this on a pre-wizard commit (e.g. 1e79314). On HEAD
-# mismatch the script checks out $requiredHead in place (or recreates).
+# PIN NOTE: TABLET-PARTNER-BRANDING-LAYOUT-1 on FULL-PRODUCT-PLUS-PNG-NAV-20260805.
+# Theme/Billit/PNG/owner gates remain. On HEAD mismatch the script checks out
+# $requiredHead in place (or recreates).
 # ============================================================================
 
 $ErrorActionPreference = 'Stop'
 
 # --- Vaste instellingen ---
 $repo         = 'C:\_flutter_work\fluxidi_tracking'
-$worktree     = 'C:\_flutter_work\fluxidi_tracking_field_312f8d2_tablet'
+$worktree     = 'C:\_flutter_work\fluxidi_tracking_full_integration_20260805'
 $device       = 'R52Y808CN2M'
 $adb          = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-$requiredHead = 'd273be4fe26e72af6dc5521879a73fc1bbc5f82b'
-$branch       = 'fix/dispatch-deterministic-origin-leg'
+$requiredHead = '6a63dedb9179cce87dbc217069dbe8cd62e1fb52'
+$branch       = 'release/full-tablet-integration-20260805'
 
 function Assert-LastExitCode {
     param(
@@ -169,6 +170,83 @@ Write-Host "worktree_head=$head"
 if ($head -ne $requiredHead) {
     throw "HEAD mismatch after ensure: gevonden $head, verwacht $requiredHead"
 }
+
+# --- FULL-PRODUCT-PLUS-PNG-NAV-20260805 source gates ---
+$requiredSubject = (& git log -1 --format=%s $requiredHead).Trim()
+Assert-LastExitCode -Step 'git log required subject'
+
+$themeButtonPath = '.\lib\widgets\business_theme_cycle_button.dart'
+$themeCyclePath = '.\lib\business_theme_cycle.dart'
+$signResolverPath = '.\lib\navigation\presentation\nav_sign_resolver.dart'
+$maneuverOwnerPath = '.\lib\navigation\nav_engine\nav_maneuver_owner.dart'
+$bookingsDocsPath = '.\lib\main_parts\company_booking_documents_section.dart'
+
+if (-not (Test-Path -LiteralPath $themeButtonPath)) {
+    throw "BusinessThemeCycleButton ontbreekt: $themeButtonPath"
+}
+if (-not (Test-Path -LiteralPath $themeCyclePath)) {
+    throw "business_theme_cycle.dart ontbreekt: $themeCyclePath"
+}
+if (-not (Test-Path -LiteralPath $signResolverPath)) {
+    throw "nav_sign_resolver.dart ontbreekt: $signResolverPath"
+}
+if (-not (Test-Path -LiteralPath $maneuverOwnerPath)) {
+    throw "nav_maneuver_owner.dart ontbreekt: $maneuverOwnerPath"
+}
+
+$themeCycleRaw = Get-Content -LiteralPath $themeCyclePath -Raw
+$presetCount = @(
+    'executiveGold',
+    'corporateBlue',
+    'cleanProfessional',
+    'emeraldIvory',
+    'fluxidiNeonRush'
+) | Where-Object { $themeCycleRaw -match $_ } | Measure-Object | Select-Object -ExpandProperty Count
+if ($presetCount -ne 5) {
+    throw "theme_preset_count=$presetCount (verwacht 5)"
+}
+
+$bookingsRaw = Get-Content -LiteralPath $bookingsDocsPath -Raw
+if ($bookingsRaw -notmatch 'billit_export|BillitExport|_BillitExportMetadata') {
+    throw "Billit/documentactie ontbreekt in company_booking_documents_section.dart"
+}
+
+$pngCount = @(
+    Get-ChildItem -LiteralPath '.\assets\fluxidi_navigation_signs_v3\png' `
+        -Recurse -Filter '*.png' -File
+).Count
+if ($pngCount -ne 136) {
+    throw "nav_sign_png_count=$pngCount (verwacht 136)"
+}
+
+$langCount = @(
+    'nl', 'en', 'fr', 'es'
+) | Where-Object {
+    Test-Path -LiteralPath ".\assets\fluxidi_navigation_signs_v3\png\$_"
+} | Measure-Object | Select-Object -ExpandProperty Count
+if ($langCount -ne 4) {
+    throw "nav_sign_languages=$langCount (verwacht 4)"
+}
+
+Write-Host "required_app_head=$requiredHead"
+Write-Host "required_app_subject=$requiredSubject"
+Write-Host 'theme_cycle_present=True'
+Write-Host "theme_preset_count=$presetCount"
+Write-Host 'business_billit_action_present=True'
+Write-Host "nav_sign_png_count=$pngCount"
+Write-Host "nav_sign_languages=$langCount"
+Write-Host 'nav_maneuver_owner_present=True'
+$brandingLayoutPath = '.\lib\nearby\tablet_partner_branding_layout.dart'
+if (-not (Test-Path -LiteralPath $brandingLayoutPath)) {
+    throw "tablet_partner_branding_layout.dart ontbreekt: $brandingLayoutPath"
+}
+$brandingRaw = Get-Content -LiteralPath $brandingLayoutPath -Raw
+if ($brandingRaw -notmatch 'isTabletPartnerBrandingLayout|PartnerBrandingLogoPlate') {
+    throw 'Tablet partner branding helpers ontbreken'
+}
+Write-Host 'tablet_partner_branding_layout_present=True'
+Write-Host "worktree_head=$head"
+
 
 # --- Windows-regelovergangen neutraliseren zonder gedeelde Git-config te wijzigen ---
 # Gebruik per commando tijdelijke instellingen. Dit vermijdt conflicten met
