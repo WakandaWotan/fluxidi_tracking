@@ -358,6 +358,7 @@ class DriverRideMetersSnapshot {
     required this.rideDurationText,
     required this.waitingTimeText,
     required this.statusText,
+    this.fareLabel = 'Tarief',
     this.etaText = '',
     this.remainingDistanceText = '',
     this.tariffName = '',
@@ -365,6 +366,10 @@ class DriverRideMetersSnapshot {
   });
 
   final String fareText;
+
+  /// Fare tile label. Planned rides use `Vaste prijs`; street/direct keep
+  /// the existing `Tarief` meter name.
+  final String fareLabel;
   final String distanceTravelledText;
   final String rideDurationText;
   final String waitingTimeText;
@@ -1157,11 +1162,14 @@ class _DriverRideMetersContent extends StatelessWidget {
   /// 2x2 area (Tarief, Afstand, Ritduur, Wachttijd). Status is rendered
   /// separately as a smaller element — never a fifth equal tile.
   Widget _buildMetersGrid(DriverThemePalette palette, {bool fillHeight = false}) {
+    final fareLabel = snapshot.fareLabel.trim().isEmpty
+        ? 'Tarief'
+        : snapshot.fareLabel.trim();
     final fare = _MeterTile(
       key: const ValueKey('teller_fare'),
-      label: 'Tarief',
+      label: fareLabel,
       value: snapshot.fareText,
-      semanticLabel: 'Tarief ${snapshot.fareText}',
+      semanticLabel: '$fareLabel ${snapshot.fareText}',
       palette: palette,
       emphasize: true,
       isTablet: isTablet,

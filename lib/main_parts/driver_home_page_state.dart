@@ -6424,6 +6424,27 @@ class _DriverHomePageState extends State<DriverHomePage>
     return _driverDisplayPriceForBooking(b);
   }
 
+  /// True when the active booking is a street/direct ride (live meter UI).
+  bool get _activeBookingIsStreetDirect {
+    final b = _activeBooking;
+    if (b == null) return false;
+    return bookingRecordIsStreetDirect(<String, dynamic>{
+      ...b.details,
+      if (b.bookingId.trim().isNotEmpty) 'booking_id': b.bookingId,
+    });
+  }
+
+  /// PLANNED-RIDE-FIXED-PRICE-PRESENTATION-AND-DURABILITY-1: fixed booking/leg
+  /// price for planned rides; live meter only for street/direct.
+  DriverCockpitFarePresentation get _cockpitFarePresentation {
+    return resolveDriverCockpitFarePresentation(
+      hasActiveBooking: _activeBooking != null,
+      isStreetOrDirectBooking: _activeBookingIsStreetDirect,
+      fixedBookingPriceEur: _fixedBookingPriceEur,
+      liveMeterPreviewEur: _liveMeterPreviewEur,
+    );
+  }
+
   ({
     String source,
     double startFee,
@@ -6597,22 +6618,18 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  /// Price text shown in the cockpit:
-  /// - Booking selected: show fixed price if known, otherwise "€ —" (never show live meter for bookings)
-  /// - No booking selected: show the live meter total
-  String get _displayTotalText {
-    if (_liveRideActive) {
-      final live = _liveMeterPreviewEur;
-      return '€ ${live.toStringAsFixed(2)}';
-    }
-    final fixed = _fixedBookingPriceEur;
-    if (_activeBooking != null) {
-      if (fixed != null && fixed > 0) return '€ ${fixed.toStringAsFixed(2)}';
-      return '€ —';
-    }
-    final live = _liveMeterPreviewEur;
-    return '€ ${live.toStringAsFixed(2)}';
-  }
+  /// Price text shown in the cockpit / Tellers.
+  ///
+  /// PLANNED-RIDE-FIXED-PRICE-PRESENTATION-AND-DURABILITY-1:
+  /// - Planned booking (prepare / START / active): canonical fixed booking/leg
+  ///   price via [_driverDisplayPriceForBooking]; never `_liveMeterTotalEur`.
+  /// - Missing planned price: `€ —` (no street-meter fallback).
+  /// - Street/direct (or no booking): existing live meter preview.
+  String get _displayTotalText => _cockpitFarePresentation.amountText;
+
+  String get _displayPriceLabel => _cockpitFarePresentation.cockpitLabel;
+
+  String get _tellersFareLabel => _cockpitFarePresentation.tellersLabel;
 
   String get _cockpitPriceText =>
       _displayTotalText.replaceFirst('€', '').trim();
@@ -22864,6 +22881,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     return DriverRideMetersSnapshot(
       fareText: _displayTotalText,
+      fareLabel: _tellersFareLabel,
       distanceTravelledText: distanceText,
       rideDurationText: _formatHms(_activeElapsed),
       waitingTimeText: _formatHms(_effectiveWaitElapsed),
@@ -32120,6 +32138,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                             etaText: _etaText,
                             kmText: _kmRemainingText,
                             priceText: _cockpitPriceText,
+                            priceLabel: _displayPriceLabel,
                             tripStarted: _liveRideActive,
                             isWaiting: _isWaiting,
                             navActive: _cameraMode == _CameraMode.follow,

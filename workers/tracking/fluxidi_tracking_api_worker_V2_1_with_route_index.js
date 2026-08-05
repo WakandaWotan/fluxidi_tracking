@@ -6051,6 +6051,178 @@ async function _notifyBookingWorkerPlannedTripCompletionBestEffort(env, scope, t
   }
 }
 
+// PLANNED-RIDE-FIXED-PRICE-PRESENTATION-AND-DURABILITY-1 — mirrored from
+// workers/tracking/modules/planned_stop_price.mjs (unit-tested there).
+function _plannedStopPositiveMoney(v) {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function _plannedStopAsObject(v) {
+  return v && typeof v === "object" && !Array.isArray(v) ? v : null;
+}
+
+function _plannedStopLegTypeToken(legType) {
+  const t = safeStr(legType, 32)?.toLowerCase() ?? "";
+  return t === "return" ? "return" : t ? "outbound" : "";
+}
+
+function resolveCanonicalPlannedBookingFare({
+  bookingRecord = null,
+  bookingDetails = null,
+  legId = null,
+  legType = null,
+} = {}) {
+  const record = _plannedStopAsObject(bookingRecord) || {};
+  const details = _plannedStopAsObject(bookingDetails) || {};
+  const nestedBooking =
+    _plannedStopAsObject(details.booking) ||
+    _plannedStopAsObject(details.record) ||
+    _plannedStopAsObject(record.booking) ||
+    {};
+  const sources = [details, nestedBooking, record];
+  const wantedLegId = safeStr(legId, 160) || "";
+  const wantedLegType = _plannedStopLegTypeToken(
+    legType || details.leg_type || details.legType,
+  );
+  const pickFirst = (cands) => {
+    for (const c of cands) {
+      const n = _plannedStopPositiveMoney(c);
+      if (n != null) return n;
+    }
+    return null;
+  };
+
+  for (const src of sources) {
+    const legPrice = pickFirst([
+      src.leg_price_incl_vat,
+      src.legPriceInclVat,
+      src.segment_price_eur,
+      src.segmentPriceEur,
+    ]);
+    if (legPrice != null) return { amount: legPrice, source: "leg_price_incl_vat" };
+  }
+
+  for (const src of sources) {
+    const legs = Array.isArray(src.operational_legs)
+      ? src.operational_legs
+      : Array.isArray(src.legs)
+        ? src.legs
+        : null;
+    if (!legs) continue;
+    for (const rawLeg of legs) {
+      const leg = _plannedStopAsObject(rawLeg);
+      if (!leg) continue;
+      const entryLegId = safeStr(leg.leg_id ?? leg.legId, 160) || "";
+      const entryType = _plannedStopLegTypeToken(leg.leg_type ?? leg.legType);
+      if (wantedLegId && entryLegId && entryLegId !== wantedLegId) continue;
+      if (!wantedLegId && wantedLegType && entryType && entryType !== wantedLegType) continue;
+      const legPrice = pickFirst([
+        leg.leg_price_incl_vat,
+        leg.legPriceInclVat,
+        leg.price_incl_vat,
+        leg.priceInclVat,
+        leg.price,
+      ]);
+      if (legPrice != null) return { amount: legPrice, source: "operational_leg_price" };
+    }
+  }
+
+  if (wantedLegType === "return") {
+    for (const src of sources) {
+      const returnPrice = pickFirst([
+        src.price_incl_vat_return,
+        src.priceInclVatReturn,
+        src.return_price_eur,
+        _plannedStopAsObject(src.quote)?.price_incl_vat_return,
+        _plannedStopAsObject(_plannedStopAsObject(src.quote)?.pricing_return)?.price_incl_vat,
+      ]);
+      if (returnPrice != null) return { amount: returnPrice, source: "price_incl_vat_return" };
+    }
+  } else {
+    for (const src of sources) {
+      const mainPrice = pickFirst([
+        src.price_incl_vat_main,
+        src.priceInclVatMain,
+        src.outbound_price_eur,
+        _plannedStopAsObject(src.quote)?.price_incl_vat_main,
+        _plannedStopAsObject(_plannedStopAsObject(src.quote)?.pricing_main)?.price_incl_vat,
+      ]);
+      if (mainPrice != null) return { amount: mainPrice, source: "price_incl_vat_main" };
+    }
+  }
+
+  for (const src of sources) {
+    const canonical = pickFirst([
+      src.price_incl_vat,
+      src.priceInclVat,
+      src.total_price_incl_vat,
+      src.totalPriceInclVat,
+      _plannedStopAsObject(src.quote)?.price_incl_vat,
+      _plannedStopAsObject(_plannedStopAsObject(src.quote)?.pricing)?.price_incl_vat,
+      src.price,
+      src.total_price,
+      src.total,
+    ]);
+    if (canonical != null) return { amount: canonical, source: "price_incl_vat" };
+  }
+  return { amount: null, source: "missing" };
+}
+
+function resolvePlannedStopTotalEur({
+  bookingRecord = null,
+  bookingDetails = null,
+  legId = null,
+  legType = null,
+  clientTotalEur = null,
+  existingTripTotalEur = null,
+} = {}) {
+  const canonical = resolveCanonicalPlannedBookingFare({
+    bookingRecord,
+    bookingDetails,
+    legId,
+    legType,
+  });
+  if (canonical.amount != null) {
+    return {
+      total_eur: canonical.amount,
+      source: canonical.source,
+      ignored_client_total: true,
+    };
+  }
+  const existing = _plannedStopPositiveMoney(existingTripTotalEur);
+  if (existing != null) {
+    return {
+      total_eur: existing,
+      source: "existing_trip",
+      ignored_client_total: true,
+    };
+  }
+  return {
+    total_eur: null,
+    source: "missing",
+    ignored_client_total: true,
+  };
+}
+
+async function _loadBookingRecordForPlannedStopBestEffort(env, scope, bookingId) {
+  const id = safeStr(bookingId, 96);
+  if (!id) return null;
+  const res = await _callBookingWorkerJson(
+    env,
+    "/track/booking/canonical-fare-for-planned-stop",
+    {
+      tenant_id: scope?.tenant_id,
+      company_id: scope?.company_id,
+      booking_id: id,
+    },
+  );
+  if (!res?.ok) return null;
+  const booking = _plannedStopAsObject(res.booking);
+  return booking || null;
+}
+
 async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
   const rawBody = await readJson(req);
   const auth = await requireDriverSessionOrAdminForScope(req, url, env, {
@@ -6133,7 +6305,7 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
   const stoppedAt = safeStr(body["stopped_at"] ?? body["client_stopped_at"], 64) ?? nowIso();
   const km_total = safeNum(body["km_total"], 0, 100000);
   const wait_seconds_total = safeNum(body["wait_seconds_total"] ?? 0, 0, 60 * 60 * 24 * 7) ?? 0;
-  const total_eur = safeNum(body["total_eur"], 0, 1000000);
+  const client_total_eur = body["total_eur"];
   const currency = safeStr(body["currency"] ?? "EUR", 8) ?? "EUR";
   const tripSuffix =
     sanitizeTripIdentityToken(leg_id, 96) ??
@@ -6234,6 +6406,34 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
   const linkedTrackingTripId = safeStr(shadowGuard.trackingTripId, 160) || null;
   const canonicalPhysicalRideKey =
     linkedTrackingTripId || parent_booking_id || booking_id || null;
+
+  // PLANNED-RIDE-FIXED-PRICE-PRESENTATION-AND-DURABILITY-1: server owns the
+  // planned fare. Load booking + resolve from leg/main/return/canonical price.
+  // Client total_eur (incl. live meter / 0) is never authoritative.
+  const bookingRecordForFare = await _loadBookingRecordForPlannedStopBestEffort(
+    env,
+    scope,
+    parent_booking_id || booking_id,
+  );
+  const plannedFare = resolvePlannedStopTotalEur({
+    bookingRecord: bookingRecordForFare,
+    bookingDetails: booking_details,
+    legId: leg_id,
+    legType: leg_type,
+    clientTotalEur: client_total_eur,
+    existingTripTotalEur: existingTrip?.total_eur ?? existingTrip?.price_incl_vat,
+  });
+  const total_eur =
+    plannedFare.total_eur != null
+      ? plannedFare.total_eur
+      : null;
+  console.log(
+    `[TRACKING][PLANNED_STOP][FARE] booking=${booking_id} trip=${trip_id} ` +
+      `source=${plannedFare.source} total=${total_eur == null ? "null" : Number(total_eur).toFixed(2)} ` +
+      `ignored_client=${!!plannedFare.ignored_client_total} ` +
+      `client_raw=${client_total_eur == null ? "null" : String(client_total_eur)}`,
+  );
+
   const trip = {
     trip_id,
     kind: "planned",
@@ -6269,6 +6469,7 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
         km_total,
         wait_seconds_total,
         total_eur,
+        fare_source: plannedFare.source,
       },
     ],
     created_at: startedAt ?? stoppedAt,
@@ -6278,6 +6479,8 @@ async function handleRecordPlannedStopTrip(req, url, env, origin, ctx) {
     km_total,
     wait_seconds_total,
     total_eur,
+    price_incl_vat: total_eur,
+    fare_source: plannedFare.source,
     currency,
     owner_driver_id: actor.actor_role === "driver" ? actor.actor_driver_id : driver_id,
     owner_vehicle_id: actor.actor_role === "driver" ? (actor.actor_vehicle_id ?? vehicle_id) : vehicle_id,
@@ -6979,6 +7182,44 @@ async function handleReconcilePlannedStop(req, url, env, origin) {
         { status: 409 },
       ),
       origin,
+    );
+  }
+
+  // PLANNED-RIDE-FIXED-PRICE-PRESENTATION-AND-DURABILITY-1: offline reconcile
+  // uses the same server-side fare resolution. If a prior stop persisted 0 /
+  // null while a valid booking price exists, repair the trip row before emit.
+  const reconcileBookingId =
+    safeStr(
+      trip?.parent_booking_id ??
+        trip?.parentBookingId ??
+        trip?.booking_id ??
+        trip?.bookingId,
+      96,
+    ) || null;
+  const reconcileBookingRecord = await _loadBookingRecordForPlannedStopBestEffort(
+    env,
+    scope,
+    reconcileBookingId,
+  );
+  const reconcileFare = resolvePlannedStopTotalEur({
+    bookingRecord: reconcileBookingRecord,
+    bookingDetails: trip?.booking_details ?? null,
+    legId: trip?.leg_id ?? trip?.legId ?? null,
+    legType: trip?.leg_type ?? trip?.legType ?? null,
+    clientTotalEur: null,
+    existingTripTotalEur: trip?.total_eur ?? trip?.price_incl_vat,
+  });
+  if (
+    reconcileFare.total_eur != null &&
+    _plannedStopPositiveMoney(trip.total_eur ?? trip.price_incl_vat) == null
+  ) {
+    trip.total_eur = reconcileFare.total_eur;
+    trip.price_incl_vat = reconcileFare.total_eur;
+    trip.fare_source = reconcileFare.source;
+    await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
+    console.log(
+      `[TRACKING][PLANNED_STOP][FARE_REPAIR] trip=${trip_id} source=${reconcileFare.source} ` +
+        `total=${Number(reconcileFare.total_eur).toFixed(2)}`,
     );
   }
 

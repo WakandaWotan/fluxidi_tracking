@@ -69,14 +69,28 @@ function complianceWorker(handler) {
   };
 }
 
-function bookingApi() {
-  // The record-planned-stop handler notifies the booking worker; we don't
-  // assert on it here (out of scope), we just accept + swallow the call.
+function bookingApi({ fare = 12.5 } = {}) {
+  // Completes planned-stop booking sync AND serves canonical fare lookups so
+  // client total_eur is never the authoritative planned fare source.
   return {
     calls: [],
     async fetch(request) {
+      const url = new URL(request.url);
       const body = await request.json().catch(() => ({}));
-      this.calls.push(body);
+      this.calls.push({ path: url.pathname, body });
+      if (url.pathname.includes("canonical-fare-for-planned-stop")) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            booking_id: body.booking_id,
+            booking: {
+              booking_id: body.booking_id,
+              price_incl_vat: fare,
+            },
+          }),
+          { status: 200 },
+        );
+      }
       return new Response(JSON.stringify({ ok: true }), { status: 200 });
     },
   };

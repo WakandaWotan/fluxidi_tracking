@@ -65,12 +65,23 @@ function complianceWorker(handler) {
   };
 }
 
-function bookingApi() {
+function bookingApi({ fare = 9.9 } = {}) {
   return {
     calls: [],
     async fetch(request) {
+      const url = new URL(request.url);
       const body = await request.json().catch(() => ({}));
-      this.calls.push(body);
+      this.calls.push({ path: url.pathname, body });
+      if (url.pathname.includes("canonical-fare-for-planned-stop")) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            booking_id: body.booking_id,
+            booking: { booking_id: body.booking_id, price_incl_vat: fare },
+          }),
+          { status: 200 },
+        );
+      }
       return new Response(JSON.stringify({ ok: true }), { status: 200 });
     },
   };

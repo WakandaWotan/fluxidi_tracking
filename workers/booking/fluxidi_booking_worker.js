@@ -43449,6 +43449,75 @@ export default {
         );
       }
 
+      // PLANNED-RIDE-FIXED-PRICE-PRESENTATION-AND-DURABILITY-1: tracking loads
+      // the booking server-side when recording a planned STOP so client
+      // total_eur / live meter can never authoritatively set the fare.
+      if (
+        url.pathname === "/track/booking/canonical-fare-for-planned-stop" &&
+        request.method === "POST"
+      ) {
+        _requireAdmin(request, url, env);
+        const body = await safeJson(request);
+        const scopedRoute = requireExplicitBookingRouteScope({ request, url, body });
+        if (!scopedRoute.ok) return scopedRoute.response;
+        const tenantScope = scopedRoute.scope;
+        const bookingId = safeStr(body?.booking_id ?? body?.bookingId, 160);
+        if (!bookingId) {
+          return json({ ok: false, error: "booking_id is required" }, 400);
+        }
+        let rec = null;
+        try {
+          const loaded = await loadBookingRecord(env, bookingId);
+          rec = loaded?.rec || null;
+        } catch (loadErr) {
+          if (String(loadErr?.message || "") === "Booking not found") {
+            return json({ ok: false, error: "booking_not_found" }, 404);
+          }
+          throw loadErr;
+        }
+        // Admin service-binding calls (tracking → booking) are trusted; still
+        // enforce explicit tenant/company scope on the request body.
+        if (!rec) {
+          return json({ ok: false, error: "booking_not_found" }, 404);
+        }
+        const booking =
+          rec?.booking && typeof rec.booking === "object" ? rec.booking : {};
+        return json({
+          ok: true,
+          booking_id: bookingId,
+          booking: {
+            booking_id: bookingId,
+            price_incl_vat:
+              rec?.price_incl_vat ??
+              booking?.price_incl_vat ??
+              rec?.priceInclVat ??
+              booking?.priceInclVat ??
+              null,
+            price_incl_vat_main:
+              rec?.price_incl_vat_main ??
+              booking?.price_incl_vat_main ??
+              null,
+            price_incl_vat_return:
+              rec?.price_incl_vat_return ??
+              booking?.price_incl_vat_return ??
+              null,
+            leg_price_incl_vat:
+              rec?.leg_price_incl_vat ??
+              booking?.leg_price_incl_vat ??
+              null,
+            quote: rec?.quote ?? booking?.quote ?? null,
+            operational_legs:
+              rec?.operational_legs ??
+              booking?.operational_legs ??
+              rec?.legs ??
+              booking?.legs ??
+              null,
+            source: rec?.source ?? booking?.source ?? null,
+            ride_type: rec?.ride_type ?? booking?.ride_type ?? null,
+          },
+        });
+      }
+
       // STREET-RIDE-BOOKING-LIFECYCLE (staging-validate): create the lightweight
       // street-ride booking at direct-trip START. Called backend-to-backend by
       // the tracking worker's /trip/start-direct. Idempotent by direct_ride_key.

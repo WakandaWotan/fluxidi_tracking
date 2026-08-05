@@ -35,6 +35,10 @@ class CockpitWidget extends StatefulWidget {
   final String kmText;
   final String priceText;
 
+  /// Metric tile label above [priceText]. Planned rides use `Vaste prijs`;
+  /// street/direct keep the existing `€` meter label.
+  final String priceLabel;
+
   final bool tripStarted;
   final bool isWaiting;
   final bool navActive;
@@ -83,6 +87,7 @@ class CockpitWidget extends StatefulWidget {
     required this.etaText,
     required this.kmText,
     required this.priceText,
+    this.priceLabel = '€',
     required this.tripStarted,
     required this.isWaiting,
     required this.navActive,
@@ -195,6 +200,9 @@ class _CockpitWidgetState extends State<CockpitWidget>
         final price = (widget.priceText.trim().isEmpty)
             ? '—'
             : widget.priceText;
+        final priceLabel = widget.priceLabel.trim().isEmpty
+            ? '€'
+            : widget.priceLabel.trim();
         final isLandscape =
             MediaQuery.of(context).orientation == Orientation.landscape;
         final panel = AnimatedBuilder(
@@ -231,8 +239,18 @@ class _CockpitWidgetState extends State<CockpitWidget>
                     ],
                   ),
                   child: isLandscape
-                      ? _buildLandscapeStrip(eta: eta, km: km, price: price)
-                      : _buildPortraitPanel(eta: eta, km: km, price: price),
+                      ? _buildLandscapeStrip(
+                          eta: eta,
+                          km: km,
+                          price: price,
+                          priceLabel: priceLabel,
+                        )
+                      : _buildPortraitPanel(
+                          eta: eta,
+                          km: km,
+                          price: price,
+                          priceLabel: priceLabel,
+                        ),
                 ),
               ),
             );
@@ -261,6 +279,7 @@ class _CockpitWidgetState extends State<CockpitWidget>
     required String eta,
     required String km,
     required String price,
+    required String priceLabel,
   }) {
     const metricTileGap = 4.0;
     final metricsPrimaryGap = widget.metricsToPrimaryGap;
@@ -287,7 +306,7 @@ class _CockpitWidgetState extends State<CockpitWidget>
                   const SizedBox(width: metricTileGap),
                   _metricTile('KM', km),
                   const SizedBox(width: metricTileGap),
-                  _metricTile('€', price),
+                  _metricTile(priceLabel, price),
                 ],
               ),
             ),
@@ -377,6 +396,7 @@ class _CockpitWidgetState extends State<CockpitWidget>
     required String eta,
     required String km,
     required String price,
+    required String priceLabel,
   }) {
     return SizedBox(
       // NAV-VEHICLE-MODE-CAR-ARROW-1: shared with the Street Level marker
@@ -405,7 +425,7 @@ class _CockpitWidgetState extends State<CockpitWidget>
                   ),
                   const SizedBox(width: 4),
                   _metricTile(
-                    '€',
+                    priceLabel,
                     price,
                     compact: !widget.landscapeKpiPriority,
                   ),
