@@ -12,6 +12,7 @@ import 'customer_profile_store.dart';
 import 'customer_theme_palette.dart';
 import 'customer_theme_store.dart';
 import 'nearby/nearby_partner_hero_media.dart';
+import 'nearby/tablet_partner_branding_layout.dart';
 import 'partner_public_profile_page.dart';
 
 typedef CustomerProfileBackendSync =
@@ -877,9 +878,17 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     ]);
     final distanceKm = _mapDoubleAny(p, const ['distance_km', 'distanceKm']);
 
-    final mediaHeight = nearbyPartnerHeroMediaHeight(
-      MediaQuery.sizeOf(context).width,
-    );
+    final viewport = MediaQuery.sizeOf(context);
+    final isTabletBranding = isTabletPartnerBrandingLayout(viewport);
+    final isLandscape = viewport.width > viewport.height;
+    final tabletMedia = isTabletBranding
+        ? TabletPartnerCardMediaSplit.resolve(
+            layoutWidth: viewport.width,
+            isLandscape: isLandscape,
+          )
+        : null;
+    final mediaHeight =
+        tabletMedia?.height ?? nearbyPartnerHeroMediaHeight(viewport.width);
 
     Widget fallbackStrip({double? height}) {
       final h = height ?? mediaHeight;
@@ -954,6 +963,15 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                   heroUrl: heroUrl,
                   logoUrl: logoUrl,
                   fallback: fallbackStrip(height: mediaHeight),
+                  tabletSplit: isTabletBranding,
+                  tabletSplitMetrics: tabletMedia,
+                  logoPanelColor: _card,
+                  logoBorderColor: _gold.withOpacity(
+                    _isDarkTheme ? 0.45 : 0.34,
+                  ),
+                  logoFallbackIconColor: _isDarkTheme
+                      ? _gold.withOpacity(0.96)
+                      : _bronze,
                 ),
                 const SizedBox(height: 8),
                 Row(
@@ -1138,6 +1156,13 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     final logoCandidate = _mapTextAny(p, const ['logo_url', 'logoUrl']);
     final logoUrl = _isPublicHttpsUrl(logoCandidate) ? logoCandidate : '';
     final subtitle = _favoritePartnerSubtitle(p);
+    final viewport = MediaQuery.sizeOf(context);
+    final isTabletBranding = isTabletPartnerBrandingLayout(viewport);
+    final favoriteLogo = isTabletBranding
+        ? TabletFavoritePartnerLogoMetrics.resolve(
+            layoutWidth: width ?? viewport.width,
+          )
+        : null;
     return SizedBox(
       width: width,
       child: _premiumCard(
@@ -1147,24 +1172,42 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                CircleAvatar(
-                  radius: 18,
-                  backgroundColor: _gold.withOpacity(
-                    _isDarkTheme ? 0.14 : 0.10,
+                if (favoriteLogo != null)
+                  PartnerBrandingLogoPlate(
+                    logoUrl: logoUrl,
+                    maxWidth: favoriteLogo.width,
+                    maxHeight: favoriteLogo.height,
+                    padding: favoriteLogo.padding,
+                    backgroundColor: _gold.withOpacity(
+                      _isDarkTheme ? 0.14 : 0.10,
+                    ),
+                    borderColor: _gold.withOpacity(
+                      _isDarkTheme ? 0.45 : 0.34,
+                    ),
+                    fallbackIconColor: _isDarkTheme
+                        ? _gold.withOpacity(0.96)
+                        : _bronze,
+                    borderRadius: 12,
+                  )
+                else
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: _gold.withOpacity(
+                      _isDarkTheme ? 0.14 : 0.10,
+                    ),
+                    foregroundImage: logoUrl.isNotEmpty
+                        ? NetworkImage(logoUrl)
+                        : null,
+                    child: logoUrl.isEmpty
+                        ? Icon(
+                            Icons.local_taxi_outlined,
+                            size: 18,
+                            color: _isDarkTheme
+                                ? _gold.withOpacity(0.96)
+                                : _bronze,
+                          )
+                        : null,
                   ),
-                  foregroundImage: logoUrl.isNotEmpty
-                      ? NetworkImage(logoUrl)
-                      : null,
-                  child: logoUrl.isEmpty
-                      ? Icon(
-                          Icons.local_taxi_outlined,
-                          size: 18,
-                          color: _isDarkTheme
-                              ? _gold.withOpacity(0.96)
-                              : _bronze,
-                        )
-                      : null,
-                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Column(

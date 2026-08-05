@@ -13,6 +13,7 @@ import 'customer_profile_store.dart';
 import 'customer_session_store.dart';
 import 'customer_theme_palette.dart';
 import 'customer_theme_store.dart';
+import 'nearby/tablet_partner_branding_layout.dart';
 import 'payment/payment_method_catalog.dart';
 import 'payment/payment_method_logo.dart';
 import 'payment/payment_method_resolver.dart';
@@ -1114,6 +1115,241 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     );
   }
 
+  /// Phone partner hero — unchanged cover + square logo overlay contract.
+  Widget _buildPhonePartnerHero({
+    required String heroPhotoUrl,
+    required String logoUrl,
+    required String companyName,
+    required String tagline,
+  }) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: Stack(
+        children: [
+          Image.network(
+            heroPhotoUrl,
+            height: 244,
+            width: double.infinity,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) {
+              return Container(
+                height: 244,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      _surfaceAlt,
+                      _card,
+                      _gold.withOpacity(0.18),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+              );
+            },
+          ),
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Colors.black.withOpacity(0.06),
+                    Colors.black.withOpacity(0.74),
+                  ],
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: 12,
+            child: Padding(
+              padding: EdgeInsets.only(left: logoUrl.isNotEmpty ? 94 : 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    companyName,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: _textPrimary,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 18,
+                    ),
+                  ),
+                  if (tagline.isNotEmpty)
+                    Text(
+                      tagline,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: _textMuted, fontSize: 12.5),
+                    ),
+                  const SizedBox(height: 5),
+                  _chip(
+                    _verifiedPartnerTrustLabel(),
+                    icon: Icons.verified_outlined,
+                    color: const Color(0xFF34D29A),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (logoUrl.isNotEmpty)
+            Positioned(
+              left: 12,
+              bottom: 10,
+              child: Container(
+                width: 82,
+                height: 82,
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.72),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: _gold.withOpacity(0.62),
+                    width: 1.2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.30),
+                      blurRadius: 10,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
+                ),
+                padding: const EdgeInsets.all(7),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.network(
+                    logoUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      color: _surfaceAlt,
+                      alignment: Alignment.center,
+                      child: Icon(
+                        Icons.business_outlined,
+                        color: _gold.withOpacity(0.95),
+                        size: 28,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// TABLET-PARTNER-BRANDING-LAYOUT-1: photo | branding split hero.
+  Widget _buildTabletPartnerHero({
+    required String heroPhotoUrl,
+    required String logoUrl,
+    required String companyName,
+    required String tagline,
+    required TabletPartnerProfileHeroSplit split,
+  }) {
+    return ClipRRect(
+      key: const ValueKey<String>('partner_profile_tablet_hero_split'),
+      borderRadius: BorderRadius.circular(18),
+      child: SizedBox(
+        height: split.height,
+        width: double.infinity,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              flex: split.photoFlex,
+              child: ColoredBox(
+                color: _surfaceAlt,
+                child: Image.network(
+                  key: const ValueKey<String>('partner_profile_tablet_photo'),
+                  heroPhotoUrl,
+                  fit: BoxFit.contain,
+                  alignment: Alignment.center,
+                  width: double.infinity,
+                  height: split.height,
+                  errorBuilder: (_, __, ___) => DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          _surfaceAlt,
+                          _card,
+                          _gold.withOpacity(0.18),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Expanded(
+              flex: split.brandingFlex,
+              child: ColoredBox(
+                color: _card,
+                child: Padding(
+                  padding: split.logoPadding,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      PartnerBrandingLogoPlate(
+                        logoUrl: logoUrl,
+                        maxWidth: split.logoMaxWidth,
+                        maxHeight: split.logoMaxHeight,
+                        padding: const EdgeInsets.all(10),
+                        backgroundColor: Colors.black.withOpacity(
+                          _isDarkTheme ? 0.35 : 0.08,
+                        ),
+                        borderColor: _gold.withOpacity(0.55),
+                        fallbackIconColor: _gold.withOpacity(0.95),
+                        borderRadius: 14,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        companyName,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: _textPrimary,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 20,
+                        ),
+                      ),
+                      if (tagline.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          tagline,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: _textMuted,
+                            fontSize: 13.5,
+                          ),
+                        ),
+                      ],
+                      const Spacer(),
+                      _chip(
+                        _verifiedPartnerTrustLabel(),
+                        icon: Icons.verified_outlined,
+                        color: const Color(0xFF34D29A),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = _profileMap(_profile);
@@ -1402,137 +1638,33 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 92),
                       children: [
                         if (heroPhotoUrl.isNotEmpty)
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(18),
-                            child: Stack(
-                              children: [
-                                Image.network(
-                                  heroPhotoUrl,
-                                  height: 244,
-                                  width: double.infinity,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) {
-                                    return Container(
-                                      height: 244,
-                                      width: double.infinity,
-                                      decoration: BoxDecoration(
-                                        gradient: LinearGradient(
-                                          colors: [
-                                            _surfaceAlt,
-                                            _card,
-                                            _gold.withOpacity(0.18),
-                                          ],
-                                          begin: Alignment.topLeft,
-                                          end: Alignment.bottomRight,
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                                Positioned.fill(
-                                  child: DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        colors: [
-                                          Colors.black.withOpacity(0.06),
-                                          Colors.black.withOpacity(0.74),
-                                        ],
-                                        begin: Alignment.topCenter,
-                                        end: Alignment.bottomCenter,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                Positioned(
-                                  left: 12,
-                                  right: 12,
-                                  bottom: 12,
-                                  child: Padding(
-                                    padding: EdgeInsets.only(
-                                      left: logoUrl.isNotEmpty ? 94 : 0,
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          companyName,
-                                          maxLines: 3,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: _textPrimary,
-                                            fontWeight: FontWeight.w800,
-                                            fontSize: 18,
-                                          ),
-                                        ),
-                                        if (tagline.isNotEmpty)
-                                          Text(
-                                            tagline,
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              color: _textMuted,
-                                              fontSize: 12.5,
-                                            ),
-                                          ),
-                                        const SizedBox(height: 5),
-                                        _chip(
-                                          _verifiedPartnerTrustLabel(),
-                                          icon: Icons.verified_outlined,
-                                          color: const Color(0xFF34D29A),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                                if (logoUrl.isNotEmpty)
-                                  Positioned(
-                                    left: 12,
-                                    bottom: 10,
-                                    child: Container(
-                                      width: 82,
-                                      height: 82,
-                                      decoration: BoxDecoration(
-                                        color: Colors.black.withOpacity(0.72),
-                                        borderRadius: BorderRadius.circular(16),
-                                        border: Border.all(
-                                          color: _gold.withOpacity(0.62),
-                                          width: 1.2,
-                                        ),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: Colors.black.withOpacity(
-                                              0.30,
-                                            ),
-                                            blurRadius: 10,
-                                            offset: const Offset(0, 5),
-                                          ),
-                                        ],
-                                      ),
-                                      padding: const EdgeInsets.all(7),
-                                      child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(12),
-                                        child: Image.network(
-                                          logoUrl,
-                                          fit: BoxFit.cover,
-                                          errorBuilder: (_, __, ___) =>
-                                              Container(
-                                                color: _surfaceAlt,
-                                                alignment: Alignment.center,
-                                                child: Icon(
-                                                  Icons.business_outlined,
-                                                  color: _gold.withOpacity(
-                                                    0.95,
-                                                  ),
-                                                  size: 28,
-                                                ),
-                                              ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
+                          Builder(
+                            builder: (heroCtx) {
+                              final viewport = MediaQuery.sizeOf(heroCtx);
+                              final tabletHero =
+                                  isTabletPartnerBrandingLayout(viewport)
+                                  ? TabletPartnerProfileHeroSplit.resolve(
+                                      layoutWidth: viewport.width,
+                                      isLandscape:
+                                          viewport.width > viewport.height,
+                                    )
+                                  : null;
+                              if (tabletHero != null) {
+                                return _buildTabletPartnerHero(
+                                  heroPhotoUrl: heroPhotoUrl,
+                                  logoUrl: logoUrl,
+                                  companyName: companyName,
+                                  tagline: tagline,
+                                  split: tabletHero,
+                                );
+                              }
+                              return _buildPhonePartnerHero(
+                                heroPhotoUrl: heroPhotoUrl,
+                                logoUrl: logoUrl,
+                                companyName: companyName,
+                                tagline: tagline,
+                              );
+                            },
                           )
                         else
                           Container(
