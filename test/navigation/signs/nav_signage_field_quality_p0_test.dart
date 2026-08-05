@@ -381,7 +381,7 @@ void main() {
       expect(NavSignManeuver.values.where((m) => m == p.signManeuver), hasLength(1));
     });
 
-    test('followRouteForced clears specific turn to follow_route', () {
+    test('followRouteForced clears specific turn to upright straight', () {
       final p = _present(
         _snap(
           type: 'turn',
@@ -390,8 +390,9 @@ void main() {
           followRouteForced: true,
         ),
       );
-      expect(p.signManeuver, NavSignManeuver.followRoute);
-      expect(p.maneuverVisual, ManeuverVisual.followRoute);
+      expect(p.signManeuver, NavSignManeuver.straight);
+      expect(p.maneuverVisual, ManeuverVisual.straight);
+      expect(p.signAssetPath, endsWith('/straight.png'));
     });
   });
 

@@ -206,9 +206,9 @@ class NavSignEvent {
       drivingSide: drivingSide ?? snapshot.drivingSide,
       distanceToManeuverMeters: snapshot.distanceToManeuverMeters,
       arrivalConfirmed: arrivalConfirmed ?? snapshot.arrivalConfirmed,
-      // A maneuver the owner has not activated yet describes nothing the driver
-      // can act on, so it resolves to the same neutral sign as a policy
-      // fallback rather than to a turn the driver must not take yet.
+      // A maneuver the owner has not activated yet (or a policy-neutral tick)
+      // must not paint a premature turn. The resolver maps this to the upright
+      // straight plate — not the curved follow_route glyph.
       neutralFallback:
           snapshot.source == NavInstructionSource.fallback ||
           snapshot.followRouteForced,
@@ -375,11 +375,13 @@ NavSignResolution _resolveNavSignInternal(NavSignEvent event) {
   final direction = _direction(event.maneuverModifier);
   final drivingSide = event.drivingSide;
 
-  // A neutral placeholder from the instruction pipeline describes no maneuver,
-  // so it must not borrow a direction from stale type/modifier fields.
+  // NAV-FOLLOW-ROUTE-RUNTIME-TRUTH-P0-2: a withheld / policy-neutral tick
+  // describes upright "keep going" guidance — never a premature turn and never
+  // the curved follow_route glyph. The curved plate stays reserved for truly
+  // unclassified events below. Route shape alone is never consulted.
   if (event.neutralFallback) {
     return const NavSignResolution(
-      maneuver: NavSignManeuver.followRoute,
+      maneuver: NavSignManeuver.straight,
       source: NavSignResolutionSource.safeFallback,
     );
   }

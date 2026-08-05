@@ -31,18 +31,20 @@ String _trNl({
 }) => nl;
 
 NavInstructionSnapshot _followRouteSnap() {
+  // Field case: policy-neutral / withheld "Volg de route naar N454" must
+  // resolve to the upright straight plate — not the curved follow_route glyph.
   return NavInstructionSnapshot(
     distanceToManeuverMeters: 643,
     primaryText: 'Volg de route',
     secondaryText: 'naar N454',
-    // Same unmapped type the signage widget tests use for follow_route.
-    maneuverType: 'unmapped_engine_event',
-    maneuverModifier: '',
+    maneuverType: 'continue',
+    maneuverModifier: 'straight',
     roadName: 'N454',
     roadRef: 'N454',
     isHighwayLike: false,
     lanes: const <DriverNavLaneGuidance>[],
     source: NavInstructionSource.banner,
+    followRouteForced: true,
   );
 }
 
@@ -239,7 +241,7 @@ double _primaryFont(WidgetTester tester) {
 Future<void> _primeFollowRoute(WidgetTester tester, BuildContext context) async {
   final path = navSignAssetPath(
     languageCode: 'nl',
-    maneuver: NavSignManeuver.followRoute,
+    maneuver: NavSignManeuver.straight,
   );
   await tester.runAsync(() async {
     final data = await rootBundle.load(path);
@@ -378,12 +380,14 @@ void main() {
       final signWidget = tester.widget<NavManeuverSign>(
         find.byType(NavManeuverSign),
       );
-      expect(signWidget.maneuver, NavSignManeuver.followRoute);
+      expect(signWidget.maneuver, NavSignManeuver.straight);
       expect(signWidget.resolvedLanguageCode, 'nl');
       expect(
         signWidget.assetPath,
-        'assets/fluxidi_navigation_signs_v3/png/nl/follow_route.png',
+        'assets/fluxidi_navigation_signs_v3/png/nl/straight.png',
       );
+      expect(find.text('Volg de route'), findsOneWidget);
+      expect(find.textContaining('N454'), findsOneWidget);
 
       await _writeBoundaryPng(
         tester,
@@ -477,11 +481,13 @@ void main() {
       expect(split.primaryFontSize, greaterThanOrEqualTo(21));
     });
 
-    test('instruction presentation stays follow_route / N454 / 643 m', () {
+    test('instruction presentation stays straight / N454 / 643 m', () {
       final p = _presentation();
-      expect(p.signManeuver, NavSignManeuver.followRoute);
+      expect(p.signManeuver, NavSignManeuver.straight);
+      expect(p.signAssetPath, endsWith('/straight.png'));
       expect(p.distanceLabel, contains('643'));
       expect(p.secondaryInstruction.toLowerCase(), contains('n454'));
+      expect(p.primaryInstruction, 'Volg de route');
     });
   });
 }

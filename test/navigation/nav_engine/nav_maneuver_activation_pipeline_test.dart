@@ -130,7 +130,7 @@ void main() {
           NavManeuverActivationClass.ordinary);
       expect(tooFar.maneuverOwner!.isActive, isFalse);
       expect(tooFar.snapshot.followRouteForced, isTrue);
-      expect(_signOf(tooFar.snapshot), NavSignManeuver.followRoute);
+      expect(_signOf(tooFar.snapshot), NavSignManeuver.straight);
 
       final inWindow = _atDistance(turn, 200);
       expect(inWindow.maneuverOwner!.isActive, isTrue);
@@ -150,7 +150,7 @@ void main() {
       expect(tooFar.maneuverOwner!.activationClass,
           NavManeuverActivationClass.complex);
       expect(tooFar.snapshot.followRouteForced, isTrue);
-      expect(_signOf(tooFar.snapshot), NavSignManeuver.followRoute);
+      expect(_signOf(tooFar.snapshot), NavSignManeuver.straight);
 
       final inWindow = _atDistance(roundabout, 300);
       expect(inWindow.snapshot.followRouteForced, isFalse);
@@ -183,8 +183,8 @@ void main() {
         languageCode: 'nl',
       );
       expect(p.primaryInstruction, 'Volg de route');
-      expect(p.maneuverVisual, ManeuverVisual.followRoute);
-      expect(p.signManeuver, NavSignManeuver.followRoute);
+      expect(p.maneuverVisual, ManeuverVisual.straight);
+      expect(p.signManeuver, NavSignManeuver.straight);
     });
 
     test('arrival is owned far outside any junction window', () {
@@ -354,7 +354,7 @@ void main() {
       final beforeKeep = advance(steps, 1050, onFork);
       expect(beforeKeep.maneuverOwner!.maneuverType, 'continue');
       expect(beforeKeep.snapshot.followRouteForced, isTrue);
-      expect(_signOf(beforeKeep.snapshot), NavSignManeuver.followRoute);
+      expect(_signOf(beforeKeep.snapshot), NavSignManeuver.straight);
 
       final onKeep = advance(steps, 1150, beforeKeep);
       expect(onKeep.maneuverOwner!.activationClass,
@@ -474,7 +474,7 @@ void main() {
         previousBanner: active.activeBanner,
       );
       expect(rerouted.snapshot.followRouteForced, isTrue);
-      expect(_signOf(rerouted.snapshot), NavSignManeuver.followRoute);
+      expect(_signOf(rerouted.snapshot), NavSignManeuver.straight);
       expect(_signOf(rerouted.snapshot), isNot(NavSignManeuver.turnLeft));
     });
   });
@@ -587,7 +587,7 @@ void main() {
       );
       if (neutral.maneuverType == 'continue') {
         expect(neutral.followRouteForced, isTrue);
-        expect(_signOf(neutral), NavSignManeuver.followRoute);
+        expect(_signOf(neutral), NavSignManeuver.straight);
       } else {
         expect(neutral.followRouteForced, active.followRouteForced);
       }
@@ -595,7 +595,7 @@ void main() {
 
     test('a fallback is followed cleanly by the next real instruction', () {
       final withheld = _atDistance(turn, 400).snapshot;
-      expect(_signOf(withheld), NavSignManeuver.followRoute);
+      expect(_signOf(withheld), NavSignManeuver.straight);
 
       final shown = _atDistance(turn, 180).snapshot;
       expect(_signOf(shown), NavSignManeuver.turnLeft);

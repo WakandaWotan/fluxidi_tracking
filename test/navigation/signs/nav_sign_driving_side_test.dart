@@ -250,14 +250,14 @@ void main() {
   });
 
   group('follow-route and fallback safety', () {
-    test('a withheld maneuver resolves to follow-route, not to its turn', () {
+    test('a withheld maneuver resolves to straight, not to its turn', () {
       final snapshot = _snapshot(
         type: 'turn',
         modifier: 'left',
         distance: 400,
       ).copyWith(followRouteForced: true);
       final resolution = resolveNavSign(NavSignEvent.fromSnapshot(snapshot));
-      expect(resolution.maneuver, NavSignManeuver.followRoute);
+      expect(resolution.maneuver, NavSignManeuver.straight);
       expect(resolution.source, NavSignResolutionSource.safeFallback);
     });
 

@@ -332,7 +332,8 @@ void main() {
           neutralFallback: true,
         ),
       );
-      expect(resolution.maneuver, NavSignManeuver.followRoute);
+      // Upright straight — not a premature left turn, not curved follow_route.
+      expect(resolution.maneuver, NavSignManeuver.straight);
     });
 
     test('unrecognised type still honours a usable modifier', () {

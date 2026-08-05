@@ -355,7 +355,7 @@ void main() {
       }
     });
 
-    testWidgets('rerouting falls back to follow_route, not a wrong turn', (
+    testWidgets('rerouting falls back to straight, not a wrong turn', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -382,7 +382,7 @@ void main() {
       await tester.pump();
       expect(
         _visibleSignPath(tester),
-        'assets/fluxidi_navigation_signs_v3/png/nl/follow_route.png',
+        'assets/fluxidi_navigation_signs_v3/png/nl/straight.png',
       );
     });
 

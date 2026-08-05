@@ -216,6 +216,15 @@ class DriverTurnInstructionBanner extends StatelessWidget {
 
   bool get _useLandscapeCompactRow => compact && !topRowLandscape;
 
+  /// NAV-FOLLOW-ROUTE-RUNTIME-TRUTH-P0-2: tablet full-nav / split portrait must
+  /// stack distance above the primary line so "Volg de route" is never squeezed
+  /// onto one shared row with the chip at 28–32 sp.
+  bool get _useTabletStackedText =>
+      tabletReadability != null &&
+      !compact &&
+      !_useLandscapeTopRow &&
+      !_useLandscapeCompactRow;
+
   bool get _usePortraitTabletPolish =>
       portraitTabletMetrics != null &&
       !compact &&
@@ -466,7 +475,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
                       // so wrapping, ellipsis and height are unchanged, but a
                       // short instruction no longer stretches the card.
                       Flexible(
-                        child: _usePhonePortraitStack
+                        child: (_usePhonePortraitStack || _useTabletStackedText)
                             ? _buildPhonePortraitTextColumn(
                                 palette: palette,
                                 secondaryLine: secondaryLine,

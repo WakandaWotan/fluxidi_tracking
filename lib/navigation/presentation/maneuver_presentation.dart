@@ -4,6 +4,81 @@ import '../driver_navigation_formatters.dart';
 import '../driver_navigation_models.dart';
 import 'nav_sign_resolver.dart';
 
+/// NAV-FOLLOW-ROUTE-RUNTIME-TRUTH-P0-2: deterministic proof of the live
+/// Mapbox step → owner force → canonical sign → asset path chain.
+///
+/// Used by tests (and optional debug hooks). Never invents route-shape-based
+/// classification — only the fields the production banner already uses.
+@immutable
+class NavSignRuntimeTruth {
+  final String rawType;
+  final String rawModifier;
+  final bool followRouteForced;
+  final bool neutralFallback;
+  final ManeuverVisual maneuverVisual;
+  final String canonicalId;
+  final String assetBasename;
+  final String assetPath;
+
+  const NavSignRuntimeTruth({
+    required this.rawType,
+    required this.rawModifier,
+    required this.followRouteForced,
+    required this.neutralFallback,
+    required this.maneuverVisual,
+    required this.canonicalId,
+    required this.assetBasename,
+    required this.assetPath,
+  });
+}
+
+/// Proves which canonical ID and asset path the mounted banner would use.
+@visibleForTesting
+NavSignRuntimeTruth proveNavSignRuntimeTruth({
+  required String type,
+  required String modifier,
+  required DriverNavTranslate tr,
+  String primaryText = '',
+  String secondaryText = '',
+  String roadName = '',
+  String roadRef = '',
+  double distanceMeters = 643,
+  bool followRouteForced = false,
+  NavInstructionSource source = NavInstructionSource.banner,
+  String? languageCode,
+}) {
+  final snapshot = NavInstructionSnapshot(
+    distanceToManeuverMeters: distanceMeters,
+    primaryText: primaryText,
+    secondaryText: secondaryText,
+    maneuverType: type,
+    maneuverModifier: modifier,
+    roadName: roadName,
+    roadRef: roadRef,
+    isHighwayLike: false,
+    lanes: const <DriverNavLaneGuidance>[],
+    source: source,
+    followRouteForced: followRouteForced,
+  );
+  final event = NavSignEvent.fromSnapshot(snapshot);
+  final presentation = buildResponsiveManeuverPresentation(
+    snapshot: snapshot,
+    tr: tr,
+    languageCode: languageCode,
+  );
+  final id = presentation.signManeuver.id;
+  return NavSignRuntimeTruth(
+    rawType: type,
+    rawModifier: modifier,
+    followRouteForced: followRouteForced,
+    neutralFallback: event.neutralFallback,
+    maneuverVisual: presentation.maneuverVisual,
+    canonicalId: id,
+    assetBasename: '$id.png',
+    assetPath: presentation.signAssetPath,
+  );
+}
+
 /// NAV-RESPONSIVE-MANEUVER-BANNER-V1: distance bands that drive maneuver wording.
 ///
 /// Timing wording ("Over 1 km linksaf" vs "Sla nu linksaf") is chosen from the
@@ -635,9 +710,12 @@ String _accessibilityFor({
 /// carries; production leaves both unset and lets the guidance fields the
 /// maneuver owner stamped on the snapshot decide.
 ///
-/// NAV-MANEUVER-OWNER-REBASE-1: when the owner withheld the maneuver — it is
-/// still outside its activation window — the banner shows plain follow-route
-/// wording and the follow-route sign. Activation itself is never decided here.
+/// NAV-MANEUVER-OWNER-REBASE-1 / NAV-FOLLOW-ROUTE-RUNTIME-TRUTH-P0-2:
+/// when the owner withheld the maneuver — it is still outside its activation
+/// window — the banner shows plain "Volg de route" wording and the upright
+/// straight plate. Activation itself is never decided here. The curved
+/// follow_route glyph is not used for withheld / continue / policy-neutral
+/// guidance.
 ResponsiveManeuverPresentation buildResponsiveManeuverPresentation({
   required NavInstructionSnapshot snapshot,
   required DriverNavTranslate tr,
@@ -649,7 +727,7 @@ ResponsiveManeuverPresentation buildResponsiveManeuverPresentation({
   final isArrival = rawVisual == ManeuverVisual.arrive;
   final ownerWithholdsManeuver = snapshot.followRouteForced && !isArrival;
   final visual = ownerWithholdsManeuver
-      ? ManeuverVisual.followRoute
+      ? ManeuverVisual.straight
       : rawVisual;
   final phase = resolveDriverManeuverUrgencyPhase(
     snapshot.distanceToManeuverMeters,

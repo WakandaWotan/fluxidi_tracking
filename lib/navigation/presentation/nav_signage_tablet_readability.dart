@@ -66,8 +66,9 @@ class NavSignageTabletReadabilityMetrics {
   /// Full-navigation target ranges before available-width clamping.
   static const double portraitBannerHeightMin = 112;
   static const double portraitBannerHeightMax = 132;
-  static const double portraitBannerWidthMin = 360;
-  static const double portraitBannerWidthMax = 440;
+  /// Wider portrait band so "Volg de route" fits at 28–32 sp beside the plate.
+  static const double portraitBannerWidthMin = 380;
+  static const double portraitBannerWidthMax = 560;
 
   static const double landscapeBannerHeightMin = 108;
   static const double landscapeBannerHeightMax = 128;
