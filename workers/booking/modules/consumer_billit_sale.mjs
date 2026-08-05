@@ -1,0 +1,510 @@
+// CONSUMER-BILLIT-SERVER-CONTRACT-1
+//
+// Pure decision model for registering private/consumer ride revenue in Billit.
+// Billit live create only supports OrderType "Invoice" (Income). Fluxidi may
+// still present this as "Particuliere verkoop" / "Ontvangstbewijs" with Peppol
+// not applicable. Never invent a Billit document type that the API does not
+// expose in this codebase.
+
+export const CONSUMER_SALE_KIND = "consumer_sale";
+export const CONSUMER_SALE_BILLIT_ORDER_TYPE = "Invoice";
+export const CONSUMER_SALE_DOCUMENT_TYPE = "invoice";
+
+function _str(v, max = 160) {
+  return String(v ?? "").trim().slice(0, max);
+}
+
+function _lower(v, max = 160) {
+  return _str(v, max).toLowerCase();
+}
+
+function _asObject(v) {
+  return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+}
+
+function _positiveEuro(raw) {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    if (raw.value != null) return _positiveEuro(raw.value);
+    if (raw.amount != null) return _positiveEuro(raw.amount);
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !(n > 0)) return null;
+  return Math.round(n * 100) / 100;
+}
+
+function _recordSources(rec) {
+  const record = _asObject(rec);
+  const booking = _asObject(record.booking);
+  const nested = _asObject(record.record);
+  return [record, booking, nested];
+}
+
+export function isStreetDirectBookingRecord(rec) {
+  const record = _asObject(rec);
+  const source = _lower(
+    record.source ??
+      record.booking_source ??
+      record.booking?.source ??
+      record.booking?.booking_source,
+    64,
+  );
+  const rideType = _lower(record.ride_type ?? record.booking?.ride_type, 64);
+  const id = _lower(record.booking_id ?? record.bookingId, 160);
+  return source === "street_ride" || rideType === "direct" || id.startsWith("street_");
+}
+
+export function isBookingCompletedForConsumerSale(rec) {
+  const record = _asObject(rec);
+  const status = _lower(
+    record.status ?? record.booking_status ?? record.booking?.status,
+    40,
+  );
+  return status === "completed" || status === "complete";
+}
+
+export function hasBusinessInvoiceIntent(rec) {
+  const record = _asObject(rec);
+  const intent = _lower(
+    record.invoice_intent ??
+      record.invoiceIntent ??
+      record.booking?.invoice_intent ??
+      record.booking?.invoiceIntent,
+    64,
+  );
+  if (intent === "business_invoice") return true;
+  const requested =
+    record.invoice_requested === true ||
+    record.invoiceRequested === true ||
+    record.booking?.invoice_requested === true;
+  const customerType = _lower(
+    record.billing_customer_snapshot?.customer_type ??
+      record.billingCustomerSnapshot?.customer_type ??
+      record.booking?.billing_customer_snapshot?.customer_type,
+    40,
+  );
+  if (requested && customerType === "business") return true;
+  return false;
+}
+
+export function isConsumerSaleEligibleRecord(rec) {
+  if (!rec || typeof rec !== "object") return false;
+  if (hasBusinessInvoiceIntent(rec)) return false;
+  if (!isBookingCompletedForConsumerSale(rec)) return false;
+  return true;
+}
+
+export function resolveConsumerSaleAmount(rec, { legId = null, legType = null } = {}) {
+  const record = _asObject(rec);
+  const currency = (
+    _str(record.currency ?? record.booking?.currency, 8) || "EUR"
+  ).toUpperCase();
+  if (currency !== "EUR") {
+    return { ok: false, error: "unsupported_currency", currency };
+  }
+
+  if (isStreetDirectBookingRecord(record)) {
+    if (
+      record.street_ride_fare_finalized !== true &&
+      record.streetRideFareFinalized !== true
+    ) {
+      return { ok: false, error: "street_fare_not_finalized", currency };
+    }
+    const euro = _positiveEuro(
+      record.price_incl_vat ??
+        record.priceInclVat ??
+        record.booking?.price_incl_vat,
+    );
+    if (euro == null) {
+      return { ok: false, error: "amount_unavailable", currency };
+    }
+    return {
+      ok: true,
+      currency,
+      cents: Math.round(euro * 100),
+      value: euro.toFixed(2),
+      source: "street_finalized",
+    };
+  }
+
+  const wantedLeg = _lower(legType, 32);
+  const sources = _recordSources(record);
+  let euro = null;
+  let source = null;
+
+  for (const src of sources) {
+    const legPrice = _positiveEuro(src.leg_price_incl_vat ?? src.legPriceInclVat);
+    if (legPrice != null) {
+      euro = legPrice;
+      source = "leg_price_incl_vat";
+      break;
+    }
+  }
+  if (euro == null && wantedLeg === "return") {
+    for (const src of sources) {
+      const p = _positiveEuro(src.price_incl_vat_return ?? src.priceInclVatReturn);
+      if (p != null) {
+        euro = p;
+        source = "price_incl_vat_return";
+        break;
+      }
+    }
+  }
+  if (euro == null && wantedLeg !== "return") {
+    for (const src of sources) {
+      const p = _positiveEuro(src.price_incl_vat_main ?? src.priceInclVatMain);
+      if (p != null) {
+        euro = p;
+        source = "price_incl_vat_main";
+        break;
+      }
+    }
+  }
+  if (euro == null) {
+    for (const src of sources) {
+      const p = _positiveEuro(src.price_incl_vat ?? src.priceInclVat);
+      if (p != null) {
+        euro = p;
+        source = "price_incl_vat";
+        break;
+      }
+    }
+  }
+  if (euro == null) {
+    return { ok: false, error: "amount_unavailable", currency };
+  }
+  // Client amount is never accepted as authority; callers must not pass it in.
+  void legId;
+  return {
+    ok: true,
+    currency,
+    cents: Math.round(euro * 100),
+    value: euro.toFixed(2),
+    source,
+  };
+}
+
+export function resolveConsumerSaleVatFromSnapshot(rec, companyTaxSnapshot = null) {
+  const record = _asObject(rec);
+  const tax = _asObject(companyTaxSnapshot);
+  const rate = Number(
+    record.vat_rate_percent ??
+      record.vatRatePercent ??
+      record.booking?.vat_rate_percent ??
+      tax.vat_rate_percent ??
+      tax.default_vat_rate_percent ??
+      tax.standard_vat_rate_percent,
+  );
+  if (!Number.isFinite(rate) || rate < 0) {
+    return { ok: false, error: "vat_rate_unavailable" };
+  }
+  // Never invent 21 — only accept a finite rate from the canonical snapshot.
+  return {
+    ok: true,
+    vat_rate_percent: rate,
+    source: Number.isFinite(Number(record.vat_rate_percent ?? record.vatRatePercent))
+      ? "booking_snapshot"
+      : "company_tax_snapshot",
+  };
+}
+
+export function buildConsumerSaleIdempotencyKey({
+  tenantId,
+  companyId,
+  bookingId,
+  legId = null,
+} = {}) {
+  const t = _str(tenantId, 96);
+  const c = _str(companyId, 96);
+  const b = _str(bookingId, 160);
+  if (!t || !c || !b) return null;
+  const leg = _str(legId, 160) || "main";
+  return `inv-consumer:${t}:${c}:${b}:${leg}:${CONSUMER_SALE_KIND}:v1`;
+}
+
+export function consumerSalePeppolPolicy() {
+  return {
+    peppol_applicable: false,
+    peppol_required: false,
+    peppol_sent: false,
+    label_key: "peppolNotApplicable",
+    suppress_missing_endpoint_warning: true,
+    suppress_settings_required_warning: true,
+    suppress_send_action: true,
+  };
+}
+
+export function consumerSalePresentation() {
+  return {
+    sale_kind: CONSUMER_SALE_KIND,
+    document_label_key: "consumerSale",
+    document_label_nl: "Particuliere verkoop",
+    receipt_label_nl: "Ontvangstbewijs",
+    status_key: "registeredInBillit",
+    status_nl: "Geregistreerd in Billit",
+    // Internal Billit OrderType remains Invoice; UI must never say "Factuur".
+    billit_order_type: CONSUMER_SALE_BILLIT_ORDER_TYPE,
+    document_type: CONSUMER_SALE_DOCUMENT_TYPE,
+    forbid_invoice_label: true,
+    peppol: consumerSalePeppolPolicy(),
+  };
+}
+
+/**
+ * Gate for creating/registering a consumer Billit sale after completion.
+ */
+export function resolveConsumerSaleRegistrationGate({
+  completed = false,
+  businessInvoiceIntent = false,
+  businessInvoiceExists = false,
+  businessInvoiceInFlight = false,
+  amountCents = 0,
+  existingConsumerDocumentId = "",
+  existingConsumerBillitOrderId = "",
+  consumerSaleSuperseded = false,
+} = {}) {
+  if (businessInvoiceIntent || businessInvoiceExists || businessInvoiceInFlight) {
+    return { action: "none", reason: "business_invoice_active" };
+  }
+  if (consumerSaleSuperseded) {
+    return { action: "none", reason: "consumer_sale_superseded" };
+  }
+  if (!completed) {
+    return { action: "none", reason: "not_completed" };
+  }
+  if (!Number.isInteger(amountCents) || !(amountCents > 0)) {
+    return { action: "none", reason: "invalid_or_zero_amount" };
+  }
+  if (_str(existingConsumerBillitOrderId, 120)) {
+    return {
+      action: "reuse",
+      reason: "existing_billit_order",
+      document_id: _str(existingConsumerDocumentId, 200) || null,
+      billit_order_id: _str(existingConsumerBillitOrderId, 120),
+    };
+  }
+  if (_str(existingConsumerDocumentId, 200)) {
+    return {
+      action: "ensure_billit_order",
+      reason: "existing_document_missing_order",
+      document_id: _str(existingConsumerDocumentId, 200),
+    };
+  }
+  return { action: "create", reason: "eligible_consumer_sale" };
+}
+
+/**
+ * Payment sync against an existing consumer Billit document/order.
+ * Create is never a side-effect of payment sync failure.
+ */
+export function resolveConsumerSalePaymentSyncGate({
+  ridePaid = false,
+  hasConsumerDocument = false,
+  hasConsumerBillitOrder = false,
+  billitPaid = null,
+  billitPaymentSyncStatus = "",
+  paymentMethod = "",
+  paymentProvider = "",
+} = {}) {
+  void paymentMethod;
+  void paymentProvider;
+  if (!ridePaid) {
+    return { action: "none", reason: "ride_unpaid" };
+  }
+  if (!hasConsumerDocument && !hasConsumerBillitOrder) {
+    return { action: "none", reason: "no_consumer_sale" };
+  }
+  const sync = _lower(billitPaymentSyncStatus, 40);
+  if (billitPaid === true || sync === "synced") {
+    return { action: "already_synced", reason: "already_paid" };
+  }
+  if (!hasConsumerBillitOrder) {
+    // Payment sync must not invent a second sale document.
+    return {
+      action: "ensure_order_then_sync",
+      reason: "missing_billit_order_reuse_document",
+      creates_new_sale_document: false,
+    };
+  }
+  return {
+    action: "sync_paid",
+    reason: "ride_paid_billit_pending",
+    creates_new_sale_document: false,
+  };
+}
+
+/**
+ * Conversion from consumer sale → business invoice.
+ *
+ * Billit in this codebase has no replace/reclassify API and CreditNote create
+ * is not wired. Safe interim strategy:
+ *   - mark consumer sale superseded (inactive revenue)
+ *   - issue a separate business invoice identity
+ *   - never count both as active revenue for the same booking/leg
+ */
+export function resolveConsumerToBusinessConversionDecision({
+  hasConsumerSale = false,
+  consumerSaleSuperseded = false,
+  hasActiveBusinessInvoice = false,
+  consumerBillitOrderId = "",
+  businessBillitOrderId = "",
+} = {}) {
+  if (hasActiveBusinessInvoice && _str(businessBillitOrderId, 120)) {
+    return {
+      action: "reuse_business",
+      reason: "business_invoice_already_active",
+      double_revenue_risk: false,
+    };
+  }
+  if (!hasConsumerSale) {
+    return {
+      action: "create_business",
+      reason: "no_consumer_sale",
+      double_revenue_risk: false,
+      requires_consumer_supersede: false,
+    };
+  }
+  if (consumerSaleSuperseded) {
+    return {
+      action: "create_business",
+      reason: "consumer_already_superseded",
+      double_revenue_risk: false,
+      requires_consumer_supersede: false,
+      previous_consumer_order_id: _str(consumerBillitOrderId, 120) || null,
+      accounting_note:
+        "Consumer sale already superseded; business invoice may proceed. Manual Billit credit of the superseded Invoice may still be required in the accountant workflow when the API cannot auto-credit.",
+    };
+  }
+  return {
+    action: "supersede_consumer_then_create_business",
+    reason: "convert_consumer_to_business",
+    double_revenue_risk: false,
+    requires_consumer_supersede: true,
+    previous_consumer_order_id: _str(consumerBillitOrderId, 120) || null,
+    accounting_note:
+      "Billit API in this integration cannot reclassify Invoice→business Peppol invoice in-place. Fluxidi supersedes the consumer sale (inactive revenue) then issues a distinct business invoice. Accountant may still need a Billit credit note against the superseded consumer Invoice when CreditNote create is not automated.",
+  };
+}
+
+export function isActiveRevenueDocument({
+  saleKind = "",
+  superseded = false,
+  lifecycleState = "",
+} = {}) {
+  if (superseded === true) return false;
+  const life = _lower(lifecycleState, 40);
+  if (life === "superseded" || life === "void" || life === "cancelled" || life === "canceled") {
+    return false;
+  }
+  const kind = _lower(saleKind, 40);
+  if (kind === CONSUMER_SALE_KIND || kind === "business_invoice" || kind === "" || kind === "invoice") {
+    return true;
+  }
+  return true;
+}
+
+export function buildConsumerSaleDocumentMetadata({
+  bookingId,
+  legId = null,
+  amount,
+  paymentStatus = "unpaid",
+  paymentMethod = "",
+  paymentProvider = "",
+  billitOrderId = null,
+} = {}) {
+  const presentation = consumerSalePresentation();
+  const peppol = consumerSalePeppolPolicy();
+  return {
+    fluxidi_sale_kind: CONSUMER_SALE_KIND,
+    document_type: CONSUMER_SALE_DOCUMENT_TYPE,
+    presentation_label_key: presentation.document_label_key,
+    status_label_key: presentation.status_key,
+    peppol_applicable: peppol.peppol_applicable,
+    peppol_required: peppol.peppol_required,
+    peppol_sent: peppol.peppol_sent,
+    source_booking_id: _str(bookingId, 160) || null,
+    source_leg_id: _str(legId, 160) || null,
+    amount: amount || null,
+    payment_status: _lower(paymentStatus, 40) || "unpaid",
+    payment_method: _lower(paymentMethod, 40) || null,
+    payment_provider: _lower(paymentProvider, 40) || null,
+    billit_order_id: _str(billitOrderId, 120) || null,
+    active_revenue: true,
+    superseded: false,
+  };
+}
+
+export function mapConsumerSalePaymentMethodLabel({
+  paymentMethod = "",
+  paymentProvider = "",
+  paymentSource = "",
+} = {}) {
+  const method = _lower(paymentMethod, 40);
+  const provider = _lower(paymentProvider, 40);
+  const source = _lower(paymentSource, 40);
+  if (
+    method === "pointofsale" ||
+    method === "tap_to_pay" ||
+    source === "tap_to_pay" ||
+    method === "in_vehicle_card"
+  ) {
+    return {
+      key: "tapToPay",
+      provider_confirmed: provider === "mollie",
+      manual: provider !== "mollie",
+    };
+  }
+  if (method === "bancontact") {
+    return {
+      key: "bancontactManual",
+      provider_confirmed: false,
+      manual: true,
+    };
+  }
+  if (method === "cash") {
+    return { key: "cash", provider_confirmed: false, manual: true };
+  }
+  if (method === "qr_code" || method === "qr") {
+    return { key: "qr", provider_confirmed: false, manual: true };
+  }
+  if (provider === "mollie" || method === "ideal" || method === "creditcard") {
+    return {
+      key: "onlineMollie",
+      provider_confirmed: true,
+      manual: false,
+    };
+  }
+  if (method === "bank_transfer" || method === "bank_transfer_bacs") {
+    return { key: "bankTransfer", provider_confirmed: false, manual: true };
+  }
+  return { key: "unknown", provider_confirmed: false, manual: false };
+}
+
+export function shouldWarnMissingPeppolEndpointForSale({
+  saleKind = "",
+  peppolApplicable = null,
+} = {}) {
+  if (_lower(saleKind, 40) === CONSUMER_SALE_KIND) return false;
+  if (peppolApplicable === false) return false;
+  return true;
+}
+
+export function roundtripAvoidsDoubleRevenue({
+  registerParentTotal = false,
+  registerOutboundLeg = false,
+  registerReturnLeg = false,
+} = {}) {
+  // Canonical strategy: register per operational leg OR parent-only, never both.
+  const legCount =
+    (registerOutboundLeg ? 1 : 0) + (registerReturnLeg ? 1 : 0);
+  if (registerParentTotal && legCount > 0) {
+    return {
+      ok: false,
+      error: "double_revenue_parent_and_legs",
+      strategy: "reject",
+    };
+  }
+  return {
+    ok: true,
+    strategy: legCount > 0 ? "per_leg" : "parent_only",
+  };
+}

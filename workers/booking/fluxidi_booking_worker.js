@@ -247,6 +247,19 @@ import {
   shouldTriggerBillitSyncOnPosPaid,
 } from "./modules/pos_terminal_payment.mjs";
 import {
+  CONSUMER_SALE_KIND,
+  buildConsumerSaleDocumentMetadata,
+  buildConsumerSaleIdempotencyKey,
+  consumerSalePeppolPolicy,
+  hasBusinessInvoiceIntent,
+  isConsumerSaleEligibleRecord,
+  resolveConsumerSaleAmount,
+  resolveConsumerSalePaymentSyncGate,
+  resolveConsumerSaleRegistrationGate,
+  resolveConsumerSaleVatFromSnapshot,
+  resolveConsumerToBusinessConversionDecision,
+} from "./modules/consumer_billit_sale.mjs";
+import {
   _adminTokenFromRequest,
   _requireAdmin,
   _scopeText,
@@ -3841,6 +3854,520 @@ async function findExistingInvoiceDocumentForBooking(
   };
 }
 
+function _documentIsConsumerSale(rec) {
+  const kind = safeStr(
+    rec?.fluxidi_sale_kind ?? rec?.fluxidiSaleKind ?? rec?.sale_kind,
+    40,
+  ).toLowerCase();
+  return kind === CONSUMER_SALE_KIND;
+}
+
+function _documentIsSuperseded(rec) {
+  if (rec?.superseded === true || rec?.active_revenue === false) return true;
+  const life = safeStr(rec?.lifecycle_state ?? rec?.lifecycleState, 40).toLowerCase();
+  return life === "superseded" || life === "void" || life === "cancelled";
+}
+
+async function findExistingConsumerSaleDocumentForBooking(
+  env,
+  scope,
+  bookingId,
+  { sourceLegId = null } = {},
+) {
+  const listed = await listIssuedDocumentRecordsForBooking(env, scope, bookingId);
+  if (!listed || listed.ok !== true || !Array.isArray(listed.records)) {
+    return null;
+  }
+  const wantLegId = safeStr(sourceLegId, 200) || null;
+  const matches = listed.records.filter((rec) => {
+    if (!_documentIsConsumerSale(rec)) return false;
+    if (_documentIsSuperseded(rec)) return false;
+    if (wantLegId) {
+      const recLegId = safeStr(rec?.source_leg_id ?? rec?.sourceLegId, 200) || null;
+      return recLegId === wantLegId;
+    }
+    return true;
+  });
+  if (matches.length === 0) return null;
+  matches.sort((a, b) => {
+    const at = safeStr(a?.issue_timestamp ?? a?.issueTimestamp, 40);
+    const bt = safeStr(b?.issue_timestamp ?? b?.issueTimestamp, 40);
+    return at < bt ? -1 : at > bt ? 1 : 0;
+  });
+  const record = matches[0];
+  const exportObj =
+    record?.billit_export && typeof record.billit_export === "object"
+      ? record.billit_export
+      : null;
+  return {
+    ok: true,
+    document_record: record,
+    document_id: safeStr(record?.document_id ?? record?.documentId, 200) || null,
+    document_number:
+      safeStr(record?.document_number ?? record?.documentNumber, 80) || null,
+    billit_order_id: safeStr(exportObj?.order_id, 120) || null,
+    superseded: _documentIsSuperseded(record),
+  };
+}
+
+function _ensurePrivateConsumerBillingSnapshot(rec) {
+  const existing =
+    rec?.billing_customer_snapshot ||
+    rec?.billingCustomerSnapshot ||
+    rec?.booking?.billing_customer_snapshot ||
+    null;
+  if (existing && typeof existing === "object" && !Array.isArray(existing)) {
+    const name = safeStr(
+      existing.legal_name ?? existing.legalName ?? existing.display_name ?? existing.name,
+      240,
+    );
+    if (name) return existing;
+  }
+  const passenger = safeStr(
+    rec?.custName ??
+      rec?.customer_name ??
+      rec?.customerName ??
+      rec?.booking?.custName ??
+      rec?.booking?.customer_name ??
+      rec?.payload?.name ??
+      "Particuliere klant",
+    240,
+  );
+  return {
+    customer_type: "private",
+    legal_name: passenger || "Particuliere klant",
+    display_name: passenger || "Particuliere klant",
+    fluxidi_sale_kind: CONSUMER_SALE_KIND,
+  };
+}
+
+async function stampConsumerSaleMarkersOnBooking(env, bookingId, markers = {}) {
+  try {
+    const loaded = await loadBookingRecord(env, bookingId);
+    const rec = loaded?.rec;
+    if (!rec || typeof rec !== "object") return false;
+    rec.consumer_sale = {
+      ...(rec.consumer_sale && typeof rec.consumer_sale === "object"
+        ? rec.consumer_sale
+        : {}),
+      ...markers,
+      sale_kind: CONSUMER_SALE_KIND,
+      updated_at: new Date().toISOString(),
+    };
+    const peppol = consumerSalePeppolPolicy();
+    rec.consumer_sale.peppol_applicable = peppol.peppol_applicable;
+    rec.consumer_sale.peppol_required = peppol.peppol_required;
+    await env.BOOKING_KV.put(loaded.key, JSON.stringify(rec));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * CONSUMER-BILLIT-SERVER-CONTRACT-1: register private ride revenue in Billit.
+ * Triggered on completed/finalized consumer rides (not business invoice intent).
+ * Billit OrderType remains Invoice; Fluxidi presentation is consumer_sale.
+ */
+async function maybeRegisterConsumerBillitSaleAfterCompletion(
+  env,
+  scope,
+  bookingId,
+  options = {},
+) {
+  const opts = options && typeof options === "object" ? options : {};
+  const sourceLegId = safeStr(opts.sourceLegId, 200) || null;
+  const sourceLegType = safeStr(opts.sourceLegType, 24) || null;
+  const maskedBooking = _bookingIntentMask(bookingId);
+  if (!env?.BOOKING_KV || !scope?.tenant_id || !scope?.company_id) {
+    return { ok: false, skipped: true, reason: "missing_scope" };
+  }
+
+  let rec = opts.rec && typeof opts.rec === "object" ? opts.rec : null;
+  if (!rec) {
+    try {
+      rec = (await loadBookingRecord(env, bookingId))?.rec || null;
+    } catch (_) {
+      rec = null;
+    }
+  }
+  if (!rec) return { ok: false, skipped: true, reason: "booking_not_found" };
+  if (!isConsumerSaleEligibleRecord(rec) || hasBusinessInvoiceIntent(rec)) {
+    return { ok: true, skipped: true, reason: "not_consumer_eligible" };
+  }
+
+  const amount = resolveConsumerSaleAmount(rec, {
+    legId: sourceLegId,
+    legType: sourceLegType,
+  });
+  if (!amount.ok) {
+    return { ok: true, skipped: true, reason: amount.error || "amount_unavailable" };
+  }
+  const vat = resolveConsumerSaleVatFromSnapshot(rec, opts.companyTaxSnapshot || null);
+  if (!vat.ok) {
+    // Prefer booking-stamped VAT from fare finalize; fail closed if absent.
+    return { ok: true, skipped: true, reason: "vat_rate_unavailable" };
+  }
+
+  const existing = await findExistingConsumerSaleDocumentForBooking(
+    env,
+    scope,
+    bookingId,
+    { sourceLegId },
+  );
+  const gate = resolveConsumerSaleRegistrationGate({
+    completed: true,
+    businessInvoiceIntent: hasBusinessInvoiceIntent(rec),
+    amountCents: amount.cents,
+    existingConsumerDocumentId: existing?.document_id || "",
+    existingConsumerBillitOrderId: existing?.billit_order_id || "",
+    consumerSaleSuperseded: existing?.superseded === true,
+  });
+  if (gate.action === "none") {
+    return { ok: true, skipped: true, reason: gate.reason };
+  }
+  if (gate.action === "reuse") {
+    await stampConsumerSaleMarkersOnBooking(env, bookingId, {
+      document_id: gate.document_id,
+      billit_order_id: gate.billit_order_id,
+      status: "registered",
+      amount: { currency: amount.currency, value: amount.value },
+      amount_source: amount.source,
+    });
+    return {
+      ok: true,
+      skipped: false,
+      reason: "idempotent_reuse",
+      document_id: gate.document_id,
+      billit_order_id: gate.billit_order_id,
+      peppol_sent: false,
+    };
+  }
+
+  // Ensure private billing snapshot so Billit create readiness has a customer name.
+  const snapshot = _ensurePrivateConsumerBillingSnapshot(rec);
+  try {
+    rec.billing_customer_snapshot = snapshot;
+    rec.billingCustomerSnapshot = snapshot;
+    if (rec.booking && typeof rec.booking === "object") {
+      rec.booking.billing_customer_snapshot = snapshot;
+    }
+    await env.BOOKING_KV.put(`booking:${bookingId}`, JSON.stringify(rec));
+  } catch (_) {
+    // continue; issue may still work from stamped snapshot on rec
+  }
+
+  const idempotencyKey = buildConsumerSaleIdempotencyKey({
+    tenantId: scope.tenant_id,
+    companyId: scope.company_id,
+    bookingId,
+    legId: sourceLegId,
+  });
+  if (!idempotencyKey) {
+    return { ok: false, skipped: true, reason: "idempotency_key_unavailable" };
+  }
+
+  let documentId = existing?.document_id || null;
+  let documentNumber = existing?.document_number || null;
+  let documentRecord = existing?.document_record || null;
+
+  if (gate.action === "create" || !documentId) {
+    let serverPricingProfile = null;
+    try {
+      serverPricingProfile = await _loadTenantPricingProfile(env, scope, {
+        allowTenantLegacyFallback: true,
+      });
+    } catch (_) {
+      serverPricingProfile = null;
+    }
+    const built = buildAutoInvoiceIssueBodyFromBooking({
+      scope,
+      booking: rec,
+      bookingId,
+      sourceLegId,
+      sourceLegType,
+      serverPricingProfile,
+    });
+    if (!built.ok) {
+      return { ok: false, skipped: true, reason: built.error || "issue_body_failed" };
+    }
+    // Distinct consumer identity — never collide with business inv-auto keys.
+    built.body.idempotency_key = idempotencyKey;
+    built.body.fluxidi_sale_kind = CONSUMER_SALE_KIND;
+    built.body.created_by_role = "system_consumer_sale";
+
+    const issueResp = await _issueInvoiceCore({
+      env,
+      body: built.body,
+      scope,
+      scopeForBookingMatch: { ...scope, hasScope: true },
+      createdByRoleOverride: "system_consumer_sale",
+      routeLabel: "CONSUMER_BILLIT_SALE_ISSUE",
+    });
+    let issueData = null;
+    try {
+      issueData = await issueResp.json();
+    } catch (_) {
+      issueData = null;
+    }
+    if (!issueResp.ok || !issueData || issueData.ok !== true) {
+      console.log(
+        `[CONSUMER_BILLIT_SALE][ISSUE_FAIL] booking=${maskedBooking} error=${safeStr(issueData?.error, 80) || "issue_failed"}`,
+      );
+      return {
+        ok: false,
+        skipped: false,
+        reason: safeStr(issueData?.error, 80) || "consumer_sale_issue_failed",
+      };
+    }
+    documentId = safeStr(issueData.document_id ?? issueData.documentId, 200) || null;
+    documentNumber =
+      safeStr(issueData.document_number ?? issueData.documentNumber, 80) || null;
+    documentRecord = issueData.document_record || issueData.document || null;
+  }
+
+  // Stamp presentation + Peppol N/A on the issued document when possible.
+  if (documentId && env.BOOKING_KV) {
+    try {
+      const docKey = safeStr(
+        documentRecord?.kv_key ?? documentRecord?.key,
+        240,
+      );
+      // Best-effort: merge metadata via booking consumer_sale markers always.
+      const meta = buildConsumerSaleDocumentMetadata({
+        bookingId,
+        legId: sourceLegId,
+        amount: { currency: amount.currency, value: amount.value },
+        paymentStatus: safeStr(rec.payment_status ?? rec.paymentStatus, 40) || "unpaid",
+        paymentMethod: safeStr(rec.payment_method ?? rec.paymentMethod, 40),
+        paymentProvider: safeStr(rec.payment_provider ?? rec.paymentProvider, 40),
+      });
+      if (documentRecord && typeof documentRecord === "object") {
+        Object.assign(documentRecord, meta);
+        if (docKey) {
+          await env.BOOKING_KV.put(docKey, JSON.stringify(documentRecord));
+        }
+      }
+    } catch (_) {
+      // markers on booking are enough for UI projection
+    }
+  }
+
+  // Billit sandbox order create (OrderType Invoice). Peppol never sent here.
+  let billitOrderId = existing?.billit_order_id || null;
+  const config = resolveBillitOAuthConfig(env);
+  if (config.environment === "sandbox" && documentRecord) {
+    try {
+      const billit = await ensureBillitSandboxOrderForIssuedInvoice(
+        env,
+        scope,
+        config,
+        documentRecord,
+        { documentId, documentNumber },
+      );
+      if (billit?.ok) {
+        billitOrderId = safeStr(billit.billit_order_id, 120) || billitOrderId;
+      }
+    } catch (err) {
+      console.log(
+        `[CONSUMER_BILLIT_SALE][BILLIT_FAIL] booking=${maskedBooking} err=${safeStr(err?.message || err, 80)}`,
+      );
+    }
+  }
+
+  await stampConsumerSaleMarkersOnBooking(env, bookingId, {
+    document_id: documentId,
+    document_number: documentNumber,
+    billit_order_id: billitOrderId,
+    status: billitOrderId ? "registered" : "document_issued",
+    amount: { currency: amount.currency, value: amount.value },
+    amount_source: amount.source,
+    vat_rate_percent: vat.vat_rate_percent,
+    idempotency_key: idempotencyKey,
+  });
+
+  console.log(
+    `[CONSUMER_BILLIT_SALE][OK] booking=${maskedBooking} doc=${_bookingIntentMask(documentId)} order=${_bookingIntentMask(billitOrderId)} amount_source=${amount.source} peppol=n/a`,
+  );
+  return {
+    ok: true,
+    skipped: false,
+    reason: billitOrderId ? "created_or_linked" : "document_issued_billit_pending",
+    document_id: documentId,
+    billit_order_id: billitOrderId,
+    peppol_sent: false,
+    peppol_applicable: false,
+  };
+}
+
+async function maybeSyncConsumerBillitSaleAfterPaid(
+  env,
+  scope,
+  bookingId,
+  options = {},
+) {
+  const opts = options && typeof options === "object" ? options : {};
+  const maskedBooking = _bookingIntentMask(bookingId);
+  let rec = opts.rec && typeof opts.rec === "object" ? opts.rec : null;
+  if (!rec) {
+    try {
+      rec = (await loadBookingRecord(env, bookingId))?.rec || null;
+    } catch (_) {
+      rec = null;
+    }
+  }
+  if (!rec || hasBusinessInvoiceIntent(rec)) {
+    return { handled: false };
+  }
+
+  // If no consumer sale yet but ride is completed+eligible, register first
+  // (completion hook may have been missed), then sync payment.
+  const existing = await findExistingConsumerSaleDocumentForBooking(
+    env,
+    scope,
+    bookingId,
+    { sourceLegId: opts.sourceLegId || null },
+  );
+  if (!existing?.document_id && isConsumerSaleEligibleRecord(rec)) {
+    await maybeRegisterConsumerBillitSaleAfterCompletion(env, scope, bookingId, {
+      rec,
+      sourceLegId: opts.sourceLegId || null,
+      sourceLegType: opts.sourceLegType || null,
+    });
+  }
+  const consumer = await findExistingConsumerSaleDocumentForBooking(
+    env,
+    scope,
+    bookingId,
+    { sourceLegId: opts.sourceLegId || null },
+  );
+  const paymentFields = _bookingPaymentFieldsForBillitSync(rec);
+  const ridePaid = paymentFields?.payment_status === "paid";
+  const exportObj =
+    consumer?.document_record?.billit_export &&
+    typeof consumer.document_record.billit_export === "object"
+      ? consumer.document_record.billit_export
+      : null;
+  const gate = resolveConsumerSalePaymentSyncGate({
+    ridePaid,
+    hasConsumerDocument: !!consumer?.document_id,
+    hasConsumerBillitOrder: !!consumer?.billit_order_id,
+    billitPaid: exportObj?.billit_paid === true ? true : exportObj?.billit_paid === false ? false : null,
+    billitPaymentSyncStatus: safeStr(exportObj?.billit_payment_sync_status, 40),
+    paymentMethod: safeStr(paymentFields?.payment_method, 40),
+    paymentProvider: safeStr(paymentFields?.payment_provider, 40),
+  });
+  if (gate.action === "none") {
+    return { handled: true, ok: true, skipped: true, reason: gate.reason };
+  }
+  if (gate.action === "already_synced") {
+    return {
+      handled: true,
+      ok: true,
+      skipped: true,
+      reason: "already_synced",
+      billit_order_id: consumer?.billit_order_id || null,
+      peppol_sent: false,
+    };
+  }
+
+  const config = resolveBillitOAuthConfig(env);
+  if (config.environment !== "sandbox") {
+    return { handled: true, ok: true, skipped: true, reason: "config_not_sandbox" };
+  }
+
+  if (
+    (gate.action === "ensure_order_then_sync" || gate.action === "sync_paid") &&
+    consumer?.document_record
+  ) {
+    try {
+      const billit = await ensureBillitSandboxOrderForIssuedInvoice(
+        env,
+        scope,
+        config,
+        consumer.document_record,
+        {
+          documentId: consumer.document_id,
+          documentNumber: consumer.document_number,
+        },
+      );
+      await stampConsumerSaleMarkersOnBooking(env, bookingId, {
+        document_id: consumer.document_id,
+        billit_order_id: safeStr(billit?.billit_order_id, 120) || consumer.billit_order_id,
+        status: "registered",
+        payment_sync: ridePaid ? "attempted" : "pending",
+      });
+      console.log(
+        `[CONSUMER_BILLIT_SALE][PAID_SYNC] booking=${maskedBooking} action=${gate.action} order=${_bookingIntentMask(billit?.billit_order_id || consumer.billit_order_id)}`,
+      );
+      return {
+        handled: true,
+        ok: billit?.ok === true,
+        skipped: false,
+        reason: gate.action,
+        billit_order_id: billit?.billit_order_id || consumer.billit_order_id || null,
+        peppol_sent: false,
+        peppol_applicable: false,
+      };
+    } catch (err) {
+      console.log(
+        `[CONSUMER_BILLIT_SALE][PAID_SYNC_FAIL] booking=${maskedBooking} err=${safeStr(err?.message || err, 80)}`,
+      );
+      // Payment sync failure must not create a second sale document.
+      return {
+        handled: true,
+        ok: false,
+        skipped: false,
+        reason: "payment_sync_failed",
+        creates_new_sale_document: false,
+      };
+    }
+  }
+
+  return { handled: true, ok: true, skipped: true, reason: gate.reason };
+}
+
+async function supersedeConsumerSaleForBusinessConversion(
+  env,
+  scope,
+  bookingId,
+  { consumerDocument = null } = {},
+) {
+  const decision = resolveConsumerToBusinessConversionDecision({
+    hasConsumerSale: !!consumerDocument?.document_id,
+    consumerSaleSuperseded: consumerDocument?.superseded === true,
+    consumerBillitOrderId: consumerDocument?.billit_order_id || "",
+  });
+  if (!decision.requires_consumer_supersede) {
+    return { ok: true, decision };
+  }
+  try {
+    const record = consumerDocument?.document_record;
+    if (record && typeof record === "object") {
+      record.superseded = true;
+      record.active_revenue = false;
+      record.lifecycle_state = "superseded";
+      record.superseded_reason = "converted_to_business_invoice";
+      record.superseded_at = new Date().toISOString();
+      const docKey = safeStr(record.kv_key ?? record.key, 240);
+      if (docKey) {
+        await env.BOOKING_KV.put(docKey, JSON.stringify(record));
+      }
+    }
+    await stampConsumerSaleMarkersOnBooking(env, bookingId, {
+      superseded: true,
+      active_revenue: false,
+      status: "superseded",
+      conversion: decision.action,
+      accounting_note: decision.accounting_note,
+      previous_billit_order_id: decision.previous_consumer_order_id,
+    });
+  } catch (_) {
+    // fail-open for business path but markers are best-effort
+  }
+  return { ok: true, decision };
+}
+
 /* Pure builder (Patch B8a) for the body expected by _issueInvoiceCore. It NEVER
  * invents amounts: totals + currency come from deriveServerSideInvoiceContext
  * (the same server derivation the issue route uses), and are passed back as
@@ -5084,11 +5611,20 @@ async function maybeRunBillitAutoCreateAfterPaidLifecycle(env, scope, bookingId,
       return { ok: true, skipped: true, reason: "config_not_sandbox" };
     }
 
-    // Only proceed for business-invoice intent bookings (cheap pre-check; the
-    // helper re-verifies authoritatively).
+    // Business invoice path stays unchanged. Private/consumer rides fall
+    // through to consumer-sale payment sync (never Peppol, never a second sale).
     if (rec) {
       const ctx = _invoiceLifecycleContextFromRecord(rec);
       if (!ctx.businessInvoiceIntent) {
+        const consumerSync = await maybeSyncConsumerBillitSaleAfterPaid(
+          env,
+          scope,
+          bookingId,
+          { rec, source, nowIso, effectiveScope },
+        );
+        if (consumerSync?.handled === true) {
+          return consumerSync;
+        }
         console.log(
           `[BILLIT_AUTO_CREATE_LIFECYCLE] skipped not_business_invoice_intent booking=${maskedBooking}`,
         );
@@ -64673,6 +65209,22 @@ async function applyBookingCompletionFromPlannedTripStopBestEffort(
     console.log(
       `[BOOKING][PLANNED_TRIP_COMPLETION] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeLegId)} trip=${_bookingIntentMask(safeTripId)} status=LEG_COMPLETED parent_status=${legResult?.parent_status || legResult?.status || "-"} source=${safeSourceLabel}`,
     );
+    // Per-leg consumer sale (roundtrip): never also register parent total.
+    try {
+      const saleRec = (await loadBookingRecord(env, safeBookingId))?.rec || null;
+      await maybeRegisterConsumerBillitSaleAfterCompletion(
+        env,
+        tenantScope,
+        safeBookingId,
+        {
+          rec: saleRec,
+          sourceLegId: safeLegId || null,
+          sourceLegType: matchingLegType || null,
+        },
+      );
+    } catch (_) {
+      // best-effort
+    }
     return {
       ok: true,
       booking_id: safeBookingId,
@@ -64730,6 +65282,29 @@ async function applyBookingCompletionFromPlannedTripStopBestEffort(
   console.log(
     `[BOOKING][PLANNED_TRIP_COMPLETION] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeLegId)} trip=${_bookingIntentMask(safeTripId)} status=COMPLETED scope=parent source=${safeSourceLabel}`,
   );
+  // CONSUMER-BILLIT-SERVER-CONTRACT-1: private planned rides register consumer
+  // Billit sales on completion (fixed price; Peppol N/A).
+  try {
+    let saleRec = null;
+    try {
+      saleRec = (await loadBookingRecord(env, safeBookingId))?.rec || null;
+    } catch (_) {
+      saleRec = null;
+    }
+    await maybeRegisterConsumerBillitSaleAfterCompletion(
+      env,
+      tenantScope,
+      safeBookingId,
+      {
+        rec: saleRec,
+        sourceLegId: safeLegId || null,
+      },
+    );
+  } catch (saleErr) {
+    console.log(
+      `[BOOKING][PLANNED_TRIP_COMPLETION][CONSUMER_SALE] booking=${_bookingIntentMask(safeBookingId)} err=${String(saleErr?.message || saleErr).slice(0, 120)}`,
+    );
+  }
   return { ok: true, booking_id: safeBookingId, status: "COMPLETED", scope: "parent" };
 }
 
@@ -65116,6 +65691,25 @@ async function finalizeDirectRideBookingBestEffort(
     } catch (freezeErr) {
       console.log(
         `[BOOKING][STREET_RIDE_FINALIZE][ROUTE_ADDRESS] booking=${_bookingIntentMask(safeBookingId)} freeze=skipped err=${String(freezeErr?.message || freezeErr).slice(0, 120)}`,
+      );
+    }
+    // CONSUMER-BILLIT-SERVER-CONTRACT-1: register private street revenue in
+    // Billit after finalize (Peppol N/A). Fail-closed / best-effort.
+    try {
+      let saleRec = freezeRec;
+      try {
+        const reloaded = await loadBookingRecord(env, safeBookingId);
+        if (reloaded?.rec) saleRec = reloaded.rec;
+      } catch (_) {}
+      await maybeRegisterConsumerBillitSaleAfterCompletion(
+        env,
+        tenantScope,
+        safeBookingId,
+        { rec: saleRec },
+      );
+    } catch (saleErr) {
+      console.log(
+        `[BOOKING][STREET_RIDE_FINALIZE][CONSUMER_SALE] booking=${_bookingIntentMask(safeBookingId)} err=${String(saleErr?.message || saleErr).slice(0, 120)}`,
       );
     }
   }
@@ -66228,11 +66822,32 @@ async function handleCompanyBookingRequestBusinessInvoice({
   });
 
   // 4. Existing invoice + stored snapshot -> retry decision.
+  // Consumer sales use the same Document Core invoice type but must be
+  // superseded before a business invoice is issued (no double revenue).
+  const existingConsumerSale = await findExistingConsumerSaleDocumentForBooking(
+    env,
+    scope,
+    safeBookingId,
+  );
+  if (existingConsumerSale?.document_id) {
+    await supersedeConsumerSaleForBusinessConversion(env, scope, safeBookingId, {
+      consumerDocument: existingConsumerSale,
+    });
+  }
   const existingInvoice = await findExistingInvoiceDocumentForBooking(
     env,
     scope,
     safeBookingId,
   );
+  // Ignore superseded consumer documents for business reuse/conflict.
+  const existingInvoiceForBusiness =
+    existingInvoice &&
+    _documentIsConsumerSale(existingInvoice.document_record) &&
+    _documentIsSuperseded(existingInvoice.document_record)
+      ? null
+      : existingInvoice && _documentIsConsumerSale(existingInvoice.document_record)
+        ? null
+        : existingInvoice;
   const existingSnapshot =
     (rec.billing_customer_snapshot ?? rec.billingCustomerSnapshot) ||
     (rec.booking && typeof rec.booking === "object"
@@ -66241,8 +66856,13 @@ async function handleCompanyBookingRequestBusinessInvoice({
       : null) ||
     null;
   const decision = resolveBusinessInvoiceRetryDecision({
-    existingInvoice,
-    existingSnapshot,
+    existingInvoice: existingInvoiceForBusiness,
+    existingSnapshot:
+      existingConsumerSale?.document_id &&
+      (!existingInvoiceForBusiness ||
+        _documentIsConsumerSale(existingInvoiceForBusiness.document_record))
+        ? null
+        : existingSnapshot,
     requestedSnapshot,
   });
   if (decision.action === "conflict") {
