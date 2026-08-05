@@ -1,12 +1,14 @@
 # ============================================================================
 # FLUXIDI FIELD BUILD — Tablet
-# Exact commit: 6a63dedb9179cce87dbc217069dbe8cd62e1fb52
+# Exact commit: 9ce6959ed9868a5933aef5766aadbc4765c446dc
 # Clean integration worktree. Dirty hoofdrepository blijft onaangeraakt.
 # Exact 12 dart-defines, NO ADMIN_TOKEN, NO LEARNING_SERVICE_TOKEN.
 #
-# PIN NOTE: TABLET-PARTNER-BRANDING-LAYOUT-1 on FULL-PRODUCT-PLUS-PNG-NAV-20260805.
-# Theme/Billit/PNG/owner gates remain. On HEAD mismatch the script checks out
-# $requiredHead in place (or recreates).
+# PIN NOTE: TABLET-PIN-FINAL-VISUAL-INTEGRATION-20260805
+# App head includes PNG nav, maneuver owner, tablet readability, partner
+# branding layout, and partner media polish. Theme/Billit/PNG/owner gates
+# remain. On HEAD mismatch the script checks out $requiredHead in place
+# (or recreates).
 # ============================================================================
 
 $ErrorActionPreference = 'Stop'
@@ -16,7 +18,7 @@ $repo         = 'C:\_flutter_work\fluxidi_tracking'
 $worktree     = 'C:\_flutter_work\fluxidi_tracking_full_integration_20260805'
 $device       = 'R52Y808CN2M'
 $adb          = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-$requiredHead = '6a63dedb9179cce87dbc217069dbe8cd62e1fb52'
+$requiredHead = '9ce6959ed9868a5933aef5766aadbc4765c446dc'
 $branch       = 'release/full-tablet-integration-20260805'
 
 function Assert-LastExitCode {
