@@ -34,6 +34,15 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   /// never left `true` indefinitely.
   bool _mollieCheckoutLoading = false;
 
+  /// TAP-TO-PAY-DRIVER-UI-1: Mollie POS / Tap to Pay capability + in-flight
+  /// guard. Capability is loaded from the driver-safe booking-worker probe;
+  /// phone and tablet share the same logical path id.
+  bool _tapToPayCapabilityLoaded = false;
+  bool _tapToPayAvailable = false;
+  bool _tapToPayInFlight = false;
+  String? _tapToPayStatusMessageKey;
+  final TapToPayStartGuard _tapToPayStartGuard = TapToPayStartGuard();
+
   /// Raw `/pay/status` payload captured on the poll attempt that first
   /// reported `paid`, used to enrich the authoritative-fields merge when the
   /// live booking GET fallback is unavailable.
@@ -186,6 +195,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     _paymentStatus = _initialPaymentStatus();
     unawaited(_resolveReceiptPaymentStatus());
     unawaited(_ensureStreetBusinessInvoiceEligibilityResolved());
+    unawaited(_refreshTapToPayCapability());
     _logStreetInvoiceReentry(phase: 'receipt_open');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -212,8 +222,219 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     _streetInvoiceResolvedBookingId = null;
     _hasStreetBusinessInvoice = false;
     _streetBusinessInvoicePaid = false;
+    _tapToPayCapabilityLoaded = false;
+    _tapToPayAvailable = false;
+    _tapToPayInFlight = false;
+    _tapToPayStatusMessageKey = null;
     unawaited(_ensureStreetBusinessInvoiceEligibilityResolved());
+    unawaited(_refreshTapToPayCapability());
     _logStreetInvoiceReentry(phase: 'receipt_reentry');
+  }
+
+  Future<void> _refreshTapToPayCapability() async {
+    // Same logical path on phone and tablet — form factor never gates.
+    assert(
+      tapToPayLogicalPathId(isTablet: false) ==
+          tapToPayLogicalPathId(isTablet: true),
+    );
+    try {
+      final scope = _strictActiveBookingScopeQuery();
+      final raw = await fetchDriverMollieTerminalCapability(
+        tenantId: scope?['tenant_id'],
+        companyId: scope?['company_id'],
+      );
+      final status = resolveTapToPayCapabilityStatus(raw);
+      final available = shouldShowTapToPayAction(status);
+      if (!mounted) return;
+      setState(() {
+        _tapToPayCapabilityLoaded = true;
+        _tapToPayAvailable = available;
+      });
+      debugPrint(
+        '[TAP_TO_PAY][CAPABILITY] available=$available '
+        'status=${status.name} path=${tapToPayLogicalPathId(isTablet: false)}',
+      );
+    } catch (e) {
+      debugPrint('[TAP_TO_PAY][CAPABILITY][ERROR] $e');
+      if (!mounted) return;
+      setState(() {
+        _tapToPayCapabilityLoaded = true;
+        _tapToPayAvailable = false;
+      });
+    }
+  }
+
+  Future<void> _startTapToPay(BuildContext context) async {
+    if (_tapToPayInFlight || _tapToPayStartGuard.inFlight) return;
+    if (!_tapToPayAvailable) return;
+    if (!_guardDriverReceiptOperation(action: 'tap_to_pay')) return;
+
+    final strictScope = _strictReceiptPaymentScopeForMutation(
+      context: context,
+      action: 'tap_to_pay',
+    );
+    if (strictScope == null) return;
+
+    final bookingId = (item.bookingId ?? '').trim();
+    if (bookingId.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_receiptText('bookingIdMissing'))));
+      return;
+    }
+
+    final maskedRef = _safeRefPreview(bookingId);
+    final started = await _tapToPayStartGuard.runOnce(() async {
+      if (!mounted) return false;
+      setState(() {
+        _tapToPayInFlight = true;
+        _tapToPayStatusMessageKey = 'tapToPayStarting';
+      });
+
+      // Never send amount — server resolves planned fixed price / street fare.
+      final start = await startDriverMollieTerminalPayment(
+        bookingId: bookingId,
+        legId: _operationalLegIdForReceipt(),
+        legType: _operationalLegTypeTokenForReceipt(),
+        tenantId: strictScope['tenant_id'],
+        companyId: strictScope['company_id'],
+      );
+      final httpCode = (start['http_code'] as num?)?.toInt() ?? 0;
+      final ok = start['ok'] == true;
+      final paymentId = (start['payment_id'] ?? start['paymentId'] ?? '')
+          .toString()
+          .trim();
+      final status = (start['status'] ?? '').toString();
+      final mollieStatus =
+          (start['mollie_status'] ?? start['mollieStatus'] ?? '').toString();
+      final valid = cardTerminalStartIsValidIntent(
+        httpCode: httpCode,
+        ok: ok,
+        paymentId: paymentId,
+        status: status,
+        mollieStatus: mollieStatus,
+      );
+      debugPrint(
+        cardTerminalDiagnosticsLine(
+          phase: CardTerminalPhase.launch,
+          amountCents: 0,
+          providerStatus: mollieStatus.isEmpty ? status : mollieStatus,
+          paymentWritten: false,
+          reason: valid ? 'tap_to_pay_start_ok' : 'tap_to_pay_start_invalid',
+        ),
+      );
+      if (!valid) {
+        if (!mounted) return false;
+        setState(() {
+          _tapToPayInFlight = false;
+          _tapToPayStatusMessageKey = 'cardTerminalRetryOrOther';
+        });
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_receiptText('cardTerminalRetryOrOther'))),
+          );
+        }
+        return false;
+      }
+
+      if (!mounted) return false;
+      setState(() => _tapToPayStatusMessageKey = 'tapToPayWaitingForCard');
+
+      // Bounded poll; only Mollie `paid` (via server reconcile) marks paid.
+      const maxAttempts = 40;
+      for (var i = 0; i < maxAttempts; i++) {
+        await Future<void>.delayed(const Duration(seconds: 2));
+        if (!mounted) return false;
+        if (i > 0 && i % 5 == 0) {
+          setState(() => _tapToPayStatusMessageKey = 'tapToPayCheckingStatus');
+        }
+        final poll = await pollDriverMollieTerminalPaymentStatus(
+          bookingId: bookingId,
+          paymentId: paymentId,
+          legId: _operationalLegIdForReceipt(),
+          tenantId: strictScope['tenant_id'],
+          companyId: strictScope['company_id'],
+        );
+        final pollHttp = (poll['http_code'] as num?)?.toInt() ?? 0;
+        final providerStatus =
+            (poll['mollie_status'] ?? poll['mollieStatus'] ?? '').toString();
+        final outcome = classifyCardTerminalProviderStatus(
+          providerStatus: providerStatus,
+          httpCode: pollHttp >= 400 ? pollHttp : null,
+        );
+        final serverPaid = poll['paid'] == true;
+        final paymentWritten = poll['payment_written'] == true;
+        debugPrint(
+          cardTerminalDiagnosticsLine(
+            phase: CardTerminalPhase.callback,
+            amountCents: 0,
+            providerStatus: providerStatus,
+            paymentWritten: paymentWritten || serverPaid,
+            reason: cardTerminalOutcomeReason(outcome),
+          ),
+        );
+
+        if (serverPaid || cardTerminalShouldWritePaid(outcome)) {
+          if (!mounted) return true;
+          setState(() {
+            _tapToPayStatusMessageKey = 'tapToPaySucceeded';
+            _paymentStatus = _ReceiptPaymentStatus.paid;
+          });
+          final fields = await _fetchAuthoritativePaymentFields(bookingId);
+          if (mounted && fields != null && fields.isNotEmpty) {
+            _mergePaymentFieldsIntoReceiptDetails(fields);
+            setState(() => _paymentStatus = _ReceiptPaymentStatus.paid);
+          }
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(_receiptText('tapToPaySucceeded'))),
+            );
+          }
+          return true;
+        }
+
+        if (cardTerminalIsTerminalOutcome(outcome)) {
+          final msgKey =
+              cardTerminalUserMessageKey(outcome) ?? 'cardTerminalRetryOrOther';
+          if (!mounted) return false;
+          setState(() {
+            _tapToPayInFlight = false;
+            _tapToPayStatusMessageKey = msgKey;
+          });
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(_receiptText(msgKey))),
+            );
+          }
+          // Explicitly keep unpaid — never invent paid on cancel/fail/return.
+          return false;
+        }
+      }
+
+      if (!mounted) return false;
+      setState(() {
+        _tapToPayInFlight = false;
+        _tapToPayStatusMessageKey = 'tapToPayCheckingStatus';
+      });
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_receiptText('tapToPayCheckingStatus'))),
+        );
+      }
+      debugPrint(
+        '[TAP_TO_PAY][POLL_TIMEOUT] booking=$maskedRef unpaid=true '
+        '(backend reconcile may still mark paid later)',
+      );
+      return false;
+    });
+
+    if (started == null) {
+      // Double-tap ignored.
+      return;
+    }
+    if (mounted) {
+      setState(() => _tapToPayInFlight = false);
+    }
   }
 
   /// Bounded re-entry diagnostics (no PII / no tokens). Logged on receipt open
@@ -4699,8 +4920,45 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
               label: Text(_receiptText('cashReceived')),
             ),
             const SizedBox(height: 8),
+            if (_tapToPayAvailable) ...[
+              FilledButton.icon(
+                onPressed: (canRequestPayment && !_tapToPayInFlight)
+                    ? () => _startTapToPay(context)
+                    : null,
+                icon: _tapToPayInFlight
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.contactless),
+                label: Text(
+                  _receiptText(
+                    _tapToPayInFlight
+                        ? (_tapToPayStatusMessageKey ?? 'tapToPayStarting')
+                        : 'tapToPay',
+                  ),
+                ),
+              ),
+              if ((_tapToPayStatusMessageKey ?? '').isNotEmpty &&
+                  !_tapToPayInFlight)
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, top: 4, bottom: 4),
+                  child: Text(
+                    _receiptText(_tapToPayStatusMessageKey!),
+                    style: TextStyle(fontSize: 11, color: _palette.textMuted),
+                  ),
+                ),
+              const SizedBox(height: 8),
+            ] else if (_tapToPayCapabilityLoaded) ...[
+              // Capability loaded and no usable terminal: hide Tap to Pay.
+              // Manual Bancontact remains available below.
+            ],
             FilledButton.icon(
-              onPressed: canRequestPayment
+              onPressed: canRequestPayment && !_tapToPayInFlight
                   ? () => _persistInCarPayment(
                       context: context,
                       method: 'bancontact',

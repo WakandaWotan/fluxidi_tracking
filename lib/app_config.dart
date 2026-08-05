@@ -9702,6 +9702,128 @@ Future<Map<String, dynamic>> startBackendMollieTerminalPayment({
   return map;
 }
 
+/// Driver/company Tap-to-Pay capability (active terminal available?).
+///
+/// Uses in-car payment auth (driver session or company session). Never sends
+/// ADMIN_TOKEN. Response is PII-light: availability + status token only.
+Future<Map<String, dynamic>> fetchDriverMollieTerminalCapability({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final auth = await resolveInCarPaymentAuthHeaders();
+  if (auth.mode == InCarPaymentAuthMode.none) {
+    return <String, dynamic>{
+      'ok': false,
+      'available': false,
+      'status': 'unauthorized',
+      'error': 'unauthorized',
+    };
+  }
+  final endpoint = Uri.parse(
+    '${appConfig.bookingBaseUrl}/driver/mollie/terminal-payment/capability',
+  );
+  final body = <String, dynamic>{
+    if ((tenantId ?? '').trim().isNotEmpty) 'tenant_id': tenantId!.trim(),
+    if ((companyId ?? '').trim().isNotEmpty) 'company_id': companyId!.trim(),
+  };
+  final res = await http
+      .post(endpoint, headers: auth.headers, body: jsonEncode(body))
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) {
+    return <String, dynamic>{
+      'ok': false,
+      'available': false,
+      'status': 'error',
+      'http_code': res.statusCode,
+    };
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  map['http_code'] = res.statusCode;
+  return map;
+}
+
+/// Starts a server-authoritative driver Tap-to-Pay / POS payment.
+///
+/// Client must NOT send amount or terminal id as authority — server resolves
+/// both from the canonical booking + synced terminal snapshot.
+Future<Map<String, dynamic>> startDriverMollieTerminalPayment({
+  required String bookingId,
+  String? legId,
+  String? legType,
+  String? tenantId,
+  String? companyId,
+}) async {
+  final auth = await resolveInCarPaymentAuthHeaders();
+  if (auth.mode == InCarPaymentAuthMode.none) {
+    return <String, dynamic>{
+      'ok': false,
+      'error': 'unauthorized',
+      'http_code': 401,
+    };
+  }
+  final endpoint = Uri.parse(
+    '${appConfig.bookingBaseUrl}/driver/mollie/terminal-payment/start',
+  );
+  final body = <String, dynamic>{
+    'booking_id': bookingId.trim(),
+    if ((legId ?? '').trim().isNotEmpty) 'leg_id': legId!.trim(),
+    if ((legType ?? '').trim().isNotEmpty) 'leg_type': legType!.trim(),
+    if ((tenantId ?? '').trim().isNotEmpty) 'tenant_id': tenantId!.trim(),
+    if ((companyId ?? '').trim().isNotEmpty) 'company_id': companyId!.trim(),
+  };
+  final res = await http
+      .post(endpoint, headers: auth.headers, body: jsonEncode(body))
+      .timeout(const Duration(seconds: 25));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  final map = decoded is Map
+      ? Map<String, dynamic>.from(decoded)
+      : <String, dynamic>{'ok': false, 'error': 'invalid_response'};
+  map['http_code'] = res.statusCode;
+  return map;
+}
+
+/// Polls / reconciles an in-flight driver Tap-to-Pay payment.
+///
+/// Only Mollie `paid` (server-side) marks the booking paid. Client never
+/// invents paid from local UI return alone.
+Future<Map<String, dynamic>> pollDriverMollieTerminalPaymentStatus({
+  required String bookingId,
+  String? paymentId,
+  String? legId,
+  String? tenantId,
+  String? companyId,
+}) async {
+  final auth = await resolveInCarPaymentAuthHeaders();
+  if (auth.mode == InCarPaymentAuthMode.none) {
+    return <String, dynamic>{
+      'ok': false,
+      'error': 'unauthorized',
+      'http_code': 401,
+      'paid': false,
+    };
+  }
+  final endpoint = Uri.parse(
+    '${appConfig.bookingBaseUrl}/driver/mollie/terminal-payment/status',
+  );
+  final body = <String, dynamic>{
+    'booking_id': bookingId.trim(),
+    if ((paymentId ?? '').trim().isNotEmpty) 'payment_id': paymentId!.trim(),
+    if ((legId ?? '').trim().isNotEmpty) 'leg_id': legId!.trim(),
+    if ((tenantId ?? '').trim().isNotEmpty) 'tenant_id': tenantId!.trim(),
+    if ((companyId ?? '').trim().isNotEmpty) 'company_id': companyId!.trim(),
+  };
+  final res = await http
+      .post(endpoint, headers: auth.headers, body: jsonEncode(body))
+      .timeout(const Duration(seconds: 20));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  final map = decoded is Map
+      ? Map<String, dynamic>.from(decoded)
+      : <String, dynamic>{'ok': false, 'error': 'invalid_response'};
+  map['http_code'] = res.statusCode;
+  return map;
+}
+
 Future<void> loadLocalTenantState() async {
   try {
     _deletedDriverIdsByScope.clear();

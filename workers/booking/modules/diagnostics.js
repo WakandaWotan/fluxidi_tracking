@@ -43,6 +43,7 @@ GET  /admin/mollie/connect/test-payment/status
 GET  /admin/mollie/terminals (?testmode=true for test snapshot)
 POST /admin/mollie/terminals/sync (body/query testmode=true for test sync)
 POST /admin/mollie/terminal-payment/start
+POST /driver/mollie/terminal-payment/capability
 POST /driver/mollie/terminal-payment/start
 POST /driver/mollie/terminal-payment/status
 POST /admin/mollie/connect/disconnect

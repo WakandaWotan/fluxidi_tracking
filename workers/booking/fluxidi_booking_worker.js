@@ -32817,6 +32817,53 @@ export default {
         );
       }
 
+      // TAP-TO-PAY-DRIVER-UI-1: capability probe for Tap-to-Pay button gating.
+      if (
+        url.pathname === "/driver/mollie/terminal-payment/capability" &&
+        request.method === "POST"
+      ) {
+        const body = await safeJson(request);
+        const trusted = await _resolveTrustedBookingActor(request, url, env, body);
+        if (!trusted.ok) return trusted.response;
+        if (
+          trusted.auth_mode !== "admin_token" &&
+          !trusted.driver_session &&
+          !trusted.company_session
+        ) {
+          return json({ ok: false, error: "unauthorized" }, 401);
+        }
+        let tenantScope = null;
+        if (trusted.driver_session) {
+          tenantScope = {
+            tenant_id: trusted.driver_session.tenant_id,
+            company_id: trusted.driver_session.company_id,
+            hasScope: true,
+          };
+        } else if (trusted.company_session) {
+          tenantScope = {
+            tenant_id: trusted.company_session.tenant_id,
+            company_id: trusted.company_session.company_id,
+            hasScope: true,
+          };
+        } else if (trusted.auth_mode === "admin_token") {
+          const explicit = resolveExplicitBookingRequestScope({
+            request,
+            url,
+            body,
+          });
+          if (!explicit?.tenant_id || !explicit?.company_id) {
+            return json(missingTenantScopeError(), 400);
+          }
+          tenantScope = {
+            tenant_id: explicit.tenant_id,
+            company_id: explicit.company_id,
+            hasScope: true,
+          };
+        }
+        const out = await resolveDriverPosTerminalCapability(env, tenantScope);
+        return json(out, out?.ok ? 200 : 400);
+      }
+
       // TAP-TO-PAY-SERVER-CONTRACT-1: driver-safe POS terminal payment start.
       // Server selects terminal + amount; client amount/terminal id ignored.
       if (
@@ -80118,6 +80165,117 @@ function _applyCheckoutResumeFieldsToCanonicalRecord(rec, {
 
 // TAP-TO-PAY-SERVER-CONTRACT-1 — driver Mollie Point-of-Sale terminal payment.
 // Amount + terminal are server-authoritative. Client amount/terminal id ignored.
+async function resolveDriverPosTerminalCapability(env, tenantScope) {
+  if (!tenantScope?.hasScope) {
+    return {
+      ok: false,
+      available: false,
+      status: "missing_scope",
+      error: "missing_scope",
+    };
+  }
+  if (!env?.BOOKING_KV) {
+    return {
+      ok: false,
+      available: false,
+      status: "error",
+      error: "missing_booking_kv",
+    };
+  }
+
+  let credentials = null;
+  try {
+    credentials = await resolveCompanyMollieConnectCredentials(env, tenantScope, {
+      purpose: "driver_pos_terminal_capability",
+    });
+  } catch (_) {
+    credentials = { ok: false };
+  }
+  if (!credentials?.ok || !_isCompanyMollieOAuthCredentials(credentials)) {
+    credentials = null;
+    return {
+      ok: true,
+      available: false,
+      status: "no_terminal",
+      error: "company_mollie_credentials_unavailable",
+    };
+  }
+  const companyMollieProfileId = _companyMollieProfileId(credentials);
+  credentials = null;
+  if (!companyMollieProfileId) {
+    return {
+      ok: true,
+      available: false,
+      status: "no_terminal",
+      error: "company_mollie_credentials_unavailable",
+    };
+  }
+
+  const snapshotKey = buildScopedMollieTerminalsSnapshotKey({
+    ...tenantScope,
+    testmode: false,
+  });
+  const snapshot = snapshotKey
+    ? await env.BOOKING_KV.get(snapshotKey, { type: "json" })
+    : null;
+  if (!snapshot || typeof snapshot !== "object") {
+    return {
+      ok: true,
+      available: false,
+      status: "no_terminal",
+      error: "terminal_snapshot_not_synced",
+    };
+  }
+  if (!posTerminalSnapshotModeMatches(snapshot, { expectTestmode: false })) {
+    return {
+      ok: true,
+      available: false,
+      status: "error",
+      error: "terminal_snapshot_mode_mismatch",
+    };
+  }
+  const terminals = Array.isArray(snapshot.terminals)
+    ? snapshot.terminals
+        .map(_sanitizeMollieTerminalForSnapshot)
+        .filter((t) => !!t?.id)
+    : [];
+  const defaultTerminalId = safeStr(
+    snapshot.default_terminal_id ??
+      snapshot.defaultTerminalId ??
+      snapshot.selected_terminal_id ??
+      snapshot.selectedTerminalId,
+    120,
+  );
+  const selected = selectServerSidePosTerminal(terminals, {
+    profileId: companyMollieProfileId,
+    defaultTerminalId,
+  });
+  if (!selected?.ok) {
+    const err = selected?.error || "terminal_not_configured";
+    let status = "no_terminal";
+    if (err === "terminal_selection_required") {
+      status = "multiple_terminals_need_default";
+    } else if (err === "terminal_not_configured") {
+      const anyActive = terminals.some(
+        (t) => String(t?.status || "").toLowerCase() === "active",
+      );
+      status = anyActive
+        ? "connected_no_active_terminal"
+        : terminals.length > 0
+          ? "connected_no_active_terminal"
+          : "no_terminal";
+    }
+    return { ok: true, available: false, status, error: err };
+  }
+  return {
+    ok: true,
+    available: true,
+    status: "active_terminal",
+    selection: selected.selection,
+    terminal_id_masked: maskPosTerminalId(safeStr(selected.terminal?.id, 120)),
+  };
+}
+
 async function startDriverPosTerminalPaymentAuthoritative(
   bookingId,
   env,

@@ -607,11 +607,75 @@ String _receiptText(String key) {
         es: 'Efectivo recibido',
       );
     case 'paidByCardTerminal':
+      // Manual Bancontact confirmation only — NOT Mollie Tap to Pay / POS.
       return _tr(
-        nl: 'Betaald via Bancontact',
-        en: 'Paid by card terminal',
-        fr: 'Payé par terminal bancaire',
-        es: 'Pagado con terminal de tarjeta',
+        nl: 'Bancontact handmatig registreren',
+        en: 'Register Bancontact manually',
+        fr: 'Enregistrer Bancontact manuellement',
+        es: 'Registrar Bancontact manualmente',
+      );
+    case 'tapToPay':
+      return _tr(
+        nl: 'Tap to Pay',
+        en: 'Tap to Pay',
+        fr: 'Tap to Pay',
+        es: 'Tap to Pay',
+      );
+    case 'tapToPayStarting':
+      return _tr(
+        nl: 'Terminal wordt gestart…',
+        en: 'Starting terminal…',
+        fr: 'Démarrage du terminal…',
+        es: 'Iniciando terminal…',
+      );
+    case 'tapToPayWaitingForCard':
+      return _tr(
+        nl: 'Wacht op kaart…',
+        en: 'Waiting for card…',
+        fr: 'En attente de la carte…',
+        es: 'Esperando tarjeta…',
+      );
+    case 'tapToPaySucceeded':
+      return _tr(
+        nl: 'Betaling geslaagd',
+        en: 'Payment successful',
+        fr: 'Paiement réussi',
+        es: 'Pago correcto',
+      );
+    case 'tapToPayCancelled':
+      return _tr(
+        nl: 'Betaling geannuleerd',
+        en: 'Payment cancelled',
+        fr: 'Paiement annulé',
+        es: 'Pago cancelado',
+      );
+    case 'tapToPayDeclined':
+      return _tr(
+        nl: 'Betaling geweigerd',
+        en: 'Payment declined',
+        fr: 'Paiement refusé',
+        es: 'Pago rechazado',
+      );
+    case 'tapToPayCheckingStatus':
+      return _tr(
+        nl: 'Status wordt nog gecontroleerd…',
+        en: 'Still checking payment status…',
+        fr: 'Statut encore en cours de vérification…',
+        es: 'Aún se comprueba el estado…',
+      );
+    case 'cardTerminalProcessing':
+      return _tr(
+        nl: 'Terminalbetaling wordt verwerkt…',
+        en: 'Processing terminal payment…',
+        fr: 'Traitement du paiement terminal…',
+        es: 'Procesando pago en terminal…',
+      );
+    case 'cardTerminalRetryOrOther':
+      return _tr(
+        nl: 'Terminalbetaling mislukt. Probeer opnieuw of kies een andere methode.',
+        en: 'Terminal payment failed. Try again or choose another method.',
+        fr: 'Échec du paiement terminal. Réessayez ou choisissez une autre méthode.',
+        es: 'Falló el pago en terminal. Inténtalo de nuevo u elige otro método.',
       );
     case 'businessInvoice':
       return _tr(
