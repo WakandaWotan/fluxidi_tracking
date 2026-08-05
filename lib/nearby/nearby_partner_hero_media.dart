@@ -31,9 +31,9 @@ double nearbyPartnerHeroMediaHeight(double layoutWidth) {
 /// Preserves source aspect ratio via [BoxFit.contain], centers the image, and
 /// fills unused space with [backgroundColor] (theme card/surface — not black).
 ///
-/// TABLET-PARTNER-BRANDING-LAYOUT-1: when [tabletSplit] is true the media zone
-/// is a horizontal photo | logo row. Phone keeps the historic stacked strip
-/// with a small circular logo overlay.
+/// TABLET-PARTNER-BRANDING-LAYOUT-1 / TABLET-PARTNER-MEDIA-POLISH-1: when
+/// [tabletSplit] is true the media zone is a single clipped photo | logo row.
+/// Phone keeps the historic stacked strip with a small circular logo overlay.
 class NearbyPartnerHeroMedia extends StatelessWidget {
   const NearbyPartnerHeroMedia({
     super.key,
@@ -45,6 +45,7 @@ class NearbyPartnerHeroMedia extends StatelessWidget {
     this.logoImage,
     this.fallback,
     this.borderRadius = 11,
+    this.clipBorderRadius,
     this.tabletSplit = false,
     this.tabletSplitMetrics,
     this.logoPanelColor,
@@ -61,6 +62,9 @@ class NearbyPartnerHeroMedia extends StatelessWidget {
   final ImageProvider? logoImage;
   final Widget? fallback;
   final double borderRadius;
+
+  /// Optional full [BorderRadius] override for the outer tablet media clip.
+  final BorderRadius? clipBorderRadius;
 
   /// TABLET-PARTNER-BRANDING-LAYOUT-1: enable horizontal photo | logo split.
   final bool tabletSplit;
@@ -155,28 +159,27 @@ class NearbyPartnerHeroMedia extends StatelessWidget {
           isLandscape: false,
         );
     final rowHeight = metrics.height;
+    final clip =
+        clipBorderRadius ?? BorderRadius.circular(borderRadius);
+    final logoSurface = logoPanelColor ?? backgroundColor;
     return ClipRRect(
       key: const ValueKey<String>('nearby_partner_tablet_media_split'),
-      borderRadius: BorderRadius.circular(borderRadius),
+      borderRadius: clip,
       child: SizedBox(
         height: rowHeight,
         width: double.infinity,
         child: Row(
+          key: const ValueKey<String>('nearby_partner_tablet_media_row'),
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Expanded(
               flex: metrics.photoFlex,
-              child: ColoredBox(
-                color: backgroundColor,
+              child: KeyedSubtree(
+                key: const ValueKey<String>('nearby_partner_tablet_photo'),
                 child: resolvedHero != null
-                    ? Image(
-                        key: const ValueKey<String>('nearby_partner_tablet_photo'),
+                    ? PartnerTabletPhotoFill(
                         image: resolvedHero,
-                        fit: BoxFit.contain,
-                        alignment: Alignment.center,
-                        width: double.infinity,
-                        height: rowHeight,
-                        errorBuilder: (_, __, ___) => safeFallback,
+                        errorFallback: safeFallback,
                       )
                     : safeFallback,
               ),
@@ -184,18 +187,22 @@ class NearbyPartnerHeroMedia extends StatelessWidget {
             Expanded(
               flex: metrics.logoFlex,
               child: ColoredBox(
-                color: logoPanelColor ?? backgroundColor,
-                child: Center(
-                  child: PartnerBrandingLogoPlate(
-                    logoUrl: logoUrl,
-                    logoImage: resolvedLogo,
-                    maxWidth: rowHeight * 1.55,
-                    maxHeight: rowHeight - metrics.logoPadding.vertical,
-                    padding: metrics.logoPadding,
-                    backgroundColor: Colors.black.withOpacity(0.28),
-                    borderColor: logoBorderColor ?? Colors.white24,
-                    fallbackIconColor: logoFallbackIconColor,
-                    borderRadius: 14,
+                key: const ValueKey<String>('nearby_partner_tablet_logo_cell'),
+                color: logoSurface,
+                child: Padding(
+                  padding: metrics.logoPadding,
+                  child: Center(
+                    child: PartnerBrandingLogoPlate(
+                      logoUrl: logoUrl,
+                      logoImage: resolvedLogo,
+                      maxWidth: rowHeight * 1.55,
+                      maxHeight: rowHeight - metrics.logoPadding.vertical,
+                      padding: EdgeInsets.zero,
+                      backgroundColor: Colors.transparent,
+                      borderColor: Colors.transparent,
+                      fallbackIconColor: logoFallbackIconColor,
+                      borderRadius: 0,
+                    ),
                   ),
                 ),
               ),

@@ -1245,7 +1245,8 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     );
   }
 
-  /// TABLET-PARTNER-BRANDING-LAYOUT-1: photo | branding split hero.
+  /// TABLET-PARTNER-MEDIA-POLISH-1: pure two-column hero — no legacy Stack,
+  /// full-width cover, dark gradient, or positioned square logo overlay.
   Widget _buildTabletPartnerHero({
     required String heroPhotoUrl,
     required String logoUrl,
@@ -1253,45 +1254,43 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     required String tagline,
     required TabletPartnerProfileHeroSplit split,
   }) {
+    final heroImage = NetworkImage(heroPhotoUrl.trim());
+    final errorFallback = DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [_surfaceAlt, _card, _gold.withOpacity(0.18)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+    );
     return ClipRRect(
       key: const ValueKey<String>('partner_profile_tablet_hero_split'),
       borderRadius: BorderRadius.circular(18),
+      clipBehavior: Clip.antiAlias,
       child: SizedBox(
         height: split.height,
         width: double.infinity,
         child: Row(
+          key: const ValueKey<String>('partner_profile_tablet_hero_row'),
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Expanded(
               flex: split.photoFlex,
-              child: ColoredBox(
-                color: _surfaceAlt,
-                child: Image.network(
-                  key: const ValueKey<String>('partner_profile_tablet_photo'),
-                  heroPhotoUrl,
-                  fit: BoxFit.contain,
-                  alignment: Alignment.center,
-                  width: double.infinity,
-                  height: split.height,
-                  errorBuilder: (_, __, ___) => DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          _surfaceAlt,
-                          _card,
-                          _gold.withOpacity(0.18),
-                        ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                    ),
-                  ),
+              child: KeyedSubtree(
+                key: const ValueKey<String>('partner_profile_tablet_photo'),
+                child: PartnerTabletPhotoFill(
+                  image: heroImage,
+                  errorFallback: errorFallback,
                 ),
               ),
             ),
             Expanded(
               flex: split.brandingFlex,
               child: ColoredBox(
+                key: const ValueKey<String>(
+                  'partner_profile_tablet_branding_cell',
+                ),
                 color: _card,
                 child: Padding(
                   padding: split.logoPadding,
@@ -1303,12 +1302,10 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                         maxWidth: split.logoMaxWidth,
                         maxHeight: split.logoMaxHeight,
                         padding: const EdgeInsets.all(10),
-                        backgroundColor: Colors.black.withOpacity(
-                          _isDarkTheme ? 0.35 : 0.08,
-                        ),
-                        borderColor: _gold.withOpacity(0.55),
+                        backgroundColor: Colors.transparent,
+                        borderColor: Colors.transparent,
                         fallbackIconColor: _gold.withOpacity(0.95),
-                        borderRadius: 14,
+                        borderRadius: 0,
                       ),
                       const SizedBox(height: 12),
                       Text(

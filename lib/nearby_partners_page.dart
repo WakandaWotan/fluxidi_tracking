@@ -945,6 +945,208 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
       );
     }
 
+    final media = NearbyPartnerHeroMedia(
+      height: mediaHeight,
+      backgroundColor: _panel,
+      heroUrl: heroUrl,
+      logoUrl: logoUrl,
+      fallback: fallbackStrip(height: mediaHeight),
+      tabletSplit: isTabletBranding,
+      tabletSplitMetrics: tabletMedia,
+      // Tablet: flush to card edges; phone keeps inset rounded strip.
+      borderRadius: isTabletBranding ? 14 : 11,
+      clipBorderRadius: isTabletBranding
+          ? const BorderRadius.vertical(top: Radius.circular(14))
+          : null,
+      logoPanelColor: _card,
+      logoBorderColor: _gold.withOpacity(_isDarkTheme ? 0.45 : 0.34),
+      logoFallbackIconColor: _isDarkTheme ? _gold.withOpacity(0.96) : _bronze,
+    );
+
+    final details = <Widget>[
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.business_outlined,
+            color: _gold.withOpacity(0.95),
+            size: 18,
+          ),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              company.isEmpty ? partnerId : company,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: _textPrimary,
+                fontWeight: FontWeight.w800,
+                fontSize: 14.2,
+              ),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 7),
+      Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          if (isActive)
+            _infoChip(
+              _t(
+                nl: 'Actieve partner',
+                en: 'Active partner',
+                fr: 'Partenaire actif',
+                es: 'Socio activo',
+              ),
+              icon: Icons.verified_outlined,
+              color: const Color(0xFF34D29A),
+            ),
+          if (supported.isNotEmpty)
+            _infoChip(
+              _t(
+                nl: supported.take(4).join(", "),
+                en: supported.take(4).join(", "),
+                fr: supported.take(4).join(", "),
+                es: supported.take(4).join(", "),
+              ),
+              icon: Icons.location_on_outlined,
+            ),
+          if (badgeList.isNotEmpty)
+            _infoChip(
+              _t(
+                nl: '${badgeList.length} services',
+                en: '${badgeList.length} services',
+                fr: '${badgeList.length} services',
+                es: '${badgeList.length} servicios',
+              ),
+              icon: Icons.local_offer_outlined,
+            ),
+          if (distanceKm != null)
+            _infoChip(
+              '${distanceKm.toStringAsFixed(distanceKm < 10 ? 1 : 0)} km',
+              icon: Icons.near_me_outlined,
+              color: const Color(0xFF6CCBFF),
+            ),
+        ],
+      ),
+      const SizedBox(height: 7),
+      Row(
+        children: [
+          Expanded(
+            child: FilledButton(
+              onPressed: () => _openPartnerBooking(p),
+              style: FilledButton.styleFrom(
+                backgroundColor: _isDarkTheme ? _gold : _bronze,
+                foregroundColor: _isDarkTheme ? Colors.black : Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 9),
+              ),
+              child: Text(
+                _t(
+                  nl: widget.selectionMode ? 'Selecteer partner' : 'Boek rit',
+                  en: widget.selectionMode ? 'Select partner' : 'Book ride',
+                  fr: widget.selectionMode
+                      ? 'Choisir partenaire'
+                      : 'Réserver un trajet',
+                  es: widget.selectionMode
+                      ? 'Seleccionar socio'
+                      : 'Reservar viaje',
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton(
+              onPressed: () => _openPartnerProfile(p),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _isDarkTheme
+                    ? _gold.withOpacity(0.98)
+                    : _bronze,
+                side: BorderSide(
+                  color: _isDarkTheme ? _gold.withOpacity(0.34) : _border,
+                ),
+                backgroundColor: _isDarkTheme
+                    ? _gold.withOpacity(0.10)
+                    : _panel.withOpacity(0.70),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 9),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Flexible(
+                    child: Text(
+                      _t(
+                        nl: 'Bekijk profiel',
+                        en: 'View profile',
+                        fr: 'Voir le profil',
+                        es: 'Ver perfil',
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12.1,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    Icons.arrow_forward_rounded,
+                    color: _isDarkTheme ? _gold.withOpacity(0.98) : _bronze,
+                    size: 16,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+      if (partnerId.isNotEmpty) ...[
+        const SizedBox(height: 5),
+        Text(
+          '${_t(nl: "Referentie", en: "Reference", fr: "Référence", es: "Referencia")}: $partnerId',
+          style: TextStyle(
+            color: _textMuted.withOpacity(0.72),
+            fontSize: 9.8,
+          ),
+        ),
+      ],
+    ];
+
+    final cardBody = isTabletBranding
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              media,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: details,
+                ),
+              ),
+            ],
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              media,
+              const SizedBox(height: 8),
+              ...details,
+            ],
+          );
+
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       child: Material(
@@ -952,197 +1154,13 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
         child: InkWell(
           onTap: () => _openPartnerProfile(p),
           borderRadius: BorderRadius.circular(14),
-          child: _premiumCard(
-            padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                NearbyPartnerHeroMedia(
-                  height: mediaHeight,
-                  backgroundColor: _panel,
-                  heroUrl: heroUrl,
-                  logoUrl: logoUrl,
-                  fallback: fallbackStrip(height: mediaHeight),
-                  tabletSplit: isTabletBranding,
-                  tabletSplitMetrics: tabletMedia,
-                  logoPanelColor: _card,
-                  logoBorderColor: _gold.withOpacity(
-                    _isDarkTheme ? 0.45 : 0.34,
-                  ),
-                  logoFallbackIconColor: _isDarkTheme
-                      ? _gold.withOpacity(0.96)
-                      : _bronze,
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(
-                      Icons.business_outlined,
-                      color: _gold.withOpacity(0.95),
-                      size: 18,
-                    ),
-                    const SizedBox(width: 7),
-                    Expanded(
-                      child: Text(
-                        company.isEmpty ? partnerId : company,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: _textPrimary,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 14.2,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 7),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    if (isActive)
-                      _infoChip(
-                        _t(
-                          nl: 'Actieve partner',
-                          en: 'Active partner',
-                          fr: 'Partenaire actif',
-                          es: 'Socio activo',
-                        ),
-                        icon: Icons.verified_outlined,
-                        color: const Color(0xFF34D29A),
-                      ),
-                    if (supported.isNotEmpty)
-                      _infoChip(
-                        _t(
-                          nl: supported.take(4).join(", "),
-                          en: supported.take(4).join(", "),
-                          fr: supported.take(4).join(", "),
-                          es: supported.take(4).join(", "),
-                        ),
-                        icon: Icons.location_on_outlined,
-                      ),
-                    if (badgeList.isNotEmpty)
-                      _infoChip(
-                        _t(
-                          nl: '${badgeList.length} services',
-                          en: '${badgeList.length} services',
-                          fr: '${badgeList.length} services',
-                          es: '${badgeList.length} servicios',
-                        ),
-                        icon: Icons.local_offer_outlined,
-                      ),
-                    if (distanceKm != null)
-                      _infoChip(
-                        '${distanceKm.toStringAsFixed(distanceKm < 10 ? 1 : 0)} km',
-                        icon: Icons.near_me_outlined,
-                        color: const Color(0xFF6CCBFF),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 7),
-                Row(
-                  children: [
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: () => _openPartnerBooking(p),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _isDarkTheme ? _gold : _bronze,
-                          foregroundColor: _isDarkTheme
-                              ? Colors.black
-                              : Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(9),
-                          ),
-                          padding: const EdgeInsets.symmetric(vertical: 9),
-                        ),
-                        child: Text(
-                          _t(
-                            nl: widget.selectionMode
-                                ? 'Selecteer partner'
-                                : 'Boek rit',
-                            en: widget.selectionMode
-                                ? 'Select partner'
-                                : 'Book ride',
-                            fr: widget.selectionMode
-                                ? 'Choisir partenaire'
-                                : 'Réserver un trajet',
-                            es: widget.selectionMode
-                                ? 'Seleccionar socio'
-                                : 'Reservar viaje',
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => _openPartnerProfile(p),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: _isDarkTheme
-                              ? _gold.withOpacity(0.98)
-                              : _bronze,
-                          side: BorderSide(
-                            color: _isDarkTheme
-                                ? _gold.withOpacity(0.34)
-                                : _border,
-                          ),
-                          backgroundColor: _isDarkTheme
-                              ? _gold.withOpacity(0.10)
-                              : _panel.withOpacity(0.70),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(9),
-                          ),
-                          padding: const EdgeInsets.symmetric(vertical: 9),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Flexible(
-                              child: Text(
-                                _t(
-                                  nl: 'Bekijk profiel',
-                                  en: 'View profile',
-                                  fr: 'Voir le profil',
-                                  es: 'Ver perfil',
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 12.1,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Icon(
-                              Icons.arrow_forward_rounded,
-                              color: _isDarkTheme
-                                  ? _gold.withOpacity(0.98)
-                                  : _bronze,
-                              size: 16,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                if (partnerId.isNotEmpty) ...[
-                  const SizedBox(height: 5),
-                  Text(
-                    '${_t(nl: "Referentie", en: "Reference", fr: "Référence", es: "Referencia")}: $partnerId',
-                    style: TextStyle(
-                      color: _textMuted.withOpacity(0.72),
-                      fontSize: 9.8,
-                    ),
-                  ),
-                ],
-              ],
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: _premiumCard(
+              padding: isTabletBranding
+                  ? EdgeInsets.zero
+                  : const EdgeInsets.fromLTRB(10, 10, 10, 10),
+              child: cardBody,
             ),
           ),
         ),
