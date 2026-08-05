@@ -94758,7 +94758,6 @@ async function generateAndSendInvoice({
       paymentStatus: bookingInput.paymentStatus || "",
       paymentMethod: bookingInput.paymentMethod || "",
       paymentSource: bookingInput.paymentSource || "",
-      seller_source: bookingInput.seller_source || bookingInput.sellerSource || "",
 
       // customer (buyer/legal identity prefers billing_customer_snapshot, then
       // legacy fields; passenger customerName is left as-is and never used as a
