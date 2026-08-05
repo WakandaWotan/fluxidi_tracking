@@ -9,6 +9,7 @@ import 'package:fluxidi_tracking/navigation/driver_navigation_formatters.dart';
 import 'package:fluxidi_tracking/navigation/driver_navigation_models.dart';
 import 'package:fluxidi_tracking/navigation/presentation/maneuver_presentation.dart';
 import 'package:fluxidi_tracking/navigation/presentation/nav_maneuver_sign.dart';
+import 'package:fluxidi_tracking/navigation/presentation/nav_signage_tablet_readability.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_lane_guidance_strip.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_tablet_portrait_nav_layout.dart';
 
@@ -105,19 +106,31 @@ Widget _constrainNavBannerWidth({
   required bool compact,
   required bool isTablet,
   required Widget child,
+  NavSignageTabletReadabilityMetrics? tabletReadability,
 }) {
   final media = MediaQuery.maybeOf(context);
   // `compact` is only ever set by the landscape collapsed top row, so it stays
   // a reliable landscape signal even for a host that supplies no MediaQuery.
   final isLandscape = compact || media?.orientation == Orientation.landscape;
+  final BoxConstraints constraints;
+  if (tabletReadability != null) {
+    // NAV-SIGNAGE-TABLET-READABILITY-1: hug content inside the tablet
+    // readability width band (clamped by LayoutBuilder upstream).
+    constraints = BoxConstraints(
+      minWidth: tabletReadability.bannerMinWidth,
+      maxWidth: tabletReadability.bannerMaxWidth,
+    );
+  } else {
+    constraints = DriverNavBannerWidthPolicy.constraintsFor(
+      viewportWidth: media?.size.width ?? 0,
+      isTablet: isTablet,
+      isLandscape: isLandscape,
+    );
+  }
   return Align(
     alignment: AlignmentDirectional.topStart,
     child: ConstrainedBox(
-      constraints: DriverNavBannerWidthPolicy.constraintsFor(
-        viewportWidth: media?.size.width ?? 0,
-        isTablet: isTablet,
-        isLandscape: isLandscape,
-      ),
+      constraints: constraints,
       child: child,
     ),
   );
@@ -163,6 +176,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     String maneuverModifier = '',
     this.themeListenable,
     this.portraitTabletMetrics,
+    this.tabletReadability,
     this.presentation,
   }) : _rawIsArrival = isArrival,
        _rawIsHighwayLike = isHighwayLike,
@@ -175,6 +189,11 @@ class DriverTurnInstructionBanner extends StatelessWidget {
 
   /// NAV-PRES-TABLET-PORTRAIT-POLISH-1: optional tablet portrait banner metrics.
   final DriverNavBannerPortraitTabletLayout? portraitTabletMetrics;
+
+  /// NAV-SIGNAGE-TABLET-READABILITY-1: larger tablet driving metrics. When set,
+  /// these override icon/text/height floors for both tablet portrait (inline
+  /// top row) and tablet landscape. Phones never pass this.
+  final NavSignageTabletReadabilityMetrics? tabletReadability;
 
   bool get isArrival => presentation?.isArrival ?? _rawIsArrival;
   bool get isHighwayLike => presentation?.isHighwayLike ?? _rawIsHighwayLike;
@@ -209,6 +228,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
   // content-adaptive (soft floor + tight padding), so the bigger glyph improves
   // legibility without restoring an oversized fixed band.
   double get _iconBoxSize {
+    if (tabletReadability != null) return tabletReadability!.iconBoxSize;
     if (_usePortraitTabletPolish) return portraitTabletMetrics!.iconBoxSize;
     if (_useLandscapeTopRow) return isTablet ? 38 : 34;
     if (_useLandscapeCompactRow) return isTablet ? 48 : 44;
@@ -218,6 +238,10 @@ class DriverTurnInstructionBanner extends StatelessWidget {
   }
 
   double get _iconSize {
+    if (tabletReadability != null) {
+      // Legacy Material icon path only; PNG signs use [tabletReadability.signSize].
+      return tabletReadability!.signSize;
+    }
     if (_usePortraitTabletPolish) return portraitTabletMetrics!.iconSize;
     if (_useLandscapeTopRow) return isTablet ? 22 : 20;
     if (_useLandscapeCompactRow) return isTablet ? 27 : 24;
@@ -227,6 +251,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
   }
 
   double get _distanceFontSize {
+    if (tabletReadability != null) return tabletReadability!.distanceFontSize;
     if (_useLandscapeTopRow) return isTablet ? 13 : 12;
     if (_useLandscapeCompactRow) return isTablet ? 14 : 13;
     if (compact) return isTablet ? 15 : 14;
@@ -237,6 +262,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
   // NAV-PARKING-2 Commit 3: primary maneuver text enlarged for daylight-driving
   // readability. Two-line ceiling + ellipsis keep it overflow-safe.
   double get _primaryFontSize {
+    if (tabletReadability != null) return tabletReadability!.primaryFontSize;
     if (_useLandscapeTopRow) return isTablet ? 15 : 14;
     if (_useLandscapeCompactRow) return isTablet ? 17 : 16;
     if (compact) return isTablet ? 19 : 18;
@@ -245,6 +271,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
   }
 
   double get _secondaryFontSize {
+    if (tabletReadability != null) return tabletReadability!.secondaryFontSize;
     if (_useLandscapeCompactRow) return isTablet ? 12 : 11;
     if (compact) return isTablet ? 14 : 13;
     if (_usePhonePortraitStack) return 14;
@@ -264,6 +291,9 @@ class DriverTurnInstructionBanner extends StatelessWidget {
   int get _secondaryMaxLines => 1;
 
   double get _horizontalPadding {
+    if (tabletReadability != null) {
+      return tabletReadability!.horizontalPadding;
+    }
     if (_useLandscapeTopRow) return 6;
     if (_useLandscapeCompactRow) return 8;
     if (compact) return 10;
@@ -275,6 +305,9 @@ class DriverTurnInstructionBanner extends StatelessWidget {
   }
 
   double get _verticalPadding {
+    if (tabletReadability != null) {
+      return tabletReadability!.verticalPadding;
+    }
     if (_useLandscapeTopRow) return 4;
     if (_useLandscapeCompactRow) return 5;
     if (compact) return 6;
@@ -289,9 +322,17 @@ class DriverTurnInstructionBanner extends StatelessWidget {
   /// No fixed oversized band. Height hugs icon + text (+ optional lane row).
   /// Kept only as a tiny touch-target floor for landscape top-row chrome.
   double get _minBannerHeight {
+    if (tabletReadability != null) return tabletReadability!.bannerMinHeight;
     if (_useLandscapeTopRow) return isTablet ? 40 : 36;
     return 0;
   }
+
+  double get _signPlateInsetResolved =>
+      tabletReadability?.signPlateInset ?? _signPlateInset;
+
+  double get _signPaintSize =>
+      tabletReadability?.signSize ??
+      (_iconBoxSize - (_signPlateInsetResolved * 2));
 
   List<DriverNavLaneGuidance> get _displayLanes =>
       driverNavLanesForBannerDisplay(lanes);
@@ -486,6 +527,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
           context: context,
           compact: compact,
           isTablet: isTablet,
+          tabletReadability: tabletReadability,
           child: labelled,
         );
       },
@@ -502,12 +544,15 @@ class DriverTurnInstructionBanner extends StatelessWidget {
 
   Widget _buildManeuverIcon(DriverThemePalette palette) {
     final presentation = this.presentation;
-    final radius = BorderRadius.circular(compact ? 12 : 14);
+    final radius = BorderRadius.circular(
+      tabletReadability != null ? 16 : (compact ? 12 : 14),
+    );
     if (presentation != null) {
+      final inset = _signPlateInsetResolved;
       return Container(
         width: _iconBoxSize,
         height: _iconBoxSize,
-        padding: EdgeInsets.all(_signPlateInset),
+        padding: EdgeInsets.all(inset),
         decoration: BoxDecoration(
           color: _signPlateSurface,
           borderRadius: radius,
@@ -520,10 +565,12 @@ class DriverTurnInstructionBanner extends StatelessWidget {
           ),
         ),
         alignment: Alignment.center,
+        // NAV-SIGNAGE-TABLET-READABILITY-1: enlarge the loaded plate itself,
+        // not only the outer container.
         child: NavManeuverSign(
           maneuver: presentation.signManeuver,
           languageCode: presentation.signLanguageCode,
-          size: _iconBoxSize - (_signPlateInset * 2),
+          size: _signPaintSize,
         ),
       );
     }

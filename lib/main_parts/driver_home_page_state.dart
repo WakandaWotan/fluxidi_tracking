@@ -31023,6 +31023,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     required bool isTablet,
     bool topRowLandscape = false,
     DriverNavBannerPortraitTabletLayout? portraitTabletMetrics,
+    NavSignageTabletReadabilityMetrics? tabletReadability,
   }) {
     final snapshot = _effectiveNavInstructionSnapshot();
     final distanceText = formatManeuverDistance(
@@ -31064,6 +31065,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       lanes: snapshot.lanes,
       maneuverModifier: snapshot.maneuverModifier,
       portraitTabletMetrics: portraitTabletMetrics,
+      tabletReadability: tabletReadability,
       presentation: presentation,
     );
   }
@@ -31152,7 +31154,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       !_isRerouting &&
       _routeSteps.isEmpty;
 
-  Widget? _buildFollowNavBannerForTopRow({required bool isTablet}) {
+  Widget? _buildFollowNavBannerForTopRow({
+    required bool isTablet,
+    NavSignageTabletReadabilityMetrics? tabletReadability,
+  }) {
     if (_cameraMode != _CameraMode.follow) return null;
     if (_showNavInstructionBanner()) {
       return _wrapNavBannerWithComplexityCaution(
@@ -31160,6 +31165,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           compact: true,
           isTablet: isTablet,
           topRowLandscape: true,
+          tabletReadability: tabletReadability,
         ),
         compact: true,
         isTablet: isTablet,
@@ -31258,22 +31264,63 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  /// Collapsed follow-mode top row: menu → logo → banner → free space.
+  ///
+  /// NAV-SIGNAGE-TABLET-READABILITY-1: tablet portrait uses this same single
+  /// row (banner beside the logo) so the plate is never stacked under the
+  /// logo. The Mapbox compass stays in the reserved trailing inset.
+  Widget _buildCollapsedNavTopRowWithBanner({
+    required bool isTablet,
+    required bool isLandscape,
+    NavSignageTabletReadabilityMetrics? tabletReadability,
+  }) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Parent Positioned.right already reserved the compass; do not
+        // subtract it again from [constraints.maxWidth].
+        final metrics =
+            tabletReadability ??
+            (isNavSignageTabletLayout(MediaQuery.sizeOf(context))
+                ? NavSignageTabletReadabilityMetrics.resolve(
+                    isLandscape: isLandscape,
+                    availableBannerWidth:
+                        constraints.maxWidth - 44 - 118 - 16,
+                  )
+                : null);
+        final banner = _buildFollowNavBannerForTopRow(
+          isTablet: isTablet,
+          tabletReadability: metrics,
+        );
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            _buildCollapsedNavMenuButton(),
+            const SizedBox(width: 8),
+            _buildCollapsedNavLogoCapsule(
+              isLandscape: isLandscape || metrics != null,
+              hasInlineBanner: banner != null,
+            ),
+            if (banner != null) ...[
+              const SizedBox(width: 8),
+              // Expanded + start Align leaves trailing free space for the
+              // Mapbox compass (also reserved via Positioned.right).
+              Expanded(
+                child: Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: banner,
+                ),
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildLandscapeCollapsedNavTopRow({required bool isTablet}) {
-    final banner = _buildFollowNavBannerForTopRow(isTablet: isTablet);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        _buildCollapsedNavMenuButton(),
-        const SizedBox(width: 8),
-        _buildCollapsedNavLogoCapsule(
-          isLandscape: true,
-          hasInlineBanner: banner != null,
-        ),
-        if (banner != null) ...[
-          const SizedBox(width: 8),
-          Expanded(child: banner),
-        ],
-      ],
+    return _buildCollapsedNavTopRowWithBanner(
+      isTablet: isTablet,
+      isLandscape: true,
     );
   }
 
@@ -31403,6 +31450,11 @@ class _DriverHomePageState extends State<DriverHomePage>
         screenClass == FluxidiScreenClass.desktop;
     final bool isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
+    // NAV-SIGNAGE-TABLET-READABILITY-1: shortestSide >= 600 only. Phones keep
+    // the historic below-logo portrait banner and smaller top-row metrics.
+    final bool navSignageTablet = isNavSignageTabletLayout(
+      Size(screenW, screenH),
+    );
     // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: observe the current navigation
     // viewport before any downstream geometry/camera work so a materially
     // changed viewport bumps [_navViewportEpoch] and invalidates cached
@@ -31764,9 +31816,21 @@ class _DriverHomePageState extends State<DriverHomePage>
                   MediaQuery.of(context).padding.top +
                   (collapseTopBarInLandscapeNav ? 6 : 8),
               left: 10,
-              right: collapseTopBarInLandscapeNav ? 10 : null,
-              child: collapseTopBarInLandscapeNav
-                  ? _buildLandscapeCollapsedNavTopRow(isTablet: isTablet)
+              // Tablet portrait/landscape: reserve trailing room for the
+              // Mapbox compass so the larger banner never overlaps it.
+              right: collapseTopBarInLandscapeNav ||
+                      (collapseTopBarInPortraitNav && navSignageTablet)
+                  ? (navSignageTablet
+                        ? NavSignageTabletReadabilityMetrics
+                              .defaultCompassReserve
+                        : 10)
+                  : null,
+              child: collapseTopBarInLandscapeNav ||
+                      (collapseTopBarInPortraitNav && navSignageTablet)
+                  ? _buildCollapsedNavTopRowWithBanner(
+                      isTablet: isTablet || navSignageTablet,
+                      isLandscape: isLandscape,
+                    )
                   : Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -31779,9 +31843,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                       ],
                     ),
             ),
+          // Phone portrait (and non-tablet): banner stays on its own row under
+          // the logo. Tablet portrait mounts the banner inline above instead.
           if (navHudVisible &&
               _showNavInstructionBanner() &&
-              !collapseTopBarInLandscapeNav)
+              !collapseTopBarInLandscapeNav &&
+              !(collapseTopBarInPortraitNav && navSignageTablet))
             Positioned(
               top: navBannerTop,
               left: 12,
@@ -31810,7 +31877,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                   _isRerouting ||
                   _navInstructionSnapshot?.source ==
                       NavInstructionSource.loading) &&
-              !collapseTopBarInLandscapeNav)
+              !collapseTopBarInLandscapeNav &&
+              !(collapseTopBarInPortraitNav && navSignageTablet))
             Positioned(
               top: navBannerTop,
               left: 12,
@@ -31837,7 +31905,8 @@ class _DriverHomePageState extends State<DriverHomePage>
               !_navStepsLoading &&
               !_isRerouting &&
               _routeSteps.isEmpty &&
-              !collapseTopBarInLandscapeNav)
+              !collapseTopBarInLandscapeNav &&
+              !(collapseTopBarInPortraitNav && navSignageTablet))
             Positioned(
               top: navBannerTop,
               left: 12,
