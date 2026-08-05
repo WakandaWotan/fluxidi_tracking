@@ -1,6 +1,6 @@
 # ============================================================================
 # FLUXIDI FIELD BUILD — Tablet
-# Exact commit: da33b08a40386968caaec5e362e4ffed80202b53
+# Exact commit: 6a63dedb9179cce87dbc217069dbe8cd62e1fb52
 # Clean integration worktree. Dirty hoofdrepository blijft onaangeraakt.
 # Exact 12 dart-defines, NO ADMIN_TOKEN, NO LEARNING_SERVICE_TOKEN.
 #
@@ -16,7 +16,7 @@ $repo         = 'C:\_flutter_work\fluxidi_tracking'
 $worktree     = 'C:\_flutter_work\fluxidi_tracking_full_integration_20260805'
 $device       = 'R52Y808CN2M'
 $adb          = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-$requiredHead$requiredHead = 'da33b08a40386968caaec5e362e4ffed80202b53'
+$requiredHead = '6a63dedb9179cce87dbc217069dbe8cd62e1fb52'
 $branch       = 'release/full-tablet-integration-20260805'
 
 function Assert-LastExitCode {
