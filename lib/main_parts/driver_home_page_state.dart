@@ -3086,6 +3086,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     // STREET-RIDE-DURABLE-COMPLETION-2: reconcile any street/direct booking
     // whose stop finalization did not durably complete (crash/restart/network).
     unawaited(_recoverPendingDirectTripSession());
+    // ACTIVE-RIDE-DURABLE-RESTORE-P0-7: after process death during Maps/PiP,
+    // restore planned/street cockpit from the durable snapshot (post-PIN).
+    unawaited(_recoverActiveRideDurableSnapshot());
     // RELEASE-P0-CLOSE-PLANNED-CHIRON-DURABILITY-GAPS-2026-07-31: bounded,
     // tenant/company-scoped startup recovery for planned ride_start/ride_stop
     // Chiron events whose immediate in-session retry never landed. Fire once
@@ -6261,6 +6264,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       // the meter notifier so only the meter/HUD subtree repaints. Avoids
       // rebuilding the MapWidget subtree once every 5 s.
       _publishDriverRideMetersSnapshot();
+      if (_externalNavigationSession != null) {
+        unawaited(
+          _persistActiveRideDurableSnapshot(reason: 'meter_ticker'),
+        );
+      }
     });
   }
 
@@ -8329,8 +8337,222 @@ class _DriverHomePageState extends State<DriverHomePage>
         tenantId: scope.tenantId,
         companyId: scope.companyId,
       );
+      unawaited(_clearActiveRideDurableSnapshot(reason: 'direct_trip_cleared'));
     } catch (_) {
       // Best-effort only.
+    }
+  }
+
+  // ACTIVE-RIDE-DURABLE-RESTORE-P0-7: disk snapshot for planned + street rides
+  // so Google Maps / PiP process death can restore the cockpit after PIN.
+  ActiveRideDurableSnapshot? _buildActiveRideDurableSnapshot({
+    ExternalNavigationSession? externalSession,
+  }) {
+    if (!_liveRideActive) return null;
+    final bookingId = (_activeBooking?.bookingId ??
+            _activeDirectBookingId ??
+            _directRideKey ??
+            '')
+        .trim();
+    if (bookingId.isEmpty) return null;
+    final street = _directRideActive || _activeBookingIsStreetDirect;
+    final last = _lastPos;
+    return ActiveRideDurableSnapshot(
+      rideType: street ? 'street' : 'planned',
+      bookingId: bookingId,
+      parentBookingId: street
+          ? (_directRideKey ?? bookingId)
+          : (_activeBooking?.details['parent_booking_id']?.toString() ??
+              _activeBooking?.details['parentBookingId']?.toString()),
+      activeLegId: (_activeBooking?.legId ?? '').trim().isEmpty
+          ? null
+          : _activeBooking!.legId,
+      tripId: street
+          ? (_activeDirectTripId ?? '').trim()
+          : (_activeTripId ?? '').trim(),
+      lifecyclePhase: 'active',
+      startedAt: (_trackingStartedAt ?? DateTime.now()).toUtc(),
+      updatedAt: DateTime.now().toUtc(),
+      lastLat: last?.latitude,
+      lastLon: last?.longitude,
+      trackedDistanceKm: _kmDriven.isFinite ? _kmDriven : null,
+      waitingSeconds: _effectiveWaitElapsed.inSeconds,
+      currentOrFixedFare: street
+          ? (_liveMeterTotalEur.isFinite ? _liveMeterTotalEur : null)
+          : _fixedBookingPriceEur,
+      paymentState: null,
+      finalizePending: false,
+      externalNavSession: externalSession ?? _externalNavigationSession,
+    );
+  }
+
+  Future<void> _persistActiveRideDurableSnapshot({
+    String reason = 'tick',
+    ExternalNavigationSession? externalSession,
+  }) async {
+    try {
+      final scope = _complianceLedgerScopeForStop();
+      if (scope == null) return;
+      final snap = _buildActiveRideDurableSnapshot(
+        externalSession: externalSession,
+      );
+      if (snap == null) return;
+      await ActiveRideDurableSnapshotStore.save(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+        snapshot: snap,
+      );
+      debugPrint(
+        '[EXTERNAL_NAV] event=active_ride_durable_persisted '
+        'reason=$reason rideType=${snap.rideType} booking=${snap.bookingId} '
+        'trip=${snap.tripId ?? ""} external_nav='
+        '${snap.externalNavSession != null}',
+      );
+    } catch (_) {
+      // Best-effort only.
+    }
+  }
+
+  Future<void> _clearActiveRideDurableSnapshot({
+    String reason = 'clear',
+  }) async {
+    try {
+      final scope = _complianceLedgerScopeForStop();
+      if (scope == null) return;
+      await ActiveRideDurableSnapshotStore.clear(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      debugPrint(
+        '[EXTERNAL_NAV] event=active_ride_durable_cleared reason=$reason',
+      );
+    } catch (_) {}
+  }
+
+  /// Restore planned/street cockpit from disk after process death during
+  /// external navigation. Idempotent; never invents fare/distance.
+  Future<void> _recoverActiveRideDurableSnapshot() async {
+    try {
+      final scope = _complianceLedgerScopeForStop();
+      if (scope == null) return;
+      if (_liveRideActive) {
+        debugPrint(
+          '[EXTERNAL_NAV] event=active_ride_restore_skipped '
+          'reason=already_live',
+        );
+        return;
+      }
+      final snap = await ActiveRideDurableSnapshotStore.load(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (snap == null || snap.bookingId.trim().isEmpty) return;
+      if (snap.lifecyclePhase != 'active' && !snap.finalizePending) {
+        await ActiveRideDurableSnapshotStore.clear(
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+        );
+        return;
+      }
+
+      debugPrint(
+        '[EXTERNAL_NAV] event=active_ride_restore_begin '
+        'rideType=${snap.rideType} booking=${snap.bookingId} '
+        'trip=${snap.tripId ?? ""} process_recreated=true '
+        'session_present=true',
+      );
+
+      await _refreshBookings(
+        force: true,
+        trigger: 'active_ride_durable_restore',
+      );
+      if (!mounted || _liveRideActive) return;
+
+      BookingItem? booking;
+      for (final b in _bookings) {
+        if (b.bookingId.trim() == snap.bookingId.trim()) {
+          booking = b;
+          break;
+        }
+      }
+      booking ??= BookingItem(
+        bookingId: snap.bookingId,
+        sessionId: snap.isPlanned ? snap.tripId : null,
+        status: 'IN_PROGRESS',
+        price: snap.currentOrFixedFare,
+        currency: 'EUR',
+        details: <String, dynamic>{
+          if ((snap.parentBookingId ?? '').trim().isNotEmpty)
+            'parent_booking_id': snap.parentBookingId,
+          if ((snap.activeLegId ?? '').trim().isNotEmpty)
+            'leg_id': snap.activeLegId,
+          if (snap.isStreet) 'ride_kind': 'street_direct',
+          'restored_from_durable_snapshot': true,
+        },
+      );
+
+      final startedAt = snap.startedAt.toLocal();
+      final waitSec = snap.waitingSeconds ?? 0;
+      final km = snap.trackedDistanceKm;
+      final ext = snap.externalNavSession?.copyWith(pipActive: false);
+
+      if (mounted) {
+        setState(() {
+          _activeBooking = booking;
+          if (snap.isStreet) {
+            _directRideActive = true;
+            _activeTripId = null;
+            _activeDirectTripId =
+                (snap.tripId ?? '').trim().isEmpty ? null : snap.tripId;
+            _activeDirectBookingId = snap.bookingId;
+            _directRideKey =
+                (snap.parentBookingId ?? snap.bookingId).trim();
+            _directTripStartWorkerOk = true;
+          } else {
+            _directRideActive = false;
+            _activeTripId = (snap.tripId ?? '').trim().isEmpty
+                ? snap.bookingId
+                : snap.tripId;
+            _activeDirectTripId = null;
+            _activeDirectBookingId = null;
+            _directRideKey = null;
+          }
+          _routePhase = _RideRoutePhase.trip;
+          _kmDriven = (km != null && km.isFinite && km >= 0) ? km : 0.0;
+          _trackingStartedAt = startedAt;
+          _waitElapsed = Duration(seconds: waitSec < 0 ? 0 : waitSec);
+          _isWaiting = false;
+          _waitStartedAt = null;
+          _cameraMode = _CameraMode.follow;
+          _hasSwitchedToFollow = true;
+          _followCar = true;
+          _externalNavigationSession = ext;
+          _navigationGuidanceActive =
+              !(ext?.nativeGuidanceSuppressed ?? false);
+        });
+      }
+
+      _publishBearerBusyState();
+      _setNavigationWakelock(true);
+      await _ensureLocationPermission();
+      if (_posSub == null) _startTrackingInternal();
+      _startMeterTicker();
+      if (snap.isPlanned) {
+        await _hydrateActiveBookingDetails(snap.bookingId);
+        await _hydrateActiveBookingPrice(snap.bookingId);
+      }
+      unawaited(_persistActiveRideDurableSnapshot(reason: 'restore_ack'));
+      debugPrint(
+        '[EXTERNAL_NAV] event=active_ride_restored '
+        'rideType=${snap.rideType} booking=${snap.bookingId} '
+        'km=${snap.trackedDistanceKm} wait_s=$waitSec '
+        'fare=${snap.currentOrFixedFare} '
+        'external_nav=${ext != null} lifecycle_resume_completed=true',
+      );
+    } catch (e) {
+      debugPrint(
+        '[EXTERNAL_NAV] event=active_ride_restore_failed err=${e.runtimeType}',
+      );
     }
   }
 
@@ -8491,7 +8713,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
         return;
       case DirectTripRecoveryProbeAction.retainServerActive:
-        // Keep persisted active; no meter restore; no `/trip/stop`.
+        // ACTIVE-RIDE-DURABLE-RESTORE-P0-7: server still non-terminal — restore
+        // cockpit from durable snapshot (meter/nav). Never `/trip/stop`.
+        unawaited(_recoverActiveRideDurableSnapshot());
         return;
       case DirectTripRecoveryProbeAction.retainTransportUnknown:
       case DirectTripRecoveryProbeAction.retainIdentityMismatch:
@@ -9522,6 +9746,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     unawaited(
       _endExternalNavigationSession(reason: 'stop_trip', exitPip: true),
     );
+    unawaited(_clearActiveRideDurableSnapshot(reason: 'stop_begin'));
 
     // NAV-RIDE-BOUNDARY: invalidate route ownership BEFORE network awaits so a
     // fast next-ride start cannot race uncleared geometry / style restores.
@@ -11185,6 +11410,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   /// Idempotent — an already-armed timer wins.
   void _scheduleMarkerSelfHeal(String reason) {
     if (!_mapSupported || !mounted) return;
+    // EXTERNAL-NAV-RETURN-LIFECYCLE-P0-7: while Fluxidi PiP owns the surface,
+    // never storm native annotation recreate (manager-missing fatal path).
+    if (_externalNavigationSession?.pipActive == true) return;
     if (_markerSelfHealTimer?.isActive ?? false) return;
     final delay = _markerLifecycle.selfHealDelay(DateTime.now());
     _logNavR12Marker(event: 'self_heal_scheduled', selfHealReason: reason);
@@ -23312,6 +23540,20 @@ class _DriverHomePageState extends State<DriverHomePage>
       final session = _externalNavigationSession;
       if (session == null) return;
       if (session.pipActive == active) return;
+      if (active) {
+        _markerSelfHealTimer?.cancel();
+        _markerSelfHealTimer = null;
+        debugPrint(
+          '[EXTERNAL_NAV] event=external_nav_background_entered '
+          'pipActive=true session=${session.bookingId}',
+        );
+      } else {
+        debugPrint(
+          '[EXTERNAL_NAV] event=external_nav_return_received '
+          'pipActive=false session=${session.bookingId} '
+          'active_ride_present=$_liveRideActive',
+        );
+      }
       setState(() {
         _externalNavigationSession = session.copyWith(pipActive: active);
       });
@@ -23777,6 +24019,22 @@ class _DriverHomePageState extends State<DriverHomePage>
       } else {
         _externalNavigationSession = activeSession;
       }
+      // ACTIVE-RIDE-DURABLE-RESTORE-P0-7: persist before PiP / background.
+      await _persistActiveRideDurableSnapshot(
+        reason: 'maps_handoff',
+        externalSession: activeSession,
+      );
+      if (_directRideActive) {
+        unawaited(_persistDirectTripSession(
+          localLifecycle: kDirectTripLocalLifecycleActive,
+          bookingFinalizeState: kDirectTripFinalizePending,
+        ));
+      }
+      debugPrint(
+        '[EXTERNAL_NAV] event=external_nav_return_requested '
+        'booking=$bookingId phase=${phase.name} '
+        'active_ride_present=true',
+      );
 
       var pipOk = false;
       if (decision.requestPip && launch.launchDispatched) {
@@ -32332,17 +32590,13 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   @override
   Widget build(BuildContext context) {
-    // GOOGLE-MAPS-WITH-FLUXIDI-PIP-RELEASE-1: while Android PiP is active,
-    // render only the compact meter card — no Mapbox map / dashboard chrome.
+    // EXTERNAL-NAV-RETURN-LIFECYCLE-P0-7: while Android PiP is active, overlay
+    // the compact meter card but KEEP the Mapbox MapWidget mounted (Offstage).
+    // Field evidence SM-X400: swapping the tree to meter-only disposed
+    // annotation managers while GPS/nav still called update → fatal
+    // "No manager found with id" → process death → PIN cold start → lost ride.
     final externalPip = _externalNavigationSession;
-    if (externalPip != null && externalPip.pipActive) {
-      return Scaffold(
-        backgroundColor: const Color(0xFF0B0F14),
-        body: ExternalNavPipMeterCard(
-          model: _buildCurrentPipMeterModel(),
-        ),
-      );
-    }
+    final pipActive = externalPip != null && externalPip.pipActive;
 
     // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
     // `build()` must NOT publish `operatorMintedBearerInFlightNotifier`.
@@ -32701,7 +32955,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         layout: cockpitControlsLayout,
       );
     }
-    return PopScope(
+    final Widget driverBody = PopScope(
       // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
       // In business-preview mode, system back is routed through the shared
       // exit guard so it blocks during live ride / STOP teardown / direct
@@ -33137,6 +33391,24 @@ class _DriverHomePageState extends State<DriverHomePage>
       ),
       ),
     ),
+    );
+    if (!pipActive) return driverBody;
+    // EXTERNAL-NAV-RETURN-LIFECYCLE-P0-7: meter overlay + keep MapWidget alive.
+    debugPrint(
+      '[EXTERNAL_NAV] event=pip_overlay_active '
+      'process_id=dart map_kept_mounted=true',
+    );
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Offstage(offstage: true, child: driverBody),
+        Scaffold(
+          backgroundColor: const Color(0xFF0B0F14),
+          body: ExternalNavPipMeterCard(
+            model: _buildCurrentPipMeterModel(),
+          ),
+        ),
+      ],
     );
   }
 
