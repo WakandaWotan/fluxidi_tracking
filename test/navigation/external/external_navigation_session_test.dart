@@ -41,6 +41,17 @@ void main() {
       expect(d.hasCoordinates, isFalse);
       expect(d.address, 'Korenmarkt Gent');
     });
+
+    test('3b) out-of-range pickup falls back to address', () {
+      final d = ExternalNavDestinationResolver.resolve(
+        phase: ExternalNavPhase.toPickup,
+        pickupLat: 99.0,
+        pickupLon: 3.7,
+        pickupAddress: 'Pickup Street',
+      );
+      expect(d.hasCoordinates, isFalse);
+      expect(d.hasAddress, isTrue);
+    });
   });
 
   group('PiP meter models', () {

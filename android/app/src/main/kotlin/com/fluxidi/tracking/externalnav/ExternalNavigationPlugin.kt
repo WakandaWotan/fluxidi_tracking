@@ -16,12 +16,15 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * GOOGLE-MAPS-DIRECT-LAUNCH-ANDROID-1 / GOOGLE-MAPS-PIP-HANDOFF-P0-1
+ * GOOGLE-MAPS-DIRECT-LAUNCH-ANDROID-1 / GOOGLE-MAPS-LAUNCH-CONTRACT-NOOP-P0-2
  *
  * Platform channel: fluxidi.external_navigation
  *
+ * Launch contract always returns a structured map with:
+ * status, failure_code, pip_supported, launch_dispatched.
+ *
  * Correct handoff: prepare PiP params → dispatch Maps → enter PiP only after
- * a successful startActivity (or via Android 12+ auto-enter on leave).
+ * launch_dispatched=true (PiP support never blocks Maps launch).
  */
 class ExternalNavigationPlugin :
   FlutterPlugin,
@@ -33,6 +36,15 @@ class ExternalNavigationPlugin :
     const val CHANNEL = "fluxidi.external_navigation"
     const val EVENTS = "fluxidi.external_navigation/events"
     private const val TAG = "FluxidiExternalNav"
+
+    const val STATUS_LAUNCHED = "launched"
+    const val STATUS_MAPS_NOT_INSTALLED = "maps_not_installed"
+    const val STATUS_MAPS_DISABLED = "maps_disabled"
+    const val STATUS_INVALID_DESTINATION = "invalid_destination"
+    const val STATUS_INTENT_NOT_RESOLVED = "intent_not_resolved"
+    const val STATUS_ACTIVITY_NOT_FOUND = "activity_not_found"
+    const val STATUS_SECURITY_EXCEPTION = "security_exception"
+    const val STATUS_NATIVE_EXCEPTION = "native_exception"
   }
 
   private var methodChannel: MethodChannel? = null
@@ -110,7 +122,31 @@ class ExternalNavigationPlugin :
           installed &&
             GoogleMapsNavigationIntents.isGoogleMapsEnabled(act.packageManager)
         Log.i(TAG, "maps_package_installed=$installed maps_package_enabled=$enabled")
-        result.success(installed && enabled)
+        // Contract: "installed" means package present (enabled checked separately).
+        result.success(installed)
+      }
+      "probeGoogleMapsAvailability" -> {
+        val act = activity
+        if (act == null) {
+          result.success(
+            mapOf(
+              "installed" to false,
+              "enabled" to false,
+              "error" to "no_activity",
+            ),
+          )
+          return
+        }
+        val pm = act.packageManager
+        val installed = GoogleMapsNavigationIntents.isGoogleMapsInstalled(pm)
+        val enabled =
+          installed && GoogleMapsNavigationIntents.isGoogleMapsEnabled(pm)
+        result.success(
+          mapOf(
+            "installed" to installed,
+            "enabled" to enabled,
+          ),
+        )
       }
       "isPipSupported" -> result.success(isPipSupported())
       "prepareFluxidiPipForHandoff" -> prepareFluxidiPipForHandoff(result)
@@ -137,9 +173,41 @@ class ExternalNavigationPlugin :
     return act.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
   }
 
+  private fun launchResult(
+    status: String,
+    failureCode: String? = null,
+    launchDispatched: Boolean = false,
+    mapsPackageInstalled: Boolean? = null,
+    mapsPackageEnabled: Boolean? = null,
+    mapsIntentResolved: Boolean? = null,
+    uri: String? = null,
+    message: String? = null,
+    destinationSource: String? = null,
+  ): Map<String, Any?> {
+    val ok = status == STATUS_LAUNCHED && launchDispatched
+    return mapOf(
+      "ok" to ok,
+      "status" to status,
+      "failure_code" to failureCode,
+      "error" to failureCode,
+      "pip_supported" to isPipSupported(),
+      "launch_dispatched" to launchDispatched,
+      "maps_launch_dispatched" to launchDispatched,
+      "maps_package_installed" to mapsPackageInstalled,
+      "maps_package_enabled" to mapsPackageEnabled,
+      "maps_intent_resolved" to mapsIntentResolved,
+      "uri" to uri,
+      "maps_intent_uri" to uri,
+      "message" to message,
+      "maps_destination_source" to destinationSource,
+      "package" to if (ok) GoogleMapsNavigationIntents.GOOGLE_MAPS_PACKAGE else null,
+      "drivingMode" to if (ok) true else null,
+    )
+  }
+
   /**
    * Prepare PiP params (Android 12+ auto-enter) WITHOUT entering PiP yet.
-   * Maps must be dispatched first.
+   * Maps must be dispatched first. PiP failure must never block Maps.
    */
   private fun prepareFluxidiPipForHandoff(result: MethodChannel.Result) {
     val act = activity
@@ -185,21 +253,38 @@ class ExternalNavigationPlugin :
     val act = activity
     if (act == null) {
       Log.w(TAG, "maps_launch_failure_code=no_activity")
-      result.success(mapOf("ok" to false, "error" to "no_activity"))
+      result.success(
+        launchResult(
+          status = STATUS_NATIVE_EXCEPTION,
+          failureCode = "no_activity",
+        ),
+      )
       return
     }
     val pm = act.packageManager
     val installed = GoogleMapsNavigationIntents.isGoogleMapsInstalled(pm)
     val enabled = installed && GoogleMapsNavigationIntents.isGoogleMapsEnabled(pm)
     Log.i(TAG, "maps_package_installed=$installed maps_package_enabled=$enabled")
-    if (!installed || !enabled) {
-      Log.w(TAG, "maps_launch_failure_code=google_maps_not_installed")
+    if (!installed) {
+      Log.w(TAG, "maps_launch_failure_code=maps_not_installed")
       result.success(
-        mapOf(
-          "ok" to false,
-          "error" to "google_maps_not_installed",
-          "maps_package_installed" to installed,
-          "maps_package_enabled" to enabled,
+        launchResult(
+          status = STATUS_MAPS_NOT_INSTALLED,
+          failureCode = "maps_not_installed",
+          mapsPackageInstalled = false,
+          mapsPackageEnabled = false,
+        ),
+      )
+      return
+    }
+    if (!enabled) {
+      Log.w(TAG, "maps_launch_failure_code=maps_disabled")
+      result.success(
+        launchResult(
+          status = STATUS_MAPS_DISABLED,
+          failureCode = "maps_disabled",
+          mapsPackageInstalled = true,
+          mapsPackageEnabled = false,
         ),
       )
       return
@@ -213,63 +298,115 @@ class ExternalNavigationPlugin :
       longitude = lon,
       address = address,
     )
-    Log.i(TAG, "maps_destination_source=$destinationSource hasCoords=${destination.hasCoordinates()}")
+    Log.i(
+      TAG,
+      "destination_source=$destinationSource " +
+        "destination_lat_valid=${destination.hasCoordinates() && lat != null} " +
+        "destination_lng_valid=${destination.hasCoordinates() && lon != null} " +
+        "destination_address_present=${destination.hasAddress()}",
+    )
     val intent = GoogleMapsNavigationIntents.buildGoogleNavigationIntent(destination)
     if (intent == null) {
-      Log.w(TAG, "maps_launch_failure_code=missing_destination")
-      result.success(mapOf("ok" to false, "error" to "missing_destination"))
+      Log.w(TAG, "maps_launch_failure_code=invalid_destination")
+      result.success(
+        launchResult(
+          status = STATUS_INVALID_DESTINATION,
+          failureCode = "invalid_destination",
+          mapsPackageInstalled = true,
+          mapsPackageEnabled = true,
+          destinationSource = destinationSource,
+        ),
+      )
       return
     }
-    if (!GoogleMapsNavigationIntents.intentTargetsGoogleMapsOnly(intent) ||
+    if (GoogleMapsNavigationIntents.intentIsBrowserFallback(intent) ||
+      !GoogleMapsNavigationIntents.intentTargetsGoogleMapsOnly(intent) ||
       !GoogleMapsNavigationIntents.intentUsesDrivingMode(intent)
     ) {
       Log.w(TAG, "maps_launch_failure_code=invalid_intent")
-      result.success(mapOf("ok" to false, "error" to "invalid_intent"))
+      result.success(
+        launchResult(
+          status = STATUS_NATIVE_EXCEPTION,
+          failureCode = "invalid_intent",
+          mapsPackageInstalled = true,
+          mapsPackageEnabled = true,
+          destinationSource = destinationSource,
+        ),
+      )
       return
     }
+    val uriString = intent.data?.toString().orEmpty()
     val resolved = GoogleMapsNavigationIntents.canResolveNavigationIntent(pm, intent)
-    Log.i(TAG, "maps_intent_resolved=$resolved uri=${intent.data}")
+    Log.i(TAG, "maps_intent_uri_present=${uriString.isNotEmpty()} maps_intent_resolved=$resolved")
     if (!resolved) {
       Log.w(TAG, "maps_launch_failure_code=intent_not_resolved")
       result.success(
-        mapOf(
-          "ok" to false,
-          "error" to "intent_not_resolved",
-          "maps_intent_resolved" to false,
+        launchResult(
+          status = STATUS_INTENT_NOT_RESOLVED,
+          failureCode = "intent_not_resolved",
+          mapsPackageInstalled = true,
+          mapsPackageEnabled = true,
+          mapsIntentResolved = false,
+          uri = uriString,
+          destinationSource = destinationSource,
         ),
       )
       return
     }
     try {
+      Log.i(TAG, "maps_start_activity_called=true")
       act.startActivity(intent)
-      Log.i(TAG, "maps_launch_dispatched=true")
+      Log.i(TAG, "maps_start_activity_result=ok launch_dispatched=true")
       result.success(
-        mapOf(
-          "ok" to true,
-          "package" to GoogleMapsNavigationIntents.GOOGLE_MAPS_PACKAGE,
-          "drivingMode" to true,
-          "maps_package_installed" to true,
-          "maps_intent_resolved" to true,
-          "maps_launch_dispatched" to true,
-          "maps_destination_source" to destinationSource,
-          "uri" to (intent.data?.toString() ?: ""),
+        launchResult(
+          status = STATUS_LAUNCHED,
+          launchDispatched = true,
+          mapsPackageInstalled = true,
+          mapsPackageEnabled = true,
+          mapsIntentResolved = true,
+          uri = uriString,
+          destinationSource = destinationSource,
         ),
       )
     } catch (_: ActivityNotFoundException) {
-      Log.w(TAG, "maps_launch_failure_code=google_maps_not_installed")
+      Log.w(TAG, "maps_start_activity_result=activity_not_found")
       result.success(
-        mapOf(
-          "ok" to false,
-          "error" to "google_maps_not_installed",
+        launchResult(
+          status = STATUS_ACTIVITY_NOT_FOUND,
+          failureCode = "activity_not_found",
+          mapsPackageInstalled = true,
+          mapsPackageEnabled = true,
+          mapsIntentResolved = true,
+          uri = uriString,
+          destinationSource = destinationSource,
+        ),
+      )
+    } catch (e: SecurityException) {
+      Log.w(TAG, "maps_start_activity_result=security_exception msg=${e.message}")
+      result.success(
+        launchResult(
+          status = STATUS_SECURITY_EXCEPTION,
+          failureCode = "security_exception",
+          mapsPackageInstalled = true,
+          mapsPackageEnabled = true,
+          mapsIntentResolved = true,
+          uri = uriString,
+          message = e.message,
+          destinationSource = destinationSource,
         ),
       )
     } catch (e: Exception) {
-      Log.w(TAG, "maps_launch_failure_code=launch_failed msg=${e.message}")
+      Log.w(TAG, "maps_start_activity_result=native_exception msg=${e.message}")
       result.success(
-        mapOf(
-          "ok" to false,
-          "error" to "launch_failed",
-          "message" to (e.message ?: "unknown"),
+        launchResult(
+          status = STATUS_NATIVE_EXCEPTION,
+          failureCode = "native_exception",
+          mapsPackageInstalled = true,
+          mapsPackageEnabled = true,
+          mapsIntentResolved = true,
+          uri = uriString,
+          message = e.message,
+          destinationSource = destinationSource,
         ),
       )
     }

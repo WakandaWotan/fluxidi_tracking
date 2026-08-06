@@ -6,7 +6,7 @@ import android.net.Uri
 import java.util.Locale
 
 /**
- * GOOGLE-MAPS-DIRECT-LAUNCH-ANDROID-1 / GOOGLE-MAPS-PIP-HANDOFF-P0-1
+ * GOOGLE-MAPS-DIRECT-LAUNCH-ANDROID-1 / GOOGLE-MAPS-LAUNCH-CONTRACT-NOOP-P0-2
  *
  * Pure helpers that build an explicit Google Maps navigation Intent.
  * No browser chooser, no generic VIEW without package.
@@ -24,9 +24,18 @@ object GoogleMapsNavigationIntents {
       latitude != null &&
         longitude != null &&
         latitude!!.isFinite() &&
-        longitude!!.isFinite()
+        longitude!!.isFinite() &&
+        latitude!! >= -90.0 &&
+        latitude!! <= 90.0 &&
+        longitude!! >= -180.0 &&
+        longitude!! <= 180.0
 
-    fun hasAddress(): Boolean = !address.isNullOrBlank()
+    fun hasAddress(): Boolean {
+      val trimmed = address?.trim().orEmpty()
+      if (trimmed.isEmpty()) return false
+      val lower = trimmed.lowercase(Locale.US)
+      return lower != "null" && lower != "undefined"
+    }
   }
 
   fun isGoogleMapsInstalled(packageManager: PackageManager): Boolean {
@@ -146,5 +155,14 @@ object GoogleMapsNavigationIntents {
     val data = intent.data ?: return false
     return data.getQueryParameter("mode") == "d" ||
       data.toString().contains("mode=d")
+  }
+
+  fun intentIsBrowserFallback(intent: Intent): Boolean {
+    val data = intent.data ?: return false
+    val s = data.toString()
+    return s.startsWith("http://") ||
+      s.startsWith("https://") ||
+      s.contains("www.google.com/maps") ||
+      s.contains("maps/dir")
   }
 }

@@ -9,7 +9,7 @@ import org.junit.Test
 import java.util.Locale
 
 /**
- * GOOGLE-MAPS-DIRECT-LAUNCH-ANDROID-1 / GOOGLE-MAPS-PIP-HANDOFF-P0-1
+ * GOOGLE-MAPS-DIRECT-LAUNCH-ANDROID-1 / GOOGLE-MAPS-LAUNCH-CONTRACT-NOOP-P0-2
  */
 class GoogleMapsNavigationIntentsTest {
 
@@ -62,6 +62,30 @@ class GoogleMapsNavigationIntentsTest {
   }
 
   @Test
+  fun rejectsOutOfRangeCoordinates() {
+    assertFalse(
+      GoogleMapsNavigationIntents.Destination(latitude = 91.0, longitude = 3.0)
+        .hasCoordinates(),
+    )
+    assertFalse(
+      GoogleMapsNavigationIntents.Destination(latitude = 51.0, longitude = 181.0)
+        .hasCoordinates(),
+    )
+    assertNull(
+      GoogleMapsNavigationIntents.buildGoogleNavigationUriString(
+        GoogleMapsNavigationIntents.Destination(latitude = 91.0, longitude = 3.0),
+      ),
+    )
+  }
+
+  @Test
+  fun rejectsStringNullAddress() {
+    assertFalse(
+      GoogleMapsNavigationIntents.Destination(address = "null").hasAddress(),
+    )
+  }
+
+  @Test
   fun googleMapsPackageConstantIsExplicit() {
     assertEquals("com.google.android.apps.maps", GoogleMapsNavigationIntents.GOOGLE_MAPS_PACKAGE)
   }
@@ -94,5 +118,25 @@ class GoogleMapsNavigationIntentsTest {
     assertNotNull(uri)
     assertTrue(uri!!.contains("51.050000,3.720000"))
     assertFalse(uri.contains("ShouldNotAppear"))
+  }
+
+  @Test
+  fun structuredStatusConstantsExist() {
+    assertEquals("launched", ExternalNavigationPlugin.STATUS_LAUNCHED)
+    assertEquals("maps_not_installed", ExternalNavigationPlugin.STATUS_MAPS_NOT_INSTALLED)
+    assertEquals("maps_disabled", ExternalNavigationPlugin.STATUS_MAPS_DISABLED)
+    assertEquals("invalid_destination", ExternalNavigationPlugin.STATUS_INVALID_DESTINATION)
+    assertEquals("intent_not_resolved", ExternalNavigationPlugin.STATUS_INTENT_NOT_RESOLVED)
+    assertEquals("activity_not_found", ExternalNavigationPlugin.STATUS_ACTIVITY_NOT_FOUND)
+    assertEquals("security_exception", ExternalNavigationPlugin.STATUS_SECURITY_EXCEPTION)
+    assertEquals("native_exception", ExternalNavigationPlugin.STATUS_NATIVE_EXCEPTION)
+  }
+
+  @Test
+  fun latLngOrderIsLatitudeThenLongitude() {
+    val pair = GoogleMapsNavigationIntents.formatCoordinatePair(50.850000, 4.350000)
+    assertEquals("50.850000,4.350000", pair)
+    // Never swapped to lng,lat.
+    assertFalse(pair.startsWith("4.350000"))
   }
 }

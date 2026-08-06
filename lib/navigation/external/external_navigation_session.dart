@@ -22,9 +22,18 @@ class ExternalNavigationDestinationPoint {
       latitude != null &&
       longitude != null &&
       latitude!.isFinite &&
-      longitude!.isFinite;
+      longitude!.isFinite &&
+      latitude! >= -90.0 &&
+      latitude! <= 90.0 &&
+      longitude! >= -180.0 &&
+      longitude! <= 180.0;
 
-  bool get hasAddress => (address ?? '').trim().isNotEmpty;
+  bool get hasAddress {
+    final trimmed = (address ?? '').trim();
+    if (trimmed.isEmpty) return false;
+    final lower = trimmed.toLowerCase();
+    return lower != 'null' && lower != 'undefined';
+  }
 
   Map<String, Object?> toJson() => <String, Object?>{
         'latitude': latitude,
@@ -138,10 +147,7 @@ class ExternalNavDestinationResolver {
     String? dropoffAddress,
   }) {
     if (phase == ExternalNavPhase.toPickup) {
-      if (pickupLat != null &&
-          pickupLon != null &&
-          pickupLat.isFinite &&
-          pickupLon.isFinite) {
+      if (_coordsValid(pickupLat, pickupLon)) {
         return ExternalNavigationDestinationPoint(
           latitude: pickupLat,
           longitude: pickupLon,
@@ -150,10 +156,7 @@ class ExternalNavDestinationResolver {
       }
       return ExternalNavigationDestinationPoint(address: pickupAddress);
     }
-    if (dropoffLat != null &&
-        dropoffLon != null &&
-        dropoffLat.isFinite &&
-        dropoffLon.isFinite) {
+    if (_coordsValid(dropoffLat, dropoffLon)) {
       return ExternalNavigationDestinationPoint(
         latitude: dropoffLat,
         longitude: dropoffLon,
@@ -162,6 +165,16 @@ class ExternalNavDestinationResolver {
     }
     return ExternalNavigationDestinationPoint(address: dropoffAddress);
   }
+
+  static bool _coordsValid(double? lat, double? lon) =>
+      lat != null &&
+      lon != null &&
+      lat.isFinite &&
+      lon.isFinite &&
+      lat >= -90.0 &&
+      lat <= 90.0 &&
+      lon >= -180.0 &&
+      lon <= 180.0;
 }
 
 /// Whether Fluxidi native maneuver/voice guidance must stay suppressed.
