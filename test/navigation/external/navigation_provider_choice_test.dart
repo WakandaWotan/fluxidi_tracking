@@ -46,9 +46,8 @@ void main() {
     expect(chosen, NavigationProviderChoice.googleMapsWithMeter);
   });
 
-  testWidgets('2) PiP meter hides map chrome and shows return action',
+  testWidgets('2) PiP meter hides map chrome and Flutter return button',
       (tester) async {
-    var returned = false;
     final model = buildExternalNavPipMeterModel(
       phase: ExternalNavPhase.activeRide,
       isStreetRide: false,
@@ -62,16 +61,15 @@ void main() {
       MaterialApp(
         home: ExternalNavPipMeterCard(
           model: model,
-          onReturnToFluxidi: () => returned = true,
         ),
       ),
     );
     expect(find.text('Naar bestemming'), findsOneWidget);
     expect(find.text('€12,20'), findsOneWidget);
-    expect(find.text('Terug naar Fluxidi'), findsOneWidget);
+    // Return is a system PiP RemoteAction — not a Flutter TextButton.
+    expect(find.text('Terug naar Fluxidi'), findsNothing);
+    expect(find.byType(TextButton), findsNothing);
     expect(find.byType(Placeholder), findsNothing);
-    await tester.tap(find.text('Terug naar Fluxidi'));
-    expect(returned, isTrue);
   });
 
   testWidgets('3) phone and tablet PiP layouts render large primary value',

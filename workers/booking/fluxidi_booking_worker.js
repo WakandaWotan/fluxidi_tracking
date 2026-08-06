@@ -501,6 +501,7 @@ import {
   enrichBookingRecordOperationalLegsForReadModel,
   _materializeOperationalLegIfMissingFromReadModel,
   _projectionLifecycleStatusFromRecord,
+  syncCanonicalParentLifecycleAliasesFromProjection,
   _flattenBookingForRidesList,
   _flattenOperationalLegForRidesList,
   _flattenBookingForRidesListWithOperationalLegs,
@@ -65755,8 +65756,23 @@ async function applyBookingCompletionFromPlannedTripStopBestEffort(
   // Fallback: parent-level completion path retained for legacy
   // single-execution bookings (no leg metadata) or planned trips where the
   // tracker emitted a stale leg_id that no longer exists on the record.
+  // NAV-PIP-PLANNED-COMPLETION-EVIDENCE-FIX-P0: never cascade parent COMPLETED
+  // onto multi-leg bookings via bypass — that closes a genuine pending return.
   if (currentStatus === "COMPLETED") {
     return { ok: true, skipped: true, reason: "already_completed" };
+  }
+  if (operationalLegsForCompletion.length > 1) {
+    console.log(
+      `[ROUNDTRIP_STATUS][LEG_COMPLETE] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeLegId) || "-"} scope=parent_fallback_refused reason=multi_leg_no_cascade total_legs=${operationalLegsForCompletion.length} source=${safeSourceLabel}`,
+    );
+    return {
+      ok: true,
+      skipped: true,
+      reason: "multi_leg_stale_or_missing_leg_id_no_parent_cascade",
+      booking_id: safeBookingId,
+      leg_id: safeLegId,
+      scope: "parent_fallback_refused",
+    };
   }
   if (safeLegId && !matchingLeg) {
     console.log(
@@ -79816,6 +79832,16 @@ function _dashboardRecordHasTerminalLifecycle(rec) {
 function _isDashboardActionableOpenBooking(rec, nowMs = Date.now(), opts = {}) {
   const recordKeyId = safeStr(opts?.recordKeyId, 160) || "";
   const identityMeta = _dashboardIdentityMeta(rec, recordKeyId);
+  // Canonical projected lifecycle wins over raw stage/status disagreement so
+  // a completed one-way parent (legs COMPLETED, stage still PENDING) cannot
+  // stay in dashboard "Volgende rit" / open KPI contributions.
+  const projectedLifecycle = _projectionLifecycleStatusFromRecord(rec, recordKeyId);
+  if (
+    projectedLifecycle === "COMPLETED" ||
+    projectedLifecycle === "CANCELLED"
+  ) {
+    return { open: false, reason: "excluded_terminal_projected" };
+  }
   const operationalLegLifecycleValues = _dashboardOperationalLegFieldValues(rec, [
     "lifecycle_status",
     "lifecycleStatus",
@@ -82671,6 +82697,26 @@ async function getBookingAuthoritative(bookingId, env, tenantScope = null, prelo
   if (plannedTripCompletionRepair?.changed === true && plannedTripCompletionRepair?.rec) {
     rec = plannedTripCompletionRepair.rec;
   }
+  // NAV-PIP-PLANNED-COMPLETION-EVIDENCE-FIX-P0: heal status/stage disagreement
+  // BEFORE read-model enrich (enrich may synthesize display legs onto `rec`).
+  try {
+    const aliasHeal = syncCanonicalParentLifecycleAliasesFromProjection(rec, bookingId);
+    if (aliasHeal?.changed === true) {
+      const key = `booking:${safeStr(bookingId, 160)}`;
+      await env.BOOKING_KV.put(key, JSON.stringify(rec));
+      await upsertDashboardBookingsKpiProjectionBestEffort(
+        env,
+        bookingId,
+        rec,
+        normalizeFleetTenantScope(tenantScope),
+      );
+      console.log(
+        `[BOOKING_LIFECYCLE][ALIAS_HEAL] booking=${_bookingIntentMask(bookingId)} projected=${aliasHeal.projected} previous_status=${aliasHeal.previous_status || "-"} previous_stage=${aliasHeal.previous_stage || "-"} source=get_booking`,
+      );
+    }
+  } catch (_) {
+    // best-effort heal only
+  }
   // Lazy historical repair for ordinary receipts: when a completed booking
   // still lacks human-readable route labels but has coordinates, freeze once.
   // Never creates invoices / Billit orders / Peppol traffic.
@@ -83630,16 +83676,23 @@ async function updateBookingOperationalLegStatusAuthoritative(
 
   let derivedParentStatus = "PENDING";
   let progressState = "pending";
+  // NAV-PIP-PLANNED-COMPLETION-EVIDENCE-FIX-P0: when every stored operational
+  // leg is COMPLETED, the parent is COMPLETED. The future-pickup ignore count
+  // must not leave stage=PENDING while legs (and GET projection) say COMPLETED
+  // — that resurrects one-way bookings in dashboard/KPI after STOP.
   if (
     operationalLegsCount > 0 &&
     rawCompletedLegsCount === operationalLegsCount &&
     futureCompletedLegsIgnored > 0
   ) {
     console.log(
-      `[BOOKING_LIFECYCLE][PARENT_COMPLETION_GUARD] booking=${_bookingIntentMask(safeBookingId)} reason=future_leg_completed_ignored ignored=${futureCompletedLegsIgnored} total=${operationalLegsCount}`,
+      `[BOOKING_LIFECYCLE][PARENT_COMPLETION_GUARD] booking=${_bookingIntentMask(safeBookingId)} reason=future_leg_completed_ignored_but_all_legs_terminal ignored=${futureCompletedLegsIgnored} total=${operationalLegsCount} parent=COMPLETED`,
     );
   }
-  if (operationalLegsCount > 0 && completedLegsCount === operationalLegsCount) {
+  if (operationalLegsCount > 0 && rawCompletedLegsCount === operationalLegsCount) {
+    derivedParentStatus = "COMPLETED";
+    progressState = "completed";
+  } else if (operationalLegsCount > 0 && completedLegsCount === operationalLegsCount) {
     derivedParentStatus = "COMPLETED";
     progressState = "completed";
   } else if (operationalLegsCount > 0 && cancelledLegsCount === operationalLegsCount) {

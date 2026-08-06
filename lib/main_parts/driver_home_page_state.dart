@@ -9832,10 +9832,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (!mounted) return;
     setState(() {
       if (isLegScopedCompletion) {
-        // Optimistic state is leg-scoped: never stamp the parent booking_id
-        // override or _deletedBookingIds, both of which are matched against
-        // sibling leg rows that share the same bookingId and would hide the
-        // return leg from the driver list before the worker refresh lands.
+        // Optimistic state is leg-scoped while a genuine open sibling remains.
+        // Field evidence (2026-08-166): remaining_open_leg_rows=0 still logged
+        // KEEP_RETURN_VISIBLE and left the one-way parent resurrectable.
         _bookingStatusOverrides[rowKey] = 'COMPLETED';
         _bookings.removeWhere((x) => x.rowKey == rowKey);
         final remainingLegRows = _bookings
@@ -9846,13 +9845,26 @@ class _DriverHomePageState extends State<DriverHomePage>
                   !_isClosedRideStatus(_effectiveStatusFor(x)),
             )
             .length;
-        debugPrint(
-          '[ROUNDTRIP_STATUS][KEEP_RETURN_VISIBLE] parent=$bookingId completed_row_key=$rowKey completed_leg=$legId leg_type=$legType remaining_open_leg_rows=$remainingLegRows',
-        );
+        if (remainingLegRows > 0) {
+          debugPrint(
+            '[ROUNDTRIP_STATUS][KEEP_RETURN_VISIBLE] parent=$bookingId completed_row_key=$rowKey completed_leg=$legId leg_type=$legType remaining_open_leg_rows=$remainingLegRows',
+          );
+        } else {
+          // Final/open leg of a one-way (or last open leg) completed: finalize
+          // the parent locally so dashboard "Volgende rit" cannot resurrect it.
+          _bookingStatusOverrides[bookingId] = 'COMPLETED';
+          _bookings.removeWhere((x) => x.bookingId == bookingId);
+          _deletedBookingIds.add(bookingId);
+          _nextRidePreviewCache.clear();
+          debugPrint(
+            '[ROUNDTRIP_STATUS][PARENT_FINALIZE_LOCAL] parent=$bookingId completed_row_key=$rowKey completed_leg=$legId leg_type=$legType remaining_open_leg_rows=0',
+          );
+        }
       } else {
         _bookingStatusOverrides[bookingId] = 'COMPLETED';
         _bookings.removeWhere((x) => x.bookingId == bookingId);
         _deletedBookingIds.add(bookingId);
+        _nextRidePreviewCache.clear();
       }
     });
     _markBookingsUiDirty();
@@ -11840,9 +11852,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     // eligibility so a style swap during pre-start preview may still redraw
     // the accepted route line + pins. Without this the style-restore gate
     // rejects every preview redraw because `_liveRideActive` is false.
+    // NAV-PIP-PLANNED-COMPLETION-EVIDENCE-FIX-P0 (C): prepared_route booking
+    // previews use `_fixedStreetLevelPreviewDraft` (active booking + street
+    // draft). Restricting to `_directRideDraft` alone rejected style restore
+    // with navigation_not_live while phase=prepared_route.
     final previewRestoreEligible =
         !_liveRideActive &&
-        _directRideDraft &&
+        _fixedStreetLevelPreviewDraft &&
         _routeCoords.length >= 2;
     final styleOwnershipCapture = NavRouteOwnershipCapture(
       sessionGeneration: _navigationSessionGeneration,
@@ -12193,7 +12209,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     // authoritative — this only widens the "must be live" gate.
     final previewRestoreEligibleNow =
         !_liveRideActive &&
-        _directRideDraft &&
+        _fixedStreetLevelPreviewDraft &&
         _routeCoords.length >= 2;
     final capture =
         ownershipCapture ??
@@ -32324,9 +32340,6 @@ class _DriverHomePageState extends State<DriverHomePage>
         backgroundColor: const Color(0xFF0B0F14),
         body: ExternalNavPipMeterCard(
           model: _buildCurrentPipMeterModel(),
-          onReturnToFluxidi: () {
-            unawaited(_externalNavigationHost.returnToFluxidi());
-          },
         ),
       );
     }

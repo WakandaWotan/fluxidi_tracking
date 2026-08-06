@@ -123,8 +123,8 @@ class ExternalNavigationPlugin :
   }
 
   /**
-   * PIP-ACTIVITY-RETURN-TO-FLUXIDI-P0-6: handle Activity PendingIntent /
-   * onNewIntent return from the yellow PiP action.
+   * NAV-PIP-PLANNED-COMPLETION-EVIDENCE-FIX-P0: handle Activity PendingIntent /
+   * onNewIntent return from the system PiP RemoteAction.
    */
   fun handleReturnFromPipIntent(intent: Intent?) {
     if (intent == null) return
@@ -136,13 +136,14 @@ class ExternalNavigationPlugin :
     val session = intent.getStringExtra(GoogleMapsNavigationIntents.EXTRA_PIP_SESSION)
     Log.i(
       TAG,
-      "on_new_intent_called=true pip_return_pressed=true " +
+      "pip_return_intent_received=true pip_remote_action_clicked=true " +
+        "on_new_intent_called=true " +
         "session=${session ?: pipSessionToken} " +
         "current_task_id=${act?.taskId ?: -1} " +
         "main_activity_task_id=${act?.taskId ?: -1} " +
         "duplicate_activity_created=false",
     )
-    bringFluxidiTaskToFront(source = "on_new_intent")
+    bringFluxidiTaskToFront(source = "pip_remote_action")
   }
 
   override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -317,6 +318,8 @@ class ExternalNavigationPlugin :
     )
     lastPipReturnRequestCode =
       GoogleMapsNavigationIntents.pipReturnRequestCode(pipSessionToken)
+    // ic_menu_revert is a standard system control icon — Samsung PiP chrome
+    // shows RemoteAction icons in the PiP window (title = accessibility label).
     val icon = Icon.createWithResource(act, android.R.drawable.ic_menu_revert)
     val action = RemoteAction(
       icon,
@@ -324,11 +327,17 @@ class ExternalNavigationPlugin :
       "Terug naar Fluxidi",
       pending,
     )
+    action.setEnabled(true)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      action.setShouldShowIcon(true)
+    }
     builder.setActions(listOf(action))
     Log.i(
       TAG,
-      "pip_return_action_created=true request_code=$lastPipReturnRequestCode " +
+      "pip_remote_action_created=true pip_return_action_created=true " +
+        "request_code=$lastPipReturnRequestCode " +
         "session=$pipSessionToken " +
+        "title=Terug naar Fluxidi enabled=true show_icon=true " +
         "target_component=${act.packageName}.MainActivity " +
         "intent_flags=REORDER_TO_FRONT|SINGLE_TOP|CLEAR_TOP|NEW_TASK " +
         "pending_intent_update_current=true",
@@ -337,11 +346,15 @@ class ExternalNavigationPlugin :
   }
 
   private fun bringFluxidiTaskToFront(source: String) {
-    val act = activity ?: return
+    val act = activity
+    if (act == null) {
+      Log.w(TAG, "pip_return_failed=true reason=no_activity source=$source")
+      return
+    }
     try {
       Log.i(
         TAG,
-        "pip_return_pressed=true source=$source " +
+        "pip_remote_action_clicked=true pip_return_pressed=true source=$source " +
           "current_task_id=${act.taskId} main_activity_task_id=${act.taskId}",
       )
       val intent = GoogleMapsNavigationIntents.buildReturnToFluxidiIntent(
@@ -353,8 +366,13 @@ class ExternalNavigationPlugin :
       @Suppress("DEPRECATION")
       val am = act.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
       am.moveTaskToFront(act.taskId, 0)
-      Log.i(TAG, "move_task_to_front_result=ok task=${act.taskId}")
+      Log.i(
+        TAG,
+        "pip_task_brought_to_front=true move_task_to_front_result=ok " +
+          "task=${act.taskId} duplicate_activity_created=false",
+      )
       // Match manual PiP expand: leave the Flutter PiP meter immediately.
+      // Active ride / meter / external-nav session state stays in Flutter.
       pipActive = false
       eventSink?.success(
         mapOf(
@@ -365,7 +383,11 @@ class ExternalNavigationPlugin :
       )
       Log.i(TAG, "pip_exit_requested=true on_resume_called=pending flutter_resumed=true")
     } catch (e: Exception) {
-      Log.w(TAG, "move_task_to_front_result=fail msg=${e.message}")
+      Log.w(
+        TAG,
+        "pip_return_failed=true move_task_to_front_result=fail " +
+          "source=$source msg=${e.message}",
+      )
     }
   }
 

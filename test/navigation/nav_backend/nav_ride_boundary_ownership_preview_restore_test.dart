@@ -185,5 +185,69 @@ void main() {
       expect(decision.allowed, isFalse);
       expect(decision.reason, StyleRestoreRejectReason.packageOwnerMismatch);
     });
+
+    // NAV-PIP-PLANNED-COMPLETION-EVIDENCE-FIX-P0 (C): prepared_route style
+    // swaps must restore via the same previewRestoreEligible gate used for
+    // fixed street-level booking drafts (not live-only).
+    test('prepared_route 2D→3D style swap keeps restore eligible', () {
+      final decision = evaluateStyleRouteRestore(
+        capture: _capture(
+          navigationLive: false,
+          previewRestoreEligible: true,
+          routeCoordCount: 12,
+        ),
+        current: _snapshot(
+          navigationLive: false,
+          previewRestoreEligible: true,
+        ),
+      );
+      expect(decision.allowed, isTrue);
+    });
+
+    test('prepared_route 3D→satellite style swap keeps restore eligible', () {
+      final decision = evaluateStyleRouteRestore(
+        capture: _capture(
+          navigationLive: false,
+          previewRestoreEligible: true,
+          routeCoordCount: 8,
+        ),
+        current: _snapshot(
+          navigationLive: false,
+          previewRestoreEligible: true,
+        ),
+      );
+      expect(decision.allowed, isTrue);
+    });
+
+    test('satellite→navigation style keeps restore eligible in prepared_route', () {
+      final decision = evaluateStyleRouteRestore(
+        capture: _capture(
+          navigationLive: false,
+          previewRestoreEligible: true,
+          routeCoordCount: 20,
+        ),
+        current: _snapshot(
+          navigationLive: false,
+          previewRestoreEligible: true,
+        ),
+      );
+      expect(decision.allowed, isTrue);
+    });
+
+    test('stale prior-session prepared restore remains rejected', () {
+      final decision = evaluateStyleRouteRestore(
+        capture: _capture(
+          sessionGeneration: 3,
+          previewRestoreEligible: true,
+          routeCoordCount: 10,
+        ),
+        current: _snapshot(
+          sessionGeneration: 4,
+          previewRestoreEligible: true,
+        ),
+      );
+      expect(decision.allowed, isFalse);
+      expect(decision.reason, StyleRestoreRejectReason.sessionMismatch);
+    });
   });
 }

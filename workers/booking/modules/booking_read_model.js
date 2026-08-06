@@ -1093,6 +1093,90 @@ export function _projectionLifecycleStatusFromRecord(rec, bookingId = null) {
   return parentStatus;
 }
 
+/**
+ * NAV-PIP-PLANNED-COMPLETION-EVIDENCE-FIX-P0:
+ * When stored operational legs unanimously imply a terminal parent lifecycle
+ * but `status` / `stage` aliases still disagree (field: GET status=COMPLETED
+ * while record.stage=PENDING), sync every parent alias in-memory.
+ * Idempotent. Does not invent completion when a genuine open leg remains.
+ * Returns { changed, projected, previous_status, previous_stage }.
+ */
+export function syncCanonicalParentLifecycleAliasesFromProjection(rec, bookingId = null) {
+  if (!rec || typeof rec !== "object") {
+    return {
+      changed: false,
+      projected: null,
+      previous_status: null,
+      previous_stage: null,
+    };
+  }
+  const projected = _projectionLifecycleStatusFromRecord(rec, bookingId);
+  const previousStatus = _normLifecycleStatus(rec?.status ?? null);
+  const previousStage = _normLifecycleStatus(rec?.stage ?? null);
+  if (projected !== "COMPLETED" && projected !== "CANCELLED") {
+    return {
+      changed: false,
+      projected,
+      previous_status: previousStatus,
+      previous_stage: previousStage,
+    };
+  }
+  const statusMismatch = previousStatus !== projected;
+  const stageMismatch = previousStage !== projected;
+  if (!statusMismatch && !stageMismatch) {
+    return {
+      changed: false,
+      projected,
+      previous_status: previousStatus,
+      previous_stage: previousStage,
+    };
+  }
+  const nowIso = new Date().toISOString();
+  const lifecycleLower = projected.toLowerCase();
+  rec.status = projected;
+  rec.stage = projected;
+  rec.lifecycle_status = lifecycleLower;
+  rec.lifecycleStatus = lifecycleLower;
+  rec.booking_status = lifecycleLower;
+  rec.bookingStatus = lifecycleLower;
+  if (projected === "COMPLETED") {
+    rec.completed_at = rec.completed_at || rec.completedAt || nowIso;
+    rec.completedAt = rec.completedAt || rec.completed_at;
+    rec.progress_state = rec.progress_state || "completed";
+    rec.progressState = rec.progressState || rec.progress_state;
+  } else if (projected === "CANCELLED") {
+    rec.cancelled_at = rec.cancelled_at || rec.cancelledAt || nowIso;
+    rec.cancelledAt = rec.cancelledAt || rec.cancelled_at;
+    rec.canceled_at = rec.canceled_at || rec.cancelled_at;
+    rec.canceledAt = rec.canceledAt || rec.cancelled_at;
+    rec.progress_state = rec.progress_state || "cancelled";
+    rec.progressState = rec.progressState || rec.progress_state;
+  }
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.status = projected;
+    rec.booking.stage = projected;
+    rec.booking.lifecycle_status = lifecycleLower;
+    rec.booking.lifecycleStatus = lifecycleLower;
+    rec.booking.booking_status = lifecycleLower;
+    rec.booking.bookingStatus = lifecycleLower;
+    if (projected === "COMPLETED") {
+      rec.booking.completed_at =
+        rec.booking.completed_at || rec.booking.completedAt || rec.completed_at || nowIso;
+      rec.booking.completedAt = rec.booking.completedAt || rec.booking.completed_at;
+    } else if (projected === "CANCELLED") {
+      rec.booking.cancelled_at =
+        rec.booking.cancelled_at || rec.booking.cancelledAt || rec.cancelled_at || nowIso;
+      rec.booking.cancelledAt = rec.booking.cancelledAt || rec.booking.cancelled_at;
+    }
+  }
+  return {
+    changed: true,
+    projected,
+    previous_status: previousStatus,
+    previous_stage: previousStage,
+  };
+}
+
 /* ---- Rides-list flatten pipeline (core) ------------------------------ */
 
 export function _flattenBookingForRidesList(bookingId, rec) {

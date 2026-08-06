@@ -306,6 +306,12 @@ class GoogleMapsNavigationIntentsTest {
     assertTrue(pluginSrc.contains("setActions"))
     assertTrue(pluginSrc.contains("moveTaskToFront"))
     assertTrue(pluginSrc.contains("handleReturnFromPipIntent"))
+    assertTrue(pluginSrc.contains("pip_remote_action_created"))
+    assertTrue(pluginSrc.contains("pip_remote_action_clicked"))
+    assertTrue(pluginSrc.contains("pip_return_intent_received"))
+    assertTrue(pluginSrc.contains("pip_task_brought_to_front"))
+    assertTrue(pluginSrc.contains("pip_return_failed"))
+    assertTrue(pluginSrc.contains("setEnabled(true)"))
     assertTrue(mainSrc.contains("onNewIntent"))
     assertTrue(mainSrc.contains("handleReturnFromPipIntent"))
   }

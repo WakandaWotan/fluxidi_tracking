@@ -90,12 +90,10 @@ class ExternalNavPipMeterCard extends StatelessWidget {
   const ExternalNavPipMeterCard({
     super.key,
     required this.model,
-    this.onReturnToFluxidi,
     this.compact = true,
   });
 
   final ExternalNavPipMeterModel model;
-  final VoidCallback? onReturnToFluxidi;
   final bool compact;
 
   @override
@@ -163,22 +161,11 @@ class ExternalNavPipMeterCard extends StatelessWidget {
                     )
                     .toList(growable: false),
               ),
-              if (onReturnToFluxidi != null) ...[
-                const SizedBox(height: 12),
-                TextButton(
-                  onPressed: onReturnToFluxidi,
-                  style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFF0B0F14),
-                    backgroundColor: const Color(0xFFFFC107),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    textStyle: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                  child: const Text('Terug naar Fluxidi'),
-                ),
-              ],
+              // NAV-PIP-PLANNED-COMPLETION-EVIDENCE-FIX-P0:
+              // Do not render a Flutter "Terug naar Fluxidi" button inside PiP.
+              // Field evidence: the yellow TextButton never delivers taps /
+              // MethodChannel events on Samsung PiP. Return is owned by the
+              // Android system PiP RemoteAction / PendingIntent.
             ],
           ),
         ),
