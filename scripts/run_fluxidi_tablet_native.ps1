@@ -1,12 +1,12 @@
 # ============================================================================
 # FLUXIDI FIELD BUILD — Tablet
-# Exact commit: 20b7724081174a93cf28f905f474325b4f27bfb6
+# Exact commit: 1588663d0e2b5f453314a58ca4f1f5f129c21168
 # Clean integration worktree. Dirty hoofdrepository blijft onaangeraakt.
 # Exact 12 dart-defines, NO ADMIN_TOKEN, NO LEARNING_SERVICE_TOKEN.
 #
-# PIN NOTE: TABLET-PIN-GOOGLE-MAPS-OPAQUE-URI-P0-3
-# App head fixes opaque google.navigation URI crash (getQueryParameter on
-# non-hierarchical URI). Signage/Billit/PNG/owner gates remain. On HEAD
+# PIN NOTE: TABLET-PIN-NAVIGATION-SINGLE-TARGET-ARRIVAL-P0-5
+# App head: single ActiveNavigationTargetSnapshot + arrival reset/guard +
+# PiP return-to-Fluxidi. Signage/Billit/PNG/owner gates remain. On HEAD
 # mismatch the script checks out $requiredHead in place (or recreates).
 # ============================================================================
 
@@ -17,7 +17,7 @@ $repo         = 'C:\_flutter_work\fluxidi_tracking'
 $worktree     = 'C:\_flutter_work\fluxidi_tracking_full_integration_20260805'
 $device       = 'R52Y808CN2M'
 $adb          = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-$requiredHead = '20b7724081174a93cf28f905f474325b4f27bfb6'
+$requiredHead = '1588663d0e2b5f453314a58ca4f1f5f129c21168'
 $branch       = 'release/full-tablet-integration-20260805'
 
 function Assert-LastExitCode {
