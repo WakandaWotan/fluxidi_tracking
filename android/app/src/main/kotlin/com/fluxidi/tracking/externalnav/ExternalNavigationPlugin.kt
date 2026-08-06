@@ -339,7 +339,7 @@ class ExternalNavigationPlugin :
         "session=$pipSessionToken " +
         "title=Terug naar Fluxidi enabled=true show_icon=true " +
         "target_component=${act.packageName}.MainActivity " +
-        "intent_flags=REORDER_TO_FRONT|SINGLE_TOP|CLEAR_TOP|NEW_TASK " +
+        "intent_flags=REORDER_TO_FRONT|SINGLE_TOP " +
         "pending_intent_update_current=true",
     )
     return builder.build()

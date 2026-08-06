@@ -257,10 +257,13 @@ class AnnotationController(
   }
 
   override fun getManager(managerId: String): AnnotationManager<*, *, *, *, *, *, *> {
-    if (managerMap[managerId] == null) {
-      throw(Throwable("No manager found with id: $managerId"))
-    }
-    return managerMap[managerId]!!
+    // EXTERNAL-NAV-RETURN-LIFECYCLE-P0-7: throw Exception (not bare Throwable).
+    // Polyline/Point controllers catch Exception → Result.failure. A bare
+    // Throwable bypassed that catch and fatally killed Fluxidi during PiP
+    // (MapWidget disposed while GPS/nav still issued annotation updates).
+    val manager = managerMap[managerId]
+      ?: throw IllegalStateException("No manager found with id: $managerId")
+    return manager
   }
 
   companion object {

@@ -172,11 +172,12 @@ object GoogleMapsNavigationIntents {
     return Intent().apply {
       setClassName(packageName, "$packageName.MainActivity")
       action = ACTION_RETURN_FROM_PIP
+      // EXTERNAL-NAV-RETURN-LIFECYCLE-P0-7: prefer bringing the existing
+      // singleTop MainActivity forward. CLEAR_TOP|NEW_TASK can recreate the
+      // task/engine on Samsung PiP return and force a cold PIN gate.
       addFlags(
         Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-          Intent.FLAG_ACTIVITY_SINGLE_TOP or
-          Intent.FLAG_ACTIVITY_CLEAR_TOP or
-          Intent.FLAG_ACTIVITY_NEW_TASK,
+          Intent.FLAG_ACTIVITY_SINGLE_TOP,
       )
       putExtra(EXTRA_PIP_RETURN, true)
       if (!sessionToken.isNullOrBlank()) {

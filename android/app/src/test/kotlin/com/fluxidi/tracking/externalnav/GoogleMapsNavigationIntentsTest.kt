@@ -262,7 +262,9 @@ class GoogleMapsNavigationIntentsTest {
     assertTrue(source.contains("buildReturnToFluxidiPendingIntent"))
     assertTrue(source.contains("FLAG_ACTIVITY_REORDER_TO_FRONT"))
     assertTrue(source.contains("FLAG_ACTIVITY_SINGLE_TOP"))
-    assertTrue(source.contains("FLAG_ACTIVITY_CLEAR_TOP"))
+    // EXTERNAL-NAV-RETURN-LIFECYCLE-P0-7: CLEAR_TOP|NEW_TASK removed from
+    // return intent to avoid Samsung PiP cold-task recreation.
+    assertTrue(!source.contains("FLAG_ACTIVITY_CLEAR_TOP"))
     assertTrue(source.contains("FLAG_UPDATE_CURRENT"))
     assertTrue(source.contains("FLAG_IMMUTABLE"))
     assertTrue(source.contains("ACTION_RETURN_FROM_PIP"))
