@@ -1,10 +1,14 @@
 package com.fluxidi.tracking.externalnav
 
 import android.app.Activity
+import android.app.ActivityManager
 import android.app.PictureInPictureParams
+import android.app.RemoteAction
 import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.drawable.Icon
 import android.os.Build
 import android.util.Log
 import android.util.Rational
@@ -56,6 +60,9 @@ class ExternalNavigationPlugin :
   private var activity: Activity? = null
   private var pipActive: Boolean = false
   private var handoffPrepared: Boolean = false
+  /** Unique per external Maps/PiP session — PendingIntent requestCode owner. */
+  private var pipSessionToken: String = ""
+  private var lastPipReturnRequestCode: Int = -1
 
   override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
     methodChannel = MethodChannel(binding.binaryMessenger, CHANNEL).also {
@@ -102,6 +109,10 @@ class ExternalNavigationPlugin :
     pipActive = isInPictureInPictureMode
     if (isInPictureInPictureMode) {
       Log.i(TAG, "pip_entered_after_handoff=true")
+      // Refresh system RemoteAction so stale PendingIntents cannot survive.
+      refreshPipReturnAction(reason = "pip_entered")
+    } else {
+      Log.i(TAG, "pip_exit_requested=system_or_expand flutter_resumed=true")
     }
     eventSink?.success(
       mapOf(
@@ -109,6 +120,29 @@ class ExternalNavigationPlugin :
         "pipActive" to isInPictureInPictureMode,
       ),
     )
+  }
+
+  /**
+   * PIP-ACTIVITY-RETURN-TO-FLUXIDI-P0-6: handle Activity PendingIntent /
+   * onNewIntent return from the yellow PiP action.
+   */
+  fun handleReturnFromPipIntent(intent: Intent?) {
+    if (intent == null) return
+    val isReturn =
+      intent.getBooleanExtra(GoogleMapsNavigationIntents.EXTRA_PIP_RETURN, false) ||
+        intent.action == GoogleMapsNavigationIntents.ACTION_RETURN_FROM_PIP
+    if (!isReturn) return
+    val act = activity
+    val session = intent.getStringExtra(GoogleMapsNavigationIntents.EXTRA_PIP_SESSION)
+    Log.i(
+      TAG,
+      "on_new_intent_called=true pip_return_pressed=true " +
+        "session=${session ?: pipSessionToken} " +
+        "current_task_id=${act?.taskId ?: -1} " +
+        "main_activity_task_id=${act?.taskId ?: -1} " +
+        "duplicate_activity_created=false",
+    )
+    bringFluxidiTaskToFront(source = "on_new_intent")
   }
 
   override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -157,10 +191,13 @@ class ExternalNavigationPlugin :
       "enterFluxidiPip" -> enterFluxidiPip(result)
       "exitFluxidiPip" -> exitFluxidiPip(result)
       "updateFluxidiPip" -> {
+        refreshPipReturnAction(reason = "pip_update")
         result.success(
           mapOf(
             "ok" to true,
             "pipActive" to pipActive,
+            "session" to pipSessionToken,
+            "request_code" to lastPipReturnRequestCode,
           ),
         )
       }
@@ -223,19 +260,15 @@ class ExternalNavigationPlugin :
       return
     }
     try {
+      // Fresh session token per handoff so return PendingIntent cannot reopen
+      // a previous ride's stale action.
+      pipSessionToken = "pip_${System.currentTimeMillis()}"
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        val autoParams = PictureInPictureParams.Builder()
-          .setAspectRatio(Rational(16, 9))
-          .setAutoEnterEnabled(true)
-          .build()
-        act.setPictureInPictureParams(autoParams)
+        act.setPictureInPictureParams(buildPipParams(act, autoEnter = true))
         handoffPrepared = true
         result.success(mapOf("ok" to true, "autoEnterPrepared" to true))
       } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        val params = PictureInPictureParams.Builder()
-          .setAspectRatio(Rational(16, 9))
-          .build()
-        act.setPictureInPictureParams(params)
+        act.setPictureInPictureParams(buildPipParams(act, autoEnter = false))
         handoffPrepared = true
         result.success(mapOf("ok" to true, "autoEnterPrepared" to false))
       } else {
@@ -249,6 +282,90 @@ class ExternalNavigationPlugin :
           "message" to (e.message ?: "unknown"),
         ),
       )
+    }
+  }
+
+  private fun ensurePipSessionToken() {
+    if (pipSessionToken.isBlank()) {
+      pipSessionToken = "pip_${System.currentTimeMillis()}"
+    }
+  }
+
+  private fun refreshPipReturnAction(reason: String) {
+    val act = activity ?: return
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+    if (!isPipSupported()) return
+    try {
+      ensurePipSessionToken()
+      act.setPictureInPictureParams(buildPipParams(act, autoEnter = false))
+      Log.i(TAG, "pip_return_action_refreshed=true reason=$reason")
+    } catch (e: Exception) {
+      Log.w(TAG, "pip_return_action_refresh_failed=${e.message}")
+    }
+  }
+
+  private fun buildPipParams(act: Activity, autoEnter: Boolean): PictureInPictureParams {
+    ensurePipSessionToken()
+    val builder = PictureInPictureParams.Builder()
+      .setAspectRatio(Rational(16, 9))
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      builder.setAutoEnterEnabled(autoEnter)
+    }
+    val pending = GoogleMapsNavigationIntents.buildReturnToFluxidiPendingIntent(
+      act,
+      pipSessionToken,
+    )
+    lastPipReturnRequestCode =
+      GoogleMapsNavigationIntents.pipReturnRequestCode(pipSessionToken)
+    val icon = Icon.createWithResource(act, android.R.drawable.ic_menu_revert)
+    val action = RemoteAction(
+      icon,
+      "Terug naar Fluxidi",
+      "Terug naar Fluxidi",
+      pending,
+    )
+    builder.setActions(listOf(action))
+    Log.i(
+      TAG,
+      "pip_return_action_created=true request_code=$lastPipReturnRequestCode " +
+        "session=$pipSessionToken " +
+        "target_component=${act.packageName}.MainActivity " +
+        "intent_flags=REORDER_TO_FRONT|SINGLE_TOP|CLEAR_TOP|NEW_TASK " +
+        "pending_intent_update_current=true",
+    )
+    return builder.build()
+  }
+
+  private fun bringFluxidiTaskToFront(source: String) {
+    val act = activity ?: return
+    try {
+      Log.i(
+        TAG,
+        "pip_return_pressed=true source=$source " +
+          "current_task_id=${act.taskId} main_activity_task_id=${act.taskId}",
+      )
+      val intent = GoogleMapsNavigationIntents.buildReturnToFluxidiIntent(
+        act.packageName,
+        pipSessionToken.ifBlank { null },
+      )
+      act.startActivity(intent)
+      Log.i(TAG, "pending_intent_sent=channel_startActivity")
+      @Suppress("DEPRECATION")
+      val am = act.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+      am.moveTaskToFront(act.taskId, 0)
+      Log.i(TAG, "move_task_to_front_result=ok task=${act.taskId}")
+      // Match manual PiP expand: leave the Flutter PiP meter immediately.
+      pipActive = false
+      eventSink?.success(
+        mapOf(
+          "type" to "pipModeChanged",
+          "pipActive" to false,
+          "source" to source,
+        ),
+      )
+      Log.i(TAG, "pip_exit_requested=true on_resume_called=pending flutter_resumed=true")
+    } catch (e: Exception) {
+      Log.w(TAG, "move_task_to_front_result=fail msg=${e.message}")
     }
   }
 
@@ -429,20 +546,23 @@ class ExternalNavigationPlugin :
     }
     try {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        val params = PictureInPictureParams.Builder()
-          .setAspectRatio(Rational(16, 9))
-          .build()
+        // New session token per enter so PendingIntent cannot target a stale ride.
+        pipSessionToken = "pip_${System.currentTimeMillis()}"
+        val params = buildPipParams(act, autoEnter = false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-          val autoParams = PictureInPictureParams.Builder()
-            .setAspectRatio(Rational(16, 9))
-            .setAutoEnterEnabled(true)
-            .build()
-          act.setPictureInPictureParams(autoParams)
+          act.setPictureInPictureParams(buildPipParams(act, autoEnter = true))
         }
         val entered = act.enterPictureInPictureMode(params)
         pipActive = entered
         Log.i(TAG, "pip_entered_after_handoff=$entered prepared=$handoffPrepared")
-        result.success(mapOf("ok" to entered, "pipActive" to entered))
+        result.success(
+          mapOf(
+            "ok" to entered,
+            "pipActive" to entered,
+            "session" to pipSessionToken,
+            "request_code" to lastPipReturnRequestCode,
+          ),
+        )
       } else {
         result.success(mapOf("ok" to false, "error" to "pip_unsupported"))
       }
@@ -474,9 +594,15 @@ class ExternalNavigationPlugin :
       return
     }
     try {
-      val intent = GoogleMapsNavigationIntents.buildReturnToFluxidiIntent(act.packageName)
-      act.startActivity(intent)
-      result.success(mapOf("ok" to true, "pipActive" to false))
+      bringFluxidiTaskToFront(source = "method_channel")
+      result.success(
+        mapOf(
+          "ok" to true,
+          "pipActive" to false,
+          "session" to pipSessionToken,
+          "request_code" to lastPipReturnRequestCode,
+        ),
+      )
     } catch (e: Exception) {
       result.success(
         mapOf(

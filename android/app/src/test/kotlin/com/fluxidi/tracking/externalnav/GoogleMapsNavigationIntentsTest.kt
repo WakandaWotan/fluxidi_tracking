@@ -244,8 +244,8 @@ class GoogleMapsNavigationIntentsTest {
 
   @Test
   fun returnToFluxidiIntentSourceReordersExistingTask() {
-    // PIP-RETURN-TO-FLUXIDI-P0-4 — JVM unit tests cannot call setClassName
-    // (not mocked). Guard the committed source contract instead.
+    // PIP-ACTIVITY-RETURN-TO-FLUXIDI-P0-6 — JVM unit tests cannot call
+    // setClassName / PendingIntent (not mocked). Guard source contract.
     val candidates = listOf(
       File("src/main/kotlin/com/fluxidi/tracking/externalnav/GoogleMapsNavigationIntents.kt"),
       File(
@@ -259,9 +259,54 @@ class GoogleMapsNavigationIntentsTest {
       ?: error("GoogleMapsNavigationIntents.kt not found for return guard")
     val source = sourceFile.readText()
     assertTrue(source.contains("buildReturnToFluxidiIntent"))
+    assertTrue(source.contains("buildReturnToFluxidiPendingIntent"))
     assertTrue(source.contains("FLAG_ACTIVITY_REORDER_TO_FRONT"))
     assertTrue(source.contains("FLAG_ACTIVITY_SINGLE_TOP"))
+    assertTrue(source.contains("FLAG_ACTIVITY_CLEAR_TOP"))
+    assertTrue(source.contains("FLAG_UPDATE_CURRENT"))
+    assertTrue(source.contains("FLAG_IMMUTABLE"))
+    assertTrue(source.contains("ACTION_RETURN_FROM_PIP"))
     assertTrue(source.contains("fluxidi_external_nav_return"))
     assertTrue(source.contains("MainActivity"))
+  }
+
+  @Test
+  fun pipReturnRequestCodeIsStablePerSessionToken() {
+    val a = GoogleMapsNavigationIntents.pipReturnRequestCode("pip_session_1")
+    val b = GoogleMapsNavigationIntents.pipReturnRequestCode("pip_session_1")
+    val c = GoogleMapsNavigationIntents.pipReturnRequestCode("pip_session_2")
+    assertEquals(a, b)
+    assertTrue(a != c)
+    assertTrue(a >= 0)
+  }
+
+  @Test
+  fun pluginSourceRegistersRemoteActionAndOnNewIntentPath() {
+    val pluginCandidates = listOf(
+      File("src/main/kotlin/com/fluxidi/tracking/externalnav/ExternalNavigationPlugin.kt"),
+      File(
+        "../src/main/kotlin/com/fluxidi/tracking/externalnav/ExternalNavigationPlugin.kt",
+      ),
+      File(
+        "android/app/src/main/kotlin/com/fluxidi/tracking/externalnav/ExternalNavigationPlugin.kt",
+      ),
+    )
+    val mainCandidates = listOf(
+      File("src/main/kotlin/com/fluxidi/tracking/MainActivity.kt"),
+      File("../src/main/kotlin/com/fluxidi/tracking/MainActivity.kt"),
+      File("android/app/src/main/kotlin/com/fluxidi/tracking/MainActivity.kt"),
+    )
+    val plugin = pluginCandidates.firstOrNull { it.isFile }
+      ?: error("ExternalNavigationPlugin.kt missing")
+    val main = mainCandidates.firstOrNull { it.isFile }
+      ?: error("MainActivity.kt missing")
+    val pluginSrc = plugin.readText()
+    val mainSrc = main.readText()
+    assertTrue(pluginSrc.contains("RemoteAction"))
+    assertTrue(pluginSrc.contains("setActions"))
+    assertTrue(pluginSrc.contains("moveTaskToFront"))
+    assertTrue(pluginSrc.contains("handleReturnFromPipIntent"))
+    assertTrue(mainSrc.contains("onNewIntent"))
+    assertTrue(mainSrc.contains("handleReturnFromPipIntent"))
   }
 }

@@ -1,8 +1,11 @@
 package com.fluxidi.tracking.externalnav
 
+import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import java.util.Locale
 
 /**
@@ -24,6 +27,11 @@ object GoogleMapsNavigationIntents {
   const val NAVIGATION_MODE_DRIVING = "d"
   /** Structured contract field stamped on intents we build ourselves. */
   const val EXTRA_NAVIGATION_MODE = "fluxidi_google_navigation_mode"
+
+  // PIP-ACTIVITY-RETURN-TO-FLUXIDI-P0-6
+  const val ACTION_RETURN_FROM_PIP = "com.fluxidi.tracking.action.RETURN_FROM_PIP"
+  const val EXTRA_PIP_RETURN = "fluxidi_external_nav_return"
+  const val EXTRA_PIP_SESSION = "fluxidi_external_nav_session"
 
   data class Destination(
     val latitude: Double? = null,
@@ -152,16 +160,47 @@ object GoogleMapsNavigationIntents {
     }
   }
 
-  fun buildReturnToFluxidiIntent(packageName: String): Intent {
+  /**
+   * Explicit Activity intent that brings the existing MainActivity task to the
+   * foreground and expands out of PiP. Used by RemoteAction PendingIntent and
+   * the MethodChannel return path.
+   */
+  fun buildReturnToFluxidiIntent(
+    packageName: String,
+    sessionToken: String? = null,
+  ): Intent {
     return Intent().apply {
       setClassName(packageName, "$packageName.MainActivity")
+      action = ACTION_RETURN_FROM_PIP
       addFlags(
         Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
           Intent.FLAG_ACTIVITY_SINGLE_TOP or
+          Intent.FLAG_ACTIVITY_CLEAR_TOP or
           Intent.FLAG_ACTIVITY_NEW_TASK,
       )
-      putExtra("fluxidi_external_nav_return", true)
+      putExtra(EXTRA_PIP_RETURN, true)
+      if (!sessionToken.isNullOrBlank()) {
+        putExtra(EXTRA_PIP_SESSION, sessionToken)
+      }
     }
+  }
+
+  /** Stable positive requestCode from an external-nav session token. */
+  fun pipReturnRequestCode(sessionToken: String): Int {
+    return sessionToken.hashCode() and 0x7fffffff
+  }
+
+  fun buildReturnToFluxidiPendingIntent(
+    context: Context,
+    sessionToken: String,
+  ): PendingIntent {
+    val requestCode = pipReturnRequestCode(sessionToken)
+    val intent = buildReturnToFluxidiIntent(context.packageName, sessionToken)
+    var flags = PendingIntent.FLAG_UPDATE_CURRENT
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      flags = flags or PendingIntent.FLAG_IMMUTABLE
+    }
+    return PendingIntent.getActivity(context, requestCode, intent, flags)
   }
 
   fun intentTargetsGoogleMapsOnly(intent: Intent): Boolean {

@@ -1,6 +1,9 @@
 package com.fluxidi.tracking
 
+import android.content.Intent
 import android.content.res.Configuration
+import android.os.Bundle
+import android.util.Log
 import com.fluxidi.tracking.externalnav.ExternalNavigationPlugin
 import com.fluxidi.tracking.nativefollow.FluxidiNativeFollowPlugin
 import io.flutter.embedding.android.FlutterActivity
@@ -22,6 +25,28 @@ class MainActivity : FlutterActivity() {
     val plugin = ExternalNavigationPlugin()
     externalNavigationPlugin = plugin
     flutterEngine.plugins.add(plugin)
+  }
+
+  override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    // Cold-start return from PiP RemoteAction.
+    externalNavigationPlugin?.handleReturnFromPipIntent(intent)
+  }
+
+  /**
+   * PIP-ACTIVITY-RETURN-TO-FLUXIDI-P0-6: singleTop delivers return intents here
+   * instead of spawning a duplicate MainActivity.
+   */
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    Log.i("FluxidiMainActivity", "on_new_intent_called=true")
+    externalNavigationPlugin?.handleReturnFromPipIntent(intent)
+  }
+
+  override fun onResume() {
+    super.onResume()
+    Log.i("FluxidiMainActivity", "on_resume_called=true")
   }
 
   override fun onPictureInPictureModeChanged(
