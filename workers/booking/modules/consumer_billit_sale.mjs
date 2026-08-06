@@ -289,6 +289,20 @@ function _normalizeVatRatePercent(raw) {
   return n;
 }
 
+/**
+ * Billit BE rejects non-catalog VAT percentages (e.g. 5.99 from euro rounding).
+ * Snap only when within epsilon of a known Belgian rate — never invent 21.
+ */
+export function snapBelgianVatRatePercent(raw) {
+  const n = _normalizeVatRatePercent(raw);
+  if (n == null) return null;
+  const catalog = [0, 6, 12, 21];
+  for (const rate of catalog) {
+    if (Math.abs(n - rate) <= 0.05) return rate;
+  }
+  return n;
+}
+
 export function resolveConsumerSaleVatFromSnapshot(rec, companyTaxSnapshot = null) {
   const record = _asObject(rec);
   const tax = _asObject(companyTaxSnapshot);
@@ -318,10 +332,11 @@ export function resolveConsumerSaleVatFromSnapshot(rec, companyTaxSnapshot = nul
   if (rate == null) {
     return { ok: false, error: "vat_rate_unavailable" };
   }
+  const snapped = snapBelgianVatRatePercent(rate);
   // Never invent 21 — only accept a finite rate from an existing snapshot.
   return {
     ok: true,
-    vat_rate_percent: rate,
+    vat_rate_percent: snapped == null ? rate : snapped,
     source,
   };
 }

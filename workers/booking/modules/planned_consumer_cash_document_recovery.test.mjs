@@ -12,6 +12,7 @@ import {
   resolveConsumerSalePaymentSyncGate,
   resolveConsumerSaleRegistrationGate,
   resolveConsumerSaleVatFromSnapshot,
+  snapBelgianVatRatePercent,
 } from "./consumer_billit_sale.mjs";
 
 function cashPlannedSoftBusiness(over = {}) {
@@ -232,6 +233,9 @@ test("14. amount/VAT/fixed price unchanged for €35.40 / 6%", () => {
   assert.equal(amount.value, "35.40");
   assert.equal(amount.cents, 3540);
   assert.equal(vat.vat_rate_percent, 6);
+  // Billit BE catalog snap: euro-derived 5.99 must become 6.
+  assert.equal(snapBelgianVatRatePercent(5.99), 6);
+  assert.equal(snapBelgianVatRatePercent(0.06), 6);
 });
 
 test("15. registration gate failure path leaves create when no existing doc", () => {

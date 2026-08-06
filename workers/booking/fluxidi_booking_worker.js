@@ -264,6 +264,7 @@ import {
   resolveConsumerSaleRegistrationGate,
   resolveConsumerSaleVatFromSnapshot,
   resolveConsumerToBusinessConversionDecision,
+  snapBelgianVatRatePercent,
 } from "./modules/consumer_billit_sale.mjs";
 import {
   _adminTokenFromRequest,
@@ -4244,6 +4245,13 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
     built.body.idempotency_key = idempotencyKey;
     built.body.fluxidi_sale_kind = CONSUMER_SALE_KIND;
     built.body.created_by_role = "system_consumer_sale";
+    // Authoritative consumer VAT (snapped to Billit BE catalog, e.g. 5.99→6).
+    if (Number.isFinite(Number(vat.vat_rate_percent))) {
+      built.body.vat_rate_percent = vat.vat_rate_percent;
+      if (built.body.expected_totals && typeof built.body.expected_totals === "object") {
+        built.body.expected_totals.vat_rate_percent = vat.vat_rate_percent;
+      }
+    }
 
     const issueResp = await _issueInvoiceCore({
       env,
@@ -4339,6 +4347,39 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
           documentId,
         );
       }
+      // Heal near-miss VAT percentages (5.99→6) that Billit BE rejects.
+      if (documentRecord && typeof documentRecord === "object") {
+        const totals =
+          documentRecord.totals && typeof documentRecord.totals === "object"
+            ? documentRecord.totals
+            : null;
+        const rawVat = totals?.vat_rate_percent ?? totals?.vatRatePercent;
+        const snappedVat = snapBelgianVatRatePercent(rawVat);
+        if (
+          totals &&
+          snappedVat != null &&
+          Number(rawVat) !== snappedVat
+        ) {
+          const healed = {
+            ...documentRecord,
+            totals: { ...totals, vat_rate_percent: snappedVat },
+            updated_at: new Date().toISOString(),
+          };
+          try {
+            const registryKey = buildDocumentRegistryKey(scope, documentId);
+            await env.BOOKING_KV.put(registryKey, JSON.stringify(healed));
+            documentRecord = healed;
+            console.log(
+              `[CONSUMER_BILLIT_SALE][VAT_SNAP] booking=${maskedBooking} from=${safeStr(rawVat, 16)} to=${snappedVat}`,
+            );
+          } catch (_) {
+            documentRecord = {
+              ...documentRecord,
+              totals: { ...totals, vat_rate_percent: snappedVat },
+            };
+          }
+        }
+      }
       if (documentRecord) {
         const billit = await ensureBillitSandboxOrderForIssuedInvoice(
           env,
@@ -4350,8 +4391,24 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
         if (billit?.ok) {
           billitOrderId = safeStr(billit.billit_order_id, 120) || billitOrderId;
         } else {
+          const reasonBits = [];
+          const errCode = safeStr(billit?.error, 120);
+          if (errCode) reasonBits.push(errCode);
+          const billitCode = safeStr(billit?.billit_error_code, 80);
+          if (billitCode) reasonBits.push(`code=${billitCode}`);
+          const billitDesc = safeStr(billit?.billit_error_description, 120);
+          if (billitDesc) reasonBits.push(billitDesc);
+          if (Array.isArray(billit?.reasons) && billit.reasons.length) {
+            reasonBits.push(
+              billit.reasons
+                .slice(0, 4)
+                .map((r) => safeStr(r, 60))
+                .filter(Boolean)
+                .join("|"),
+            );
+          }
           billitLastError =
-            safeStr(billit?.error, 120) || "billit_order_create_failed";
+            reasonBits.join(";").slice(0, 160) || "billit_order_create_failed";
           console.log(
             `[CONSUMER_BILLIT_SALE][BILLIT_FAIL] booking=${maskedBooking} err=${billitLastError}`,
           );
@@ -4475,31 +4532,40 @@ async function maybeSyncConsumerBillitSaleAfterPaid(
     consumer?.document_record
   ) {
     try {
-      const billit = await ensureBillitSandboxOrderForIssuedInvoice(
+      // Reuse registration path so VAT snap + metadata heal run before Billit.
+      const ensured = await maybeRegisterConsumerBillitSaleAfterCompletion(
         env,
         scope,
-        config,
-        consumer.document_record,
+        bookingId,
         {
-          documentId: consumer.document_id,
-          documentNumber: consumer.document_number,
+          rec,
+          sourceLegId: opts.sourceLegId || null,
+          sourceLegType: opts.sourceLegType || null,
         },
       );
+      const orderId =
+        safeStr(ensured?.billit_order_id, 120) ||
+        safeStr(consumer.billit_order_id, 120) ||
+        null;
       await stampConsumerSaleMarkersOnBooking(env, bookingId, {
         document_id: consumer.document_id,
-        billit_order_id: safeStr(billit?.billit_order_id, 120) || consumer.billit_order_id,
-        status: "registered",
+        billit_order_id: orderId,
+        status: orderId ? "registered" : "document_issued",
         payment_sync: ridePaid ? "attempted" : "pending",
+        last_error: orderId
+          ? null
+          : safeStr(ensured?.reason, 120) || "billit_order_pending",
+        retryable: !orderId,
       });
       console.log(
-        `[CONSUMER_BILLIT_SALE][PAID_SYNC] booking=${maskedBooking} action=${gate.action} order=${_bookingIntentMask(billit?.billit_order_id || consumer.billit_order_id)}`,
+        `[CONSUMER_BILLIT_SALE][PAID_SYNC] booking=${maskedBooking} action=${gate.action} order=${_bookingIntentMask(orderId)}`,
       );
       return {
         handled: true,
-        ok: billit?.ok === true,
+        ok: !!orderId,
         skipped: false,
         reason: gate.action,
-        billit_order_id: billit?.billit_order_id || consumer.billit_order_id || null,
+        billit_order_id: orderId,
         peppol_sent: false,
         peppol_applicable: false,
       };
