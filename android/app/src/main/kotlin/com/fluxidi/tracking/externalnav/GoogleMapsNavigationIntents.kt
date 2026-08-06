@@ -3,9 +3,10 @@ package com.fluxidi.tracking.externalnav
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import java.util.Locale
 
 /**
- * GOOGLE-MAPS-DIRECT-LAUNCH-ANDROID-1
+ * GOOGLE-MAPS-DIRECT-LAUNCH-ANDROID-1 / GOOGLE-MAPS-PIP-HANDOFF-P0-1
  *
  * Pure helpers that build an explicit Google Maps navigation Intent.
  * No browser chooser, no generic VIEW without package.
@@ -37,25 +38,41 @@ object GoogleMapsNavigationIntents {
     }
   }
 
+  fun isGoogleMapsEnabled(packageManager: PackageManager): Boolean {
+    return try {
+      packageManager.getApplicationInfo(GOOGLE_MAPS_PACKAGE, 0).enabled
+    } catch (_: PackageManager.NameNotFoundException) {
+      false
+    }
+  }
+
+  /**
+   * Locale-invariant lat,lng for the navigation query (always '.' decimal).
+   */
+  fun formatCoordinatePair(latitude: Double, longitude: Double): String {
+    return String.format(Locale.US, "%.6f,%.6f", latitude, longitude)
+  }
+
   /**
    * google.navigation URI with driving mode, always targeted at the Maps package.
+   * No FLAG_ACTIVITY_NEW_TASK — launched from the resumed Fluxidi Activity so
+   * Maps can take the foreground before PiP handoff.
    */
   fun buildGoogleNavigationIntent(destination: Destination): Intent? {
     val uri = buildGoogleNavigationUri(destination) ?: return null
     return Intent(Intent.ACTION_VIEW, uri).apply {
       setPackage(GOOGLE_MAPS_PACKAGE)
-      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
   }
 
   /**
    * Pure string form for JVM unit tests (no Android Uri.encode dependency).
-   * Spaces become '+'; production Intent path uses Uri.encode.
+   * Spaces become '+'; production Intent path uses Uri.encode for addresses.
    */
   fun buildGoogleNavigationUriString(destination: Destination): String? {
     val destParam: String = when {
       destination.hasCoordinates() ->
-        "${destination.latitude},${destination.longitude}"
+        formatCoordinatePair(destination.latitude!!, destination.longitude!!)
       destination.hasAddress() ->
         destination.address!!.trim().replace(' ', '+')
       else -> return null
@@ -66,17 +83,23 @@ object GoogleMapsNavigationIntents {
 
   fun buildGoogleNavigationUri(destination: Destination): Uri? {
     return when {
-      destination.hasCoordinates() ->
-        // Keep lat,lng unencoded so Maps receives a clean coordinate pair.
-        Uri.parse(
-          "google.navigation:q=${destination.latitude},${destination.longitude}&mode=d",
-        )
+      destination.hasCoordinates() -> {
+        val pair = formatCoordinatePair(destination.latitude!!, destination.longitude!!)
+        Uri.parse("google.navigation:q=$pair&mode=d")
+      }
       destination.hasAddress() ->
         Uri.parse(
           "google.navigation:q=${Uri.encode(destination.address!!.trim())}&mode=d",
         )
       else -> null
     }
+  }
+
+  fun canResolveNavigationIntent(
+    packageManager: PackageManager,
+    intent: Intent,
+  ): Boolean {
+    return intent.resolveActivity(packageManager) != null
   }
 
   fun buildPlayStoreInstallIntent(): Intent {

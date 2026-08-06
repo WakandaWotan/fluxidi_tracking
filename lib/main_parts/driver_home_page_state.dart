@@ -22874,6 +22874,13 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool get _externalNavGuidanceSuppressed =>
       shouldSuppressNativeGuidance(_externalNavigationSession);
 
+  /// TABLET-LOCALIZED-NAV-SIGNAGE-1: captioned language plates only when
+  /// shortestSide >= 600. Phones stay on captionless icon assets.
+  bool get _useCaptionedNavSigns {
+    if (!mounted) return false;
+    return isNavSignageTabletLayout(MediaQuery.sizeOf(context));
+  }
+
   ExternalNavPhase _resolveExternalNavPhase() {
     if (_liveRideActive) return ExternalNavPhase.activeRide;
     return ExternalNavPhase.toPickup;
@@ -23093,6 +23100,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _launchGoogleMapsWithFluxidiPip({
     required ExternalNavPhase phase,
   }) async {
+    // GOOGLE-MAPS-PIP-HANDOFF-P0-1: Maps intent first; PiP only after a
+    // successful startActivity. Never PiP-over-homescreen without Maps.
     if (!_externalNavigationHost.isAndroid) {
       _toast(
         _tr(
@@ -23141,7 +23150,12 @@ class _DriverHomePageState extends State<DriverHomePage>
             _directRideKey ??
             'pending')
         .trim();
-    final session = ExternalNavigationSession(
+    final destinationSource = phase == ExternalNavPhase.toPickup
+        ? 'pickup_a'
+        : 'destination_b';
+    // Session is pending until Maps launch succeeds; guidance stays active
+    // until then so a failed handoff never leaves the driver without Fluxidi.
+    final pendingSession = ExternalNavigationSession(
       provider: ExternalNavProvider.googleMaps,
       bookingId: bookingId,
       legId: _activeBooking?.bookingId,
@@ -23149,36 +23163,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       destination: destination,
       launchedAt: DateTime.now().toUtc(),
       pipActive: false,
-      nativeGuidanceSuppressed: true,
+      nativeGuidanceSuppressed: false,
     );
-    if (mounted) {
-      setState(() {
-        _externalNavigationSession = session;
-        // Keep Fluxidi guidance flags off while Google owns turn-by-turn.
-        _navigationGuidanceActive = false;
-      });
-    } else {
-      _externalNavigationSession = session;
-    }
 
     if (usePip) {
-      final pipResult = await _externalNavigationHost.enterFluxidiPip();
-      final pipOk = pipResult['ok'] == true || pipResult['pipActive'] == true;
-      if (mounted) {
-        setState(() {
-          _externalNavigationSession =
-              (_externalNavigationSession ?? session).copyWith(
-            pipActive: pipOk,
-          );
-        });
-      }
-      if (!pipOk && pipResult['error'] == 'pip_unsupported') {
-        final continueWithout = await _confirmContinueWithoutPip();
-        if (!continueWithout) {
-          await _endExternalNavigationSession(reason: 'pip_enter_declined');
-          return;
-        }
-      }
+      await _externalNavigationHost.prepareFluxidiPipForHandoff();
     }
 
     final launch = await _externalNavigationHost.launchGoogleNavigation(
@@ -23187,29 +23176,70 @@ class _DriverHomePageState extends State<DriverHomePage>
         longitude: destination.longitude,
         address: destination.address,
       ),
+      destinationSource: destinationSource,
     );
     if (launch['ok'] != true) {
       final err = (launch['error'] ?? '').toString();
+      _logNavBounded(
+        'EXTERNAL_NAV',
+        'event=maps_launch_failure code=$err '
+            'resolved=${launch['maps_intent_resolved']} '
+            'source=$destinationSource',
+        intervalMs: 1,
+      );
       if (err == 'google_maps_not_installed') {
-        await _endExternalNavigationSession(reason: 'maps_missing_at_launch');
         await _promptGoogleMapsMissing();
         return;
       }
-      await _endExternalNavigationSession(reason: 'launch_failed');
       _toast(
         _tr(
-          nl: 'Google Maps kon niet worden geopend.',
-          en: 'Could not open Google Maps.',
-          fr: 'Impossible d’ouvrir Google Maps.',
-          es: 'No se pudo abrir Google Maps.',
+          nl: 'Google Maps kon niet worden gestart.',
+          en: 'Google Maps could not be started.',
+          fr: 'Google Maps n’a pas pu démarrer.',
+          es: 'No se pudo iniciar Google Maps.',
         ),
       );
       return;
     }
+
+    // Launch succeeded — now own the external session and suppress Fluxidi
+    // turn-by-turn. PiP only after Maps was dispatched.
+    final activeSession = pendingSession.copyWith(
+      nativeGuidanceSuppressed: true,
+    );
+    if (mounted) {
+      setState(() {
+        _externalNavigationSession = activeSession;
+        _navigationGuidanceActive = false;
+      });
+    } else {
+      _externalNavigationSession = activeSession;
+    }
+
+    var pipOk = false;
+    if (usePip) {
+      final pipResult = await _externalNavigationHost.enterFluxidiPip();
+      pipOk = pipResult['ok'] == true || pipResult['pipActive'] == true;
+      if (mounted) {
+        setState(() {
+          _externalNavigationSession =
+              (_externalNavigationSession ?? activeSession).copyWith(
+            pipActive: pipOk,
+          );
+        });
+      }
+      _logNavBounded(
+        'EXTERNAL_NAV',
+        'event=pip_after_handoff ok=$pipOk',
+        intervalMs: 1,
+      );
+    }
+
     _logNavBounded(
       'EXTERNAL_NAV',
       'event=launched provider=google_maps phase=${phase.name} '
-          'pip=$usePip booking=$bookingId',
+          'pip=$pipOk source=$destinationSource booking=$bookingId '
+          'dispatched=${launch['maps_launch_dispatched']}',
       intervalMs: 1,
     );
   }
@@ -23601,6 +23631,7 @@ class _DriverHomePageState extends State<DriverHomePage>
               // The active customer language is the only source for the
               // sign language; device locale never overrides it.
               languageCode: currentLanguageCode,
+              useCaptionedSign: _useCaptionedNavSigns,
             )
           : null,
       loadingText: _navLoadingBannerText(),
@@ -31466,6 +31497,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       // The active customer language is the only source for the sign
       // language; device locale never overrides it.
       languageCode: currentLanguageCode,
+      useCaptionedSign: _useCaptionedNavSigns,
     );
     return DriverTurnInstructionBanner(
       themeListenable: _activeDriverThemeListenable,

@@ -23,11 +23,14 @@ void main() {
             return true;
           case 'isPipSupported':
             return true;
+          case 'prepareFluxidiPipForHandoff':
+            return <String, dynamic>{'ok': true, 'autoEnterPrepared': true};
           case 'launchGoogleNavigation':
             return <String, dynamic>{
               'ok': true,
               'package': 'com.google.android.apps.maps',
               'drivingMode': true,
+              'maps_launch_dispatched': true,
             };
           case 'enterFluxidiPip':
             return <String, dynamic>{'ok': true, 'pipActive': true};
@@ -101,5 +104,24 @@ void main() {
       'enterFluxidiPip',
       'returnToFluxidi',
     ]);
+  });
+
+  test('handoff order: prepare then launch then enter PiP', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+    await host.prepareFluxidiPipForHandoff();
+    await host.launchGoogleNavigation(
+      const ExternalNavigationDestination(latitude: 51.0, longitude: 3.7),
+      destinationSource: 'pickup_a',
+    );
+    await host.enterFluxidiPip();
+    expect(log.map((c) => c.method).toList(), [
+      'prepareFluxidiPipForHandoff',
+      'launchGoogleNavigation',
+      'enterFluxidiPip',
+    ]);
+    final launchArgs = log[1].arguments as Map;
+    expect(launchArgs['destinationSource'], 'pickup_a');
   });
 }

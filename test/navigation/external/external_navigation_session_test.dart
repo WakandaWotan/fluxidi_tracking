@@ -151,5 +151,22 @@ void main() {
       expect(after.destination.latitude, 50.8);
       expect(after.bookingId, before.bookingId);
     });
+
+    test('10) launch failure contract: suppressed only when active', () {
+      final pending = ExternalNavigationSession(
+        provider: ExternalNavProvider.googleMaps,
+        bookingId: 'b',
+        phase: ExternalNavPhase.toPickup,
+        destination: const ExternalNavigationDestinationPoint(
+          latitude: 51,
+          longitude: 3.7,
+        ),
+        launchedAt: DateTime.now(),
+        nativeGuidanceSuppressed: false,
+      );
+      expect(shouldSuppressNativeGuidance(pending), isFalse);
+      final active = pending.copyWith(nativeGuidanceSuppressed: true);
+      expect(shouldSuppressNativeGuidance(active), isTrue);
+    });
   });
 }

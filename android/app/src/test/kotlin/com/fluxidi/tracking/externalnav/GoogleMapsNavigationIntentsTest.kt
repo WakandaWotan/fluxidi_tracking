@@ -6,10 +6,10 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Locale
 
 /**
- * GOOGLE-MAPS-DIRECT-LAUNCH-ANDROID-1 — pure JVM URI/contract tests.
- * Avoids Robolectric so CI/local can run without long Android framework boot.
+ * GOOGLE-MAPS-DIRECT-LAUNCH-ANDROID-1 / GOOGLE-MAPS-PIP-HANDOFF-P0-1
  */
 class GoogleMapsNavigationIntentsTest {
 
@@ -20,10 +20,26 @@ class GoogleMapsNavigationIntentsTest {
     )
     assertNotNull(uri)
     assertTrue(uri!!.startsWith("google.navigation:"))
-    assertTrue(uri.contains("51.05"))
-    assertTrue(uri.contains("3.72"))
+    assertTrue(uri.contains("51.050000"))
+    assertTrue(uri.contains("3.720000"))
     assertTrue(uri.contains("mode=d"))
     assertFalse(uri.startsWith("http"))
+  }
+
+  @Test
+  fun decimalPointIndependentOfLocale() {
+    val previous = Locale.getDefault()
+    try {
+      Locale.setDefault(Locale.GERMANY) // uses comma as decimal separator
+      val pair = GoogleMapsNavigationIntents.formatCoordinatePair(51.05, 3.72)
+      assertEquals("51.050000,3.720000", pair)
+      // Separator between lat/lng is ',', decimals stay '.' (never "51,05").
+      assertEquals(1, pair.count { it == ',' })
+      assertTrue(pair.contains('.'))
+      assertFalse(pair.contains("51,05"))
+    } finally {
+      Locale.setDefault(previous)
+    }
   }
 
   @Test
@@ -76,7 +92,7 @@ class GoogleMapsNavigationIntentsTest {
       ),
     )
     assertNotNull(uri)
-    assertTrue(uri!!.contains("51.05,3.72"))
+    assertTrue(uri!!.contains("51.050000,3.720000"))
     assertFalse(uri.contains("ShouldNotAppear"))
   }
 }

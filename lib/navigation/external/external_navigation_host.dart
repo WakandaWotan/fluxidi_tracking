@@ -63,19 +63,34 @@ class ExternalNavigationHost {
   }
 
   Future<Map<String, dynamic>> launchGoogleNavigation(
-    ExternalNavigationDestination destination,
-  ) async {
+    ExternalNavigationDestination destination, {
+    String destinationSource = 'unknown',
+  }) async {
     if (!isAndroid) {
       return <String, dynamic>{'ok': false, 'error': 'unsupported_platform'};
     }
     if (!destination.hasCoordinates && !destination.hasAddress) {
       return <String, dynamic>{'ok': false, 'error': 'missing_destination'};
     }
+    final args = <String, Object?>{
+      ...destination.toChannelArgs(),
+      'destinationSource': destinationSource,
+    };
     final raw = await _channel.invokeMethod<dynamic>(
       'launchGoogleNavigation',
-      destination.toChannelArgs(),
+      args,
     );
     return _asMap(raw);
+  }
+
+  /// Prepare PiP params (auto-enter on Android 12+) without entering yet.
+  Future<Map<String, dynamic>> prepareFluxidiPipForHandoff() async {
+    if (!isAndroid) {
+      return <String, dynamic>{'ok': false, 'error': 'unsupported_platform'};
+    }
+    return _asMap(
+      await _channel.invokeMethod<dynamic>('prepareFluxidiPipForHandoff'),
+    );
   }
 
   Future<Map<String, dynamic>> enterFluxidiPip() async {

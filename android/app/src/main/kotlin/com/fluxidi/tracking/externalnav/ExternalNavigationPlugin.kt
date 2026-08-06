@@ -5,8 +5,8 @@ import android.app.PictureInPictureParams
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.res.Configuration
 import android.os.Build
+import android.util.Log
 import android.util.Rational
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -16,9 +16,12 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * GOOGLE-MAPS-DIRECT-LAUNCH-ANDROID-1 / FLUXIDI-PIP-METER-EXTERNAL-NAV-1
+ * GOOGLE-MAPS-DIRECT-LAUNCH-ANDROID-1 / GOOGLE-MAPS-PIP-HANDOFF-P0-1
  *
  * Platform channel: fluxidi.external_navigation
+ *
+ * Correct handoff: prepare PiP params → dispatch Maps → enter PiP only after
+ * a successful startActivity (or via Android 12+ auto-enter on leave).
  */
 class ExternalNavigationPlugin :
   FlutterPlugin,
@@ -29,6 +32,7 @@ class ExternalNavigationPlugin :
   companion object {
     const val CHANNEL = "fluxidi.external_navigation"
     const val EVENTS = "fluxidi.external_navigation/events"
+    private const val TAG = "FluxidiExternalNav"
   }
 
   private var methodChannel: MethodChannel? = null
@@ -36,6 +40,7 @@ class ExternalNavigationPlugin :
   private var eventSink: EventChannel.EventSink? = null
   private var activity: Activity? = null
   private var pipActive: Boolean = false
+  private var handoffPrepared: Boolean = false
 
   override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
     methodChannel = MethodChannel(binding.binaryMessenger, CHANNEL).also {
@@ -80,6 +85,9 @@ class ExternalNavigationPlugin :
 
   fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
     pipActive = isInPictureInPictureMode
+    if (isInPictureInPictureMode) {
+      Log.i(TAG, "pip_entered_after_handoff=true")
+    }
     eventSink?.success(
       mapOf(
         "type" to "pipModeChanged",
@@ -96,16 +104,20 @@ class ExternalNavigationPlugin :
           result.success(false)
           return
         }
-        result.success(
-          GoogleMapsNavigationIntents.isGoogleMapsInstalled(act.packageManager),
-        )
+        val installed =
+          GoogleMapsNavigationIntents.isGoogleMapsInstalled(act.packageManager)
+        val enabled =
+          installed &&
+            GoogleMapsNavigationIntents.isGoogleMapsEnabled(act.packageManager)
+        Log.i(TAG, "maps_package_installed=$installed maps_package_enabled=$enabled")
+        result.success(installed && enabled)
       }
       "isPipSupported" -> result.success(isPipSupported())
+      "prepareFluxidiPipForHandoff" -> prepareFluxidiPipForHandoff(result)
       "launchGoogleNavigation" -> launchGoogleNavigation(call, result)
       "enterFluxidiPip" -> enterFluxidiPip(result)
       "exitFluxidiPip" -> exitFluxidiPip(result)
       "updateFluxidiPip" -> {
-        // Aspect ratio / actions refresh — no-op payload update for now.
         result.success(
           mapOf(
             "ok" to true,
@@ -125,17 +137,69 @@ class ExternalNavigationPlugin :
     return act.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
   }
 
-  private fun launchGoogleNavigation(call: MethodCall, result: MethodChannel.Result) {
+  /**
+   * Prepare PiP params (Android 12+ auto-enter) WITHOUT entering PiP yet.
+   * Maps must be dispatched first.
+   */
+  private fun prepareFluxidiPipForHandoff(result: MethodChannel.Result) {
     val act = activity
     if (act == null) {
       result.success(mapOf("ok" to false, "error" to "no_activity"))
       return
     }
-    if (!GoogleMapsNavigationIntents.isGoogleMapsInstalled(act.packageManager)) {
+    if (!isPipSupported()) {
+      result.success(mapOf("ok" to false, "error" to "pip_unsupported"))
+      return
+    }
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        val autoParams = PictureInPictureParams.Builder()
+          .setAspectRatio(Rational(16, 9))
+          .setAutoEnterEnabled(true)
+          .build()
+        act.setPictureInPictureParams(autoParams)
+        handoffPrepared = true
+        result.success(mapOf("ok" to true, "autoEnterPrepared" to true))
+      } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val params = PictureInPictureParams.Builder()
+          .setAspectRatio(Rational(16, 9))
+          .build()
+        act.setPictureInPictureParams(params)
+        handoffPrepared = true
+        result.success(mapOf("ok" to true, "autoEnterPrepared" to false))
+      } else {
+        result.success(mapOf("ok" to false, "error" to "pip_unsupported"))
+      }
+    } catch (e: Exception) {
+      result.success(
+        mapOf(
+          "ok" to false,
+          "error" to "pip_prepare_failed",
+          "message" to (e.message ?: "unknown"),
+        ),
+      )
+    }
+  }
+
+  private fun launchGoogleNavigation(call: MethodCall, result: MethodChannel.Result) {
+    val act = activity
+    if (act == null) {
+      Log.w(TAG, "maps_launch_failure_code=no_activity")
+      result.success(mapOf("ok" to false, "error" to "no_activity"))
+      return
+    }
+    val pm = act.packageManager
+    val installed = GoogleMapsNavigationIntents.isGoogleMapsInstalled(pm)
+    val enabled = installed && GoogleMapsNavigationIntents.isGoogleMapsEnabled(pm)
+    Log.i(TAG, "maps_package_installed=$installed maps_package_enabled=$enabled")
+    if (!installed || !enabled) {
+      Log.w(TAG, "maps_launch_failure_code=google_maps_not_installed")
       result.success(
         mapOf(
           "ok" to false,
           "error" to "google_maps_not_installed",
+          "maps_package_installed" to installed,
+          "maps_package_enabled" to enabled,
         ),
       )
       return
@@ -143,32 +207,56 @@ class ExternalNavigationPlugin :
     val lat = (call.argument<Number>("latitude"))?.toDouble()
     val lon = (call.argument<Number>("longitude"))?.toDouble()
     val address = call.argument<String>("address")
+    val destinationSource = call.argument<String>("destinationSource") ?: "unknown"
     val destination = GoogleMapsNavigationIntents.Destination(
       latitude = lat,
       longitude = lon,
       address = address,
     )
+    Log.i(TAG, "maps_destination_source=$destinationSource hasCoords=${destination.hasCoordinates()}")
     val intent = GoogleMapsNavigationIntents.buildGoogleNavigationIntent(destination)
     if (intent == null) {
+      Log.w(TAG, "maps_launch_failure_code=missing_destination")
       result.success(mapOf("ok" to false, "error" to "missing_destination"))
       return
     }
     if (!GoogleMapsNavigationIntents.intentTargetsGoogleMapsOnly(intent) ||
       !GoogleMapsNavigationIntents.intentUsesDrivingMode(intent)
     ) {
+      Log.w(TAG, "maps_launch_failure_code=invalid_intent")
       result.success(mapOf("ok" to false, "error" to "invalid_intent"))
+      return
+    }
+    val resolved = GoogleMapsNavigationIntents.canResolveNavigationIntent(pm, intent)
+    Log.i(TAG, "maps_intent_resolved=$resolved uri=${intent.data}")
+    if (!resolved) {
+      Log.w(TAG, "maps_launch_failure_code=intent_not_resolved")
+      result.success(
+        mapOf(
+          "ok" to false,
+          "error" to "intent_not_resolved",
+          "maps_intent_resolved" to false,
+        ),
+      )
       return
     }
     try {
       act.startActivity(intent)
+      Log.i(TAG, "maps_launch_dispatched=true")
       result.success(
         mapOf(
           "ok" to true,
           "package" to GoogleMapsNavigationIntents.GOOGLE_MAPS_PACKAGE,
           "drivingMode" to true,
+          "maps_package_installed" to true,
+          "maps_intent_resolved" to true,
+          "maps_launch_dispatched" to true,
+          "maps_destination_source" to destinationSource,
+          "uri" to (intent.data?.toString() ?: ""),
         ),
       )
     } catch (_: ActivityNotFoundException) {
+      Log.w(TAG, "maps_launch_failure_code=google_maps_not_installed")
       result.success(
         mapOf(
           "ok" to false,
@@ -176,6 +264,7 @@ class ExternalNavigationPlugin :
         ),
       )
     } catch (e: Exception) {
+      Log.w(TAG, "maps_launch_failure_code=launch_failed msg=${e.message}")
       result.success(
         mapOf(
           "ok" to false,
@@ -202,8 +291,6 @@ class ExternalNavigationPlugin :
           .setAspectRatio(Rational(16, 9))
           .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-          // Android 12+: prepare auto-enter style params, then enter explicitly
-          // so launch→PiP remains deterministic from Flutter.
           val autoParams = PictureInPictureParams.Builder()
             .setAspectRatio(Rational(16, 9))
             .setAutoEnterEnabled(true)
@@ -212,6 +299,7 @@ class ExternalNavigationPlugin :
         }
         val entered = act.enterPictureInPictureMode(params)
         pipActive = entered
+        Log.i(TAG, "pip_entered_after_handoff=$entered prepared=$handoffPrepared")
         result.success(mapOf("ok" to entered, "pipActive" to entered))
       } else {
         result.success(mapOf("ok" to false, "error" to "pip_unsupported"))
@@ -233,7 +321,7 @@ class ExternalNavigationPlugin :
       result.success(mapOf("ok" to false, "error" to "no_activity"))
       return
     }
-    // Leaving PiP is done by moving the task to front / finishing PiP mode.
+    handoffPrepared = false
     returnToFluxidi(result)
   }
 
