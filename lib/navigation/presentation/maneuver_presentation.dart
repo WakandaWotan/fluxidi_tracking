@@ -65,6 +65,7 @@ NavSignRuntimeTruth proveNavSignRuntimeTruth({
     snapshot: snapshot,
     tr: tr,
     languageCode: languageCode,
+    useCaptionedSign: false,
   );
   final id = presentation.signManeuver.id;
   return NavSignRuntimeTruth(
@@ -143,6 +144,10 @@ class ResponsiveManeuverPresentation {
   /// Why [signManeuver] was chosen. Diagnostics only.
   final NavSignResolutionSource signResolutionSource;
 
+  /// TABLET-LOCALIZED-NAV-SIGNAGE-1: tablet uses captioned language plates;
+  /// phone keeps captionless icons with external primary wording.
+  final bool signCaptioned;
+
   const ResponsiveManeuverPresentation({
     required this.maneuverVisual,
     required this.distanceLabel,
@@ -156,11 +161,15 @@ class ResponsiveManeuverPresentation {
     this.signManeuver = NavSignManeuver.followRoute,
     this.signLanguageCode = kNavSignFallbackLanguageCode,
     this.signResolutionSource = NavSignResolutionSource.safeFallback,
+    this.signCaptioned = false,
   });
 
   /// Full bundle path of the sign for this presentation.
-  String get signAssetPath =>
-      navSignAssetPath(languageCode: signLanguageCode, maneuver: signManeuver);
+  String get signAssetPath => navSignAssetPath(
+        languageCode: signLanguageCode,
+        maneuver: signManeuver,
+        useCaptioned: signCaptioned,
+      );
 }
 
 /// NAV-RESPONSIVE-MANEUVER-BANNER-V1: maps a live snapshot to phase.
@@ -722,6 +731,7 @@ ResponsiveManeuverPresentation buildResponsiveManeuverPresentation({
   String? languageCode,
   String? drivingSide,
   bool? arrivalConfirmed,
+  bool useCaptionedSign = false,
 }) {
   final rawVisual = resolveDriverManeuverVisual(snapshot);
   final isArrival = rawVisual == ManeuverVisual.arrive;
@@ -898,11 +908,28 @@ ResponsiveManeuverPresentation buildResponsiveManeuverPresentation({
     );
   }
 
+  // TABLET-LOCALIZED-NAV-SIGNAGE-1: caption lives on the plate. External copy
+  // is distance + street only — never a second maneuver verb.
+  final String outPrimary;
+  final String outDistance;
+  final String outSecondary;
+  if (useCaptionedSign && !isArrival) {
+    outPrimary = '';
+    outDistance = distanceLabel;
+    outSecondary = wording.secondary.trim().isNotEmpty
+        ? wording.secondary
+        : _towardLabel(snapshot: snapshot, tr: tr);
+  } else {
+    outPrimary = wording.primary;
+    outDistance = wording.showDistanceChip ? distanceLabel : '';
+    outSecondary = wording.secondary;
+  }
+
   return ResponsiveManeuverPresentation(
     maneuverVisual: visual,
-    distanceLabel: wording.showDistanceChip ? distanceLabel : '',
-    primaryInstruction: wording.primary,
-    secondaryInstruction: wording.secondary,
+    distanceLabel: outDistance,
+    primaryInstruction: outPrimary,
+    secondaryInstruction: outSecondary,
     roundaboutExitNumber: exitNumber,
     urgencyPhase: phase,
     accessibilityLabel: wording.accessibility,
@@ -911,5 +938,6 @@ ResponsiveManeuverPresentation buildResponsiveManeuverPresentation({
     signManeuver: sign.maneuver,
     signLanguageCode: resolveNavSignLanguageCode(languageCode),
     signResolutionSource: sign.source,
+    signCaptioned: useCaptionedSign,
   );
 }

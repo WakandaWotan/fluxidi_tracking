@@ -48,11 +48,12 @@ NavInstructionSnapshot _followRouteSnap() {
   );
 }
 
-ResponsiveManeuverPresentation _presentation() {
+ResponsiveManeuverPresentation _presentation({bool useCaptionedSign = false}) {
   return buildResponsiveManeuverPresentation(
     snapshot: _followRouteSnap(),
     tr: _trNl,
     languageCode: 'nl',
+    useCaptionedSign: useCaptionedSign,
   );
 }
 
@@ -61,8 +62,9 @@ DriverTurnInstructionBanner _banner({
   required bool compact,
   required bool topRowLandscape,
   NavSignageTabletReadabilityMetrics? tabletReadability,
+  bool useCaptionedSign = false,
 }) {
-  final p = _presentation();
+  final p = _presentation(useCaptionedSign: useCaptionedSign);
   return DriverTurnInstructionBanner(
     compact: compact,
     isTablet: isTablet,
@@ -127,7 +129,7 @@ Widget _tabletTopRowHarness({
             key: boundaryKey,
             child: SizedBox(
               width: size.width,
-              height: 160,
+              height: 220,
               child: Stack(
                 children: [
                   Positioned(
@@ -180,6 +182,7 @@ Widget _tabletTopRowHarness({
                                   compact: true,
                                   topRowLandscape: true,
                                   tabletReadability: resolved,
+                                  useCaptionedSign: true,
                                 ),
                               ),
                             ),
@@ -354,9 +357,8 @@ void main() {
       expect(find.byKey(const ValueKey<String>('harness_menu')), findsOneWidget);
 
       final sign = _signSize(tester);
-      expect(sign, greaterThanOrEqualTo(110));
-      expect(sign, lessThanOrEqualTo(120));
-      expect(_primaryFont(tester), greaterThanOrEqualTo(28));
+      expect(sign, greaterThanOrEqualTo(160));
+      expect(sign, lessThanOrEqualTo(180));
 
       final bannerRect = tester.getRect(
         find.byKey(const ValueKey<String>('nav_maneuver_banner')),
@@ -371,7 +373,7 @@ void main() {
       expect(bannerRect.left, greaterThanOrEqualTo(logoRect.right - 0.5));
       expect(
         (bannerRect.top - logoRect.top).abs(),
-        lessThan(80),
+        lessThan(120),
         reason: 'banner must share the logo row in tablet portrait',
       );
       // No overlap with the compass stand-in.
@@ -384,10 +386,12 @@ void main() {
       expect(signWidget.resolvedLanguageCode, 'nl');
       expect(
         signWidget.assetPath,
-        'assets/fluxidi_navigation_signs_v3/png/nl/straight.png',
+        'assets/fluxidi_navigation_signs_v3/png_captioned/nl/straight.png',
       );
-      expect(find.text('Volg de route'), findsOneWidget);
+      // Captioned plate owns the maneuver verb; external copy is distance + road.
+      expect(find.text('Volg de route'), findsNothing);
       expect(find.textContaining('N454'), findsOneWidget);
+      expect(find.textContaining('643'), findsOneWidget);
 
       await _writeBoundaryPng(
         tester,
@@ -420,8 +424,7 @@ void main() {
       expect(find.byType(NavManeuverSign), findsOneWidget);
 
       final tabletSign = _signSize(tester);
-      expect(tabletSign, greaterThanOrEqualTo(110));
-      expect(_primaryFont(tester), greaterThanOrEqualTo(28));
+      expect(tabletSign, greaterThanOrEqualTo(160));
       expect(
         _bannerSize(tester).height,
         greaterThanOrEqualTo(
@@ -471,23 +474,23 @@ void main() {
       );
       expect(narrow.bannerMaxWidth, lessThanOrEqualTo(300));
       expect(narrow.bannerMinWidth, lessThanOrEqualTo(narrow.bannerMaxWidth));
-      expect(narrow.signSize, greaterThanOrEqualTo(110));
-      expect(narrow.signSize, lessThanOrEqualTo(120));
+      expect(narrow.signSize, greaterThanOrEqualTo(160));
+      expect(narrow.signSize, lessThanOrEqualTo(180));
       final split = NavSignageTabletReadabilityMetrics.forSplitNav(
         availableBannerWidth: 320,
       );
-      expect(split.signSize, greaterThanOrEqualTo(76));
-      expect(split.signSize, lessThanOrEqualTo(88));
-      expect(split.primaryFontSize, greaterThanOrEqualTo(21));
+      expect(split.signSize, greaterThanOrEqualTo(120));
+      expect(split.signSize, lessThanOrEqualTo(140));
+      expect(split.primaryFontSize, greaterThanOrEqualTo(22));
     });
 
     test('instruction presentation stays straight / N454 / 643 m', () {
-      final p = _presentation();
+      final p = _presentation(useCaptionedSign: true);
       expect(p.signManeuver, NavSignManeuver.straight);
-      expect(p.signAssetPath, endsWith('/straight.png'));
+      expect(p.signAssetPath, contains('png_captioned/nl/straight.png'));
       expect(p.distanceLabel, contains('643'));
       expect(p.secondaryInstruction.toLowerCase(), contains('n454'));
-      expect(p.primaryInstruction, 'Volg de route');
+      expect(p.primaryInstruction, isEmpty);
     });
   });
 }

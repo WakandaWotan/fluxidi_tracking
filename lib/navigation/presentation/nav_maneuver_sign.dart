@@ -14,6 +14,7 @@ class NavManeuverSign extends StatelessWidget {
     required this.languageCode,
     required this.size,
     this.semanticLabel,
+    this.useCaptioned = false,
   });
 
   final NavSignManeuver maneuver;
@@ -27,9 +28,15 @@ class NavManeuverSign extends StatelessWidget {
 
   final String? semanticLabel;
 
+  /// TABLET-LOCALIZED-NAV-SIGNAGE-1: load captioned language plates.
+  final bool useCaptioned;
+
   /// The resolved bundle path this widget will load.
-  String get assetPath =>
-      navSignAssetPath(languageCode: languageCode, maneuver: maneuver);
+  String get assetPath => navSignAssetPath(
+        languageCode: languageCode,
+        maneuver: maneuver,
+        useCaptioned: useCaptioned,
+      );
 
   /// Language directory actually used after fallback.
   String get resolvedLanguageCode => resolveNavSignLanguageCode(languageCode);

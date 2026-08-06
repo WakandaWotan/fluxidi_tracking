@@ -580,6 +580,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
           maneuver: presentation.signManeuver,
           languageCode: presentation.signLanguageCode,
           size: _signPaintSize,
+          useCaptioned: presentation.signCaptioned,
         ),
       );
     }
@@ -689,7 +690,10 @@ class DriverTurnInstructionBanner extends StatelessWidget {
   }) {
     // NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1:
     // Principal block ≤ 2 lines. Missing subtitle collapses (zero height).
+    // TABLET-LOCALIZED-NAV-SIGNAGE-1: captioned plates leave primary empty —
+    // only distance + street/ref appear beside the plate.
     if (presentation != null) {
+      final hasPrimary = primaryText.trim().isNotEmpty;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -698,13 +702,18 @@ class DriverTurnInstructionBanner extends StatelessWidget {
             _buildDistanceChip(palette),
             const SizedBox(height: 3),
           ],
-          _buildPrimaryText(
-            palette,
-            maxLines: showSecondary ? 1 : 2,
-          ),
+          if (hasPrimary)
+            _buildPrimaryText(
+              palette,
+              maxLines: showSecondary ? 1 : 2,
+            ),
           if (showSecondary) ...[
-            const SizedBox(height: 2),
-            _buildSecondaryText(palette, secondaryLine, maxLines: 1),
+            if (hasPrimary) const SizedBox(height: 2),
+            _buildSecondaryText(
+              palette,
+              secondaryLine,
+              maxLines: presentation!.signCaptioned ? 2 : 1,
+            ),
           ],
         ],
       );

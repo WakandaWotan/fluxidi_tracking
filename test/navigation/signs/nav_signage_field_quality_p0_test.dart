@@ -228,27 +228,27 @@ void main() {
   });
 
   group('tablet readability sizes', () {
-    test('full-nav pictogram is at least 110 logical px', () {
+    test('full-nav pictogram is at least 160 logical px', () {
       final m = NavSignageTabletReadabilityMetrics.resolve(
         isLandscape: false,
-        availableBannerWidth: 400,
+        availableBannerWidth: 560,
       );
-      expect(m.signSize, greaterThanOrEqualTo(110));
-      expect(m.signSize, lessThanOrEqualTo(120));
-      expect(m.primaryFontSize, greaterThanOrEqualTo(28));
-      expect(m.distanceFontSize, greaterThanOrEqualTo(23));
-      expect(m.secondaryFontSize, greaterThanOrEqualTo(22));
+      expect(m.signSize, greaterThanOrEqualTo(160));
+      expect(m.signSize, lessThanOrEqualTo(180));
+      expect(m.primaryFontSize, greaterThanOrEqualTo(26));
+      expect(m.distanceFontSize, greaterThanOrEqualTo(26));
+      expect(m.secondaryFontSize, greaterThanOrEqualTo(24));
     });
 
-    test('split-nav pictogram is at least 76 logical px', () {
+    test('split-nav pictogram is at least 120 logical px', () {
       final m = NavSignageTabletReadabilityMetrics.forSplitNav(
-        availableBannerWidth: 320,
+        availableBannerWidth: 360,
       );
-      expect(m.signSize, greaterThanOrEqualTo(76));
-      expect(m.signSize, lessThanOrEqualTo(88));
-      expect(m.primaryFontSize, greaterThanOrEqualTo(21));
-      expect(m.distanceFontSize, greaterThanOrEqualTo(18));
-      expect(m.secondaryFontSize, greaterThanOrEqualTo(18));
+      expect(m.signSize, greaterThanOrEqualTo(120));
+      expect(m.signSize, lessThanOrEqualTo(140));
+      expect(m.primaryFontSize, greaterThanOrEqualTo(22));
+      expect(m.distanceFontSize, greaterThanOrEqualTo(22));
+      expect(m.secondaryFontSize, greaterThanOrEqualTo(20));
     });
   });
 

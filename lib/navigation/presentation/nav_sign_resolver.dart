@@ -78,7 +78,15 @@ const List<String> kNavSignLanguageCodes = <String>['nl', 'en', 'fr', 'es'];
 const String kNavSignFallbackLanguageCode = 'nl';
 
 /// Root of the bundled PNG signs. Registered per language in `pubspec.yaml`.
+///
+/// Phone (shortestSide &lt; 600) uses captionless icon plates here.
 const String kNavSignAssetRoot = 'assets/fluxidi_navigation_signs_v3/png';
+
+/// TABLET-LOCALIZED-NAV-SIGNAGE-1: original language-captioned plates restored
+/// from Git history (`a4d7aed`). Used only when [useCaptioned] is true
+/// (tablet shortestSide &gt;= 600).
+const String kNavSignCaptionedAssetRoot =
+    'assets/fluxidi_navigation_signs_v3/png_captioned';
 
 /// Highest roundabout exit that has a dedicated sign. Higher exits are real but
 /// undrawn, so they render the generic roundabout sign rather than a wrong one.
@@ -107,22 +115,28 @@ String resolveNavSignLanguageCode(String? raw) {
   return kNavSignFallbackLanguageCode;
 }
 
-/// `assets/fluxidi_navigation_signs_v3/png/<language>/<maneuver_id>.png`.
+/// `assets/fluxidi_navigation_signs_v3/png[|_captioned]/<language>/<id>.png`.
 String navSignAssetPath({
   required String? languageCode,
   required NavSignManeuver maneuver,
+  bool useCaptioned = false,
 }) {
   final language = resolveNavSignLanguageCode(languageCode);
-  return '$kNavSignAssetRoot/$language/${maneuver.id}.png';
+  final root = useCaptioned ? kNavSignCaptionedAssetRoot : kNavSignAssetRoot;
+  return '$root/$language/${maneuver.id}.png';
 }
 
 /// Every bundled sign path. Used by the asset-integrity tests and the debug
 /// catalog; never by production rendering.
-List<String> navSignAllAssetPaths() {
+List<String> navSignAllAssetPaths({bool useCaptioned = false}) {
   return <String>[
     for (final language in kNavSignLanguageCodes)
       for (final maneuver in NavSignManeuver.values)
-        navSignAssetPath(languageCode: language, maneuver: maneuver),
+        navSignAssetPath(
+          languageCode: language,
+          maneuver: maneuver,
+          useCaptioned: useCaptioned,
+        ),
   ];
 }
 

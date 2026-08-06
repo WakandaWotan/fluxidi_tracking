@@ -64,41 +64,41 @@ class NavSignageTabletReadabilityMetrics {
   final bool isSplitNav;
 
   /// Full-navigation target ranges before available-width clamping.
-  static const double portraitBannerHeightMin = 112;
-  static const double portraitBannerHeightMax = 132;
-  /// Wider portrait band so "Volg de route" fits at 28–32 sp beside the plate.
-  static const double portraitBannerWidthMin = 380;
-  static const double portraitBannerWidthMax = 560;
+  /// TABLET-LOCALIZED-NAV-SIGNAGE-1: taller band for captioned ~160–180 px plates.
+  static const double portraitBannerHeightMin = 168;
+  static const double portraitBannerHeightMax = 196;
+  static const double portraitBannerWidthMin = 420;
+  static const double portraitBannerWidthMax = 620;
 
-  static const double landscapeBannerHeightMin = 108;
-  static const double landscapeBannerHeightMax = 128;
-  static const double landscapeBannerWidthMin = 420;
-  static const double landscapeBannerWidthMax = 520;
+  static const double landscapeBannerHeightMin = 160;
+  static const double landscapeBannerHeightMax = 188;
+  static const double landscapeBannerWidthMin = 460;
+  static const double landscapeBannerWidthMax = 580;
 
-  /// Full-nav pictogram plate: ~110–120 logical px.
-  static const double signSizeMin = 110;
-  static const double signSizeMax = 120;
+  /// TABLET-LOCALIZED-NAV-SIGNAGE-1: full-nav captioned plate ~160–180 px.
+  static const double signSizeMin = 160;
+  static const double signSizeMax = 180;
 
-  static const double distanceFontMin = 23;
-  static const double distanceFontMax = 26;
-  static const double primaryFontMin = 28;
-  static const double primaryFontMax = 32;
-  static const double secondaryFontMin = 22;
-  static const double secondaryFontMax = 26;
+  static const double distanceFontMin = 26;
+  static const double distanceFontMax = 30;
+  static const double primaryFontMin = 26;
+  static const double primaryFontMax = 30;
+  static const double secondaryFontMin = 24;
+  static const double secondaryFontMax = 28;
 
-  /// Tellers + navigatie split — still glanceable, never phone-mini.
-  static const double splitSignSizeMin = 76;
-  static const double splitSignSizeMax = 88;
-  static const double splitPrimaryFontMin = 21;
-  static const double splitPrimaryFontMax = 24;
-  static const double splitDistanceFontMin = 18;
-  static const double splitDistanceFontMax = 21;
-  static const double splitSecondaryFontMin = 18;
-  static const double splitSecondaryFontMax = 20;
-  static const double splitBannerHeightMin = 88;
-  static const double splitBannerHeightMax = 108;
-  static const double splitBannerWidthMin = 260;
-  static const double splitBannerWidthMax = 360;
+  /// Tellers + navigatie split — captioned plate still readable while driving.
+  static const double splitSignSizeMin = 120;
+  static const double splitSignSizeMax = 140;
+  static const double splitPrimaryFontMin = 22;
+  static const double splitPrimaryFontMax = 26;
+  static const double splitDistanceFontMin = 22;
+  static const double splitDistanceFontMax = 26;
+  static const double splitSecondaryFontMin = 20;
+  static const double splitSecondaryFontMax = 24;
+  static const double splitBannerHeightMin = 128;
+  static const double splitBannerHeightMax = 156;
+  static const double splitBannerWidthMin = 300;
+  static const double splitBannerWidthMax = 420;
 
   static const double defaultCompassReserve = 96;
 
