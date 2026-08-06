@@ -182,5 +182,54 @@ void main() {
       gate.forceClear();
       expect(gate.inFlight, isFalse);
     });
+
+    test('busy state always released after native_exception path', () {
+      final gate = GoogleMapsLaunchBusyGate();
+      final gen = gate.tryBegin();
+      expect(gen, isNotNull);
+      // Mimic finally after structured native_exception (no silent stuck busy).
+      final decision = GoogleMapsLaunchDecision.fromResult(
+        result: const GoogleMapsLaunchResult(
+          status: GoogleMapsLaunchStatus.nativeException,
+          failureCode: 'native_exception',
+          launchDispatched: false,
+        ),
+        userWantsPip: true,
+      );
+      expect(decision.activateExternalSession, isFalse);
+      expect(decision.requestPip, isFalse);
+      expect(decision.uiAction, GoogleMapsLaunchUiAction.showFailureDialog);
+      gate.end(gen!);
+      expect(gate.inFlight, isFalse);
+      expect(gate.tryBegin(), isNotNull);
+    });
+  });
+
+  group('opaque URI launch contract', () {
+    test('launched result opens external session; native_exception is visible', () {
+      final launched = GoogleMapsLaunchDecision.fromResult(
+        result: const GoogleMapsLaunchResult(
+          status: GoogleMapsLaunchStatus.launched,
+          launchDispatched: true,
+          pipSupported: true,
+        ),
+        userWantsPip: true,
+      );
+      expect(launched.activateExternalSession, isTrue);
+      expect(launched.requestPip, isTrue);
+
+      final failed = GoogleMapsLaunchDecision.fromResult(
+        result: const GoogleMapsLaunchResult(
+          status: GoogleMapsLaunchStatus.nativeException,
+          failureCode: 'This isn\'t a hierarchical URI.',
+          launchDispatched: false,
+        ),
+        userWantsPip: true,
+      );
+      expect(failed.activateExternalSession, isFalse);
+      expect(failed.requestPip, isFalse);
+      expect(failed.uiAction, isNot(GoogleMapsLaunchUiAction.none));
+      expect(failed.keepNativeGuidanceActive, isTrue);
+    });
   });
 }
