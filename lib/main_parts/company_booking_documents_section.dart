@@ -474,6 +474,9 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   // B11-D: per-document Peppol send in-flight set, keyed by document_id so one
   // send never blocks unrelated rows or the status refresh button.
   Set<String> _sendingPeppolDocIds = <String>{};
+  // CONSUMER-SALE-LATE-BUSINESS-INVOICE-ACTION-P0-3: one conversion POST at a
+  // time per booking (idempotent credit-first path).
+  bool _lateBusinessInvoiceConverting = false;
   // B12-G2: proactive Peppol readiness preview cache, keyed by document_id
   // within the active booking scope. Discarded when the booking identity changes.
   Map<String, BookingPeppolReadinessState> _peppolReadinessByDocId =
@@ -620,6 +623,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       _documents = const <_BookingDocumentMetadata>[];
       _refreshingDocIds = <String>{};
       _sendingPeppolDocIds = <String>{};
+      _lateBusinessInvoiceConverting = false;
       _peppolReadinessByDocId = <String, BookingPeppolReadinessState>{};
       _fetchingPeppolReadinessDocIds = <String>{};
       _loaded = false;
@@ -838,6 +842,199 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
             ..._fetchingPeppolReadinessDocIds,
           }..remove(docId);
         });
+      }
+    }
+  }
+
+  /// CONSUMER-SALE-LATE-BUSINESS-INVOICE-ACTION-P0-3: late “Zakelijke factuur
+  /// aanvragen” under an existing consumer-sale document card.
+  bool _bookingHasBusinessInvoiceDocument() {
+    return _documentsForDisplay.any((d) => d.isBusinessInvoicePresentation);
+  }
+
+  bool _shouldShowLateBusinessInvoiceAction(_BookingDocumentMetadata doc) {
+    // Keep the row visible while a conversion POST is in flight so the spinner
+    // can replace the active button; `_lateBusinessInvoiceConverting` disables
+    // every late-action button (no second active click).
+    return shouldShowLateBusinessInvoiceAction(
+      saleKind: doc.fluxidiSaleKind,
+      documentType: doc.documentType,
+      createdByRole: doc.createdByRole,
+      peppolApplicable: doc.peppolApplicable,
+      superseded: doc.superseded,
+      lifecycleState: doc.lifecycleState.isNotEmpty
+          ? doc.lifecycleState
+          : doc.documentStatus,
+      businessInvoicePresent: _bookingHasBusinessInvoiceDocument(),
+      conversionInProgress: false,
+      conversionAllowed: true,
+    );
+  }
+
+  bool _isDocPaidForStreetInvoice(_BookingDocumentMetadata doc) {
+    final export = doc.billitExport;
+    if (export == null) return false;
+    if (export.billitPaid == true) return true;
+    return export.billitStatus.toLowerCase() == 'paid';
+  }
+
+  Future<StreetInvoicePostResult> _postLateBusinessInvoice(
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/company/bookings/${Uri.encodeComponent(widget.bookingId)}'
+        '/request-business-invoice',
+      );
+      final auth = await resolveCompanyOwnerAuthHeaders();
+      final res = await http
+          .post(uri, headers: auth.headers, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 20));
+      Object? decoded;
+      try {
+        decoded = jsonDecode(res.body);
+      } catch (_) {
+        decoded = null;
+      }
+      if (res.statusCode == 200) {
+        final parsed = parseStreetBusinessInvoiceResponse(decoded);
+        if (parsed != null && parsed.ok) {
+          return StreetInvoicePostResult(statusCode: 200, response: parsed);
+        }
+        return StreetInvoicePostResult(
+          statusCode: 200,
+          errorToken: decoded is Map ? decoded['error']?.toString() : null,
+        );
+      }
+      return StreetInvoicePostResult(
+        statusCode: res.statusCode,
+        errorToken: decoded is Map ? decoded['error']?.toString() : null,
+      );
+    } catch (_) {
+      return const StreetInvoicePostResult(statusCode: null);
+    }
+  }
+
+  Future<StreetInvoiceDocsResult> _fetchDocumentsForLateInvoice() async {
+    try {
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/company/bookings/${Uri.encodeComponent(widget.bookingId)}/documents',
+      );
+      final auth = await resolveCompanyOwnerAuthHeaders();
+      final res = await http
+          .get(uri, headers: auth.headers)
+          .timeout(const Duration(seconds: 12));
+      if (res.statusCode != 200) {
+        return StreetInvoiceDocsResult(statusCode: res.statusCode);
+      }
+      Object? decoded;
+      try {
+        decoded = jsonDecode(res.body);
+      } catch (_) {
+        decoded = null;
+      }
+      return StreetInvoiceDocsResult(
+        statusCode: 200,
+        okEnvelope: documentsEnvelopeOk(decoded),
+        invoice: extractInvoiceFromDocuments(decoded),
+        invoicePdfReady: extractInvoicePdfReadyFromDocuments(decoded),
+      );
+    } catch (_) {
+      return const StreetInvoiceDocsResult();
+    }
+  }
+
+  Future<void> _requestLateBusinessInvoice(_BookingDocumentMetadata doc) async {
+    if (_lateBusinessInvoiceConverting) return;
+    if (!_shouldShowLateBusinessInvoiceAction(doc)) return;
+
+    final input = await showStreetBusinessInvoiceForm(
+      context: context,
+      theme: _streetInvoiceThemeFromCompanyTokens(widget.tokens),
+      language: appLanguageNotifier.value,
+      isPaidBooking: _isDocPaidForStreetInvoice(doc),
+      initial: const StreetBusinessInvoiceBuyerInput(),
+      convertFromConsumerSale: true,
+    );
+    if (input == null || !mounted) return;
+
+    final requestScopeKey = _documentsScopeKey;
+    setState(() => _lateBusinessInvoiceConverting = true);
+
+    final controller = StreetBusinessInvoiceController(
+      bookingId: widget.bookingId,
+      isPaidBooking: _isDocPaidForStreetInvoice(doc),
+      postInvoice: _postLateBusinessInvoice,
+      fetchDocuments: _fetchDocumentsForLateInvoice,
+      pollTimeout: kStreetInvoicePollTimeout,
+    );
+    try {
+      await controller.loadExisting();
+      if (controller.hasIssuedInvoice) {
+        if (mounted && requestScopeKey == _activeScopeKey) {
+          _showBillitPeppolSendSnackBar(
+            _tr(
+              nl: 'Er bestaat al een zakelijke factuur voor deze boeking.',
+              en: 'A business invoice already exists for this booking.',
+              fr: 'Une facture professionnelle existe déjà pour cette réservation.',
+              es: 'Ya existe una factura comercial para esta reserva.',
+            ),
+          );
+          _loadDocuments();
+        }
+        return;
+      }
+      await controller.submit(input);
+      if (!mounted || requestScopeKey != _activeScopeKey) return;
+
+      if (controller.hasIssuedInvoice) {
+        final docId = controller.displayDocumentId;
+        if (docId.isNotEmpty) {
+          final issued = controller.issuedResponse;
+          final indexed = controller.indexedInvoice;
+          final snapshot = issued != null
+              ? StreetInvoiceLocalIssuedSnapshot.fromIssueResponse(issued)
+              : (indexed != null
+                    ? StreetInvoiceLocalIssuedSnapshot.fromDocSummary(indexed)
+                    : StreetInvoiceLocalIssuedSnapshot(documentId: docId));
+          _StreetInvoiceLocalIndex.instance.registerIssuedInvoice(
+            widget.bookingId,
+            documentId: docId,
+            snapshot: snapshot,
+          );
+        }
+        _showBillitPeppolSendSnackBar(
+          _tr(
+            nl:
+                'Zakelijke factuur aangemaakt. De particuliere verkoop is '
+                'gecrediteerd.',
+            en:
+                'Business invoice created. The private sale has been credited.',
+            fr:
+                'Facture professionnelle créée. La vente particulière a été '
+                'créditée.',
+            es:
+                'Factura comercial creada. La venta particular ha sido '
+                'acreditada.',
+          ),
+        );
+        _loadDocuments();
+        return;
+      }
+
+      final kind =
+          controller.errorKind ?? StreetBusinessInvoiceErrorKind.unknown;
+      _showBillitPeppolSendSnackBar(
+        streetBusinessInvoiceErrorText(kind, appLanguageNotifier.value),
+      );
+    } finally {
+      controller.dispose();
+      if (mounted && requestScopeKey == _activeScopeKey) {
+        setState(() => _lateBusinessInvoiceConverting = false);
+      } else {
+        _lateBusinessInvoiceConverting = false;
       }
     }
   }
@@ -2073,11 +2270,54 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
             _buildBillitStatusBlock(tokens, doc, doc.billitExport!),
           if (_shouldShowBillitNotLinkedYet(doc))
             _buildBillitNotLinkedYetBlock(tokens, doc: doc),
+          if (_shouldShowLateBusinessInvoiceAction(doc))
+            _buildLateBusinessInvoiceButton(tokens, doc),
           if (_shouldShowBillitRefresh(doc))
             _buildBillitRefreshButton(tokens, doc),
           if (_shouldShowBillitPeppolSend(doc))
             _buildBillitPeppolSendButton(tokens, doc),
         ],
+      ),
+    );
+  }
+
+  /// CONSUMER-SALE-LATE-BUSINESS-INVOICE-ACTION-P0-3: opens the existing
+  /// credit-first conversion form + POST …/request-business-invoice.
+  Widget _buildLateBusinessInvoiceButton(
+    _CompanyBookingsThemeTokens tokens,
+    _BookingDocumentMetadata doc,
+  ) {
+    final busy = _lateBusinessInvoiceConverting;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: TextButton.icon(
+        onPressed: busy ? null : () => _requestLateBusinessInvoice(doc),
+        style: TextButton.styleFrom(
+          foregroundColor: tokens.accent,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          minimumSize: const Size(0, 30),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          alignment: Alignment.centerLeft,
+        ),
+        icon: busy
+            ? SizedBox(
+                width: 13,
+                height: 13,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(tokens.accent),
+                ),
+              )
+            : Icon(Icons.description_outlined, size: 14, color: tokens.accent),
+        label: Text(
+          _tr(
+            nl: 'Zakelijke factuur aanvragen',
+            en: 'Request business invoice',
+            fr: 'Demander une facture professionnelle',
+            es: 'Solicitar factura comercial',
+          ),
+          style: const TextStyle(fontSize: 11.0, fontWeight: FontWeight.w700),
+        ),
       ),
     );
   }

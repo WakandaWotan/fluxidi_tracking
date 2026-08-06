@@ -1733,10 +1733,64 @@ int countInvoiceDocuments(Object? decoded) {
 bool documentsEnvelopeOk(Object? decoded) =>
     decoded is Map && decoded['ok'] == true;
 
-/// Extracts a single invoice summary from a documents-list envelope. When
-/// [expectedDocumentId] is provided and present, that exact document is chosen;
-/// otherwise the first invoice is used. Returns null when the envelope is not
-/// OK or has no invoice document.
+/// True when a documents-list row is a convertible / presentation consumer
+/// sale (never a business invoice or credit note).
+bool documentRecordIsConsumerSale(Map doc) {
+  final saleKind = _lower(
+    doc['fluxidi_sale_kind'] ??
+        doc['fluxidiSaleKind'] ??
+        doc['sale_kind'] ??
+        doc['saleKind'],
+  );
+  if (saleKind == 'consumer_sale' ||
+      saleKind == 'private_sale' ||
+      saleKind == 'particuliere_verkoop' ||
+      saleKind == 'ritbon') {
+    return true;
+  }
+  if (saleKind == 'business_invoice' ||
+      saleKind == 'credit_note' ||
+      saleKind == 'creditnote' ||
+      saleKind == 'consumer_conversion_credit') {
+    return false;
+  }
+  final role = _lower(doc['created_by_role'] ?? doc['createdByRole']);
+  if (role == 'system_consumer_sale' || role.contains('consumer_sale')) {
+    return true;
+  }
+  if (doc['peppol_applicable'] == false || doc['peppolApplicable'] == false) {
+    // Historical consumer marker — only when not explicitly business.
+    if (saleKind.isEmpty) return true;
+  }
+  return false;
+}
+
+bool documentRecordIsBusinessInvoice(Map doc) {
+  if (documentRecordIsConsumerSale(doc)) return false;
+  final saleKind = _lower(
+    doc['fluxidi_sale_kind'] ??
+        doc['fluxidiSaleKind'] ??
+        doc['sale_kind'] ??
+        doc['saleKind'],
+  );
+  if (saleKind == 'credit_note' ||
+      saleKind == 'creditnote' ||
+      saleKind == 'consumer_conversion_credit') {
+    return false;
+  }
+  final type = _lower(doc['document_type'] ?? doc['documentType']);
+  if (type == 'credit_note' || type == 'creditnote') return false;
+  if (doc['superseded'] == true) return false;
+  if (saleKind == 'business_invoice' || saleKind == 'zakelijke_factuur') {
+    return true;
+  }
+  // Legacy business invoices: document_type invoice without consumer markers.
+  return type == 'invoice';
+}
+
+/// Extracts a single **business** invoice summary from a documents-list
+/// envelope. Consumer sales and credit notes are ignored so a private Billit
+/// sale never blocks “Zakelijke factuur aanvragen”.
 StreetInvoiceDocSummary? extractInvoiceFromDocuments(
   Object? decoded, {
   String? expectedDocumentId,
@@ -1746,7 +1800,7 @@ StreetInvoiceDocSummary? extractInvoiceFromDocuments(
   if (docs is! List) return null;
   final invoices = <Map>[];
   for (final d in docs) {
-    if (d is Map && _lower(d['document_type']) == 'invoice') invoices.add(d);
+    if (d is Map && documentRecordIsBusinessInvoice(d)) invoices.add(d);
   }
   if (invoices.isEmpty) return null;
 

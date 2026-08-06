@@ -281,6 +281,7 @@ import {
   STREET_BUSINESS_INVOICE_INTENT,
   STREET_INVOICE_REQUEST_SOURCE,
   evaluateStreetInvoiceEligibility,
+  evaluateLateBusinessInvoiceConversionEligibility,
   streetRidePaymentStatus,
   shouldRejectForBillingReadiness,
   buildStreetBillingCustomerSnapshot,
@@ -67835,10 +67836,22 @@ async function handleCompanyBookingRequestBusinessInvoice({
     }
   }
 
-  // 2. Street/direct + COMPLETED + not cancelled/refunded/credited.
-  const eligibility = evaluateStreetInvoiceEligibility({
+  // 2. Existing consumer sale (if any) + eligibility.
+  // CONSUMER-SALE-LATE-BUSINESS-INVOICE-ACTION-P0-3: when a consumer sale
+  // exists, allow completed planned OR street bookings through the same
+  // credit-first conversion path. Without a consumer sale, keep street-only.
+  const existingConsumerSale = await findExistingConsumerSaleDocumentForBooking(
+    env,
+    scope,
+    safeBookingId,
+  );
+  const eligibility = evaluateLateBusinessInvoiceConversionEligibility({
     bookingId: safeBookingId,
     record: rec,
+    hasConsumerSale: !!(
+      existingConsumerSale?.document_id &&
+      !_documentIsSuperseded(existingConsumerSale.document_record)
+    ),
   });
   if (!eligibility.ok) {
     const status = eligibility.reason === "source_booking_not_found" ? 404 : 409;
@@ -67875,11 +67888,6 @@ async function handleCompanyBookingRequestBusinessInvoice({
   // 4. Existing invoice + stored snapshot -> retry decision.
   // Consumer Billit sales must be credited (Income CreditNote) before a
   // business invoice is issued. Failure before credit blocks business create.
-  const existingConsumerSale = await findExistingConsumerSaleDocumentForBooking(
-    env,
-    scope,
-    safeBookingId,
-  );
   if (existingConsumerSale?.document_id && existingConsumerSale?.billit_order_id) {
     const conversion = await creditConsumerSaleBeforeBusinessConversion(
       env,

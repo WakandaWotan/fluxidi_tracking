@@ -17,6 +17,7 @@ import {
   REJECTED_AUTHORITATIVE_REQUEST_FIELDS,
   isStreetRideBooking,
   evaluateStreetInvoiceEligibility,
+  evaluateLateBusinessInvoiceConversionEligibility,
   streetRidePaymentStatus,
   shouldRejectForBillingReadiness,
   buildStreetBillingCustomerSnapshot,
@@ -102,6 +103,54 @@ test("planned booking is rejected as not a street booking", () => {
   const res = evaluateStreetInvoiceEligibility({ bookingId: rec.booking_id, record: rec });
   assert.equal(res.ok, false);
   assert.equal(res.reason, "not_a_street_booking");
+});
+
+// CONSUMER-SALE-LATE-BUSINESS-INVOICE-ACTION-P0-3
+test("late conversion: planned COMPLETED + consumer sale is eligible", () => {
+  const rec = {
+    booking_id: "b_9f8e7d6c",
+    tenant_id: TENANT,
+    company_id: COMPANY,
+    source: "flutter_app",
+    booking_source: "flutter_app",
+    ride_type: "planned",
+    status: "COMPLETED",
+  };
+  const res = evaluateLateBusinessInvoiceConversionEligibility({
+    bookingId: rec.booking_id,
+    record: rec,
+    hasConsumerSale: true,
+  });
+  assert.deepEqual(res, { ok: true, reason: null });
+});
+
+test("late conversion: without consumer sale planned stays street-only reject", () => {
+  const rec = {
+    booking_id: "b_9f8e7d6c",
+    tenant_id: TENANT,
+    company_id: COMPANY,
+    source: "flutter_app",
+    booking_source: "flutter_app",
+    ride_type: "planned",
+    status: "COMPLETED",
+  };
+  const res = evaluateLateBusinessInvoiceConversionEligibility({
+    bookingId: rec.booking_id,
+    record: rec,
+    hasConsumerSale: false,
+  });
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "not_a_street_booking");
+});
+
+test("late conversion: street COMPLETED + consumer sale is eligible", () => {
+  const rec = completedStreetBooking();
+  const res = evaluateLateBusinessInvoiceConversionEligibility({
+    bookingId: rec.booking_id,
+    record: rec,
+    hasConsumerSale: true,
+  });
+  assert.deepEqual(res, { ok: true, reason: null });
 });
 
 // 3. cross-company scope is rejected (uses the real scope matcher)

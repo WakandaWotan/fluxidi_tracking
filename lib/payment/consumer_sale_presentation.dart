@@ -416,7 +416,59 @@ bool businessInvoiceActionStillAvailable({
   required bool businessInvoicePresent,
   required bool conversionAllowed,
 }) {
+  if (!consumerSalePresent) return false;
   if (businessInvoicePresent) return false;
   if (!conversionAllowed) return false;
   return true;
+}
+
+/// CONSUMER-SALE-LATE-BUSINESS-INVOICE-ACTION-P0-3
+///
+/// Visibility for “Zakelijke factuur aanvragen” on an existing consumer sale.
+/// Uses only canonical sale kind / conversion / linked business invoice —
+/// never INV-prefix, Billit OrderType, or filled billing fields.
+bool shouldShowLateBusinessInvoiceAction({
+  Object? saleKind,
+  Object? documentType,
+  Object? createdByRole,
+  bool? peppolApplicable,
+  bool superseded = false,
+  Object? lifecycleState,
+  bool businessInvoicePresent = false,
+  bool conversionInProgress = false,
+  bool conversionAllowed = true,
+}) {
+  if (!conversionAllowed || conversionInProgress) return false;
+  if (businessInvoicePresent) return false;
+  if (superseded) return false;
+
+  final life = (lifecycleState ?? '').toString().trim().toLowerCase();
+  if (life == 'voided' ||
+      life == 'cancelled' ||
+      life == 'canceled' ||
+      life == 'credited' ||
+      life == 'superseded') {
+    return false;
+  }
+
+  if (isCreditNoteKind(saleKind) ||
+      isCreditNoteKind(documentType) ||
+      isBusinessInvoiceKind(saleKind)) {
+    return false;
+  }
+
+  final kind = resolveDocumentPresentationKind(
+    saleKind: saleKind,
+    documentType: documentType,
+    createdByRole: createdByRole,
+    peppolApplicable: peppolApplicable,
+    consumerSaleSuperseded: superseded,
+  );
+  if (kind != FluxidiDocumentPresentationKind.consumerSale) return false;
+
+  return businessInvoiceActionStillAvailable(
+    consumerSalePresent: true,
+    businessInvoicePresent: false,
+    conversionAllowed: true,
+  );
 }

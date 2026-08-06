@@ -176,6 +176,31 @@ export function evaluateStreetInvoiceEligibility({
   return { ok: true, reason: null };
 }
 
+/* CONSUMER-SALE-LATE-BUSINESS-INVOICE-ACTION-P0-3
+ * Late conversion from an existing consumer sale (street OR planned) to a
+ * business invoice via the credit-first path. Street-only identity is NOT
+ * required when a consumer sale document is present; COMPLETED + not
+ * cancelled/refunded/credited still is. */
+export function evaluateLateBusinessInvoiceConversionEligibility({
+  bookingId = "",
+  record = null,
+  hasConsumerSale = false,
+} = {}) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    return { ok: false, reason: "source_booking_not_found" };
+  }
+  if (!hasConsumerSale) {
+    return evaluateStreetInvoiceEligibility({ bookingId, record });
+  }
+  if (_isNonInvoiceableState(record)) {
+    return { ok: false, reason: "booking_not_invoiceable_state" };
+  }
+  if (_bookingStatusToken(record) !== "COMPLETED") {
+    return { ok: false, reason: "booking_not_completed" };
+  }
+  return { ok: true, reason: null };
+}
+
 /* Canonical street identity for the DRIVER path. STRICTER than
  * isStreetRideBooking: ride_type == "direct" alone is NEVER sufficient. A driver
  * may only request an invoice when the booking is unambiguously a street ride:

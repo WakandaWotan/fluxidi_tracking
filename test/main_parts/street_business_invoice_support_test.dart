@@ -404,6 +404,54 @@ void main() {
       expect(documentsEnvelopeOk({'ok': false}), isFalse);
       expect(extractInvoiceFromDocuments(docsEnvelope(const [])), isNull);
     });
+
+    test(
+      'CONSUMER-SALE-LATE-P0-3: consumer sale INV is not a business invoice',
+      () {
+        final decoded = docsEnvelope([
+          {
+            'document_id': 'doc-consumer',
+            'document_type': 'invoice',
+            'document_number': 'INV-2026-000048',
+            'fluxidi_sale_kind': 'consumer_sale',
+            'peppol_applicable': false,
+            'lifecycle_state': 'issued',
+            'billit_export': {
+              'environment': 'sandbox',
+              'order_id': '999',
+              'peppol_sent': false,
+              'billit_paid': true,
+            },
+          },
+        ]);
+        expect(documentRecordIsConsumerSale(decoded['documents'][0] as Map), isTrue);
+        expect(extractInvoiceFromDocuments(decoded), isNull);
+      },
+    );
+
+    test(
+      'CONSUMER-SALE-LATE-P0-3: true business invoice still extracts',
+      () {
+        final decoded = docsEnvelope([
+          {
+            'document_id': 'doc-consumer',
+            'document_type': 'invoice',
+            'fluxidi_sale_kind': 'consumer_sale',
+          },
+          {
+            'document_id': 'doc-biz',
+            'document_type': 'invoice',
+            'document_number': 'INV-BIZ-1',
+            'fluxidi_sale_kind': 'business_invoice',
+            'lifecycle_state': 'issued',
+          },
+        ]);
+        final inv = extractInvoiceFromDocuments(decoded);
+        expect(inv, isNotNull);
+        expect(inv!.documentId, 'doc-biz');
+        expect(inv.documentNumber, 'INV-BIZ-1');
+      },
+    );
   });
 
   group('derived document count (section 2)', () {

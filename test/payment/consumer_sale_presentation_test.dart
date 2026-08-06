@@ -198,4 +198,104 @@ void main() {
       );
     });
   });
+
+  group('CONSUMER-SALE-LATE-BUSINESS-INVOICE-ACTION-P0-3 visibility', () {
+    test('1. paid planned consumer sale shows action', () {
+      expect(
+        shouldShowLateBusinessInvoiceAction(
+          saleKind: 'consumer_sale',
+          documentType: 'invoice',
+        ),
+        isTrue,
+      );
+    });
+
+    test('2. unpaid planned consumer sale shows action', () {
+      expect(
+        shouldShowLateBusinessInvoiceAction(
+          saleKind: 'consumer_sale',
+          documentType: 'invoice',
+          peppolApplicable: false,
+        ),
+        isTrue,
+      );
+    });
+
+    test('3. paid street consumer sale shows action', () {
+      expect(
+        shouldShowLateBusinessInvoiceAction(
+          saleKind: 'consumer_sale',
+          documentType: 'invoice',
+          createdByRole: 'system_consumer_sale',
+        ),
+        isTrue,
+      );
+    });
+
+    test('4. real business invoice hides action', () {
+      expect(
+        shouldShowLateBusinessInvoiceAction(
+          saleKind: 'business_invoice',
+          documentType: 'invoice',
+        ),
+        isFalse,
+      );
+    });
+
+    test('5. credit note hides action', () {
+      expect(
+        shouldShowLateBusinessInvoiceAction(
+          saleKind: 'credit_note',
+          documentType: 'credit_note',
+        ),
+        isFalse,
+      );
+    });
+
+    test('6. already converted consumer sale hides action', () {
+      expect(
+        shouldShowLateBusinessInvoiceAction(
+          saleKind: 'consumer_sale',
+          documentType: 'invoice',
+          superseded: true,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldShowLateBusinessInvoiceAction(
+          saleKind: 'consumer_sale',
+          businessInvoicePresent: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('7. conversion in progress hides second active action', () {
+      expect(
+        shouldShowLateBusinessInvoiceAction(
+          saleKind: 'consumer_sale',
+          conversionInProgress: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('12. Peppol stays N/A before conversion', () {
+      final p = resolvePeppolUiPolicy(saleKind: 'consumer_sale');
+      expect(p.showNotApplicable, isTrue);
+      expect(p.showSendAction, isFalse);
+      expect(p.showMissingEndpointWarning, isFalse);
+    });
+
+    test('businessInvoiceActionStillAvailable requires consumer sale', () {
+      expect(
+        businessInvoiceActionStillAvailable(
+          consumerSalePresent: false,
+          businessInvoicePresent: false,
+          conversionAllowed: true,
+        ),
+        isFalse,
+      );
+    });
+  });
 }

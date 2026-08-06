@@ -902,6 +902,7 @@ Future<StreetBusinessInvoiceBuyerInput?> showStreetBusinessInvoiceForm({
   required AppLanguage language,
   required bool isPaidBooking,
   required StreetBusinessInvoiceBuyerInput initial,
+  bool convertFromConsumerSale = false,
 }) {
   return showModalBottomSheet<StreetBusinessInvoiceBuyerInput>(
     context: context,
@@ -915,6 +916,7 @@ Future<StreetBusinessInvoiceBuyerInput?> showStreetBusinessInvoiceForm({
       language: language,
       isPaidBooking: isPaidBooking,
       initial: initial,
+      convertFromConsumerSale: convertFromConsumerSale,
     ),
   );
 }
@@ -927,12 +929,15 @@ class StreetBusinessInvoiceForm extends StatefulWidget {
     required this.language,
     required this.isPaidBooking,
     required this.initial,
+    this.convertFromConsumerSale = false,
   });
 
   final StreetInvoiceActionTheme theme;
   final AppLanguage language;
   final bool isPaidBooking;
   final StreetBusinessInvoiceBuyerInput initial;
+  /// CONSUMER-SALE-LATE-BUSINESS-INVOICE-ACTION-P0-3: credit-first conversion.
+  final bool convertFromConsumerSale;
 
   @override
   State<StreetBusinessInvoiceForm> createState() =>
@@ -1139,25 +1144,51 @@ class _StreetBusinessInvoiceFormState extends State<StreetBusinessInvoiceForm> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        _tl(
-                          _lang,
-                          nl:
-                              'De factuur wordt aangemaakt voor deze bestaande '
-                              'straatrit. De ritprijs en betaalstatus worden '
-                              'niet gewijzigd.',
-                          en:
-                              'The invoice is created for this existing street '
-                              'ride. The ride price and payment status are not '
-                              'changed.',
-                          fr:
-                              'La facture est créée pour cette course de rue '
-                              'existante. Le prix de la course et le statut de '
-                              'paiement ne sont pas modifiés.',
-                          es:
-                              'La factura se crea para este trayecto de calle '
-                              'existente. El precio del trayecto y el estado de '
-                              'pago no se modifican.',
-                        ),
+                        widget.convertFromConsumerSale
+                            ? _tl(
+                                _lang,
+                                nl:
+                                    'De particuliere verkoop wordt eerst '
+                                    'gecrediteerd. Daarna wordt een nieuwe '
+                                    'zakelijke factuur aangemaakt. Bedrag en '
+                                    'btw blijven gelijk. Peppol geldt alleen '
+                                    'voor de nieuwe zakelijke factuur.',
+                                en:
+                                    'The private sale is credited first. Then '
+                                    'a new business invoice is created. Amount '
+                                    'and VAT stay the same. Peppol applies only '
+                                    'to the new business invoice.',
+                                fr:
+                                    'La vente particulière est d’abord '
+                                    'créditée. Ensuite une nouvelle facture '
+                                    'professionnelle est créée. Montant et TVA '
+                                    'restent identiques. Peppol s’applique '
+                                    'uniquement à la nouvelle facture.',
+                                es:
+                                    'Primero se acredita la venta particular. '
+                                    'Después se crea una nueva factura '
+                                    'comercial. Importe e IVA se mantienen. '
+                                    'Peppol solo aplica a la nueva factura.',
+                              )
+                            : _tl(
+                                _lang,
+                                nl:
+                                    'De factuur wordt aangemaakt voor deze '
+                                    'bestaande straatrit. De ritprijs en '
+                                    'betaalstatus worden niet gewijzigd.',
+                                en:
+                                    'The invoice is created for this existing '
+                                    'street ride. The ride price and payment '
+                                    'status are not changed.',
+                                fr:
+                                    'La facture est créée pour cette course de '
+                                    'rue existante. Le prix de la course et le '
+                                    'statut de paiement ne sont pas modifiés.',
+                                es:
+                                    'La factura se crea para este trayecto de '
+                                    'calle existente. El precio del trayecto y '
+                                    'el estado de pago no se modifican.',
+                              ),
                         style: TextStyle(
                           color: theme.textSecondary,
                           fontSize: 12.2,
