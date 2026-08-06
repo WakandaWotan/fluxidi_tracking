@@ -53,31 +53,35 @@ ExternalNavPipMeterModel buildExternalNavPipMeterModel({
     final primary = (etaText ?? remainingDistanceText ?? '—').trim();
     return ExternalNavPipMeterModel(
       kind: PipMeterKind.toCustomer,
-      title: 'Naar klant',
+      // NAVIGATION-SINGLE-ACTIVE-TARGET-TRUTH-P0-5
+      title: 'Naar ophaalpunt',
       primaryValue: primary.isEmpty ? '—' : primary,
       primaryLabel: etaText != null ? 'ETA' : 'Afstand',
       kmText: remainingDistanceText,
       durationText: durationText,
     );
   }
+  // Active passenger / return leg: label tracks destination B (or return).
+  // Fare/fixed-price values stay authoritative — never swap in pickup KPIs.
+  final remainingOrEta = (etaText ?? remainingDistanceText ?? '').trim();
   if (isFixedPrice && !isStreetRide) {
     return ExternalNavPipMeterModel(
       kind: PipMeterKind.fixedPrice,
-      title: 'Vaste prijs',
+      title: 'Naar bestemming',
       primaryValue: (fixedPriceText ?? '—').trim(),
       primaryLabel: 'Prijs',
-      kmText: kmText,
-      durationText: durationText,
+      kmText: remainingDistanceText ?? kmText,
+      durationText: remainingOrEta.isNotEmpty ? remainingOrEta : durationText,
       waitText: waitText,
     );
   }
   return ExternalNavPipMeterModel(
     kind: PipMeterKind.liveTariff,
-    title: 'Tarief',
+    title: 'Naar bestemming',
     primaryValue: (liveFareText ?? '—').trim(),
     primaryLabel: 'Actueel',
-    kmText: kmText,
-    durationText: durationText,
+    kmText: remainingDistanceText ?? kmText,
+    durationText: remainingOrEta.isNotEmpty ? remainingOrEta : durationText,
     waitText: waitText,
   );
 }

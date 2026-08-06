@@ -66,7 +66,7 @@ void main() {
         waitText: '00:01:00',
       );
       expect(m.kind, PipMeterKind.fixedPrice);
-      expect(m.title, 'Vaste prijs');
+      expect(m.title, 'Naar bestemming');
       expect(m.primaryValue, '€12,20');
       expect(m.secondaryLines.length, 3);
     });
@@ -82,7 +82,7 @@ void main() {
         waitText: '00:00:00',
       );
       expect(m.kind, PipMeterKind.liveTariff);
-      expect(m.title, 'Tarief');
+      expect(m.title, 'Naar bestemming');
     });
 
     test('6) pre-start shows no tariff', () {
@@ -96,7 +96,7 @@ void main() {
         remainingDistanceText: '2.4 km',
       );
       expect(m.kind, PipMeterKind.toCustomer);
-      expect(m.title, 'Naar klant');
+      expect(m.title, 'Naar ophaalpunt');
       expect(m.primaryValue, isNot(contains('€12')));
       expect(m.primaryValue, isNot(contains('€0')));
     });

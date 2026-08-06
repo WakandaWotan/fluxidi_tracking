@@ -66,7 +66,7 @@ void main() {
         ),
       ),
     );
-    expect(find.text('Vaste prijs'), findsOneWidget);
+    expect(find.text('Naar bestemming'), findsOneWidget);
     expect(find.text('€12,20'), findsOneWidget);
     expect(find.text('Terug naar Fluxidi'), findsOneWidget);
     expect(find.byType(Placeholder), findsNothing);
@@ -91,7 +91,7 @@ void main() {
         child: MaterialApp(home: ExternalNavPipMeterCard(model: model)),
       ),
     );
-    expect(find.text('Tarief'), findsOneWidget);
+    expect(find.text('Naar bestemming'), findsOneWidget);
     expect(find.text('€17,60'), findsOneWidget);
 
     await tester.pumpWidget(
@@ -100,7 +100,7 @@ void main() {
         child: MaterialApp(home: ExternalNavPipMeterCard(model: model)),
       ),
     );
-    expect(find.text('Tarief'), findsOneWidget);
+    expect(find.text('Naar bestemming'), findsOneWidget);
   });
 
   test('4) STOP ends session contract (copy cleared)', () {

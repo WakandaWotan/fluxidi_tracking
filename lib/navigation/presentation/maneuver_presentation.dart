@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../driver_navigation_formatters.dart';
 import '../driver_navigation_models.dart';
+import '../nav_engine/nav_arrival_truth_guard.dart';
 import 'nav_sign_resolver.dart';
 
 /// NAV-FOLLOW-ROUTE-RUNTIME-TRUTH-P0-2: deterministic proof of the live
@@ -516,6 +517,29 @@ String _directionActionWord({
   }
 }
 
+String _arrivalAheadPrimary({
+  required String distanceLabel,
+  required DriverNavTranslate tr,
+}) {
+  final label = distanceLabel.trim();
+  if (label.isEmpty) {
+    return tr(
+      nl: 'Naar bestemming',
+      en: 'Towards destination',
+      fr: 'Vers la destination',
+      es: 'Hacia el destino',
+    );
+  }
+  final prefix = _distancePrefixWord(tr);
+  final dest = tr(
+    nl: 'naar de bestemming',
+    en: 'to the destination',
+    fr: 'vers la destination',
+    es: 'hacia el destino',
+  );
+  return '$prefix $label $dest';
+}
+
 String _nowPrimary({
   required ManeuverVisual visual,
   required DriverNavTranslate tr,
@@ -760,12 +784,26 @@ ResponsiveManeuverPresentation buildResponsiveManeuverPresentation({
   late final _ManeuverWording wording;
 
   if (isArrival) {
-    final txt = _nowPrimary(visual: ManeuverVisual.arrive, tr: tr);
+    // NAVIGATION-SINGLE-ACTIVE-TARGET-TRUTH-P0-5: arrive step text must not
+    // claim "Bestemming bereikt" when distance is missing/large or arrival is
+    // not truth-confirmed. Missing distance never coerces to reached.
+    final reached = navArrivalBannerAllowed(
+      arrivalTruthConfirmed: arrivalConfirmed == true,
+      maneuverLooksLikeArrive: true,
+      distanceToManeuverM: snapshot.distanceToManeuverMeters,
+      reachedBandM: kNavSignDestinationReachedMeters,
+    );
+    final txt = reached
+        ? _nowPrimary(visual: ManeuverVisual.arrive, tr: tr)
+        : _arrivalAheadPrimary(
+            distanceLabel: distanceLabel,
+            tr: tr,
+          );
     wording = _ManeuverWording(
       primary: txt,
       secondary: '',
       accessibility: '$txt.',
-      showDistanceChip: false,
+      showDistanceChip: !reached && distanceLabel.isNotEmpty,
     );
   } else if (isNeutralFallback ||
       visual == ManeuverVisual.followRoute ||

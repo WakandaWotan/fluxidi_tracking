@@ -1055,6 +1055,13 @@ class _DriverHomePageState extends State<DriverHomePage>
       NavStartupOrientationSelector();
   bool _navParkingArrivalConfirmed = false;
   NavArrivalEvent? _lastNavArrivalEvent;
+  // NAVIGATION-SINGLE-ACTIVE-TARGET-TRUTH-P0-5: sole source of truth for the
+  // active navigation destination (route / KPI / arrival / Maps / PiP).
+  final ActiveNavigationTargetOwner _activeNavTargetOwner =
+      ActiveNavigationTargetOwner();
+  String? _arrivalEvaluatorSnapshotId;
+  bool _navPhaseTransitionStaleGuard = false;
+  DateTime? _navPhaseTransitionAt;
   String? _lastNavR14ComplexitySignature;
   final NavComplexityIntelligenceExporter _navComplexityIntelligenceExporter =
       const NavComplexityIntelligenceExporter();
@@ -1215,6 +1222,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     // NAV-RELEASE-FINAL-FLOW-1: ride boundary always ends unmetered NAV
     // guidance so style/zoom gates fall back to the next surface phase.
     _navigationGuidanceActive = false;
+    if (reason == 'stop_begin' ||
+        reason == 'dispose' ||
+        reason == 'booking_open') {
+      _activeNavTargetOwner.clear();
+      _arrivalEvaluatorSnapshotId = null;
+      _navPhaseTransitionStaleGuard = false;
+      _navPhaseTransitionAt = null;
+    }
     // Style generation advances so in-flight style restores from the prior
     // session cannot repaint after this boundary.
     _styleRequestGeneration += 1;
@@ -1363,6 +1378,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _navParkingArrival.reset();
     _navParkingArrivalConfirmed = false;
     _lastNavArrivalEvent = null;
+    _arrivalEvaluatorSnapshotId = null;
+    // Do not clear the active target here — ride-boundary / START install owns
+    // snapshot lifecycle. Progress reset alone must not resurrect pickup A.
     _useMatchedVisual = false;
     _matchEnterHits = 0;
     _matchExitHits = 0;
@@ -4854,6 +4872,18 @@ class _DriverHomePageState extends State<DriverHomePage>
 
       // NAV-RIDE-BOUNDARY: planned nav start owns a fresh session before style/route.
       _hardClearAtRideBoundary(reason: 'planned_ride_start', bumpSession: true);
+      // NAVIGATION-ARRIVAL-STATE-RESET-P0-5: end pickup snapshot + wipe arrival
+      // before passenger route / Maps / PiP can see B.
+      final dropoffStored =
+          _usableNavLonLat(_extractPreviewEndpoints(b).dropoff);
+      _installActiveNavTarget(
+        bookingId: b.bookingId,
+        phase: ActiveNavigationPhase.passengerLeg,
+        targetLat: dropoffStored?.lat,
+        targetLng: dropoffStored?.lon,
+        targetAddress: (b.to ?? '').trim(),
+        reason: 'planned_ride_start',
+      );
       // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part D: enforce the fixed
       // safe navigation-day/-night style and discard any pre-start Standard/
       // Satellite preview zoom BEFORE we flip _activeTripId. Discarding the
@@ -10137,25 +10167,24 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool get _isTracking => _liveRideActive && _posSub != null;
 
   String get _etaText {
-    // Countdown style ETA (remaining), used both in preview and in active trip.
+    // NAVIGATION-SINGLE-ACTIVE-TARGET-TRUTH-P0-5: never invent <1 min while
+    // the active-target route is missing/stale.
+    final truth = _resolveActiveRemainingDistanceTruth();
+    final fromTruth = formatNavEtaText(truth);
+    if (fromTruth.isNotEmpty) return fromTruth;
+    if (!truth.routeReady) return '';
     final total = _routeDurationSec;
     if (total == null || total <= 0) return '';
-
-    // When tracking, subtract progress (based on km fraction). When previewing, show total.
     int remainingSec;
     if (_isTracking) {
       remainingSec = _timeRemainingSeconds ?? total;
     } else {
-      // Not tracking yet (preview)
       remainingSec = total;
     }
-
     remainingSec = math.max(0, remainingSec);
     if (remainingSec < 60) return '<1 min';
-
     final minutes = (remainingSec / 60).ceil();
     if (minutes < 60) return '$minutes min';
-
     final h = minutes ~/ 60;
     final m = minutes % 60;
     if (m == 0) return '${h}h';
@@ -10163,8 +10192,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   String get _kmRemainingText {
-    // Show in preview as soon as we have a route.
-
+    // NAVIGATION-SINGLE-ACTIVE-TARGET-TRUTH-P0-5: missing route → '' (UI —),
+    // never fake 0.0 km.
+    final truth = _resolveActiveRemainingDistanceTruth();
+    final fromTruth = formatNavRemainingKmText(truth);
+    if (fromTruth.isNotEmpty || !truth.routeReady) return fromTruth;
     final remaining = _kmRemaining;
     if (remaining == null) return '';
     if (remaining < 0.05) return '0.0';
@@ -10446,6 +10478,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     // NAV-RIDE-BOUNDARY: clear prior ride geometry/style restore BEFORE this
     // session becomes live and before style apply can repaint stale coords.
     _hardClearAtRideBoundary(reason: 'street_ride_start', bumpSession: true);
+    final directPt = _directRideDestinationPoint;
+    _installActiveNavTarget(
+      bookingId: _directRideKey ?? 'street_direct',
+      phase: ActiveNavigationPhase.passengerLeg,
+      targetLat: directPt?.lat,
+      targetLng: directPt?.lon,
+      targetAddress: destination,
+      reason: 'street_ride_start',
+    );
     // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part D: fixed safe navigation
     // style + Street Level, before we go live. Any pre-start Satellite
     // preview is discarded.
@@ -12326,6 +12367,16 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   _LonLat? _trustedNavigationDropoffCoordinate() {
+    // Prefer the canonical active target when it is a dropoff/return leg.
+    final snap = _activeNavTargetOwner.current;
+    if (snap != null &&
+        snap.isValid &&
+        snap.hasCoordinates &&
+        (snap.destinationKind == NavigationDestinationKind.dropoff ||
+            snap.destinationKind ==
+                NavigationDestinationKind.returnDestination)) {
+      return _usableNavLonLat(_LonLat(snap.targetLng!, snap.targetLat!));
+    }
     final direct = _directRideDestinationPoint;
     if (direct != null) {
       return _usableNavLonLat(_LonLat(direct.lon, direct.lat));
@@ -12335,6 +12386,148 @@ class _DriverHomePageState extends State<DriverHomePage>
       return _usableNavLonLat(_extractPreviewEndpoints(booking).dropoff);
     }
     return null;
+  }
+
+  void _clearActiveNavArrivalState({required String reason}) {
+    _navParkingArrival.reset();
+    _navParkingArrivalConfirmed = false;
+    _lastNavArrivalEvent = null;
+    _arrivalEvaluatorSnapshotId = null;
+    _logNavTargetTruthEvent(
+      event: 'arrival_state_cleared',
+      arrivalFlagSource: reason,
+      previousArrivalConfirmed: false,
+    );
+  }
+
+  String _nextActiveNavRouteId() {
+    return 'route_${_navigationSessionGeneration}_$_routeStepsVersion';
+  }
+
+  String? _visibleRouteEndpointHash() {
+    if (_routeCoords.isEmpty) return null;
+    final last = _routeCoords.last;
+    return navigationTargetCoordinateHash(last.lat, last.lon);
+  }
+
+  void _logNavTargetTruthEvent({
+    required String event,
+    String? arrivalFlagSource,
+    bool? previousArrivalConfirmed,
+    String? googleMapsTargetHash,
+    String? pipTargetHash,
+    double? remainingRouteMetres,
+    double? straightLineTargetDistanceM,
+    double? gpsAccuracyM,
+  }) {
+    final sample = buildNavTargetTruthLogSample(
+      event: event,
+      target: _activeNavTargetOwner.current,
+      previous: _activeNavTargetOwner.previous,
+      routeSessionId: _activeNavTargetOwner.current?.routeId,
+      visibleRouteEndpointHash: _visibleRouteEndpointHash(),
+      arrivalDetectorTargetHash: _activeNavTargetOwner.current?.targetCoordinateHash,
+      googleMapsTargetHash: googleMapsTargetHash,
+      pipTargetHash: pipTargetHash,
+      remainingRouteMetres: remainingRouteMetres,
+      straightLineTargetDistanceM: straightLineTargetDistanceM,
+      gpsAccuracyM: gpsAccuracyM,
+      arrivalFlagSource: arrivalFlagSource,
+      previousArrivalConfirmed: previousArrivalConfirmed,
+    );
+    _logNavBounded('NAV_TARGET_TRUTH', sample.toLogLine(), intervalMs: 1);
+  }
+
+  ActiveNavigationTargetSnapshot _installActiveNavTarget({
+    required String bookingId,
+    String? legId,
+    required ActiveNavigationPhase phase,
+    double? targetLat,
+    double? targetLng,
+    String? targetAddress,
+    String? routeId,
+    required String reason,
+  }) {
+    final previousArrival = _navParkingArrivalConfirmed;
+    if (phase == ActiveNavigationPhase.passengerLeg ||
+        phase == ActiveNavigationPhase.returnLeg) {
+      // Atomic pickup → passenger/return transition: wipe pickup completion.
+      _clearActiveNavArrivalState(reason: 'phase_install_$reason');
+      _navPhaseTransitionStaleGuard = true;
+      _navPhaseTransitionAt = DateTime.now();
+      _kmDriven = 0.0;
+      _lastNavRouteProgress = null;
+      _navInstructionSnapshot = null;
+      _activeBanner = null;
+      _nextNavType = null;
+      _nextNavDistanceM = null;
+    }
+    final snap = buildActiveNavigationTargetSnapshot(
+      bookingId: bookingId,
+      legId: legId,
+      navigationPhase: phase,
+      destinationKind: destinationKindForPhase(phase),
+      targetLat: targetLat,
+      targetLng: targetLng,
+      targetAddress: targetAddress,
+      routeId: routeId,
+    );
+    _activeNavTargetOwner.replaceForPhaseTransition(snap);
+    _arrivalEvaluatorSnapshotId = snap.snapshotId;
+    _logNavTargetTruthEvent(
+      event: 'target_installed',
+      arrivalFlagSource: reason,
+      previousArrivalConfirmed: previousArrival,
+    );
+    return snap;
+  }
+
+  void _bindActiveNavTargetToActivatedRoute({
+    required DriverRouteApplyPurpose purpose,
+    required _LonLat destination,
+  }) {
+    final routeId = _nextActiveNavRouteId();
+    // Align target coords to the visible route endpoint so arrival/KPI/Maps
+    // share one hash (geocode POI and routed endpoint often differ).
+    final endpoint =
+        _routeCoords.isNotEmpty ? _routeCoords.last : destination;
+    final bound = _activeNavTargetOwner.bindRoute(
+      routeId: routeId,
+      targetLat: endpoint.lat,
+      targetLng: endpoint.lon,
+    );
+    if (bound != null) {
+      _arrivalEvaluatorSnapshotId = bound.snapshotId;
+      if (_navPhaseTransitionStaleGuard &&
+          bound.destinationKind != NavigationDestinationKind.pickup) {
+        // Route for the new phase is visible — clear stale pickup completion
+        // window after bind (guard still blocks arrival until GPS proves B).
+      }
+      _logNavTargetTruthEvent(
+        event: 'route_bound',
+        arrivalFlagSource: purpose.name,
+        remainingRouteMetres: (_routeKm == null) ? null : _routeKm! * 1000.0,
+      );
+    }
+  }
+
+  NavRemainingDistanceTruth _resolveActiveRemainingDistanceTruth() {
+    final target = _activeNavTargetOwner.current;
+    final progress = _lastNavRouteProgress;
+    final routeLenM = _routeKm == null ? null : _routeKm! * 1000.0;
+    return resolveNavRemainingDistanceTruth(
+      activeTargetValid: target != null && target.isValid,
+      activeRouteId: target?.routeId,
+      progressRouteId: target?.routeId,
+      routeLengthMeters: routeLenM,
+      distanceAlongRouteMeters: progress?.distanceAlongRouteM,
+      fallbackRemainingKmFromOdometer: _routeKm == null
+          ? null
+          : (_routeKm! - _kmDriven).clamp(0.0, double.infinity),
+      routeDurationSec: _routeDurationSec,
+      kmDriven: _kmDriven,
+      trackingCountdownStarted: _isTracking && _hasSwitchedToFollow,
+    );
   }
 
   void _logNavPresDestMarker({
@@ -17285,10 +17478,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     _navBootstrapPrevLat = pos.latitude;
     _navBootstrapPrevLon = pos.longitude;
 
-    // Destination-proximity arrival only makes sense with an active route and a
-    // known original/trusted dropoff.
+    // Destination-proximity arrival only with active target + known route.
+    // NAVIGATION-ARRIVAL-STATE-RESET-P0-5: never treat missing route as 0 m.
+    final target = _activeNavTargetOwner.current;
     final dropoff = _trustedNavigationDropoffCoordinate();
-    if (_liveRideActive && _routeCoords.isNotEmpty && dropoff != null) {
+    if (_liveRideActive &&
+        _routeCoords.isNotEmpty &&
+        dropoff != null &&
+        target != null &&
+        target.isValid) {
       final toOriginal = geo.Geolocator.distanceBetween(
         pos.latitude,
         pos.longitude,
@@ -17302,15 +17500,24 @@ class _DriverHomePageState extends State<DriverHomePage>
         endpoint.lat,
         endpoint.lon,
       );
-      final totalM = (_routeKm ?? 0.0) * 1000.0;
-      final alongM = progress?.distanceAlongRouteM ?? 0.0;
-      final remainingM = (totalM - alongM).clamp(0.0, double.infinity);
+      final truth = _resolveActiveRemainingDistanceTruth();
+      final remainingKnown = truth.routeReady && truth.remainingMeters != null;
+      final remainingM = truth.remainingMeters;
+      if (!remainingKnown) {
+        _logNavTargetTruthEvent(
+          event: 'arrival_eval_skipped',
+          arrivalFlagSource: 'remaining_unknown',
+          straightLineTargetDistanceM: toOriginal,
+          gpsAccuracyM: pos.accuracy,
+        );
+        return;
+      }
       final arrivalResult = _navParkingArrival.evaluate(
         NavParkingArrivalInput(
           timestampMs: DateTime.now().millisecondsSinceEpoch,
           distanceToOriginalDestinationM: toOriginal,
           distanceToRouteEndpointM: toEndpoint,
-          remainingRouteM: remainingM,
+          remainingRouteM: remainingM!,
           gpsAccuracyM: pos.accuracy,
           speedKmh: speedKmh,
           progressingTowardDestination: progress?.forwardProgress ?? false,
@@ -17325,12 +17532,46 @@ class _DriverHomePageState extends State<DriverHomePage>
           intervalMs: 1,
         );
       }
+      // After toPickup→passengerLeg, block arrival while still far from B so a
+      // leftover "pickup bereikt" completion cannot become "bestemming B".
+      final phaseStaleCompletion = _navPhaseTransitionStaleGuard &&
+          toOriginal > 80.0;
+      final guard = evaluateNavArrivalTruth(
+        NavArrivalTruthInput(
+          activeTarget: target,
+          arrivalEvaluatorSnapshotId:
+              _arrivalEvaluatorSnapshotId ?? target.snapshotId,
+          visibleRouteId: target.routeId,
+          visibleRouteEndpointHash: _visibleRouteEndpointHash(),
+          gpsFixValid: pos.accuracy.isFinite,
+          gpsAccuracyM: pos.accuracy,
+          distanceToTargetM: toOriginal,
+          arrivalThresholdM: 45.0,
+          dwellOrConsecutiveFixesSatisfied:
+              arrivalResult.arrived || _navParkingArrival.confirmed,
+          remainingRouteM: remainingM,
+          remainingRouteKnown: remainingKnown,
+          straightLineTargetDistanceM: toOriginal,
+          phaseJustChangedWithStaleCompletion: phaseStaleCompletion,
+          parkingEvaluatorArrived: arrivalResult.arrived,
+        ),
+      );
+      if (!guard.allowArrival) {
+        if (guard.logEvent == 'target_mismatch' ||
+            guard.rejectReason ==
+                NavArrivalTruthRejectReason.targetEndpointMismatch) {
+          _logNavTargetTruthEvent(
+            event: 'target_mismatch',
+            arrivalFlagSource: guard.logEvent,
+            remainingRouteMetres: remainingM,
+            straightLineTargetDistanceM: toOriginal,
+            gpsAccuracyM: pos.accuracy,
+          );
+        }
+        return;
+      }
       if (arrivalResult.arrived && !_navParkingArrivalConfirmed) {
-        // Parking-site arrival is now authoritative: clear contradictory
-        // maneuver/lane/complexity state and let the presentation declare
-        // arrival. Fare/ride ownership and trip finalization are untouched.
-        // NAV-ANNOTATION-LIFECYCLE-REPAIR-1: field label "Ter plaatse" maps to
-        // on-site / parking arrival confirmation (no separate UI string in tree).
+        _navPhaseTransitionStaleGuard = false;
         logNavUiInputTiming(
           action: NavUiInputTimingAction.terPlaatse,
           phase: NavUiInputTimingPhase.inputReceived,
@@ -17343,6 +17584,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         _navParkingArrivalConfirmed = true;
         _activeLaneGuidance = null;
         _resetNavComplexityState();
+        _logNavTargetTruthEvent(
+          event: 'arrival_confirmed',
+          arrivalFlagSource: 'parking_proximity',
+          remainingRouteMetres: remainingM,
+          straightLineTargetDistanceM: toOriginal,
+          gpsAccuracyM: pos.accuracy,
+        );
         logNavUiInputTiming(
           action: NavUiInputTimingAction.terPlaatse,
           phase: NavUiInputTimingPhase.completed,
@@ -17355,6 +17603,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
     }
   }
+
 
   bool _navBootstrapPositionCoherent(geo.Position pos) {
     final lat = _navBootstrapPrevLat;
@@ -22017,6 +22266,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     final hasStoredPickup =
         _usableNavLonLat(_extractPreviewEndpoints(b).pickup) != null;
     if (pickupText.isEmpty && !hasStoredPickup) return false;
+    final storedPickup = _usableNavLonLat(_extractPreviewEndpoints(b).pickup);
+    _installActiveNavTarget(
+      bookingId: b.bookingId,
+      phase: ActiveNavigationPhase.toPickup,
+      targetLat: storedPickup?.lat,
+      targetLng: storedPickup?.lon,
+      targetAddress: pickupText,
+      reason: 'nav_to_pickup',
+    );
     final request = _beginDriverRouteRequest(
       purpose: DriverRouteApplyPurpose.pickup,
       expectedBookingId: expectedBookingId,
@@ -22051,6 +22309,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       )) {
         return false;
       }
+      _bindActiveNavTargetToActivatedRoute(
+        purpose: DriverRouteApplyPurpose.pickup,
+        destination: toLL,
+      );
       final renderEpoch = _routeRenderEpoch;
       if (mounted) setState(() {});
       if (_lastPos != null) {
@@ -22112,6 +22374,20 @@ class _DriverHomePageState extends State<DriverHomePage>
     final hasStoredDropoff =
         _usableNavLonLat(_extractPreviewEndpoints(b).dropoff) != null;
     if (dropoffText.isEmpty && !hasStoredDropoff) return false;
+    final storedDropoff = _usableNavLonLat(_extractPreviewEndpoints(b).dropoff);
+    final existing = _activeNavTargetOwner.current;
+    if (existing == null ||
+        existing.destinationKind != NavigationDestinationKind.dropoff ||
+        existing.bookingId != b.bookingId) {
+      _installActiveNavTarget(
+        bookingId: b.bookingId,
+        phase: ActiveNavigationPhase.passengerLeg,
+        targetLat: storedDropoff?.lat,
+        targetLng: storedDropoff?.lon,
+        targetAddress: dropoffText,
+        reason: 'nav_to_destination',
+      );
+    }
     final request = _beginDriverRouteRequest(
       purpose: DriverRouteApplyPurpose.destination,
       expectedBookingId: expectedBookingId,
@@ -22140,6 +22416,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       )) {
         return false;
       }
+      _bindActiveNavTargetToActivatedRoute(
+        purpose: DriverRouteApplyPurpose.destination,
+        destination: toLL,
+      );
       final renderEpoch = _routeRenderEpoch;
       if (mounted) setState(() {});
       if (_lastPos != null) {
@@ -22892,6 +23172,23 @@ class _DriverHomePageState extends State<DriverHomePage>
   ExternalNavigationDestinationPoint _resolveGoogleNavDestinationPoint(
     ExternalNavPhase phase,
   ) {
+    // NAVIGATION-SINGLE-ACTIVE-TARGET-TRUTH-P0-5: Maps/PiP use the same
+    // ActiveNavigationTargetSnapshot as native route/arrival/KPI.
+    final snap = _activeNavTargetOwner.current;
+    if (snap != null && snap.isValid) {
+      final snapPhaseMatches = (phase == ExternalNavPhase.toPickup &&
+              snap.navigationPhase == ActiveNavigationPhase.toPickup) ||
+          (phase == ExternalNavPhase.activeRide &&
+              (snap.navigationPhase == ActiveNavigationPhase.passengerLeg ||
+                  snap.navigationPhase == ActiveNavigationPhase.returnLeg));
+      if (snapPhaseMatches || phase == ExternalNavPhase.activeRide) {
+        return ExternalNavigationDestinationPoint(
+          latitude: snap.targetLat,
+          longitude: snap.targetLng,
+          address: snap.targetAddress,
+        );
+      }
+    }
     final booking = _activeBooking;
     final endpoints =
         booking == null ? null : _extractPreviewEndpoints(booking);
@@ -22908,7 +23205,6 @@ class _DriverHomePageState extends State<DriverHomePage>
         dropoffAddress: (booking.to ?? '').trim(),
       );
     }
-    // Active ride / street: prefer B (dropoff / direct destination).
     if (_directRideDestinationPoint != null) {
       return ExternalNavigationDestinationPoint(
         latitude: _directRideDestinationPoint!.lat,
@@ -23160,14 +23456,15 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   ExternalNavPipMeterModel _buildCurrentPipMeterModel() {
     final phase = _externalNavigationSession?.phase ?? _resolveExternalNavPhase();
-    final km = _kmDriven;
-    final kmText = !km.isFinite
-        ? null
-        : (km < 0.05 ? '0.0 km' : '${km.toStringAsFixed(1)} km');
+    // Prefer remaining-to-active-target over driven-km for destination truth.
     final remaining = _kmRemainingText.trim();
     final remainingText = remaining.isEmpty
         ? null
         : (remaining.endsWith('km') ? remaining : '$remaining km');
+    final km = _kmDriven;
+    final drivenText = !km.isFinite
+        ? null
+        : (km < 0.05 ? '0.0 km' : '${km.toStringAsFixed(1)} km');
     final fixed = _fixedBookingPriceEur;
     final fixedText = fixed == null ? null : _fmtMoney(fixed, 'EUR');
     return buildExternalNavPipMeterModel(
@@ -23176,7 +23473,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       isFixedPrice: fixed != null && !_activeBookingIsStreetDirect,
       fixedPriceText: fixedText,
       liveFareText: _displayTotalText,
-      kmText: kmText,
+      kmText: drivenText,
       durationText: _formatHms(_activeElapsed),
       waitText: _formatHms(_effectiveWaitElapsed),
       etaText: _etaText.trim().isEmpty ? null : _etaText.trim(),
@@ -23227,6 +23524,16 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
 
       final destination = _resolveGoogleNavDestinationPoint(phase);
+      final mapsHash = navigationTargetCoordinateHash(
+        destination.latitude,
+        destination.longitude,
+      );
+      _logNavTargetTruthEvent(
+        event: 'google_maps_open',
+        arrivalFlagSource: destinationSource,
+        googleMapsTargetHash: mapsHash,
+        pipTargetHash: mapsHash,
+      );
       final channelDest = ExternalNavigationDestination(
         latitude: destination.latitude,
         longitude: destination.longitude,
