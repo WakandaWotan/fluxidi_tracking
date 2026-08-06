@@ -23172,8 +23172,71 @@ class _DriverHomePageState extends State<DriverHomePage>
   ExternalNavigationDestinationPoint _resolveGoogleNavDestinationPoint(
     ExternalNavPhase phase,
   ) {
-    // NAVIGATION-SINGLE-ACTIVE-TARGET-TRUTH-P0-5: Maps/PiP use the same
-    // ActiveNavigationTargetSnapshot as native route/arrival/KPI.
+    // PLANNED-BOOKING-CANONICAL-GMAPS-HANDOFF-P0-6: street-direct path is
+    // unchanged and must win over any planned snapshot leftovers.
+    if (_directRideActive || _directRideDestinationPoint != null) {
+      if (_directRideDestinationPoint != null) {
+        return ExternalNavigationDestinationPoint(
+          latitude: _directRideDestinationPoint!.lat,
+          longitude: _directRideDestinationPoint!.lon,
+          address: (_directRideDestinationText ?? '').trim(),
+        );
+      }
+    }
+
+    final booking = _activeBooking;
+    if (booking != null && !_directRideActive) {
+      final canonical = _resolvePlannedCanonicalEndpoints(booking);
+      final toPickup = phase == ExternalNavPhase.toPickup;
+      final ep = canonical.endpointForPhase(toPickup: toPickup);
+      _logNavBounded(
+        'EXTERNAL_NAV',
+        PlannedBookingCanonicalDestinationResolver.auditLine(
+          endpoints: canonical,
+          toPickup: toPickup,
+          rideKind: 'planned',
+          activePhase: phase.name,
+          externalSessionToken: _externalNavigationSession == null
+              ? null
+              : navigationBookingIdLogToken(
+                  _externalNavigationSession!.bookingId,
+                ),
+        ),
+        intervalMs: 1,
+      );
+      // Prefer active-target snap only when it still matches the canonical
+      // leg hash (prevents stale parent/quote coords surviving into Maps).
+      final snap = _activeNavTargetOwner.current;
+      if (snap != null &&
+          snap.isValid &&
+          snap.hasCoordinates &&
+          snap.bookingId == booking.bookingId) {
+        final snapHash = snap.targetCoordinateHash;
+        final canonHash = ep.coordinateHash;
+        final phaseOk = (toPickup &&
+                snap.navigationPhase == ActiveNavigationPhase.toPickup) ||
+            (!toPickup &&
+                (snap.navigationPhase == ActiveNavigationPhase.passengerLeg ||
+                    snap.navigationPhase == ActiveNavigationPhase.returnLeg));
+        if (phaseOk &&
+            (canonHash == 'none' || snapHash == canonHash || !ep.hasCoordinates)) {
+          return ExternalNavigationDestinationPoint(
+            latitude: snap.targetLat,
+            longitude: snap.targetLng,
+            address: snap.targetAddress ?? ep.address,
+          );
+        }
+      }
+      if (ep.isLaunchable) {
+        return ExternalNavigationDestinationPoint(
+          latitude: ep.hasCoordinates ? ep.latitude : null,
+          longitude: ep.hasCoordinates ? ep.longitude : null,
+          address: ep.address,
+        );
+      }
+    }
+
+    // NAVIGATION-SINGLE-ACTIVE-TARGET-TRUTH-P0-5 fallback.
     final snap = _activeNavTargetOwner.current;
     if (snap != null && snap.isValid) {
       final snapPhaseMatches = (phase == ExternalNavPhase.toPickup &&
@@ -23189,7 +23252,6 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
       }
     }
-    final booking = _activeBooking;
     final endpoints =
         booking == null ? null : _extractPreviewEndpoints(booking);
     final pickup = endpoints?.pickup;
@@ -23203,13 +23265,6 @@ class _DriverHomePageState extends State<DriverHomePage>
         dropoffLat: dropoff?.lat,
         dropoffLon: dropoff?.lon,
         dropoffAddress: (booking.to ?? '').trim(),
-      );
-    }
-    if (_directRideDestinationPoint != null) {
-      return ExternalNavigationDestinationPoint(
-        latitude: _directRideDestinationPoint!.lat,
-        longitude: _directRideDestinationPoint!.lon,
-        address: (_directRideDestinationText ?? '').trim(),
       );
     }
     if (_routeCoords.isNotEmpty && phase == ExternalNavPhase.activeRide) {
@@ -23521,6 +23576,19 @@ class _DriverHomePageState extends State<DriverHomePage>
           failureCode: 'unsupported_platform',
         );
         return;
+      }
+
+      // PLANNED-BOOKING-CANONICAL-GMAPS-HANDOFF-P0-6: never reuse a stale
+      // external session from another booking/leg.
+      final activeBookingId = (_activeBooking?.bookingId ?? '').trim();
+      final existingSession = _externalNavigationSession;
+      if (existingSession != null &&
+          activeBookingId.isNotEmpty &&
+          existingSession.bookingId.trim() != activeBookingId) {
+        await _endExternalNavigationSession(
+          reason: 'stale_session_booking_mismatch',
+          exitPip: true,
+        );
       }
 
       final destination = _resolveGoogleNavDestinationPoint(phase);
@@ -25341,117 +25409,31 @@ class _DriverHomePageState extends State<DriverHomePage>
     return _geocodeOne(text);
   }
 
+  PlannedCanonicalEndpoints _resolvePlannedCanonicalEndpoints(
+    BookingItem booking,
+  ) {
+    return PlannedBookingCanonicalDestinationResolver.resolve(
+      bookingId: booking.bookingId,
+      details: booking.details,
+      fromLabel: booking.from,
+      toLabel: booking.to,
+    );
+  }
+
   ({_LonLat? pickup, _LonLat? dropoff}) _extractPreviewEndpoints(
     BookingItem booking,
   ) {
-    final d = booking.details;
-    final pickup = _previewPointFromDetailPaths(
-      d,
-      const [
-        ['pickup_lat'],
-        ['pickupLat'],
-        ['from_lat'],
-        ['fromLat'],
-        ['pickup', 'lat'],
-        ['from', 'lat'],
-        ['record', 'pickup_lat'],
-        ['record', 'pickup', 'lat'],
-        ['record', 'booking', 'pickup_lat'],
-        ['record', 'booking', 'pickup', 'lat'],
-        ['record', 'booking_details', 'pickup_lat'],
-        ['record', 'booking_details', 'pickup', 'lat'],
-        ['payload', 'pickup_lat'],
-        ['payload', 'pickup', 'lat'],
-        ['quote', 'pickup', 'lat'],
-        ['quote', 'origin', 'lat'],
-      ],
-      const [
-        ['pickup_lon'],
-        ['pickupLng'],
-        ['pickupLon'],
-        ['from_lon'],
-        ['fromLng'],
-        ['fromLon'],
-        ['pickup', 'lon'],
-        ['pickup', 'lng'],
-        ['from', 'lon'],
-        ['from', 'lng'],
-        ['record', 'pickup_lon'],
-        ['record', 'pickup', 'lon'],
-        ['record', 'pickup', 'lng'],
-        ['record', 'booking', 'pickup_lon'],
-        ['record', 'booking', 'pickup', 'lon'],
-        ['record', 'booking', 'pickup', 'lng'],
-        ['record', 'booking_details', 'pickup_lon'],
-        ['record', 'booking_details', 'pickup', 'lon'],
-        ['record', 'booking_details', 'pickup', 'lng'],
-        ['payload', 'pickup_lon'],
-        ['payload', 'pickup', 'lon'],
-        ['payload', 'pickup', 'lng'],
-        ['quote', 'pickup', 'lon'],
-        ['quote', 'pickup', 'lng'],
-        ['quote', 'origin', 'lon'],
-        ['quote', 'origin', 'lng'],
-      ],
+    // PLANNED-BOOKING-CANONICAL-GMAPS-HANDOFF-P0-6: active leg coords beat
+    // parent/quote package fields; never mix parent pickup with leg dropoff.
+    final canonical = _resolvePlannedCanonicalEndpoints(booking);
+    _LonLat? toLonLat(PlannedCanonicalEndpoint ep) {
+      if (!ep.hasCoordinates) return null;
+      return _usableNavLonLat(_LonLat(ep.longitude!, ep.latitude!));
+    }
+    return (
+      pickup: toLonLat(canonical.pickup),
+      dropoff: toLonLat(canonical.dropoff),
     );
-    final dropoff = _previewPointFromDetailPaths(
-      d,
-      const [
-        ['dropoff_lat'],
-        ['dropoffLat'],
-        ['to_lat'],
-        ['toLat'],
-        ['destination_lat'],
-        ['destinationLat'],
-        ['dropoff', 'lat'],
-        ['to', 'lat'],
-        ['destination', 'lat'],
-        ['record', 'dropoff_lat'],
-        ['record', 'dropoff', 'lat'],
-        ['record', 'booking', 'dropoff_lat'],
-        ['record', 'booking', 'dropoff', 'lat'],
-        ['record', 'booking_details', 'dropoff_lat'],
-        ['record', 'booking_details', 'dropoff', 'lat'],
-        ['payload', 'dropoff_lat'],
-        ['payload', 'dropoff', 'lat'],
-        ['quote', 'dropoff', 'lat'],
-        ['quote', 'destination', 'lat'],
-      ],
-      const [
-        ['dropoff_lon'],
-        ['dropoffLng'],
-        ['dropoffLon'],
-        ['to_lon'],
-        ['toLng'],
-        ['toLon'],
-        ['destination_lon'],
-        ['destinationLng'],
-        ['destinationLon'],
-        ['dropoff', 'lon'],
-        ['dropoff', 'lng'],
-        ['to', 'lon'],
-        ['to', 'lng'],
-        ['destination', 'lon'],
-        ['destination', 'lng'],
-        ['record', 'dropoff_lon'],
-        ['record', 'dropoff', 'lon'],
-        ['record', 'dropoff', 'lng'],
-        ['record', 'booking', 'dropoff_lon'],
-        ['record', 'booking', 'dropoff', 'lon'],
-        ['record', 'booking', 'dropoff', 'lng'],
-        ['record', 'booking_details', 'dropoff_lon'],
-        ['record', 'booking_details', 'dropoff', 'lon'],
-        ['record', 'booking_details', 'dropoff', 'lng'],
-        ['payload', 'dropoff_lon'],
-        ['payload', 'dropoff', 'lon'],
-        ['payload', 'dropoff', 'lng'],
-        ['quote', 'dropoff', 'lon'],
-        ['quote', 'dropoff', 'lng'],
-        ['quote', 'destination', 'lon'],
-        ['quote', 'destination', 'lng'],
-      ],
-    );
-    return (pickup: pickup, dropoff: dropoff);
   }
 
   Future<List<_LonLat>> _workerRouteForPreview({
