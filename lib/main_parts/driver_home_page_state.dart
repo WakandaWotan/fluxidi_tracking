@@ -228,6 +228,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   // starting the paid customer trip.
   bool _navigationGuidanceActive = false;
 
+  // GOOGLE-MAPS-WITH-FLUXIDI-PIP-RELEASE-1 / FLUXIDI-PIP-METER-EXTERNAL-NAV-1
+  final ExternalNavigationHost _externalNavigationHost = ExternalNavigationHost();
+  ExternalNavigationSession? _externalNavigationSession;
+  StreamSubscription<Map<String, dynamic>>? _externalNavPipSub;
+
   // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix)
   //
   // Reference-identity ownership marker for the operator-minted
@@ -3478,6 +3483,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _publishBearerBusyState();
     // NAV-RIDE-BOUNDARY: dispose invalidates every in-flight style/route owner.
     _hardClearAtRideBoundary(reason: 'dispose', bumpSession: true);
+    _externalNavPipSub?.cancel();
+    _externalNavPipSub = null;
+    _externalNavigationSession = null;
     _markerSelfHealTimer?.cancel();
     _markerSelfHealTimer = null;
     // NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1: stop bounded route retries.
@@ -4895,6 +4903,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       unawaited(_reconcileMapZoomGestures(reason: 'planned_ride_start'));
       final bb = _activeBooking ?? b;
       await _buildNavRouteToDestination(bb);
+      // GOOGLE-MAPS-WITH-FLUXIDI-PIP-RELEASE-1: after START, relaunch Maps to B
+      // without creating a second street ride or duplicating START.
+      unawaited(_maybeRelaunchGoogleMapsAfterStart());
       logNavUiInputTiming(
         action: NavUiInputTimingAction.terPlaatse,
         phase: NavUiInputTimingPhase.completed,
@@ -9473,6 +9484,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     final kmAtStop = _kmDriven;
     var plannedSessionStopOk = false;
 
+    // GOOGLE-MAPS-WITH-FLUXIDI-PIP-RELEASE-1: STOP only in full Fluxidi —
+    // end external session and leave PiP; never relaunch Google Maps.
+    unawaited(
+      _endExternalNavigationSession(reason: 'stop_trip', exitPip: true),
+    );
+
     // NAV-RIDE-BOUNDARY: invalidate route ownership BEFORE network awaits so a
     // fast next-ride start cannot race uncleared geometry / style restores.
     // Meter stops here: `_directRideActive=false` so UI never believes the
@@ -10206,8 +10223,6 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _openNavigation() async {
-    // NAV always forces follow mode for live street-level navigation.
-    if (_map == null) return;
     // NAV-RELEASE-FINAL-FLOW-1: direct street draft is already at pickup A
     // (current driver position). Do not expose a preview-refresh NAV action.
     if (!navToPickupActionVisible(
@@ -10242,6 +10257,29 @@ class _DriverHomePageState extends State<DriverHomePage>
         bookingId: booking?.bookingId,
       );
     }
+
+    // GOOGLE-MAPS-WITH-FLUXIDI-PIP-RELEASE-1: ask per NAV start (no settings
+    // preference contract exists for nav provider yet).
+    if (!mounted) return;
+    final choice = await showNavigationProviderChoiceDialog(
+      context,
+      tr: _tr,
+    );
+    if (!mounted || choice == null) return;
+    if (choice == NavigationProviderChoice.googleMapsWithMeter) {
+      await _launchGoogleMapsWithFluxidiPip(
+        phase: _resolveExternalNavPhase(),
+      );
+      return;
+    }
+
+    // Fluxidi-navigatie: end any prior Google Maps session first.
+    if (_externalNavigationSession != null) {
+      await _endExternalNavigationSession(reason: 'switch_to_fluxidi_nav');
+    }
+
+    // NAV always forces follow mode for live street-level navigation.
+    if (_map == null) return;
 
     setState(() {
       _cameraMode = _CameraMode.follow;
@@ -10446,6 +10484,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     await _forceFollowCameraNow(caller: 'direct_ride_start');
     await _buildDirectRouteToDestination(destination);
     unawaited(_reconcileMapZoomGestures(reason: 'direct_ride_start'));
+    // GOOGLE-MAPS-WITH-FLUXIDI-PIP-RELEASE-1: street START → destination B.
+    unawaited(_maybeRelaunchGoogleMapsAfterStart());
   }
 
   void _handleCockpitStart() {
@@ -21723,6 +21763,24 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   void _updateNextNavInstruction(geo.Position pos) {
+    // GOOGLE-MAPS-WITH-FLUXIDI-PIP-RELEASE-1: while Google Maps owns guidance,
+    // suppress Fluxidi maneuver banners / stale instruction ownership. GPS,
+    // fare, wait and trip timers keep updating elsewhere.
+    if (shouldSuppressNativeGuidance(_externalNavigationSession)) {
+      if (_nextNavInstruction != null ||
+          _navInstructionSnapshot != null &&
+              _navInstructionSnapshot != NavInstructionSnapshot.none) {
+        _nextNavInstruction = null;
+        _nextNavStreet = null;
+        _nextNavDistanceM = null;
+        _nextNavType = null;
+        _nextNavModifier = null;
+        _activeBanner = null;
+        _activeLaneGuidance = null;
+        _navInstructionSnapshot = NavInstructionSnapshot.none;
+      }
+      return;
+    }
     // NAV-REROUTE-CURRENT-POSITION-HEADING-P0: after confirmed deviation, do
     // not keep advancing old-route maneuvers while recalculating.
     if (_navRerouteCoordinator.freezeOldRouteProgress &&
@@ -22807,23 +22865,361 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _openInGoogleMaps() async {
-    final target = _resolveExternalNavTarget();
-    if (target == null) return;
-    Uri uri;
-    if (target.hasCoordinates) {
-      uri = Uri.https('www.google.com', '/maps/dir/', <String, String>{
-        'api': '1',
-        'destination': '${target.lat},${target.lon}',
+    // GOOGLE-MAPS-DIRECT-LAUNCH-ANDROID-1: never open the HTTPS browser URL.
+    await _launchGoogleMapsWithFluxidiPip(
+      phase: _resolveExternalNavPhase(),
+    );
+  }
+
+  bool get _externalNavGuidanceSuppressed =>
+      shouldSuppressNativeGuidance(_externalNavigationSession);
+
+  ExternalNavPhase _resolveExternalNavPhase() {
+    if (_liveRideActive) return ExternalNavPhase.activeRide;
+    return ExternalNavPhase.toPickup;
+  }
+
+  ExternalNavigationDestinationPoint _resolveGoogleNavDestinationPoint(
+    ExternalNavPhase phase,
+  ) {
+    final booking = _activeBooking;
+    final endpoints =
+        booking == null ? null : _extractPreviewEndpoints(booking);
+    final pickup = endpoints?.pickup;
+    final dropoff = endpoints?.dropoff;
+    if (phase == ExternalNavPhase.toPickup && booking != null) {
+      return ExternalNavDestinationResolver.resolve(
+        phase: ExternalNavPhase.toPickup,
+        pickupLat: pickup?.lat,
+        pickupLon: pickup?.lon,
+        pickupAddress: (booking.from ?? '').trim(),
+        dropoffLat: dropoff?.lat,
+        dropoffLon: dropoff?.lon,
+        dropoffAddress: (booking.to ?? '').trim(),
+      );
+    }
+    // Active ride / street: prefer B (dropoff / direct destination).
+    if (_directRideDestinationPoint != null) {
+      return ExternalNavigationDestinationPoint(
+        latitude: _directRideDestinationPoint!.lat,
+        longitude: _directRideDestinationPoint!.lon,
+        address: (_directRideDestinationText ?? '').trim(),
+      );
+    }
+    if (_routeCoords.isNotEmpty && phase == ExternalNavPhase.activeRide) {
+      final last = _routeCoords.last;
+      return ExternalNavigationDestinationPoint(
+        latitude: last.lat,
+        longitude: last.lon,
+        address: (booking?.to ?? _directRideDestinationText ?? '').trim(),
+      );
+    }
+    return ExternalNavDestinationResolver.resolve(
+      phase: phase,
+      pickupLat: pickup?.lat,
+      pickupLon: pickup?.lon,
+      pickupAddress: (booking?.from ?? '').trim(),
+      dropoffLat: dropoff?.lat,
+      dropoffLon: dropoff?.lon,
+      dropoffAddress:
+          (booking?.to ?? _directRideDestinationText ?? '').trim(),
+    );
+  }
+
+  void _ensureExternalNavPipListener() {
+    if (_externalNavPipSub != null) return;
+    _externalNavPipSub = _externalNavigationHost.pipEvents().listen((event) {
+      if (!mounted) return;
+      if (event['type'] != 'pipModeChanged') return;
+      final active = event['pipActive'] == true;
+      final session = _externalNavigationSession;
+      if (session == null) return;
+      if (session.pipActive == active) return;
+      setState(() {
+        _externalNavigationSession = session.copyWith(pipActive: active);
       });
-    } else if (target.hasQuery) {
-      uri = Uri.https('www.google.com', '/maps/dir/', <String, String>{
-        'api': '1',
-        'destination': target.query!.trim(),
-      });
-    } else {
+    });
+  }
+
+  Future<void> _endExternalNavigationSession({
+    required String reason,
+    bool exitPip = true,
+  }) async {
+    final session = _externalNavigationSession;
+    if (session == null) return;
+    _logNavBounded(
+      'EXTERNAL_NAV',
+      'event=end reason=$reason pip=${session.pipActive}',
+      intervalMs: 1,
+    );
+    if (exitPip && session.pipActive) {
+      try {
+        await _externalNavigationHost.exitFluxidiPip();
+      } catch (_) {}
+    }
+    if (!mounted) {
+      _externalNavigationSession = null;
       return;
     }
-    await _launchExternalNavUri(uri);
+    setState(() {
+      _externalNavigationSession = null;
+    });
+  }
+
+  Future<void> _promptGoogleMapsMissing() async {
+    if (!mounted) return;
+    final install = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          _tr(
+            nl: 'Google Maps is niet geïnstalleerd',
+            en: 'Google Maps is not installed',
+            fr: 'Google Maps n’est pas installé',
+            es: 'Google Maps no está instalado',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _tr(
+                nl: 'Annuleren',
+                en: 'Cancel',
+                fr: 'Annuler',
+                es: 'Cancelar',
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _tr(
+                nl: 'Installeren',
+                en: 'Install',
+                fr: 'Installer',
+                es: 'Instalar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (install == true) {
+      await _externalNavigationHost.openGoogleMapsInstallPage();
+    }
+  }
+
+  Future<bool> _confirmContinueWithoutPip() async {
+    if (!mounted) return false;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          _tr(
+            nl: 'Fluxidi-teller niet beschikbaar',
+            en: 'Fluxidi meter unavailable',
+            fr: 'Compteur Fluxidi indisponible',
+            es: 'Contador Fluxidi no disponible',
+          ),
+        ),
+        content: Text(
+          _tr(
+            nl:
+                'Picture-in-Picture wordt niet ondersteund of is uitgeschakeld. Google Maps opent zonder zichtbare Fluxidi-teller. Doorgaan?',
+            en:
+                'Picture-in-Picture is unsupported or disabled. Google Maps will open without a visible Fluxidi meter. Continue?',
+            fr:
+                'Le mode PiP n’est pas pris en charge ou est désactivé. Google Maps s’ouvrira sans compteur Fluxidi visible. Continuer ?',
+            es:
+                'PiP no es compatible o está desactivado. Google Maps se abrirá sin contador Fluxidi visible. ¿Continuar?',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _tr(
+                nl: 'Annuleren',
+                en: 'Cancel',
+                fr: 'Annuler',
+                es: 'Cancelar',
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _tr(
+                nl: 'Doorgaan',
+                en: 'Continue',
+                fr: 'Continuer',
+                es: 'Continuar',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
+  ExternalNavPipMeterModel _buildCurrentPipMeterModel() {
+    final phase = _externalNavigationSession?.phase ?? _resolveExternalNavPhase();
+    final km = _kmDriven;
+    final kmText = !km.isFinite
+        ? null
+        : (km < 0.05 ? '0.0 km' : '${km.toStringAsFixed(1)} km');
+    final remaining = _kmRemainingText.trim();
+    final remainingText = remaining.isEmpty
+        ? null
+        : (remaining.endsWith('km') ? remaining : '$remaining km');
+    final fixed = _fixedBookingPriceEur;
+    final fixedText = fixed == null ? null : _fmtMoney(fixed, 'EUR');
+    return buildExternalNavPipMeterModel(
+      phase: phase,
+      isStreetRide: _directRideActive || _activeBookingIsStreetDirect,
+      isFixedPrice: fixed != null && !_activeBookingIsStreetDirect,
+      fixedPriceText: fixedText,
+      liveFareText: _displayTotalText,
+      kmText: kmText,
+      durationText: _formatHms(_activeElapsed),
+      waitText: _formatHms(_effectiveWaitElapsed),
+      etaText: _etaText.trim().isEmpty ? null : _etaText.trim(),
+      remainingDistanceText: remainingText,
+    );
+  }
+
+  Future<void> _launchGoogleMapsWithFluxidiPip({
+    required ExternalNavPhase phase,
+  }) async {
+    if (!_externalNavigationHost.isAndroid) {
+      _toast(
+        _tr(
+          nl: 'Google Maps + teller is alleen beschikbaar op Android.',
+          en: 'Google Maps + meter is only available on Android.',
+          fr: 'Google Maps + compteur est disponible uniquement sur Android.',
+          es: 'Google Maps + contador solo está disponible en Android.',
+        ),
+      );
+      return;
+    }
+    final installed = await _externalNavigationHost.isGoogleMapsInstalled();
+    if (!installed) {
+      await _promptGoogleMapsMissing();
+      return;
+    }
+    final destination = _resolveGoogleNavDestinationPoint(phase);
+    if (!destination.hasCoordinates && !destination.hasAddress) {
+      _toast(
+        _tr(
+          nl: 'Geen bestemming beschikbaar voor Google Maps.',
+          en: 'No destination available for Google Maps.',
+          fr: 'Aucune destination disponible pour Google Maps.',
+          es: 'No hay destino disponible para Google Maps.',
+        ),
+      );
+      return;
+    }
+
+    final pipSupported = await _externalNavigationHost.isPipSupported();
+    var usePip = pipSupported;
+    if (!pipSupported) {
+      final continueWithout = await _confirmContinueWithoutPip();
+      if (!continueWithout) return;
+      usePip = false;
+    }
+
+    if (_posSub == null) {
+      _startTrackingInternal();
+    }
+    _ensureExternalNavPipListener();
+    _setNavigationWakelock(true);
+
+    final bookingId = (_activeBooking?.bookingId ??
+            _activeDirectBookingId ??
+            _directRideKey ??
+            'pending')
+        .trim();
+    final session = ExternalNavigationSession(
+      provider: ExternalNavProvider.googleMaps,
+      bookingId: bookingId,
+      legId: _activeBooking?.bookingId,
+      phase: phase,
+      destination: destination,
+      launchedAt: DateTime.now().toUtc(),
+      pipActive: false,
+      nativeGuidanceSuppressed: true,
+    );
+    if (mounted) {
+      setState(() {
+        _externalNavigationSession = session;
+        // Keep Fluxidi guidance flags off while Google owns turn-by-turn.
+        _navigationGuidanceActive = false;
+      });
+    } else {
+      _externalNavigationSession = session;
+    }
+
+    if (usePip) {
+      final pipResult = await _externalNavigationHost.enterFluxidiPip();
+      final pipOk = pipResult['ok'] == true || pipResult['pipActive'] == true;
+      if (mounted) {
+        setState(() {
+          _externalNavigationSession =
+              (_externalNavigationSession ?? session).copyWith(
+            pipActive: pipOk,
+          );
+        });
+      }
+      if (!pipOk && pipResult['error'] == 'pip_unsupported') {
+        final continueWithout = await _confirmContinueWithoutPip();
+        if (!continueWithout) {
+          await _endExternalNavigationSession(reason: 'pip_enter_declined');
+          return;
+        }
+      }
+    }
+
+    final launch = await _externalNavigationHost.launchGoogleNavigation(
+      ExternalNavigationDestination(
+        latitude: destination.latitude,
+        longitude: destination.longitude,
+        address: destination.address,
+      ),
+    );
+    if (launch['ok'] != true) {
+      final err = (launch['error'] ?? '').toString();
+      if (err == 'google_maps_not_installed') {
+        await _endExternalNavigationSession(reason: 'maps_missing_at_launch');
+        await _promptGoogleMapsMissing();
+        return;
+      }
+      await _endExternalNavigationSession(reason: 'launch_failed');
+      _toast(
+        _tr(
+          nl: 'Google Maps kon niet worden geopend.',
+          en: 'Could not open Google Maps.',
+          fr: 'Impossible d’ouvrir Google Maps.',
+          es: 'No se pudo abrir Google Maps.',
+        ),
+      );
+      return;
+    }
+    _logNavBounded(
+      'EXTERNAL_NAV',
+      'event=launched provider=google_maps phase=${phase.name} '
+          'pip=$usePip booking=$bookingId',
+      intervalMs: 1,
+    );
+  }
+
+  Future<void> _maybeRelaunchGoogleMapsAfterStart() async {
+    final session = _externalNavigationSession;
+    if (session == null || !session.isGoogleMaps) return;
+    await _launchGoogleMapsWithFluxidiPip(
+      phase: ExternalNavPhase.activeRide,
+    );
   }
 
   Future<void> _openInWaze() async {
@@ -23561,10 +23957,10 @@ class _DriverHomePageState extends State<DriverHomePage>
           _buildCompactNavIconChip(
             icon: Icons.map,
             tooltip: _tr(
-              nl: 'Openen in Google Maps',
-              en: 'Open in Google Maps',
-              fr: 'Ouvrir dans Google Maps',
-              es: 'Abrir en Google Maps',
+              nl: 'Google Maps + Fluxidi-teller',
+              en: 'Google Maps + Fluxidi meter',
+              fr: 'Google Maps + compteur Fluxidi',
+              es: 'Google Maps + contador Fluxidi',
             ),
             onPressed: _openInGoogleMaps,
             navAccent: colors.accent,
@@ -30986,6 +31382,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   bool _showNavInstructionBanner() {
+    if (shouldSuppressNativeGuidance(_externalNavigationSession)) {
+      return false;
+    }
     if (_cameraMode != _CameraMode.follow) return false;
     // Hide only while a reroute request is in flight without an accepted
     // package yet; accepted ownership may re-resolve banner immediately.
@@ -30996,6 +31395,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   bool _showNavComplexityCaution() {
+    if (_externalNavGuidanceSuppressed) return false;
     return _cameraMode == _CameraMode.follow && _lastNavCautionState.active;
   }
 
@@ -31399,6 +31799,21 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   @override
   Widget build(BuildContext context) {
+    // GOOGLE-MAPS-WITH-FLUXIDI-PIP-RELEASE-1: while Android PiP is active,
+    // render only the compact meter card — no Mapbox map / dashboard chrome.
+    final externalPip = _externalNavigationSession;
+    if (externalPip != null && externalPip.pipActive) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF0B0F14),
+        body: ExternalNavPipMeterCard(
+          model: _buildCurrentPipMeterModel(),
+          onReturnToFluxidi: () {
+            unawaited(_externalNavigationHost.returnToFluxidi());
+          },
+        ),
+      );
+    }
+
     // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
     // `build()` must NOT publish `operatorMintedBearerInFlightNotifier`.
     // The global lifecycle notifier is updated only at explicit state
@@ -31442,7 +31857,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       showDriverHudOverlay: navPresentationForHud.showDriverHudOverlay,
     );
     final bool cockpitHudVisible = hudVisibility.cockpitHud;
-    final bool navHudVisible = hudVisibility.navBannerHud;
+    final bool navHudVisible =
+        hudVisibility.navBannerHud && !_externalNavGuidanceSuppressed;
     // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 1): the pre-start
     // preview surface owns the map actions row. Previously this required follow
     // mode or an already-built route, both of which only existed after START.
