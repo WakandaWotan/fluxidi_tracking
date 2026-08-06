@@ -1,14 +1,14 @@
 # ============================================================================
 # FLUXIDI FIELD BUILD — Tablet
-# Exact commit: 9225765e48c5b015500d906ab2e31d53365ea496
+# Exact commit: a4f884608e3ee6683a16baed00e214a24dc38311
 # Clean integration worktree. Dirty hoofdrepository blijft onaangeraakt.
 # Exact 12 dart-defines, NO ADMIN_TOKEN, NO LEARNING_SERVICE_TOKEN.
 #
-# PIN NOTE: TABLET-PIN-NAV-FOLLOW-ROUTE-RUNTIME-TRUTH-P0-2
-# App head maps withheld/policy-neutral continue guidance to upright
-# straight.png (not curved follow_route) with readable tablet portrait text.
-# Theme/Billit/PNG/owner gates remain. On HEAD mismatch the script checks
-# out $requiredHead in place (or recreates).
+# PIN NOTE: TABLET-PIN-GOOGLE-MAPS-PIP-RELEASE-1
+# App head adds Google Maps direct launch + Fluxidi PiP meter as a second
+# NAV option (native Intent, no browser chooser). Theme/Billit/PNG/owner
+# gates remain. On HEAD mismatch the script checks out $requiredHead in
+# place (or recreates).
 # ============================================================================
 
 $ErrorActionPreference = 'Stop'
@@ -18,7 +18,7 @@ $repo         = 'C:\_flutter_work\fluxidi_tracking'
 $worktree     = 'C:\_flutter_work\fluxidi_tracking_full_integration_20260805'
 $device       = 'R52Y808CN2M'
 $adb          = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-$requiredHead = '9225765e48c5b015500d906ab2e31d53365ea496'
+$requiredHead = 'a4f884608e3ee6683a16baed00e214a24dc38311'
 $branch       = 'release/full-tablet-integration-20260805'
 
 function Assert-LastExitCode {
