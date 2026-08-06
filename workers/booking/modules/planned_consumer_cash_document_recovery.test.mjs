@@ -236,6 +236,7 @@ test("14. amount/VAT/fixed price unchanged for €35.40 / 6%", () => {
   // Billit BE catalog snap: euro-derived 5.99 must become 6.
   assert.equal(snapBelgianVatRatePercent(5.99), 6);
   assert.equal(snapBelgianVatRatePercent(0.06), 6);
+  assert.equal(snapBelgianVatRatePercent(null), null);
 });
 
 test("15. registration gate failure path leaves create when no existing doc", () => {

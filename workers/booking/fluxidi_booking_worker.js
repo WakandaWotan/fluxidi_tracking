@@ -89153,25 +89153,31 @@ function buildBillitPayloadPreviewFromProviderNeutralDocument(docPreview, scope)
  * obviously invalid rates (5.5, 7, 15, 19, …). Billit export / preview only;
  * never mutates immutable Document Core invoice snapshots. */
 function _normalizeBeStatutoryVatPercentageForBillit(vatPercent, beContext = {}) {
+  // Number(null) === 0 — never coerce missing VAT into a literal 0% Billit line.
+  if (vatPercent === null || vatPercent === undefined || vatPercent === "") {
+    return null;
+  }
   const raw = Number(vatPercent);
-  if (!Number.isFinite(raw)) return vatPercent;
+  if (!Number.isFinite(raw)) return null;
   const countryCode = safeStr(beContext.countryCode, 8).toUpperCase();
   const sellerCountryCode = safeStr(beContext.sellerCountryCode, 8).toUpperCase();
   const customerVat = safeStr(beContext.customerVat, 64).toUpperCase();
+  // Private consumer buyers often omit CountryCode; seller/party is still BE.
   const isBe =
+    !countryCode ||
     countryCode === "BE" ||
     sellerCountryCode === "BE" ||
     customerVat.startsWith("BE");
-  if (!isBe) return vatPercent;
+  if (!isBe) return raw;
   const bands = [
-    { target: 6, min: 5.95, max: 6.05 },
-    { target: 12, min: 11.95, max: 12.05 },
-    { target: 21, min: 20.95, max: 21.05 },
+    { target: 6, min: 5.5, max: 6.5 },
+    { target: 12, min: 11.5, max: 12.5 },
+    { target: 21, min: 20.5, max: 21.5 },
   ];
   for (const band of bands) {
     if (raw >= band.min && raw <= band.max) return band.target;
   }
-  return vatPercent;
+  return raw;
 }
 
 /* Pure, dry-run mapper that projects the provider-neutral Billit payload

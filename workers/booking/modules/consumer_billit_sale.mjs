@@ -282,6 +282,8 @@ export function resolveConsumerSaleAmount(rec, { legId = null, legType = null } 
 }
 
 function _normalizeVatRatePercent(raw) {
+  // Number(null) === 0 — never treat a missing rate as 0% VAT.
+  if (raw === null || raw === undefined || raw === "") return null;
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0) return null;
   // Quote breakdowns often store 0.06; snapshots store 6.
