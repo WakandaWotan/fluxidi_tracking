@@ -27,9 +27,20 @@ import kotlin.test.assertFalse
  */
 class MapboxMapViewRegistryTest {
 
-  @Before fun setUp() { MapboxMapViewRegistry.clearForTest() }
+  // clearForTest() is internal to the plugin module; clean via public APIs.
+  @Before
+  fun setUp() {
+    for (id in MapboxMapViewRegistry.activeMapInstanceIds().toList()) {
+      MapboxMapViewRegistry.unregister(id)
+    }
+  }
 
-  @After fun tearDown() { MapboxMapViewRegistry.clearForTest() }
+  @After
+  fun tearDown() {
+    for (id in MapboxMapViewRegistry.activeMapInstanceIds().toList()) {
+      MapboxMapViewRegistry.unregister(id)
+    }
+  }
 
   @Test fun registerAndGetReturnsSameInstance() {
     val fake = mock(MapView::class.java)

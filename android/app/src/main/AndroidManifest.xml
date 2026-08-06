@@ -47,6 +47,7 @@
             android:launchMode="singleTop"
             android:taskAffinity=""
             android:theme="@style/LaunchTheme"
+            android:supportsPictureInPicture="true"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
@@ -90,6 +91,8 @@
             <action android:name="android.intent.action.PROCESS_TEXT" />
             <data android:mimeType="text/plain" />
         </intent>
+        <!-- GOOGLE-MAPS-DIRECT-LAUNCH-ANDROID-1: targeted package visibility only. -->
+        <package android:name="com.google.android.apps.maps" />
     </queries>
 
 </manifest>
