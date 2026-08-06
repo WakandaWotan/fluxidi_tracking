@@ -1,12 +1,12 @@
 # ============================================================================
 # FLUXIDI FIELD BUILD — Tablet
-# Exact commit: 915ed9582e09fe5a3b67b490e6ca0cda07caeb6a
+# Exact commit: cdde21790ded749a3de79ef2543141d41be7ba65
 # Clean integration worktree. Dirty hoofdrepository blijft onaangeraakt.
 # Exact 12 dart-defines, NO ADMIN_TOKEN, NO LEARNING_SERVICE_TOKEN.
 #
-# PIN NOTE: TABLET-PIN-LOCALIZED-SIGNAGE-MAPS-HANDOFF-1
-# App head restores tablet captioned nav plates and fixes Google Maps
-# launch-before-PiP handoff. Theme/Billit/PNG/owner gates remain. On HEAD
+# PIN NOTE: TABLET-PIN-GOOGLE-MAPS-NOOP-P0-2
+# App head fixes Google Maps button silent no-op via structured launch
+# contract + failure UI. Signage/Billit/PNG/owner gates remain. On HEAD
 # mismatch the script checks out $requiredHead in place (or recreates).
 # ============================================================================
 
@@ -17,7 +17,7 @@ $repo         = 'C:\_flutter_work\fluxidi_tracking'
 $worktree     = 'C:\_flutter_work\fluxidi_tracking_full_integration_20260805'
 $device       = 'R52Y808CN2M'
 $adb          = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-$requiredHead = '915ed9582e09fe5a3b67b490e6ca0cda07caeb6a'
+$requiredHead = 'cdde21790ded749a3de79ef2543141d41be7ba65'
 $branch       = 'release/full-tablet-integration-20260805'
 
 function Assert-LastExitCode {
