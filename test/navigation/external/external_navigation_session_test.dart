@@ -1,4 +1,7 @@
 // FLUXIDI-PIP-METER-EXTERNAL-NAV-1
+// PIP-COMPACT-KPI-READABILITY-P1
+
+import 'dart:ui' show Size;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/navigation/external/external_navigation_pip_meter.dart';
@@ -83,6 +86,25 @@ void main() {
       );
       expect(m.kind, PipMeterKind.liveTariff);
       expect(m.title, 'Naar bestemming');
+    });
+
+    test('5b) tablet PiP typography larger than phone', () {
+      final phone = PipMeterTypography.forSize(
+        const Size(390, 844),
+        compact: true,
+      );
+      final tablet = PipMeterTypography.forSize(
+        const Size(800, 1280),
+        compact: true,
+      );
+      expect(phone.primarySize, 34);
+      expect(tablet.titleSize, inInclusiveRange(18, 22));
+      expect(tablet.primarySize, inInclusiveRange(38, 48));
+      expect(tablet.metricSize, inInclusiveRange(22, 28));
+      expect(tablet.labelSize, inInclusiveRange(15, 18));
+      expect(tablet.horizontalPadding, inInclusiveRange(14, 20));
+      expect(tablet.primarySize, greaterThan(phone.primarySize));
+      expect(tablet.metricSize, greaterThan(phone.metricSize));
     });
 
     test('6) pre-start shows no tariff', () {

@@ -1,6 +1,8 @@
 // FLUXIDI-PIP-METER-EXTERNAL-NAV-1
+// PIP-COMPACT-KPI-READABILITY-P1
 //
 // Compact high-contrast PiP meter card. Max four core values. No map / menus.
+// Tablet PiP uses denser padding and larger primary/metrics for SM-X400.
 
 import 'package:flutter/material.dart';
 
@@ -86,6 +88,57 @@ ExternalNavPipMeterModel buildExternalNavPipMeterModel({
   );
 }
 
+/// PIP-COMPACT-KPI-READABILITY-P1: tablet denser layout; phone unchanged.
+@immutable
+class PipMeterTypography {
+  const PipMeterTypography({
+    required this.titleSize,
+    required this.primarySize,
+    required this.metricSize,
+    required this.labelSize,
+    required this.horizontalPadding,
+    required this.verticalPadding,
+    required this.titleGap,
+    required this.metricsGap,
+  });
+
+  final double titleSize;
+  final double primarySize;
+  final double metricSize;
+  final double labelSize;
+  final double horizontalPadding;
+  final double verticalPadding;
+  final double titleGap;
+  final double metricsGap;
+
+  static PipMeterTypography forSize(Size size, {required bool compact}) {
+    final isPhone = size.shortestSide < 600;
+    if (isPhone) {
+      return PipMeterTypography(
+        titleSize: 14,
+        primarySize: 34,
+        metricSize: 16,
+        labelSize: 13.6,
+        horizontalPadding: compact ? 12 : 20,
+        verticalPadding: compact ? 8 : 16,
+        titleGap: 6,
+        metricsGap: 10,
+      );
+    }
+    // Tablet SM-X400 PiP: fill surface, larger KPI, thinner frame feel.
+    return PipMeterTypography(
+      titleSize: 20,
+      primarySize: 44,
+      metricSize: 24,
+      labelSize: 16,
+      horizontalPadding: compact ? 16 : 20,
+      verticalPadding: compact ? 14 : 18,
+      titleGap: 4,
+      metricsGap: 8,
+    );
+  }
+}
+
 class ExternalNavPipMeterCard extends StatelessWidget {
   const ExternalNavPipMeterCard({
     super.key,
@@ -99,54 +152,58 @@ class ExternalNavPipMeterCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
-    final isPhone = size.shortestSide < 600;
-    final titleSize = isPhone ? 14.0 : 16.0;
-    final primarySize = isPhone ? 34.0 : 42.0;
-    final secondarySize = isPhone ? 16.0 : 18.0;
+    final typo = PipMeterTypography.forSize(size, compact: compact);
 
     return Material(
       color: const Color(0xFF0B0F14),
       child: SafeArea(
+        minimum: EdgeInsets.zero,
         child: Padding(
           padding: EdgeInsets.symmetric(
-            horizontal: compact ? 12 : 20,
-            vertical: compact ? 8 : 16,
+            horizontal: typo.horizontalPadding,
+            vertical: typo.verticalPadding,
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
                 model.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: const Color(0xFFE8EEF5),
-                  fontSize: titleSize,
+                  fontSize: typo.titleSize,
                   fontWeight: FontWeight.w700,
-                  letterSpacing: 0.4,
+                  letterSpacing: 0.3,
+                  height: 1.1,
                 ),
               ),
-              const SizedBox(height: 6),
+              SizedBox(height: typo.titleGap),
               Text(
                 model.primaryValue,
                 textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: const Color(0xFFFFC107),
-                  fontSize: primarySize,
+                  fontSize: typo.primarySize,
                   fontWeight: FontWeight.w800,
-                  height: 1.05,
+                  height: 1.0,
                 ),
               ),
               Text(
                 model.primaryLabel,
                 style: TextStyle(
                   color: const Color(0xFF9AA7B5),
-                  fontSize: secondarySize * 0.85,
+                  fontSize: typo.labelSize,
                   fontWeight: FontWeight.w600,
+                  height: 1.1,
                 ),
               ),
-              const SizedBox(height: 10),
+              SizedBox(height: typo.metricsGap),
               Wrap(
-                spacing: 14,
-                runSpacing: 6,
+                spacing: 16,
+                runSpacing: 4,
                 alignment: WrapAlignment.center,
                 children: model.secondaryLines
                     .map(
@@ -154,8 +211,9 @@ class ExternalNavPipMeterCard extends StatelessWidget {
                         line,
                         style: TextStyle(
                           color: const Color(0xFFE8EEF5),
-                          fontSize: secondarySize,
+                          fontSize: typo.metricSize,
                           fontWeight: FontWeight.w700,
+                          height: 1.1,
                         ),
                       ),
                     )
