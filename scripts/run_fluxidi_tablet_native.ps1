@@ -1,13 +1,14 @@
 # ============================================================================
 # FLUXIDI FIELD BUILD — Tablet
-# Exact commit: cca07c90e458cea5b899513e8492fc631c766a41
+# Exact commit: 3c0c39e4999908e51f26986a6fc05d599c7e9c5b
 # Clean integration worktree. Dirty hoofdrepository blijft onaangeraakt.
 # Exact 12 dart-defines, NO ADMIN_TOKEN, NO LEARNING_SERVICE_TOKEN.
 #
-# PIN NOTE: TABLET-PIN-PLANNED-GMAPS-PIP-RETURN-P0-6
-# App head: planned-leg canonical Maps handoff + system PiP RemoteAction
-# return. Signage/Billit/PNG/owner gates remain. On HEAD mismatch the
-# script checks out $requiredHead in place (or recreates).
+# PIN NOTE: TABLET-PIN-NAV-PIP-PLANNED-COMPLETION-EVIDENCE-FIX-P0
+# App head: system PiP RemoteAction return (no Flutter yellow button),
+# planned one-way completion no-resurrection, prepared_route style restore.
+# Signage/Billit/PNG/owner gates remain. On HEAD mismatch the script
+# checks out $requiredHead in place (or recreates).
 # ============================================================================
 
 $ErrorActionPreference = 'Stop'
@@ -17,7 +18,7 @@ $repo         = 'C:\_flutter_work\fluxidi_tracking'
 $worktree     = 'C:\_flutter_work\fluxidi_tracking_full_integration_20260805'
 $device       = 'R52Y808CN2M'
 $adb          = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-$requiredHead = 'cca07c90e458cea5b899513e8492fc631c766a41'
+$requiredHead = '3c0c39e4999908e51f26986a6fc05d599c7e9c5b'
 $branch       = 'release/full-tablet-integration-20260805'
 
 function Assert-LastExitCode {
