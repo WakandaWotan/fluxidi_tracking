@@ -3866,7 +3866,14 @@ function _documentIsConsumerSale(rec) {
     rec?.fluxidi_sale_kind ?? rec?.fluxidiSaleKind ?? rec?.sale_kind,
     40,
   ).toLowerCase();
-  return kind === CONSUMER_SALE_KIND;
+  if (kind === CONSUMER_SALE_KIND) return true;
+  // Recovery: early consumer-sale issues may lack fluxidi_sale_kind on the
+  // registry row but still carry the authoritative system role.
+  const role = safeStr(
+    rec?.created_by_role ?? rec?.createdByRole,
+    80,
+  ).toLowerCase();
+  return role === "system_consumer_sale";
 }
 
 function _documentIsSuperseded(rec) {
@@ -3889,19 +3896,44 @@ async function findExistingConsumerSaleDocumentForBooking(
   { sourceLegId = null } = {},
 ) {
   const listed = await listIssuedDocumentRecordsForBooking(env, scope, bookingId);
-  if (!listed || listed.ok !== true || !Array.isArray(listed.records)) {
-    return null;
-  }
   const wantLegId = safeStr(sourceLegId, 200) || null;
-  const matches = listed.records.filter((rec) => {
-    if (!_documentIsConsumerSale(rec)) return false;
-    if (_documentIsSuperseded(rec)) return false;
-    if (wantLegId) {
-      const recLegId = safeStr(rec?.source_leg_id ?? rec?.sourceLegId, 200) || null;
-      return recLegId === wantLegId;
+  const matches = [];
+  if (listed?.ok === true && Array.isArray(listed.records)) {
+    for (const rec of listed.records) {
+      if (!_documentIsConsumerSale(rec)) continue;
+      if (_documentIsSuperseded(rec)) continue;
+      if (wantLegId) {
+        const recLegId =
+          safeStr(rec?.source_leg_id ?? rec?.sourceLegId, 200) || null;
+        if (recLegId !== wantLegId) continue;
+      }
+      matches.push(rec);
     }
-    return true;
-  });
+  }
+  // Fallback: booking.consumer_sale marker may point at a registry row that
+  // was issued before fluxidi_sale_kind was stamped (field 2026-08-165).
+  if (matches.length === 0) {
+    try {
+      const bookingRec = (await loadBookingRecord(env, bookingId))?.rec || null;
+      const markerId = safeStr(
+        bookingRec?.consumer_sale?.document_id ??
+          bookingRec?.consumer_sale?.documentId,
+        200,
+      );
+      if (markerId) {
+        const marked = await loadIssuedDocumentRegistryRecordById(
+          env,
+          scope,
+          markerId,
+        );
+        if (marked && !_documentIsSuperseded(marked)) {
+          matches.push(marked);
+        }
+      }
+    } catch (_) {
+      // keep empty
+    }
+  }
   if (matches.length === 0) return null;
   matches.sort((a, b) => {
     const at = safeStr(a?.issue_timestamp ?? a?.issueTimestamp, 40);
@@ -4249,51 +4281,88 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
     documentRecord = issueData.document_record || issueData.document || null;
   }
 
-  // Stamp presentation + Peppol N/A on the issued document when possible.
+  // Always reload + stamp consumer-sale metadata on the registry row so
+  // reconcile/UI/Billit never depend on the issue response shape.
+  let billitLastError = null;
   if (documentId && env.BOOKING_KV) {
     try {
-      const docKey = safeStr(
-        documentRecord?.kv_key ?? documentRecord?.key,
-        240,
-      );
-      // Best-effort: merge metadata via booking consumer_sale markers always.
-      const meta = buildConsumerSaleDocumentMetadata({
-        bookingId,
-        legId: sourceLegId,
-        amount: { currency: amount.currency, value: amount.value },
-        paymentStatus: safeStr(rec.payment_status ?? rec.paymentStatus, 40) || "unpaid",
-        paymentMethod: safeStr(rec.payment_method ?? rec.paymentMethod, 40),
-        paymentProvider: safeStr(rec.payment_provider ?? rec.paymentProvider, 40),
-      });
-      if (documentRecord && typeof documentRecord === "object") {
-        Object.assign(documentRecord, meta);
-        if (docKey) {
-          await env.BOOKING_KV.put(docKey, JSON.stringify(documentRecord));
-        }
+      const live =
+        (await loadIssuedDocumentRegistryRecordById(env, scope, documentId)) ||
+        (documentRecord && typeof documentRecord === "object"
+          ? documentRecord
+          : null);
+      if (live && typeof live === "object") {
+        const meta = buildConsumerSaleDocumentMetadata({
+          bookingId,
+          legId: sourceLegId,
+          amount: { currency: amount.currency, value: amount.value },
+          paymentStatus:
+            safeStr(rec.payment_status ?? rec.paymentStatus, 40) || "unpaid",
+          paymentMethod: safeStr(rec.payment_method ?? rec.paymentMethod, 40),
+          paymentProvider: safeStr(
+            rec.payment_provider ?? rec.paymentProvider,
+            40,
+          ),
+        });
+        const stamped = {
+          ...live,
+          ...meta,
+          created_by_role:
+            safeStr(live.created_by_role ?? live.createdByRole, 80) ||
+            "system_consumer_sale",
+          updated_at: new Date().toISOString(),
+        };
+        const registryKey = buildDocumentRegistryKey(scope, documentId);
+        await env.BOOKING_KV.put(registryKey, JSON.stringify(stamped));
+        documentRecord = stamped;
+        documentNumber =
+          documentNumber ||
+          safeStr(stamped.document_number ?? stamped.documentNumber, 80) ||
+          null;
       }
-    } catch (_) {
-      // markers on booking are enough for UI projection
+    } catch (stampErr) {
+      console.log(
+        `[CONSUMER_BILLIT_SALE][META_STAMP_FAIL] booking=${maskedBooking} err=${safeStr(stampErr?.message || stampErr, 80)}`,
+      );
     }
   }
 
   // Billit sandbox order create (OrderType Invoice). Peppol never sent here.
   let billitOrderId = existing?.billit_order_id || null;
   const config = resolveBillitOAuthConfig(env);
-  if (config.environment === "sandbox" && documentRecord) {
+  if (config.environment === "sandbox" && documentId) {
     try {
-      const billit = await ensureBillitSandboxOrderForIssuedInvoice(
-        env,
-        scope,
-        config,
-        documentRecord,
-        { documentId, documentNumber },
-      );
-      if (billit?.ok) {
-        billitOrderId = safeStr(billit.billit_order_id, 120) || billitOrderId;
+      if (!documentRecord || typeof documentRecord !== "object") {
+        documentRecord = await loadIssuedDocumentRegistryRecordById(
+          env,
+          scope,
+          documentId,
+        );
+      }
+      if (documentRecord) {
+        const billit = await ensureBillitSandboxOrderForIssuedInvoice(
+          env,
+          scope,
+          config,
+          documentRecord,
+          { documentId, documentNumber },
+        );
+        if (billit?.ok) {
+          billitOrderId = safeStr(billit.billit_order_id, 120) || billitOrderId;
+        } else {
+          billitLastError =
+            safeStr(billit?.error, 120) || "billit_order_create_failed";
+          console.log(
+            `[CONSUMER_BILLIT_SALE][BILLIT_FAIL] booking=${maskedBooking} err=${billitLastError}`,
+          );
+        }
+      } else {
+        billitLastError = "document_record_unavailable";
       }
     } catch (err) {
+      billitLastError = safeStr(err?.message || err, 80) || "billit_exception";
       console.log(
-        `[CONSUMER_BILLIT_SALE][BILLIT_FAIL] booking=${maskedBooking} err=${safeStr(err?.message || err, 80)}`,
+        `[CONSUMER_BILLIT_SALE][BILLIT_FAIL] booking=${maskedBooking} err=${billitLastError}`,
       );
     }
   }
@@ -4307,6 +4376,8 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
     amount_source: amount.source,
     vat_rate_percent: vat.vat_rate_percent,
     idempotency_key: idempotencyKey,
+    last_error: billitOrderId ? null : billitLastError,
+    retryable: !billitOrderId,
   });
 
   console.log(
