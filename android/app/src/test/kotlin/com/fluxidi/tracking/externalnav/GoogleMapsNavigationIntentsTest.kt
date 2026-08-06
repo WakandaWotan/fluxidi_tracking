@@ -241,4 +241,27 @@ class GoogleMapsNavigationIntentsTest {
     assertEquals("fluxidi_google_navigation_mode", GoogleMapsNavigationIntents.EXTRA_NAVIGATION_MODE)
     assertEquals("d", GoogleMapsNavigationIntents.NAVIGATION_MODE_DRIVING)
   }
+
+  @Test
+  fun returnToFluxidiIntentSourceReordersExistingTask() {
+    // PIP-RETURN-TO-FLUXIDI-P0-4 — JVM unit tests cannot call setClassName
+    // (not mocked). Guard the committed source contract instead.
+    val candidates = listOf(
+      File("src/main/kotlin/com/fluxidi/tracking/externalnav/GoogleMapsNavigationIntents.kt"),
+      File(
+        "../src/main/kotlin/com/fluxidi/tracking/externalnav/GoogleMapsNavigationIntents.kt",
+      ),
+      File(
+        "android/app/src/main/kotlin/com/fluxidi/tracking/externalnav/GoogleMapsNavigationIntents.kt",
+      ),
+    )
+    val sourceFile = candidates.firstOrNull { it.isFile }
+      ?: error("GoogleMapsNavigationIntents.kt not found for return guard")
+    val source = sourceFile.readText()
+    assertTrue(source.contains("buildReturnToFluxidiIntent"))
+    assertTrue(source.contains("FLAG_ACTIVITY_REORDER_TO_FRONT"))
+    assertTrue(source.contains("FLAG_ACTIVITY_SINGLE_TOP"))
+    assertTrue(source.contains("fluxidi_external_nav_return"))
+    assertTrue(source.contains("MainActivity"))
+  }
 }

@@ -34,6 +34,12 @@ void main() {
     expect(manifest.contains('android:launchMode="singleTop"'), isTrue);
   });
 
+  test('PIP-RETURN-TO-FLUXIDI-P0-4: empty taskAffinity + singleTop', () {
+    // Bring existing task to front; do not spawn a sibling affinity task.
+    expect(manifest.contains('android:taskAffinity=""'), isTrue);
+    expect(manifest.contains('android:launchMode="singleTop"'), isTrue);
+  });
+
   test('no SYSTEM_ALERT_WINDOW / overlay permission', () {
     expect(manifest.contains('SYSTEM_ALERT_WINDOW'), isFalse);
     expect(manifest.contains('SYSTEM_OVERLAY_WINDOW'), isFalse);
