@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/navigation/external/external_navigation_pip_meter.dart';
 import 'package:fluxidi_tracking/navigation/external/external_navigation_session.dart';
+import 'package:fluxidi_tracking/navigation/external/google_maps_launch_contract.dart';
 import 'package:fluxidi_tracking/navigation/external/navigation_provider_choice.dart';
 
 String _tr({
@@ -118,5 +119,43 @@ void main() {
     session = null;
     expect(session, isNull);
     expect(shouldSuppressNativeGuidance(session), isFalse);
+  });
+
+  test('5) failed launch decision keeps native guidance and no session', () {
+    final d = GoogleMapsLaunchDecision.fromResult(
+      result: const GoogleMapsLaunchResult(
+        status: GoogleMapsLaunchStatus.nativeException,
+        failureCode: 'channel_boom',
+      ),
+      userWantsPip: true,
+    );
+    expect(d.activateExternalSession, isFalse);
+    expect(d.keepNativeGuidanceActive, isTrue);
+    expect(d.uiAction, GoogleMapsLaunchUiAction.showFailureDialog);
+  });
+
+  testWidgets(
+      '6) Google Maps ListTile onTap is non-null (no silent disabled button)',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () {
+                showNavigationProviderChoiceDialog(context, tr: _tr);
+              },
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    final tile = tester.widget<ListTile>(
+      find.widgetWithText(ListTile, 'Google Maps + Fluxidi-teller'),
+    );
+    expect(tile.onTap, isNotNull);
   });
 }

@@ -124,6 +124,7 @@ import 'navigation/nav_external_fallback_policy.dart';
 import 'navigation/external/external_navigation_host.dart';
 import 'navigation/external/external_navigation_pip_meter.dart';
 import 'navigation/external/external_navigation_session.dart';
+import 'navigation/external/google_maps_launch_contract.dart';
 import 'navigation/external/navigation_provider_choice.dart';
 import 'navigation/driver_navigation_geometry.dart';
 import 'navigation/driver_navigation_instruction_state.dart';

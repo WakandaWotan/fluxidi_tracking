@@ -229,7 +229,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _navigationGuidanceActive = false;
 
   // GOOGLE-MAPS-WITH-FLUXIDI-PIP-RELEASE-1 / FLUXIDI-PIP-METER-EXTERNAL-NAV-1
+  // GOOGLE-MAPS-LAUNCH-FAILURE-UI-P0-2: busy gate never sticks permanently.
   final ExternalNavigationHost _externalNavigationHost = ExternalNavigationHost();
+  final GoogleMapsLaunchBusyGate _googleMapsLaunchBusyGate =
+      GoogleMapsLaunchBusyGate();
   ExternalNavigationSession? _externalNavigationSession;
   StreamSubscription<Map<String, dynamic>>? _externalNavPipSub;
 
@@ -22973,44 +22976,46 @@ class _DriverHomePageState extends State<DriverHomePage>
     });
   }
 
-  Future<void> _promptGoogleMapsMissing() async {
-    if (!mounted) return;
-    final install = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(
-          _tr(
+  Future<void> _promptGoogleMapsMissing({bool disabled = false}) async {
+    final title = disabled
+        ? _tr(
+            nl: 'Google Maps is uitgeschakeld',
+            en: 'Google Maps is disabled',
+            fr: 'Google Maps est désactivé',
+            es: 'Google Maps está desactivado',
+          )
+        : _tr(
             nl: 'Google Maps is niet geïnstalleerd',
             en: 'Google Maps is not installed',
             fr: 'Google Maps n’est pas installé',
             es: 'Google Maps no está instalado',
+          );
+    final install = await _showExternalNavDialog<bool>(
+      title: title,
+      actions: (ctx) => [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: Text(
+            _tr(
+              nl: 'Annuleren',
+              en: 'Cancel',
+              fr: 'Annuler',
+              es: 'Cancelar',
+            ),
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(
-              _tr(
-                nl: 'Annuleren',
-                en: 'Cancel',
-                fr: 'Annuler',
-                es: 'Cancelar',
-              ),
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: Text(
+            _tr(
+              nl: 'Installeren',
+              en: 'Install',
+              fr: 'Installer',
+              es: 'Instalar',
             ),
           ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text(
-              _tr(
-                nl: 'Installeren',
-                en: 'Install',
-                fr: 'Installer',
-                es: 'Instalar',
-              ),
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
     if (install == true) {
       await _externalNavigationHost.openGoogleMapsInstallPage();
@@ -23018,57 +23023,139 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<bool> _confirmContinueWithoutPip() async {
-    if (!mounted) return false;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(
-          _tr(
-            nl: 'Fluxidi-teller niet beschikbaar',
-            en: 'Fluxidi meter unavailable',
-            fr: 'Compteur Fluxidi indisponible',
-            es: 'Contador Fluxidi no disponible',
-          ),
-        ),
-        content: Text(
-          _tr(
-            nl:
-                'Picture-in-Picture wordt niet ondersteund of is uitgeschakeld. Google Maps opent zonder zichtbare Fluxidi-teller. Doorgaan?',
-            en:
-                'Picture-in-Picture is unsupported or disabled. Google Maps will open without a visible Fluxidi meter. Continue?',
-            fr:
-                'Le mode PiP n’est pas pris en charge ou est désactivé. Google Maps s’ouvrira sans compteur Fluxidi visible. Continuer ?',
-            es:
-                'PiP no es compatible o está desactivado. Google Maps se abrirá sin contador Fluxidi visible. ¿Continuar?',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(
-              _tr(
-                nl: 'Annuleren',
-                en: 'Cancel',
-                fr: 'Annuler',
-                es: 'Cancelar',
-              ),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text(
-              _tr(
-                nl: 'Doorgaan',
-                en: 'Continue',
-                fr: 'Continuer',
-                es: 'Continuar',
-              ),
-            ),
-          ),
-        ],
+    final ok = await _showExternalNavDialog<bool>(
+      title: _tr(
+        nl: 'Fluxidi-teller niet beschikbaar',
+        en: 'Fluxidi meter unavailable',
+        fr: 'Compteur Fluxidi indisponible',
+        es: 'Contador Fluxidi no disponible',
       ),
+      content: _tr(
+        nl:
+            'Picture-in-Picture wordt niet ondersteund of is uitgeschakeld. Google Maps opent zonder zichtbare Fluxidi-teller. Doorgaan?',
+        en:
+            'Picture-in-Picture is unsupported or disabled. Google Maps will open without a visible Fluxidi meter. Continue?',
+        fr:
+            'Le mode PiP n’est pas pris en charge ou est désactivé. Google Maps s’ouvrira sans compteur Fluxidi visible. Continuer ?',
+        es:
+            'PiP no es compatible o está desactivado. Google Maps se abrirá sin contador Fluxidi visible. ¿Continuar?',
+      ),
+      actions: (ctx) => [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: Text(
+            _tr(
+              nl: 'Annuleren',
+              en: 'Cancel',
+              fr: 'Annuler',
+              es: 'Cancelar',
+            ),
+          ),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: Text(
+            _tr(
+              nl: 'Doorgaan',
+              en: 'Continue',
+              fr: 'Continuer',
+              es: 'Continuar',
+            ),
+          ),
+        ),
+      ],
     );
     return ok == true;
+  }
+
+  Future<T?> _showExternalNavDialog<T>({
+    required String title,
+    String? content,
+    required List<Widget> Function(BuildContext ctx) actions,
+  }) async {
+    if (!mounted) {
+      _logNavBounded(
+        'EXTERNAL_NAV',
+        'event=failure_dialog_shown mounted=false title_len=${title.length}',
+        intervalMs: 1,
+      );
+      return null;
+    }
+    _logNavBounded(
+      'EXTERNAL_NAV',
+      'event=failure_dialog_shown mounted=true',
+      intervalMs: 1,
+    );
+    return showDialog<T>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: content == null ? null : Text(content),
+        actions: actions(ctx),
+      ),
+    );
+  }
+
+  Future<void> _showGoogleMapsLaunchFailureDialog({
+    required GoogleMapsLaunchStatus status,
+    String? failureCode,
+  }) async {
+    final message = switch (status) {
+      GoogleMapsLaunchStatus.invalidDestination => _tr(
+          nl:
+              'Google Maps kon niet worden gestart omdat de bestemming ontbreekt.',
+          en: 'Google Maps could not start because the destination is missing.',
+          fr:
+              'Google Maps n’a pas pu démarrer car la destination est manquante.',
+          es:
+              'Google Maps no pudo iniciarse porque falta el destino.',
+        ),
+      GoogleMapsLaunchStatus.intentNotResolved ||
+      GoogleMapsLaunchStatus.activityNotFound =>
+        _tr(
+          nl: 'Google Maps kon niet worden geopend op dit toestel.',
+          en: 'Google Maps could not be opened on this device.',
+          fr: 'Google Maps n’a pas pu être ouvert sur cet appareil.',
+          es: 'No se pudo abrir Google Maps en este dispositivo.',
+        ),
+      GoogleMapsLaunchStatus.securityException => _tr(
+          nl: 'Google Maps kon niet worden gestart (beveiligingsfout).',
+          en: 'Google Maps could not start (security error).',
+          fr: 'Google Maps n’a pas pu démarrer (erreur de sécurité).',
+          es: 'Google Maps no pudo iniciarse (error de seguridad).',
+        ),
+      _ => _tr(
+          nl: 'Google Maps kon niet worden gestart.',
+          en: 'Google Maps could not be started.',
+          fr: 'Google Maps n’a pas pu démarrer.',
+          es: 'No se pudo iniciar Google Maps.',
+        ),
+    };
+    await _showExternalNavDialog<void>(
+      title: _tr(
+        nl: 'Google Maps',
+        en: 'Google Maps',
+        fr: 'Google Maps',
+        es: 'Google Maps',
+      ),
+      content: failureCode == null || failureCode.isEmpty
+          ? message
+          : '$message ($failureCode)',
+      actions: (ctx) => [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: Text(
+            _tr(
+              nl: 'OK',
+              en: 'OK',
+              fr: 'OK',
+              es: 'OK',
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   ExternalNavPipMeterModel _buildCurrentPipMeterModel() {
@@ -23100,148 +23187,257 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _launchGoogleMapsWithFluxidiPip({
     required ExternalNavPhase phase,
   }) async {
-    // GOOGLE-MAPS-PIP-HANDOFF-P0-1: Maps intent first; PiP only after a
-    // successful startActivity. Never PiP-over-homescreen without Maps.
-    if (!_externalNavigationHost.isAndroid) {
+    // GOOGLE-MAPS-LAUNCH-CONTRACT-NOOP-P0-2 /
+    // GOOGLE-MAPS-LAUNCH-FAILURE-UI-P0-2:
+    // Never silent no-op. Maps launch is independent of PiP. PiP only after
+    // launch_dispatched=true. All failures show an explicit dialog/toast.
+    final gen = _googleMapsLaunchBusyGate.tryBegin();
+    if (gen == null) {
+      _logNavBounded(
+        'EXTERNAL_NAV',
+        'event=google_button_pressed ignored=busy',
+        intervalMs: 1,
+      );
       _toast(
         _tr(
-          nl: 'Google Maps + teller is alleen beschikbaar op Android.',
-          en: 'Google Maps + meter is only available on Android.',
-          fr: 'Google Maps + compteur est disponible uniquement sur Android.',
-          es: 'Google Maps + contador solo está disponible en Android.',
+          nl: 'Google Maps wordt al gestart…',
+          en: 'Google Maps is already starting…',
+          fr: 'Google Maps démarre déjà…',
+          es: 'Google Maps ya se está iniciando…',
         ),
       );
       return;
     }
-    final installed = await _externalNavigationHost.isGoogleMapsInstalled();
-    if (!installed) {
-      await _promptGoogleMapsMissing();
-      return;
-    }
-    final destination = _resolveGoogleNavDestinationPoint(phase);
-    if (!destination.hasCoordinates && !destination.hasAddress) {
-      _toast(
-        _tr(
-          nl: 'Geen bestemming beschikbaar voor Google Maps.',
-          en: 'No destination available for Google Maps.',
-          fr: 'Aucune destination disponible pour Google Maps.',
-          es: 'No hay destino disponible para Google Maps.',
-        ),
-      );
-      return;
-    }
-
-    final pipSupported = await _externalNavigationHost.isPipSupported();
-    var usePip = pipSupported;
-    if (!pipSupported) {
-      final continueWithout = await _confirmContinueWithoutPip();
-      if (!continueWithout) return;
-      usePip = false;
-    }
-
-    if (_posSub == null) {
-      _startTrackingInternal();
-    }
-    _ensureExternalNavPipListener();
-    _setNavigationWakelock(true);
-
-    final bookingId = (_activeBooking?.bookingId ??
-            _activeDirectBookingId ??
-            _directRideKey ??
-            'pending')
-        .trim();
-    final destinationSource = phase == ExternalNavPhase.toPickup
-        ? 'pickup_a'
-        : 'destination_b';
-    // Session is pending until Maps launch succeeds; guidance stays active
-    // until then so a failed handoff never leaves the driver without Fluxidi.
-    final pendingSession = ExternalNavigationSession(
-      provider: ExternalNavProvider.googleMaps,
-      bookingId: bookingId,
-      legId: _activeBooking?.bookingId,
-      phase: phase,
-      destination: destination,
-      launchedAt: DateTime.now().toUtc(),
-      pipActive: false,
-      nativeGuidanceSuppressed: false,
+    final destinationSource =
+        phase == ExternalNavPhase.toPickup ? 'pickup_a' : 'destination_b';
+    _logNavBounded(
+      'EXTERNAL_NAV',
+      'event=google_button_pressed phase=${phase.name} '
+          'external_navigation_phase=${phase.name} '
+          'destination_source=$destinationSource',
+      intervalMs: 1,
     );
+    try {
+      if (!_externalNavigationHost.isAndroid) {
+        await _showGoogleMapsLaunchFailureDialog(
+          status: GoogleMapsLaunchStatus.unsupportedPlatform,
+          failureCode: 'unsupported_platform',
+        );
+        return;
+      }
 
-    if (usePip) {
-      await _externalNavigationHost.prepareFluxidiPipForHandoff();
-    }
-
-    final launch = await _externalNavigationHost.launchGoogleNavigation(
-      ExternalNavigationDestination(
+      final destination = _resolveGoogleNavDestinationPoint(phase);
+      final channelDest = ExternalNavigationDestination(
         latitude: destination.latitude,
         longitude: destination.longitude,
         address: destination.address,
-      ),
-      destinationSource: destinationSource,
-    );
-    if (launch['ok'] != true) {
-      final err = (launch['error'] ?? '').toString();
+      );
+      final latValid =
+          GoogleMapsDestinationValidator.isValidLatitude(channelDest.latitude);
+      final lngValid =
+          GoogleMapsDestinationValidator.isValidLongitude(channelDest.longitude);
+      final addressPresent =
+          GoogleMapsDestinationValidator.hasUsableAddress(channelDest.address);
       _logNavBounded(
         'EXTERNAL_NAV',
-        'event=maps_launch_failure code=$err '
-            'resolved=${launch['maps_intent_resolved']} '
-            'source=$destinationSource',
+        'event=external_navigation_phase phase=${phase.name} '
+            'destination_source=$destinationSource '
+            'destination_lat_valid=$latValid '
+            'destination_lng_valid=$lngValid '
+            'destination_address_present=$addressPresent',
         intervalMs: 1,
       );
-      if (err == 'google_maps_not_installed') {
-        await _promptGoogleMapsMissing();
+      if (!GoogleMapsDestinationValidator.isLaunchable(channelDest)) {
+        await _showGoogleMapsLaunchFailureDialog(
+          status: GoogleMapsLaunchStatus.invalidDestination,
+          failureCode: 'invalid_destination',
+        );
         return;
       }
-      _toast(
-        _tr(
-          nl: 'Google Maps kon niet worden gestart.',
-          en: 'Google Maps could not be started.',
-          fr: 'Google Maps n’a pas pu démarrer.',
-          es: 'No se pudo iniciar Google Maps.',
-        ),
-      );
-      return;
-    }
 
-    // Launch succeeded — now own the external session and suppress Fluxidi
-    // turn-by-turn. PiP only after Maps was dispatched.
-    final activeSession = pendingSession.copyWith(
-      nativeGuidanceSuppressed: true,
-    );
-    if (mounted) {
-      setState(() {
-        _externalNavigationSession = activeSession;
-        _navigationGuidanceActive = false;
-      });
-    } else {
-      _externalNavigationSession = activeSession;
-    }
-
-    var pipOk = false;
-    if (usePip) {
-      final pipResult = await _externalNavigationHost.enterFluxidiPip();
-      pipOk = pipResult['ok'] == true || pipResult['pipActive'] == true;
-      if (mounted) {
-        setState(() {
-          _externalNavigationSession =
-              (_externalNavigationSession ?? activeSession).copyWith(
-            pipActive: pipOk,
+      final pipSupported = await _externalNavigationHost.isPipSupported();
+      var usePip = pipSupported;
+      if (!pipSupported) {
+        final continueWithout = await _confirmContinueWithoutPip();
+        if (!continueWithout) {
+          _toast(
+            _tr(
+              nl: 'Google Maps-start geannuleerd.',
+              en: 'Google Maps launch cancelled.',
+              fr: 'Lancement de Google Maps annulé.',
+              es: 'Inicio de Google Maps cancelado.',
+            ),
           );
-        });
+          return;
+        }
+        usePip = false;
       }
+
+      if (_posSub == null) {
+        _startTrackingInternal();
+      }
+      _ensureExternalNavPipListener();
+      _setNavigationWakelock(true);
+
+      final bookingId = (_activeBooking?.bookingId ??
+              _activeDirectBookingId ??
+              _directRideKey ??
+              'pending')
+          .trim();
+      // Session is pending until Maps launch succeeds; guidance stays active
+      // until then so a failed handoff never leaves the driver without Fluxidi.
+      final pendingSession = ExternalNavigationSession(
+        provider: ExternalNavProvider.googleMaps,
+        bookingId: bookingId,
+        legId: _activeBooking?.bookingId,
+        phase: phase,
+        destination: destination,
+        launchedAt: DateTime.now().toUtc(),
+        pipActive: false,
+        nativeGuidanceSuppressed: false,
+      );
+
+      // Prepare PiP params only; never enter PiP before Maps dispatch.
+      // PiP prepare failure must not block Maps.
+      if (usePip) {
+        try {
+          await _externalNavigationHost.prepareFluxidiPipForHandoff();
+        } catch (_) {
+          usePip = false;
+        }
+      }
+
+      final launch =
+          await _externalNavigationHost.launchGoogleNavigationResult(
+        channelDest,
+        destinationSource: destinationSource,
+      );
       _logNavBounded(
         'EXTERNAL_NAV',
-        'event=pip_after_handoff ok=$pipOk',
+        'event=maps_launch_result '
+            'status=${launch.status.name} '
+            'failure_code=${launch.failureCode} '
+            'maps_package_installed=${launch.mapsPackageInstalled} '
+            'maps_package_enabled=${launch.mapsPackageEnabled} '
+            'maps_intent_resolved=${launch.mapsIntentResolved} '
+            'maps_start_activity_result=${launch.launchDispatched} '
+            'launch_dispatched=${launch.launchDispatched} '
+            'pip_supported=${launch.pipSupported} '
+            'uri_present=${(launch.uri ?? '').isNotEmpty}',
         intervalMs: 1,
       );
-    }
 
-    _logNavBounded(
-      'EXTERNAL_NAV',
-      'event=launched provider=google_maps phase=${phase.name} '
-          'pip=$pipOk source=$destinationSource booking=$bookingId '
-          'dispatched=${launch['maps_launch_dispatched']}',
-      intervalMs: 1,
-    );
+      final decision = GoogleMapsLaunchDecision.fromResult(
+        result: launch,
+        userWantsPip: usePip,
+      );
+      if (!decision.activateExternalSession) {
+        // Ensure no stale external session remains after a failed launch.
+        if (_externalNavigationSession != null) {
+          await _endExternalNavigationSession(
+            reason: 'maps_launch_failed',
+            exitPip: false,
+          );
+        }
+        switch (decision.uiAction) {
+          case GoogleMapsLaunchUiAction.showInstallDialog:
+            await _promptGoogleMapsMissing(
+              disabled: launch.status == GoogleMapsLaunchStatus.mapsDisabled,
+            );
+            return;
+          case GoogleMapsLaunchUiAction.showInvalidDestination:
+            await _showGoogleMapsLaunchFailureDialog(
+              status: GoogleMapsLaunchStatus.invalidDestination,
+              failureCode: launch.failureCode,
+            );
+            return;
+          case GoogleMapsLaunchUiAction.showCancelledToast:
+            _toast(
+              _tr(
+                nl: 'Google Maps-start geannuleerd.',
+                en: 'Google Maps launch cancelled.',
+                fr: 'Lancement de Google Maps annulé.',
+                es: 'Inicio de Google Maps cancelado.',
+              ),
+            );
+            return;
+          case GoogleMapsLaunchUiAction.showFailureDialog:
+          case GoogleMapsLaunchUiAction.none:
+          case GoogleMapsLaunchUiAction.proceedWithPip:
+          case GoogleMapsLaunchUiAction.proceedWithoutPip:
+            await _showGoogleMapsLaunchFailureDialog(
+              status: launch.status,
+              failureCode: launch.failureCode,
+            );
+            return;
+        }
+      }
+
+      // Launch succeeded — own the external session and suppress Fluxidi
+      // turn-by-turn. PiP only after Maps was dispatched.
+      final activeSession = pendingSession.copyWith(
+        nativeGuidanceSuppressed: true,
+      );
+      if (mounted) {
+        setState(() {
+          _externalNavigationSession = activeSession;
+          _navigationGuidanceActive = false;
+        });
+      } else {
+        _externalNavigationSession = activeSession;
+      }
+
+      var pipOk = false;
+      if (decision.requestPip && launch.launchDispatched) {
+        _logNavBounded(
+          'EXTERNAL_NAV',
+          'event=pip_requested after_launch_dispatched=true',
+          intervalMs: 1,
+        );
+        final pipResult = await _externalNavigationHost.enterFluxidiPip();
+        pipOk = pipResult['ok'] == true || pipResult['pipActive'] == true;
+        if (mounted) {
+          setState(() {
+            _externalNavigationSession =
+                (_externalNavigationSession ?? activeSession).copyWith(
+              pipActive: pipOk,
+            );
+          });
+        }
+        _logNavBounded(
+          'EXTERNAL_NAV',
+          'event=pip_after_handoff ok=$pipOk',
+          intervalMs: 1,
+        );
+      }
+
+      _logNavBounded(
+        'EXTERNAL_NAV',
+        'event=launched provider=google_maps phase=${phase.name} '
+            'pip=$pipOk source=$destinationSource booking=$bookingId '
+            'dispatched=${launch.launchDispatched} '
+            'external_session_created=true',
+        intervalMs: 1,
+      );
+    } catch (e) {
+      _logNavBounded(
+        'EXTERNAL_NAV',
+        'event=maps_platform_exception_code=${e.runtimeType} '
+            'message_present=${e.toString().isNotEmpty}',
+        intervalMs: 1,
+      );
+      // Never leave a half-created external session on unexpected errors.
+      if (_externalNavigationSession != null &&
+          !_externalNavigationSession!.nativeGuidanceSuppressed) {
+        _externalNavigationSession = null;
+      }
+      await _showGoogleMapsLaunchFailureDialog(
+        status: GoogleMapsLaunchStatus.nativeException,
+        failureCode: e is PlatformException ? e.code : 'native_exception',
+      );
+    } finally {
+      _googleMapsLaunchBusyGate.end(gen);
+    }
   }
 
   Future<void> _maybeRelaunchGoogleMapsAfterStart() async {
