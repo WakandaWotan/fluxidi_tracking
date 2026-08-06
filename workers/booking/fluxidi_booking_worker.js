@@ -93880,12 +93880,34 @@ function renderInvoiceHtml(env, data, commProfile = null) {
   const paymentLine = safeStr(d.paymentStatus)
     ? `<strong>Betaalstatus:</strong> ${escapeHtml(statusNl(d.paymentStatus))}<br>`
     : "";
-  const paymentMethodLine = safeStr(d.paymentMethod)
-    ? `<strong>Betaalmethode:</strong> ${escapeHtml(safeStr(d.paymentMethod))}<br>`
+  // CONSUMER-SALE-DOCUMENT-PRESENTATION-P0-1: never show technical payment_source
+  // (e.g. in_car) on consumer ritbon PDFs.
+  const _isConsumerSalePdf =
+    d.consumerSalePresentation === true ||
+    String(d.fluxidiSaleKind || d.fluxidi_sale_kind || "")
+      .toLowerCase()
+      .trim() === "consumer_sale" ||
+    String(d.invoiceIntent || d.invoice_intent || "")
+      .toLowerCase()
+      .trim() === "none" ||
+    String(d.billingCustomerType || "").toLowerCase().trim() === "private";
+  const _paymentMethodRaw = safeStr(d.paymentMethod).toLowerCase();
+  const _paymentMethodDisplay =
+    _paymentMethodRaw === "cash" ||
+    _paymentMethodRaw === "contant" ||
+    _paymentMethodRaw === "in_car" ||
+    _paymentMethodRaw === "incar"
+      ? "Contant"
+      : safeStr(d.paymentMethod);
+  const paymentMethodLine = _paymentMethodDisplay
+    ? `<strong>Betaalmethode:</strong> ${escapeHtml(_paymentMethodDisplay)}<br>`
     : "";
-  const paymentSourceLine = safeStr(d.paymentSource)
-    ? `<strong>Betaalbron:</strong> ${escapeHtml(safeStr(d.paymentSource))}<br>`
-    : "";
+  const paymentSourceLine =
+    !_isConsumerSalePdf &&
+    safeStr(d.paymentSource) &&
+    !["in_car", "incar"].includes(safeStr(d.paymentSource).toLowerCase())
+      ? `<strong>Betaalbron:</strong> ${escapeHtml(safeStr(d.paymentSource))}<br>`
+      : "";
   const rideStatusLine = safeStr(d.rideStatus)
     ? `<strong>Status:</strong> ${escapeHtml(statusNl(d.rideStatus))}<br>`
     : "";
@@ -93968,9 +93990,13 @@ function renderInvoiceHtml(env, data, commProfile = null) {
   const waitingPackageRow = hasDisplayReturnLeg && toInt(d.waitMinutes, 0) > 0
     ? `<tr><td class="muted">Heen-terug met geboekte wachttijd (${escapeHtml(String(toInt(d.waitMinutes, 0)))} min)</td><td class="right">Inbegrepen</td></tr>`
     : "";
-  const documentTitle = safeStr(d.customerCompany) || safeStr(d.customerVat)
-    ? "Factuur"
-    : "Betaalbewijs / Ritbon";
+  // CONSUMER-SALE-DOCUMENT-PRESENTATION-P0-1: title from sale kind / intent,
+  // never from filled company/VAT alone (consumer private snapshots have names).
+  const documentTitle = _isConsumerSalePdf
+    ? "Ritbon / Particuliere verkoop"
+    : d.businessBuyerActive || safeStr(d.customerVat)
+      ? "Factuur"
+      : "Betaalbewijs / Ritbon";
 
   return `<!DOCTYPE html>
 <html lang="nl">
@@ -94000,18 +94026,27 @@ ${buildInvoicePrintCss()}
   <h1>${escapeHtml(documentTitle)}</h1>
 
   <div class="meta">
-    <div class="box">
+    ${_isConsumerSalePdf
+      ? ""
+      : `<div class="box">
       <strong>Gefactureerd aan</strong>
       ${buyerBlockInner}
-    </div>
+    </div>`}
 
     <div class="box" style="text-align:right;">
-      <strong>Factuurnummer:</strong> <span class="mono">${escapeHtml(safeStr(d.invoiceNumber) || missingLabel)}</span><br>
-      <strong>Factuurdatum:</strong> ${escapeHtml(safeStr(d.invoiceDate) || missingLabel)}<br>
+      <strong>${_isConsumerSalePdf ? "Bonnummer" : "Factuurnummer"}:</strong> <span class="mono">${escapeHtml(safeStr(d.invoiceNumber) || missingLabel)}</span><br>
+      <strong>${_isConsumerSalePdf ? "Documentdatum" : "Factuurdatum"}:</strong> ${escapeHtml(safeStr(d.invoiceDate) || missingLabel)}<br>
       <strong>Datum dienst:</strong> ${escapeHtml(safeStr(d.tripDate) || missingLabel)}<br>
 
       <small>
-        <strong>Booking ID:</strong> <span class="mono">${escapeHtml(safeStr(d.bookingPublicId) || safeStr(d.bookingId) || missingLabel)}</span><br>
+        <strong>${_isConsumerSalePdf ? "Ritreferentie" : "Booking ID"}:</strong> <span class="mono">${escapeHtml(
+          _isConsumerSalePdf
+            ? (safeStr(d.bookingPublicId) || safeStr(d.bookingId) || missingLabel)
+                .replace(/^street_/i, "")
+                .slice(-10)
+                .toUpperCase() || missingLabel
+            : (safeStr(d.bookingPublicId) || safeStr(d.bookingId) || missingLabel),
+        )}</span><br>
         ${rideStatusLine}
         ${paymentLine}
         ${paymentMethodLine}
@@ -94707,15 +94742,45 @@ async function generateAndSendInvoice({
       _buyerContactPhone || safeStr(bookingInput.customerPhone) || "";
     const resolvedCustomerEmailDisplay =
       _buyerContactEmail || customerEmail || "";
-    // A "business buyer" is active when the snapshot supplies any legal-identity
-    // signal: legal/display name, VAT/company-registration, or any billing
-    // address field. Used by renderInvoiceHtml to render the "Gefactureerd aan"
-    // block as buyer identity only (no passenger name/phone/email mixed in).
-    const _businessBuyerActive = !!(
-      _buyerLegalName || _buyerVatNumber || _billingComposedAddress
-    );
+    // CONSUMER-SALE-DOCUMENT-PRESENTATION-P0-1: business buyer only from
+    // explicit business invoice intent / business customer_type — never from
+    // a filled private legal_name snapshot alone.
+    const _snapshotCustomerType = String(
+      _invoiceBillingSnapshot?.customer_type ||
+        _invoiceBillingSnapshot?.customerType ||
+        bookingInput.billingCustomerType ||
+        "",
+    )
+      .toLowerCase()
+      .trim();
+    const _invoiceIntentToken = String(
+      bookingInput.invoiceIntent ||
+        bookingInput.invoice_intent ||
+        "",
+    )
+      .toLowerCase()
+      .trim();
+    const _saleKindToken = String(
+      bookingInput.fluxidiSaleKind ||
+        bookingInput.fluxidi_sale_kind ||
+        bookingInput.consumerSaleKind ||
+        "",
+    )
+      .toLowerCase()
+      .trim();
+    const _isConsumerSalePresentation =
+      _saleKindToken === "consumer_sale" ||
+      _snapshotCustomerType === "private" ||
+      _snapshotCustomerType === "consumer" ||
+      _invoiceIntentToken === "none" ||
+      bookingInput.consumerSalePresentation === true;
+    const _businessBuyerActive =
+      !_isConsumerSalePresentation &&
+      (_invoiceIntentToken === "business_invoice" ||
+        _snapshotCustomerType === "business") &&
+      !!(_buyerLegalName || _buyerVatNumber || _billingComposedAddress);
     console.log(
-      `[INVOICE_GEN][BUYER_SOURCE] bookingId=${safeStr(bookingInput.bookingPublicId || bookingInput.bookingId)} billingSnapshotUsed=${!!_invoiceBillingSnapshot} legalNameFromSnapshot=${!!_buyerLegalName} vatFromSnapshot=${!!_buyerVatNumber} addressFromSnapshot=${!!_billingComposedAddress} businessBuyerActive=${_businessBuyerActive}`,
+      `[INVOICE_GEN][BUYER_SOURCE] bookingId=${safeStr(bookingInput.bookingPublicId || bookingInput.bookingId)} billingSnapshotUsed=${!!_invoiceBillingSnapshot} legalNameFromSnapshot=${!!_buyerLegalName} vatFromSnapshot=${!!_buyerVatNumber} addressFromSnapshot=${!!_billingComposedAddress} businessBuyerActive=${_businessBuyerActive} consumerSale=${_isConsumerSalePresentation}`,
     );
 
     const data = {
@@ -94774,6 +94839,12 @@ async function generateAndSendInvoice({
       // contact_email (never the passenger email); empty when not provided.
       businessBuyerActive: _businessBuyerActive,
       buyerBillingContactEmail: _buyerContactEmail || "",
+      consumerSalePresentation: _isConsumerSalePresentation,
+      fluxidiSaleKind: _saleKindToken || "",
+      fluxidi_sale_kind: _saleKindToken || "",
+      invoiceIntent: _invoiceIntentToken || "",
+      invoice_intent: _invoiceIntentToken || "",
+      billingCustomerType: _snapshotCustomerType || "",
 
       // totals
       vat_rate: effectiveVatRate,

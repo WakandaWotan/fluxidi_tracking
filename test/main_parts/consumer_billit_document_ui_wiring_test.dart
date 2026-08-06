@@ -23,11 +23,25 @@ void main() {
     expect(docs, contains('Geregistreerd in Billit'));
     expect(docs, contains('Peppol niet van toepassing'));
     expect(docs, contains('fluxidiSaleKind'));
+    expect(docs, contains('createdByRole'));
+    expect(docs, contains('Peppol niet van toepassing'));
+    // Consumer rows must not keep the Peppol-not-sent secondary label.
+    expect(docs, contains('doc.isConsumerSale'));
   });
 
   test('consumer sale forbids invoice label and Peppol send', () {
     expect(presentation, contains('documentForbidsInvoiceLabel'));
     expect(presentation, contains('showSendAction'));
     expect(presentation, contains('consumer_sale'));
+    expect(presentation, contains('isBusinessDocumentForPresentation'));
+    expect(presentation, contains('Billit OrderType'));
+  });
+
+  test('document_core projects sale kind for list UI', () {
+    final core = _read('workers/booking/modules/document_core.js');
+    expect(core, contains('fluxidi_sale_kind'));
+    expect(core, contains('peppol_applicable'));
+    expect(core, contains('created_by_role'));
+    expect(core, contains('CONSUMER-SALE-DOCUMENT-PRESENTATION-P0-1'));
   });
 }

@@ -425,6 +425,43 @@ export function buildInvoiceReplaySafeFields(idemHit, registryRecord) {
 // fields are returned as null rather than guessed.
 export function buildIssuedDocumentPublicMetadata(record) {
   const rec = record && typeof record === "object" ? record : {};
+  // CONSUMER-SALE-DOCUMENT-PRESENTATION-P0-1: project Fluxidi sale presentation
+  // fields so the company Documents UI never falls back to "Factuur"/Peppol
+  // solely because Billit OrderType is Invoice.
+  const saleKind =
+    safeStr(
+      rec.fluxidi_sale_kind ?? rec.fluxidiSaleKind ?? rec.sale_kind ?? rec.saleKind,
+      40,
+    ) || null;
+  const presentationLabelKey =
+    safeStr(
+      rec.presentation_label_key ??
+        rec.presentationLabelKey ??
+        rec.document_label_key ??
+        rec.documentLabelKey,
+      40,
+    ) || null;
+  const invoiceIntent =
+    safeStr(rec.invoice_intent ?? rec.invoiceIntent, 40) || null;
+  const createdByRole =
+    safeStr(rec.created_by_role ?? rec.createdByRole, 64) || null;
+  let peppolApplicable = null;
+  if (rec.peppol_applicable === true || rec.peppolApplicable === true) {
+    peppolApplicable = true;
+  } else if (rec.peppol_applicable === false || rec.peppolApplicable === false) {
+    peppolApplicable = false;
+  } else if (
+    String(saleKind || "").toLowerCase() === "consumer_sale" ||
+    String(createdByRole || "").toLowerCase().includes("consumer_sale")
+  ) {
+    peppolApplicable = false;
+  }
+  const superseded =
+    rec.superseded === true ||
+    rec.active_revenue === false ||
+    String(rec.lifecycle_state ?? rec.lifecycleState ?? "")
+      .toLowerCase()
+      .trim() === "superseded";
   return {
     document_id: safeStr(rec.document_id ?? rec.documentId, 200) || null,
     document_type: safeStr(rec.document_type ?? rec.documentType, 40) || null,
@@ -441,6 +478,13 @@ export function buildIssuedDocumentPublicMetadata(record) {
       safeStr(rec.source_booking_id ?? rec.sourceBookingId, 200) || null,
     source_leg_id: safeStr(rec.source_leg_id ?? rec.sourceLegId, 200) || null,
     source_leg_type: safeStr(rec.source_leg_type ?? rec.sourceLegType, 24) || null,
+    fluxidi_sale_kind: saleKind,
+    sale_kind: saleKind,
+    presentation_label_key: presentationLabelKey,
+    invoice_intent: invoiceIntent,
+    created_by_role: createdByRole,
+    peppol_applicable: peppolApplicable,
+    superseded: superseded === true,
     // B6b: safe Billit export link projection (envelope-only; null when absent).
     // Never exposes tokens, the raw OAuth record, or the raw Billit response.
     billit_export: buildSafeBillitExportProjection(rec),

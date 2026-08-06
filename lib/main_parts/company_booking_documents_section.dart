@@ -206,9 +206,13 @@ class _BookingDocumentMetadata {
   final String sourceBookingId;
   final String sourceLegId;
   final String sourceLegType;
-  /// CONSUMER-BILLIT-DOCUMENT-UI-1: Fluxidi sale kind (`consumer_sale` vs business).
+  /// CONSUMER-BILLIT-DOCUMENT-UI-1 / CONSUMER-SALE-DOCUMENT-PRESENTATION-P0-1
+  /// Fluxidi sale kind (`consumer_sale` vs `business_invoice`).
   final String fluxidiSaleKind;
   final bool? peppolApplicable;
+  final String invoiceIntent;
+  final String createdByRole;
+  final bool superseded;
   // B10c: safe read-only Billit export projection (null when the document has no
   // meaningful Billit export). Existing documents without it render unchanged.
   final _BillitExportMetadata? billitExport;
@@ -228,6 +232,9 @@ class _BookingDocumentMetadata {
     required this.sourceLegType,
     this.fluxidiSaleKind = '',
     this.peppolApplicable,
+    this.invoiceIntent = '',
+    this.createdByRole = '',
+    this.superseded = false,
     this.billitExport,
   });
 
@@ -303,6 +310,9 @@ class _BookingDocumentMetadata {
         'saleKind',
       ]),
       peppolApplicable: peppolApplicable,
+      invoiceIntent: readAny(const ['invoice_intent', 'invoiceIntent']),
+      createdByRole: readAny(const ['created_by_role', 'createdByRole']),
+      superseded: json['superseded'] == true,
       billitExport: billitExport,
     );
   }
@@ -326,11 +336,28 @@ class _BookingDocumentMetadata {
       sourceLegType: sourceLegType,
       fluxidiSaleKind: fluxidiSaleKind,
       peppolApplicable: peppolApplicable,
+      invoiceIntent: invoiceIntent,
+      createdByRole: createdByRole,
+      superseded: superseded,
       billitExport: export,
     );
   }
 
-  bool get isConsumerSale => isConsumerSaleKind(fluxidiSaleKind);
+  FluxidiDocumentPresentationKind get presentationKind =>
+      resolveDocumentPresentationKind(
+        saleKind: fluxidiSaleKind,
+        documentType: documentType,
+        invoiceIntent: invoiceIntent,
+        createdByRole: createdByRole,
+        peppolApplicable: peppolApplicable,
+        consumerSaleSuperseded: superseded,
+      );
+
+  bool get isConsumerSale =>
+      presentationKind == FluxidiDocumentPresentationKind.consumerSale;
+
+  bool get isBusinessInvoicePresentation =>
+      presentationKind == FluxidiDocumentPresentationKind.businessInvoice;
 
   /// Best human-facing reference for the row title (credit notes carry a
   /// document number, refund proofs a proof reference).
@@ -379,8 +406,11 @@ _BookingDocumentMetadata _bookingDocumentFromLocalIssuedSnapshot(
     sourceBookingId: bookingId,
     sourceLegId: '',
     sourceLegType: '',
-    fluxidiSaleKind: '',
-    peppolApplicable: null,
+    fluxidiSaleKind: 'business_invoice',
+    peppolApplicable: true,
+    invoiceIntent: 'business_invoice',
+    createdByRole: '',
+    superseded: false,
     billitExport: hasBillit
         ? _BillitExportMetadata(
             status: snap.billitOrderId.isNotEmpty ? 'created' : '',
@@ -707,6 +737,9 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   bool _shouldFetchPeppolReadiness(_BookingDocumentMetadata doc) {
     final peppol = resolvePeppolUiPolicy(
       saleKind: doc.fluxidiSaleKind,
+      documentType: doc.documentType,
+      invoiceIntent: doc.invoiceIntent,
+      createdByRole: doc.createdByRole,
       peppolApplicable: doc.peppolApplicable,
     );
     if (!peppol.applicable) return false;
@@ -957,6 +990,9 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
   bool _shouldShowBillitPeppolSend(_BookingDocumentMetadata doc) {
     final peppol = resolvePeppolUiPolicy(
       saleKind: doc.fluxidiSaleKind,
+      documentType: doc.documentType,
+      invoiceIntent: doc.invoiceIntent,
+      createdByRole: doc.createdByRole,
       peppolApplicable: doc.peppolApplicable,
     );
     if (!peppol.showSendAction) return false;
@@ -1583,6 +1619,9 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     final key = consumerOrBusinessDocumentLabelKey(
       saleKind: doc.fluxidiSaleKind,
       documentType: doc.documentType,
+      invoiceIntent: doc.invoiceIntent,
+      createdByRole: doc.createdByRole,
+      peppolApplicable: doc.peppolApplicable,
     );
     switch (key) {
       case 'consumerSale':
@@ -1593,7 +1632,12 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
           es: 'Venta particular',
         );
       case 'invoice':
-        return _tr(nl: 'Factuur', en: 'Invoice', fr: 'Facture', es: 'Factura');
+        return _tr(
+          nl: 'Zakelijke factuur',
+          en: 'Business invoice',
+          fr: 'Facture professionnelle',
+          es: 'Factura comercial',
+        );
       case 'creditNote':
         return _tr(
           nl: 'Creditnota',
@@ -1693,6 +1737,31 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
       default:
         return state.isEmpty ? '—' : state;
     }
+  }
+
+  /// CONSUMER-SALE-DOCUMENT-PRESENTATION-P0-1: Betaald / Openstaand chip text.
+  String? _localizedConsumerPaymentChip(_BookingDocumentMetadata doc) {
+    final export = doc.billitExport;
+    if (export == null) return null;
+    if (export.billitPaid == true ||
+        export.billitStatus.toLowerCase() == 'paid') {
+      return _tr(nl: 'Betaald', en: 'Paid', fr: 'Payé', es: 'Pagado');
+    }
+    final status = export.billitStatus.toLowerCase();
+    if (status == 'topay' ||
+        status == 'to_pay' ||
+        status == 'open' ||
+        status == 'unpaid' ||
+        status == 'tosend' ||
+        status == 'created') {
+      return _tr(
+        nl: 'Openstaand',
+        en: 'Outstanding',
+        fr: 'En souffrance',
+        es: 'Pendiente',
+      );
+    }
+    return null;
   }
 
   String _formatIssueDate(String iso) {
@@ -1892,6 +1961,9 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
     final shortHash = _shortHash(doc.contentHash);
     final peppol = resolvePeppolUiPolicy(
       saleKind: doc.fluxidiSaleKind,
+      documentType: doc.documentType,
+      invoiceIntent: doc.invoiceIntent,
+      createdByRole: doc.createdByRole,
       peppolApplicable: doc.peppolApplicable,
     );
     final registeredInBillit =
@@ -1906,10 +1978,14 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
                 )
               : null)
         : null;
+    final paymentStatusLabel = doc.isConsumerSale
+        ? _localizedConsumerPaymentChip(doc)
+        : null;
 
     final metaParts = <String>[
       typeLabel,
       if (consumerStatus != null) consumerStatus,
+      if (paymentStatusLabel != null) paymentStatusLabel,
       if (peppol.showNotApplicable)
         _tr(
           nl: 'Peppol niet van toepassing',
@@ -2215,18 +2291,28 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
         );
       }
     } else if (billitStatus == 'tosend' || status == 'created') {
-      primaryLabel = _tr(
-        nl: 'Klaargezet in Billit',
-        en: 'Prepared in Billit',
-        fr: 'Préparé dans Billit',
-        es: 'Preparado en Billit',
-      );
-      secondaryLabel = _tr(
-        nl: 'Nog niet via Peppol verzonden',
-        en: 'Not sent via Peppol yet',
-        fr: 'Pas encore envoyé via Peppol',
-        es: 'Aún no enviado por Peppol',
-      );
+      primaryLabel = doc.isConsumerSale
+          ? _tr(
+              nl: 'Geregistreerd in Billit',
+              en: 'Registered in Billit',
+              fr: 'Enregistré dans Billit',
+              es: 'Registrado en Billit',
+            )
+          : _tr(
+              nl: 'Klaargezet in Billit',
+              en: 'Prepared in Billit',
+              fr: 'Préparé dans Billit',
+              es: 'Preparado en Billit',
+            );
+      // Consumer sales never show Peppol send-state warnings.
+      secondaryLabel = doc.isConsumerSale
+          ? null
+          : _tr(
+              nl: 'Nog niet via Peppol verzonden',
+              en: 'Not sent via Peppol yet',
+              fr: 'Pas encore envoyé via Peppol',
+              es: 'Aún no enviado por Peppol',
+            );
     } else if (billitStatus == 'topay') {
       primaryLabel = _tr(
         nl: 'Billit-order aangemaakt',
@@ -2299,7 +2385,7 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
               style: TextStyle(color: tokens.textTertiary, fontSize: 10.4),
             ),
           ],
-          if (!export.peppolSent) ...[
+          if (!doc.isConsumerSale && !export.peppolSent) ...[
             const SizedBox(height: 2),
             Text(
               _tr(
@@ -2315,7 +2401,8 @@ class _BookingDocumentsSectionState extends State<_BookingDocumentsSection> {
               ),
             ),
           ],
-          if (readiness != null &&
+          if (!doc.isConsumerSale &&
+              readiness != null &&
               readiness.phase == BookingPeppolReadinessPhase.notReady &&
               readiness.reasons.isNotEmpty) ...[
             const SizedBox(height: 3),

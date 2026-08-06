@@ -1,50 +1,211 @@
-// CONSUMER-BILLIT-DOCUMENT-UI-1
+// CONSUMER-BILLIT-DOCUMENT-UI-1 / CONSUMER-SALE-DOCUMENT-PRESENTATION-P0-1
 //
 // Pure presentation contract for private/consumer Billit sales.
 // Internally Billit may store OrderType Invoice; Fluxidi must never show
 // "Factuur" for a consumer sale, and Peppol is never applicable.
+//
+// Classification uses ONLY:
+// 1) explicit booking invoice intent
+// 2) canonical document kind (consumer_sale / business_invoice / credit_note)
+// 3) conversion state
+// Never: Billit OrderType, INV-* numbers, filled company/VAT/Peppol fields,
+// or presence of a Billit order id.
 
 const String kConsumerSaleKind = 'consumer_sale';
+const String kBusinessInvoiceKind = 'business_invoice';
+const String kCreditNoteKind = 'credit_note';
+
+enum FluxidiDocumentPresentationKind {
+  consumerSale,
+  businessInvoice,
+  creditNote,
+}
 
 bool isConsumerSaleKind(Object? raw) {
   final s = (raw ?? '').toString().trim().toLowerCase();
   return s == kConsumerSaleKind ||
       s == 'private_sale' ||
       s == 'particuliere_verkoop' ||
-      s == 'ontvangstbewijs';
+      s == 'ontvangstbewijs' ||
+      s == 'ritbon';
+}
+
+bool isBusinessInvoiceKind(Object? raw) {
+  final s = (raw ?? '').toString().trim().toLowerCase();
+  return s == kBusinessInvoiceKind || s == 'zakelijke_factuur';
+}
+
+bool isCreditNoteKind(Object? raw) {
+  final s = (raw ?? '').toString().trim().toLowerCase();
+  return s == kCreditNoteKind ||
+      s == 'creditnote' ||
+      s == 'credit-note' ||
+      s == 'consumer_conversion_credit';
+}
+
+bool hasExplicitBusinessInvoiceIntent({
+  Object? invoiceIntent,
+  bool businessInvoiceIntent = false,
+}) {
+  if (businessInvoiceIntent) return true;
+  final intent = (invoiceIntent ?? '').toString().trim().toLowerCase();
+  return intent == 'business_invoice' || intent == kBusinessInvoiceKind;
+}
+
+/// Historical / repaired consumer sales without full UI metadata.
+bool hasHistoricalConsumerSaleSignals({
+  Object? saleKind,
+  Object? bookingConsumerSaleKind,
+  Object? createdByRole,
+  bool? peppolApplicable,
+  Object? billingCustomerType,
+}) {
+  if (isConsumerSaleKind(saleKind) ||
+      isConsumerSaleKind(bookingConsumerSaleKind)) {
+    return true;
+  }
+  final role = (createdByRole ?? '').toString().trim().toLowerCase();
+  if (role == 'system_consumer_sale' || role.contains('consumer_sale')) {
+    return true;
+  }
+  if (peppolApplicable == false) return true;
+  final customerType =
+      (billingCustomerType ?? '').toString().trim().toLowerCase();
+  if (customerType == 'private' || customerType == 'consumer') return true;
+  return false;
+}
+
+/// Canonical presentation kind. Never infer business from OrderType/INV/billing.
+FluxidiDocumentPresentationKind resolveDocumentPresentationKind({
+  Object? saleKind,
+  Object? documentType,
+  Object? invoiceIntent,
+  Object? bookingConsumerSaleKind,
+  Object? createdByRole,
+  Object? billingCustomerType,
+  bool? peppolApplicable,
+  bool businessInvoiceIntent = false,
+  bool conversionToBusinessSucceeded = false,
+  bool consumerSaleSuperseded = false,
+}) {
+  final type = (documentType ?? '').toString().trim().toLowerCase();
+  if (isCreditNoteKind(saleKind) ||
+      type == 'credit_note' ||
+      type == 'creditnote') {
+    return FluxidiDocumentPresentationKind.creditNote;
+  }
+
+  // After conversion the active revenue document is the new business invoice.
+  if (conversionToBusinessSucceeded && !consumerSaleSuperseded) {
+    return FluxidiDocumentPresentationKind.businessInvoice;
+  }
+
+  if (hasExplicitBusinessInvoiceIntent(
+        invoiceIntent: invoiceIntent,
+        businessInvoiceIntent: businessInvoiceIntent,
+      ) ||
+      isBusinessInvoiceKind(saleKind)) {
+    return FluxidiDocumentPresentationKind.businessInvoice;
+  }
+
+  if (hasHistoricalConsumerSaleSignals(
+    saleKind: saleKind,
+    bookingConsumerSaleKind: bookingConsumerSaleKind,
+    createdByRole: createdByRole,
+    peppolApplicable: peppolApplicable,
+    billingCustomerType: billingCustomerType,
+  )) {
+    return FluxidiDocumentPresentationKind.consumerSale;
+  }
+
+  // Bare OrderType/INV/documentType=invoice alone is NOT enough to force
+  // business presentation when consumer signals exist (handled above).
+  // Legacy business invoices without sale-kind still resolve here as business
+  // only when there is no consumer/private signal.
+  if (type == 'credit_note' || type == 'creditnote') {
+    return FluxidiDocumentPresentationKind.creditNote;
+  }
+  if (type == 'refund_proof') {
+    return FluxidiDocumentPresentationKind.consumerSale;
+  }
+  if (type == 'invoice') {
+    return FluxidiDocumentPresentationKind.businessInvoice;
+  }
+  return FluxidiDocumentPresentationKind.consumerSale;
 }
 
 bool documentForbidsInvoiceLabel({
   Object? saleKind,
   Object? documentType,
+  Object? invoiceIntent,
+  Object? bookingConsumerSaleKind,
+  Object? createdByRole,
+  bool? peppolApplicable,
   bool businessInvoiceIntent = false,
+  bool conversionToBusinessSucceeded = false,
 }) {
-  if (businessInvoiceIntent) return false;
-  if (isConsumerSaleKind(saleKind)) return true;
-  return false;
+  final kind = resolveDocumentPresentationKind(
+    saleKind: saleKind,
+    documentType: documentType,
+    invoiceIntent: invoiceIntent,
+    bookingConsumerSaleKind: bookingConsumerSaleKind,
+    createdByRole: createdByRole,
+    peppolApplicable: peppolApplicable,
+    businessInvoiceIntent: businessInvoiceIntent,
+    conversionToBusinessSucceeded: conversionToBusinessSucceeded,
+  );
+  return kind == FluxidiDocumentPresentationKind.consumerSale;
 }
 
 /// Customer-facing document type label key.
 String consumerOrBusinessDocumentLabelKey({
   Object? saleKind,
   Object? documentType,
+  Object? invoiceIntent,
+  Object? bookingConsumerSaleKind,
+  Object? createdByRole,
+  bool? peppolApplicable,
   bool businessInvoiceIntent = false,
+  bool conversionToBusinessSucceeded = false,
 }) {
-  if (businessInvoiceIntent) return 'invoice';
-  if (isConsumerSaleKind(saleKind)) return 'consumerSale';
-  final type = (documentType ?? '').toString().trim().toLowerCase();
-  if (type == 'invoice') return 'invoice';
-  if (type == 'credit_note') return 'creditNote';
-  if (type == 'refund_proof') return 'refundProof';
-  return type.isEmpty ? 'document' : type;
+  final kind = resolveDocumentPresentationKind(
+    saleKind: saleKind,
+    documentType: documentType,
+    invoiceIntent: invoiceIntent,
+    bookingConsumerSaleKind: bookingConsumerSaleKind,
+    createdByRole: createdByRole,
+    peppolApplicable: peppolApplicable,
+    businessInvoiceIntent: businessInvoiceIntent,
+    conversionToBusinessSucceeded: conversionToBusinessSucceeded,
+  );
+  switch (kind) {
+    case FluxidiDocumentPresentationKind.businessInvoice:
+      return 'invoice';
+    case FluxidiDocumentPresentationKind.creditNote:
+      return 'creditNote';
+    case FluxidiDocumentPresentationKind.consumerSale:
+      final type = (documentType ?? '').toString().trim().toLowerCase();
+      if (type == 'refund_proof') return 'refundProof';
+      return 'consumerSale';
+  }
 }
 
 String consumerSaleStatusLabelKey({
   Object? saleKind,
+  Object? bookingConsumerSaleKind,
+  Object? createdByRole,
+  bool? peppolApplicable,
   bool registeredInBillit = false,
   Object? billitOrderId,
 }) {
-  if (!isConsumerSaleKind(saleKind)) return 'unknown';
+  final isConsumer = resolveDocumentPresentationKind(
+        saleKind: saleKind,
+        bookingConsumerSaleKind: bookingConsumerSaleKind,
+        createdByRole: createdByRole,
+        peppolApplicable: peppolApplicable,
+      ) ==
+      FluxidiDocumentPresentationKind.consumerSale;
+  if (!isConsumer) return 'unknown';
   final order = (billitOrderId ?? '').toString().trim();
   if (registeredInBillit || order.isNotEmpty) return 'registeredInBillit';
   return 'pendingBillitRegistration';
@@ -69,25 +230,32 @@ class PeppolUiPolicy {
 
 PeppolUiPolicy resolvePeppolUiPolicy({
   Object? saleKind,
+  Object? documentType,
+  Object? invoiceIntent,
+  Object? bookingConsumerSaleKind,
+  Object? createdByRole,
   bool? peppolApplicable,
   bool businessInvoiceIntent = false,
+  bool conversionToBusinessSucceeded = false,
 }) {
-  if (isConsumerSaleKind(saleKind) || peppolApplicable == false) {
+  final kind = resolveDocumentPresentationKind(
+    saleKind: saleKind,
+    documentType: documentType,
+    invoiceIntent: invoiceIntent,
+    bookingConsumerSaleKind: bookingConsumerSaleKind,
+    createdByRole: createdByRole,
+    peppolApplicable: peppolApplicable,
+    businessInvoiceIntent: businessInvoiceIntent,
+    conversionToBusinessSucceeded: conversionToBusinessSucceeded,
+  );
+  if (kind != FluxidiDocumentPresentationKind.businessInvoice ||
+      peppolApplicable == false) {
     return const PeppolUiPolicy(
       applicable: false,
       showNotApplicable: true,
       showMissingEndpointWarning: false,
       showSettingsRequiredWarning: false,
       showSendAction: false,
-    );
-  }
-  if (businessInvoiceIntent) {
-    return const PeppolUiPolicy(
-      applicable: true,
-      showNotApplicable: false,
-      showMissingEndpointWarning: true,
-      showSettingsRequiredWarning: true,
-      showSendAction: true,
     );
   }
   return const PeppolUiPolicy(
@@ -125,13 +293,122 @@ String paymentMethodDisplayKey({
     return 'tapToPay';
   }
   if (method == 'bancontact') return 'bancontactManual';
-  if (method == 'cash') return 'cash';
+  if (method == 'cash' || method == 'contant') return 'cash';
   if (method == 'qr' || method == 'qr_code') return 'qr';
+  if (provider == 'mollie' && (method.isEmpty || method == 'mollie')) {
+    return 'onlineMollie';
+  }
   if (provider == 'mollie') return 'onlineMollie';
   if (method == 'bank_transfer' || method == 'bank_transfer_bacs') {
     return 'bankTransfer';
   }
+  // Never surface technical payment_source tokens like in_car as the method.
+  if (method == 'in_car' || method == 'incar') return 'cash';
+  if (method.isEmpty && (source == 'in_car' || source == 'incar')) {
+    return 'cash';
+  }
   return method.isEmpty ? 'unknown' : method;
+}
+
+/// Whether the technical payment_source row should be shown on consumer PDFs.
+bool shouldShowPaymentSourceOnDocument({
+  required FluxidiDocumentPresentationKind presentationKind,
+  Object? paymentSource,
+}) {
+  if (presentationKind == FluxidiDocumentPresentationKind.consumerSale) {
+    return false;
+  }
+  final source = (paymentSource ?? '').toString().trim().toLowerCase();
+  if (source.isEmpty || source == 'in_car' || source == 'incar') return false;
+  return true;
+}
+
+/// Short ride reference for consumer PDFs (never full booking id).
+String consumerSaleShortRideReference(Object? bookingId) {
+  final raw = (bookingId ?? '').toString().trim();
+  if (raw.isEmpty) return '';
+  final withoutStreet = raw.startsWith('street_')
+      ? raw.substring('street_'.length)
+      : raw;
+  final compact = withoutStreet.replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
+  if (compact.isEmpty) {
+    return raw.length <= 10 ? raw : raw.substring(raw.length - 10);
+  }
+  return compact.length <= 10
+      ? compact.toUpperCase()
+      : compact.substring(compact.length - 10).toUpperCase();
+}
+
+/// Local/server PDF title key.
+String consumerOrBusinessPdfTitleKey({
+  Object? saleKind,
+  Object? documentType,
+  Object? invoiceIntent,
+  Object? bookingConsumerSaleKind,
+  Object? createdByRole,
+  bool? peppolApplicable,
+  bool businessInvoiceIntent = false,
+  bool conversionToBusinessSucceeded = false,
+}) {
+  final kind = resolveDocumentPresentationKind(
+    saleKind: saleKind,
+    documentType: documentType,
+    invoiceIntent: invoiceIntent,
+    bookingConsumerSaleKind: bookingConsumerSaleKind,
+    createdByRole: createdByRole,
+    peppolApplicable: peppolApplicable,
+    businessInvoiceIntent: businessInvoiceIntent,
+    conversionToBusinessSucceeded: conversionToBusinessSucceeded,
+  );
+  switch (kind) {
+    case FluxidiDocumentPresentationKind.businessInvoice:
+      return 'invoice';
+    case FluxidiDocumentPresentationKind.creditNote:
+      return 'creditNote';
+    case FluxidiDocumentPresentationKind.consumerSale:
+      return 'ritbon';
+  }
+}
+
+/// Business document for local PDF — intent/kind only, never company/VAT fill.
+bool isBusinessDocumentForPresentation({
+  Object? saleKind,
+  Object? documentType,
+  Object? invoiceIntent,
+  Object? bookingConsumerSaleKind,
+  Object? createdByRole,
+  Object? billingCustomerType,
+  bool? peppolApplicable,
+  bool businessInvoiceIntent = false,
+  bool conversionToBusinessSucceeded = false,
+  // Legacy inputs — accepted for call-site compatibility but ignored.
+  Object? companyName,
+  Object? vatNumber,
+  Object? billitOrderType,
+  Object? documentNumber,
+}) {
+  // Keep signatures stable for call sites that still pass billing/OrderType
+  // fields; classification must ignore them.
+  assert(() {
+    companyName;
+    vatNumber;
+    billitOrderType;
+    documentNumber;
+    return true;
+  }());
+
+  return resolveDocumentPresentationKind(
+        saleKind: saleKind,
+        documentType: documentType,
+        invoiceIntent: invoiceIntent,
+        bookingConsumerSaleKind: bookingConsumerSaleKind,
+        createdByRole: createdByRole,
+        billingCustomerType: billingCustomerType,
+        peppolApplicable: peppolApplicable,
+        businessInvoiceIntent: businessInvoiceIntent,
+        conversionToBusinessSucceeded: conversionToBusinessSucceeded,
+      ) ==
+      FluxidiDocumentPresentationKind.businessInvoice;
 }
 
 bool businessInvoiceActionStillAvailable({

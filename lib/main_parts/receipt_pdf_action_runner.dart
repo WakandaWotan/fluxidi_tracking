@@ -980,7 +980,12 @@ class _ReceiptPdfActionRunner {
       // #endregion
       final documentTitle = businessFields.isBusinessDocument
           ? _receiptText('invoiceLabel')
-          : _receiptText('paymentReceiptLabel');
+          : _tr(
+              nl: 'Ritbon / Particuliere verkoop',
+              en: 'Ride receipt / Private sale',
+              fr: 'Reçu de course / Vente particulière',
+              es: 'Recibo de viaje / Venta particular',
+            );
       final footerText = seller['footer']?.trim().isNotEmpty == true
           ? seller['footer']!.trim()
           : _receiptText('pdfFooterDefault');
@@ -1194,7 +1199,8 @@ class _ReceiptPdfActionRunner {
               _paymentStatusText(item),
             ),
             _pdfInfoRow(_receiptText('paymentMethod'), paymentMethod),
-            _pdfInfoRow(_receiptText('paymentSource'), paymentSource),
+            if (businessFields.isBusinessDocument)
+              _pdfInfoRow(_receiptText('paymentSource'), paymentSource),
             if (!isLegReceipt) ..._roundtripProjectionPdfRows(item, boldFont),
             pw.Divider(color: PdfColors.grey400),
             _pdfInfoRow(
@@ -1830,11 +1836,44 @@ class _ReceiptPdfActionRunner {
           ['payload', 'booking', 'invoiceAddress'],
         ]) ??
         '';
-    final hasBusiness =
-        invoiceRequested ||
-        businessFlag ||
-        (customerCompany != null && customerCompany.trim().isNotEmpty) ||
-        (customerVat != null && customerVat.trim().isNotEmpty);
+    // CONSUMER-SALE-DOCUMENT-PRESENTATION-P0-1: intent/kind only.
+    final invoiceIntent = _firstPathText(item, const [
+      ['invoice_intent'],
+      ['invoiceIntent'],
+      ['booking', 'invoice_intent'],
+      ['booking', 'invoiceIntent'],
+      ['record', 'invoice_intent'],
+      ['record', 'booking', 'invoice_intent'],
+    ]);
+    final saleKind = _firstPathText(item, const [
+      ['fluxidi_sale_kind'],
+      ['fluxidiSaleKind'],
+      ['sale_kind'],
+      ['consumer_sale', 'sale_kind'],
+      ['booking', 'consumer_sale', 'sale_kind'],
+      ['record', 'consumer_sale', 'sale_kind'],
+    ]);
+    final createdByRole = _firstPathText(item, const [
+      ['created_by_role'],
+      ['createdByRole'],
+      ['record', 'created_by_role'],
+    ]);
+    final billingCustomerType = _firstPathText(item, const [
+      ['billing_customer_snapshot', 'customer_type'],
+      ['billingCustomerSnapshot', 'customer_type'],
+      ['booking', 'billing_customer_snapshot', 'customer_type'],
+      ['record', 'billing_customer_snapshot', 'customer_type'],
+    ]);
+    final hasBusiness = isBusinessDocumentForPresentation(
+      saleKind: saleKind,
+      invoiceIntent: invoiceIntent,
+      bookingConsumerSaleKind: saleKind,
+      createdByRole: createdByRole,
+      billingCustomerType: billingCustomerType,
+      businessInvoiceIntent: invoiceRequested || businessFlag,
+      companyName: customerCompany,
+      vatNumber: customerVat,
+    );
     return (
       isBusinessDocument: hasBusiness,
       invoiceRequested: invoiceRequested,

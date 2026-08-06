@@ -1,63 +1,52 @@
-// CONSUMER-BILLIT-DOCUMENT-UI-1
+// CONSUMER-BILLIT-DOCUMENT-UI-1 / CONSUMER-SALE-DOCUMENT-PRESENTATION-P0-1
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/payment/consumer_sale_presentation.dart';
 
 void main() {
   group('consumer sale presentation', () {
-    test('1. private ride shows Particuliere verkoop / Ontvangstbewijs key', () {
+    test('1. consumer street ride shows no business invoice label', () {
       expect(
-        consumerOrBusinessDocumentLabelKey(saleKind: 'consumer_sale'),
+        consumerOrBusinessDocumentLabelKey(
+          saleKind: 'consumer_sale',
+          documentType: 'invoice',
+        ),
         'consumerSale',
       );
-    });
-
-    test('2. private ride does not use Factuur label', () {
       expect(
-        documentForbidsInvoiceLabel(saleKind: 'consumer_sale'),
+        documentForbidsInvoiceLabel(
+          saleKind: 'consumer_sale',
+          documentType: 'invoice',
+        ),
         isTrue,
       );
-      expect(
-        consumerOrBusinessDocumentLabelKey(saleKind: 'consumer_sale'),
-        isNot('invoice'),
-      );
     });
 
-    test('3. status registered in Billit', () {
-      expect(
-        consumerSaleStatusLabelKey(
-          saleKind: 'consumer_sale',
-          registeredInBillit: true,
-          billitOrderId: 'ord_1',
-        ),
-        'registeredInBillit',
+    test('2. consumer planned ride shows no Peppol warning', () {
+      final p = resolvePeppolUiPolicy(
+        saleKind: 'consumer_sale',
+        documentType: 'invoice',
       );
+      expect(p.showMissingEndpointWarning, isFalse);
+      expect(p.showSettingsRequiredWarning, isFalse);
     });
 
-    test('4+5. Peppol not applicable; no missing-endpoint warning', () {
+    test('3. consumer sale shows Peppol not applicable', () {
       final p = resolvePeppolUiPolicy(saleKind: 'consumer_sale');
       expect(p.applicable, isFalse);
       expect(p.showNotApplicable, isTrue);
-      expect(p.showMissingEndpointWarning, isFalse);
-      expect(p.showSettingsRequiredWarning, isFalse);
+    });
+
+    test('4. Verstuur via Peppol is absent for consumer', () {
+      final p = resolvePeppolUiPolicy(
+        saleKind: 'consumer_sale',
+        documentType: 'invoice',
+        peppolApplicable: false,
+      );
       expect(p.showSendAction, isFalse);
     });
 
-    test('6. business ride still shows Factuur', () {
-      expect(
-        consumerOrBusinessDocumentLabelKey(
-          documentType: 'invoice',
-          businessInvoiceIntent: true,
-        ),
-        'invoice',
-      );
-      expect(
-        documentForbidsInvoiceLabel(businessInvoiceIntent: true),
-        isFalse,
-      );
-    });
-
-    test('7. business invoice action remains available for consumer sale', () {
+    test('5. Zakelijke factuur aanvragen remains available', () {
       expect(
         businessInvoiceActionStillAvailable(
           consumerSalePresent: true,
@@ -68,25 +57,137 @@ void main() {
       );
     });
 
-    test('8. conversion refreshes document type to invoice', () {
+    test('6. business invoice still shows Peppol status', () {
+      final p = resolvePeppolUiPolicy(
+        saleKind: 'business_invoice',
+        documentType: 'invoice',
+        businessInvoiceIntent: true,
+      );
+      expect(p.applicable, isTrue);
+      expect(p.showSendAction, isTrue);
+      expect(
+        consumerOrBusinessDocumentLabelKey(
+          documentType: 'invoice',
+          businessInvoiceIntent: true,
+        ),
+        'invoice',
+      );
+    });
+
+    test('7. converted consumer sale shows new business invoice', () {
       expect(
         documentLabelKeyAfterConversion(conversionSucceeded: true),
         'invoice',
       );
       expect(
-        documentLabelKeyAfterConversion(conversionSucceeded: false),
-        'consumerSale',
+        resolveDocumentPresentationKind(
+          saleKind: 'consumer_sale',
+          conversionToBusinessSucceeded: true,
+        ),
+        FluxidiDocumentPresentationKind.businessInvoice,
       );
     });
 
-    test('9. planned and street share presentation contract', () {
+    test('8. Billit OrderType Invoice does not force business presentation', () {
+      // documentType invoice alone with consumer signals stays consumer.
+      expect(
+        resolveDocumentPresentationKind(
+          documentType: 'invoice',
+          saleKind: 'consumer_sale',
+          createdByRole: 'system_consumer_sale',
+        ),
+        FluxidiDocumentPresentationKind.consumerSale,
+      );
+      expect(
+        isBusinessDocumentForPresentation(
+          documentType: 'invoice',
+          saleKind: 'consumer_sale',
+          billitOrderType: 'Invoice',
+          documentNumber: 'INV-2026-000099',
+        ),
+        isFalse,
+      );
+    });
+
+    test('9. filled company data does not force business presentation', () {
+      expect(
+        isBusinessDocumentForPresentation(
+          saleKind: 'consumer_sale',
+          billingCustomerType: 'private',
+          companyName: 'Particuliere klant',
+          vatNumber: '',
+          billitOrderType: 'Invoice',
+        ),
+        isFalse,
+      );
+      expect(
+        resolveDocumentPresentationKind(
+          bookingConsumerSaleKind: 'consumer_sale',
+          billingCustomerType: 'private',
+          documentType: 'invoice',
+        ),
+        FluxidiDocumentPresentationKind.consumerSale,
+      );
+    });
+
+    test('10. PDF title ritbon; payment key never surfaces in_car', () {
+      expect(
+        consumerOrBusinessPdfTitleKey(saleKind: 'consumer_sale'),
+        'ritbon',
+      );
+      expect(
+        paymentMethodDisplayKey(
+          paymentMethod: 'cash',
+          paymentSource: 'in_car',
+        ),
+        'cash',
+      );
+      expect(
+        paymentMethodDisplayKey(paymentSource: 'in_car'),
+        'cash',
+      );
+      expect(
+        shouldShowPaymentSourceOnDocument(
+          presentationKind: FluxidiDocumentPresentationKind.consumerSale,
+          paymentSource: 'in_car',
+        ),
+        isFalse,
+      );
+      expect(
+        consumerSaleShortRideReference('street_1785819368565_6bb22fdh'),
+        isNot(contains('street_')),
+      );
+      expect(
+        consumerSaleShortRideReference('street_1785819368565_6bb22fdh').length,
+        lessThanOrEqualTo(10),
+      );
+    });
+
+    test('historical consumer via created_by_role / peppol_applicable', () {
+      expect(
+        resolveDocumentPresentationKind(
+          documentType: 'invoice',
+          createdByRole: 'system_consumer_sale',
+        ),
+        FluxidiDocumentPresentationKind.consumerSale,
+      );
+      expect(
+        resolvePeppolUiPolicy(
+          documentType: 'invoice',
+          peppolApplicable: false,
+        ).showSendAction,
+        isFalse,
+      );
+    });
+
+    test('planned and street share presentation contract', () {
       expect(
         consumerSalePresentationContractId(isStreetRide: false),
         consumerSalePresentationContractId(isStreetRide: true),
       );
     });
 
-    test('10. Tap to Pay payment method displays correctly', () {
+    test('Tap to Pay payment method displays correctly', () {
       expect(
         paymentMethodDisplayKey(
           paymentMethod: 'pointofsale',

@@ -1936,40 +1936,60 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   }
 
   String _localizedPaymentMethodValue(String? raw) {
-    final value = (raw ?? '').trim();
-    if (value.isEmpty) return _receiptText('notAvailable');
-    final normalized = value
-        .toLowerCase()
-        .replaceAll('-', '_')
-        .replaceAll(' ', '_');
-    switch (normalized) {
+    final key = paymentMethodDisplayKey(
+      paymentMethod: raw,
+      paymentProvider: _firstDetailPathText(const [
+        ['payment_provider'],
+        ['paymentProvider'],
+        ['booking', 'payment_provider'],
+      ]),
+      paymentSource: _paymentSourceFromDetails(),
+    );
+    switch (key) {
       case 'cash':
         return _tr(nl: 'Contant', en: 'Cash', fr: 'Espèces', es: 'Efectivo');
-      case 'bancontact':
+      case 'bancontactManual':
         return _tr(
           nl: 'Bancontact',
           en: 'Bancontact',
           fr: 'Bancontact',
           es: 'Bancontact',
         );
-      case 'card':
-        return _tr(nl: 'Kaart', en: 'Card', fr: 'Carte', es: 'Tarjeta');
+      case 'tapToPay':
+        return _tr(
+          nl: 'Tap to Pay',
+          en: 'Tap to Pay',
+          fr: 'Tap to Pay',
+          es: 'Tap to Pay',
+        );
       case 'qr':
-      case 'qr_code':
         return _tr(
           nl: 'QR-code',
           en: 'QR code',
           fr: 'Code QR',
           es: 'Código QR',
         );
-      case 'mollie':
+      case 'onlineMollie':
         return _tr(
           nl: 'Online betaling',
           en: 'Online payment',
           fr: 'Paiement en ligne',
           es: 'Pago en línea',
         );
+      case 'bankTransfer':
+        return _tr(
+          nl: 'Overschrijving',
+          en: 'Bank transfer',
+          fr: 'Virement',
+          es: 'Transferencia',
+        );
+      case 'unknown':
+        return _receiptText('notAvailable');
       default:
+        final value = (raw ?? '').trim();
+        if (value.toLowerCase() == 'in_car') {
+          return _tr(nl: 'Contant', en: 'Cash', fr: 'Espèces', es: 'Efectivo');
+        }
         return _displayToken(value) ?? value.replaceAll('_', ' ');
     }
   }
@@ -2614,11 +2634,48 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           ['payload', 'booking', 'invoiceAddress'],
         ]) ??
         '';
-    final hasBusiness =
-        invoiceRequested ||
-        businessFlag ||
-        (customerCompany != null && customerCompany.trim().isNotEmpty) ||
-        (customerVat != null && customerVat.trim().isNotEmpty);
+    // CONSUMER-SALE-DOCUMENT-PRESENTATION-P0-1: never treat filled company/VAT
+    // or Billit Invoice OrderType as business presentation.
+    final invoiceIntent = _firstDetailPathText(const [
+      ['invoice_intent'],
+      ['invoiceIntent'],
+      ['booking', 'invoice_intent'],
+      ['booking', 'invoiceIntent'],
+      ['record', 'invoice_intent'],
+      ['record', 'invoiceIntent'],
+      ['record', 'booking', 'invoice_intent'],
+    ]);
+    final saleKind = _firstDetailPathText(const [
+      ['fluxidi_sale_kind'],
+      ['fluxidiSaleKind'],
+      ['sale_kind'],
+      ['consumer_sale', 'sale_kind'],
+      ['booking', 'fluxidi_sale_kind'],
+      ['booking', 'consumer_sale', 'sale_kind'],
+      ['record', 'fluxidi_sale_kind'],
+      ['record', 'consumer_sale', 'sale_kind'],
+    ]);
+    final createdByRole = _firstDetailPathText(const [
+      ['created_by_role'],
+      ['createdByRole'],
+      ['record', 'created_by_role'],
+    ]);
+    final billingCustomerType = _firstDetailPathText(const [
+      ['billing_customer_snapshot', 'customer_type'],
+      ['billingCustomerSnapshot', 'customer_type'],
+      ['booking', 'billing_customer_snapshot', 'customer_type'],
+      ['record', 'billing_customer_snapshot', 'customer_type'],
+    ]);
+    final hasBusiness = isBusinessDocumentForPresentation(
+      saleKind: saleKind,
+      invoiceIntent: invoiceIntent,
+      bookingConsumerSaleKind: saleKind,
+      createdByRole: createdByRole,
+      billingCustomerType: billingCustomerType,
+      businessInvoiceIntent: invoiceRequested || businessFlag,
+      companyName: customerCompany,
+      vatNumber: customerVat,
+    );
     return (
       isBusinessDocument: hasBusiness,
       invoiceRequested: invoiceRequested,
@@ -2921,7 +2978,12 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       // #endregion
       final documentTitle = businessFields.isBusinessDocument
           ? _receiptText('invoiceLabel')
-          : _receiptText('paymentReceiptLabel');
+          : _tr(
+              nl: 'Ritbon / Particuliere verkoop',
+              en: 'Ride receipt / Private sale',
+              fr: 'Reçu de course / Vente particulière',
+              es: 'Recibo de viaje / Venta particular',
+            );
       final footerText = seller['footer']?.trim().isNotEmpty == true
           ? seller['footer']!.trim()
           : _receiptText('pdfFooterDefault');
@@ -3134,7 +3196,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
             pw.SizedBox(height: 6),
             _pdfInfoRow(_receiptText('paymentStatus'), _paymentStatusText()),
             _pdfInfoRow(_receiptText('paymentMethod'), paymentMethod),
-            _pdfInfoRow(_receiptText('paymentSource'), paymentSource),
+            if (businessFields.isBusinessDocument)
+              _pdfInfoRow(_receiptText('paymentSource'), paymentSource),
             pw.Divider(color: PdfColors.grey400),
             _pdfInfoRow(
               _receiptText('subtotalExVat'),
