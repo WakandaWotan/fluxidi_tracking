@@ -15,7 +15,9 @@ import {
   consumerSalePeppolPolicy,
   consumerSalePresentation,
   creditNoteTotalsMatchConsumerSale,
+  canIssueBusinessInvoiceFromRecord,
   hasBusinessInvoiceIntent,
+  hasMeaningfulBusinessBillingCustomer,
   isActiveRevenueDocument,
   isConsumerSaleEligibleRecord,
   mapConsumerSalePaymentMethodLabel,
@@ -175,17 +177,19 @@ test("10+11. consumer sale never triggers Peppol / missing-endpoint warnings", (
   );
 });
 
-test("12. business invoice intent is not treated as consumer sale", () => {
-  assert.equal(
-    hasBusinessInvoiceIntent(planned({ invoice_intent: "business_invoice" })),
-    true,
-  );
-  assert.equal(
-    isConsumerSaleEligibleRecord(
-      planned({ invoice_intent: "business_invoice" }),
-    ),
-    false,
-  );
+test("12. issuable business invoice is not treated as consumer sale", () => {
+  const realBusiness = planned({
+    invoice_intent: "business_invoice",
+    billing_customer_snapshot: {
+      customer_type: "business",
+      legal_name: "Acme BV",
+      vat_number: "BE0123456789",
+    },
+  });
+  assert.equal(hasBusinessInvoiceIntent(realBusiness), true);
+  assert.equal(hasMeaningfulBusinessBillingCustomer(realBusiness), true);
+  assert.equal(canIssueBusinessInvoiceFromRecord(realBusiness), true);
+  assert.equal(isConsumerSaleEligibleRecord(realBusiness), false);
   assert.equal(
     resolveConsumerSaleRegistrationGate({
       completed: true,
@@ -194,6 +198,46 @@ test("12. business invoice intent is not treated as consumer sale", () => {
     }).reason,
     "business_invoice_active",
   );
+});
+
+test("12b. soft business flags without billing customer still get consumer sale", () => {
+  // Field evidence 2026-08-165: invoice_intent=business_invoice but no snapshot.
+  const soft = planned({
+    invoice_intent: "business_invoice",
+    invoice_requested: true,
+    business_detected: true,
+    operational_legs: [
+      {
+        leg_id: "bk_plan_1:OUTBOUND",
+        leg_type: "outbound",
+        price_incl_vat: 35.4,
+        status: "COMPLETED",
+      },
+    ],
+  });
+  assert.equal(hasBusinessInvoiceIntent(soft), true);
+  assert.equal(hasMeaningfulBusinessBillingCustomer(soft), false);
+  assert.equal(canIssueBusinessInvoiceFromRecord(soft), false);
+  assert.equal(isConsumerSaleEligibleRecord(soft), true);
+  const amount = resolveConsumerSaleAmount(soft, {
+    legId: "bk_plan_1:OUTBOUND",
+    legType: "outbound",
+  });
+  assert.equal(amount.ok, true);
+  assert.equal(amount.value, "35.40");
+  assert.equal(amount.source, "operational_leg_price");
+});
+
+test("12c. quote VAT snapshot is accepted (fraction or percent)", () => {
+  const fromQuote = resolveConsumerSaleVatFromSnapshot(
+    planned({
+      vat_rate_percent: undefined,
+      quote: { pricing_main: { breakdown: { vat_rate: 0.06 } } },
+    }),
+  );
+  assert.equal(fromQuote.ok, true);
+  assert.equal(fromQuote.vat_rate_percent, 6);
+  assert.equal(fromQuote.source, "quote_vat_snapshot");
 });
 
 test("13. heen/terugrit must not register parent total AND legs", () => {

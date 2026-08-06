@@ -86,9 +86,49 @@ export function hasBusinessInvoiceIntent(rec) {
   return false;
 }
 
+/**
+ * PLANNED-CONSUMER-CASH-DOCUMENT-BILLIT-P0-3:
+ * Soft/incomplete business flags (intent=business_invoice without a
+ * meaningful billing customer / VAT) must not block private consumer-sale
+ * issuance. Field evidence 2026-08-165: business_detected + invoice_intent
+ * set, but no billing_customer_snapshot → Document Core skipped with
+ * billit_auto_billing_customer_missing and consumer sale skipped forever.
+ */
+export function hasMeaningfulBusinessBillingCustomer(rec) {
+  const record = _asObject(rec);
+  const snapshots = [
+    record.billing_customer_snapshot,
+    record.billingCustomerSnapshot,
+    record.booking?.billing_customer_snapshot,
+    record.booking?.billingCustomerSnapshot,
+  ].filter((v) => v && typeof v === "object" && !Array.isArray(v));
+  for (const snap of snapshots) {
+    const vat = _str(snap.vat_number ?? snap.vatNumber, 64);
+    const legal = _str(snap.legal_name ?? snap.legalName, 240);
+    const display = _str(snap.display_name ?? snap.displayName, 240);
+    const customerType = _lower(snap.customer_type ?? snap.customerType, 40);
+    if (vat) return true;
+    if (customerType === "business" && (legal || display)) return true;
+  }
+  const topVat = _str(
+    record.vat_number ??
+      record.vatNumber ??
+      record.booking?.vat_number ??
+      record.booking?.vatNumber ??
+      record.business?.vat_number,
+    64,
+  );
+  return !!topVat;
+}
+
+export function canIssueBusinessInvoiceFromRecord(rec) {
+  return hasBusinessInvoiceIntent(rec) && hasMeaningfulBusinessBillingCustomer(rec);
+}
+
 export function isConsumerSaleEligibleRecord(rec) {
   if (!rec || typeof rec !== "object") return false;
-  if (hasBusinessInvoiceIntent(rec)) return false;
+  // Only a real, issuable business invoice owns the revenue document.
+  if (canIssueBusinessInvoiceFromRecord(rec)) return false;
   if (!isBookingCompletedForConsumerSale(rec)) return false;
   return true;
 }
@@ -127,6 +167,7 @@ export function resolveConsumerSaleAmount(rec, { legId = null, legType = null } 
   }
 
   const wantedLeg = _lower(legType, 32);
+  const wantLegId = _str(legId, 200);
   const sources = _recordSources(record);
   let euro = null;
   let source = null;
@@ -137,6 +178,36 @@ export function resolveConsumerSaleAmount(rec, { legId = null, legType = null } 
       euro = legPrice;
       source = "leg_price_incl_vat";
       break;
+    }
+  }
+  // Planned bookings often only stamp price on operational_legs / quote.
+  if (euro == null) {
+    const legs = [
+      ...(Array.isArray(record.operational_legs) ? record.operational_legs : []),
+      ...(Array.isArray(record.operationalLegs) ? record.operationalLegs : []),
+      ...(Array.isArray(record.booking?.operational_legs)
+        ? record.booking.operational_legs
+        : []),
+    ].filter((entry) => entry && typeof entry === "object");
+    const match =
+      (wantLegId
+        ? legs.find(
+            (entry) => _str(entry.leg_id ?? entry.legId, 200) === wantLegId,
+          )
+        : null) ||
+      (wantedLeg
+        ? legs.find(
+            (entry) => _lower(entry.leg_type ?? entry.legType, 32) === wantedLeg,
+          )
+        : null) ||
+      legs[0] ||
+      null;
+    const legEuro = _positiveEuro(
+      match?.price_incl_vat ?? match?.priceInclVat ?? match?.leg_price_incl_vat,
+    );
+    if (legEuro != null) {
+      euro = legEuro;
+      source = "operational_leg_price";
     }
   }
   if (euro == null && wantedLeg === "return") {
@@ -170,10 +241,37 @@ export function resolveConsumerSaleAmount(rec, { legId = null, legType = null } 
     }
   }
   if (euro == null) {
+    const quote = _asObject(record.quote);
+    const quoteEuro = _positiveEuro(
+      quote.pricing_main?.price_incl_vat ??
+        quote.pricing?.price_incl_vat ??
+        quote.price_incl_vat,
+    );
+    if (quoteEuro != null) {
+      euro = quoteEuro;
+      source = "quote_price_incl_vat";
+    }
+  }
+  if (euro == null) {
+    const paidToken = _lower(
+      record.payment_status ?? record.paymentStatus ?? record.booking?.payment_status,
+      40,
+    );
+    if (paidToken === "paid") {
+      const paidEuro = _positiveEuro(
+        record.payment_amount ??
+          record.paymentAmount ??
+          record.booking?.payment_amount,
+      );
+      if (paidEuro != null) {
+        euro = paidEuro;
+        source = "payment_amount_paid";
+      }
+    }
+  }
+  if (euro == null) {
     return { ok: false, error: "amount_unavailable", currency };
   }
-  // Client amount is never accepted as authority; callers must not pass it in.
-  void legId;
   return {
     ok: true,
     currency,
@@ -183,27 +281,48 @@ export function resolveConsumerSaleAmount(rec, { legId = null, legType = null } 
   };
 }
 
+function _normalizeVatRatePercent(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return null;
+  // Quote breakdowns often store 0.06; snapshots store 6.
+  if (n > 0 && n <= 1) return Math.round(n * 10000) / 100;
+  return n;
+}
+
 export function resolveConsumerSaleVatFromSnapshot(rec, companyTaxSnapshot = null) {
   const record = _asObject(rec);
   const tax = _asObject(companyTaxSnapshot);
-  const rate = Number(
-    record.vat_rate_percent ??
-      record.vatRatePercent ??
-      record.booking?.vat_rate_percent ??
-      tax.vat_rate_percent ??
-      tax.default_vat_rate_percent ??
-      tax.standard_vat_rate_percent,
-  );
-  if (!Number.isFinite(rate) || rate < 0) {
+  const quote = _asObject(record.quote);
+  const candidates = [
+    record.vat_rate_percent,
+    record.vatRatePercent,
+    record.booking?.vat_rate_percent,
+    quote.pricing_main?.breakdown?.vat_rate,
+    quote.pricing?.vat_rate,
+    quote.pricing_profile?.vat_rate,
+    tax.vat_rate_percent,
+    tax.default_vat_rate_percent,
+    tax.standard_vat_rate_percent,
+  ];
+  let rate = null;
+  let source = "company_tax_snapshot";
+  for (let i = 0; i < candidates.length; i += 1) {
+    const normalized = _normalizeVatRatePercent(candidates[i]);
+    if (normalized == null) continue;
+    rate = normalized;
+    if (i <= 2) source = "booking_snapshot";
+    else if (i <= 5) source = "quote_vat_snapshot";
+    else source = "company_tax_snapshot";
+    break;
+  }
+  if (rate == null) {
     return { ok: false, error: "vat_rate_unavailable" };
   }
-  // Never invent 21 — only accept a finite rate from the canonical snapshot.
+  // Never invent 21 — only accept a finite rate from an existing snapshot.
   return {
     ok: true,
     vat_rate_percent: rate,
-    source: Number.isFinite(Number(record.vat_rate_percent ?? record.vatRatePercent))
-      ? "booking_snapshot"
-      : "company_tax_snapshot",
+    source,
   };
 }
 

@@ -254,7 +254,10 @@ import {
   buildConsumerSaleIdempotencyKey,
   consumerSalePeppolPolicy,
   creditNoteTotalsMatchConsumerSale,
+  canIssueBusinessInvoiceFromRecord,
   hasBusinessInvoiceIntent,
+  hasMeaningfulBusinessBillingCustomer,
+  isBookingCompletedForConsumerSale,
   isConsumerSaleEligibleRecord,
   resolveConsumerSaleAmount,
   resolveConsumerSalePaymentSyncGate,
@@ -3975,6 +3978,95 @@ async function stampConsumerSaleMarkersOnBooking(env, bookingId, markers = {}) {
   }
 }
 
+/** Durable retry marker when consumer-sale issuance fails or is blocked. */
+async function stampConsumerSaleFailureOnBooking(
+  env,
+  bookingId,
+  { reason = "consumer_sale_failed", sourceLegId = null, retryable = true } = {},
+) {
+  return stampConsumerSaleMarkersOnBooking(env, bookingId, {
+    status: "issue_failed",
+    last_error: safeStr(reason, 120) || "consumer_sale_failed",
+    retryable: retryable !== false,
+    source_leg_id: safeStr(sourceLegId, 200) || null,
+  });
+}
+
+/**
+ * PLANNED-CONSUMER-CASH-DOCUMENT-BILLIT-P0-3:
+ * Idempotent reconcile for completed planned/street bookings that still lack
+ * a consumer-sale document (or only have a retryable failure marker).
+ * Never reopens the ride / never changes COMPLETED lifecycle.
+ */
+async function reconcileConsumerSaleForCompletedBooking(
+  env,
+  scope,
+  bookingId,
+  options = {},
+) {
+  const opts = options && typeof options === "object" ? options : {};
+  const source = safeStr(opts.source, 80) || "consumer_sale_reconcile";
+  let rec = opts.rec && typeof opts.rec === "object" ? opts.rec : null;
+  if (!rec) {
+    try {
+      rec = (await loadBookingRecord(env, bookingId))?.rec || null;
+    } catch (_) {
+      rec = null;
+    }
+  }
+  if (!rec) return { ok: false, skipped: true, reason: "booking_not_found" };
+  if (canIssueBusinessInvoiceFromRecord(rec)) {
+    return { ok: true, skipped: true, reason: "business_invoice_issuable" };
+  }
+  const status = _normLifecycleStatus(rec?.status ?? rec?.stage ?? null);
+  if (status !== "COMPLETED" && !isBookingCompletedForConsumerSale(rec)) {
+    return { ok: true, skipped: true, reason: "not_completed" };
+  }
+  const existing = await findExistingConsumerSaleDocumentForBooking(
+    env,
+    scope,
+    bookingId,
+    { sourceLegId: opts.sourceLegId || null },
+  );
+  if (existing?.document_id && existing?.billit_order_id) {
+    await stampConsumerSaleMarkersOnBooking(env, bookingId, {
+      document_id: existing.document_id,
+      document_number: existing.document_number,
+      billit_order_id: existing.billit_order_id,
+      status: "registered",
+    });
+    return {
+      ok: true,
+      skipped: false,
+      reason: "idempotent_reuse",
+      document_id: existing.document_id,
+      billit_order_id: existing.billit_order_id,
+    };
+  }
+  console.log(
+    `[CONSUMER_BILLIT_SALE][RECONCILE] booking=${_bookingIntentMask(bookingId)} source=${source} has_doc=${!!existing?.document_id}`,
+  );
+  const registered = await maybeRegisterConsumerBillitSaleAfterCompletion(
+    env,
+    scope,
+    bookingId,
+    {
+      rec,
+      sourceLegId: opts.sourceLegId || null,
+      sourceLegType: opts.sourceLegType || null,
+    },
+  );
+  const paymentFields = _bookingPaymentFieldsForBillitSync(rec);
+  if (paymentFields?.payment_status === "paid") {
+    await maybeSyncConsumerBillitSaleAfterPaid(env, scope, bookingId, {
+      rec,
+      sourceLegId: opts.sourceLegId || null,
+      sourceLegType: opts.sourceLegType || null,
+    });
+  }
+  return registered;
+}
+
 /**
  * CONSUMER-BILLIT-SERVER-CONTRACT-1: register private ride revenue in Billit.
  * Triggered on completed/finalized consumer rides (not business invoice intent).
@@ -4003,7 +4095,12 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
     }
   }
   if (!rec) return { ok: false, skipped: true, reason: "booking_not_found" };
-  if (!isConsumerSaleEligibleRecord(rec) || hasBusinessInvoiceIntent(rec)) {
+  // Soft business_invoice flags without a meaningful billing customer must
+  // still receive a private consumer sale (field: 2026-08-165).
+  if (canIssueBusinessInvoiceFromRecord(rec)) {
+    return { ok: true, skipped: true, reason: "not_consumer_eligible" };
+  }
+  if (!isConsumerSaleEligibleRecord(rec)) {
     return { ok: true, skipped: true, reason: "not_consumer_eligible" };
   }
 
@@ -4012,10 +4109,18 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
     legType: sourceLegType,
   });
   if (!amount.ok) {
+    await stampConsumerSaleFailureOnBooking(env, bookingId, {
+      reason: amount.error || "amount_unavailable",
+      sourceLegId,
+    });
     return { ok: true, skipped: true, reason: amount.error || "amount_unavailable" };
   }
   const vat = resolveConsumerSaleVatFromSnapshot(rec, opts.companyTaxSnapshot || null);
   if (!vat.ok) {
+    await stampConsumerSaleFailureOnBooking(env, bookingId, {
+      reason: "vat_rate_unavailable",
+      sourceLegId,
+    });
     // Prefer booking-stamped VAT from fare finalize; fail closed if absent.
     return { ok: true, skipped: true, reason: "vat_rate_unavailable" };
   }
@@ -4028,7 +4133,8 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
   );
   const gate = resolveConsumerSaleRegistrationGate({
     completed: true,
-    businessInvoiceIntent: hasBusinessInvoiceIntent(rec),
+    // Only block when business invoice is actually issuable.
+    businessInvoiceIntent: canIssueBusinessInvoiceFromRecord(rec),
     amountCents: amount.cents,
     existingConsumerDocumentId: existing?.document_id || "",
     existingConsumerBillitOrderId: existing?.billit_order_id || "",
@@ -4122,13 +4228,19 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
       issueData = null;
     }
     if (!issueResp.ok || !issueData || issueData.ok !== true) {
+      const failReason = safeStr(issueData?.error, 80) || "consumer_sale_issue_failed";
       console.log(
-        `[CONSUMER_BILLIT_SALE][ISSUE_FAIL] booking=${maskedBooking} error=${safeStr(issueData?.error, 80) || "issue_failed"}`,
+        `[CONSUMER_BILLIT_SALE][ISSUE_FAIL] booking=${maskedBooking} error=${failReason}`,
       );
+      await stampConsumerSaleFailureOnBooking(env, bookingId, {
+        reason: failReason,
+        sourceLegId,
+        retryable: true,
+      });
       return {
         ok: false,
         skipped: false,
-        reason: safeStr(issueData?.error, 80) || "consumer_sale_issue_failed",
+        reason: failReason,
       };
     }
     documentId = safeStr(issueData.document_id ?? issueData.documentId, 200) || null;
@@ -4227,7 +4339,7 @@ async function maybeSyncConsumerBillitSaleAfterPaid(
       rec = null;
     }
   }
-  if (!rec || hasBusinessInvoiceIntent(rec)) {
+  if (!rec || canIssueBusinessInvoiceFromRecord(rec)) {
     return { handled: false };
   }
 
@@ -7073,6 +7185,40 @@ async function runPaidBookingAfterLifecycle(env, scope, bookingId, options = {})
         );
       }
     }
+    // PLANNED-CONSUMER-CASH-DOCUMENT-BILLIT-P0-3: when business invoice path
+    // cannot issue (missing billing customer) or only soft business flags are
+    // present, fall through to private consumer-sale issuance/reconcile.
+    try {
+      let liveRec = rec;
+      try {
+        liveRec = (await loadBookingRecord(env, bookingId))?.rec || rec;
+      } catch (_) {
+        liveRec = rec;
+      }
+      const docReason = safeStr(chainResult.document_core_result?.reason, 80);
+      const billitReason = safeStr(chainResult.billit_result?.reason, 80);
+      const softBusinessDeadEnd =
+        docReason === "billit_auto_billing_customer_missing" ||
+        billitReason === "billit_auto_billing_customer_missing" ||
+        (hasBusinessInvoiceIntent(liveRec) &&
+          !canIssueBusinessInvoiceFromRecord(liveRec));
+      if (softBusinessDeadEnd || isConsumerSaleEligibleRecord(liveRec)) {
+        chainResult.consumer_sale_result =
+          await reconcileConsumerSaleForCompletedBooking(
+            env,
+            normalizedScope,
+            bookingId,
+            {
+              rec: liveRec,
+              source: `${source}:consumer_sale_fallthrough`,
+            },
+          );
+      }
+    } catch (consumerErr) {
+      console.log(
+        `[PAID_AFTER_LIFECYCLE][CONSUMER_SALE_ERROR] booking=${maskedBooking} source=${source} error=${safeStr(consumerErr?.message || consumerErr, 120) || "exception"}`,
+      );
+    }
     // PDF THIRD: controlled street invoice PDF refresh after a genuine paid
     // transition. Idempotent via projection revision — never allocates a new
     // invoice number, never Billit create/PATCH, never Peppol. Ordinary GET
@@ -7206,12 +7352,103 @@ export {
   sweepBillitDurableRecoveryOutbox,
   persistPendingBillitExportOutboxOnce,
 };
+export { reconcileConsumerSaleForCompletedBooking };
 // Hermetic Billit route-snapshot parity tests only (pure mappers).
 export {
   buildDocumentExportPreview,
   buildBillitPayloadPreviewFromProviderNeutralDocument,
   buildBillitOfficialOrderRequestPreview,
 };
+
+/**
+ * Admin-only idempotent consumer-sale reconcile for completed bookings that
+ * still lack a document / Billit order (PLANNED-CONSUMER-CASH-DOCUMENT-BILLIT-P0-3).
+ * Never reopens the ride or changes COMPLETED lifecycle.
+ */
+async function handleAdminBookingConsumerSaleReconcile({
+  request,
+  url,
+  env,
+  bookingId,
+}) {
+  try {
+    _requireAdmin(request, url, env);
+  } catch (err) {
+    const message = String(err?.message || "Unauthorized");
+    return json(
+      {
+        ok: false,
+        error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable",
+      },
+      message === "Unauthorized" ? 401 : 500,
+    );
+  }
+
+  if (!env?.BOOKING_KV) {
+    return json({ ok: false, error: "missing_binding" }, 503);
+  }
+  const id = safeStr(bookingId, 200) || "";
+  if (!id) {
+    return json({ ok: false, error: "missing_booking_id" }, 400);
+  }
+
+  const body = await safeJson(request);
+  const bodyObj = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  const scopedRoute = requireExplicitBookingRouteScope({
+    request,
+    url,
+    body: bodyObj,
+  });
+  if (!scopedRoute.ok) return scopedRoute.response;
+  const scope = {
+    tenant_id: scopedRoute.scope.tenant_id,
+    company_id: scopedRoute.scope.company_id,
+  };
+
+  let loaded = null;
+  try {
+    loaded = await loadBookingRecord(env, id);
+  } catch (_) {
+    loaded = null;
+  }
+  const rec = loaded?.rec && typeof loaded.rec === "object" ? loaded.rec : null;
+  if (!rec) {
+    return json({ ok: false, error: "booking_not_found" }, 404);
+  }
+  if (!_bookingBelongsToScope(rec, scopedRoute.scope)) {
+    return json({ ok: false, error: "booking_scope_mismatch" }, 403);
+  }
+
+  const sourceLegId =
+    safeStr(bodyObj.source_leg_id ?? bodyObj.sourceLegId, 200) || null;
+  const sourceLegType =
+    safeStr(bodyObj.source_leg_type ?? bodyObj.sourceLegType, 24) || null;
+
+  const result = await reconcileConsumerSaleForCompletedBooking(env, scope, id, {
+    rec,
+    source: "admin_consumer_sale_reconcile",
+    sourceLegId,
+    sourceLegType,
+  });
+
+  const masked = _bookingIntentMask(id);
+  console.log(
+    `[CONSUMER_BILLIT_SALE][ADMIN_RECONCILE] booking=${masked} ok=${result?.ok === true} skipped=${result?.skipped === true} reason=${safeStr(result?.reason, 80) || "-"} doc=${safeStr(result?.document_id, 80) || "-"} billit=${safeStr(result?.billit_order_id, 80) || "-"}`,
+  );
+
+  const httpStatus =
+    result?.ok === false && result?.reason === "booking_not_found"
+      ? 404
+      : 200;
+  return json(
+    {
+      ok: result?.ok !== false,
+      booking_id: id,
+      ...result,
+    },
+    httpStatus,
+  );
+}
 
 async function handleAdminBookingBillitAutoCreateSandbox({ request, url, env, bookingId }) {
   // 1. Admin auth.
@@ -32590,6 +32827,86 @@ export default {
         return json({ ok: result?.ok === true, ...result });
       }
 
+      // PLANNED-CONSUMER-CASH-DOCUMENT-BILLIT-P0-3 — one-shot recovery for
+      // booking 2026-08-165 (COMPLETED cash private planned, Documents=0).
+      // Auth: x-admin-token OR matching one-time KV trigger token.
+      // Never reopens the ride; idempotent via reconcileConsumerSaleForCompletedBooking.
+      if (
+        url.pathname === "/admin/ops/consumer-sale-recover-2026-08-165" &&
+        request.method === "POST"
+      ) {
+        let authorized = false;
+        try {
+          _requireAdmin(request, url, env);
+          authorized = true;
+        } catch (_) {
+          authorized = false;
+        }
+        if (!authorized) {
+          const provided = String(
+            request.headers.get("x-ops-trigger-token") ||
+              url.searchParams.get("token") ||
+              "",
+          ).trim();
+          try {
+            const expected = await env.BOOKING_KV.get(
+              "ops:consumer_sale_recover_2026_08_165_token",
+              { type: "text" },
+            );
+            if (provided && expected && provided === expected) {
+              authorized = true;
+              try {
+                await env.BOOKING_KV.delete(
+                  "ops:consumer_sale_recover_2026_08_165_token",
+                );
+              } catch (_) {}
+            }
+          } catch (_) {
+            authorized = false;
+          }
+        }
+        if (!authorized) {
+          return json({ ok: false, error: "Unauthorized" }, 401);
+        }
+        const recoverBookingId = "2026-08-165";
+        const scope = {
+          tenant_id: "fluxidi_fluxidi_ddmh9g",
+          company_id: "fluxidi_fluxidi_ddmh9g",
+          hasScope: true,
+        };
+        let recoverRec = null;
+        try {
+          recoverRec = (await loadBookingRecord(env, recoverBookingId))?.rec || null;
+        } catch (_) {
+          recoverRec = null;
+        }
+        if (!recoverRec) {
+          return json({ ok: false, error: "booking_not_found" }, 404);
+        }
+        const sourceLegId =
+          safeStr(recoverRec?.operational_legs?.[0]?.leg_id, 200) ||
+          `${recoverBookingId}:OUTBOUND`;
+        const result = await reconcileConsumerSaleForCompletedBooking(
+          env,
+          scope,
+          recoverBookingId,
+          {
+            rec: recoverRec,
+            source: "ops_consumer_sale_recover_2026_08_165",
+            sourceLegId,
+            sourceLegType: "outbound",
+          },
+        );
+        console.log(
+          `[CONSUMER_BILLIT_SALE][OPS_RECOVER_165] ok=${result?.ok === true} skipped=${result?.skipped === true} reason=${safeStr(result?.reason, 80) || "-"} doc=${safeStr(result?.document_id, 80) || "-"} billit=${safeStr(result?.billit_order_id, 80) || "-"}`,
+        );
+        return json({
+          ok: result?.ok !== false,
+          booking_id: recoverBookingId,
+          ...result,
+        });
+      }
+
       // RELEASE-P0 Option A′ — human booking ID allocator admin (admin token).
       if (
         url.pathname === "/admin/booking-id-allocator/status" &&
@@ -34548,6 +34865,41 @@ export default {
           } catch (err) {
             console.log(
               `[BILLIT_EXPORT_REQUEUE][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
+            );
+            return json({ ok: false, error: "internal_error" }, 500);
+          }
+        }
+      }
+
+      // POST /admin/bookings/:bookingId/consumer-sale/reconcile
+      // PLANNED-CONSUMER-CASH-DOCUMENT-BILLIT-P0-3: admin-only idempotent
+      // recovery when COMPLETED private/soft-business bookings lack a
+      // consumer-sale document / Billit order. Never reopens the ride.
+      if (
+        request.method === "POST" &&
+        url.pathname.startsWith("/admin/bookings/") &&
+        url.pathname.endsWith("/consumer-sale/reconcile")
+      ) {
+        const consumerReconcileSegments = url.pathname.split("/").filter(Boolean);
+        if (
+          consumerReconcileSegments.length === 5 &&
+          consumerReconcileSegments[0] === "admin" &&
+          consumerReconcileSegments[1] === "bookings" &&
+          consumerReconcileSegments[3] === "consumer-sale" &&
+          consumerReconcileSegments[4] === "reconcile"
+        ) {
+          try {
+            const bookingId =
+              safeStr(decodeURIComponent(consumerReconcileSegments[2]), 200) || "";
+            return await handleAdminBookingConsumerSaleReconcile({
+              request,
+              url,
+              env,
+              bookingId,
+            });
+          } catch (err) {
+            console.log(
+              `[CONSUMER_BILLIT_SALE][ADMIN_RECONCILE][ERR] ${safeStr(err?.message, 160) || "unknown"}`,
             );
             return json({ ok: false, error: "internal_error" }, 500);
           }
@@ -65688,6 +66040,21 @@ async function applyBookingCompletionFromPlannedTripStopBestEffort(
       console.log(
         `[ROUNDTRIP_STATUS][LEG_COMPLETE] booking=${_bookingIntentMask(safeBookingId)} leg=${_bookingIntentMask(safeLegId)} leg_type=${matchingLegType} old=${matchingLegStatus} new=COMPLETED scope=leg skipped=already_terminal source=${safeSourceLabel}`,
       );
+      // Lifecycle already terminal — still reconcile missing consumer sale.
+      try {
+        await reconcileConsumerSaleForCompletedBooking(
+          env,
+          tenantScope,
+          safeBookingId,
+          {
+            sourceLegId: safeLegId || null,
+            sourceLegType: matchingLegType || null,
+            source: `${safeSourceLabel}:leg_already_completed`,
+          },
+        );
+      } catch (_) {
+        // durable failure marker is stamped inside register path
+      }
       return {
         ok: true,
         skipped: true,
@@ -65759,6 +66126,20 @@ async function applyBookingCompletionFromPlannedTripStopBestEffort(
   // NAV-PIP-PLANNED-COMPLETION-EVIDENCE-FIX-P0: never cascade parent COMPLETED
   // onto multi-leg bookings via bypass — that closes a genuine pending return.
   if (currentStatus === "COMPLETED") {
+    // Lifecycle heal / prior STOP may have left Documents=0. Reconcile sale.
+    try {
+      await reconcileConsumerSaleForCompletedBooking(
+        env,
+        tenantScope,
+        safeBookingId,
+        {
+          sourceLegId: safeLegId || null,
+          source: `${safeSourceLabel}:already_completed`,
+        },
+      );
+    } catch (_) {
+      // durable failure marker is stamped inside register path
+    }
     return { ok: true, skipped: true, reason: "already_completed" };
   }
   if (operationalLegsForCompletion.length > 1) {
