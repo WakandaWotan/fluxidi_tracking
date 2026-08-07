@@ -3096,6 +3096,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     // deterministic event_ids so no duplicate Chiron rows can result even if
     // an in-session retry and this startup retry race.
     unawaited(_recoverPlannedPendingOnWorker());
+    // PLANNED-STOP-HISTORY-DURABILITY-P0-8: replay planned STOP intents that
+    // never reached the tracking worker. The Chiron recovery above can only
+    // reconcile trips that already exist, so this is the only path that can
+    // still materialize the trip / trips_index / driver-history rows after a
+    // stop was lost to poor network or process death.
+    unawaited(_drainPlannedStopIntents());
     _activeDriverThemeListenable.addListener(_onDriverThemeSourceChanged);
     chauffeurShellFrameThemeNotifier.value = _activeDriverThemeListenable.value;
     fluxidiPendingPaymentNotifier.addListener(_onPendingPaymentStatusChanged);
@@ -5378,6 +5384,30 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
         ),
       };
+      // PLANNED-STOP-HISTORY-DURABILITY-P0-8: a planned leg must not be committed
+      // COMPLETED before its STOP is durable. This write used to land first and
+      // only then fire a best-effort `/trip/record-planned-stop` whose failure was
+      // swallowed, which is how booking 2026-08-168 became COMPLETED with no trip,
+      // no history and no Chiron event. Persist the replayable intent first; a
+      // later drain materializes the chain exactly once.
+      if (status.trim().toUpperCase() == 'COMPLETED' && b.isOperationalLeg) {
+        final durable = await _ensurePlannedStopIntentDurable(b);
+        if (!durable && _buildOperationalLegPlannedStopPayload(b) != null) {
+          debugPrint(
+            '[PLANNED_STOP_DURABILITY_GATE] action=skip_leg_completed '
+            'booking=$bookingId leg=$legId reason=intent_not_persisted',
+          );
+          _toast(
+            _tr(
+              nl: 'Rit niet afgerond: stopgegevens konden niet worden opgeslagen. Probeer opnieuw.',
+              en: 'Ride not completed: stop data could not be saved. Please try again.',
+              fr: "Course non terminée : les données d'arrêt n'ont pas pu être enregistrées. Réessayez.",
+              es: 'Viaje no finalizado: no se pudieron guardar los datos de parada. Inténtalo de nuevo.',
+            ),
+          );
+          return;
+        }
+      }
       debugPrint(
         '[RIDES][LEG_STATUS][REQ] url=$uri payload=${jsonEncode(payload)}',
       );
@@ -5658,14 +5688,20 @@ class _DriverHomePageState extends State<DriverHomePage>
     return null;
   }
 
-  Future<void> _recordOperationalLegPlannedStopBestEffort(
+  /// PLANNED-STOP-HISTORY-DURABILITY-P0-8: builds the exact
+  /// `/trip/record-planned-stop` body for a planned operational leg.
+  ///
+  /// Extracted so the durable STOP intent and the live request are built from a
+  /// single source, which is what makes a replayed intent byte-identical to the
+  /// original attempt. Returns null when this leg must not produce a planned
+  /// stop: missing identity, unresolvable scope, or a street-ride shadow write.
+  Map<String, dynamic>? _buildOperationalLegPlannedStopPayload(
     BookingItem booking,
-  ) async {
-    if (!mounted) return;
-    if (!booking.isOperationalLeg) return;
+  ) {
+    if (!booking.isOperationalLeg) return null;
     final bookingId = booking.bookingId.trim();
     final legId = booking.legId.trim();
-    if (bookingId.isEmpty || legId.isEmpty) return;
+    if (bookingId.isEmpty || legId.isEmpty) return null;
 
     // STREET-RIDE-HISTORY-DUPLICATE-ZERO-BOOKING-1B (FASE 2 client skip): a
     // street-ride / direct booking's physical ride is ALREADY stored as
@@ -5701,7 +5737,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         'syntheticLeg=true hasDirectTrip=true '
         'reason=street_ride_direct_trip_already_stored',
       );
-      return;
+      return null;
     }
 
     try {
@@ -5709,7 +5745,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         action: 'record_operational_leg_planned_stop',
         showUx: false,
       );
-      if (strictScope == null) return;
+      if (strictScope == null) return null;
       final nowIso = DateTime.now().toUtc().toIso8601String();
       final bookingScope = _bookingScopeViewFor(booking);
       final legType = _operationalLegTypeToken(booking);
@@ -5857,6 +5893,40 @@ class _DriverHomePageState extends State<DriverHomePage>
       debugPrint(
         '[RIDES][LEG_STATUS][PLANNED_STOP][REQ] trip=$deterministicTripId booking=$bookingId leg=$legId type=$legType',
       );
+      return payload;
+    } catch (err) {
+      debugPrint(
+        '[RIDES][LEG_STATUS][PLANNED_STOP][BUILD_WARN] booking=${booking.bookingId} leg=${booking.legId} err=$err',
+      );
+      return null;
+    }
+  }
+
+  /// Submits a planned operational leg's STOP to the tracking worker.
+  ///
+  /// PLANNED-STOP-HISTORY-DURABILITY-P0-8: the durable intent is persisted before
+  /// the request and only cleared once the worker confirms, so a request lost to
+  /// poor network leaves a replayable intent instead of a COMPLETED leg with no
+  /// trip, no history and no Chiron event.
+  Future<void> _recordOperationalLegPlannedStopBestEffort(
+    BookingItem booking,
+  ) async {
+    if (!mounted) return;
+    final payload = _buildOperationalLegPlannedStopPayload(booking);
+    if (payload == null) return;
+    final strictScope = _strictBookingScopeForMutation(
+      action: 'record_operational_leg_planned_stop',
+      showUx: false,
+    );
+    if (strictScope == null) return;
+    final durableIntent = _buildPlannedStopIntent(
+      booking: booking,
+      payload: payload,
+    );
+    if (durableIntent != null) {
+      await _PlannedStopIntentStore.save(durableIntent);
+    }
+    try {
       final res = await http
           .post(
             _uriWithScope(
@@ -5869,15 +5939,23 @@ class _DriverHomePageState extends State<DriverHomePage>
           )
           .timeout(const Duration(seconds: 10));
       debugPrint(
-        '[RIDES][LEG_STATUS][PLANNED_STOP][RES] code=${res.statusCode} trip=$deterministicTripId booking=$bookingId leg=$legId',
+        '[RIDES][LEG_STATUS][PLANNED_STOP][RES] code=${res.statusCode} '
+        'booking=${booking.bookingId} leg=${booking.legId}',
       );
       if (res.statusCode < 200 || res.statusCode >= 300) {
         throw Exception('HTTP ${res.statusCode}');
       }
+      await _clearPlannedStopIntent(durableIntent);
     } catch (err) {
       debugPrint(
         '[RIDES][LEG_STATUS][PLANNED_STOP][WARN] booking=${booking.bookingId} leg=${booking.legId} err=$err',
       );
+      if (durableIntent != null) {
+        await _PlannedStopIntentStore.recordAttemptFailure(
+          intent: durableIntent,
+          error: '$err',
+        );
+      }
     }
   }
 
@@ -8892,6 +8970,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       return false;
     }
+    PlannedStopIntent? durableIntent;
     try {
       final strictScope = _strictBookingScopeForMutation(
         action: 'record_planned_trip_stop',
@@ -9006,6 +9085,17 @@ class _DriverHomePageState extends State<DriverHomePage>
           'public_reference': bookingDetails['public_reference'],
         ..._driverMutationActorFields(actorVehicleId: _directRideVehicleId()),
       };
+      // PLANNED-STOP-HISTORY-DURABILITY-P0-8: the measured STOP payload becomes
+      // durable BEFORE the booking can be projected COMPLETED. This request is
+      // the only writer of the trip / trips_index / driver-history / Chiron
+      // chain, and no server route can recreate a trip row that was never
+      // written, so a request lost to poor network must leave behind a
+      // replayable intent rather than a completed ride with no history.
+      durableIntent = _buildPlannedStopIntent(booking: booking, payload: payload);
+      _plannedStopIntentDurable =
+          durableIntent != null &&
+          await _PlannedStopIntentStore.save(durableIntent);
+
       final res = await http
           .post(
             _uriWithScope(
@@ -9020,6 +9110,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (res.statusCode != 200) {
         throw Exception('HTTP ${res.statusCode}: ${res.body}');
       }
+      // Chain confirmed materialized, so the intent has served its purpose.
+      await _clearPlannedStopIntent(durableIntent);
       debugPrint('[PLANNED_TRIP][HISTORY][OK] booking=${booking.bookingId}');
 
       // RELEASE-P0-DURABLE-CHIRON-SYNC-FOR-PLANNED-RIDES-2026-07-31: inspect
@@ -9058,6 +9150,177 @@ class _DriverHomePageState extends State<DriverHomePage>
     } catch (e) {
       debugPrint(
         '[PLANNED_TRIP][HISTORY][WARN] booking=${booking.bookingId} reason=$e',
+      );
+      if (durableIntent != null) {
+        await _PlannedStopIntentStore.recordAttemptFailure(
+          intent: durableIntent,
+          error: '$e',
+        );
+      }
+      return false;
+    }
+  }
+
+  /// PLANNED-STOP-HISTORY-DURABILITY-P0-8: whether the current STOP managed to
+  /// persist a durable, replayable planned STOP intent.
+  ///
+  /// This is the invariant-B proof consumed by [_completeStoppedBooking]: without
+  /// either a confirmed chain or this flag, a terminal COMPLETED projection would
+  /// lose the driven ride entirely.
+  bool _plannedStopIntentDurable = false;
+
+  /// PLANNED-STOP-HISTORY-DURABILITY-P0-8: builds the durable STOP intent for a
+  /// planned ride from the exact payload measured at STOP time.
+  ///
+  /// The payload is stored verbatim so recovery replays real ride truth and never
+  /// synthesizes distance, waiting time or stop timestamps. Returns null when the
+  /// tenant/company scope cannot be resolved, because an unscoped intent could
+  /// not be replayed safely on a shared device.
+  PlannedStopIntent? _buildPlannedStopIntent({
+    required BookingItem booking,
+    required Map<String, dynamic> payload,
+  }) {
+    final scope = _complianceLedgerScopeForStop();
+    if (scope == null) return null;
+    if (booking.bookingId.trim().isEmpty) return null;
+    return PlannedStopIntent.fromStopPayload(
+      bookingId: booking.bookingId,
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+      driverId: kDriverId,
+      payload: payload,
+      nowUtc: DateTime.now().toUtc(),
+      legId: booking.legId,
+      rowKey: booking.rowKey,
+      legType: booking.isOperationalLeg
+          ? _operationalLegTypeToken(booking)
+          : '',
+    );
+  }
+
+  Future<void> _clearPlannedStopIntent(PlannedStopIntent? intent) async {
+    if (intent == null) return;
+    await _PlannedStopIntentStore.remove(
+      tenantId: intent.tenantId,
+      companyId: intent.companyId,
+      intentId: intent.intentId,
+    );
+  }
+
+  /// PLANNED-STOP-HISTORY-DURABILITY-P0-8: ensures a durable STOP intent exists
+  /// for [booking] before its leg/booking is projected COMPLETED.
+  ///
+  /// Used by the leg-status path, which commits COMPLETED to the booking worker
+  /// before the tracking chain runs. Returns true when an intent is on disk,
+  /// which is the invariant-B proof the caller needs.
+  ///
+  /// An existing intent for the same deterministic id is kept as-is. The cockpit
+  /// STOP records real measured distance and waiting time, while this leg-scoped
+  /// payload carries zeros, so overwriting would replace measured ride truth with
+  /// zeros.
+  Future<bool> _ensurePlannedStopIntentDurable(BookingItem booking) async {
+    try {
+      final scope = _complianceLedgerScopeForStop();
+      if (scope == null) return false;
+      final intentId = plannedStopTripId(
+        bookingId: booking.bookingId,
+        legId: booking.legId,
+        rowKey: booking.rowKey,
+      );
+      final existing = await _PlannedStopIntentStore.pending(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+        driverId: kDriverId,
+      );
+      if (existing.any((e) => e.intentId == intentId)) {
+        debugPrint(
+          '[PLANNED_STOP_INTENT][ENSURE] action=keep_existing intent=$intentId',
+        );
+        return true;
+      }
+      final payload = _buildOperationalLegPlannedStopPayload(booking);
+      if (payload == null) return false;
+      final intent = _buildPlannedStopIntent(booking: booking, payload: payload);
+      if (intent == null) return false;
+      return await _PlannedStopIntentStore.save(intent);
+    } catch (e) {
+      debugPrint('[PLANNED_STOP_INTENT][ENSURE][WARN] reason=$e');
+      return false;
+    }
+  }
+
+  /// PLANNED-STOP-HISTORY-DURABILITY-P0-8: replays stranded planned STOP intents.
+  ///
+  /// Runs at driver-page init so a stop lost to poor network, an app kill or a
+  /// process death still materializes its trip, `trips_index`, driver-history and
+  /// Chiron rows. Replay is idempotent: the tracking worker derives the same
+  /// deterministic `trip_id`, de-duplicates index entries, reuses the same
+  /// deterministic Chiron `event_id` and never regresses APPLIED.
+  Future<void> _drainPlannedStopIntents() async {
+    try {
+      final scope = _complianceLedgerScopeForStop();
+      if (scope == null) return;
+      final pending = await _PlannedStopIntentStore.pending(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+        driverId: kDriverId,
+      );
+      if (pending.isEmpty) return;
+      debugPrint(
+        '[PLANNED_STOP_INTENT][DRAIN] pending=${pending.length} '
+        'tenant=${_maskLocalScopeId(scope.tenantId)}',
+      );
+      for (final intent in pending) {
+        if (!mounted) return;
+        await _replayPlannedStopIntent(intent);
+      }
+    } catch (e) {
+      debugPrint('[PLANNED_STOP_INTENT][DRAIN][WARN] reason=$e');
+    }
+  }
+
+  /// Replays one durable intent verbatim. Clears it only on server confirmation.
+  Future<bool> _replayPlannedStopIntent(PlannedStopIntent intent) async {
+    try {
+      final strictScope = _strictBookingScopeForMutation(
+        action: 'replay_planned_stop_intent',
+        showUx: false,
+      );
+      if (strictScope == null) return false;
+      // Fail closed rather than replay another tenant/company's ride.
+      final scopeTenant = (strictScope['tenant_id'] ?? '').trim();
+      final scopeCompany = (strictScope['company_id'] ?? '').trim();
+      if (scopeTenant.isNotEmpty && scopeTenant != intent.tenantId) return false;
+      if (scopeCompany.isNotEmpty && scopeCompany != intent.companyId) {
+        return false;
+      }
+      final res = await http
+          .post(
+            _uriWithScope(
+              kWorkerBaseUrl,
+              kRecordPlannedTripStopPath,
+              strictScope,
+            ),
+            headers: _driverBearerHeaders(),
+            body: jsonEncode(intent.payload),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        throw Exception('HTTP ${res.statusCode}');
+      }
+      debugPrint(
+        '[PLANNED_STOP_INTENT][REPLAY][OK] intent=${intent.intentId} '
+        'booking=${intent.bookingId} attempts=${intent.attemptCount}',
+      );
+      await _clearPlannedStopIntent(intent);
+      return true;
+    } catch (e) {
+      debugPrint(
+        '[PLANNED_STOP_INTENT][REPLAY][WARN] intent=${intent.intentId} reason=$e',
+      );
+      await _PlannedStopIntentStore.recordAttemptFailure(
+        intent: intent,
+        error: '$e',
       );
       return false;
     }
@@ -9855,8 +10118,16 @@ class _DriverHomePageState extends State<DriverHomePage>
       } catch (_) {}
     }
 
+    // PLANNED-STOP-HISTORY-DURABILITY-P0-8: this call is the ONLY writer of the
+    // planned trip / trips_index / driver-history / Chiron chain, so it must not
+    // be gated on `/track/session/stop`. That call only flips
+    // `session.status="stopped"`, materializes nothing durable, and swallows its
+    // own errors above — on poor network its 10s timeout used to skip the entire
+    // durable chain while the booking still went COMPLETED (field incident
+    // PLN-2026-000387 / booking 2026-08-168).
+    _plannedStopIntentDurable = false;
     var plannedTripStopBridgeOk = false;
-    if (!wasDirectRide && stoppedBooking != null && plannedSessionStopOk) {
+    if (!wasDirectRide && stoppedBooking != null) {
       plannedTripStopBridgeOk = await _recordPlannedTripStopOnWorker(
         booking: stoppedBooking,
         kmTotal: kmAtStop,
@@ -10074,6 +10345,33 @@ class _DriverHomePageState extends State<DriverHomePage>
       debugPrint(
         '[STREET_DIRECT_COMPLETE_GUARD] action=skip_local_completed booking=$bookingId '
         'reason=finalize_not_acknowledged',
+      );
+      return;
+    }
+
+    // PLANNED-STOP-HISTORY-DURABILITY-P0-8: the planned-ride counterpart of the
+    // street finalize-ack gate above. A planned ride may only reach a terminal
+    // COMPLETED projection when the durable STOP/history chain is confirmed
+    // (invariant A) or a durable replayable STOP intent is on disk that will
+    // finish the chain later (invariant B). With neither, the driven ride exists
+    // only in memory, so completing here is exactly what erased booking
+    // 2026-08-168 from Driver History. Keep the ride open instead of losing it.
+    if (!isStreetDirect &&
+        !plannedTerminalProjectionAllowed(
+          trackingStopMaterialized: plannedStopBridgeAlreadyCompletedLeg,
+          durableIntentPersisted: _plannedStopIntentDurable,
+        )) {
+      debugPrint(
+        '[PLANNED_STOP_DURABILITY_GATE] action=skip_completed booking=$bookingId '
+        'leg=${legId.isEmpty ? "-" : legId} reason=no_durable_stop_record',
+      );
+      _toast(
+        _tr(
+          nl: 'Rit niet afgerond: stopgegevens konden niet worden opgeslagen. Probeer opnieuw.',
+          en: 'Ride not completed: stop data could not be saved. Please try again.',
+          fr: "Course non terminée : les données d'arrêt n'ont pas pu être enregistrées. Réessayez.",
+          es: 'Viaje no finalizado: no se pudieron guardar los datos de parada. Inténtalo de nuevo.',
+        ),
       );
       return;
     }

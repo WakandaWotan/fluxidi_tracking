@@ -441,6 +441,159 @@ class _DirectTripSessionStore {
   }
 }
 
+/// PLANNED-STOP-HISTORY-DURABILITY-P0-8: durable store for planned-ride STOP
+/// intents that have not yet been confirmed materialized by the tracking
+/// worker.
+///
+/// This is the planned-ride counterpart of [_DirectTripSessionStore]. A planned
+/// ride only gets its durable trip / `trips_index` / driver-history / Chiron
+/// chain from `POST /trip/record-planned-stop`, and nothing server-side can
+/// recreate a trip row that was never written. So the measured STOP payload is
+/// persisted here BEFORE the booking is projected COMPLETED, and replayed until
+/// the worker confirms it. Replay is safe because the planned `trip_id` is
+/// deterministic (see `plannedStopTripId`).
+///
+/// Scoped under the same tenant/company directory as the other local stores;
+/// each record also carries `driver_id` so a shared device never replays another
+/// driver's stop.
+class _PlannedStopIntentStore {
+  static const String _fileName = 'planned_stop_intents_v1.json';
+
+  static Future<File> _scopedFile({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final base = await getApplicationDocumentsDirectory();
+    final scopedDir = Directory(
+      '${base.path}${Platform.pathSeparator}compliance_state${Platform.pathSeparator}tenant_${_localScopePathSegment(tenantId)}${Platform.pathSeparator}company_${_localScopePathSegment(companyId)}',
+    );
+    if (!await scopedDir.exists()) {
+      await scopedDir.create(recursive: true);
+    }
+    return File('${scopedDir.path}${Platform.pathSeparator}$_fileName');
+  }
+
+  static Future<List<PlannedStopIntent>> _readAll({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    try {
+      final file = await _scopedFile(tenantId: tenantId, companyId: companyId);
+      if (!await file.exists()) return const <PlannedStopIntent>[];
+      final raw = (await file.readAsString()).trim();
+      if (raw.isEmpty) return const <PlannedStopIntent>[];
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const <PlannedStopIntent>[];
+      return decoded
+          .map(PlannedStopIntent.fromJson)
+          .whereType<PlannedStopIntent>()
+          .toList();
+    } catch (_) {
+      return const <PlannedStopIntent>[];
+    }
+  }
+
+  static Future<bool> _writeAll(
+    List<PlannedStopIntent> intents, {
+    required String tenantId,
+    required String companyId,
+  }) async {
+    try {
+      final file = await _scopedFile(tenantId: tenantId, companyId: companyId);
+      await file.writeAsString(
+        jsonEncode(intents.map((e) => e.toJson()).toList()),
+        flush: true,
+      );
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Persists [intent] durably.
+  ///
+  /// Returns true only when the bytes reached disk — the caller uses that as the
+  /// invariant-B proof before projecting COMPLETED, so a failed write must never
+  /// report success.
+  static Future<bool> save(PlannedStopIntent intent) async {
+    if (kIsWeb) return false;
+    final tenantId = intent.tenantId.trim();
+    final companyId = intent.companyId.trim();
+    if (tenantId.isEmpty || companyId.isEmpty) return false;
+    final existing = await _readAll(tenantId: tenantId, companyId: companyId);
+    final ok = await _writeAll(
+      upsertPlannedStopIntent(existing, intent),
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+    debugPrint(
+      '[PLANNED_STOP_INTENT][PERSIST] ok=$ok intent=${intent.intentId} '
+      'booking=${intent.bookingId} tenant=${_maskLocalScopeId(tenantId)} '
+      'company=${_maskLocalScopeId(companyId)}',
+    );
+    return ok;
+  }
+
+  /// Intents still awaiting confirmation for this tenant/company/driver.
+  static Future<List<PlannedStopIntent>> pending({
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+  }) async {
+    if (kIsWeb) return const <PlannedStopIntent>[];
+    final normalizedTenant = tenantId.trim();
+    final normalizedCompany = companyId.trim();
+    if (normalizedTenant.isEmpty || normalizedCompany.isEmpty) {
+      return const <PlannedStopIntent>[];
+    }
+    final all = await _readAll(
+      tenantId: normalizedTenant,
+      companyId: normalizedCompany,
+    );
+    return plannedStopIntentsForScope(
+      all,
+      tenantId: normalizedTenant,
+      companyId: normalizedCompany,
+      driverId: driverId,
+    );
+  }
+
+  /// Drops a confirmed intent.
+  static Future<void> remove({
+    required String tenantId,
+    required String companyId,
+    required String intentId,
+  }) async {
+    if (kIsWeb) return;
+    final normalizedTenant = tenantId.trim();
+    final normalizedCompany = companyId.trim();
+    if (normalizedTenant.isEmpty || normalizedCompany.isEmpty) return;
+    final existing = await _readAll(
+      tenantId: normalizedTenant,
+      companyId: normalizedCompany,
+    );
+    final next = removePlannedStopIntent(existing, intentId);
+    if (next.length == existing.length) return;
+    await _writeAll(
+      next,
+      tenantId: normalizedTenant,
+      companyId: normalizedCompany,
+    );
+    debugPrint('[PLANNED_STOP_INTENT][CLEARED] intent=$intentId');
+  }
+
+  /// Records a failed replay so operators can see attempt counts in evidence.
+  static Future<void> recordAttemptFailure({
+    required PlannedStopIntent intent,
+    required String error,
+  }) async {
+    if (kIsWeb) return;
+    await save(
+      intent.markAttemptFailed(nowUtc: DateTime.now().toUtc(), error: error),
+    );
+  }
+}
+
 /// ===============================
 /// BRANDING (Fluxidi Taxi UI)
 /// ===============================
