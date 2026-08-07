@@ -4056,6 +4056,62 @@ async function reconcileConsumerSaleForCompletedBooking(
   if (status !== "COMPLETED" && !isBookingCompletedForConsumerSale(rec)) {
     return { ok: true, skipped: true, reason: "not_completed" };
   }
+
+  // ROUNDTRIP-CONSUMER-SALE-LATE-INVOICE-ACTION-P0-4:
+  // Parent-level reconcile (no sourceLegId) on multi-leg bookings must not
+  // early-reuse the first (outbound) consumer sale and skip the return leg.
+  // Expand once into per-COMPLETED-leg reconciles.
+  const wantLegId = safeStr(opts.sourceLegId, 200) || null;
+  if (!wantLegId && opts._fromMultiLegExpand !== true) {
+    const operationalLegs = _bookingOperationalLegsFromRecord(rec)
+      .map((entry) => (entry && typeof entry === "object" ? entry : null))
+      .filter((entry) => !!entry);
+    if (operationalLegs.length > 1) {
+      const results = [];
+      for (const leg of operationalLegs) {
+        const legId = safeStr(leg?.leg_id ?? leg?.legId, 200) || "";
+        if (!legId) continue;
+        const legStatus = _normLifecycleStatus(
+          leg?.status ??
+            leg?.lifecycle_status ??
+            leg?.lifecycleStatus ??
+            null,
+        );
+        if (legStatus !== "COMPLETED") continue;
+        const legType =
+          safeStr(leg?.leg_type ?? leg?.legType, 24) || null;
+        results.push(
+          await reconcileConsumerSaleForCompletedBooking(env, scope, bookingId, {
+            ...opts,
+            rec,
+            sourceLegId: legId,
+            sourceLegType: legType,
+            source: `${source}:multi_leg`,
+            _fromMultiLegExpand: true,
+          }),
+        );
+      }
+      if (results.length > 0) {
+        const anyCreated = results.some(
+          (r) =>
+            r &&
+            r.ok !== false &&
+            r.skipped !== true &&
+            r.reason !== "idempotent_reuse",
+        );
+        const anyDoc = results.find((r) => r?.document_id)?.document_id || null;
+        return {
+          ok: true,
+          skipped: !anyCreated,
+          reason: "multi_leg_reconcile",
+          document_id: anyDoc,
+          legs: results.length,
+          results,
+        };
+      }
+    }
+  }
+
   const existing = await findExistingConsumerSaleDocumentForBooking(
     env,
     scope,
@@ -67840,10 +67896,17 @@ async function handleCompanyBookingRequestBusinessInvoice({
   // CONSUMER-SALE-LATE-BUSINESS-INVOICE-ACTION-P0-3: when a consumer sale
   // exists, allow completed planned OR street bookings through the same
   // credit-first conversion path. Without a consumer sale, keep street-only.
+  // ROUNDTRIP-CONSUMER-SALE-LATE-INVOICE-ACTION-P0-4: scope by source_leg so
+  // an outbound consumer sale does not drive return-leg conversion (and vice versa).
+  const requestSourceLegId =
+    safeStr(body?.source_leg_id ?? body?.sourceLegId, 200) || null;
+  const requestSourceLegType =
+    safeStr(body?.source_leg_type ?? body?.sourceLegType, 24) || null;
   const existingConsumerSale = await findExistingConsumerSaleDocumentForBooking(
     env,
     scope,
     safeBookingId,
+    { sourceLegId: requestSourceLegId },
   );
   const eligibility = evaluateLateBusinessInvoiceConversionEligibility({
     bookingId: safeBookingId,
@@ -67896,6 +67959,8 @@ async function handleCompanyBookingRequestBusinessInvoice({
       {
         consumerDocument: existingConsumerSale,
         bookingRec: rec,
+        sourceLegId: requestSourceLegId,
+        sourceLegType: requestSourceLegType,
       },
     );
     if (!conversion?.ok || conversion.allow_business_invoice !== true) {
@@ -67929,6 +67994,7 @@ async function handleCompanyBookingRequestBusinessInvoice({
     env,
     scope,
     safeBookingId,
+    { sourceLegId: requestSourceLegId, sourceLegType: requestSourceLegType },
   );
   // Ignore superseded consumer documents for business reuse/conflict.
   const existingInvoiceForBusiness =
@@ -68030,6 +68096,8 @@ async function handleCompanyBookingRequestBusinessInvoice({
       scope,
       booking: rec,
       bookingId: safeBookingId,
+      sourceLegId: requestSourceLegId,
+      sourceLegType: requestSourceLegType,
       serverPricingProfile,
     });
     if (!built.ok) {
@@ -68041,13 +68109,17 @@ async function handleCompanyBookingRequestBusinessInvoice({
         409,
       );
     }
+    // Prefer leg-scoped key from buildAutoInvoiceIssueBodyFromBooking when a
+    // roundtrip source_leg is present; street/main keeps inv-auto:…:main:v1.
     const issueBody = {
       ...built.body,
-      idempotency_key: streetRideInvoiceIdempotencyKey({
-        tenantId: scope.tenant_id,
-        companyId: scope.company_id,
-        bookingId: safeBookingId,
-      }),
+      idempotency_key:
+        safeStr(built.body?.idempotency_key, 200) ||
+        streetRideInvoiceIdempotencyKey({
+          tenantId: scope.tenant_id,
+          companyId: scope.company_id,
+          bookingId: safeBookingId,
+        }),
     };
     const issueResp = await _issueInvoiceCore({
       env,

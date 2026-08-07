@@ -110,12 +110,17 @@ class _CompanyLateBusinessInvoicePlacement extends StatefulWidget {
     required this.isPaidBooking,
     required this.tokens,
     required this.placementKind,
+    this.sourceLegId,
+    this.sourceLegType,
   });
 
   final String bookingId;
   final bool isPaidBooking;
   final _CompanyBookingsThemeTokens tokens;
   final CompanyLateInvoicePlacementKind placementKind;
+  /// Roundtrip operational-leg scope (null for street / single-trip cards).
+  final String? sourceLegId;
+  final String? sourceLegType;
 
   @override
   State<_CompanyLateBusinessInvoicePlacement> createState() =>
@@ -165,7 +170,11 @@ class _CompanyLateBusinessInvoicePlacementState
       } catch (_) {
         return;
       }
-      final convertible = documentsEnvelopeHasConvertibleConsumerSale(decoded);
+      final convertible = documentsEnvelopeHasConvertibleConsumerSale(
+        decoded,
+        sourceLegId: widget.sourceLegId,
+        sourceLegType: widget.sourceLegType,
+      );
       if (!mounted) return;
       setState(() => _convertFromConsumerSale = convertible);
     } catch (_) {
@@ -191,7 +200,11 @@ class _CompanyLateBusinessInvoicePlacementState
         } catch (_) {
           decoded = null;
         }
-        show = documentsEnvelopeHasConvertibleConsumerSale(decoded);
+        show = documentsEnvelopeHasConvertibleConsumerSale(
+          decoded,
+          sourceLegId: widget.sourceLegId,
+          sourceLegType: widget.sourceLegType,
+        );
       }
     } catch (_) {
       show = false;
@@ -207,12 +220,16 @@ class _CompanyLateBusinessInvoicePlacementState
   @override
   Widget build(BuildContext context) {
     if (!_probeDone || !_showAction) return const SizedBox.shrink();
+    final legKey =
+        '${(widget.sourceLegId ?? '').trim()}-${(widget.sourceLegType ?? '').trim().toLowerCase()}';
     return _StreetBusinessInvoiceAction(
-      key: ValueKey('late-invoice-action-${widget.bookingId}'),
+      key: ValueKey('late-invoice-action-${widget.bookingId}-$legKey'),
       bookingId: widget.bookingId,
       isPaidBooking: widget.isPaidBooking,
       tokens: widget.tokens,
       convertFromConsumerSale: _convertFromConsumerSale,
+      sourceLegId: widget.sourceLegId,
+      sourceLegType: widget.sourceLegType,
     );
   }
 }
@@ -224,12 +241,16 @@ class _StreetBusinessInvoiceAction extends StatefulWidget {
     required this.isPaidBooking,
     required this.tokens,
     this.convertFromConsumerSale = false,
+    this.sourceLegId,
+    this.sourceLegType,
   });
 
   final String bookingId;
   final bool isPaidBooking;
   final _CompanyBookingsThemeTokens tokens;
   final bool convertFromConsumerSale;
+  final String? sourceLegId;
+  final String? sourceLegType;
 
   @override
   State<_StreetBusinessInvoiceAction> createState() =>
@@ -304,6 +325,11 @@ class _StreetBusinessInvoiceActionState
     Map<String, dynamic> body,
   ) async {
     try {
+      final payload = Map<String, dynamic>.from(body);
+      final legId = (widget.sourceLegId ?? '').trim();
+      final legType = (widget.sourceLegType ?? '').trim();
+      if (legId.isNotEmpty) payload['source_leg_id'] = legId;
+      if (legType.isNotEmpty) payload['source_leg_type'] = legType;
       final uri = _withActiveBookingScope(
         kBookingBaseUrl,
         '/company/bookings/${Uri.encodeComponent(widget.bookingId)}'
@@ -311,7 +337,7 @@ class _StreetBusinessInvoiceActionState
       );
       final auth = await resolveCompanyOwnerAuthHeaders();
       final res = await http
-          .post(uri, headers: auth.headers, body: jsonEncode(body))
+          .post(uri, headers: auth.headers, body: jsonEncode(payload))
           .timeout(const Duration(seconds: 20));
       Object? decoded;
       try {
@@ -360,7 +386,11 @@ class _StreetBusinessInvoiceActionState
       }
       if (documentsEnvelopeOk(decoded)) {
         _docsIndicateConvertibleConsumerSale =
-            documentsEnvelopeHasConvertibleConsumerSale(decoded);
+            documentsEnvelopeHasConvertibleConsumerSale(
+              decoded,
+              sourceLegId: widget.sourceLegId,
+              sourceLegType: widget.sourceLegType,
+            );
       }
       return StreetInvoiceDocsResult(
         statusCode: 200,

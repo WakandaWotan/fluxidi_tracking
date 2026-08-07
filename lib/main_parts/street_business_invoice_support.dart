@@ -18,6 +18,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:fluxidi_tracking/company/booking_documents_leg_filter.dart';
 import 'package:fluxidi_tracking/payment/consumer_sale_presentation.dart';
 
 /// Per-booking lifecycle state for the invoice action UI.
@@ -1386,7 +1387,12 @@ class StreetBusinessInvoiceBuyerInput {
   /// Builds the exact `{ "billing_customer": { ... } }` request body. Empty
   /// optional fields are omitted (never sent as empty strings). Country is
   /// upper-cased. `customer_type` is always "business" for this action.
-  Map<String, dynamic> toRequestBody() {
+  /// Optional [sourceLegId]/[sourceLegType] scope roundtrip conversion to one
+  /// operational leg (ROUNDTRIP-CONSUMER-SALE-LATE-INVOICE-ACTION-P0-4).
+  Map<String, dynamic> toRequestBody({
+    String? sourceLegId,
+    String? sourceLegType,
+  }) {
     final address = <String, dynamic>{};
     void putAddr(String key, String value) {
       final t = value.trim();
@@ -1412,7 +1418,12 @@ class StreetBusinessInvoiceBuyerInput {
     putField('buyer_reference', buyerReference);
     if (address.isNotEmpty) billing['billing_address'] = address;
 
-    return <String, dynamic>{'billing_customer': billing};
+    final body = <String, dynamic>{'billing_customer': billing};
+    final legId = (sourceLegId ?? '').trim();
+    final legType = (sourceLegType ?? '').trim();
+    if (legId.isNotEmpty) body['source_leg_id'] = legId;
+    if (legType.isNotEmpty) body['source_leg_type'] = legType;
+    return body;
   }
 }
 
@@ -1789,27 +1800,49 @@ bool documentRecordIsBusinessInvoice(Map doc) {
   return type == 'invoice';
 }
 
-/// CONSUMER-SALE-LATE-INVOICE-ACTION-PLACEMENT-P1
+/// CONSUMER-SALE-LATE-INVOICE-ACTION-PLACEMENT-P1 /
+/// ROUNDTRIP-CONSUMER-SALE-LATE-INVOICE-ACTION-P0-4
 ///
 /// True when a documents GET envelope contains a convertible consumer sale and
-/// no linked business invoice — used to mount the single large action above
-/// Documenten for planned/historical rides (never guessed when docs are empty).
-bool documentsEnvelopeHasConvertibleConsumerSale(Object? decoded) {
+/// no linked business invoice for the optional leg scope — used to mount the
+/// single large action above Documenten (never guessed when docs are empty).
+/// Roundtrip leg cards MUST pass [sourceLegId]/[sourceLegType] so a sibling
+/// leg's consumer sale cannot unlock the button on this card.
+bool documentsEnvelopeHasConvertibleConsumerSale(
+  Object? decoded, {
+  String? sourceLegId,
+  String? sourceLegType,
+}) {
   if (!documentsEnvelopeOk(decoded)) return false;
   final docs = (decoded as Map)['documents'];
   if (docs is! List || docs.isEmpty) return false;
 
-  var businessInvoicePresent = false;
+  final scoped = <Map>[];
   for (final d in docs) {
-    if (d is Map && documentRecordIsBusinessInvoice(d)) {
+    if (d is! Map) continue;
+    final asMap = d.map((k, v) => MapEntry(k.toString(), v));
+    final legFields = readBookingDocumentLegFieldsFromJson(asMap);
+    if (!bookingDocumentMatchesLegFilter(
+      legFields,
+      sourceLegId: sourceLegId,
+      sourceLegType: sourceLegType,
+    )) {
+      continue;
+    }
+    scoped.add(d);
+  }
+  if (scoped.isEmpty) return false;
+
+  var businessInvoicePresent = false;
+  for (final d in scoped) {
+    if (documentRecordIsBusinessInvoice(d)) {
       businessInvoicePresent = true;
       break;
     }
   }
   if (businessInvoicePresent) return false;
 
-  for (final d in docs) {
-    if (d is! Map) continue;
+  for (final d in scoped) {
     final saleKind =
         d['fluxidi_sale_kind'] ??
         d['fluxidiSaleKind'] ??

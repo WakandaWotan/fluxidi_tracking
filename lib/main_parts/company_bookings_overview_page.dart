@@ -3507,6 +3507,18 @@ class _CompanyBookingsOverviewPageState
                 isPaidBooking: _isBookingPaidForStreetInvoice(item),
                 tokens: tokens,
                 placementKind: _lateInvoicePlacementKind(item),
+                sourceLegId:
+                    _CompanyBookingOverviewItem.isRoundtripOperationalLegRow(
+                      item,
+                    )
+                    ? item.legId
+                    : null,
+                sourceLegType:
+                    _CompanyBookingOverviewItem.isRoundtripOperationalLegRow(
+                      item,
+                    )
+                    ? item.legType
+                    : null,
               ),
             ],
             if (_documentsBookingId(item).isNotEmpty) ...[

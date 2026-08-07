@@ -374,5 +374,17 @@ void main() {
         isFalse,
       );
     });
+
+    test('10. parent eligibility does not replace per-leg placement mode', () {
+      // Planned completed → probe slot; street → canonical. Sibling legs each
+      // resolve independently via the same completed/street predicates.
+      expect(
+        resolveCompanyLateInvoicePlacement(
+          completedBucket: true,
+          streetRideBusinessInvoiceEligible: false,
+        ),
+        CompanyLateInvoicePlacementKind.consumerSaleProbeSlot,
+      );
+    });
   });
 }

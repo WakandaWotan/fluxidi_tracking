@@ -503,6 +503,59 @@ void main() {
         );
       },
     );
+
+    test(
+      'ROUNDTRIP-P0-4: outbound consumer sale does not unlock return slot',
+      () {
+        final decoded = docsEnvelope([
+          {
+            'document_id': 'doc-out',
+            'document_type': 'invoice',
+            'document_number': 'INV-2026-000048',
+            'fluxidi_sale_kind': 'consumer_sale',
+            'peppol_applicable': false,
+            'lifecycle_state': 'issued',
+            'source_leg_id': '2026-08-000011:OUTBOUND',
+            'source_leg_type': 'outbound',
+          },
+        ]);
+        expect(
+          documentsEnvelopeHasConvertibleConsumerSale(
+            decoded,
+            sourceLegId: '2026-08-000011:OUTBOUND',
+            sourceLegType: 'outbound',
+          ),
+          isTrue,
+        );
+        expect(
+          documentsEnvelopeHasConvertibleConsumerSale(
+            decoded,
+            sourceLegId: '2026-08-000011:RETURN',
+            sourceLegType: 'return',
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'ROUNDTRIP-P0-4: request body carries source_leg for conversion',
+      () {
+        final body = const StreetBusinessInvoiceBuyerInput(
+          legalName: 'Acme BV',
+          street: 'Straat 1',
+          postalCode: '1000',
+          city: 'Brussel',
+          country: 'BE',
+        ).toRequestBody(
+          sourceLegId: '2026-08-000011:OUTBOUND',
+          sourceLegType: 'outbound',
+        );
+        expect(body['source_leg_id'], '2026-08-000011:OUTBOUND');
+        expect(body['source_leg_type'], 'outbound');
+        expect(body['billing_customer'], isA<Map>());
+      },
+    );
   });
 
   group('derived document count (section 2)', () {
