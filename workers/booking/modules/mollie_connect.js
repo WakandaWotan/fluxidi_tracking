@@ -1356,7 +1356,12 @@ export function _sanitizeMollieTerminalForSnapshot(terminal = {}) {
         source.profile?.profileId,
       80,
     ) || null;
-  return {
+  const excluded =
+    source.excluded === true ||
+    source.excluded === "true" ||
+    source.linked === false ||
+    source.linked === "false";
+  const out = {
     id: safeStr(source.id, 80),
     description:
       safeStr(source.description ?? source.name ?? source.alias, 160) || null,
@@ -1369,7 +1374,12 @@ export function _sanitizeMollieTerminalForSnapshot(terminal = {}) {
     profile_id: profileId,
     created_at: safeStr(source.created_at ?? source.createdAt, 80) || null,
     updated_at: safeStr(source.updated_at ?? source.updatedAt, 80) || null,
+    // MOLLIE-TERMINAL-UNLINK-AND-EXCLUSION-P1 — Fluxidi link/exclusion (not Mollie).
+    linked: excluded ? false : true,
+    excluded: !!excluded,
+    excluded_at: safeStr(source.excluded_at ?? source.excludedAt, 80) || null,
   };
+  return out;
 }
 
 export function _mollieTerminalsScopeMissingFromResponse(status, payload = {}, text = "") {

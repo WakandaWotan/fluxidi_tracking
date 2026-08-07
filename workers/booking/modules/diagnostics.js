@@ -42,6 +42,8 @@ POST /admin/mollie/connect/test-payment
 GET  /admin/mollie/connect/test-payment/status
 GET  /admin/mollie/terminals (?testmode=true for test snapshot)
 POST /admin/mollie/terminals/sync (body/query testmode=true for test sync)
+POST /admin/mollie/terminals/unlink (Fluxidi-only exclusion; never Mollie DELETE)
+POST /admin/mollie/terminals/relink (clear Fluxidi exclusion)
 POST /admin/mollie/terminal-payment/start
 POST /driver/mollie/terminal-payment/capability
 POST /driver/mollie/terminal-payment/start

@@ -18,6 +18,7 @@ import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/widgets/chiron_environment_status_labels.dart';
 import 'package:fluxidi_tracking/widgets/chiron_self_service_wizard.dart';
 import 'package:fluxidi_tracking/payment/mollie_capability_status.dart';
+import 'package:fluxidi_tracking/payment/mollie_terminal_link_copy.dart';
 import 'package:fluxidi_tracking/payment/payment_method_catalog.dart';
 import 'package:fluxidi_tracking/payment/payment_method_logo.dart';
 import 'package:fluxidi_tracking/payment/payment_method_resolver.dart';
@@ -306,6 +307,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   bool _mollieConnectDisconnectLoading = false;
   bool _mollieTerminalsLoading = false;
   bool _mollieTerminalsSyncLoading = false;
+  String? _mollieTerminalLinkBusyId;
   String? _mollieConnectStatusError;
   Map<String, dynamic>? _mollieConnectStatus;
   String? _mollieTerminalsError;
@@ -2332,6 +2334,25 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         .toList(growable: false);
   }
 
+  bool _isMollieTerminalExcluded(Map<String, dynamic> terminal) {
+    if (terminal['excluded'] == true || terminal['excluded'] == 'true') {
+      return true;
+    }
+    if (terminal['linked'] == false || terminal['linked'] == 'false') {
+      return true;
+    }
+    return false;
+  }
+
+  List<Map<String, dynamic>> _mollieActiveTerminalList() => _mollieTerminalList()
+      .where((t) => !_isMollieTerminalExcluded(t))
+      .toList(growable: false);
+
+  List<Map<String, dynamic>> _mollieExcludedTerminalList() =>
+      _mollieTerminalList()
+          .where(_isMollieTerminalExcluded)
+          .toList(growable: false);
+
   String _mollieTerminalsStatusCode() {
     final raw = (_mollieTerminalsSnapshot?['status'] ?? '').toString().trim();
     if (raw.isNotEmpty) return raw.toLowerCase();
@@ -2552,6 +2573,97 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     } finally {
       if (mounted) {
         setState(() => _mollieTerminalsSyncLoading = false);
+      }
+    }
+  }
+
+  Future<void> _unlinkMollieTerminal(Map<String, dynamic> terminal) async {
+    final terminalId = (terminal['id'] ?? '').toString().trim();
+    if (terminalId.isEmpty || _mollieTerminalLinkBusyId != null) return;
+    final scope = _strictSettingsScopeForAction(action: 'unlink_mollie_terminal');
+    if (scope == null) return;
+    setState(() => _mollieTerminalLinkBusyId = terminalId);
+    try {
+      final data = await unlinkCompanyMollieTerminal(
+        terminalId: terminalId,
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      setState(() => _mollieTerminalsSnapshot = data);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            mollieTerminalLinkCopy(key: 'unlinked_snack', lang: _lang.name),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      final msg = e.toString();
+      final blocked = msg.contains('terminal_unlink_blocked_pending_payment');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            blocked
+                ? mollieTerminalLinkCopy(
+                    key: 'unlink_blocked_pending',
+                    lang: _lang.name,
+                  )
+                : _t(
+                    nl: 'Terminal kon niet ontkoppeld worden.',
+                    en: 'Terminal could not be unlinked.',
+                    fr: 'Le terminal n’a pas pu être déconnecté.',
+                    es: 'No se pudo desvincular el terminal.',
+                  ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _mollieTerminalLinkBusyId = null);
+      }
+    }
+  }
+
+  Future<void> _relinkMollieTerminal(Map<String, dynamic> terminal) async {
+    final terminalId = (terminal['id'] ?? '').toString().trim();
+    if (terminalId.isEmpty || _mollieTerminalLinkBusyId != null) return;
+    final scope = _strictSettingsScopeForAction(action: 'relink_mollie_terminal');
+    if (scope == null) return;
+    setState(() => _mollieTerminalLinkBusyId = terminalId);
+    try {
+      final data = await relinkCompanyMollieTerminal(
+        terminalId: terminalId,
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      setState(() => _mollieTerminalsSnapshot = data);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            mollieTerminalLinkCopy(key: 'relinked_snack', lang: _lang.name),
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Terminal kon niet opnieuw gekoppeld worden.',
+              en: 'Terminal could not be reconnected.',
+              fr: 'Le terminal n’a pas pu être reconnecté.',
+              es: 'No se pudo volver a vincular el terminal.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _mollieTerminalLinkBusyId = null);
       }
     }
   }
@@ -4817,6 +4929,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   Widget _mollieTerminalPaymentsCard() {
     final statusCode = _mollieTerminalsStatusCode();
     final terminals = _mollieTerminalList();
+    final activeTerminals = _mollieActiveTerminalList();
+    final excludedTerminals = _mollieExcludedTerminalList();
     final syncedAt = (_mollieTerminalsSnapshot?['synced_at'] ?? '')
         .toString()
         .trim();
@@ -4908,13 +5022,22 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   runSpacing: 6,
                   children: [
                     Text(
-                      '${_t(nl: 'Terminals', en: 'Terminals', fr: 'Terminaux', es: 'Terminales')}: ${terminals.length}',
+                      '${_t(nl: 'Terminals', en: 'Terminals', fr: 'Terminaux', es: 'Terminales')}: ${activeTerminals.length}',
                       style: TextStyle(
                         color: _textMuted,
                         fontSize: 11.5,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
+                    if (excludedTerminals.isNotEmpty)
+                      Text(
+                        '${_t(nl: 'Ontkoppeld', en: 'Unlinked', fr: 'Déconnectés', es: 'Desvinculados')}: ${excludedTerminals.length}',
+                        style: TextStyle(
+                          color: _textMuted,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                     if (syncedAt.isNotEmpty)
                       Text(
                         '${_t(nl: 'Laatste sync', en: 'Last sync', fr: 'Dernière synchro', es: 'Última sincronización')}: $syncedAt',
@@ -4941,11 +5064,31 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               ],
             ),
           ),
-          if (terminals.isNotEmpty) ...[
+          if (activeTerminals.isNotEmpty) ...[
             const SizedBox(height: 10),
             Column(
-              children: terminals
-                  .map(_mollieTerminalListTile)
+              children: activeTerminals
+                  .map((t) => _mollieTerminalListTile(t, excluded: false))
+                  .toList(growable: false),
+            ),
+          ],
+          if (excludedTerminals.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Text(
+              mollieTerminalLinkCopy(
+                key: 'unlinked_section',
+                lang: _lang.name,
+              ),
+              style: TextStyle(
+                color: _textPrimary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Column(
+              children: excludedTerminals
+                  .map((t) => _mollieTerminalListTile(t, excluded: true))
                   .toList(growable: false),
             ),
           ],
@@ -5032,14 +5175,19 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     );
   }
 
-  Widget _mollieTerminalListTile(Map<String, dynamic> terminal) {
+  Widget _mollieTerminalListTile(
+    Map<String, dynamic> terminal, {
+    bool excluded = false,
+  }) {
     String value(String key) => (terminal[key] ?? '').toString().trim();
-    final id = _maskedMollieId(value('id'));
+    final terminalId = value('id');
+    final id = _maskedMollieId(terminalId);
     final profileId = _maskedMollieId(value('profile_id'));
     final description = value('description');
     final status = value('status');
     final brand = value('brand');
     final model = value('model');
+    final busy = _mollieTerminalLinkBusyId == terminalId;
     final title = description.isNotEmpty
         ? description
         : _t(
@@ -5048,9 +5196,19 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             fr: 'Terminal Mollie',
             es: 'Terminal Mollie',
           );
+    final statusLabel = excluded
+        ? _t(
+            nl: 'ontkoppeld',
+            en: 'unlinked',
+            fr: 'déconnecté',
+            es: 'desvinculado',
+          )
+        : (status.isNotEmpty
+            ? status
+            : _t(nl: 'active', en: 'active', fr: 'actif', es: 'activo'));
     final detailParts = <String>[
       if (id.isNotEmpty) id,
-      if (status.isNotEmpty) status,
+      statusLabel,
       if (brand.isNotEmpty || model.isNotEmpty)
         [brand, model].where((part) => part.isNotEmpty).join(' '),
       if (profileId.isNotEmpty)
@@ -5065,45 +5223,89 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: _border.withOpacity(_isDark ? 0.42 : 0.82)),
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: _subPanelBg,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: _border.withOpacity(0.72)),
-            ),
-            child: Icon(Icons.point_of_sale_rounded, size: 18, color: _accent),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    color: _textPrimary,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w800,
-                  ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: _subPanelBg,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: _border.withOpacity(0.72)),
                 ),
-                if (detailParts.isNotEmpty) ...[
-                  const SizedBox(height: 3),
-                  Text(
-                    detailParts.join(' • '),
-                    style: TextStyle(
-                      color: _textMuted,
-                      fontSize: 11.1,
-                      height: 1.28,
+                child: Icon(
+                  Icons.point_of_sale_rounded,
+                  size: 18,
+                  color: _accent,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: _textPrimary,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (detailParts.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        detailParts.join(' • '),
+                        style: TextStyle(
+                          color: _textMuted,
+                          fontSize: 11.1,
+                          height: 1.28,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: excluded
+                ? OutlinedButton.icon(
+                    onPressed: busy || terminalId.isEmpty
+                        ? null
+                        : () => _relinkMollieTerminal(terminal),
+                    icon: busy
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.link_rounded, size: 16),
+                    label: Text(
+                      mollieTerminalLinkCopy(key: 'relink', lang: _lang.name),
+                    ),
+                  )
+                : OutlinedButton.icon(
+                    onPressed: busy || terminalId.isEmpty
+                        ? null
+                        : () => _unlinkMollieTerminal(terminal),
+                    icon: busy
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.link_off_rounded, size: 16),
+                    label: Text(
+                      mollieTerminalLinkCopy(key: 'unlink', lang: _lang.name),
                     ),
                   ),
-                ],
-              ],
-            ),
           ),
         ],
       ),

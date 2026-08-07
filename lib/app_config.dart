@@ -9649,6 +9649,92 @@ Future<Map<String, dynamic>> syncCompanyMollieTerminals({
   return map;
 }
 
+/// Fluxidi-only unlink (exclusion). Never deletes/deactivates the Mollie terminal.
+Future<Map<String, dynamic>> unlinkCompanyMollieTerminal({
+  required String terminalId,
+  String? tenantId,
+  String? companyId,
+  bool testmode = false,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/mollie/terminals/unlink'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{
+          ...scope,
+          'terminal_id': terminalId,
+          if (testmode) 'testmode': true,
+        }),
+      )
+      .timeout(const Duration(seconds: 20));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception(
+      _adminApiErrorMessageFromResponse(
+        map,
+        res.statusCode,
+        fallback: 'mollie_terminal_unlink_failed',
+      ),
+    );
+  }
+  return map;
+}
+
+/// Clear Fluxidi exclusion so the terminal can be selected again.
+Future<Map<String, dynamic>> relinkCompanyMollieTerminal({
+  required String terminalId,
+  String? tenantId,
+  String? companyId,
+  bool testmode = false,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/mollie/terminals/relink'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{
+          ...scope,
+          'terminal_id': terminalId,
+          if (testmode) 'testmode': true,
+        }),
+      )
+      .timeout(const Duration(seconds: 20));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception(
+      _adminApiErrorMessageFromResponse(
+        map,
+        res.statusCode,
+        fallback: 'mollie_terminal_relink_failed',
+      ),
+    );
+  }
+  return map;
+}
+
 Future<Map<String, dynamic>> startBackendMollieTerminalPayment({
   required String tenantId,
   required String companyId,

@@ -9,6 +9,11 @@
 //  * A card-terminal payment is only "paid" when Mollie reports `paid`.
 //    Every other status keeps the ride unpaid.
 
+import {
+  filterSelectablePosTerminals,
+  isTerminalExcluded,
+} from "./mollie_terminal_exclusion.mjs";
+
 function _asObject(v) {
   return v && typeof v === "object" && !Array.isArray(v) ? v : {};
 }
@@ -283,12 +288,19 @@ export function molliePosStatusIsPaid(status) {
 }
 
 export function selectServerSidePosTerminal(terminals, opts = {}) {
-  const list = Array.isArray(terminals) ? terminals : [];
+  // MOLLIE-TERMINAL-UNLINK-AND-EXCLUSION-P1: never select excluded/unlinked.
+  const list = filterSelectablePosTerminals(
+    Array.isArray(terminals) ? terminals : [],
+    opts.excludedMap ?? opts.excluded_terminals,
+  );
   const wantProfile = String(opts.profileId ?? "").trim();
   const candidates = list.filter((t) => {
     if (!t || typeof t !== "object") return false;
     if (!String(t.id ?? "").trim()) return false;
     if (String(t.status ?? "").trim().toLowerCase() !== "active") return false;
+    if (isTerminalExcluded(t, opts.excludedMap ?? opts.excluded_terminals)) {
+      return false;
+    }
     const tProfile = String(t.profile_id ?? t.profileId ?? "").trim();
     if (wantProfile) {
       if (!tProfile || tProfile !== wantProfile) return false;
@@ -312,13 +324,25 @@ export function selectServerSidePosTerminal(terminals, opts = {}) {
 export function validatePosDefaultTerminalCandidate(terminals, terminalId, opts = {}) {
   const wantId = String(terminalId ?? "").trim();
   if (!wantId) return { ok: false, error: "terminal_id_required" };
-  const list = Array.isArray(terminals) ? terminals : [];
+  const excludedMap = opts.excludedMap ?? opts.excluded_terminals;
+  const list = filterSelectablePosTerminals(
+    Array.isArray(terminals) ? terminals : [],
+    excludedMap,
+  );
   const match = list.find(
     (t) => t && typeof t === "object" && String(t.id ?? "").trim() === wantId,
   );
-  if (!match) return { ok: false, error: "terminal_not_found" };
+  if (!match) {
+    if (isTerminalExcluded(wantId, excludedMap)) {
+      return { ok: false, error: "terminal_excluded" };
+    }
+    return { ok: false, error: "terminal_not_found" };
+  }
   if (String(match.status ?? "").trim().toLowerCase() !== "active") {
     return { ok: false, error: "terminal_inactive" };
+  }
+  if (isTerminalExcluded(match, excludedMap)) {
+    return { ok: false, error: "terminal_excluded" };
   }
   const wantProfile = String(opts.profileId ?? "").trim();
   if (wantProfile) {
@@ -332,11 +356,16 @@ export function validatePosDefaultTerminalCandidate(terminals, terminalId, opts 
 
 export function resolveEffectiveDefaultTerminalId(terminals, storedDefaultId, opts = {}) {
   const wantProfile = String(opts.profileId ?? "").trim();
-  const list = Array.isArray(terminals) ? terminals : [];
+  const excludedMap = opts.excludedMap ?? opts.excluded_terminals;
+  const list = filterSelectablePosTerminals(
+    Array.isArray(terminals) ? terminals : [],
+    excludedMap,
+  );
   const activeCandidates = list.filter((t) => {
     if (!t || typeof t !== "object") return false;
     if (!String(t.id ?? "").trim()) return false;
     if (String(t.status ?? "").trim().toLowerCase() !== "active") return false;
+    if (isTerminalExcluded(t, excludedMap)) return false;
     if (wantProfile) {
       const tp = String(t.profile_id ?? t.profileId ?? "").trim();
       if (!tp || tp !== wantProfile) return false;

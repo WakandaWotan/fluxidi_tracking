@@ -245,7 +245,16 @@ import {
   isBookingAlreadyPaid,
   shouldMarkBookingPaidFromPosStatus,
   shouldTriggerBillitSyncOnPosPaid,
+  resolveEffectiveDefaultTerminalId,
 } from "./modules/pos_terminal_payment.mjs";
+import {
+  applyTerminalLinkAction,
+  filterSelectablePosTerminals,
+  isTerminalExcluded,
+  mergeProviderTerminalsWithExclusions,
+  normalizeExcludedTerminalsMap,
+  posIntentStatusBlocksTerminalUnlink,
+} from "./modules/mollie_terminal_exclusion.mjs";
 import {
   CONSUMER_SALE_KIND,
   CONSUMER_SALE_INTENT_STATES,
@@ -9385,6 +9394,220 @@ async function fetchCompanyMollieTerminals(env, scope) {
   };
 }
 
+function _presentCompanyMollieTerminalsSnapshot(snapshot, {
+  tenantId = "",
+  companyId = "",
+  mollieMode = "live",
+  testMode = false,
+} = {}) {
+  const src = snapshot && typeof snapshot === "object" ? snapshot : {};
+  const excludedMap = normalizeExcludedTerminalsMap(
+    src.excluded_terminals ?? src.excludedTerminals,
+  );
+  const providerList = Array.isArray(src.terminals) ? src.terminals : [];
+  const merged = mergeProviderTerminalsWithExclusions({
+    providerTerminals: providerList.map(_sanitizeMollieTerminalForSnapshot).filter((t) => !!t?.id),
+    previousExcluded: excludedMap,
+  });
+  const terminals = merged.terminals.map((t) => _sanitizeMollieTerminalForSnapshot(t)).filter((t) => !!t.id);
+  return {
+    ok: true,
+    version: Number(src.version) || 1,
+    tenant_id: safeStr(src.tenant_id ?? tenantId, 80) || null,
+    company_id: safeStr(src.company_id ?? companyId, 80) || null,
+    profile_id: safeStr(src.profile_id ?? src.profileId, 80) || null,
+    mollie_mode: safeStr(src.mollie_mode ?? mollieMode, 16) || mollieMode,
+    testmode: boolish(src.testmode ?? src.testMode ?? testMode),
+    status: safeStr(src.status, 40) || "synced",
+    synced_at: safeStr(src.synced_at ?? src.syncedAt, 80) || null,
+    default_terminal_id:
+      safeStr(
+        src.default_terminal_id ?? src.defaultTerminalId ?? src.selected_terminal_id,
+        120,
+      ) || null,
+    terminals,
+    excluded_terminals: merged.excluded_terminals,
+  };
+}
+
+async function _listCompanyPosPaymentIntentsForTerminal(env, scope, terminalId) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const wantTerminal = safeStr(terminalId, 120);
+  if (!env?.BOOKING_KV || !tenantId || !companyId || !wantTerminal) return [];
+  const prefixes = [
+    `tenant:${tenantId}:company:${companyId}:mollie_driver_pos_intent:`,
+    `tenant:${tenantId}:company:${companyId}:mollie_terminal_payment_intent:`,
+  ];
+  const matches = [];
+  for (const prefix of prefixes) {
+    let cursor = undefined;
+    for (let pageGuard = 0; pageGuard < 20; pageGuard += 1) {
+      const page = await env.BOOKING_KV.list({ prefix, limit: 100, cursor });
+      const keys = Array.isArray(page?.keys) ? page.keys : [];
+      for (const entry of keys) {
+        const name = safeStr(entry?.name, 400);
+        if (!name) continue;
+        const intent = await env.BOOKING_KV.get(name, { type: "json" });
+        if (!intent || typeof intent !== "object") continue;
+        const tid = safeStr(
+          intent.terminal_id ?? intent.terminalId ?? intent.terminal?.id,
+          120,
+        );
+        if (tid !== wantTerminal) continue;
+        matches.push({ key: name, intent });
+      }
+      if (page?.list_complete || !page?.cursor) break;
+      cursor = page.cursor;
+    }
+  }
+  return matches;
+}
+
+async function companyTerminalHasBlockingOpenPayment(env, scope, terminalId) {
+  const matches = await _listCompanyPosPaymentIntentsForTerminal(env, scope, terminalId);
+  let credentials = null;
+  try {
+    credentials = await resolveCompanyMollieConnectCredentials(env, scope, {
+      purpose: "mollie_terminal_unlink_pending_check",
+    });
+  } catch (_) {
+    credentials = null;
+  }
+  const apiKey =
+    credentials?.ok && safeStr(credentials.apiKey, 200)
+      ? safeStr(credentials.apiKey, 200)
+      : "";
+  for (const row of matches) {
+    const intent = row.intent || {};
+    let status = safeStr(intent.mollie_status ?? intent.status, 40).toLowerCase();
+    const paymentId = safeStr(intent.payment_id ?? intent.paymentId, 160);
+    if (apiKey && paymentId) {
+      try {
+        const payUrl = `https://api.mollie.com/v2/payments/${encodeURIComponent(paymentId)}`;
+        const res = await fetch(payUrl, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        const txt = await res.text();
+        let body = {};
+        try {
+          body = txt ? JSON.parse(txt) : {};
+        } catch (_) {
+          body = {};
+        }
+        if (res.ok) {
+          status = safeStr(body?.status, 40).toLowerCase() || status;
+        }
+      } catch (_) {
+        // Keep KV status; if still open-like, block unlink.
+      }
+    }
+    if (posIntentStatusBlocksTerminalUnlink(status) || classifyMolliePosStatus(status) === "pending") {
+      // settled is classified pending in POS helper; do not block unlink on settled/paid.
+      if (status === "settled" || status === "paid") continue;
+      return {
+        blocked: true,
+        payment_id: paymentId || null,
+        mollie_status: status || null,
+        intent_key: row.key,
+      };
+    }
+  }
+  credentials = null;
+  return { blocked: false };
+}
+
+async function setCompanyMollieTerminalLinkState(env, scope, { terminalId, action }) {
+  const testMode = boolish(scope?.testmode ?? scope?.testMode);
+  const mollieMode = testMode ? "test" : "live";
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const key = buildScopedMollieTerminalsSnapshotKey({
+    tenant_id: tenantId,
+    company_id: companyId,
+    testmode: testMode,
+  });
+  if (!env?.BOOKING_KV || !key) {
+    return { ok: false, error: "invalid_terminals_snapshot_scope", status: "invalid_terminals_snapshot_scope" };
+  }
+  const wantId = safeStr(terminalId, 120);
+  if (!wantId) return { ok: false, error: "terminal_id_required", status: "terminal_id_required" };
+  const act = safeStr(action, 40).toLowerCase();
+  const snapshot = (await env.BOOKING_KV.get(key, { type: "json" })) || null;
+  if (!snapshot || typeof snapshot !== "object") {
+    return { ok: false, error: "terminal_snapshot_not_synced", status: "terminal_snapshot_not_synced" };
+  }
+  const terminals = Array.isArray(snapshot.terminals)
+    ? snapshot.terminals.map(_sanitizeMollieTerminalForSnapshot).filter((t) => !!t.id)
+    : [];
+  const found = terminals.find((t) => t.id === wantId);
+  if (!found) {
+    return { ok: false, error: "terminal_not_found_for_company", status: "terminal_not_found_for_company" };
+  }
+  if (act === "unlink" || act === "exclude") {
+    const pending = await companyTerminalHasBlockingOpenPayment(env, {
+      tenant_id: tenantId,
+      company_id: companyId,
+      testmode: testMode,
+    }, wantId);
+    if (pending?.blocked) {
+      return {
+        ok: false,
+        error: "terminal_unlink_blocked_pending_payment",
+        status: "terminal_unlink_blocked_pending_payment",
+        payment_id: pending.payment_id || null,
+        mollie_status: pending.mollie_status || null,
+      };
+    }
+  }
+  const applied = applyTerminalLinkAction({
+    excludedMap: snapshot.excluded_terminals,
+    terminalId: wantId,
+    action: act,
+    nowIso: new Date().toISOString(),
+  });
+  if (!applied.ok) {
+    return { ok: false, error: applied.error || "invalid_link_action", status: applied.error || "invalid_link_action" };
+  }
+  const merged = mergeProviderTerminalsWithExclusions({
+    providerTerminals: terminals,
+    previousExcluded: applied.excluded_terminals,
+  });
+  const annotated = merged.terminals.map(_sanitizeMollieTerminalForSnapshot).filter((t) => !!t.id);
+  const selectable = filterSelectablePosTerminals(annotated, merged.excluded_terminals);
+  const previousDefault = safeStr(
+    snapshot.default_terminal_id ?? snapshot.defaultTerminalId,
+    120,
+  );
+  const effective = resolveEffectiveDefaultTerminalId(selectable, previousDefault, {
+    profileId: safeStr(snapshot.profile_id, 80),
+    excluded_terminals: merged.excluded_terminals,
+  });
+  const next = {
+    ...snapshot,
+    ok: true,
+    version: Number(snapshot.version) || 1,
+    tenant_id: tenantId,
+    company_id: companyId,
+    status: safeStr(snapshot.status, 40) || "synced",
+    terminals: annotated,
+    excluded_terminals: merged.excluded_terminals,
+    default_terminal_id: effective.defaultTerminalId,
+    updated_at: new Date().toISOString(),
+  };
+  await env.BOOKING_KV.put(key, JSON.stringify(next));
+  return {
+    ..._presentCompanyMollieTerminalsSnapshot(next, {
+      tenantId,
+      companyId,
+      mollieMode,
+      testMode,
+    }),
+    action: act === "relink" || act === "include" ? "relinked" : "unlinked",
+  };
+}
+
 async function syncCompanyMollieTerminalsSnapshot(env, scope) {
   const testMode = boolish(scope?.testmode ?? scope?.testMode);
   const mollieMode = testMode ? "test" : "live";
@@ -9396,6 +9619,7 @@ async function syncCompanyMollieTerminalsSnapshot(env, scope) {
       mollie_mode: mollieMode,
       testmode: testMode,
       terminals: [],
+      excluded_terminals: {},
     };
   }
   const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
@@ -9413,14 +9637,38 @@ async function syncCompanyMollieTerminalsSnapshot(env, scope) {
       mollie_mode: mollieMode,
       testmode: testMode,
       terminals: [],
+      excluded_terminals: {},
     };
   }
+  const previous = (await env.BOOKING_KV.get(key, { type: "json" })) || null;
+  const previousExcluded = normalizeExcludedTerminalsMap(
+    previous?.excluded_terminals ?? previous?.excludedTerminals,
+  );
+  const previousDefault = safeStr(
+    previous?.default_terminal_id ?? previous?.defaultTerminalId,
+    120,
+  );
   const fetched = await fetchCompanyMollieTerminals(env, {
     tenant_id: tenantId,
     company_id: companyId,
     testmode: testMode,
   });
   if (!fetched?.ok) return fetched;
+  const providerTerminals = (Array.isArray(fetched.terminals) ? fetched.terminals : [])
+    .map(_sanitizeMollieTerminalForSnapshot)
+    .filter((t) => !!t.id);
+  const merged = mergeProviderTerminalsWithExclusions({
+    providerTerminals,
+    previousExcluded,
+  });
+  const terminals = merged.terminals
+    .map(_sanitizeMollieTerminalForSnapshot)
+    .filter((t) => !!t.id);
+  const selectable = filterSelectablePosTerminals(terminals, merged.excluded_terminals);
+  const effective = resolveEffectiveDefaultTerminalId(selectable, previousDefault, {
+    profileId: safeStr(fetched.profile_id, 80),
+    excluded_terminals: merged.excluded_terminals,
+  });
   const snapshot = {
     ok: true,
     version: 1,
@@ -9431,10 +9679,17 @@ async function syncCompanyMollieTerminalsSnapshot(env, scope) {
     testmode: testMode,
     status: "synced",
     synced_at: new Date().toISOString(),
-    terminals: Array.isArray(fetched.terminals) ? fetched.terminals : [],
+    terminals,
+    excluded_terminals: merged.excluded_terminals,
+    default_terminal_id: effective.defaultTerminalId,
   };
   await env.BOOKING_KV.put(key, JSON.stringify(snapshot));
-  return snapshot;
+  return _presentCompanyMollieTerminalsSnapshot(snapshot, {
+    tenantId,
+    companyId,
+    mollieMode,
+    testMode,
+  });
 }
 
 async function mollieConnectOAuthCallback(request, env) {
@@ -34482,26 +34737,89 @@ export default {
               status: "not_synced",
               synced_at: null,
               terminals: [],
+              excluded_terminals: {},
+              default_terminal_id: null,
             },
             200,
           );
         }
         return json(
+          _presentCompanyMollieTerminalsSnapshot(snapshot, {
+            tenantId,
+            companyId,
+            mollieMode,
+            testMode,
+          }),
+          200,
+        );
+      }
+
+      if (
+        (url.pathname === "/admin/mollie/terminals/unlink" ||
+          url.pathname === "/admin/mollie/terminals/relink") &&
+        request.method === "POST"
+      ) {
+        const body = await safeJson(request);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel:
+            url.pathname.endsWith("/unlink")
+              ? "ADMIN_MOLLIE_TERMINALS_UNLINK"
+              : "ADMIN_MOLLIE_TERMINALS_RELINK",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
+        const testMode = boolish(
+          body?.testmode ?? body?.testMode ?? url.searchParams.get("testmode"),
+        );
+        const terminalId = safeStr(body?.terminal_id ?? body?.terminalId, 120);
+        const action = url.pathname.endsWith("/unlink") ? "unlink" : "relink";
+        const out = await setCompanyMollieTerminalLinkState(
+          env,
+          { ...explicitScope, testmode: testMode },
+          { terminalId, action },
+        );
+        if (!out?.ok) {
+          const code =
+            safeStr(out?.error ?? out?.status, 80) || "mollie_terminal_link_failed";
+          const httpStatus =
+            code === "terminal_unlink_blocked_pending_payment"
+              ? 409
+              : code === "terminal_not_found_for_company"
+                ? 404
+                : 400;
+          console.log(
+            `[MOLLIE_TERMINALS][${action.toUpperCase()}_FAIL] tenant=${explicitScope.tenant_id} company=${explicitScope.company_id} terminal=${_bookingIntentMask(terminalId)} code=${code}`,
+          );
+          return json(
+            {
+              ok: false,
+              error: code,
+              code,
+              status: code,
+              tenant_id: explicitScope.tenant_id,
+              company_id: explicitScope.company_id,
+              terminal_id: terminalId || null,
+              payment_id: out?.payment_id || null,
+              mollie_status: out?.mollie_status || null,
+              // Explicit: Fluxidi-only unlink; Mollie provider terminal untouched.
+              provider_delete_called: false,
+              provider_deactivate_called: false,
+            },
+            httpStatus,
+          );
+        }
+        console.log(
+          `[MOLLIE_TERMINALS][${action.toUpperCase()}_OK] tenant=${explicitScope.tenant_id} company=${explicitScope.company_id} terminal=${_bookingIntentMask(terminalId)}`,
+        );
+        return json(
           {
-            ok: true,
-            version: 1,
-            tenant_id: tenantId,
-            company_id: companyId,
-            profile_id: safeStr(snapshot.profile_id ?? snapshot.profileId, 80) || null,
-            mollie_mode: mollieMode,
-            testmode: boolish(snapshot.testmode ?? snapshot.testMode ?? testMode),
-            status: safeStr(snapshot.status, 40) || "synced",
-            synced_at: safeStr(snapshot.synced_at ?? snapshot.syncedAt, 80) || null,
-            terminals: Array.isArray(snapshot.terminals)
-              ? snapshot.terminals
-                  .map(_sanitizeMollieTerminalForSnapshot)
-                  .filter((terminal) => !!terminal.id)
-              : [],
+            ...out,
+            provider_delete_called: false,
+            provider_deactivate_called: false,
           },
           200,
         );
@@ -34653,6 +34971,9 @@ export default {
           credentials = null;
           return _adminPosTerminalError("terminal_snapshot_not_synced", 400);
         }
+        const excludedMap = normalizeExcludedTerminalsMap(
+          snapshot.excluded_terminals ?? snapshot.excludedTerminals,
+        );
         const terminals = Array.isArray(snapshot.terminals)
           ? snapshot.terminals
               .map(_sanitizeMollieTerminalForSnapshot)
@@ -34662,6 +34983,12 @@ export default {
         if (!terminal) {
           credentials = null;
           return _adminPosTerminalError("terminal_not_found_for_company", 404);
+        }
+        if (isTerminalExcluded(terminal, excludedMap)) {
+          credentials = null;
+          return _adminPosTerminalError("terminal_excluded", 400, {
+            terminal: _adminPosTerminalResponseTerminal(terminal),
+          });
         }
         if (safeStr(terminal.status, 64).toLowerCase() !== "active") {
           credentials = null;
@@ -82612,11 +82939,15 @@ async function resolveDriverPosTerminalCapability(env, tenantScope) {
       error: "terminal_snapshot_mode_mismatch",
     };
   }
+  const excludedMap = normalizeExcludedTerminalsMap(
+    snapshot.excluded_terminals ?? snapshot.excludedTerminals,
+  );
   const terminals = Array.isArray(snapshot.terminals)
     ? snapshot.terminals
         .map(_sanitizeMollieTerminalForSnapshot)
         .filter((t) => !!t?.id)
     : [];
+  const selectable = filterSelectablePosTerminals(terminals, excludedMap);
   const defaultTerminalId = safeStr(
     snapshot.default_terminal_id ??
       snapshot.defaultTerminalId ??
@@ -82624,9 +82955,10 @@ async function resolveDriverPosTerminalCapability(env, tenantScope) {
       snapshot.selectedTerminalId,
     120,
   );
-  const selected = selectServerSidePosTerminal(terminals, {
+  const selected = selectServerSidePosTerminal(selectable, {
     profileId: companyMollieProfileId,
     defaultTerminalId,
+    excluded_terminals: excludedMap,
   });
   if (!selected?.ok) {
     const err = selected?.error || "terminal_not_configured";
@@ -82634,7 +82966,7 @@ async function resolveDriverPosTerminalCapability(env, tenantScope) {
     if (err === "terminal_selection_required") {
       status = "multiple_terminals_need_default";
     } else if (err === "terminal_not_configured") {
-      const anyActive = terminals.some(
+      const anyActive = selectable.some(
         (t) => String(t?.status || "").toLowerCase() === "active",
       );
       status = anyActive
@@ -82751,11 +83083,15 @@ async function startDriverPosTerminalPaymentAuthoritative(
     credentials = null;
     return { ok: false, error: "terminal_snapshot_mode_mismatch" };
   }
+  const excludedMap = normalizeExcludedTerminalsMap(
+    snapshot.excluded_terminals ?? snapshot.excludedTerminals,
+  );
   const terminals = Array.isArray(snapshot.terminals)
     ? snapshot.terminals
         .map(_sanitizeMollieTerminalForSnapshot)
         .filter((t) => !!t?.id)
     : [];
+  const selectable = filterSelectablePosTerminals(terminals, excludedMap);
   const defaultTerminalId = safeStr(
     snapshot.default_terminal_id ??
       snapshot.defaultTerminalId ??
@@ -82763,9 +83099,10 @@ async function startDriverPosTerminalPaymentAuthoritative(
       snapshot.selectedTerminalId,
     120,
   );
-  const selected = selectServerSidePosTerminal(terminals, {
+  const selected = selectServerSidePosTerminal(selectable, {
     profileId: companyMollieProfileId,
     defaultTerminalId,
+    excluded_terminals: excludedMap,
   });
   if (!selected?.ok) {
     credentials = null;

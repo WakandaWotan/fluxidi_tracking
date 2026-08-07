@@ -216,6 +216,37 @@ InPersonTerminalStatus resolveTapToPayCapabilityStatus(Map<String, dynamic>? raw
   return InPersonTerminalStatus.noTerminal;
 }
 
+/// True when a snapshot terminal is Fluxidi-excluded / unlinked.
+bool isMollieTerminalExcludedInSnapshot(Map terminal) {
+  if (terminal['excluded'] == true || terminal['excluded'] == 'true') {
+    return true;
+  }
+  if (terminal['linked'] == false || terminal['linked'] == 'false') {
+    return true;
+  }
+  return false;
+}
+
+/// Terminals eligible for Tap to Pay from a company snapshot.
+List<Map<String, dynamic>> selectableMollieTerminalsFromSnapshot(
+  Map<String, dynamic>? snapshot,
+) {
+  if (snapshot == null) return const <Map<String, dynamic>>[];
+  final terminalsRaw = snapshot['terminals'];
+  if (terminalsRaw is! List) return const <Map<String, dynamic>>[];
+  final out = <Map<String, dynamic>>[];
+  for (final t in terminalsRaw) {
+    if (t is! Map) continue;
+    final map = Map<String, dynamic>.from(t);
+    if (isMollieTerminalExcludedInSnapshot(map)) continue;
+    if (_norm(map['status']) != 'active') continue;
+    final id = (map['id'] ?? '').toString().trim();
+    if (id.isEmpty) continue;
+    out.add(map);
+  }
+  return out;
+}
+
 /// Resolve from a Mollie terminals snapshot map (admin/company fetch).
 InPersonTerminalStatus resolveTapToPayStatusFromTerminalsSnapshot(
   Map<String, dynamic>? snapshot,
@@ -223,12 +254,8 @@ InPersonTerminalStatus resolveTapToPayStatusFromTerminalsSnapshot(
   if (snapshot == null) return InPersonTerminalStatus.noTerminal;
   final terminalsRaw = snapshot['terminals'];
   final terminals = terminalsRaw is List ? terminalsRaw : const <dynamic>[];
-  var active = 0;
-  for (final t in terminals) {
-    if (t is! Map) continue;
-    final status = _norm(t['status']);
-    if (status == 'active') active += 1;
-  }
+  final selectable = selectableMollieTerminalsFromSnapshot(snapshot);
+  final active = selectable.length;
   final hasDefault =
       (snapshot['default_terminal_id'] ?? snapshot['defaultTerminalId'] ?? '')
           .toString()
@@ -246,6 +273,7 @@ InPersonTerminalStatus resolveTapToPayStatusFromTerminalsSnapshot(
   return resolveInPersonTerminalStatus(
     snapshotStatus: statusCode,
     terminalCount: terminals.length,
+    // Only linked, non-excluded, provider-active terminals count for Tap to Pay.
     activeTerminalCount: active,
     hasDefault: hasDefault,
     syncedAt: syncedAt,
