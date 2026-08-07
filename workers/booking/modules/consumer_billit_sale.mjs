@@ -357,6 +357,193 @@ export function buildConsumerSaleIdempotencyKey({
   return `inv-consumer:${t}:${c}:${b}:${leg}:${CONSUMER_SALE_KIND}:v1`;
 }
 
+/**
+ * CONSUMER-BILLIT-EXACTLY-ONCE-CREATE-P0
+ *
+ * Booking/sale-scoped durable creation intent. Claimed BEFORE Document Core
+ * allocates an INV number or UUID, so concurrent finalize / webhook /
+ * /pay/status callers converge on one sale instead of each minting a document.
+ *
+ * Mirrors existing booking-scoped intent naming
+ * (`tenant:…:company:…:mollie_driver_pos_intent:…`, `direct_ride_key:…`).
+ */
+export const CONSUMER_SALE_INTENT_STATES = Object.freeze({
+  PENDING: "pending",
+  ISSUING: "issuing",
+  BILLIT_CREATING: "billit_creating",
+  REGISTERED: "registered",
+  FAILED: "failed",
+});
+
+export function buildConsumerBillitSaleIntentKey({
+  tenantId,
+  companyId,
+  bookingId,
+  legId = null,
+} = {}) {
+  const t = _str(tenantId, 96);
+  const c = _str(companyId, 96);
+  const b = _str(bookingId, 160);
+  if (!t || !c || !b) return null;
+  const leg = _str(legId, 160) || "main";
+  return `tenant:${t}:company:${c}:consumer_billit_sale_intent:${b}:${leg}:v1`;
+}
+
+/**
+ * Billit create Idempotent-Key for a consumer sale.
+ *
+ * MUST derive from the canonical sale identity — never from a freshly minted
+ * document UUID. Two independently allocated docs would otherwise produce two
+ * independent Billit creates (`fluxidi-billit-order-create:{documentId}:…`).
+ */
+export function buildBillitConsumerSaleOrderCreateIdempotencyKey(
+  saleIdempotencyKey,
+) {
+  const key = _str(saleIdempotencyKey, 200);
+  if (!key) return null;
+  return `fluxidi-billit-consumer-order:${key}:sandbox:v1`;
+}
+
+export function normalizeConsumerBillitSaleIntent(raw = null) {
+  const obj = _asObject(raw);
+  const state = _lower(obj.state, 40);
+  const allowed = new Set(Object.values(CONSUMER_SALE_INTENT_STATES));
+  return {
+    document_id: _str(obj.document_id ?? obj.documentId, 200) || null,
+    document_number: _str(obj.document_number ?? obj.documentNumber, 80) || null,
+    billit_order_id: _str(obj.billit_order_id ?? obj.billitOrderId, 120) || null,
+    sale_idempotency_key:
+      _str(obj.sale_idempotency_key ?? obj.saleIdempotencyKey, 200) || null,
+    holder_id: _str(obj.holder_id ?? obj.holderId, 80) || null,
+    state: allowed.has(state) ? state : CONSUMER_SALE_INTENT_STATES.PENDING,
+    updated_at: _str(obj.updated_at ?? obj.updatedAt, 40) || null,
+    created_at: _str(obj.created_at ?? obj.createdAt, 40) || null,
+    last_error: _str(obj.last_error ?? obj.lastError, 160) || null,
+  };
+}
+
+/**
+ * Pure owner/waiter decision after an intent claim + existing-doc lookup.
+ *
+ * - owner + no document → this caller may allocate Document Core
+ * - any caller with a stored document_id → reuse (never mint a second INV)
+ * - waiter without document yet → wait / retry (never allocate)
+ */
+export function resolveConsumerSaleIssueOwnerDecision({
+  isOwner = false,
+  intentDocumentId = "",
+  intentBillitOrderId = "",
+  existingDocumentId = "",
+  existingBillitOrderId = "",
+} = {}) {
+  const documentId =
+    _str(intentDocumentId, 200) || _str(existingDocumentId, 200) || null;
+  const billitOrderId =
+    _str(intentBillitOrderId, 120) || _str(existingBillitOrderId, 120) || null;
+  if (billitOrderId && documentId) {
+    return {
+      action: "reuse",
+      reason: "intent_or_existing_registered",
+      document_id: documentId,
+      billit_order_id: billitOrderId,
+      may_issue: false,
+    };
+  }
+  if (documentId) {
+    return {
+      action: "ensure_billit_order",
+      reason: "intent_or_existing_document",
+      document_id: documentId,
+      billit_order_id: null,
+      may_issue: false,
+    };
+  }
+  if (isOwner) {
+    return {
+      action: "issue",
+      reason: "intent_owner_no_document",
+      document_id: null,
+      billit_order_id: null,
+      may_issue: true,
+    };
+  }
+  return {
+    action: "wait",
+    reason: "intent_owned_by_peer",
+    document_id: null,
+    billit_order_id: null,
+    may_issue: false,
+  };
+}
+
+/**
+ * Ambiguous remote timeout reconcile before a consumer Billit CREATE.
+ *
+ * When Billit POST may have succeeded but the local response was lost,
+ * never mint a new sale identity — reuse intent document + sale-scoped
+ * Idempotent-Key. CREATE is only allowed after local reconcile proves no
+ * prior order_id is known.
+ */
+export function reconcileConsumerBillitCreateDecision({
+  intentDocumentId = "",
+  intentBillitOrderId = "",
+  documentBillitOrderId = "",
+  lastError = "",
+  hasRemoteOrderByExternalRef = null,
+} = {}) {
+  const documentId = _str(intentDocumentId, 200) || null;
+  const orderId =
+    _str(intentBillitOrderId, 120) ||
+    _str(documentBillitOrderId, 120) ||
+    null;
+  if (orderId) {
+    return {
+      action: "reuse_order",
+      may_create: false,
+      reason: "local_order_known",
+      document_id: documentId,
+      billit_order_id: orderId,
+    };
+  }
+  if (hasRemoteOrderByExternalRef === true) {
+    return {
+      action: "reuse_remote_order",
+      may_create: false,
+      reason: "remote_order_found_by_external_ref",
+      document_id: documentId,
+      billit_order_id: null,
+    };
+  }
+  if (!documentId) {
+    return {
+      action: "need_document",
+      may_create: false,
+      reason: "no_document_allocated",
+      document_id: null,
+      billit_order_id: null,
+    };
+  }
+  const err = _lower(lastError, 80);
+  if (err === "ambiguous_remote_timeout" || err === "order_create_request_failed") {
+    return {
+      action: "retry_same_sale_key",
+      may_create: true,
+      reason: "ambiguous_timeout_reconcile_then_same_key",
+      document_id: documentId,
+      billit_order_id: null,
+      creates_new_sale_document: false,
+    };
+  }
+  return {
+    action: "create_order",
+    may_create: true,
+    reason: "no_prior_order_after_reconcile",
+    document_id: documentId,
+    billit_order_id: null,
+    creates_new_sale_document: false,
+  };
+}
+
 export function consumerSalePeppolPolicy() {
   return {
     peppol_applicable: false,

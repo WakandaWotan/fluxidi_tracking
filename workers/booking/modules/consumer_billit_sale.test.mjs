@@ -7,7 +7,10 @@ import assert from "node:assert/strict";
 import {
   CONSUMER_SALE_BILLIT_ORDER_TYPE,
   CONSUMER_SALE_KIND,
+  CONSUMER_SALE_INTENT_STATES,
   activeRevenueDocumentsAfterConversion,
+  buildBillitConsumerSaleOrderCreateIdempotencyKey,
+  buildConsumerBillitSaleIntentKey,
   buildConsumerConversionCreditIdempotencyKey,
   buildConsumerConversionLinkTrail,
   buildConsumerSaleDocumentMetadata,
@@ -21,7 +24,9 @@ import {
   isActiveRevenueDocument,
   isConsumerSaleEligibleRecord,
   mapConsumerSalePaymentMethodLabel,
+  reconcileConsumerBillitCreateDecision,
   resolveConsumerSaleAmount,
+  resolveConsumerSaleIssueOwnerDecision,
   resolveConsumerSalePaymentSyncGate,
   resolveConsumerSaleRegistrationGate,
   resolveConsumerSaleVatFromSnapshot,
@@ -431,4 +436,101 @@ test("eligibility requires completed private ride", () => {
     false,
   );
   assert.equal(isConsumerSaleEligibleRecord(street()), true);
+});
+
+test("P0 exactly-once: canonical sale + intent keys are stable and tenant-isolated", () => {
+  const sale = buildConsumerSaleIdempotencyKey({
+    tenantId: "T1",
+    companyId: "C1",
+    bookingId: "street_1",
+    legId: null,
+  });
+  assert.equal(sale, "inv-consumer:T1:C1:street_1:main:consumer_sale:v1");
+  const intent = buildConsumerBillitSaleIntentKey({
+    tenantId: "T1",
+    companyId: "C1",
+    bookingId: "street_1",
+  });
+  assert.equal(
+    intent,
+    "tenant:T1:company:C1:consumer_billit_sale_intent:street_1:main:v1",
+  );
+  const billitKey = buildBillitConsumerSaleOrderCreateIdempotencyKey(sale);
+  assert.equal(
+    billitKey,
+    `fluxidi-billit-consumer-order:${sale}:sandbox:v1`,
+  );
+  assert.notEqual(
+    buildConsumerBillitSaleIntentKey({
+      tenantId: "T2",
+      companyId: "C1",
+      bookingId: "street_1",
+    }),
+    intent,
+  );
+  // Roundtrip legs remain distinct.
+  assert.notEqual(
+    buildConsumerSaleIdempotencyKey({
+      tenantId: "T1",
+      companyId: "C1",
+      bookingId: "bk_rt",
+      legId: "leg_out",
+    }),
+    buildConsumerSaleIdempotencyKey({
+      tenantId: "T1",
+      companyId: "C1",
+      bookingId: "bk_rt",
+      legId: "leg_ret",
+    }),
+  );
+});
+
+test("P0 exactly-once: owner/waiter decision never double-mints", () => {
+  assert.equal(
+    resolveConsumerSaleIssueOwnerDecision({ isOwner: true }).action,
+    "issue",
+  );
+  assert.equal(
+    resolveConsumerSaleIssueOwnerDecision({ isOwner: false }).action,
+    "wait",
+  );
+  assert.equal(
+    resolveConsumerSaleIssueOwnerDecision({
+      isOwner: true,
+      intentDocumentId: "doc-1",
+    }).may_issue,
+    false,
+  );
+  assert.equal(
+    resolveConsumerSaleIssueOwnerDecision({
+      isOwner: false,
+      existingDocumentId: "doc-1",
+      existingBillitOrderId: "ord-1",
+    }).action,
+    "reuse",
+  );
+});
+
+test("P0 exactly-once: ambiguous timeout reconciles before CREATE", () => {
+  assert.equal(
+    reconcileConsumerBillitCreateDecision({
+      intentDocumentId: "doc-1",
+      intentBillitOrderId: "ord-1",
+    }).may_create,
+    false,
+  );
+  const ambiguous = reconcileConsumerBillitCreateDecision({
+    intentDocumentId: "doc-1",
+    lastError: "ambiguous_remote_timeout",
+  });
+  assert.equal(ambiguous.action, "retry_same_sale_key");
+  assert.equal(ambiguous.may_create, true);
+  assert.equal(ambiguous.creates_new_sale_document, false);
+  assert.equal(
+    reconcileConsumerBillitCreateDecision({
+      intentDocumentId: "",
+    }).action,
+    "need_document",
+  );
+  assert.equal(CONSUMER_SALE_INTENT_STATES.BILLIT_CREATING, "billit_creating");
 });

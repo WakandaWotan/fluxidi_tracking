@@ -248,6 +248,9 @@ import {
 } from "./modules/pos_terminal_payment.mjs";
 import {
   CONSUMER_SALE_KIND,
+  CONSUMER_SALE_INTENT_STATES,
+  buildBillitConsumerSaleOrderCreateIdempotencyKey,
+  buildConsumerBillitSaleIntentKey,
   buildConsumerConversionCreditIdempotencyKey,
   buildConsumerConversionLinkTrail,
   buildConsumerSaleDocumentMetadata,
@@ -259,7 +262,9 @@ import {
   hasMeaningfulBusinessBillingCustomer,
   isBookingCompletedForConsumerSale,
   isConsumerSaleEligibleRecord,
+  normalizeConsumerBillitSaleIntent,
   resolveConsumerSaleAmount,
+  resolveConsumerSaleIssueOwnerDecision,
   resolveConsumerSalePaymentSyncGate,
   resolveConsumerSaleRegistrationGate,
   resolveConsumerSaleVatFromSnapshot,
@@ -4158,7 +4163,127 @@ async function reconcileConsumerSaleForCompletedBooking(
 }
 
 /**
- * CONSUMER-BILLIT-SERVER-CONTRACT-1: register private ride revenue in Billit.
+ * CONSUMER-BILLIT-EXACTLY-ONCE-CREATE-P0: durable booking/sale creation intent.
+ * Claimed before Document Core allocates an INV / UUID so concurrent finalize,
+ * Mollie webhook and /pay/status converge on one sale.
+ */
+async function loadConsumerBillitSaleIntent(env, scope, bookingId, legId = null) {
+  const key = buildConsumerBillitSaleIntentKey({
+    tenantId: scope?.tenant_id ?? scope?.tenantId,
+    companyId: scope?.company_id ?? scope?.companyId,
+    bookingId,
+    legId,
+  });
+  if (!key || !env?.BOOKING_KV) return { key: null, intent: null };
+  try {
+    const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    return { key, intent: normalizeConsumerBillitSaleIntent(raw) };
+  } catch (_) {
+    return { key, intent: null };
+  }
+}
+
+async function claimConsumerBillitSaleIntent(
+  env,
+  scope,
+  bookingId,
+  legId,
+  saleIdempotencyKey,
+) {
+  const key = buildConsumerBillitSaleIntentKey({
+    tenantId: scope?.tenant_id ?? scope?.tenantId,
+    companyId: scope?.company_id ?? scope?.companyId,
+    bookingId,
+    legId,
+  });
+  if (!key || !env?.BOOKING_KV || !saleIdempotencyKey) {
+    return { key: null, owner: false, intent: null, holderId: null };
+  }
+  const holderId =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `holder_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  try {
+    const existing = await env.BOOKING_KV.get(key, { type: "json" });
+    if (existing && typeof existing === "object" && !Array.isArray(existing)) {
+      return {
+        key,
+        owner: false,
+        intent: normalizeConsumerBillitSaleIntent(existing),
+        holderId,
+      };
+    }
+    const nowIso = new Date().toISOString();
+    const seed = {
+      document_id: null,
+      document_number: null,
+      billit_order_id: null,
+      sale_idempotency_key: saleIdempotencyKey,
+      holder_id: holderId,
+      state: CONSUMER_SALE_INTENT_STATES.PENDING,
+      created_at: nowIso,
+      updated_at: nowIso,
+      last_error: null,
+    };
+    await env.BOOKING_KV.put(key, JSON.stringify(seed));
+    // Readback detects the classic TOCTOU where two writers both saw empty.
+    const verified = await env.BOOKING_KV.get(key, { type: "json" });
+    const intent = normalizeConsumerBillitSaleIntent(verified);
+    const owner = intent.holder_id === holderId;
+    return { key, owner, intent, holderId };
+  } catch (_) {
+    return { key, owner: false, intent: null, holderId };
+  }
+}
+
+async function patchConsumerBillitSaleIntent(env, key, patch = {}) {
+  if (!env?.BOOKING_KV || !key) return null;
+  try {
+    const current = await env.BOOKING_KV.get(key, { type: "json" });
+    const base = normalizeConsumerBillitSaleIntent(current);
+    const next = normalizeConsumerBillitSaleIntent({
+      ...base,
+      ...patch,
+      updated_at: new Date().toISOString(),
+      created_at: base.created_at || new Date().toISOString(),
+    });
+    await env.BOOKING_KV.put(key, JSON.stringify(next));
+    return next;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function waitForConsumerBillitSaleIntentDocument(
+  env,
+  key,
+  { timeoutMs = 2500, intervalMs = 40 } = {},
+) {
+  if (!env?.BOOKING_KV || !key) return null;
+  const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
+  while (Date.now() <= deadline) {
+    try {
+      const raw = await env.BOOKING_KV.get(key, { type: "json" });
+      const intent = normalizeConsumerBillitSaleIntent(raw);
+      if (intent.document_id) return intent;
+      if (intent.state === CONSUMER_SALE_INTENT_STATES.FAILED) return intent;
+    } catch (_) {
+      // keep polling
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  try {
+    return normalizeConsumerBillitSaleIntent(
+      await env.BOOKING_KV.get(key, { type: "json" }),
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * CONSUMER-BILLIT-SERVER-CONTRACT-1 / CONSUMER-BILLIT-EXACTLY-ONCE-CREATE-P0:
+ * register private ride revenue in Billit exactly once per canonical sale.
  * Triggered on completed/finalized consumer rides (not business invoice intent).
  * Billit OrderType remains Invoice; Fluxidi presentation is consumer_sale.
  */
@@ -4234,12 +4359,34 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
     return { ok: true, skipped: true, reason: gate.reason };
   }
   if (gate.action === "reuse") {
+    const saleKey = buildConsumerSaleIdempotencyKey({
+      tenantId: scope.tenant_id,
+      companyId: scope.company_id,
+      bookingId,
+      legId: sourceLegId,
+    });
+    const intentKey = buildConsumerBillitSaleIntentKey({
+      tenantId: scope.tenant_id,
+      companyId: scope.company_id,
+      bookingId,
+      legId: sourceLegId,
+    });
+    if (intentKey && saleKey) {
+      await patchConsumerBillitSaleIntent(env, intentKey, {
+        document_id: gate.document_id,
+        billit_order_id: gate.billit_order_id,
+        sale_idempotency_key: saleKey,
+        state: CONSUMER_SALE_INTENT_STATES.REGISTERED,
+        last_error: null,
+      });
+    }
     await stampConsumerSaleMarkersOnBooking(env, bookingId, {
       document_id: gate.document_id,
       billit_order_id: gate.billit_order_id,
       status: "registered",
       amount: { currency: amount.currency, value: amount.value },
       amount_source: amount.source,
+      idempotency_key: saleKey,
     });
     return {
       ok: true,
@@ -4247,6 +4394,7 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
       reason: "idempotent_reuse",
       document_id: gate.document_id,
       billit_order_id: gate.billit_order_id,
+      creates_new_sale_document: false,
       peppol_sent: false,
     };
   }
@@ -4274,43 +4422,153 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
     return { ok: false, skipped: true, reason: "idempotency_key_unavailable" };
   }
 
-  let documentId = existing?.document_id || null;
-  let documentNumber = existing?.document_number || null;
-  let documentRecord = existing?.document_record || null;
+  // CONSUMER-BILLIT-EXACTLY-ONCE-CREATE-P0: claim the durable sale intent BEFORE
+  // Document Core allocates. Concurrent finalize / webhook / /pay/status must
+  // converge here — only the intent owner may mint an INV / document UUID.
+  const claim = await claimConsumerBillitSaleIntent(
+    env,
+    scope,
+    bookingId,
+    sourceLegId,
+    idempotencyKey,
+  );
+  let intent = claim.intent;
+  const ownerDecision = resolveConsumerSaleIssueOwnerDecision({
+    isOwner: claim.owner === true,
+    intentDocumentId: intent?.document_id || "",
+    intentBillitOrderId: intent?.billit_order_id || "",
+    existingDocumentId: existing?.document_id || "",
+    existingBillitOrderId: existing?.billit_order_id || "",
+  });
 
-  if (gate.action === "create" || !documentId) {
-    let serverPricingProfile = null;
+  let documentId =
+    ownerDecision.document_id || existing?.document_id || intent?.document_id || null;
+  let documentNumber =
+    existing?.document_number || intent?.document_number || null;
+  let documentRecord = existing?.document_record || null;
+  let billitOrderId =
+    ownerDecision.billit_order_id ||
+    existing?.billit_order_id ||
+    intent?.billit_order_id ||
+    null;
+
+  if (ownerDecision.action === "wait" && !documentId) {
+    intent = await waitForConsumerBillitSaleIntentDocument(env, claim.key);
+    documentId = intent?.document_id || null;
+    documentNumber = intent?.document_number || documentNumber;
+    billitOrderId = intent?.billit_order_id || billitOrderId;
+    if (!documentId) {
+      // Peer still allocating — do NOT mint a second document.
+      console.log(
+        `[CONSUMER_BILLIT_SALE][INTENT_WAIT] booking=${maskedBooking} reason=peer_in_progress`,
+      );
+      return {
+        ok: false,
+        skipped: false,
+        reason: "consumer_sale_intent_in_progress",
+        retryable: true,
+        creates_new_sale_document: false,
+      };
+    }
+  }
+
+  if (documentId && !documentRecord) {
     try {
-      serverPricingProfile = await _loadTenantPricingProfile(env, scope, {
-        allowTenantLegacyFallback: true,
-      });
+      documentRecord = await loadIssuedDocumentRegistryRecordById(
+        env,
+        scope,
+        documentId,
+      );
+      if (documentRecord) {
+        documentNumber =
+          documentNumber ||
+          safeStr(
+            documentRecord.document_number ?? documentRecord.documentNumber,
+            80,
+          ) ||
+          null;
+        const exportObj =
+          documentRecord.billit_export &&
+          typeof documentRecord.billit_export === "object"
+            ? documentRecord.billit_export
+            : null;
+        billitOrderId =
+          billitOrderId || safeStr(exportObj?.order_id, 120) || null;
+      }
     } catch (_) {
-      serverPricingProfile = null;
+      // continue with ids from intent
     }
-    const built = buildAutoInvoiceIssueBodyFromBooking({
-      scope,
-      booking: rec,
-      bookingId,
-      sourceLegId,
-      sourceLegType,
-      serverPricingProfile,
+  }
+
+  if (ownerDecision.may_issue === true && !documentId) {
+    await patchConsumerBillitSaleIntent(env, claim.key, {
+      state: CONSUMER_SALE_INTENT_STATES.ISSUING,
+      sale_idempotency_key: idempotencyKey,
+      holder_id: claim.holderId || intent?.holder_id,
     });
-    if (!built.ok) {
-      return { ok: false, skipped: true, reason: built.error || "issue_body_failed" };
-    }
-    // Distinct consumer identity — never collide with business inv-auto keys.
-    built.body.idempotency_key = idempotencyKey;
-    built.body.fluxidi_sale_kind = CONSUMER_SALE_KIND;
-    built.body.created_by_role = "system_consumer_sale";
-    // Authoritative consumer VAT (snapped to Billit BE catalog, e.g. 5.99→6).
-    if (Number.isFinite(Number(vat.vat_rate_percent))) {
-      built.body.vat_rate_percent = vat.vat_rate_percent;
-      if (built.body.expected_totals && typeof built.body.expected_totals === "object") {
-        built.body.expected_totals.vat_rate_percent = vat.vat_rate_percent;
+    let built = null;
+    const hasIssueImpl = typeof opts.issueInvoiceImpl === "function";
+    if (!hasIssueImpl) {
+      let serverPricingProfile = null;
+      try {
+        serverPricingProfile = await _loadTenantPricingProfile(env, scope, {
+          allowTenantLegacyFallback: true,
+        });
+      } catch (_) {
+        serverPricingProfile = null;
+      }
+      built = buildAutoInvoiceIssueBodyFromBooking({
+        scope,
+        booking: rec,
+        bookingId,
+        sourceLegId,
+        sourceLegType,
+        serverPricingProfile,
+      });
+      if (!built.ok) {
+        await patchConsumerBillitSaleIntent(env, claim.key, {
+          state: CONSUMER_SALE_INTENT_STATES.FAILED,
+          last_error: built.error || "issue_body_failed",
+        });
+        return { ok: false, skipped: true, reason: built.error || "issue_body_failed" };
+      }
+      // Distinct consumer identity — never collide with business inv-auto keys.
+      built.body.idempotency_key = idempotencyKey;
+      built.body.fluxidi_sale_kind = CONSUMER_SALE_KIND;
+      built.body.created_by_role = "system_consumer_sale";
+      // Authoritative consumer VAT (snapped to Billit BE catalog, e.g. 5.99→6).
+      if (Number.isFinite(Number(vat.vat_rate_percent))) {
+        built.body.vat_rate_percent = vat.vat_rate_percent;
+        if (built.body.expected_totals && typeof built.body.expected_totals === "object") {
+          built.body.expected_totals.vat_rate_percent = vat.vat_rate_percent;
+        }
+      }
+    } else {
+      // Hermetic tests inject issueInvoiceImpl — still pass the canonical sale key.
+      built = {
+        ok: true,
+        body: {
+          source_booking_id: bookingId,
+          canonical_booking_id: bookingId,
+          currency: amount.currency,
+          expected_totals: {
+            total_incl_vat: Number(amount.value),
+            vat_rate_percent: vat.vat_rate_percent,
+          },
+          idempotency_key: idempotencyKey,
+          fluxidi_sale_kind: CONSUMER_SALE_KIND,
+          created_by_role: "system_consumer_sale",
+          vat_rate_percent: vat.vat_rate_percent,
+        },
+      };
+      if (sourceLegId) {
+        built.body.source_leg_id = sourceLegId;
+        if (sourceLegType) built.body.source_leg_type = sourceLegType;
       }
     }
 
-    const issueResp = await _issueInvoiceCore({
+    const issueImpl = hasIssueImpl ? opts.issueInvoiceImpl : _issueInvoiceCore;
+    const issueResp = await issueImpl({
       env,
       body: built.body,
       scope,
@@ -4329,6 +4587,10 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
       console.log(
         `[CONSUMER_BILLIT_SALE][ISSUE_FAIL] booking=${maskedBooking} error=${failReason}`,
       );
+      await patchConsumerBillitSaleIntent(env, claim.key, {
+        state: CONSUMER_SALE_INTENT_STATES.FAILED,
+        last_error: failReason,
+      });
       await stampConsumerSaleFailureOnBooking(env, bookingId, {
         reason: failReason,
         sourceLegId,
@@ -4344,6 +4606,26 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
     documentNumber =
       safeStr(issueData.document_number ?? issueData.documentNumber, 80) || null;
     documentRecord = issueData.document_record || issueData.document || null;
+    // Persist the permanently assigned document id BEFORE Billit create so a
+    // crash/timeout after allocation never lets a peer mint a second INV.
+    intent = await patchConsumerBillitSaleIntent(env, claim.key, {
+      document_id: documentId,
+      document_number: documentNumber,
+      sale_idempotency_key: idempotencyKey,
+      holder_id: claim.holderId || intent?.holder_id,
+      state: CONSUMER_SALE_INTENT_STATES.BILLIT_CREATING,
+      last_error: null,
+    });
+  } else if (documentId && claim.key) {
+    intent = await patchConsumerBillitSaleIntent(env, claim.key, {
+      document_id: documentId,
+      document_number: documentNumber,
+      billit_order_id: billitOrderId,
+      sale_idempotency_key: idempotencyKey,
+      state: billitOrderId
+        ? CONSUMER_SALE_INTENT_STATES.REGISTERED
+        : CONSUMER_SALE_INTENT_STATES.BILLIT_CREATING,
+    });
   }
 
   // Always reload + stamp consumer-sale metadata on the registry row so
@@ -4393,92 +4675,176 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
   }
 
   // Billit sandbox order create (OrderType Invoice). Peppol never sent here.
-  let billitOrderId = existing?.billit_order_id || null;
+  // Reuse any order already known on the intent / existing markers — never
+  // allocate a second consumer invoice for this canonical sale.
+  billitOrderId =
+    billitOrderId || existing?.billit_order_id || intent?.billit_order_id || null;
   const config = resolveBillitOAuthConfig(env);
-  if (config.environment === "sandbox" && documentId) {
-    try {
-      if (!documentRecord || typeof documentRecord !== "object") {
-        documentRecord = await loadIssuedDocumentRegistryRecordById(
-          env,
-          scope,
-          documentId,
+  if (config.environment === "sandbox" && documentId && !billitOrderId) {
+    const lockHolder =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `consumer_billit_${Date.now()}`;
+    const lock = await _acquireBillitRecoveryLock(
+      env,
+      scope,
+      documentId,
+      lockHolder,
+    );
+    if (!lock.acquired) {
+      // Peer is creating/reconciling the Billit order for this document.
+      // Re-read intent; do NOT POST a second create.
+      const waited = await waitForConsumerBillitSaleIntentDocument(env, claim.key, {
+        timeoutMs: 1500,
+        intervalMs: 40,
+      });
+      billitOrderId = waited?.billit_order_id || billitOrderId;
+      if (!billitOrderId) {
+        billitLastError = "consumer_billit_create_locked";
+        console.log(
+          `[CONSUMER_BILLIT_SALE][BILLIT_LOCK] booking=${maskedBooking} reason=concurrent_create`,
         );
       }
-      // Heal near-miss VAT percentages (5.99→6) that Billit BE rejects.
-      if (documentRecord && typeof documentRecord === "object") {
-        const totals =
-          documentRecord.totals && typeof documentRecord.totals === "object"
-            ? documentRecord.totals
-            : null;
-        const rawVat = totals?.vat_rate_percent ?? totals?.vatRatePercent;
-        const snappedVat = snapBelgianVatRatePercent(rawVat);
-        if (
-          totals &&
-          snappedVat != null &&
-          Number(rawVat) !== snappedVat
-        ) {
-          const healed = {
-            ...documentRecord,
-            totals: { ...totals, vat_rate_percent: snappedVat },
-            updated_at: new Date().toISOString(),
-          };
-          try {
-            const registryKey = buildDocumentRegistryKey(scope, documentId);
-            await env.BOOKING_KV.put(registryKey, JSON.stringify(healed));
-            documentRecord = healed;
-            console.log(
-              `[CONSUMER_BILLIT_SALE][VAT_SNAP] booking=${maskedBooking} from=${safeStr(rawVat, 16)} to=${snappedVat}`,
-            );
-          } catch (_) {
-            documentRecord = {
-              ...documentRecord,
-              totals: { ...totals, vat_rate_percent: snappedVat },
-            };
-          }
-        }
-      }
-      if (documentRecord) {
-        const billit = await ensureBillitSandboxOrderForIssuedInvoice(
-          env,
-          scope,
-          config,
-          documentRecord,
-          { documentId, documentNumber },
-        );
-        if (billit?.ok) {
-          billitOrderId = safeStr(billit.billit_order_id, 120) || billitOrderId;
-        } else {
-          const reasonBits = [];
-          const errCode = safeStr(billit?.error, 120);
-          if (errCode) reasonBits.push(errCode);
-          const billitCode = safeStr(billit?.billit_error_code, 80);
-          if (billitCode) reasonBits.push(`code=${billitCode}`);
-          const billitDesc = safeStr(billit?.billit_error_description, 120);
-          if (billitDesc) reasonBits.push(billitDesc);
-          if (Array.isArray(billit?.reasons) && billit.reasons.length) {
-            reasonBits.push(
-              billit.reasons
-                .slice(0, 4)
-                .map((r) => safeStr(r, 60))
-                .filter(Boolean)
-                .join("|"),
-            );
-          }
-          billitLastError =
-            reasonBits.join(";").slice(0, 160) || "billit_order_create_failed";
-          console.log(
-            `[CONSUMER_BILLIT_SALE][BILLIT_FAIL] booking=${maskedBooking} err=${billitLastError}`,
+    } else {
+      try {
+        if (!documentRecord || typeof documentRecord !== "object") {
+          documentRecord = await loadIssuedDocumentRegistryRecordById(
+            env,
+            scope,
+            documentId,
           );
         }
-      } else {
-        billitLastError = "document_record_unavailable";
+        // Heal near-miss VAT percentages (5.99→6) that Billit BE rejects.
+        if (documentRecord && typeof documentRecord === "object") {
+          const totals =
+            documentRecord.totals && typeof documentRecord.totals === "object"
+              ? documentRecord.totals
+              : null;
+          const rawVat = totals?.vat_rate_percent ?? totals?.vatRatePercent;
+          const snappedVat = snapBelgianVatRatePercent(rawVat);
+          if (
+            totals &&
+            snappedVat != null &&
+            Number(rawVat) !== snappedVat
+          ) {
+            const healed = {
+              ...documentRecord,
+              totals: { ...totals, vat_rate_percent: snappedVat },
+              updated_at: new Date().toISOString(),
+            };
+            try {
+              const registryKey = buildDocumentRegistryKey(scope, documentId);
+              await env.BOOKING_KV.put(registryKey, JSON.stringify(healed));
+              documentRecord = healed;
+              console.log(
+                `[CONSUMER_BILLIT_SALE][VAT_SNAP] booking=${maskedBooking} from=${safeStr(rawVat, 16)} to=${snappedVat}`,
+              );
+            } catch (_) {
+              documentRecord = {
+                ...documentRecord,
+                totals: { ...totals, vat_rate_percent: snappedVat },
+              };
+            }
+          }
+        }
+        // Ambiguous-timeout reconcile BEFORE any new CREATE: local intent +
+        // document export order_id. Remote Billit create then uses the
+        // sale-scoped Idempotent-Key (never a freshly minted document UUID).
+        const exportObj =
+          documentRecord?.billit_export &&
+          typeof documentRecord.billit_export === "object"
+            ? documentRecord.billit_export
+            : null;
+        billitOrderId =
+          billitOrderId ||
+          safeStr(exportObj?.order_id, 120) ||
+          safeStr(intent?.billit_order_id, 120) ||
+          null;
+        if (billitOrderId) {
+          intent = await patchConsumerBillitSaleIntent(env, claim.key, {
+            document_id: documentId,
+            document_number: documentNumber,
+            billit_order_id: billitOrderId,
+            sale_idempotency_key: idempotencyKey,
+            state: CONSUMER_SALE_INTENT_STATES.REGISTERED,
+            last_error: null,
+          });
+        } else if (documentRecord) {
+          const ensureImpl =
+            typeof opts.ensureBillitOrderImpl === "function"
+              ? opts.ensureBillitOrderImpl
+              : ensureBillitSandboxOrderForIssuedInvoice;
+          const billit = await ensureImpl(env, scope, config, documentRecord, {
+            documentId,
+            documentNumber,
+            saleIdempotencyKey: idempotencyKey,
+          });
+          if (billit?.ok) {
+            billitOrderId = safeStr(billit.billit_order_id, 120) || billitOrderId;
+            intent = await patchConsumerBillitSaleIntent(env, claim.key, {
+              document_id: documentId,
+              document_number: documentNumber,
+              billit_order_id: billitOrderId,
+              sale_idempotency_key: idempotencyKey,
+              state: billitOrderId
+                ? CONSUMER_SALE_INTENT_STATES.REGISTERED
+                : CONSUMER_SALE_INTENT_STATES.BILLIT_CREATING,
+              last_error: null,
+            });
+          } else {
+            const reasonBits = [];
+            const errCode = safeStr(billit?.error, 120);
+            if (errCode) reasonBits.push(errCode);
+            const billitCode = safeStr(billit?.billit_error_code, 80);
+            if (billitCode) reasonBits.push(`code=${billitCode}`);
+            const billitDesc = safeStr(billit?.billit_error_description, 120);
+            if (billitDesc) reasonBits.push(billitDesc);
+            if (Array.isArray(billit?.reasons) && billit.reasons.length) {
+              reasonBits.push(
+                billit.reasons
+                  .slice(0, 4)
+                  .map((r) => safeStr(r, 60))
+                  .filter(Boolean)
+                  .join("|"),
+              );
+            }
+            billitLastError =
+              billit?.ambiguous_remote_outcome === true
+                ? "ambiguous_remote_timeout"
+                : reasonBits.join(";").slice(0, 160) ||
+                  "billit_order_create_failed";
+            await patchConsumerBillitSaleIntent(env, claim.key, {
+              document_id: documentId,
+              document_number: documentNumber,
+              sale_idempotency_key: idempotencyKey,
+              state: CONSUMER_SALE_INTENT_STATES.BILLIT_CREATING,
+              last_error: billitLastError,
+            });
+            console.log(
+              `[CONSUMER_BILLIT_SALE][BILLIT_FAIL] booking=${maskedBooking} err=${billitLastError}`,
+            );
+          }
+        } else {
+          billitLastError = "document_record_unavailable";
+        }
+      } catch (err) {
+        billitLastError = safeStr(err?.message || err, 80) || "billit_exception";
+        console.log(
+          `[CONSUMER_BILLIT_SALE][BILLIT_FAIL] booking=${maskedBooking} err=${billitLastError}`,
+        );
+      } finally {
+        await _releaseBillitRecoveryLock(env, lock.key);
       }
-    } catch (err) {
-      billitLastError = safeStr(err?.message || err, 80) || "billit_exception";
-      console.log(
-        `[CONSUMER_BILLIT_SALE][BILLIT_FAIL] booking=${maskedBooking} err=${billitLastError}`,
-      );
     }
+  } else if (billitOrderId && claim.key) {
+    await patchConsumerBillitSaleIntent(env, claim.key, {
+      document_id: documentId,
+      document_number: documentNumber,
+      billit_order_id: billitOrderId,
+      sale_idempotency_key: idempotencyKey,
+      state: CONSUMER_SALE_INTENT_STATES.REGISTERED,
+      last_error: null,
+    });
   }
 
   await stampConsumerSaleMarkersOnBooking(env, bookingId, {
@@ -4494,6 +4860,17 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
     retryable: !billitOrderId,
   });
 
+  if (billitOrderId && claim.key) {
+    await patchConsumerBillitSaleIntent(env, claim.key, {
+      document_id: documentId,
+      document_number: documentNumber,
+      billit_order_id: billitOrderId,
+      sale_idempotency_key: idempotencyKey,
+      state: CONSUMER_SALE_INTENT_STATES.REGISTERED,
+      last_error: null,
+    });
+  }
+
   console.log(
     `[CONSUMER_BILLIT_SALE][OK] booking=${maskedBooking} doc=${_bookingIntentMask(documentId)} order=${_bookingIntentMask(billitOrderId)} amount_source=${amount.source} peppol=n/a`,
   );
@@ -4503,6 +4880,7 @@ async function maybeRegisterConsumerBillitSaleAfterCompletion(
     reason: billitOrderId ? "created_or_linked" : "document_issued_billit_pending",
     document_id: documentId,
     billit_order_id: billitOrderId,
+    creates_new_sale_document: ownerDecision.may_issue === true,
     peppol_sent: false,
     peppol_applicable: false,
   };
@@ -4528,20 +4906,60 @@ async function maybeSyncConsumerBillitSaleAfterPaid(
     return { handled: false };
   }
 
-  // If no consumer sale yet but ride is completed+eligible, register first
-  // (completion hook may have been missed), then sync payment.
+  // CONSUMER-BILLIT-EXACTLY-ONCE-CREATE-P0: paid lifecycle is SYNC-ONLY when a
+  // consumer-sale intent/document already exists or is being created. Finalize,
+  // Mollie webhook and /pay/status all converge through the canonical register
+  // path — never independently allocate a second consumer invoice.
   const existing = await findExistingConsumerSaleDocumentForBooking(
     env,
     scope,
     bookingId,
     { sourceLegId: opts.sourceLegId || null },
   );
-  if (!existing?.document_id && isConsumerSaleEligibleRecord(rec)) {
+  const intentProbe = await loadConsumerBillitSaleIntent(
+    env,
+    scope,
+    bookingId,
+    opts.sourceLegId || null,
+  );
+  const intentHasDocument = !!intentProbe?.intent?.document_id;
+  const intentInFlight =
+    !!intentProbe?.intent &&
+    !intentProbe.intent.billit_order_id &&
+    (intentProbe.intent.state === CONSUMER_SALE_INTENT_STATES.PENDING ||
+      intentProbe.intent.state === CONSUMER_SALE_INTENT_STATES.ISSUING ||
+      intentProbe.intent.state === CONSUMER_SALE_INTENT_STATES.BILLIT_CREATING);
+  if (
+    (!existing?.document_id || !existing?.billit_order_id) &&
+    isConsumerSaleEligibleRecord(rec)
+  ) {
+    // Complete pending registration via the sale intent (owner or waiter).
     await maybeRegisterConsumerBillitSaleAfterCompletion(env, scope, bookingId, {
       rec,
       sourceLegId: opts.sourceLegId || null,
       sourceLegType: opts.sourceLegType || null,
+      issueInvoiceImpl: opts.issueInvoiceImpl,
+      ensureBillitOrderImpl: opts.ensureBillitOrderImpl,
     });
+  } else if (!existing?.document_id && intentHasDocument) {
+    // findExisting missed but intent already owns a document — register to
+    // reuse, never mint.
+    await maybeRegisterConsumerBillitSaleAfterCompletion(env, scope, bookingId, {
+      rec,
+      sourceLegId: opts.sourceLegId || null,
+      sourceLegType: opts.sourceLegType || null,
+      issueInvoiceImpl: opts.issueInvoiceImpl,
+      ensureBillitOrderImpl: opts.ensureBillitOrderImpl,
+    });
+  } else if (!existing?.document_id && intentInFlight) {
+    return {
+      handled: true,
+      ok: false,
+      skipped: false,
+      reason: "consumer_sale_intent_in_progress",
+      retryable: true,
+      creates_new_sale_document: false,
+    };
   }
   const consumer = await findExistingConsumerSaleDocumentForBooking(
     env,
@@ -5768,7 +6186,7 @@ async function ensureBillitSandboxOrderForIssuedInvoice(
   scope,
   config,
   documentRecord,
-  { documentId, documentNumber } = {},
+  { documentId, documentNumber, saleIdempotencyKey } = {},
 ) {
   const warnings = [];
   const docId = safeStr(documentId, 200);
@@ -5869,7 +6287,19 @@ async function ensureBillitSandboxOrderForIssuedInvoice(
   }
 
   // 3. Deterministic create request (stable Idempotent-Key, no token inside).
-  const idempotencyKey = buildBillitSandboxOrderCreateIdempotencyKey(docId);
+  // CONSUMER-BILLIT-EXACTLY-ONCE-CREATE-P0: consumer sales MUST key off the
+  // canonical sale identity (or the permanently assigned document id stored on
+  // the sale intent). Document-UUID keys would mint a second Billit order when
+  // a race allocates a second Fluxidi document. Business auto-create keeps the
+  // legacy document-scoped key.
+  const saleKey = safeStr(saleIdempotencyKey, 200);
+  const idempotencyKey =
+    (saleKey
+      ? buildBillitConsumerSaleOrderCreateIdempotencyKey(saleKey)
+      : null) || buildBillitSandboxOrderCreateIdempotencyKey(docId);
+  if (!idempotencyKey) {
+    return { ok: false, status: 409, error: "billit_idempotency_key_unavailable" };
+  }
   const createRequest = buildBillitOfficialOrderCreateRequestFromPreview(officialPreview, {
     idempotency_key: idempotencyKey,
   });
@@ -5899,6 +6329,8 @@ async function ensureBillitSandboxOrderForIssuedInvoice(
   }
 
   // 5. The single outbound create call (POST /v1/orders, sandbox host).
+  // On network timeout the remote may already have succeeded — callers must
+  // reconcile locally and retry with the SAME Idempotent-Key (never a new one).
   const createResult = await postBillitSandboxOrderCreate(
     config,
     tokenResult.access_token,
@@ -5906,8 +6338,12 @@ async function ensureBillitSandboxOrderForIssuedInvoice(
     createRequest,
   );
   if (!createResult.ok) {
+    const ambiguousRemote =
+      createResult.status_code == null ||
+      safeStr(createResult.billit_error_code, 80) ===
+        "order_create_request_failed";
     console.log(
-      `[BILLIT_AUTO_CREATE][SANDBOX][FAIL] doc=${docId.slice(0, 8)} status=${createResult.status_code ?? "-"} refreshed=${tokenResult.refreshed}`,
+      `[BILLIT_AUTO_CREATE][SANDBOX][FAIL] doc=${docId.slice(0, 8)} status=${createResult.status_code ?? "-"} refreshed=${tokenResult.refreshed} ambiguous=${ambiguousRemote}`,
     );
     return {
       ok: false,
@@ -5916,6 +6352,8 @@ async function ensureBillitSandboxOrderForIssuedInvoice(
       status_code: createResult.status_code,
       billit_error_code: createResult.billit_error_code,
       billit_error_description: createResult.billit_error_description,
+      ambiguous_remote_outcome: ambiguousRemote,
+      idempotency_key: idempotencyKey,
     };
   }
   const summary = createResult.summary || {
@@ -7547,6 +7985,13 @@ export {
   persistPendingBillitExportOutboxOnce,
 };
 export { reconcileConsumerSaleForCompletedBooking };
+// Hermetic CONSUMER-BILLIT-EXACTLY-ONCE-CREATE-P0 concurrency tests only.
+export {
+  maybeRegisterConsumerBillitSaleAfterCompletion,
+  maybeSyncConsumerBillitSaleAfterPaid,
+  claimConsumerBillitSaleIntent,
+  loadConsumerBillitSaleIntent,
+};
 // Hermetic Billit route-snapshot parity tests only (pure mappers).
 export {
   buildDocumentExportPreview,
