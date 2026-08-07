@@ -1,12 +1,16 @@
 # ============================================================================
 # FLUXIDI FIELD BUILD — Tablet
-# Exact commit: 3137d6b8cb6febfe3be1e7ce15e51182ca791ed6
+# Exact commit: b6354547b717083170e7abc0b1c704337173ed61
 # Clean integration worktree. Dirty hoofdrepository blijft onaangeraakt.
 # Exact 12 dart-defines, NO ADMIN_TOKEN, NO LEARNING_SERVICE_TOKEN.
 #
-# PIN NOTE: TABLET-PIN-RELEASE-LANGUAGE-CONSISTENCY-P0
-# App head: RELEASE-LANGUAGE-CONSISTENCY-NL-EN-FR-ES-P0 — Fluxidi appLanguage
-# owns NL/EN/FR/ES UI chrome (Tellers, street-ride toasts, offline maps, statuses).
+# PIN NOTE: TABLET-PIN-GLOBAL-LOCALIZATION-ROOT-FIX-P0-2
+# App head: GLOBAL-APP-WASHOUT-OVERLAY-REGRESSION-P0-2 — restores the
+# Material/Widgets/Cupertino localization delegates for the pinned Fluxidi app
+# language. Without them nl/fr/es/de threw on every MaterialLocalizations
+# lookup and release builds painted the failed subtrees as a translucent grey
+# ErrorWidget (the global washout). Keeps the RELEASE-LANGUAGE-CONSISTENCY
+# NL/EN/FR/ES chrome from 3137d6b.
 # On HEAD mismatch the script checks out $requiredHead in place (or recreates).
 # ============================================================================
 
@@ -17,7 +21,7 @@ $repo         = 'C:\_flutter_work\fluxidi_tracking'
 $worktree     = 'C:\_flutter_work\fluxidi_tracking_full_integration_20260805'
 $device       = 'R52Y808CN2M'
 $adb          = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-$requiredHead = '3137d6b8cb6febfe3be1e7ce15e51182ca791ed6'
+$requiredHead = 'b6354547b717083170e7abc0b1c704337173ed61'
 $branch       = 'release/full-tablet-integration-20260805'
 
 function Assert-LastExitCode {
@@ -229,6 +233,28 @@ if ($langCount -ne 4) {
     throw "nav_sign_languages=$langCount (verwacht 4)"
 }
 
+# GLOBAL-APP-WASHOUT-OVERLAY-REGRESSION-P0-2 gate: never ship a build that pins
+# MaterialApp.locale without the framework localization delegates. That exact
+# combination made nl/fr/es/de throw on every MaterialLocalizations lookup, and
+# release paints those failed subtrees as a translucent grey ErrorWidget.
+$pubspecRaw = Get-Content -LiteralPath '.\pubspec.yaml' -Raw
+if ($pubspecRaw -notmatch 'flutter_localizations') {
+    throw 'flutter_localizations ontbreekt in pubspec.yaml (washout-regressie)'
+}
+
+$mainRaw = Get-Content -LiteralPath '.\lib\main.dart' -Raw
+$delegateCount = @(
+    'GlobalMaterialLocalizations\.delegate',
+    'GlobalWidgetsLocalizations\.delegate',
+    'GlobalCupertinoLocalizations\.delegate'
+) | Where-Object { $mainRaw -match $_ } | Measure-Object | Select-Object -ExpandProperty Count
+if ($delegateCount -ne 3) {
+    throw "localization_delegates=$delegateCount (verwacht 3, washout-regressie)"
+}
+if ($mainRaw -notmatch 'localizationsDelegates:\s*kFluxidiLocalizationsDelegates') {
+    throw 'app-root MaterialApp gebruikt kFluxidiLocalizationsDelegates niet'
+}
+
 Write-Host "required_app_head=$requiredHead"
 Write-Host "required_app_subject=$requiredSubject"
 Write-Host 'theme_cycle_present=True'
@@ -236,6 +262,7 @@ Write-Host "theme_preset_count=$presetCount"
 Write-Host 'business_billit_action_present=True'
 Write-Host "nav_sign_png_count=$pngCount"
 Write-Host "nav_sign_languages=$langCount"
+Write-Host "localization_delegates=$delegateCount"
 Write-Host 'nav_maneuver_owner_present=True'
 $brandingLayoutPath = '.\lib\nearby\tablet_partner_branding_layout.dart'
 if (-not (Test-Path -LiteralPath $brandingLayoutPath)) {
