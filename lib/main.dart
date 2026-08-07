@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:flutter/services.dart';
 import 'package:flutter_email_sender/flutter_email_sender.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:http/http.dart' as http;
 import 'package:internet_connection_checker_plus/internet_connection_checker_plus.dart';
@@ -2412,6 +2413,84 @@ String _tr({
   return nl;
 }
 
+// ---------------------------------------------------------------------------
+// GLOBAL-APP-WASHOUT-OVERLAY-REGRESSION-P0-2
+//
+// Single canonical localization contract for the Fluxidi app root. The app
+// pins the UI language to the explicitly chosen Fluxidi app language (never the
+// device locale), so Material/Widgets/Cupertino localizations MUST be resolvable
+// for every entry of [kFluxidiSupportedLocales].
+//
+// Field regression this closes: `locale:` was set without any
+// [localizationsDelegates]. The framework defaults only support English, so
+// under nl/fr/es/de no MaterialLocalizations existed and every
+// `MaterialLocalizations.of(context)` call site (Tooltip, PopupMenuButton,
+// Scaffold, TextField, …) threw during build. Release builds paint such a
+// failed subtree as a translucent grey ErrorWidget, which read in the field as
+// a global white/grey washout over hero images and whole pages.
+// ---------------------------------------------------------------------------
+
+/// Locales the Fluxidi app language selector can activate.
+///
+/// Release acceptance focus is NL / EN / FR / ES; `de` stays supported because
+/// [AppLanguage] already exposes it.
+const List<Locale> kFluxidiSupportedLocales = <Locale>[
+  Locale('nl'),
+  Locale('en'),
+  Locale('fr'),
+  Locale('es'),
+  Locale('de'),
+];
+
+/// Framework localization delegates required by [kFluxidiSupportedLocales].
+///
+/// Never drop these while [MaterialApp.locale] is pinned — see the regression
+/// note above.
+const List<LocalizationsDelegate<dynamic>> kFluxidiLocalizationsDelegates =
+    <LocalizationsDelegate<dynamic>>[
+      GlobalMaterialLocalizations.delegate,
+      GlobalWidgetsLocalizations.delegate,
+      GlobalCupertinoLocalizations.delegate,
+    ];
+
+/// Resolves the active UI locale from the Fluxidi app language.
+///
+/// The device/system locale is deliberately ignored: an explicitly chosen
+/// Fluxidi app language always wins.
+Locale resolveFluxidiAppLocale([Iterable<Locale>? supported]) {
+  final code = currentLanguageCode;
+  for (final locale in supported ?? kFluxidiSupportedLocales) {
+    if (locale.languageCode == code) return locale;
+  }
+  return const Locale('en');
+}
+
+/// Builds the single app-root [MaterialApp].
+///
+/// Tests pump this exact factory so the localization contract under test is the
+/// production one and cannot drift from [FluxidiDriverApp].
+MaterialApp buildFluxidiRootMaterialApp({
+  required ThemeData theme,
+  required Widget home,
+}) {
+  return MaterialApp(
+    debugShowCheckedModeBanner: false,
+    title: kAppTitle,
+    theme: theme,
+    // RELEASE-LANGUAGE-CONSISTENCY: Fluxidi app language wins over device.
+    locale: resolveFluxidiAppLocale(),
+    supportedLocales: kFluxidiSupportedLocales,
+    localizationsDelegates: kFluxidiLocalizationsDelegates,
+    localeResolutionCallback: (deviceLocale, supported) =>
+        resolveFluxidiAppLocale(supported),
+    navigatorObservers: <NavigatorObserver>[kAppRouteObserver],
+    builder: (context, child) {
+      return FluxidiFrame(child: child ?? const SizedBox.shrink());
+    },
+    home: home,
+  );
+}
+
 class _CompanySessionRecoveryRoleEntryGate extends StatefulWidget {
   const _CompanySessionRecoveryRoleEntryGate();
 
@@ -2502,30 +2581,8 @@ class FluxidiDriverApp extends StatelessWidget {
 
     return ValueListenableBuilder(
       valueListenable: appLanguageNotifier,
-      builder: (context, _, __) => MaterialApp(
-        debugShowCheckedModeBanner: false,
-        title: kAppTitle,
+      builder: (context, _, __) => buildFluxidiRootMaterialApp(
         theme: theme,
-        // RELEASE-LANGUAGE-CONSISTENCY: Fluxidi app language wins over device.
-        locale: Locale(currentLanguageCode),
-        supportedLocales: const <Locale>[
-          Locale('nl'),
-          Locale('en'),
-          Locale('fr'),
-          Locale('es'),
-          Locale('de'),
-        ],
-        localeResolutionCallback: (deviceLocale, supported) {
-          final code = currentLanguageCode;
-          for (final locale in supported) {
-            if (locale.languageCode == code) return locale;
-          }
-          return const Locale('en');
-        },
-        navigatorObservers: <NavigatorObserver>[kAppRouteObserver],
-        builder: (context, child) {
-          return FluxidiFrame(child: child ?? const SizedBox.shrink());
-        },
         home: FluxidiAppLockGatePage(
           target: startupTarget,
           shouldGate: shouldGateStartupSession,

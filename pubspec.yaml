@@ -11,6 +11,15 @@ dependencies:
   flutter:
     sdk: flutter
 
+  # GLOBAL-APP-WASHOUT-OVERLAY-REGRESSION-P0-2: MaterialApp pins the Fluxidi
+  # app language via `locale:`, so Material/Widgets/Cupertino localizations must
+  # exist for nl/fr/es/de too. MaterialApp's built-in delegates only cover
+  # English, so without these every MaterialLocalizations.of(context) call threw
+  # under nl/fr/es/de, which release builds paint as a translucent grey
+  # ErrorWidget.
+  flutter_localizations:
+    sdk: flutter
+
   cupertino_icons: ^1.0.8
 
   # === Fluxidi tracking dependencies ===
