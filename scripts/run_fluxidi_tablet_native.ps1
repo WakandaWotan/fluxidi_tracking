@@ -1,12 +1,12 @@
 # ============================================================================
 # FLUXIDI FIELD BUILD — Tablet
-# Exact commit: 6364a5c2dd83aa96267ed8c4d77c232b9738270f
+# Exact commit: 0d8480e28886313c80b7be3618c947d1ff290469
 # Clean integration worktree. Dirty hoofdrepository blijft onaangeraakt.
 # Exact 12 dart-defines, NO ADMIN_TOKEN, NO LEARNING_SERVICE_TOKEN.
 #
-# PIN NOTE: TABLET-PIN-LATE-BUSINESS-INVOICE-ACTION-P0-3
-# App head: late Zakelijke factuur aanvragen on consumer-sale document
-# cards; credit-first conversion via existing request-business-invoice.
+# PIN NOTE: TABLET-PIN-LATE-INVOICE-ACTION-PLACEMENT-P1
+# App head: single Zakelijke factuur aanvragen slot above Documenten
+# for street + planned; no duplicate on document cards.
 # Signage/Billit/PNG/owner gates remain. On HEAD mismatch the script
 # checks out $requiredHead in place (or recreates).
 # ============================================================================
@@ -18,7 +18,7 @@ $repo         = 'C:\_flutter_work\fluxidi_tracking'
 $worktree     = 'C:\_flutter_work\fluxidi_tracking_full_integration_20260805'
 $device       = 'R52Y808CN2M'
 $adb          = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-$requiredHead = '6364a5c2dd83aa96267ed8c4d77c232b9738270f'
+$requiredHead = '0d8480e28886313c80b7be3618c947d1ff290469'
 $branch       = 'release/full-tablet-integration-20260805'
 
 function Assert-LastExitCode {
