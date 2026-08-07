@@ -251,7 +251,7 @@ void main() {
       expect(body, contains('shouldRetainConfirmedPaidOnReload('));
     });
 
-    test('cash / QR / terminal share _persistInCarPayment', () {
+    test('cash / QR share _persistInCarPayment; Bancontact UI hidden', () {
       expect(
         receiptSource.contains("method: 'cash'"),
         isTrue,
@@ -260,10 +260,18 @@ void main() {
         receiptSource.contains("method: 'qr'"),
         isTrue,
       );
+      // HIDE-MANUAL-BANCONTACT-FROM-PRIMARY-PAYMENT-ZONE-P1: no primary-zone
+      // Bancontact start, but historical method token still recognized.
       expect(
-        RegExp(r"_persistInCarPayment\([\s\S]*?method:\s*'bancontact'")
-            .hasMatch(receiptSource),
-        isTrue,
+        RegExp(
+          r"onPressed:[\s\S]{0,200}?_persistInCarPayment\([\s\S]{0,120}?method:\s*'bancontact'",
+        ).hasMatch(receiptSource),
+        isFalse,
+      );
+      expect(receiptSource.contains("m == 'bancontact'"), isTrue);
+      expect(
+        receiptSource,
+        contains('HIDE-MANUAL-BANCONTACT-FROM-PRIMARY-PAYMENT-ZONE-P1'),
       );
     });
   });

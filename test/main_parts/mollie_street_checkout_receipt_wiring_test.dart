@@ -159,6 +159,28 @@ void main() {
     });
 
     test(
+      'HIDE-MANUAL-BANCONTACT-P1: primary zone keeps online/QR/cash/invoice',
+      () {
+        final sectionIdx = receiptSource.indexOf(
+          'Widget _paymentSection(BuildContext context) {',
+        );
+        expect(sectionIdx, greaterThan(-1));
+        final sectionBody = receiptSource.substring(
+          sectionIdx,
+          sectionIdx + 14000,
+        );
+        expect(sectionBody, contains("_receiptText('onlinePay')"));
+        expect(sectionBody, contains("_receiptText('payByQr')"));
+        expect(sectionBody, contains("_receiptText('cashReceived')"));
+        expect(sectionBody, contains('_shouldShowStreetInvoicePaymentSlot()'));
+        expect(
+          sectionBody,
+          isNot(contains("_receiptText('paidByCardTerminal')")),
+        );
+      },
+    );
+
+    test(
       'PHANTOM-P0: booking change clears local open-Mollie recovery owner',
       () {
         final idx = receiptSource.indexOf(

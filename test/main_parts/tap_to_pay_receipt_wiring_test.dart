@@ -26,11 +26,49 @@ void main() {
     expect(helpersSource, isNot(contains('Betaald via Bancontact')));
 
     expect(receiptSource, contains('_startTapToPay'));
-    expect(receiptSource, contains("method: 'bancontact'"));
     expect(receiptSource, contains('_persistInCarPayment'));
     expect(receiptSource, contains("'tapToPay'"));
-    expect(receiptSource, contains("'paidByCardTerminal'"));
+    // Legacy keys/handler remain; primary zone no longer offers the action.
+    expect(helpersSource, contains("case 'paidByCardTerminal':"));
   });
+
+  test(
+    'HIDE-MANUAL-BANCONTACT-P1: primary payment zone hides manual Bancontact',
+    () {
+      final sectionIdx = receiptSource.indexOf(
+        'Widget _paymentSection(BuildContext context) {',
+      );
+      expect(sectionIdx, greaterThan(-1));
+      final sectionBody = receiptSource.substring(
+        sectionIdx,
+        sectionIdx + 14000,
+      );
+      expect(
+        sectionBody,
+        isNot(contains("_receiptText('paidByCardTerminal')")),
+        reason: 'Manual Bancontact must not render in primary payment zone',
+      );
+      expect(
+        RegExp(
+          r"onPressed:[\s\S]{0,200}?_persistInCarPayment\([\s\S]{0,120}?method:\s*'bancontact'",
+        ).hasMatch(sectionBody),
+        isFalse,
+        reason: 'Primary zone must not start manual Bancontact mark-paid',
+      );
+      // Primary options remain wired.
+      expect(sectionBody, contains("_receiptText('onlinePay')"));
+      expect(sectionBody, contains("_receiptText('payByQr')"));
+      expect(sectionBody, contains("_receiptText('cashReceived')"));
+      expect(sectionBody, contains("if (_tapToPayAvailable)"));
+      expect(sectionBody, contains('_shouldShowStreetInvoicePaymentSlot()'));
+      // Historical/manual Bancontact still recognized for display/reload.
+      expect(receiptSource, contains("m == 'bancontact'"));
+      expect(
+        receiptSource,
+        contains('HIDE-MANUAL-BANCONTACT-FROM-PRIMARY-PAYMENT-ZONE-P1'),
+      );
+    },
+  );
 
   test('Tap to Pay is capability-gated and double-tap guarded', () {
     expect(receiptSource, contains('_tapToPayAvailable'));

@@ -5323,18 +5323,13 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
               const SizedBox(height: 8),
             ] else if (_tapToPayCapabilityLoaded) ...[
               // Capability loaded and no usable terminal: hide Tap to Pay.
-              // Manual Bancontact remains available below.
             ],
-            FilledButton.icon(
-              onPressed: canRequestPayment && !_tapToPayInFlight
-                  ? () => _persistInCarPayment(
-                      context: context,
-                      method: 'bancontact',
-                    )
-                  : null,
-              icon: const Icon(Icons.credit_card),
-              label: Text(_receiptText('paidByCardTerminal')),
-            ),
+            // HIDE-MANUAL-BANCONTACT-FROM-PRIMARY-PAYMENT-ZONE-P1:
+            // Do not offer "Bancontact handmatig registreren" in the primary
+            // payment zone. Electronic Mollie flows (Tap to Pay / Online
+            // betalen) already get provider confirmation. Legacy in-car
+            // Bancontact mark-paid handler and historical Bancontact display
+            // remain for already-recorded rides.
           ],
           // Fourth Payment action: business invoice for completed street rides.
           // Remains available while unpaid — invoicing is a valid payment path.
