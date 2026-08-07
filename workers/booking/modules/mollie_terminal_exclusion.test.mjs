@@ -11,6 +11,7 @@ import {
   filterSelectablePosTerminals,
   isTerminalExcluded,
   isTerminalForgotten,
+  mergeLiveAndTestTerminalPresentations,
   mergeProviderTerminalsWithExclusions,
   normalizeExcludedTerminalsMap,
   partitionTerminalsForPresentation,
@@ -386,4 +387,51 @@ test("FORGET-11. reconnect cannot clear forgotten tombstone", () => {
   });
   assert.equal(relink.ok, false);
   assert.equal(relink.error, "terminal_forgotten");
+});
+
+test("DISCOVERY-1. merge live+test shows test terminals when live only has forgotten", () => {
+  const live = {
+    status: "synced",
+    synced_at: "2026-08-07T14:25:33.671Z",
+    profile_id: "pfl_ZuqKHTmzDp",
+    terminals: [], // forgotten filtered out of presentation
+    excluded_terminals: {
+      term_old4: { provider_terminal_id: "term_old4", forgotten: true, excluded: true },
+      term_old3: { provider_terminal_id: "term_old3", forgotten: true, excluded: true },
+    },
+  };
+  const test = {
+    status: "synced",
+    synced_at: "2026-08-07T14:30:00.000Z",
+    profile_id: "pfl_ZuqKHTmzDp",
+    terminals: [
+      { id: "term_new1", description: "Tap app Android #1", status: "active", profile_id: "pfl_ZuqKHTmzDp" },
+      { id: "term_new2", description: "Tap app Android #2", status: "active", profile_id: "pfl_ZuqKHTmzDp" },
+    ],
+    excluded_terminals: {},
+  };
+  const merged = mergeLiveAndTestTerminalPresentations({ live, test });
+  assert.equal(merged.status, "synced");
+  assert.deepEqual(
+    merged.terminals.map((t) => t.id).sort(),
+    ["term_new1", "term_new2"],
+  );
+  assert.equal(merged.terminals.every((t) => t.mollie_mode === "test"), true);
+  assert.equal(merged.excluded_terminals.term_old4.forgotten, true);
+});
+
+test("DISCOVERY-2. forgotten live ids cannot hide different test terminal ids", () => {
+  const live = {
+    terminals: [],
+    excluded_terminals: {
+      term_nckkb9WHkhtWxKZs8QAUJ: { forgotten: true, excluded: true },
+    },
+  };
+  const test = {
+    terminals: [{ id: "term_brand_new_1", description: "Tap app Android #1", status: "active" }],
+    excluded_terminals: {},
+  };
+  const merged = mergeLiveAndTestTerminalPresentations({ live, test });
+  assert.equal(merged.terminals.length, 1);
+  assert.equal(merged.terminals[0].id, "term_brand_new_1");
 });

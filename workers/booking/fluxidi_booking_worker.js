@@ -252,6 +252,7 @@ import {
   filterCustomerVisibleTerminals,
   filterSelectablePosTerminals,
   isTerminalExcluded,
+  mergeLiveAndTestTerminalPresentations,
   mergeProviderTerminalsWithExclusions,
   normalizeExcludedTerminalsMap,
   posIntentStatusBlocksTerminalUnlink,
@@ -9417,7 +9418,11 @@ function _presentCompanyMollieTerminalsSnapshot(snapshot, {
   const terminals = filterCustomerVisibleTerminals(
     annotated,
     merged.excluded_terminals,
-  );
+  ).map((t) => ({
+    ...t,
+    mollie_mode: testMode ? "test" : "live",
+    testmode: !!testMode,
+  }));
   return {
     ok: true,
     version: Number(src.version) || 1,
@@ -9435,7 +9440,87 @@ function _presentCompanyMollieTerminalsSnapshot(snapshot, {
       ) || null,
     terminals,
     excluded_terminals: merged.excluded_terminals,
+    raw_terminal_count: annotated.length,
   };
+}
+
+async function _loadPresentedMollieTerminalsMode(env, scope, testMode) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const key = buildScopedMollieTerminalsSnapshotKey({
+    tenant_id: tenantId,
+    company_id: companyId,
+    testmode: !!testMode,
+  });
+  if (!key || !env?.BOOKING_KV) {
+    return {
+      ok: true,
+      status: "not_synced",
+      terminals: [],
+      excluded_terminals: {},
+      synced_at: null,
+      profile_id: null,
+      raw_terminal_count: 0,
+    };
+  }
+  const snapshot = await env.BOOKING_KV.get(key, { type: "json" });
+  if (!snapshot || typeof snapshot !== "object") {
+    return {
+      ok: true,
+      version: 1,
+      tenant_id: tenantId,
+      company_id: companyId,
+      profile_id: null,
+      mollie_mode: testMode ? "test" : "live",
+      testmode: !!testMode,
+      status: "not_synced",
+      synced_at: null,
+      terminals: [],
+      excluded_terminals: {},
+      raw_terminal_count: 0,
+    };
+  }
+  return _presentCompanyMollieTerminalsSnapshot(snapshot, {
+    tenantId,
+    companyId,
+    mollieMode: testMode ? "test" : "live",
+    testMode: !!testMode,
+  });
+}
+
+async function presentCompanyMollieTerminalsDiscovery(env, scope) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  const live = await _loadPresentedMollieTerminalsMode(env, scope, false);
+  const test = await _loadPresentedMollieTerminalsMode(env, scope, true);
+  const merged = mergeLiveAndTestTerminalPresentations({ live, test });
+  return {
+    ...merged,
+    tenant_id: tenantId,
+    company_id: companyId,
+    live_raw_terminal_count: Number(live?.raw_terminal_count || 0),
+    test_raw_terminal_count: Number(test?.raw_terminal_count || 0),
+  };
+}
+
+async function resolveTerminalLinkSnapshotTestMode(env, scope, terminalId) {
+  const wantId = safeStr(terminalId, 120);
+  if (!wantId || !env?.BOOKING_KV) return false;
+  for (const testMode of [false, true]) {
+    const key = buildScopedMollieTerminalsSnapshotKey({
+      ...scope,
+      testmode: testMode,
+    });
+    if (!key) continue;
+    const snapshot = await env.BOOKING_KV.get(key, { type: "json" });
+    if (!snapshot || typeof snapshot !== "object") continue;
+    const inList = Array.isArray(snapshot.terminals)
+      ? snapshot.terminals.some((t) => safeStr(t?.id, 120) === wantId)
+      : false;
+    const excluded = normalizeExcludedTerminalsMap(snapshot.excluded_terminals);
+    if (inList || excluded[wantId]) return testMode;
+  }
+  return boolish(scope?.testmode ?? scope?.testMode);
 }
 
 async function _listCompanyPosPaymentIntentsForTerminal(env, scope, terminalId) {
@@ -9629,19 +9714,20 @@ async function setCompanyMollieTerminalLinkState(env, scope, { terminalId, actio
   else if (act === "forget" || act === "remove" || act === "remove_from_fluxidi") {
     actionLabel = "forgotten";
   }
+  // Return merged discovery so UI stays consistent across live+test.
+  const discovery = await presentCompanyMollieTerminalsDiscovery(env, {
+    tenant_id: tenantId,
+    company_id: companyId,
+  });
   return {
-    ..._presentCompanyMollieTerminalsSnapshot(next, {
-      tenantId,
-      companyId,
-      mollieMode,
-      testMode,
-    }),
+    ...discovery,
     action: actionLabel,
+    link_mollie_mode: mollieMode,
+    link_testmode: testMode,
   };
 }
 
-async function syncCompanyMollieTerminalsSnapshot(env, scope) {
-  const testMode = boolish(scope?.testmode ?? scope?.testMode);
+async function syncCompanyMollieTerminalsSnapshotOneMode(env, scope, testMode) {
   const mollieMode = testMode ? "test" : "live";
   if (!env?.BOOKING_KV) {
     return {
@@ -9722,6 +9808,46 @@ async function syncCompanyMollieTerminalsSnapshot(env, scope) {
     mollieMode,
     testMode,
   });
+}
+
+async function syncCompanyMollieTerminalsSnapshot(env, scope) {
+  // MOLLIE-NEW-TERMINALS-NOT-DISCOVERED-P0:
+  // Business Settings sync discovers BOTH live and test Mollie environments
+  // unless caller explicitly requests a single mode (`mode_only` / `discover_both=false`).
+  const discoverBoth =
+    scope?.discover_both === true ||
+    scope?.discoverBoth === true ||
+    (scope?.mode_only !== true &&
+      scope?.discover_both !== false &&
+      scope?.discoverBoth !== false &&
+      scope?.testmode === undefined &&
+      scope?.testMode === undefined);
+  if (!discoverBoth) {
+    return syncCompanyMollieTerminalsSnapshotOneMode(
+      env,
+      scope,
+      boolish(scope?.testmode ?? scope?.testMode),
+    );
+  }
+  const live = await syncCompanyMollieTerminalsSnapshotOneMode(env, scope, false);
+  const test = await syncCompanyMollieTerminalsSnapshotOneMode(env, scope, true);
+  // Prefer returning a hard failure only when BOTH modes fail.
+  if (!live?.ok && !test?.ok) {
+    return live?.status === "terminals_scope_missing" ? live : live || test;
+  }
+  // Scope missing on one mode must not hide the other mode's terminals.
+  const discovery = await presentCompanyMollieTerminalsDiscovery(env, scope);
+  console.log(
+    `[MOLLIE_TERMINALS][DISCOVERY_SYNC] tenant=${safeStr(scope?.tenant_id ?? scope?.tenantId, 80)} company=${safeStr(scope?.company_id ?? scope?.companyId, 80)} live_ok=${live?.ok === true} live_raw=${Number(discovery.live_raw_terminal_count || 0)} test_ok=${test?.ok === true} test_raw=${Number(discovery.test_raw_terminal_count || 0)} presented=${Array.isArray(discovery.terminals) ? discovery.terminals.length : 0}`,
+  );
+  return {
+    ...discovery,
+    ok: true,
+    live_sync_ok: live?.ok === true,
+    test_sync_ok: test?.ok === true,
+    live_sync_status: safeStr(live?.status ?? live?.error, 80) || null,
+    test_sync_status: safeStr(test?.status ?? test?.error, 80) || null,
+  };
 }
 
 async function mollieConnectOAuthCallback(request, env) {
@@ -34746,13 +34872,21 @@ export default {
         const explicitScope = authScope.explicitScope;
         const tenantId = explicitScope.tenant_id;
         const companyId = explicitScope.company_id;
+        const hasExplicitTestMode = url.searchParams.has("testmode");
+        if (!env?.BOOKING_KV) {
+          return json({ ok: false, error: "invalid_terminals_snapshot_scope" }, 400);
+        }
+        // Default GET merges live+test discovery for Business Settings.
+        if (!hasExplicitTestMode) {
+          return json(await presentCompanyMollieTerminalsDiscovery(env, explicitScope), 200);
+        }
         const testMode = boolish(url.searchParams.get("testmode"));
         const mollieMode = testMode ? "test" : "live";
         const snapshotKey = buildScopedMollieTerminalsSnapshotKey({
           ...explicitScope,
           testmode: testMode,
         });
-        if (!snapshotKey || !env?.BOOKING_KV) {
+        if (!snapshotKey) {
           return json({ ok: false, error: "invalid_terminals_snapshot_scope" }, 400);
         }
         const snapshot = await env.BOOKING_KV.get(snapshotKey, { type: "json" });
@@ -34812,10 +34946,26 @@ export default {
         });
         if (!authScope.ok) return authScope.response;
         const explicitScope = authScope.explicitScope;
-        const testMode = boolish(
+        const terminalId = safeStr(body?.terminal_id ?? body?.terminalId, 120);
+        const hasExplicitTestMode =
+          body?.testmode !== undefined ||
+          body?.testMode !== undefined ||
+          url.searchParams.has("testmode") ||
+          body?.mollie_mode !== undefined ||
+          body?.mollieMode !== undefined;
+        let testMode = boolish(
           body?.testmode ?? body?.testMode ?? url.searchParams.get("testmode"),
         );
-        const terminalId = safeStr(body?.terminal_id ?? body?.terminalId, 120);
+        const modeHint = safeStr(body?.mollie_mode ?? body?.mollieMode, 16).toLowerCase();
+        if (modeHint === "test") testMode = true;
+        if (modeHint === "live") testMode = false;
+        if (!hasExplicitTestMode) {
+          testMode = await resolveTerminalLinkSnapshotTestMode(
+            env,
+            explicitScope,
+            terminalId,
+          );
+        }
         const out = await setCompanyMollieTerminalLinkState(
           env,
           { ...explicitScope, testmode: testMode },
@@ -34875,16 +35025,28 @@ export default {
         });
         if (!authScope.ok) return authScope.response;
         const explicitScope = authScope.explicitScope;
-        const testMode = boolish(
-          body?.testmode ?? body?.testMode ?? url.searchParams.get("testmode"),
-        );
-        const synced = await syncCompanyMollieTerminalsSnapshot(env, {
-          ...explicitScope,
-          testmode: testMode,
-        });
+        const hasExplicitTestMode =
+          body?.testmode !== undefined ||
+          body?.testMode !== undefined ||
+          url.searchParams.has("testmode") ||
+          body?.mode_only === true;
+        const syncScope = hasExplicitTestMode
+          ? {
+              ...explicitScope,
+              testmode: boolish(
+                body?.testmode ?? body?.testMode ?? url.searchParams.get("testmode"),
+              ),
+              mode_only: true,
+              discover_both: false,
+            }
+          : {
+              ...explicitScope,
+              discover_both: true,
+            };
+        const synced = await syncCompanyMollieTerminalsSnapshot(env, syncScope);
         if (synced?.status === "terminals_scope_missing") {
           console.log(
-            `[MOLLIE_TERMINALS][SYNC_SCOPE_MISSING] tenant=${explicitScope.tenant_id} company=${explicitScope.company_id} mode=${testMode ? "test" : "live"}`,
+            `[MOLLIE_TERMINALS][SYNC_SCOPE_MISSING] tenant=${explicitScope.tenant_id} company=${explicitScope.company_id} mode=${syncScope.testmode ? "test" : "discovery"}`,
           );
           return json(synced, 200);
         }
@@ -34893,7 +35055,7 @@ export default {
             safeStr(synced?.error ?? synced?.code ?? synced?.status, 80) ||
             "mollie_terminals_sync_failed";
           console.log(
-            `[MOLLIE_TERMINALS][SYNC_FAIL] tenant=${explicitScope.tenant_id} company=${explicitScope.company_id} mode=${testMode ? "test" : "live"} code=${code}`,
+            `[MOLLIE_TERMINALS][SYNC_FAIL] tenant=${explicitScope.tenant_id} company=${explicitScope.company_id} code=${code}`,
           );
           return json(
             {
@@ -34903,15 +35065,15 @@ export default {
               status: code,
               tenant_id: explicitScope.tenant_id,
               company_id: explicitScope.company_id,
-              mollie_mode: testMode ? "test" : "live",
-              testmode: testMode,
+              mollie_mode: synced?.mollie_mode || "discovery",
+              testmode: !!syncScope.testmode,
               terminals: [],
             },
             400,
           );
         }
         console.log(
-          `[MOLLIE_TERMINALS][SYNC_OK] tenant=${explicitScope.tenant_id} company=${explicitScope.company_id} mode=${testMode ? "test" : "live"} count=${Array.isArray(synced.terminals) ? synced.terminals.length : 0}`,
+          `[MOLLIE_TERMINALS][SYNC_OK] tenant=${explicitScope.tenant_id} company=${explicitScope.company_id} mode=${synced?.mollie_mode || "discovery"} count=${Array.isArray(synced.terminals) ? synced.terminals.length : 0} live_raw=${Number(synced.live_raw_terminal_count || 0)} test_raw=${Number(synced.test_raw_terminal_count || 0)}`,
         );
         return json(synced, 200);
       }
@@ -34998,10 +35160,11 @@ export default {
           credentials = null;
           return _adminPosTerminalError("company_mollie_credentials_unavailable", 400);
         }
+        const paymentTestMode = resolveCompanyMolliePaymentTestMode(env, credentials);
 
         const snapshotKey = buildScopedMollieTerminalsSnapshotKey({
           ...explicitScope,
-          testmode: false,
+          testmode: paymentTestMode,
         });
         const snapshot = snapshotKey
           ? await env.BOOKING_KV.get(snapshotKey, { type: "json" })
@@ -35125,6 +35288,7 @@ export default {
             pos_terminal_intent_key: posTerminalIntentKey,
           },
           profileId: companyMollieProfileId,
+          ...(paymentTestMode ? { testmode: true } : {}),
         };
         const idempotencyKey = safeStr(posTerminalIntentKey, 240).replace(/[^a-zA-Z0-9_-]+/g, "_");
         let mollieRes = null;
@@ -82945,6 +83109,7 @@ async function resolveDriverPosTerminalCapability(env, tenantScope) {
     };
   }
   const companyMollieProfileId = _companyMollieProfileId(credentials);
+  const paymentTestMode = resolveCompanyMolliePaymentTestMode(env, credentials);
   credentials = null;
   if (!companyMollieProfileId) {
     return {
@@ -82955,9 +83120,10 @@ async function resolveDriverPosTerminalCapability(env, tenantScope) {
     };
   }
 
+  // Align Tap-to-Pay snapshot with payment test/live mode (demo often forced test).
   const snapshotKey = buildScopedMollieTerminalsSnapshotKey({
     ...tenantScope,
-    testmode: false,
+    testmode: paymentTestMode,
   });
   const snapshot = snapshotKey
     ? await env.BOOKING_KV.get(snapshotKey, { type: "json" })
@@ -82970,7 +83136,7 @@ async function resolveDriverPosTerminalCapability(env, tenantScope) {
       error: "terminal_snapshot_not_synced",
     };
   }
-  if (!posTerminalSnapshotModeMatches(snapshot, { expectTestmode: false })) {
+  if (!posTerminalSnapshotModeMatches(snapshot, { expectTestmode: paymentTestMode })) {
     return {
       ok: true,
       available: false,
@@ -83106,10 +83272,11 @@ async function startDriverPosTerminalPaymentAuthoritative(
     credentials = null;
     return { ok: false, error: "company_mollie_credentials_unavailable" };
   }
+  const paymentTestMode = resolveCompanyMolliePaymentTestMode(env, credentials);
 
   const snapshotKey = buildScopedMollieTerminalsSnapshotKey({
     ...tenantScope,
-    testmode: false,
+    testmode: paymentTestMode,
   });
   const snapshot = snapshotKey
     ? await env.BOOKING_KV.get(snapshotKey, { type: "json" })
@@ -83118,7 +83285,7 @@ async function startDriverPosTerminalPaymentAuthoritative(
     credentials = null;
     return { ok: false, error: "terminal_snapshot_not_synced" };
   }
-  if (!posTerminalSnapshotModeMatches(snapshot, { expectTestmode: false })) {
+  if (!posTerminalSnapshotModeMatches(snapshot, { expectTestmode: paymentTestMode })) {
     credentials = null;
     return { ok: false, error: "terminal_snapshot_mode_mismatch" };
   }
@@ -83220,6 +83387,7 @@ async function startDriverPosTerminalPaymentAuthoritative(
       pos_intent_key: intentKey,
     },
     profileId: companyMollieProfileId,
+    ...(paymentTestMode ? { testmode: true } : {}),
   };
   const idempotencyKey = safeStr(intentKey, 240).replace(/[^a-zA-Z0-9_-]+/g, "_");
   let mollieRes = null;

@@ -258,3 +258,81 @@ export function posIntentStatusBlocksTerminalUnlink(status = "") {
     s === "mollie_open"
   );
 }
+
+/**
+ * MOLLIE-NEW-TERMINALS-NOT-DISCOVERED-P0
+ * Merge customer-visible terminals from live + test snapshots.
+ * Live wins on id collision. Each row is tagged with mollie_mode/testmode.
+ */
+export function mergeLiveAndTestTerminalPresentations({
+  live = null,
+  test = null,
+} = {}) {
+  const liveObj = _asObject(live);
+  const testObj = _asObject(test);
+  const byId = new Map();
+  const tag = (list, mode) => {
+    const rows = Array.isArray(list) ? list : [];
+    for (const raw of rows) {
+      if (!raw || typeof raw !== "object") continue;
+      const id = _str(raw.id, 120);
+      if (!id) continue;
+      if (byId.has(id)) continue;
+      byId.set(id, {
+        ...raw,
+        id,
+        mollie_mode: mode,
+        testmode: mode === "test",
+      });
+    }
+  };
+  // Prefer live ids first so collisions keep live.
+  tag(liveObj.terminals, "live");
+  tag(testObj.terminals, "test");
+  const liveSynced = _str(liveObj.synced_at, 80);
+  const testSynced = _str(testObj.synced_at, 80);
+  const syncedAt =
+    !liveSynced
+      ? testSynced || null
+      : !testSynced
+        ? liveSynced
+        : liveSynced >= testSynced
+          ? liveSynced
+          : testSynced;
+  const statusLive = _str(liveObj.status, 40);
+  const statusTest = _str(testObj.status, 40);
+  const status =
+    statusLive === "synced" || statusTest === "synced"
+      ? "synced"
+      : statusLive || statusTest || "not_synced";
+  return {
+    ok: true,
+    version: Number(liveObj.version || testObj.version) || 1,
+    tenant_id: _str(liveObj.tenant_id ?? testObj.tenant_id, 80) || null,
+    company_id: _str(liveObj.company_id ?? testObj.company_id, 80) || null,
+    profile_id: _str(liveObj.profile_id ?? testObj.profile_id, 80) || null,
+    mollie_mode: "discovery",
+    testmode: false,
+    discovery_modes: ["live", "test"],
+    status,
+    synced_at: syncedAt,
+    default_terminal_id:
+      _str(liveObj.default_terminal_id ?? testObj.default_terminal_id, 120) ||
+      null,
+    terminals: Array.from(byId.values()),
+    excluded_terminals: {
+      ..._asObject(testObj.excluded_terminals),
+      ..._asObject(liveObj.excluded_terminals),
+    },
+    live_raw_terminal_count: Array.isArray(liveObj.terminals_raw)
+      ? liveObj.terminals_raw.length
+      : Array.isArray(liveObj._raw_terminals)
+        ? liveObj._raw_terminals.length
+        : null,
+    test_raw_terminal_count: Array.isArray(testObj.terminals_raw)
+      ? testObj.terminals_raw.length
+      : Array.isArray(testObj._raw_terminals)
+        ? testObj._raw_terminals.length
+        : null,
+  };
+}

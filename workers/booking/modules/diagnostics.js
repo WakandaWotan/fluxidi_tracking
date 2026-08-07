@@ -40,8 +40,8 @@ GET  /admin/mollie/connect/status
 GET  /admin/mollie/connect/readiness
 POST /admin/mollie/connect/test-payment
 GET  /admin/mollie/connect/test-payment/status
-GET  /admin/mollie/terminals (?testmode=true for test snapshot)
-POST /admin/mollie/terminals/sync (body/query testmode=true for test sync)
+GET  /admin/mollie/terminals (default=live+test discovery; ?testmode=true|false for single mode)
+POST /admin/mollie/terminals/sync (default discovers live+test; body testmode for single mode)
 POST /admin/mollie/terminals/unlink (Fluxidi-only exclusion; never Mollie DELETE)
 POST /admin/mollie/terminals/relink (clear Fluxidi exclusion)
 POST /admin/mollie/terminals/forget (Fluxidi-only tombstone hide; never Mollie DELETE)
