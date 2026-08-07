@@ -1,12 +1,12 @@
 # ============================================================================
 # FLUXIDI FIELD BUILD — Tablet
-# Exact commit: 16f63e0da9bf4e37817d191f7b08f2660b5a8380
+# Exact commit: 3137d6b8cb6febfe3be1e7ce15e51182ca791ed6
 # Clean integration worktree. Dirty hoofdrepository blijft onaangeraakt.
 # Exact 12 dart-defines, NO ADMIN_TOKEN, NO LEARNING_SERVICE_TOKEN.
 #
-# PIN NOTE: TABLET-PIN-OFFLINE-MAPS-DOWNLOADED-REGION-PREVIEW-P1
-# App head: offline downloaded-region Kaart bekijken preview — read-only map,
-# OfflineSwitch disconnect, complete-only CTA, no nav/ride mutation.
+# PIN NOTE: TABLET-PIN-RELEASE-LANGUAGE-CONSISTENCY-P0
+# App head: RELEASE-LANGUAGE-CONSISTENCY-NL-EN-FR-ES-P0 — Fluxidi appLanguage
+# owns NL/EN/FR/ES UI chrome (Tellers, street-ride toasts, offline maps, statuses).
 # On HEAD mismatch the script checks out $requiredHead in place (or recreates).
 # ============================================================================
 
@@ -17,7 +17,7 @@ $repo         = 'C:\_flutter_work\fluxidi_tracking'
 $worktree     = 'C:\_flutter_work\fluxidi_tracking_full_integration_20260805'
 $device       = 'R52Y808CN2M'
 $adb          = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-$requiredHead = '16f63e0da9bf4e37817d191f7b08f2660b5a8380'
+$requiredHead = '3137d6b8cb6febfe3be1e7ce15e51182ca791ed6'
 $branch       = 'release/full-tablet-integration-20260805'
 
 function Assert-LastExitCode {
