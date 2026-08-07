@@ -9735,6 +9735,49 @@ Future<Map<String, dynamic>> relinkCompanyMollieTerminal({
   return map;
 }
 
+/// Permanently hide terminal from Fluxidi UI (tombstone). Never Mollie DELETE.
+Future<Map<String, dynamic>> forgetCompanyMollieTerminal({
+  required String terminalId,
+  String? tenantId,
+  String? companyId,
+  bool testmode = false,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/mollie/terminals/forget'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{
+          ...scope,
+          'terminal_id': terminalId,
+          if (testmode) 'testmode': true,
+        }),
+      )
+      .timeout(const Duration(seconds: 20));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception(
+      _adminApiErrorMessageFromResponse(
+        map,
+        res.statusCode,
+        fallback: 'mollie_terminal_forget_failed',
+      ),
+    );
+  }
+  return map;
+}
+
 Future<Map<String, dynamic>> startBackendMollieTerminalPayment({
   required String tenantId,
   required String companyId,

@@ -2334,7 +2334,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         .toList(growable: false);
   }
 
+  bool _isMollieTerminalForgotten(Map<String, dynamic> terminal) {
+    if (terminal['forgotten'] == true || terminal['forgotten'] == 'true') {
+      return true;
+    }
+    if (terminal['removed_from_fluxidi'] == true) return true;
+    return false;
+  }
+
   bool _isMollieTerminalExcluded(Map<String, dynamic> terminal) {
+    if (_isMollieTerminalForgotten(terminal)) return true;
     if (terminal['excluded'] == true || terminal['excluded'] == 'true') {
       return true;
     }
@@ -2345,12 +2354,15 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   }
 
   List<Map<String, dynamic>> _mollieActiveTerminalList() => _mollieTerminalList()
-      .where((t) => !_isMollieTerminalExcluded(t))
+      .where((t) => !_isMollieTerminalExcluded(t) && !_isMollieTerminalForgotten(t))
       .toList(growable: false);
 
   List<Map<String, dynamic>> _mollieExcludedTerminalList() =>
       _mollieTerminalList()
-          .where(_isMollieTerminalExcluded)
+          .where(
+            (t) =>
+                _isMollieTerminalExcluded(t) && !_isMollieTerminalForgotten(t),
+          )
           .toList(growable: false);
 
   String _mollieTerminalsStatusCode() {
@@ -2658,6 +2670,90 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               fr: 'Le terminal n’a pas pu être reconnecté.',
               es: 'No se pudo volver a vincular el terminal.',
             ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _mollieTerminalLinkBusyId = null);
+      }
+    }
+  }
+
+  Future<void> _forgetMollieTerminal(Map<String, dynamic> terminal) async {
+    final terminalId = (terminal['id'] ?? '').toString().trim();
+    if (terminalId.isEmpty || _mollieTerminalLinkBusyId != null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          mollieTerminalLinkCopy(
+            key: 'forget_confirm_title',
+            lang: _lang.name,
+          ),
+        ),
+        content: Text(
+          mollieTerminalLinkCopy(
+            key: 'forget_confirm_body',
+            lang: _lang.name,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              mollieTerminalLinkCopy(key: 'forget_cancel', lang: _lang.name),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              mollieTerminalLinkCopy(
+                key: 'forget_confirm_action',
+                lang: _lang.name,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final scope = _strictSettingsScopeForAction(action: 'forget_mollie_terminal');
+    if (scope == null) return;
+    setState(() => _mollieTerminalLinkBusyId = terminalId);
+    try {
+      final data = await forgetCompanyMollieTerminal(
+        terminalId: terminalId,
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted) return;
+      setState(() => _mollieTerminalsSnapshot = data);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            mollieTerminalLinkCopy(key: 'forgotten_snack', lang: _lang.name),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      final msg = e.toString();
+      final blocked = msg.contains('terminal_unlink_blocked_pending_payment');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            blocked
+                ? mollieTerminalLinkCopy(
+                    key: 'forget_blocked_pending',
+                    lang: _lang.name,
+                  )
+                : _t(
+                    nl: 'Terminal kon niet uit Fluxidi verwijderd worden.',
+                    en: 'Terminal could not be removed from Fluxidi.',
+                    fr: 'Le terminal n’a pas pu être supprimé de Fluxidi.',
+                    es: 'No se pudo eliminar el terminal de Fluxidi.',
+                  ),
           ),
         ),
       );
@@ -5276,20 +5372,41 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           Align(
             alignment: Alignment.centerLeft,
             child: excluded
-                ? OutlinedButton.icon(
-                    onPressed: busy || terminalId.isEmpty
-                        ? null
-                        : () => _relinkMollieTerminal(terminal),
-                    icon: busy
-                        ? const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.link_rounded, size: 16),
-                    label: Text(
-                      mollieTerminalLinkCopy(key: 'relink', lang: _lang.name),
-                    ),
+                ? Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: busy || terminalId.isEmpty
+                            ? null
+                            : () => _relinkMollieTerminal(terminal),
+                        icon: busy
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.link_rounded, size: 16),
+                        label: Text(
+                          mollieTerminalLinkCopy(
+                            key: 'relink',
+                            lang: _lang.name,
+                          ),
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: busy || terminalId.isEmpty
+                            ? null
+                            : () => _forgetMollieTerminal(terminal),
+                        icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                        label: Text(
+                          mollieTerminalLinkCopy(
+                            key: 'forget',
+                            lang: _lang.name,
+                          ),
+                        ),
+                      ),
+                    ],
                   )
                 : OutlinedButton.icon(
                     onPressed: busy || terminalId.isEmpty

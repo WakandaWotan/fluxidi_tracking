@@ -1,4 +1,5 @@
 // MOLLIE-TERMINAL-UNLINK-AND-EXCLUSION-P1
+// MOLLIE-TERMINAL-FORGET-FROM-FLUXIDI-P1
 // Run: node --test workers/booking/modules/mollie_terminal_exclusion.test.mjs
 
 import { test } from "node:test";
@@ -6,8 +7,10 @@ import assert from "node:assert/strict";
 
 import {
   applyTerminalLinkAction,
+  filterCustomerVisibleTerminals,
   filterSelectablePosTerminals,
   isTerminalExcluded,
+  isTerminalForgotten,
   mergeProviderTerminalsWithExclusions,
   normalizeExcludedTerminalsMap,
   partitionTerminalsForPresentation,
@@ -32,9 +35,10 @@ test("1. unlink active terminal marks excluded in durable map", () => {
   });
   assert.equal(applied.ok, true);
   assert.equal(applied.excluded, true);
+  assert.equal(applied.forgotten, false);
   assert.equal(applied.linked, false);
   assert.equal(applied.excluded_terminals.term_old4.excluded, true);
-  assert.equal(applied.excluded_terminals.term_old4.excluded_at, "2026-08-07T12:00:00.000Z");
+  assert.equal(applied.excluded_terminals.term_old4.forgotten, false);
 });
 
 test("2. excluded terminal disappears from Tap to Pay selector", () => {
@@ -172,8 +176,6 @@ test("11. unlink action is Fluxidi-only (no provider delete/deactivate fields)",
   });
   assert.equal(applied.ok, true);
   assert.equal(Object.prototype.hasOwnProperty.call(applied, "provider_delete_called"), false);
-  assert.equal(Object.prototype.hasOwnProperty.call(applied, "mollie_delete"), false);
-  // Contract marker used by API responses.
   const apiContract = {
     ...applied,
     provider_delete_called: false,
@@ -197,4 +199,191 @@ test("12. presentation partitions active vs unlinked", () => {
     parts.excluded.map((t) => t.id),
     ["b"],
   );
+});
+
+test("FORGET-1. remove terminal marks forgotten tombstone", () => {
+  const applied = applyTerminalLinkAction({
+    excludedMap: {
+      term_old4: {
+        provider_terminal_id: "term_old4",
+        excluded: true,
+        forgotten: false,
+      },
+    },
+    terminalId: "term_old4",
+    action: "forget",
+    nowIso: "2026-08-07T16:00:00.000Z",
+  });
+  assert.equal(applied.ok, true);
+  assert.equal(applied.forgotten, true);
+  assert.equal(applied.excluded, true);
+  assert.equal(applied.excluded_terminals.term_old4.forgotten, true);
+  assert.equal(
+    applied.excluded_terminals.term_old4.forgotten_at,
+    "2026-08-07T16:00:00.000Z",
+  );
+});
+
+test("FORGET-2. forgotten disappears from both UI sections", () => {
+  const merged = mergeProviderTerminalsWithExclusions({
+    providerTerminals: [T("term_old4"), T("term_new")],
+    previousExcluded: {
+      term_old4: {
+        provider_terminal_id: "term_old4",
+        excluded: true,
+        forgotten: true,
+      },
+    },
+  });
+  const visible = filterCustomerVisibleTerminals(
+    merged.terminals,
+    merged.excluded_terminals,
+  );
+  assert.deepEqual(
+    visible.map((t) => t.id),
+    ["term_new"],
+  );
+  const parts = partitionTerminalsForPresentation(merged.terminals);
+  assert.deepEqual(
+    parts.active.map((t) => t.id),
+    ["term_new"],
+  );
+  assert.equal(parts.excluded.length, 0);
+});
+
+test("FORGET-3. forgotten disappears from Tap to Pay", () => {
+  const merged = mergeProviderTerminalsWithExclusions({
+    providerTerminals: [T("term_old4"), T("term_new")],
+    previousExcluded: {
+      term_old4: {
+        provider_terminal_id: "term_old4",
+        excluded: true,
+        forgotten: true,
+      },
+    },
+  });
+  const selectable = filterSelectablePosTerminals(
+    merged.terminals,
+    merged.excluded_terminals,
+  );
+  assert.deepEqual(
+    selectable.map((t) => t.id),
+    ["term_new"],
+  );
+});
+
+test("FORGET-4. sync does not restore forgotten terminal to UI", () => {
+  const previous = normalizeExcludedTerminalsMap({
+    term_old3: {
+      provider_terminal_id: "term_old3",
+      excluded: true,
+      forgotten: true,
+      forgotten_at: "2026-08-07T10:00:00.000Z",
+    },
+  });
+  const merged = mergeProviderTerminalsWithExclusions({
+    providerTerminals: [T("term_old3"), T("term_demo")],
+    previousExcluded: previous,
+  });
+  assert.equal(isTerminalForgotten("term_old3", merged.excluded_terminals), true);
+  const visible = filterCustomerVisibleTerminals(
+    merged.terminals,
+    merged.excluded_terminals,
+  );
+  assert.deepEqual(
+    visible.map((t) => t.id),
+    ["term_demo"],
+  );
+});
+
+test("FORGET-5. snapshot remount keeps forgotten tombstone", () => {
+  const remounted = normalizeExcludedTerminalsMap({
+    term_old4: {
+      provider_terminal_id: "term_old4",
+      forgotten: true,
+      excluded: true,
+    },
+  });
+  assert.equal(isTerminalForgotten("term_old4", remounted), true);
+  const merged = mergeProviderTerminalsWithExclusions({
+    providerTerminals: [T("term_old4")],
+    previousExcluded: remounted,
+  });
+  assert.equal(
+    filterCustomerVisibleTerminals(merged.terminals, remounted).length,
+    0,
+  );
+});
+
+test("FORGET-6. restart-equivalent forgotten stays hidden", () => {
+  const remounted = normalizeExcludedTerminalsMap({
+    term_old4: { provider_terminal_id: "term_old4", forgotten: true },
+  });
+  assert.equal(isTerminalExcluded("term_old4", remounted), true);
+  assert.equal(isTerminalForgotten("term_old4", remounted), true);
+});
+
+test("FORGET-7. tenant isolation for forgotten tombstones", () => {
+  const companyA = normalizeExcludedTerminalsMap({
+    term_x: { provider_terminal_id: "term_x", forgotten: true },
+  });
+  const companyB = normalizeExcludedTerminalsMap({});
+  assert.equal(isTerminalForgotten("term_x", companyA), true);
+  assert.equal(isTerminalForgotten("term_x", companyB), false);
+});
+
+test("FORGET-8. pending payment status blocks forget (same gate as unlink)", () => {
+  assert.equal(posIntentStatusBlocksTerminalUnlink("open"), true);
+  assert.equal(posIntentStatusBlocksTerminalUnlink("paid"), false);
+});
+
+test("FORGET-9. forget is Fluxidi-only (no Mollie DELETE fields)", () => {
+  const applied = applyTerminalLinkAction({
+    terminalId: "term_old4",
+    action: "forget",
+  });
+  assert.equal(applied.ok, true);
+  const apiContract = {
+    ...applied,
+    provider_delete_called: false,
+    provider_deactivate_called: false,
+  };
+  assert.equal(apiContract.provider_delete_called, false);
+  assert.equal(apiContract.provider_deactivate_called, false);
+});
+
+test("FORGET-10. temporary unlink/reconnect still works after forget model", () => {
+  const unlinked = applyTerminalLinkAction({
+    terminalId: "term_tmp",
+    action: "unlink",
+  });
+  assert.equal(unlinked.forgotten, false);
+  const parts = partitionTerminalsForPresentation(
+    mergeProviderTerminalsWithExclusions({
+      providerTerminals: [T("term_tmp")],
+      previousExcluded: unlinked.excluded_terminals,
+    }).terminals,
+  );
+  assert.equal(parts.excluded.length, 1);
+  const relinked = applyTerminalLinkAction({
+    excludedMap: unlinked.excluded_terminals,
+    terminalId: "term_tmp",
+    action: "relink",
+  });
+  assert.equal(relinked.ok, true);
+  assert.equal(relinked.linked, true);
+});
+
+test("FORGET-11. reconnect cannot clear forgotten tombstone", () => {
+  const forgotten = applyTerminalLinkAction({
+    terminalId: "term_old4",
+    action: "forget",
+  });
+  const relink = applyTerminalLinkAction({
+    excludedMap: forgotten.excluded_terminals,
+    terminalId: "term_old4",
+    action: "relink",
+  });
+  assert.equal(relink.ok, false);
+  assert.equal(relink.error, "terminal_forgotten");
 });

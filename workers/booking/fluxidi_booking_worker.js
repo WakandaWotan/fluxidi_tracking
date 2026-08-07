@@ -249,6 +249,7 @@ import {
 } from "./modules/pos_terminal_payment.mjs";
 import {
   applyTerminalLinkAction,
+  filterCustomerVisibleTerminals,
   filterSelectablePosTerminals,
   isTerminalExcluded,
   mergeProviderTerminalsWithExclusions,
@@ -9409,7 +9410,14 @@ function _presentCompanyMollieTerminalsSnapshot(snapshot, {
     providerTerminals: providerList.map(_sanitizeMollieTerminalForSnapshot).filter((t) => !!t?.id),
     previousExcluded: excludedMap,
   });
-  const terminals = merged.terminals.map((t) => _sanitizeMollieTerminalForSnapshot(t)).filter((t) => !!t.id);
+  const annotated = merged.terminals
+    .map((t) => _sanitizeMollieTerminalForSnapshot(t))
+    .filter((t) => !!t.id);
+  // Customer UI: forgotten tombstones are omitted (durable map still persisted).
+  const terminals = filterCustomerVisibleTerminals(
+    annotated,
+    merged.excluded_terminals,
+  );
   return {
     ok: true,
     version: Number(src.version) || 1,
@@ -9541,11 +9549,20 @@ async function setCompanyMollieTerminalLinkState(env, scope, { terminalId, actio
   const terminals = Array.isArray(snapshot.terminals)
     ? snapshot.terminals.map(_sanitizeMollieTerminalForSnapshot).filter((t) => !!t.id)
     : [];
+  const priorExcluded = normalizeExcludedTerminalsMap(
+    snapshot.excluded_terminals ?? snapshot.excludedTerminals,
+  );
   const found = terminals.find((t) => t.id === wantId);
-  if (!found) {
+  if (!found && !priorExcluded[wantId]) {
     return { ok: false, error: "terminal_not_found_for_company", status: "terminal_not_found_for_company" };
   }
-  if (act === "unlink" || act === "exclude") {
+  if (
+    act === "unlink" ||
+    act === "exclude" ||
+    act === "forget" ||
+    act === "remove" ||
+    act === "remove_from_fluxidi"
+  ) {
     const pending = await companyTerminalHasBlockingOpenPayment(env, {
       tenant_id: tenantId,
       company_id: companyId,
@@ -9562,7 +9579,7 @@ async function setCompanyMollieTerminalLinkState(env, scope, { terminalId, actio
     }
   }
   const applied = applyTerminalLinkAction({
-    excludedMap: snapshot.excluded_terminals,
+    excludedMap: priorExcluded,
     terminalId: wantId,
     action: act,
     nowIso: new Date().toISOString(),
@@ -9570,8 +9587,18 @@ async function setCompanyMollieTerminalLinkState(env, scope, { terminalId, actio
   if (!applied.ok) {
     return { ok: false, error: applied.error || "invalid_link_action", status: applied.error || "invalid_link_action" };
   }
+  const providerTerminals = found
+    ? terminals
+    : [
+        ...terminals,
+        _sanitizeMollieTerminalForSnapshot({
+          id: wantId,
+          status: "active",
+          description: null,
+        }),
+      ];
   const merged = mergeProviderTerminalsWithExclusions({
-    providerTerminals: terminals,
+    providerTerminals,
     previousExcluded: applied.excluded_terminals,
   });
   const annotated = merged.terminals.map(_sanitizeMollieTerminalForSnapshot).filter((t) => !!t.id);
@@ -9597,6 +9624,11 @@ async function setCompanyMollieTerminalLinkState(env, scope, { terminalId, actio
     updated_at: new Date().toISOString(),
   };
   await env.BOOKING_KV.put(key, JSON.stringify(next));
+  let actionLabel = "unlinked";
+  if (act === "relink" || act === "include") actionLabel = "relinked";
+  else if (act === "forget" || act === "remove" || act === "remove_from_fluxidi") {
+    actionLabel = "forgotten";
+  }
   return {
     ..._presentCompanyMollieTerminalsSnapshot(next, {
       tenantId,
@@ -9604,7 +9636,7 @@ async function setCompanyMollieTerminalLinkState(env, scope, { terminalId, actio
       mollieMode,
       testMode,
     }),
-    action: act === "relink" || act === "include" ? "relinked" : "unlinked",
+    action: actionLabel,
   };
 }
 
@@ -34756,19 +34788,27 @@ export default {
 
       if (
         (url.pathname === "/admin/mollie/terminals/unlink" ||
-          url.pathname === "/admin/mollie/terminals/relink") &&
+          url.pathname === "/admin/mollie/terminals/relink" ||
+          url.pathname === "/admin/mollie/terminals/forget") &&
         request.method === "POST"
       ) {
         const body = await safeJson(request);
+        const action = url.pathname.endsWith("/unlink")
+          ? "unlink"
+          : url.pathname.endsWith("/forget")
+            ? "forget"
+            : "relink";
         const authScope = await _requireAdminOrCompanySessionForExplicitScope({
           request,
           url,
           env,
           body,
           routeLabel:
-            url.pathname.endsWith("/unlink")
+            action === "unlink"
               ? "ADMIN_MOLLIE_TERMINALS_UNLINK"
-              : "ADMIN_MOLLIE_TERMINALS_RELINK",
+              : action === "forget"
+                ? "ADMIN_MOLLIE_TERMINALS_FORGET"
+                : "ADMIN_MOLLIE_TERMINALS_RELINK",
         });
         if (!authScope.ok) return authScope.response;
         const explicitScope = authScope.explicitScope;
@@ -34776,7 +34816,6 @@ export default {
           body?.testmode ?? body?.testMode ?? url.searchParams.get("testmode"),
         );
         const terminalId = safeStr(body?.terminal_id ?? body?.terminalId, 120);
-        const action = url.pathname.endsWith("/unlink") ? "unlink" : "relink";
         const out = await setCompanyMollieTerminalLinkState(
           env,
           { ...explicitScope, testmode: testMode },
@@ -34805,7 +34844,7 @@ export default {
               terminal_id: terminalId || null,
               payment_id: out?.payment_id || null,
               mollie_status: out?.mollie_status || null,
-              // Explicit: Fluxidi-only unlink; Mollie provider terminal untouched.
+              // Explicit: Fluxidi-only unlink/forget; Mollie provider terminal untouched.
               provider_delete_called: false,
               provider_deactivate_called: false,
             },

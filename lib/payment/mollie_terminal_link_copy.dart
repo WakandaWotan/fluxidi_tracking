@@ -1,5 +1,5 @@
-// MOLLIE-TERMINAL-UNLINK-AND-EXCLUSION-P1 — localized unlink/relink copy.
-// Fluxidi app language remains source of truth (nl/en/fr/es).
+// MOLLIE-TERMINAL-UNLINK-AND-EXCLUSION-P1 / MOLLIE-TERMINAL-FORGET-FROM-FLUXIDI-P1
+// Localized unlink / relink / forget copy. Fluxidi app language is source of truth.
 
 String mollieTerminalLinkCopy({
   required String key,
@@ -30,6 +30,13 @@ String mollieTerminalLinkCopy({
         'Reconnecter',
         'Volver a vincular',
       );
+    case 'forget':
+      return pick(
+        'Verwijderen uit Fluxidi',
+        'Remove from Fluxidi',
+        'Supprimer de Fluxidi',
+        'Eliminar de Fluxidi',
+      );
     case 'unlinked_section':
       return pick(
         'Ontkoppelde terminals',
@@ -51,12 +58,49 @@ String mollieTerminalLinkCopy({
         'Terminal reconnecté',
         'Terminal vuelto a vincular',
       );
+    case 'forgotten_snack':
+      return pick(
+        'Terminal verwijderd uit Fluxidi',
+        'Terminal removed from Fluxidi',
+        'Terminal supprimé de Fluxidi',
+        'Terminal eliminado de Fluxidi',
+      );
+    case 'forget_confirm_title':
+      return pick(
+        'Terminal verwijderen uit Fluxidi?',
+        'Remove terminal from Fluxidi?',
+        'Supprimer le terminal de Fluxidi ?',
+        '¿Eliminar el terminal de Fluxidi?',
+      );
+    case 'forget_confirm_body':
+      return pick(
+        'Deze terminal wordt alleen uit Fluxidi verwijderd. De terminal blijft bestaan in je Mollie-account.',
+        'This terminal will only be removed from Fluxidi. The terminal will remain in your Mollie account.',
+        'Ce terminal sera uniquement supprimé de Fluxidi. Le terminal restera dans votre compte Mollie.',
+        'Este terminal solo se eliminará de Fluxidi. El terminal seguirá existiendo en tu cuenta de Mollie.',
+      );
+    case 'forget_confirm_action':
+      return pick(
+        'Verwijderen uit Fluxidi',
+        'Remove from Fluxidi',
+        'Supprimer de Fluxidi',
+        'Eliminar de Fluxidi',
+      );
+    case 'forget_cancel':
+      return pick('Annuleren', 'Cancel', 'Annuler', 'Cancelar');
     case 'unlink_blocked_pending':
       return pick(
         'Kan niet ontkoppelen zolang een betaling actief is',
         'Cannot unlink while a payment is still active',
         'Impossible de déconnecter tant qu’un paiement est actif',
         'No se puede desvincular mientras un pago esté activo',
+      );
+    case 'forget_blocked_pending':
+      return pick(
+        'Kan niet verwijderen zolang een betaling actief is',
+        'Cannot remove while a payment is still active',
+        'Impossible de supprimer tant qu’un paiement est actif',
+        'No se puede eliminar mientras un pago esté activo',
       );
     default:
       return '';

@@ -1356,7 +1356,13 @@ export function _sanitizeMollieTerminalForSnapshot(terminal = {}) {
         source.profile?.profileId,
       80,
     ) || null;
+  const forgotten =
+    source.forgotten === true ||
+    source.forgotten === "true" ||
+    source.removed_from_fluxidi === true ||
+    source.removedFromFluxidi === true;
   const excluded =
+    forgotten ||
     source.excluded === true ||
     source.excluded === "true" ||
     source.linked === false ||
@@ -1374,10 +1380,12 @@ export function _sanitizeMollieTerminalForSnapshot(terminal = {}) {
     profile_id: profileId,
     created_at: safeStr(source.created_at ?? source.createdAt, 80) || null,
     updated_at: safeStr(source.updated_at ?? source.updatedAt, 80) || null,
-    // MOLLIE-TERMINAL-UNLINK-AND-EXCLUSION-P1 — Fluxidi link/exclusion (not Mollie).
+    // Fluxidi link/exclusion/forget (not Mollie provider DELETE).
     linked: excluded ? false : true,
     excluded: !!excluded,
+    forgotten: !!forgotten,
     excluded_at: safeStr(source.excluded_at ?? source.excludedAt, 80) || null,
+    forgotten_at: safeStr(source.forgotten_at ?? source.forgottenAt, 80) || null,
   };
   return out;
 }

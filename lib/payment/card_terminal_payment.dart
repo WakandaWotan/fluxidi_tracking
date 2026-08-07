@@ -216,8 +216,16 @@ InPersonTerminalStatus resolveTapToPayCapabilityStatus(Map<String, dynamic>? raw
   return InPersonTerminalStatus.noTerminal;
 }
 
-/// True when a snapshot terminal is Fluxidi-excluded / unlinked.
+/// True when a snapshot terminal is Fluxidi-forgotten (removed from UI).
+bool isMollieTerminalForgottenInSnapshot(Map terminal) {
+  return terminal['forgotten'] == true ||
+      terminal['forgotten'] == 'true' ||
+      terminal['removed_from_fluxidi'] == true;
+}
+
+/// True when a snapshot terminal is Fluxidi-excluded / unlinked / forgotten.
 bool isMollieTerminalExcludedInSnapshot(Map terminal) {
+  if (isMollieTerminalForgottenInSnapshot(terminal)) return true;
   if (terminal['excluded'] == true || terminal['excluded'] == 'true') {
     return true;
   }
