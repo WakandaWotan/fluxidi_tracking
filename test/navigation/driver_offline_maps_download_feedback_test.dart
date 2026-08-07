@@ -73,7 +73,9 @@ void main() {
         'ENOSPC: no space left on device':
             DriverOfflineMapFailureCategory.insufficientStorage,
         'tile count exceeds the allowed limit':
-            DriverOfflineMapFailureCategory.regionTooLarge,
+            DriverOfflineMapFailureCategory.tileLimitExceeded,
+        'beyond the maximum allowed 750 tiles':
+            DriverOfflineMapFailureCategory.tileLimitExceeded,
         'invalid coordinate in geometry':
             DriverOfflineMapFailureCategory.invalidGeometry,
         'network restriction disallows expensive connections':

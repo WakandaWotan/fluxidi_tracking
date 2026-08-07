@@ -13,6 +13,7 @@ import 'driver_offline_maps_estimate_format.dart';
 import 'driver_offline_maps_europe_geocoder.dart';
 import 'driver_offline_maps_europe_selection.dart';
 import 'driver_offline_maps_service.dart';
+import 'driver_offline_maps_tile_quota.dart';
 import 'nav_backend/driver_navigation_worker_client.dart';
 
 // Future: OFFLINE-C2 download current visible map area from DriverHomePage.
@@ -190,6 +191,10 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
   DriverOfflineEuropePlace? _selectedPlace;
   int _selectedRadiusKm = kDriverOfflineEuropeDefaultRadiusKm;
   Timer? _searchDebounce;
+  DriverOfflineMapsTileCapacity? _tileCapacity;
+  bool _selectionTooLarge = false;
+  int? _suggestedRadiusKm;
+  String? _quotaGuidance;
 
   @override
   void initState() {
@@ -458,9 +463,16 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
     try {
       await _service.ensureInitialized();
       final regions = await _service.listDownloadedRegions();
+      DriverOfflineMapsTileCapacity? capacity;
+      try {
+        capacity = await _service.readTileCapacity();
+      } catch (_) {
+        capacity = null;
+      }
       if (!mounted) return;
       setState(() {
         _regions = regions;
+        _tileCapacity = capacity;
         _loadingList = false;
       });
     } catch (_) {
@@ -473,6 +485,38 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
         );
       });
     }
+  }
+
+  Future<int?> _findLargestValidRadiusKm({
+    required DriverOfflineEuropePlace place,
+    required int usedMapsTiles,
+    required int limitMapsTiles,
+    required int currentRadiusKm,
+  }) async {
+    final candidates = kDriverOfflineEuropeRadiusOptionsKm
+        .where((km) => km < currentRadiusKm)
+        .toList()
+      ..sort((a, b) => b.compareTo(a));
+    for (final km in candidates) {
+      final selection = DriverOfflineEuropeSelection(
+        place: place,
+        radiusKm: km,
+      );
+      try {
+        final estimate = await _service
+            .estimateRegion(selection.toRegionRequest(wifiOnly: _wifiOnly))
+            .timeout(kDriverOfflineMapEstimateTimeout);
+        final evaluation = evaluateOfflineMapsTileQuota(
+          usedMapsTiles: usedMapsTiles,
+          requestedMapsTiles: estimate.estimatedMapsTileCount,
+          limitMapsTiles: limitMapsTiles,
+        );
+        if (evaluation.isAllowed) return km;
+      } catch (_) {
+        // Keep scanning smaller radii; never silent-apply a fallback.
+      }
+    }
+    return null;
   }
 
   Future<void> _onPresetSelected(DriverOfflineMapPreset preset) async {
@@ -516,8 +560,11 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
     setState(() {
       _estimateInProgress = true;
       _inlineError = null;
+      _selectionTooLarge = false;
+      _suggestedRadiusKm = null;
+      _quotaGuidance = null;
     });
-    DriverOfflineMapEstimate? estimate;
+    DriverOfflineMapPreflight? preflight;
     DriverOfflineMapFailureCategory? estimateFailure;
     // Both awaits are bounded. An unbounded platform call was the silent no-op:
     // the page stayed busy and the preview below was never reached.
@@ -535,8 +582,9 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
     }
     if (estimateFailure == null) {
       try {
-        estimate = await _service
-            .estimateRegion(request)
+        // OFFLINE-MAPS-TILE-LIMIT-PREFLIGHT-P0-2: quota before StylePacks.
+        preflight = await _service
+            .preflightRegion(request)
             .timeout(kDriverOfflineMapEstimateTimeout);
       } catch (err) {
         estimateFailure = classifyDriverOfflineMapFailure(
@@ -547,7 +595,14 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
         );
       }
     }
-    if (mounted) setState(() => _estimateInProgress = false);
+    if (mounted) {
+      setState(() {
+        _estimateInProgress = false;
+        if (preflight != null) {
+          _tileCapacity = preflight.capacity;
+        }
+      });
+    }
     if (estimateFailure != null) {
       _logOfflineDiagnostic(
         phase: 'estimate',
@@ -566,10 +621,54 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
       return;
     }
 
+    final estimate = preflight?.estimate;
+    final quota = preflight?.quota;
+    final quotaBlocked = quota?.isBlocked == true;
+    int? suggestedRadius;
+    String? quotaGuidance;
+    if (quotaBlocked &&
+        preflight != null &&
+        estimate?.estimatedMapsTileCount != null) {
+      final place = _selectedPlace;
+      if (place != null && radiusKm != null) {
+        suggestedRadius = await _findLargestValidRadiusKm(
+          place: place,
+          usedMapsTiles: preflight.capacity.usedMapsTiles,
+          limitMapsTiles: preflight.capacity.limitMapsTiles,
+          currentRadiusKm: radiusKm,
+        );
+      }
+      if (!mounted) return;
+      final lang = appConfig.currentLanguage;
+      if (suggestedRadius != null) {
+        quotaGuidance = formatOfflineMapsTileQuotaBlockedMessage(
+          language: lang,
+          requestedMapsTiles: estimate!.estimatedMapsTileCount!,
+          availableMapsTiles: preflight.capacity.availableMapsTiles,
+          suggestedRadiusKm: suggestedRadius,
+        );
+      } else {
+        quotaGuidance = offlineMapsNoValidRadiusMessage(lang);
+      }
+      setState(() {
+        _selectionTooLarge = true;
+        _suggestedRadiusKm = suggestedRadius;
+        _quotaGuidance = quotaGuidance;
+        _inlineError = driverOfflineMapFailureMessage(
+          category: DriverOfflineMapFailureCategory.tileLimitExceeded,
+          language: lang,
+        );
+      });
+    }
+
     final proceed = await _showDownloadConfirmDialog(
       titleName: titleName,
       detailLines: detailLines,
       estimate: estimate,
+      capacity: preflight?.capacity,
+      quota: quota,
+      quotaGuidance: quotaGuidance,
+      downloadAllowed: !quotaBlocked,
       estimateFailed: estimateFailure != null,
       estimateFailureMessage: estimateFailure == null
           ? null
@@ -585,7 +684,8 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
       regionIdForDiag: request.regionId,
       radiusKmForDiag: radiusKm,
     );
-    if (proceed == true && mounted) {
+    // Never start download when quota is proven over limit — no silent fallback.
+    if (proceed == true && mounted && !quotaBlocked) {
       await _startDownloadRequest(request, radiusKm: radiusKm);
     }
   }
@@ -597,6 +697,10 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
     required bool estimateFailed,
     required int minZoom,
     required int maxZoom,
+    DriverOfflineMapsTileCapacity? capacity,
+    DriverOfflineMapsTileQuotaEvaluation? quota,
+    String? quotaGuidance,
+    bool downloadAllowed = true,
     String? estimateFailureMessage,
     double? previewCenterLat,
     double? previewCenterLon,
@@ -608,6 +712,7 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
     // Field crash: non-finite TileRegionEstimateResult.errorMargin made
     // `.round()` throw "Infinity or NaN toInt".
     final estimateLines = <String>[];
+    final lang = appConfig.currentLanguage;
     try {
       if (estimate != null) {
         _logOfflineDiagnostic(
@@ -621,10 +726,11 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
           marginFinite: offlineMapEstimateFiniteClassToken(
             classifyOfflineMapEstimateNumber(estimate.errorMargin),
           ),
+          requiredResourceCount: estimate.estimatedMapsTileCount,
         );
         estimateLines.add(
           formatOfflineMapEstimateConfirmLine(
-            language: appConfig.currentLanguage,
+            language: lang,
             transferSizeBytes: estimate.transferSizeBytes,
             storageSizeBytes: estimate.storageSizeBytes,
             errorMargin: estimate.errorMargin,
@@ -640,8 +746,31 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
           marginFinite: 'missing',
         );
         estimateLines.add(
-          estimateFailureMessage ??
-              offlineMapEstimateUnavailableLabel(appConfig.currentLanguage),
+          estimateFailureMessage ?? offlineMapEstimateUnavailableLabel(lang),
+        );
+      }
+      if (capacity != null) {
+        estimateLines.add(
+          formatOfflineMapsTileQuotaSummaryLine(
+            language: lang,
+            requestedMapsTiles: estimate?.estimatedMapsTileCount,
+            usedMapsTiles: capacity.usedMapsTiles,
+            availableMapsTiles: capacity.availableMapsTiles,
+            limitMapsTiles: capacity.limitMapsTiles,
+          ),
+        );
+      }
+      if (quotaGuidance != null && quotaGuidance.trim().isNotEmpty) {
+        estimateLines.add(quotaGuidance.trim());
+      } else if (quota?.isBlocked == true &&
+          estimate?.estimatedMapsTileCount != null &&
+          capacity != null) {
+        estimateLines.add(
+          formatOfflineMapsTileQuotaBlockedMessage(
+            language: lang,
+            requestedMapsTiles: estimate!.estimatedMapsTileCount!,
+            availableMapsTiles: capacity.availableMapsTiles,
+          ),
         );
       }
     } catch (_) {
@@ -662,7 +791,7 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
       );
       estimateLines
         ..clear()
-        ..add(offlineMapEstimateUnavailableLabel(appConfig.currentLanguage));
+        ..add(offlineMapEstimateUnavailableLabel(lang));
     }
 
     try {
@@ -671,7 +800,12 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
         builder: (ctx) {
           return AlertDialog(
             title: Text(
-              _tr(nl: 'Kaartgebied downloaden?', en: 'Download map area?'),
+              downloadAllowed
+                  ? _tr(nl: 'Kaartgebied downloaden?', en: 'Download map area?')
+                  : _tr(
+                      nl: 'Kaartgebied te groot',
+                      en: 'Map area too large',
+                    ),
             ),
             content: SingleChildScrollView(
               child: Column(
@@ -682,6 +816,14 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                     titleName,
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
+                  if (!downloadAllowed) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      offlineMapsSelectionTooLargeLabel(lang),
+                      key: const Key('offline_selection_too_large'),
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ],
                   const SizedBox(height: 8),
                   for (final line in detailLines) ...[
                     Text(line),
@@ -721,7 +863,10 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                   ],
                   if (estimateLines.isNotEmpty) ...[
                     const SizedBox(height: 8),
-                    Text(estimateLines.join('\n')),
+                    for (final line in estimateLines) ...[
+                      Text(line),
+                      const SizedBox(height: 6),
+                    ],
                   ],
                   const SizedBox(height: 12),
                   Text(
@@ -746,7 +891,9 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
               ),
               FilledButton(
                 key: const Key('offline_confirm_download'),
-                onPressed: () => Navigator.pop(ctx, true),
+                onPressed: downloadAllowed
+                    ? () => Navigator.pop(ctx, true)
+                    : null,
                 child: Text(_tr(nl: 'Downloaden', en: 'Download')),
               ),
             ],
@@ -1547,6 +1694,28 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                         const SizedBox(height: 10),
                         _selectedPlaceSummary(palette: palette),
                         const SizedBox(height: 10),
+                        if (_tileCapacity != null) ...[
+                          _infoCard(
+                            key: const Key('offline_tile_capacity_card'),
+                            palette: palette,
+                            child: Text(
+                              formatOfflineMapsTileQuotaSummaryLine(
+                                language: appConfig.currentLanguage,
+                                requestedMapsTiles: null,
+                                usedMapsTiles: _tileCapacity!.usedMapsTiles,
+                                availableMapsTiles:
+                                    _tileCapacity!.availableMapsTiles,
+                                limitMapsTiles: _tileCapacity!.limitMapsTiles,
+                              ),
+                              style: TextStyle(
+                                color: palette.textPrimary,
+                                fontSize: 13,
+                                height: 1.35,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                        ],
                         Text(
                           _tr(nl: 'Downloadstraal', en: 'Download radius'),
                           style: TextStyle(
@@ -1561,13 +1730,25 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                           children: [
                             for (final km in kDriverOfflineEuropeRadiusOptionsKm)
                               ChoiceChip(
-                                label: Text('$km km'),
+                                label: Text(
+                                  _suggestedRadiusKm == km
+                                      ? '$km km · ${_tr(nl: 'voorstel', en: 'suggested')}'
+                                      : '$km km',
+                                ),
                                 selected: _selectedRadiusKm == km,
                                 onSelected: busy
                                     ? null
-                                    : (_) => setState(
-                                          () => _selectedRadiusKm = km,
-                                        ),
+                                    : (_) => setState(() {
+                                          _selectedRadiusKm = km;
+                                          _selectionTooLarge = false;
+                                          _quotaGuidance = null;
+                                          // Do not auto-change zoom; only clear
+                                          // stale quota state for the new radius.
+                                          if (_suggestedRadiusKm != null &&
+                                              km == _suggestedRadiusKm) {
+                                            _suggestedRadiusKm = null;
+                                          }
+                                        }),
                                 selectedColor: palette.accent.withOpacity(0.35),
                                 labelStyle: TextStyle(
                                   color: palette.textPrimary,
@@ -1575,6 +1756,30 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                               ),
                           ],
                         ),
+                        if (_selectionTooLarge) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            offlineMapsSelectionTooLargeLabel(
+                              appConfig.currentLanguage,
+                            ),
+                            key: const Key('offline_radius_too_large'),
+                            style: TextStyle(
+                              color: palette.textPrimary,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          if (_quotaGuidance != null) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              _quotaGuidance!,
+                              style: TextStyle(
+                                color: palette.textMuted,
+                                fontSize: 12,
+                                height: 1.35,
+                              ),
+                            ),
+                          ],
+                        ],
                         const SizedBox(height: 10),
                         SizedBox(
                           width: double.infinity,

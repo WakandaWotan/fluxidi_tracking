@@ -3,6 +3,7 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mb;
 
 import 'driver_navigation_map_config.dart';
 import 'driver_offline_maps_download_feedback.dart';
+import 'driver_offline_maps_tile_quota.dart';
 import 'nav_engine/nav_field_diagnostics.dart';
 
 /// Fluxidi metadata marker for tile regions created by this service.
@@ -293,30 +294,57 @@ void _offlineMapsFieldLog(String line) {
 /// Values come from [mb.TileRegionEstimateResult]. They are statistical estimates
 /// (99.9% confidence band via [errorMargin]), not exact byte counts until download
 /// completes.
+///
+/// [estimatedMapsTileCount] is the best Maps tile-pack count observed on
+/// [mb.TileRegionEstimateProgress.requiredResourceCount] during estimate (SDK
+/// has no dedicated estimated-tiles result field in 2.18.0).
 class DriverOfflineMapEstimate {
   final int transferSizeBytes;
   final int storageSizeBytes;
   final double errorMargin;
+  final int? estimatedMapsTileCount;
 
   const DriverOfflineMapEstimate({
     required this.transferSizeBytes,
     required this.storageSizeBytes,
     required this.errorMargin,
+    this.estimatedMapsTileCount,
   });
 
   /// Normalizes SDK estimate fields. Non-finite / negative margins become
   /// [double.nan] so UI formatters omit the ±% clause instead of crashing on
   /// `.round()` / `.toInt()`. Negative byte counts collapse to 0.
-  factory DriverOfflineMapEstimate.fromSdk(mb.TileRegionEstimateResult result) {
+  factory DriverOfflineMapEstimate.fromSdk(
+    mb.TileRegionEstimateResult result, {
+    int? estimatedMapsTileCount,
+  }) {
     final margin = result.errorMargin;
     final safeMargin =
         margin.isFinite && !margin.isNaN && margin >= 0 ? margin : double.nan;
+    final tiles = estimatedMapsTileCount;
     return DriverOfflineMapEstimate(
       transferSizeBytes: result.transferSize < 0 ? 0 : result.transferSize,
       storageSizeBytes: result.storageSize < 0 ? 0 : result.storageSize,
       errorMargin: safeMargin,
+      estimatedMapsTileCount:
+          tiles != null && tiles > 0 ? tiles : null,
     );
   }
+}
+
+/// Preflight result: byte estimate + cumulative Maps tile-pack quota.
+class DriverOfflineMapPreflight {
+  final DriverOfflineMapEstimate estimate;
+  final DriverOfflineMapsTileCapacity capacity;
+  final DriverOfflineMapsTileQuotaEvaluation quota;
+
+  const DriverOfflineMapPreflight({
+    required this.estimate,
+    required this.capacity,
+    required this.quota,
+  });
+
+  bool get downloadAllowedByQuota => quota.isAllowed;
 }
 
 class DriverOfflineMapsException implements Exception {
@@ -396,6 +424,17 @@ abstract interface class DriverOfflineMapsDownloadPort {
   Future<void> ensureInitialized();
 
   Future<DriverOfflineMapEstimate> estimateRegion(
+    DriverOfflineMapRegionRequest request, {
+    DriverOfflineMapProgressCallback? onProgress,
+  });
+
+  /// Cumulative Maps tile-pack usage on the default TileStore (SDK 750 cap).
+  Future<DriverOfflineMapsTileCapacity> readTileCapacity({
+    String? excludeRegionId,
+  });
+
+  /// Estimate + quota gate. Must run before StylePack / TileRegion download.
+  Future<DriverOfflineMapPreflight> preflightRegion(
     DriverOfflineMapRegionRequest request, {
     DriverOfflineMapProgressCallback? onProgress,
   });
@@ -490,6 +529,7 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
       // OFFLINE-MAPS-DOWNLOAD-COMPLETION-P0-1: never share the download region
       // id with estimate — Mapbox cancels a pending load for the same id.
       final estimateId = '${regionId}__estimate';
+      var peakRequiredTiles = 0;
       final result = await _store.estimateTileRegion(
         estimateId,
         loadOptions,
@@ -498,36 +538,50 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
           preciseEstimationTimeout: 5,
           timeout: 30,
         ),
-        onProgress == null
-            ? null
-            : (mb.TileRegionEstimateProgress progress) {
-                _emitProgress(
-                  onProgress,
-                  DriverOfflineMapProgress(
-                    phase: DriverOfflineMapProgressPhase.estimate,
-                    regionId: regionId,
-                    completedResourceCount: progress.completedResourceCount,
-                    requiredResourceCount: progress.requiredResourceCount,
-                    status: 'progress',
-                  ),
-                );
-              },
+        (mb.TileRegionEstimateProgress progress) {
+          if (progress.requiredResourceCount > peakRequiredTiles) {
+            peakRequiredTiles = progress.requiredResourceCount;
+          }
+          if (onProgress == null) return;
+          _emitProgress(
+            onProgress,
+            DriverOfflineMapProgress(
+              phase: DriverOfflineMapProgressPhase.estimate,
+              regionId: regionId,
+              completedResourceCount: progress.completedResourceCount,
+              requiredResourceCount: progress.requiredResourceCount,
+              status: 'progress',
+            ),
+          );
+        },
       );
       _log('estimate', regionId, 'done');
       // Best-effort: estimate must not leave a phantom region id behind.
       try {
         await _store.removeRegion(estimateId);
       } catch (_) {}
+      final estimate = DriverOfflineMapEstimate.fromSdk(
+        result,
+        estimatedMapsTileCount:
+            peakRequiredTiles > 0 ? peakRequiredTiles : null,
+      );
+      _offlineMapsFieldLog(
+        '[OFFLINE_MAPS][ESTIMATE] region_id=$regionId '
+        'transfer_bytes=${estimate.transferSizeBytes} '
+        'storage_bytes=${estimate.storageSizeBytes} '
+        'estimated_maps_tiles=${estimate.estimatedMapsTileCount ?? '-'}',
+      );
       _emitProgress(
         onProgress,
         DriverOfflineMapProgress(
           phase: DriverOfflineMapProgressPhase.estimate,
           regionId: regionId,
+          requiredResourceCount: estimate.estimatedMapsTileCount,
           status: 'done',
           message: 'estimate_complete',
         ),
       );
-      return DriverOfflineMapEstimate.fromSdk(result);
+      return estimate;
     } catch (e) {
       _log('estimate', regionId, 'fail');
       try {
@@ -542,10 +596,76 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
     }
   }
 
+  /// Reads cumulative Maps tile-pack usage from all TileRegions on the store.
+  ///
+  /// Mapbox 2.18.0 documents the 750 cap as across all regions; deleting a
+  /// region frees capacity for subsequent loads.
+  @override
+  Future<DriverOfflineMapsTileCapacity> readTileCapacity({
+    String? excludeRegionId,
+  }) async {
+    await ensureInitialized();
+    try {
+      final regions = await _store.allTileRegions();
+      final counts = <String, int>{};
+      for (final region in regions) {
+        counts[region.id] = region.requiredResourceCount;
+      }
+      final capacity = buildOfflineMapsTileCapacity(
+        regionTileCounts: counts,
+        excludeRegionId: excludeRegionId,
+      );
+      _offlineMapsFieldLog(
+        '[OFFLINE_MAPS][QUOTA] used=${capacity.usedMapsTiles} '
+        'limit=${capacity.limitMapsTiles} '
+        'available=${capacity.availableMapsTiles} '
+        'exclude=${excludeRegionId ?? '-'} '
+        'regions=${counts.length}',
+      );
+      return capacity;
+    } catch (e) {
+      throw DriverOfflineMapsException(
+        'Could not read offline map tile capacity.',
+        phase: 'quota',
+        cause: e,
+      );
+    }
+  }
+
+  /// Geometry → descriptors → estimate → quota. No StylePack / TileRegion load.
+  @override
+  Future<DriverOfflineMapPreflight> preflightRegion(
+    DriverOfflineMapRegionRequest request, {
+    DriverOfflineMapProgressCallback? onProgress,
+  }) async {
+    await ensureInitialized();
+    final estimate = await estimateRegion(request, onProgress: onProgress);
+    final capacity = await readTileCapacity(
+      excludeRegionId: request.regionId,
+    );
+    final quota = evaluateOfflineMapsTileQuota(
+      usedMapsTiles: capacity.usedMapsTiles,
+      requestedMapsTiles: estimate.estimatedMapsTileCount,
+      limitMapsTiles: capacity.limitMapsTiles,
+    );
+    _offlineMapsFieldLog(
+      '[OFFLINE_MAPS][PREFLIGHT] region_id=${request.regionId} '
+      'requested_tiles=${estimate.estimatedMapsTileCount ?? '-'} '
+      'used=${capacity.usedMapsTiles} available=${capacity.availableMapsTiles} '
+      'decision=${quota.decision.name}',
+    );
+    return DriverOfflineMapPreflight(
+      estimate: estimate,
+      capacity: capacity,
+      quota: quota,
+    );
+  }
+
   /// Downloads style packs and tile region for [request].
   ///
-  /// Loads one style pack per entry in [DriverOfflineMapRegionRequest.styleUris],
-  /// then loads a single tile region with matching descriptors.
+  /// Order: geometry/descriptors validated → quota preflight → StylePacks →
+  /// TileRegion → verify. Quota failures throw before any StylePack load when
+  /// the estimate yields a usable tile count.
   @override
   Future<DriverOfflineMapRegionInfo> downloadRegion(
     DriverOfflineMapRegionRequest request, {
@@ -576,6 +696,38 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
     );
 
     try {
+      // OFFLINE-MAPS-TILE-LIMIT-PREFLIGHT-P0-2: block before expensive packs
+      // when quota is proven over limit. Estimate failures leave quota unknown
+      // and do not by themselves abort the download (Mapbox may still reject).
+      try {
+        final preflight = await preflightRegion(
+          request,
+          onProgress: onProgress,
+        );
+        if (preflight.quota.isBlocked) {
+          throw DriverOfflineMapsException(
+            'Maps tile pack limit exceeded '
+            '(requested=${preflight.estimate.estimatedMapsTileCount} '
+            'available=${preflight.capacity.availableMapsTiles} '
+            'maximum allowed ${preflight.capacity.limitMapsTiles} tiles).',
+            phase: 'quota',
+            regionId: regionId,
+          );
+        }
+      } on DriverOfflineMapsException catch (e) {
+        if (e.phase == 'quota') rethrow;
+        _offlineMapsFieldLog(
+          '[OFFLINE_MAPS][PREFLIGHT] continue_without_quota '
+          'region_id=$regionId phase=${e.phase} '
+          'message=${_safeErr(e)}',
+        );
+      } catch (e) {
+        _offlineMapsFieldLog(
+          '[OFFLINE_MAPS][PREFLIGHT] continue_without_quota '
+          'region_id=$regionId message=${_safeErr(e)}',
+        );
+      }
+
       int styleErroredTotal = 0;
       for (final styleUri in styleUris) {
         styleErroredTotal += await _loadStylePack(

@@ -19,6 +19,7 @@ import 'package:fluxidi_tracking/navigation/driver_offline_maps_download_feedbac
 import 'package:fluxidi_tracking/navigation/driver_offline_maps_europe_selection.dart';
 import 'package:fluxidi_tracking/navigation/driver_offline_maps_page.dart';
 import 'package:fluxidi_tracking/navigation/driver_offline_maps_service.dart';
+import 'package:fluxidi_tracking/navigation/driver_offline_maps_tile_quota.dart';
 
 const DriverOfflineEuropePlace _ronse = DriverOfflineEuropePlace(
   primaryName: 'Ronse',
@@ -51,6 +52,9 @@ class _FakeOfflinePort implements DriverOfflineMapsDownloadPort {
     this.completionStatus = DriverOfflineMapCompletionStatus.complete,
     this.erroredResourceCount = 0,
     this.estimateOverride,
+    this.usedMapsTilesOverride,
+    this.radiusTileEstimates = const <int, int>{},
+    this.defaultEstimatedMapsTiles,
   });
 
   Object? estimateError;
@@ -62,11 +66,17 @@ class _FakeOfflinePort implements DriverOfflineMapsDownloadPort {
   int erroredResourceCount;
   /// When set, returned instead of the finite default (tests non-finite margins).
   DriverOfflineMapEstimate? estimateOverride;
+  int? usedMapsTilesOverride;
+  Map<int, int> radiusTileEstimates;
+  int? defaultEstimatedMapsTiles;
 
   int initCalls = 0;
+  int stylePackStarts = 0;
   final List<DriverOfflineMapRegionRequest> estimateRequests =
       <DriverOfflineMapRegionRequest>[];
   final List<DriverOfflineMapRegionRequest> downloadRequests =
+      <DriverOfflineMapRegionRequest>[];
+  final List<DriverOfflineMapRegionRequest> preflightRequests =
       <DriverOfflineMapRegionRequest>[];
   final List<DriverOfflineMapProgressPhase> observedPhases =
       <DriverOfflineMapProgressPhase>[];
@@ -75,6 +85,21 @@ class _FakeOfflinePort implements DriverOfflineMapsDownloadPort {
   @override
   Future<void> ensureInitialized() async {
     initCalls += 1;
+  }
+
+  int? _tilesForRequest(DriverOfflineMapRegionRequest request) {
+    if (estimateOverride?.estimatedMapsTileCount != null) {
+      return estimateOverride!.estimatedMapsTileCount;
+    }
+    final slug = request.slug ?? '';
+    final match = RegExp(r'_r(\d+)_').firstMatch(slug);
+    if (match != null) {
+      final km = int.tryParse(match.group(1)!);
+      if (km != null && radiusTileEstimates.containsKey(km)) {
+        return radiusTileEstimates[km];
+      }
+    }
+    return defaultEstimatedMapsTiles;
   }
 
   @override
@@ -89,12 +114,56 @@ class _FakeOfflinePort implements DriverOfflineMapsDownloadPort {
     }
     if (estimateDelay > Duration.zero) await Future<void>.delayed(estimateDelay);
     if (estimateError != null) throw estimateError!;
-    return estimateOverride ??
+    final base = estimateOverride ??
         const DriverOfflineMapEstimate(
           transferSizeBytes: 41943040,
           storageSizeBytes: 52428800,
           errorMargin: 0.15,
         );
+    return DriverOfflineMapEstimate(
+      transferSizeBytes: base.transferSizeBytes,
+      storageSizeBytes: base.storageSizeBytes,
+      errorMargin: base.errorMargin,
+      estimatedMapsTileCount: _tilesForRequest(request),
+    );
+  }
+
+  @override
+  Future<DriverOfflineMapsTileCapacity> readTileCapacity({
+    String? excludeRegionId,
+  }) async {
+    if (usedMapsTilesOverride != null) {
+      return DriverOfflineMapsTileCapacity(
+        usedMapsTiles: usedMapsTilesOverride!,
+      );
+    }
+    final counts = <String, int>{
+      for (final region in regions) region.id: region.requiredResourceCount,
+    };
+    return buildOfflineMapsTileCapacity(
+      regionTileCounts: counts,
+      excludeRegionId: excludeRegionId,
+    );
+  }
+
+  @override
+  Future<DriverOfflineMapPreflight> preflightRegion(
+    DriverOfflineMapRegionRequest request, {
+    DriverOfflineMapProgressCallback? onProgress,
+  }) async {
+    preflightRequests.add(request);
+    final estimate = await estimateRegion(request, onProgress: onProgress);
+    final capacity = await readTileCapacity(excludeRegionId: request.regionId);
+    final quota = evaluateOfflineMapsTileQuota(
+      usedMapsTiles: capacity.usedMapsTiles,
+      requestedMapsTiles: estimate.estimatedMapsTileCount,
+      limitMapsTiles: capacity.limitMapsTiles,
+    );
+    return DriverOfflineMapPreflight(
+      estimate: estimate,
+      capacity: capacity,
+      quota: quota,
+    );
   }
 
   @override
@@ -102,9 +171,26 @@ class _FakeOfflinePort implements DriverOfflineMapsDownloadPort {
     DriverOfflineMapRegionRequest request, {
     DriverOfflineMapProgressCallback? onProgress,
   }) async {
+    try {
+      final preflight = await preflightRegion(request, onProgress: onProgress);
+      if (preflight.quota.isBlocked) {
+        throw DriverOfflineMapsException(
+          'Maps tile pack limit exceeded '
+          '(beyond the maximum allowed ${preflight.capacity.limitMapsTiles} tiles).',
+          phase: 'quota',
+          regionId: request.regionId,
+        );
+      }
+    } on DriverOfflineMapsException catch (e) {
+      if (e.phase == 'quota') rethrow;
+      // Estimate/quota-unknown: continue like production service.
+    } catch (_) {
+      // Estimate/quota-unknown: continue like production service.
+    }
     downloadRequests.add(request);
     // Mirrors the real service order: one style pack per style URI, then tiles.
     for (final styleUri in request.styleUris) {
+      stylePackStarts += 1;
       observedPhases.add(DriverOfflineMapProgressPhase.stylePack);
       onProgress?.call(
         DriverOfflineMapProgress(
@@ -483,7 +569,8 @@ void main() {
 
         await _tap(tester, _confirmDownload);
 
-        expect(port.estimateRequests.length, 1);
+        // Confirm preflight + download preflight each estimate once.
+        expect(port.estimateRequests.length, 2);
         expect(port.downloadRequests.length, 1);
 
         // StylePack per style URI, then exactly one TileRegion.
@@ -863,7 +950,7 @@ void main() {
       expect(find.byType(AlertDialog), findsOneWidget);
       await _tap(tester, _confirmDownload);
 
-      expect(port.estimateRequests.length, 1);
+      expect(port.estimateRequests.length, 2);
       expect(port.downloadRequests.length, 1);
       expect(
         port.downloadRequests.single.regionId,
@@ -1141,5 +1228,178 @@ void main() {
         await _tap(tester, find.text('Annuleren'));
       }
     });
+  });
+
+  group('OFFLINE-MAPS-TILE-LIMIT-PREFLIGHT-P0-2', () {
+    testWidgets(
+      '3+10+12) above quota blocks download before StylePack / TileRegion',
+      (tester) async {
+        final port = _FakeOfflinePort(
+          usedMapsTilesOverride: 300,
+          radiusTileEstimates: const <int, int>{
+            60: 720,
+            40: 480,
+            20: 220,
+            10: 90,
+          },
+        );
+        await _pumpPage(tester, port: port);
+        await _searchAndSelectRonse(tester);
+        await _tap(tester, find.text('60 km'));
+        await _tap(tester, _cta);
+        expect(find.byType(AlertDialog), findsOneWidget);
+        expect(find.byKey(const Key('offline_selection_too_large')), findsOneWidget);
+        expect(find.textContaining('Voorstel: 20 km'), findsWidgets);
+        final confirm = tester.widget<FilledButton>(_confirmDownload);
+        expect(confirm.onPressed, isNull);
+        await _tap(tester, find.text('Annuleren'));
+        expect(port.downloadRequests, isEmpty);
+        expect(port.stylePackStarts, 0);
+        expect(port.regions, isEmpty);
+        expect(find.byKey(const Key('offline_radius_too_large')), findsOneWidget);
+      },
+    );
+
+    testWidgets('7) 40 km within quota remains downloadable', (tester) async {
+      final port = _FakeOfflinePort(
+        usedMapsTilesOverride: 200,
+        radiusTileEstimates: const <int, int>{
+          60: 900,
+          40: 400,
+          20: 200,
+          10: 80,
+        },
+      );
+      await _pumpPage(tester, port: port);
+      await _searchAndSelectRonse(tester);
+      await _tap(tester, find.text('40 km'));
+      await _tap(tester, _cta);
+      expect(find.byType(AlertDialog), findsOneWidget);
+      final confirm = tester.widget<FilledButton>(_confirmDownload);
+      expect(confirm.onPressed, isNotNull);
+      await _tap(tester, _confirmDownload);
+      expect(port.downloadRequests.length, 1);
+      expect(port.stylePackStarts, greaterThan(0));
+      expect(port.regions.single.completionStatus,
+          DriverOfflineMapCompletionStatus.complete);
+    });
+
+    testWidgets('8) 20 km within quota remains downloadable', (tester) async {
+      final port = _FakeOfflinePort(
+        usedMapsTilesOverride: 500,
+        radiusTileEstimates: const <int, int>{
+          60: 600,
+          40: 400,
+          20: 200,
+          10: 80,
+        },
+      );
+      await _pumpPage(tester, port: port);
+      await _searchAndSelectRonse(tester);
+      await _tap(tester, find.text('20 km'));
+      await _tap(tester, _cta);
+      expect(find.byType(AlertDialog), findsOneWidget);
+      await _tap(tester, _confirmDownload);
+      expect(port.downloadRequests.length, 1);
+    });
+
+    testWidgets('9) no valid radius shows clear capacity message', (tester) async {
+      final port = _FakeOfflinePort(
+        usedMapsTilesOverride: 720,
+        radiusTileEstimates: const <int, int>{
+          60: 200,
+          40: 150,
+          20: 100,
+          10: 80,
+        },
+      );
+      await _pumpPage(tester, port: port);
+      await _searchAndSelectRonse(tester);
+      await _tap(tester, find.text('60 km'));
+      await _tap(tester, _cta);
+      expect(find.textContaining('Geen beschikbare downloadstraal'), findsWidgets);
+      final confirm = tester.widget<FilledButton>(_confirmDownload);
+      expect(confirm.onPressed, isNull);
+      await _tap(tester, find.text('Annuleren'));
+      expect(port.downloadRequests, isEmpty);
+    });
+
+    testWidgets('13) existing complete region preserved after quota reject', (
+      tester,
+    ) async {
+      final existing = DriverOfflineMapRegionInfo(
+        id: 'fluxidi_driver_region_maarkedal_vlaamse_ardennen_11_16',
+        displayName: 'Maarkedal / Vlaamse Ardennen detail',
+        minZoom: 11,
+        maxZoom: 16,
+        requiredResourceCount: 340,
+        completedResourceCount: 340,
+        completedResourceSize: 10,
+        completionStatus: DriverOfflineMapCompletionStatus.complete,
+        erroredResourceCount: 0,
+      );
+      final port = _FakeOfflinePort(
+        usedMapsTilesOverride: 340,
+        radiusTileEstimates: const <int, int>{60: 720, 40: 480, 20: 220, 10: 90},
+      )..regions = <DriverOfflineMapRegionInfo>[existing];
+      await _pumpPage(tester, port: port);
+      expect(find.textContaining('Maarkedal'), findsWidgets);
+      await _searchAndSelectRonse(tester);
+      await _tap(tester, find.text('60 km'));
+      await _tap(tester, _cta);
+      await _tap(tester, find.text('Annuleren'));
+      expect(port.regions, hasLength(1));
+      expect(port.regions.single.id, existing.id);
+      expect(
+        port.regions.single.completionStatus,
+        DriverOfflineMapCompletionStatus.complete,
+      );
+    });
+
+    testWidgets('14) capacity card refreshes after delete', (tester) async {
+      final port = _FakeOfflinePort()
+        ..regions = <DriverOfflineMapRegionInfo>[
+          const DriverOfflineMapRegionInfo(
+            id: 'fluxidi_driver_region_maarkedal_vlaamse_ardennen_11_16',
+            displayName: 'Maarkedal detail',
+            minZoom: 11,
+            maxZoom: 16,
+            requiredResourceCount: 340,
+            completedResourceCount: 340,
+            completedResourceSize: 10,
+            completionStatus: DriverOfflineMapCompletionStatus.complete,
+            erroredResourceCount: 0,
+          ),
+        ];
+      await _pumpPage(tester, port: port);
+      expect(find.byKey(const Key('offline_tile_capacity_card')), findsOneWidget);
+      expect(find.textContaining('gebruikt 340'), findsOneWidget);
+      await _tap(tester, find.text('Verwijderen').first);
+      await _tap(tester, find.text('Verwijderen').last);
+      await tester.pumpAndSettle();
+      expect(port.regions, isEmpty);
+      expect(find.textContaining('gebruikt 0'), findsOneWidget);
+    });
+
+    test(
+      'direct downloadRegion quota rejection never starts StylePacks',
+      () async {
+        final port = _FakeOfflinePort(
+          usedMapsTilesOverride: 300,
+          defaultEstimatedMapsTiles: 720,
+        );
+        final request = DriverOfflineEuropeSelection(
+          place: _ronse,
+          radiusKm: 60,
+        ).toRegionRequest();
+        await expectLater(
+          () => port.downloadRegion(request),
+          throwsA(isA<DriverOfflineMapsException>()),
+        );
+        expect(port.stylePackStarts, 0);
+        expect(port.downloadRequests, isEmpty);
+        expect(port.regions, isEmpty);
+      },
+    );
   });
 }

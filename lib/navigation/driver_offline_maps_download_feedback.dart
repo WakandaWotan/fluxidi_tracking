@@ -33,6 +33,8 @@ enum DriverOfflineMapFailureCategory {
   estimateUnavailable,
   invalidGeometry,
   regionTooLarge,
+  /// Mapbox TileStore cumulative Maps tile-pack cap (default 750) exceeded.
+  tileLimitExceeded,
   insufficientStorage,
   wifiOnlyRestricted,
   mapboxConfiguration,
@@ -58,6 +60,8 @@ String driverOfflineMapFailureCategoryToken(
       return 'invalid_geometry';
     case DriverOfflineMapFailureCategory.regionTooLarge:
       return 'region_too_large';
+    case DriverOfflineMapFailureCategory.tileLimitExceeded:
+      return 'tile_limit_exceeded';
     case DriverOfflineMapFailureCategory.insufficientStorage:
       return 'insufficient_storage';
     case DriverOfflineMapFailureCategory.wifiOnlyRestricted:
@@ -161,11 +165,26 @@ DriverOfflineMapFailureCategory classifyDriverOfflineMapFailure({
   ])) {
     return DriverOfflineMapFailureCategory.noInternet;
   }
+  // OFFLINE-MAPS-TILE-LIMIT-PREFLIGHT-P0-2: Mapbox TILE_COUNT_EXCEEDED /
+  // "beyond the maximum allowed 750 tiles" must not be interrupted/network/
+  // generic tile failure.
+  if (_mentionsAny(text, <String>[
+    'tile_count_exceeded',
+    'tilecountexceeded',
+    'maximum allowed',
+    'beyond the maximum',
+    'maps tiles',
+    'tile packs',
+    '750 tiles',
+    'tile count exceeded',
+    'number of maps tiles',
+  ])) {
+    return DriverOfflineMapFailureCategory.tileLimitExceeded;
+  }
   if (_mentionsAny(text, <String>[
     'no space',
     'insufficient storage',
     'disk full',
-    'quota',
     'enospc',
   ])) {
     return DriverOfflineMapFailureCategory.insufficientStorage;
@@ -176,6 +195,11 @@ DriverOfflineMapFailureCategory classifyDriverOfflineMapFailure({
     'exceeds',
     'limit exceeded',
   ])) {
+    // Legacy size wording without the Mapbox 750-cap markers still maps to
+    // regionTooLarge; explicit tile-cap needles above win first.
+    if (_mentionsAny(text, <String>['tile count', 'limit exceeded', '750'])) {
+      return DriverOfflineMapFailureCategory.tileLimitExceeded;
+    }
     return DriverOfflineMapFailureCategory.regionTooLarge;
   }
   if (_mentionsAny(text, <String>[
@@ -227,6 +251,8 @@ DriverOfflineMapFailureCategory classifyDriverOfflineMapFailure({
       return DriverOfflineMapFailureCategory.mapboxConfiguration;
     case 'estimate':
       return DriverOfflineMapFailureCategory.estimateUnavailable;
+    case 'quota':
+      return DriverOfflineMapFailureCategory.tileLimitExceeded;
     case 'stylePack':
       return DriverOfflineMapFailureCategory.stylePackFailure;
     case 'tileRegion':
@@ -305,6 +331,21 @@ String driverOfflineMapFailureMessage({
         en: 'This area is too large. Choose a smaller radius.',
         fr: 'Cette zone est trop grande. Choisissez un rayon plus petit.',
         es: 'Esta zona es demasiado grande. Elige un radio menor.',
+      );
+    case DriverOfflineMapFailureCategory.tileLimitExceeded:
+      return pick(
+        nl:
+            'Dit kaartgebied is te groot voor de beschikbare offline '
+            'kaartcapaciteit. Kies een kleinere downloadstraal.',
+        en:
+            'This map area is too large for the available offline map '
+            'capacity. Choose a smaller download radius.',
+        fr:
+            'Cette zone dépasse la capacité hors ligne disponible. '
+            'Choisissez un rayon plus petit.',
+        es:
+            'Esta zona supera la capacidad offline disponible. '
+            'Elige un radio de descarga menor.',
       );
     case DriverOfflineMapFailureCategory.insufficientStorage:
       return pick(
