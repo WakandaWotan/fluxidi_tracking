@@ -298,4 +298,81 @@ void main() {
       );
     });
   });
+
+  group('CONSUMER-SALE-LATE-INVOICE-ACTION-PLACEMENT-P1', () {
+    test('1. street consumer sale → streetCanonicalSlot above Documenten', () {
+      expect(
+        resolveCompanyLateInvoicePlacement(
+          completedBucket: true,
+          streetRideBusinessInvoiceEligible: true,
+        ),
+        CompanyLateInvoicePlacementKind.streetCanonicalSlot,
+      );
+    });
+
+    test('2. planned completed → consumerSaleProbeSlot above Documenten', () {
+      expect(
+        resolveCompanyLateInvoicePlacement(
+          completedBucket: true,
+          streetRideBusinessInvoiceEligible: false,
+        ),
+        CompanyLateInvoicePlacementKind.consumerSaleProbeSlot,
+      );
+    });
+
+    test('3/4. heen/terug use same placement resolver (per card)', () {
+      // Operational leg cards share the same completed/street predicates;
+      // each mounts one slot above its own Documenten section.
+      expect(
+        resolveCompanyLateInvoicePlacement(
+          completedBucket: true,
+          streetRideBusinessInvoiceEligible: false,
+        ),
+        CompanyLateInvoicePlacementKind.consumerSaleProbeSlot,
+      );
+      expect(
+        resolveCompanyLateInvoicePlacement(
+          completedBucket: true,
+          streetRideBusinessInvoiceEligible: true,
+        ),
+        CompanyLateInvoicePlacementKind.streetCanonicalSlot,
+      );
+    });
+
+    test('6. non-completed / open bucket hides placement', () {
+      expect(
+        resolveCompanyLateInvoicePlacement(
+          completedBucket: false,
+          streetRideBusinessInvoiceEligible: true,
+        ),
+        CompanyLateInvoicePlacementKind.hidden,
+      );
+    });
+
+    test('5/7. converted / business invoice hides late request helper', () {
+      expect(
+        shouldShowLateBusinessInvoiceAction(
+          saleKind: 'consumer_sale',
+          superseded: true,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldShowLateBusinessInvoiceAction(
+          saleKind: 'business_invoice',
+        ),
+        isFalse,
+      );
+    });
+
+    test('8. conversion in progress hides second request', () {
+      expect(
+        shouldShowLateBusinessInvoiceAction(
+          saleKind: 'consumer_sale',
+          conversionInProgress: true,
+        ),
+        isFalse,
+      );
+    });
+  });
 }

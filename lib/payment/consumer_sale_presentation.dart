@@ -422,6 +422,34 @@ bool businessInvoiceActionStillAvailable({
   return true;
 }
 
+/// CONSUMER-SALE-LATE-INVOICE-ACTION-PLACEMENT-P1
+///
+/// Where the single company “Zakelijke factuur aanvragen” slot may appear
+/// (always above Documenten — never on a document card).
+enum CompanyLateInvoicePlacementKind {
+  /// Do not mount the action.
+  hidden,
+
+  /// Canonical completed street ride: show the large existing action slot
+  /// (request or issued view) without guessing a consumer-sale state.
+  streetCanonicalSlot,
+
+  /// Completed non-street (e.g. planned): probe documents; show the large
+  /// slot only when a convertible consumer sale exists.
+  consumerSaleProbeSlot,
+}
+
+CompanyLateInvoicePlacementKind resolveCompanyLateInvoicePlacement({
+  required bool completedBucket,
+  required bool streetRideBusinessInvoiceEligible,
+}) {
+  if (!completedBucket) return CompanyLateInvoicePlacementKind.hidden;
+  if (streetRideBusinessInvoiceEligible) {
+    return CompanyLateInvoicePlacementKind.streetCanonicalSlot;
+  }
+  return CompanyLateInvoicePlacementKind.consumerSaleProbeSlot;
+}
+
 /// CONSUMER-SALE-LATE-BUSINESS-INVOICE-ACTION-P0-3
 ///
 /// Visibility for “Zakelijke factuur aanvragen” on an existing consumer sale.

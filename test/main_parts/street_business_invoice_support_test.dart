@@ -452,6 +452,57 @@ void main() {
         expect(inv.documentNumber, 'INV-BIZ-1');
       },
     );
+
+    test(
+      'PLACEMENT-P1: convertible consumer sale envelope allows late slot',
+      () {
+        final decoded = docsEnvelope([
+          {
+            'document_id': 'doc-consumer',
+            'document_type': 'invoice',
+            'fluxidi_sale_kind': 'consumer_sale',
+            'peppol_applicable': false,
+            'lifecycle_state': 'issued',
+          },
+        ]);
+        expect(documentsEnvelopeHasConvertibleConsumerSale(decoded), isTrue);
+      },
+    );
+
+    test(
+      'PLACEMENT-P1: empty docs / business invoice do not allow late slot',
+      () {
+        expect(
+          documentsEnvelopeHasConvertibleConsumerSale(docsEnvelope(const [])),
+          isFalse,
+        );
+        expect(
+          documentsEnvelopeHasConvertibleConsumerSale(
+            docsEnvelope([
+              {
+                'document_id': 'doc-biz',
+                'document_type': 'invoice',
+                'fluxidi_sale_kind': 'business_invoice',
+              },
+            ]),
+          ),
+          isFalse,
+        );
+        expect(
+          documentsEnvelopeHasConvertibleConsumerSale(
+            docsEnvelope([
+              {
+                'document_id': 'doc-consumer',
+                'document_type': 'invoice',
+                'fluxidi_sale_kind': 'consumer_sale',
+                'superseded': true,
+              },
+            ]),
+          ),
+          isFalse,
+        );
+      },
+    );
   });
 
   group('derived document count (section 2)', () {

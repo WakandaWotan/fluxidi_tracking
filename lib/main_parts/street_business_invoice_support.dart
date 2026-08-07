@@ -18,6 +18,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:fluxidi_tracking/payment/consumer_sale_presentation.dart';
 
 /// Per-booking lifecycle state for the invoice action UI.
 enum StreetBusinessInvoiceUiState {
@@ -1786,6 +1787,63 @@ bool documentRecordIsBusinessInvoice(Map doc) {
   }
   // Legacy business invoices: document_type invoice without consumer markers.
   return type == 'invoice';
+}
+
+/// CONSUMER-SALE-LATE-INVOICE-ACTION-PLACEMENT-P1
+///
+/// True when a documents GET envelope contains a convertible consumer sale and
+/// no linked business invoice — used to mount the single large action above
+/// Documenten for planned/historical rides (never guessed when docs are empty).
+bool documentsEnvelopeHasConvertibleConsumerSale(Object? decoded) {
+  if (!documentsEnvelopeOk(decoded)) return false;
+  final docs = (decoded as Map)['documents'];
+  if (docs is! List || docs.isEmpty) return false;
+
+  var businessInvoicePresent = false;
+  for (final d in docs) {
+    if (d is Map && documentRecordIsBusinessInvoice(d)) {
+      businessInvoicePresent = true;
+      break;
+    }
+  }
+  if (businessInvoicePresent) return false;
+
+  for (final d in docs) {
+    if (d is! Map) continue;
+    final saleKind =
+        d['fluxidi_sale_kind'] ??
+        d['fluxidiSaleKind'] ??
+        d['sale_kind'] ??
+        d['saleKind'];
+    final documentType = d['document_type'] ?? d['documentType'];
+    final createdByRole = d['created_by_role'] ?? d['createdByRole'];
+    bool? peppolApplicable;
+    if (d['peppol_applicable'] == true || d['peppolApplicable'] == true) {
+      peppolApplicable = true;
+    } else if (d['peppol_applicable'] == false ||
+        d['peppolApplicable'] == false) {
+      peppolApplicable = false;
+    }
+    final lifecycle =
+        d['lifecycle_state'] ??
+        d['lifecycleState'] ??
+        d['document_status'] ??
+        d['documentStatus'];
+    if (shouldShowLateBusinessInvoiceAction(
+      saleKind: saleKind,
+      documentType: documentType,
+      createdByRole: createdByRole,
+      peppolApplicable: peppolApplicable,
+      superseded: d['superseded'] == true,
+      lifecycleState: lifecycle,
+      businessInvoicePresent: false,
+      conversionInProgress: false,
+      conversionAllowed: true,
+    )) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /// Extracts a single **business** invoice summary from a documents-list

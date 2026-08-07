@@ -3492,18 +3492,21 @@ class _CompanyBookingsOverviewPageState
                 ],
               ),
             ],
-            if (_isStreetBusinessInvoiceEligible(item)) ...[
+            if (_lateInvoicePlacementKind(item) !=
+                CompanyLateInvoicePlacementKind.hidden) ...[
               const SizedBox(height: 10),
-              _StreetBusinessInvoiceAction(
-                // Keyed by the canonical street booking id so the per-booking
-                // invoice lifecycle controller (state + bounded polling)
-                // survives list rebuilds and never leaks across bookings.
+              // CONSUMER-SALE-LATE-INVOICE-ACTION-PLACEMENT-P1: exactly one
+              // large “Zakelijke factuur aanvragen” slot above Documenten
+              // (street + planned; never duplicated on the document card).
+              _CompanyLateBusinessInvoicePlacement(
                 key: ValueKey(
-                  'street-business-invoice-${_documentsBookingId(item)}',
+                  'late-business-invoice-${_documentsBookingId(item)}-'
+                  '${item.legId.trim()}-${item.legType.trim().toLowerCase()}',
                 ),
                 bookingId: _documentsBookingId(item),
                 isPaidBooking: _isBookingPaidForStreetInvoice(item),
                 tokens: tokens,
+                placementKind: _lateInvoicePlacementKind(item),
               ),
             ],
             if (_documentsBookingId(item).isNotEmpty) ...[
@@ -3566,6 +3569,19 @@ class _CompanyBookingsOverviewPageState
       isCancelled: false,
       isRefunded: false,
       isCredited: false,
+    );
+  }
+
+  /// CONSUMER-SALE-LATE-INVOICE-ACTION-PLACEMENT-P1: single slot above Documenten.
+  CompanyLateInvoicePlacementKind _lateInvoicePlacementKind(
+    _CompanyBookingOverviewItem item,
+  ) {
+    if (_documentsBookingId(item).isEmpty) {
+      return CompanyLateInvoicePlacementKind.hidden;
+    }
+    return resolveCompanyLateInvoicePlacement(
+      completedBucket: item.bucket == _CompanyBookingsFilter.completed,
+      streetRideBusinessInvoiceEligible: _isStreetBusinessInvoiceEligible(item),
     );
   }
 

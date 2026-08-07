@@ -97,17 +97,139 @@ StreetInvoiceActionTheme _streetInvoiceThemeFromCompanyTokens(
   );
 }
 
+/// CONSUMER-SALE-LATE-INVOICE-ACTION-PLACEMENT-P1
+///
+/// Single large “Zakelijke factuur aanvragen” slot above Documenten.
+/// Street: mount immediately (canonical street eligibility).
+/// Planned/other completed: probe documents; mount only when a convertible
+/// consumer sale exists (never guess when Documenten count is 0).
+class _CompanyLateBusinessInvoicePlacement extends StatefulWidget {
+  const _CompanyLateBusinessInvoicePlacement({
+    super.key,
+    required this.bookingId,
+    required this.isPaidBooking,
+    required this.tokens,
+    required this.placementKind,
+  });
+
+  final String bookingId;
+  final bool isPaidBooking;
+  final _CompanyBookingsThemeTokens tokens;
+  final CompanyLateInvoicePlacementKind placementKind;
+
+  @override
+  State<_CompanyLateBusinessInvoicePlacement> createState() =>
+      _CompanyLateBusinessInvoicePlacementState();
+}
+
+class _CompanyLateBusinessInvoicePlacementState
+    extends State<_CompanyLateBusinessInvoicePlacement> {
+  bool _probeDone = false;
+  bool _showAction = false;
+  bool _convertFromConsumerSale = false;
+
+  @override
+  void initState() {
+    super.initState();
+    switch (widget.placementKind) {
+      case CompanyLateInvoicePlacementKind.hidden:
+        _probeDone = true;
+        _showAction = false;
+        break;
+      case CompanyLateInvoicePlacementKind.streetCanonicalSlot:
+        _probeDone = true;
+        _showAction = true;
+        // Best-effort: detect consumer sale for credit-first form copy.
+        unawaited(_probeConsumerSaleFlagOnly());
+        break;
+      case CompanyLateInvoicePlacementKind.consumerSaleProbeSlot:
+        unawaited(_probeForConvertibleConsumerSale());
+        break;
+    }
+  }
+
+  Future<void> _probeConsumerSaleFlagOnly() async {
+    try {
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/company/bookings/${Uri.encodeComponent(widget.bookingId)}/documents',
+      );
+      final auth = await resolveCompanyOwnerAuthHeaders();
+      final res = await http
+          .get(uri, headers: auth.headers)
+          .timeout(const Duration(seconds: 12));
+      if (!mounted || res.statusCode != 200) return;
+      Object? decoded;
+      try {
+        decoded = jsonDecode(res.body);
+      } catch (_) {
+        return;
+      }
+      final convertible = documentsEnvelopeHasConvertibleConsumerSale(decoded);
+      if (!mounted) return;
+      setState(() => _convertFromConsumerSale = convertible);
+    } catch (_) {
+      // Non-fatal: street slot stays visible; form uses non-conversion copy.
+    }
+  }
+
+  Future<void> _probeForConvertibleConsumerSale() async {
+    var show = false;
+    try {
+      final uri = _withActiveBookingScope(
+        kBookingBaseUrl,
+        '/company/bookings/${Uri.encodeComponent(widget.bookingId)}/documents',
+      );
+      final auth = await resolveCompanyOwnerAuthHeaders();
+      final res = await http
+          .get(uri, headers: auth.headers)
+          .timeout(const Duration(seconds: 12));
+      if (res.statusCode == 200) {
+        Object? decoded;
+        try {
+          decoded = jsonDecode(res.body);
+        } catch (_) {
+          decoded = null;
+        }
+        show = documentsEnvelopeHasConvertibleConsumerSale(decoded);
+      }
+    } catch (_) {
+      show = false;
+    }
+    if (!mounted) return;
+    setState(() {
+      _probeDone = true;
+      _showAction = show;
+      _convertFromConsumerSale = show;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_probeDone || !_showAction) return const SizedBox.shrink();
+    return _StreetBusinessInvoiceAction(
+      key: ValueKey('late-invoice-action-${widget.bookingId}'),
+      bookingId: widget.bookingId,
+      isPaidBooking: widget.isPaidBooking,
+      tokens: widget.tokens,
+      convertFromConsumerSale: _convertFromConsumerSale,
+    );
+  }
+}
+
 class _StreetBusinessInvoiceAction extends StatefulWidget {
   const _StreetBusinessInvoiceAction({
     super.key,
     required this.bookingId,
     required this.isPaidBooking,
     required this.tokens,
+    this.convertFromConsumerSale = false,
   });
 
   final String bookingId;
   final bool isPaidBooking;
   final _CompanyBookingsThemeTokens tokens;
+  final bool convertFromConsumerSale;
 
   @override
   State<_StreetBusinessInvoiceAction> createState() =>
@@ -118,6 +240,7 @@ class _StreetBusinessInvoiceActionState
     extends State<_StreetBusinessInvoiceAction> {
   late final StreetBusinessInvoiceController _controller;
   bool _localIndexNotified = false;
+  bool _docsIndicateConvertibleConsumerSale = false;
 
   @override
   void initState() {
@@ -235,6 +358,10 @@ class _StreetBusinessInvoiceActionState
       } catch (_) {
         decoded = null;
       }
+      if (documentsEnvelopeOk(decoded)) {
+        _docsIndicateConvertibleConsumerSale =
+            documentsEnvelopeHasConvertibleConsumerSale(decoded);
+      }
       return StreetInvoiceDocsResult(
         statusCode: 200,
         okEnvelope: documentsEnvelopeOk(decoded),
@@ -256,6 +383,9 @@ class _StreetBusinessInvoiceActionState
       language: appLanguageNotifier.value,
       isPaidBooking: widget.isPaidBooking,
       initial: const StreetBusinessInvoiceBuyerInput(),
+      convertFromConsumerSale:
+          widget.convertFromConsumerSale ||
+          _docsIndicateConvertibleConsumerSale,
     );
     if (input == null || !mounted) return;
     await _controller.submit(input);
