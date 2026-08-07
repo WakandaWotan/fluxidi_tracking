@@ -592,6 +592,69 @@ String _receiptText(String key) {
         fr: "Voulez-vous annuler le paiement en ligne en cours et enregistrer ce paiement manuellement ?",
         es: '¿Quieres cancelar el pago en línea abierto y registrar este pago manualmente?',
       );
+    case 'openPaymentRecoveryBody':
+      return _tr(
+        nl: 'Er loopt al een online betaling. Zolang die nog kan slagen, kun je geen QR-, contante of nieuwe betaling starten.',
+        en: 'An online payment is already open. While it may still complete, QR, cash, or a new payment cannot be started.',
+        fr: 'Un paiement en ligne est déjà en cours. Tant qu’il peut encore aboutir, QR, espèces ou un nouveau paiement sont bloqués.',
+        es: 'Ya hay un pago en línea abierto. Mientras pueda completarse, no se puede iniciar QR, efectivo ni otro pago.',
+      );
+    case 'checkPaymentStatus':
+      return _tr(
+        nl: 'Betaling controleren',
+        en: 'Check payment',
+        fr: 'Vérifier le paiement',
+        es: 'Comprobar pago',
+      );
+    case 'resumeOnlinePayment':
+      return _tr(
+        nl: 'Betaling hervatten',
+        en: 'Resume payment',
+        fr: 'Reprendre le paiement',
+        es: 'Reanudar pago',
+      );
+    case 'cancelOnlinePayment':
+      return _tr(
+        nl: 'Online betaling annuleren',
+        en: 'Cancel online payment',
+        fr: 'Annuler le paiement en ligne',
+        es: 'Cancelar pago en línea',
+      );
+    case 'paymentStillPending':
+      return _tr(
+        nl: 'De online betaling is nog open. Probeer opnieuw te controleren of hervat de betaling.',
+        en: 'The online payment is still open. Check again or resume the payment.',
+        fr: 'Le paiement en ligne est encore ouvert. Vérifiez à nouveau ou reprenez le paiement.',
+        es: 'El pago en línea sigue abierto. Comprueba de nuevo o reanuda el pago.',
+      );
+    case 'paymentOwnerReleased':
+      return _tr(
+        nl: 'De online betaling is beëindigd. Je kunt nu een andere betaalmethode kiezen.',
+        en: 'The online payment has ended. You can choose another payment method now.',
+        fr: 'Le paiement en ligne est terminé. Vous pouvez choisir un autre mode de paiement.',
+        es: 'El pago en línea ha finalizado. Ya puedes elegir otro método de pago.',
+      );
+    case 'paymentRecoveryError':
+      return _tr(
+        nl: 'Status kon niet worden opgehaald. Controleer de verbinding en probeer opnieuw.',
+        en: 'Status could not be fetched. Check your connection and try again.',
+        fr: 'Impossible de récupérer le statut. Vérifiez la connexion et réessayez.',
+        es: 'No se pudo obtener el estado. Comprueba la conexión e inténtalo de nuevo.',
+      );
+    case 'cancelingOnlinePayment':
+      return _tr(
+        nl: 'Online betaling annuleren…',
+        en: 'Canceling online payment…',
+        fr: 'Annulation du paiement en ligne…',
+        es: 'Cancelando pago en línea…',
+      );
+    case 'checkingPaymentStatus':
+      return _tr(
+        nl: 'Betaling controleren…',
+        en: 'Checking payment…',
+        fr: 'Vérification du paiement…',
+        es: 'Comprobando pago…',
+      );
     case 'payByQr':
       return _tr(
         nl: 'Betaal via QR',

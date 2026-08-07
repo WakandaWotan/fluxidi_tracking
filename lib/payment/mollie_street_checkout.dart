@@ -273,7 +273,8 @@ bool manualPaymentBlockedByOpenMollieCheckout({
   if (decoded == null) return true;
   if (_asBool(decoded['requires_confirm_cancel_mollie']) ||
       _asBool(decoded['confirm_cancel_required']) ||
-      _asBool(decoded['confirm_cancel_open_mollie_required'])) {
+      _asBool(decoded['confirm_cancel_open_mollie_required']) ||
+      _asBool(decoded['requires_confirm_cancel_open_mollie'])) {
     return true;
   }
   final err = _lower(
@@ -283,6 +284,153 @@ bool manualPaymentBlockedByOpenMollieCheckout({
       err.contains('open_payment') ||
       err.contains('open_checkout') ||
       err.isEmpty;
+}
+
+/// Driver-facing recovery action chosen from the open-checkout dialog.
+enum MollieOpenPaymentRecoveryChoice {
+  refresh,
+  resume,
+  cancel,
+  dismiss,
+}
+
+/// Parsed `recovery` block from `open_mollie_checkout_exists` / recovery API.
+class MollieOpenPaymentRecoveryInfo {
+  const MollieOpenPaymentRecoveryInfo({
+    required this.presentationState,
+    required this.resumable,
+    required this.cancelAllowed,
+    required this.fallbackAllowed,
+    required this.actions,
+    this.checkoutUrl,
+    this.paymentBookingId,
+    this.molliePaymentId,
+  });
+
+  final String presentationState;
+  final bool resumable;
+  final bool cancelAllowed;
+  final bool fallbackAllowed;
+  final List<String> actions;
+  final String? checkoutUrl;
+  final String? paymentBookingId;
+  final String? molliePaymentId;
+
+  bool get isPendingOwner =>
+      !fallbackAllowed &&
+      (presentationState == 'pending' ||
+          presentationState == 'checking' ||
+          presentationState == 'refreshing' ||
+          presentationState == 'canceling' ||
+          presentationState == 'recoveryError');
+}
+
+MollieOpenPaymentRecoveryInfo? parseMollieOpenPaymentRecovery(
+  Map<String, dynamic>? decoded,
+) {
+  if (decoded == null) return null;
+  final recovery = _asMap(decoded['recovery']);
+  final open = _asMap(decoded['open_checkout'] ?? decoded['openCheckout']);
+  if (recovery == null && open == null) {
+    // Infer from top-level conflict flags.
+    if (!manualPaymentBlockedByOpenMollieCheckout(
+      httpCode: 409,
+      decoded: decoded,
+    )) {
+      return null;
+    }
+  }
+  final actionsRaw = recovery?['actions'];
+  final actions = <String>[];
+  if (actionsRaw is List) {
+    for (final a in actionsRaw) {
+      final t = _norm(a);
+      if (t.isNotEmpty) actions.add(t);
+    }
+  }
+  final checkoutUrl = _firstNonEmpty(open ?? const {}, [
+        'checkout_url',
+        'checkoutUrl',
+        'payment_url',
+        'paymentUrl',
+      ]) ??
+      _firstNonEmpty(decoded, ['checkout_url', 'checkoutUrl']);
+  final resumable = recovery != null
+      ? _asBool(recovery['resumable'])
+      : (checkoutUrl != null && checkoutUrl.isNotEmpty);
+  final cancelAllowed = recovery != null
+      ? _asBool(recovery['cancel_allowed'] ?? recovery['cancelAllowed'])
+      : true;
+  final fallbackAllowed = recovery != null
+      ? _asBool(recovery['fallback_allowed'] ?? recovery['fallbackAllowed'])
+      : false;
+  return MollieOpenPaymentRecoveryInfo(
+    presentationState: _lower(
+      recovery?['presentation_state'] ??
+          recovery?['presentationState'] ??
+          decoded['presentation_state'] ??
+          'pending',
+    ),
+    resumable: resumable,
+    cancelAllowed: cancelAllowed,
+    fallbackAllowed: fallbackAllowed,
+    actions: actions.isEmpty
+        ? <String>[
+            'refresh_status',
+            if (resumable) 'resume_checkout',
+            if (cancelAllowed) 'cancel_open_checkout',
+          ]
+        : actions,
+    checkoutUrl: checkoutUrl,
+    paymentBookingId: _firstNonEmpty(open ?? const {}, [
+      'payment_booking_id',
+      'paymentBookingId',
+    ]),
+    molliePaymentId: _firstNonEmpty(open ?? const {}, [
+      'mollie_payment_id',
+      'molliePaymentId',
+    ]),
+  );
+}
+
+/// True when receipt booking details already show an open Mollie checkout owner.
+bool receiptDetailsHaveOpenMollieCheckout(Map<String, dynamic>? details) {
+  final map = details;
+  if (map == null) return false;
+  final payStatus = _lower(
+    map['payment_status'] ?? map['paymentStatus'] ?? 'unpaid',
+  );
+  if (payStatus == 'paid' ||
+      payStatus == 'failed' ||
+      payStatus == 'canceled' ||
+      payStatus == 'cancelled' ||
+      payStatus == 'expired') {
+    return false;
+  }
+  final provider = _lower(
+    map['payment_provider'] ??
+        map['paymentProvider'] ??
+        map['payment_mode'] ??
+        map['paymentMode'],
+  );
+  if (provider != 'mollie') return false;
+  final checkout = _firstNonEmpty(map, [
+    'checkout_url',
+    'checkoutUrl',
+    'payment_url',
+    'paymentUrl',
+  ]);
+  if (checkout == null || checkout.isEmpty) return false;
+  final mollie = _asMap(map['mollie']);
+  final mollieStatus = _lower(mollie?['status'] ?? payStatus);
+  if (mollieStatus == 'paid' ||
+      mollieStatus == 'failed' ||
+      mollieStatus == 'canceled' ||
+      mollieStatus == 'cancelled' ||
+      mollieStatus == 'expired') {
+    return false;
+  }
+  return true;
 }
 
 /// Outcome of a single `GET /pay/status` poll for an in-flight street

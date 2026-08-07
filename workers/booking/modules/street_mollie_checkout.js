@@ -4,6 +4,7 @@
 // Network / KV I/O lives in fluxidi_booking_worker.js (createStreetRideCheckoutAuthoritative).
 
 import { normalizePaymentMethodId } from "./payment_method_truth.js";
+import { buildOpenMollieCheckoutRecoveryPayload } from "./mollie_open_payment_recovery.mjs";
 
 function _safeStr(value, max = 200) {
   const text = String(value ?? "").trim();
@@ -35,6 +36,15 @@ export function streetCheckoutLockKey(tenantId, companyId, bookingId) {
   const b = _safeStr(bookingId, 160);
   if (!t || !c || !b) return null;
   return `tenant:${t}:company:${c}:street_checkout:${b}:lock:v1`;
+}
+
+/** Exclusive lock for refresh/cancel recovery (must not collide with create lock). */
+export function streetCheckoutRecoveryLockKey(tenantId, companyId, bookingId) {
+  const t = _safeStr(tenantId, 80);
+  const c = _safeStr(companyId, 80);
+  const b = _safeStr(bookingId, 160);
+  if (!t || !c || !b) return null;
+  return `tenant:${t}:company:${c}:street_checkout_recovery:${b}:lock:v1`;
 }
 
 export function streetCheckoutIdempotencyKey(bookingId, attemptId) {
@@ -261,13 +271,9 @@ export function manualMarkPaidConflict(rec, { confirmCancelOpenMollie = false } 
   }
   const open = readOpenStreetMollieCheckout(rec);
   if (open && !confirmCancelOpenMollie) {
-    return {
-      error: "open_mollie_checkout_exists",
-      status: 409,
-      message: "An online Mollie checkout is still open for this ride.",
-      open_checkout: open,
-      requires_confirm_cancel_open_mollie: true,
-    };
+    // MOLLIE-OPEN-PAYMENT-RECOVERY-P0: include recovery actions so the client
+    // can refresh / resume / cancel instead of dead-ending on 409.
+    return buildOpenMollieCheckoutRecoveryPayload(open);
   }
   return open && confirmCancelOpenMollie
     ? { cancel_open: true, open_checkout: open }

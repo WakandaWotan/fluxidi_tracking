@@ -34,6 +34,12 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   /// never left `true` indefinitely.
   bool _mollieCheckoutLoading = false;
 
+  /// MOLLIE-OPEN-PAYMENT-RECOVERY-P0: last known open hosted-checkout recovery
+  /// info (from 409 conflict or recovery API). While [isPendingOwner], QR /
+  /// cash / Tap to Pay / new checkout are blocked.
+  MollieOpenPaymentRecoveryInfo? _openMollieRecovery;
+  bool _mollieRecoveryBusy = false;
+
   /// TAP-TO-PAY-DRIVER-UI-1: Mollie POS / Tap to Pay capability + in-flight
   /// guard. Capability is loaded from the driver-safe booking-worker probe;
   /// phone and tablet share the same logical path id.
@@ -269,6 +275,17 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     if (!_tapToPayAvailable) return;
     if (!_guardDriverReceiptOperation(action: 'tap_to_pay')) return;
 
+    // MOLLIE-OPEN-PAYMENT-RECOVERY-P0: never start Tap to Pay while a hosted
+    // Mollie checkout may still settle.
+    if (_openMollieBlocksFallback) {
+      final choice = await _showOpenMollieRecoveryDialog(context);
+      if (!context.mounted) return;
+      if (choice != null && choice != MollieOpenPaymentRecoveryChoice.dismiss) {
+        await _runOpenMollieRecoveryAction(context, choice: choice);
+      }
+      return;
+    }
+
     final strictScope = _strictReceiptPaymentScopeForMutation(
       context: context,
       action: 'tap_to_pay',
@@ -325,6 +342,32 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       );
       if (!valid) {
         if (!mounted) return false;
+        final recovery = parseMollieOpenPaymentRecovery(
+          Map<String, dynamic>.from(start),
+        );
+        if (recovery != null ||
+            manualPaymentBlockedByOpenMollieCheckout(
+              httpCode: httpCode,
+              decoded: Map<String, dynamic>.from(start),
+            )) {
+          setState(() {
+            _tapToPayInFlight = false;
+            _openMollieRecovery = recovery;
+            _tapToPayStatusMessageKey = null;
+          });
+          if (context.mounted) {
+            final choice = await _showOpenMollieRecoveryDialog(
+              context,
+              recovery: recovery,
+            );
+            if (context.mounted &&
+                choice != null &&
+                choice != MollieOpenPaymentRecoveryChoice.dismiss) {
+              await _runOpenMollieRecoveryAction(context, choice: choice);
+            }
+          }
+          return false;
+        }
         setState(() {
           _tapToPayInFlight = false;
           _tapToPayStatusMessageKey = 'cardTerminalRetryOrOther';
@@ -3379,6 +3422,18 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   void _showPaymentQr(BuildContext context) {
     if (!_guardDriverReceiptOperation(action: 'payment_qr')) return;
 
+    // MOLLIE-OPEN-PAYMENT-RECOVERY-P0: block EPC QR while Mollie may settle.
+    if (_openMollieBlocksFallback) {
+      _showOpenMollieRecoveryDialog(context).then((choice) async {
+        if (!context.mounted) return;
+        if (choice != null &&
+            choice != MollieOpenPaymentRecoveryChoice.dismiss) {
+          await _runOpenMollieRecoveryAction(context, choice: choice);
+        }
+      });
+      return;
+    }
+
     final rideRefMasked = _safeRefPreview(item.bookingId ?? item.tripId);
 
     // 1) Booking owner scope must be present on the ride record itself.
@@ -3986,28 +4041,173 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     );
   }
 
-  /// Confirmation dialog shown when a manual payment (cash / Bancontact
-  /// terminal / QR confirm) is rejected because an online Mollie checkout is
-  /// already open for this ride. Returning `true` retries the same manual
-  /// payment with `confirm_cancel_open_mollie: true`.
-  Future<bool?> _confirmCancelOpenMollieCheckout(BuildContext context) {
-    return showDialog<bool>(
+  bool get _openMollieBlocksFallback {
+    final recovery = _openMollieRecovery;
+    if (recovery != null) return recovery.isPendingOwner;
+    return receiptDetailsHaveOpenMollieCheckout(
+      Map<String, dynamic>.from(item.bookingDetails),
+    );
+  }
+
+  /// MOLLIE-OPEN-PAYMENT-RECOVERY-P0: recoverable actions when an online
+  /// Mollie checkout is still open (refresh / resume / cancel).
+  Future<MollieOpenPaymentRecoveryChoice?> _showOpenMollieRecoveryDialog(
+    BuildContext context, {
+    MollieOpenPaymentRecoveryInfo? recovery,
+  }) {
+    final info = recovery ?? _openMollieRecovery;
+    return showDialog<MollieOpenPaymentRecoveryChoice>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(_receiptText('openPaymentExists')),
-        content: Text(_receiptText('cancelOpenMollieConfirm')),
+        content: Text(_receiptText('openPaymentRecoveryBody')),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
+            onPressed: () => Navigator.of(dialogContext).pop(
+              MollieOpenPaymentRecoveryChoice.dismiss,
+            ),
             child: Text(_receiptText('close')),
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(_receiptText('tryAgain')),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(
+              MollieOpenPaymentRecoveryChoice.refresh,
+            ),
+            child: Text(_receiptText('checkPaymentStatus')),
           ),
+          if (info?.resumable == true)
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(
+                MollieOpenPaymentRecoveryChoice.resume,
+              ),
+              child: Text(_receiptText('resumeOnlinePayment')),
+            ),
+          if (info?.cancelAllowed != false)
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(
+                MollieOpenPaymentRecoveryChoice.cancel,
+              ),
+              child: Text(_receiptText('cancelOnlinePayment')),
+            ),
         ],
       ),
     );
+  }
+
+  Future<Map<String, dynamic>?> _postMollieCheckoutRecovery({
+    required String bookingId,
+    required String action,
+    required Map<String, String> headers,
+  }) async {
+    final uri = Uri.parse(
+      '$kBookingBaseUrl/bookings/${Uri.encodeComponent(bookingId)}/mollie-checkout-recovery',
+    );
+    final res = await http
+        .post(
+          uri,
+          headers: {...headers, 'content-type': 'application/json'},
+          body: jsonEncode({'action': action}),
+        )
+        .timeout(const Duration(seconds: 12));
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(utf8.decode(res.bodyBytes));
+    } catch (_) {
+      decoded = null;
+    }
+    final root = decoded is Map
+        ? Map<String, dynamic>.from(decoded)
+        : <String, dynamic>{};
+    root['_http_code'] = res.statusCode;
+    return root;
+  }
+
+  Future<void> _runOpenMollieRecoveryAction(
+    BuildContext context, {
+    required MollieOpenPaymentRecoveryChoice choice,
+    String? pendingManualMethod,
+  }) async {
+    final bookingId = (item.bookingId ?? '').trim();
+    if (bookingId.isEmpty) return;
+    if (choice == MollieOpenPaymentRecoveryChoice.dismiss) return;
+
+    if (choice == MollieOpenPaymentRecoveryChoice.resume) {
+      await _startMollieStreetCheckout(context);
+      return;
+    }
+
+    final authHeaders = await resolveInCarPaymentAuthHeaders();
+    if (authHeaders.mode == InCarPaymentAuthMode.none) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_receiptText('paymentAuthRequired'))),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() => _mollieRecoveryBusy = true);
+    try {
+      final action = choice == MollieOpenPaymentRecoveryChoice.cancel
+          ? 'cancel'
+          : 'refresh';
+      final root = await _postMollieCheckoutRecovery(
+        bookingId: bookingId,
+        action: action,
+        headers: authHeaders.headers,
+      );
+      if (!mounted || root == null) return;
+      final recovery = parseMollieOpenPaymentRecovery(root);
+      final payStatus = (root['payment_status'] ?? root['paymentStatus'] ?? '')
+          .toString()
+          .toLowerCase();
+      if (payStatus == 'paid' || recovery?.presentationState == 'paid') {
+        setState(() {
+          _openMollieRecovery = null;
+          _paymentStatus = _ReceiptPaymentStatus.paid;
+        });
+        await _markMollieStreetCheckoutPaid(context);
+        return;
+      }
+      final released =
+          recovery?.fallbackAllowed == true ||
+          recovery?.presentationState == 'canceled' ||
+          recovery?.presentationState == 'expired' ||
+          recovery?.presentationState == 'failed';
+      setState(() {
+        _openMollieRecovery = released ? null : recovery;
+      });
+      if (!context.mounted) return;
+      if (released) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_receiptText('paymentOwnerReleased'))),
+        );
+        if (pendingManualMethod != null &&
+            choice == MollieOpenPaymentRecoveryChoice.cancel) {
+          await _persistInCarPayment(
+            context: context,
+            method: pendingManualMethod,
+            confirmCancelOpenMollie: false,
+          );
+        }
+        return;
+      }
+      if (root['ok'] != true && root['error'] == 'recovery_refresh_failed') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_receiptText('paymentRecoveryError'))),
+        );
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_receiptText('paymentStillPending'))),
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_receiptText('paymentRecoveryError'))),
+      );
+    } finally {
+      if (mounted) setState(() => _mollieRecoveryBusy = false);
+    }
   }
 
   void _togglePaidDemo(BuildContext context) {
@@ -4454,15 +4654,30 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           debugPrint(
             '[RECEIPT_PAYMENT][OPEN_MOLLIE_CONFLICT] booking=$maskedRef method=$normalizedMethod confirmCancelOpenMollie=$confirmCancelOpenMollie',
           );
+          final recovery = parseMollieOpenPaymentRecovery(conflictBody);
+          if (mounted) {
+            setState(() => _openMollieRecovery = recovery);
+          }
           if (!confirmCancelOpenMollie) {
             if (!context.mounted) return;
-            final confirmed = await _confirmCancelOpenMollieCheckout(context);
-            if (confirmed == true && context.mounted) {
-              await _persistInCarPayment(
-                context: context,
-                method: method,
-                confirmCancelOpenMollie: true,
+            final choice = await _showOpenMollieRecoveryDialog(
+              context,
+              recovery: recovery,
+            );
+            if (!context.mounted) return;
+            if (choice == MollieOpenPaymentRecoveryChoice.cancel) {
+              // Controlled cancel via recovery API, then retry manual mark-paid
+              // only after owner is released (never cancel blindly).
+              await _runOpenMollieRecoveryAction(
+                context,
+                choice: MollieOpenPaymentRecoveryChoice.cancel,
+                pendingManualMethod: method,
               );
+              return;
+            }
+            if (choice == MollieOpenPaymentRecoveryChoice.refresh ||
+                choice == MollieOpenPaymentRecoveryChoice.resume) {
+              await _runOpenMollieRecoveryAction(context, choice: choice!);
               return;
             }
           }
@@ -4941,7 +5156,58 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           ),
           const SizedBox(height: 10),
           if (!alreadyPaid) ...[
-            if (_mollieStreetCheckoutEligible()) ...[
+            if (_openMollieBlocksFallback) ...[
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  _receiptText(
+                    _mollieRecoveryBusy
+                        ? 'checkingPaymentStatus'
+                        : 'openPaymentRecoveryBody',
+                  ),
+                  style: TextStyle(fontSize: 12, color: _palette.textMuted),
+                ),
+              ),
+              FilledButton.icon(
+                onPressed: (_mollieRecoveryBusy || !canRequestPayment)
+                    ? null
+                    : () => _runOpenMollieRecoveryAction(
+                          context,
+                          choice: MollieOpenPaymentRecoveryChoice.refresh,
+                        ),
+                icon: const Icon(Icons.refresh),
+                label: Text(_receiptText('checkPaymentStatus')),
+              ),
+              const SizedBox(height: 8),
+              if (_openMollieRecovery?.resumable == true ||
+                  receiptDetailsHaveOpenMollieCheckout(
+                    Map<String, dynamic>.from(item.bookingDetails),
+                  )) ...[
+                FilledButton.icon(
+                  onPressed: (_mollieRecoveryBusy || !canRequestPayment)
+                      ? null
+                      : () => _runOpenMollieRecoveryAction(
+                            context,
+                            choice: MollieOpenPaymentRecoveryChoice.resume,
+                          ),
+                  icon: const Icon(Icons.open_in_browser),
+                  label: Text(_receiptText('resumeOnlinePayment')),
+                ),
+                const SizedBox(height: 8),
+              ],
+              OutlinedButton.icon(
+                onPressed: (_mollieRecoveryBusy || !canRequestPayment)
+                    ? null
+                    : () => _runOpenMollieRecoveryAction(
+                          context,
+                          choice: MollieOpenPaymentRecoveryChoice.cancel,
+                        ),
+                icon: const Icon(Icons.cancel_outlined),
+                label: Text(_receiptText('cancelOnlinePayment')),
+              ),
+              const SizedBox(height: 12),
+            ],
+            if (_mollieStreetCheckoutEligible() && !_openMollieBlocksFallback) ...[
               FilledButton.icon(
                 onPressed: (canRequestPayment && !_mollieCheckoutLoading)
                     ? () => _startMollieStreetCheckout(context)
@@ -4968,26 +5234,47 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
               const SizedBox(height: 4),
             ],
             FilledButton.icon(
-              onPressed: canRequestPayment
+              onPressed: (canRequestPayment && !_openMollieBlocksFallback)
                   ? () => _showPaymentQr(context)
-                  : null,
+                  : (_openMollieBlocksFallback
+                        ? () => _showPaymentQr(context)
+                        : null),
               icon: const Icon(Icons.qr_code_2),
               label: Text(_receiptText('payByQr')),
             ),
             const SizedBox(height: 8),
             FilledButton.icon(
-              onPressed: canRequestPayment
+              onPressed: (canRequestPayment && !_openMollieBlocksFallback)
                   ? () => _persistInCarPayment(context: context, method: 'cash')
-                  : null,
+                  : (_openMollieBlocksFallback
+                        ? () async {
+                            final choice =
+                                await _showOpenMollieRecoveryDialog(context);
+                            if (!context.mounted) return;
+                            if (choice != null &&
+                                choice !=
+                                    MollieOpenPaymentRecoveryChoice.dismiss) {
+                              await _runOpenMollieRecoveryAction(
+                                context,
+                                choice: choice,
+                                pendingManualMethod: 'cash',
+                              );
+                            }
+                          }
+                        : null),
               icon: const Icon(Icons.payments_outlined),
               label: Text(_receiptText('cashReceived')),
             ),
             const SizedBox(height: 8),
             if (_tapToPayAvailable) ...[
               FilledButton.icon(
-                onPressed: (canRequestPayment && !_tapToPayInFlight)
+                onPressed: (canRequestPayment &&
+                        !_tapToPayInFlight &&
+                        !_openMollieBlocksFallback)
                     ? () => _startTapToPay(context)
-                    : null,
+                    : (_openMollieBlocksFallback && canRequestPayment
+                          ? () => _startTapToPay(context)
+                          : null),
                 icon: _tapToPayInFlight
                     ? const SizedBox(
                         width: 18,

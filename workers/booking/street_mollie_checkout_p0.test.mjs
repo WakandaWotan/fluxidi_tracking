@@ -203,14 +203,18 @@ function seedBusinessProfile(tenantId, companyId) {
 function installMollieFetchMock({ paymentId = "tr_street_1", status = "open" } = {}) {
   const original = globalThis.fetch;
   const calls = [];
+  // MOLLIE-OPEN-PAYMENT-RECOVERY-P0: DELETE must advance provider status so
+  // post-cancel re-read can release the payment owner.
+  let currentStatus = status;
   globalThis.fetch = async (input, init = {}) => {
     const href = typeof input === "string" ? input : String(input?.url || "");
     calls.push({ href, method: init.method || "GET", headers: init.headers || {}, body: init.body });
     if (/api\.mollie\.com\/v2\/payments\/?(\?|$)/.test(href) && (init.method || "GET") === "POST") {
+      currentStatus = status;
       return new Response(
         JSON.stringify({
           id: paymentId,
-          status,
+          status: currentStatus,
           amount: { currency: "EUR", value: "42.50" },
           _links: {
             checkout: { href: `https://www.mollie.com/checkout/test/${paymentId}` },
@@ -226,7 +230,7 @@ function installMollieFetchMock({ paymentId = "tr_street_1", status = "open" } =
       return new Response(
         JSON.stringify({
           id: paymentId,
-          status,
+          status: currentStatus,
           _links: {
             checkout: { href: `https://www.mollie.com/checkout/test/${paymentId}` },
           },
@@ -235,6 +239,7 @@ function installMollieFetchMock({ paymentId = "tr_street_1", status = "open" } =
       );
     }
     if (/api\.mollie\.com\/v2\/payments\//.test(href) && init.method === "DELETE") {
+      currentStatus = "canceled";
       return new Response(JSON.stringify({ id: paymentId, status: "canceled" }), {
         status: 200,
         headers: { "content-type": "application/json" },

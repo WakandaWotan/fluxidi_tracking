@@ -254,6 +254,62 @@ void main() {
         ),
         isTrue,
       );
+      expect(
+        manualPaymentBlockedByOpenMollieCheckout(
+          httpCode: 409,
+          decoded: {'requires_confirm_cancel_open_mollie': true},
+        ),
+        isTrue,
+      );
+    });
+
+    test('open checkout recovery payload parses actions', () {
+      final info = parseMollieOpenPaymentRecovery({
+        'error': 'open_mollie_checkout_exists',
+        'requires_confirm_cancel_open_mollie': true,
+        'open_checkout': {
+          'checkout_url': 'https://www.mollie.com/checkout/x',
+          'mollie_payment_id': 'tr_1',
+          'mollie_status': 'open',
+        },
+        'recovery': {
+          'presentation_state': 'pending',
+          'resumable': true,
+          'cancel_allowed': true,
+          'fallback_allowed': false,
+          'actions': [
+            'refresh_status',
+            'resume_checkout',
+            'cancel_open_checkout',
+          ],
+        },
+      });
+      expect(info, isNotNull);
+      expect(info!.isPendingOwner, isTrue);
+      expect(info.resumable, isTrue);
+      expect(info.cancelAllowed, isTrue);
+      expect(info.fallbackAllowed, isFalse);
+      expect(info.actions, contains('refresh_status'));
+    });
+
+    test('receipt details detect open Mollie owner', () {
+      expect(
+        receiptDetailsHaveOpenMollieCheckout({
+          'payment_status': 'pending',
+          'payment_provider': 'mollie',
+          'checkout_url': 'https://www.mollie.com/checkout/x',
+          'mollie': {'status': 'open'},
+        }),
+        isTrue,
+      );
+      expect(
+        receiptDetailsHaveOpenMollieCheckout({
+          'payment_status': 'paid',
+          'payment_provider': 'mollie',
+          'checkout_url': 'https://www.mollie.com/checkout/x',
+        }),
+        isFalse,
+      );
     });
 
     test('409 with mollie/open_payment error token -> blocked', () {

@@ -75,9 +75,13 @@ void main() {
       expect(sectionIdx, greaterThan(-1));
       final sectionBody = receiptSource.substring(
         sectionIdx,
-        sectionIdx + 4000,
+        sectionIdx + 12000,
       );
       expect(sectionBody, contains('_mollieStreetCheckoutEligible()'));
+      // MOLLIE-OPEN-PAYMENT-RECOVERY-P0: recovery actions while open checkout owns payment.
+      expect(sectionBody, contains('_openMollieBlocksFallback'));
+      expect(sectionBody, contains('checkPaymentStatus'));
+      expect(receiptSource, contains('mollie-checkout-recovery'));
     });
 
     test('street-checkout start request never sends amount as authority', () {
@@ -144,6 +148,14 @@ void main() {
         receiptSource,
         contains('confirmCancelOpenMollie'),
       );
+      expect(
+        receiptSource,
+        contains('_showOpenMollieRecoveryDialog'),
+      );
+      expect(
+        receiptSource,
+        contains('MollieOpenPaymentRecoveryChoice'),
+      );
     });
 
     test('paid poll outcome refreshes receipt paid state via canonical helper', () {
@@ -183,6 +195,13 @@ void main() {
         'openPaymentExists',
         'rideAlreadyPaid',
         'cancelOpenMollieConfirm',
+        'openPaymentRecoveryBody',
+        'checkPaymentStatus',
+        'resumeOnlinePayment',
+        'cancelOnlinePayment',
+        'paymentStillPending',
+        'paymentOwnerReleased',
+        'paymentRecoveryError',
       ];
       for (final key in keys) {
         final caseIdx = textHelpersSource.indexOf("case '$key':");
