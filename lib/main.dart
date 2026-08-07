@@ -2506,6 +2506,22 @@ class FluxidiDriverApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         title: kAppTitle,
         theme: theme,
+        // RELEASE-LANGUAGE-CONSISTENCY: Fluxidi app language wins over device.
+        locale: Locale(currentLanguageCode),
+        supportedLocales: const <Locale>[
+          Locale('nl'),
+          Locale('en'),
+          Locale('fr'),
+          Locale('es'),
+          Locale('de'),
+        ],
+        localeResolutionCallback: (deviceLocale, supported) {
+          final code = currentLanguageCode;
+          for (final locale in supported) {
+            if (locale.languageCode == code) return locale;
+          }
+          return const Locale('en');
+        },
         navigatorObservers: <NavigatorObserver>[kAppRouteObserver],
         builder: (context, child) {
           return FluxidiFrame(child: child ?? const SizedBox.shrink());

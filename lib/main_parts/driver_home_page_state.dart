@@ -4363,7 +4363,14 @@ class _DriverHomePageState extends State<DriverHomePage>
 
       if (mounted) setState(() => _isStartingTrip = false);
     } catch (e) {
-      _toast('Open ride failed: $e');
+      _toast(
+        _tr(
+          nl: 'Rit openen mislukt',
+          en: 'Open ride failed',
+          fr: 'Échec de l’ouverture de la course',
+          es: 'Error al abrir el viaje',
+        ),
+      );
     }
   }
 
@@ -4960,7 +4967,14 @@ class _DriverHomePageState extends State<DriverHomePage>
         reason: 'start_trip_exception',
       );
       if (mounted) setState(() => _isStartingTrip = false);
-      _toast('Start failed: $e');
+      _toast(
+        _tr(
+          nl: 'Start mislukt',
+          en: 'Start failed',
+          fr: 'Échec du démarrage',
+          es: 'Error al iniciar',
+        ),
+      );
     }
   }
 
@@ -5225,7 +5239,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
       }
       _markBookingsUiDirty();
-      _toast('✅ $status: ${b.shortId}');
+      _toast('✅ ${_rideStatusLabel(status)}: ${b.shortId}');
       await _debugFetchBookingSnapshot(
         bookingId: bookingId,
         contextLabel: 'STATUS_AFTER_WRITE',
@@ -5280,7 +5294,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             }
           });
           _markBookingsUiDirty();
-          _toast('✅ $status: ${b.shortId}');
+          _toast('✅ ${_rideStatusLabel(status)}: ${b.shortId}');
           await _refreshBookings(
             force: true,
             trigger: 'status_change_verified',
@@ -5396,7 +5410,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         }
       });
       _markBookingsUiDirty();
-      _toast('✅ $status: ${b.shortId}');
+      _toast('✅ ${_rideStatusLabel(status)}: ${b.shortId}');
       final normalizedStatus = status.trim().toUpperCase();
       if (normalizedStatus == 'COMPLETED') {
         await _recordOperationalLegPlannedStopBestEffort(b);
@@ -5941,14 +5955,27 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       if (!_liveRideActive) _setNavigationWakelock(false);
       _markBookingsUiDirty();
-      _toast('🗑️ Verwijderd: ${b.shortId}');
+      final deletedLabel = _tr(
+        nl: 'Verwijderd',
+        en: 'Deleted',
+        fr: 'Supprimé',
+        es: 'Eliminado',
+      );
+      _toast('🗑️ $deletedLabel: ${b.shortId}');
       await _debugFetchBookingSnapshot(
         bookingId: bookingId,
         contextLabel: 'DELETE_AFTER_WRITE',
       );
       await _refreshBookings(force: true, trigger: 'delete_action');
     } catch (e) {
-      _toast('❌ Delete failed: $e');
+      _toast(
+        '❌ ${_tr(
+          nl: 'Verwijderen mislukt',
+          en: 'Delete failed',
+          fr: 'Échec de la suppression',
+          es: 'Error al eliminar',
+        )}',
+      );
     } finally {
       if (mounted) {
         setState(() => _bookingActionInFlight.remove(actionKey));
@@ -5961,18 +5988,43 @@ class _DriverHomePageState extends State<DriverHomePage>
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Rit verwijderen?'),
+        title: Text(
+          _tr(
+            nl: 'Rit verwijderen?',
+            en: 'Delete ride?',
+            fr: 'Supprimer la course ?',
+            es: '¿Eliminar el viaje?',
+          ),
+        ),
         content: Text(
-          'This will remove the booking from the list (KV).\n\nID: ${b.bookingId}',
+          _tr(
+            nl:
+                'Dit verwijdert de boeking uit de lijst.\n\nID: ${b.bookingId}',
+            en:
+                'This removes the booking from the list.\n\nID: ${b.bookingId}',
+            fr:
+                'Cela supprime la réservation de la liste.\n\nID : ${b.bookingId}',
+            es:
+                'Esto elimina la reserva de la lista.\n\nID: ${b.bookingId}',
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('No'),
+            child: Text(
+              _tr(nl: 'Nee', en: 'No', fr: 'Non', es: 'No'),
+            ),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Yes, delete'),
+            child: Text(
+              _tr(
+                nl: 'Ja, verwijderen',
+                en: 'Yes, delete',
+                fr: 'Oui, supprimer',
+                es: 'Sí, eliminar',
+              ),
+            ),
           ),
         ],
       ),
@@ -6494,6 +6546,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       isStreetOrDirectBooking: _activeBookingIsStreetDirect,
       fixedBookingPriceEur: _fixedBookingPriceEur,
       liveMeterPreviewEur: _liveMeterPreviewEur,
+      language: appConfig.currentLanguage,
     );
   }
 
@@ -9979,7 +10032,14 @@ class _DriverHomePageState extends State<DriverHomePage>
           serverDirectTotal ??
               roundFareEuroToNearestTenCents(finalTotal) ??
               finalTotal;
-      _toast('Straatrit afgerond: € ${shownTotal.toStringAsFixed(2)}');
+      _toast(
+        _tr(
+          nl: 'Straatrit afgerond: € ${shownTotal.toStringAsFixed(2)}',
+          en: 'Street ride completed: € ${shownTotal.toStringAsFixed(2)}',
+          fr: 'Course de rue terminée : € ${shownTotal.toStringAsFixed(2)}',
+          es: 'Viaje de calle finalizado: € ${shownTotal.toStringAsFixed(2)}',
+        ),
+      );
     }
     unawaited(_refreshCompletedTodayCount(reason: 'trip_stop'));
   }
@@ -10116,7 +10176,14 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _ensureLocationPermission() async {
     final enabled = await geo.Geolocator.isLocationServiceEnabled();
     if (!enabled) {
-      _toast('Location is disabled on the phone.');
+      _toast(
+        _tr(
+          nl: 'Locatie is uitgeschakeld op het toestel.',
+          en: 'Location is disabled on the device.',
+          fr: 'La localisation est désactivée sur l’appareil.',
+          es: 'La ubicación está desactivada en el dispositivo.',
+        ),
+      );
       return;
     }
 
@@ -10126,7 +10193,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     if (perm == geo.LocationPermission.denied ||
         perm == geo.LocationPermission.deniedForever) {
-      _toast('Location permission denied.');
+      _toast(
+        _tr(
+          nl: 'Locatietoestemming geweigerd.',
+          en: 'Location permission denied.',
+          fr: 'Autorisation de localisation refusée.',
+          es: 'Permiso de ubicación denegado.',
+        ),
+      );
       return;
     }
   }
@@ -10663,7 +10737,14 @@ class _DriverHomePageState extends State<DriverHomePage>
       _directRideLocationRetryCount = 0;
       _directRideLocationRetryDestination = _directRideDestinationText;
     });
-    _toast('Straatrit klaar. Druk START om te rijden.');
+    _toast(
+      _tr(
+        nl: 'Straatrit klaar. Druk START om te rijden.',
+        en: 'Street ride is ready. Press START to drive.',
+        fr: 'Course de rue prête. Appuyez sur START pour rouler.',
+        es: 'El viaje de calle está listo. Pulsa START para conducir.',
+      ),
+    );
     _scheduleDirectRideEstimateRefresh(reason: 'destination_changed');
     // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 1): present the
     // calculated route immediately. Continue used to leave the map empty until
@@ -10708,7 +10789,14 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
     }
     if (pos == null) {
-      _toast('GPS-locatie nog niet beschikbaar');
+      _toast(
+        _tr(
+          nl: 'GPS-locatie nog niet beschikbaar',
+          en: 'GPS location not available yet',
+          fr: 'Position GPS pas encore disponible',
+          es: 'Ubicación GPS aún no disponible',
+        ),
+      );
       return;
     }
 
@@ -10786,7 +10874,14 @@ class _DriverHomePageState extends State<DriverHomePage>
       _startDirectRide();
       return;
     }
-    _toast('Kies eerst een rit of start een straatrit.');
+    _toast(
+      _tr(
+        nl: 'Kies eerst een rit of start een straatrit.',
+        en: 'Choose a ride first or start a street ride.',
+        fr: 'Choisissez d’abord une course ou démarrez une course de rue.',
+        es: 'Elige primero un viaje o inicia un viaje de calle.',
+      ),
+    );
   }
 
   Future<void> _sendPing(geo.Position pos) async {
@@ -22920,7 +23015,16 @@ class _DriverHomePageState extends State<DriverHomePage>
         'caller=$caller action=wait_for_fix ageMs=${ageMs ?? -1}',
         intervalMs: 1000,
       );
-      if (pos == null) _toast('GPS-locatie nog niet beschikbaar');
+      if (pos == null) {
+        _toast(
+          _tr(
+            nl: 'GPS-locatie nog niet beschikbaar',
+            en: 'GPS location not available yet',
+            fr: 'Position GPS pas encore disponible',
+            es: 'Ubicación GPS aún no disponible',
+          ),
+        );
+      }
       return;
     }
 
@@ -24400,7 +24504,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final showLabel = layout.isTablet || layout.buttonVisualSize >= 48;
     final visual = layout.buttonVisualSize;
     final touch = layout.minTouchTarget;
-    final label = 'Tellers';
+    final label = driverTellersTitle(appConfig.currentLanguage);
     if (!showLabel) {
       return _buildCompactNavIconChip(
         icon: Icons.speed_outlined,
@@ -26486,7 +26590,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     final from = _manualFromCtrl.text.trim();
     final to = _manualToCtrl.text.trim();
     if (from.isEmpty || to.isEmpty) {
-      _toast('Vul zowel "Van" als "Naar" in.');
+      _toast(
+        _tr(
+          nl: 'Vul zowel "Van" als "Naar" in.',
+          en: 'Fill in both "From" and "To".',
+          fr: 'Remplissez « De » et « À ».',
+          es: 'Completa tanto «Desde» como «Hasta».',
+        ),
+      );
       return;
     }
 
@@ -27205,7 +27316,37 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (s.isEmpty || s == 'PENDING') return kRideStatusPendingLabel;
     if (s == 'COMPLETED') return kRideActionCompletedLabel;
     if (s == 'CANCELLED') return kRideActionCancelledLabel;
-    return rawStatus.trim();
+    if (s == 'DELETED') {
+      return _tr(
+        nl: 'Verwijderd',
+        en: 'Deleted',
+        fr: 'Supprimé',
+        es: 'Eliminado',
+      );
+    }
+    if (s == 'ACCEPTED') {
+      return _tr(
+        nl: 'Geaccepteerd',
+        en: 'Accepted',
+        fr: 'Accepté',
+        es: 'Aceptado',
+      );
+    }
+    if (s == 'IN_PROGRESS' || s == 'ACTIVE' || s == 'STARTED') {
+      return _tr(
+        nl: 'Bezig',
+        en: 'In progress',
+        fr: 'En cours',
+        es: 'En curso',
+      );
+    }
+    // Never surface raw server tokens in driver UI.
+    return _tr(
+      nl: 'Status bijgewerkt',
+      en: 'Status updated',
+      fr: 'Statut mis à jour',
+      es: 'Estado actualizado',
+    );
   }
 
   // -------------------------------
@@ -34942,7 +35083,14 @@ class _DriverHomePageState extends State<DriverHomePage>
                             final b = _activeBooking;
                             if (!tripStarted) {
                               if (b == null) {
-                                _toast('Kies eerst een rit in Ritten.');
+                                _toast(
+                                  _tr(
+                                    nl: 'Kies eerst een rit in Ritten.',
+                                    en: 'Choose a ride in Rides first.',
+                                    fr: 'Choisissez d’abord une course dans Courses.',
+                                    es: 'Elige primero un viaje en Viajes.',
+                                  ),
+                                );
                                 return;
                               }
                               _startTrip(b);
@@ -34963,7 +35111,14 @@ class _DriverHomePageState extends State<DriverHomePage>
                           icon: waiting ? Icons.play_arrow : Icons.pause,
                           onTap: () {
                             if (!tripStarted) {
-                              _toast('Start eerst de rit.');
+                              _toast(
+                                _tr(
+                                  nl: 'Start eerst de rit.',
+                                  en: 'Start the ride first.',
+                                  fr: 'Démarrez d’abord la course.',
+                                  es: 'Inicia primero el viaje.',
+                                ),
+                              );
                               return;
                             }
                             if (waiting) {
@@ -35789,7 +35944,14 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   void _denyRoleAccess() {
-    _toast('Geen toegang voor jouw rol.');
+    _toast(
+      _tr(
+        nl: 'Geen toegang voor jouw rol.',
+        en: 'No access for your role.',
+        fr: 'Pas d’accès pour votre rôle.',
+        es: 'Sin acceso para tu rol.',
+      ),
+    );
   }
 
   void _openBookingsHub() async {
@@ -35880,7 +36042,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     Navigator.pop(context);
 
     if (!_liveRideActive) {
-      _toast('Geen actieve rit. Start een rit vanuit Ritten.');
+      _toast(
+        _tr(
+          nl: 'Geen actieve rit. Start een rit vanuit Ritten.',
+          en: 'No active ride. Start a ride from Rides.',
+          fr: 'Aucune course active. Démarrez une course depuis Courses.',
+          es: 'No hay viaje activo. Inicia un viaje desde Viajes.',
+        ),
+      );
       return;
     }
 

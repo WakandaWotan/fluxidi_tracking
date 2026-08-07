@@ -13,12 +13,11 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:fluxidi_tracking/app_config.dart';
-import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mb;
 
+import 'driver_offline_maps_l10n.dart';
 import 'driver_offline_maps_preview_model.dart';
 import 'driver_offline_maps_service.dart';
 import 'nav_engine/nav_field_diagnostics.dart';
@@ -72,17 +71,7 @@ class _DriverOfflineMapRegionPreviewPageState
     String? fr,
     String? es,
   }) {
-    switch (appConfig.currentLanguage) {
-      case AppLanguage.fr:
-        return fr ?? en;
-      case AppLanguage.es:
-        return es ?? en;
-      case AppLanguage.nl:
-        return nl;
-      case AppLanguage.en:
-      case AppLanguage.de:
-        return en;
-    }
+    return resolveOfflineMapsUiText(nl: nl, en: en, fr: fr, es: es);
   }
 
   @override

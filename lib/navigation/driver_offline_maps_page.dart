@@ -12,6 +12,7 @@ import 'driver_offline_maps_download_feedback.dart';
 import 'driver_offline_maps_estimate_format.dart';
 import 'driver_offline_maps_europe_geocoder.dart';
 import 'driver_offline_maps_europe_selection.dart';
+import 'driver_offline_maps_l10n.dart';
 import 'driver_offline_maps_preview_model.dart';
 import 'driver_offline_maps_region_preview_page.dart';
 import 'driver_offline_maps_service.dart';
@@ -220,18 +221,7 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
     String? fr,
     String? es,
   }) {
-    switch (appConfig.currentLanguage) {
-      case AppLanguage.fr:
-        return fr ?? en;
-      case AppLanguage.es:
-        return es ?? en;
-      case AppLanguage.nl:
-        return nl;
-      case AppLanguage.en:
-        return en;
-      case AppLanguage.de:
-        return en;
-    }
+    return resolveOfflineMapsUiText(nl: nl, en: en, fr: fr, es: es);
   }
 
   bool get _mapboxConfigured =>
@@ -429,10 +419,14 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
         _tr(
           nl: 'Land: ${place.countryName} (${place.countryCode.toUpperCase()})',
           en: 'Country: ${place.countryName} (${place.countryCode.toUpperCase()})',
+          fr: 'Pays : ${place.countryName} (${place.countryCode.toUpperCase()})',
+          es: 'País: ${place.countryName} (${place.countryCode.toUpperCase()})',
         ),
         _tr(
           nl: 'Straal: $_selectedRadiusKm km (grensoverschrijdend toegestaan)',
           en: 'Radius: $_selectedRadiusKm km (cross-border allowed)',
+          fr: 'Rayon : $_selectedRadiusKm km (transfrontalier autorisé)',
+          es: 'Radio: $_selectedRadiusKm km (transfronterizo permitido)',
         ),
         _tr(
           nl:
@@ -440,6 +434,12 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
               '${place.longitude.toStringAsFixed(3)}',
           en:
               'Center: ${place.latitude.toStringAsFixed(3)}, '
+              '${place.longitude.toStringAsFixed(3)}',
+          fr:
+              'Centre : ${place.latitude.toStringAsFixed(3)}, '
+              '${place.longitude.toStringAsFixed(3)}',
+          es:
+              'Centro: ${place.latitude.toStringAsFixed(3)}, '
               '${place.longitude.toStringAsFixed(3)}',
         ),
         _tr(
@@ -449,6 +449,12 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
           en:
               'Zoom ${selection.minZoom}–${selection.maxZoom} · '
               'radius boundary (not an exact municipality polygon)',
+          fr:
+              'Zoom ${selection.minZoom}–${selection.maxZoom} · '
+              'limite par rayon (pas un polygone communal exact)',
+          es:
+              'Zoom ${selection.minZoom}–${selection.maxZoom} · '
+              'límite por radio (no un polígono municipal exacto)',
         ),
       ],
       previewCenterLat: place.latitude,
@@ -545,6 +551,8 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
         _tr(
           nl: 'Zoom ${preset.minZoom}–${preset.maxZoom} · licht + donker kaartstijl',
           en: 'Zoom ${preset.minZoom}–${preset.maxZoom} · light + dark map styles',
+          fr: 'Zoom ${preset.minZoom}–${preset.maxZoom} · styles de carte clair + sombre',
+          es: 'Zoom ${preset.minZoom}–${preset.maxZoom} · estilos de mapa claro + oscuro',
         ),
       ],
     );
@@ -835,6 +843,8 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                     _tr(
                       nl: 'Zoom $minZoom–$maxZoom · licht + donker kaartstijl',
                       en: 'Zoom $minZoom–$maxZoom · light + dark map styles',
+                      fr: 'Zoom $minZoom–$maxZoom · styles de carte clair + sombre',
+                      es: 'Zoom $minZoom–$maxZoom · estilos de mapa claro + oscuro',
                     ),
                   ),
                   if (previewCenterLat != null &&
@@ -853,6 +863,8 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                             _tr(
                               nl: 'Voorbeeld · $previewRadiusKm km straal',
                               en: 'Preview · $previewRadiusKm km radius',
+                              fr: 'Aperçu · $previewRadiusKm km de rayon',
+                              es: 'Vista previa · $previewRadiusKm km de radio',
                             ),
                             style: const TextStyle(
                               fontSize: 12,
@@ -1060,6 +1072,8 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
             _tr(
               nl: '“${region.displayName}” van dit toestel verwijderen?',
               en: 'Remove “${region.displayName}” from this device?',
+              fr: 'Supprimer « ${region.displayName} » de cet appareil ?',
+              es: '¿Eliminar « ${region.displayName} » de este dispositivo?',
             ),
           ),
           actions: [
@@ -1165,6 +1179,14 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                   'Estimated ${metadata.estimatedTileCountMin}-${metadata.estimatedTileCountMax} tiles · '
                   '$sizeRange · buffer ${metadata.corridorBufferMeters} m · '
                   'zoom ${metadata.zoomMin}-${metadata.zoomMax} · ${metadata.supportedStatus}',
+              fr:
+                  'Estimé ${metadata.estimatedTileCountMin}-${metadata.estimatedTileCountMax} tuiles · '
+                  '$sizeRange · tampon ${metadata.corridorBufferMeters} m · '
+                  'zoom ${metadata.zoomMin}-${metadata.zoomMax} · ${metadata.supportedStatus}',
+              es:
+                  'Estimado ${metadata.estimatedTileCountMin}-${metadata.estimatedTileCountMax} teselas · '
+                  '$sizeRange · búfer ${metadata.corridorBufferMeters} m · '
+                  'zoom ${metadata.zoomMin}-${metadata.zoomMax} · ${metadata.supportedStatus}',
             ),
             style: TextStyle(
               color: palette.textMuted,
@@ -1209,46 +1231,19 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
   /// Distinguishes complete / completed-with-errors / incomplete / expired /
   /// unknown so the driver never sees a false "complete" claim over a region
   /// that failed resources or a StylePack that could not be verified.
-  String _offlineRegionStatusText(
-    DriverOfflineMapRegionInfo region, {
-    required bool nl,
-  }) {
-    switch (region.completionStatus) {
-      case DriverOfflineMapCompletionStatus.complete:
-        return nl ? 'Volledig' : 'Complete';
-      case DriverOfflineMapCompletionStatus.completedWithErrors:
-        return nl
-            ? 'Ontladen met fouten (niet volledig)'
-            : 'Downloaded with errors (not complete)';
-      case DriverOfflineMapCompletionStatus.incomplete:
-        return nl ? 'Bezig / onvolledig' : 'In progress / incomplete';
-      case DriverOfflineMapCompletionStatus.expiredOrStale:
-        return nl
-            ? 'Verlopen — vernieuwen aanbevolen'
-            : 'Expired — refresh recommended';
-      case DriverOfflineMapCompletionStatus.unknown:
-        return nl ? 'Status onbekend' : 'Status unknown';
-    }
+  String _offlineRegionStatusText(DriverOfflineMapRegionInfo region) {
+    return offlineMapsRegionStatusText(region.completionStatus);
   }
 
   /// NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part F: show which navigation
   /// styles the region actually covers. Standard/Satellite are only listed as
   /// offline when their StylePack was proven downloaded — never assumed.
-  String _offlineStyleCoverageText(
-    DriverOfflineMapRegionInfo region, {
-    required bool nl,
-  }) {
+  String _offlineStyleCoverageText(DriverOfflineMapRegionInfo region) {
     if (region.styleUris.isEmpty) {
-      return nl ? 'geen' : 'none';
+      return offlineMapsNoneLabel();
     }
     final labels = region.styleUris.map(_offlineStyleLabel).toList();
-    final verified = region.stylePacksVerified;
-    final suffix = verified == true
-        ? (nl ? ' (geverifieerd)' : ' (verified)')
-        : verified == false
-            ? (nl ? ' (niet volledig)' : ' (not complete)')
-            : (nl ? ' (niet geverifieerd)' : ' (not verified)');
-    return '${labels.join(', ')}$suffix';
+    return '${labels.join(', ')}${offlineMapsVerifiedSuffix(verified: region.stylePacksVerified)}';
   }
 
   String _offlineStyleLabel(String styleUri) {
@@ -1327,6 +1322,8 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                       _tr(
                         nl: 'Zoom ${preset.minZoom}–${preset.maxZoom}',
                         en: 'Zoom ${preset.minZoom}–${preset.maxZoom}',
+                        fr: 'Zoom ${preset.minZoom}–${preset.maxZoom}',
+                        es: 'Zoom ${preset.minZoom}–${preset.maxZoom}',
                       ),
                       style: TextStyle(
                         color: palette.textMuted,
@@ -1433,6 +1430,8 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                   _tr(
                     nl: 'Straal $_selectedRadiusKm km',
                     en: 'Radius $_selectedRadiusKm km',
+                    fr: 'Rayon $_selectedRadiusKm km',
+                    es: 'Radio $_selectedRadiusKm km',
                   ),
                   style: TextStyle(color: palette.textMuted, fontSize: 12),
                 ),
@@ -2056,6 +2055,10 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                                             'Aangemaakt: ${_formatCreatedAt(region.createdAt)}',
                                         en:
                                             'Created: ${_formatCreatedAt(region.createdAt)}',
+                                        fr:
+                                            'Créé : ${_formatCreatedAt(region.createdAt)}',
+                                        es:
+                                            'Creado: ${_formatCreatedAt(region.createdAt)}',
                                       ),
                                       style:
                                           TextStyle(color: palette.textMuted),
@@ -2064,10 +2067,16 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                                       _tr(
                                         nl:
                                             'Opslag: ${_formatBytes(region.completedResourceSize)} · '
-                                            '${_offlineRegionStatusText(region, nl: true)}',
+                                            '${_offlineRegionStatusText(region)}',
                                         en:
                                             'Storage: ${_formatBytes(region.completedResourceSize)} · '
-                                            '${_offlineRegionStatusText(region, nl: false)}',
+                                            '${_offlineRegionStatusText(region)}',
+                                        fr:
+                                            'Stockage : ${_formatBytes(region.completedResourceSize)} · '
+                                            '${_offlineRegionStatusText(region)}',
+                                        es:
+                                            'Almacenamiento: ${_formatBytes(region.completedResourceSize)} · '
+                                            '${_offlineRegionStatusText(region)}',
                                       ),
                                       style: TextStyle(
                                         color: palette.textMuted,
@@ -2081,10 +2090,16 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                                           _tr(
                                             nl:
                                                 'Navigatiestijlen offline: '
-                                                '${_offlineStyleCoverageText(region, nl: true)}',
+                                                '${_offlineStyleCoverageText(region)}',
                                             en:
                                                 'Navigation styles offline: '
-                                                '${_offlineStyleCoverageText(region, nl: false)}',
+                                                '${_offlineStyleCoverageText(region)}',
+                                            fr:
+                                                'Styles de navigation hors ligne : '
+                                                '${_offlineStyleCoverageText(region)}',
+                                            es:
+                                                'Estilos de navegación sin conexión: '
+                                                '${_offlineStyleCoverageText(region)}',
                                           ),
                                           style: TextStyle(
                                             color: palette.textMuted,

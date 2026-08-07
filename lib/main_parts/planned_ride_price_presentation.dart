@@ -4,13 +4,19 @@
 // Planned bookings always show the canonical fixed booking/leg price — never
 // the live street meter — even while `_liveRideActive` is true.
 
+import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/main_parts/direct_ride_booking_link.dart';
+import 'package:fluxidi_tracking/navigation/presentation/driver_ride_meters.dart';
 
-/// Labels shown above the fare amount.
+/// Labels shown above the fare amount (locale-aware).
 abstract final class DriverFarePresentationLabels {
-  static const String fixedPrice = 'Vaste prijs';
+  static String fixedPrice(AppLanguage language) =>
+      driverTellersFixedPriceLabel(language);
+
   static const String liveMeterCockpit = '€';
-  static const String liveMeterTellers = 'Tarief';
+
+  static String liveMeterTellers(AppLanguage language) =>
+      driverTellersFareLabel(language);
 }
 
 /// Resolved fare text + label for the driver cockpit / Tellers surface.
@@ -64,13 +70,15 @@ DriverCockpitFarePresentation resolveDriverCockpitFarePresentation({
   required bool isStreetOrDirectBooking,
   required double? fixedBookingPriceEur,
   required double liveMeterPreviewEur,
+  AppLanguage language = AppLanguage.nl,
 }) {
   final plannedBooking = hasActiveBooking && !isStreetOrDirectBooking;
   if (plannedBooking) {
+    final label = DriverFarePresentationLabels.fixedPrice(language);
     return DriverCockpitFarePresentation(
       amountText: formatFixedBookingPriceText(fixedBookingPriceEur),
-      cockpitLabel: DriverFarePresentationLabels.fixedPrice,
-      tellersLabel: DriverFarePresentationLabels.fixedPrice,
+      cockpitLabel: label,
+      tellersLabel: label,
       usesFixedPrice: true,
     );
   }
@@ -78,7 +86,7 @@ DriverCockpitFarePresentation resolveDriverCockpitFarePresentation({
   return DriverCockpitFarePresentation(
     amountText: formatLiveMeterPriceText(liveMeterPreviewEur),
     cockpitLabel: DriverFarePresentationLabels.liveMeterCockpit,
-    tellersLabel: DriverFarePresentationLabels.liveMeterTellers,
+    tellersLabel: DriverFarePresentationLabels.liveMeterTellers(language),
     usesFixedPrice: false,
   );
 }

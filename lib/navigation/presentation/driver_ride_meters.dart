@@ -381,6 +381,89 @@ class DriverRideMetersSnapshot {
   final String companyName;
 }
 
+/// Localized product title for the Tellers / Counters surface.
+String driverTellersTitle(AppLanguage language) {
+  return const LocalizedText(
+    nl: 'Tellers',
+    en: 'Counters',
+    fr: 'Compteurs',
+    es: 'Contadores',
+  ).of(language);
+}
+
+/// Localized back-to-navigation control on the Tellers surface.
+String driverTellersNavigationLabel(AppLanguage language) {
+  return const LocalizedText(
+    nl: 'Navigatie',
+    en: 'Navigation',
+    fr: 'Navigation',
+    es: 'Navegación',
+  ).of(language);
+}
+
+String driverTellersDistanceLabel(AppLanguage language) {
+  return const LocalizedText(
+    nl: 'Afstand',
+    en: 'Distance',
+    fr: 'Distance',
+    es: 'Distancia',
+  ).of(language);
+}
+
+String driverTellersDurationLabel(AppLanguage language) {
+  return const LocalizedText(
+    nl: 'Ritduur',
+    en: 'Ride duration',
+    fr: 'Durée',
+    es: 'Duración',
+  ).of(language);
+}
+
+String driverTellersWaitingLabel(AppLanguage language) {
+  return const LocalizedText(
+    nl: 'Wachttijd',
+    en: 'Waiting time',
+    fr: 'Temps d’attente',
+    es: 'Tiempo de espera',
+  ).of(language);
+}
+
+String driverTellersFareLabel(AppLanguage language) {
+  return const LocalizedText(
+    nl: 'Tarief',
+    en: 'Fare',
+    fr: 'Tarif',
+    es: 'Tarifa',
+  ).of(language);
+}
+
+String driverTellersFixedPriceLabel(AppLanguage language) {
+  return const LocalizedText(
+    nl: 'Vaste prijs',
+    en: 'Fixed price',
+    fr: 'Prix fixe',
+    es: 'Precio fijo',
+  ).of(language);
+}
+
+String driverTellersPauseLabel(AppLanguage language) {
+  return const LocalizedText(
+    nl: 'Pauze',
+    en: 'Pause',
+    fr: 'Pause',
+    es: 'Pausa',
+  ).of(language);
+}
+
+String driverTellersResumeLabel(AppLanguage language) {
+  return const LocalizedText(
+    nl: 'Hervatten',
+    en: 'Resume',
+    fr: 'Reprendre',
+    es: 'Reanudar',
+  ).of(language);
+}
+
 /// Localized Tellers status chip text. Dutch must show `Rit actief` /
 /// `Rit gepauzeerd` — never the English `Ride active` / `Ride paused`.
 String driverTellersStatusText({
@@ -1135,11 +1218,13 @@ class _DriverRideMetersContent extends StatelessWidget {
   }
 
   Widget _buildHeader(DriverThemePalette palette) {
+    final title = driverTellersTitle(markerLanguage);
+    final navLabel = driverTellersNavigationLabel(markerLanguage);
     return Row(
       children: [
         Expanded(
           child: Text(
-            'Tellers',
+            title,
             style: TextStyle(
               fontSize: isTablet ? 28 : 22,
               fontWeight: FontWeight.w900,
@@ -1149,12 +1234,12 @@ class _DriverRideMetersContent extends StatelessWidget {
         ),
         Semantics(
           button: true,
-          label: 'Navigatie',
+          label: navLabel,
           child: FilledButton.icon(
             key: const ValueKey<String>('driver_tellers_back_nav'),
             onPressed: onBackToNavigation,
             icon: const Icon(Icons.map_outlined, size: 20),
-            label: const Text('Navigatie'),
+            label: Text(navLabel),
             style: FilledButton.styleFrom(
               backgroundColor: palette.accent,
               foregroundColor: palette.isDark ? Colors.black : Colors.white,
@@ -1171,9 +1256,13 @@ class _DriverRideMetersContent extends StatelessWidget {
   /// 2x2 area (Tarief, Afstand, Ritduur, Wachttijd). Status is rendered
   /// separately as a smaller element — never a fifth equal tile.
   Widget _buildMetersGrid(DriverThemePalette palette, {bool fillHeight = false}) {
+    final defaultFare = driverTellersFareLabel(markerLanguage);
     final fareLabel = snapshot.fareLabel.trim().isEmpty
-        ? 'Tarief'
+        ? defaultFare
         : snapshot.fareLabel.trim();
+    final distanceLabel = driverTellersDistanceLabel(markerLanguage);
+    final durationLabel = driverTellersDurationLabel(markerLanguage);
+    final waitingLabel = driverTellersWaitingLabel(markerLanguage);
     final fare = _MeterTile(
       key: const ValueKey('teller_fare'),
       label: fareLabel,
@@ -1186,27 +1275,27 @@ class _DriverRideMetersContent extends StatelessWidget {
     );
     final distance = _MeterTile(
       key: const ValueKey('teller_distance'),
-      label: 'Afstand',
+      label: distanceLabel,
       value: snapshot.distanceTravelledText,
-      semanticLabel: 'Afstand gereden ${snapshot.distanceTravelledText}',
+      semanticLabel: '$distanceLabel ${snapshot.distanceTravelledText}',
       palette: palette,
       isTablet: isTablet,
       isLandscape: isLandscape,
     );
     final duration = _MeterTile(
       key: const ValueKey('teller_duration'),
-      label: 'Ritduur',
+      label: durationLabel,
       value: snapshot.rideDurationText,
-      semanticLabel: 'Ritduur ${snapshot.rideDurationText}',
+      semanticLabel: '$durationLabel ${snapshot.rideDurationText}',
       palette: palette,
       isTablet: isTablet,
       isLandscape: isLandscape,
     );
     final waiting = _MeterTile(
       key: const ValueKey('teller_waiting'),
-      label: 'Wachttijd',
+      label: waitingLabel,
       value: snapshot.waitingTimeText,
-      semanticLabel: 'Wachttijd ${snapshot.waitingTimeText}',
+      semanticLabel: '$waitingLabel ${snapshot.waitingTimeText}',
       palette: palette,
       isTablet: isTablet,
       isLandscape: isLandscape,
@@ -1260,7 +1349,11 @@ class _DriverRideMetersContent extends StatelessWidget {
               side: BorderSide(color: palette.border),
               minimumSize: const Size(48, 48),
             ),
-            child: Text(isWaiting ? 'Hervatten' : 'Pauze'),
+            child: Text(
+              isWaiting
+                  ? driverTellersResumeLabel(markerLanguage)
+                  : driverTellersPauseLabel(markerLanguage),
+            ),
           ),
         ),
       );
