@@ -1,12 +1,12 @@
 # ============================================================================
 # FLUXIDI FIELD BUILD — Tablet
-# Exact commit: ebe8609d4d6bb858ae26e2576ca03225916ca546
+# Exact commit: 9a8c74138f433ef496d94db072882c45ff75d15c
 # Clean integration worktree. Dirty hoofdrepository blijft onaangeraakt.
 # Exact 12 dart-defines, NO ADMIN_TOKEN, NO LEARNING_SERVICE_TOKEN.
 #
-# PIN NOTE: TABLET-PIN-OFFLINE-MAPS-DOWNLOAD-COMPLETION-P0-1
-# App head: offline maps download completion — StylePack 0/0 unknown-safe,
-# estimate id isolation, real OFFLINE_MAPS counters, Volledig only on proof.
+# PIN NOTE: TABLET-PIN-OFFLINE-MAPS-TILE-LIMIT-PREFLIGHT-P0-2
+# App head: offline maps tile-limit preflight — cumulative 750 Maps tile-pack
+# quota before StylePacks, Te groot + smaller radius guidance, tile_limit_exceeded.
 # On HEAD mismatch the script checks out $requiredHead in place (or recreates).
 # ============================================================================
 
@@ -17,7 +17,7 @@ $repo         = 'C:\_flutter_work\fluxidi_tracking'
 $worktree     = 'C:\_flutter_work\fluxidi_tracking_full_integration_20260805'
 $device       = 'R52Y808CN2M'
 $adb          = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-$requiredHead = 'ebe8609d4d6bb858ae26e2576ca03225916ca546'
+$requiredHead = '9a8c74138f433ef496d94db072882c45ff75d15c'
 $branch       = 'release/full-tablet-integration-20260805'
 
 function Assert-LastExitCode {
