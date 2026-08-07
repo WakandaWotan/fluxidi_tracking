@@ -142,6 +142,56 @@ void main() {
       expect(ring.length, 5);
     });
 
+    test('8b) 10/20/40/60 km geometries scale and stay valid polygons', () {
+      const lat = 50.7456;
+      const lon = 3.6003;
+      double width(Map<String, dynamic> geom) {
+        final ring = (geom['coordinates'] as List).first as List;
+        final lons = ring.map((p) => (p as List)[0] as num).toList();
+        return (lons.reduce((a, b) => a > b ? a : b) -
+                lons.reduce((a, b) => a < b ? a : b))
+            .toDouble();
+      }
+
+      final g10 = driverOfflineEuropeRadiusBboxGeometry(
+        latitude: lat,
+        longitude: lon,
+        radiusKm: 10,
+      );
+      final g20 = driverOfflineEuropeRadiusBboxGeometry(
+        latitude: lat,
+        longitude: lon,
+        radiusKm: 20,
+      );
+      final g40 = driverOfflineEuropeRadiusBboxGeometry(
+        latitude: lat,
+        longitude: lon,
+        radiusKm: 40,
+      );
+      final g60 = driverOfflineEuropeRadiusBboxGeometry(
+        latitude: lat,
+        longitude: lon,
+        radiusKm: 60,
+      );
+      for (final g in [g10, g20, g40, g60]) {
+        expect(g['type'], 'Polygon');
+        expect(((g['coordinates'] as List).first as List).length, 5);
+      }
+      expect(width(g10) < width(g20), isTrue);
+      expect(width(g20) < width(g40), isTrue);
+      expect(width(g40) < width(g60), isTrue);
+      for (final km in [10, 20, 40, 60]) {
+        expect(
+          validateDriverOfflineEuropeSelection(
+            latitude: lat,
+            longitude: lon,
+            radiusKm: km,
+          ).accepted,
+          isTrue,
+        );
+      }
+    });
+
     test('9) invalid or excessive area is rejected before download', () {
       expect(
         validateDriverOfflineEuropeSelection(

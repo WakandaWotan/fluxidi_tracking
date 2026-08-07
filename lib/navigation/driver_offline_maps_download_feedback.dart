@@ -214,11 +214,23 @@ DriverOfflineMapFailureCategory classifyDriverOfflineMapFailure({
     return DriverOfflineMapFailureCategory.wifiOnlyRestricted;
   }
 
-  switch (phase) {
+  // Prefer nested phase= from DriverOfflineMapsException.toString() when the
+  // UI wrapper only passes phase=download.
+  final nestedPhase = RegExp(r'phase=([A-Za-z]+)')
+      .firstMatch(error?.toString() ?? '')
+      ?.group(1);
+  final effectivePhase =
+      (nestedPhase != null && nestedPhase.isNotEmpty) ? nestedPhase : phase;
+
+  switch (effectivePhase) {
     case 'init':
       return DriverOfflineMapFailureCategory.mapboxConfiguration;
     case 'estimate':
       return DriverOfflineMapFailureCategory.estimateUnavailable;
+    case 'stylePack':
+      return DriverOfflineMapFailureCategory.stylePackFailure;
+    case 'tileRegion':
+      return DriverOfflineMapFailureCategory.tileRegionResourceError;
     case 'download':
       return DriverOfflineMapFailureCategory.interrupted;
     default:

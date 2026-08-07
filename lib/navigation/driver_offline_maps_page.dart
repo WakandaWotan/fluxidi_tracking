@@ -806,21 +806,41 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
           info.completionStatus,
         ),
       );
-      if (info.completionStatus ==
-          DriverOfflineMapCompletionStatus.completedWithErrors) {
-        // Resource errors must never read as a clean success.
-        _showFailure(DriverOfflineMapFailureCategory.tileRegionResourceError);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _tr(
-                nl: 'Kaarttegels gedownload. Status wordt geverifieerd.',
-                en: 'Map tiles downloaded. Status is verified.',
+      switch (info.completionStatus) {
+        case DriverOfflineMapCompletionStatus.complete:
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _tr(
+                  nl: 'Kaartgebied gedownload. Status: Volledig.',
+                  en: 'Map area downloaded. Status: Complete.',
+                ),
               ),
             ),
-          ),
-        );
+          );
+        case DriverOfflineMapCompletionStatus.completedWithErrors:
+          // Resource errors must never read as a clean success.
+          _showFailure(DriverOfflineMapFailureCategory.tileRegionResourceError);
+        case DriverOfflineMapCompletionStatus.unknown:
+          // OFFLINE-MAPS-DOWNLOAD-COMPLETION-P0-1: unknown counters (incl.
+          // StylePack 0/0 without exception) are not "download mislukt".
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _tr(
+                  nl:
+                      'Download afgerond. Status wordt geverifieerd — nog niet '
+                      'als volledig gemarkeerd.',
+                  en:
+                      'Download finished. Status is being verified — not yet '
+                      'marked complete.',
+                ),
+              ),
+            ),
+          );
+        case DriverOfflineMapCompletionStatus.incomplete:
+        case DriverOfflineMapCompletionStatus.expiredOrStale:
+          _showFailure(DriverOfflineMapFailureCategory.tileRegionResourceError);
       }
       await _loadRegions();
     } catch (err) {
@@ -1675,10 +1695,15 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  _tr(
-                                    nl: 'Bezig met downloaden…',
-                                    en: 'Downloading…',
-                                  ),
+                                  progressFraction == null
+                                      ? _tr(
+                                          nl: 'Kaartgebied downloaden…',
+                                          en: 'Downloading map area…',
+                                        )
+                                      : _tr(
+                                          nl: 'Bezig met downloaden…',
+                                          en: 'Downloading…',
+                                        ),
                                   style: TextStyle(
                                     color: palette.textPrimary,
                                     fontWeight: FontWeight.w700,
@@ -1691,14 +1716,14 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                                     style:
                                         TextStyle(color: palette.textMuted),
                                   ),
+                                  const SizedBox(height: 8),
+                                  LinearProgressIndicator(
+                                    value: progressFraction,
+                                    color: palette.accent,
+                                    backgroundColor:
+                                        palette.surfaceAlt.withOpacity(0.8),
+                                  ),
                                   if (progressFraction != null) ...[
-                                    const SizedBox(height: 8),
-                                    LinearProgressIndicator(
-                                      value: progressFraction,
-                                      color: palette.accent,
-                                      backgroundColor:
-                                          palette.surfaceAlt.withOpacity(0.8),
-                                    ),
                                     const SizedBox(height: 6),
                                     Text(
                                       '${safeOfflineMapPercent(progressFraction) ?? '—'}%',
@@ -1709,7 +1734,9 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                                   if (progress.completedResourceCount !=
                                           null &&
                                       progress.requiredResourceCount !=
-                                          null) ...[
+                                          null &&
+                                      (progress.requiredResourceCount ?? 0) >
+                                          0) ...[
                                     const SizedBox(height: 4),
                                     Text(
                                       '${progress.completedResourceCount} / ${progress.requiredResourceCount}',

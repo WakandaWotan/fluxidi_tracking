@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mb;
 
 import 'driver_navigation_map_config.dart';
+import 'driver_offline_maps_download_feedback.dart';
 import 'nav_engine/nav_field_diagnostics.dart';
 
 /// Fluxidi metadata marker for tile regions created by this service.
@@ -209,6 +210,34 @@ class DriverOfflineMapRegionInfo {
   });
 }
 
+/// StylePack ready per Mapbox Maps Flutter 2.18.0
+/// ([StylePack] / [StylePackLoadProgress]): resources are ready when
+/// `completedResourceCount >= requiredResourceCount`.
+///
+/// Cached packs commonly finish as `required=0, completed=0, errored=0`.
+/// That is NOT a failure under this SDK contract.
+bool stylePackResourcesReady({
+  required int requiredResourceCount,
+  required int completedResourceCount,
+}) {
+  if (requiredResourceCount < 0 || completedResourceCount < 0) return false;
+  return completedResourceCount >= requiredResourceCount;
+}
+
+/// TileRegion fully downloaded per Mapbox Maps Flutter 2.18.0
+/// ([TileRegion]): `completedResourceCount == requiredResourceCount`.
+///
+/// `required == 0` is treated as *no navigable proof* (unknown), not as a
+/// fabricated download failure — empty counters without an exception must not
+/// be forced into FAIL by Fluxidi.
+bool tileRegionResourcesFullyDownloaded({
+  required int requiredResourceCount,
+  required int completedResourceCount,
+}) {
+  if (requiredResourceCount <= 0) return false;
+  return completedResourceCount >= requiredResourceCount;
+}
+
 /// Pure completion-status resolver. Kept public so unit tests can exercise
 /// the exact rules without a live Mapbox SDK.
 DriverOfflineMapCompletionStatus resolveDriverOfflineMapCompletionStatus({
@@ -219,10 +248,14 @@ DriverOfflineMapCompletionStatus resolveDriverOfflineMapCompletionStatus({
   required bool? stylePacksVerified,
   required bool expired,
 }) {
+  // OFFLINE-MAPS-DOWNLOAD-COMPLETION-P0-1: 0/0 is unknown, never auto-FAIL.
   if (requiredResourceCount <= 0) {
     return DriverOfflineMapCompletionStatus.unknown;
   }
-  if (completedResourceCount < requiredResourceCount) {
+  if (!tileRegionResourcesFullyDownloaded(
+    requiredResourceCount: requiredResourceCount,
+    completedResourceCount: completedResourceCount,
+  )) {
     return DriverOfflineMapCompletionStatus.incomplete;
   }
   if (expired) {
@@ -248,6 +281,11 @@ DriverOfflineMapCompletionStatus resolveDriverOfflineMapCompletionStatus({
     return DriverOfflineMapCompletionStatus.completedWithErrors;
   }
   return DriverOfflineMapCompletionStatus.complete;
+}
+
+void _offlineMapsFieldLog(String line) {
+  // Always emit in profile/release field builds (not gated on kDebugMode).
+  navFieldDiagnosticsPrinter(line);
 }
 
 /// Storage / transfer estimate for a region download.
@@ -449,8 +487,11 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
 
     try {
       final loadOptions = _buildTileRegionLoadOptions(request);
+      // OFFLINE-MAPS-DOWNLOAD-COMPLETION-P0-1: never share the download region
+      // id with estimate — Mapbox cancels a pending load for the same id.
+      final estimateId = '${regionId}__estimate';
       final result = await _store.estimateTileRegion(
-        regionId,
+        estimateId,
         loadOptions,
         mb.TileRegionEstimateOptions(
           errorMargin: 0.15,
@@ -473,6 +514,10 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
               },
       );
       _log('estimate', regionId, 'done');
+      // Best-effort: estimate must not leave a phantom region id behind.
+      try {
+        await _store.removeRegion(estimateId);
+      } catch (_) {}
       _emitProgress(
         onProgress,
         DriverOfflineMapProgress(
@@ -485,6 +530,9 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
       return DriverOfflineMapEstimate.fromSdk(result);
     } catch (e) {
       _log('estimate', regionId, 'fail');
+      try {
+        await _store.removeRegion('${regionId}__estimate');
+      } catch (_) {}
       throw DriverOfflineMapsException(
         'Could not estimate offline map region.',
         phase: 'estimate',
@@ -516,6 +564,17 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
       );
     }
 
+    final geometryValid = request.geometry.isNotEmpty &&
+        (request.geometry['type']?.toString().isNotEmpty ?? false);
+    final center = _geometryCenterForLog(request.geometry);
+    final radiusKm = _radiusKmFromSlug(request.slug) ?? '-';
+    _offlineMapsFieldLog(
+      '[OFFLINE_MAPS][REQUEST] region_id=$regionId '
+      'center=$center radius_km=$radiusKm '
+      'min_zoom=${request.minZoom} max_zoom=${request.maxZoom} '
+      'style_uris=${styleUris.join(',')} geometry_valid=$geometryValid',
+    );
+
     try {
       int styleErroredTotal = 0;
       for (final styleUri in styleUris) {
@@ -537,6 +596,26 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
         },
       );
       _log('download', regionId, 'done');
+
+      // Read back the same region id — proves loadTileRegion persisted it.
+      mb.TileRegion verifiedRegion = tileRegion;
+      var tileRegionFound = true;
+      try {
+        verifiedRegion = await _store.tileRegion(regionId);
+      } catch (e) {
+        tileRegionFound = false;
+        _offlineMapsFieldLog(
+          '[OFFLINE_MAPS][FAIL] stage=tile_readback '
+          'exception_type=${e.runtimeType} message=${_safeErr(e)}',
+        );
+        throw DriverOfflineMapsException(
+          'Tile region was not found after loadTileRegion.',
+          phase: 'download',
+          regionId: regionId,
+          cause: e,
+        );
+      }
+
       // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part F: persist the final
       // errored counts into the region metadata so future list/status queries
       // are truthful even after an app restart (the SDK does not expose an
@@ -550,11 +629,28 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
       logNavOfflineTruth(
         kind: 'tile_region',
         regionId: regionId,
-        requiredCount: tileRegion.requiredResourceCount,
-        completedCount: tileRegion.completedResourceCount,
+        requiredCount: verifiedRegion.requiredResourceCount,
+        completedCount: verifiedRegion.completedResourceCount,
         erroredCount: tileErroredTotal,
       );
-      final info = await _regionInfoFromTileRegion(tileRegion);
+      final info = await _regionInfoFromTileRegion(verifiedRegion);
+      _offlineMapsFieldLog(
+        '[OFFLINE_MAPS][VERIFY] style_ok=${info.stylePacksVerified} '
+        'tile_region_found=$tileRegionFound '
+        'tile_required=${info.requiredResourceCount} '
+        'tile_completed=${info.completedResourceCount} '
+        'tile_errored=${info.erroredResourceCount ?? tileErroredTotal} '
+        'registry_complete=${info.isComplete} '
+        'reason=${driverOfflineMapCompletionStatusToken(info.completionStatus)}',
+      );
+      if (info.completionStatus ==
+          DriverOfflineMapCompletionStatus.incomplete) {
+        throw DriverOfflineMapsException(
+          'Tile region incomplete: completed < required.',
+          phase: 'download',
+          regionId: regionId,
+        );
+      }
       _emitProgress(
         onProgress,
         DriverOfflineMapProgress(
@@ -569,6 +665,10 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
       return info;
     } catch (e) {
       _log('download', regionId, 'fail');
+      _offlineMapsFieldLog(
+        '[OFFLINE_MAPS][FAIL] stage=download '
+        'exception_type=${e.runtimeType} message=${_safeErr(e)}',
+      );
       if (e is DriverOfflineMapsException) rethrow;
       throw DriverOfflineMapsException(
         'Offline map download failed.',
@@ -588,6 +688,8 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
       final out = <DriverOfflineMapRegionInfo>[];
       for (final region in regions) {
         if (!_isFluxidiManagedRegionId(region.id)) continue;
+        // Estimate uses a sibling id; never surface it as a downloaded region.
+        if (region.id.endsWith('__estimate')) continue;
         out.add(await _regionInfoFromTileRegion(region));
       }
       out.sort((a, b) {
@@ -670,6 +772,7 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
     required bool acceptExpired,
     DriverOfflineMapProgressCallback? onProgress,
   }) async {
+    _offlineMapsFieldLog('[OFFLINE_MAPS][STYLE_START] style_uri=$styleUri');
     _emitProgress(
       onProgress,
       DriverOfflineMapProgress(
@@ -689,35 +792,87 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
       acceptExpired: acceptExpired,
     );
     var maxErrored = 0;
-    await _manager.loadStylePack(
-      styleUri,
-      options,
-      (mb.StylePackLoadProgress progress) {
-        if (progress.erroredResourceCount > maxErrored) {
-          maxErrored = progress.erroredResourceCount;
-        }
-        _emitProgress(
-          onProgress,
-          DriverOfflineMapProgress(
-            phase: DriverOfflineMapProgressPhase.stylePack,
-            regionId: regionId,
-            styleUri: styleUri,
-            completedResourceCount: progress.completedResourceCount,
-            requiredResourceCount: progress.requiredResourceCount,
-            completedResourceSize: progress.completedResourceSize,
-            status: 'progress',
-          ),
+    var lastRequired = 0;
+    var lastCompleted = 0;
+    try {
+      final pack = await _manager.loadStylePack(
+        styleUri,
+        options,
+        (mb.StylePackLoadProgress progress) {
+          if (progress.erroredResourceCount > maxErrored) {
+            maxErrored = progress.erroredResourceCount;
+          }
+          lastRequired = progress.requiredResourceCount;
+          lastCompleted = progress.completedResourceCount;
+          _offlineMapsFieldLog(
+            '[OFFLINE_MAPS][STYLE_PROGRESS] style_uri=$styleUri '
+            'required=${progress.requiredResourceCount} '
+            'completed=${progress.completedResourceCount} '
+            'errored=${progress.erroredResourceCount} '
+            'percentage=${_resourcePercent(
+              progress.requiredResourceCount,
+              progress.completedResourceCount,
+            )}',
+          );
+          _emitProgress(
+            onProgress,
+            DriverOfflineMapProgress(
+              phase: DriverOfflineMapProgressPhase.stylePack,
+              regionId: regionId,
+              styleUri: styleUri,
+              completedResourceCount: progress.completedResourceCount,
+              requiredResourceCount: progress.requiredResourceCount,
+              completedResourceSize: progress.completedResourceSize,
+              status: 'progress',
+            ),
+          );
+        },
+      );
+      lastRequired = pack.requiredResourceCount;
+      lastCompleted = pack.completedResourceCount;
+      _offlineMapsFieldLog(
+        '[OFFLINE_MAPS][STYLE_DONE] style_uri=$styleUri '
+        'required=${pack.requiredResourceCount} '
+        'completed=${pack.completedResourceCount} '
+        'errored=$maxErrored error=',
+      );
+      // Real SDK counters — never hardcode 0/0 (that poisoned field diagnosis).
+      logNavOfflineTruth(
+        kind: 'style_pack',
+        regionId: regionId,
+        requiredCount: pack.requiredResourceCount,
+        completedCount: pack.completedResourceCount,
+        erroredCount: maxErrored,
+      );
+      if (!stylePackResourcesReady(
+        requiredResourceCount: pack.requiredResourceCount,
+        completedResourceCount: pack.completedResourceCount,
+      )) {
+        throw DriverOfflineMapsException(
+          'StylePack incomplete for $styleUri.',
+          phase: 'stylePack',
+          regionId: regionId,
         );
-      },
-    );
-    logNavOfflineTruth(
-      kind: 'style_pack',
-      regionId: regionId,
-      requiredCount: 0,
-      completedCount: 0,
-      erroredCount: maxErrored,
-    );
-    return maxErrored;
+      }
+      return maxErrored;
+    } catch (e) {
+      _offlineMapsFieldLog(
+        '[OFFLINE_MAPS][STYLE_DONE] style_uri=$styleUri '
+        'required=$lastRequired completed=$lastCompleted '
+        'errored=$maxErrored error=${_safeErr(e)}',
+      );
+      _offlineMapsFieldLog(
+        '[OFFLINE_MAPS][FAIL] stage=style_pack '
+        'exception_type=${e.runtimeType} message=${_safeErr(e)}',
+      );
+      if (e is DriverOfflineMapsException) rethrow;
+      throw DriverOfflineMapsException(
+        'StylePack load failed.',
+        phase: 'stylePack',
+        regionId: regionId,
+        cause: e,
+      );
+    }
   }
 
   Future<mb.TileRegion> _loadTileRegion({
@@ -727,6 +882,17 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
     void Function(int erroredCount)? onErroredResourceObserved,
   }) async {
     final regionId = request.regionId;
+    final loadOptions =
+        _buildTileRegionLoadOptions(request, styleUris: styleUris);
+    final descriptorCount = loadOptions.descriptorsOptions?.length ?? 0;
+    final geometrySummary = _geometrySummaryForLog(request.geometry);
+    _offlineMapsFieldLog(
+      '[OFFLINE_MAPS][TILE_START] region_id=$regionId '
+      'descriptor_count=$descriptorCount geometry=$geometrySummary '
+      'min_zoom=${request.minZoom} max_zoom=${request.maxZoom} '
+      'accept_expired=${request.acceptExpired} '
+      'wifi_only=${request.wifiOnly} callback=registered',
+    );
     _emitProgress(
       onProgress,
       DriverOfflineMapProgress(
@@ -735,28 +901,62 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
         status: 'start',
       ),
     );
-    final loadOptions = _buildTileRegionLoadOptions(request, styleUris: styleUris);
-    return _store.loadTileRegion(
-      regionId,
-      loadOptions,
-      (mb.TileRegionLoadProgress progress) {
-        if (progress.erroredResourceCount > 0 &&
-            onErroredResourceObserved != null) {
-          onErroredResourceObserved(progress.erroredResourceCount);
-        }
-        _emitProgress(
-          onProgress,
-          DriverOfflineMapProgress(
-            phase: DriverOfflineMapProgressPhase.tileRegion,
-            regionId: regionId,
-            completedResourceCount: progress.completedResourceCount,
-            requiredResourceCount: progress.requiredResourceCount,
-            completedResourceSize: progress.completedResourceSize,
-            status: 'progress',
-          ),
-        );
-      },
-    );
+    try {
+      final region = await _store.loadTileRegion(
+        regionId,
+        loadOptions,
+        (mb.TileRegionLoadProgress progress) {
+          if (progress.erroredResourceCount > 0 &&
+              onErroredResourceObserved != null) {
+            onErroredResourceObserved(progress.erroredResourceCount);
+          }
+          _offlineMapsFieldLog(
+            '[OFFLINE_MAPS][TILE_PROGRESS] region_id=$regionId '
+            'required=${progress.requiredResourceCount} '
+            'completed=${progress.completedResourceCount} '
+            'errored=${progress.erroredResourceCount} '
+            'percentage=${_resourcePercent(
+              progress.requiredResourceCount,
+              progress.completedResourceCount,
+            )}',
+          );
+          _emitProgress(
+            onProgress,
+            DriverOfflineMapProgress(
+              phase: DriverOfflineMapProgressPhase.tileRegion,
+              regionId: regionId,
+              completedResourceCount: progress.completedResourceCount,
+              requiredResourceCount: progress.requiredResourceCount,
+              completedResourceSize: progress.completedResourceSize,
+              status: 'progress',
+            ),
+          );
+        },
+      );
+      _offlineMapsFieldLog(
+        '[OFFLINE_MAPS][TILE_DONE] region_id=${region.id} '
+        'required=${region.requiredResourceCount} '
+        'completed=${region.completedResourceCount} '
+        'errored= error=',
+      );
+      return region;
+    } catch (e) {
+      _offlineMapsFieldLog(
+        '[OFFLINE_MAPS][TILE_DONE] region_id=$regionId '
+        'required= completed= errored= error=${_safeErr(e)}',
+      );
+      _offlineMapsFieldLog(
+        '[OFFLINE_MAPS][FAIL] stage=tile_region '
+        'exception_type=${e.runtimeType} message=${_safeErr(e)}',
+      );
+      if (e is DriverOfflineMapsException) rethrow;
+      throw DriverOfflineMapsException(
+        'TileRegion load failed.',
+        phase: 'tileRegion',
+        regionId: regionId,
+        cause: e,
+      );
+    }
   }
 
   /// Persist the final errored counts into the tile region metadata so
@@ -917,11 +1117,12 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
     );
   }
 
-  /// Best-effort StylePack completeness check. Returns `true` when every
-  /// [styleUris] entry has a matching StylePack with
-  /// `completedResourceCount >= requiredResourceCount > 0`; `false` when the
-  /// service can prove at least one StylePack is incomplete or missing; and
-  /// `null` when the SDK cannot answer (e.g. init hiccup).
+  /// Best-effort StylePack completeness check.
+  ///
+  /// Returns `true` when every [styleUris] entry has a matching StylePack with
+  /// `completedResourceCount >= requiredResourceCount` (including cached
+  /// `0/0/0`); `false` when at least one pack is missing or incomplete; and
+  /// `null` when the SDK cannot answer.
   Future<bool?> _verifyStylePacksForStyleUris(List<String> styleUris) async {
     if (styleUris.isEmpty) return null;
     final packs = <String, mb.StylePack>{};
@@ -936,8 +1137,12 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
     for (final uri in styleUris) {
       final pack = packs[uri];
       if (pack == null) return false;
-      if (pack.requiredResourceCount <= 0) return false;
-      if (pack.completedResourceCount < pack.requiredResourceCount) return false;
+      if (!stylePackResourcesReady(
+        requiredResourceCount: pack.requiredResourceCount,
+        completedResourceCount: pack.completedResourceCount,
+      )) {
+        return false;
+      }
     }
     return true;
   }
@@ -1000,8 +1205,62 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
   }
 
   void _log(String phase, String regionId, String status) {
-    if (!kDebugMode) return;
-    debugPrint('[OFFLINE_MAPS] phase=$phase region=$regionId status=$status');
+    // Keep classic phase lines in field builds too (profile/release).
+    _offlineMapsFieldLog(
+      '[OFFLINE_MAPS] phase=$phase region=$regionId status=$status',
+    );
+  }
+
+  String _safeErr(Object error) {
+    return redactDriverOfflineMapDiagnostic(error.toString());
+  }
+
+  String _resourcePercent(int required, int completed) {
+    if (required <= 0) return 'na';
+    final pct = ((completed / required) * 100.0).clamp(0.0, 100.0);
+    return pct.toStringAsFixed(0);
+  }
+
+  String? _radiusKmFromSlug(String? slug) {
+    if (slug == null || slug.isEmpty) return null;
+    final match = RegExp(r'_r(\d+)_').firstMatch(slug);
+    return match?.group(1);
+  }
+
+  String _geometryCenterForLog(Map<String, dynamic> geometry) {
+    try {
+      final coords = geometry['coordinates'];
+      if (coords is! List || coords.isEmpty) return 'na';
+      final ring = coords.first;
+      if (ring is! List || ring.isEmpty) return 'na';
+      var sumLon = 0.0;
+      var sumLat = 0.0;
+      var n = 0;
+      for (final point in ring) {
+        if (point is! List || point.length < 2) continue;
+        final lon = (point[0] as num).toDouble();
+        final lat = (point[1] as num).toDouble();
+        sumLon += lon;
+        sumLat += lat;
+        n += 1;
+      }
+      if (n == 0) return 'na';
+      return '${(sumLat / n).toStringAsFixed(4)},${(sumLon / n).toStringAsFixed(4)}';
+    } catch (_) {
+      return 'na';
+    }
+  }
+
+  String _geometrySummaryForLog(Map<String, dynamic> geometry) {
+    final type = geometry['type']?.toString() ?? 'unknown';
+    try {
+      final coords = geometry['coordinates'];
+      if (coords is List && coords.isNotEmpty && coords.first is List) {
+        final ring = coords.first as List;
+        return '$type(points=${ring.length})';
+      }
+    } catch (_) {}
+    return type;
   }
 }
 

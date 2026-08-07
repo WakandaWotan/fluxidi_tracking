@@ -102,6 +102,25 @@ void main() {
         DriverOfflineMapFailureCategory.unknown,
       );
     });
+
+    test('nested phase=stylePack / tileRegion beat wrapper download phase', () {
+      expect(
+        classifyDriverOfflineMapFailure(
+          error:
+              'DriverOfflineMapsException: StylePack load failed. phase=stylePack',
+          phase: 'download',
+        ),
+        DriverOfflineMapFailureCategory.stylePackFailure,
+      );
+      expect(
+        classifyDriverOfflineMapFailure(
+          error:
+              'DriverOfflineMapsException: TileRegion load failed. phase=tileRegion',
+          phase: 'download',
+        ),
+        DriverOfflineMapFailureCategory.tileRegionResourceError,
+      );
+    });
   });
 
   group('localized messages', () {

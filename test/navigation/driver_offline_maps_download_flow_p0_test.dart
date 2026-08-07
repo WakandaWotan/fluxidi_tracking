@@ -534,21 +534,53 @@ void main() {
         find.byKey(const Key('offline_download_progress_card')),
         findsOneWidget,
       );
-      expect(find.text('Bezig met downloaden…'), findsWidgets);
+      // With countable progress → determinate label; indeterminate uses
+      // "Kaartgebied downloaden…".
+      expect(find.textContaining('downloaden'), findsWidgets);
+      expect(port.observedPhases, contains(DriverOfflineMapProgressPhase.tileRegion));
+      expect(
+        port.observedPhases.where((p) => p == DriverOfflineMapProgressPhase.stylePack).length,
+        greaterThanOrEqualTo(2),
+      );
 
       // Bounded pumps: pumpAndSettle would run past the SnackBar auto-dismiss.
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pump();
 
       expect(
-        find.text('Kaarttegels gedownload. Status wordt geverifieerd.'),
+        find.text('Kaartgebied gedownload. Status: Volledig.'),
         findsOneWidget,
+      );
+      expect(
+        find.textContaining('Download mislukt of onderbroken'),
+        findsNothing,
       );
       expect(
         find.byKey(const Key('offline_download_progress_card')),
         findsNothing,
       );
       await tester.pumpAndSettle();
+    });
+
+    testWidgets('unknown completion is not interrupted failure snackbar', (
+      tester,
+    ) async {
+      final port = _FakeOfflinePort(
+        completionStatus: DriverOfflineMapCompletionStatus.unknown,
+      );
+      await _pumpPage(tester, port: port);
+      await _searchAndSelectRonse(tester);
+      await _tap(tester, _cta);
+      await _tap(tester, _confirmDownload);
+
+      expect(
+        find.textContaining('Download mislukt of onderbroken'),
+        findsNothing,
+      );
+      expect(
+        find.textContaining('Status wordt geverifieerd'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('resource errors prevent a clean success message', (
@@ -564,13 +596,32 @@ void main() {
       await _tap(tester, _confirmDownload);
 
       expect(
-        find.text('Kaarttegels gedownload. Status wordt geverifieerd.'),
+        find.text('Kaartgebied gedownload. Status: Volledig.'),
         findsNothing,
       );
       expect(
         find.text(_nl(DriverOfflineMapFailureCategory.tileRegionResourceError)),
         findsWidgets,
       );
+    });
+
+    testWidgets('light+dark styles are requested and tile phase is reached', (
+      tester,
+    ) async {
+      final port = _FakeOfflinePort();
+      await _pumpPage(tester, port: port);
+      await _searchAndSelectRonse(tester);
+      await _tap(tester, _cta);
+      await _tap(tester, _confirmDownload);
+
+      expect(port.downloadRequests, hasLength(1));
+      expect(port.downloadRequests.single.styleUris, hasLength(2));
+      expect(
+        port.observedPhases,
+        contains(DriverOfflineMapProgressPhase.tileRegion),
+      );
+      // Silent no-op forbidden: download must have been invoked.
+      expect(port.downloadRequests, isNotEmpty);
     });
 
     testWidgets('a duplicate region is reported visibly and skips download', (
@@ -794,7 +845,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 600));
       await tester.pump();
       expect(
-        find.text('Kaarttegels gedownload. Status wordt geverifieerd.'),
+        find.text('Kaartgebied gedownload. Status: Volledig.'),
         findsOneWidget,
       );
       await tester.pumpAndSettle();

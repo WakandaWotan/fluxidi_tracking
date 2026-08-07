@@ -83,11 +83,74 @@ void main() {
     );
   });
 
+  test('TileRegion 0/0/0 is unknown, never auto-FAIL', () {
+    expect(
+      resolve(required: 0, completed: 0, errored: 0, styleErrored: 0),
+      DriverOfflineMapCompletionStatus.unknown,
+    );
+    expect(
+      tileRegionResourcesFullyDownloaded(
+        requiredResourceCount: 0,
+        completedResourceCount: 0,
+      ),
+      isFalse,
+    );
+  });
+
+  test('StylePack cached 0/0/0 is ready under SDK 2.18.0 contract', () {
+    expect(
+      stylePackResourcesReady(
+        requiredResourceCount: 0,
+        completedResourceCount: 0,
+      ),
+      isTrue,
+    );
+  });
+
+  test(
+    'StylePack 0/0 + TileRegion fully downloaded → COMPLETE (verified)',
+    () {
+      // Simulates cached style packs (0/0) with a successful tile region.
+      expect(
+        resolve(
+          required: 120,
+          completed: 120,
+          errored: 0,
+          styleErrored: 0,
+          verified: true,
+        ),
+        DriverOfflineMapCompletionStatus.complete,
+      );
+    },
+  );
+
+  test('TileRegion required>0 completed==required errored=0 → COMPLETE', () {
+    expect(
+      resolve(required: 50, completed: 50, errored: 0, styleErrored: 0),
+      DriverOfflineMapCompletionStatus.complete,
+    );
+  });
+
+  test('TileRegion errored>0 → completedWithErrors (FAIL for UI)', () {
+    expect(
+      resolve(errored: 2),
+      DriverOfflineMapCompletionStatus.completedWithErrors,
+    );
+  });
+
   test('completed but StylePack proven incomplete → completedWithErrors', () {
     expect(
       resolve(verified: false),
       DriverOfflineMapCompletionStatus.completedWithErrors,
     );
+  });
+
+  test('region ids must not cross-contaminate completion', () {
+    final a = resolve(required: 10, completed: 10);
+    final b = resolve(required: 10, completed: 3);
+    expect(a, DriverOfflineMapCompletionStatus.complete);
+    expect(b, DriverOfflineMapCompletionStatus.incomplete);
+    expect(a == b, isFalse);
   });
 
   test('token labels are bounded and PII-free', () {
