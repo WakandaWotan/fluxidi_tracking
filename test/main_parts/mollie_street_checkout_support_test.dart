@@ -283,7 +283,7 @@ void main() {
             'cancel_open_checkout',
           ],
         },
-      });
+      }, httpCode: 409);
       expect(info, isNotNull);
       expect(info!.isPendingOwner, isTrue);
       expect(info.resumable, isTrue);
@@ -312,18 +312,11 @@ void main() {
       );
     });
 
-    test('409 with mollie/open_payment error token -> blocked', () {
+    test('409 with exact open_mollie_checkout_exists -> blocked', () {
       expect(
         manualPaymentBlockedByOpenMollieCheckout(
           httpCode: 409,
-          decoded: {'error': 'open_payment_exists'},
-        ),
-        isTrue,
-      );
-      expect(
-        manualPaymentBlockedByOpenMollieCheckout(
-          httpCode: 409,
-          decoded: {'error': 'open_mollie_checkout'},
+          decoded: {'error': 'open_mollie_checkout_exists'},
         ),
         isTrue,
       );
@@ -339,10 +332,177 @@ void main() {
       );
     });
 
-    test('409 with no decodable body -> conservatively blocked', () {
+    test('409 with no decodable body -> NOT open-payment recovery', () {
       expect(
         manualPaymentBlockedByOpenMollieCheckout(httpCode: 409, decoded: null),
+        isFalse,
+      );
+    });
+  });
+
+  group('PHANTOM-MOLLIE-OPEN-PAYMENT-FALSE-POSITIVE-P0', () {
+    test('1. mollie_terminal_payment_create_failed => NOT recovery', () {
+      final decoded = {
+        'ok': false,
+        'error': 'mollie_terminal_payment_create_failed',
+      };
+      expect(
+        parseMollieOpenPaymentRecovery(decoded, httpCode: 400),
+        isNull,
+      );
+      expect(
+        manualPaymentBlockedByOpenMollieCheckout(
+          httpCode: 400,
+          decoded: decoded,
+        ),
+        isFalse,
+      );
+    });
+
+    test('2. company_mollie_credentials_unavailable => NOT recovery', () {
+      final decoded = {
+        'ok': false,
+        'error': 'company_mollie_credentials_unavailable',
+      };
+      expect(
+        parseMollieOpenPaymentRecovery(decoded, httpCode: 400),
+        isNull,
+      );
+      expect(
+        manualPaymentBlockedByOpenMollieCheckout(
+          httpCode: 409,
+          decoded: decoded,
+        ),
+        isFalse,
+      );
+    });
+
+    test('3. empty/generic error => NOT recovery', () {
+      expect(
+        parseMollieOpenPaymentRecovery({'ok': false}, httpCode: 400),
+        isNull,
+      );
+      expect(
+        parseMollieOpenPaymentRecovery({'ok': false, 'error': ''}, httpCode: 409),
+        isNull,
+      );
+      expect(
+        manualPaymentBlockedByOpenMollieCheckout(
+          httpCode: 409,
+          decoded: {'ok': false, 'error': ''},
+        ),
+        isFalse,
+      );
+    });
+
+    test('4. unrelated HTTP 409 => NOT automatically recovery', () {
+      expect(
+        manualPaymentBlockedByOpenMollieCheckout(
+          httpCode: 409,
+          decoded: {'error': 'duplicate_request'},
+        ),
+        isFalse,
+      );
+      expect(
+        parseMollieOpenPaymentRecovery(
+          {'error': 'duplicate_request'},
+          httpCode: 409,
+        ),
+        isNull,
+      );
+    });
+
+    test('5. exact open_mollie_checkout_exists => recovery activates', () {
+      final info = parseMollieOpenPaymentRecovery({
+        'error': 'open_mollie_checkout_exists',
+      }, httpCode: 409);
+      expect(info, isNotNull);
+      expect(info!.isPendingOwner, isTrue);
+    });
+
+    test('6. requires_confirm_cancel_open_mollie => recovery activates', () {
+      expect(
+        manualPaymentBlockedByOpenMollieCheckout(
+          httpCode: 409,
+          decoded: {'requires_confirm_cancel_open_mollie': true},
+        ),
         isTrue,
+      );
+      final info = parseMollieOpenPaymentRecovery({
+        'requires_confirm_cancel_open_mollie': true,
+      }, httpCode: 409);
+      expect(info, isNotNull);
+      expect(info!.isPendingOwner, isTrue);
+    });
+
+    test('7. authoritative open_checkout payload => recovery activates', () {
+      final info = parseMollieOpenPaymentRecovery({
+        'open_checkout': {
+          'checkout_url': 'https://www.mollie.com/checkout/x',
+          'mollie_payment_id': 'tr_open',
+          'mollie_status': 'open',
+        },
+        'recovery': {
+          'presentation_state': 'pending',
+          'resumable': true,
+          'cancel_allowed': true,
+          'fallback_allowed': false,
+        },
+      }, httpCode: 400);
+      expect(info, isNotNull);
+      expect(info!.isPendingOwner, isTrue);
+      expect(info.checkoutUrl, contains('mollie.com/checkout'));
+      expect(info.molliePaymentId, 'tr_open');
+    });
+
+    test('8. real pending owner still blocks QR/cash/Tap/new checkout', () {
+      final info = parseMollieOpenPaymentRecovery({
+        'error': 'open_mollie_checkout_exists',
+        'requires_confirm_cancel_open_mollie': true,
+        'open_checkout': {
+          'checkout_url': 'https://www.mollie.com/checkout/x',
+          'mollie_status': 'open',
+        },
+        'recovery': {
+          'presentation_state': 'pending',
+          'resumable': true,
+          'cancel_allowed': true,
+          'fallback_allowed': false,
+        },
+      }, httpCode: 409);
+      expect(info, isNotNull);
+      // Receipt uses isPendingOwner / !_openMollieBlocksFallback to gate
+      // QR, cash, Tap to Pay, and Online betalen.
+      expect(info!.isPendingOwner, isTrue);
+      expect(info.fallbackAllowed, isFalse);
+      expect(
+        receiptDetailsHaveOpenMollieCheckout({
+          'payment_status': 'pending',
+          'payment_provider': 'mollie',
+          'checkout_url': 'https://www.mollie.com/checkout/x',
+          'mollie': {'status': 'open'},
+        }),
+        isTrue,
+      );
+    });
+
+    test('9. booking A -> booking B clears recovery isolation predicate', () {
+      expect(
+        shouldResetOpenMollieRecoveryForBookingChange(
+          previousBookingId: 'street_1786115380293_v42uqsds',
+          nextBookingId: 'street_1786116223595_1rvykvt3',
+        ),
+        isTrue,
+      );
+    });
+
+    test('10. same booking rebuild does not discard recovery', () {
+      expect(
+        shouldResetOpenMollieRecoveryForBookingChange(
+          previousBookingId: 'street_1786116223595_1rvykvt3',
+          nextBookingId: 'street_1786116223595_1rvykvt3',
+        ),
+        isFalse,
       );
     });
   });

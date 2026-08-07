@@ -261,29 +261,55 @@ MollieStreetCheckoutErrorKind classifyMollieStreetCheckoutStartError({
   return MollieStreetCheckoutErrorKind.unknown;
 }
 
-/// True when a manual in-car payment (cash / Bancontact terminal / QR
-/// confirm) was rejected because an online Mollie checkout is already open
-/// for this ride, and the backend requires an explicit confirmation before
-/// it will cancel the open checkout and accept the manual payment.
+/// True when a response carries authoritative evidence that an online Mollie
+/// checkout for THIS ride may still settle and therefore blocks QR / cash /
+/// Tap to Pay / new checkout until recovered.
+///
+/// PHANTOM-MOLLIE-OPEN-PAYMENT-FALSE-POSITIVE-P0: never infer an open owner
+/// from generic Mollie errors (create failed, credentials, empty error) or
+/// from the substring "mollie". Only explicit canonical conflict signals.
 bool manualPaymentBlockedByOpenMollieCheckout({
   required int httpCode,
   Map<String, dynamic>? decoded,
 }) {
   if (httpCode != 409) return false;
-  if (decoded == null) return true;
+  if (decoded == null) return false;
+  return _hasAuthoritativeOpenMollieCheckoutEvidence(decoded);
+}
+
+/// Authoritative open-checkout / recovery evidence (HTTP-agnostic payload).
+bool _hasAuthoritativeOpenMollieCheckoutEvidence(Map<String, dynamic> decoded) {
   if (_asBool(decoded['requires_confirm_cancel_mollie']) ||
       _asBool(decoded['confirm_cancel_required']) ||
       _asBool(decoded['confirm_cancel_open_mollie_required']) ||
       _asBool(decoded['requires_confirm_cancel_open_mollie'])) {
     return true;
   }
+  if (_asMap(decoded['open_checkout'] ?? decoded['openCheckout']) != null) {
+    return true;
+  }
+  if (_asMap(decoded['recovery']) != null) {
+    return true;
+  }
   final err = _lower(
     decoded['error'] ?? decoded['error_code'] ?? decoded['code'],
   );
-  return err.contains('mollie') ||
-      err.contains('open_payment') ||
-      err.contains('open_checkout') ||
-      err.isEmpty;
+  return err == 'open_mollie_checkout_exists';
+}
+
+/// Whether receipt-local open-Mollie recovery state must be dropped when the
+/// receipt widget is rebound to a different booking identity.
+///
+/// Same booking id => keep local recovery (rebuild/update must not discard a
+/// still-valid owner). Different booking => clear so ride A never blocks B.
+bool shouldResetOpenMollieRecoveryForBookingChange({
+  required String? previousBookingId,
+  required String? nextBookingId,
+}) {
+  final oldId = _norm(previousBookingId);
+  final newId = _norm(nextBookingId);
+  if (oldId.isEmpty || newId.isEmpty) return false;
+  return oldId != newId;
 }
 
 /// Driver-facing recovery action chosen from the open-checkout dialog.
@@ -325,20 +351,28 @@ class MollieOpenPaymentRecoveryInfo {
           presentationState == 'recoveryError');
 }
 
+/// Parses open-checkout recovery UI state from a server response.
+///
+/// [httpCode] must be the actual HTTP status. Recovery activates only when
+/// the payload (or a 409 conflict) carries authoritative open-checkout
+/// evidence — never from generic Mollie failures.
 MollieOpenPaymentRecoveryInfo? parseMollieOpenPaymentRecovery(
-  Map<String, dynamic>? decoded,
-) {
+  Map<String, dynamic>? decoded, {
+  int? httpCode,
+}) {
   if (decoded == null) return null;
   final recovery = _asMap(decoded['recovery']);
   final open = _asMap(decoded['open_checkout'] ?? decoded['openCheckout']);
-  if (recovery == null && open == null) {
-    // Infer from top-level conflict flags.
-    if (!manualPaymentBlockedByOpenMollieCheckout(
-      httpCode: 409,
-      decoded: decoded,
-    )) {
-      return null;
-    }
+  final hasPayload = recovery != null || open != null;
+  final conflictBlocked = httpCode != null &&
+      manualPaymentBlockedByOpenMollieCheckout(
+        httpCode: httpCode,
+        decoded: decoded,
+      );
+  // Payload-only path: Tap-to-Pay / street-checkout may return non-409 HTTP
+  // with a full open_checkout+recovery body (canonical evidence).
+  if (!hasPayload && !conflictBlocked) {
+    return null;
   }
   final actionsRaw = recovery?['actions'];
   final actions = <String>[];

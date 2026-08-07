@@ -217,10 +217,15 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     super.didUpdateWidget(oldWidget);
     final oldId = (oldWidget.item.bookingId ?? '').trim();
     final newId = (widget.item.bookingId ?? '').trim();
-    if (oldId == newId) return;
+    if (!shouldResetOpenMollieRecoveryForBookingChange(
+      previousBookingId: oldId,
+      nextBookingId: newId,
+    )) {
+      return;
+    }
     // Different receipt reusing the same State object: drop all stale per-
-    // booking lookup/invoice state and re-resolve from scratch. A previous
-    // receipt's false/failed lookup must never leak into the new booking.
+    // booking lookup/invoice/payment-owner state and re-resolve from scratch.
+    // A previous receipt's open-Mollie recovery must never block the new ride.
     _streetInvoiceLookupBooking = null;
     _streetInvoiceLookupBookingId = null;
     _streetInvoiceLookupInFlight = false;
@@ -232,6 +237,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     _tapToPayAvailable = false;
     _tapToPayInFlight = false;
     _tapToPayStatusMessageKey = null;
+    _openMollieRecovery = null;
+    _mollieRecoveryBusy = false;
+    _mollieCheckoutLoading = false;
     unawaited(_ensureStreetBusinessInvoiceEligibilityResolved());
     unawaited(_refreshTapToPayCapability());
     _logStreetInvoiceReentry(phase: 'receipt_reentry');
@@ -344,6 +352,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         if (!mounted) return false;
         final recovery = parseMollieOpenPaymentRecovery(
           Map<String, dynamic>.from(start),
+          httpCode: httpCode,
         );
         if (recovery != null ||
             manualPaymentBlockedByOpenMollieCheckout(
@@ -4156,7 +4165,13 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         headers: authHeaders.headers,
       );
       if (!mounted || root == null) return;
-      final recovery = parseMollieOpenPaymentRecovery(root);
+      final recoveryHttp =
+          (root['_http_code'] as num?)?.toInt() ??
+          (root['http_code'] as num?)?.toInt();
+      final recovery = parseMollieOpenPaymentRecovery(
+        root,
+        httpCode: recoveryHttp,
+      );
       final payStatus = (root['payment_status'] ?? root['paymentStatus'] ?? '')
           .toString()
           .toLowerCase();
@@ -4654,7 +4669,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           debugPrint(
             '[RECEIPT_PAYMENT][OPEN_MOLLIE_CONFLICT] booking=$maskedRef method=$normalizedMethod confirmCancelOpenMollie=$confirmCancelOpenMollie',
           );
-          final recovery = parseMollieOpenPaymentRecovery(conflictBody);
+          final recovery = parseMollieOpenPaymentRecovery(
+            conflictBody,
+            httpCode: res.statusCode,
+          );
           if (mounted) {
             setState(() => _openMollieRecovery = recovery);
           }

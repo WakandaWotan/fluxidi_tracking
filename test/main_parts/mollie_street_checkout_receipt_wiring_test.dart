@@ -158,6 +158,32 @@ void main() {
       );
     });
 
+    test(
+      'PHANTOM-P0: booking change clears local open-Mollie recovery owner',
+      () {
+        final idx = receiptSource.indexOf(
+          'void didUpdateWidget(covariant _RideReceiptBody oldWidget)',
+        );
+        expect(idx, greaterThan(-1));
+        final body = receiptSource.substring(idx, idx + 1800);
+        expect(
+          body,
+          contains('shouldResetOpenMollieRecoveryForBookingChange('),
+        );
+        expect(body, contains('_openMollieRecovery = null'));
+        expect(body, contains('_mollieRecoveryBusy = false'));
+        // Tap-to-Pay parse must pass the actual HTTP status (no hardcoded 409).
+        expect(
+          receiptSource,
+          contains('parseMollieOpenPaymentRecovery(\n'),
+        );
+        expect(
+          receiptSource,
+          contains('httpCode: httpCode'),
+        );
+      },
+    );
+
     test('paid poll outcome refreshes receipt paid state via canonical helper', () {
       expect(
         receiptSource,
