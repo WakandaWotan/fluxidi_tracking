@@ -12,6 +12,8 @@ import 'driver_offline_maps_download_feedback.dart';
 import 'driver_offline_maps_estimate_format.dart';
 import 'driver_offline_maps_europe_geocoder.dart';
 import 'driver_offline_maps_europe_selection.dart';
+import 'driver_offline_maps_preview_model.dart';
+import 'driver_offline_maps_region_preview_page.dart';
 import 'driver_offline_maps_service.dart';
 import 'driver_offline_maps_tile_quota.dart';
 import 'nav_backend/driver_navigation_worker_client.dart';
@@ -1016,6 +1018,36 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
         });
       }
     }
+  }
+
+  Future<void> _openRegionPreview(DriverOfflineMapRegionInfo region) async {
+    if (!driverOfflineMapRegionPreviewAvailable(region)) return;
+    final target = resolveDriverOfflineMapPreviewTarget(region);
+    if (target == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _tr(
+              nl:
+                  'Deze regio heeft geen bruikbare geometrie voor een voorbeeld.',
+              en: 'This region has no usable geometry for a preview.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => DriverOfflineMapRegionPreviewPage(
+          region: region,
+          target: target,
+          themeListenable: widget.themeListenable,
+        ),
+      ),
+    );
   }
 
   Future<void> _confirmAndDelete(DriverOfflineMapRegionInfo region) async {
@@ -2061,26 +2093,69 @@ class _DriverOfflineMapsPageState extends State<DriverOfflineMapsPage> {
                                         ),
                                       ),
                                     const SizedBox(height: 10),
-                                    Align(
-                                      alignment: Alignment.centerRight,
-                                      child: TextButton.icon(
-                                        onPressed: busy
-                                            ? null
-                                            : () =>
-                                                _confirmAndDelete(region),
-                                        icon: Icon(
-                                          Icons.delete_outline_rounded,
-                                          color: palette.danger,
-                                        ),
-                                        label: Text(
-                                          _tr(
-                                            nl: 'Verwijderen',
-                                            en: 'Delete',
+                                    Row(
+                                      children: [
+                                        if (driverOfflineMapRegionPreviewAvailable(
+                                          region,
+                                        ))
+                                          Expanded(
+                                            child: OutlinedButton.icon(
+                                              key: Key(
+                                                'offline_region_preview_${region.id}',
+                                              ),
+                                              onPressed: busy
+                                                  ? null
+                                                  : () => _openRegionPreview(
+                                                        region,
+                                                      ),
+                                              icon: Icon(
+                                                Icons.map_outlined,
+                                                color: palette.accent,
+                                                size: 18,
+                                              ),
+                                              label: Text(
+                                                _tr(
+                                                  nl: 'Kaart bekijken',
+                                                  en: 'View map',
+                                                ),
+                                                style: TextStyle(
+                                                  color: palette.accent,
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                              style: OutlinedButton.styleFrom(
+                                                foregroundColor: palette.accent,
+                                                side: BorderSide(
+                                                  color: palette.accent
+                                                      .withOpacity(0.55),
+                                                ),
+                                              ),
+                                            ),
                                           ),
-                                          style:
-                                              TextStyle(color: palette.danger),
+                                        if (driverOfflineMapRegionPreviewAvailable(
+                                          region,
+                                        ))
+                                          const SizedBox(width: 8),
+                                        TextButton.icon(
+                                          onPressed: busy
+                                              ? null
+                                              : () =>
+                                                  _confirmAndDelete(region),
+                                          icon: Icon(
+                                            Icons.delete_outline_rounded,
+                                            color: palette.danger,
+                                          ),
+                                          label: Text(
+                                            _tr(
+                                              nl: 'Verwijderen',
+                                              en: 'Delete',
+                                            ),
+                                            style: TextStyle(
+                                              color: palette.danger,
+                                            ),
+                                          ),
                                         ),
-                                      ),
+                                      ],
                                     ),
                                   ],
                                 ),

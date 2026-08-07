@@ -180,6 +180,15 @@ class DriverOfflineMapRegionInfo {
   /// (milliseconds since epoch). `null` when the region has no expiry.
   final int? expiresAtMs;
 
+  /// GeoJSON geometry persisted in TileRegion metadata (preview). Null for
+  /// legacy regions downloaded before preview metadata was written.
+  final Map<String, dynamic>? geometry;
+
+  /// Optional center / radius persisted alongside geometry for preview fit.
+  final double? centerLatitude;
+  final double? centerLongitude;
+  final int? radiusKm;
+
   /// Deprecated boolean form retained for existing UI callers. Prefer
   /// [completionStatus] which distinguishes complete / completed-with-errors
   /// / incomplete / expired / unknown.
@@ -208,6 +217,10 @@ class DriverOfflineMapRegionInfo {
     this.stylePacksVerified,
     this.expired = false,
     this.expiresAtMs,
+    this.geometry,
+    this.centerLatitude,
+    this.centerLongitude,
+    this.radiusKm,
   });
 }
 
@@ -1185,6 +1198,8 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
     DriverOfflineMapRegionRequest request, {
     required List<String> styleUris,
   }) {
+    final center = _geometryCenterLatLon(request.geometry);
+    final radiusKm = int.tryParse(_radiusKmFromSlug(request.slug) ?? '');
     return <String, Object>{
       'source': kDriverOfflineMapsMetadataSource,
       'displayName': request.displayName.trim(),
@@ -1192,6 +1207,12 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
       'minZoom': request.minZoom,
       'maxZoom': request.maxZoom,
       'styleUris': styleUris,
+      // OFFLINE-MAPS-DOWNLOADED-REGION-PREVIEW-P1: persist download geometry so
+      // preview can fit the camera without re-geocoding.
+      'geometry': request.geometry,
+      if (center != null) 'centerLat': center.$1,
+      if (center != null) 'centerLon': center.$2,
+      if (radiusKm != null) 'radiusKm': radiusKm,
     };
   }
 
@@ -1211,6 +1232,10 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
     final minZoom = _asInt(metadata['minZoom']) ?? kDriverOfflineMapsDefaultMinZoom;
     final maxZoom = _asInt(metadata['maxZoom']) ?? kDriverOfflineMapsDefaultMaxZoom;
     final styleUris = _styleUrisFromMetadata(metadata['styleUris']);
+    final geometry = _geometryFromMetadata(metadata['geometry']);
+    final centerLat = _asDouble(metadata['centerLat']);
+    final centerLon = _asDouble(metadata['centerLon']);
+    final radiusKm = _asInt(metadata['radiusKm']);
 
     // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part F: pick up any persisted
     // errored resource counts. When the pinned package could not persist to
@@ -1266,6 +1291,10 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
       expired: expired,
       expiresAtMs: expiresAtMs,
       completionStatus: completionStatus,
+      geometry: geometry,
+      centerLatitude: centerLat,
+      centerLongitude: centerLon,
+      radiusKm: radiusKm,
     );
   }
 
@@ -1336,6 +1365,45 @@ class DriverOfflineMapsService implements DriverOfflineMapsDownloadPort {
     if (value is int) return value;
     if (value is num) return value.round();
     return int.tryParse(value?.toString() ?? '');
+  }
+
+  double? _asDouble(Object? value) {
+    if (value is double) return value;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
+  }
+
+  Map<String, dynamic>? _geometryFromMetadata(Object? raw) {
+    if (raw is Map) {
+      try {
+        return Map<String, dynamic>.from(raw);
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  (double, double)? _geometryCenterLatLon(Map<String, dynamic> geometry) {
+    try {
+      final coords = geometry['coordinates'];
+      if (coords is! List || coords.isEmpty) return null;
+      final ring = coords.first;
+      if (ring is! List || ring.isEmpty) return null;
+      var sumLon = 0.0;
+      var sumLat = 0.0;
+      var n = 0;
+      for (final point in ring) {
+        if (point is! List || point.length < 2) continue;
+        sumLon += (point[0] as num).toDouble();
+        sumLat += (point[1] as num).toDouble();
+        n += 1;
+      }
+      if (n == 0) return null;
+      return (sumLat / n, sumLon / n);
+    } catch (_) {
+      return null;
+    }
   }
 
   Map<String?, Object?>? _castGeometry(Map<String, dynamic> geometry) {
