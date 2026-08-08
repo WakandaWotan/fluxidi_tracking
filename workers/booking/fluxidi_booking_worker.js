@@ -556,6 +556,9 @@ import {
   webhookAfterManualPaidConflict,
   buildStreetCheckoutShadowPayload,
   buildStreetMollieRedirectUrl,
+  STREET_HOSTED_PAYMENT_SHADOW_TTL_SECONDS,
+  STREET_HOSTED_CHECKOUT_ROUTE_CHANNEL,
+  STREET_HOSTED_CHECKOUT_ROUTE_SOURCE,
 } from "./modules/street_mollie_checkout.js";
 import {
   buildOpenMollieCheckoutRecoveryPayload,
@@ -60755,6 +60758,38 @@ async function mollieWebhook(request, env, ctx = null) {
             reason: posOut?.ok ? "pos_route_reconciled" : (posOut?.error || "pos_reconcile_failed"),
           };
         }
+        // STREET-ONLINE-PAYMENT-CONVERGENCE-P0: durable hosted-checkout route.
+        // Prefer payment-shadow finalize when the shadow still exists; otherwise
+        // converge the canonical street booking without marking the ride FAILED.
+        if (
+          routeChannel === STREET_HOSTED_CHECKOUT_ROUTE_CHANNEL ||
+          safeStr(p.data?.metadata?.streetCheckout, 20).toLowerCase() === "true" ||
+          p.data?.metadata?.streetCheckout === true
+        ) {
+          const streetOut = await reconcileStreetHostedCheckoutFromWebhookRoute(
+            env,
+            routeScope,
+            paymentRoute,
+            p.data,
+            mollieId,
+            { request, ctx },
+          );
+          console.log(
+            `[MOLLIE_WEBHOOK][STREET_HOSTED_ROUTE] booking=${_bookingIntentMask(bookingId)} paid=${streetOut?.paid === true ? "true" : "false"} status=${safeStr(streetOut?.mollie_status, 40) || "-"} reason=${safeStr(streetOut?.reason, 80) || "-"}`,
+          );
+          return {
+            ok: true,
+            received: true,
+            processed: streetOut?.ok === true,
+            bookingId,
+            street_hosted_reconcile: true,
+            paid: streetOut?.paid === true,
+            already_paid: streetOut?.already_paid === true,
+            creates_duplicate_paid: streetOut?.creates_duplicate_paid === true ? true : false,
+            mollie_status: streetOut?.mollie_status || null,
+            reason: streetOut?.reason || (streetOut?.ok ? "street_hosted_route_reconciled" : "street_hosted_reconcile_failed"),
+          };
+        }
         rideCredentials = companyCreds;
       }
     }
@@ -84657,6 +84692,259 @@ async function linkPaidMolliePaymentToBookingAuthoritative(
  * MOLLIE-OPEN-PAYMENT-RECOVERY-P0: clear local open-checkout ownership markers
  * AFTER provider state is canceled/expired/failed (never before).
  */
+/**
+ * STREET-ONLINE-PAYMENT-CONVERGENCE-P0
+ *
+ * Webhook reconcile for durable `street_hosted_checkout` payment routes.
+ * Uses the same route builders/schema as Tap to Pay. Never marks a COMPLETED
+ * street ride lifecycle as FAILED — only releases hosted-payment ownership
+ * for canceled/expired/failed, or finalizes paid exactly once.
+ *
+ * Route fields:
+ *   booking_id  = canonical street booking
+ *   intent_key  = payment shadow UUID (may already be TTL-evicted)
+ *   channel     = street_hosted_checkout
+ */
+async function reconcileStreetHostedCheckoutFromWebhookRoute(
+  env,
+  routeScope,
+  paymentRoute,
+  molliePayment,
+  mollieId,
+  { request = null, ctx = null } = {},
+) {
+  const bookingId = safeStr(
+    paymentRoute?.booking_id ?? paymentRoute?.bookingId,
+    160,
+  );
+  const paymentBookingId = safeStr(paymentRoute?.intent_key, 160);
+  const providerStatus = safeStr(molliePayment?.status, 40).toLowerCase();
+  if (!bookingId || !routeScope?.hasScope) {
+    return { ok: false, error: "missing_route_booking", mollie_status: providerStatus || null };
+  }
+  if (!env?.BOOKING_KV) {
+    return { ok: false, error: "missing_booking_kv", mollie_status: providerStatus || null };
+  }
+
+  let key = `booking:${bookingId}`;
+  let rec = null;
+  try {
+    const loaded = await loadBookingRecord(env, bookingId);
+    key = loaded.key || key;
+    rec = loaded.rec;
+  } catch (loadErr) {
+    if (String(loadErr?.message || "") === "Booking not found") {
+      return { ok: false, error: "booking_not_found", mollie_status: providerStatus || null };
+    }
+    return { ok: false, error: "booking_lookup_failed", mollie_status: providerStatus || null };
+  }
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, routeScope)) {
+    return { ok: false, error: "forbidden", mollie_status: providerStatus || null };
+  }
+
+  // Late webhook for a superseded/orphan payment: never overwrite a different paid owner.
+  const existingPay = streetCheckoutPaymentStatusToken(rec);
+  const existingMollieId = safeStr(
+    rec?.mollie?.payment_id ?? rec?.mollie?.id ?? rec?.payment_id ?? rec?.paymentId,
+    120,
+  );
+  if (
+    isStreetCheckoutPaidLike(existingPay) &&
+    existingMollieId &&
+    mollieId &&
+    existingMollieId !== mollieId
+  ) {
+    const recon = webhookAfterManualPaidConflict(rec, mollieId);
+    return {
+      ok: true,
+      paid: true,
+      already_paid: true,
+      mollie_status: providerStatus || "paid",
+      reason: recon?.reason || "canonical_already_paid_different_mollie",
+      creates_duplicate_paid: false,
+    };
+  }
+  if (isStreetCheckoutPaidLike(existingPay)) {
+    return {
+      ok: true,
+      paid: true,
+      already_paid: true,
+      mollie_status: "paid",
+      reason: "canonical_already_paid",
+    };
+  }
+
+  // Prefer payment-shadow finalize when the durable shadow still exists.
+  if (paymentBookingId && isMollieProviderStatusPaid(providerStatus)) {
+    try {
+      const shadow = await env.BOOKING_KV.get(`booking:${paymentBookingId}`, {
+        type: "json",
+      });
+      if (shadow && typeof shadow === "object") {
+        Object.assign(
+          shadow,
+          normalizedPaymentFields({
+            status: "paid",
+            paymentId: mollieId,
+            paidAt: shadow.paid_at || new Date().toISOString(),
+          }),
+        );
+        shadow.mollie = {
+          ...(shadow.mollie && typeof shadow.mollie === "object" ? shadow.mollie : {}),
+          id: mollieId,
+          payment_id: mollieId,
+          status: "paid",
+          last_webhook_at: new Date().toISOString(),
+        };
+        await env.BOOKING_KV.put(
+          `booking:${paymentBookingId}`,
+          JSON.stringify(shadow),
+          { expirationTtl: STREET_HOSTED_PAYMENT_SHADOW_TTL_SECONDS },
+        );
+        const finalizeResult = await finalizeBookingFromStored(shadow, env, request, {
+          paymentBookingId,
+          tenantScope: routeScope,
+          source: "mollie_webhook_street_hosted_route",
+        });
+        if (
+          finalizeResult?.ok ||
+          finalizeResult?.already === true ||
+          finalizeResult?.alreadyRunning === true
+        ) {
+          await runPaidBookingAfterLifecycle(env, routeScope, bookingId, {
+            source: "mollie_webhook_street_hosted_route_paid_lifecycle",
+            effectiveScope: routeScope,
+            ctx,
+            background: true,
+          });
+          return {
+            ok: true,
+            paid: true,
+            mollie_status: "paid",
+            reason:
+              finalizeResult?.already === true
+                ? "street_hosted_already_paid"
+                : "street_hosted_paid_via_shadow",
+          };
+        }
+      }
+    } catch (shadowErr) {
+      console.log(
+        `[MOLLIE_WEBHOOK][STREET_HOSTED_SHADOW_ERROR] booking=${_bookingIntentMask(bookingId)} reason=${safeStr(shadowErr?.message || shadowErr, 80) || "-"}`,
+      );
+    }
+  }
+
+  if (isMollieProviderStatusPaid(providerStatus)) {
+    // Shadow missing: project paid onto canonical exactly once (resume-style).
+    const syntheticShadow = {
+      bookingId: paymentBookingId || bookingId,
+      booking_id: paymentBookingId || bookingId,
+      public_booking_id: bookingId,
+      publicBookingId: bookingId,
+      checkout_resume: true,
+      street_checkout: true,
+      payment_status: "paid",
+      paymentStatus: "paid",
+      payment_mode: "mollie",
+      payment_provider: "mollie",
+      payment_method: "online_payment",
+      payment_id: mollieId,
+      paid_at: new Date().toISOString(),
+      mollie: { id: mollieId, payment_id: mollieId, status: "paid" },
+      tenant_id: routeScope.tenant_id,
+      company_id: routeScope.company_id,
+      payload: {
+        __checkout_resume: true,
+        __street_checkout: true,
+        street_checkout: true,
+        tenant_id: routeScope.tenant_id,
+        company_id: routeScope.company_id,
+      },
+    };
+    _applyResumePaidPaymentToCanonicalRecord(rec, syntheticShadow, {
+      paymentBookingId: paymentBookingId || null,
+      molliePaymentId: mollieId,
+      paidAt: syntheticShadow.paid_at,
+    });
+    rec.payment_attempt_status = "paid";
+    rec.paymentAttemptStatus = "paid";
+    rec.checkout_url = null;
+    rec.checkoutUrl = null;
+    await env.BOOKING_KV.put(key, JSON.stringify(rec));
+    await runPaidBookingAfterLifecycle(env, routeScope, bookingId, {
+      source: "mollie_webhook_street_hosted_route_paid_lifecycle_no_shadow",
+      effectiveScope: routeScope,
+      ctx,
+      background: true,
+    });
+    return {
+      ok: true,
+      paid: true,
+      mollie_status: "paid",
+      reason: "street_hosted_paid_canonical_no_shadow",
+    };
+  }
+
+  if (isMollieProviderStatusReleased(providerStatus)) {
+    // Only release if this route still owns the canonical open checkout.
+    const open = readOpenStreetMollieCheckout(rec);
+    const openId = safeStr(open?.mollie_payment_id, 120);
+    if (!openId || openId === mollieId || !open) {
+      // If no open owner, or this payment is the owner — clear markers.
+      if (!openId || openId === mollieId) {
+        _clearOpenStreetMollieCheckoutMarkers(rec, { providerStatus });
+        await env.BOOKING_KV.put(key, JSON.stringify(rec));
+      }
+      return {
+        ok: true,
+        paid: false,
+        released: true,
+        mollie_status: providerStatus,
+        reason: "street_hosted_released",
+      };
+    }
+    // Different payment still owns the ride — ignore stale terminal webhook.
+    return {
+      ok: true,
+      paid: false,
+      released: false,
+      mollie_status: providerStatus,
+      reason: "street_hosted_stale_terminal_ignored",
+    };
+  }
+
+  // Still open/pending/authorized — update Mollie status only; never release.
+  if (rec.mollie && typeof rec.mollie === "object") {
+    rec.mollie = {
+      ...rec.mollie,
+      id: mollieId || rec.mollie.id,
+      payment_id: mollieId || rec.mollie.payment_id,
+      status: providerStatus || rec.mollie.status || "open",
+      last_webhook_at: new Date().toISOString(),
+    };
+  } else {
+    rec.mollie = {
+      id: mollieId,
+      payment_id: mollieId,
+      status: providerStatus || "open",
+      last_webhook_at: new Date().toISOString(),
+    };
+  }
+  if (providerStatus && isStreetCheckoutOpenLike(providerStatus)) {
+    rec.payment_attempt_status = "mollie_open";
+    rec.paymentAttemptStatus = "mollie_open";
+  }
+  await env.BOOKING_KV.put(key, JSON.stringify(rec));
+  return {
+    ok: true,
+    paid: false,
+    released: false,
+    mollie_status: providerStatus || "open",
+    reason: "street_hosted_still_open",
+  };
+}
+
 function _clearOpenStreetMollieCheckoutMarkers(rec, { providerStatus = "canceled" } = {}) {
   if (!rec || typeof rec !== "object") return;
   const status = safeStr(providerStatus, 40).toLowerCase() || "canceled";
@@ -84962,9 +85250,11 @@ async function recoverOpenStreetMollieCheckoutAuthoritative(
       };
     }
     // Reuse create path's Mollie revalidation without minting a new payment.
+    // Signature: (bookingId, env, request, tenantScope, options).
     const reused = await createStreetRideCheckoutAuthoritative(
       bookingId,
       env,
+      options.request || null,
       tenantScope,
       { preloadedRec: rec },
     );
@@ -85323,8 +85613,12 @@ async function createStreetRideCheckoutAuthoritative(
               paymentStatus: "paid",
             };
           }
-          if (isStreetCheckoutFailedLike(apiStatus)) {
+          if (isStreetCheckoutFailedLike(apiStatus) || isMollieProviderStatusReleased(apiStatus)) {
             stillOpen = false;
+            // Provider released — clear stale local ownership before minting.
+            _clearOpenStreetMollieCheckoutMarkers(rec, { providerStatus: apiStatus });
+            if (!key) key = `booking:${bookingId}`;
+            await env.BOOKING_KV.put(key, JSON.stringify(rec));
           } else if (!isStreetCheckoutOpenLike(apiStatus) && apiStatus) {
             stillOpen = isStreetCheckoutOpenLike(apiStatus);
           }
@@ -85355,6 +85649,81 @@ async function createStreetRideCheckoutAuthoritative(
         amount_cents: amountResolution.amount_cents,
         currency: "EUR",
         reused: true,
+        creates_new_mollie_payment: false,
+      };
+    }
+  }
+
+  // STREET-ONLINE-PAYMENT-CONVERGENCE-P0: fail-closed when local markers say
+  // an open Mollie payment still owns the ride (mollie_open + payment id)
+  // even if checkout_url is missing — never mint a second payable hosted
+  // payment. Driver must refresh/cancel via recovery first.
+  const attemptStatus = safeStr(
+    rec?.payment_attempt_status ?? rec?.paymentAttemptStatus,
+    40,
+  ).toLowerCase();
+  const danglingPaymentId = safeStr(
+    rec?.mollie?.payment_id ?? rec?.mollie?.id ?? rec?.payment_id ?? rec?.paymentId,
+    120,
+  );
+  if (
+    !existingOpen &&
+    danglingPaymentId &&
+    (attemptStatus === "mollie_open" ||
+      isStreetCheckoutOpenLike(safeStr(rec?.mollie?.status, 40)))
+  ) {
+    let danglingReleased = false;
+    try {
+      const rideCredentials = await resolveRideMollieCredentials(env, tenantScope);
+      if (rideCredentials.ok) {
+        const snap = await mollieFetchPaymentJson(danglingPaymentId, env, rideCredentials, {
+          paymentRecord: rec,
+        });
+        const apiStatus = safeStr(snap?.status, 40).toLowerCase();
+        if (isStreetCheckoutPaidLike(apiStatus) || apiStatus === "paid") {
+          return {
+            ok: false,
+            error: "payment_already_paid",
+            payment_status: "paid",
+            paymentStatus: "paid",
+            creates_new_mollie_payment: false,
+          };
+        }
+        if (isMollieProviderStatusReleased(apiStatus) || isStreetCheckoutFailedLike(apiStatus)) {
+          _clearOpenStreetMollieCheckoutMarkers(rec, { providerStatus: apiStatus });
+          if (!key) key = `booking:${bookingId}`;
+          await env.BOOKING_KV.put(key, JSON.stringify(rec));
+          danglingReleased = true;
+        } else if (isStreetCheckoutOpenLike(apiStatus)) {
+          const freshCheckout = normalizeMollieCheckoutUrl(snap?._links?.checkout?.href);
+          const openPayload = {
+            checkout_url: freshCheckout || null,
+            payment_booking_id: safeStr(rec?.payment_booking_id ?? rec?.paymentBookingId, 160) || null,
+            mollie_payment_id: danglingPaymentId,
+            mollie_status: apiStatus || "open",
+          };
+          return {
+            ok: false,
+            error: "open_mollie_checkout_exists",
+            creates_new_mollie_payment: false,
+            ...buildOpenMollieCheckoutRecoveryPayload(openPayload),
+          };
+        }
+      }
+    } catch (_) {
+      // Fall through to fail-closed recovery payload when provider revalidation fails.
+    }
+    if (!danglingReleased) {
+      return {
+        ok: false,
+        error: "open_mollie_checkout_exists",
+        creates_new_mollie_payment: false,
+        ...buildOpenMollieCheckoutRecoveryPayload({
+          checkout_url: null,
+          payment_booking_id: safeStr(rec?.payment_booking_id ?? rec?.paymentBookingId, 160) || null,
+          mollie_payment_id: danglingPaymentId,
+          mollie_status: safeStr(rec?.mollie?.status, 40) || "open",
+        }),
       };
     }
   }
@@ -85607,10 +85976,13 @@ async function createStreetRideCheckoutAuthoritative(
     street_checkout_attempt_id: attemptId,
   };
   applyPaymentOwnershipFields(shadowRecord, rideCredentials);
+  // STREET-ONLINE-PAYMENT-CONVERGENCE-P0: pre-create uses the same durable TTL
+  // as the success shadow so a crash between put and Mollie create cannot
+  // leave a 1h-evictable orphan that breaks late webhook routing.
   await env.BOOKING_KV.put(
     `booking:${paymentBookingId}`,
     JSON.stringify(shadowRecord),
-    { expirationTtl: 60 * 60 },
+    { expirationTtl: STREET_HOSTED_PAYMENT_SHADOW_TTL_SECONDS },
   );
 
   const base = getBaseUrl(request);
@@ -85677,7 +86049,7 @@ async function createStreetRideCheckoutAuthoritative(
     await env.BOOKING_KV.put(
       `booking:${paymentBookingId}`,
       JSON.stringify(shadowRecord),
-      { expirationTtl: 60 * 60 * 24 },
+      { expirationTtl: STREET_HOSTED_PAYMENT_SHADOW_TTL_SECONDS },
     );
     if (lockKey) {
       try {
@@ -85711,8 +86083,37 @@ async function createStreetRideCheckoutAuthoritative(
   await env.BOOKING_KV.put(
     `booking:${paymentBookingId}`,
     JSON.stringify(shadowRecord),
-    { expirationTtl: 60 * 60 * 24 * 30 },
+    { expirationTtl: STREET_HOSTED_PAYMENT_SHADOW_TTL_SECONDS },
   );
+
+  // STREET-ONLINE-PAYMENT-CONVERGENCE-P0: durable reverse route (same architecture
+  // as Tap to Pay) so late webhooks resolve after ephemeral metadata lookup fails.
+  try {
+    const routeKey = buildMolliePaymentRouteKey(mollie.id);
+    const routeRec = buildMolliePaymentRouteRecord({
+      paymentId: mollie.id,
+      tenantId: tenantScope.tenant_id,
+      companyId: tenantScope.company_id,
+      bookingId,
+      legId: null,
+      profileId: companyMollieProfileId || null,
+      terminalId: null,
+      channel: STREET_HOSTED_CHECKOUT_ROUTE_CHANNEL,
+      source: STREET_HOSTED_CHECKOUT_ROUTE_SOURCE,
+      testmode: companyMollieCreateTestMode === true,
+      intentKey: paymentBookingId,
+      nowIso,
+    });
+    if (routeKey && routeRec) {
+      await env.BOOKING_KV.put(routeKey, JSON.stringify(routeRec), {
+        expirationTtl: MOLLIE_PAYMENT_ROUTE_TTL_SECONDS,
+      });
+    }
+  } catch (routeErr) {
+    console.log(
+      `[STREET_CHECKOUT][ROUTE_PUT_ERROR] booking=${_bookingIntentMask(bookingId)} mollie=${_bookingIntentMask(mollie.id)} reason=${safeStr(routeErr?.message || routeErr, 80) || "-"}`,
+    );
+  }
 
   // Stamp canonical — resume-style linkage, do not change COMPLETED lifecycle.
   _applyCheckoutResumeFieldsToCanonicalRecord(rec, {

@@ -121,6 +121,24 @@ void main() {
       expect(dialog, contains("source: 'LIFECYCLE_RESUME'"));
       expect(dialog, contains('WidgetsBindingObserver'));
       expect(dialog, contains('iHavePaidLabel'));
+      expect(dialog, contains('onCancelOnlinePayment'));
+      expect(dialog, contains('onAuthoritativeRefresh'));
+      expect(dialog, contains('cancelOnlinePaymentNow'));
+    });
+
+    test('CONVERGE-P0: receipt auto-refreshes on open/resume/return', () {
+      expect(
+        receiptSource,
+        contains('_maybeAuthoritativeMollieCheckoutRefresh'),
+      );
+      expect(receiptSource, contains("reason: 'receipt_open'"));
+      expect(receiptSource, contains("reason: 'app_resume'"));
+      expect(receiptSource, contains("reason: 'return_from_checkout'"));
+      expect(receiptSource, contains('with WidgetsBindingObserver'));
+      expect(
+        receiptSource,
+        contains('onCancelOnlinePayment: () => _cancelOpenMollieCheckoutAsPollOutcome'),
+      );
     });
 
     test('street dialog uses generic Mollie instruction (not Bancontact-only)', () {
@@ -247,6 +265,9 @@ void main() {
         'checkPaymentStatus',
         'resumeOnlinePayment',
         'cancelOnlinePayment',
+        'cancelOnlinePaymentHint',
+        'cancelOnlinePaymentBusy',
+        'cancelOnlinePaymentFailed',
         'paymentStillPending',
         'paymentOwnerReleased',
         'paymentRecoveryError',

@@ -36,6 +36,12 @@ class MollieStreetCheckoutCopy {
     required this.statusNotFoundErrorText,
     required this.statusServerErrorText,
     required this.statusGenericErrorText,
+    this.cancelOnlinePaymentLabel = 'Cancel online payment',
+    this.cancelOnlinePaymentHint =
+        'Stops this online attempt at the provider before another payment method can be chosen.',
+    this.cancelOnlinePaymentBusyText = 'Canceling online payment…',
+    this.cancelOnlinePaymentFailedText =
+        'Could not confirm cancellation. Online payment is still open.',
   });
 
   final String title;
@@ -52,6 +58,12 @@ class MollieStreetCheckoutCopy {
   final String statusNotFoundErrorText;
   final String statusServerErrorText;
   final String statusGenericErrorText;
+
+  /// STREET-ONLINE-PAYMENT-CONVERGENCE-P0: first-class cancel inside dialog.
+  final String cancelOnlinePaymentLabel;
+  final String cancelOnlinePaymentHint;
+  final String cancelOnlinePaymentBusyText;
+  final String cancelOnlinePaymentFailedText;
 }
 
 /// Content of the street "Online betalen" waiting dialog.
@@ -68,6 +80,8 @@ class MollieStreetCheckoutDialogContent extends StatefulWidget {
     required this.pollOnce,
     this.pendingPaymentListenable,
     this.canonicalBookingId,
+    this.onCancelOnlinePayment,
+    this.onAuthoritativeRefresh,
     this.maxAttempts = 60,
     this.interval = const Duration(seconds: 5),
   });
@@ -87,6 +101,14 @@ class MollieStreetCheckoutDialogContent extends StatefulWidget {
   /// matching updates only trigger a server poll.
   final ValueNotifier<FluxidiPendingPayment?>? pendingPaymentListenable;
 
+  /// STREET-ONLINE-PAYMENT-CONVERGENCE-P0: authoritative cancel via
+  /// `/mollie-checkout-recovery` action=cancel. Must not be a local dismiss.
+  final Future<MollieStreetCheckoutPollOutcome> Function()? onCancelOnlinePayment;
+
+  /// One-shot authoritative refresh (recovery action=refresh) on dialog open
+  /// and app resume. Provider truth may converge without waiting for poll.
+  final Future<MollieStreetCheckoutPollOutcome?> Function()? onAuthoritativeRefresh;
+
   final int maxAttempts;
   final Duration interval;
 
@@ -105,6 +127,8 @@ class MollieStreetCheckoutDialogContentState
   bool _stopped = false;
   bool _pollQueued = false;
   bool _userRefreshPendingFeedback = false;
+  bool _cancelBusy = false;
+  bool _authoritativeRefreshInFlight = false;
   MollieStreetCheckoutPollOutcome? _terminal;
   String? _feedbackText;
   Timer? _intervalTimer;
@@ -112,6 +136,9 @@ class MollieStreetCheckoutDialogContentState
 
   @visibleForTesting
   bool get isPolling => _polling;
+
+  @visibleForTesting
+  bool get isCancelBusy => _cancelBusy;
 
   @visibleForTesting
   MollieStreetCheckoutPollOutcome? get terminalOutcome => _terminal;
@@ -126,7 +153,7 @@ class MollieStreetCheckoutDialogContentState
     widget.pendingPaymentListenable?.addListener(_onPendingPaymentChanged);
     if (widget.paymentBookingId.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        unawaited(_runPoll(source: 'DIALOG_OPEN'));
+        unawaited(_runAuthoritativeRefreshThenPoll(source: 'DIALOG_OPEN'));
       });
     }
   }
@@ -145,7 +172,77 @@ class MollieStreetCheckoutDialogContentState
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
     if (_terminal != null) return;
-    unawaited(_runPoll(source: 'LIFECYCLE_RESUME'));
+    unawaited(_runAuthoritativeRefreshThenPoll(source: 'LIFECYCLE_RESUME'));
+  }
+
+  Future<void> _runAuthoritativeRefreshThenPoll({required String source}) async {
+    if (!mounted || _stopped || _terminal != null) return;
+    if (_authoritativeRefreshInFlight) {
+      unawaited(_runPoll(source: source));
+      return;
+    }
+    final refresh = widget.onAuthoritativeRefresh;
+    if (refresh == null) {
+      unawaited(_runPoll(source: source));
+      return;
+    }
+    _authoritativeRefreshInFlight = true;
+    try {
+      final outcome = await refresh();
+      if (!mounted || _stopped) return;
+      if (outcome != null && molliePollOutcomeIsTerminal(outcome)) {
+        _intervalTimer?.cancel();
+        setState(() {
+          _terminal = outcome;
+          _feedbackText = null;
+        });
+        _scheduleTerminalPop(outcome);
+        return;
+      }
+    } catch (_) {
+      // Fall through to bounded /pay/status poll.
+    } finally {
+      _authoritativeRefreshInFlight = false;
+    }
+    if (!mounted || _stopped || _terminal != null) return;
+    unawaited(_runPoll(source: source));
+  }
+
+  /// Explicit provider-side cancel (not local dismiss).
+  Future<void> cancelOnlinePaymentNow() async {
+    if (!mounted || _stopped || _cancelBusy) return;
+    if (_terminal != null && molliePollOutcomeIsTerminal(_terminal!)) return;
+    final cancel = widget.onCancelOnlinePayment;
+    if (cancel == null) return;
+    setState(() {
+      _cancelBusy = true;
+      _feedbackText = widget.copy.cancelOnlinePaymentBusyText;
+    });
+    try {
+      final outcome = await cancel();
+      if (!mounted || _stopped) return;
+      if (outcome == MollieStreetCheckoutPollOutcome.paid ||
+          molliePollOutcomeIsTerminal(outcome)) {
+        _intervalTimer?.cancel();
+        setState(() {
+          _terminal = outcome;
+          _feedbackText = null;
+          _cancelBusy = false;
+        });
+        _scheduleTerminalPop(outcome);
+        return;
+      }
+      setState(() {
+        _cancelBusy = false;
+        _feedbackText = widget.copy.cancelOnlinePaymentFailedText;
+      });
+    } catch (_) {
+      if (!mounted || _stopped) return;
+      setState(() {
+        _cancelBusy = false;
+        _feedbackText = widget.copy.cancelOnlinePaymentFailedText;
+      });
+    }
   }
 
   void _onPendingPaymentChanged() {
@@ -400,9 +497,29 @@ class MollieStreetCheckoutDialogContentState
           if (_terminal == null) ...[
             const SizedBox(height: 12),
             TextButton(
-              onPressed: _polling ? null : () => unawaited(refreshNow()),
+              onPressed: (_polling || _cancelBusy)
+                  ? null
+                  : () => unawaited(refreshNow()),
               child: Text(widget.copy.iHavePaidLabel),
             ),
+            if (widget.onCancelOnlinePayment != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                widget.copy.cancelOnlinePaymentHint,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: widget.textMutedColor,
+                ),
+              ),
+              const SizedBox(height: 6),
+              OutlinedButton(
+                onPressed: (_polling || _cancelBusy)
+                    ? null
+                    : () => unawaited(cancelOnlinePaymentNow()),
+                child: Text(widget.copy.cancelOnlinePaymentLabel),
+              ),
+            ],
           ],
         ],
       ],

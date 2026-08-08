@@ -20,8 +20,14 @@ class _InCarPaymentAuthRequiredException implements Exception {
 final StreetInvoiceEligibilityMemo _streetInvoiceEligibilityMemo =
     StreetInvoiceEligibilityMemo();
 
-class _RideReceiptBodyState extends State<_RideReceiptBody> {
+class _RideReceiptBodyState extends State<_RideReceiptBody>
+    with WidgetsBindingObserver {
   _ReceiptPaymentStatus _paymentStatus = _ReceiptPaymentStatus.pending;
+
+  /// STREET-ONLINE-PAYMENT-CONVERGENCE-P0: one-shot auto refresh guard so
+  /// receipt open / resume / return do not spam recovery endpoints.
+  bool _mollieAutoRefreshInFlight = false;
+  DateTime? _mollieAutoRefreshLastAt;
 
   /// Set by the embedded street business-invoice action when an invoice is
   /// known for this completed street ride. Used so Payment status does not
@@ -201,6 +207,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _paymentStatus = _initialPaymentStatus();
     unawaited(_resolveReceiptPaymentStatus());
     unawaited(_ensureStreetBusinessInvoiceEligibilityResolved());
@@ -213,7 +220,27 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       if (action != null) {
         unawaited(_runInitialAction(context, action));
       }
+      // STREET-ONLINE-PAYMENT-CONVERGENCE-P0: one authoritative refresh when
+      // opening a completed street receipt that still owns an open Mollie
+      // hosted checkout (provider truth may already be terminal).
+      unawaited(
+        _maybeAuthoritativeMollieCheckoutRefresh(reason: 'receipt_open'),
+      );
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    unawaited(
+      _maybeAuthoritativeMollieCheckoutRefresh(reason: 'app_resume'),
+    );
   }
 
   @override
@@ -3907,10 +3934,27 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
               statusGenericErrorText: _receiptText(
                 'paymentStatusGenericError',
               ),
+              cancelOnlinePaymentLabel: _receiptText('cancelOnlinePayment'),
+              cancelOnlinePaymentHint: _receiptText(
+                'cancelOnlinePaymentHint',
+              ),
+              cancelOnlinePaymentBusyText: _receiptText(
+                'cancelOnlinePaymentBusy',
+              ),
+              cancelOnlinePaymentFailedText: _receiptText(
+                'cancelOnlinePaymentFailed',
+              ),
             ),
             pollOnce: () => _pollMollieStreetCheckoutStatusOnce(
               paymentBookingId: paymentBookingId,
               strictScope: strictScope,
+            ),
+            onAuthoritativeRefresh: () =>
+                _authoritativeMollieCheckoutRefreshAsPollOutcome(
+              reason: 'checkout_dialog',
+            ),
+            onCancelOnlinePayment: () => _cancelOpenMollieCheckoutAsPollOutcome(
+              reason: 'checkout_dialog_cancel',
             ),
           ),
         ),
@@ -3929,6 +3973,186 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       context,
       dialogOutcome: outcome,
     );
+  }
+
+  /// Maps recovery API presentation to dialog poll outcomes.
+  MollieStreetCheckoutPollOutcome? _pollOutcomeFromRecoveryRoot(
+    Map<String, dynamic>? root,
+  ) {
+    if (root == null) return null;
+    final payStatus = (root['payment_status'] ?? root['paymentStatus'] ?? '')
+        .toString()
+        .toLowerCase();
+    final presentation =
+        (root['presentation_state'] ?? root['presentationState'] ?? '')
+            .toString()
+            .toLowerCase();
+    if (payStatus == 'paid' || presentation == 'paid') {
+      return MollieStreetCheckoutPollOutcome.paid;
+    }
+    if (presentation == 'expired' || payStatus == 'expired') {
+      return MollieStreetCheckoutPollOutcome.expired;
+    }
+    if (presentation == 'failed' || payStatus == 'failed') {
+      return MollieStreetCheckoutPollOutcome.failed;
+    }
+    if (presentation == 'canceled' ||
+        presentation == 'cancelled' ||
+        payStatus == 'canceled' ||
+        payStatus == 'cancelled' ||
+        root['fallback_allowed'] == true) {
+      // Released ownership (cancel confirmed or provider terminal).
+      if (presentation == 'expired') {
+        return MollieStreetCheckoutPollOutcome.expired;
+      }
+      if (presentation == 'failed') {
+        return MollieStreetCheckoutPollOutcome.failed;
+      }
+      return MollieStreetCheckoutPollOutcome.cancelled;
+    }
+    return null;
+  }
+
+  Future<MollieStreetCheckoutPollOutcome?>
+  _authoritativeMollieCheckoutRefreshAsPollOutcome({
+    required String reason,
+  }) async {
+    final root = await _postAuthoritativeMollieCheckoutRefresh(reason: reason);
+    return _pollOutcomeFromRecoveryRoot(root);
+  }
+
+  Future<MollieStreetCheckoutPollOutcome>
+  _cancelOpenMollieCheckoutAsPollOutcome({required String reason}) async {
+    final bookingId = (item.bookingId ?? '').trim();
+    if (bookingId.isEmpty) {
+      return MollieStreetCheckoutPollOutcome.error;
+    }
+    final authHeaders = await resolveInCarPaymentAuthHeaders();
+    if (authHeaders.mode == InCarPaymentAuthMode.none) {
+      return MollieStreetCheckoutPollOutcome.error;
+    }
+    final root = await _postMollieCheckoutRecovery(
+      bookingId: bookingId,
+      action: 'cancel',
+      headers: authHeaders.headers,
+    );
+    debugPrint(
+      '[MOLLIE_STREET_CHECKOUT][CANCEL] reason=$reason '
+      'booking=${_safeRefPreview(bookingId)} '
+      'ok=${root?['ok']} presentation=${root?['presentation_state']}',
+    );
+    final outcome = _pollOutcomeFromRecoveryRoot(root);
+    if (outcome == MollieStreetCheckoutPollOutcome.paid) {
+      return MollieStreetCheckoutPollOutcome.paid;
+    }
+    if (outcome == MollieStreetCheckoutPollOutcome.cancelled ||
+        outcome == MollieStreetCheckoutPollOutcome.expired ||
+        outcome == MollieStreetCheckoutPollOutcome.failed) {
+      if (mounted) {
+        setState(() => _openMollieRecovery = null);
+      }
+      return outcome!;
+    }
+    // Cancel not confirmed — keep ownership; dialog stays open.
+    final recoveryHttp =
+        (root?['_http_code'] as num?)?.toInt() ??
+        (root?['http_code'] as num?)?.toInt();
+    final recovery = parseMollieOpenPaymentRecovery(
+      root,
+      httpCode: recoveryHttp,
+    );
+    if (mounted && recovery != null) {
+      setState(() => _openMollieRecovery = recovery);
+    }
+    return MollieStreetCheckoutPollOutcome.pending;
+  }
+
+  Future<Map<String, dynamic>?> _postAuthoritativeMollieCheckoutRefresh({
+    required String reason,
+  }) async {
+    final bookingId = (item.bookingId ?? '').trim();
+    if (bookingId.isEmpty) return null;
+    final authHeaders = await resolveInCarPaymentAuthHeaders();
+    if (authHeaders.mode == InCarPaymentAuthMode.none) return null;
+    final root = await _postMollieCheckoutRecovery(
+      bookingId: bookingId,
+      action: 'refresh',
+      headers: authHeaders.headers,
+    );
+    debugPrint(
+      '[MOLLIE_STREET_CHECKOUT][AUTO_REFRESH] reason=$reason '
+      'booking=${_safeRefPreview(bookingId)} '
+      'ok=${root?['ok']} presentation=${root?['presentation_state']} '
+      'pay=${root?['payment_status']}',
+    );
+    if (!mounted || root == null) return root;
+    final recoveryHttp =
+        (root['_http_code'] as num?)?.toInt() ??
+        (root['http_code'] as num?)?.toInt();
+    final recovery = parseMollieOpenPaymentRecovery(
+      root,
+      httpCode: recoveryHttp,
+    );
+    final payStatus = (root['payment_status'] ?? root['paymentStatus'] ?? '')
+        .toString()
+        .toLowerCase();
+    if (payStatus == 'paid' || recovery?.presentationState == 'paid') {
+      setState(() {
+        _openMollieRecovery = null;
+        _paymentStatus = _ReceiptPaymentStatus.paid;
+      });
+      return root;
+    }
+    final released =
+        recovery?.fallbackAllowed == true ||
+        recovery?.presentationState == 'canceled' ||
+        recovery?.presentationState == 'cancelled' ||
+        recovery?.presentationState == 'expired' ||
+        recovery?.presentationState == 'failed' ||
+        payStatus == 'unpaid';
+    setState(() {
+      _openMollieRecovery = released ? null : recovery;
+    });
+    if (released) {
+      // Merge unpaid/released markers into local receipt details so fallback
+      // buttons unblock without requiring a second manual refresh.
+      final fields = await _fetchAuthoritativePaymentFields(bookingId);
+      if (mounted && fields != null && fields.isNotEmpty) {
+        _mergePaymentFieldsIntoReceiptDetails(fields);
+        setState(() {});
+      }
+    }
+    return root;
+  }
+
+  /// One-shot refresh when a completed street ride still shows open Mollie
+  /// ownership. Debounced; never starts an unbounded poll loop.
+  Future<void> _maybeAuthoritativeMollieCheckoutRefresh({
+    required String reason,
+  }) async {
+    if (!mounted || _mollieAutoRefreshInFlight) return;
+    if (_paymentStatus == _ReceiptPaymentStatus.paid) return;
+    final hasOpen = _openMollieBlocksFallback ||
+        receiptDetailsHaveOpenMollieCheckout(
+          Map<String, dynamic>.from(item.bookingDetails),
+        );
+    if (!hasOpen) return;
+    final last = _mollieAutoRefreshLastAt;
+    if (last != null &&
+        DateTime.now().difference(last) < const Duration(seconds: 4)) {
+      return;
+    }
+    _mollieAutoRefreshInFlight = true;
+    _mollieAutoRefreshLastAt = DateTime.now();
+    try {
+      await _postAuthoritativeMollieCheckoutRefresh(reason: reason);
+      if (!mounted) return;
+      if (_paymentStatus == _ReceiptPaymentStatus.paid) {
+        await _markMollieStreetCheckoutPaid(context);
+      }
+    } finally {
+      _mollieAutoRefreshInFlight = false;
+    }
   }
 
   /// Single `GET /pay/status` attempt for a street-checkout in-flight
@@ -4025,6 +4249,20 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     final beforePaid = _paymentStatus == _ReceiptPaymentStatus.paid;
     final bookingId = (item.bookingId ?? '').trim();
     if (bookingId.isEmpty) return;
+
+    // STREET-ONLINE-PAYMENT-CONVERGENCE-P0: return-from-checkout boundary —
+    // one Mollie GET via recovery refresh before merging booking fields.
+    if (!beforePaid &&
+        dialogOutcome != MollieStreetCheckoutPollOutcome.paid) {
+      await _postAuthoritativeMollieCheckoutRefresh(
+        reason: 'return_from_checkout',
+      );
+      if (!mounted || !context.mounted) return;
+      if (_paymentStatus == _ReceiptPaymentStatus.paid) {
+        await _markMollieStreetCheckoutPaid(context);
+        return;
+      }
+    }
 
     final fields = await _fetchAuthoritativePaymentFields(bookingId);
     if (!mounted) return;
@@ -4289,6 +4527,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           _openMollieRecovery = null;
           _paymentStatus = _ReceiptPaymentStatus.paid;
         });
+        if (!context.mounted) return;
         await _markMollieStreetCheckoutPaid(context);
         return;
       }

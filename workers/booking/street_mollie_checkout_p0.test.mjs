@@ -14,11 +14,15 @@ import {
   manualMarkPaidConflict,
   webhookAfterManualPaidConflict,
   readOpenStreetMollieCheckout,
+  STREET_HOSTED_CHECKOUT_ROUTE_CHANNEL,
+  STREET_HOSTED_CHECKOUT_ROUTE_SOURCE,
+  STREET_HOSTED_PAYMENT_SHADOW_TTL_SECONDS,
 } from "./modules/street_mollie_checkout.js";
 import {
   buildScopedMollieConnectAuthKey,
   encryptMollieConnectTokenPayload,
 } from "./modules/mollie_connect.js";
+import { buildMolliePaymentRouteKey } from "./modules/pos_terminal_payment.mjs";
 
 const ADMIN = "test-admin-token";
 const ENC_KEY = "test-mollie-connect-encryption-key-please-rotate";
@@ -1073,6 +1077,343 @@ test("P0 recovery: repeated cancel is idempotent after release", async () => {
     // Second cancel: no open owner — refresh/cancel path returns non-trapping outcome.
     const secondBody = await second.json();
     assert.ok(secondBody.ok === true || secondBody.error === "checkout_not_resumable" || secondBody.fallback_allowed === true);
+  } finally {
+    mock.restore();
+  }
+});
+
+// ---------- STREET-ONLINE-PAYMENT-CONVERGENCE-P0 ----------
+
+test("CONVERGE-P0: hosted create writes durable mollie_payment_route", async () => {
+  const { env, kv } = await makeEnv();
+  const mock = installMultiPaymentMollieMock();
+  try {
+    const res = await worker.fetch(streetCheckoutRequest({}), env, {});
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.ok(body.checkout_url);
+    const booking = JSON.parse(await kv.get("booking:street_1001_abc"));
+    const paymentId = booking.mollie?.id || booking.payment_id;
+    assert.ok(paymentId);
+    const routeKey = buildMolliePaymentRouteKey(paymentId);
+    const route = await kv.get(routeKey, { type: "json" });
+    assert.ok(route, "durable route must exist");
+    assert.equal(route.tenant_id, "T1");
+    assert.equal(route.company_id, "C1");
+    assert.equal(route.booking_id, "street_1001_abc");
+    assert.equal(route.channel, STREET_HOSTED_CHECKOUT_ROUTE_CHANNEL);
+    assert.equal(route.source, STREET_HOSTED_CHECKOUT_ROUTE_SOURCE);
+    assert.equal(route.intent_key, body.payment_booking_id);
+    assert.ok(STREET_HOSTED_PAYMENT_SHADOW_TTL_SECONDS >= 60 * 60 * 24 * 30);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("CONVERGE-P0: webhook after shadow loss resolves via durable hosted route", async () => {
+  const { env, kv } = await makeEnv();
+  const paymentId = "tr_street_route_1";
+  const paymentBookingId = "shadow-evicted-uuid";
+  const routeKey = buildMolliePaymentRouteKey(paymentId);
+  await kv.put(
+    routeKey,
+    JSON.stringify({
+      version: 1,
+      payment_id: paymentId,
+      tenant_id: "T1",
+      company_id: "C1",
+      booking_id: "street_1001_abc",
+      channel: STREET_HOSTED_CHECKOUT_ROUTE_CHANNEL,
+      source: STREET_HOSTED_CHECKOUT_ROUTE_SOURCE,
+      profile_id: "pfl_street_test",
+      intent_key: paymentBookingId,
+      created_at: new Date().toISOString(),
+    }),
+  );
+  // Canonical still shows open ownership; shadow intentionally missing.
+  const booking = JSON.parse(await kv.get("booking:street_1001_abc"));
+  booking.payment_status = "pending";
+  booking.payment_provider = "mollie";
+  booking.payment_mode = "mollie";
+  booking.checkout_url = `https://www.mollie.com/checkout/test/${paymentId}`;
+  booking.payment_booking_id = paymentBookingId;
+  booking.payment_id = paymentId;
+  booking.mollie = { id: paymentId, payment_id: paymentId, status: "open" };
+  booking.payment_attempt_status = "mollie_open";
+  await kv.put("booking:street_1001_abc", JSON.stringify(booking));
+
+  const mock = installMultiPaymentMollieMock({ [paymentId]: "expired" });
+  try {
+    const res = await worker.fetch(
+      new Request("https://booking.internal/webhook/mollie", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: paymentId }),
+      }),
+      env,
+      {},
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.street_hosted_reconcile, true);
+    assert.equal(body.mollie_status, "expired");
+    const after = JSON.parse(await kv.get("booking:street_1001_abc"));
+    assert.equal(String(after.status).toUpperCase(), "COMPLETED");
+    assert.ok(!readOpenStreetMollieCheckout(after));
+    assert.ok(["expired", "cancelled", "canceled"].includes(
+      String(after.payment_attempt_status || "").toLowerCase(),
+    ));
+  } finally {
+    mock.restore();
+  }
+});
+
+test("CONVERGE-P0: refresh paid releases nothing and projects paid", async () => {
+  const { env, kv } = await makeEnv();
+  const paymentId = "tr_refresh_paid";
+  const shadowId = crypto.randomUUID();
+  const booking = JSON.parse(await kv.get("booking:street_1001_abc"));
+  booking.payment_status = "pending";
+  booking.payment_provider = "mollie";
+  booking.payment_mode = "mollie";
+  booking.checkout_url = `https://www.mollie.com/checkout/test/${paymentId}`;
+  booking.payment_booking_id = shadowId;
+  booking.payment_id = paymentId;
+  booking.mollie = { id: paymentId, payment_id: paymentId, status: "open" };
+  booking.payment_attempt_status = "mollie_open";
+  await kv.put("booking:street_1001_abc", JSON.stringify(booking));
+  await kv.put(
+    `booking:${shadowId}`,
+    JSON.stringify({
+      bookingId: shadowId,
+      booking_id: shadowId,
+      public_booking_id: "street_1001_abc",
+      checkout_resume: true,
+      street_checkout: true,
+      payment_status: "pending",
+      payment_id: paymentId,
+      mollie: { id: paymentId, status: "open" },
+      tenant_id: "T1",
+      company_id: "C1",
+      payload: {
+        __checkout_resume: true,
+        __street_checkout: true,
+        tenant_id: "T1",
+        company_id: "C1",
+      },
+      authoritative_amount_cents: 4250,
+    }),
+  );
+  const mock = installMultiPaymentMollieMock({ [paymentId]: "paid" });
+  try {
+    const res = await worker.fetch(recoveryRequest({ action: "refresh" }), env, {});
+    const body = await res.json();
+    assert.equal(body.presentation_state, "paid");
+    assert.equal(body.payment_status, "paid");
+    assert.equal(body.fallback_allowed, false);
+  } finally {
+    mock.restore();
+  }
+});
+
+for (const terminal of ["canceled", "failed", "expired"]) {
+  test(`CONVERGE-P0: refresh ${terminal} releases ownership`, async () => {
+    const { env, kv } = await makeEnv();
+    const paymentId = `tr_refresh_${terminal}`;
+    const booking = JSON.parse(await kv.get("booking:street_1001_abc"));
+    booking.payment_status = "pending";
+    booking.payment_provider = "mollie";
+    booking.payment_mode = "mollie";
+    booking.checkout_url = `https://www.mollie.com/checkout/test/${paymentId}`;
+    booking.payment_booking_id = "shadow-x";
+    booking.payment_id = paymentId;
+    booking.mollie = { id: paymentId, payment_id: paymentId, status: "open" };
+    booking.payment_attempt_status = "mollie_open";
+    await kv.put("booking:street_1001_abc", JSON.stringify(booking));
+    const mock = installMultiPaymentMollieMock({ [paymentId]: terminal });
+    try {
+      const res = await worker.fetch(recoveryRequest({ action: "refresh" }), env, {});
+      const body = await res.json();
+      assert.equal(body.ok, true);
+      assert.equal(body.fallback_allowed, true);
+      assert.ok(!readOpenStreetMollieCheckout(
+        JSON.parse(await kv.get("booking:street_1001_abc")),
+      ));
+    } finally {
+      mock.restore();
+    }
+  });
+}
+
+test("CONVERGE-P0: refresh still open does not release ownership", async () => {
+  const { env, kv } = await makeEnv();
+  const mock = installMultiPaymentMollieMock();
+  try {
+    const created = await worker.fetch(streetCheckoutRequest({}), env, {});
+    assert.equal(created.status, 200);
+    const res = await worker.fetch(recoveryRequest({ action: "refresh" }), env, {});
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.fallback_allowed, false);
+    assert.equal(body.payment_status, "pending");
+    assert.ok(readOpenStreetMollieCheckout(
+      JSON.parse(await kv.get("booking:street_1001_abc")),
+    ));
+  } finally {
+    mock.restore();
+  }
+});
+
+test("CONVERGE-P0: cancel race — provider paid wins", async () => {
+  const { env, kv } = await makeEnv();
+  const paymentId = "tr_cancel_paid_race";
+  const booking = JSON.parse(await kv.get("booking:street_1001_abc"));
+  booking.payment_status = "pending";
+  booking.payment_provider = "mollie";
+  booking.payment_mode = "mollie";
+  booking.checkout_url = `https://www.mollie.com/checkout/test/${paymentId}`;
+  booking.payment_booking_id = "shadow-race";
+  booking.payment_id = paymentId;
+  booking.mollie = { id: paymentId, payment_id: paymentId, status: "open" };
+  await kv.put("booking:street_1001_abc", JSON.stringify(booking));
+  const mock = installMultiPaymentMollieMock({ [paymentId]: "paid" });
+  try {
+    const res = await worker.fetch(recoveryRequest({ action: "cancel" }), env, {});
+    const body = await res.json();
+    assert.notEqual(body.payment_status, "unpaid");
+    assert.ok(
+      body.presentation_state === "paid" ||
+        body.payment_status === "paid" ||
+        body.error === "payment_already_paid",
+    );
+    assert.equal(body.fallback_allowed, false);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("CONVERGE-P0: cancel confirmed releases; cancel not confirmed keeps block", async () => {
+  const { env, kv } = await makeEnv();
+  const mock = installMultiPaymentMollieMock();
+  try {
+    const created = await worker.fetch(streetCheckoutRequest({}), env, {});
+    assert.equal(created.status, 200);
+    const cancelOk = await worker.fetch(recoveryRequest({ action: "cancel" }), env, {});
+    const okBody = await cancelOk.json();
+    assert.equal(okBody.ok, true);
+    assert.equal(okBody.fallback_allowed, true);
+    assert.ok(!readOpenStreetMollieCheckout(
+      JSON.parse(await kv.get("booking:street_1001_abc")),
+    ));
+  } finally {
+    mock.restore();
+  }
+
+  // Not-confirmed path: DELETE leaves payment open.
+  const { env: env2, kv: kv2 } = await makeEnv();
+  const paymentId = "tr_cancel_stuck";
+  const booking = JSON.parse(await kv2.get("booking:street_1001_abc"));
+  booking.payment_status = "pending";
+  booking.payment_provider = "mollie";
+  booking.payment_mode = "mollie";
+  booking.checkout_url = `https://www.mollie.com/checkout/test/${paymentId}`;
+  booking.payment_booking_id = "shadow-stuck";
+  booking.payment_id = paymentId;
+  booking.mollie = { id: paymentId, payment_id: paymentId, status: "open" };
+  await kv2.put("booking:street_1001_abc", JSON.stringify(booking));
+  const mock2 = installMultiPaymentMollieMock({ [paymentId]: "open" });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init = {}) => {
+    const href = typeof input === "string" ? input : String(input?.url || "");
+    if (/tr_cancel_stuck/.test(href) && (init.method || "GET") === "DELETE") {
+      return new Response(JSON.stringify({ id: paymentId, status: "open" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return originalFetch(input, init);
+  };
+  try {
+    const res = await worker.fetch(recoveryRequest({ action: "cancel" }), env2, {});
+    const body = await res.json();
+    assert.equal(body.ok, false);
+    assert.equal(body.fallback_allowed, false);
+    assert.ok(readOpenStreetMollieCheckout(
+      JSON.parse(await kv2.get("booking:street_1001_abc")),
+    ));
+  } finally {
+    globalThis.fetch = originalFetch;
+    mock2.restore();
+  }
+});
+
+test("CONVERGE-P0: hosted→hosted resume reuses, does not mint second payable", async () => {
+  const { env } = await makeEnv();
+  const mock = installMultiPaymentMollieMock();
+  try {
+    const first = await worker.fetch(streetCheckoutRequest({}), env, {});
+    const firstBody = await first.json();
+    const second = await worker.fetch(streetCheckoutRequest({}), env, {});
+    const secondBody = await second.json();
+    assert.equal(secondBody.reused, true);
+    assert.equal(secondBody.creates_new_mollie_payment, false);
+    assert.equal(secondBody.checkout_url, firstBody.checkout_url);
+    assert.equal(mock.calls.filter((c) => c.method === "POST").length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("CONVERGE-P0: late orphan payment webhook cannot create duplicate paid", async () => {
+  const { env, kv } = await makeEnv();
+  const oldPaymentId = "tr_old_orphan";
+  const currentPaymentId = "tr_current_paid";
+  // Canonical already paid by a different Mollie payment.
+  const booking = JSON.parse(await kv.get("booking:street_1001_abc"));
+  booking.payment_status = "paid";
+  booking.paymentStatus = "paid";
+  booking.payment_provider = "mollie";
+  booking.payment_mode = "mollie";
+  booking.payment_id = currentPaymentId;
+  booking.paid_at = "2026-08-08T10:00:00.000Z";
+  booking.mollie = { id: currentPaymentId, payment_id: currentPaymentId, status: "paid" };
+  await kv.put("booking:street_1001_abc", JSON.stringify(booking));
+  await kv.put(
+    buildMolliePaymentRouteKey(oldPaymentId),
+    JSON.stringify({
+      version: 1,
+      payment_id: oldPaymentId,
+      tenant_id: "T1",
+      company_id: "C1",
+      booking_id: "street_1001_abc",
+      channel: STREET_HOSTED_CHECKOUT_ROUTE_CHANNEL,
+      source: STREET_HOSTED_CHECKOUT_ROUTE_SOURCE,
+      profile_id: "pfl_street_test",
+      intent_key: "old-shadow",
+    }),
+  );
+  const mock = installMultiPaymentMollieMock({ [oldPaymentId]: "paid" });
+  try {
+    const res = await worker.fetch(
+      new Request("https://booking.internal/webhook/mollie", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: oldPaymentId }),
+      }),
+      env,
+      {},
+    );
+    const body = await res.json();
+    assert.equal(body.street_hosted_reconcile, true);
+    assert.equal(body.creates_duplicate_paid, false);
+    assert.ok(
+      body.reason === "canonical_already_paid_different_mollie" ||
+        body.already_paid === true,
+    );
+    const after = JSON.parse(await kv.get("booking:street_1001_abc"));
+    assert.equal(after.payment_id, currentPaymentId);
+    assert.equal(String(after.payment_status).toLowerCase(), "paid");
   } finally {
     mock.restore();
   }

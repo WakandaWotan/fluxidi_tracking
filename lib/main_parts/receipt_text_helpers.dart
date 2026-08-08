@@ -620,6 +620,27 @@ String _receiptText(String key) {
         fr: 'Annuler le paiement en ligne',
         es: 'Cancelar pago en línea',
       );
+    case 'cancelOnlinePaymentHint':
+      return _tr(
+        nl: 'Stopt deze online poging bij de betaalprovider voordat je een andere betaalmethode kunt kiezen.',
+        en: 'Stops this online attempt at the provider before another payment method can be chosen.',
+        fr: 'Arrête cette tentative en ligne chez le prestataire avant de pouvoir choisir un autre mode de paiement.',
+        es: 'Detiene este intento en línea en el proveedor antes de poder elegir otro método de pago.',
+      );
+    case 'cancelOnlinePaymentBusy':
+      return _tr(
+        nl: 'Online betaling wordt geannuleerd…',
+        en: 'Canceling online payment…',
+        fr: 'Annulation du paiement en ligne…',
+        es: 'Cancelando el pago en línea…',
+      );
+    case 'cancelOnlinePaymentFailed':
+      return _tr(
+        nl: 'Annulatie niet bevestigd. De online betaling is nog open.',
+        en: 'Could not confirm cancellation. Online payment is still open.',
+        fr: 'Annulation non confirmée. Le paiement en ligne est encore ouvert.',
+        es: 'No se pudo confirmar la cancelación. El pago en línea sigue abierto.',
+      );
     case 'paymentStillPending':
       return _tr(
         nl: 'De online betaling is nog open. Probeer opnieuw te controleren of hervat de betaling.',

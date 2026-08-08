@@ -6,6 +6,22 @@
 import { normalizePaymentMethodId } from "./payment_method_truth.js";
 import { buildOpenMollieCheckoutRecoveryPayload } from "./mollie_open_payment_recovery.mjs";
 
+/**
+ * STREET-ONLINE-PAYMENT-CONVERGENCE-P0
+ *
+ * Payment-shadow TTL for driver street hosted checkout.
+ * Matched to `MOLLIE_PAYMENT_ROUTE_TTL_SECONDS` (45d) so a late Mollie
+ * webhook can still resolve the shadow while the durable payment route
+ * exists. Mollie hosted checkouts typically expire within hours; 45d is a
+ * safe bounded upper limit for delayed webhook delivery without unbounded
+ * retention. Customer /pay/create shadows are intentionally unchanged.
+ */
+export const STREET_HOSTED_PAYMENT_SHADOW_TTL_SECONDS = 60 * 60 * 24 * 45;
+
+/** Durable route channel for street hosted checkout (must NOT be pos_terminal). */
+export const STREET_HOSTED_CHECKOUT_ROUTE_CHANNEL = "street_hosted_checkout";
+export const STREET_HOSTED_CHECKOUT_ROUTE_SOURCE = "street_checkout";
+
 function _safeStr(value, max = 200) {
   const text = String(value ?? "").trim();
   if (!text) return "";
