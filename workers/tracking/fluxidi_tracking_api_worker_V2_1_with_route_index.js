@@ -6759,6 +6759,78 @@ async function handleStopTrip(req, url, env, origin, ctx) {
     origin,
   });
   if (ownershipBlock) return ownershipBlock;
+
+  // OFFLINE-STOP-RIDE-DURABILITY-P0: idempotent STOP when the trip is already
+  // terminal. A client that lost the HTTP response (or retried after offline
+  // STOP) must not get "Trip is not active" — return the stored authoritative
+  // totals and continue booking finalize if still pending. Never overwrite
+  // frozen stop totals on replay.
+  const alreadyTerminal =
+    trip.status === "stopped" ||
+    trip.status === "completed" ||
+    trip.status === "done" ||
+    !!safeStr(trip.stopped_at, 80);
+  if (alreadyTerminal) {
+    const existingTotals = {
+      km_total: trip.km_total,
+      wait_seconds_total: trip.wait_seconds_total,
+      total_eur: trip.total_eur,
+      price_ex_vat: trip.price_ex_vat,
+      price_vat: trip.price_vat,
+      price_incl_vat: trip.price_incl_vat,
+      vat_rate: trip.vat_rate,
+      vat_mode: trip.vat_mode,
+      currency: trip.currency,
+    };
+    // Opportunistic finalize retry when stop already landed but booking did not.
+    const replayBookingId = safeStr(
+      trip?.booking_id ?? trip?.bookingId ?? body["booking_id"] ?? body["bookingId"],
+      160,
+    );
+    if (replayBookingId && !bookingAlreadyFinalized(trip)) {
+      const finalizePayload = buildFinalizePayloadFromTrip(trip, scope);
+      let finalizeRes = null;
+      try {
+        finalizeRes = await _callBookingWorkerJson(
+          env,
+          "/track/booking/finalize-direct",
+          finalizePayload,
+          { timeoutMs: 4000 },
+        );
+      } catch (err) {
+        finalizeRes = {
+          ok: false,
+          error: safeStr(err?.message || err, 120) || "finalize_call_failed",
+        };
+      }
+      applyBookingFinalizeAttempt(trip, {
+        state: deriveFinalizeStateFromResult(finalizeRes),
+        errorCode: finalizeErrorCodeFromResult(finalizeRes),
+        nowIso: nowIso(),
+      });
+      applyCanonicalScopeToRecord(trip, scope);
+      await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
+    }
+    const stopFinalizeFields = safeBookingFinalizeResponseFields(trip);
+    return withCors(
+      json(
+        {
+          ok: true,
+          trip_id,
+          booking_id: stopFinalizeFields.booking_id,
+          booking_finalize_state: stopFinalizeFields.booking_finalize_state,
+          booking_finalized: stopFinalizeFields.booking_finalized,
+          status: "stopped",
+          stopped_at: trip.stopped_at || null,
+          totals: existingTotals,
+          idempotent_replay: true,
+        },
+        { status: 200 },
+      ),
+      origin,
+    );
+  }
+
   if (trip.status !== "active") throw new Error("Trip is not active");
 
   const km_total = safeNum(body["km_total"], 0, 100000);

@@ -4540,6 +4540,8 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   /// DIRECT-RIDE-FINALIZE-ACK-GATE-1: ride stopped but booking finalize is
   /// still pending/unknown. No fake Completed state; server truth remains.
+  /// OFFLINE-STOP-RIDE-DURABILITY-P0: message is backed by a durable frozen
+  /// STOP outbox that reconnect / resume drains.
   void _showStreetDirectFinalizePendingSnackbar() {
     if (!mounted) return;
     final messenger = ScaffoldMessenger.maybeOf(context);
@@ -4550,10 +4552,14 @@ class _DriverHomePageState extends State<DriverHomePage>
         duration: const Duration(seconds: 6),
         content: Text(
           _tr(
-            nl: 'Rit gestopt. De afrekening wordt nog afgerond.',
-            en: 'Ride stopped. Finalization is still in progress.',
-            fr: 'Course arrêtée. La finalisation est encore en cours.',
-            es: 'Viaje detenido. La finalización sigue en curso.',
+            nl:
+                'Rit gestopt. Afronding blijft lokaal bewaard — herverbind voor betaling.',
+            en:
+                'Ride stopped. Finalization is saved locally — reconnect to continue payment.',
+            fr:
+                'Course arrêtée. Finalisation enregistrée localement — reconnectez pour le paiement.',
+            es:
+                'Viaje detenido. Finalización guardada localmente: reconéctese para el pago.',
           ),
         ),
       ),
@@ -8353,17 +8359,47 @@ class _DriverHomePageState extends State<DriverHomePage>
     required String tripId,
     required double kmTotal,
     required int waitSecondsTotal,
+    String? clientStoppedAtIso,
+    String? bookingIdOverride,
+    String? directRideKeyOverride,
+    String? startedAtIsoOverride,
+    double? frozenTotalEur,
   }) async {
+    final resolvedBookingId =
+        (bookingIdOverride ?? _activeDirectBookingId ?? '').trim();
+    final stoppedAtIso = (clientStoppedAtIso ?? '').trim().isNotEmpty
+        ? clientStoppedAtIso!.trim()
+        : DateTime.now().toUtc().toIso8601String();
+    final frozenFare = frozenTotalEur;
+    Future<void> persistStopped({
+      required String trackingStopState,
+      required String bookingFinalizeState,
+    }) {
+      return _persistDirectTripSession(
+        localLifecycle: kDirectTripLocalLifecycleStopped,
+        bookingFinalizeState: bookingFinalizeState,
+        trackingStopState: trackingStopState,
+        stoppedAtIso: stoppedAtIso,
+        frozenKmTotal: kmTotal,
+        frozenWaitSecondsTotal: waitSecondsTotal,
+        frozenTotalEur: frozenFare,
+        tripIdOverride: tripId,
+        bookingIdOverride: resolvedBookingId,
+        directRideKeyOverride: directRideKeyOverride,
+        startedAtIsoOverride: startedAtIsoOverride,
+      );
+    }
+
     try {
       final strictScope = _strictBookingScopeForMutation(
         action: 'stop_direct_trip',
         showUx: false,
       );
       if (strictScope == null) {
-        unawaited(_persistDirectTripSession(
-          localLifecycle: kDirectTripLocalLifecycleStopped,
+        await persistStopped(
+          trackingStopState: kDirectTripTrackingStopPending,
           bookingFinalizeState: kDirectTripFinalizePending,
-        ));
+        );
         return DirectRideStopOutcome.unknown;
       }
       final payload = withDirectRideBookingStopFields(<String, dynamic>{
@@ -8371,9 +8407,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         ...strictScope,
         'km_total': kmTotal,
         'wait_seconds_total': waitSecondsTotal,
-        'client_stopped_at': DateTime.now().toUtc().toIso8601String(),
+        'client_stopped_at': stoppedAtIso,
         ..._driverMutationActorFields(actorVehicleId: _directRideVehicleId()),
-      }, bookingId: _activeDirectBookingId);
+      }, bookingId: resolvedBookingId.isEmpty ? null : resolvedBookingId);
       final res = await http
           .post(
             _uriWithScope(kWorkerBaseUrl, kStopDirectTripPath, strictScope),
@@ -8400,54 +8436,70 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       final ack = isDirectRideFinalizeAcknowledged(
         outcome: outcome,
-        expectedBookingId: _activeDirectBookingId,
+        expectedBookingId: resolvedBookingId,
       );
       if (ack) {
-        unawaited(_clearDirectTripSession());
+        await _clearDirectTripSession();
       } else {
-        unawaited(_persistDirectTripSession(
-          localLifecycle: kDirectTripLocalLifecycleStopped,
+        await persistStopped(
+          trackingStopState: kDirectTripTrackingStopCompleted,
           bookingFinalizeState: kDirectTripFinalizePending,
-        ));
+        );
       }
       return outcome;
     } catch (e) {
       _directTripStopWorkerOk = false;
       // Transport / unknown: do not assume the tracking trip is still active,
-      // and never treat this as booking completion. Persist recovery identity.
-      unawaited(_persistDirectTripSession(
-        localLifecycle: kDirectTripLocalLifecycleStopped,
+      // and never treat this as booking completion. Persist recovery identity
+      // WITH frozen STOP totals so reconnect can replay `/trip/stop`.
+      await persistStopped(
+        trackingStopState: kDirectTripTrackingStopPending,
         bookingFinalizeState: kDirectTripFinalizePending,
-      ));
+      );
       debugPrint('[DIRECT_TRIP][STOP][WARN] outcome=unknown reason=$e');
       return DirectRideStopOutcome.unknown;
     }
   }
 
-  // STREET-RIDE-DURABLE-COMPLETION-2: durable direct-trip session persistence
-  // + startup reconciliation. Best-effort; never blocks ride UX.
+  // STREET-RIDE-DURABLE-COMPLETION-2 + OFFLINE-STOP-RIDE-DURABILITY-P0:
+  // durable direct-trip session persistence + startup/reconnect recovery.
   Future<void> _persistDirectTripSession({
     required String localLifecycle,
     required String bookingFinalizeState,
+    String? trackingStopState,
+    String? stoppedAtIso,
+    double? frozenKmTotal,
+    int? frozenWaitSecondsTotal,
+    double? frozenTotalEur,
+    String? tripIdOverride,
+    String? bookingIdOverride,
+    String? directRideKeyOverride,
+    String? startedAtIsoOverride,
   }) async {
     try {
       final scope = _complianceLedgerScopeForStop();
       if (scope == null) return;
-      final key = _directRideKey ?? '';
-      final tripId = _activeDirectTripId ?? '';
+      final key = (directRideKeyOverride ?? _directRideKey ?? '').trim();
+      final tripId = (tripIdOverride ?? _activeDirectTripId ?? '').trim();
       if (key.isEmpty && tripId.isEmpty) return;
+      final startedIso = (startedAtIsoOverride ?? '').trim().isNotEmpty
+          ? startedAtIsoOverride!.trim()
+          : (_trackingStartedAt ?? DateTime.now()).toUtc().toIso8601String();
       final session = DirectTripSession(
         directRideKey: key,
         tripId: tripId,
-        bookingId: _activeDirectBookingId ?? '',
-        startedAtIso: (_trackingStartedAt ?? DateTime.now())
-            .toUtc()
-            .toIso8601String(),
+        bookingId: (bookingIdOverride ?? _activeDirectBookingId ?? '').trim(),
+        startedAtIso: startedIso,
         localLifecycle: localLifecycle,
         bookingFinalizeState: bookingFinalizeState,
         tenantId: scope.tenantId,
         companyId: scope.companyId,
         driverId: kDriverId,
+        stoppedAtIso: stoppedAtIso,
+        frozenKmTotal: frozenKmTotal,
+        frozenWaitSecondsTotal: frozenWaitSecondsTotal,
+        frozenTotalEur: frozenTotalEur,
+        trackingStopState: trackingStopState,
       );
       await _DirectTripSessionStore.save(
         session,
@@ -8752,10 +8804,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
-  /// Startup recovery: resolve any persisted direct-trip session. Non-blocking
-  /// (invoked unawaited). Reconciles a stopped-but-pending booking with bounded
-  /// retry/backoff; probes server truth for persisted `active` sessions (never
-  /// resends `/trip/stop`); abandons only structurally unusable sessions.
+  /// Startup / reconnect recovery: resolve any persisted direct-trip session.
+  /// Non-blocking (invoked unawaited). Offline STOP freezes totals and may
+  /// need a `/trip/stop` replay before reconcile can finalize the booking.
   Future<void> _recoverPendingDirectTripSession() async {
     try {
       final scope = _complianceLedgerScopeForStop();
@@ -8772,6 +8823,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       switch (action) {
         case DirectTripRecoveryAction.none:
           return;
+        case DirectTripRecoveryAction.retryStop:
+          await _attemptDirectStopReplayWithBackoff(session, scope);
+          return;
         case DirectTripRecoveryAction.reconcilePending:
           await _attemptDirectReconcileWithBackoff(session, scope);
           return;
@@ -8779,7 +8833,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         case DirectTripRecoveryAction.abandon:
           // DIRECT-RIDE-STOP-RECOVERY-RACE-1 Commit 2: never blindly resume or
           // abandon an active session that still carries durable ids. Probe
-          // server truth via idempotent reconcile (never `/trip/stop`).
+          // server truth via idempotent reconcile (never `/trip/stop`) unless
+          // the session already carries a frozen offline-STOP outbox.
+          if (session.needsTrackingStopReplay) {
+            await _attemptDirectStopReplayWithBackoff(session, scope);
+            return;
+          }
           if (directTripSessionHasProbeIdentity(session)) {
             await _probeAndRecoverActiveDirectSession(session, scope);
             return;
@@ -8802,6 +8861,70 @@ class _DriverHomePageState extends State<DriverHomePage>
     } catch (_) {
       // Best-effort recovery; remain pending + retryable on next launch.
     }
+  }
+
+  /// OFFLINE-STOP-RIDE-DURABILITY-P0: replay `/trip/stop` with frozen client
+  /// totals, then reconcile booking finalize. Idempotent on the worker.
+  Future<void> _attemptDirectStopReplayWithBackoff(
+    DirectTripSession session,
+    ({String tenantId, String companyId}) scope,
+  ) async {
+    if (!session.needsTrackingStopReplay && !session.hasFrozenStopTotals) {
+      await _attemptDirectReconcileWithBackoff(session, scope);
+      return;
+    }
+    const maxAttempts = 4;
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      final outcome = await _stopDirectTripSessionOnWorker(
+        tripId: session.tripId,
+        kmTotal: session.frozenKmTotal ?? 0,
+        waitSecondsTotal: session.frozenWaitSecondsTotal ?? 0,
+        clientStoppedAtIso: session.stoppedAtIso,
+        bookingIdOverride: session.bookingId,
+        directRideKeyOverride: session.directRideKey,
+        startedAtIsoOverride: session.startedAtIso,
+        frozenTotalEur: session.frozenTotalEur,
+      );
+      if (isDirectRideFinalizeAcknowledged(
+        outcome: outcome,
+        expectedBookingId: session.bookingId,
+      )) {
+        await _DirectTripSessionStore.clear(
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+        );
+        _clearStaleInMemoryDirectIdentityIfMatching(session);
+        debugPrint('[DIRECT_TRIP][RECOVERY] stop_replay=finalize_ok');
+        unawaited(
+          _refreshBookings(
+            force: true,
+            trigger: 'street_recovery_stop_replay_ok',
+          ),
+        );
+        return;
+      }
+      if (outcome.trackingTripStopped) {
+        // Stop landed; booking finalize still pending — drain via reconcile.
+        final advanced = session.copyWith(
+          trackingStopState: kDirectTripTrackingStopCompleted,
+          bookingFinalizeState: kDirectTripFinalizePending,
+        );
+        await _DirectTripSessionStore.save(
+          advanced,
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+          driverId: kDriverId,
+        );
+        await _attemptDirectReconcileWithBackoff(advanced, scope);
+        return;
+      }
+      if (attempt < maxAttempts - 1) {
+        await Future<void>.delayed(directReconcileBackoff(attempt));
+      }
+    }
+    debugPrint(
+      '[DIRECT_TRIP][RECOVERY] state=stop_replay_pending retryable=true',
+    );
   }
 
   /// Server-truth probe for a persisted active (or stale-active) session.
@@ -9975,10 +10098,56 @@ class _DriverHomePageState extends State<DriverHomePage>
     await _LocalDirectTripHistoryStore.append(record);
   }
 
+  /// OFFLINE-STOP-RIDE-DURABILITY-P0: durable local history row for a street
+  /// ride that STOP'd with a known trip id but whose server finalize has not
+  /// been acknowledged yet. Uses the real trip_id so reconnect merge dedupes
+  /// against the backend row once finalize succeeds.
+  Future<void> _persistPendingFinalizeDirectHistory({
+    required String tripId,
+    required String? bookingId,
+    required DateTime stoppedAt,
+    required DateTime? startedAt,
+    required double kmTotal,
+    required int waitSecondsTotal,
+    required double totalEur,
+  }) async {
+    final payment = _buildCompliancePaymentPayload();
+    final booking = (bookingId ?? '').trim();
+    final record = <String, dynamic>{
+      'trip_id': tripId.trim(),
+      'kind': 'direct',
+      'status': 'COMPLETED',
+      'tenant_id': kOutboundTenantId,
+      'driver_id': kDriverId,
+      'vehicle_id': _directRideVehicleId(),
+      if (booking.isNotEmpty) 'booking_id': booking,
+      'started_at': startedAt?.toUtc().toIso8601String(),
+      'stopped_at': stoppedAt.toUtc().toIso8601String(),
+      'km_total': kmTotal,
+      'wait_seconds_total': waitSecondsTotal,
+      'total_eur': totalEur,
+      'currency': kDefaultCurrency,
+      'payment_status': payment['status'] ?? 'unknown',
+      'booking_details': <String, dynamic>{
+        'payment_status': payment['status'] ?? 'unknown',
+        if (payment['method'] != null) 'payment_method': payment['method'],
+        'history_source': 'offline_stop_pending_finalize',
+        'backend_confirmed': false,
+        'finalize_pending': true,
+      },
+      'history_source': 'offline_stop_pending_finalize',
+      'backend_confirmed': false,
+      'finalize_pending': true,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+    };
+    await _LocalDirectTripHistoryStore.append(record);
+  }
+
   Future<void> _stopTrip() async {
-    // DIRECT-RIDE-FINALIZE-ACK-GATE-1: a second Stop while finalize is pending
-    // must not re-call `/trip/stop`. Meter is already off; only reconcile owns
-    // booking finalization retries.
+    // DIRECT-RIDE-FINALIZE-ACK-GATE-1 + OFFLINE-STOP-RIDE-DURABILITY-P0:
+    // a second Stop while finalize is pending must not invent new totals.
+    // Meter is already off; recovery owns `/trip/stop` replay (frozen) and
+    // booking finalize retries.
     if (_directStopFinalizePending) {
       _logDriverNavDiag(
         tag: 'STOP_FINALIZE_PENDING',
@@ -9986,6 +10155,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         bookingId: _activeDirectBookingId ?? _activeBooking?.bookingId ?? '',
       );
       _showStreetDirectFinalizePendingSnackbar();
+      unawaited(_recoverPendingDirectTripSession());
       // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 4):
       // even on the "second STOP tap while finalize pending" branch we must
       // force the DriverHomePage back into normal (non-live) rendering. The
@@ -10051,11 +10221,41 @@ class _DriverHomePageState extends State<DriverHomePage>
     final wasDirectRide = _directRideActive || stopRouting.isDirectFinalize;
     final directTripId = _activeDirectTripId;
     final directBookingId = _activeDirectBookingId;
+    final directRideKeyAtStop = _directRideKey;
     final finalTotal = _liveMeterTotalEur;
     final stoppedAt = DateTime.now();
     final startedAt = _trackingStartedAt;
     final kmAtStop = _kmDriven;
+    final waitAtStop = _effectiveWaitElapsed.inSeconds;
+    final frozenDirectFare = wasDirectRide
+        ? _finalizedFareForPersistence(
+            finalTotal,
+            source: 'street',
+            reason: 'offline_stop_client_freeze',
+          )
+        : finalTotal;
     var plannedSessionStopOk = false;
+
+    // OFFLINE-STOP-RIDE-DURABILITY-P0: freeze authoritative STOP totals to
+    // durable session BEFORE leaving the active-ride presentation / awaiting
+    // network. Network availability must not determine ride survival.
+    if (wasDirectRide &&
+        ((directTripId ?? '').trim().isNotEmpty ||
+            (directRideKeyAtStop ?? '').trim().isNotEmpty)) {
+      await _persistDirectTripSession(
+        localLifecycle: kDirectTripLocalLifecycleStopped,
+        bookingFinalizeState: kDirectTripFinalizePending,
+        trackingStopState: kDirectTripTrackingStopPending,
+        stoppedAtIso: stoppedAt.toUtc().toIso8601String(),
+        frozenKmTotal: kmAtStop,
+        frozenWaitSecondsTotal: waitAtStop,
+        frozenTotalEur: frozenDirectFare,
+        tripIdOverride: directTripId,
+        bookingIdOverride: directBookingId,
+        directRideKeyOverride: directRideKeyAtStop,
+        startedAtIsoOverride: startedAt?.toUtc().toIso8601String(),
+      );
+    }
 
     // GOOGLE-MAPS-WITH-FLUXIDI-PIP-RELEASE-1: STOP only in full Fluxidi —
     // end external session and leave PiP; never relaunch Google Maps.
@@ -10131,7 +10331,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       plannedTripStopBridgeOk = await _recordPlannedTripStopOnWorker(
         booking: stoppedBooking,
         kmTotal: kmAtStop,
-        waitSecondsTotal: _effectiveWaitElapsed.inSeconds,
+        waitSecondsTotal: waitAtStop,
         startedAt: startedAt,
         stoppedAt: stoppedAt,
       );
@@ -10143,8 +10343,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         directTripId.trim().isNotEmpty) {
       directStopOutcome = await _stopDirectTripSessionOnWorker(
         tripId: directTripId,
-        kmTotal: _kmDriven,
-        waitSecondsTotal: _effectiveWaitElapsed.inSeconds,
+        kmTotal: kmAtStop,
+        waitSecondsTotal: waitAtStop,
+        clientStoppedAtIso: stoppedAt.toUtc().toIso8601String(),
+        bookingIdOverride: directBookingId,
+        directRideKeyOverride: directRideKeyAtStop,
+        startedAtIsoOverride: startedAt?.toUtc().toIso8601String(),
+        frozenTotalEur: frozenDirectFare,
       );
     }
 
@@ -10186,20 +10391,17 @@ class _DriverHomePageState extends State<DriverHomePage>
       // FARE-ROUNDING-CENTRAL-0_10-1: the tracking worker already returns the
       // canonical €0.10-rounded total, so trust it as-is. Only the local
       // client fallback (worker total absent) is rounded here — exactly once —
-      // before it becomes the persisted amount.
-      final double finalDirectTotal = serverDirectTotal ??
-          _finalizedFareForPersistence(
-            finalTotal,
-            source: 'street',
-            reason: 'client_fallback_no_server_total',
-          );
+      // before it becomes the persisted amount. Offline STOP already froze
+      // [frozenDirectFare] before the network call.
+      final double finalDirectTotal =
+          serverDirectTotal ?? frozenDirectFare;
       final directLedger = _buildComplianceDirectLedgerRecord(
         tripId: directTripId,
         bookingId: directBookingId,
         startedAt: startedAt,
         stoppedAt: stoppedAt,
-        kmTotal: _kmDriven,
-        waitSecondsTotal: _effectiveWaitElapsed.inSeconds,
+        kmTotal: kmAtStop,
+        waitSecondsTotal: waitAtStop,
         totalEur: finalDirectTotal,
         backendConfirmed: directBackendConfirmed,
       );
@@ -10210,53 +10412,90 @@ class _DriverHomePageState extends State<DriverHomePage>
         await _persistLocalOnlyDirectHistoryFallback(
           stoppedAt: stoppedAt,
           startedAt: startedAt,
-          kmTotal: _kmDriven,
-          waitSecondsTotal: _effectiveWaitElapsed.inSeconds,
+          kmTotal: kmAtStop,
+          waitSecondsTotal: waitAtStop,
+          totalEur: finalDirectTotal,
+        );
+      } else if (!directFinalizeAcknowledged) {
+        // OFFLINE-STOP-RIDE-DURABILITY-P0: keep the completed ride visible in
+        // history while server finalize/payment is still pending. Backend rows
+        // win on trip_id collision once finalize succeeds.
+        await _persistPendingFinalizeDirectHistory(
+          tripId: directTripId,
+          bookingId: directBookingId,
+          stoppedAt: stoppedAt,
+          startedAt: startedAt,
+          kmTotal: kmAtStop,
+          waitSecondsTotal: waitAtStop,
           totalEur: finalDirectTotal,
         );
       }
 
       if (!directFinalizeAcknowledged &&
           directTripId != null &&
-          directTripId.trim().isNotEmpty &&
-          (directBookingId ?? '').trim().isNotEmpty) {
-        // Bounded single in-session reconcile — never retry via `/trip/stop`.
-        // DIRECT-RIDE-STOP-RECOVERY-RACE-1 Commit 1: local COMPLETED only when
-        // the shared reconcile acknowledgement proves matching trip/booking
-        // ids and completed finalize state (no totals; endpoint omits them).
+          directTripId.trim().isNotEmpty) {
         _directStopFinalizePending = true;
         _publishBearerBusyState();
-        final reconcileOutcome = await _reconcileDirectBookingOnWorker(
-          tripId: directTripId,
-          expectedBookingId: directBookingId!,
-        );
-        if (isDirectRideReconcileAcknowledged(reconcileOutcome)) {
-          directFinalizeAcknowledged = true;
-          _directStopFinalizePending = false;
-          _publishBearerBusyState();
-          unawaited(_clearDirectTripSession());
-          if (stoppedBooking != null) {
-            await _completeStoppedBooking(
-              stoppedBooking,
-              plannedStopBridgeAlreadyCompletedLeg: false,
-              directFinalizeAcknowledged: true,
-            );
-          }
-          // Refresh authoritative booking/fare — do not invent a monetary
-          // success toast from the reconcile response (no totals there).
-          unawaited(
-            _refreshBookings(
-              force: true,
-              trigger: 'street_finalize_reconcile_ok',
-            ),
+        final trackingStopped =
+            directStopOutcome?.trackingTripStopped == true;
+        if (trackingStopped &&
+            (directBookingId ?? '').trim().isNotEmpty) {
+          // Bounded single in-session reconcile — only after `/trip/stop`
+          // landed. Offline STOP must NOT call reconcile alone (NON_TERMINAL).
+          final reconcileOutcome = await _reconcileDirectBookingOnWorker(
+            tripId: directTripId,
+            expectedBookingId: directBookingId!,
           );
+          if (isDirectRideReconcileAcknowledged(reconcileOutcome)) {
+            directFinalizeAcknowledged = true;
+            _directStopFinalizePending = false;
+            _publishBearerBusyState();
+            unawaited(_clearDirectTripSession());
+            if (stoppedBooking != null) {
+              await _completeStoppedBooking(
+                stoppedBooking,
+                plannedStopBridgeAlreadyCompletedLeg: false,
+                directFinalizeAcknowledged: true,
+              );
+            }
+            unawaited(
+              _refreshBookings(
+                force: true,
+                trigger: 'street_finalize_reconcile_ok',
+              ),
+            );
+          } else {
+            await _persistDirectTripSession(
+              localLifecycle: kDirectTripLocalLifecycleStopped,
+              bookingFinalizeState: kDirectTripFinalizePending,
+              trackingStopState: kDirectTripTrackingStopCompleted,
+              stoppedAtIso: stoppedAt.toUtc().toIso8601String(),
+              frozenKmTotal: kmAtStop,
+              frozenWaitSecondsTotal: waitAtStop,
+              frozenTotalEur: finalDirectTotal,
+              tripIdOverride: directTripId,
+              bookingIdOverride: directBookingId,
+              directRideKeyOverride: directRideKeyAtStop,
+              startedAtIsoOverride: startedAt?.toUtc().toIso8601String(),
+            );
+            _showStreetDirectFinalizePendingSnackbar();
+          }
         } else {
-          // Keep recovery identity + identifiers; leave list on server truth.
-          // Identity mismatch / pending / unknown never apply local COMPLETED.
-          unawaited(_persistDirectTripSession(
+          // Tracking stop did not land (offline / unknown). Frozen outbox
+          // already persisted; surface truthful pending finalize UX.
+          await _persistDirectTripSession(
             localLifecycle: kDirectTripLocalLifecycleStopped,
             bookingFinalizeState: kDirectTripFinalizePending,
-          ));
+            trackingStopState: kDirectTripTrackingStopPending,
+            stoppedAtIso: stoppedAt.toUtc().toIso8601String(),
+            frozenKmTotal: kmAtStop,
+            frozenWaitSecondsTotal: waitAtStop,
+            frozenTotalEur: finalDirectTotal,
+            tripIdOverride: directTripId,
+            bookingIdOverride: directBookingId,
+            directRideKeyOverride: directRideKeyAtStop,
+            startedAtIsoOverride: startedAt?.toUtc().toIso8601String(),
+          );
           _showStreetDirectFinalizePendingSnackbar();
         }
       }
@@ -13707,7 +13946,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     required bool usable,
     required String state,
   }) {
-    if (_usableInternetConnection == usable && _navConnectivityState == state) {
+    final wasUsable = _usableInternetConnection;
+    if (usable == wasUsable && _navConnectivityState == state) {
       return;
     }
     if (mounted) {
@@ -13718,6 +13958,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     } else {
       _usableInternetConnection = usable;
       _navConnectivityState = state;
+    }
+    // OFFLINE-STOP-RIDE-DURABILITY-P0: reconnect must drain the frozen STOP
+    // outbox without requiring an app restart.
+    if (!wasUsable && usable) {
+      unawaited(_recoverPendingDirectTripSession());
     }
   }
 

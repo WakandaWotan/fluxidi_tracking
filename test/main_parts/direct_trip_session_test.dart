@@ -47,6 +47,27 @@ void main() {
       expect(decoded.driverId, 'driver-1');
     });
 
+    test('round-trips frozen STOP totals for offline durability', () {
+      final s = active(
+        lifecycle: kDirectTripLocalLifecycleStopped,
+      ).copyWith(
+        stoppedAtIso: '2026-07-23T10:08:00.000Z',
+        frozenKmTotal: 3.4,
+        frozenWaitSecondsTotal: 90,
+        frozenTotalEur: 12.5,
+        trackingStopState: kDirectTripTrackingStopPending,
+      );
+      final decoded = DirectTripSession.fromJson(s.toJson());
+      expect(decoded, isNotNull);
+      expect(decoded!.hasFrozenStopTotals, isTrue);
+      expect(decoded.needsTrackingStopReplay, isTrue);
+      expect(decoded.frozenKmTotal, 3.4);
+      expect(decoded.frozenWaitSecondsTotal, 90);
+      expect(decoded.frozenTotalEur, 12.5);
+      expect(decoded.stoppedAtIso, '2026-07-23T10:08:00.000Z');
+      expect(decoded.trackingStopState, kDirectTripTrackingStopPending);
+    });
+
     test('fromJson returns null for meaningless records', () {
       expect(DirectTripSession.fromJson(null), isNull);
       expect(DirectTripSession.fromJson('nope'), isNull);
@@ -97,6 +118,38 @@ void main() {
       );
     });
 
+    test('stopped + frozen totals + tracking stop pending retries stop', () {
+      final offlineStop = active(
+        lifecycle: kDirectTripLocalLifecycleStopped,
+      ).copyWith(
+        stoppedAtIso: '2026-07-23T10:08:00.000Z',
+        frozenKmTotal: 2.1,
+        frozenWaitSecondsTotal: 30,
+        frozenTotalEur: 8.0,
+        trackingStopState: kDirectTripTrackingStopPending,
+      );
+      expect(
+        directTripRecoveryAction(offlineStop, now: now),
+        DirectTripRecoveryAction.retryStop,
+      );
+    });
+
+    test('stopped + frozen totals + tracking stop completed reconciles', () {
+      final stopLanded = active(
+        lifecycle: kDirectTripLocalLifecycleStopped,
+      ).copyWith(
+        stoppedAtIso: '2026-07-23T10:08:00.000Z',
+        frozenKmTotal: 2.1,
+        frozenWaitSecondsTotal: 30,
+        frozenTotalEur: 8.0,
+        trackingStopState: kDirectTripTrackingStopCompleted,
+      );
+      expect(
+        directTripRecoveryAction(stopLanded, now: now),
+        DirectTripRecoveryAction.reconcilePending,
+      );
+    });
+
     test('stopped + pending but local-only (no booking/trip) is abandoned', () {
       expect(
         directTripRecoveryAction(
@@ -121,12 +174,14 @@ void main() {
       );
     });
 
-    test('stale active session (older than staleAfter) is abandoned', () {
+    test('stale active session is abandoned', () {
       expect(
         directTripRecoveryAction(
-          active(started: '2026-07-22T10:00:00.000Z'),
+          active(
+            started: '2026-07-22T10:00:00.000Z',
+            updated: '2026-07-22T10:00:00.000Z',
+          ),
           now: now,
-          staleAfter: const Duration(hours: 12),
         ),
         DirectTripRecoveryAction.abandon,
       );

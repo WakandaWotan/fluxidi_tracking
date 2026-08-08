@@ -482,3 +482,107 @@ test("reconcile is a no-op for compliance emit when configuration is missing (le
   assert.equal(stored.compliance_emit_state, "pending");
   assert.equal(stored.compliance_emit_last_error_code, "missing_config");
 });
+
+// OFFLINE-STOP-RIDE-DURABILITY-P0: lost STOP response / offline reconnect must
+// replay `/trip/stop` safely without "Trip is not active" and without mutating
+// authoritative frozen totals.
+test("STOP replay on already-stopped trip is idempotent and preserves frozen totals", async () => {
+  const kv = makeKV({
+    [TRIP_KEY]: seedTrip({
+      status: "stopped",
+      stopped_at: "2026-07-23T10:00:00.000Z",
+      km_total: 4.2,
+      wait_seconds_total: 12,
+      total_eur: 9.5,
+      price_incl_vat: 9.5,
+      booking_finalize_state: "pending",
+    }),
+  });
+  const booking = bookingApi(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const env = {
+    ADMIN_TOKEN: ADMIN,
+    FLUXIDI_TRACKING: kv,
+    BOOKING_API: booking,
+  };
+
+  const res = await worker.fetch(
+    stopReq({
+      ...scope,
+      trip_id: "trip_abc",
+      // Different client numbers on replay must NOT overwrite stored totals.
+      km_total: 99,
+      wait_seconds_total: 999,
+      client_stopped_at: "2026-07-23T11:00:00.000Z",
+    }),
+    env,
+    {},
+  );
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  assert.equal(json.ok, true);
+  assert.equal(json.idempotent_replay, true);
+  assert.equal(json.totals.km_total, 4.2);
+  assert.equal(json.totals.total_eur, 9.5);
+  assert.equal(json.booking_finalized, true);
+
+  const stored = JSON.parse(kv.store.get(TRIP_KEY));
+  assert.equal(stored.km_total, 4.2);
+  assert.equal(stored.total_eur, 9.5);
+  assert.equal(stored.stopped_at, "2026-07-23T10:00:00.000Z");
+  assert.equal(stored.booking_finalize_state, "completed");
+  assert.equal(booking.calls.length, 1);
+});
+
+test("STOP then STOP again does not create a second fare (lost-response case)", async () => {
+  const kv = makeKV({ [TRIP_KEY]: activeTrip({ km_total: null, total_eur: null }) });
+  const booking = bookingApi(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const compliance = complianceWorker(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const env = {
+    ...COMPLIANCE_ENV_BASE,
+    ADMIN_TOKEN: ADMIN,
+    FLUXIDI_TRACKING: kv,
+    BOOKING_API: booking,
+    COMPLIANCE_WORKER: compliance,
+  };
+  const ctx = makeCtx();
+
+  const first = await worker.fetch(
+    stopReq({
+      ...scope,
+      trip_id: "trip_abc",
+      km_total: 3.1,
+      wait_seconds_total: 0,
+      client_stopped_at: "2026-07-23T10:00:00.000Z",
+    }),
+    env,
+    ctx,
+  );
+  assert.equal(first.status, 200);
+  await ctx.flush();
+  const firstJson = await first.json();
+  assert.equal(firstJson.ok, true);
+  assert.equal(firstJson.idempotent_replay, undefined);
+
+  const second = await worker.fetch(
+    stopReq({
+      ...scope,
+      trip_id: "trip_abc",
+      km_total: 3.1,
+      wait_seconds_total: 0,
+      client_stopped_at: "2026-07-23T10:00:00.000Z",
+    }),
+    env,
+    {},
+  );
+  assert.equal(second.status, 200);
+  const secondJson = await second.json();
+  assert.equal(secondJson.ok, true);
+  assert.equal(secondJson.idempotent_replay, true);
+
+  const stored = JSON.parse(kv.store.get(TRIP_KEY));
+  assert.equal(stored.status, "stopped");
+  assert.equal(stored.km_total, 3.1);
+  // Timeline should not accumulate a second stop event from idempotent replay.
+  const stops = (stored.timeline || []).filter((e) => e && e.type === "stop");
+  assert.equal(stops.length, 1);
+});

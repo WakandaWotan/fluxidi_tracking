@@ -175,9 +175,21 @@ const String kDirectTripLocalLifecycleStopped = 'stopped';
 const String kDirectTripFinalizePending = 'pending';
 const String kDirectTripFinalizeCompleted = 'completed';
 
-/// Minimal durable record of the active/last direct-trip session, persisted so
-/// a crash/restart can resume an active ride or reconcile a stopped-but-not-
-/// finalized booking. Deliberately small and PII-free (ids + timestamps only).
+/// Whether `/trip/stop` has durably landed for this session.
+///
+/// Distinct from [kDirectTripFinalizePending]: stop may succeed while booking
+/// finalize is still pending. Offline STOP leaves this `pending` with frozen
+/// meter totals so reconnect can replay `/trip/stop` (reconcile alone cannot
+/// stop a still-active server trip).
+const String kDirectTripTrackingStopPending = 'pending';
+const String kDirectTripTrackingStopCompleted = 'completed';
+
+/// Durable record of the active/last direct-trip session, persisted so a
+/// crash/restart/offline-STOP can resume or finalize without losing the ride.
+///
+/// Identity fields are PII-free ids/timestamps. After STOP, frozen meter
+/// totals are also stored so reconnect can replay `/trip/stop` with the
+/// exact driver-visible distance/time/fare (authoritative client freeze).
 class DirectTripSession {
   const DirectTripSession({
     required this.directRideKey,
@@ -190,6 +202,11 @@ class DirectTripSession {
     this.companyId,
     this.driverId,
     this.updatedAtIso,
+    this.stoppedAtIso,
+    this.frozenKmTotal,
+    this.frozenWaitSecondsTotal,
+    this.frozenTotalEur,
+    this.trackingStopState,
   });
 
   final String directRideKey;
@@ -208,12 +225,54 @@ class DirectTripSession {
   final String? driverId;
   final String? updatedAtIso;
 
+  /// Client freeze timestamp from the driver's STOP tap (UTC ISO).
+  final String? stoppedAtIso;
+
+  /// Frozen meter distance (km) at STOP — authoritative for offline replay.
+  final double? frozenKmTotal;
+
+  /// Frozen wait seconds at STOP.
+  final int? frozenWaitSecondsTotal;
+
+  /// Frozen client fare (€) at STOP (already €0.10-rounded when persisted).
+  final double? frozenTotalEur;
+
+  /// `pending` until `/trip/stop` is acknowledged; then `completed`.
+  final String? trackingStopState;
+
   bool get hasTripId => tripId.trim().isNotEmpty;
   bool get hasBookingId => bookingId.trim().isNotEmpty;
   bool get isCompleted =>
       bookingFinalizeState.trim().toLowerCase() == kDirectTripFinalizeCompleted;
   bool get isStopped =>
       localLifecycle.trim().toLowerCase() == kDirectTripLocalLifecycleStopped;
+
+  bool get hasFrozenStopTotals {
+    final km = frozenKmTotal;
+    final wait = frozenWaitSecondsTotal;
+    final total = frozenTotalEur;
+    final stopped = (stoppedAtIso ?? '').trim();
+    return km != null &&
+        km.isFinite &&
+        km >= 0 &&
+        wait != null &&
+        wait >= 0 &&
+        total != null &&
+        total.isFinite &&
+        total >= 0 &&
+        stopped.isNotEmpty;
+  }
+
+  bool get trackingStopCompleted =>
+      (trackingStopState ?? '').trim().toLowerCase() ==
+      kDirectTripTrackingStopCompleted;
+
+  bool get needsTrackingStopReplay =>
+      isStopped &&
+      hasTripId &&
+      hasFrozenStopTotals &&
+      !trackingStopCompleted &&
+      !isCompleted;
 
   DirectTripSession copyWith({
     String? directRideKey,
@@ -226,6 +285,11 @@ class DirectTripSession {
     String? companyId,
     String? driverId,
     String? updatedAtIso,
+    String? stoppedAtIso,
+    double? frozenKmTotal,
+    int? frozenWaitSecondsTotal,
+    double? frozenTotalEur,
+    String? trackingStopState,
   }) {
     return DirectTripSession(
       directRideKey: directRideKey ?? this.directRideKey,
@@ -238,6 +302,12 @@ class DirectTripSession {
       companyId: companyId ?? this.companyId,
       driverId: driverId ?? this.driverId,
       updatedAtIso: updatedAtIso ?? this.updatedAtIso,
+      stoppedAtIso: stoppedAtIso ?? this.stoppedAtIso,
+      frozenKmTotal: frozenKmTotal ?? this.frozenKmTotal,
+      frozenWaitSecondsTotal:
+          frozenWaitSecondsTotal ?? this.frozenWaitSecondsTotal,
+      frozenTotalEur: frozenTotalEur ?? this.frozenTotalEur,
+      trackingStopState: trackingStopState ?? this.trackingStopState,
     );
   }
 
@@ -253,11 +323,34 @@ class DirectTripSession {
         if ((driverId ?? '').trim().isNotEmpty) 'driver_id': driverId!.trim(),
         if ((updatedAtIso ?? '').trim().isNotEmpty)
           'updated_at': updatedAtIso!.trim(),
+        if ((stoppedAtIso ?? '').trim().isNotEmpty)
+          'stopped_at': stoppedAtIso!.trim(),
+        if (frozenKmTotal != null && frozenKmTotal!.isFinite)
+          'frozen_km_total': frozenKmTotal,
+        if (frozenWaitSecondsTotal != null)
+          'frozen_wait_seconds_total': frozenWaitSecondsTotal,
+        if (frozenTotalEur != null && frozenTotalEur!.isFinite)
+          'frozen_total_eur': frozenTotalEur,
+        if ((trackingStopState ?? '').trim().isNotEmpty)
+          'tracking_stop_state': trackingStopState!.trim(),
       };
 
   static DirectTripSession? fromJson(Object? decoded) {
     if (decoded is! Map) return null;
     String s(Object? v) => (v ?? '').toString().trim();
+    double? d(Object? v) {
+      if (v is num) return v.toDouble();
+      if (v == null) return null;
+      return double.tryParse(v.toString().replaceAll(',', '.'));
+    }
+
+    int? i(Object? v) {
+      if (v is int) return v;
+      if (v is num) return v.round();
+      if (v == null) return null;
+      return int.tryParse(v.toString().trim());
+    }
+
     final directRideKey = s(decoded['direct_ride_key'] ?? decoded['directRideKey']);
     final tripId = s(decoded['trip_id'] ?? decoded['tripId']);
     // A session with neither a direct_ride_key nor a trip_id is meaningless.
@@ -266,6 +359,9 @@ class DirectTripSession {
         s(decoded['local_lifecycle'] ?? decoded['localLifecycle']).toLowerCase();
     final finalizeRaw = s(
       decoded['booking_finalize_state'] ?? decoded['bookingFinalizeState'],
+    ).toLowerCase();
+    final trackingStopRaw = s(
+      decoded['tracking_stop_state'] ?? decoded['trackingStopState'],
     ).toLowerCase();
     return DirectTripSession(
       directRideKey: directRideKey,
@@ -289,11 +385,22 @@ class DirectTripSession {
       updatedAtIso: s(decoded['updated_at'] ?? decoded['updatedAt']).isEmpty
           ? null
           : s(decoded['updated_at'] ?? decoded['updatedAt']),
+      stoppedAtIso: s(decoded['stopped_at'] ?? decoded['stoppedAt']).isEmpty
+          ? null
+          : s(decoded['stopped_at'] ?? decoded['stoppedAt']),
+      frozenKmTotal: d(decoded['frozen_km_total'] ?? decoded['frozenKmTotal']),
+      frozenWaitSecondsTotal: i(
+        decoded['frozen_wait_seconds_total'] ??
+            decoded['frozenWaitSecondsTotal'],
+      ),
+      frozenTotalEur:
+          d(decoded['frozen_total_eur'] ?? decoded['frozenTotalEur']),
+      trackingStopState: trackingStopRaw.isEmpty ? null : trackingStopRaw,
     );
   }
 }
 
-/// What startup recovery should do with a persisted session.
+/// What startup / reconnect recovery should do with a persisted session.
 enum DirectTripRecoveryAction {
   /// No persisted session, or it is already resolved (completed).
   none,
@@ -301,8 +408,11 @@ enum DirectTripRecoveryAction {
   /// A ride is still marked active locally and recent — resume it in memory.
   resumeActive,
 
-  /// A stopped ride whose booking is still pending and has a durable booking id
-  /// and trip id — call the reconcile endpoint.
+  /// Local STOP froze totals but `/trip/stop` has not been acknowledged —
+  /// replay stop with the frozen totals (reconcile alone is insufficient).
+  retryStop,
+
+  /// Tracking stop landed; booking finalize still pending — reconcile only.
   reconcilePending,
 
   /// The session is unrecoverable (too old, or stopped/local-only with no
@@ -310,10 +420,12 @@ enum DirectTripRecoveryAction {
   abandon,
 }
 
-/// Pure decision for startup recovery. No IO, fully unit-testable.
+/// Pure decision for startup / reconnect recovery. No IO, fully unit-testable.
 ///
 /// Rules:
 ///   * null / completed session → none;
+///   * stopped + frozen totals + tracking stop not completed + trip_id
+///     → retryStop (offline STOP durability);
 ///   * stopped + pending + has trip_id + has booking_id → reconcilePending;
 ///   * stopped + pending but no durable booking/trip → abandon (local-only);
 ///   * active + within [staleAfter] → resumeActive;
@@ -329,6 +441,9 @@ DirectTripRecoveryAction directTripRecoveryAction(
   final resolvedNow = (now ?? DateTime.now()).toUtc();
 
   if (session.isStopped) {
+    if (session.needsTrackingStopReplay) {
+      return DirectTripRecoveryAction.retryStop;
+    }
     if (session.hasTripId && session.hasBookingId) {
       return DirectTripRecoveryAction.reconcilePending;
     }

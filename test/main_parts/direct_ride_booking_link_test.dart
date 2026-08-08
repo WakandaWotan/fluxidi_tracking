@@ -1684,8 +1684,28 @@ void main() {
       );
     });
 
+    test('offline STOP with frozen totals maps to retryStop not reconcile', () {
+      final offline = activeSession(
+        lifecycle: kDirectTripLocalLifecycleStopped,
+        finalize: kDirectTripFinalizePending,
+      ).copyWith(
+        stoppedAtIso: '2026-07-23T10:08:00.000Z',
+        frozenKmTotal: 1.5,
+        frozenWaitSecondsTotal: 0,
+        frozenTotalEur: 6.5,
+        trackingStopState: kDirectTripTrackingStopPending,
+      );
+      expect(offline.needsTrackingStopReplay, isTrue);
+      expect(
+        directTripRecoveryAction(offline),
+        DirectTripRecoveryAction.retryStop,
+      );
+    });
+
     test('startup recovery never implies /trip/stop or new key generation', () {
       // Contract: every probe action is retain / rewrite / clear — never "stop".
+      // (Offline STOP replay uses DirectTripRecoveryAction.retryStop, which is
+      // a separate recovery enum — not a probe action.)
       const forbidden = {'stop', 'start', 'create'};
       for (final a in DirectTripRecoveryProbeAction.values) {
         expect(forbidden.contains(a.name), isFalse);
