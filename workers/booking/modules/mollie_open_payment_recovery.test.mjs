@@ -12,6 +12,7 @@ import {
   resolveMollieCancelReconcileOutcome,
   resolveMollieOpenPaymentCancelDecision,
   resolveMollieOpenPaymentPresentation,
+  resolveMollieRecoveryWhenProviderFetchFailed,
   resolveOpenPosBlocksNewStreetCheckout,
   resolvePendingLockClearAfterCancel,
 } from "./mollie_open_payment_recovery.mjs";
@@ -178,6 +179,20 @@ test("16. weak network / recovery error keeps owner (no fallback)", () => {
   assert.equal(err.state, "recoveryError");
   assert.equal(err.fallback_allowed, false);
   assert.deepEqual(err.actions, ["refresh_status"]);
+});
+
+test("16b. provider GET failure never invents cancel_not_confirmed from local open", () => {
+  const out = resolveMollieRecoveryWhenProviderFetchFailed({
+    action: "cancel",
+    hasCheckoutUrl: true,
+    openCheckout,
+  });
+  assert.equal(out.ok, false);
+  assert.equal(out.error, "provider_status_unavailable");
+  assert.notEqual(out.error, "cancel_not_confirmed");
+  assert.equal(out.release_owner, false);
+  assert.equal(out.fallback_allowed, false);
+  assert.equal(out.presentation_state, "recoveryError");
 });
 
 test("17. manualMarkPaidConflict surfaces recovery (no duplicate create)", () => {

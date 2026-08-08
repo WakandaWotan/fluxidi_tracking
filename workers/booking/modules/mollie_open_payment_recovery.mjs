@@ -270,6 +270,45 @@ export function resolveMollieCancelReconcileOutcome({
   };
 }
 
+/**
+ * STREET-HOSTED-TERMINAL-CONVERGENCE-P0:
+ * When the authoritative Mollie GET cannot be completed, never invent
+ * "still open" / cancel_not_confirmed from a stale local mollie_open marker.
+ * Ownership stays fail-closed until a fresh provider read succeeds.
+ */
+export function resolveMollieRecoveryWhenProviderFetchFailed({
+  action = "refresh",
+  hasCheckoutUrl = false,
+  openCheckout = null,
+} = {}) {
+  const presentation = resolveMollieOpenPaymentPresentation({
+    providerStatus: "",
+    hasCheckoutUrl,
+    recoveryError: true,
+  });
+  return {
+    ok: false,
+    action: _lower(action, 40) || "refresh",
+    error: "provider_status_unavailable",
+    message:
+      "Could not confirm the online payment status with Mollie. Refresh and try again.",
+    release_owner: false,
+    fallback_allowed: false,
+    cancel_allowed: true,
+    resumable: !!hasCheckoutUrl,
+    presentation_state: presentation.state,
+    open_checkout: openCheckout,
+    recovery: {
+      presentation_state: presentation.state,
+      resumable: presentation.resumable === true,
+      cancel_allowed: true,
+      fallback_allowed: false,
+      actions: presentation.actions,
+    },
+    creates_new_mollie_payment: false,
+  };
+}
+
 export function normalizeMollieRecoveryAction(raw) {
   const t = _lower(raw, 40);
   if (t === "refresh" || t === "refresh_status" || t === "status") {

@@ -1418,3 +1418,176 @@ test("CONVERGE-P0: late orphan payment webhook cannot create duplicate paid", as
     mock.restore();
   }
 });
+
+async function seedOpenHostedOwner(kv, {
+  paymentId,
+  shadowId = "shadow-term",
+  localStatus = "open",
+}) {
+  const booking = JSON.parse(await kv.get("booking:street_1001_abc"));
+  booking.payment_status = "pending";
+  booking.payment_provider = "mollie";
+  booking.payment_mode = "mollie";
+  booking.checkout_url = `https://www.mollie.com/checkout/test/${paymentId}`;
+  booking.payment_booking_id = shadowId;
+  booking.payment_id = paymentId;
+  booking.mollie = { id: paymentId, payment_id: paymentId, status: localStatus };
+  booking.payment_attempt_status = "mollie_open";
+  await kv.put("booking:street_1001_abc", JSON.stringify(booking));
+  await kv.put(
+    `booking:${shadowId}`,
+    JSON.stringify({
+      booking_id: shadowId,
+      public_booking_id: "street_1001_abc",
+      payment_status: "pending",
+      payment_id: paymentId,
+      checkout_url: booking.checkout_url,
+      mollie: { id: paymentId, payment_id: paymentId, status: localStatus },
+      tenant_id: "T1",
+      company_id: "C1",
+      street_checkout: true,
+    }),
+  );
+}
+
+for (const terminal of ["expired", "failed"]) {
+  test(`TERMINAL-CONVERGE-P0: refresh local-open + provider ${terminal} releases + shadow`, async () => {
+    const { env, kv } = await makeEnv();
+    const paymentId = `tr_refresh_${terminal}_shadow`;
+    await seedOpenHostedOwner(kv, { paymentId, shadowId: `shadow_${terminal}` });
+    const mock = installMultiPaymentMollieMock({ [paymentId]: terminal });
+    try {
+      const res = await worker.fetch(recoveryRequest({ action: "refresh" }), env, {});
+      const body = await res.json();
+      assert.equal(body.ok, true);
+      assert.equal(body.fallback_allowed, true);
+      assert.equal(body.payment_status, "unpaid");
+      assert.ok(["expired", "failed", "canceled"].includes(body.presentation_state));
+      const after = JSON.parse(await kv.get("booking:street_1001_abc"));
+      assert.ok(!readOpenStreetMollieCheckout(after));
+      const shadow = JSON.parse(await kv.get(`booking:shadow_${terminal}`));
+      assert.equal(String(shadow.mollie?.status || "").toLowerCase(), terminal);
+      assert.equal(String(shadow.payment_status || "").toLowerCase(), "unpaid");
+      assert.equal(
+        mock.calls.filter((c) => c.method === "DELETE").length,
+        0,
+        "refresh must not DELETE",
+      );
+    } finally {
+      mock.restore();
+    }
+  });
+
+  test(`TERMINAL-CONVERGE-P0: cancel local-open + provider already ${terminal} → no DELETE`, async () => {
+    const { env, kv } = await makeEnv();
+    const paymentId = `tr_cancel_already_${terminal}`;
+    await seedOpenHostedOwner(kv, { paymentId, shadowId: `shadow_cancel_${terminal}` });
+    const mock = installMultiPaymentMollieMock({ [paymentId]: terminal });
+    try {
+      const res = await worker.fetch(recoveryRequest({ action: "cancel" }), env, {});
+      const body = await res.json();
+      assert.equal(body.ok, true);
+      assert.equal(body.fallback_allowed, true);
+      assert.equal(body.already_released ?? true, true);
+      assert.ok(!readOpenStreetMollieCheckout(
+        JSON.parse(await kv.get("booking:street_1001_abc")),
+      ));
+      assert.equal(
+        mock.calls.filter((c) => c.method === "DELETE").length,
+        0,
+        "already-terminal cancel must not DELETE",
+      );
+      const shadow = JSON.parse(await kv.get(`booking:shadow_cancel_${terminal}`));
+      assert.equal(String(shadow.mollie?.status || "").toLowerCase(), terminal);
+    } finally {
+      mock.restore();
+    }
+  });
+}
+
+test("TERMINAL-CONVERGE-P0: provider GET throws → provider_status_unavailable not cancel_not_confirmed", async () => {
+  const { env, kv } = await makeEnv();
+  const paymentId = "tr_get_throws";
+  await seedOpenHostedOwner(kv, { paymentId });
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error("network_down");
+  };
+  try {
+    const res = await worker.fetch(recoveryRequest({ action: "cancel" }), env, {});
+    const body = await res.json();
+    assert.equal(body.ok, false);
+    assert.equal(body.error, "provider_status_unavailable");
+    assert.notEqual(body.error, "cancel_not_confirmed");
+    assert.equal(body.fallback_allowed, false);
+    assert.ok(readOpenStreetMollieCheckout(
+      JSON.parse(await kv.get("booking:street_1001_abc")),
+    ));
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("TERMINAL-CONVERGE-P0: old payment terminal after tip moved does not clear newer open owner", async () => {
+  const { env, kv } = await makeEnv();
+  const oldId = "tr_old_tip";
+  const newId = "tr_new_tip";
+  await seedOpenHostedOwner(kv, {
+    paymentId: newId,
+    shadowId: "shadow_new_tip",
+  });
+  await kv.put(
+    buildMolliePaymentRouteKey(oldId),
+    JSON.stringify({
+      version: 1,
+      payment_id: oldId,
+      tenant_id: "T1",
+      company_id: "C1",
+      booking_id: "street_1001_abc",
+      channel: STREET_HOSTED_CHECKOUT_ROUTE_CHANNEL,
+      source: STREET_HOSTED_CHECKOUT_ROUTE_SOURCE,
+      profile_id: "pfl_street_test",
+      intent_key: "shadow_old_tip",
+    }),
+  );
+  await kv.put(
+    "booking:shadow_old_tip",
+    JSON.stringify({
+      booking_id: "shadow_old_tip",
+      public_booking_id: "street_1001_abc",
+      payment_status: "pending",
+      payment_id: oldId,
+      mollie: { id: oldId, status: "open" },
+      street_checkout: true,
+    }),
+  );
+  const mock = installMultiPaymentMollieMock({
+    [oldId]: "expired",
+    [newId]: "open",
+  });
+  try {
+    const res = await worker.fetch(
+      new Request("https://booking.internal/webhook/mollie", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: oldId }),
+      }),
+      env,
+      {},
+    );
+    const body = await res.json();
+    assert.equal(body.street_hosted_reconcile, true);
+    assert.equal(body.reason, "street_hosted_stale_terminal_ignored");
+    // Tip owner must stay open (newer payment); only old shadow converges.
+    assert.ok(readOpenStreetMollieCheckout(
+      JSON.parse(await kv.get("booking:street_1001_abc")),
+    ));
+    const tip = JSON.parse(await kv.get("booking:street_1001_abc"));
+    assert.equal(String(tip.payment_id || "").trim(), newId);
+    assert.equal(String(tip.payment_attempt_status || "").toLowerCase(), "mollie_open");
+    const oldShadow = JSON.parse(await kv.get("booking:shadow_old_tip"));
+    assert.equal(String(oldShadow.mollie?.status || "").toLowerCase(), "expired");
+  } finally {
+    mock.restore();
+  }
+});

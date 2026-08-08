@@ -42,6 +42,8 @@ class MollieStreetCheckoutCopy {
     this.cancelOnlinePaymentBusyText = 'Canceling online payment…',
     this.cancelOnlinePaymentFailedText =
         'Could not confirm cancellation. Online payment is still open.',
+    this.recoveryErrorText =
+        'Could not confirm the online payment status. Refresh and try again.',
   });
 
   final String title;
@@ -64,6 +66,10 @@ class MollieStreetCheckoutCopy {
   final String cancelOnlinePaymentHint;
   final String cancelOnlinePaymentBusyText;
   final String cancelOnlinePaymentFailedText;
+
+  /// STREET-HOSTED-TERMINAL-CONVERGENCE-P0: shown when provider GET fails
+  /// (ownership stays fail-closed; not the same as cancel_not_confirmed).
+  final String recoveryErrorText;
 }
 
 /// Content of the street "Online betalen" waiting dialog.
@@ -232,9 +238,13 @@ class MollieStreetCheckoutDialogContentState
         _scheduleTerminalPop(outcome);
         return;
       }
+      // STREET-HOSTED-TERMINAL-CONVERGENCE-P0: provider GET failure is not
+      // "cancel not confirmed" — keep ownership and prompt a status refresh.
       setState(() {
         _cancelBusy = false;
-        _feedbackText = widget.copy.cancelOnlinePaymentFailedText;
+        _feedbackText = outcome == MollieStreetCheckoutPollOutcome.error
+            ? widget.copy.recoveryErrorText
+            : widget.copy.cancelOnlinePaymentFailedText;
       });
     } catch (_) {
       if (!mounted || _stopped) return;

@@ -3944,6 +3944,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
               cancelOnlinePaymentFailedText: _receiptText(
                 'cancelOnlinePaymentFailed',
               ),
+              recoveryErrorText: _receiptText('paymentRecoveryError'),
             ),
             pollOnce: () => _pollMollieStreetCheckoutStatusOnce(
               paymentBookingId: paymentBookingId,
@@ -4051,7 +4052,30 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       if (mounted) {
         setState(() => _openMollieRecovery = null);
       }
+      // Merge released markers so fallback methods unblock immediately.
+      final fields = await _fetchAuthoritativePaymentFields(bookingId);
+      if (mounted && fields != null && fields.isNotEmpty) {
+        _mergePaymentFieldsIntoReceiptDetails(fields);
+        setState(() {});
+      }
       return outcome!;
+    }
+    final err = (root?['error'] ?? '').toString().trim();
+    // STREET-HOSTED-TERMINAL-CONVERGENCE-P0: provider GET failure is NOT
+    // cancel_not_confirmed — keep ownership fail-closed and surface retry.
+    if (err == 'provider_status_unavailable' ||
+        err == 'recovery_refresh_failed') {
+      final recoveryHttp =
+          (root?['_http_code'] as num?)?.toInt() ??
+          (root?['http_code'] as num?)?.toInt();
+      final recovery = parseMollieOpenPaymentRecovery(
+        root,
+        httpCode: recoveryHttp,
+      );
+      if (mounted && recovery != null) {
+        setState(() => _openMollieRecovery = recovery);
+      }
+      return MollieStreetCheckoutPollOutcome.error;
     }
     // Cancel not confirmed — keep ownership; dialog stays open.
     final recoveryHttp =
@@ -4554,7 +4578,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
         }
         return;
       }
-      if (root['ok'] != true && root['error'] == 'recovery_refresh_failed') {
+      final err = (root['error'] ?? '').toString().trim();
+      if (root['ok'] != true &&
+          (err == 'recovery_refresh_failed' ||
+              err == 'provider_status_unavailable')) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(_receiptText('paymentRecoveryError'))),
         );
