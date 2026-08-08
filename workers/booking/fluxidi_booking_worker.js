@@ -251,6 +251,7 @@ import {
   buildDriverPosStartFailureDiagnostic,
   driverPosStartFailDiagContainsSecrets,
   DRIVER_POS_START_FAIL_DIAG_TTL_SECONDS,
+  buildMolliePosIdempotencyKey,
 } from "./modules/pos_terminal_payment.mjs";
 import {
   applyTerminalLinkAction,
@@ -35295,7 +35296,11 @@ export default {
           profileId: companyMollieProfileId,
           ...(paymentTestMode ? { testmode: true } : {}),
         };
-        const idempotencyKey = safeStr(posTerminalIntentKey, 240).replace(/[^a-zA-Z0-9_-]+/g, "_");
+        // MOLLIE-POS-IDEMPOTENCY-KEY-LENGTH-P0: Mollie rejects keys > 100 chars.
+        const idempotencyKey = await buildMolliePosIdempotencyKey(
+          posTerminalIntentKey,
+          paymentTestMode ? "test" : "live",
+        );
         let mollieRes = null;
         let mollie = {};
         try {
@@ -83421,7 +83426,12 @@ async function startDriverPosTerminalPaymentAuthoritative(
     profileId: companyMollieProfileId,
     ...(paymentTestMode ? { testmode: true } : {}),
   };
-  const idempotencyKey = safeStr(intentKey, 240).replace(/[^a-zA-Z0-9_-]+/g, "_");
+  // MOLLIE-POS-IDEMPOTENCY-KEY-LENGTH-P0: never send the raw intent KV key —
+  // Mollie rejects Idempotency-Key values longer than 100 characters.
+  const idempotencyKey = await buildMolliePosIdempotencyKey(
+    intentKey,
+    paymentTestMode ? "test" : "live",
+  );
   const requestContract = buildDriverPosCreateRequestContract({
     terminalId,
     amount,

@@ -456,6 +456,62 @@ export function buildScopedDriverPosPaymentIntentKey(scope, bookingId, legId) {
   return `tenant:${tenant}:company:${company}:mollie_driver_pos_intent:${booking}:${legOrMain}:v1`;
 }
 
+/** Mollie Idempotency-Key hard limit (documented + field-proven). */
+export const MOLLIE_POS_IDEMPOTENCY_KEY_MAX_LEN = 100;
+
+/**
+ * Canonical source string hashed into the Mollie Idempotency-Key.
+ * Includes intent key + live/test so environments cannot collide.
+ */
+export function buildMolliePosIdempotencyCanonicalSource(
+  intentKey,
+  mollieMode = "live",
+) {
+  const intent = _str(intentKey, 400);
+  const mode =
+    String(mollieMode ?? "").trim().toLowerCase() === "test" ? "test" : "live";
+  return `${intent}:${mode}:v1`;
+}
+
+async function _sha256Hex(text) {
+  const data = new TextEncoder().encode(String(text ?? ""));
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  const bytes = new Uint8Array(digest);
+  let hex = "";
+  for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
+  return hex;
+}
+
+/**
+ * Deterministic Mollie Idempotency-Key for POS create.
+ * Always <= 100 chars. Never random. Same intent+mode => same key.
+ *
+ * Format: fluxidi-pos-v1:<64-char-sha256-hex>  (79 chars)
+ */
+export async function buildMolliePosIdempotencyKey(
+  intentKey,
+  mollieMode = "live",
+) {
+  const source = buildMolliePosIdempotencyCanonicalSource(intentKey, mollieMode);
+  if (!_str(intentKey, 400)) return "";
+  const hex = await _sha256Hex(source);
+  const key = `fluxidi-pos-v1:${hex}`;
+  if (key.length > MOLLIE_POS_IDEMPOTENCY_KEY_MAX_LEN) {
+    // Defensive: format is fixed-length; fail closed rather than send oversize.
+    return key.slice(0, MOLLIE_POS_IDEMPOTENCY_KEY_MAX_LEN);
+  }
+  return key;
+}
+
+/**
+ * Legacy oversize key form that Mollie rejected in field evidence
+ * (raw intent key with non [A-Za-z0-9_-] replaced by `_`).
+ * Exported only for regression tests / length proof.
+ */
+export function legacyOversizedMolliePosIdempotencyKey(intentKey) {
+  return _str(intentKey, 400).replace(/[^a-zA-Z0-9_-]+/g, "_");
+}
+
 /** TTL for Tap-to-Pay create-failure diagnostics (14 days). */
 export const DRIVER_POS_START_FAIL_DIAG_TTL_SECONDS = 60 * 60 * 24 * 14;
 

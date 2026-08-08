@@ -353,6 +353,85 @@ test("driver POS start: no active terminal fails clearly; double start reuses in
   }
 });
 
+test("driver POS start: Mollie Idempotency-Key is compact and stable across timeout retry", async () => {
+  const kv = makeKV();
+  const session = await seedDriverSession({
+    tokenValue: "drv-pos-idem",
+    tenantId: TENANT,
+    companyId: COMPANY,
+    driverId: DRIVER,
+  });
+  await kv.put(session.key, JSON.stringify(session.record));
+  await kv.put(`booking:${BOOKING}`, JSON.stringify(plannedBooking()));
+  await seedMollieCredentials(kv, { tenantId: TENANT, companyId: COMPANY });
+  await seedTerminalSnapshot(kv, {
+    tenantId: TENANT,
+    companyId: COMPANY,
+    terminals: [{ id: "term_1", status: "active", profile_id: "pfl_1" }],
+  });
+
+  const seenKeys = [];
+  let createCalls = 0;
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes("api.mollie.com") && init?.method === "POST") {
+      createCalls += 1;
+      const idem = init.headers?.["Idempotency-Key"] || init.headers?.["idempotency-key"];
+      seenKeys.push(String(idem || ""));
+      assert.ok(String(idem).length <= 100, `idempotency key too long: ${String(idem).length}`);
+      assert.match(String(idem), /^fluxidi-pos-v1:[0-9a-f]{64}$/);
+      // Field regression: legacy sanitized intent key was 133 chars.
+      assert.ok(!String(idem).includes("mollie_driver_pos_intent"));
+      if (createCalls === 1) {
+        throw new Error("network timeout");
+      }
+      const body = JSON.parse(init.body);
+      assert.equal(body.method, "pointofsale");
+      assert.equal(body.terminalId, "term_1");
+      assert.equal(body.amount.value, "42.50");
+      return new Response(
+        JSON.stringify({ id: "tr_idem_1", status: "open" }),
+        { status: 201 },
+      );
+    }
+    return new Response("{}", { status: 404 });
+  };
+
+  try {
+    const failRes = await worker.fetch(
+      startReq({ booking_id: BOOKING }, "drv-pos-idem"),
+      envFor(kv),
+    );
+    const failBody = await failRes.json();
+    assert.equal(failBody.ok, false);
+    assert.equal(failBody.error, "mollie_terminal_payment_create_failed");
+
+    const okRes = await worker.fetch(
+      startReq({ booking_id: BOOKING }, "drv-pos-idem"),
+      envFor(kv),
+    );
+    const okBody = await okRes.json();
+    assert.equal(okRes.status, 200);
+    assert.equal(okBody.ok, true);
+    assert.equal(okBody.payment_id, "tr_idem_1");
+    assert.equal(createCalls, 2);
+    assert.equal(seenKeys.length, 2);
+    assert.equal(seenKeys[0], seenKeys[1]);
+
+    // No duplicate create on third start — reuses open intent.
+    const reuseRes = await worker.fetch(
+      startReq({ booking_id: BOOKING }, "drv-pos-idem"),
+      envFor(kv),
+    );
+    const reuseBody = await reuseRes.json();
+    assert.equal(reuseBody.status, "existing_open");
+    assert.equal(reuseBody.payment_id, "tr_idem_1");
+    assert.equal(createCalls, 2);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
 test("driver POS start: Mollie 4xx persists status/title/detail; no intent/shadow", async () => {
   const kv = makeKV();
   const session = await seedDriverSession({

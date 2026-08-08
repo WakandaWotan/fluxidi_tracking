@@ -27,6 +27,10 @@ import {
   buildDriverPosStartFailureDiagnostic,
   buildScopedDriverPosStartFailLatestKey,
   driverPosStartFailDiagContainsSecrets,
+  buildMolliePosIdempotencyKey,
+  buildMolliePosIdempotencyCanonicalSource,
+  legacyOversizedMolliePosIdempotencyKey,
+  MOLLIE_POS_IDEMPOTENCY_KEY_MAX_LEN,
 } from "./pos_terminal_payment.mjs";
 
 const T = (id, extra = {}) => ({ id, status: "active", profile_id: "pfl_1", ...extra });
@@ -342,6 +346,53 @@ test("sanitizeMollieCreateRejection timeout/network does not invent provider bod
   assert.equal(out.title, null);
   assert.equal(out.detail, null);
   assert.equal(out.code, null);
+});
+
+test("Mollie POS Idempotency-Key is compact, deterministic, and mode/booking/leg scoped", async () => {
+  const intentA = buildScopedDriverPosPaymentIntentKey(
+    { tenant_id: "fluxidi_fluxidi_ddmh9g", company_id: "fluxidi_fluxidi_ddmh9g" },
+    "street_1786166071241_h72y5gm4",
+    "main",
+  );
+  const legacy = legacyOversizedMolliePosIdempotencyKey(intentA);
+  assert.ok(legacy.length > MOLLIE_POS_IDEMPOTENCY_KEY_MAX_LEN);
+  // Field-proven oversize form for this booking (Mollie detail quoted this key).
+  assert.equal(legacy.length, 123);
+
+  const key1 = await buildMolliePosIdempotencyKey(intentA, "live");
+  const keyRetry = await buildMolliePosIdempotencyKey(intentA, "live");
+  assert.equal(key1, keyRetry);
+  assert.ok(key1.length <= MOLLIE_POS_IDEMPOTENCY_KEY_MAX_LEN);
+  assert.equal(key1.length, "fluxidi-pos-v1:".length + 64);
+  assert.match(key1, /^fluxidi-pos-v1:[0-9a-f]{64}$/);
+
+  const keyOtherBooking = await buildMolliePosIdempotencyKey(
+    buildScopedDriverPosPaymentIntentKey(
+      { tenant_id: "fluxidi_fluxidi_ddmh9g", company_id: "fluxidi_fluxidi_ddmh9g" },
+      "street_other_booking",
+      "main",
+    ),
+    "live",
+  );
+  assert.notEqual(key1, keyOtherBooking);
+
+  const keyOtherLeg = await buildMolliePosIdempotencyKey(
+    buildScopedDriverPosPaymentIntentKey(
+      { tenant_id: "fluxidi_fluxidi_ddmh9g", company_id: "fluxidi_fluxidi_ddmh9g" },
+      "street_1786166071241_h72y5gm4",
+      "return",
+    ),
+    "live",
+  );
+  assert.notEqual(key1, keyOtherLeg);
+
+  const keyTest = await buildMolliePosIdempotencyKey(intentA, "test");
+  assert.notEqual(key1, keyTest);
+
+  const srcLive = buildMolliePosIdempotencyCanonicalSource(intentA, "live");
+  const srcTest = buildMolliePosIdempotencyCanonicalSource(intentA, "test");
+  assert.match(srcLive, /:live:v1$/);
+  assert.match(srcTest, /:test:v1$/);
 });
 
 test("start-fail diagnostic record is secret-free and latest-key scoped", () => {
