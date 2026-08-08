@@ -1591,3 +1591,285 @@ test("TERMINAL-CONVERGE-P0: old payment terminal after tip moved does not clear 
     mock.restore();
   }
 });
+
+// ---------------------------------------------------------------------------
+// MOLLIE-HOSTED-CANCEL-WIRE-EVIDENCE-P0
+// Logging must not alter cancel semantics for the field-critical branches.
+// ---------------------------------------------------------------------------
+
+function captureConsoleLogs(fn) {
+  const lines = [];
+  const original = console.log;
+  console.log = (...args) => {
+    lines.push(args.map((a) => String(a)).join(" "));
+  };
+  return Promise.resolve()
+    .then(fn)
+    .finally(() => {
+      console.log = original;
+    })
+    .then((result) => ({ result, lines }));
+}
+
+function installWireEvidenceMollieMock({
+  statusById = {},
+  deleteHttpStatus = 200,
+  deleteLeavesOpen = false,
+  isCancelableById = {},
+  getThrows = false,
+} = {}) {
+  const original = globalThis.fetch;
+  const statuses = new Map(Object.entries(statusById));
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const href = typeof input === "string" ? input : String(input?.url || "");
+    const method = init.method || "GET";
+    calls.push({ href, method });
+    if (getThrows && method === "GET") {
+      throw new Error("network_down");
+    }
+    const idMatch = href.match(/api\.mollie\.com\/v2\/payments\/([^/?]+)/);
+    const paymentId = idMatch ? decodeURIComponent(idMatch[1]) : "";
+    if (paymentId && method === "GET") {
+      const status = statuses.get(paymentId) || "open";
+      const body = {
+        id: paymentId,
+        status,
+        isCancelable:
+          Object.prototype.hasOwnProperty.call(isCancelableById, paymentId)
+            ? isCancelableById[paymentId]
+            : status === "open",
+        _links: {
+          checkout: { href: `https://www.mollie.com/checkout/test/${paymentId}` },
+        },
+      };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (paymentId && method === "DELETE") {
+      if (deleteHttpStatus >= 200 && deleteHttpStatus < 300 && !deleteLeavesOpen) {
+        statuses.set(paymentId, "canceled");
+      }
+      if (deleteHttpStatus === 404) {
+        statuses.set(paymentId, "canceled");
+      }
+      const ok = deleteHttpStatus < 400 || deleteHttpStatus === 404;
+      return new Response(
+        JSON.stringify(
+          ok
+            ? { id: paymentId, status: statuses.get(paymentId) || "canceled" }
+            : {
+                status: deleteHttpStatus,
+                title: "Unprocessable Entity",
+                detail: "The payment cannot be canceled",
+              },
+        ),
+        { status: deleteHttpStatus, headers: { "content-type": "application/json" } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: false, error: "unexpected_fetch" }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  return {
+    calls,
+    statuses,
+    restore() {
+      globalThis.fetch = original;
+    },
+  };
+}
+
+function assertWireLogsSafe(lines) {
+  const cancelLines = lines.filter((l) => l.includes("[MOLLIE_HOSTED_CANCEL]"));
+  for (const line of cancelLines) {
+    assert.equal(line.includes("Bearer "), false, line);
+    assert.equal(/access_token|refresh_token|accessTokenEncrypted/i.test(line), false, line);
+    assert.equal(/https?:\/\/www\.mollie\.com\/checkout/i.test(line), false, line);
+  }
+  return cancelLines;
+}
+
+test("WIRE-EVIDENCE-P0: 1) fresh GET terminal → no DELETE; logs PRE/DECISION/FINAL", async () => {
+  const { env, kv } = await makeEnv();
+  const paymentId = "tr_wire_terminal";
+  await seedOpenHostedOwner(kv, { paymentId, shadowId: "shadow_wire_term" });
+  const mock = installWireEvidenceMollieMock({
+    statusById: { [paymentId]: "expired" },
+    isCancelableById: { [paymentId]: false },
+  });
+  try {
+    const { result: res, lines } = await captureConsoleLogs(() =>
+      worker.fetch(recoveryRequest({ action: "cancel" }), env, {}),
+    );
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.fallback_allowed, true);
+    assert.equal(mock.calls.filter((c) => c.method === "DELETE").length, 0);
+    const cancelLines = assertWireLogsSafe(lines);
+    assert.ok(cancelLines.some((l) => l.includes("[PRE_GET]") && l.includes("provider_status=expired")));
+    assert.ok(cancelLines.some((l) => l.includes("[DECISION]") && l.includes("already_released")));
+    assert.equal(cancelLines.some((l) => l.includes("[DELETE_SEND]")), false);
+    assert.ok(cancelLines.some((l) => l.includes("[FINAL]") && l.includes("release_owner=true")));
+  } finally {
+    mock.restore();
+  }
+});
+
+test("WIRE-EVIDENCE-P0: 2) fresh GET open → DELETE path logs full chain", async () => {
+  const { env, kv } = await makeEnv();
+  const paymentId = "tr_wire_open";
+  await seedOpenHostedOwner(kv, { paymentId, shadowId: "shadow_wire_open" });
+  const mock = installWireEvidenceMollieMock({
+    statusById: { [paymentId]: "open" },
+    isCancelableById: { [paymentId]: true },
+  });
+  try {
+    const { result: res, lines } = await captureConsoleLogs(() =>
+      worker.fetch(recoveryRequest({ action: "cancel" }), env, {}),
+    );
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.fallback_allowed, true);
+    assert.equal(mock.calls.filter((c) => c.method === "DELETE").length, 1);
+    const cancelLines = assertWireLogsSafe(lines);
+    assert.ok(cancelLines.some((l) => l.includes("[PRE_GET]") && l.includes("is_cancelable=true")));
+    assert.ok(cancelLines.some((l) => l.includes("[DECISION]") && l.includes("cancel")));
+    assert.ok(cancelLines.some((l) => l.includes("[DELETE_SEND]")));
+    assert.ok(cancelLines.some((l) => l.includes("[DELETE_RESULT]") && l.includes("http_status=200")));
+    assert.ok(cancelLines.some((l) => l.includes("[POST_GET]") && l.includes("provider_status=canceled")));
+    assert.ok(cancelLines.some((l) => l.includes("[FINAL]") && l.includes("result=ok")));
+  } finally {
+    mock.restore();
+  }
+});
+
+test("WIRE-EVIDENCE-P0: 3) GET failure → provider_status_unavailable; no DELETE", async () => {
+  const { env, kv } = await makeEnv();
+  const paymentId = "tr_wire_get_fail";
+  await seedOpenHostedOwner(kv, { paymentId });
+  const mock = installWireEvidenceMollieMock({ getThrows: true });
+  try {
+    const { result: res, lines } = await captureConsoleLogs(() =>
+      worker.fetch(recoveryRequest({ action: "cancel" }), env, {}),
+    );
+    const body = await res.json();
+    assert.equal(body.ok, false);
+    assert.equal(body.error, "provider_status_unavailable");
+    assert.equal(mock.calls.filter((c) => c.method === "DELETE").length, 0);
+    const cancelLines = assertWireLogsSafe(lines);
+    assert.ok(cancelLines.some((l) => l.includes("[DECISION]") && l.includes("provider_status_unavailable")));
+    assert.ok(cancelLines.some((l) => l.includes("[FINAL]") && l.includes("error=provider_status_unavailable")));
+    assert.ok(readOpenStreetMollieCheckout(JSON.parse(await kv.get("booking:street_1001_abc"))));
+  } finally {
+    mock.restore();
+  }
+});
+
+test("WIRE-EVIDENCE-P0: 4) DELETE rejection → still open / not released", async () => {
+  const { env, kv } = await makeEnv();
+  const paymentId = "tr_wire_delete_422";
+  await seedOpenHostedOwner(kv, { paymentId, shadowId: "shadow_wire_422" });
+  const mock = installWireEvidenceMollieMock({
+    statusById: { [paymentId]: "open" },
+    deleteHttpStatus: 422,
+    deleteLeavesOpen: true,
+    isCancelableById: { [paymentId]: false },
+  });
+  try {
+    const { result: res, lines } = await captureConsoleLogs(() =>
+      worker.fetch(recoveryRequest({ action: "cancel" }), env, {}),
+    );
+    const body = await res.json();
+    assert.equal(body.ok, false);
+    assert.ok(
+      body.error === "cancel_reconcile_failed" || body.error === "cancel_not_confirmed",
+    );
+    assert.equal(body.fallback_allowed, false);
+    const cancelLines = assertWireLogsSafe(lines);
+    assert.ok(cancelLines.some((l) => l.includes("[DELETE_RESULT]") && l.includes("http_status=422")));
+    assert.ok(cancelLines.some((l) => l.includes("error_title=Unprocessable Entity")));
+    assert.ok(readOpenStreetMollieCheckout(JSON.parse(await kv.get("booking:street_1001_abc"))));
+  } finally {
+    mock.restore();
+  }
+});
+
+test("WIRE-EVIDENCE-P0: 5) DELETE success + terminal post-GET releases", async () => {
+  const { env, kv } = await makeEnv();
+  const paymentId = "tr_wire_delete_ok";
+  await seedOpenHostedOwner(kv, { paymentId, shadowId: "shadow_wire_ok" });
+  const mock = installWireEvidenceMollieMock({
+    statusById: { [paymentId]: "open" },
+    deleteHttpStatus: 200,
+  });
+  try {
+    const { result: res, lines } = await captureConsoleLogs(() =>
+      worker.fetch(recoveryRequest({ action: "cancel" }), env, {}),
+    );
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.fallback_allowed, true);
+    const cancelLines = assertWireLogsSafe(lines);
+    assert.ok(cancelLines.some((l) => l.includes("[POST_GET]") && l.includes("canceled")));
+    assert.ok(cancelLines.some((l) => l.includes("[FINAL]") && l.includes("release_owner=true")));
+    assert.ok(!readOpenStreetMollieCheckout(JSON.parse(await kv.get("booking:street_1001_abc"))));
+  } finally {
+    mock.restore();
+  }
+});
+
+test("WIRE-EVIDENCE-P0: 6) DELETE ok but post-GET still payable → cancel_not_confirmed", async () => {
+  const { env, kv } = await makeEnv();
+  const paymentId = "tr_wire_still_open";
+  await seedOpenHostedOwner(kv, { paymentId, shadowId: "shadow_wire_still" });
+  const mock = installWireEvidenceMollieMock({
+    statusById: { [paymentId]: "open" },
+    deleteHttpStatus: 200,
+    deleteLeavesOpen: true,
+  });
+  try {
+    const { result: res, lines } = await captureConsoleLogs(() =>
+      worker.fetch(recoveryRequest({ action: "cancel" }), env, {}),
+    );
+    const body = await res.json();
+    assert.equal(body.ok, false);
+    assert.equal(body.error, "cancel_not_confirmed");
+    assert.equal(body.fallback_allowed, false);
+    const cancelLines = assertWireLogsSafe(lines);
+    assert.ok(cancelLines.some((l) => l.includes("[DELETE_RESULT]") && l.includes("ok=true")));
+    assert.ok(cancelLines.some((l) => l.includes("[POST_GET]") && l.includes("provider_status=open")));
+    assert.ok(cancelLines.some((l) => l.includes("[FINAL]") && l.includes("error=cancel_not_confirmed")));
+    assert.ok(readOpenStreetMollieCheckout(JSON.parse(await kv.get("booking:street_1001_abc"))));
+  } finally {
+    mock.restore();
+  }
+});
+
+test("WIRE-EVIDENCE-P0: 7) paid race → no DELETE; paid presentation", async () => {
+  const { env, kv } = await makeEnv();
+  const paymentId = "tr_wire_paid";
+  await seedOpenHostedOwner(kv, { paymentId, shadowId: "shadow_wire_paid" });
+  const mock = installWireEvidenceMollieMock({
+    statusById: { [paymentId]: "paid" },
+    isCancelableById: { [paymentId]: false },
+  });
+  try {
+    const { result: res, lines } = await captureConsoleLogs(() =>
+      worker.fetch(recoveryRequest({ action: "cancel" }), env, {}),
+    );
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.presentation_state, "paid");
+    assert.equal(body.fallback_allowed, false);
+    assert.equal(mock.calls.filter((c) => c.method === "DELETE").length, 0);
+    const cancelLines = assertWireLogsSafe(lines);
+    assert.ok(cancelLines.some((l) => l.includes("[DECISION]") && l.includes("reject_paid")));
+    assert.ok(cancelLines.some((l) => l.includes("[FINAL]") && l.includes("presentation_state=paid")));
+  } finally {
+    mock.restore();
+  }
+});

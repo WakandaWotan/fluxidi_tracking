@@ -571,6 +571,13 @@ import {
   resolveMollieRecoveryWhenProviderFetchFailed,
   resolveOpenPosBlocksNewStreetCheckout,
 } from "./modules/mollie_open_payment_recovery.mjs";
+import {
+  MOLLIE_HOSTED_CANCEL_LOG_TAGS,
+  emitMollieHostedCancelWireLog,
+  readMollieCredentialWireFields,
+  readSafeMollieCancelWireFields,
+  sanitizeMollieCancelProviderError,
+} from "./modules/mollie_hosted_cancel_wire_evidence.mjs";
 
 /* -------- Google API helpers (hoisted at top to avoid any ReferenceError) -------- */
 
@@ -85164,6 +85171,9 @@ async function _fetchAuthoritativeStreetHostedMollieStatus(
  * STREET-HOSTED-TERMINAL-CONVERGENCE-P0: never trust stale local mollie_open
  * when the authoritative GET fails; never DELETE when provider is already
  * terminal; always persist shadow terminal on release.
+ *
+ * MOLLIE-HOSTED-CANCEL-WIRE-EVIDENCE-P0: structured logs only — no semantic
+ * change to decisions, DELETE gating, or ownership release.
  */
 async function _controlledCancelOpenStreetMollieCheckout(
   env,
@@ -85178,6 +85188,8 @@ async function _controlledCancelOpenStreetMollieCheckout(
     open?.payment_booking_id || rec?.payment_booking_id || rec?.paymentBookingId,
     160,
   );
+  const wireBookingId = safeStr(bookingId, 160);
+  const wirePaymentId = molliePaymentId || null;
   // Dedicated recovery lock — must not collide with street-checkout create lock
   // which remains after a successful create for TTL.
   const lockKey = streetCheckoutRecoveryLockKey(
@@ -85215,6 +85227,21 @@ async function _controlledCancelOpenStreetMollieCheckout(
         rec,
       );
     } catch (fetchErr) {
+      const credWire = readMollieCredentialWireFields(null);
+      emitMollieHostedCancelWireLog(MOLLIE_HOSTED_CANCEL_LOG_TAGS.PRE_GET, {
+        booking_id: wireBookingId,
+        payment_id: wirePaymentId,
+        provider_status: "",
+        is_cancelable: null,
+        credential_source: credWire.credential_source,
+        mode: credWire.mode,
+      });
+      emitMollieHostedCancelWireLog(MOLLIE_HOSTED_CANCEL_LOG_TAGS.DECISION, {
+        booking_id: wireBookingId,
+        payment_id: wirePaymentId,
+        provider_status: "",
+        decision: "provider_status_unavailable",
+      });
       return {
         ...resolveMollieRecoveryWhenProviderFetchFailed({
           action: "cancel",
@@ -85227,6 +85254,21 @@ async function _controlledCancelOpenStreetMollieCheckout(
       };
     }
     if (!fresh?.ok) {
+      const credWire = readMollieCredentialWireFields(fresh?.credentials);
+      emitMollieHostedCancelWireLog(MOLLIE_HOSTED_CANCEL_LOG_TAGS.PRE_GET, {
+        booking_id: wireBookingId,
+        payment_id: wirePaymentId,
+        provider_status: "",
+        is_cancelable: null,
+        credential_source: credWire.credential_source,
+        mode: credWire.mode,
+      });
+      emitMollieHostedCancelWireLog(MOLLIE_HOSTED_CANCEL_LOG_TAGS.DECISION, {
+        booking_id: wireBookingId,
+        payment_id: wirePaymentId,
+        provider_status: "",
+        decision: "provider_status_unavailable",
+      });
       return {
         ...resolveMollieRecoveryWhenProviderFetchFailed({
           action: "cancel",
@@ -85237,11 +85279,28 @@ async function _controlledCancelOpenStreetMollieCheckout(
         provider_fetch_error: fresh?.error || "mollie_payment_fetch_failed",
       };
     }
-    const providerStatus = safeStr(fresh.status, 40).toLowerCase();
+    const preWire = readSafeMollieCancelWireFields(fresh.payment);
+    const providerStatus =
+      safeStr(fresh.status, 40).toLowerCase() || preWire.provider_status;
     const rideCredentials = fresh.credentials;
+    const credWire = readMollieCredentialWireFields(rideCredentials);
+    emitMollieHostedCancelWireLog(MOLLIE_HOSTED_CANCEL_LOG_TAGS.PRE_GET, {
+      booking_id: wireBookingId,
+      payment_id: wirePaymentId,
+      provider_status: providerStatus,
+      is_cancelable: preWire.is_cancelable,
+      credential_source: credWire.credential_source,
+      mode: credWire.mode,
+    });
     const gate = resolveMollieOpenPaymentCancelDecision({
       providerStatus,
       localPaymentStatus: streetCheckoutPaymentStatusToken(rec),
+    });
+    emitMollieHostedCancelWireLog(MOLLIE_HOSTED_CANCEL_LOG_TAGS.DECISION, {
+      booking_id: wireBookingId,
+      payment_id: wirePaymentId,
+      provider_status: providerStatus,
+      decision: gate.action || gate.reason || "unknown",
     });
     if (gate.action === "reject_paid") {
       return {
@@ -85280,6 +85339,9 @@ async function _controlledCancelOpenStreetMollieCheckout(
     }
 
     let cancelHttpOk = false;
+    let deleteHttpStatus = null;
+    let deleteErrorCode = null;
+    let deleteErrorTitle = null;
     if (molliePaymentId && rideCredentials?.ok) {
       try {
         const cancelUrl = _molliePaymentApiUrl(molliePaymentId, {
@@ -85290,6 +85352,10 @@ async function _controlledCancelOpenStreetMollieCheckout(
             paymentRecord: rec,
           }),
         });
+        emitMollieHostedCancelWireLog(MOLLIE_HOSTED_CANCEL_LOG_TAGS.DELETE_SEND, {
+          booking_id: wireBookingId,
+          payment_id: wirePaymentId,
+        });
         const cancelRes = await fetch(cancelUrl, {
           method: "DELETE",
           headers: {
@@ -85297,9 +85363,50 @@ async function _controlledCancelOpenStreetMollieCheckout(
             "Content-Type": "application/json",
           },
         });
+        deleteHttpStatus =
+          typeof cancelRes?.status === "number" ? cancelRes.status : null;
         cancelHttpOk = !!(cancelRes && (cancelRes.ok || cancelRes.status === 404));
+        // Observability only: read sanitized code/title; never log raw body.
+        try {
+          const rawText = await cancelRes.text();
+          if (rawText && !cancelHttpOk) {
+            let parsed = null;
+            try {
+              parsed = JSON.parse(rawText);
+            } catch (_) {
+              parsed = null;
+            }
+            const err = sanitizeMollieCancelProviderError(parsed);
+            deleteErrorCode = err.error_code;
+            deleteErrorTitle = err.error_title;
+          }
+        } catch (_) {
+          // ignore body parse failures
+        }
+        emitMollieHostedCancelWireLog(
+          MOLLIE_HOSTED_CANCEL_LOG_TAGS.DELETE_RESULT,
+          {
+            booking_id: wireBookingId,
+            payment_id: wirePaymentId,
+            http_status: deleteHttpStatus,
+            ok: cancelHttpOk,
+            error_code: deleteErrorCode,
+            error_title: deleteErrorTitle,
+          },
+        );
       } catch (_) {
         cancelHttpOk = false;
+        emitMollieHostedCancelWireLog(
+          MOLLIE_HOSTED_CANCEL_LOG_TAGS.DELETE_RESULT,
+          {
+            booking_id: wireBookingId,
+            payment_id: wirePaymentId,
+            http_status: deleteHttpStatus,
+            ok: false,
+            error_code: "delete_fetch_threw",
+            error_title: null,
+          },
+        );
       }
     }
 
@@ -85310,6 +85417,12 @@ async function _controlledCancelOpenStreetMollieCheckout(
       rec,
     );
     if (!afterFresh.ok) {
+      emitMollieHostedCancelWireLog(MOLLIE_HOSTED_CANCEL_LOG_TAGS.POST_GET, {
+        booking_id: wireBookingId,
+        payment_id: wirePaymentId,
+        provider_status: "",
+        is_cancelable: null,
+      });
       // DELETE may have raced; without a fresh provider read we cannot release
       // ownership and must not invent cancel_not_confirmed from stale local open.
       return {
@@ -85323,7 +85436,17 @@ async function _controlledCancelOpenStreetMollieCheckout(
         cancel_http_ok: cancelHttpOk,
       };
     }
-    const afterStatus = safeStr(afterFresh.status, 40).toLowerCase() || providerStatus;
+    const postWire = readSafeMollieCancelWireFields(afterFresh.payment);
+    const afterStatus =
+      safeStr(afterFresh.status, 40).toLowerCase() ||
+      postWire.provider_status ||
+      providerStatus;
+    emitMollieHostedCancelWireLog(MOLLIE_HOSTED_CANCEL_LOG_TAGS.POST_GET, {
+      booking_id: wireBookingId,
+      payment_id: wirePaymentId,
+      provider_status: afterStatus,
+      is_cancelable: postWire.is_cancelable,
+    });
 
     const reconcile = resolveMollieCancelReconcileOutcome({
       providerStatusAfter: afterStatus,
@@ -85675,7 +85798,39 @@ async function recoverOpenStreetMollieCheckoutAuthoritative(
     rec,
     open,
   );
+  const wirePaymentId =
+    safeStr(cancelOut?.mollie_payment_id, 120) ||
+    safeStr(open?.mollie_payment_id, 120) ||
+    null;
+  // MOLLIE-HOSTED-CANCEL-WIRE-EVIDENCE-P0: FINAL is log-only; response shape
+  // for cancel remains unchanged (no semantic / contract drift).
+  const logCancelFinal = ({
+    ok,
+    error = null,
+    providerStatus = null,
+    releaseOwner = false,
+    fallbackAllowed = false,
+    presentationState = null,
+  }) => {
+    emitMollieHostedCancelWireLog(MOLLIE_HOSTED_CANCEL_LOG_TAGS.FINAL, {
+      booking_id: safeStr(bookingId, 160),
+      payment_id: wirePaymentId,
+      result: ok === true ? "ok" : "error",
+      error: error || null,
+      provider_status: safeStr(providerStatus, 40).toLowerCase() || null,
+      release_owner: releaseOwner === true,
+      fallback_allowed: fallbackAllowed === true,
+      presentation_state: presentationState || null,
+    });
+  };
   if (cancelOut?.paid === true) {
+    logCancelFinal({
+      ok: true,
+      providerStatus: "paid",
+      releaseOwner: false,
+      fallbackAllowed: false,
+      presentationState: "paid",
+    });
     return {
       ok: true,
       action: "cancel",
@@ -85698,6 +85853,13 @@ async function recoverOpenStreetMollieCheckoutAuthoritative(
       providerStatus: cancelOut.provider_status || "canceled",
       hasCheckoutUrl: false,
     });
+    logCancelFinal({
+      ok: true,
+      providerStatus: cancelOut.provider_status || "canceled",
+      releaseOwner: true,
+      fallbackAllowed: true,
+      presentationState: presentation.state,
+    });
     return {
       ok: true,
       action: "cancel",
@@ -85712,6 +85874,19 @@ async function recoverOpenStreetMollieCheckoutAuthoritative(
     };
   }
   const stillOpen = readOpenStreetMollieCheckout(rec) || open;
+  const failPresentation =
+    cancelOut?.presentation_state ||
+    (cancelOut?.error === "provider_status_unavailable"
+      ? "recoveryError"
+      : "pending");
+  logCancelFinal({
+    ok: false,
+    error: cancelOut?.error || "cancel_not_confirmed",
+    providerStatus: cancelOut?.provider_status || null,
+    releaseOwner: false,
+    fallbackAllowed: false,
+    presentationState: failPresentation,
+  });
   return {
     ok: false,
     action: "cancel",
