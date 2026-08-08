@@ -332,6 +332,78 @@ class _LocalDirectTripHistoryStore {
       return const <Map<String, dynamic>>[];
     }
   }
+
+  /// DRIVER-HISTORY-PENDING-FLICKER-MONOTONICITY-P1:
+  /// Drop only superseded `offline_stop_pending_finalize` rows whose trip_id
+  /// now exists on the backend. Never touches genuine still-pending rows or
+  /// unrelated local history (`local_only_direct_fallback`, etc.).
+  static Future<int> removeSupersededOfflineStopPending({
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+    required Set<String> confirmedTripIds,
+  }) async {
+    if (kIsWeb) return 0;
+    final confirmed = confirmedTripIds
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toSet();
+    if (confirmed.isEmpty) return 0;
+    try {
+      final normalizedTenantId = tenantId.trim();
+      final normalizedCompanyId = companyId.trim();
+      final normalizedDriverId = driverId.trim();
+      if (normalizedTenantId.isEmpty ||
+          normalizedCompanyId.isEmpty ||
+          normalizedDriverId.isEmpty) {
+        return 0;
+      }
+      final scopedFile = await _scopedFile(
+        tenantId: normalizedTenantId,
+        companyId: normalizedCompanyId,
+      );
+      if (!await scopedFile.exists()) return 0;
+      // Read the full file (all drivers in scope) so a rewrite cannot drop
+      // another driver's rows; then filter only this driver's superseded pending.
+      final lines = await scopedFile.readAsLines();
+      final keptLines = <String>[];
+      var removed = 0;
+      for (final raw in lines) {
+        final line = raw.trim();
+        if (line.isEmpty) continue;
+        try {
+          final decoded = jsonDecode(line);
+          if (decoded is! Map) {
+            keptLines.add(line);
+            continue;
+          }
+          final map = Map<String, dynamic>.from(decoded);
+          final rowDriver = (map['driver_id'] ?? '').toString().trim();
+          if (rowDriver != normalizedDriverId) {
+            keptLines.add(jsonEncode(map));
+            continue;
+          }
+          final tripId =
+              (map['trip_id'] ?? map['tripId'] ?? '').toString().trim();
+          if (tripId.isNotEmpty &&
+              confirmed.contains(tripId) &&
+              isOfflineStopPendingFinalizeRecord(map)) {
+            removed++;
+            continue;
+          }
+          keptLines.add(jsonEncode(map));
+        } catch (_) {
+          keptLines.add(line);
+        }
+      }
+      if (removed == 0) return 0;
+      final body = keptLines.isEmpty ? '' : '${keptLines.join('\n')}\n';
+      await scopedFile.writeAsString(body, flush: true);
+      return removed;
+    } catch (_) {
+      return 0;
+    }
+  }
 }
 
 /// STREET-RIDE-DURABLE-COMPLETION-2: durable single-record store for the active

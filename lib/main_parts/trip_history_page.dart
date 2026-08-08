@@ -250,6 +250,11 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
   String _scopeSignature = '';
   String? _workerCanonicalVersion;
   bool _lastRemoteSucceeded = false;
+  // DRIVER-HISTORY-PENDING-FLICKER-MONOTONICITY-P1: retain last successful
+  // summary while syncing so KPIs never flash provisional local-pending totals.
+  ({int total, int completed, int cancelled, double revenue})?
+  _authoritativeSummary;
+  bool _summaryNeutralWhileSyncing = false;
 
   _TripHistoryItem _enrichTripHistoryItemWithBusinessRefs(
     _TripHistoryItem item, {
@@ -490,6 +495,8 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
         _items = const <_TripHistoryItem>[];
         _localReadCompleted = false;
         _lastRemoteSucceeded = false;
+        _authoritativeSummary = null;
+        _summaryNeutralWhileSyncing = false;
         _workerCanonicalVersion = null;
         _syncStatus = _TripHistorySyncStatus.idle;
       });
@@ -597,19 +604,19 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     return List<_TripHistoryItem>.unmodifiable(finalized);
   }
 
-  /// COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part E): local-first lifecycle.
+  /// COMPANY-DATA-LATENCY-P0-REPAIR-1 (Part E) +
+  /// DRIVER-HISTORY-PENDING-FLICKER-MONOTONICITY-P1:
   ///
-  /// 1. Read local rides and render them immediately (never behind a
-  ///    spinner).
-  /// 2. Start the authenticated remote request in the background.
-  /// 3. On success: atomically merge and replace `_items`.
-  /// 4. On timeout / failure: keep local rides visible, surface a small
-  ///    non-destructive sync warning.
+  /// 1. Read local rides.
+  /// 2. Paint without downgrading an already-authoritative snapshot:
+  ///    - refresh with prior remote success → keep authoritative rows and
+  ///      overlay only genuine pending locals whose trip_id is absent;
+  ///    - cold start → show genuine pending locals only; KPIs stay neutral.
+  /// 3. Remote merge (backend wins on trip_id); clean superseded pending.
+  /// 4. On timeout / failure: keep painted rows, surface sync warning.
   ///
-  /// The `_fetchGeneration` guard prevents a stale completion from
-  /// overwriting a newer load (e.g. a route_return refresh that races an
-  /// earlier one), from mutating disposed state, or — in combination with
-  /// `_computeScopeSignature` — from surfacing another company's rows.
+  /// Offline STOP durability (`_persistPendingFinalizeDirectHistory`) is
+  /// unchanged — this only gates presentation/merge monotonicity.
   Future<void> _startLoad({required String reason}) async {
     final generation = ++_fetchGeneration;
     final scopeSignatureAtStart = _scopeSignature;
@@ -619,8 +626,13 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
     );
 
     // ------------------------------------------------------------------
-    // 1. LOCAL PHASE — read + render immediately.
+    // 1. LOCAL PHASE — monotonic paint (never downgrade authoritative).
     // ------------------------------------------------------------------
+    final priorAuthoritativeItems = List<_TripHistoryItem>.from(_items);
+    final hadAuthoritativeSnapshot =
+        _lastRemoteSucceeded && priorAuthoritativeItems.isNotEmpty;
+    final priorSummary = _authoritativeSummary;
+
     List<_TripHistoryItem> localItems;
     try {
       localItems = await _readLocalItems();
@@ -637,14 +649,32 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       sourceTag: 'trip_history_local_first',
       cacheUsed: true,
     );
+    final paintPlan = planTripHistoryLocalPaintPhase<_TripHistoryItem>(
+      priorAuthoritativeItems: priorAuthoritativeItems,
+      hasAuthoritativeSnapshot: hadAuthoritativeSnapshot,
+      localItems: localFinalized,
+      tripIdOf: (item) => item.tripId,
+      isLocalUnconfirmed: (item) => item.shouldRenderAsLocalOnlyUnconfirmed,
+    );
+    final painted = _finalizeItems(
+      paintPlan.items,
+      sourceTag: 'trip_history_local_monotonic',
+      cacheUsed: true,
+    );
     setState(() {
-      _items = localFinalized;
+      _items = painted;
       _localReadCompleted = true;
       _syncStatus = _TripHistorySyncStatus.syncing;
+      _summaryNeutralWhileSyncing = paintPlan.summaryNeutral;
+      if (paintPlan.retainAuthoritativeSummary && priorSummary != null) {
+        _authoritativeSummary = priorSummary;
+      }
     });
     debugPrint(
       '[TRIP_HISTORY_LIFECYCLE] phase=local_done generation=$generation '
-      'local_count=${localFinalized.length}',
+      'local_count=${localFinalized.length} painted_count=${painted.length} '
+      'retained_auth=$hadAuthoritativeSnapshot '
+      'summary_neutral=${paintPlan.summaryNeutral}',
     );
 
     // ------------------------------------------------------------------
@@ -714,7 +744,11 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       );
       setState(() {
         _syncStatus = _TripHistorySyncStatus.syncFailed;
-        _lastRemoteSucceeded = false;
+        // Keep prior authoritative success flag so a later refresh still
+        // retains Voltooid/Betaald instead of re-downgrading from local.
+        if (!hadAuthoritativeSnapshot) {
+          _lastRemoteSucceeded = false;
+        }
       });
       return;
     }
@@ -751,6 +785,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       cacheUsed:
           safeBackendItems.isEmpty && latestLocalItems.isNotEmpty,
     );
+    final nextSummary = _summary(merged);
     debugPrint(
       '[TRIP_HISTORY_LIFECYCLE] phase=remote_done generation=$generation '
       'backend_count=${safeBackendItems.length} '
@@ -760,7 +795,26 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
       _items = merged;
       _syncStatus = _TripHistorySyncStatus.idle;
       _lastRemoteSucceeded = true;
+      _summaryNeutralWhileSyncing = false;
+      _authoritativeSummary = nextSummary;
     });
+
+    // Drop superseded offline-STOP pending projections so the next cold
+    // start cannot re-flash "Lokaal opgeslagen — niet bevestigd".
+    final confirmedTripIds = safeBackendItems
+        .map((e) => e.tripId.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    if (confirmedTripIds.isNotEmpty) {
+      unawaited(
+        _LocalDirectTripHistoryStore.removeSupersededOfflineStopPending(
+          tenantId: widget.tenantId,
+          companyId: widget.companyId,
+          driverId: widget.driverId,
+          confirmedTripIds: confirmedTripIds,
+        ),
+      );
+    }
   }
 
   void _refresh() {
@@ -1691,8 +1745,45 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                   // spinner or an empty state.
                   final items = _items;
                   final filteredItems = _applyFilter(items);
-                  final summary = _summary(items);
-                  if (!_localReadCompleted && items.isEmpty) {
+                  // DRIVER-HISTORY-PENDING-FLICKER-MONOTONICITY-P1: while
+                  // syncing, prefer the last authoritative KPI snapshot (or
+                  // neutral placeholders on cold start) over provisional
+                  // local-pending totals.
+                  final ({
+                    int total,
+                    int completed,
+                    int cancelled,
+                    double revenue,
+                  })?
+                  summary;
+                  final String Function(int) kpiInt;
+                  final String Function(double) kpiEur;
+                  if (_syncStatus == _TripHistorySyncStatus.syncing &&
+                      _authoritativeSummary != null &&
+                      !_summaryNeutralWhileSyncing) {
+                    summary = _authoritativeSummary;
+                    kpiInt = (v) => v.toString();
+                    kpiEur = _formatEur;
+                  } else if (_syncStatus == _TripHistorySyncStatus.syncing &&
+                      _summaryNeutralWhileSyncing) {
+                    summary = (
+                      total: 0,
+                      completed: 0,
+                      cancelled: 0,
+                      revenue: 0,
+                    );
+                    kpiInt = (_) => '—';
+                    kpiEur = (_) => '—';
+                  } else {
+                    summary = _summary(items);
+                    kpiInt = (v) => v.toString();
+                    kpiEur = _formatEur;
+                  }
+                  final waitingForFirstAuthoritative = !_localReadCompleted ||
+                      (_syncStatus == _TripHistorySyncStatus.syncing &&
+                          items.isEmpty &&
+                          !_lastRemoteSucceeded);
+                  if (waitingForFirstAuthoritative && items.isEmpty) {
                     return Center(
                       child: CircularProgressIndicator(color: accent),
                     );
@@ -1821,7 +1912,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                                                 fr: 'Total courses',
                                                 es: 'Total viajes',
                                               ),
-                                              value: summary.total.toString(),
+                                              value: kpiInt(summary!.total),
                                               icon: Icons.list_alt_rounded,
                                               accentColor: const Color(
                                                 0xFF60A5FA,
@@ -1837,8 +1928,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                                                 fr: 'Terminées',
                                                 es: 'Completados',
                                               ),
-                                              value: summary.completed
-                                                  .toString(),
+                                              value: kpiInt(summary.completed),
                                               icon: Icons
                                                   .check_circle_outline_rounded,
                                               accentColor: const Color(
@@ -1859,8 +1949,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                                                 fr: 'Annulées',
                                                 es: 'Cancelados',
                                               ),
-                                              value: summary.cancelled
-                                                  .toString(),
+                                              value: kpiInt(summary.cancelled),
                                               icon: Icons.cancel_outlined,
                                               accentColor: const Color(
                                                 0xFFF97373,
@@ -1876,9 +1965,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                                                 fr: 'Revenus',
                                                 es: 'Ingresos',
                                               ),
-                                              value: _formatEur(
-                                                summary.revenue,
-                                              ),
+                                              value: kpiEur(summary.revenue),
                                               icon: Icons.euro_rounded,
                                               accentColor: accent,
                                               valueColor: accent,
@@ -1899,7 +1986,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                                           fr: 'Total courses',
                                           es: 'Total viajes',
                                         ),
-                                        value: summary.total.toString(),
+                                        value: kpiInt(summary!.total),
                                         icon: Icons.list_alt_rounded,
                                         accentColor: const Color(0xFF60A5FA),
                                       ),
@@ -1913,7 +2000,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                                           fr: 'Terminées',
                                           es: 'Completados',
                                         ),
-                                        value: summary.completed.toString(),
+                                        value: kpiInt(summary.completed),
                                         icon:
                                             Icons.check_circle_outline_rounded,
                                         accentColor: const Color(0xFF4ADE80),
@@ -1928,7 +2015,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                                           fr: 'Annulées',
                                           es: 'Cancelados',
                                         ),
-                                        value: summary.cancelled.toString(),
+                                        value: kpiInt(summary.cancelled),
                                         icon: Icons.cancel_outlined,
                                         accentColor: const Color(0xFFF97373),
                                       ),
@@ -1942,7 +2029,7 @@ class _TripHistoryPageState extends State<_TripHistoryPage> {
                                           fr: 'Revenus',
                                           es: 'Ingresos',
                                         ),
-                                        value: _formatEur(summary.revenue),
+                                        value: kpiEur(summary.revenue),
                                         icon: Icons.euro_rounded,
                                         accentColor: accent,
                                         valueColor: accent,

@@ -450,17 +450,55 @@ void main() {
             'that hid local rows behind a spinner for up to 10 s. It '
             'must be gone.',
       );
-      // The build path must consult `_localReadCompleted` to decide
-      // whether to show the initial spinner.
+      // DRIVER-HISTORY-PENDING-FLICKER-MONOTONICITY-P1: spinner while local
+      // read incomplete OR cold-start sync with no painted rows yet.
       expect(
         src,
-        contains('!_localReadCompleted && items.isEmpty'),
+        contains('waitingForFirstAuthoritative'),
         reason:
-            'The initial spinner must only appear before the local '
-            'read has completed. Once local rows are available they '
-            'must always render directly.',
+            'The initial spinner must cover cold-start sync with an empty '
+            'paint set, not only `!_localReadCompleted`.',
+      );
+      expect(
+        src,
+        contains('!_localReadCompleted'),
+        reason:
+            'The initial spinner must still consult `_localReadCompleted` '
+            'so local rows never hide behind a remote-only FutureBuilder.',
       );
     });
+
+    test(
+      'DRIVER-HISTORY-PENDING-FLICKER-MONOTONICITY-P1 wiring present',
+      () {
+        final body = extractMethodBody(
+          src,
+          'Future<void> _startLoad({required String reason}) async',
+        );
+        expect(
+          body,
+          contains('planTripHistoryLocalPaintPhase'),
+          reason: 'Local paint must use monotonic merge helpers.',
+        );
+        expect(
+          body,
+          contains('removeSupersededOfflineStopPending'),
+          reason:
+              'Successful backend merge must clean superseded offline-STOP '
+              'pending local projections.',
+        );
+        expect(
+          src,
+          contains('_authoritativeSummary'),
+          reason: 'KPI retention snapshot must exist on the page state.',
+        );
+        expect(
+          src,
+          contains('_summaryNeutralWhileSyncing'),
+          reason: 'Cold-start KPI neutrality flag must exist.',
+        );
+      },
+    );
 
     test('remote http timeout is not increased beyond 10 s', () {
       final body = extractMethodBody(
