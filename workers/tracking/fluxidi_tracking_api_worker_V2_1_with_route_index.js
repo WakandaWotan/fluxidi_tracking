@@ -2745,6 +2745,131 @@ function complianceEmitRetryEligible(trip) {
   return state === "" || state === COMPLIANCE_EMIT_STATE.PENDING;
 }
 
+/**
+ * OFFLINE-STOP-CHIRON-ARRIVAL-DURABILITY-P0
+ *
+ * Ensure the durable Chiron ride_stop (ARRIVAL) outbox exists and is drained
+ * for an already-authoritative stopped direct trip. Used by:
+ *   - idempotent /trip/stop replay (trip already stopped)
+ *   - /trip/reconcile-direct-booking opportunistic retry
+ *
+ * Must NOT depend on active→stopped being the first mutation. Deterministic
+ * event_id prevents duplicate Chiron ARRIVAL. Never mutates frozen stop totals.
+ *
+ * @returns {{ event: object|null, fields: object, emitted: boolean }}
+ */
+async function ensureDirectTripStopComplianceEmit(
+  env,
+  {
+    trip,
+    key,
+    scope,
+    body = {},
+    tripId,
+    logLabel = "ensure_direct_stop",
+    timeoutMs = 1500,
+  } = {},
+) {
+  const fieldsEmpty = () => safeComplianceEmitResponseFields(trip);
+  if (!trip || typeof trip !== "object") {
+    return { event: null, fields: fieldsEmpty(), emitted: false };
+  }
+  if (complianceEmitAlreadyApplied(trip)) {
+    return { event: null, fields: fieldsEmpty(), emitted: false };
+  }
+  if (!directTripIsTerminal(trip)) {
+    return { event: null, fields: fieldsEmpty(), emitted: false };
+  }
+
+  const stoppedAt =
+    _dbfStr(trip?.stopped_at, 80) ||
+    _dbfStr(body?.client_stopped_at, 80) ||
+    nowIso();
+  const totals = {
+    km_total: trip?.km_total,
+    wait_seconds_total: trip?.wait_seconds_total,
+    total_eur: trip?.total_eur,
+    price_ex_vat: trip?.price_ex_vat,
+    price_vat: trip?.price_vat,
+    price_incl_vat: trip?.price_incl_vat,
+    vat_rate: trip?.vat_rate,
+    vat_mode: trip?.vat_mode,
+    currency: trip?.currency,
+  };
+  const event = buildDirectTripStopComplianceEvent(
+    trip,
+    body,
+    stoppedAt,
+    totals,
+    scope,
+  );
+  if (!event) {
+    console.log(
+      `[COMPLIANCE_EMIT][${logLabel}] skipped reason=missing_canonical_scope trip_id=${tripId || "-"}`,
+    );
+    return { event: null, fields: fieldsEmpty(), emitted: false };
+  }
+
+  const eventId =
+    _dbfStr(trip.compliance_emit_event_id, 200) ||
+    buildDeterministicRideStopEventId(
+      event.tenant_id,
+      event.company_id,
+      event.trip_id ?? tripId,
+    );
+  if (eventId) event.event_id = eventId;
+
+  // Persist PENDING before emit so a transient failure leaves a durable row.
+  const priorState = _dbfStr(trip.compliance_emit_state).toLowerCase();
+  if (priorState !== COMPLIANCE_EMIT_STATE.PENDING) {
+    applyComplianceEmitAttempt(trip, {
+      state: COMPLIANCE_EMIT_STATE.PENDING,
+      errorCode: null,
+      eventId,
+      nowIso: nowIso(),
+      attemptDelta: priorState === "" ? 1 : 0,
+    });
+    applyCanonicalScopeToRecord(trip, scope);
+    await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
+    _chironSyncLog("enqueue", trip, tripId, event, "queued", logLabel);
+  }
+
+  let emitRes;
+  try {
+    emitRes = await emitComplianceEventBestEffort(env, event, {
+      timeoutMs,
+      logLabel,
+    });
+  } catch (err) {
+    emitRes = {
+      ok: false,
+      error: _dbfStr(err?.message || err, 120) || "internal_error",
+    };
+  }
+  const nextState = deriveComplianceEmitStateFromResult(emitRes);
+  applyComplianceEmitAttempt(trip, {
+    state: nextState,
+    errorCode: complianceEmitErrorCodeFromResult(emitRes),
+    eventId,
+    nowIso: nowIso(),
+  });
+  applyCanonicalScopeToRecord(trip, scope);
+  await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
+  _chironSyncLog(
+    "ensure",
+    trip,
+    tripId,
+    event,
+    nextState,
+    complianceEmitErrorCodeFromResult(emitRes) || "ok",
+  );
+  return {
+    event,
+    fields: safeComplianceEmitResponseFields(trip),
+    emitted: nextState === COMPLIANCE_EMIT_STATE.APPLIED,
+  };
+}
+
 // RELEASE-P0-DURABLE-CHIRON-SYNC-FOR-PLANNED-RIDES-2026-07-31: parallel scalar
 // outbox family for the planned ride_start event on the SESSION record. Mirrors
 // the direct compliance_emit_* semantics field-for-field but scoped to the
@@ -6811,7 +6936,20 @@ async function handleStopTrip(req, url, env, origin, ctx) {
       applyCanonicalScopeToRecord(trip, scope);
       await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
     }
+    // OFFLINE-STOP-CHIRON-ARRIVAL-DURABILITY-P0: idempotent STOP must converge
+    // to the same Chiron ARRIVAL side effect as first-path STOP. Do not skip
+    // compliance enqueue/drain just because active→stopped already happened.
+    await ensureDirectTripStopComplianceEmit(env, {
+      trip,
+      key,
+      scope,
+      body,
+      tripId: trip_id,
+      logLabel: "idempotent_stop_replay",
+      timeoutMs: 1500,
+    });
     const stopFinalizeFields = safeBookingFinalizeResponseFields(trip);
+    const complianceFields = safeComplianceEmitResponseFields(trip);
     return withCors(
       json(
         {
@@ -6824,6 +6962,7 @@ async function handleStopTrip(req, url, env, origin, ctx) {
           stopped_at: trip.stopped_at || null,
           totals: existingTotals,
           idempotent_replay: true,
+          ...complianceFields,
         },
         { status: 200 },
       ),
@@ -7019,6 +7158,7 @@ async function handleStopTrip(req, url, env, origin, ctx) {
   }
 
   const stopFinalizeFields = safeBookingFinalizeResponseFields(trip);
+  const complianceFields = safeComplianceEmitResponseFields(trip);
   return withCors(
     json(
       {
@@ -7030,6 +7170,7 @@ async function handleStopTrip(req, url, env, origin, ctx) {
         status: "stopped",
         stopped_at: stoppedAt,
         totals,
+        ...complianceFields,
       },
       { status: 200 }
     ),
@@ -7071,52 +7212,21 @@ async function handleReconcileDirectBooking(req, url, env, origin) {
   });
   if (ownershipBlock) return ownershipBlock;
 
-  // CHIRON-AUTOMATIC-SYNC-AFTER-STOP-P0-FIELD-2026-07-29: opportunistic
-  // compliance-emit retry. Runs BEFORE the booking-finalize short-circuit so a
-  // trip whose booking already completed but whose compliance emit is still
-  // PENDING gets retried by the existing client-startup reconcile call. Never
-  // regresses APPLIED (idempotent). Uses the same deterministic event_id
-  // persisted at STOP so a compliance-side idempotency addition later would
-  // collapse duplicates without any client change.
+  // CHIRON-AUTOMATIC-SYNC-AFTER-STOP-P0-FIELD-2026-07-29 +
+  // OFFLINE-STOP-CHIRON-ARRIVAL-DURABILITY-P0: opportunistic compliance-emit
+  // ensure/retry. Runs BEFORE the booking-finalize short-circuit so a trip
+  // whose booking already completed but whose compliance emit is still
+  // PENDING/absent gets drained. Never regresses APPLIED (idempotent).
   if (complianceEmitRetryEligible(trip)) {
-    const retryEvent = buildDirectTripStopComplianceEvent(
+    await ensureDirectTripStopComplianceEmit(env, {
       trip,
-      body,
-      _dbfStr(trip?.stopped_at, 80) || nowIso(),
-      {
-        km_total: trip?.km_total,
-        wait_seconds_total: trip?.wait_seconds_total,
-        total_eur: trip?.total_eur,
-        price_ex_vat: trip?.price_ex_vat,
-        price_vat: trip?.price_vat,
-        price_incl_vat: trip?.price_incl_vat,
-        vat_rate: trip?.vat_rate,
-        vat_mode: trip?.vat_mode,
-        currency: trip?.currency,
-      },
+      key,
       scope,
-    );
-    if (retryEvent) {
-      const retryEventId = _dbfStr(trip.compliance_emit_event_id, 200) ||
-        buildDeterministicRideStopEventId(retryEvent.tenant_id, retryEvent.company_id, retryEvent.trip_id ?? trip_id);
-      if (retryEventId) retryEvent.event_id = retryEventId;
-      let emitRes;
-      try {
-        emitRes = await emitComplianceEventBestEffort(env, retryEvent, { timeoutMs: 1500, logLabel: "reconcile_retry" });
-      } catch (err) {
-        emitRes = { ok: false, error: _dbfStr(err?.message || err, 120) || "internal_error" };
-      }
-      const nextState = deriveComplianceEmitStateFromResult(emitRes);
-      applyComplianceEmitAttempt(trip, {
-        state: nextState,
-        errorCode: complianceEmitErrorCodeFromResult(emitRes),
-        eventId: retryEventId,
-        nowIso: nowIso(),
-      });
-      applyCanonicalScopeToRecord(trip, scope);
-      await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
-      _chironSyncLog("retry", trip, trip_id, retryEvent, nextState, complianceEmitErrorCodeFromResult(emitRes) || "ok");
-    }
+      body,
+      tripId: trip_id,
+      logLabel: "reconcile_retry",
+      timeoutMs: 1500,
+    });
   }
 
   // Already durably completed → idempotent no-op.

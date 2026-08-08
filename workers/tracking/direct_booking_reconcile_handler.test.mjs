@@ -499,10 +499,13 @@ test("STOP replay on already-stopped trip is idempotent and preserves frozen tot
     }),
   });
   const booking = bookingApi(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const compliance = complianceWorker(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
   const env = {
+    ...COMPLIANCE_ENV_BASE,
     ADMIN_TOKEN: ADMIN,
     FLUXIDI_TRACKING: kv,
     BOOKING_API: booking,
+    COMPLIANCE_WORKER: compliance,
   };
 
   const res = await worker.fetch(
@@ -524,13 +527,19 @@ test("STOP replay on already-stopped trip is idempotent and preserves frozen tot
   assert.equal(json.totals.km_total, 4.2);
   assert.equal(json.totals.total_eur, 9.5);
   assert.equal(json.booking_finalized, true);
+  assert.equal(json.compliance_emit_state, "applied");
+  assert.equal(json.compliance_emit_event_id, "ride_stop:T1:C1:trip_abc");
 
   const stored = JSON.parse(kv.store.get(TRIP_KEY));
   assert.equal(stored.km_total, 4.2);
   assert.equal(stored.total_eur, 9.5);
   assert.equal(stored.stopped_at, "2026-07-23T10:00:00.000Z");
   assert.equal(stored.booking_finalize_state, "completed");
+  assert.equal(stored.compliance_emit_state, "applied");
   assert.equal(booking.calls.length, 1);
+  assert.equal(compliance.calls.length, 1);
+  assert.equal(compliance.calls[0].event_type, "ride_stop");
+  assert.equal(compliance.calls[0].event_id, "ride_stop:T1:C1:trip_abc");
 });
 
 test("STOP then STOP again does not create a second fare (lost-response case)", async () => {
@@ -558,10 +567,14 @@ test("STOP then STOP again does not create a second fare (lost-response case)", 
     ctx,
   );
   assert.equal(first.status, 200);
-  await ctx.flush();
   const firstJson = await first.json();
   assert.equal(firstJson.ok, true);
   assert.equal(firstJson.idempotent_replay, undefined);
+  // First-path STOP returns before waitUntil emit completes — outbox is PENDING.
+  assert.equal(firstJson.compliance_emit_state, "pending");
+  await ctx.flush();
+  const afterFlush = JSON.parse(kv.store.get(TRIP_KEY));
+  assert.equal(afterFlush.compliance_emit_state, "applied");
 
   const second = await worker.fetch(
     stopReq({
@@ -578,6 +591,7 @@ test("STOP then STOP again does not create a second fare (lost-response case)", 
   const secondJson = await second.json();
   assert.equal(secondJson.ok, true);
   assert.equal(secondJson.idempotent_replay, true);
+  assert.equal(secondJson.compliance_emit_state, "applied");
 
   const stored = JSON.parse(kv.store.get(TRIP_KEY));
   assert.equal(stored.status, "stopped");
@@ -585,4 +599,94 @@ test("STOP then STOP again does not create a second fare (lost-response case)", 
   // Timeline should not accumulate a second stop event from idempotent replay.
   const stops = (stored.timeline || []).filter((e) => e && e.type === "stop");
   assert.equal(stops.length, 1);
+  // Exactly one Chiron ARRIVAL emit across first STOP + idempotent replay.
+  assert.equal(compliance.calls.length, 1);
+  assert.equal(compliance.calls[0].event_id, "ride_stop:T1:C1:trip_abc");
+});
+
+// OFFLINE-STOP-CHIRON-ARRIVAL-DURABILITY-P0: already-stopped trip with MISSING
+// compliance outbox must be repaired on idempotent STOP replay.
+test("idempotent STOP repairs missing Chiron ARRIVAL without mutating fare", async () => {
+  const kv = makeKV({
+    [TRIP_KEY]: seedTrip({
+      status: "stopped",
+      stopped_at: "2026-08-08T09:45:19.000Z",
+      km_total: 1.8,
+      wait_seconds_total: 0,
+      total_eur: 5.4,
+      price_incl_vat: 5.4,
+      booking_finalize_state: "completed",
+      // Explicitly absent compliance_emit_* — the field regression.
+    }),
+  });
+  const booking = bookingApi(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const compliance = complianceWorker(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const env = {
+    ...COMPLIANCE_ENV_BASE,
+    ADMIN_TOKEN: ADMIN,
+    FLUXIDI_TRACKING: kv,
+    BOOKING_API: booking,
+    COMPLIANCE_WORKER: compliance,
+  };
+
+  const res = await worker.fetch(
+    stopReq({
+      ...scope,
+      trip_id: "trip_abc",
+      km_total: 99,
+      wait_seconds_total: 0,
+      client_stopped_at: "2026-08-08T10:00:00.000Z",
+    }),
+    env,
+    {},
+  );
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  assert.equal(json.idempotent_replay, true);
+  assert.equal(json.compliance_emit_state, "applied");
+  assert.equal(json.totals.total_eur, 5.4);
+  assert.equal(booking.calls.length, 0); // already finalized — no re-finalize
+  assert.equal(compliance.calls.length, 1);
+  assert.equal(compliance.calls[0].event_type, "ride_stop");
+  assert.equal(compliance.calls[0].event_id, "ride_stop:T1:C1:trip_abc");
+  assert.equal(Number(compliance.calls[0].fare?.total_amount), 5.4);
+
+  const stored = JSON.parse(kv.store.get(TRIP_KEY));
+  assert.equal(stored.total_eur, 5.4);
+  assert.equal(stored.km_total, 1.8);
+  assert.equal(stored.compliance_emit_state, "applied");
+  assert.equal(stored.compliance_emit_event_id, "ride_stop:T1:C1:trip_abc");
+});
+
+test("idempotent STOP does not duplicate Chiron ARRIVAL when already applied", async () => {
+  const kv = makeKV({
+    [TRIP_KEY]: seedTrip({
+      status: "stopped",
+      booking_finalize_state: "completed",
+      compliance_emit_state: "applied",
+      compliance_emit_event_id: "ride_stop:T1:C1:trip_abc",
+      compliance_emit_attempt_count: 1,
+    }),
+  });
+  const booking = bookingApi(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const compliance = complianceWorker(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  const env = {
+    ...COMPLIANCE_ENV_BASE,
+    ADMIN_TOKEN: ADMIN,
+    FLUXIDI_TRACKING: kv,
+    BOOKING_API: booking,
+    COMPLIANCE_WORKER: compliance,
+  };
+
+  const res = await worker.fetch(
+    stopReq({ ...scope, trip_id: "trip_abc", km_total: 4.2, wait_seconds_total: 0 }),
+    env,
+    {},
+  );
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  assert.equal(json.idempotent_replay, true);
+  assert.equal(json.compliance_emit_state, "applied");
+  assert.equal(compliance.calls.length, 0);
+  assert.equal(booking.calls.length, 0);
 });

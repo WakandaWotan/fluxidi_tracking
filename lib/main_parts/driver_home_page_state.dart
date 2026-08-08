@@ -8446,6 +8446,19 @@ class _DriverHomePageState extends State<DriverHomePage>
           bookingFinalizeState: kDirectTripFinalizePending,
         );
       }
+      // OFFLINE-STOP-CHIRON-ARRIVAL-DURABILITY-P0: mirror planned-stop client
+      // drain. Booking finalize ack alone must not strand a PENDING/absent
+      // Chiron ride_stop outbox — reconcile is idempotent and drains ARRIVAL.
+      if (outcome.trackingTripStopped &&
+          resolvedBookingId.isNotEmpty &&
+          !outcome.complianceEmitApplied) {
+        unawaited(
+          _reconcileDirectBookingOnWorker(
+            tripId: tripId,
+            expectedBookingId: resolvedBookingId,
+          ),
+        );
+      }
       return outcome;
     } catch (e) {
       _directTripStopWorkerOk = false;
@@ -8895,6 +8908,16 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
         _clearStaleInMemoryDirectIdentityIfMatching(session);
         debugPrint('[DIRECT_TRIP][RECOVERY] stop_replay=finalize_ok');
+        // Drain Chiron ARRIVAL even when booking finalize already ack'd.
+        if (!outcome.complianceEmitApplied &&
+            session.bookingId.trim().isNotEmpty) {
+          unawaited(
+            _reconcileDirectBookingOnWorker(
+              tripId: session.tripId,
+              expectedBookingId: session.bookingId,
+            ),
+          );
+        }
         unawaited(
           _refreshBookings(
             force: true,

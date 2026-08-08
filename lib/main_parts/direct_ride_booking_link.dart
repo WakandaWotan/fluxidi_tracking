@@ -479,6 +479,7 @@ class DirectRideStopResult {
     required this.bookingId,
     required this.bookingFinalizeState,
     required this.bookingFinalized,
+    this.complianceEmitState,
   });
 
   final bool ok;
@@ -486,6 +487,12 @@ class DirectRideStopResult {
   final String? bookingId;
   final String bookingFinalizeState;
   final bool bookingFinalized;
+
+  /// Tracking-worker Chiron ride_stop outbox state (`applied` / `pending`).
+  final String? complianceEmitState;
+
+  bool get complianceEmitApplied =>
+      (complianceEmitState ?? '').trim().toLowerCase() == 'applied';
 }
 
 // ===========================================================================
@@ -520,6 +527,7 @@ class DirectRideStopOutcome {
     required this.bookingFinalizeState,
     required this.totalEur,
     required this.totalsPresent,
+    this.complianceEmitApplied = false,
   });
 
   /// HTTP layer succeeded and body parsed as an `ok` response.
@@ -534,6 +542,9 @@ class DirectRideStopOutcome {
   final double? totalEur;
   final bool totalsPresent;
 
+  /// True when STOP response reports Chiron ride_stop outbox `applied`.
+  final bool complianceEmitApplied;
+
   /// Transport / parse failure — never treat as booking completion.
   static const DirectRideStopOutcome unknown = DirectRideStopOutcome(
     transportSucceeded: false,
@@ -543,6 +554,7 @@ class DirectRideStopOutcome {
     bookingFinalizeState: DirectRideFinalizeState.unknown,
     totalEur: null,
     totalsPresent: false,
+    complianceEmitApplied: false,
   );
 }
 
@@ -582,6 +594,7 @@ DirectRideStopOutcome mapDirectRideStopOutcome({
             : DirectRideFinalizeState.unknown),
     totalEur: parsed.totalEur,
     totalsPresent: parsed.totalEur != null,
+    complianceEmitApplied: parsed.complianceEmitApplied,
   );
 }
 
@@ -1537,6 +1550,12 @@ DirectRideStopResult parseDirectRideStopResponse(Object? decoded) {
       .toLowerCase();
   final finalized = decoded['booking_finalized'] == true ||
       stateRaw == kDirectTripFinalizeCompleted;
+  final complianceRaw = (decoded['compliance_emit_state'] ??
+          decoded['complianceEmitState'] ??
+          '')
+      .toString()
+      .trim()
+      .toLowerCase();
   return DirectRideStopResult(
     ok: ok,
     totalEur: total,
@@ -1544,5 +1563,6 @@ DirectRideStopResult parseDirectRideStopResponse(Object? decoded) {
     bookingFinalizeState:
         stateRaw.isEmpty ? kDirectTripFinalizePending : stateRaw,
     bookingFinalized: finalized,
+    complianceEmitState: complianceRaw.isEmpty ? null : complianceRaw,
   );
 }

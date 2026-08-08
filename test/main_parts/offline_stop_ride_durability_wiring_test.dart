@@ -62,4 +62,14 @@ void main() {
     expect(src.contains('_attemptDirectStopReplayWithBackoff'), isTrue);
     expect(src.contains('DirectTripRecoveryAction.retryStop'), isTrue);
   });
+
+  test('STOP success drains Chiron when compliance emit not applied', () {
+    final src = File('lib/main_parts/driver_home_page_state.dart')
+        .readAsStringSync();
+    expect(src.contains('!outcome.complianceEmitApplied'), isTrue);
+    expect(
+      src.contains('OFFLINE-STOP-CHIRON-ARRIVAL-DURABILITY-P0'),
+      isTrue,
+    );
+  });
 }
