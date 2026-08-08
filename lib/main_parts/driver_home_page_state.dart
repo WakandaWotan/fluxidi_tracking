@@ -22923,19 +22923,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     // GOOGLE-MAPS-WITH-FLUXIDI-PIP-RELEASE-1: while Google Maps owns guidance,
     // suppress Fluxidi maneuver banners / stale instruction ownership. GPS,
     // fare, wait and trip timers keep updating elsewhere.
+    //
+    // GOOGLE-MAPS-NAV-RETURN-SIGNAGE-RESTORE-P1: do NOT wipe the current
+    // maneuver snapshot / owner progress while suppressed — clearing those
+    // fields left NAV FLX without DriverTurnInstructionBanner after return.
     if (shouldSuppressNativeGuidance(_externalNavigationSession)) {
-      if (_nextNavInstruction != null ||
-          _navInstructionSnapshot != null &&
-              _navInstructionSnapshot != NavInstructionSnapshot.none) {
-        _nextNavInstruction = null;
-        _nextNavStreet = null;
-        _nextNavDistanceM = null;
-        _nextNavType = null;
-        _nextNavModifier = null;
-        _activeBanner = null;
-        _activeLaneGuidance = null;
-        _navInstructionSnapshot = NavInstructionSnapshot.none;
-      }
+      assert(!shouldClearManeuverPresentationWhileSuppressed());
       return;
     }
     // NAV-REROUTE-CURRENT-POSITION-HEADING-P0: after confirmed deviation, do
@@ -24217,17 +24210,69 @@ class _DriverHomePageState extends State<DriverHomePage>
           '[EXTERNAL_NAV] event=external_nav_background_entered '
           'pipActive=true session=${session.bookingId}',
         );
-      } else {
-        debugPrint(
-          '[EXTERNAL_NAV] event=external_nav_return_received '
-          'pipActive=false session=${session.bookingId} '
-          'active_ride_present=$_liveRideActive',
-        );
+        setState(() {
+          _externalNavigationSession = session.copyWith(pipActive: true);
+        });
+        return;
       }
-      setState(() {
-        _externalNavigationSession = session.copyWith(pipActive: active);
-      });
+      debugPrint(
+        '[EXTERNAL_NAV] event=external_nav_return_received '
+        'pipActive=false session=${session.bookingId} '
+        'active_ride_present=$_liveRideActive',
+      );
+      // GOOGLE-MAPS-NAV-RETURN-SIGNAGE-RESTORE-P1: returning to full Fluxidi
+      // NAV must unsuppress + rehydrate the current maneuver signage.
+      _restoreFluxidiNavSignageAfterExternalReturn(
+        trigger: ExternalNavSignageRestoreTrigger.pipReturnToFluxidi,
+        reason: 'pip_return',
+      );
     });
+  }
+
+  /// GOOGLE-MAPS-NAV-RETURN-SIGNAGE-RESTORE-P1
+  ///
+  /// Rebinds DriverTurnInstructionBanner / NavManeuverSign from the CURRENT
+  /// route + maneuver owner without recreating MapWidget, clearing the route,
+  /// or inventing a fake straight maneuver.
+  void _restoreFluxidiNavSignageAfterExternalReturn({
+    required ExternalNavSignageRestoreTrigger trigger,
+    required String reason,
+    bool hadExternalSession = true,
+  }) {
+    if (!mounted) return;
+    final decision = decideExternalNavSignageRestore(
+      trigger: trigger,
+      liveRideActive: _liveRideActive,
+      cameraFollow: _cameraMode == _CameraMode.follow,
+      hadExternalSession: hadExternalSession,
+    );
+    final nextSession = applyExternalNavSignageRestoreToSession(
+      session: _externalNavigationSession,
+      decision: decision,
+    );
+    setState(() {
+      if (trigger == ExternalNavSignageRestoreTrigger.pipReturnToFluxidi) {
+        _externalNavigationSession = nextSession;
+      }
+      if (decision.restoreNavigationGuidanceActive) {
+        _navigationGuidanceActive = true;
+      }
+    });
+    debugPrint(
+      '[EXTERNAL_NAV] event=signage_restore reason=$reason '
+      'trigger=${trigger.name} '
+      'unsuppress=${decision.unsuppressNativeGuidance} '
+      'guidance=${decision.restoreNavigationGuidanceActive} '
+      'rehydrate=${decision.rehydrateManeuverFromCurrentState} '
+      'has_snapshot=${_navInstructionSnapshot?.hasInstruction == true} '
+      'route_steps=${_routeSteps.length} '
+      'camera=$_cameraMode',
+    );
+    if (!decision.rehydrateManeuverFromCurrentState) return;
+    final pos = _lastPos;
+    if (pos == null) return;
+    if (shouldSuppressNativeGuidance(_externalNavigationSession)) return;
+    _updateNextNavInstruction(pos);
   }
 
   Future<void> _endExternalNavigationSession({
@@ -24250,9 +24295,20 @@ class _DriverHomePageState extends State<DriverHomePage>
       _externalNavigationSession = null;
       return;
     }
+    final shouldRestoreSignage =
+        reason != 'stop_trip' && reason != 'maps_launch_failed';
     setState(() {
       _externalNavigationSession = null;
     });
+    // GOOGLE-MAPS-NAV-RETURN-SIGNAGE-RESTORE-P1: after ending Google Maps
+    // ownership, immediately restore banner presentation for NAV FLX.
+    if (shouldRestoreSignage) {
+      _restoreFluxidiNavSignageAfterExternalReturn(
+        trigger: ExternalNavSignageRestoreTrigger.endExternalSession,
+        reason: reason,
+        hadExternalSession: true,
+      );
+    }
   }
 
   Future<void> _promptGoogleMapsMissing({bool disabled = false}) async {
