@@ -96,9 +96,35 @@ class PaymentQrPanel extends StatelessWidget {
     final url = checkoutUrl?.trim() ?? '';
     if (url.isEmpty) return;
     final uri = Uri.tryParse(url);
-    if (uri == null) return;
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (uri == null || !(uri.hasScheme && (uri.scheme == 'https' || uri.scheme == 'http'))) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(checkoutLaunchFailedFor(language))),
+      );
+      return;
+    }
+    // PAYMENT-RECOVERY-OPEN-CANCEL-P0: never silent-fail "Open betaalpagina".
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(checkoutLaunchFailedFor(language))),
+      );
+    }
   }
+
+  static String checkoutLaunchFailedFor(AppLanguage language) =>
+      switch (language) {
+        AppLanguage.en =>
+          'Could not open the payment page. Try again or copy the link.',
+        AppLanguage.fr =>
+          'Impossible d’ouvrir la page de paiement. Réessayez.',
+        AppLanguage.es =>
+          'No se pudo abrir la página de pago. Inténtalo de nuevo.',
+        AppLanguage.nl =>
+          'Kon de betaalpagina niet openen. Probeer opnieuw.',
+        AppLanguage.de =>
+          'Could not open the payment page. Try again or copy the link.',
+      };
 
   @override
   Widget build(BuildContext context) {

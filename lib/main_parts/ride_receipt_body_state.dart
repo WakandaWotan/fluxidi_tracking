@@ -3721,6 +3721,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         return _receiptText('mollieNotConnected');
       case MollieStreetCheckoutErrorKind.noOnlineMethods:
         return _receiptText('noOnlineMethods');
+      case MollieStreetCheckoutErrorKind.openPosPaymentExists:
+        return _receiptText('openPosPaymentBlocksCheckout');
       case MollieStreetCheckoutErrorKind.notEligible:
       case MollieStreetCheckoutErrorKind.network:
       case MollieStreetCheckoutErrorKind.unknown:

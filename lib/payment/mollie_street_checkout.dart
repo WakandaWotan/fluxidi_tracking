@@ -218,6 +218,10 @@ enum MollieStreetCheckoutErrorKind {
   /// (not a street/direct ride, or not in a checkout-eligible state).
   notEligible,
 
+  /// An open Tap to Pay (POS) payment still blocks minting a new hosted
+  /// checkout for this ride.
+  openPosPaymentExists,
+
   /// Transport-level failure (timeout / no connectivity / non-JSON body).
   network,
 
@@ -257,6 +261,9 @@ MollieStreetCheckoutErrorKind classifyMollieStreetCheckoutStartError({
       err.contains('not_eligible') ||
       err.contains('booking_not_completed')) {
     return MollieStreetCheckoutErrorKind.notEligible;
+  }
+  if (err == 'open_pos_payment_exists' || err.contains('open_pos_payment')) {
+    return MollieStreetCheckoutErrorKind.openPosPaymentExists;
   }
   return MollieStreetCheckoutErrorKind.unknown;
 }

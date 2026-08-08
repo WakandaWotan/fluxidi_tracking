@@ -565,6 +565,7 @@ import {
   resolveMollieCancelReconcileOutcome,
   resolveMollieOpenPaymentCancelDecision,
   resolveMollieOpenPaymentPresentation,
+  resolveOpenPosBlocksNewStreetCheckout,
 } from "./modules/mollie_open_payment_recovery.mjs";
 
 /* -------- Google API helpers (hoisted at top to avoid any ReferenceError) -------- */
@@ -44850,7 +44851,8 @@ export default {
             out?.error === "street_fare_not_finalized" ||
             out?.error === "street_fare_unavailable" ||
             out?.error === "street_currency_unsupported" ||
-            out?.error === "booking_not_payable"
+            out?.error === "booking_not_payable" ||
+            out?.error === "open_pos_payment_exists"
           ) {
             statusCode = 409;
           } else if (
@@ -44937,9 +44939,15 @@ export default {
               trusted.customer_session,
               bookingId,
             );
-            if (customerGate) return customerGate;
-          } else {
-            return _opaqueBookingNotFoundResponse();
+            if (!customerGate.ok) return customerGate.response;
+          } else if (
+            trusted.auth_mode !== "admin_token" &&
+            trusted.actor_role !== "admin"
+          ) {
+            // Parity with /street-checkout: admin may recover/cancel for ops.
+            if (!hasValidAdminToken(request, url, env)) {
+              return trusted.response || json({ ok: false, error: "unauthorized" }, 401);
+            }
           }
 
           const out = await recoverOpenStreetMollieCheckoutAuthoritative(
@@ -84177,6 +84185,139 @@ async function reconcileDriverPosTerminalPaymentAuthoritative(
 }
 
 /**
+ * PAYMENT-RECOVERY-OPEN-CANCEL-P0
+ * Best-effort release of an open Tap POS intent for a booking.
+ *
+ * When requireReleased=true (street checkout create path): if Mollie still
+ * reports a payable POS payment after cancel attempt, returns { blocks: true }
+ * so a second payable channel is not minted.
+ * When requireReleased=false (after street cancel): never blocks the caller.
+ */
+async function _releaseOpenDriverPosIntentBestEffort(
+  env,
+  tenantScope,
+  bookingId,
+  options = {},
+) {
+  const requireReleased = options?.requireReleased === true;
+  const reason = safeStr(options?.reason, 80) || "pos_release";
+  try {
+    if (!env?.BOOKING_KV || !tenantScope?.hasScope) {
+      return { ok: true, skipped: true, reason: "missing_scope" };
+    }
+    const intentKey = buildScopedDriverPosPaymentIntentKey(
+      tenantScope,
+      bookingId,
+      null,
+    );
+    if (!intentKey) {
+      return { ok: true, skipped: true, reason: "missing_intent_key" };
+    }
+    const intent = await env.BOOKING_KV.get(intentKey, { type: "json" });
+    if (!intent || typeof intent !== "object") {
+      return { ok: true, skipped: true, reason: "no_intent" };
+    }
+    const paymentId = safeStr(intent?.payment_id ?? intent?.paymentId, 160);
+    const intentStatus = safeStr(
+      intent?.mollie_status ?? intent?.status,
+      40,
+    ).toLowerCase();
+    if (!paymentId) {
+      return { ok: true, skipped: true, reason: "no_payment_id" };
+    }
+    if (posTerminalStatusAllowsRetry(intentStatus)) {
+      return {
+        ok: true,
+        already_released: true,
+        payment_id: paymentId,
+        provider_status: intentStatus,
+      };
+    }
+    if (
+      intentStatus &&
+      !["open", "pending", "authorized", "created", ""].includes(intentStatus)
+    ) {
+      // Unknown non-payable local status — do not block street create.
+      return {
+        ok: true,
+        skipped: true,
+        reason: "intent_not_payable",
+        payment_id: paymentId,
+        provider_status: intentStatus,
+      };
+    }
+
+    const cancelOut = await cancelOpenDriverPosTerminalPaymentAuthoritative(
+      bookingId,
+      env,
+      tenantScope,
+      { paymentId, reason },
+    );
+    if (cancelOut?.paid === true || cancelOut?.error === "payment_already_paid") {
+      return {
+        ok: false,
+        blocks: requireReleased,
+        paid: true,
+        payment_id: paymentId,
+        provider_status: "paid",
+        error: "payment_already_paid",
+      };
+    }
+    const afterStatus = safeStr(cancelOut?.provider_status, 40).toLowerCase();
+    const released =
+      cancelOut?.already_released === true ||
+      (cancelOut?.ok === true && posTerminalStatusAllowsRetry(afterStatus)) ||
+      posTerminalStatusAllowsRetry(afterStatus);
+    if (released) {
+      return {
+        ok: true,
+        released: true,
+        payment_id: paymentId,
+        provider_status: afterStatus || cancelOut?.provider_status || null,
+      };
+    }
+    const gate = resolveOpenPosBlocksNewStreetCheckout({
+      posProviderStatus: afterStatus || intentStatus,
+      cancelReleased: false,
+      posPaid: false,
+    });
+    // Still payable at Mollie — block only when minting a new street payment.
+    if (requireReleased && gate.blocks) {
+      console.log(
+        `[PAYMENT_RECOVERY][POS_BLOCKS_STREET] booking=${_bookingIntentMask(bookingId)} payment=${_bookingIntentMask(paymentId)} status=${afterStatus || intentStatus} reason=${reason}`,
+      );
+      return {
+        ok: false,
+        blocks: true,
+        payment_id: paymentId,
+        provider_status: afterStatus || intentStatus || null,
+        error: gate.error || cancelOut?.error || "open_pos_payment_exists",
+      };
+    }
+    return {
+      ok: false,
+      blocks: false,
+      payment_id: paymentId,
+      provider_status: afterStatus || intentStatus || null,
+      error: cancelOut?.error || "cancel_not_confirmed",
+    };
+  } catch (err) {
+    console.log(
+      `[PAYMENT_RECOVERY][POS_RELEASE_ERR] booking=${_bookingIntentMask(bookingId)} reason=${reason} err=${safeStr(err?.message, 120)}`,
+    );
+    if (requireReleased) {
+      // Fail closed when we cannot prove POS is released before minting street.
+      return {
+        ok: false,
+        blocks: true,
+        error: "pos_release_failed",
+      };
+    }
+    return { ok: false, blocks: false, error: "pos_release_failed" };
+  }
+}
+
+/**
  * Cancel a stuck open/pending driver POS Mollie payment, then clear the intent
  * so a controlled retry can create a new payment (never while still active).
  */
@@ -84308,11 +84449,15 @@ async function cancelOpenDriverPosTerminalPaymentAuthoritative(
       provider: sanitizeMolliePaymentSnapshot(after?.data),
     };
   }
-  if (!posTerminalStatusAllowsRetry(afterStatus) && !cancelHttpOk) {
+  // PAYMENT-RECOVERY-OPEN-CANCEL-P0: DELETE HTTP success is not enough —
+  // Mollie must report a terminal released status before we clear the intent
+  // / allow a new payable channel (matches hosted-checkout cancel contract).
+  if (!posTerminalStatusAllowsRetry(afterStatus)) {
     return {
       ok: false,
       error: "cancel_not_confirmed",
       provider_status: afterStatus,
+      cancel_http_ok: cancelHttpOk,
       provider: sanitizeMolliePaymentSnapshot(after?.data),
     };
   }
@@ -85040,6 +85185,11 @@ async function recoverOpenStreetMollieCheckoutAuthoritative(
     };
   }
   if (cancelOut?.ok && cancelOut?.release_owner) {
+    // PAYMENT-RECOVERY-OPEN-CANCEL-P0: also release any orphan open Tap POS
+    // attempt for this booking so the chauffeur is not trapped after cancel.
+    await _releaseOpenDriverPosIntentBestEffort(env, tenantScope, bookingId, {
+      reason: "street_checkout_cancel_release",
+    });
     const presentation = resolveMollieOpenPaymentPresentation({
       providerStatus: cancelOut.provider_status || "canceled",
       hasCheckoutUrl: false,
@@ -85207,6 +85357,28 @@ async function createStreetRideCheckoutAuthoritative(
         reused: true,
       };
     }
+  }
+
+  // PAYMENT-RECOVERY-OPEN-CANCEL-P0: never mint a second payable channel while
+  // an open Tap POS attempt can still succeed. Release it first; if Mollie
+  // still reports payable, refuse the new hosted checkout (no double charge).
+  // Runs only on the create path — resume/reuse above must stay available.
+  const posGate = await _releaseOpenDriverPosIntentBestEffort(
+    env,
+    tenantScope,
+    bookingId,
+    { reason: "street_checkout_before_create", requireReleased: true },
+  );
+  if (posGate?.blocks === true) {
+    return {
+      ok: false,
+      error: "open_pos_payment_exists",
+      message:
+        "An open Tap to Pay payment is still active for this ride. Cancel or wait until it expires before starting online payment.",
+      mollie_payment_id: posGate.payment_id || null,
+      provider_status: posGate.provider_status || null,
+      creates_new_mollie_payment: false,
+    };
   }
 
   // Online readiness: company must have Mollie Connect usable AND at least one

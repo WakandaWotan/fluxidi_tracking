@@ -233,6 +233,16 @@ void main() {
         MollieStreetCheckoutErrorKind.unknown,
       );
     });
+
+    test('open_pos_payment_exists -> openPosPaymentExists', () {
+      expect(
+        classifyMollieStreetCheckoutStartError(
+          httpCode: 409,
+          decoded: {'error': 'open_pos_payment_exists'},
+        ),
+        MollieStreetCheckoutErrorKind.openPosPaymentExists,
+      );
+    });
   });
 
   group('manualPaymentBlockedByOpenMollieCheckout', () {

@@ -283,3 +283,73 @@ export function normalizeMollieRecoveryAction(raw) {
   }
   return "";
 }
+
+/**
+ * PAYMENT-RECOVERY-OPEN-CANCEL-P0
+ * After attempting to cancel an open Tap POS payment, decide whether minting a
+ * new hosted street checkout is allowed. Never mint a second payable channel.
+ */
+export function resolveOpenPosBlocksNewStreetCheckout({
+  posProviderStatus = "",
+  cancelReleased = false,
+  posPaid = false,
+} = {}) {
+  if (posPaid === true || isMollieProviderStatusPaid(posProviderStatus)) {
+    return {
+      blocks: true,
+      error: "payment_already_paid",
+      creates_new_mollie_payment: false,
+    };
+  }
+  if (
+    cancelReleased === true ||
+    isMollieProviderStatusReleased(posProviderStatus)
+  ) {
+    return {
+      blocks: false,
+      error: null,
+      creates_new_mollie_payment: true,
+    };
+  }
+  if (isMollieProviderStatusPayable(posProviderStatus)) {
+    return {
+      blocks: true,
+      error: "open_pos_payment_exists",
+      creates_new_mollie_payment: false,
+    };
+  }
+  // Unknown status: fail closed — do not mint a parallel payable channel.
+  return {
+    blocks: true,
+    error: "open_pos_payment_exists",
+    creates_new_mollie_payment: false,
+  };
+}
+
+/**
+ * Local pending lock may clear only after authoritative cancel/abandon.
+ * DELETE + still-open must keep the lock.
+ */
+export function resolvePendingLockClearAfterCancel({
+  providerStatusAfter = "",
+  cancelHttpOk = false,
+  localWasPaid = false,
+} = {}) {
+  if (localWasPaid === true || isMollieProviderStatusPaid(providerStatusAfter)) {
+    return {
+      clear_local_lock: false,
+      payment_status: "paid",
+      error: "payment_already_paid",
+    };
+  }
+  const outcome = resolveMollieCancelReconcileOutcome({
+    providerStatusAfter,
+    cancelHttpOk,
+  });
+  return {
+    clear_local_lock: outcome.release_owner === true,
+    payment_status: outcome.release_owner ? "unpaid" : "pending",
+    error: outcome.error,
+    release_owner: outcome.release_owner === true,
+  };
+}

@@ -634,6 +634,13 @@ String _receiptText(String key) {
         fr: 'Le paiement en ligne est terminé. Vous pouvez choisir un autre mode de paiement.',
         es: 'El pago en línea ha finalizado. Ya puedes elegir otro método de pago.',
       );
+    case 'openPosPaymentBlocksCheckout':
+      return _tr(
+        nl: 'Er is nog een open Tap to Pay-betaling voor deze rit. Annuleer die of wacht tot ze verloopt voordat je online betaalt.',
+        en: 'An open Tap to Pay payment is still active for this ride. Cancel it or wait until it expires before paying online.',
+        fr: 'Un paiement Tap to Pay est encore ouvert pour cette course. Annulez-le ou attendez qu’il expire avant de payer en ligne.',
+        es: 'Todavía hay un pago Tap to Pay abierto para este viaje. Cancélalo o espera a que caduque antes de pagar en línea.',
+      );
     case 'paymentRecoveryError':
       return _tr(
         nl: 'Status kon niet worden opgehaald. Controleer de verbinding en probeer opnieuw.',

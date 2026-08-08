@@ -12,10 +12,13 @@ import {
   resolveMollieCancelReconcileOutcome,
   resolveMollieOpenPaymentCancelDecision,
   resolveMollieOpenPaymentPresentation,
+  resolveOpenPosBlocksNewStreetCheckout,
+  resolvePendingLockClearAfterCancel,
 } from "./mollie_open_payment_recovery.mjs";
 import {
   manualMarkPaidConflict,
   readOpenStreetMollieCheckout,
+  webhookAfterManualPaidConflict,
 } from "./street_mollie_checkout.js";
 
 const openCheckout = {
@@ -209,4 +212,109 @@ test("19+20. amount/ownership invariants stay outside this module (guards only)"
     }).may_manual_pay,
     false,
   );
+});
+
+test("21. open POS blocks minting a new street checkout", () => {
+  const blocked = resolveOpenPosBlocksNewStreetCheckout({
+    posProviderStatus: "open",
+    cancelReleased: false,
+  });
+  assert.equal(blocked.blocks, true);
+  assert.equal(blocked.error, "open_pos_payment_exists");
+  assert.equal(blocked.creates_new_mollie_payment, false);
+});
+
+test("22. released POS allows new street checkout (Tap after cancel)", () => {
+  const allowed = resolveOpenPosBlocksNewStreetCheckout({
+    posProviderStatus: "canceled",
+    cancelReleased: true,
+  });
+  assert.equal(allowed.blocks, false);
+  assert.equal(allowed.creates_new_mollie_payment, true);
+});
+
+test("23. pending lock clears only after authoritative cancel/abandon", () => {
+  const stillOpen = resolvePendingLockClearAfterCancel({
+    providerStatusAfter: "open",
+    cancelHttpOk: true,
+  });
+  assert.equal(stillOpen.clear_local_lock, false);
+  assert.equal(stillOpen.payment_status, "pending");
+
+  const canceled = resolvePendingLockClearAfterCancel({
+    providerStatusAfter: "canceled",
+    cancelHttpOk: true,
+  });
+  assert.equal(canceled.clear_local_lock, true);
+  assert.equal(canceled.payment_status, "unpaid");
+
+  const abandoned = resolvePendingLockClearAfterCancel({
+    providerStatusAfter: "abandoned",
+    cancelHttpOk: false,
+  });
+  assert.equal(abandoned.clear_local_lock, true);
+});
+
+test("24. paid payment can never be cancelled locally into unpaid", () => {
+  const paid = resolvePendingLockClearAfterCancel({
+    providerStatusAfter: "paid",
+    cancelHttpOk: true,
+    localWasPaid: false,
+  });
+  assert.equal(paid.clear_local_lock, false);
+  assert.equal(paid.payment_status, "paid");
+  assert.equal(paid.error, "payment_already_paid");
+
+  const localPaid = resolvePendingLockClearAfterCancel({
+    providerStatusAfter: "open",
+    cancelHttpOk: true,
+    localWasPaid: true,
+  });
+  assert.equal(localPaid.clear_local_lock, false);
+  assert.equal(localPaid.payment_status, "paid");
+});
+
+test("25. repeated cancel/recheck is idempotent once released", () => {
+  const first = resolveMollieOpenPaymentCancelDecision({
+    providerStatus: "canceled",
+  });
+  const second = resolveMollieOpenPaymentCancelDecision({
+    providerStatus: "canceled",
+  });
+  assert.equal(first.action, "already_released");
+  assert.equal(second.action, "already_released");
+  assert.equal(first.release_owner, true);
+  assert.equal(second.release_owner, true);
+});
+
+test("26. late webhook from abandoned/other Mollie cannot create double-paid", () => {
+  const alreadyPaid = {
+    payment_status: "paid",
+    payment_provider: "mollie",
+    payment_mode: "mollie",
+    payment_id: "tr_street_paid",
+    mollie: { id: "tr_street_paid", payment_id: "tr_street_paid", status: "paid" },
+  };
+  const conflict = webhookAfterManualPaidConflict(alreadyPaid, "tr_abandoned_pos");
+  assert.equal(conflict.error, "payment_reconciliation_conflict");
+  assert.equal(conflict.reason, "canonical_already_paid_different_mollie");
+
+  const cashPaid = {
+    payment_status: "paid",
+    payment_provider: "manual",
+    payment_mode: "manual",
+  };
+  const cashConflict = webhookAfterManualPaidConflict(cashPaid, "tr_abandoned_pos");
+  assert.equal(cashConflict.error, "payment_reconciliation_conflict");
+  assert.equal(cashConflict.reason, "canonical_already_paid_manual");
+});
+
+test("27. resume keeps single owner (no second create signal)", () => {
+  const pending = resolveMollieOpenPaymentPresentation({
+    providerStatus: "open",
+    hasCheckoutUrl: true,
+  });
+  assert.equal(pending.resumable, true);
+  assert.ok(pending.actions.includes("resume_checkout"));
+  assert.equal(normalizeMollieRecoveryAction("resume"), "resume");
 });
