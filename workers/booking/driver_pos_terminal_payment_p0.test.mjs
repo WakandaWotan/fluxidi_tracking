@@ -353,6 +353,148 @@ test("driver POS start: no active terminal fails clearly; double start reuses in
   }
 });
 
+test("driver POS start: Mollie 4xx persists status/title/detail; no intent/shadow", async () => {
+  const kv = makeKV();
+  const session = await seedDriverSession({
+    tokenValue: "drv-pos-fail4",
+    tenantId: TENANT,
+    companyId: COMPANY,
+    driverId: DRIVER,
+  });
+  await kv.put(session.key, JSON.stringify(session.record));
+  await kv.put(`booking:${BOOKING}`, JSON.stringify(plannedBooking()));
+  await seedMollieCredentials(kv, { tenantId: TENANT, companyId: COMPANY });
+  await seedTerminalSnapshot(kv, {
+    tenantId: TENANT,
+    companyId: COMPANY,
+    terminals: [{ id: "term_1", status: "active", profile_id: "pfl_1" }],
+  });
+
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes("api.mollie.com") && init?.method === "POST") {
+      const body = JSON.parse(init.body);
+      assert.equal(body.method, "pointofsale");
+      assert.equal(body.terminalId, "term_1");
+      assert.equal(body.amount.currency, "EUR");
+      assert.equal(body.amount.value, "42.50");
+      assert.ok(!String(init.body).includes("access_token"));
+      return new Response(
+        JSON.stringify({
+          status: 422,
+          title: "Unprocessable Entity",
+          detail: "The terminal is not enabled for this profile",
+          field: "terminalId",
+        }),
+        {
+          status: 422,
+          headers: { "request-id": "req_4xx_pos" },
+        },
+      );
+    }
+    return new Response("{}", { status: 404 });
+  };
+
+  try {
+    const res = await worker.fetch(
+      startReq({ booking_id: BOOKING }, "drv-pos-fail4"),
+      envFor(kv),
+    );
+    const body = await res.json();
+    assert.equal(body.ok, false);
+    assert.equal(body.error, "mollie_terminal_payment_create_failed");
+    assert.equal(body.provider_category, "mollie_http_4xx");
+    // Generic contract: no raw Mollie title/detail on response.
+    assert.equal(body.mollie_title, undefined);
+    assert.equal(body.detail, undefined);
+
+    const intentKey = `tenant:${TENANT}:company:${COMPANY}:mollie_driver_pos_intent:${BOOKING}:main:v1`;
+    assert.equal(await kv.get(intentKey), null);
+
+    const latestKey = `tenant:${TENANT}:company:${COMPANY}:mollie_driver_pos_start_fail:${BOOKING}:latest:v1`;
+    const diag = JSON.parse(await kv.get(latestKey));
+    assert.equal(diag.mollie_http_status, 422);
+    assert.equal(diag.mollie_title, "Unprocessable Entity");
+    assert.match(diag.mollie_detail, /terminal is not enabled/);
+    assert.equal(diag.mollie_field, "terminalId");
+    assert.equal(diag.mollie_request_id, "req_4xx_pos");
+    assert.equal(diag.request_method, "pointofsale");
+    assert.equal(diag.amount.value, "42.50");
+    assert.equal(diag.request_contract.method, "pointofsale");
+    assert.ok(!JSON.stringify(diag).includes("Bearer"));
+    assert.ok(!JSON.stringify(diag).includes("access_live_test"));
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test("driver POS start: Mollie 5xx persists status/title; timeout has no invented body", async () => {
+  const kv = makeKV();
+  const session = await seedDriverSession({
+    tokenValue: "drv-pos-fail5",
+    tenantId: TENANT,
+    companyId: COMPANY,
+    driverId: DRIVER,
+  });
+  await kv.put(session.key, JSON.stringify(session.record));
+  await kv.put(`booking:${BOOKING}`, JSON.stringify(plannedBooking()));
+  await seedMollieCredentials(kv, { tenantId: TENANT, companyId: COMPANY });
+  await seedTerminalSnapshot(kv, {
+    tenantId: TENANT,
+    companyId: COMPANY,
+    terminals: [{ id: "term_1", status: "active", profile_id: "pfl_1" }],
+  });
+
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes("api.mollie.com") && init?.method === "POST") {
+      return new Response(JSON.stringify({ title: "Bad Gateway" }), {
+        status: 502,
+      });
+    }
+    return new Response("{}", { status: 404 });
+  };
+  try {
+    const res = await worker.fetch(
+      startReq({ booking_id: BOOKING }, "drv-pos-fail5"),
+      envFor(kv),
+    );
+    const body = await res.json();
+    assert.equal(body.error, "mollie_terminal_payment_create_failed");
+    assert.equal(body.provider_category, "mollie_http_5xx");
+    const latestKey = `tenant:${TENANT}:company:${COMPANY}:mollie_driver_pos_start_fail:${BOOKING}:latest:v1`;
+    const diag = JSON.parse(await kv.get(latestKey));
+    assert.equal(diag.mollie_http_status, 502);
+    assert.equal(diag.mollie_title, "Bad Gateway");
+    assert.equal(diag.mollie_detail, null);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+
+  globalThis.fetch = async () => {
+    throw new Error("network timeout");
+  };
+  try {
+    const res = await worker.fetch(
+      startReq({ booking_id: BOOKING }, "drv-pos-fail5"),
+      envFor(kv),
+    );
+    const body = await res.json();
+    assert.equal(body.error, "mollie_terminal_payment_create_failed");
+    assert.equal(body.provider_category, "mollie_network_error");
+    const latestKey = `tenant:${TENANT}:company:${COMPANY}:mollie_driver_pos_start_fail:${BOOKING}:latest:v1`;
+    const diag = JSON.parse(await kv.get(latestKey));
+    assert.equal(diag.provider_category, "mollie_network_error");
+    assert.equal(diag.mollie_http_status, null);
+    assert.equal(diag.mollie_title, null);
+    assert.equal(diag.mollie_detail, null);
+    const intentKey = `tenant:${TENANT}:company:${COMPANY}:mollie_driver_pos_intent:${BOOKING}:main:v1`;
+    assert.equal(await kv.get(intentKey), null);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
 test("driver POS status: only paid marks booking paid; failed keeps unpaid", async () => {
   const kv = makeKV();
   const session = await seedDriverSession({

@@ -22,6 +22,11 @@ import {
   isStreetDirectBookingRecord,
   shouldMarkBookingPaidFromPosStatus,
   shouldTriggerBillitSyncOnPosPaid,
+  buildDriverPosCreateRequestContract,
+  sanitizeMollieCreateRejection,
+  buildDriverPosStartFailureDiagnostic,
+  buildScopedDriverPosStartFailLatestKey,
+  driverPosStartFailDiagContainsSecrets,
 } from "./pos_terminal_payment.mjs";
 
 const T = (id, extra = {}) => ({ id, status: "active", profile_id: "pfl_1", ...extra });
@@ -273,4 +278,117 @@ test("diagnostics line is PII-free with required fields", () => {
   assert.match(line, /^\[CARD_TERMINAL_PAYMENT\] /);
   assert.match(line, /amountCents=320/);
   assert.match(line, /paymentWritten=false/);
+});
+
+test("create request contract asserts pointofsale + terminal + EUR amount", () => {
+  const contract = buildDriverPosCreateRequestContract({
+    terminalId: "term_YAhfDhEbbbydgRaVLd4VJ",
+    amount: { currency: "EUR", value: "43.60" },
+    profileId: "pfl_53RM5gS9qZ",
+    webhookUrl: "https://fluxidi-booking-api.fluxidi.workers.dev/webhook/mollie",
+    redirectUrl: null,
+    testmode: false,
+  });
+  assert.equal(contract.api, "POST /v2/payments");
+  assert.equal(contract.method, "pointofsale");
+  assert.equal(contract.terminalId, "term_YAhfDhEbbbydgRaVLd4VJ");
+  assert.equal(contract.amount.currency, "EUR");
+  assert.equal(contract.amount.value, "43.60");
+  assert.equal(contract.profileId_present, true);
+  assert.equal(contract.webhookUrl_present, true);
+  assert.equal(contract.webhookUrl_host, "fluxidi-booking-api.fluxidi.workers.dev");
+  assert.equal(contract.redirectUrl_present, false);
+  assert.equal(contract.mollie_mode, "live");
+  assert.equal(driverPosStartFailDiagContainsSecrets(contract), false);
+});
+
+test("sanitizeMollieCreateRejection keeps 4xx title/detail/field", () => {
+  const out = sanitizeMollieCreateRejection({
+    httpStatus: 422,
+    body: {
+      status: 422,
+      title: "Unprocessable Entity",
+      detail: "The terminal is not enabled for this profile",
+      field: "terminalId",
+    },
+    requestId: "req_abc",
+  });
+  assert.equal(out.category, "mollie_http_4xx");
+  assert.equal(out.http_status, 422);
+  assert.equal(out.title, "Unprocessable Entity");
+  assert.match(out.detail, /terminal is not enabled/);
+  assert.equal(out.field, "terminalId");
+  assert.equal(out.request_id, "req_abc");
+});
+
+test("sanitizeMollieCreateRejection keeps 5xx without inventing detail", () => {
+  const out = sanitizeMollieCreateRejection({
+    httpStatus: 503,
+    body: { title: "Service Unavailable" },
+  });
+  assert.equal(out.category, "mollie_http_5xx");
+  assert.equal(out.http_status, 503);
+  assert.equal(out.title, "Service Unavailable");
+  assert.equal(out.detail, null);
+});
+
+test("sanitizeMollieCreateRejection timeout/network does not invent provider body", () => {
+  const out = sanitizeMollieCreateRejection({
+    networkError: true,
+    body: { title: "should_not_use", detail: "ignored" },
+  });
+  assert.equal(out.category, "mollie_network_error");
+  assert.equal(out.http_status, null);
+  assert.equal(out.title, null);
+  assert.equal(out.detail, null);
+  assert.equal(out.code, null);
+});
+
+test("start-fail diagnostic record is secret-free and latest-key scoped", () => {
+  const rejection = sanitizeMollieCreateRejection({
+    httpStatus: 422,
+    body: {
+      title: "Unprocessable Entity",
+      detail: "The payment could not be created",
+      code: "invalid_request",
+    },
+  });
+  const contract = buildDriverPosCreateRequestContract({
+    terminalId: "term_1",
+    amount: { currency: "EUR", value: "43.60" },
+    profileId: "pfl_1",
+    webhookUrl: "https://example.test/webhook/mollie",
+    testmode: false,
+  });
+  const diag = buildDriverPosStartFailureDiagnostic({
+    scope: { tenant_id: "T1", company_id: "C1" },
+    bookingId: "street_1786120995678_uupw9mnz",
+    terminalId: "term_1",
+    profileId: "pfl_1",
+    amount: { currency: "EUR", value: "43.60" },
+    testmode: false,
+    requestContract: contract,
+    rejection,
+    attemptId: "att_test1",
+    nowIso: "2026-08-08T05:00:00.000Z",
+  });
+  assert.equal(
+    diag.keys.latest,
+    buildScopedDriverPosStartFailLatestKey(
+      { tenant_id: "T1", company_id: "C1" },
+      "street_1786120995678_uupw9mnz",
+    ),
+  );
+  assert.match(diag.keys.attempt, /att_test1/);
+  assert.equal(diag.record.mollie_http_status, 422);
+  assert.equal(diag.record.mollie_title, "Unprocessable Entity");
+  assert.equal(diag.record.request_method, "pointofsale");
+  assert.equal(diag.record.fluxidi_error, "mollie_terminal_payment_create_failed");
+  assert.equal(driverPosStartFailDiagContainsSecrets(diag.record), false);
+  assert.equal(
+    driverPosStartFailDiagContainsSecrets({
+      Authorization: "Bearer live_secret_token_value",
+    }),
+    true,
+  );
 });

@@ -246,6 +246,11 @@ import {
   shouldMarkBookingPaidFromPosStatus,
   shouldTriggerBillitSyncOnPosPaid,
   resolveEffectiveDefaultTerminalId,
+  buildDriverPosCreateRequestContract,
+  sanitizeMollieCreateRejection,
+  buildDriverPosStartFailureDiagnostic,
+  driverPosStartFailDiagContainsSecrets,
+  DRIVER_POS_START_FAIL_DIAG_TTL_SECONDS,
 } from "./modules/pos_terminal_payment.mjs";
 import {
   applyTerminalLinkAction,
@@ -83191,6 +83196,33 @@ async function resolveDriverPosTerminalCapability(env, tenantScope) {
   };
 }
 
+
+async function persistDriverPosStartFailDiagBestEffort(env, diagnostic) {
+  try {
+    if (!env?.BOOKING_KV || !diagnostic?.record) return;
+    const latestKey = String(diagnostic.keys?.latest || "").trim();
+    const attemptKey = String(diagnostic.keys?.attempt || "").trim();
+    if (!latestKey && !attemptKey) return;
+    if (driverPosStartFailDiagContainsSecrets(diagnostic.record)) {
+      console.log("[CARD_TERMINAL_PAYMENT] phase=start_fail_diag_skipped reason=secrets_guard");
+      return;
+    }
+    const ttl =
+      Number(diagnostic.ttl_seconds) > 0
+        ? Number(diagnostic.ttl_seconds)
+        : DRIVER_POS_START_FAIL_DIAG_TTL_SECONDS;
+    const payload = JSON.stringify(diagnostic.record);
+    if (attemptKey) {
+      await env.BOOKING_KV.put(attemptKey, payload, { expirationTtl: ttl });
+    }
+    if (latestKey) {
+      await env.BOOKING_KV.put(latestKey, payload, { expirationTtl: ttl });
+    }
+  } catch (_) {
+    // Diagnostic persistence must never alter payment semantics.
+  }
+}
+
 async function startDriverPosTerminalPaymentAuthoritative(
   bookingId,
   env,
@@ -83390,8 +83422,30 @@ async function startDriverPosTerminalPaymentAuthoritative(
     ...(paymentTestMode ? { testmode: true } : {}),
   };
   const idempotencyKey = safeStr(intentKey, 240).replace(/[^a-zA-Z0-9_-]+/g, "_");
+  const requestContract = buildDriverPosCreateRequestContract({
+    terminalId,
+    amount,
+    profileId: companyMollieProfileId,
+    webhookUrl: mollieCreateBody.webhookUrl,
+    redirectUrl: mollieCreateBody.redirectUrl,
+    testmode: paymentTestMode === true,
+    apiPath: "/v2/payments",
+  });
+  console.log(
+    posTerminalDiagnosticsLine({
+      phase: "create_request_contract",
+      amountCents: amountResolution.cents,
+      currency: amountResolution.currency,
+      reason: `method=pointofsale terminal=${maskPosTerminalId(terminalId)} mode=${paymentTestMode ? "test" : "live"}`,
+    }),
+  );
+  console.log(
+    `[CARD_TERMINAL_PAYMENT] create_request_contract=${JSON.stringify(requestContract)}`,
+  );
+
   let mollieRes = null;
   let mollie = {};
+  let mollieRequestId = null;
   try {
     mollieRes = await fetch(_mollieCreatePaymentApiUrl(), {
       method: "POST",
@@ -83402,6 +83456,10 @@ async function startDriverPosTerminalPaymentAuthoritative(
       },
       body: JSON.stringify(mollieCreateBody),
     });
+    mollieRequestId =
+      mollieRes?.headers?.get?.("request-id") ||
+      mollieRes?.headers?.get?.("x-request-id") ||
+      null;
     const txt = await mollieRes.text();
     try {
       mollie = txt ? JSON.parse(txt) : {};
@@ -83410,22 +83468,68 @@ async function startDriverPosTerminalPaymentAuthoritative(
     }
   } catch (_) {
     credentials = null;
-    return { ok: false, error: "mollie_terminal_payment_create_failed" };
-  }
-  const paymentId = safeStr(mollie?.id, 160);
-  const mollieStatus = safeStr(mollie?.status, 40) || "created";
-  if (!mollieRes?.ok || !paymentId) {
-    credentials = null;
+    const rejection = sanitizeMollieCreateRejection({ networkError: true });
+    const diagnostic = buildDriverPosStartFailureDiagnostic({
+      scope: tenantScope,
+      bookingId,
+      terminalId,
+      profileId: companyMollieProfileId,
+      amount,
+      testmode: paymentTestMode === true,
+      requestContract,
+      rejection,
+    });
+    await persistDriverPosStartFailDiagBestEffort(env, diagnostic);
     console.log(
       posTerminalDiagnosticsLine({
         phase: "start_fail",
         amountCents: amountResolution.cents,
         currency: amountResolution.currency,
-        providerCode: safeStr(mollie?.detail || mollie?.code, 80) || "create_failed",
+        providerCode: "network_error",
+        reason: "mollie_network_error",
+      }),
+    );
+    return {
+      ok: false,
+      error: "mollie_terminal_payment_create_failed",
+      provider_category: rejection.category,
+    };
+  }
+  const paymentId = safeStr(mollie?.id, 160);
+  const mollieStatus = safeStr(mollie?.status, 40) || "created";
+  if (!mollieRes?.ok || !paymentId) {
+    credentials = null;
+    const rejection = sanitizeMollieCreateRejection({
+      httpStatus: mollieRes?.status,
+      body: mollie,
+      requestId: mollieRequestId,
+    });
+    const diagnostic = buildDriverPosStartFailureDiagnostic({
+      scope: tenantScope,
+      bookingId,
+      terminalId,
+      profileId: companyMollieProfileId,
+      amount,
+      testmode: paymentTestMode === true,
+      requestContract,
+      rejection,
+    });
+    await persistDriverPosStartFailDiagBestEffort(env, diagnostic);
+    console.log(
+      posTerminalDiagnosticsLine({
+        phase: "start_fail",
+        amountCents: amountResolution.cents,
+        currency: amountResolution.currency,
+        providerCode:
+          safeStr(rejection.detail || rejection.code, 80) || "create_failed",
         reason: "mollie_create_failed",
       }),
     );
-    return { ok: false, error: "mollie_terminal_payment_create_failed" };
+    return {
+      ok: false,
+      error: "mollie_terminal_payment_create_failed",
+      provider_category: rejection.category,
+    };
   }
 
   const nowIso = new Date().toISOString();

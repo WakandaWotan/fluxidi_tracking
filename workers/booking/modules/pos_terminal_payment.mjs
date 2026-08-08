@@ -456,6 +456,224 @@ export function buildScopedDriverPosPaymentIntentKey(scope, bookingId, legId) {
   return `tenant:${tenant}:company:${company}:mollie_driver_pos_intent:${booking}:${legOrMain}:v1`;
 }
 
+/** TTL for Tap-to-Pay create-failure diagnostics (14 days). */
+export const DRIVER_POS_START_FAIL_DIAG_TTL_SECONDS = 60 * 60 * 24 * 14;
+
+/**
+ * Latest failure for a booking (Agent read path).
+ * tenant + company + booking scoped.
+ */
+export function buildScopedDriverPosStartFailLatestKey(scope, bookingId) {
+  const s = _asObject(scope);
+  const tenant = _str(s.tenantId ?? s.tenant_id ?? s.tenant, 120);
+  const company = _str(s.companyId ?? s.company_id ?? s.company, 120);
+  const booking = _str(bookingId, 160);
+  if (!tenant || !company || !booking) return "";
+  return `tenant:${tenant}:company:${company}:mollie_driver_pos_start_fail:${booking}:latest:v1`;
+}
+
+/**
+ * Per-attempt failure key (tenant + company + booking + attempt).
+ */
+export function buildScopedDriverPosStartFailAttemptKey(scope, bookingId, attemptId) {
+  const s = _asObject(scope);
+  const tenant = _str(s.tenantId ?? s.tenant_id ?? s.tenant, 120);
+  const company = _str(s.companyId ?? s.company_id ?? s.company, 120);
+  const booking = _str(bookingId, 160);
+  const attempt = _str(attemptId, 80).replace(/[^a-zA-Z0-9_-]+/g, "_");
+  if (!tenant || !company || !booking || !attempt) return "";
+  return `tenant:${tenant}:company:${company}:mollie_driver_pos_start_fail:${booking}:${attempt}:v1`;
+}
+
+export function newDriverPosStartFailAttemptId(nowMs = Date.now()) {
+  const rand = Math.floor(Math.random() * 1e9).toString(36);
+  return `att_${Number(nowMs).toString(36)}_${rand}`;
+}
+
+function _safeUrlPresence(url) {
+  const raw = _str(url, 500);
+  if (!raw) {
+    return { present: false, host: null };
+  }
+  try {
+    const u = new URL(raw);
+    return { present: true, host: _str(u.host, 120) || null };
+  } catch (_) {
+    return { present: true, host: null };
+  }
+}
+
+/**
+ * Sanitized contract proof for the Mollie Create Payment call about to be sent.
+ * Never includes Authorization / OAuth tokens.
+ */
+export function buildDriverPosCreateRequestContract({
+  terminalId,
+  amount,
+  profileId,
+  webhookUrl,
+  redirectUrl,
+  testmode = false,
+  apiPath = "/v2/payments",
+} = {}) {
+  const amountObj = _asObject(amount);
+  const webhook = _safeUrlPresence(webhookUrl);
+  const redirect = _safeUrlPresence(redirectUrl);
+  return {
+    api: `POST ${_str(apiPath, 80) || "/v2/payments"}`,
+    method: "pointofsale",
+    terminalId: _str(terminalId, 120) || null,
+    amount: {
+      currency: _str(amountObj.currency, 8).toUpperCase() || null,
+      value: _str(amountObj.value, 32) || null,
+    },
+    profileId: _str(profileId, 80) || null,
+    profileId_present: !!_str(profileId, 80),
+    webhookUrl_present: webhook.present,
+    webhookUrl_host: webhook.host,
+    redirectUrl_present: redirect.present,
+    redirectUrl_host: redirect.host,
+    testmode: testmode === true,
+    mollie_mode: testmode === true ? "test" : "live",
+  };
+}
+
+/**
+ * Extract sanitized Mollie rejection fields from a Create Payment response body.
+ * Does not invent title/detail when the provider never answered (timeout).
+ */
+export function sanitizeMollieCreateRejection({
+  httpStatus = null,
+  body = null,
+  requestId = null,
+  networkError = false,
+} = {}) {
+  if (networkError === true) {
+    return {
+      category: "mollie_network_error",
+      http_status: null,
+      title: null,
+      detail: null,
+      code: null,
+      field: null,
+      request_id: _str(requestId, 120) || null,
+    };
+  }
+  const obj = _asObject(body);
+  const statusNum = Number(httpStatus);
+  const http =
+    Number.isFinite(statusNum) && statusNum > 0 ? Math.trunc(statusNum) : null;
+  let category = "mollie_create_rejected";
+  if (http != null && http >= 500) category = "mollie_http_5xx";
+  else if (http != null && http >= 400) category = "mollie_http_4xx";
+  return {
+    category,
+    http_status: http,
+    title: _str(obj.title, 160) || null,
+    detail: _str(obj.detail, 400) || null,
+    code: _str(obj.code ?? obj.error ?? obj.name, 80) || null,
+    field: _str(obj.field, 80) || null,
+    // Prefer HTTP request-id header; never treat Mollie payment id as correlation.
+    request_id:
+      _str(requestId, 120) ||
+      _str(obj.request_id ?? obj.requestId, 120) ||
+      null,
+  };
+}
+
+/**
+ * Full durable diagnostic record for a failed driver Tap create.
+ * Must never include secrets / Authorization / OAuth tokens.
+ */
+export function buildDriverPosStartFailureDiagnostic({
+  scope,
+  bookingId,
+  terminalId,
+  profileId,
+  amount,
+  testmode = false,
+  requestContract = null,
+  rejection = null,
+  attemptId = null,
+  nowIso = null,
+} = {}) {
+  const s = _asObject(scope);
+  const tenant = _str(s.tenantId ?? s.tenant_id ?? s.tenant, 120);
+  const company = _str(s.companyId ?? s.company_id ?? s.company, 120);
+  const booking = _str(bookingId, 160);
+  const attempt = _str(attemptId, 80) || newDriverPosStartFailAttemptId();
+  const ts = _str(nowIso, 40) || new Date().toISOString();
+  const amountObj = _asObject(amount);
+  const rej = _asObject(rejection);
+  const contract = _asObject(requestContract);
+
+  const record = {
+    version: 1,
+    kind: "mollie_driver_pos_start_fail",
+    timestamp: ts,
+    attempt_id: attempt,
+    tenant_id: tenant || null,
+    company_id: company || null,
+    booking_id: booking || null,
+    terminal_id: _str(terminalId, 120) || null,
+    profile_id: _str(profileId, 80) || null,
+    testmode: testmode === true,
+    mollie_mode: testmode === true ? "test" : "live",
+    amount: {
+      currency: _str(amountObj.currency, 8).toUpperCase() || null,
+      value: _str(amountObj.value, 32) || null,
+    },
+    request_method: "pointofsale",
+    request_contract: Object.keys(contract).length ? contract : null,
+    mollie_http_status: rej.http_status ?? null,
+    mollie_title: rej.title ?? null,
+    mollie_detail: rej.detail ?? null,
+    mollie_error_code: rej.code ?? null,
+    mollie_field: rej.field ?? null,
+    mollie_request_id: rej.request_id ?? null,
+    provider_category: _str(rej.category, 60) || "mollie_create_rejected",
+    fluxidi_error: "mollie_terminal_payment_create_failed",
+  };
+
+  return {
+    attempt_id: attempt,
+    keys: {
+      latest: buildScopedDriverPosStartFailLatestKey(
+        { tenant_id: tenant, company_id: company },
+        booking,
+      ),
+      attempt: buildScopedDriverPosStartFailAttemptKey(
+        { tenant_id: tenant, company_id: company },
+        booking,
+        attempt,
+      ),
+    },
+    record,
+    ttl_seconds: DRIVER_POS_START_FAIL_DIAG_TTL_SECONDS,
+  };
+}
+
+/**
+ * True when a diagnostic JSON/string contains forbidden secret material.
+ * Used by tests; also a last-line guard before KV put.
+ */
+export function driverPosStartFailDiagContainsSecrets(value) {
+  const text =
+    typeof value === "string"
+      ? value
+      : value == null
+        ? ""
+        : JSON.stringify(value);
+  if (!text) return false;
+  if (/access[_-]?token/i.test(text)) return true;
+  if (/refresh[_-]?token/i.test(text)) return true;
+  if (/authorization/i.test(text)) return true;
+  if (/Bearer\s+[A-Za-z0-9._\-]+/i.test(text)) return true;
+  if (/live_[A-Za-z0-9]{10,}/.test(text)) return true;
+  if (/test_[A-Za-z0-9]{10,}/.test(text)) return true;
+  return false;
+}
+
 export function isBookingAlreadyPaid(rec) {
   const record = _asObject(rec);
   const booking = _asObject(record.booking);
