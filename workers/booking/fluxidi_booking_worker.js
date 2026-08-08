@@ -252,6 +252,13 @@ import {
   driverPosStartFailDiagContainsSecrets,
   DRIVER_POS_START_FAIL_DIAG_TTL_SECONDS,
   buildMolliePosIdempotencyKey,
+  validatePosDefaultTerminalCandidate,
+  validatePosTerminalForPaymentCreate,
+  buildMolliePaymentRouteKey,
+  buildMolliePaymentRouteRecord,
+  sanitizeMolliePaymentSnapshot,
+  posTerminalStatusAllowsRetry,
+  MOLLIE_PAYMENT_ROUTE_TTL_SECONDS,
 } from "./modules/pos_terminal_payment.mjs";
 import {
   applyTerminalLinkAction,
@@ -34867,6 +34874,181 @@ export default {
         );
       }
 
+      // TAP-TO-PAY-REMOTE-POS-END-TO-END-P0: read-only Mollie payment inspect
+      // via company Connect (no local encryption key required).
+      if (url.pathname === "/admin/mollie/connect/payment" && request.method === "GET") {
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "ADMIN_MOLLIE_CONNECT_PAYMENT_GET",
+        });
+        if (!authScope.ok) return authScope.response;
+        const paymentId = safeStr(
+          url.searchParams.get("payment_id") || url.searchParams.get("paymentId"),
+          160,
+        );
+        if (!paymentId) {
+          return json({ ok: false, error: "payment_id_required" }, 400);
+        }
+        let credentials = null;
+        try {
+          credentials = await resolveCompanyMollieConnectCredentials(
+            env,
+            authScope.explicitScope,
+            { purpose: "admin_mollie_connect_payment_get" },
+          );
+        } catch (_) {
+          credentials = { ok: false };
+        }
+        if (!credentials?.ok || !_isCompanyMollieOAuthCredentials(credentials)) {
+          return json({ ok: false, error: "company_mollie_credentials_unavailable" }, 502);
+        }
+        const fetched = await mollieFetchPayment(paymentId, env, credentials);
+        credentials = null;
+        if (!fetched?.ok) {
+          return json({ ok: false, error: "mollie_payment_fetch_failed" }, 502);
+        }
+        return json(
+          {
+            ok: true,
+            tenant_id: authScope.explicitScope.tenant_id,
+            company_id: authScope.explicitScope.company_id,
+            provider: sanitizeMolliePaymentSnapshot(fetched.data),
+          },
+          200,
+        );
+      }
+
+      if (url.pathname === "/admin/mollie/connect/payments" && request.method === "GET") {
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "ADMIN_MOLLIE_CONNECT_PAYMENTS_LIST",
+        });
+        if (!authScope.ok) return authScope.response;
+        let credentials = null;
+        try {
+          credentials = await resolveCompanyMollieConnectCredentials(
+            env,
+            authScope.explicitScope,
+            { purpose: "admin_mollie_connect_payments_list" },
+          );
+        } catch (_) {
+          credentials = { ok: false };
+        }
+        if (!credentials?.ok || !_isCompanyMollieOAuthCredentials(credentials)) {
+          return json({ ok: false, error: "company_mollie_credentials_unavailable" }, 502);
+        }
+        const profileId = _companyMollieProfileId(credentials);
+        const limitRaw = Number(url.searchParams.get("limit") || 50);
+        const limit = Number.isFinite(limitRaw)
+          ? Math.max(1, Math.min(250, Math.round(limitRaw)))
+          : 50;
+        const listUrl = new URL("https://api.mollie.com/v2/payments");
+        listUrl.searchParams.set("limit", String(limit));
+        if (profileId) listUrl.searchParams.set("profileId", profileId);
+        if (boolish(url.searchParams.get("testmode"))) {
+          listUrl.searchParams.set("testmode", "true");
+        }
+        let listRes = null;
+        let listBody = {};
+        try {
+          listRes = await fetch(listUrl.toString(), {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${credentials.apiKey}`,
+              "Content-Type": "application/json",
+            },
+          });
+          const txt = await listRes.text();
+          try {
+            listBody = txt ? JSON.parse(txt) : {};
+          } catch (_) {
+            listBody = {};
+          }
+        } catch (_) {
+          credentials = null;
+          return json({ ok: false, error: "mollie_payments_list_failed" }, 502);
+        }
+        credentials = null;
+        if (!listRes?.ok) {
+          return json({ ok: false, error: "mollie_payments_list_failed" }, 502);
+        }
+        const embedded = Array.isArray(listBody?._embedded?.payments)
+          ? listBody._embedded.payments
+          : [];
+        const payments = embedded.map((p) => sanitizeMolliePaymentSnapshot(p));
+        return json(
+          {
+            ok: true,
+            tenant_id: authScope.explicitScope.tenant_id,
+            company_id: authScope.explicitScope.company_id,
+            profile_id: profileId || null,
+            count: payments.length,
+            payments,
+          },
+          200,
+        );
+      }
+
+      // Safe cancel of a stuck open driver POS attempt (no new charge).
+      if (
+        url.pathname === "/admin/mollie/terminal-payment/cancel-open" &&
+        request.method === "POST"
+      ) {
+        const body = await safeJson(request);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_MOLLIE_POS_CANCEL_OPEN",
+        });
+        if (!authScope.ok) return authScope.response;
+        const bookingId = safeStr(body?.booking_id ?? body?.bookingId, 160);
+        const paymentId = safeStr(body?.payment_id ?? body?.paymentId, 160);
+        if (!bookingId || !paymentId) {
+          return json({ ok: false, error: "booking_id_and_payment_id_required" }, 400);
+        }
+        const out = await cancelOpenDriverPosTerminalPaymentAuthoritative(
+          bookingId,
+          env,
+          authScope.explicitScope,
+          { paymentId },
+        );
+        return json(out, out?.ok ? 200 : 400);
+      }
+
+      // Link a provider-paid Mollie payment to an unpaid booking (audited; no forge).
+      if (
+        url.pathname === "/admin/mollie/terminal-payment/link-paid" &&
+        request.method === "POST"
+      ) {
+        const body = await safeJson(request);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_MOLLIE_POS_LINK_PAID",
+        });
+        if (!authScope.ok) return authScope.response;
+        const bookingId = safeStr(body?.booking_id ?? body?.bookingId, 160);
+        const paymentId = safeStr(body?.payment_id ?? body?.paymentId, 160);
+        if (!bookingId || !paymentId) {
+          return json({ ok: false, error: "booking_id_and_payment_id_required" }, 400);
+        }
+        const out = await linkPaidMolliePaymentToBookingAuthoritative(
+          bookingId,
+          env,
+          authScope.explicitScope,
+          { paymentId, source: "admin_mollie_terminal_payment_link_paid" },
+        );
+        return json(out, out?.ok ? 200 : 400);
+      }
+
       if (url.pathname === "/admin/mollie/terminals" && request.method === "GET") {
         const authScope = await _requireAdminOrCompanySessionForExplicitScope({
           request,
@@ -60469,14 +60651,122 @@ async function mollieWebhook(request, env, ctx = null) {
       return { ok: true, received: true, processed: false, reason: "Missing Mollie payment id" };
     }
 
-    let p = await mollieFetchPayment(mollieId, env, null, { bootstrapCentralDemo: true });
-    if (!p.ok) {
-      return { ok: true, received: true, processed: false, reason: "Failed to fetch Mollie payment" };
+    // TAP-TO-PAY-REMOTE-POS-END-TO-END-P0: company-owned payments resolve via
+    // durable payment-id route + company Connect OAuth. Central/demo credentials
+    // are never the authoritative fallback for those payments.
+    let p = null;
+    let bookingId = "";
+    let metadataTenantId = "";
+    let metadataCompanyId = "";
+    let rideCredentials = null;
+    let webhookViaPaymentRoute = false;
+
+    const routeKey = buildMolliePaymentRouteKey(mollieId);
+    const paymentRoute = routeKey
+      ? await env.BOOKING_KV.get(routeKey, { type: "json" })
+      : null;
+    if (paymentRoute && typeof paymentRoute === "object") {
+      const routeTenant = safeStr(paymentRoute.tenant_id ?? paymentRoute.tenantId, 80);
+      const routeCompany = safeStr(paymentRoute.company_id ?? paymentRoute.companyId, 80);
+      const routeBooking = safeStr(paymentRoute.booking_id ?? paymentRoute.bookingId, 160);
+      const routeChannel = safeStr(paymentRoute.channel, 40).toLowerCase();
+      if (routeTenant && routeCompany && routeBooking) {
+        webhookViaPaymentRoute = true;
+        bookingId = routeBooking;
+        metadataTenantId = routeTenant;
+        metadataCompanyId = routeCompany;
+        const routeScope = {
+          tenant_id: routeTenant,
+          company_id: routeCompany,
+          hasScope: true,
+        };
+        let companyCreds = null;
+        try {
+          companyCreds = await resolveCompanyMollieConnectCredentials(env, routeScope, {
+            purpose: "mollie_webhook_payment_route",
+          });
+        } catch (_) {
+          companyCreds = { ok: false };
+        }
+        if (!companyCreds?.ok || !_isCompanyMollieOAuthCredentials(companyCreds)) {
+          return {
+            ok: true,
+            received: true,
+            processed: false,
+            reason: "company_mollie_credentials_unavailable",
+            bookingId,
+          };
+        }
+        p = await mollieFetchPayment(mollieId, env, companyCreds);
+        if (!p?.ok) {
+          return {
+            ok: true,
+            received: true,
+            processed: false,
+            reason: "Failed to fetch Mollie payment",
+            bookingId,
+          };
+        }
+        const snapProfile = safeStr(
+          p.data?.profileId ?? p.data?.profile_id ?? companyCreds.profileId,
+          80,
+        );
+        const routeProfile = safeStr(paymentRoute.profile_id ?? paymentRoute.profileId, 80);
+        if (routeProfile && snapProfile && routeProfile !== snapProfile) {
+          return {
+            ok: true,
+            received: true,
+            processed: false,
+            reason: "payment_profile_mismatch",
+            bookingId,
+          };
+        }
+        // POS terminal payments: authoritative reconcile (paid exactly once).
+        if (
+          routeChannel === "pos_terminal" ||
+          safeStr(p.data?.method, 40).toLowerCase() === "pointofsale" ||
+          safeStr(p.data?.metadata?.payment_channel, 40).toLowerCase() === "pos_terminal"
+        ) {
+          const posOut = await reconcileDriverPosTerminalPaymentAuthoritative(
+            bookingId,
+            env,
+            routeScope,
+            { body: { payment_id: mollieId, leg_id: paymentRoute.leg_id || null } },
+          );
+          console.log(
+            `[MOLLIE_WEBHOOK][POS_ROUTE] booking=${_bookingIntentMask(bookingId)} paid=${posOut?.paid === true ? "true" : "false"} status=${safeStr(posOut?.mollie_status, 40) || "-"}`,
+          );
+          return {
+            ok: true,
+            received: true,
+            processed: posOut?.ok === true,
+            bookingId,
+            pos_reconcile: true,
+            paid: posOut?.paid === true,
+            mollie_status: posOut?.mollie_status || null,
+            reason: posOut?.ok ? "pos_route_reconciled" : (posOut?.error || "pos_reconcile_failed"),
+          };
+        }
+        rideCredentials = companyCreds;
+      }
     }
 
-    const bookingId = safeStr(p.data?.metadata?.bookingId);
-    const metadataTenantId = safeStr(p.data?.metadata?.tenantId ?? p.data?.metadata?.tenant_id, 80);
-    const metadataCompanyId = safeStr(p.data?.metadata?.companyId ?? p.data?.metadata?.company_id, 80);
+    if (!p) {
+      // Historical / hosted-checkout path: central demo may resolve central-owned
+      // payments only. Never treat central-demo failure as end of company POS.
+      p = await mollieFetchPayment(mollieId, env, null, { bootstrapCentralDemo: true });
+      if (!p.ok) {
+        return {
+          ok: true,
+          received: true,
+          processed: false,
+          reason: "Failed to fetch Mollie payment",
+        };
+      }
+      bookingId = safeStr(p.data?.metadata?.bookingId);
+      metadataTenantId = safeStr(p.data?.metadata?.tenantId ?? p.data?.metadata?.tenant_id, 80);
+      metadataCompanyId = safeStr(p.data?.metadata?.companyId ?? p.data?.metadata?.company_id, 80);
+    }
 
     if (!bookingId) {
       return { ok: true, received: true, processed: false, reason: "No bookingId in Mollie metadata" };
@@ -60503,7 +60793,9 @@ async function mollieWebhook(request, env, ctx = null) {
       };
     }
 
-    let rideCredentials = await resolveRideMollieCredentialsForPaymentRecord(env, stored);
+    if (!rideCredentials?.ok) {
+      rideCredentials = await resolveRideMollieCredentialsForPaymentRecord(env, stored);
+    }
     if (!rideCredentials?.ok && metadataTenantId && metadataCompanyId) {
       rideCredentials = await resolveRideMollieCredentials(env, {
         tenant_id: metadataTenantId,
@@ -60515,11 +60807,44 @@ async function mollieWebhook(request, env, ctx = null) {
         paymentDemoMode: readPaymentOwnershipFromRecord(stored).payment_demo_mode,
       });
     }
-    if (rideCredentials?.ok) {
+    if (rideCredentials?.ok && !webhookViaPaymentRoute) {
       p = await mollieFetchPayment(mollieId, env, rideCredentials);
       if (!p.ok) {
         return { ok: true, received: true, processed: false, reason: "Failed to fetch Mollie payment" };
       }
+    } else if (rideCredentials?.ok && webhookViaPaymentRoute) {
+      // Already fetched with company Connect above.
+    }
+
+    // Historical POS without route: if metadata marks POS, reconcile authoritatively.
+    if (
+      !webhookViaPaymentRoute &&
+      (safeStr(p.data?.method, 40).toLowerCase() === "pointofsale" ||
+        safeStr(p.data?.metadata?.payment_channel, 40).toLowerCase() === "pos_terminal") &&
+      metadataTenantId &&
+      metadataCompanyId
+    ) {
+      const histScope = {
+        tenant_id: metadataTenantId,
+        company_id: metadataCompanyId,
+        hasScope: true,
+      };
+      const posOut = await reconcileDriverPosTerminalPaymentAuthoritative(
+        bookingId,
+        env,
+        histScope,
+        { body: { payment_id: mollieId } },
+      );
+      return {
+        ok: true,
+        received: true,
+        processed: posOut?.ok === true,
+        bookingId,
+        pos_reconcile: true,
+        paid: posOut?.paid === true,
+        mollie_status: posOut?.mollie_status || null,
+        reason: posOut?.ok ? "pos_historical_reconciled" : (posOut?.error || "pos_reconcile_failed"),
+      };
     }
 
     const mollieStatus = safeStr(p.data?.status);
@@ -83351,7 +83676,29 @@ async function startDriverPosTerminalPaymentAuthoritative(
     credentials = null;
     return { ok: false, error: selected?.error || "terminal_not_configured" };
   }
-  const terminal = selected.terminal;
+  const terminalGate = validatePosTerminalForPaymentCreate(selected.terminal, {
+    profileId: companyMollieProfileId,
+    expectTestmode: paymentTestMode === true,
+    excluded_terminals: excludedMap,
+  });
+  if (!terminalGate?.ok) {
+    credentials = null;
+    return { ok: false, error: terminalGate?.error || "terminal_not_configured" };
+  }
+  // Re-validate against snapshot by id (stale missing / inactive / wrong profile).
+  const candidateGate = validatePosDefaultTerminalCandidate(
+    selectable,
+    terminalGate.terminal_id,
+    {
+      profileId: companyMollieProfileId,
+      excluded_terminals: excludedMap,
+    },
+  );
+  if (!candidateGate?.ok) {
+    credentials = null;
+    return { ok: false, error: candidateGate?.error || "terminal_not_found" };
+  }
+  const terminal = candidateGate.terminal;
   const terminalId = safeStr(terminal.id, 120);
   const intentKey = buildScopedDriverPosPaymentIntentKey(
     tenantScope,
@@ -83404,11 +83751,18 @@ async function startDriverPosTerminalPaymentAuthoritative(
   const description = _sanitizeAdminPosTerminalDescription(
     `Fluxidi Tap to Pay ${bookingId}`,
   );
+  // Mollie POS create requires a valid HTTPS redirectUrl; reuse /pay/return helper
+  // (deep-link return). POS does not require a checkout URL.
+  const redirectUrl = buildStreetMollieRedirectUrl({
+    baseUrl: base,
+    paymentBookingId: bookingId,
+  });
   const mollieCreateBody = {
     amount,
     description,
     method: "pointofsale",
     terminalId,
+    redirectUrl,
     webhookUrl: `${base}/webhook/mollie`,
     metadata: {
       bookingId,
@@ -83567,6 +83921,40 @@ async function startDriverPosTerminalPaymentAuthoritative(
     }),
     { expirationTtl: ADMIN_MOLLIE_TERMINAL_PAYMENT_INTENT_TTL_SECONDS },
   );
+  // Durable reverse route for company-Connect webhook resolution (payment id only).
+  try {
+    const routeKey = buildMolliePaymentRouteKey(paymentId);
+    const routeRec = buildMolliePaymentRouteRecord({
+      paymentId,
+      tenantId: tenantScope.tenant_id,
+      companyId: tenantScope.company_id,
+      bookingId,
+      legId,
+      profileId: companyMollieProfileId,
+      terminalId,
+      channel: "pos_terminal",
+      source: "tap_to_pay",
+      testmode: paymentTestMode === true,
+      intentKey,
+      nowIso,
+    });
+    if (routeKey && routeRec) {
+      await env.BOOKING_KV.put(routeKey, JSON.stringify(routeRec), {
+        expirationTtl: MOLLIE_PAYMENT_ROUTE_TTL_SECONDS,
+      });
+    }
+  } catch (routeErr) {
+    console.log(
+      posTerminalDiagnosticsLine({
+        phase: "route_persist_fail",
+        amountCents: amountResolution.cents,
+        currency: amountResolution.currency,
+        providerStatus: mollieStatus,
+        reason: safeStr(routeErr?.message || routeErr, 80) || "route_put_failed",
+        referencePresent: true,
+      }),
+    );
+  }
   credentials = null;
   console.log(
     posTerminalDiagnosticsLine({
@@ -83715,6 +84103,45 @@ async function reconcileDriverPosTerminalPaymentAuthoritative(
     }
   }
 
+  // Ensure reverse route exists for late webhooks (historical open intents).
+  try {
+    const routeKey = buildMolliePaymentRouteKey(paymentId);
+    if (routeKey && !(await env.BOOKING_KV.get(routeKey))) {
+      const routeRec = buildMolliePaymentRouteRecord({
+        paymentId,
+        tenantId: tenantScope.tenant_id,
+        companyId: tenantScope.company_id,
+        bookingId,
+        legId,
+        profileId:
+          safeStr(intent?.profile_id, 80) ||
+          safeStr(mollieFetch.data?.profileId, 80) ||
+          null,
+        terminalId: safeStr(intent?.terminal_id, 120) || null,
+        channel: "pos_terminal",
+        source: "tap_to_pay",
+        testmode: false,
+        intentKey,
+      });
+      if (routeRec) {
+        await env.BOOKING_KV.put(routeKey, JSON.stringify(routeRec), {
+          expirationTtl: MOLLIE_PAYMENT_ROUTE_TTL_SECONDS,
+        });
+      }
+    }
+  } catch (_) {
+    // best-effort
+  }
+
+  const attemptFinished = posTerminalStatusAllowsRetry(mollieStatus);
+  if (attemptFinished && intent && typeof intent === "object") {
+    intent.attempt_finished_at = intent.attempt_finished_at || new Date().toISOString();
+    intent.updated_at = new Date().toISOString();
+    await env.BOOKING_KV.put(intentKey, JSON.stringify(intent), {
+      expirationTtl: ADMIN_MOLLIE_TERMINAL_PAYMENT_INTENT_TTL_SECONDS,
+    });
+  }
+
   console.log(
     posTerminalDiagnosticsLine({
       phase: "status",
@@ -83730,6 +84157,8 @@ async function reconcileDriverPosTerminalPaymentAuthoritative(
     }),
   );
 
+  const provider = sanitizeMolliePaymentSnapshot(mollieFetch.data);
+
   return {
     ok: true,
     booking_id: bookingId,
@@ -83741,6 +84170,341 @@ async function reconcileDriverPosTerminalPaymentAuthoritative(
     payment_written: paymentWritten,
     already_paid: wasAlreadyPaid,
     billit_sync_triggered: billitSyncTriggered,
+    attempt_finished: attemptFinished,
+    retry_allowed: attemptFinished || wasAlreadyPaid,
+    provider,
+  };
+}
+
+/**
+ * Cancel a stuck open/pending driver POS Mollie payment, then clear the intent
+ * so a controlled retry can create a new payment (never while still active).
+ */
+async function cancelOpenDriverPosTerminalPaymentAuthoritative(
+  bookingId,
+  env,
+  tenantScope,
+  options = {},
+) {
+  if (!tenantScope?.hasScope) return missingTenantScopeError();
+  if (!env?.BOOKING_KV) return { ok: false, error: "missing_booking_kv" };
+  const paymentId = safeStr(options?.paymentId ?? options?.payment_id, 160);
+  if (!paymentId) return { ok: false, error: "payment_id_required" };
+
+  let rec = null;
+  try {
+    const loaded = await loadBookingRecord(env, bookingId);
+    rec = loaded?.rec || null;
+  } catch (err) {
+    if (String(err?.message || "") === "Booking not found") {
+      return { ok: false, error: "booking_not_found" };
+    }
+    return { ok: false, error: "booking_lookup_failed" };
+  }
+  if (!rec) return { ok: false, error: "booking_not_found" };
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
+  const bookingPaid = isBookingAlreadyPaid(rec);
+  const bookingPaymentId = safeStr(
+    rec?.payment_id ?? rec?.paymentId ?? rec?.mollie_payment_id,
+    160,
+  );
+  // Allow canceling an orphan open POS attempt even after the booking was
+  // linked/paid via a different Mollie payment id (never cancel the paid id).
+  if (bookingPaid && bookingPaymentId && bookingPaymentId === paymentId) {
+    return { ok: false, error: "payment_already_paid", paid: true };
+  }
+
+  let credentials = null;
+  try {
+    credentials = await resolveCompanyMollieConnectCredentials(env, tenantScope, {
+      purpose: "driver_pos_terminal_payment_cancel",
+    });
+  } catch (_) {
+    credentials = { ok: false };
+  }
+  if (!credentials?.ok || !_isCompanyMollieOAuthCredentials(credentials)) {
+    return { ok: false, error: "company_mollie_credentials_unavailable" };
+  }
+
+  const before = await mollieFetchPayment(paymentId, env, credentials);
+  if (!before?.ok) {
+    credentials = null;
+    return { ok: false, error: "mollie_payment_fetch_failed" };
+  }
+  const beforeStatus = safeStr(before.data?.status, 40).toLowerCase();
+  if (beforeStatus === "paid") {
+    credentials = null;
+    return {
+      ok: false,
+      error: "payment_already_paid",
+      paid: true,
+      provider_status: "paid",
+      provider: sanitizeMolliePaymentSnapshot(before.data),
+    };
+  }
+  if (posTerminalStatusAllowsRetry(beforeStatus)) {
+    credentials = null;
+    const intentKey = buildScopedDriverPosPaymentIntentKey(tenantScope, bookingId, null);
+    if (intentKey) {
+      const intent = await env.BOOKING_KV.get(intentKey, { type: "json" });
+      if (intent && typeof intent === "object") {
+        intent.status = beforeStatus;
+        intent.mollie_status = beforeStatus;
+        intent.attempt_finished_at = new Date().toISOString();
+        intent.updated_at = new Date().toISOString();
+        await env.BOOKING_KV.put(intentKey, JSON.stringify(intent), {
+          expirationTtl: ADMIN_MOLLIE_TERMINAL_PAYMENT_INTENT_TTL_SECONDS,
+        });
+      }
+    }
+    return {
+      ok: true,
+      already_released: true,
+      provider_status: beforeStatus,
+      payment_id: paymentId,
+      retry_allowed: true,
+      provider: sanitizeMolliePaymentSnapshot(before.data),
+    };
+  }
+  if (!["open", "pending", "authorized", "created"].includes(beforeStatus)) {
+    credentials = null;
+    return {
+      ok: false,
+      error: "cancel_not_allowed",
+      provider_status: beforeStatus,
+      provider: sanitizeMolliePaymentSnapshot(before.data),
+    };
+  }
+
+  let cancelHttpOk = false;
+  try {
+    const cancelUrl = _molliePaymentApiUrl(paymentId, {
+      testMode: _molliePaymentFetchTestMode(credentials, {}),
+      profileId: _companyMollieProfileId(credentials),
+    });
+    const cancelRes = await fetch(cancelUrl, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${credentials.apiKey}`,
+        "Content-Type": "application/json",
+      },
+    });
+    cancelHttpOk = !!(cancelRes && (cancelRes.ok || cancelRes.status === 404));
+  } catch (_) {
+    cancelHttpOk = false;
+  }
+
+  const after = await mollieFetchPayment(paymentId, env, credentials);
+  credentials = null;
+  const afterStatus = safeStr(after?.data?.status, 40).toLowerCase() || beforeStatus;
+  if (afterStatus === "paid") {
+    return {
+      ok: false,
+      error: "payment_already_paid",
+      paid: true,
+      provider_status: "paid",
+      provider: sanitizeMolliePaymentSnapshot(after?.data),
+    };
+  }
+  if (!posTerminalStatusAllowsRetry(afterStatus) && !cancelHttpOk) {
+    return {
+      ok: false,
+      error: "cancel_not_confirmed",
+      provider_status: afterStatus,
+      provider: sanitizeMolliePaymentSnapshot(after?.data),
+    };
+  }
+
+  const intentKey = buildScopedDriverPosPaymentIntentKey(tenantScope, bookingId, null);
+  if (intentKey) {
+    const intent = await env.BOOKING_KV.get(intentKey, { type: "json" });
+    if (intent && typeof intent === "object") {
+      intent.status = afterStatus || "canceled";
+      intent.mollie_status = afterStatus || "canceled";
+      intent.attempt_finished_at = new Date().toISOString();
+      intent.updated_at = new Date().toISOString();
+      await env.BOOKING_KV.put(intentKey, JSON.stringify(intent), {
+        expirationTtl: ADMIN_MOLLIE_TERMINAL_PAYMENT_INTENT_TTL_SECONDS,
+      });
+    }
+  }
+
+  return {
+    ok: true,
+    payment_id: paymentId,
+    provider_status: afterStatus || "canceled",
+    retry_allowed: true,
+    provider: sanitizeMolliePaymentSnapshot(after?.data || before.data),
+  };
+}
+
+/**
+ * Link a Mollie payment that is already provider-paid onto an unpaid booking.
+ * Requires amount match + company profile + pointofsale (or explicit allow).
+ * Never forges paid from UI text alone.
+ */
+async function linkPaidMolliePaymentToBookingAuthoritative(
+  bookingId,
+  env,
+  tenantScope,
+  options = {},
+) {
+  if (!tenantScope?.hasScope) return missingTenantScopeError();
+  if (!env?.BOOKING_KV) return { ok: false, error: "missing_booking_kv" };
+  const paymentId = safeStr(options?.paymentId ?? options?.payment_id, 160);
+  if (!paymentId) return { ok: false, error: "payment_id_required" };
+
+  let rec = null;
+  try {
+    const loaded = await loadBookingRecord(env, bookingId);
+    rec = loaded?.rec || null;
+  } catch (err) {
+    if (String(err?.message || "") === "Booking not found") {
+      return { ok: false, error: "booking_not_found" };
+    }
+    return { ok: false, error: "booking_lookup_failed" };
+  }
+  if (!rec) return { ok: false, error: "booking_not_found" };
+  if (!bookingMatchesRequiredTenantCompanyScope(rec, tenantScope)) {
+    return { ok: false, error: "forbidden" };
+  }
+  if (isBookingAlreadyPaid(rec)) {
+    return { ok: true, already_paid: true, paid: true, payment_id: paymentId };
+  }
+
+  const amountResolution = resolveDriverPosTerminalAmount(rec, {});
+  if (!amountResolution?.ok) {
+    return { ok: false, error: amountResolution?.error || "amount_unavailable" };
+  }
+
+  let credentials = null;
+  try {
+    credentials = await resolveCompanyMollieConnectCredentials(env, tenantScope, {
+      purpose: "admin_mollie_pos_link_paid",
+    });
+  } catch (_) {
+    credentials = { ok: false };
+  }
+  if (!credentials?.ok || !_isCompanyMollieOAuthCredentials(credentials)) {
+    return { ok: false, error: "company_mollie_credentials_unavailable" };
+  }
+  const companyProfile = _companyMollieProfileId(credentials);
+  const fetched = await mollieFetchPayment(paymentId, env, credentials);
+  credentials = null;
+  if (!fetched?.ok) {
+    return { ok: false, error: "mollie_payment_fetch_failed" };
+  }
+  const provider = sanitizeMolliePaymentSnapshot(fetched.data);
+  if (safeStr(provider.status, 40).toLowerCase() !== "paid") {
+    return {
+      ok: false,
+      error: "provider_not_paid",
+      provider_status: provider.status,
+      provider,
+    };
+  }
+  if (
+    companyProfile &&
+    provider.profileId &&
+    companyProfile !== provider.profileId
+  ) {
+    return { ok: false, error: "payment_profile_mismatch", provider };
+  }
+  if (
+    safeStr(provider.amount?.currency, 8).toUpperCase() !== amountResolution.currency ||
+    safeStr(provider.amount?.value, 32) !== amountResolution.value
+  ) {
+    return {
+      ok: false,
+      error: "amount_mismatch",
+      expected: {
+        currency: amountResolution.currency,
+        value: amountResolution.value,
+      },
+      provider,
+    };
+  }
+  const method = safeStr(provider.method, 64).toLowerCase();
+  if (method && method !== "pointofsale") {
+    return { ok: false, error: "method_not_pointofsale", provider };
+  }
+
+  const mark = await updateBookingPaymentAuthoritative(
+    bookingId,
+    {
+      payment_status: "paid",
+      payment_method: "pointofsale",
+      payment_source: "tap_to_pay_linked",
+      payment_provider: "mollie",
+      payment_id: paymentId,
+      paid_at: provider.paidAt || new Date().toISOString(),
+      amount: Number(amountResolution.value),
+      currency: amountResolution.currency,
+    },
+    env,
+    null,
+    tenantScope,
+  );
+  if (!mark?.ok) {
+    return { ok: false, error: "booking_mark_paid_failed", provider };
+  }
+
+  const intentKey = buildScopedDriverPosPaymentIntentKey(tenantScope, bookingId, null);
+  const nowIso = new Date().toISOString();
+  if (intentKey) {
+    await env.BOOKING_KV.put(
+      intentKey,
+      JSON.stringify({
+        version: 1,
+        source: options?.source || "admin_mollie_terminal_payment_link_paid",
+        tenant_id: tenantScope.tenant_id,
+        company_id: tenantScope.company_id,
+        booking_id: bookingId,
+        terminal_id: provider.terminalId,
+        amount: {
+          currency: amountResolution.currency,
+          value: amountResolution.value,
+        },
+        payment_id: paymentId,
+        paymentId,
+        status: "paid",
+        mollie_status: "paid",
+        profile_id: provider.profileId || companyProfile || null,
+        billit_sync_triggered: true,
+        paid_written_at: nowIso,
+        linked_from_provider: true,
+        created_at: nowIso,
+        updated_at: nowIso,
+      }),
+      { expirationTtl: ADMIN_MOLLIE_TERMINAL_PAYMENT_INTENT_TTL_SECONDS },
+    );
+  }
+  const routeKey = buildMolliePaymentRouteKey(paymentId);
+  const routeRec = buildMolliePaymentRouteRecord({
+    paymentId,
+    tenantId: tenantScope.tenant_id,
+    companyId: tenantScope.company_id,
+    bookingId,
+    profileId: provider.profileId || companyProfile,
+    terminalId: provider.terminalId,
+    channel: "pos_terminal",
+    source: "tap_to_pay_linked",
+    nowIso,
+  });
+  if (routeKey && routeRec) {
+    await env.BOOKING_KV.put(routeKey, JSON.stringify(routeRec), {
+      expirationTtl: MOLLIE_PAYMENT_ROUTE_TTL_SECONDS,
+    });
+  }
+
+  return {
+    ok: true,
+    paid: true,
+    payment_written: true,
+    payment_id: paymentId,
+    provider,
   };
 }
 

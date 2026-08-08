@@ -95,6 +95,8 @@ void main() {
     expect(receiptSource, contains('cardTerminalShouldWritePaid'));
     expect(receiptSource, contains('pollDriverMollieTerminalPaymentStatus'));
     expect(receiptSource, contains('never invent paid'));
+    expect(receiptSource, contains('tapToPayPendingRecheck'));
+    expect(helpersSource, contains("case 'tapToPayPendingRecheck':"));
   });
 
   test('phone and tablet share the same logical path helper', () {

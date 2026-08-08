@@ -207,6 +207,9 @@ test("driver POS start: planned booking uses server fixed price; client amount i
       assert.equal(body.amount.value, "42.50");
       assert.equal(body.method, "pointofsale");
       assert.equal(body.terminalId, "term_1");
+      assert.ok(String(body.redirectUrl || "").includes("/pay/return"));
+      assert.ok(String(body.webhookUrl || "").includes("/webhook/mollie"));
+      assert.equal(body.profileId, "pfl_1");
       return new Response(
         JSON.stringify({ id: "tr_pos_1", status: "open" }),
         { status: 201 },
@@ -234,6 +237,13 @@ test("driver POS start: planned booking uses server fixed price; client amount i
     assert.equal(body.amount.value, "42.50");
     assert.equal(body.payment_id, "tr_pos_1");
     assert.equal(createCalls, 1);
+    const routeRaw = await kv.get("mollie_payment_route:tr_pos_1:v1");
+    assert.ok(routeRaw);
+    const route = JSON.parse(routeRaw);
+    assert.equal(route.tenant_id, TENANT);
+    assert.equal(route.company_id, COMPANY);
+    assert.equal(route.booking_id, BOOKING);
+    assert.equal(route.channel, "pos_terminal");
   } finally {
     globalThis.fetch = prevFetch;
   }
@@ -667,4 +677,147 @@ test("driver POS status: only paid marks booking paid; failed keeps unpaid", asy
   } finally {
     globalThis.fetch = prevFetch;
   }
+});
+
+test("webhook POS route uses company Connect GET (not central demo) and marks paid once", async () => {
+  const kv = makeKV();
+  await kv.put(`booking:${BOOKING}`, JSON.stringify(plannedBooking()));
+  await seedMollieCredentials(kv, { tenantId: TENANT, companyId: COMPANY });
+  await kv.put(
+    "mollie_payment_route:tr_wh_pos:v1",
+    JSON.stringify({
+      version: 1,
+      payment_id: "tr_wh_pos",
+      tenant_id: TENANT,
+      company_id: COMPANY,
+      booking_id: BOOKING,
+      channel: "pos_terminal",
+      profile_id: "pfl_1",
+    }),
+  );
+  await kv.put(
+    `tenant:${TENANT}:company:${COMPANY}:mollie_driver_pos_intent:${BOOKING}:main:v1`,
+    JSON.stringify({
+      payment_id: "tr_wh_pos",
+      mollie_status: "open",
+      amount: { currency: "EUR", value: "42.50" },
+      billit_sync_triggered: false,
+    }),
+  );
+
+  const prevFetch = globalThis.fetch;
+  let sawBearer = false;
+  let centralDemoTried = false;
+  globalThis.fetch = async (url, init) => {
+    const u = String(url);
+    const auth = String(init?.headers?.Authorization || init?.headers?.authorization || "");
+    if (auth.includes("test_") || auth.includes("live_") && !auth.includes("access_live_test")) {
+      centralDemoTried = true;
+    }
+    if (u.includes("tr_wh_pos") && u.includes("api.mollie.com")) {
+      if (auth.includes("access_live_test")) sawBearer = true;
+      return new Response(
+        JSON.stringify({
+          id: "tr_wh_pos",
+          status: "paid",
+          method: "pointofsale",
+          profileId: "pfl_1",
+          amount: { currency: "EUR", value: "42.50" },
+          metadata: {
+            bookingId: BOOKING,
+            tenantId: TENANT,
+            companyId: COMPANY,
+            payment_channel: "pos_terminal",
+          },
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response("{}", { status: 404 });
+  };
+
+  try {
+    const res = await worker.fetch(
+      new Request("https://booking.internal/webhook/mollie", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "id=tr_wh_pos",
+      }),
+      envFor(kv),
+    );
+    const body = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(body.received, true);
+    assert.equal(body.processed, true);
+    assert.equal(body.paid, true);
+    assert.equal(sawBearer, true);
+    assert.equal(centralDemoTried, false);
+    const updated = JSON.parse(await kv.get(`booking:${BOOKING}`));
+    assert.equal(String(updated.payment_status).toLowerCase(), "paid");
+
+    // Duplicate webhook is idempotent.
+    const again = await worker.fetch(
+      new Request("https://booking.internal/webhook/mollie", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "id=tr_wh_pos",
+      }),
+      envFor(kv),
+    );
+    const againBody = await again.json();
+    assert.equal(againBody.paid, true);
+    assert.equal(againBody.processed, true);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test("webhook without route does not use central-demo as company POS authority", async () => {
+  const kv = makeKV();
+  // No route, no central demo success → processed false (company POS cannot be fetched centrally).
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("{}", { status: 401 });
+  try {
+    const res = await worker.fetch(
+      new Request("https://booking.internal/webhook/mollie", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: "tr_orphan_pos" }),
+      }),
+      envFor(kv),
+    );
+    const body = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(body.received, true);
+    assert.equal(body.processed, false);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test("driver POS start: inactive terminal rejected", async () => {
+  const kv = makeKV();
+  const session = await seedDriverSession({
+    tokenValue: "drv-pos-inactive",
+    tenantId: TENANT,
+    companyId: COMPANY,
+    driverId: DRIVER,
+  });
+  await kv.put(session.key, JSON.stringify(session.record));
+  await kv.put(`booking:${BOOKING}`, JSON.stringify(plannedBooking()));
+  await seedMollieCredentials(kv, { tenantId: TENANT, companyId: COMPANY });
+  await seedTerminalSnapshot(kv, {
+    tenantId: TENANT,
+    companyId: COMPANY,
+    terminals: [{ id: "term_dead", status: "inactive", profile_id: "pfl_1" }],
+  });
+  const res = await worker.fetch(
+    startReq({ booking_id: BOOKING }, "drv-pos-inactive"),
+    envFor(kv),
+  );
+  const body = await res.json();
+  assert.equal(body.ok, false);
+  assert.ok(
+    body.error === "terminal_not_configured" || body.error === "terminal_inactive",
+  );
 });

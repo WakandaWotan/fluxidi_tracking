@@ -16,8 +16,13 @@ import {
   posTerminalSnapshotModeMatches,
   maskPosTerminalId,
   validatePosDefaultTerminalCandidate,
+  validatePosTerminalForPaymentCreate,
   resolveEffectiveDefaultTerminalId,
   buildScopedDriverPosPaymentIntentKey,
+  buildMolliePaymentRouteKey,
+  buildMolliePaymentRouteRecord,
+  sanitizeMolliePaymentSnapshot,
+  posTerminalStatusAllowsRetry,
   isBookingAlreadyPaid,
   isStreetDirectBookingRecord,
   shouldMarkBookingPaidFromPosStatus,
@@ -284,13 +289,14 @@ test("diagnostics line is PII-free with required fields", () => {
   assert.match(line, /paymentWritten=false/);
 });
 
-test("create request contract asserts pointofsale + terminal + EUR amount", () => {
+test("create request contract asserts pointofsale + terminal + EUR amount + redirectUrl", () => {
   const contract = buildDriverPosCreateRequestContract({
     terminalId: "term_YAhfDhEbbbydgRaVLd4VJ",
     amount: { currency: "EUR", value: "43.60" },
     profileId: "pfl_53RM5gS9qZ",
     webhookUrl: "https://fluxidi-booking-api.fluxidi.workers.dev/webhook/mollie",
-    redirectUrl: null,
+    redirectUrl:
+      "https://fluxidi-booking-api.fluxidi.workers.dev/pay/return?id=street_x&return_to=fluxidi%3A%2F%2Fpay%2Freturn",
     testmode: false,
   });
   assert.equal(contract.api, "POST /v2/payments");
@@ -301,9 +307,96 @@ test("create request contract asserts pointofsale + terminal + EUR amount", () =
   assert.equal(contract.profileId_present, true);
   assert.equal(contract.webhookUrl_present, true);
   assert.equal(contract.webhookUrl_host, "fluxidi-booking-api.fluxidi.workers.dev");
-  assert.equal(contract.redirectUrl_present, false);
+  assert.equal(contract.redirectUrl_present, true);
+  assert.equal(contract.redirectUrl_host, "fluxidi-booking-api.fluxidi.workers.dev");
   assert.equal(contract.mollie_mode, "live");
   assert.equal(driverPosStartFailDiagContainsSecrets(contract), false);
+});
+
+test("validatePosTerminalForPaymentCreate active correct terminal allowed", () => {
+  const out = validatePosTerminalForPaymentCreate(
+    { id: "term_1", status: "active", profile_id: "pfl_1", mollie_mode: "live" },
+    { profileId: "pfl_1", expectTestmode: false },
+  );
+  assert.equal(out.ok, true);
+});
+
+test("validatePosTerminalForPaymentCreate inactive rejected", () => {
+  const out = validatePosTerminalForPaymentCreate(
+    { id: "term_1", status: "inactive", profile_id: "pfl_1", mollie_mode: "live" },
+    { profileId: "pfl_1", expectTestmode: false },
+  );
+  assert.equal(out.ok, false);
+  assert.equal(out.error, "terminal_inactive");
+});
+
+test("validatePosTerminalForPaymentCreate wrong profile rejected", () => {
+  const out = validatePosTerminalForPaymentCreate(
+    { id: "term_1", status: "active", profile_id: "pfl_other", mollie_mode: "live" },
+    { profileId: "pfl_1", expectTestmode: false },
+  );
+  assert.equal(out.ok, false);
+  assert.equal(out.error, "terminal_profile_mismatch");
+});
+
+test("validatePosTerminalForPaymentCreate live/test mismatch rejected", () => {
+  const out = validatePosTerminalForPaymentCreate(
+    { id: "term_1", status: "active", profile_id: "pfl_1", mollie_mode: "test", testmode: true },
+    { profileId: "pfl_1", expectTestmode: false },
+  );
+  assert.equal(out.ok, false);
+  assert.equal(out.error, "terminal_mode_mismatch");
+});
+
+test("validatePosDefaultTerminalCandidate missing terminal rejected", () => {
+  const out = validatePosDefaultTerminalCandidate([T("t1")], "term_missing", {
+    profileId: "pfl_1",
+  });
+  assert.equal(out.ok, false);
+  assert.equal(out.error, "terminal_not_found");
+});
+
+test("mollie payment route key + record are payment-id keyed and scoped", () => {
+  const key = buildMolliePaymentRouteKey("tr_abc");
+  assert.equal(key, "mollie_payment_route:tr_abc:v1");
+  const rec = buildMolliePaymentRouteRecord({
+    paymentId: "tr_abc",
+    tenantId: "T1",
+    companyId: "C1",
+    bookingId: "street_1",
+    profileId: "pfl_1",
+    terminalId: "term_1",
+  });
+  assert.equal(rec.tenant_id, "T1");
+  assert.equal(rec.company_id, "C1");
+  assert.equal(rec.channel, "pos_terminal");
+  assert.equal(rec.payment_id, "tr_abc");
+});
+
+test("sanitizeMolliePaymentSnapshot keeps terminal/profile/status without secrets", () => {
+  const snap = sanitizeMolliePaymentSnapshot({
+    id: "tr_1",
+    status: "paid",
+    method: "pointofsale",
+    amount: { currency: "EUR", value: "43.60" },
+    profileId: "pfl_1",
+    details: { terminalId: "term_1" },
+    paidAt: "2026-08-08T06:00:00Z",
+    metadata: { bookingId: "street_1", tenantId: "T1", companyId: "C1" },
+    _links: { terminal: { href: "https://api.mollie.com/v2/terminals/term_1" } },
+  });
+  assert.equal(snap.status, "paid");
+  assert.equal(snap.terminalId, "term_1");
+  assert.equal(snap.amount.value, "43.60");
+  assert.equal(driverPosStartFailDiagContainsSecrets(snap), false);
+});
+
+test("posTerminalStatusAllowsRetry for failed/canceled/expired only", () => {
+  assert.equal(posTerminalStatusAllowsRetry("failed"), true);
+  assert.equal(posTerminalStatusAllowsRetry("canceled"), true);
+  assert.equal(posTerminalStatusAllowsRetry("expired"), true);
+  assert.equal(posTerminalStatusAllowsRetry("open"), false);
+  assert.equal(posTerminalStatusAllowsRetry("paid"), false);
 });
 
 test("sanitizeMollieCreateRejection keeps 4xx title/detail/field", () => {

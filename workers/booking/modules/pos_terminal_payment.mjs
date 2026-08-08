@@ -354,6 +354,127 @@ export function validatePosDefaultTerminalCandidate(terminals, terminalId, opts 
   return { ok: true, terminal: match };
 }
 
+/**
+ * Pre-create gate for a selected POS terminal. Rejects inactive, wrong profile,
+ * live/test mismatch, and missing terminals — never silently creates orphans.
+ */
+export function validatePosTerminalForPaymentCreate(terminal, opts = {}) {
+  const t = _asObject(terminal);
+  const terminalId = _str(t.id, 120);
+  if (!terminalId) return { ok: false, error: "terminal_not_found" };
+  if (String(t.status ?? "").trim().toLowerCase() !== "active") {
+    return { ok: false, error: "terminal_inactive" };
+  }
+  const excludedMap = opts.excludedMap ?? opts.excluded_terminals;
+  if (isTerminalExcluded(t, excludedMap) || isTerminalExcluded(terminalId, excludedMap)) {
+    return { ok: false, error: "terminal_excluded" };
+  }
+  const wantProfile = _str(opts.profileId ?? opts.profile_id, 80);
+  if (wantProfile) {
+    const tProfile = _str(t.profile_id ?? t.profileId, 80);
+    if (!tProfile || tProfile !== wantProfile) {
+      return { ok: false, error: "terminal_profile_mismatch" };
+    }
+  }
+  const expectTestmode = opts.expectTestmode === true;
+  const termTest =
+    t.testmode === true || String(t.mollie_mode ?? "").toLowerCase() === "test";
+  if (termTest !== expectTestmode) {
+    return { ok: false, error: "terminal_mode_mismatch" };
+  }
+  return { ok: true, terminal: t, terminal_id: terminalId };
+}
+
+/** Durable reverse route: Mollie payment id → tenant/company scope (webhook). */
+export const MOLLIE_PAYMENT_ROUTE_TTL_SECONDS = 60 * 60 * 24 * 45;
+
+export function buildMolliePaymentRouteKey(paymentId) {
+  const id = _str(paymentId, 160);
+  if (!id) return "";
+  return `mollie_payment_route:${id}:v1`;
+}
+
+export function buildMolliePaymentRouteRecord({
+  paymentId,
+  tenantId,
+  companyId,
+  bookingId,
+  legId = null,
+  profileId = null,
+  terminalId = null,
+  channel = "pos_terminal",
+  source = "tap_to_pay",
+  testmode = false,
+  intentKey = null,
+  nowIso = null,
+} = {}) {
+  const payment_id = _str(paymentId, 160);
+  const tenant_id = _str(tenantId, 120);
+  const company_id = _str(companyId, 120);
+  const booking_id = _str(bookingId, 160);
+  if (!payment_id || !tenant_id || !company_id || !booking_id) return null;
+  return {
+    version: 1,
+    payment_id,
+    tenant_id,
+    company_id,
+    booking_id,
+    leg_id: _str(legId, 160) || null,
+    profile_id: _str(profileId, 80) || null,
+    terminal_id: _str(terminalId, 120) || null,
+    channel: _str(channel, 40) || "pos_terminal",
+    source: _str(source, 40) || "tap_to_pay",
+    testmode: testmode === true,
+    mollie_mode: testmode === true ? "test" : "live",
+    intent_key: _str(intentKey, 400) || null,
+    created_at: _str(nowIso, 40) || new Date().toISOString(),
+  };
+}
+
+export function sanitizeMolliePaymentSnapshot(payment) {
+  const p = _asObject(payment);
+  const amount = _asObject(p.amount);
+  const details = _asObject(p.details);
+  const meta = _asObject(p.metadata);
+  const links = _asObject(p._links);
+  const terminalLink = _asObject(links.terminal);
+  return {
+    id: _str(p.id, 160) || null,
+    status: _str(p.status, 40) || null,
+    method: _str(p.method, 64) || null,
+    amount: {
+      currency: _str(amount.currency, 8).toUpperCase() || null,
+      value: _str(amount.value, 32) || null,
+    },
+    profileId: _str(p.profileId ?? p.profile_id, 80) || null,
+    terminalId:
+      _str(details.terminalId ?? details.terminal_id ?? p.terminalId, 120) || null,
+    terminal_href: _str(terminalLink.href, 300) || null,
+    createdAt: _str(p.createdAt ?? p.created_at, 40) || null,
+    paidAt: _str(p.paidAt ?? p.paid_at, 40) || null,
+    canceledAt: _str(p.canceledAt ?? p.canceled_at, 40) || null,
+    failedAt: _str(p.failedAt ?? p.failed_at, 40) || null,
+    expiresAt: _str(p.expiresAt ?? p.expires_at, 40) || null,
+    mode: _str(p.mode, 16) || null,
+    metadata: {
+      bookingId: _str(meta.bookingId ?? meta.booking_id, 160) || null,
+      tenantId: _str(meta.tenantId ?? meta.tenant_id, 120) || null,
+      companyId: _str(meta.companyId ?? meta.company_id, 120) || null,
+      payment_channel: _str(meta.payment_channel, 40) || null,
+      payment_source: _str(meta.payment_source, 40) || null,
+    },
+    description: _str(p.description, 200) || null,
+  };
+}
+
+/** Terminal POS statuses that may be replaced by a new create. */
+export function posTerminalStatusAllowsRetry(status) {
+  const s = String(status ?? "")
+    .trim()
+    .toLowerCase();
+  return ["failed", "canceled", "cancelled", "expired"].includes(s);
+}
+
 export function resolveEffectiveDefaultTerminalId(terminals, storedDefaultId, opts = {}) {
   const wantProfile = String(opts.profileId ?? "").trim();
   const excludedMap = opts.excludedMap ?? opts.excluded_terminals;

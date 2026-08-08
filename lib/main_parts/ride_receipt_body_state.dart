@@ -47,6 +47,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
   bool _tapToPayAvailable = false;
   bool _tapToPayInFlight = false;
   String? _tapToPayStatusMessageKey;
+  /// Open POS payment id while foreground poll timed out; enables recheck
+  /// without creating a second Mollie charge.
+  String? _tapToPayPendingPaymentId;
   final TapToPayStartGuard _tapToPayStartGuard = TapToPayStartGuard();
 
   /// Raw `/pay/status` payload captured on the poll attempt that first
@@ -202,6 +205,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     unawaited(_resolveReceiptPaymentStatus());
     unawaited(_ensureStreetBusinessInvoiceEligibilityResolved());
     unawaited(_refreshTapToPayCapability());
+    unawaited(_resumeTapToPayPendingRecheck());
     _logStreetInvoiceReentry(phase: 'receipt_open');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -237,6 +241,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     _tapToPayAvailable = false;
     _tapToPayInFlight = false;
     _tapToPayStatusMessageKey = null;
+    _tapToPayPendingPaymentId = null;
     _openMollieRecovery = null;
     _mollieRecoveryBusy = false;
     _mollieCheckoutLoading = false;
@@ -278,6 +283,96 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
     }
   }
 
+  /// Soft recheck after foreground poll timeout / receipt reopen.
+  /// Returns: `paid` | `pending` | `final` (failed/canceled/etc).
+  Future<String> _pollTapToPayOnce({
+    required String bookingId,
+    required String paymentId,
+    required Map<String, String> strictScope,
+  }) async {
+    final poll = await pollDriverMollieTerminalPaymentStatus(
+      bookingId: bookingId,
+      paymentId: paymentId,
+      legId: _operationalLegIdForReceipt(),
+      tenantId: strictScope['tenant_id'],
+      companyId: strictScope['company_id'],
+    );
+    final pollHttp = (poll['http_code'] as num?)?.toInt() ?? 0;
+    final providerStatus =
+        (poll['mollie_status'] ?? poll['mollieStatus'] ?? '').toString();
+    final outcome = classifyCardTerminalProviderStatus(
+      providerStatus: providerStatus,
+      httpCode: pollHttp >= 400 ? pollHttp : null,
+    );
+    final serverPaid = poll['paid'] == true;
+    final paymentWritten = poll['payment_written'] == true;
+    debugPrint(
+      cardTerminalDiagnosticsLine(
+        phase: CardTerminalPhase.callback,
+        amountCents: 0,
+        providerStatus: providerStatus,
+        paymentWritten: paymentWritten || serverPaid,
+        reason: cardTerminalOutcomeReason(outcome),
+      ),
+    );
+    if (serverPaid || cardTerminalShouldWritePaid(outcome)) {
+      if (!mounted) return 'paid';
+      setState(() {
+        _tapToPayStatusMessageKey = 'tapToPaySucceeded';
+        _tapToPayPendingPaymentId = null;
+        _tapToPayInFlight = false;
+        _paymentStatus = _ReceiptPaymentStatus.paid;
+      });
+      final fields = await _fetchAuthoritativePaymentFields(bookingId);
+      if (mounted && fields != null && fields.isNotEmpty) {
+        _mergePaymentFieldsIntoReceiptDetails(fields);
+        setState(() => _paymentStatus = _ReceiptPaymentStatus.paid);
+      }
+      return 'paid';
+    }
+    if (cardTerminalIsTerminalOutcome(outcome)) {
+      if (!mounted) return 'final';
+      final msgKey =
+          cardTerminalUserMessageKey(outcome) ?? 'cardTerminalRetryOrOther';
+      setState(() {
+        _tapToPayInFlight = false;
+        _tapToPayPendingPaymentId = null;
+        _tapToPayStatusMessageKey = msgKey;
+      });
+      return 'final';
+    }
+    return 'pending';
+  }
+
+  Future<void> _resumeTapToPayPendingRecheck() async {
+    if (!mounted) return;
+    if (_paymentStatus == _ReceiptPaymentStatus.paid) return;
+    final bookingId = (item.bookingId ?? '').trim();
+    final paymentId = (_tapToPayPendingPaymentId ?? '').trim();
+    if (bookingId.isEmpty || paymentId.isEmpty) return;
+    if (_tapToPayInFlight) return;
+    final strictScope = _strictReceiptPaymentScopeForMutation(
+      context: context,
+      action: 'tap_to_pay',
+    );
+    if (strictScope == null) return;
+    final result = await _pollTapToPayOnce(
+      bookingId: bookingId,
+      paymentId: paymentId,
+      strictScope: strictScope,
+    );
+    if (!mounted) return;
+    if (result != 'paid') {
+      setState(() {
+        _tapToPayStatusMessageKey =
+            result == 'final'
+                ? (_tapToPayStatusMessageKey ?? 'cardTerminalRetryOrOther')
+                : 'tapToPayPendingRecheck';
+        _tapToPayInFlight = false;
+      });
+    }
+  }
+
   Future<void> _startTapToPay(BuildContext context) async {
     if (_tapToPayInFlight || _tapToPayStartGuard.inFlight) return;
     if (!_tapToPayAvailable) return;
@@ -308,12 +403,57 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       return;
     }
 
+    // Recheck an open POS attempt after poll timeout — no second create while
+    // the server still reports an open intent (idempotent reuse).
+    final pendingId = (_tapToPayPendingPaymentId ?? '').trim();
+    if (pendingId.isNotEmpty &&
+        _paymentStatus != _ReceiptPaymentStatus.paid) {
+      setState(() {
+        _tapToPayInFlight = true;
+        _tapToPayStatusMessageKey = 'tapToPayCheckingStatus';
+      });
+      final result = await _pollTapToPayOnce(
+        bookingId: bookingId,
+        paymentId: pendingId,
+        strictScope: strictScope,
+      );
+      if (!mounted) return;
+      if (result == 'paid') {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_receiptText('tapToPaySucceeded'))),
+          );
+        }
+        return;
+      }
+      if (result == 'final') {
+        if (context.mounted &&
+            (_tapToPayStatusMessageKey ?? '').isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_receiptText(_tapToPayStatusMessageKey!))),
+          );
+        }
+        return;
+      }
+      setState(() {
+        _tapToPayInFlight = false;
+        _tapToPayStatusMessageKey = 'tapToPayPendingRecheck';
+      });
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_receiptText('tapToPayPendingRecheck'))),
+        );
+      }
+      return;
+    }
+
     final maskedRef = _safeRefPreview(bookingId);
     final started = await _tapToPayStartGuard.runOnce(() async {
       if (!mounted) return false;
       setState(() {
         _tapToPayInFlight = true;
         _tapToPayStatusMessageKey = 'tapToPayStarting';
+        _tapToPayPendingPaymentId = null;
       });
 
       // Never send amount — server resolves planned fixed price / street fare.
@@ -390,9 +530,14 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       }
 
       if (!mounted) return false;
-      setState(() => _tapToPayStatusMessageKey = 'tapToPayWaitingForCard');
+      setState(() {
+        _tapToPayStatusMessageKey = 'tapToPayWaitingForCard';
+        _tapToPayPendingPaymentId = paymentId;
+      });
 
       // Bounded poll; only Mollie `paid` (via server reconcile) marks paid.
+      // After timeout: stop spinner, keep unpaid, allow recheck; webhook/backend
+      // may still complete the payment without a second charge.
       const maxAttempts = 40;
       for (var i = 0; i < maxAttempts; i++) {
         await Future<void>.delayed(const Duration(seconds: 2));
@@ -400,43 +545,12 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
         if (i > 0 && i % 5 == 0) {
           setState(() => _tapToPayStatusMessageKey = 'tapToPayCheckingStatus');
         }
-        final poll = await pollDriverMollieTerminalPaymentStatus(
+        final result = await _pollTapToPayOnce(
           bookingId: bookingId,
           paymentId: paymentId,
-          legId: _operationalLegIdForReceipt(),
-          tenantId: strictScope['tenant_id'],
-          companyId: strictScope['company_id'],
+          strictScope: strictScope,
         );
-        final pollHttp = (poll['http_code'] as num?)?.toInt() ?? 0;
-        final providerStatus =
-            (poll['mollie_status'] ?? poll['mollieStatus'] ?? '').toString();
-        final outcome = classifyCardTerminalProviderStatus(
-          providerStatus: providerStatus,
-          httpCode: pollHttp >= 400 ? pollHttp : null,
-        );
-        final serverPaid = poll['paid'] == true;
-        final paymentWritten = poll['payment_written'] == true;
-        debugPrint(
-          cardTerminalDiagnosticsLine(
-            phase: CardTerminalPhase.callback,
-            amountCents: 0,
-            providerStatus: providerStatus,
-            paymentWritten: paymentWritten || serverPaid,
-            reason: cardTerminalOutcomeReason(outcome),
-          ),
-        );
-
-        if (serverPaid || cardTerminalShouldWritePaid(outcome)) {
-          if (!mounted) return true;
-          setState(() {
-            _tapToPayStatusMessageKey = 'tapToPaySucceeded';
-            _paymentStatus = _ReceiptPaymentStatus.paid;
-          });
-          final fields = await _fetchAuthoritativePaymentFields(bookingId);
-          if (mounted && fields != null && fields.isNotEmpty) {
-            _mergePaymentFieldsIntoReceiptDetails(fields);
-            setState(() => _paymentStatus = _ReceiptPaymentStatus.paid);
-          }
+        if (result == 'paid') {
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text(_receiptText('tapToPaySucceeded'))),
@@ -444,21 +558,13 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
           }
           return true;
         }
-
-        if (cardTerminalIsTerminalOutcome(outcome)) {
-          final msgKey =
-              cardTerminalUserMessageKey(outcome) ?? 'cardTerminalRetryOrOther';
-          if (!mounted) return false;
-          setState(() {
-            _tapToPayInFlight = false;
-            _tapToPayStatusMessageKey = msgKey;
-          });
-          if (context.mounted) {
+        if (result == 'final') {
+          // Explicitly keep unpaid — never invent paid on cancel/fail/return.
+          if ((_tapToPayStatusMessageKey ?? '').isNotEmpty && context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(_receiptText(msgKey))),
+              SnackBar(content: Text(_receiptText(_tapToPayStatusMessageKey!))),
             );
           }
-          // Explicitly keep unpaid — never invent paid on cancel/fail/return.
           return false;
         }
       }
@@ -466,16 +572,17 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
       if (!mounted) return false;
       setState(() {
         _tapToPayInFlight = false;
-        _tapToPayStatusMessageKey = 'tapToPayCheckingStatus';
+        _tapToPayPendingPaymentId = paymentId;
+        _tapToPayStatusMessageKey = 'tapToPayPendingRecheck';
       });
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_receiptText('tapToPayCheckingStatus'))),
+          SnackBar(content: Text(_receiptText('tapToPayPendingRecheck'))),
         );
       }
       debugPrint(
         '[TAP_TO_PAY][POLL_TIMEOUT] booking=$maskedRef unpaid=true '
-        '(backend reconcile may still mark paid later)',
+        'pending_payment_kept=true (webhook/reconcile may still mark paid)',
       );
       return false;
     });
@@ -5307,7 +5414,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody> {
                   _receiptText(
                     _tapToPayInFlight
                         ? (_tapToPayStatusMessageKey ?? 'tapToPayStarting')
-                        : 'tapToPay',
+                        : ((_tapToPayPendingPaymentId ?? '').isNotEmpty
+                              ? 'tapToPayRecheck'
+                              : 'tapToPay'),
                   ),
                 ),
               ),

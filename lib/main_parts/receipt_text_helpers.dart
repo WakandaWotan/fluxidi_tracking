@@ -726,6 +726,24 @@ String _receiptText(String key) {
         fr: 'Statut encore en cours de vérification…',
         es: 'Aún se comprueba el estado…',
       );
+    case 'tapToPayPendingRecheck':
+      return _tr(
+        nl:
+            'Terminalbetaling nog open. Tik opnieuw op Tap to Pay om de status te controleren — er wordt geen tweede bedrag gestart zolang deze poging open is.',
+        en:
+            'Terminal payment still open. Tap Tap to Pay again to recheck status — no second charge while this attempt is open.',
+        fr:
+            'Paiement terminal encore ouvert. Retapez Tap to Pay pour vérifier — pas de second montant tant que la tentative est ouverte.',
+        es:
+            'El pago en terminal sigue abierto. Vuelve a pulsar Tap to Pay para comprobar — sin un segundo cargo mientras siga abierto.',
+      );
+    case 'tapToPayRecheck':
+      return _tr(
+        nl: 'Status controleren',
+        en: 'Check status',
+        fr: 'Vérifier le statut',
+        es: 'Comprobar estado',
+      );
     case 'cardTerminalProcessing':
       return _tr(
         nl: 'Terminalbetaling wordt verwerkt…',
