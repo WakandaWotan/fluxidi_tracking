@@ -24169,30 +24169,22 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  ExternalNavPipMeterModel _buildCurrentPipMeterModel() {
-    final phase = _externalNavigationSession?.phase ?? _resolveExternalNavPhase();
-    // Prefer remaining-to-active-target over driven-km for destination truth.
-    final remaining = _kmRemainingText.trim();
-    final remainingText = remaining.isEmpty
-        ? null
-        : (remaining.endsWith('km') ? remaining : '$remaining km');
-    final km = _kmDriven;
-    final drivenText = !km.isFinite
-        ? null
-        : (km < 0.05 ? '0.0 km' : '${km.toStringAsFixed(1)} km');
+  ExternalNavPipMeterModel _buildCurrentPipMeterModel([
+    DriverRideMetersSnapshot? snapshot,
+  ]) {
+    // GOOGLE-MAPS-PIP-LIVE-METER-P0: project the same authoritative meter
+    // snapshot that Tellers/HUD observe. Never invent a second fare path.
+    final snap = snapshot ?? _buildDriverRideMetersSnapshot();
+    final phase =
+        _externalNavigationSession?.phase ?? _resolveExternalNavPhase();
     final fixed = _fixedBookingPriceEur;
     final fixedText = fixed == null ? null : _fmtMoney(fixed, 'EUR');
-    return buildExternalNavPipMeterModel(
+    return buildExternalNavPipMeterModelFromRideMeters(
+      snapshot: snap,
       phase: phase,
       isStreetRide: _directRideActive || _activeBookingIsStreetDirect,
       isFixedPrice: fixed != null && !_activeBookingIsStreetDirect,
       fixedPriceText: fixedText,
-      liveFareText: _displayTotalText,
-      kmText: drivenText,
-      durationText: _formatHms(_activeElapsed),
-      waitText: _formatHms(_effectiveWaitElapsed),
-      etaText: _etaText.trim().isEmpty ? null : _etaText.trim(),
-      remainingDistanceText: remainingText,
     );
   }
 
@@ -33837,14 +33829,23 @@ class _DriverHomePageState extends State<DriverHomePage>
       '[EXTERNAL_NAV] event=pip_overlay_active '
       'process_id=dart map_kept_mounted=true',
     );
+    // GOOGLE-MAPS-PIP-LIVE-METER-P0: listen to the same meter notifier as
+    // Tellers. Parent setState is rare while Maps owns the foreground; without
+    // this, PiP would freeze on the enter-time snapshot while GPS/fare continue.
+    // MapWidget stays Offstage-mounted — do NOT setState every meter tick.
     return Stack(
       fit: StackFit.expand,
       children: [
         Offstage(offstage: true, child: driverBody),
         Scaffold(
           backgroundColor: const Color(0xFF0B0F14),
-          body: ExternalNavPipMeterCard(
-            model: _buildCurrentPipMeterModel(),
+          body: ValueListenableBuilder<DriverRideMetersSnapshot>(
+            valueListenable: _driverRideMetersNotifier,
+            builder: (context, snap, _) {
+              return ExternalNavPipMeterCard(
+                model: _buildCurrentPipMeterModel(snap),
+              );
+            },
           ),
         ),
       ],

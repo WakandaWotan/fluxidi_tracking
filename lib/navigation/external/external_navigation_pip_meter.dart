@@ -1,10 +1,17 @@
 // FLUXIDI-PIP-METER-EXTERNAL-NAV-1
 // PIP-COMPACT-KPI-READABILITY-P1
+// GOOGLE-MAPS-PIP-LIVE-METER-P0
 //
 // Compact high-contrast PiP meter card. Max four core values. No map / menus.
 // Tablet PiP uses denser padding and larger primary/metrics for SM-X400.
+//
+// PiP MUST observe the same [DriverRideMetersSnapshot] stream as Tellers/HUD —
+// never a one-shot model baked at PiP enter. There is no second fare engine.
 
 import 'package:flutter/material.dart';
+
+import 'package:fluxidi_tracking/navigation/presentation/driver_ride_meters.dart'
+    show DriverRideMetersSnapshot;
 
 import 'external_navigation_session.dart';
 
@@ -85,6 +92,34 @@ ExternalNavPipMeterModel buildExternalNavPipMeterModel({
     kmText: remainingDistanceText ?? kmText,
     durationText: remainingOrEta.isNotEmpty ? remainingOrEta : durationText,
     waitText: waitText,
+  );
+}
+
+/// Project the authoritative ride-meter snapshot into the compact PiP model.
+///
+/// GOOGLE-MAPS-PIP-LIVE-METER-P0: same numeric/text source as Tellers — no
+/// duplicate GPS/fare calculation. Phase/street/fixed flags only choose which
+/// snapshot fields are emphasised in the compact layout.
+ExternalNavPipMeterModel buildExternalNavPipMeterModelFromRideMeters({
+  required DriverRideMetersSnapshot snapshot,
+  required ExternalNavPhase phase,
+  required bool isStreetRide,
+  required bool isFixedPrice,
+  String? fixedPriceText,
+}) {
+  final remaining = snapshot.remainingDistanceText.trim();
+  final eta = snapshot.etaText.trim();
+  return buildExternalNavPipMeterModel(
+    phase: phase,
+    isStreetRide: isStreetRide,
+    isFixedPrice: isFixedPrice,
+    fixedPriceText: fixedPriceText,
+    liveFareText: snapshot.fareText,
+    kmText: snapshot.distanceTravelledText,
+    durationText: snapshot.rideDurationText,
+    waitText: snapshot.waitingTimeText,
+    etaText: eta.isEmpty ? null : eta,
+    remainingDistanceText: remaining.isEmpty ? null : remaining,
   );
 }
 
