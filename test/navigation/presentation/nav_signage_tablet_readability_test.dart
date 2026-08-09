@@ -386,7 +386,7 @@ void main() {
       expect(signWidget.resolvedLanguageCode, 'nl');
       expect(
         signWidget.assetPath,
-        'assets/fluxidi_navigation_signs_v3/png_captioned/nl/straight.png',
+        'assets/fluxidi_navigation_signs_v3/png/nl/straight.png',
       );
       // Captioned plate owns the maneuver verb; external copy is distance + road.
       expect(find.text('Volg de route'), findsNothing);
@@ -487,7 +487,11 @@ void main() {
     test('instruction presentation stays straight / N454 / 643 m', () {
       final p = _presentation(useCaptionedSign: true);
       expect(p.signManeuver, NavSignManeuver.straight);
-      expect(p.signAssetPath, contains('png_captioned/nl/straight.png'));
+      expect(
+        p.signAssetPath,
+        'assets/fluxidi_navigation_signs_v3/png/nl/straight.png',
+      );
+      expect(p.signAssetPath, isNot(contains('png_captioned')));
       expect(p.distanceLabel, contains('643'));
       expect(p.secondaryInstruction.toLowerCase(), contains('n454'));
       expect(p.primaryInstruction, isEmpty);

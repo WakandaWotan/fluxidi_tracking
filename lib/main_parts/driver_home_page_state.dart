@@ -24064,8 +24064,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool get _externalNavGuidanceSuppressed =>
       shouldSuppressNativeGuidance(_externalNavigationSession);
 
-  /// TABLET-LOCALIZED-NAV-SIGNAGE-1: captioned language plates only when
-  /// shortestSide >= 600. Phones stay on captionless icon assets.
+  /// TABLET-LOCALIZED-NAV-SIGNAGE-1: on tablet, suppress duplicate external
+  /// maneuver verbs (caption lives on the language PNG plate). Asset root is
+  /// always `png/` (BLACK-CONTOUR-V3) — never legacy `png_captioned/`.
   bool get _useCaptionedNavSigns {
     if (!mounted) return false;
     return isNavSignageTabletLayout(MediaQuery.sizeOf(context));

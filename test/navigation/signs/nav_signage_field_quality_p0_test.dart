@@ -204,25 +204,31 @@ void main() {
     });
   });
 
-  group('captionless sign assets', () {
-    test('language folders share identical captionless bytes per id', () async {
+  group('BLACK-CONTOUR-V3 png/ runtime assets', () {
+    test('straight NL resolves to contour png family, not png_captioned', () {
+      final path = navSignAssetPath(
+        languageCode: 'nl',
+        maneuver: NavSignManeuver.straight,
+        useCaptioned: true,
+      );
+      expect(
+        path,
+        'assets/fluxidi_navigation_signs_v3/png/nl/straight.png',
+      );
+      expect(path, isNot(contains('png_captioned')));
+    });
+
+    test('all languages load under png/ for every maneuver id', () async {
       for (final maneuver in NavSignManeuver.values) {
-        final hashes = <String>{};
         for (final lang in kNavSignLanguageCodes) {
-          final data = await rootBundle.load(
-            navSignAssetPath(languageCode: lang, maneuver: maneuver),
+          final path = navSignAssetPath(
+            languageCode: lang,
+            maneuver: maneuver,
           );
-          final bytes = data.buffer.asUint8List(
-            data.offsetInBytes,
-            data.lengthInBytes,
-          );
-          hashes.add(bytes.join(','));
+          expect(path, startsWith('$kNavSignAssetRoot/$lang/'));
+          final data = await rootBundle.load(path);
+          expect(data.lengthInBytes, greaterThan(0), reason: path);
         }
-        expect(
-          hashes,
-          hasLength(1),
-          reason: '${maneuver.id} must be captionless and identical across langs',
-        );
       }
     });
   });

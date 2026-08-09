@@ -1,4 +1,4 @@
-// TABLET-LOCALIZED-NAV-SIGNAGE-1
+// TABLET-LOCALIZED-NAV-SIGNAGE-1 / NAV-SIGNS-BLACK-CONTOUR-V3 pickup
 
 import 'dart:io';
 
@@ -40,62 +40,72 @@ NavInstructionSnapshot _snap({
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('captioned asset source (a4d7aed restore)', () {
-    test('1) tablet NL uses captioned NL straight', () {
-      final path = navSignAssetPath(
-        languageCode: 'nl',
-        maneuver: NavSignManeuver.straight,
-        useCaptioned: true,
-      );
-      expect(path, contains('png_captioned/nl/straight.png'));
-      expect(File(path).existsSync(), isTrue);
-      final phone = navSignAssetPath(
-        languageCode: 'nl',
-        maneuver: NavSignManeuver.straight,
-        useCaptioned: false,
-      );
-      expect(
-        File(path).readAsBytesSync(),
-        isNot(equals(File(phone).readAsBytesSync())),
-      );
-    });
-
-    test('2) tablet EN uses captioned EN straight', () {
-      final nl = File(
-        navSignAssetPath(
+  group('runtime HUD uses BLACK-CONTOUR-V3 png/ family', () {
+    test('1) straight resolves to png/nl — never png_captioned', () {
+      for (final captionedFlag in <bool>[true, false]) {
+        final path = navSignAssetPath(
           languageCode: 'nl',
           maneuver: NavSignManeuver.straight,
-          useCaptioned: true,
-        ),
-      ).readAsBytesSync();
-      final en = File(
-        navSignAssetPath(
-          languageCode: 'en',
+          useCaptioned: captionedFlag,
+        );
+        expect(
+          path,
+          'assets/fluxidi_navigation_signs_v3/png/nl/straight.png',
+        );
+        expect(path, isNot(contains('png_captioned')));
+        expect(File(path).existsSync(), isTrue);
+      }
+    });
+
+    test('2) NL/EN/FR/ES share the same png/ source family', () {
+      for (final lang in kNavSignLanguageCodes) {
+        final path = navSignAssetPath(
+          languageCode: lang,
           maneuver: NavSignManeuver.straight,
           useCaptioned: true,
+        );
+        expect(path, startsWith('$kNavSignAssetRoot/$lang/'));
+        expect(path, endsWith('/straight.png'));
+        expect(path, isNot(contains('png_captioned')));
+        expect(File(path).existsSync(), isTrue);
+      }
+    });
+
+    test('3) legacy png_captioned remains on disk but is not the HUD path', () {
+      final legacy = navSignLegacyCaptionedAssetPaths().firstWhere(
+        (p) => p.endsWith('/nl/straight.png'),
+      );
+      expect(legacy, contains('png_captioned/nl/straight.png'));
+      expect(File(legacy).existsSync(), isTrue);
+      final runtime = navSignAssetPath(
+        languageCode: 'nl',
+        maneuver: NavSignManeuver.straight,
+        useCaptioned: true,
+      );
+      expect(runtime, isNot(equals(legacy)));
+      expect(
+        File(runtime).readAsBytesSync(),
+        isNot(equals(File(legacy).readAsBytesSync())),
+      );
+    });
+
+    test('4) FR/ES language directories stay under png/', () {
+      expect(
+        navSignAssetPath(
+          languageCode: 'fr',
+          maneuver: NavSignManeuver.turnRight,
+          useCaptioned: true,
         ),
-      ).readAsBytesSync();
-      expect(nl, isNot(equals(en)));
-    });
-
-    test('3) tablet FR uses captioned FR right', () {
-      final fr = navSignAssetPath(
-        languageCode: 'fr',
-        maneuver: NavSignManeuver.turnRight,
-        useCaptioned: true,
+        'assets/fluxidi_navigation_signs_v3/png/fr/turn_right.png',
       );
-      expect(fr, contains('png_captioned/fr/turn_right.png'));
-      expect(File(fr).existsSync(), isTrue);
-    });
-
-    test('4) tablet ES uses captioned ES left', () {
-      final es = navSignAssetPath(
-        languageCode: 'es',
-        maneuver: NavSignManeuver.turnLeft,
-        useCaptioned: true,
+      expect(
+        navSignAssetPath(
+          languageCode: 'es',
+          maneuver: NavSignManeuver.turnLeft,
+          useCaptioned: true,
+        ),
+        'assets/fluxidi_navigation_signs_v3/png/es/turn_left.png',
       );
-      expect(es, contains('png_captioned/es/turn_left.png'));
-      expect(File(es).existsSync(), isTrue);
     });
   });
 
@@ -118,8 +128,8 @@ void main() {
     });
   });
 
-  group('captioned presentation copy', () {
-    test('7/8) captioned tablet does not duplicate maneuver caption externally',
+  group('tablet presentation copy (caption on plate)', () {
+    test('7/8) tablet flag suppresses external maneuver verb; asset is png/',
         () {
       final p = buildResponsiveManeuverPresentation(
         snapshot: _snap(type: 'turn', modifier: 'right', distance: 191),
@@ -128,14 +138,15 @@ void main() {
         useCaptionedSign: true,
       );
       expect(p.signCaptioned, isTrue);
-      expect(p.signAssetPath, contains('png_captioned/nl/turn_right.png'));
+      expect(p.signAssetPath, 'assets/fluxidi_navigation_signs_v3/png/nl/turn_right.png');
+      expect(p.signAssetPath, isNot(contains('png_captioned')));
       expect(p.primaryInstruction, isEmpty);
       expect(p.distanceLabel, isNotEmpty);
       expect(p.secondaryInstruction.toLowerCase(), contains('hofveldstraat'));
       expect(p.primaryInstruction.toLowerCase(), isNot(contains('rechts')));
     });
 
-    test('9) phone stays captionless with external primary', () {
+    test('9) phone stays on png/ with external primary', () {
       final p = buildResponsiveManeuverPresentation(
         snapshot: _snap(type: 'turn', modifier: 'right', distance: 191),
         tr: _tr,
@@ -148,21 +159,16 @@ void main() {
       expect(p.primaryInstruction.trim(), isNotEmpty);
     });
 
-    test('10) all 34 IDs resolve in four languages (captioned + phone)', () {
+    test('10) all 34 IDs resolve in four languages under png/', () {
       for (final lang in kNavSignLanguageCodes) {
         for (final maneuver in NavSignManeuver.values) {
-          final captioned = navSignAssetPath(
+          final path = navSignAssetPath(
             languageCode: lang,
             maneuver: maneuver,
             useCaptioned: true,
           );
-          final phone = navSignAssetPath(
-            languageCode: lang,
-            maneuver: maneuver,
-            useCaptioned: false,
-          );
-          expect(File(captioned).existsSync(), isTrue, reason: captioned);
-          expect(File(phone).existsSync(), isTrue, reason: phone);
+          expect(File(path).existsSync(), isTrue, reason: path);
+          expect(path, startsWith('$kNavSignAssetRoot/$lang/'));
         }
       }
       expect(NavSignManeuver.values.length, 34);

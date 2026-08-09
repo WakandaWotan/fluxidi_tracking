@@ -79,12 +79,13 @@ const String kNavSignFallbackLanguageCode = 'nl';
 
 /// Root of the bundled PNG signs. Registered per language in `pubspec.yaml`.
 ///
-/// Phone (shortestSide &lt; 600) uses captionless icon plates here.
+/// NAV-SIGNS-BLACK-CONTOUR-V3 / FIELD: this is the only runtime HUD source.
+/// Language directories already carry the localized caption on-plate.
 const String kNavSignAssetRoot = 'assets/fluxidi_navigation_signs_v3/png';
 
-/// TABLET-LOCALIZED-NAV-SIGNAGE-1: original language-captioned plates restored
-/// from Git history (`a4d7aed`). Used only when [useCaptioned] is true
-/// (tablet shortestSide &gt;= 600).
+/// Legacy pre-contour plates. Kept on disk / in pubspec for inventory only —
+/// must NOT be selected by [navSignAssetPath] (tablet previously preferred
+/// these and lost the black arrow contour from BLACK-CONTOUR-V3).
 const String kNavSignCaptionedAssetRoot =
     'assets/fluxidi_navigation_signs_v3/png_captioned';
 
@@ -115,19 +116,23 @@ String resolveNavSignLanguageCode(String? raw) {
   return kNavSignFallbackLanguageCode;
 }
 
-/// `assets/fluxidi_navigation_signs_v3/png[|_captioned]/<language>/<id>.png`.
+/// `assets/fluxidi_navigation_signs_v3/png/<language>/<id>.png`.
+///
+/// [useCaptioned] is retained for call-site compatibility (tablet still uses
+/// it to suppress duplicate external maneuver verbs) but does **not** change
+/// the asset root — runtime always picks BLACK-CONTOUR-V3 under [kNavSignAssetRoot].
 String navSignAssetPath({
   required String? languageCode,
   required NavSignManeuver maneuver,
+  // Retained for tablet copy gating at call sites; unused for path selection.
   bool useCaptioned = false,
 }) {
   final language = resolveNavSignLanguageCode(languageCode);
-  final root = useCaptioned ? kNavSignCaptionedAssetRoot : kNavSignAssetRoot;
-  return '$root/$language/${maneuver.id}.png';
+  return '$kNavSignAssetRoot/$language/${maneuver.id}.png';
 }
 
-/// Every bundled sign path. Used by the asset-integrity tests and the debug
-/// catalog; never by production rendering.
+/// Every bundled runtime sign path. Used by the asset-integrity tests and the
+/// debug catalog; never by production rendering.
 List<String> navSignAllAssetPaths({bool useCaptioned = false}) {
   return <String>[
     for (final language in kNavSignLanguageCodes)
@@ -137,6 +142,15 @@ List<String> navSignAllAssetPaths({bool useCaptioned = false}) {
           maneuver: maneuver,
           useCaptioned: useCaptioned,
         ),
+  ];
+}
+
+/// Legacy captioned inventory paths (not used by the HUD).
+List<String> navSignLegacyCaptionedAssetPaths() {
+  return <String>[
+    for (final language in kNavSignLanguageCodes)
+      for (final maneuver in NavSignManeuver.values)
+        '$kNavSignCaptionedAssetRoot/$language/${maneuver.id}.png',
   ];
 }
 
