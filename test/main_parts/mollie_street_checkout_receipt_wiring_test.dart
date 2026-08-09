@@ -205,6 +205,43 @@ void main() {
       },
     );
 
+    test(
+      'MOLLIE-CUSTOMER-CANCEL-RETURN-P0: resume bypasses debounce + clears ownership',
+      () {
+        expect(
+          receiptSource,
+          contains('shouldForceImmediateMollieOwnershipRefresh'),
+        );
+        expect(
+          receiptSource,
+          contains('isAuthoritativeMollieOwnershipReleased'),
+        );
+        expect(
+          receiptSource,
+          contains('_applyAuthoritativeMollieOwnershipReleaseLocally'),
+        );
+        expect(
+          receiptSource,
+          contains('applyAuthoritativeMollieOwnershipReleaseToDetails'),
+        );
+        expect(receiptSource, contains('_mollieAutoRefreshQueuedReason'));
+        // Manual "Betaling controleren" shares the same release helper.
+        final runIdx = receiptSource.indexOf(
+          'Future<void> _runOpenMollieRecoveryAction(',
+        );
+        final resumeIdx = receiptSource.indexOf(
+          'Future<void> _resumeOpenMollieCheckout(',
+          runIdx,
+        );
+        final runBody = receiptSource.substring(runIdx, resumeIdx);
+        expect(runBody, contains('isAuthoritativeMollieOwnershipReleased(root)'));
+        expect(
+          runBody,
+          contains('_applyAuthoritativeMollieOwnershipReleaseLocally(root)'),
+        );
+      },
+    );
+
     test('street dialog uses generic Mollie instruction (not Bancontact-only)', () {
       expect(
         receiptSource,

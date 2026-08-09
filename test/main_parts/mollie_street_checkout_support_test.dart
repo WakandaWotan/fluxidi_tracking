@@ -761,4 +761,164 @@ void main() {
       expect(isSafeMollieCheckoutLaunchUrl(null), isFalse);
     });
   });
+
+  group('MOLLIE-CUSTOMER-CANCEL-RETURN-CONVERGENCE-P0', () {
+    Map<String, dynamic> openLocalDetails() => {
+          'payment_status': 'pending',
+          'payment_provider': 'mollie',
+          'payment_mode': 'mollie',
+          'checkout_url': 'https://www.mollie.com/checkout/select-method/x',
+          'payment_attempt_status': 'mollie_open',
+          'mollie': {'id': 'tr_x', 'payment_id': 'tr_x', 'status': 'open'},
+        };
+
+    test('1. provider canceled release → clear ownership + fallback enabled', () {
+      final root = {
+        'ok': true,
+        'action': 'refresh',
+        'payment_status': 'unpaid',
+        'presentation_state': 'canceled',
+        'fallback_allowed': true,
+        'resumable': false,
+        'open_checkout': null,
+        'recovery': {
+          'presentation_state': 'canceled',
+          'resumable': false,
+          'cancel_allowed': false,
+          'fallback_allowed': true,
+          'actions': <String>[],
+        },
+      };
+      expect(isAuthoritativeMollieOwnershipReleased(root), isTrue);
+      final cleared = applyAuthoritativeMollieOwnershipReleaseToDetails(
+        openLocalDetails(),
+        providerStatus: resolveMollieReleasePresentationStatus(root),
+      );
+      expect(receiptDetailsHaveOpenMollieCheckout(cleared), isFalse);
+      expect(cleared['checkout_url'], isNull);
+      expect(cleared['payment_provider'], isNull);
+      expect(cleared['payment_status'], 'unpaid');
+      expect((cleared['mollie'] as Map)['status'], 'canceled');
+    });
+
+    test('2. provider expired → same release', () {
+      final root = {
+        'ok': true,
+        'payment_status': 'unpaid',
+        'presentation_state': 'expired',
+        'fallback_allowed': true,
+        'recovery': {
+          'presentation_state': 'expired',
+          'fallback_allowed': true,
+          'resumable': false,
+        },
+      };
+      expect(isAuthoritativeMollieOwnershipReleased(root), isTrue);
+      final cleared = applyAuthoritativeMollieOwnershipReleaseToDetails(
+        openLocalDetails(),
+        providerStatus: 'expired',
+      );
+      expect(receiptDetailsHaveOpenMollieCheckout(cleared), isFalse);
+      expect((cleared['mollie'] as Map)['status'], 'expired');
+    });
+
+    test('3. provider failed → same release', () {
+      expect(
+        isAuthoritativeMollieOwnershipReleased({
+          'presentation_state': 'failed',
+          'fallback_allowed': true,
+          'payment_status': 'unpaid',
+        }),
+        isTrue,
+      );
+      final cleared = applyAuthoritativeMollieOwnershipReleaseToDetails(
+        openLocalDetails(),
+        providerStatus: 'failed',
+      );
+      expect(receiptDetailsHaveOpenMollieCheckout(cleared), isFalse);
+    });
+
+    test('4. provider still open → remain blocked', () {
+      final root = {
+        'ok': true,
+        'payment_status': 'pending',
+        'presentation_state': 'pending',
+        'fallback_allowed': false,
+        'resumable': true,
+        'open_checkout': {
+          'checkout_url': 'https://www.mollie.com/checkout/x',
+          'mollie_status': 'open',
+        },
+        'recovery': {
+          'presentation_state': 'pending',
+          'resumable': true,
+          'fallback_allowed': false,
+          'cancel_allowed': true,
+        },
+      };
+      expect(isAuthoritativeMollieOwnershipReleased(root), isFalse);
+      expect(receiptDetailsHaveOpenMollieCheckout(openLocalDetails()), isTrue);
+    });
+
+    test('5. provider paid race → not released (paid wins)', () {
+      expect(
+        isAuthoritativeMollieOwnershipReleased({
+          'payment_status': 'paid',
+          'presentation_state': 'paid',
+          'fallback_allowed': true,
+        }),
+        isFalse,
+      );
+      expect(
+        shouldKeepReceiptPaidMonotonic(
+          currentlyPaid: true,
+          authoritativeSaysPaid: true,
+          authoritativeReadSucceeded: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('6. app resume / return force immediate refresh', () {
+      expect(shouldForceImmediateMollieOwnershipRefresh('app_resume'), isTrue);
+      expect(
+        shouldForceImmediateMollieOwnershipRefresh('return_from_checkout'),
+        isTrue,
+      );
+      expect(shouldForceImmediateMollieOwnershipRefresh('receipt_open'), isFalse);
+    });
+
+    test('7. Betaling controleren canceled payload releases', () {
+      expect(
+        isAuthoritativeMollieOwnershipReleased({
+          'ok': true,
+          'action': 'refresh',
+          'fallback_allowed': true,
+          'presentation_state': 'canceled',
+          'payment_status': 'unpaid',
+        }),
+        isTrue,
+      );
+    });
+
+    test('8. stale KV open + fresh provider canceled → provider wins locally', () {
+      final stale = openLocalDetails();
+      expect(receiptDetailsHaveOpenMollieCheckout(stale), isTrue);
+      final cleared = applyAuthoritativeMollieOwnershipReleaseToDetails(
+        stale,
+        providerStatus: 'canceled',
+      );
+      expect(receiptDetailsHaveOpenMollieCheckout(cleared), isFalse);
+      expect(cleared['payment_attempt_status'], 'cancelled');
+    });
+
+    test('9. stale KV open + fresh provider expired → provider wins locally', () {
+      final cleared = applyAuthoritativeMollieOwnershipReleaseToDetails(
+        openLocalDetails(),
+        providerStatus: 'expired',
+      );
+      expect(receiptDetailsHaveOpenMollieCheckout(cleared), isFalse);
+      expect(cleared['payment_attempt_status'], 'expired');
+    });
+  });
 }

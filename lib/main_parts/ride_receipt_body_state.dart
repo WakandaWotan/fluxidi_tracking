@@ -29,6 +29,11 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
   bool _mollieAutoRefreshInFlight = false;
   DateTime? _mollieAutoRefreshLastAt;
 
+  /// MOLLIE-CUSTOMER-CANCEL-RETURN-CONVERGENCE-P0: when app_resume arrives
+  /// while a refresh is already in flight, queue one follow-up so a customer
+  /// Mollie cancel is not dropped by the in-flight guard.
+  String? _mollieAutoRefreshQueuedReason;
+
   /// Set by the embedded street business-invoice action when an invoice is
   /// known for this completed street ride. Used so Payment status does not
   /// fall back to a misleading bare "Unpaid" while the ride is on invoice.
@@ -4049,6 +4054,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
     if (outcome == MollieStreetCheckoutPollOutcome.cancelled ||
         outcome == MollieStreetCheckoutPollOutcome.expired ||
         outcome == MollieStreetCheckoutPollOutcome.failed) {
+      if (root != null) {
+        _applyAuthoritativeMollieOwnershipReleaseLocally(root);
+      }
       if (mounted) {
         setState(() => _openMollieRecovery = null);
       }
@@ -4091,6 +4099,21 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
     return MollieStreetCheckoutPollOutcome.pending;
   }
 
+  /// MOLLIE-CUSTOMER-CANCEL-RETURN-CONVERGENCE-P0: apply authoritative release
+  /// to local receipt details immediately (do not wait on GET merge, which
+  /// cannot clear null checkout_url / stale mollie.status=open).
+  void _applyAuthoritativeMollieOwnershipReleaseLocally(
+    Map<String, dynamic> root,
+  ) {
+    final releasedDetails = applyAuthoritativeMollieOwnershipReleaseToDetails(
+      Map<String, dynamic>.from(item.bookingDetails),
+      providerStatus: resolveMollieReleasePresentationStatus(root),
+    );
+    item.bookingDetails
+      ..clear()
+      ..addAll(releasedDetails);
+  }
+
   Future<Map<String, dynamic>?> _postAuthoritativeMollieCheckoutRefresh({
     required String reason,
   }) async {
@@ -4107,7 +4130,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       '[MOLLIE_STREET_CHECKOUT][AUTO_REFRESH] reason=$reason '
       'booking=${_safeRefPreview(bookingId)} '
       'ok=${root?['ok']} presentation=${root?['presentation_state']} '
-      'pay=${root?['payment_status']}',
+      'pay=${root?['payment_status']} fallback=${root?['fallback_allowed']}',
     );
     if (!mounted || root == null) return root;
     final recoveryHttp =
@@ -4127,44 +4150,53 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       });
       return root;
     }
-    final released =
-        recovery?.fallbackAllowed == true ||
-        recovery?.presentationState == 'canceled' ||
-        recovery?.presentationState == 'cancelled' ||
-        recovery?.presentationState == 'expired' ||
-        recovery?.presentationState == 'failed' ||
-        payStatus == 'unpaid';
-    setState(() {
-      _openMollieRecovery = released ? null : recovery;
-    });
+    final released = isAuthoritativeMollieOwnershipReleased(root);
     if (released) {
-      // Merge unpaid/released markers into local receipt details so fallback
-      // buttons unblock without requiring a second manual refresh.
+      _applyAuthoritativeMollieOwnershipReleaseLocally(root);
+      setState(() => _openMollieRecovery = null);
+      // Best-effort canonical merge; local release markers already unblocked
+      // fallback methods even if GET omits null checkout_url.
       final fields = await _fetchAuthoritativePaymentFields(bookingId);
       if (mounted && fields != null && fields.isNotEmpty) {
         _mergePaymentFieldsIntoReceiptDetails(fields);
         setState(() {});
+      } else if (mounted) {
+        setState(() {});
       }
+      return root;
     }
+    setState(() {
+      _openMollieRecovery = recovery;
+    });
     return root;
   }
 
   /// One-shot refresh when a completed street ride still shows open Mollie
-  /// ownership. Debounced; never starts an unbounded poll loop.
+  /// ownership. Debounced for receipt_open; app_resume / return-from-checkout
+  /// always run immediately (customer Mollie cancel must not wait 15 min).
   Future<void> _maybeAuthoritativeMollieCheckoutRefresh({
     required String reason,
   }) async {
-    if (!mounted || _mollieAutoRefreshInFlight) return;
+    if (!mounted) return;
     if (_paymentStatus == _ReceiptPaymentStatus.paid) return;
+    final forceImmediate = shouldForceImmediateMollieOwnershipRefresh(reason);
+    if (_mollieAutoRefreshInFlight) {
+      if (forceImmediate) {
+        _mollieAutoRefreshQueuedReason = reason;
+      }
+      return;
+    }
     final hasOpen = _openMollieBlocksFallback ||
         receiptDetailsHaveOpenMollieCheckout(
           Map<String, dynamic>.from(item.bookingDetails),
         );
     if (!hasOpen) return;
-    final last = _mollieAutoRefreshLastAt;
-    if (last != null &&
-        DateTime.now().difference(last) < const Duration(seconds: 4)) {
-      return;
+    if (!forceImmediate) {
+      final last = _mollieAutoRefreshLastAt;
+      if (last != null &&
+          DateTime.now().difference(last) < const Duration(seconds: 4)) {
+        return;
+      }
     }
     _mollieAutoRefreshInFlight = true;
     _mollieAutoRefreshLastAt = DateTime.now();
@@ -4176,6 +4208,11 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       }
     } finally {
       _mollieAutoRefreshInFlight = false;
+      final queued = _mollieAutoRefreshQueuedReason;
+      _mollieAutoRefreshQueuedReason = null;
+      if (queued != null && mounted) {
+        unawaited(_maybeAuthoritativeMollieCheckoutRefresh(reason: queued));
+      }
     }
   }
 
@@ -4558,16 +4595,13 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
         await _markMollieStreetCheckoutPaid(context);
         return;
       }
-      final released =
-          recovery?.fallbackAllowed == true ||
-          recovery?.presentationState == 'canceled' ||
-          recovery?.presentationState == 'expired' ||
-          recovery?.presentationState == 'failed';
-      setState(() {
-        _openMollieRecovery = released ? null : recovery;
-      });
-      if (!context.mounted) return;
+      // MOLLIE-CUSTOMER-CANCEL-RETURN-CONVERGENCE-P0: provider canceled /
+      // expired / failed must release ownership immediately (same as resume).
+      final released = isAuthoritativeMollieOwnershipReleased(root);
       if (released) {
+        _applyAuthoritativeMollieOwnershipReleaseLocally(root);
+        setState(() => _openMollieRecovery = null);
+        if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(_receiptText('paymentOwnerReleased'))),
         );
@@ -4581,6 +4615,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
         }
         return;
       }
+      setState(() {
+        _openMollieRecovery = recovery;
+      });
+      if (!context.mounted) return;
       final err = (root['error'] ?? '').toString().trim();
       if (root['ok'] != true &&
           (err == 'recovery_refresh_failed' ||
@@ -4658,6 +4696,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
           return;
 
         case MollieHostedResumeDecision.released:
+          _applyAuthoritativeMollieOwnershipReleaseLocally(root);
           setState(() => _openMollieRecovery = null);
           final fields = await _fetchAuthoritativePaymentFields(bookingId);
           if (mounted && fields != null && fields.isNotEmpty) {

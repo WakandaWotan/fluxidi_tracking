@@ -454,7 +454,18 @@ bool receiptDetailsHaveOpenMollieCheckout(Map<String, dynamic>? details) {
       payStatus == 'failed' ||
       payStatus == 'canceled' ||
       payStatus == 'cancelled' ||
-      payStatus == 'expired') {
+      payStatus == 'expired' ||
+      payStatus == 'abandoned') {
+    return false;
+  }
+  final attempt = _lower(
+    map['payment_attempt_status'] ?? map['paymentAttemptStatus'],
+  );
+  if (attempt == 'failed' ||
+      attempt == 'canceled' ||
+      attempt == 'cancelled' ||
+      attempt == 'expired' ||
+      attempt == 'abandoned') {
     return false;
   }
   final provider = _lower(
@@ -477,7 +488,8 @@ bool receiptDetailsHaveOpenMollieCheckout(Map<String, dynamic>? details) {
       mollieStatus == 'failed' ||
       mollieStatus == 'canceled' ||
       mollieStatus == 'cancelled' ||
-      mollieStatus == 'expired') {
+      mollieStatus == 'expired' ||
+      mollieStatus == 'abandoned') {
     return false;
   }
   return true;
@@ -663,6 +675,122 @@ bool shouldKeepReceiptPaidMonotonic({
   if (!authoritativeReadSucceeded) return true;
   // Authoritative unpaid while local is paid: keep paid (no revert).
   return true;
+}
+
+/// MOLLIE-CUSTOMER-CANCEL-RETURN-CONVERGENCE-P0: whether a recovery refresh
+/// response means hosted ownership must be released (customer cancel /
+/// expired / failed / abandoned). Paid is never treated as released.
+bool isAuthoritativeMollieOwnershipReleased(Map<String, dynamic>? decoded) {
+  if (decoded == null) return false;
+  final payStatus = _lower(
+    decoded['payment_status'] ?? decoded['paymentStatus'],
+  );
+  final presentation = _lower(
+    decoded['presentation_state'] ?? decoded['presentationState'],
+  );
+  if (payStatus == 'paid' || presentation == 'paid') return false;
+
+  final recovery = _asMap(decoded['recovery']);
+  if (_asBool(decoded['fallback_allowed'] ?? decoded['fallbackAllowed'])) {
+    return true;
+  }
+  if (recovery != null &&
+      _asBool(recovery['fallback_allowed'] ?? recovery['fallbackAllowed'])) {
+    return true;
+  }
+  const releasedStates = <String>{
+    'canceled',
+    'cancelled',
+    'expired',
+    'failed',
+    'abandoned',
+  };
+  final recoveryPresentation = _lower(
+    recovery?['presentation_state'] ?? recovery?['presentationState'],
+  );
+  if (releasedStates.contains(presentation)) return true;
+  if (releasedStates.contains(recoveryPresentation)) return true;
+  if (releasedStates.contains(payStatus)) return true;
+  return false;
+}
+
+/// Provider terminal token to persist locally after ownership release.
+String resolveMollieReleasePresentationStatus(Map<String, dynamic>? decoded) {
+  if (decoded == null) return 'canceled';
+  final recovery = _asMap(decoded['recovery']);
+  final raw = _firstNonEmpty(decoded, [
+        'presentation_state',
+        'presentationState',
+      ]) ??
+      _firstNonEmpty(recovery ?? const {}, [
+        'presentation_state',
+        'presentationState',
+      ]) ??
+      _firstNonEmpty(decoded, ['payment_status', 'paymentStatus']);
+  return normalizeMollieReleasedProviderStatus(raw);
+}
+
+/// Normalizes Mollie provider terminal status for local receipt markers.
+String normalizeMollieReleasedProviderStatus(String? raw) {
+  final t = _lower(raw);
+  if (t == 'expired') return 'expired';
+  if (t == 'failed') return 'failed';
+  if (t == 'abandoned') return 'abandoned';
+  if (t == 'canceled' || t == 'cancelled') return 'canceled';
+  return 'canceled';
+}
+
+/// Clears stale local open-checkout ownership after authoritative provider
+/// terminal release. Required because booking GET merges skip null/empty
+/// checkout_url and never overwrite a leftover local mollie.status=open.
+Map<String, dynamic> applyAuthoritativeMollieOwnershipReleaseToDetails(
+  Map<String, dynamic>? details, {
+  required String providerStatus,
+}) {
+  final next = <String, dynamic>{
+    if (details != null) ...details,
+  };
+  final terminal = normalizeMollieReleasedProviderStatus(providerStatus);
+  final attemptStatus = terminal == 'canceled' ? 'cancelled' : terminal;
+
+  void clearOn(Map<String, dynamic> map) {
+    map['checkout_url'] = null;
+    map['checkoutUrl'] = null;
+    map['payment_url'] = null;
+    map['paymentUrl'] = null;
+    map['payment_attempt_status'] = attemptStatus;
+    map['paymentAttemptStatus'] = attemptStatus;
+    map['payment_status'] = 'unpaid';
+    map['paymentStatus'] = 'unpaid';
+    map['payment_provider'] = null;
+    map['paymentProvider'] = null;
+    map['payment_mode'] = null;
+    map['paymentMode'] = null;
+    final mollie = _asMap(map['mollie']);
+    if (mollie != null) {
+      map['mollie'] = <String, dynamic>{...mollie, 'status': terminal};
+    } else {
+      map['mollie'] = <String, dynamic>{'status': terminal};
+    }
+  }
+
+  clearOn(next);
+  final nested = _asMap(next['booking']);
+  if (nested != null) {
+    final booking = Map<String, dynamic>.from(nested);
+    clearOn(booking);
+    next['booking'] = booking;
+  }
+  return next;
+}
+
+/// Whether an app-lifecycle / return-from-checkout refresh must bypass the
+/// short debounce (customer may cancel in Mollie and return within seconds).
+bool shouldForceImmediateMollieOwnershipRefresh(String reason) {
+  final r = _lower(reason);
+  return r == 'app_resume' ||
+      r == 'return_from_checkout' ||
+      r == 'checkout_dialog';
 }
 
 /// Decision for `POST .../mollie-checkout-recovery` with `action=resume`.
