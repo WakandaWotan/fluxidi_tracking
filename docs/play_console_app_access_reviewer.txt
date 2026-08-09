@@ -4,17 +4,23 @@ Package: com.fluxidi.tracking
 Build: Google Play Internal testing (consumption-only company SaaS)
 
 --------------------------------------------------
-REQUIRED DEMO ACCOUNTS (create outside source control)
+REQUIRED DEMO ACCESS (create outside source control)
 --------------------------------------------------
 
-Create durable, non-expiring demo credentials (no SMS/OTP). Store passwords
-only in Play Console App access / a secure password manager — never in git.
+Create durable, non-expiring demo credentials (no SMS/OTP mailbox access).
+Store the review access code only in Play Console App access / a secure
+password manager — never in git, APK config, logs, or source.
 
-1) Company admin (required)
-   Role: company owner/admin
+1) Company admin via review access (required)
+   Company code: FLX-00020
+   Company name: Fluxidi Google Review
+   Access path: Business → Recover / Access with code
+   Access code: <FILL_IN_PLAY_CONSOLE_ONLY>
    Purpose: business home, bookings, drivers/vehicles, subscription STATUS
             page (read-only entitlements; no in-app SaaS purchase on Play),
             Chiron/compliance surfaces as available for the demo tenant.
+   Note: After a fresh install the app asks the reviewer to CREATE A NEW
+         local PIN. That PIN is device-local and is NOT the access code.
 
 2) Driver (required)
    Role: driver linked to the demo company
@@ -25,8 +31,8 @@ only in Play Console App access / a secure password manager — never in git.
    Role: customer account able to open a booking with the demo company
    Purpose: customer booking + tracking views.
 
-Do NOT require one-time SMS codes unavailable to Google reviewers.
-Prefer email+password or a fixed company PIN already provisioned.
+Do NOT require one-time email OTP codes from info@fluxidi.com.
+Ordinary company email recovery remains available for non-review tenants.
 
 --------------------------------------------------
 PLAY CONSOLE PASTE TEXT (fill credentials in Console only)
@@ -34,15 +40,18 @@ PLAY CONSOLE PASTE TEXT (fill credentials in Console only)
 
 All core features are behind sign-in.
 
-Use these durable demo accounts (no SMS OTP):
-
-Company admin
-- Email / username: <FILL_IN_PLAY_CONSOLE_ONLY>
-- Password: <FILL_IN_PLAY_CONSOLE_ONLY>
-- Steps: Open app → Business / Company sign-in → enter credentials → open
-  Bookings and Subscription & billing. Subscription status is visible;
-  purchasing Fluxidi SaaS plans inside the Play app is disabled by design.
-  Manage subscriptions outside the Play-distributed app.
+Company admin (Google Play review tenant)
+- Company code: FLX-00020
+- Access code: <FILL_IN_PLAY_CONSOLE_ONLY>
+- Steps:
+  1. Open app → Business
+  2. Tap “Access with code” (secondary option under company restore)
+  3. Enter company code FLX-00020 and the access code above
+  4. Create a NEW local PIN when prompted (fresh install)
+  5. Open Bookings and Subscription & billing
+  Subscription status is visible; purchasing Fluxidi SaaS plans inside the
+  Play app is disabled by design. Manage subscriptions outside the
+  Play-distributed app.
 
 Driver
 - Email / username / driver id: <FILL_IN_PLAY_CONSOLE_ONLY>

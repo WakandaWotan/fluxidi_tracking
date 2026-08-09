@@ -23,6 +23,10 @@ STRICT_LIST_DISPATCH_OWNERSHIP = "1"
 # RELEASE-P1 — admin legacy scope migrate/quarantine apply. Dry-run always
 # allowed for admin; apply requires this flag = "1".
 LEGACY_SCOPE_MIGRATION_ENABLED = "0"
+# GOOGLE-PLAY-REVIEW-ACCESS-P0 — non-secret company allowlist. The reusable
+# credential hash MUST be set via: wrangler secret put PLAY_REVIEW_ACCESS_CODE_HASH
+# Worker hard-gates FLX-00020 and fails closed if this var disagrees.
+PLAY_REVIEW_COMPANY_CODE = "FLX-00020"
 
 # Mollie Connect OAuth (Phase 1) — set via Cloudflare secrets, never commit values:
 # MOLLIE_CONNECT_CLIENT_ID       — OAuth app client id (app_…)

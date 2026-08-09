@@ -7478,6 +7478,34 @@ Future<Map<String, dynamic>> verifyPublicCompanyRecovery({
   throw Exception('recovery_verify_failed');
 }
 
+/// GOOGLE-PLAY-REVIEW-ACCESS-P0 — server-validated review access for the
+/// Play Console demo tenant only. Never hardcode the access code here.
+Future<Map<String, dynamic>> verifyPublicCompanyReviewAccess({
+  required Map<String, dynamic> payload,
+}) async {
+  final endpoint = Uri.parse(
+    '${appConfig.bookingBaseUrl}/public/company/review-access/verify',
+  );
+  final res = await http
+      .post(
+        endpoint,
+        headers: const <String, String>{'Content-Type': 'application/json'},
+        body: jsonEncode(payload),
+      )
+      .timeout(const Duration(seconds: 12));
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) {
+    throw Exception('review_access_verify_failed');
+  }
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode >= 200 && res.statusCode < 300 && map['ok'] == true) {
+    return map;
+  }
+  final errorCode = (map['error'] ?? '').toString().trim();
+  if (errorCode.isNotEmpty) throw Exception(errorCode);
+  throw Exception('review_access_verify_failed');
+}
+
 Future<Map<String, dynamic>> startPublicCustomerPhoneAuth({
   required Map<String, dynamic> payload,
 }) async {

@@ -495,6 +495,10 @@ class RoleEntryPage extends StatelessWidget {
   static const String _companyPairingOnboardingIntent =
       '__open_company_onboarding__';
   static const String _companyRecoveryIntent = '__open_company_recovery__';
+  // GOOGLE-PLAY-REVIEW-ACCESS-P0: non-prominent secondary path; server
+  // fails closed for every company except the configured Play review tenant.
+  static const String _companyReviewAccessIntent =
+      '__open_company_review_access__';
 
   Future<String?> _promptCustomerEntryIntent(
     BuildContext context, {
@@ -1201,6 +1205,228 @@ class RoleEntryPage extends StatelessWidget {
     return result;
   }
 
+  Future<Map<String, String>?> _promptCompanyReviewAccess(
+    BuildContext context,
+  ) async {
+    final companyController = TextEditingController();
+    final accessController = TextEditingController();
+    String? companyError;
+    String? accessError;
+    final result = await FluxidiResponsiveDialog.show<Map<String, String>?>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF111111),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+              ),
+              title: Text(
+                _t(
+                  nl: 'Toegang met code',
+                  en: 'Access with code',
+                  fr: 'Accès avec code',
+                  es: 'Acceso con código',
+                ),
+                style: const TextStyle(color: Colors.white),
+              ),
+              scrollable: true,
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(
+                      nl: 'Vul je Fluxidi-code en toegangscode in.',
+                      en: 'Enter your Fluxidi code and access code.',
+                      fr: 'Saisissez votre code Fluxidi et code d’accès.',
+                      es: 'Introduce tu código Fluxidi y código de acceso.',
+                    ),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.78),
+                      fontSize: 12,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: companyController,
+                    textCapitalization: TextCapitalization.characters,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Fluxidi-code',
+                        en: 'Fluxidi code',
+                        fr: 'Code Fluxidi',
+                        es: 'Código Fluxidi',
+                      ),
+                      errorText: companyError,
+                      filled: true,
+                      fillColor: const Color(0xFF1A1A1A),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.38),
+                        ),
+                      ),
+                    ),
+                    onChanged: (_) {
+                      if (companyError != null) {
+                        setDialogState(() => companyError = null);
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: accessController,
+                    obscureText: true,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Toegangscode',
+                        en: 'Access code',
+                        fr: 'Code d’accès',
+                        es: 'Código de acceso',
+                      ),
+                      errorText: accessError,
+                      filled: true,
+                      fillColor: const Color(0xFF1A1A1A),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: kFluxidiYellow.withOpacity(0.38),
+                        ),
+                      ),
+                    ),
+                    onChanged: (_) {
+                      if (accessError != null) {
+                        setDialogState(() => accessError = null);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(
+                    _t(
+                      nl: 'Annuleren',
+                      en: 'Cancel',
+                      fr: 'Annuler',
+                      es: 'Cancelar',
+                    ),
+                  ),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final companyCode = companyController.text.trim();
+                    final accessCode = accessController.text.trim();
+                    var hasError = false;
+                    if (companyCode.isEmpty) {
+                      companyError = _t(
+                        nl: 'Vul je Fluxidi-code in.',
+                        en: 'Enter your Fluxidi code.',
+                        fr: 'Saisissez votre code Fluxidi.',
+                        es: 'Introduce tu código Fluxidi.',
+                      );
+                      hasError = true;
+                    }
+                    if (accessCode.isEmpty) {
+                      accessError = _t(
+                        nl: 'Vul je toegangscode in.',
+                        en: 'Enter your access code.',
+                        fr: 'Saisissez votre code d’accès.',
+                        es: 'Introduce tu código de acceso.',
+                      );
+                      hasError = true;
+                    }
+                    if (hasError) {
+                      setDialogState(() {});
+                      return;
+                    }
+                    Navigator.of(dialogContext).pop(<String, String>{
+                      'companyCode': companyCode,
+                      'accessCode': accessCode,
+                    });
+                  },
+                  child: Text(
+                    _t(
+                      nl: 'Doorgaan',
+                      en: 'Continue',
+                      fr: 'Continuer',
+                      es: 'Continuar',
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    companyController.dispose();
+    accessController.dispose();
+    return result;
+  }
+
+  Future<void> _runCompanyReviewAccessFlow(BuildContext context) async {
+    final input = await _promptCompanyReviewAccess(context);
+    if (!context.mounted || input == null) return;
+    final companyCode = _safePairingText(input['companyCode']);
+    final accessCode = _safePairingText(input['accessCode']);
+    if (companyCode.isEmpty || accessCode.isEmpty) return;
+    Map<String, dynamic> verified;
+    try {
+      verified = await verifyPublicCompanyReviewAccess(
+        payload: <String, dynamic>{
+          'company_code': companyCode,
+          'access_code': accessCode,
+          'device_label': 'Review device',
+          'device_type': 'mobile',
+        },
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Toegang mislukt. Controleer code en probeer opnieuw.',
+              en: 'Access failed. Check the code and try again.',
+              fr: 'Accès refusé. Vérifiez le code et réessayez.',
+              es: 'Acceso denegado. Verifica el código e inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+    // Same post-auth path as email recovery: force CREATE NEW PIN on fresh install.
+    final opened = await _openVerifiedCompanySession(context, verified, true);
+    if (!context.mounted) return;
+    if (!opened) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Toegang mislukt. Probeer opnieuw.',
+              en: 'Access failed. Please try again.',
+              fr: 'Accès refusé. Réessayez.',
+              es: 'Acceso denegado. Inténtalo de nuevo.',
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
   Future<void> _runCompanyRecoveryFlow(BuildContext context) async {
     final startInput = await _promptCompanyRecoveryStart(context);
     if (!context.mounted || startInput == null) return;
@@ -1582,6 +1808,24 @@ class RoleEntryPage extends StatelessWidget {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 4),
+                    TextButton(
+                      onPressed: () => Navigator.of(
+                        dialogContext,
+                      ).pop(_companyReviewAccessIntent),
+                      child: Text(
+                        _t(
+                          nl: 'Toegang met code',
+                          en: 'Access with code',
+                          fr: 'Accès avec code',
+                          es: 'Acceso con código',
+                        ),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.72),
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
                     const SizedBox(height: 8),
                     OutlinedButton(
                       onPressed: () => Navigator.of(
@@ -1853,7 +2097,9 @@ class RoleEntryPage extends StatelessWidget {
     );
     if (companySessionToken.isNotEmpty) {
       final normalizedLinkMethod = linkMethod.trim().toLowerCase();
-      final restoredSource = normalizedLinkMethod.contains('recovery')
+      final restoredSource =
+          normalizedLinkMethod.contains('recovery') ||
+              normalizedLinkMethod.contains('review_access')
           ? 'recovery'
           : 'pairing';
       debugPrint('[COMPANY_SESSION][TOKEN_RESTORED] source=$restoredSource');
@@ -2282,6 +2528,10 @@ class RoleEntryPage extends StatelessWidget {
       }
       if (activationCode == _companyRecoveryIntent) {
         await _runCompanyRecoveryFlow(context);
+        return;
+      }
+      if (activationCode == _companyReviewAccessIntent) {
+        await _runCompanyReviewAccessFlow(context);
         return;
       }
       final parsed = _parseCompanyActivationCode(activationCode);

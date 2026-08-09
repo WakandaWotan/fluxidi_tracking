@@ -17254,6 +17254,16 @@ const COMPANY_RECOVERY_VERIFY_RATE_KEY_PREFIX = "company_recovery:rate:verify:";
 const COMPANY_RECOVERY_VERIFY_RATE_KEY_SUFFIX = ":v1";
 const COMPANY_RECOVERY_VERIFY_RATE_WINDOW_SECONDS = 15 * 60;
 const COMPANY_RECOVERY_VERIFY_RATE_MAX = 20;
+// GOOGLE-PLAY-REVIEW-ACCESS-P0: FLX-00020-only reusable review credential.
+// Hash lives in Cloudflare secret PLAY_REVIEW_ACCESS_CODE_HASH; never commit
+// the plaintext. Fail closed when secret/allowlist is absent or mismatched.
+const PLAY_REVIEW_HARD_ALLOWLIST_COMPANY_CODE = "FLX-00020";
+const PLAY_REVIEW_ACCESS_RATE_KEY_PREFIX = "company_review_access:rate:";
+const PLAY_REVIEW_ACCESS_RATE_KEY_SUFFIX = ":v1";
+const PLAY_REVIEW_ACCESS_RATE_WINDOW_SECONDS = 15 * 60;
+const PLAY_REVIEW_ACCESS_RATE_MAX = 10;
+const PLAY_REVIEW_ACCESS_CODE_MIN_LEN = 16;
+const PLAY_REVIEW_ACCESS_CODE_MAX_LEN = 128;
 const CUSTOMER_RECOVERY_CHALLENGE_KEY_PREFIX = "customer_recovery:challenge:";
 const CUSTOMER_RECOVERY_CHALLENGE_KEY_SUFFIX = ":v1";
 const CUSTOMER_RECOVERY_CHALLENGE_TTL_SECONDS = 10 * 60;
@@ -17757,6 +17767,40 @@ function _companyRecoveryVerifyRateKey(companyCode, emailHash, clientHash) {
   const normalizedClientHash = sanitizeTenantString(clientHash, 200).toLowerCase();
   if (!normalizedCode || !normalizedEmailHash || !normalizedClientHash) return "";
   return `${COMPANY_RECOVERY_VERIFY_RATE_KEY_PREFIX}${normalizedCode}:${normalizedEmailHash}:${normalizedClientHash}${COMPANY_RECOVERY_VERIFY_RATE_KEY_SUFFIX}`;
+}
+
+function _playReviewAccessRateKey(companyCode, clientHash) {
+  const normalizedCode = normalizePublicCompanyCode(companyCode);
+  const normalizedClientHash = sanitizeTenantString(clientHash, 200).toLowerCase();
+  if (!normalizedCode || !normalizedClientHash) return "";
+  return `${PLAY_REVIEW_ACCESS_RATE_KEY_PREFIX}${normalizedCode}:${normalizedClientHash}${PLAY_REVIEW_ACCESS_RATE_KEY_SUFFIX}`;
+}
+
+function _normalizePlayReviewAccessCode(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) return "";
+  if (text.length < PLAY_REVIEW_ACCESS_CODE_MIN_LEN) return "";
+  if (text.length > PLAY_REVIEW_ACCESS_CODE_MAX_LEN) return "";
+  // Reject whitespace/control characters inside the credential.
+  if (/[\s\u0000-\u001f\u007f]/.test(text)) return "";
+  return text;
+}
+
+function _playReviewConfiguredCompanyCode(env) {
+  const fromEnv = normalizePublicCompanyCode(
+    env?.PLAY_REVIEW_COMPANY_CODE ?? PLAY_REVIEW_HARD_ALLOWLIST_COMPANY_CODE,
+  );
+  const hard = normalizePublicCompanyCode(PLAY_REVIEW_HARD_ALLOWLIST_COMPANY_CODE);
+  if (!fromEnv || !hard) return "";
+  // Fail closed if ops misconfigure the allowlist away from the hard gate.
+  if (fromEnv !== hard) return "";
+  return hard;
+}
+
+function _playReviewAccessCodeHashFromEnv(env) {
+  const raw = sanitizeTenantString(env?.PLAY_REVIEW_ACCESS_CODE_HASH, 128).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(raw)) return "";
+  return raw;
 }
 
 async function _companyRecoveryVerifyClientHash(request) {
@@ -22046,6 +22090,189 @@ async function handlePublicCompanyRecoveryVerify(body, env, request = null) {
       ...basePayload,
       link_method: "public_company_recovery",
       linkMethod: "public_company_recovery",
+      company_session_token: companySessionToken,
+      companySessionToken: companySessionToken,
+      expires_in: COMPANY_SESSION_TTL_SECONDS,
+      expiresIn: COMPANY_SESSION_TTL_SECONDS,
+      business_profile: businessProfile,
+      vat_verification_status: sanitizeTenantString(
+        businessProfile?.vatVerificationStatus ?? businessProfile?.vat_verification_status,
+        40,
+      ),
+      peppol_readiness_status: sanitizeTenantString(
+        businessProfile?.peppolReadinessStatus ?? businessProfile?.peppol_readiness_status,
+        40,
+      ),
+      chiron_readiness_status: sanitizeTenantString(
+        businessProfile?.chironReadinessStatus ?? businessProfile?.chiron_readiness_status,
+        40,
+      ),
+    },
+    200,
+  );
+}
+
+/**
+ * GOOGLE-PLAY-REVIEW-ACCESS-P0
+ *
+ * Fail-closed reusable Google Play review credential for FLX-00020 only.
+ * Mints the same company_admin session shape as ordinary email recovery, with
+ * link_method=public_company_review_access. Never echoes the access code.
+ * Ordinary /public/company/recovery/* remains unchanged for all tenants.
+ */
+async function handlePublicCompanyReviewAccessVerify(body, env, request = null) {
+  const deny = () => json({ ok: false, error: "verification_failed" }, 403);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return deny();
+  }
+  if (!env?.BOOKING_KV) {
+    console.log("[PLAY_REVIEW_ACCESS][VERIFY][FAILED] bucket=kv_unavailable");
+    return deny();
+  }
+
+  const configuredCompanyCode = _playReviewConfiguredCompanyCode(env);
+  const expectedHash = _playReviewAccessCodeHashFromEnv(env);
+  if (!configuredCompanyCode || !expectedHash) {
+    console.log("[PLAY_REVIEW_ACCESS][VERIFY][FAILED] bucket=config_absent");
+    return deny();
+  }
+
+  const codeValidation = validatePublicCompanyCode(
+    body.company_code ?? body.companyCode ?? body.code ?? "",
+  );
+  const accessCode = _normalizePlayReviewAccessCode(
+    body.access_code ?? body.accessCode ?? body.review_access_code ?? body.reviewAccessCode,
+  );
+  if (!codeValidation.ok || !accessCode) {
+    console.log(
+      `[PLAY_REVIEW_ACCESS][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code || "")} bucket=invalid_input`,
+    );
+    return deny();
+  }
+  if (codeValidation.code !== configuredCompanyCode) {
+    console.log(
+      `[PLAY_REVIEW_ACCESS][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} bucket=company_not_allowlisted`,
+    );
+    return deny();
+  }
+
+  const clientFingerprintHash = await _companyRecoveryVerifyClientHash(request);
+  const rateKey = _playReviewAccessRateKey(codeValidation.code, clientFingerprintHash);
+  if (rateKey) {
+    const rawRate = await env.BOOKING_KV.get(rateKey, { type: "json" });
+    const rateSource =
+      rawRate && typeof rawRate === "object" && !Array.isArray(rawRate) ? rawRate : {};
+    const count = Number.isFinite(Number(rateSource.count))
+      ? Math.max(0, Math.round(Number(rateSource.count)))
+      : 0;
+    if (count >= PLAY_REVIEW_ACCESS_RATE_MAX) {
+      console.log(
+        `[PLAY_REVIEW_ACCESS][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} bucket=rate_limited`,
+      );
+      return deny();
+    }
+  }
+
+  const candidateHash = (await _sha256Hex(accessCode)).toLowerCase();
+  const accessOk = _constantTimeEquals(expectedHash, candidateHash);
+  if (!accessOk) {
+    if (rateKey) {
+      const rawRate = await env.BOOKING_KV.get(rateKey, { type: "json" });
+      const rateSource =
+        rawRate && typeof rawRate === "object" && !Array.isArray(rawRate) ? rawRate : {};
+      const count = Number.isFinite(Number(rateSource.count))
+        ? Math.max(0, Math.round(Number(rateSource.count)))
+        : 0;
+      await env.BOOKING_KV.put(
+        rateKey,
+        JSON.stringify({
+          count: count + 1,
+          updated_at: new Date().toISOString(),
+        }),
+        { expirationTtl: PLAY_REVIEW_ACCESS_RATE_WINDOW_SECONDS },
+      );
+    }
+    console.log(
+      `[PLAY_REVIEW_ACCESS][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} bucket=access_mismatch`,
+    );
+    return deny();
+  }
+
+  const companyRecord = await loadCompanyLinkRecordByCode(env, codeValidation.code);
+  const tenantId = sanitizeTenantString(companyRecord?.tenant_id, 80);
+  const companyId = sanitizeTenantString(companyRecord?.company_id, 80);
+  if (
+    !companyRecord ||
+    companyRecord.linking_enabled !== true ||
+    !tenantId ||
+    !companyId
+  ) {
+    console.log(
+      `[PLAY_REVIEW_ACCESS][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} bucket=company_unavailable`,
+    );
+    return deny();
+  }
+
+  const nowIso = new Date().toISOString();
+  const basePayload = _projectCompanyAdminSessionPayload(companyRecord, nowIso);
+  const companySessionToken = _generateOpaqueToken(32, "cst_");
+  const companySessionTokenHash = await _hashCompanySessionToken(companySessionToken);
+  const companySessionKey = _companySessionKey(companySessionTokenHash);
+  if (!companySessionKey) {
+    console.log(
+      `[PLAY_REVIEW_ACCESS][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} bucket=session_key_unavailable`,
+    );
+    return deny();
+  }
+
+  const expiresAt = new Date(Date.now() + COMPANY_SESSION_TTL_SECONDS * 1000).toISOString();
+  const companyDisplayName = sanitizeTenantString(
+    companyRecord.display_name ??
+      companyRecord.company_name ??
+      companyRecord.companyName ??
+      basePayload?.company?.display_name,
+    160,
+  );
+  const deviceLabel = sanitizeTenantString(body.device_label ?? body.deviceLabel, 120);
+  const deviceType = sanitizeTenantString(body.device_type ?? body.deviceType, 40).toLowerCase();
+  const devicePlatform = sanitizeTenantString(
+    body.device_platform ?? body.devicePlatform ?? deviceType,
+    40,
+  ).toLowerCase();
+  const scope = { tenant_id: tenantId, company_id: companyId };
+  const businessProfile = await loadBusinessProfile(env, scope, {
+    allowTenantLegacyFallback: false,
+  });
+
+  await env.BOOKING_KV.put(
+    companySessionKey,
+    JSON.stringify({
+      role: "company_admin",
+      tenant_id: tenantId,
+      company_id: companyId,
+      company_code: sanitizeTenantString(companyRecord.company_code ?? codeValidation.code, 80),
+      company_display_name: companyDisplayName,
+      issued_at: nowIso,
+      expires_at: expiresAt,
+      link_method: "public_company_review_access",
+      recovered_at: nowIso,
+      device_label: deviceLabel,
+      device_type: deviceType,
+      device_platform: devicePlatform,
+      recovery_client_fingerprint_hash: sanitizeTenantString(clientFingerprintHash, 160)
+        .toLowerCase(),
+    }),
+    { expirationTtl: COMPANY_SESSION_TTL_SECONDS },
+  );
+
+  console.log(
+    `[PLAY_REVIEW_ACCESS][VERIFY][SUCCESS] company=${_maskPublicDriverLoginValue(codeValidation.code)} link_method=public_company_review_access`,
+  );
+  return json(
+    {
+      ...basePayload,
+      link_method: "public_company_review_access",
+      linkMethod: "public_company_review_access",
       company_session_token: companySessionToken,
       companySessionToken: companySessionToken,
       expires_in: COMPANY_SESSION_TTL_SECONDS,
@@ -41511,6 +41738,15 @@ export default {
         }
         const body = await safeJson(request);
         return handlePublicCompanyRecoveryVerify(body, env, request);
+      }
+
+      // GOOGLE-PLAY-REVIEW-ACCESS-P0: FLX-00020-only reusable review credential.
+      if (url.pathname === "/public/company/review-access/verify") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const body = await safeJson(request);
+        return handlePublicCompanyReviewAccessVerify(body, env, request);
       }
 
       if (url.pathname === "/public/customer/recovery/start") {
