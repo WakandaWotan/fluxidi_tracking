@@ -32,6 +32,8 @@ object GoogleMapsNavigationIntents {
   const val ACTION_RETURN_FROM_PIP = "com.fluxidi.tracking.action.RETURN_FROM_PIP"
   const val EXTRA_PIP_RETURN = "fluxidi_external_nav_return"
   const val EXTRA_PIP_SESSION = "fluxidi_external_nav_session"
+  /** Set after an explicit PiP return was handled once — blocks replay. */
+  const val EXTRA_PIP_RETURN_HANDLED = "fluxidi_external_nav_return_handled"
 
   data class Destination(
     val latitude: Double? = null,
@@ -202,6 +204,96 @@ object GoogleMapsNavigationIntents {
       flags = flags or PendingIntent.FLAG_IMMUTABLE
     }
     return PendingIntent.getActivity(context, requestCode, intent, flags)
+  }
+
+  /**
+   * ANDROID-RECENTS-PIP-AUTOENTER-P0: pure snapshot of return-intent gates
+   * (JVM-testable without Robolectric).
+   */
+  data class PipReturnIntentSnapshot(
+    val action: String? = null,
+    val pipReturn: Boolean = false,
+    val alreadyHandled: Boolean = false,
+  )
+
+  fun isExplicitPipReturnSnapshot(snapshot: PipReturnIntentSnapshot): Boolean {
+    return snapshot.action == ACTION_RETURN_FROM_PIP || snapshot.pipReturn
+  }
+
+  fun shouldHandlePipReturnSnapshot(snapshot: PipReturnIntentSnapshot): Boolean {
+    if (!isExplicitPipReturnSnapshot(snapshot)) return false
+    if (snapshot.alreadyHandled) return false
+    return true
+  }
+
+  fun consumePipReturnSnapshot(
+    snapshot: PipReturnIntentSnapshot,
+  ): PipReturnIntentSnapshot {
+    if (!isExplicitPipReturnSnapshot(snapshot)) return snapshot
+    return snapshot.copy(
+      action = if (snapshot.action == ACTION_RETURN_FROM_PIP) {
+        Intent.ACTION_MAIN
+      } else {
+        snapshot.action
+      },
+      pipReturn = false,
+      alreadyHandled = true,
+    )
+  }
+
+  /** Force-to-front only for an explicit, unconsumed PiP return. */
+  fun isExplicitPipReturnIntent(intent: Intent?): Boolean {
+    if (intent == null) return false
+    return try {
+      isExplicitPipReturnSnapshot(snapshotFromIntent(intent))
+    } catch (_: Exception) {
+      false
+    }
+  }
+
+  fun wasPipReturnAlreadyHandled(intent: Intent?): Boolean {
+    if (intent == null) return false
+    return try {
+      intent.getBooleanExtra(EXTRA_PIP_RETURN_HANDLED, false)
+    } catch (_: Exception) {
+      false
+    }
+  }
+
+  /** True only for a fresh, explicit PiP return that has not been consumed. */
+  fun shouldHandlePipReturn(intent: Intent?): Boolean {
+    if (intent == null) return false
+    return try {
+      shouldHandlePipReturnSnapshot(snapshotFromIntent(intent))
+    } catch (_: Exception) {
+      false
+    }
+  }
+
+  /**
+   * Consume return extras in-place so onCreate/onNewIntent cannot replay
+   * moveTaskToFront after Activity recreation.
+   */
+  fun consumePipReturnIntent(intent: Intent?): Boolean {
+    if (intent == null) return false
+    if (!isExplicitPipReturnIntent(intent)) return false
+    return try {
+      val consumed = consumePipReturnSnapshot(snapshotFromIntent(intent))
+      intent.putExtra(EXTRA_PIP_RETURN, consumed.pipReturn)
+      intent.putExtra(EXTRA_PIP_RETURN_HANDLED, consumed.alreadyHandled)
+      intent.action = consumed.action
+      true
+    } catch (_: Exception) {
+      false
+    }
+  }
+
+  private fun snapshotFromIntent(intent: Intent): PipReturnIntentSnapshot {
+    return PipReturnIntentSnapshot(
+      action = intent.action,
+      pipReturn = intent.getBooleanExtra(EXTRA_PIP_RETURN, false),
+      alreadyHandled = intent.getBooleanExtra(EXTRA_PIP_RETURN_HANDLED, false),
+    )
   }
 
   fun intentTargetsGoogleMapsOnly(intent: Intent): Boolean {

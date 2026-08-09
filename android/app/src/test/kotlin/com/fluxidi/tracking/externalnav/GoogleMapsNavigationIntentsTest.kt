@@ -317,4 +317,86 @@ class GoogleMapsNavigationIntentsTest {
     assertTrue(mainSrc.contains("onNewIntent"))
     assertTrue(mainSrc.contains("handleReturnFromPipIntent"))
   }
+
+  // ANDROID-RECENTS-PIP-AUTOENTER-P0
+
+  @Test
+  fun explicitPipReturnSnapshotIsHandledOnce() {
+    val fresh = GoogleMapsNavigationIntents.PipReturnIntentSnapshot(
+      action = GoogleMapsNavigationIntents.ACTION_RETURN_FROM_PIP,
+      pipReturn = true,
+      alreadyHandled = false,
+    )
+    assertTrue(GoogleMapsNavigationIntents.shouldHandlePipReturnSnapshot(fresh))
+    val consumed = GoogleMapsNavigationIntents.consumePipReturnSnapshot(fresh)
+    assertTrue(consumed.alreadyHandled)
+    assertFalse(consumed.pipReturn)
+    assertFalse(GoogleMapsNavigationIntents.shouldHandlePipReturnSnapshot(consumed))
+  }
+
+  @Test
+  fun genericLifecycleSnapshotDoesNotForceToFront() {
+    val generic = GoogleMapsNavigationIntents.PipReturnIntentSnapshot(
+      action = "android.intent.action.MAIN",
+      pipReturn = false,
+      alreadyHandled = false,
+    )
+    assertFalse(GoogleMapsNavigationIntents.isExplicitPipReturnSnapshot(generic))
+    assertFalse(GoogleMapsNavigationIntents.shouldHandlePipReturnSnapshot(generic))
+  }
+
+  @Test
+  fun alreadyHandledReturnCannotReplay() {
+    val handled = GoogleMapsNavigationIntents.PipReturnIntentSnapshot(
+      action = GoogleMapsNavigationIntents.ACTION_RETURN_FROM_PIP,
+      pipReturn = true,
+      alreadyHandled = true,
+    )
+    assertFalse(GoogleMapsNavigationIntents.shouldHandlePipReturnSnapshot(handled))
+  }
+
+  @Test
+  fun pluginSourceClearsStickyAutoEnterAndGatesForceToFront() {
+    val pluginCandidates = listOf(
+      File("src/main/kotlin/com/fluxidi/tracking/externalnav/ExternalNavigationPlugin.kt"),
+      File(
+        "../src/main/kotlin/com/fluxidi/tracking/externalnav/ExternalNavigationPlugin.kt",
+      ),
+      File(
+        "android/app/src/main/kotlin/com/fluxidi/tracking/externalnav/ExternalNavigationPlugin.kt",
+      ),
+    )
+    val mainCandidates = listOf(
+      File("src/main/kotlin/com/fluxidi/tracking/MainActivity.kt"),
+      File("../src/main/kotlin/com/fluxidi/tracking/MainActivity.kt"),
+      File("android/app/src/main/kotlin/com/fluxidi/tracking/MainActivity.kt"),
+    )
+    val pluginSrc = pluginCandidates.first { it.isFile }.readText()
+    val mainSrc = mainCandidates.first { it.isFile }.readText()
+
+    assertTrue(pluginSrc.contains("fun clearPipAutoEnter"))
+    assertTrue(pluginSrc.contains("setAutoEnterEnabled(autoEnter)"))
+    assertTrue(pluginSrc.contains("autoEnter = true"))
+    assertTrue(pluginSrc.contains("clearPipAutoEnter(reason = \"maps_launch_failed"))
+    assertTrue(pluginSrc.contains("clearPipAutoEnter(reason = \"pip_enter_failed\")"))
+    assertTrue(pluginSrc.contains("clearPipAutoEnter(reason = \"pip_mode_exited\")"))
+    assertTrue(pluginSrc.contains("clearPipAutoEnter(reason = \"activity_resumed_not_in_pip\")"))
+    assertTrue(pluginSrc.contains("clearPipAutoEnter(reason = \"exit_fluxidi_pip_cleanup\")"))
+    assertTrue(pluginSrc.contains("shouldHandlePipReturn"))
+    assertTrue(pluginSrc.contains("consumeReturnIntentOnActivity"))
+    assertTrue(pluginSrc.contains("force_to_front=false"))
+    assertTrue(pluginSrc.contains("method_channel_explicit_return"))
+    // exitFluxidiPip must not unconditionally call returnToFluxidi/bringToFront.
+    val exitIdx = pluginSrc.indexOf("private fun exitFluxidiPip")
+    assertTrue(exitIdx > 0)
+    val exitChunk = pluginSrc.substring(exitIdx, exitIdx + 900)
+    assertTrue(exitChunk.contains("force_to_front=false"))
+    assertFalse(exitChunk.contains("bringFluxidiTaskToFront"))
+    // enterFluxidiPip must not re-arm sticky autoEnter=true.
+    val enterIdx = pluginSrc.indexOf("private fun enterFluxidiPip")
+    assertTrue(enterIdx > 0)
+    val enterChunk = pluginSrc.substring(enterIdx, enterIdx + 1600)
+    assertFalse(enterChunk.contains("autoEnter = true"))
+    assertTrue(mainSrc.contains("onActivityResumed"))
+  }
 }

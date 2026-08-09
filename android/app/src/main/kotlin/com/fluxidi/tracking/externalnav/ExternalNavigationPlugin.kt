@@ -22,7 +22,8 @@ import io.flutter.plugin.common.MethodChannel
 /**
  * GOOGLE-MAPS-DIRECT-LAUNCH-ANDROID-1 /
  * GOOGLE-MAPS-LAUNCH-CONTRACT-NOOP-P0-2 /
- * GOOGLE-MAPS-OPAQUE-NAVIGATION-URI-P0-3
+ * GOOGLE-MAPS-OPAQUE-NAVIGATION-URI-P0-3 /
+ * ANDROID-RECENTS-PIP-AUTOENTER-P0
  *
  * Platform channel: fluxidi.external_navigation
  *
@@ -32,6 +33,9 @@ import io.flutter.plugin.common.MethodChannel
  * Correct handoff: prepare PiP params → dispatch Maps → enter PiP only after
  * launch_dispatched=true (PiP support never blocks Maps launch).
  * Opaque google.navigation URI validation never escapes the MethodChannel.
+ *
+ * Auto-enter PiP is a bounded transient for the Maps handoff window only.
+ * Force-to-front is reserved for an explicit, unconsumed PiP return action.
  */
 class ExternalNavigationPlugin :
   FlutterPlugin,
@@ -60,6 +64,8 @@ class ExternalNavigationPlugin :
   private var activity: Activity? = null
   private var pipActive: Boolean = false
   private var handoffPrepared: Boolean = false
+  /** True only while Android S+ auto-enter is intentionally armed for Maps. */
+  private var autoEnterArmed: Boolean = false
   /** Unique per external Maps/PiP session — PendingIntent requestCode owner. */
   private var pipSessionToken: String = ""
   private var lastPipReturnRequestCode: Int = -1
@@ -105,14 +111,31 @@ class ExternalNavigationPlugin :
     eventSink = null
   }
 
+  /**
+   * Called from MainActivity.onResume. If we are full-screen again, sticky
+   * auto-enter must never survive to hijack the next Home/Recents press.
+   */
+  fun onActivityResumed() {
+    if (pipActive) {
+      Log.i(TAG, "pip_auto_enter_resume_skip=true reason=currently_in_pip")
+      return
+    }
+    clearPipAutoEnter(reason = "activity_resumed_not_in_pip")
+  }
+
   fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
     pipActive = isInPictureInPictureMode
     if (isInPictureInPictureMode) {
       Log.i(TAG, "pip_entered_after_handoff=true")
-      // Refresh system RemoteAction so stale PendingIntents cannot survive.
+      handoffPrepared = false
+      // Refresh system RemoteAction; always leave auto-enter disabled while
+      // inside PiP so exiting PiP cannot poison future Recents/Home.
       refreshPipReturnAction(reason = "pip_entered")
+      autoEnterArmed = false
     } else {
-      Log.i(TAG, "pip_exit_requested=system_or_expand flutter_resumed=true")
+      Log.i(TAG, "pip_exit_requested=system_or_expand flutter_resumed=pending")
+      // FIX: leaving PiP must clear sticky auto-enter. Do NOT force-to-front.
+      clearPipAutoEnter(reason = "pip_mode_exited")
     }
     eventSink?.success(
       mapOf(
@@ -123,17 +146,23 @@ class ExternalNavigationPlugin :
   }
 
   /**
-   * NAV-PIP-PLANNED-COMPLETION-EVIDENCE-FIX-P0: handle Activity PendingIntent /
-   * onNewIntent return from the system PiP RemoteAction.
+   * NAV-PIP-PLANNED-COMPLETION-EVIDENCE-FIX-P0 /
+   * ANDROID-RECENTS-PIP-AUTOENTER-P0:
+   * handle Activity PendingIntent / onNewIntent return from the system PiP
+   * RemoteAction. Force-to-front only for an explicit, unconsumed return.
    */
   fun handleReturnFromPipIntent(intent: Intent?) {
-    if (intent == null) return
-    val isReturn =
-      intent.getBooleanExtra(GoogleMapsNavigationIntents.EXTRA_PIP_RETURN, false) ||
-        intent.action == GoogleMapsNavigationIntents.ACTION_RETURN_FROM_PIP
-    if (!isReturn) return
+    if (!GoogleMapsNavigationIntents.shouldHandlePipReturn(intent)) {
+      Log.i(
+        TAG,
+        "pip_return_ignored=true reason=not_explicit_or_already_consumed " +
+          "explicit=${GoogleMapsNavigationIntents.isExplicitPipReturnIntent(intent)} " +
+          "handled=${GoogleMapsNavigationIntents.wasPipReturnAlreadyHandled(intent)}",
+      )
+      return
+    }
     val act = activity
-    val session = intent.getStringExtra(GoogleMapsNavigationIntents.EXTRA_PIP_SESSION)
+    val session = intent?.getStringExtra(GoogleMapsNavigationIntents.EXTRA_PIP_SESSION)
     Log.i(
       TAG,
       "pip_return_intent_received=true pip_remote_action_clicked=true " +
@@ -143,7 +172,10 @@ class ExternalNavigationPlugin :
         "main_activity_task_id=${act?.taskId ?: -1} " +
         "duplicate_activity_created=false",
     )
+    // Consume BEFORE force-to-front so recreation cannot replay.
+    consumeReturnIntentOnActivity(intent)
     bringFluxidiTaskToFront(source = "pip_remote_action")
+    clearPipAutoEnter(reason = "pip_return_handled")
   }
 
   override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -160,7 +192,6 @@ class ExternalNavigationPlugin :
           installed &&
             GoogleMapsNavigationIntents.isGoogleMapsEnabled(act.packageManager)
         Log.i(TAG, "maps_package_installed=$installed maps_package_enabled=$enabled")
-        // Contract: "installed" means package present (enabled checked separately).
         result.success(installed)
       }
       "probeGoogleMapsAvailability" -> {
@@ -247,8 +278,31 @@ class ExternalNavigationPlugin :
   }
 
   /**
+   * ANDROID-RECENTS-PIP-AUTOENTER-P0: idempotent clear of sticky auto-enter.
+   * Safe on pre-S / unsupported devices (no-op).
+   */
+  fun clearPipAutoEnter(reason: String) {
+    handoffPrepared = false
+    autoEnterArmed = false
+    val act = activity
+    if (act == null) {
+      Log.i(TAG, "pip_auto_enter_cleared=true reason=$reason activity=null")
+      return
+    }
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+    if (!isPipSupported()) return
+    try {
+      ensurePipSessionToken()
+      act.setPictureInPictureParams(buildPipParams(act, autoEnter = false))
+      Log.i(TAG, "pip_auto_enter_cleared=true reason=$reason")
+    } catch (e: Exception) {
+      Log.w(TAG, "pip_auto_enter_clear_failed=true reason=$reason msg=${e.message}")
+    }
+  }
+
+  /**
    * Prepare PiP params (Android 12+ auto-enter) WITHOUT entering PiP yet.
-   * Maps must be dispatched first. PiP failure must never block Maps.
+   * Transient only — cleared on resume / fail / PiP exit / session cleanup.
    */
   private fun prepareFluxidiPipForHandoff(result: MethodChannel.Result) {
     val act = activity
@@ -267,15 +321,19 @@ class ExternalNavigationPlugin :
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         act.setPictureInPictureParams(buildPipParams(act, autoEnter = true))
         handoffPrepared = true
+        autoEnterArmed = true
+        Log.i(TAG, "pip_auto_enter_armed=true reason=prepare_handoff")
         result.success(mapOf("ok" to true, "autoEnterPrepared" to true))
       } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         act.setPictureInPictureParams(buildPipParams(act, autoEnter = false))
         handoffPrepared = true
+        autoEnterArmed = false
         result.success(mapOf("ok" to true, "autoEnterPrepared" to false))
       } else {
         result.success(mapOf("ok" to false, "error" to "pip_unsupported"))
       }
     } catch (e: Exception) {
+      clearPipAutoEnter(reason = "pip_prepare_failed")
       result.success(
         mapOf(
           "ok" to false,
@@ -299,6 +357,7 @@ class ExternalNavigationPlugin :
     try {
       ensurePipSessionToken()
       act.setPictureInPictureParams(buildPipParams(act, autoEnter = false))
+      autoEnterArmed = false
       Log.i(TAG, "pip_return_action_refreshed=true reason=$reason")
     } catch (e: Exception) {
       Log.w(TAG, "pip_return_action_refresh_failed=${e.message}")
@@ -337,6 +396,7 @@ class ExternalNavigationPlugin :
       "pip_remote_action_created=true pip_return_action_created=true " +
         "request_code=$lastPipReturnRequestCode " +
         "session=$pipSessionToken " +
+        "auto_enter=$autoEnter " +
         "title=Terug naar Fluxidi enabled=true show_icon=true " +
         "target_component=${act.packageName}.MainActivity " +
         "intent_flags=REORDER_TO_FRONT|SINGLE_TOP " +
@@ -345,10 +405,33 @@ class ExternalNavigationPlugin :
     return builder.build()
   }
 
+  private fun consumeReturnIntentOnActivity(handled: Intent?) {
+    if (handled == null) return
+    GoogleMapsNavigationIntents.consumePipReturnIntent(handled)
+    val act = activity ?: return
+    try {
+      // Replace Activity.intent so a later recreate cannot replay return.
+      val cleaned = Intent(handled)
+      GoogleMapsNavigationIntents.consumePipReturnIntent(cleaned)
+      act.intent = cleaned
+      Log.i(TAG, "pip_return_intent_consumed=true")
+    } catch (e: Exception) {
+      Log.w(TAG, "pip_return_intent_consume_failed=${e.message}")
+    }
+  }
+
+  /**
+   * Force-to-front for an explicit user Return-to-Fluxidi action only.
+   * Never call from generic PiP exit / resume / Home / Recents cleanup.
+   */
   private fun bringFluxidiTaskToFront(source: String) {
     val act = activity
     if (act == null) {
       Log.w(TAG, "pip_return_failed=true reason=no_activity source=$source")
+      return
+    }
+    if (source != "pip_remote_action" && source != "method_channel_explicit_return") {
+      Log.w(TAG, "pip_return_blocked=true reason=source_not_explicit source=$source")
       return
     }
     try {
@@ -361,6 +444,9 @@ class ExternalNavigationPlugin :
         act.packageName,
         pipSessionToken.ifBlank { null },
       )
+      // Mark the synthetic startActivity intent handled immediately so it
+      // cannot be re-processed as a second return by onNewIntent/onCreate.
+      GoogleMapsNavigationIntents.consumePipReturnIntent(intent)
       act.startActivity(intent)
       Log.i(TAG, "pending_intent_sent=channel_startActivity")
       @Suppress("DEPRECATION")
@@ -399,6 +485,7 @@ class ExternalNavigationPlugin :
       val act = activity
       if (act == null) {
         Log.w(TAG, "maps_launch_failure_code=no_activity")
+        clearPipAutoEnter(reason = "maps_launch_failed_no_activity")
         result.success(
           launchResult(
             status = STATUS_NATIVE_EXCEPTION,
@@ -413,6 +500,7 @@ class ExternalNavigationPlugin :
       Log.i(TAG, "maps_package_installed=$installed maps_package_enabled=$enabled")
       if (!installed) {
         Log.w(TAG, "maps_launch_failure_code=maps_not_installed")
+        clearPipAutoEnter(reason = "maps_launch_failed_not_installed")
         result.success(
           launchResult(
             status = STATUS_MAPS_NOT_INSTALLED,
@@ -425,6 +513,7 @@ class ExternalNavigationPlugin :
       }
       if (!enabled) {
         Log.w(TAG, "maps_launch_failure_code=maps_disabled")
+        clearPipAutoEnter(reason = "maps_launch_failed_disabled")
         result.success(
           launchResult(
             status = STATUS_MAPS_DISABLED,
@@ -454,6 +543,7 @@ class ExternalNavigationPlugin :
       val intent = GoogleMapsNavigationIntents.buildGoogleNavigationIntent(destination)
       if (intent == null) {
         Log.w(TAG, "maps_launch_failure_code=invalid_destination")
+        clearPipAutoEnter(reason = "maps_launch_failed_invalid_destination")
         result.success(
           launchResult(
             status = STATUS_INVALID_DESTINATION,
@@ -469,6 +559,7 @@ class ExternalNavigationPlugin :
         GoogleMapsNavigationIntents.validateNavigationIntentOrFailure(intent)
       if (validationFailure != null) {
         Log.w(TAG, "maps_launch_failure_code=$validationFailure")
+        clearPipAutoEnter(reason = "maps_launch_failed_validation")
         result.success(
           launchResult(
             status = STATUS_NATIVE_EXCEPTION,
@@ -486,6 +577,7 @@ class ExternalNavigationPlugin :
       Log.i(TAG, "maps_intent_uri_present=${uriString.isNotEmpty()} maps_intent_resolved=$resolved")
       if (!resolved) {
         Log.w(TAG, "maps_launch_failure_code=intent_not_resolved")
+        clearPipAutoEnter(reason = "maps_launch_failed_not_resolved")
         result.success(
           launchResult(
             status = STATUS_INTENT_NOT_RESOLVED,
@@ -515,6 +607,7 @@ class ExternalNavigationPlugin :
       )
     } catch (_: ActivityNotFoundException) {
       Log.w(TAG, "maps_start_activity_result=activity_not_found")
+      clearPipAutoEnter(reason = "maps_launch_failed_activity_not_found")
       result.success(
         launchResult(
           status = STATUS_ACTIVITY_NOT_FOUND,
@@ -524,6 +617,7 @@ class ExternalNavigationPlugin :
       )
     } catch (e: SecurityException) {
       Log.w(TAG, "maps_start_activity_result=security_exception msg=${e.message}")
+      clearPipAutoEnter(reason = "maps_launch_failed_security")
       result.success(
         launchResult(
           status = STATUS_SECURITY_EXCEPTION,
@@ -534,6 +628,7 @@ class ExternalNavigationPlugin :
       )
     } catch (e: Exception) {
       Log.w(TAG, "maps_start_activity_result=native_exception msg=${e.message}")
+      clearPipAutoEnter(reason = "maps_launch_failed_exception")
       result.success(
         launchResult(
           status = STATUS_NATIVE_EXCEPTION,
@@ -543,8 +638,8 @@ class ExternalNavigationPlugin :
         ),
       )
     } catch (t: Throwable) {
-      // Catch UnsupportedOperationException / Error subclasses from Uri APIs.
       Log.w(TAG, "maps_start_activity_result=native_throwable msg=${t.message}")
+      clearPipAutoEnter(reason = "maps_launch_failed_throwable")
       result.success(
         launchResult(
           status = STATUS_NATIVE_EXCEPTION,
@@ -563,6 +658,7 @@ class ExternalNavigationPlugin :
       return
     }
     if (!isPipSupported()) {
+      clearPipAutoEnter(reason = "pip_enter_unsupported")
       result.success(mapOf("ok" to false, "error" to "pip_unsupported"))
       return
     }
@@ -570,13 +666,21 @@ class ExternalNavigationPlugin :
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         // New session token per enter so PendingIntent cannot target a stale ride.
         pipSessionToken = "pip_${System.currentTimeMillis()}"
+        // ANDROID-RECENTS-PIP-AUTOENTER-P0: never re-arm sticky autoEnter=true
+        // here. Manual enter uses autoEnter=false; prepare() already covered
+        // the Maps-background auto-enter window.
         val params = buildPipParams(act, autoEnter = false)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-          act.setPictureInPictureParams(buildPipParams(act, autoEnter = true))
-        }
         val entered = act.enterPictureInPictureMode(params)
         pipActive = entered
+        handoffPrepared = false
         Log.i(TAG, "pip_entered_after_handoff=$entered prepared=$handoffPrepared")
+        if (!entered) {
+          clearPipAutoEnter(reason = "pip_enter_failed")
+        } else {
+          // Ensure auto-enter is disabled even if the mode callback is delayed.
+          clearPipAutoEnter(reason = "pip_enter_succeeded")
+          pipActive = true
+        }
         result.success(
           mapOf(
             "ok" to entered,
@@ -586,9 +690,11 @@ class ExternalNavigationPlugin :
           ),
         )
       } else {
+        clearPipAutoEnter(reason = "pip_enter_unsupported_sdk")
         result.success(mapOf("ok" to false, "error" to "pip_unsupported"))
       }
     } catch (e: Exception) {
+      clearPipAutoEnter(reason = "pip_enter_exception")
       result.success(
         mapOf(
           "ok" to false,
@@ -599,6 +705,10 @@ class ExternalNavigationPlugin :
     }
   }
 
+  /**
+   * Cleanup / disable PiP handoff state. Must NOT steal foreground — that is
+   * reserved for explicit user Return-to-Fluxidi.
+   */
   private fun exitFluxidiPip(result: MethodChannel.Result) {
     val act = activity
     if (act == null) {
@@ -606,9 +716,28 @@ class ExternalNavigationPlugin :
       return
     }
     handoffPrepared = false
-    returnToFluxidi(result)
+    clearPipAutoEnter(reason = "exit_fluxidi_pip_cleanup")
+    pipActive = false
+    eventSink?.success(
+      mapOf(
+        "type" to "pipModeChanged",
+        "pipActive" to false,
+        "source" to "exit_fluxidi_pip_cleanup",
+      ),
+    )
+    Log.i(TAG, "pip_exit_cleanup=true force_to_front=false")
+    result.success(
+      mapOf(
+        "ok" to true,
+        "pipActive" to false,
+        "session" to pipSessionToken,
+        "request_code" to lastPipReturnRequestCode,
+        "force_to_front" to false,
+      ),
+    )
   }
 
+  /** Explicit Flutter/user Return-to-Fluxidi (not generic cleanup). */
   private fun returnToFluxidi(result: MethodChannel.Result) {
     val act = activity
     if (act == null) {
@@ -616,16 +745,19 @@ class ExternalNavigationPlugin :
       return
     }
     try {
-      bringFluxidiTaskToFront(source = "method_channel")
+      bringFluxidiTaskToFront(source = "method_channel_explicit_return")
+      clearPipAutoEnter(reason = "explicit_return_to_fluxidi")
       result.success(
         mapOf(
           "ok" to true,
           "pipActive" to false,
           "session" to pipSessionToken,
           "request_code" to lastPipReturnRequestCode,
+          "force_to_front" to true,
         ),
       )
     } catch (e: Exception) {
+      clearPipAutoEnter(reason = "explicit_return_failed")
       result.success(
         mapOf(
           "ok" to false,

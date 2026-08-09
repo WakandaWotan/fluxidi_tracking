@@ -29,7 +29,7 @@ class MainActivity : FlutterActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    // Cold-start return from PiP RemoteAction.
+    // Cold-start return from PiP RemoteAction (idempotent / consume-once).
     externalNavigationPlugin?.handleReturnFromPipIntent(intent)
   }
 
@@ -47,6 +47,9 @@ class MainActivity : FlutterActivity() {
   override fun onResume() {
     super.onResume()
     Log.i("FluxidiMainActivity", "on_resume_called=true")
+    // ANDROID-RECENTS-PIP-AUTOENTER-P0: clear sticky auto-enter when we are
+    // full-screen again so Home/Recents regain normal Android task behavior.
+    externalNavigationPlugin?.onActivityResumed()
   }
 
   override fun onPictureInPictureModeChanged(
