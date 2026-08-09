@@ -96,6 +96,49 @@ void main() {
       );
     });
 
+    test('real vh_1 with authoritative plate is NOT a demo placeholder', () {
+      // Field collision: server fleet id vh_1 / Hoofdwagen / real plate.
+      final realVh1 = _vehicle(
+        id: 'vh_1',
+        name: 'Hoofdwagen',
+        brand: '',
+        plate: 'T-XAA-674',
+        companyId: 'fluxidi_fluxidi_ddmh9g',
+      );
+      expect(isSeededOrPlaceholderVehicle(realVh1), isFalse);
+    });
+
+    test('Ferrari EV remains operational and distinct from demo seed', () {
+      final ferrari = _vehicle(
+        id: 'vh_1785048781448',
+        name: 'Ferrari EV',
+        brand: 'Ferrari',
+        plate: 'T-XAA-673',
+        companyId: 'fluxidi_fluxidi_ddmh9g',
+      );
+      final demo = _vehicle(
+        id: 'vh_1',
+        name: 'Hoofdwagen',
+        brand: 'Tesla Model 3',
+        plate: '1-ABC-123',
+      );
+      final realVh1 = _vehicle(
+        id: 'vh_1',
+        name: 'Hoofdwagen',
+        brand: '',
+        plate: 'T-XAA-674',
+        companyId: 'fluxidi_fluxidi_ddmh9g',
+      );
+      expect(isSeededOrPlaceholderVehicle(ferrari), isFalse);
+      expect(isSeededOrPlaceholderVehicle(demo), isTrue);
+      expect(isSeededOrPlaceholderVehicle(realVh1), isFalse);
+      final visible = [ferrari, demo, realVh1]
+          .where((v) => !isSeededOrPlaceholderVehicle(v))
+          .map((v) => v.licensePlate)
+          .toSet();
+      expect(visible, {'T-XAA-673', 'T-XAA-674'});
+    });
+
     test('real non-seed vehicle counts as operational (legacy/companyless)', () {
       final real = _vehicle(
         id: 'vh_real_1',

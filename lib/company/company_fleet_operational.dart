@@ -10,9 +10,12 @@ import 'package:fluxidi_tracking/company_session_store.dart';
 
 /// True for the in-memory demo vehicle seeded at app start (`vh_1` /
 /// Hoofdwagen / Tesla Model 3 / 1-ABC-123).
+///
+/// Important: a real fleet vehicle may collide on id `vh_1`. Id alone is
+/// never enough to hide a row — classify by demo seed *content* (demo plate /
+/// Tesla Model 3 + generic main-vehicle name). A `vh_1` record with a
+/// non-demo plate (or company-scoped real identity) is operational.
 bool isSeededOrPlaceholderVehicle(VehicleProfile vehicle) {
-  final id = vehicle.id.trim().toLowerCase();
-  if (id == 'vh_1') return true;
   final plate = vehicle.licensePlate.trim().toUpperCase();
   final brand = vehicle.brandModel.trim().toLowerCase();
   final name = vehicle.vehicleName.trim().toLowerCase();
@@ -28,6 +31,19 @@ bool isSeededOrPlaceholderVehicle(VehicleProfile vehicle) {
       name == 'vehiculo principal';
   if (isDemoPlate && (isDemoBrand || isDemoName)) return true;
   if (isDemoBrand && isDemoName && plate.isEmpty) return true;
+
+  // Unhydrated local seed row: well-known demo id, no real plate, and either
+  // empty brand or still matching the demo Tesla/main-vehicle shape.
+  final id = vehicle.id.trim().toLowerCase();
+  if (id == 'vh_1') {
+    final hasRealPlate = plate.isNotEmpty && !isDemoPlate;
+    if (hasRealPlate) return false;
+    final companyId = (vehicle.companyId ?? '').trim();
+    if (companyId.isNotEmpty && !isDemoBrand && !isDemoPlate) return false;
+    if (plate.isEmpty && (brand.isEmpty || isDemoBrand || isDemoName)) {
+      return true;
+    }
+  }
   return false;
 }
 

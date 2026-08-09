@@ -2280,8 +2280,30 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
       );
       return;
     }
+    final companySessionToken =
+        (activeCompanySessionNotifier.value?.companySessionToken ?? '').trim();
+    if (companySessionToken.isEmpty) {
+      debugPrint(
+        '[DRIVER_DELETE][ERROR] status=local reason=missing_company_session driver=$maskedDriver',
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Chauffeur kon niet verwijderd worden. Actieve bedrijfssessie vereist.',
+              en: 'Driver could not be removed. An active company session is required.',
+              fr: 'Impossible de supprimer le chauffeur. Une session entreprise active est requise.',
+              es: 'No se pudo eliminar el conductor. Se requiere una sesión de empresa activa.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
     debugPrint(
-      '[DRIVER_DELETE][REQ] driver=$maskedDriver company=$maskedCompany',
+      '[DRIVER_DELETE][REQ] driver=$maskedDriver company=$maskedCompany auth=company_session',
     );
 
     final endpoint =
@@ -2293,10 +2315,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
             'company_id': scope.companyId,
           },
         );
-    final headers = <String, String>{
-      ..._adminHeaders(),
-      'Content-Type': 'application/json',
-    };
+    final headers = companyBearerHeaders(companySessionToken, json: true);
     final payload = <String, dynamic>{
       'tenant_id': scope.tenantId,
       'company_id': scope.companyId,
@@ -2315,6 +2334,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
             deleted = decoded['deleted'] == true;
           }
         } catch (_) {}
+        // Local tombstone only after authoritative backend success.
         removeDriverLocallyAfterBackendDelete(
           driverId,
           tenantId: scope.tenantId,
@@ -2342,7 +2362,7 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
       try {
         final decoded = jsonDecode(response.body);
         if (decoded is Map) {
-          final text = (decoded['reason'] ?? decoded['error'] ?? '')
+          final text = (decoded['error'] ?? decoded['reason'] ?? '')
               .toString()
               .trim();
           if (text.isNotEmpty) reason = text;
@@ -2351,6 +2371,18 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
       debugPrint(
         '[DRIVER_DELETE][ERROR] status=${response.statusCode} reason=$reason driver=$maskedDriver',
       );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _driverDeleteFailureMessage(
+              statusCode: response.statusCode,
+              reason: reason,
+            ),
+          ),
+        ),
+      );
+      return;
     } catch (_) {
       debugPrint(
         '[DRIVER_DELETE][ERROR] status=network reason=exception driver=$maskedDriver',
@@ -2362,13 +2394,79 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
       SnackBar(
         content: Text(
           _t(
-            nl: 'Chauffeur kon niet verwijderd worden.',
-            en: 'Driver could not be removed.',
-            fr: 'Impossible de supprimer le chauffeur.',
-            es: 'No se pudo eliminar el conductor.',
+            nl: 'Chauffeur kon niet verwijderd worden. Controleer de verbinding en probeer opnieuw.',
+            en: 'Driver could not be removed. Check the connection and try again.',
+            fr: 'Impossible de supprimer le chauffeur. Vérifiez la connexion et réessayez.',
+            es: 'No se pudo eliminar el conductor. Compruebe la conexión e inténtelo de nuevo.',
           ),
         ),
       ),
+    );
+  }
+
+  String _driverDeleteFailureMessage({
+    required int statusCode,
+    required String reason,
+  }) {
+    final code = reason.trim().toLowerCase();
+    if (statusCode == 401 ||
+        code == 'unauthorized' ||
+        code == 'missing_company_session_token') {
+      return _t(
+        nl: 'Chauffeur kon niet verwijderd worden. Bedrijfssessie verlopen of ontbreekt — meld opnieuw aan.',
+        en: 'Driver could not be removed. Company session expired or missing — sign in again.',
+        fr: 'Impossible de supprimer le chauffeur. Session entreprise expirée ou absente — reconnectez-vous.',
+        es: 'No se pudo eliminar el conductor. Sesión de empresa caducada o ausente — inicie sesión de nuevo.',
+      );
+    }
+    if (statusCode == 403 || code == 'forbidden' || code == 'scope_forbidden') {
+      return _t(
+        nl: 'Chauffeur kon niet verwijderd worden. Geen rechten voor dit bedrijf.',
+        en: 'Driver could not be removed. No permission for this company.',
+        fr: 'Impossible de supprimer le chauffeur. Pas d’autorisation pour cette entreprise.',
+        es: 'No se pudo eliminar el conductor. Sin permiso para esta empresa.',
+      );
+    }
+    if (code == 'missing_tenant_scope' ||
+        code == 'invalid_tenant_or_company_scope') {
+      return _t(
+        nl: 'Chauffeur kon niet verwijderd worden. Bedrijfscontext ontbreekt.',
+        en: 'Driver could not be removed. Company context is missing.',
+        fr: 'Impossible de supprimer le chauffeur. Contexte entreprise manquant.',
+        es: 'No se pudo eliminar el conductor. Falta el contexto de empresa.',
+      );
+    }
+    if (code == 'invalid_driver_id') {
+      return _t(
+        nl: 'Chauffeur kon niet verwijderd worden. Ongeldige chauffeur-id.',
+        en: 'Driver could not be removed. Invalid driver id.',
+        fr: 'Impossible de supprimer le chauffeur. Identifiant chauffeur invalide.',
+        es: 'No se pudo eliminar el conductor. Id de conductor no válido.',
+      );
+    }
+    if (code == 'driver_session_revoke_failed') {
+      return _t(
+        nl: 'Chauffeur kon niet volledig verwijderd worden (sessies). Probeer opnieuw.',
+        en: 'Driver could not be fully removed (sessions). Try again.',
+        fr: 'Impossible de supprimer complètement le chauffeur (sessions). Réessayez.',
+        es: 'No se pudo eliminar por completo el conductor (sesiones). Inténtelo de nuevo.',
+      );
+    }
+    // Safe, short machine code only — never stack traces or tokens.
+    final safeCode = RegExp(r'^[a-z0-9_]{3,64}$').hasMatch(code) ? code : '';
+    if (safeCode.isNotEmpty) {
+      return _t(
+        nl: 'Chauffeur kon niet verwijderd worden ($safeCode).',
+        en: 'Driver could not be removed ($safeCode).',
+        fr: 'Impossible de supprimer le chauffeur ($safeCode).',
+        es: 'No se pudo eliminar el conductor ($safeCode).',
+      );
+    }
+    return _t(
+      nl: 'Chauffeur kon niet verwijderd worden.',
+      en: 'Driver could not be removed.',
+      fr: 'Impossible de supprimer le chauffeur.',
+      es: 'No se pudo eliminar el conductor.',
     );
   }
 

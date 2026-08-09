@@ -26921,7 +26921,6 @@ async function handleAdminCompanyDriversIndexUpsert(request, url, env) {
 
 async function handleAdminCompanyDriversIndexDelete(request, url, env) {
   const body = await readAdminCompanyLinkBody(request.clone());
-  _requireAdmin(request, url, env);
   if (!env?.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return json({ ok: false, error: "invalid_body" }, 400);
@@ -26929,10 +26928,19 @@ async function handleAdminCompanyDriversIndexDelete(request, url, env) {
   if (Array.isArray(body.driver_ids) || Array.isArray(body.driverIds)) {
     return json({ ok: false, error: "bulk_delete_not_supported" }, 400);
   }
-  const explicitScope = resolveAdminExplicitTenantCompanyScope({ request, url, body });
-  if (!explicitScope?.hasScope) {
-    return json(missingTenantScopeError(), 400);
-  }
+  // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN follow-up: company-owner Flutter builds
+  // no longer ship ADMIN_TOKEN. Accept admin token OR company-session bearer
+  // with exact tenant/company match (same helper as driver upsert). Never trust
+  // body scope alone.
+  const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+    request,
+    url,
+    env,
+    body,
+    routeLabel: "DRIVER_INDEX_DELETE",
+  });
+  if (!authScope.ok) return authScope.response;
+  const explicitScope = authScope.explicitScope;
   const tenantId = sanitizeTenantString(explicitScope.tenant_id, 80);
   const companyId = sanitizeTenantString(explicitScope.company_id, 80);
   if (!_isSafeCompanyLinkScopePart(tenantId) || !_isSafeCompanyLinkScopePart(companyId)) {
@@ -26957,14 +26965,58 @@ async function handleAdminCompanyDriversIndexDelete(request, url, env) {
     delete nextDrivers[driverId];
   }
   nextDeletedDrivers[driverId] = nowIso;
+
+  // Soft-delete must cut future operational access. Revoke scoped public
+  // driver sessions BEFORE writing the tombstone so a revoke failure does not
+  // leave a half-applied delete. Historical ride/payment/Billit/Chiron
+  // records are intentionally left untouched.
+  let revokeResult = {
+    revoked_count: 0,
+    scanned_count: 0,
+    scan_complete: true,
+  };
+  try {
+    revokeResult = await _revokeScopedDriverSessionsInKv(env, {
+      tenantId,
+      companyId,
+      driverId,
+    });
+  } catch (err) {
+    console.warn(
+      `[DRIVER_INDEX][DELETE_REVOKE_FAILED] driver=${_maskPublicDriverLoginValue(driverId)} reason=${sanitizeTenantString(err?.message ?? err, 120) || "unknown"}`,
+    );
+    return json(
+      {
+        ok: false,
+        error: "driver_session_revoke_failed",
+        tenant_id: tenantId,
+        company_id: companyId,
+        driver_id: driverId,
+        deleted: false,
+      },
+      500,
+    );
+  }
+
   console.log(
-    `[DRIVER_INDEX][DELETE_TOMBSTONE] driver=${_maskPublicDriverLoginValue(driverId)} deleted=${deleted}`,
+    `[DRIVER_INDEX][DELETE_TOMBSTONE] driver=${_maskPublicDriverLoginValue(driverId)} deleted=${deleted} auth_mode=${authScope.auth_mode || "unknown"}`,
   );
   await _saveDriverIndexRecord(env, scope, {
     drivers: nextDrivers,
     deleted_drivers: nextDeletedDrivers,
     updated_at: nowIso,
   });
+  console.info(
+    JSON.stringify({
+      event: "driver_index_soft_deleted",
+      tenant: _maskPublicDriverLoginValue(tenantId),
+      company: _maskPublicDriverLoginValue(companyId),
+      driver: _maskPublicDriverLoginValue(driverId),
+      deleted,
+      revoked_count: Number(revokeResult?.revoked_count || 0),
+      scanned_count: Number(revokeResult?.scanned_count || 0),
+    }),
+  );
   return json(
     {
       ok: true,
@@ -26972,6 +27024,8 @@ async function handleAdminCompanyDriversIndexDelete(request, url, env) {
       company_id: companyId,
       driver_id: driverId,
       deleted,
+      revoked_count: Number(revokeResult?.revoked_count || 0),
+      scanned_count: Number(revokeResult?.scanned_count || 0),
     },
     200,
   );

@@ -455,11 +455,10 @@ final Color kGlow = appConfig.accentColor;
 
 // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase C): the platform ADMIN_TOKEN
 // is no longer injected into Flutter builds, so `kAdminToken` is always empty
-// and this helper returns an empty map. Retained as a stub only so the
-// unmigrated ops-only surfaces (receipt PDF, company driver management,
-// business fleet-sync) still compile; those surfaces will be migrated to
-// company-session bearers in a follow-up. Never re-introduce an admin header
-// from this helper.
+// and this helper returns an empty map. Retained as a stub only so remaining
+// unmigrated ops-only surfaces (e.g. receipt PDF helpers) still compile.
+// Company driver delete/upsert must use companyBearerHeaders instead.
+// Never re-introduce an admin header from this helper.
 Map<String, String> _adminHeaders() {
   return <String, String>{};
 }
