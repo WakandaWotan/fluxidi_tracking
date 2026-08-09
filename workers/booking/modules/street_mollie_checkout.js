@@ -179,6 +179,24 @@ export function isStreetCheckoutOpenLike(status) {
 }
 
 /**
+ * MOLLIE-ONLINE-PAYMENT-USER-CANCEL-FALLBACK-RELEASE-P0:
+ * Durable Fluxidi checkout abandonment (fallback allowed) — not Mollie status.
+ */
+export function isStreetCheckoutOwnershipAbandoned(rec) {
+  if (!rec || typeof rec !== "object") return false;
+  if (_asBool(rec.mollie_checkout_abandoned) || _asBool(rec.mollieCheckoutAbandoned)) {
+    return true;
+  }
+  const attempt = _lower(
+    rec.payment_attempt_status ??
+      rec.paymentAttemptStatus ??
+      rec.booking?.payment_attempt_status ??
+      rec.booking?.paymentAttemptStatus,
+  );
+  return attempt === "abandoned";
+}
+
+/**
  * True when canonical record currently holds a reusable open Mollie checkout.
  */
 export function readOpenStreetMollieCheckout(rec) {
@@ -186,6 +204,9 @@ export function readOpenStreetMollieCheckout(rec) {
   const paymentStatus = streetCheckoutPaymentStatusToken(rec);
   if (isStreetCheckoutPaidLike(paymentStatus)) return null;
   if (isStreetCheckoutFailedLike(paymentStatus)) return null;
+  // User-abandoned checkout must never resurrect as active owner even when
+  // stale checkout_url / mollie.status=open remain for audit/reconciliation.
+  if (isStreetCheckoutOwnershipAbandoned(rec)) return null;
   const mode = _lower(
     rec.payment_mode ??
       rec.paymentMode ??

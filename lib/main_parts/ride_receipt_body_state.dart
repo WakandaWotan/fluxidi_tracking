@@ -858,12 +858,14 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
   }
 
   void _mergePaymentFieldsIntoReceiptDetails(Map<String, dynamic> fields) {
-    for (final entry in fields.entries) {
-      final value = entry.value?.toString().trim();
-      if (value == null || value.isEmpty || value.toLowerCase() == 'null')
-        continue;
-      item.bookingDetails[entry.key] = entry.value;
-    }
+    // Preserve durable ONLINE-mode abandon across stale booking GET merges.
+    final merged = mergeReceiptPaymentFieldsPreservingAbandonedCheckout(
+      localDetails: Map<String, dynamic>.from(item.bookingDetails),
+      incomingFields: fields,
+    );
+    item.bookingDetails
+      ..clear()
+      ..addAll(merged);
     final bookingMap = item.bookingDetails['booking'];
     if (bookingMap is Map) {
       final mutableBooking = Map<String, dynamic>.from(bookingMap);
@@ -874,10 +876,20 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       if (fields['paid_at'] != null)
         mutableBooking['paid_at'] = fields['paid_at'];
       if (fields['paidAt'] != null) mutableBooking['paidAt'] = fields['paidAt'];
-      if (fields['payment_provider'] != null)
-        mutableBooking['payment_provider'] = fields['payment_provider'];
-      if (fields['paymentProvider'] != null)
-        mutableBooking['paymentProvider'] = fields['paymentProvider'];
+      final abandoned = receiptDetailsHaveAbandonedMollieCheckout(
+        item.bookingDetails,
+      );
+      final incomingPaid =
+          (fields['payment_status'] ?? fields['paymentStatus'] ?? '')
+              .toString()
+              .toLowerCase() ==
+          'paid';
+      if (!(abandoned && !incomingPaid)) {
+        if (fields['payment_provider'] != null)
+          mutableBooking['payment_provider'] = fields['payment_provider'];
+        if (fields['paymentProvider'] != null)
+          mutableBooking['paymentProvider'] = fields['paymentProvider'];
+      }
       if (fields['payment_id'] != null)
         mutableBooking['payment_id'] = fields['payment_id'];
       if (fields['paymentId'] != null)
@@ -890,6 +902,12 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
         mutableBooking['payment_source'] = fields['payment_source'];
       if (fields['paymentSource'] != null)
         mutableBooking['paymentSource'] = fields['paymentSource'];
+      if (abandoned && !incomingPaid) {
+        mutableBooking['checkout_url'] = null;
+        mutableBooking['checkoutUrl'] = null;
+        mutableBooking['payment_attempt_status'] = 'abandoned';
+        mutableBooking['mollie_checkout_abandoned'] = true;
+      }
       item.bookingDetails['booking'] = mutableBooking;
     }
   }
@@ -4105,9 +4123,21 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
   void _applyAuthoritativeMollieOwnershipReleaseLocally(
     Map<String, dynamic> root,
   ) {
+    final userAbandoned = isMollieCheckoutUserAbandoned(root);
+    final providerStatus = userAbandoned
+        ? (root['provider_status'] ??
+                  root['providerStatus'] ??
+                  resolveMollieReleasePresentationStatus(root))
+              .toString()
+        : resolveMollieReleasePresentationStatus(root);
+    final ownershipStatus = userAbandoned
+        ? 'abandoned'
+        : resolveMollieReleasePresentationStatus(root);
     final releasedDetails = applyAuthoritativeMollieOwnershipReleaseToDetails(
       Map<String, dynamic>.from(item.bookingDetails),
-      providerStatus: resolveMollieReleasePresentationStatus(root),
+      providerStatus: providerStatus,
+      userAbandoned: userAbandoned,
+      ownershipStatus: ownershipStatus,
     );
     item.bookingDetails
       ..clear()

@@ -13,10 +13,12 @@ import {
   resolveMollieOpenPaymentCancelDecision,
   resolveMollieOpenPaymentPresentation,
   resolveMollieRecoveryWhenProviderFetchFailed,
+  resolveMollieUserCancelOwnershipOutcome,
   resolveOpenPosBlocksNewStreetCheckout,
   resolvePendingLockClearAfterCancel,
 } from "./mollie_open_payment_recovery.mjs";
 import {
+  isStreetCheckoutOwnershipAbandoned,
   manualMarkPaidConflict,
   readOpenStreetMollieCheckout,
   webhookAfterManualPaidConflict,
@@ -332,4 +334,59 @@ test("27. resume keeps single owner (no second create signal)", () => {
   assert.equal(pending.resumable, true);
   assert.ok(pending.actions.includes("resume_checkout"));
   assert.equal(normalizeMollieRecoveryAction("resume"), "resume");
+});
+
+test("28. user cancel while Mollie open → abandon ownership; DELETE not required", () => {
+  const out = resolveMollieUserCancelOwnershipOutcome({ providerStatus: "open" });
+  assert.equal(out.action, "abandon_checkout");
+  assert.equal(out.release_owner, true);
+  assert.equal(out.fallback_allowed, true);
+  assert.equal(out.ownership_status, "abandoned");
+  assert.equal(out.provider_status, "open");
+  assert.equal(out.forge_provider_status, false);
+  assert.equal(out.user_abandoned, true);
+});
+
+test("29. user cancel paid race → paid wins; no fallback", () => {
+  const out = resolveMollieUserCancelOwnershipOutcome({ providerStatus: "paid" });
+  assert.equal(out.action, "project_paid");
+  assert.equal(out.release_owner, false);
+  assert.equal(out.fallback_allowed, false);
+  assert.equal(out.presentation_state, "paid");
+});
+
+test("30. user cancel already canceled/expired/failed → fallback enabled", () => {
+  for (const status of ["canceled", "expired", "failed"]) {
+    const out = resolveMollieUserCancelOwnershipOutcome({
+      providerStatus: status,
+    });
+    assert.equal(out.release_owner, true);
+    assert.equal(out.fallback_allowed, true);
+    assert.equal(out.ownership_status, "abandoned");
+  }
+});
+
+test("31. abandoned ownership ignores stale checkout_url/open", () => {
+  const abandoned = {
+    payment_status: "unpaid",
+    payment_provider: "mollie",
+    payment_mode: "mollie",
+    payment_attempt_status: "abandoned",
+    mollie_checkout_abandoned: true,
+    checkout_url: "https://www.mollie.com/checkout/stale",
+    mollie: { id: "tr_stale", status: "open" },
+  };
+  assert.equal(isStreetCheckoutOwnershipAbandoned(abandoned), true);
+  assert.equal(readOpenStreetMollieCheckout(abandoned), null);
+});
+
+test("32. repeated user-cancel abandon decision is idempotent", () => {
+  const first = resolveMollieUserCancelOwnershipOutcome({
+    providerStatus: "open",
+  });
+  const second = resolveMollieUserCancelOwnershipOutcome({
+    providerStatus: "open",
+  });
+  assert.deepEqual(first, second);
+  assert.equal(first.release_owner, true);
 });

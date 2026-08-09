@@ -443,10 +443,37 @@ MollieOpenPaymentRecoveryInfo? parseMollieOpenPaymentRecovery(
   );
 }
 
+/// True when Fluxidi online-checkout ownership was durably abandoned by the user.
+///
+/// Stale `checkout_url` / `mollie.status=open` must NOT resurrect ONLINE mode.
+bool receiptDetailsHaveAbandonedMollieCheckout(Map<String, dynamic>? details) {
+  final map = details;
+  if (map == null) return false;
+  if (_asBool(map['mollie_checkout_abandoned']) ||
+      _asBool(map['mollieCheckoutAbandoned'])) {
+    return true;
+  }
+  final attempt = _lower(
+    map['payment_attempt_status'] ?? map['paymentAttemptStatus'],
+  );
+  if (attempt == 'abandoned') return true;
+  final booking = _asMap(map['booking']);
+  if (booking == null) return false;
+  if (_asBool(booking['mollie_checkout_abandoned']) ||
+      _asBool(booking['mollieCheckoutAbandoned'])) {
+    return true;
+  }
+  final nestedAttempt = _lower(
+    booking['payment_attempt_status'] ?? booking['paymentAttemptStatus'],
+  );
+  return nestedAttempt == 'abandoned';
+}
+
 /// True when receipt booking details already show an open Mollie checkout owner.
 bool receiptDetailsHaveOpenMollieCheckout(Map<String, dynamic>? details) {
   final map = details;
   if (map == null) return false;
+  if (receiptDetailsHaveAbandonedMollieCheckout(map)) return false;
   final payStatus = _lower(
     map['payment_status'] ?? map['paymentStatus'] ?? 'unpaid',
   );
@@ -690,6 +717,21 @@ bool isAuthoritativeMollieOwnershipReleased(Map<String, dynamic>? decoded) {
   );
   if (payStatus == 'paid' || presentation == 'paid') return false;
 
+  if (_asBool(decoded['mollie_checkout_abandoned']) ||
+      _asBool(decoded['mollieCheckoutAbandoned']) ||
+      _asBool(decoded['user_abandoned']) ||
+      _asBool(decoded['userAbandoned'])) {
+    return true;
+  }
+  final ownership = _lower(
+    decoded['ownership_status'] ?? decoded['ownershipStatus'],
+  );
+  if (ownership == 'abandoned') return true;
+  final attempt = _lower(
+    decoded['payment_attempt_status'] ?? decoded['paymentAttemptStatus'],
+  );
+  if (attempt == 'abandoned') return true;
+
   final recovery = _asMap(decoded['recovery']);
   if (_asBool(decoded['fallback_allowed'] ?? decoded['fallbackAllowed'])) {
     return true;
@@ -712,6 +754,26 @@ bool isAuthoritativeMollieOwnershipReleased(Map<String, dynamic>? decoded) {
   if (releasedStates.contains(recoveryPresentation)) return true;
   if (releasedStates.contains(payStatus)) return true;
   return false;
+}
+
+/// True when recovery/cancel response means Fluxidi ONLINE mode was abandoned
+/// (payment-method switch), not necessarily Mollie provider canceled.
+bool isMollieCheckoutUserAbandoned(Map<String, dynamic>? decoded) {
+  if (decoded == null) return false;
+  if (_asBool(decoded['mollie_checkout_abandoned']) ||
+      _asBool(decoded['mollieCheckoutAbandoned']) ||
+      _asBool(decoded['user_abandoned']) ||
+      _asBool(decoded['userAbandoned'])) {
+    return true;
+  }
+  final ownership = _lower(
+    decoded['ownership_status'] ?? decoded['ownershipStatus'],
+  );
+  if (ownership == 'abandoned') return true;
+  final attempt = _lower(
+    decoded['payment_attempt_status'] ?? decoded['paymentAttemptStatus'],
+  );
+  return attempt == 'abandoned';
 }
 
 /// Provider terminal token to persist locally after ownership release.
@@ -741,17 +803,32 @@ String normalizeMollieReleasedProviderStatus(String? raw) {
 }
 
 /// Clears stale local open-checkout ownership after authoritative provider
-/// terminal release. Required because booking GET merges skip null/empty
-/// checkout_url and never overwrite a leftover local mollie.status=open.
+/// terminal release or user leave of ONLINE payment mode.
+///
+/// When [userAbandoned] is true, keep authentic Mollie [providerStatus]
+/// (may remain `open`) and mark Fluxidi ownership as `abandoned`.
 Map<String, dynamic> applyAuthoritativeMollieOwnershipReleaseToDetails(
   Map<String, dynamic>? details, {
   required String providerStatus,
+  bool userAbandoned = false,
+  String? ownershipStatus,
 }) {
   final next = <String, dynamic>{
     if (details != null) ...details,
   };
-  final terminal = normalizeMollieReleasedProviderStatus(providerStatus);
-  final attemptStatus = terminal == 'canceled' ? 'cancelled' : terminal;
+  final providerToken = _lower(providerStatus);
+  final attemptStatus = () {
+    final explicit = _lower(ownershipStatus);
+    if (explicit.isNotEmpty) {
+      return explicit == 'canceled' ? 'cancelled' : explicit;
+    }
+    if (userAbandoned) return 'abandoned';
+    final terminal = normalizeMollieReleasedProviderStatus(providerStatus);
+    return terminal == 'canceled' ? 'cancelled' : terminal;
+  }();
+  final persistedMollieStatus = userAbandoned
+      ? (providerToken.isEmpty ? 'open' : providerToken)
+      : normalizeMollieReleasedProviderStatus(providerStatus);
 
   void clearOn(Map<String, dynamic> map) {
     map['checkout_url'] = null;
@@ -766,11 +843,18 @@ Map<String, dynamic> applyAuthoritativeMollieOwnershipReleaseToDetails(
     map['paymentProvider'] = null;
     map['payment_mode'] = null;
     map['paymentMode'] = null;
+    if (userAbandoned || attemptStatus == 'abandoned') {
+      map['mollie_checkout_abandoned'] = true;
+      map['mollieCheckoutAbandoned'] = true;
+    }
     final mollie = _asMap(map['mollie']);
     if (mollie != null) {
-      map['mollie'] = <String, dynamic>{...mollie, 'status': terminal};
+      map['mollie'] = <String, dynamic>{
+        ...mollie,
+        'status': persistedMollieStatus,
+      };
     } else {
-      map['mollie'] = <String, dynamic>{'status': terminal};
+      map['mollie'] = <String, dynamic>{'status': persistedMollieStatus};
     }
   }
 
@@ -782,6 +866,70 @@ Map<String, dynamic> applyAuthoritativeMollieOwnershipReleaseToDetails(
     next['booking'] = booking;
   }
   return next;
+}
+
+/// Merge protection: abandoned ONLINE mode must not be resurrected by a stale
+/// booking GET that still carries checkout_url / mollie.status=open.
+///
+/// Paid always wins and is merged normally.
+Map<String, dynamic> mergeReceiptPaymentFieldsPreservingAbandonedCheckout({
+  required Map<String, dynamic> localDetails,
+  required Map<String, dynamic> incomingFields,
+}) {
+  final merged = <String, dynamic>{...localDetails};
+  final incomingPaid = _lower(
+        incomingFields['payment_status'] ?? incomingFields['paymentStatus'],
+      ) ==
+      'paid';
+  final localAbandoned = receiptDetailsHaveAbandonedMollieCheckout(localDetails);
+
+  for (final entry in incomingFields.entries) {
+    final value = entry.value?.toString().trim();
+    if (value == null || value.isEmpty || value.toLowerCase() == 'null') {
+      continue;
+    }
+    if (localAbandoned && !incomingPaid) {
+      final key = _lower(entry.key);
+      if (key == 'checkout_url' ||
+          key == 'checkouturl' ||
+          key == 'payment_url' ||
+          key == 'paymenturl') {
+        continue;
+      }
+      if (key == 'payment_attempt_status' || key == 'paymentattemptstatus') {
+        final attempt = _lower(entry.value);
+        if (attempt == 'mollie_open' ||
+            attempt == 'open' ||
+            attempt == 'pending') {
+          continue;
+        }
+      }
+      if (key == 'payment_provider' ||
+          key == 'paymentprovider' ||
+          key == 'payment_mode' ||
+          key == 'paymentmode') {
+        if (_lower(entry.value) == 'mollie') continue;
+      }
+      if (key == 'mollie_checkout_abandoned' ||
+          key == 'molliecheckoutabandoned') {
+        // Keep local abandoned=true.
+        continue;
+      }
+    }
+    merged[entry.key] = entry.value;
+  }
+
+  if (localAbandoned && !incomingPaid) {
+    merged['mollie_checkout_abandoned'] = true;
+    merged['mollieCheckoutAbandoned'] = true;
+    merged['payment_attempt_status'] = 'abandoned';
+    merged['paymentAttemptStatus'] = 'abandoned';
+    merged['checkout_url'] = null;
+    merged['checkoutUrl'] = null;
+    merged['payment_url'] = null;
+    merged['paymentUrl'] = null;
+  }
+  return merged;
 }
 
 /// Whether an app-lifecycle / return-from-checkout refresh must bypass the

@@ -1293,7 +1293,7 @@ test("CONVERGE-P0: cancel race — provider paid wins", async () => {
   }
 });
 
-test("CONVERGE-P0: cancel confirmed releases; cancel not confirmed keeps block", async () => {
+test("CONVERGE-P0: cancel releases; DELETE-still-open abandons Fluxidi ownership", async () => {
   const { env, kv } = await makeEnv();
   const mock = installMultiPaymentMollieMock();
   try {
@@ -1310,7 +1310,7 @@ test("CONVERGE-P0: cancel confirmed releases; cancel not confirmed keeps block",
     mock.restore();
   }
 
-  // Not-confirmed path: DELETE leaves payment open.
+  // DELETE leaves Mollie open — Fluxidi still abandons ONLINE mode.
   const { env: env2, kv: kv2 } = await makeEnv();
   const paymentId = "tr_cancel_stuck";
   const booking = JSON.parse(await kv2.get("booking:street_1001_abc"));
@@ -1337,11 +1337,12 @@ test("CONVERGE-P0: cancel confirmed releases; cancel not confirmed keeps block",
   try {
     const res = await worker.fetch(recoveryRequest({ action: "cancel" }), env2, {});
     const body = await res.json();
-    assert.equal(body.ok, false);
-    assert.equal(body.fallback_allowed, false);
-    assert.ok(readOpenStreetMollieCheckout(
-      JSON.parse(await kv2.get("booking:street_1001_abc")),
-    ));
+    assert.equal(body.ok, true);
+    assert.equal(body.fallback_allowed, true);
+    const after = JSON.parse(await kv2.get("booking:street_1001_abc"));
+    assert.ok(!readOpenStreetMollieCheckout(after));
+    assert.equal(String(after.payment_attempt_status || "").toLowerCase(), "abandoned");
+    assert.equal(String(after.mollie?.status || "").toLowerCase(), "open");
   } finally {
     globalThis.fetch = originalFetch;
     mock2.restore();
@@ -1769,7 +1770,7 @@ test("WIRE-EVIDENCE-P0: 3) GET failure → provider_status_unavailable; no DELET
   }
 });
 
-test("WIRE-EVIDENCE-P0: 4) DELETE rejection → still open / not released", async () => {
+test("WIRE-EVIDENCE-P0: 4) DELETE rejection → Fluxidi abandon still releases fallback", async () => {
   const { env, kv } = await makeEnv();
   const paymentId = "tr_wire_delete_422";
   await seedOpenHostedOwner(kv, { paymentId, shadowId: "shadow_wire_422" });
@@ -1784,15 +1785,19 @@ test("WIRE-EVIDENCE-P0: 4) DELETE rejection → still open / not released", asyn
       worker.fetch(recoveryRequest({ action: "cancel" }), env, {}),
     );
     const body = await res.json();
-    assert.equal(body.ok, false);
-    assert.ok(
-      body.error === "cancel_reconcile_failed" || body.error === "cancel_not_confirmed",
-    );
-    assert.equal(body.fallback_allowed, false);
+    // DELETE is optional; user cancel abandons Fluxidi ONLINE mode.
+    assert.equal(body.ok, true);
+    assert.equal(body.fallback_allowed, true);
+    assert.equal(body.resumable, false);
+    const after = JSON.parse(await kv.get("booking:street_1001_abc"));
+    assert.ok(!readOpenStreetMollieCheckout(after));
+    assert.equal(String(after.payment_attempt_status || "").toLowerCase(), "abandoned");
+    assert.equal(after.mollie_checkout_abandoned, true);
+    // Provider status must not be forged to canceled.
+    assert.equal(String(after.mollie?.status || "").toLowerCase(), "open");
     const cancelLines = assertWireLogsSafe(lines);
     assert.ok(cancelLines.some((l) => l.includes("[DELETE_RESULT]") && l.includes("http_status=422")));
-    assert.ok(cancelLines.some((l) => l.includes("error_title=Unprocessable Entity")));
-    assert.ok(readOpenStreetMollieCheckout(JSON.parse(await kv.get("booking:street_1001_abc"))));
+    assert.ok(cancelLines.some((l) => l.includes("[FINAL]") && l.includes("release_owner=true")));
   } finally {
     mock.restore();
   }
@@ -1822,7 +1827,7 @@ test("WIRE-EVIDENCE-P0: 5) DELETE success + terminal post-GET releases", async (
   }
 });
 
-test("WIRE-EVIDENCE-P0: 6) DELETE ok but post-GET still payable → cancel_not_confirmed", async () => {
+test("WIRE-EVIDENCE-P0: 6) DELETE ok but post-GET still payable → abandon + fallback", async () => {
   const { env, kv } = await makeEnv();
   const paymentId = "tr_wire_still_open";
   await seedOpenHostedOwner(kv, { paymentId, shadowId: "shadow_wire_still" });
@@ -1836,14 +1841,16 @@ test("WIRE-EVIDENCE-P0: 6) DELETE ok but post-GET still payable → cancel_not_c
       worker.fetch(recoveryRequest({ action: "cancel" }), env, {}),
     );
     const body = await res.json();
-    assert.equal(body.ok, false);
-    assert.equal(body.error, "cancel_not_confirmed");
-    assert.equal(body.fallback_allowed, false);
+    assert.equal(body.ok, true);
+    assert.equal(body.fallback_allowed, true);
+    assert.equal(body.resumable, false);
+    const after = JSON.parse(await kv.get("booking:street_1001_abc"));
+    assert.ok(!readOpenStreetMollieCheckout(after));
+    assert.equal(String(after.payment_attempt_status || "").toLowerCase(), "abandoned");
     const cancelLines = assertWireLogsSafe(lines);
     assert.ok(cancelLines.some((l) => l.includes("[DELETE_RESULT]") && l.includes("ok=true")));
     assert.ok(cancelLines.some((l) => l.includes("[POST_GET]") && l.includes("provider_status=open")));
-    assert.ok(cancelLines.some((l) => l.includes("[FINAL]") && l.includes("error=cancel_not_confirmed")));
-    assert.ok(readOpenStreetMollieCheckout(JSON.parse(await kv.get("booking:street_1001_abc"))));
+    assert.ok(cancelLines.some((l) => l.includes("[FINAL]") && l.includes("release_owner=true")));
   } finally {
     mock.restore();
   }
@@ -1869,6 +1876,81 @@ test("WIRE-EVIDENCE-P0: 7) paid race → no DELETE; paid presentation", async ()
     const cancelLines = assertWireLogsSafe(lines);
     assert.ok(cancelLines.some((l) => l.includes("[DECISION]") && l.includes("reject_paid")));
     assert.ok(cancelLines.some((l) => l.includes("[FINAL]") && l.includes("presentation_state=paid")));
+  } finally {
+    mock.restore();
+  }
+});
+
+test("USER-CANCEL-P0: abandon survives refresh with stale open provider", async () => {
+  const { env, kv } = await makeEnv();
+  const paymentId = "tr_user_abandon_refresh";
+  await seedOpenHostedOwner(kv, {
+    paymentId,
+    shadowId: "shadow_user_abandon",
+  });
+  const mock = installWireEvidenceMollieMock({
+    statusById: { [paymentId]: "open" },
+    deleteLeavesOpen: true,
+  });
+  try {
+    const cancel = await worker.fetch(
+      recoveryRequest({ action: "cancel" }),
+      env,
+      {},
+    );
+    const cancelBody = await cancel.json();
+    assert.equal(cancelBody.ok, true);
+    assert.equal(cancelBody.fallback_allowed, true);
+
+    // Simulate stale GET resurrection attempt: put checkout_url back.
+    const mid = JSON.parse(await kv.get("booking:street_1001_abc"));
+    mid.checkout_url = "https://www.mollie.com/checkout/stale-resurrect";
+    mid.checkoutUrl = mid.checkout_url;
+    mid.payment_provider = "mollie";
+    mid.payment_mode = "mollie";
+    mid.mollie = { ...(mid.mollie || {}), status: "open", id: paymentId };
+    await kv.put("booking:street_1001_abc", JSON.stringify(mid));
+
+    const refresh = await worker.fetch(
+      recoveryRequest({ action: "refresh" }),
+      env,
+      {},
+    );
+    const refreshBody = await refresh.json();
+    assert.equal(refreshBody.ok, true);
+    assert.equal(refreshBody.fallback_allowed, true);
+    assert.equal(refreshBody.resumable, false);
+    const after = JSON.parse(await kv.get("booking:street_1001_abc"));
+    assert.ok(!readOpenStreetMollieCheckout(after));
+    assert.equal(String(after.payment_attempt_status || "").toLowerCase(), "abandoned");
+    assert.equal(after.mollie_checkout_abandoned, true);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("USER-CANCEL-P0: repeated cancel is idempotent", async () => {
+  const { env, kv } = await makeEnv();
+  const paymentId = "tr_user_cancel_idem";
+  await seedOpenHostedOwner(kv, { paymentId, shadowId: "shadow_user_idem" });
+  const mock = installWireEvidenceMollieMock({
+    statusById: { [paymentId]: "open" },
+    deleteLeavesOpen: true,
+  });
+  try {
+    const first = await (
+      await worker.fetch(recoveryRequest({ action: "cancel" }), env, {})
+    ).json();
+    const second = await (
+      await worker.fetch(recoveryRequest({ action: "cancel" }), env, {})
+    ).json();
+    assert.equal(first.ok, true);
+    assert.equal(first.fallback_allowed, true);
+    assert.equal(second.ok, true);
+    assert.equal(second.fallback_allowed, true);
+    assert.ok(!readOpenStreetMollieCheckout(
+      JSON.parse(await kv.get("booking:street_1001_abc")),
+    ));
   } finally {
     mock.restore();
   }

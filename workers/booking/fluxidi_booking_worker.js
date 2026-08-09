@@ -552,6 +552,7 @@ import {
   isStreetCheckoutFailedLike,
   isStreetCheckoutOpenLike,
   readOpenStreetMollieCheckout,
+  isStreetCheckoutOwnershipAbandoned,
   manualMarkPaidConflict,
   webhookAfterManualPaidConflict,
   buildStreetCheckoutShadowPayload,
@@ -565,10 +566,10 @@ import {
   isMollieProviderStatusPaid,
   isMollieProviderStatusReleased,
   normalizeMollieRecoveryAction,
-  resolveMollieCancelReconcileOutcome,
   resolveMollieOpenPaymentCancelDecision,
   resolveMollieOpenPaymentPresentation,
   resolveMollieRecoveryWhenProviderFetchFailed,
+  resolveMollieUserCancelOwnershipOutcome,
   resolveOpenPosBlocksNewStreetCheckout,
 } from "./modules/mollie_open_payment_recovery.mjs";
 import {
@@ -84969,22 +84970,66 @@ function _paymentAttemptStatusForProviderRelease(providerStatus) {
   const status = safeStr(providerStatus, 40).toLowerCase() || "canceled";
   if (status === "expired") return "expired";
   if (status === "failed") return "failed";
+  if (status === "abandoned") return "abandoned";
   return "cancelled";
 }
 
-function _clearOpenStreetMollieCheckoutMarkers(rec, { providerStatus = "canceled" } = {}) {
+function _clearOpenStreetMollieCheckoutMarkers(
+  rec,
+  {
+    providerStatus = "canceled",
+    ownershipStatus = null,
+    forgeProviderStatus = true,
+    userAbandoned = false,
+    abandonedPaymentId = "",
+  } = {},
+) {
   if (!rec || typeof rec !== "object") return;
-  const status = safeStr(providerStatus, 40).toLowerCase() || "canceled";
+  const providerToken = safeStr(providerStatus, 40).toLowerCase() || "open";
+  const ownershipToken =
+    safeStr(ownershipStatus, 40).toLowerCase() ||
+    (userAbandoned
+      ? "abandoned"
+      : _paymentAttemptStatusForProviderRelease(providerToken));
+  // Never forge Mollie provider status on user-abandon: keep authentic token
+  // (including open) for audit / late paid reconciliation.
+  let persistedMollieStatus = providerToken || "open";
+  if (forgeProviderStatus && !userAbandoned) {
+    if (providerToken === "cancelled") persistedMollieStatus = "canceled";
+    else if (isMollieProviderStatusReleased(providerToken)) {
+      persistedMollieStatus = providerToken;
+    } else {
+      persistedMollieStatus = "canceled";
+    }
+  } else if (providerToken === "cancelled") {
+    persistedMollieStatus = "canceled";
+  }
+
   rec.checkout_url = null;
   rec.checkoutUrl = null;
   rec.payment_url = null;
   rec.paymentUrl = null;
-  rec.payment_attempt_status = _paymentAttemptStatusForProviderRelease(status);
-  rec.paymentAttemptStatus = rec.payment_attempt_status;
+  rec.payment_attempt_status = ownershipToken;
+  rec.paymentAttemptStatus = ownershipToken;
+  if (userAbandoned || ownershipToken === "abandoned") {
+    const abandonedAt =
+      safeStr(rec.mollie_checkout_abandoned_at, 80) || new Date().toISOString();
+    rec.mollie_checkout_abandoned = true;
+    rec.mollieCheckoutAbandoned = true;
+    rec.mollie_checkout_abandoned_at = abandonedAt;
+    rec.mollieCheckoutAbandonedAt = abandonedAt;
+    const pid =
+      safeStr(abandonedPaymentId, 120) ||
+      safeStr(rec?.mollie?.payment_id ?? rec?.mollie?.id ?? rec?.payment_id, 120);
+    if (pid) {
+      rec.mollie_checkout_abandoned_payment_id = pid;
+      rec.mollieCheckoutAbandonedPaymentId = pid;
+    }
+  }
   if (rec.mollie && typeof rec.mollie === "object") {
-    rec.mollie = { ...rec.mollie, status };
+    rec.mollie = { ...rec.mollie, status: persistedMollieStatus };
   } else {
-    rec.mollie = { status };
+    rec.mollie = { status: persistedMollieStatus };
   }
   // Keep payment_status unpaid-like so fallback/new payment can proceed.
   const payTok = streetCheckoutPaymentStatusToken(rec);
@@ -85001,6 +85046,12 @@ function _clearOpenStreetMollieCheckoutMarkers(rec, { providerStatus = "canceled
     rec.booking.checkoutUrl = null;
     rec.booking.payment_url = null;
     rec.booking.paymentUrl = null;
+    rec.booking.payment_attempt_status = ownershipToken;
+    rec.booking.paymentAttemptStatus = ownershipToken;
+    if (userAbandoned || ownershipToken === "abandoned") {
+      rec.booking.mollie_checkout_abandoned = true;
+      rec.booking.mollieCheckoutAbandoned = true;
+    }
     if (!isStreetCheckoutPaidLike(payTok)) {
       rec.booking.payment_status = "unpaid";
       rec.booking.paymentStatus = "unpaid";
@@ -85010,7 +85061,10 @@ function _clearOpenStreetMollieCheckoutMarkers(rec, { providerStatus = "canceled
       rec.booking.paymentMode = null;
     }
     if (rec.booking.mollie && typeof rec.booking.mollie === "object") {
-      rec.booking.mollie = { ...rec.booking.mollie, status };
+      rec.booking.mollie = {
+        ...rec.booking.mollie,
+        status: persistedMollieStatus,
+      };
     }
   }
 }
@@ -85022,12 +85076,24 @@ function _clearOpenStreetMollieCheckoutMarkers(rec, { providerStatus = "canceled
 async function _markStreetHostedPaymentShadowTerminal(
   env,
   paymentBookingId,
-  { molliePaymentId = "", providerStatus = "canceled" } = {},
+  {
+    molliePaymentId = "",
+    providerStatus = "canceled",
+    ownershipStatus = null,
+    userAbandoned = false,
+  } = {},
 ) {
   const shadowId = safeStr(paymentBookingId, 160);
   if (!shadowId || !env?.BOOKING_KV) return;
   const status = safeStr(providerStatus, 40).toLowerCase() || "canceled";
-  if (!isMollieProviderStatusReleased(status) && !isMollieProviderStatusPaid(status)) {
+  const ownership = safeStr(ownershipStatus, 40).toLowerCase();
+  const allowAbandon =
+    userAbandoned === true || ownership === "abandoned";
+  if (
+    !allowAbandon &&
+    !isMollieProviderStatusReleased(status) &&
+    !isMollieProviderStatusPaid(status)
+  ) {
     return;
   }
   try {
@@ -85051,11 +85117,21 @@ async function _markStreetHostedPaymentShadowTerminal(
       shadow.payment_status = "unpaid";
       shadow.paymentStatus = "unpaid";
     }
+    if (allowAbandon) {
+      shadow.payment_attempt_status = "abandoned";
+      shadow.paymentAttemptStatus = "abandoned";
+      shadow.mollie_checkout_abandoned = true;
+      shadow.mollieCheckoutAbandoned = true;
+    }
+    // Keep authentic provider status on abandon (may remain open).
+    const shadowMollieStatus = allowAbandon
+      ? status || "open"
+      : status;
     shadow.mollie = {
       ...(shadow.mollie && typeof shadow.mollie === "object" ? shadow.mollie : {}),
       id: paymentId || shadow.mollie?.id || null,
       payment_id: paymentId || shadow.mollie?.payment_id || null,
-      status,
+      status: shadowMollieStatus,
       last_checked_at: new Date().toISOString(),
     };
     await env.BOOKING_KV.put(`booking:${shadowId}`, JSON.stringify(shadow), {
@@ -85074,10 +85150,22 @@ async function _releaseStreetHostedOpenCheckoutOwner(
     providerStatus = "canceled",
     molliePaymentId = "",
     paymentBookingId = "",
+    ownershipStatus = null,
+    userAbandoned = false,
+    presentationState = null,
   } = {},
 ) {
   const status = safeStr(providerStatus, 40).toLowerCase() || "canceled";
-  _clearOpenStreetMollieCheckoutMarkers(rec, { providerStatus: status });
+  _clearOpenStreetMollieCheckoutMarkers(rec, {
+    providerStatus: status,
+    ownershipStatus,
+    forgeProviderStatus: userAbandoned !== true,
+    userAbandoned: userAbandoned === true,
+    abandonedPaymentId: molliePaymentId,
+  });
+  if (presentationState) {
+    rec.mollie_checkout_presentation_state = safeStr(presentationState, 40);
+  }
   if (env?.BOOKING_KV) {
     await env.BOOKING_KV.put(`booking:${bookingId}`, JSON.stringify(rec));
   }
@@ -85087,6 +85175,8 @@ async function _releaseStreetHostedOpenCheckoutOwner(
   await _markStreetHostedPaymentShadowTerminal(env, shadowId, {
     molliePaymentId,
     providerStatus: status,
+    ownershipStatus,
+    userAbandoned: userAbandoned === true,
   });
 }
 
@@ -85410,49 +85500,42 @@ async function _controlledCancelOpenStreetMollieCheckout(
       }
     }
 
+    // Best-effort post-DELETE refresh catches a paid race. Pre-GET already
+    // satisfied the required final authoritative refresh; DELETE is not a gate.
     const afterFresh = await _fetchAuthoritativeStreetHostedMollieStatus(
       env,
       tenantScope,
       molliePaymentId,
       rec,
     );
-    if (!afterFresh.ok) {
+    let afterStatus = providerStatus;
+    if (afterFresh?.ok) {
+      const postWire = readSafeMollieCancelWireFields(afterFresh.payment);
+      afterStatus =
+        safeStr(afterFresh.status, 40).toLowerCase() ||
+        postWire.provider_status ||
+        providerStatus;
+      emitMollieHostedCancelWireLog(MOLLIE_HOSTED_CANCEL_LOG_TAGS.POST_GET, {
+        booking_id: wireBookingId,
+        payment_id: wirePaymentId,
+        provider_status: afterStatus,
+        is_cancelable: postWire.is_cancelable,
+      });
+    } else {
       emitMollieHostedCancelWireLog(MOLLIE_HOSTED_CANCEL_LOG_TAGS.POST_GET, {
         booking_id: wireBookingId,
         payment_id: wirePaymentId,
         provider_status: "",
         is_cancelable: null,
       });
-      // DELETE may have raced; without a fresh provider read we cannot release
-      // ownership and must not invent cancel_not_confirmed from stale local open.
-      return {
-        ...resolveMollieRecoveryWhenProviderFetchFailed({
-          action: "cancel",
-          hasCheckoutUrl: !!open?.checkout_url,
-          openCheckout: open,
-        }),
-        mollie_payment_id: molliePaymentId || null,
-        provider_fetch_error: afterFresh.error || "mollie_payment_fetch_failed",
-        cancel_http_ok: cancelHttpOk,
-      };
     }
-    const postWire = readSafeMollieCancelWireFields(afterFresh.payment);
-    const afterStatus =
-      safeStr(afterFresh.status, 40).toLowerCase() ||
-      postWire.provider_status ||
-      providerStatus;
-    emitMollieHostedCancelWireLog(MOLLIE_HOSTED_CANCEL_LOG_TAGS.POST_GET, {
-      booking_id: wireBookingId,
-      payment_id: wirePaymentId,
-      provider_status: afterStatus,
-      is_cancelable: postWire.is_cancelable,
-    });
 
-    const reconcile = resolveMollieCancelReconcileOutcome({
-      providerStatusAfter: afterStatus,
-      cancelHttpOk,
+    // MOLLIE-ONLINE-PAYMENT-USER-CANCEL-FALLBACK-RELEASE-P0:
+    // PAID wins; otherwise abandon Fluxidi online mode immediately.
+    const ownership = resolveMollieUserCancelOwnershipOutcome({
+      providerStatus: afterStatus || providerStatus,
     });
-    if (reconcile.action === "project_paid") {
+    if (ownership.action === "project_paid") {
       return {
         ok: false,
         paid: true,
@@ -85462,28 +85545,25 @@ async function _controlledCancelOpenStreetMollieCheckout(
         mollie_payment_id: molliePaymentId,
       };
     }
-    if (reconcile.release_owner === true) {
-      await _releaseStreetHostedOpenCheckoutOwner(env, bookingId, rec, {
-        providerStatus: afterStatus || "canceled",
-        molliePaymentId,
-        paymentBookingId,
-      });
-      return {
-        ok: true,
-        paid: false,
-        release_owner: true,
-        provider_status: afterStatus || "canceled",
-        mollie_payment_id: molliePaymentId,
-      };
-    }
+    await _releaseStreetHostedOpenCheckoutOwner(env, bookingId, rec, {
+      providerStatus: ownership.provider_status || afterStatus || providerStatus,
+      molliePaymentId,
+      paymentBookingId,
+      ownershipStatus: ownership.ownership_status || "abandoned",
+      userAbandoned: ownership.user_abandoned === true,
+      presentationState: ownership.presentation_state,
+    });
     return {
-      ok: false,
-      error: reconcile.error || "cancel_not_confirmed",
-      message:
-        "The online payment could not be confirmed as canceled. Refresh status before starting another payment.",
-      release_owner: false,
-      provider_status: afterStatus,
+      ok: true,
+      paid: false,
+      release_owner: true,
+      fallback_allowed: true,
+      user_abandoned: ownership.user_abandoned === true,
+      ownership_status: ownership.ownership_status || "abandoned",
+      presentation_state: ownership.presentation_state || "canceled",
+      provider_status: ownership.provider_status || afterStatus || providerStatus,
       mollie_payment_id: molliePaymentId,
+      cancel_http_ok: cancelHttpOk,
     };
   } finally {
     if (lockHeld && lockKey && env?.BOOKING_KV) {
@@ -85753,6 +85833,46 @@ async function recoverOpenStreetMollieCheckoutAuthoritative(
       };
     }
 
+    // User abandoned online mode: keep durable abandon; never resurrect a
+    // stale checkout_url / mollie.open into UI ownership. PAID already won above.
+    if (isStreetCheckoutOwnershipAbandoned(rec)) {
+      if (rec.mollie && typeof rec.mollie === "object") {
+        rec.mollie = { ...rec.mollie, status: providerStatus || rec.mollie.status };
+      }
+      rec.checkout_url = null;
+      rec.checkoutUrl = null;
+      rec.payment_url = null;
+      rec.paymentUrl = null;
+      rec.payment_attempt_status = "abandoned";
+      rec.paymentAttemptStatus = "abandoned";
+      rec.mollie_checkout_abandoned = true;
+      await env.BOOKING_KV.put(`booking:${bookingId}`, JSON.stringify(rec));
+      return {
+        ok: true,
+        action: "refresh",
+        payment_status: "unpaid",
+        paymentStatus: "unpaid",
+        payment_attempt_status: "abandoned",
+        presentation_state: "canceled",
+        mollie_payment_id: molliePaymentId,
+        provider_status: providerStatus || null,
+        fallback_allowed: true,
+        cancel_allowed: false,
+        resumable: false,
+        mollie_checkout_abandoned: true,
+        open_checkout: null,
+        recovery: {
+          presentation_state: "canceled",
+          resumable: false,
+          cancel_allowed: false,
+          fallback_allowed: true,
+          actions: [],
+        },
+        creates_new_mollie_payment: false,
+        reason: "checkout_abandoned",
+      };
+    }
+
     // Still payable — refresh local open markers from provider truth only.
     if (checkoutUrl) {
       _applyCheckoutResumeFieldsToCanonicalRecord(rec, {
@@ -85849,26 +85969,40 @@ async function recoverOpenStreetMollieCheckoutAuthoritative(
     await _releaseOpenDriverPosIntentBestEffort(env, tenantScope, bookingId, {
       reason: "street_checkout_cancel_release",
     });
-    const presentation = resolveMollieOpenPaymentPresentation({
-      providerStatus: cancelOut.provider_status || "canceled",
-      hasCheckoutUrl: false,
-    });
+    // User-abandon keeps authentic provider_status (may stay open). UX
+    // presentation comes from ownership outcome, not provider open/pending.
+    const presentationState =
+      safeStr(cancelOut.presentation_state, 40).toLowerCase() ||
+      resolveMollieOpenPaymentPresentation({
+        providerStatus: isMollieProviderStatusReleased(cancelOut.provider_status)
+          ? cancelOut.provider_status
+          : "canceled",
+        hasCheckoutUrl: false,
+      }).state;
     logCancelFinal({
       ok: true,
       providerStatus: cancelOut.provider_status || "canceled",
       releaseOwner: true,
       fallbackAllowed: true,
-      presentationState: presentation.state,
+      presentationState,
     });
     return {
       ok: true,
       action: "cancel",
       payment_status: "unpaid",
       paymentStatus: "unpaid",
-      presentation_state: presentation.state,
+      payment_attempt_status:
+        cancelOut.ownership_status ||
+        (cancelOut.user_abandoned ? "abandoned" : "cancelled"),
+      paymentAttemptStatus:
+        cancelOut.ownership_status ||
+        (cancelOut.user_abandoned ? "abandoned" : "cancelled"),
+      presentation_state: presentationState,
       fallback_allowed: true,
       cancel_allowed: false,
       resumable: false,
+      mollie_checkout_abandoned: cancelOut.user_abandoned === true,
+      provider_status: cancelOut.provider_status || null,
       mollie_payment_id: cancelOut.mollie_payment_id || null,
       creates_new_mollie_payment: false,
     };
@@ -86519,6 +86653,19 @@ async function createStreetRideCheckoutAuthoritative(
   rec.streetCheckout = true;
   rec.payment_attempt_status = "mollie_open";
   rec.paymentAttemptStatus = "mollie_open";
+  // Entering ONLINE CHECKOUT ACTIVE again clears prior user-abandon markers.
+  rec.mollie_checkout_abandoned = false;
+  rec.mollieCheckoutAbandoned = false;
+  delete rec.mollie_checkout_abandoned_at;
+  delete rec.mollieCheckoutAbandonedAt;
+  delete rec.mollie_checkout_abandoned_payment_id;
+  delete rec.mollieCheckoutAbandonedPaymentId;
+  if (rec.booking && typeof rec.booking === "object") {
+    rec.booking.mollie_checkout_abandoned = false;
+    rec.booking.mollieCheckoutAbandoned = false;
+    rec.booking.payment_attempt_status = "mollie_open";
+    rec.booking.paymentAttemptStatus = "mollie_open";
+  }
   if (!key) key = `booking:${bookingId}`;
   await env.BOOKING_KV.put(key, JSON.stringify(rec));
 

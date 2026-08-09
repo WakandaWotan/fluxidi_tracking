@@ -222,6 +222,9 @@ export function buildOpenMollieCheckoutRecoveryPayload(openCheckout = null) {
 
 /**
  * After cancel attempt: paid race must win; released releases owner.
+ *
+ * Kept for POS-lock / legacy DELETE-confirm callers. Hosted user-cancel UX
+ * uses {@link resolveMollieUserCancelOwnershipOutcome} — DELETE is not a gate.
  */
 export function resolveMollieCancelReconcileOutcome({
   providerStatusAfter = "",
@@ -267,6 +270,59 @@ export function resolveMollieCancelReconcileOutcome({
     release_owner: false,
     fallback_allowed: false,
     may_manual_pay: false,
+  };
+}
+
+/**
+ * MOLLIE-ONLINE-PAYMENT-USER-CANCEL-FALLBACK-RELEASE-P0
+ *
+ * After a successful final authoritative Mollie refresh for user cancel:
+ * - PAID always wins (no fallback release).
+ * - Otherwise Fluxidi abandons checkout ownership immediately.
+ * - Provider status is never forged (open stays open for audit).
+ * - Mollie DELETE is NOT required.
+ */
+export function resolveMollieUserCancelOwnershipOutcome({
+  providerStatus = "",
+} = {}) {
+  const token = _lower(providerStatus, 40);
+  if (isMollieProviderStatusPaid(token)) {
+    return {
+      action: "project_paid",
+      ok: false,
+      error: "payment_already_paid",
+      release_owner: false,
+      fallback_allowed: false,
+      may_manual_pay: false,
+      ownership_status: null,
+      presentation_state: MOLLIE_OPEN_PAYMENT_PRESENTATION.PAID,
+      provider_status: "paid",
+      forge_provider_status: false,
+      user_abandoned: false,
+    };
+  }
+  let presentation = MOLLIE_OPEN_PAYMENT_PRESENTATION.CANCELED;
+  if (token === "expired") {
+    presentation = MOLLIE_OPEN_PAYMENT_PRESENTATION.EXPIRED;
+  } else if (token === "failed") {
+    presentation = MOLLIE_OPEN_PAYMENT_PRESENTATION.FAILED;
+  } else if (token === "canceled" || token === "cancelled") {
+    presentation = MOLLIE_OPEN_PAYMENT_PRESENTATION.CANCELED;
+  }
+  // User cancel / abandon: Fluxidi ownership ends even while Mollie is still
+  // open/payable. Keep authentic provider_status for reconciliation.
+  return {
+    action: "abandon_checkout",
+    ok: true,
+    error: null,
+    release_owner: true,
+    fallback_allowed: true,
+    may_manual_pay: true,
+    ownership_status: "abandoned",
+    presentation_state: presentation,
+    provider_status: token || "open",
+    forge_provider_status: false,
+    user_abandoned: true,
   };
 }
 

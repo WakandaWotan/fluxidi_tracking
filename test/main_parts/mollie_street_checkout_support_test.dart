@@ -920,5 +920,135 @@ void main() {
       expect(receiptDetailsHaveOpenMollieCheckout(cleared), isFalse);
       expect(cleared['payment_attempt_status'], 'expired');
     });
+
+    test('10. open + user abandon → fallback unlocked; provider open kept', () {
+      final abandoned = applyAuthoritativeMollieOwnershipReleaseToDetails(
+        openLocalDetails(),
+        providerStatus: 'open',
+        userAbandoned: true,
+        ownershipStatus: 'abandoned',
+      );
+      expect(receiptDetailsHaveAbandonedMollieCheckout(abandoned), isTrue);
+      expect(receiptDetailsHaveOpenMollieCheckout(abandoned), isFalse);
+      expect(abandoned['checkout_url'], isNull);
+      expect(abandoned['payment_attempt_status'], 'abandoned');
+      expect(abandoned['mollie_checkout_abandoned'], isTrue);
+      expect((abandoned['mollie'] as Map)['status'], 'open');
+    });
+
+    test('2. paid wins → not released for fallback', () {
+      expect(
+        isAuthoritativeMollieOwnershipReleased({
+          'payment_status': 'paid',
+          'presentation_state': 'paid',
+          'fallback_allowed': true,
+          'mollie_checkout_abandoned': true,
+        }),
+        isFalse,
+      );
+    });
+
+    test('3–5. canceled/expired/failed cancel roots release ownership', () {
+      for (final status in ['canceled', 'expired', 'failed']) {
+        expect(
+          isAuthoritativeMollieOwnershipReleased({
+            'ok': true,
+            'fallback_allowed': true,
+            'presentation_state': status,
+            'payment_status': 'unpaid',
+          }),
+          isTrue,
+        );
+      }
+    });
+
+    test('6. abandoned + stale GET open does not resurrect', () {
+      final local = applyAuthoritativeMollieOwnershipReleaseToDetails(
+        openLocalDetails(),
+        providerStatus: 'open',
+        userAbandoned: true,
+        ownershipStatus: 'abandoned',
+      );
+      final merged = mergeReceiptPaymentFieldsPreservingAbandonedCheckout(
+        localDetails: local,
+        incomingFields: {
+          'checkout_url': 'https://www.mollie.com/checkout/stale',
+          'payment_provider': 'mollie',
+          'payment_mode': 'mollie',
+          'payment_attempt_status': 'mollie_open',
+          'payment_status': 'pending',
+        },
+      );
+      expect(receiptDetailsHaveOpenMollieCheckout(merged), isFalse);
+      expect(receiptDetailsHaveAbandonedMollieCheckout(merged), isTrue);
+      expect(merged['checkout_url'], isNull);
+      expect(merged['payment_attempt_status'], 'abandoned');
+    });
+
+    test('7. abandoned survives reopen-shaped merge (restart/receipt)', () {
+      final local = {
+        'payment_status': 'unpaid',
+        'payment_attempt_status': 'abandoned',
+        'mollie_checkout_abandoned': true,
+        'mollie': {'id': 'tr_x', 'status': 'open'},
+      };
+      final merged = mergeReceiptPaymentFieldsPreservingAbandonedCheckout(
+        localDetails: local,
+        incomingFields: {
+          'checkout_url': 'https://www.mollie.com/checkout/x',
+          'payment_provider': 'mollie',
+          'payment_attempt_status': 'mollie_open',
+        },
+      );
+      expect(receiptDetailsHaveOpenMollieCheckout(merged), isFalse);
+      expect(isMollieCheckoutUserAbandoned(merged), isTrue);
+    });
+
+    test('8. abandoned then paid merge → paid wins', () {
+      final local = applyAuthoritativeMollieOwnershipReleaseToDetails(
+        openLocalDetails(),
+        providerStatus: 'open',
+        userAbandoned: true,
+        ownershipStatus: 'abandoned',
+      );
+      final merged = mergeReceiptPaymentFieldsPreservingAbandonedCheckout(
+        localDetails: local,
+        incomingFields: {
+          'payment_status': 'paid',
+          'paymentStatus': 'paid',
+          'paid_at': '2026-08-09T06:00:00.000Z',
+        },
+      );
+      expect(merged['payment_status'], 'paid');
+      expect(
+        shouldKeepReceiptPaidMonotonic(
+          currentlyPaid: true,
+          authoritativeSaysPaid: true,
+          authoritativeReadSucceeded: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('9. cancel root with abandoned markers releases ownership', () {
+      expect(
+        isAuthoritativeMollieOwnershipReleased({
+          'ok': true,
+          'fallback_allowed': true,
+          'mollie_checkout_abandoned': true,
+          'payment_attempt_status': 'abandoned',
+          'presentation_state': 'canceled',
+          'provider_status': 'open',
+        }),
+        isTrue,
+      );
+      expect(
+        isMollieCheckoutUserAbandoned({
+          'mollie_checkout_abandoned': true,
+          'ownership_status': 'abandoned',
+        }),
+        isTrue,
+      );
+    });
   });
 }
