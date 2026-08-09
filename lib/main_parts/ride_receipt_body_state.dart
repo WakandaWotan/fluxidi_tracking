@@ -4510,8 +4510,11 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
     if (bookingId.isEmpty) return;
     if (choice == MollieOpenPaymentRecoveryChoice.dismiss) return;
 
+    // MOLLIE-HOSTED-RESUME-EXISTING-CHECKOUT-P0: resume must reopen the
+    // existing hosted checkout via recovery action=resume + launchUrl.
+    // Never mint via the street-checkout create path from this choice.
     if (choice == MollieOpenPaymentRecoveryChoice.resume) {
-      await _startMollieStreetCheckout(context);
+      await _resumeOpenMollieCheckout(context);
       return;
     }
 
@@ -4590,6 +4593,152 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(_receiptText('paymentStillPending'))),
       );
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_receiptText('paymentRecoveryError'))),
+      );
+    } finally {
+      if (mounted) setState(() => _mollieRecoveryBusy = false);
+    }
+  }
+
+  /// MOLLIE-HOSTED-RESUME-EXISTING-CHECKOUT-P0: reopen the SAME existing
+  /// Mollie hosted checkout via recovery `action=resume` + external launch.
+  /// Never mints a second payment (no POST /street-checkout).
+  Future<void> _resumeOpenMollieCheckout(BuildContext context) async {
+    if (_mollieRecoveryBusy) return;
+    final bookingId = (item.bookingId ?? '').trim();
+    if (bookingId.isEmpty) return;
+
+    final authHeaders = await resolveInCarPaymentAuthHeaders();
+    if (authHeaders.mode == InCarPaymentAuthMode.none) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_receiptText('paymentAuthRequired'))),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() => _mollieRecoveryBusy = true);
+    final maskedRef = _safeRefPreview(bookingId);
+    try {
+      debugPrint(
+        '[MOLLIE_STREET_CHECKOUT][RESUME] booking=$maskedRef action=resume',
+      );
+      final root = await _postMollieCheckoutRecovery(
+        bookingId: bookingId,
+        action: 'resume',
+        headers: authHeaders.headers,
+      );
+      if (!mounted || root == null) return;
+      final recoveryHttp =
+          (root['_http_code'] as num?)?.toInt() ??
+          (root['http_code'] as num?)?.toInt();
+      final outcome = resolveMollieHostedResumeOutcome(
+        root,
+        httpCode: recoveryHttp,
+      );
+      debugPrint(
+        '[MOLLIE_STREET_CHECKOUT][RESUME] booking=$maskedRef '
+        'decision=${outcome.decision.name} '
+        'hasCheckout=${(outcome.checkoutUrl ?? '').isNotEmpty} '
+        'ok=${root['ok']} err=${root['error']}',
+      );
+
+      switch (outcome.decision) {
+        case MollieHostedResumeDecision.paid:
+          setState(() {
+            _openMollieRecovery = null;
+            _paymentStatus = _ReceiptPaymentStatus.paid;
+          });
+          if (!context.mounted) return;
+          await _markMollieStreetCheckoutPaid(context);
+          return;
+
+        case MollieHostedResumeDecision.released:
+          setState(() => _openMollieRecovery = null);
+          final fields = await _fetchAuthoritativePaymentFields(bookingId);
+          if (mounted && fields != null && fields.isNotEmpty) {
+            _mergePaymentFieldsIntoReceiptDetails(fields);
+            setState(() {});
+          }
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_receiptText('paymentOwnerReleased'))),
+          );
+          return;
+
+        case MollieHostedResumeDecision.providerUnavailable:
+          if (outcome.recovery != null) {
+            setState(() => _openMollieRecovery = outcome.recovery);
+          }
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_receiptText('paymentRecoveryError'))),
+          );
+          return;
+
+        case MollieHostedResumeDecision.notResumable:
+          if (outcome.recovery != null) {
+            setState(() => _openMollieRecovery = outcome.recovery);
+          }
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_receiptText('paymentRecoveryError'))),
+          );
+          return;
+
+        case MollieHostedResumeDecision.launchCheckout:
+          final checkoutUrl = (outcome.checkoutUrl ?? '').trim();
+          if (outcome.recovery != null) {
+            setState(() => _openMollieRecovery = outcome.recovery);
+          }
+          final paymentBookingId = (outcome.paymentBookingId ?? '').trim();
+          if (paymentBookingId.isNotEmpty) {
+            setFluxidiPendingPayment(
+              paymentBookingId: paymentBookingId,
+              publicBookingId: bookingId,
+            );
+          }
+          if (!context.mounted) return;
+          final uri = Uri.parse(checkoutUrl);
+          try {
+            final launched = await launchUrl(
+              uri,
+              mode: LaunchMode.externalApplication,
+            );
+            if (!launched && context.mounted) {
+              // Fail-closed: keep ownership; do not mint a replacement.
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    PaymentQrPanel.checkoutLaunchFailedFor(
+                      appConfig.currentLanguage,
+                    ),
+                  ),
+                ),
+              );
+            }
+          } catch (err) {
+            debugPrint(
+              '[MOLLIE_STREET_CHECKOUT][RESUME][LAUNCH_ERR] '
+              'booking=$maskedRef error=$err',
+            );
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  PaymentQrPanel.checkoutLaunchFailedFor(
+                    appConfig.currentLanguage,
+                  ),
+                ),
+              ),
+            );
+          }
+          return;
+      }
     } catch (_) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

@@ -349,13 +349,22 @@ class MollieOpenPaymentRecoveryInfo {
   final String? paymentBookingId;
   final String? molliePaymentId;
 
-  bool get isPendingOwner =>
-      !fallbackAllowed &&
-      (presentationState == 'pending' ||
-          presentationState == 'checking' ||
-          presentationState == 'refreshing' ||
-          presentationState == 'canceling' ||
-          presentationState == 'recoveryError');
+  bool get isPendingOwner {
+    if (fallbackAllowed) return false;
+    // presentationState is normalized lowercase by parseMollieOpenPaymentRecovery.
+    switch (presentationState) {
+      case 'pending':
+      case 'checking':
+      case 'refreshing':
+      case 'canceling':
+      case 'cancelling':
+      case 'recoveryerror':
+      case 'recovery_error':
+        return true;
+      default:
+        return false;
+    }
+  }
 }
 
 /// Parses open-checkout recovery UI state from a server response.
@@ -654,4 +663,176 @@ bool shouldKeepReceiptPaidMonotonic({
   if (!authoritativeReadSucceeded) return true;
   // Authoritative unpaid while local is paid: keep paid (no revert).
   return true;
+}
+
+/// Decision for `POST .../mollie-checkout-recovery` with `action=resume`.
+///
+/// MOLLIE-HOSTED-RESUME-EXISTING-CHECKOUT-P0: resume never mints; it either
+/// launches the existing checkout URL or adopts paid / released / fail-closed
+/// provider truth from the recovery response.
+enum MollieHostedResumeDecision {
+  /// Resumable + non-empty checkout URL — caller may launch externally.
+  launchCheckout,
+
+  /// Provider says paid — no launch; paid wins.
+  paid,
+
+  /// Provider terminal (expired/failed/canceled) or ownership released.
+  released,
+
+  /// Authoritative Mollie GET unavailable — keep ownership fail-closed.
+  providerUnavailable,
+
+  /// No safe launchable URL; keep ownership / show retryable error.
+  notResumable,
+}
+
+/// Parsed outcome of a hosted-checkout resume recovery call.
+class MollieHostedResumeOutcome {
+  const MollieHostedResumeOutcome({
+    required this.decision,
+    this.checkoutUrl,
+    this.recovery,
+    this.paymentBookingId,
+    this.molliePaymentId,
+  });
+
+  final MollieHostedResumeDecision decision;
+  final String? checkoutUrl;
+  final MollieOpenPaymentRecoveryInfo? recovery;
+  final String? paymentBookingId;
+  final String? molliePaymentId;
+}
+
+/// True when [url] is a http(s) URI safe to pass to `launchUrl`.
+bool isSafeMollieCheckoutLaunchUrl(String? url) {
+  final text = (url ?? '').trim();
+  if (text.isEmpty) return false;
+  final uri = Uri.tryParse(text);
+  if (uri == null || !uri.hasScheme) return false;
+  return uri.scheme == 'https' || uri.scheme == 'http';
+}
+
+/// Pure decision for recovery `action=resume` (never invents a new payment).
+MollieHostedResumeOutcome resolveMollieHostedResumeOutcome(
+  Map<String, dynamic>? decoded, {
+  int? httpCode,
+}) {
+  if (decoded == null) {
+    return const MollieHostedResumeOutcome(
+      decision: MollieHostedResumeDecision.providerUnavailable,
+    );
+  }
+
+  final payStatus = _lower(
+    decoded['payment_status'] ?? decoded['paymentStatus'],
+  );
+  final presentation = _lower(
+    decoded['presentation_state'] ?? decoded['presentationState'],
+  );
+  final err = _lower(decoded['error'] ?? decoded['error_code'] ?? decoded['code']);
+
+  final recovery = parseMollieOpenPaymentRecovery(
+    decoded,
+    httpCode: httpCode,
+  );
+
+  if (payStatus == 'paid' || presentation == 'paid') {
+    return MollieHostedResumeOutcome(
+      decision: MollieHostedResumeDecision.paid,
+      recovery: recovery,
+      paymentBookingId: _firstNonEmpty(decoded, [
+        'payment_booking_id',
+        'paymentBookingId',
+      ]),
+      molliePaymentId: _firstNonEmpty(decoded, [
+        'mollie_payment_id',
+        'molliePaymentId',
+      ]),
+    );
+  }
+
+  final released =
+      recovery?.fallbackAllowed == true ||
+      _asBool(decoded['fallback_allowed'] ?? decoded['fallbackAllowed']) ||
+      presentation == 'canceled' ||
+      presentation == 'cancelled' ||
+      presentation == 'expired' ||
+      presentation == 'failed' ||
+      payStatus == 'canceled' ||
+      payStatus == 'cancelled' ||
+      payStatus == 'expired' ||
+      payStatus == 'failed';
+  if (released) {
+    return MollieHostedResumeOutcome(
+      decision: MollieHostedResumeDecision.released,
+      recovery: recovery,
+      paymentBookingId: recovery?.paymentBookingId ??
+          _firstNonEmpty(decoded, ['payment_booking_id', 'paymentBookingId']),
+      molliePaymentId: recovery?.molliePaymentId ??
+          _firstNonEmpty(decoded, ['mollie_payment_id', 'molliePaymentId']),
+    );
+  }
+
+  if (err == 'provider_status_unavailable' ||
+      err == 'recovery_refresh_failed' ||
+      presentation == 'recoveryerror') {
+    return MollieHostedResumeOutcome(
+      decision: MollieHostedResumeDecision.providerUnavailable,
+      recovery: recovery,
+      checkoutUrl: recovery?.checkoutUrl ??
+          _firstNonEmpty(decoded, ['checkout_url', 'checkoutUrl']),
+      paymentBookingId: recovery?.paymentBookingId ??
+          _firstNonEmpty(decoded, ['payment_booking_id', 'paymentBookingId']),
+      molliePaymentId: recovery?.molliePaymentId ??
+          _firstNonEmpty(decoded, ['mollie_payment_id', 'molliePaymentId']),
+    );
+  }
+
+  final checkoutUrl = recovery?.checkoutUrl ??
+      _firstNonEmpty(decoded, [
+        'checkout_url',
+        'checkoutUrl',
+        'payment_url',
+        'paymentUrl',
+      ]);
+  final resumable = recovery != null
+      ? recovery.resumable
+      : (_asBool(decoded['resumable']) ||
+          (checkoutUrl != null && checkoutUrl.isNotEmpty));
+  final paymentBookingId = recovery?.paymentBookingId ??
+      _firstNonEmpty(decoded, ['payment_booking_id', 'paymentBookingId']);
+  final molliePaymentId = recovery?.molliePaymentId ??
+      _firstNonEmpty(decoded, ['mollie_payment_id', 'molliePaymentId']);
+
+  if (resumable && isSafeMollieCheckoutLaunchUrl(checkoutUrl)) {
+    // Prefer a pending-owner recovery snapshot so the receipt keeps blocking
+    // fallbacks after a successful resume launch.
+    final pendingRecovery = recovery ??
+        MollieOpenPaymentRecoveryInfo(
+          presentationState: presentation.isEmpty ? 'pending' : presentation,
+          resumable: true,
+          cancelAllowed: true,
+          fallbackAllowed: false,
+          actions: const ['refresh_status', 'resume_checkout', 'cancel_open_checkout'],
+          checkoutUrl: checkoutUrl,
+          paymentBookingId: paymentBookingId,
+          molliePaymentId: molliePaymentId,
+        );
+    return MollieHostedResumeOutcome(
+      decision: MollieHostedResumeDecision.launchCheckout,
+      checkoutUrl: checkoutUrl!.trim(),
+      recovery: pendingRecovery,
+      paymentBookingId: paymentBookingId,
+      molliePaymentId: molliePaymentId,
+    );
+  }
+
+  return MollieHostedResumeOutcome(
+    decision: MollieHostedResumeDecision.notResumable,
+    recovery: recovery,
+    checkoutUrl: checkoutUrl,
+    paymentBookingId: paymentBookingId,
+    molliePaymentId: molliePaymentId,
+  );
 }

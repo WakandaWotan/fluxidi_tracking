@@ -599,4 +599,166 @@ void main() {
       );
     });
   });
+
+  group('MOLLIE-HOSTED-RESUME-EXISTING-CHECKOUT-P0', () {
+    const existingUrl = 'https://www.mollie.com/checkout/select/resume_same';
+
+    test('1. resumable existing payment -> launchCheckout with exact URL', () {
+      final outcome = resolveMollieHostedResumeOutcome({
+        'ok': true,
+        'action': 'resume',
+        'reused': true,
+        'checkout_url': existingUrl,
+        'checkoutUrl': existingUrl,
+        'payment_booking_id': 'pay_shadow_1',
+        'mollie_payment_id': 'tr_same_owner',
+        'payment_status': 'pending',
+        'presentation_state': 'pending',
+        'resumable': true,
+        'cancel_allowed': true,
+        'fallback_allowed': false,
+        'creates_new_mollie_payment': false,
+      });
+      expect(outcome.decision, MollieHostedResumeDecision.launchCheckout);
+      expect(outcome.checkoutUrl, existingUrl);
+      expect(outcome.paymentBookingId, 'pay_shadow_1');
+      expect(outcome.molliePaymentId, 'tr_same_owner');
+      expect(outcome.recovery?.isPendingOwner, isTrue);
+      expect(outcome.recovery?.fallbackAllowed, isFalse);
+    });
+
+    test('2. current payment owner retained on launch decision', () {
+      final outcome = resolveMollieHostedResumeOutcome({
+        'ok': true,
+        'action': 'resume',
+        'reused': true,
+        'checkout_url': existingUrl,
+        'payment_booking_id': 'pay_owner_keep',
+        'mollie_payment_id': 'tr_owner_keep',
+        'resumable': true,
+        'fallback_allowed': false,
+        'creates_new_mollie_payment': false,
+      });
+      expect(outcome.decision, MollieHostedResumeDecision.launchCheckout);
+      expect(outcome.paymentBookingId, 'pay_owner_keep');
+      expect(outcome.molliePaymentId, 'tr_owner_keep');
+      expect(outcome.recovery?.checkoutUrl, existingUrl);
+      expect(outcome.recovery?.fallbackAllowed, isFalse);
+    });
+
+    test('3. terminal expired -> released, no launch', () {
+      final outcome = resolveMollieHostedResumeOutcome({
+        'ok': true,
+        'action': 'resume',
+        'payment_status': 'unpaid',
+        'presentation_state': 'expired',
+        'fallback_allowed': true,
+        'resumable': false,
+        'cancel_allowed': false,
+        'open_checkout': null,
+        'recovery': {
+          'presentation_state': 'expired',
+          'resumable': false,
+          'cancel_allowed': false,
+          'fallback_allowed': true,
+          'actions': <String>[],
+        },
+      });
+      expect(outcome.decision, MollieHostedResumeDecision.released);
+      expect(outcome.checkoutUrl, isNull);
+    });
+
+    test('4. terminal failed -> released, no launch', () {
+      final outcome = resolveMollieHostedResumeOutcome({
+        'ok': true,
+        'action': 'resume',
+        'presentation_state': 'failed',
+        'fallback_allowed': true,
+        'resumable': false,
+        'recovery': {
+          'presentation_state': 'failed',
+          'resumable': false,
+          'cancel_allowed': false,
+          'fallback_allowed': true,
+          'actions': <String>[],
+        },
+      });
+      expect(outcome.decision, MollieHostedResumeDecision.released);
+    });
+
+    test('5. paid -> paid wins, no launch, fallback blocked', () {
+      final outcome = resolveMollieHostedResumeOutcome({
+        'ok': true,
+        'action': 'resume',
+        'payment_status': 'paid',
+        'presentation_state': 'paid',
+        'fallback_allowed': false,
+        'resumable': false,
+        'checkout_url': existingUrl,
+      });
+      expect(outcome.decision, MollieHostedResumeDecision.paid);
+      // Paid must not be treated as a launchable resume.
+      expect(outcome.decision, isNot(MollieHostedResumeDecision.launchCheckout));
+      expect(
+        shouldKeepReceiptPaidMonotonic(
+          currentlyPaid: true,
+          authoritativeSaysPaid: true,
+          authoritativeReadSucceeded: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('6. provider status unavailable -> fail-closed, no launch', () {
+      final outcome = resolveMollieHostedResumeOutcome({
+        'ok': false,
+        'action': 'resume',
+        'error': 'provider_status_unavailable',
+        'presentation_state': 'recoveryError',
+        'fallback_allowed': false,
+        'resumable': true,
+        'open_checkout': {
+          'checkout_url': existingUrl,
+          'mollie_payment_id': 'tr_still_open',
+          'mollie_status': 'open',
+        },
+        'recovery': {
+          'presentation_state': 'recoveryError',
+          'resumable': true,
+          'cancel_allowed': true,
+          'fallback_allowed': false,
+          'actions': ['refresh_status'],
+        },
+      });
+      expect(outcome.decision, MollieHostedResumeDecision.providerUnavailable);
+      expect(outcome.decision, isNot(MollieHostedResumeDecision.launchCheckout));
+      expect(outcome.recovery?.fallbackAllowed, isFalse);
+      expect(outcome.recovery?.isPendingOwner, isTrue);
+    });
+
+    test('7. not resumable without URL -> notResumable (no create)', () {
+      final outcome = resolveMollieHostedResumeOutcome({
+        'ok': false,
+        'error': 'checkout_not_resumable',
+        'resumable': false,
+        'fallback_allowed': false,
+        'recovery': {
+          'presentation_state': 'pending',
+          'resumable': false,
+          'cancel_allowed': true,
+          'fallback_allowed': false,
+          'actions': ['refresh_status', 'cancel_open_checkout'],
+        },
+      }, httpCode: 409);
+      expect(outcome.decision, MollieHostedResumeDecision.notResumable);
+      expect(isSafeMollieCheckoutLaunchUrl(outcome.checkoutUrl), isFalse);
+    });
+
+    test('safe launch URL rejects non-http schemes', () {
+      expect(isSafeMollieCheckoutLaunchUrl(existingUrl), isTrue);
+      expect(isSafeMollieCheckoutLaunchUrl('javascript:alert(1)'), isFalse);
+      expect(isSafeMollieCheckoutLaunchUrl(''), isFalse);
+      expect(isSafeMollieCheckoutLaunchUrl(null), isFalse);
+    });
+  });
 }

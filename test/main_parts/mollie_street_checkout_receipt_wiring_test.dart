@@ -141,6 +141,70 @@ void main() {
       );
     });
 
+    test(
+      'MOLLIE-HOSTED-RESUME-P0: resume does NOT call _startMollieStreetCheckout',
+      () {
+        expect(
+          receiptSource,
+          contains('Future<void> _resumeOpenMollieCheckout(BuildContext context)'),
+        );
+        expect(
+          receiptSource,
+          contains('await _resumeOpenMollieCheckout(context);'),
+        );
+
+        final runIdx = receiptSource.indexOf(
+          'Future<void> _runOpenMollieRecoveryAction(',
+        );
+        expect(runIdx, greaterThan(-1));
+        final resumeHelperIdx = receiptSource.indexOf(
+          'Future<void> _resumeOpenMollieCheckout(BuildContext context)',
+          runIdx,
+        );
+        expect(resumeHelperIdx, greaterThan(runIdx));
+        final runBody = receiptSource.substring(runIdx, resumeHelperIdx);
+        expect(
+          runBody,
+          contains('MollieOpenPaymentRecoveryChoice.resume'),
+        );
+        expect(runBody, contains('await _resumeOpenMollieCheckout(context);'));
+        expect(runBody, isNot(contains('await _startMollieStreetCheckout')));
+
+        final nextMethodIdx = receiptSource.indexOf(
+          '\n  void _togglePaidDemo(',
+          resumeHelperIdx,
+        );
+        expect(nextMethodIdx, greaterThan(resumeHelperIdx));
+        final resumeBody = receiptSource.substring(
+          resumeHelperIdx,
+          nextMethodIdx,
+        );
+        expect(resumeBody, contains("action: 'resume'"));
+        expect(resumeBody, contains('_postMollieCheckoutRecovery('));
+        expect(resumeBody, contains('resolveMollieHostedResumeOutcome'));
+        expect(resumeBody, contains('launchUrl('));
+        expect(resumeBody, contains('LaunchMode.externalApplication'));
+        expect(resumeBody, contains('_mollieRecoveryBusy'));
+        expect(resumeBody, isNot(contains('/street-checkout')));
+        expect(resumeBody, isNot(contains('_startMollieStreetCheckout')));
+      },
+    );
+
+    test(
+      'MOLLIE-HOSTED-RESUME-P0: after launch, app resume still auto-refreshes',
+      () {
+        expect(receiptSource, contains("reason: 'app_resume'"));
+        expect(
+          receiptSource,
+          contains('_maybeAuthoritativeMollieCheckoutRefresh'),
+        );
+        expect(
+          receiptSource,
+          contains('void didChangeAppLifecycleState(AppLifecycleState state)'),
+        );
+      },
+    );
+
     test('street dialog uses generic Mollie instruction (not Bancontact-only)', () {
       expect(
         receiptSource,
