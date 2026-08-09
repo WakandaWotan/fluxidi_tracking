@@ -1,0 +1,64 @@
+Fluxidi — Google Play Console “App access” instructions (English)
+
+Package: com.fluxidi.tracking
+Build: Google Play Internal testing (consumption-only company SaaS)
+
+--------------------------------------------------
+REQUIRED DEMO ACCOUNTS (create outside source control)
+--------------------------------------------------
+
+Create durable, non-expiring demo credentials (no SMS/OTP). Store passwords
+only in Play Console App access / a secure password manager — never in git.
+
+1) Company admin (required)
+   Role: company owner/admin
+   Purpose: business home, bookings, drivers/vehicles, subscription STATUS
+            page (read-only entitlements; no in-app SaaS purchase on Play),
+            Chiron/compliance surfaces as available for the demo tenant.
+
+2) Driver (required)
+   Role: driver linked to the demo company
+   Purpose: active trip / navigation / metering / ride payment surfaces
+            (Mollie online, QR, cash, Tap to Pay, invoice where configured).
+
+3) Customer (recommended if customer booking UI is reviewed)
+   Role: customer account able to open a booking with the demo company
+   Purpose: customer booking + tracking views.
+
+Do NOT require one-time SMS codes unavailable to Google reviewers.
+Prefer email+password or a fixed company PIN already provisioned.
+
+--------------------------------------------------
+PLAY CONSOLE PASTE TEXT (fill credentials in Console only)
+--------------------------------------------------
+
+All core features are behind sign-in.
+
+Use these durable demo accounts (no SMS OTP):
+
+Company admin
+- Email / username: <FILL_IN_PLAY_CONSOLE_ONLY>
+- Password: <FILL_IN_PLAY_CONSOLE_ONLY>
+- Steps: Open app → Business / Company sign-in → enter credentials → open
+  Bookings and Subscription & billing. Subscription status is visible;
+  purchasing Fluxidi SaaS plans inside the Play app is disabled by design.
+  Manage subscriptions outside the Play-distributed app.
+
+Driver
+- Email / username / driver id: <FILL_IN_PLAY_CONSOLE_ONLY>
+- Password / PIN: <FILL_IN_PLAY_CONSOLE_ONLY>
+- Steps: Open app → Driver sign-in → accept location while using the app →
+  open an assigned/demo ride → navigation and ride payment (physical
+  transport payments via Mollie/QR/cash/Tap/invoice).
+
+Customer (optional)
+- Email / username: <FILL_IN_PLAY_CONSOLE_ONLY>
+- Password: <FILL_IN_PLAY_CONSOLE_ONLY>
+- Steps: Open app → Customer sign-in → open bookings.
+
+Notes for reviewers:
+- Location permission is foreground / while-in-use for active trips.
+- The app does not request background (“Always”) location.
+- Privacy policy: https://fluxidi.com/pages/privacybeleid?lang=en
+- Account deletion (web, no reinstall): https://fluxidi.com/pages/account-en-gegevens-verwijderen
+- Support: info@fluxidi.com

@@ -82,14 +82,12 @@ flutter:
     # asset directories are NOT recursive, so every language directory is
     # listed explicitly. Only png/<language>/ is bundled - the editable SVG
     # masters, contact-sheet previews and manifests stay out of the app.
+    # Runtime HUD uses BLACK-CONTOUR-V3 under png/<lang>/ only.
+    # Legacy png_captioned/ stays on disk for inventory but is not packaged.
     - assets/fluxidi_navigation_signs_v3/png/nl/
     - assets/fluxidi_navigation_signs_v3/png/en/
     - assets/fluxidi_navigation_signs_v3/png/fr/
     - assets/fluxidi_navigation_signs_v3/png/es/
-    - assets/fluxidi_navigation_signs_v3/png_captioned/nl/
-    - assets/fluxidi_navigation_signs_v3/png_captioned/en/
-    - assets/fluxidi_navigation_signs_v3/png_captioned/fr/
-    - assets/fluxidi_navigation_signs_v3/png_captioned/es/
     - assets/fluxidi/
     - assets/fluxidi/onboarding/
     - assets/fluxidi/brochures/

@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/chiron_company_connection_config.dart';
+import 'package:fluxidi_tracking/company/fluxidi_play_distribution.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
 import 'package:http/http.dart' as http;
@@ -6407,6 +6408,18 @@ startCompanySubscriptionCheckout({
   required String companyId,
   String? returnUrl,
 }) async {
+  // GOOGLE-PLAY-SAAS-CONSUMPTION-ONLY-P0: Play AAB must not start SaaS Mollie
+  // checkout. Entitlement/status reads use fetchCompanySubscriptionProfile.
+  if (!kFluxidiCompanySaasCheckoutEnabled) {
+    debugPrint(
+      '[SUBSCRIPTION_CHECKOUT_START][BLOCKED] '
+      'reason=$kFluxidiCompanySaasCheckoutDisabledError',
+    );
+    return const BackendSubscriptionCheckoutStartResult(
+      ok: false,
+      error: kFluxidiCompanySaasCheckoutDisabledError,
+    );
+  }
   final scope = _resolveAdminTenantCompanyScope(
     tenantId: tenantId,
     companyId: companyId,
@@ -6500,6 +6513,18 @@ startCompanySubscriptionAddonCheckout({
   int quantity = 1,
   String? returnUrl,
 }) async {
+  // GOOGLE-PLAY-SAAS-CONSUMPTION-ONLY-P0: block paid SaaS add-on Mollie
+  // checkout on Play-distributed builds.
+  if (!kFluxidiCompanySaasCheckoutEnabled) {
+    debugPrint(
+      '[SUBSCRIPTION_ADDON_CHECKOUT_START][BLOCKED] '
+      'reason=$kFluxidiCompanySaasCheckoutDisabledError addon=$addonCode',
+    );
+    return const BackendSubscriptionCheckoutStartResult(
+      ok: false,
+      error: kFluxidiCompanySaasCheckoutDisabledError,
+    );
+  }
   final scope = _resolveAdminTenantCompanyScope(
     tenantId: tenantId,
     companyId: companyId,

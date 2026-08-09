@@ -361,6 +361,34 @@ void main() {
             'ACCESS_BACKGROUND_LOCATION — the app never requests Always '
             'location and never starts a location FGS.',
       );
+      // No stale nested/orphan manifests under android/app/src may reintroduce
+      // ACCESS_BACKGROUND_LOCATION into a future merge.
+      final offenders = <String>[];
+      final srcRoot = Directory('android/app/src');
+      if (srcRoot.existsSync()) {
+        for (final entity in srcRoot.listSync(recursive: true)) {
+          if (entity is! File) continue;
+          if (!entity.path.toLowerCase().endsWith('androidmanifest.xml')) {
+            continue;
+          }
+          final text = entity.readAsStringSync();
+          if (bgLocPerm.hasMatch(text)) {
+            offenders.add(entity.path.replaceAll('\\', '/'));
+          }
+        }
+      }
+      expect(
+        offenders,
+        isEmpty,
+        reason:
+            'No AndroidManifest under android/app/src may declare '
+            'ACCESS_BACKGROUND_LOCATION. Found: $offenders',
+      );
+      expect(
+        Directory('android/app/src/main/android').existsSync(),
+        isFalse,
+        reason: 'Stale nested android/app/src/main/android tree must stay gone',
+      );
     });
 
     test('release code never wires foregroundNotificationConfig or Always',

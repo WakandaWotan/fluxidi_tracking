@@ -163,10 +163,37 @@ class _CompanySubscriptionBillingPageState
     return resolveActiveCompanyPricingMarket();
   }
 
+  /// Informational-only notice when Play distribution disables SaaS purchase.
+  /// No checkout URL or external payment link is offered.
+  Widget _playSaasManagedOutsideNotice() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: _chip(
+        text: fluxidiPlaySaasManagedOutsideMessage(
+          languageCode: currentLanguageCode,
+        ),
+        bg: _businessThemePalette.surfaceAlt.withOpacity(
+          _businessThemePalette.isDark ? 0.66 : 0.92,
+        ),
+        border: _businessThemePalette.border.withOpacity(0.7),
+        textColor: _businessThemePalette.textMuted,
+        icon: Icons.info_outline,
+      ),
+    );
+  }
+
   /// Start the Fluxidi-owned subscription checkout and open the Mollie payment
   /// window externally. Never embeds Mollie in a WebView. Refreshes the profile
   /// when the backend reports the subscription is already active.
   Future<void> _startCheckout(BackendSubscriptionProfile profile) async {
+    if (!kFluxidiCompanySaasCheckoutEnabled) {
+      _showSnack(
+        fluxidiPlaySaasManagedOutsideMessage(
+          languageCode: currentLanguageCode,
+        ),
+      );
+      return;
+    }
     if (_activating) return;
     final scopeId = _activeCompanyId();
     if (scopeId == null || scopeId.trim().isEmpty) {
@@ -375,6 +402,14 @@ class _CompanySubscriptionBillingPageState
   Future<void> _startExtraVehicleAddonCheckout(
     BackendSubscriptionProfile profile,
   ) async {
+    if (!kFluxidiCompanySaasCheckoutEnabled) {
+      _showSnack(
+        fluxidiPlaySaasManagedOutsideMessage(
+          languageCode: currentLanguageCode,
+        ),
+      );
+      return;
+    }
     if (_startingAddonCheckout) return;
     final scopeId = _activeCompanyId();
     if (scopeId == null || scopeId.trim().isEmpty) {
@@ -482,6 +517,14 @@ class _CompanySubscriptionBillingPageState
   Future<void> _startExtraDriverAddonCheckout(
     BackendSubscriptionProfile profile,
   ) async {
+    if (!kFluxidiCompanySaasCheckoutEnabled) {
+      _showSnack(
+        fluxidiPlaySaasManagedOutsideMessage(
+          languageCode: currentLanguageCode,
+        ),
+      );
+      return;
+    }
     if (_startingExtraDriverAddonCheckout) return;
     final scopeId = _activeCompanyId();
     if (scopeId == null || scopeId.trim().isEmpty) {
@@ -799,6 +842,15 @@ class _CompanySubscriptionBillingPageState
   /// is active it renders the real activation button; otherwise it renders a
   /// disabled button plus copy explaining add-ons need an active subscription.
   Widget _extraVehicleAddonFooter(BackendSubscriptionProfile profile) {
+    if (!kFluxidiCompanySaasCheckoutEnabled) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _playSaasManagedOutsideNotice(),
+          _extraVehicleCancellationControls(profile),
+        ],
+      );
+    }
     final bool isActive = _profileIsActive(profile);
     final button = SizedBox(
       width: double.infinity,
@@ -1076,6 +1128,15 @@ class _CompanySubscriptionBillingPageState
   }
 
   Widget _extraDriverAddonFooter(BackendSubscriptionProfile profile) {
+    if (!kFluxidiCompanySaasCheckoutEnabled) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _playSaasManagedOutsideNotice(),
+          _extraDriverCancellationControls(profile),
+        ],
+      );
+    }
     final bool isActive = _profileIsActive(profile);
     final button = SizedBox(
       width: double.infinity,
@@ -1244,6 +1305,14 @@ class _CompanySubscriptionBillingPageState
     BackendSubscriptionProfile profile,
     int pdfs,
   ) async {
+    if (!kFluxidiCompanySaasCheckoutEnabled) {
+      _showSnack(
+        fluxidiPlaySaasManagedOutsideMessage(
+          languageCode: currentLanguageCode,
+        ),
+      );
+      return;
+    }
     if (!_pdfBundleIsActionable(pdfs)) return;
     if (_pdfBundleBusyStarting(pdfs)) return;
     final scopeId = _activeCompanyId();
@@ -1540,6 +1609,15 @@ class _CompanySubscriptionBillingPageState
     int pdfs,
   ) {
     if (!_pdfBundleIsActionable(pdfs)) return null;
+    if (!kFluxidiCompanySaasCheckoutEnabled) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _playSaasManagedOutsideNotice(),
+          _pdfBundleCancellationControls(profile, pdfs),
+        ],
+      );
+    }
     final bool isActive = _profileIsActive(profile);
     final bool starting = _pdfBundleBusyStarting(pdfs);
     final button = SizedBox(
@@ -1917,6 +1995,11 @@ class _CompanySubscriptionBillingPageState
           icon: Icons.public_off_outlined,
         ),
       );
+    }
+
+    // Play distribution: consumption-only — no activate / Mollie purchase CTA.
+    if (!kFluxidiCompanySaasCheckoutEnabled) {
+      return _playSaasManagedOutsideNotice();
     }
 
     // Supported + not active (trialing / inactive) -> activate button.
