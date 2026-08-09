@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/company/company_fleet_operational.dart';
 import 'package:fluxidi_tracking/driver_creator_dialog.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
@@ -409,7 +410,19 @@ class _VehicleComplianceDocumentStore {
 }
 
 class VehicleManagementPage extends StatefulWidget {
-  const VehicleManagementPage({super.key});
+  const VehicleManagementPage({
+    super.key,
+    this.autoOpenNewVehicleEditor = false,
+    this.popPageAfterSuccessfulNewVehicleSave = false,
+  });
+
+  /// When true, opens the canonical new-vehicle editor once after first frame.
+  /// Used by first-company fleet bootstrap — not a second CRUD path.
+  final bool autoOpenNewVehicleEditor;
+
+  /// When true, after a successful *new* vehicle save the page pops with
+  /// `true` so the first-run bootstrap can advance.
+  final bool popPageAfterSuccessfulNewVehicleSave;
 
   @override
   State<VehicleManagementPage> createState() => _VehicleManagementPageState();
@@ -419,13 +432,34 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
   final ImagePicker _imagePicker = ImagePicker();
   static const int _maxPhotosPerVehicle = 5;
   bool _vehicleDocumentsLoaded = false;
+  bool _didAutoOpenNewVehicleEditor = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_ensureVehicleDocumentsLoaded(refreshUi: true));
+      unawaited(_maybeAutoOpenNewVehicleEditor());
     });
+  }
+
+  Future<void> _maybeAutoOpenNewVehicleEditor() async {
+    if (!widget.autoOpenNewVehicleEditor || _didAutoOpenNewVehicleEditor) {
+      return;
+    }
+    _didAutoOpenNewVehicleEditor = true;
+    if (!mounted) return;
+    if (!await _confirmVehicleUpsellIfNeeded()) {
+      if (widget.popPageAfterSuccessfulNewVehicleSave && mounted) {
+        Navigator.of(context).pop(false);
+      }
+      return;
+    }
+    if (!mounted) return;
+    final saved = await _openVehicleEditor();
+    if (widget.popPageAfterSuccessfulNewVehicleSave && mounted) {
+      Navigator.of(context).pop(saved == true);
+    }
   }
 
   Future<void> _ensureVehicleDocumentsLoaded({bool refreshUi = false}) async {
@@ -805,6 +839,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
   }
 
   bool _vehicleVisibleInManagementUi(VehicleProfile vehicle) {
+    // Demo seed (`vh_1` / Tesla Model 3) must never appear as a real fleet row.
+    if (isSeededOrPlaceholderVehicle(vehicle)) return false;
     final activeCompanyId = _activeCompanyIdForFleetUi();
     if (activeCompanyId == null) {
       return fleetRecordBelongsToActiveCompanyOrLegacy(vehicle.companyId);
@@ -2124,12 +2160,15 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     );
   }
 
-  Future<void> _openVehicleEditor({VehicleProfile? existing}) async {
+  Future<bool> _openVehicleEditor({VehicleProfile? existing}) async {
     final resolvedExisting = existing == null
         ? null
         : (vehicleProfileById(existing.id) ?? existing);
     final vehicleId =
         resolvedExisting?.id ?? 'vh_${DateTime.now().millisecondsSinceEpoch}';
+    // New-vehicle identity fields start EMPTY. Demo values like Tesla /
+    // Model 3 come only from the seeded `vh_1` row (filtered from UI) and
+    // must never be controller defaults for create.
     final nameCtrl = TextEditingController(
       text: resolvedExisting?.vehicleName ?? '',
     );
@@ -2148,6 +2187,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     final colorCtrl = TextEditingController(
       text: resolvedExisting?.color ?? '',
     );
+    final isNewVehicle = resolvedExisting == null;
     var primaryPhotoRef = resolvedExisting?.primaryPhotoRef ?? '';
     var galleryPhotoRefs = List<String>.from(
       resolvedExisting?.galleryPhotoRefs ?? const <String>[],
@@ -2193,6 +2233,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
             vehicleId: vehicleId,
           );
 
+    var didSave = false;
+    if (!mounted) return false;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -2242,6 +2284,14 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                           fr: 'Nom du véhicule',
                           es: 'Nombre del vehículo',
                         ),
+                        hintText: isNewVehicle
+                            ? _t(
+                                nl: 'Bijv. Hoofdwagen',
+                                en: 'E.g. Main vehicle',
+                                fr: 'Ex. Véhicule principal',
+                                es: 'Ej. Vehículo principal',
+                              )
+                            : null,
                       ),
                       _txt(
                         modelCtrl,
@@ -2251,6 +2301,14 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                           fr: 'Marque/modèle',
                           es: 'Marca/modelo',
                         ),
+                        hintText: isNewVehicle
+                            ? _t(
+                                nl: 'Bijv. Tesla Model 3',
+                                en: 'E.g. Tesla Model 3',
+                                fr: 'Ex. Tesla Model 3',
+                                es: 'Ej. Tesla Model 3',
+                              )
+                            : null,
                       ),
                       _txt(
                         plateCtrl,
@@ -2260,6 +2318,14 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                           fr: 'Plaque',
                           es: 'Matrícula',
                         ),
+                        hintText: isNewVehicle
+                            ? _t(
+                                nl: 'Bijv. 1-ABC-123',
+                                en: 'E.g. 1-ABC-123',
+                                fr: 'Ex. 1-ABC-123',
+                                es: 'Ej. 1-ABC-123',
+                              )
+                            : null,
                       ),
                       _txt(
                         exploitationLicenseCtrl,
@@ -2287,6 +2353,14 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                           fr: 'Couleur',
                           es: 'Color',
                         ),
+                        hintText: isNewVehicle
+                            ? _t(
+                                nl: 'Bijv. Zwart',
+                                en: 'E.g. Black',
+                                fr: 'Ex. Noir',
+                                es: 'Ej. Negro',
+                              )
+                            : null,
                       ),
                       Row(
                         children: [
@@ -3353,6 +3427,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                     updateVehicle(resolvedExisting.id, vehicle);
                                   }
                                   await _syncFleetOrShowError();
+                                  didSave = true;
                                   if (!ctx.mounted) return;
                                   Navigator.pop(ctx);
                                 },
@@ -3388,6 +3463,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     if (mounted) {
       await _ensureVehicleDocumentsLoaded(refreshUi: true);
     }
+    return didSave;
   }
 
   Widget _txt(
@@ -3395,6 +3471,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     String label, {
     VoidCallback? onChanged,
     bool enabled = true,
+    String? hintText,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -3407,6 +3484,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
         ),
         decoration: InputDecoration(
           labelText: label,
+          hintText: hintText,
+          hintStyle: TextStyle(color: _textMuted.withOpacity(0.75)),
           labelStyle: TextStyle(color: _textSecondary),
           filled: true,
           fillColor: _inputFill,

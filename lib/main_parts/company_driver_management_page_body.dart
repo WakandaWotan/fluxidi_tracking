@@ -4738,6 +4738,44 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                 ),
               ],
             ),
+            actions: [
+              Tooltip(
+                message: _t(
+                  nl: 'Chauffeur toevoegen',
+                  en: 'Add driver',
+                  fr: 'Ajouter un chauffeur',
+                  es: 'Añadir conductor',
+                ),
+                child: TextButton.icon(
+                  onPressed: () => _openAddDriverFlow(context),
+                  icon: Icon(
+                    Icons.person_add_alt_1_outlined,
+                    color: _gold,
+                    size: isPortraitHeader ? 22 : 20,
+                  ),
+                  label: Text(
+                    isPortraitHeader
+                        ? _t(
+                            nl: 'Toevoegen',
+                            en: 'Add',
+                            fr: 'Ajouter',
+                            es: 'Añadir',
+                          )
+                        : _t(
+                            nl: 'Chauffeur toevoegen',
+                            en: 'Add driver',
+                            fr: 'Ajouter un chauffeur',
+                            es: 'Añadir conductor',
+                          ),
+                    style: TextStyle(
+                      color: _gold,
+                      fontWeight: FontWeight.w800,
+                      fontSize: isPortraitHeader ? 13.5 : 12.5,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
           body: ValueListenableBuilder<List<DriverDocument>>(
             valueListenable: driverDocumentsNotifier,
@@ -4847,15 +4885,71 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                   return Center(
                     child: Padding(
                       padding: const EdgeInsets.all(24),
-                      child: Text(
-                        _t(
-                          nl: 'Nog geen chauffeurs beschikbaar.',
-                          en: 'No drivers available yet.',
-                          fr: 'Aucun chauffeur disponible.',
-                          es: 'Todavía no hay conductores disponibles.',
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 420),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.groups_outlined,
+                              size: 42,
+                              color: _gold.withOpacity(0.9),
+                            ),
+                            const SizedBox(height: 14),
+                            Text(
+                              _t(
+                                nl: 'Nog geen chauffeurs',
+                                en: 'No drivers yet',
+                                fr: 'Aucun chauffeur pour l’instant',
+                                es: 'Aún no hay conductores',
+                              ),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: _textPrimary,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 20,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              _t(
+                                nl: 'Voeg je eerste chauffeur toe.',
+                                en: 'Add your first driver.',
+                                fr: 'Ajoutez votre premier chauffeur.',
+                                es: 'Añade tu primer conductor.',
+                              ),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: _textMuted.withOpacity(0.92),
+                                height: 1.35,
+                              ),
+                            ),
+                            const SizedBox(height: 18),
+                            FilledButton.icon(
+                              onPressed: () => _openAddDriverFlow(context),
+                              style: FilledButton.styleFrom(
+                                backgroundColor: _gold,
+                                foregroundColor: _textOnAccent,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 18,
+                                  vertical: 14,
+                                ),
+                              ),
+                              icon: const Icon(Icons.person_add_alt_1_outlined),
+                              label: Text(
+                                _t(
+                                  nl: 'Chauffeur toevoegen',
+                                  en: 'Add driver',
+                                  fr: 'Ajouter un chauffeur',
+                                  es: 'Añadir conductor',
+                                ),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: _textMuted.withOpacity(0.92)),
                       ),
                     ),
                   );
@@ -6062,10 +6156,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
                               child: _portraitQuickActionDockItem(
                                 icon: Icons.person_add_alt_1_outlined,
                                 label: _t(
-                                  nl: 'Nieuw',
-                                  en: 'New',
-                                  fr: 'Nouveau',
-                                  es: 'Nuevo',
+                                  nl: 'Toevoegen',
+                                  en: 'Add',
+                                  fr: 'Ajouter',
+                                  es: 'Añadir',
                                 ),
                                 onTap: () => _openAddDriverFlow(context),
                               ),

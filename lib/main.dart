@@ -55,6 +55,7 @@ export 'package:fluxidi_tracking/payment_return.dart'
         paymentReturnCoordinator,
         PaymentReturnCoordinator;
 import 'package:fluxidi_tracking/business_first_run_wizard_page.dart';
+import 'package:fluxidi_tracking/company/business_first_run_fleet_bootstrap_page.dart';
 import 'package:fluxidi_tracking/main_parts/business_help_manual_page.dart';
 import 'package:fluxidi_tracking/main_parts/direct_ride_booking_link.dart';
 import 'package:fluxidi_tracking/main_parts/planned_stop_durability.dart';

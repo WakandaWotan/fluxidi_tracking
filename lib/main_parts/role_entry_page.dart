@@ -2052,77 +2052,29 @@ class RoleEntryPage extends StatelessWidget {
                           // pre-orientation behavior.
                           onFinished: () {
                             if (!wizardCtx.mounted) return;
-                            // The full Business Platform Tour is a
-                            // premium tablet / large-screen presentation.
-                            // On phone (shortest side < 600, any
-                            // orientation) we deliberately skip it: the
-                            // guided setup wizard itself still ran on
-                            // phone, but after completion we land the
-                            // operator on Business Home exactly like the
-                            // normal post-setup flow and show a short
-                            // localized note that the tour is optimized
-                            // for larger screens. Tablet/large keeps the
-                            // existing behavior and opens the tour.
-                            final bool platformTourSupported =
-                                MediaQuery.sizeOf(wizardCtx).shortestSide >=
-                                600;
-                            if (!platformTourSupported) {
-                              debugPrint(
-                                '[FIRST_RUN_WIZARD][AFTER_FINISH] '
-                                'phone -> business_home (tour skipped)',
-                              );
-                              final messenger = ScaffoldMessenger.of(wizardCtx);
-                              unawaited(
-                                _navigateToBusinessHomeWithBootstrapHydration(
-                                  wizardCtx,
-                                  reason: 'first_run_phone_no_platform_tour',
-                                ),
-                              );
-                              messenger.showSnackBar(
-                                SnackBar(
-                                  duration: const Duration(seconds: 6),
-                                  content: Text(
-                                    _t(
-                                      nl: 'Deze platformrondleiding is geoptimaliseerd voor tablet of groter scherm. Gebruik op gsm de brochure of handleiding.',
-                                      en: 'This platform tour is optimized for tablet or larger screens. On phone, please use the brochure or company guide.',
-                                      fr: 'Cette visite de la plateforme est optimisée pour tablette ou écran plus grand. Sur téléphone, utilisez la brochure ou le guide d’entreprise.',
-                                      es: 'Este recorrido de la plataforma está optimizado para tablet o pantallas más grandes. En el teléfono, utiliza el folleto o la guía de empresa.',
-                                    ),
-                                  ),
-                                ),
-                              );
-                              return;
-                            }
+                            // FIRST-COMPANY-UX-P0: after the existing 11-step
+                            // settings wizard, insert the soft fleet bootstrap
+                            // (first driver → first vehicle → ready) BEFORE
+                            // phone Business Home / tablet orientation.
+                            // Wizard skip / "later" paths still bypass this.
                             debugPrint(
                               '[FIRST_RUN_WIZARD][AFTER_FINISH] '
-                              '-> orientation_flow',
+                              '-> fleet_bootstrap',
                             );
                             Navigator.of(wizardCtx).pushReplacement(
                               MaterialPageRoute<void>(
-                                builder: (orientationCtx) =>
-                                    BusinessOrientationFlowPage(
-                                      // Opened right after the guided
-                                      // setup flow completed → show the
-                                      // "Setup voltooid" reward framing.
-                                      entryMode: BusinessOrientationEntryMode
-                                          .setupCompleted,
-                                      onFinish: () {
-                                        if (!orientationCtx.mounted) return;
-                                        unawaited(
-                                          _navigateToBusinessHomeWithBootstrapHydration(
-                                            orientationCtx,
-                                            reason:
-                                                'business_orientation_finish',
-                                          ),
+                                builder: (bootCtx) =>
+                                    BusinessFirstRunFleetBootstrapPage(
+                                      onFinished: () {
+                                        if (!bootCtx.mounted) return;
+                                        _continueAfterFirstRunFleetBootstrap(
+                                          bootCtx,
                                         );
                                       },
-                                      onSkip: () {
-                                        if (!orientationCtx.mounted) return;
-                                        unawaited(
-                                          _navigateToBusinessHomeWithBootstrapHydration(
-                                            orientationCtx,
-                                            reason: 'business_orientation_skip',
-                                          ),
+                                      onSkipped: () {
+                                        if (!bootCtx.mounted) return;
+                                        _continueAfterFirstRunFleetBootstrap(
+                                          bootCtx,
                                         );
                                       },
                                     ),
@@ -2186,6 +2138,72 @@ class RoleEntryPage extends StatelessWidget {
                     );
                   },
                 ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  /// Continues the fresh-company first-run path after fleet bootstrap
+  /// (or soft "Later"): tablet → orientation tour; phone → Business Home.
+  void _continueAfterFirstRunFleetBootstrap(BuildContext context) {
+    if (!context.mounted) return;
+    // The full Business Platform Tour is a premium tablet / large-screen
+    // presentation. On phone (shortest side < 600) we skip it and land on
+    // Business Home with the same localized note as before.
+    final bool platformTourSupported =
+        MediaQuery.sizeOf(context).shortestSide >= 600;
+    if (!platformTourSupported) {
+      debugPrint(
+        '[FIRST_RUN_WIZARD][AFTER_FLEET_BOOTSTRAP] '
+        'phone -> business_home (tour skipped)',
+      );
+      final messenger = ScaffoldMessenger.of(context);
+      unawaited(
+        _navigateToBusinessHomeWithBootstrapHydration(
+          context,
+          reason: 'first_run_phone_no_platform_tour',
+        ),
+      );
+      messenger.showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 6),
+          content: Text(
+            _t(
+              nl: 'Deze platformrondleiding is geoptimaliseerd voor tablet of groter scherm. Gebruik op gsm de brochure of handleiding.',
+              en: 'This platform tour is optimized for tablet or larger screens. On phone, please use the brochure or company guide.',
+              fr: 'Cette visite de la plateforme est optimisée pour tablette ou écran plus grand. Sur téléphone, utilisez la brochure ou le guide d’entreprise.',
+              es: 'Este recorrido de la plataforma está optimizado para tablet o pantallas más grandes. En el teléfono, utiliza el folleto o la guía de empresa.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    debugPrint(
+      '[FIRST_RUN_WIZARD][AFTER_FLEET_BOOTSTRAP] -> orientation_flow',
+    );
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (orientationCtx) => BusinessOrientationFlowPage(
+          entryMode: BusinessOrientationEntryMode.setupCompleted,
+          onFinish: () {
+            if (!orientationCtx.mounted) return;
+            unawaited(
+              _navigateToBusinessHomeWithBootstrapHydration(
+                orientationCtx,
+                reason: 'business_orientation_finish',
+              ),
+            );
+          },
+          onSkip: () {
+            if (!orientationCtx.mounted) return;
+            unawaited(
+              _navigateToBusinessHomeWithBootstrapHydration(
+                orientationCtx,
+                reason: 'business_orientation_skip',
               ),
             );
           },
