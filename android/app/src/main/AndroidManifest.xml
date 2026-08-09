@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- ===== Fluxidi Tracking: required permissions ===== -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -8,6 +9,27 @@
     <!-- Location -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!--
+      GOOGLE-PLAY-MEDIA-PERMISSIONS-P0:
+      open_filex merges broad photo/video/audio library permissions, but Fluxidi
+      does not need them. Image/logo selection uses image_picker (Android Photo
+      Picker / scoped picker). OpenFilex is only used to open app-local files
+      (driver docs / help manuals). Strip the merged permissions so Play does
+      not classify Fluxidi as requiring broad media-library access.
+    -->
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_IMAGES"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_VIDEO"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_AUDIO"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        tools:node="remove" />
 
     <!--
       GOOGLE-PLAY-PRIVACY-READINESS-P0:
