@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/widgets/fluxidi_decode_sized_asset_image.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
@@ -4088,7 +4089,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card2WelcomeTabletLandscapeAsset,
           fit: BoxFit.cover,
           alignment: Alignment.center,
@@ -4294,7 +4295,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card2WelcomeTabletPortraitAsset,
           fit: BoxFit.cover,
           alignment: Alignment.center,
@@ -4433,7 +4434,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card5ChironDocumentsTabletPortraitAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -4455,7 +4456,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card5ChironDocumentsTabletLandscapeAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -4905,7 +4906,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card7RegionRadarTabletPortraitAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -4926,7 +4927,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card7RegionRadarTabletLandscapeAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -5525,7 +5526,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card9PublicBookingLinkTabletPortraitAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -5546,7 +5547,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card9PublicBookingLinkTabletLandscapeAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -6044,7 +6045,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card10AiDispatchTabletPortraitAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -6065,7 +6066,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card10AiDispatchTabletLandscapeAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -6778,7 +6779,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card8DriverViewTabletPortraitAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -6799,7 +6800,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card8DriverViewTabletLandscapeAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -7325,7 +7326,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card11CalculatorTabletPortraitAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -7346,7 +7347,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card11CalculatorTabletLandscapeAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -7866,7 +7867,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card12DriverReceiptsTabletPortraitAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -7887,7 +7888,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card12DriverReceiptsTabletLandscapeAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -8450,7 +8451,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card13ActivateCustomersTabletPortraitAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -8471,7 +8472,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card13ActivateCustomersTabletLandscapeAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -8865,7 +8866,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _settingsProfileTabletPortraitAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -8888,7 +8889,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _settingsProfileTabletLandscapeAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -9468,7 +9469,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _themesShowroomHeroBgAsset,
           fit: BoxFit.cover,
           alignment: Alignment.center,
@@ -9575,7 +9576,7 @@ class _BusinessOrientationFlowPageState
                   duration: const Duration(milliseconds: 350),
                   switchInCurve: Curves.easeOut,
                   switchOutCurve: Curves.easeIn,
-                  child: Image.asset(
+                  child: FluxidiDecodeSizedAssetImage(
                     item.assetPath,
                     key: ValueKey<String>(item.assetPath),
                     fit: BoxFit.contain,
@@ -10052,7 +10053,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card4VehiclesFleetTabletLandscapeAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -10074,7 +10075,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card4VehiclesFleetTabletPortraitAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -10445,7 +10446,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card6DriverManagementTabletLandscapeAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -10467,7 +10468,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card6DriverManagementTabletPortraitAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -10780,7 +10781,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card3TabletLandscapeAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -10912,7 +10913,7 @@ class _BusinessOrientationFlowPageState
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        Image.asset(
+        FluxidiDecodeSizedAssetImage(
           _card3TabletPortraitAsset,
           fit: BoxFit.fill,
           alignment: Alignment.center,
@@ -11512,7 +11513,7 @@ class _BusinessOrientationFlowPageState
               // PNG poster while the video loads, and permanently
               // when the video initialisation latched as failed.
               if (!showVideo)
-                Image.asset(
+                FluxidiDecodeSizedAssetImage(
                   _card1WelcomeTabletPortraitFallbackAsset,
                   fit: BoxFit.cover,
                   errorBuilder: (ctx, error, stackTrace) {
@@ -12041,7 +12042,7 @@ class _BusinessOrientationFlowPageState
         // video's full-bleed behaviour above so the swap from
         // poster to video is visually invisible.
         if (!showVideo)
-          Image.asset(
+          FluxidiDecodeSizedAssetImage(
             _card1WelcomeTabletLandscapeFallbackAsset,
             fit: BoxFit.cover,
             errorBuilder: (ctx, error, stackTrace) {

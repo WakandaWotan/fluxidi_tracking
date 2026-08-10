@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/security/fluxidi_app_lock_store.dart';
+import 'package:fluxidi_tracking/widgets/fluxidi_decode_sized_asset_image.dart';
 
 class FluxidiPinUnlockPage extends StatefulWidget {
   const FluxidiPinUnlockPage({
@@ -617,7 +618,7 @@ class _FluxidiPinUnlockPageState extends State<FluxidiPinUnlockPage> {
       body: Stack(
         children: [
           Positioned.fill(
-            child: Image.asset(
+            child: FluxidiDecodeSizedAssetImage(
               backgroundAsset,
               fit: BoxFit.cover,
               alignment: Alignment.topCenter,

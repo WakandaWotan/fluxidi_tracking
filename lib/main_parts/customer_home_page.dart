@@ -421,11 +421,11 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           Transform.scale(
             scale: heroImageScale,
             alignment: heroImageAlignment,
-            child: Image.asset(
+            child: FluxidiDecodeSizedAssetImage(
               heroAsset,
               fit: BoxFit.cover,
               alignment: heroImageAlignment,
-              errorBuilder: (_, __, ___) => Image.asset(
+              errorBuilder: (_, __, ___) => FluxidiDecodeSizedAssetImage(
                 _isNightGold
                     ? 'assets/fluxidi/customer_home_hero_dark.png'
                     : 'assets/fluxidi/customer_home_hero_light.png',

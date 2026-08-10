@@ -3886,7 +3886,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  Image.asset(
+                  FluxidiDecodeSizedAssetImage(
                     backgroundAsset!,
                     fit: BoxFit.cover,
                     alignment: Alignment.centerRight,
@@ -4137,7 +4137,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                             child: Stack(
                               fit: StackFit.expand,
                               children: [
-                                Image.asset(
+                                FluxidiDecodeSizedAssetImage(
                                   businessHeaderAsset,
                                   fit: BoxFit.cover,
                                   alignment: isTabletLandscape

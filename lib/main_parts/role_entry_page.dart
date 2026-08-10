@@ -88,9 +88,25 @@ class RoleEntryPage extends StatelessWidget {
   }
 
   void _precacheCarouselAssets(BuildContext context, List<String> assets) {
+    final size = MediaQuery.sizeOf(context);
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final decode = fluxidiDecodePixelSize(
+      logicalWidth: size.width,
+      logicalHeight: size.height,
+      devicePixelRatio: dpr,
+    );
     for (final asset in assets) {
       if (_precachedRoleBackgrounds.add(asset)) {
-        unawaited(precacheImage(AssetImage(asset), context));
+        unawaited(
+          precacheImage(
+            ResizeImage.resizeIfNeeded(
+              decode.width,
+              decode.height,
+              AssetImage(asset),
+            ),
+            context,
+          ),
+        );
       }
     }
   }
@@ -106,7 +122,7 @@ class RoleEntryPage extends StatelessWidget {
       duration: _backgroundCrossfadeDuration,
       switchInCurve: Curves.easeInOut,
       switchOutCurve: Curves.easeInOut,
-      child: Image.asset(
+      child: FluxidiDecodeSizedAssetImage(
         activeAsset,
         key: ValueKey<String>(activeAsset),
         width: double.infinity,
