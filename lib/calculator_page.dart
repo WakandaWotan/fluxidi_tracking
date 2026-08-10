@@ -1801,11 +1801,11 @@ class _CalculatorPageState extends State<CalculatorPage> {
       final txt = res.body;
       debugPrint('quote_response_raw=$txt');
       if (res.statusCode < 200 || res.statusCode >= 300) {
-        final lang = widget.language == AppLanguage.en
+        final lang = _lang == AppLanguage.en
             ? 'en'
-            : widget.language == AppLanguage.fr
+            : _lang == AppLanguage.fr
             ? 'fr'
-            : widget.language == AppLanguage.es
+            : _lang == AppLanguage.es
             ? 'es'
             : 'nl';
         final friendly = friendlyEntitlementUserMessage(
@@ -4373,16 +4373,10 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   }
 
   String _friendlyBookingError(String raw) {
-    final lang = widget.language == AppLanguage.en
-        ? 'en'
-        : widget.language == AppLanguage.fr
-        ? 'fr'
-        : widget.language == AppLanguage.es
-        ? 'es'
-        : 'nl';
+    final lang = widget.language.name;
     final entitlementMsg = friendlyEntitlementUserMessage(
       rawError: raw,
-      languageCode: lang,
+      languageCode: lang == 'de' ? 'nl' : lang,
       isPublicCustomer:
           widget.entryContext == BookingEntryContext.customer,
     );
