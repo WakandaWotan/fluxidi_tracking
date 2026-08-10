@@ -152,6 +152,25 @@ void main() {
       expect(c.httpStatus, 403);
     });
 
+    test('Exception("HTTP 402: entitlement") is hard abort, not transport', () {
+      final c = classifyDirectTripStartError(
+        Exception(
+          'HTTP 402: {"ok":false,"error":"subscription_entitlement_denied"}',
+        ),
+      );
+      expect(c.isEntitlementFailure, isTrue);
+      expect(c.isHardAbort, isTrue);
+      expect(c.isTransportOrOther, isFalse);
+      expect(c.isAuthFailure, isFalse);
+      expect(c.httpStatus, 402);
+      expect(
+        directTripWorkerStartOutcomeFromError(
+          Exception('HTTP 402: {"error":"subscription_entitlement_denied"}'),
+        ),
+        DirectTripWorkerStartOutcome.entitlementDenied,
+      );
+    });
+
     test('Exception("HTTP 500: ...") is NOT auth failure but exposes status', () {
       final c = classifyDirectTripStartError(
         Exception('HTTP 500: worker exploded'),

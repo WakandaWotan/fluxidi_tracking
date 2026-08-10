@@ -170,15 +170,15 @@ void main() {
     test('_startDirectTripSessionOnWorker catch dispatches through classifyDirectTripStartError', () {
       final body = _extractMethodBody(
         src,
-        '  Future<void> _startDirectTripSessionOnWorker({',
+        '  Future<DirectTripWorkerStartResult> _startDirectTripSessionOnWorker({',
       );
       expect(
         body,
         contains('classifyDirectTripStartError'),
         reason:
             'The direct-trip start catch must classify errors so HTTP 401/403 '
-            'branches into deterministic teardown instead of the "local-only" '
-            'silent-success path.',
+            'and entitlement 402 branch into deterministic teardown instead of '
+            'the "local-only" silent-success path.',
       );
       expect(
         body,
@@ -187,11 +187,31 @@ void main() {
       );
       expect(
         body,
+        contains('isEntitlementFailure'),
+        reason:
+            'Entitlement 402 must be classified as a hard abort (no ghost ride).',
+      );
+      expect(
+        body,
         contains('[DIRECT_TRIP][START][ABORT]'),
         reason:
             'The abort branch must emit a stable diagnostic so field logs can '
             'distinguish auth-abort from transport-fallback outcomes.',
       );
+    });
+
+    test('_startDirectRide awaits worker before local activation (no ghost on 402)', () {
+      final body = _extractMethodBody(src, '  Future<void> _startDirectRide() async {');
+      final workerIdx = body.indexOf('_startDirectTripSessionOnWorker(');
+      final setStateIdx = body.indexOf('setState(');
+      final meterIdx = body.indexOf('_startMeterTicker(');
+      final trackIdx = body.indexOf('_startTrackingInternal(');
+      expect(workerIdx, greaterThanOrEqualTo(0));
+      expect(setStateIdx, greaterThan(workerIdx));
+      expect(meterIdx, greaterThan(workerIdx));
+      expect(trackIdx, greaterThan(workerIdx));
+      expect(body, contains('isEntitlementDenied'));
+      expect(body, contains('requireLiveLocalRide: false'));
     });
 
     test('_abortDirectRideAfterAuthFailure exists and tears down critical state', () {

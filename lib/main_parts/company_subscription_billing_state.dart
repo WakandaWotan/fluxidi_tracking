@@ -2069,57 +2069,10 @@ class _CompanySubscriptionBillingPageState
   }
 
   String _statusLabel(String status) {
-    switch (status.trim().toLowerCase()) {
-      case 'trialing':
-      case 'trial':
-      case 'trial_active':
-        return _t(
-          nl: 'Proefperiode',
-          en: 'Trial',
-          fr: 'Période d’essai',
-          es: 'Periodo de prueba',
-        );
-      case 'active':
-        return _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo');
-      case 'past_due':
-        return _t(
-          nl: 'Betaling vereist',
-          en: 'Payment required',
-          fr: 'Paiement requis',
-          es: 'Pago requerido',
-        );
-      case 'cancelled':
-      case 'canceled':
-        return _t(
-          nl: 'Geannuleerd',
-          en: 'Cancelled',
-          fr: 'Annulé',
-          es: 'Cancelado',
-        );
-      case 'inactive':
-        return _t(
-          nl: 'Inactief',
-          en: 'Inactive',
-          fr: 'Inactif',
-          es: 'Inactivo',
-        );
-      case 'suspended':
-        return _t(
-          nl: 'Opgeschort',
-          en: 'Suspended',
-          fr: 'Suspendu',
-          es: 'Suspendido',
-        );
-      default:
-        return status.trim().isEmpty
-            ? _t(
-                nl: 'Onbekend',
-                en: 'Unknown',
-                fr: 'Inconnu',
-                es: 'Desconocido',
-              )
-            : status.trim();
-    }
+    return subscriptionStatusLabel(
+      statusRaw: status,
+      languageCode: currentLanguageCode,
+    );
   }
 
   ({Color bg, Color border, Color text}) _statusColors(String statusRaw) {
@@ -2138,7 +2091,12 @@ class _CompanySubscriptionBillingPageState
         text: _gold,
       );
     }
-    if (status == 'past_due' || status == 'suspended') {
+    if (status == 'past_due' ||
+        status == 'grace_period' ||
+        status == 'suspended' ||
+        status == 'payment_required' ||
+        status == 'cancelled' ||
+        status == 'canceled') {
       return (
         bg: _warn.withOpacity(0.15),
         border: _warn.withOpacity(0.50),
@@ -2151,6 +2109,60 @@ class _CompanySubscriptionBillingPageState
       ),
       border: _businessThemePalette.border.withOpacity(0.7),
       text: _businessThemePalette.textMuted,
+    );
+  }
+
+  Widget _buildEntitlementStateBanner(BackendSubscriptionProfile profile) {
+    final status = (profile.subscriptionStatus.trim().isNotEmpty
+            ? profile.subscriptionStatus
+            : profile.status)
+        .trim()
+        .toLowerCase();
+    final warning = subscriptionDunningWarningMessage(
+      statusRaw: status,
+      languageCode: currentLanguageCode,
+    );
+    final blocked = subscriptionBlockedStateMessage(
+      statusRaw: status,
+      languageCode: currentLanguageCode,
+      cancelAtPeriodEnd: profile.cancelAtPeriodEnd,
+    );
+    final text = blocked ?? warning;
+    if (text == null || text.trim().isEmpty) return const SizedBox.shrink();
+    final isHard = blocked != null;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(11, 10, 11, 11),
+        decoration: BoxDecoration(
+          color: (isHard ? _warn : _gold).withOpacity(0.12),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: (isHard ? _warn : _gold).withOpacity(0.5)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              isHard ? Icons.block : Icons.warning_amber_outlined,
+              size: 18,
+              color: isHard ? _warn : _gold,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                text,
+                style: TextStyle(
+                  color: _businessThemePalette.textPrimary,
+                  fontSize: 12,
+                  height: 1.35,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -2818,7 +2830,11 @@ class _CompanySubscriptionBillingPageState
               );
             }
             final profile = snap.data ?? BackendSubscriptionProfile.defaults();
-            final statusColors = _statusColors(profile.status);
+            final effectiveStatus =
+                profile.subscriptionStatus.trim().isNotEmpty
+                ? profile.subscriptionStatus
+                : profile.status;
+            final statusColors = _statusColors(effectiveStatus);
             final trialRange =
                 '${profile.trialStartedAt.trim().isEmpty ? "—" : profile.trialStartedAt.trim()} / ${profile.trialEndsAt.trim().isEmpty ? "—" : profile.trialEndsAt.trim()}';
             // Country-aware catalog drives all visible pricing copy. If the
@@ -2927,7 +2943,7 @@ class _CompanySubscriptionBillingPageState
                                     ),
                                   ),
                                   _chip(
-                                    text: _statusLabel(profile.status),
+                                    text: _statusLabel(effectiveStatus),
                                     bg: statusColors.bg,
                                     border: statusColors.border,
                                     textColor: statusColors.text,
@@ -2998,6 +3014,7 @@ class _CompanySubscriptionBillingPageState
                                 textColor: _green,
                                 icon: Icons.schedule_outlined,
                               ),
+                              _buildEntitlementStateBanner(profile),
                               _buildActivationSection(profile, catalog),
                               _buildCancellationSection(profile),
                               const SizedBox(height: 8),

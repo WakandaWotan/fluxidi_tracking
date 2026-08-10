@@ -4979,6 +4979,14 @@ class _DriverHomePageState extends State<DriverHomePage>
         reason: 'start_trip_exception',
       );
       if (mounted) setState(() => _isStartingTrip = false);
+      if (isSubscriptionEntitlementHardAbort(e)) {
+        _toast(
+          companyEntitlementDeniedMessage(
+            languageCode: _fluxidiLanguageCode(),
+          ),
+        );
+        return;
+      }
       _toast(
         _tr(
           nl: 'Start mislukt',
@@ -7955,29 +7963,30 @@ class _DriverHomePageState extends State<DriverHomePage>
     };
   }
 
-  Future<void> _startDirectTripSessionOnWorker({
+  /// Calls `/trip/start-direct`. When [requireLiveLocalRide] is false (P0
+  /// worker-first street start), entitlement/auth denials return without
+  /// mutating local ride state. When true (retry after local activation),
+  /// auth/entitlement denials hard-abort an already-live ride.
+  Future<DirectTripWorkerStartResult> _startDirectTripSessionOnWorker({
     required String destination,
+    required String directRideKey,
+    bool requireLiveLocalRide = true,
   }) async {
     try {
       final strictScope = _strictBookingScopeForMutation(
         action: 'start_direct_trip',
       );
-      if (strictScope == null) return;
+      if (strictScope == null) {
+        return const DirectTripWorkerStartResult(
+          outcome: DirectTripWorkerStartOutcome.transportOrOther,
+        );
+      }
       final point = _directRideDestinationPoint;
       final destinationPayload = <String, dynamic>{
         'label': destination,
         if (point != null) 'lat': point.lat,
         if (point != null) 'lon': point.lon,
       };
-      final directRideKey =
-          _directRideKey ??
-          makeDirectRideKey(
-            driverId: kDriverId,
-            startedAtMs: (_trackingStartedAt ?? DateTime.now())
-                .toUtc()
-                .millisecondsSinceEpoch,
-          );
-      _directRideKey = directRideKey;
       final payload = withDirectRideBookingStartFields(<String, dynamic>{
         ...strictScope,
         'driver_id': kDriverId,
@@ -7985,9 +7994,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         'origin': _currentOriginPayload(_lastPos),
         'destination': destinationPayload,
         'pricing_snapshot': _directRidePricingSnapshotPayload(),
-        'client_started_at': (_trackingStartedAt ?? DateTime.now())
-            .toUtc()
-            .toIso8601String(),
+        'client_started_at': DateTime.now().toUtc().toIso8601String(),
         ..._driverMutationActorFields(actorVehicleId: _directRideVehicleId()),
       }, directRideKey: directRideKey);
       final res = await http
@@ -8007,43 +8014,68 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       final tripId = startResult.tripId;
       if (tripId.isEmpty) throw Exception('No trip_id returned');
-      if (!mounted || !_directRideActive) return;
-      setState(() {
-        _activeDirectTripId = tripId;
-        _activeDirectBookingId = startResult.bookingId;
-        _directTripStartWorkerOk = true;
-        _directTripStopWorkerOk = false;
-      });
       debugPrint(
         '[DIRECT_TRIP][START][OK] trip_id=$tripId '
         'booking_id=${startResult.bookingId ?? "-"} '
         'link_state=${startResult.bookingLinkState}',
       );
-      // STREET-RIDE-DURABLE-COMPLETION-2: persist the active session so a crash
-      // or restart can resume it or reconcile a pending booking finalization.
-      unawaited(_persistDirectTripSession(
-        localLifecycle: kDirectTripLocalLifecycleActive,
-        bookingFinalizeState: kDirectTripFinalizePending,
-      ));
+      if (requireLiveLocalRide) {
+        if (!mounted || !_directRideActive) {
+          return DirectTripWorkerStartResult(
+            outcome: DirectTripWorkerStartOutcome.ok,
+            tripId: tripId,
+            bookingId: startResult.bookingId,
+          );
+        }
+        setState(() {
+          _directRideKey = directRideKey;
+          _activeDirectTripId = tripId;
+          _activeDirectBookingId = startResult.bookingId;
+          _directTripStartWorkerOk = true;
+          _directTripStopWorkerOk = false;
+        });
+        unawaited(_persistDirectTripSession(
+          localLifecycle: kDirectTripLocalLifecycleActive,
+          bookingFinalizeState: kDirectTripFinalizePending,
+        ));
+      }
+      return DirectTripWorkerStartResult(
+        outcome: DirectTripWorkerStartOutcome.ok,
+        tripId: tripId,
+        bookingId: startResult.bookingId,
+      );
     } catch (e) {
-      // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 2):
-      // classify the failure. HTTP 401/403 means the tracking worker refused
-      // the request as unauthorised/forbidden; the ride MUST be torn down so
-      // the client never creates a misleading local ghost. Transient
-      // transport failures (timeout, DNS, connection refused, JSON parse
-      // errors) keep the existing local-only behaviour but the STOP path
-      // records `backend_confirmed=false` for truthful history.
       final classification = classifyDirectTripStartError(e);
+      if (classification.isEntitlementFailure) {
+        debugPrint(
+          '[DIRECT_TRIP][START][ABORT] reason=entitlement_${classification.httpStatus ?? "denied"}',
+        );
+        if (requireLiveLocalRide && _directRideActive) {
+          _abortDirectRideAfterAuthFailure(
+            httpStatus: classification.httpStatus,
+          );
+        }
+        return const DirectTripWorkerStartResult(
+          outcome: DirectTripWorkerStartOutcome.entitlementDenied,
+        );
+      }
       if (classification.isAuthFailure) {
         debugPrint(
           '[DIRECT_TRIP][START][ABORT] reason=auth_${classification.httpStatus ?? "unknown"}',
         );
-        _abortDirectRideAfterAuthFailure(
-          httpStatus: classification.httpStatus,
+        if (requireLiveLocalRide && _directRideActive) {
+          _abortDirectRideAfterAuthFailure(
+            httpStatus: classification.httpStatus,
+          );
+        }
+        return const DirectTripWorkerStartResult(
+          outcome: DirectTripWorkerStartOutcome.authDenied,
         );
-        return;
       }
-      debugPrint('[DIRECT_TRIP][START][WARN] local-only direct ride: $e');
+      debugPrint('[DIRECT_TRIP][START][WARN] transport_or_other: $e');
+      return const DirectTripWorkerStartResult(
+        outcome: DirectTripWorkerStartOutcome.transportOrOther,
+      );
     }
   }
 
@@ -11324,10 +11356,6 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _startDirectRide() async {
     // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Commit 2):
     // refuse client-side when no valid driver-session bearer is available.
-    // The tracking worker would 401 the request anyway; without this guard
-    // the current code silently starts meter/tracking/nav and creates a
-    // misleading local-only ghost ride after the fire-and-forget backend
-    // call fails. State must not be mutated on the blocked path.
     if (!_driverRideStartAuthAllowsOrRefuse(action: 'start_direct_ride')) {
       return;
     }
@@ -11360,32 +11388,57 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
 
-    // NAV-RIDE-BOUNDARY: clear prior ride geometry/style restore BEFORE this
-    // session becomes live and before style apply can repaint stale coords.
+    // COMMERCIAL-ENTITLEMENT-FLUTTER-P0: authorize with the tracking worker
+    // BEFORE any local ride / meter / GPS / durable state is created.
+    final directRideKey = makeDirectRideKey(
+      driverId: kDriverId,
+      startedAtMs: DateTime.now().toUtc().millisecondsSinceEpoch,
+    );
+    final workerResult = await _startDirectTripSessionOnWorker(
+      destination: destination,
+      directRideKey: directRideKey,
+      requireLiveLocalRide: false,
+    );
+    if (workerResult.isEntitlementDenied) {
+      _toast(
+        companyEntitlementDeniedMessage(
+          languageCode: _fluxidiLanguageCode(),
+        ),
+      );
+      return;
+    }
+    if (workerResult.isAuthDenied) {
+      _toast(
+        _tr(
+          nl: 'Sessie verlopen. Meld opnieuw aan als chauffeur.',
+          en: 'Session expired. Sign in again as driver.',
+          fr: 'Session expirée. Reconnectez-vous en tant que chauffeur.',
+          es: 'Sesión caducada. Vuelve a iniciar sesión como conductor.',
+        ),
+      );
+      return;
+    }
+    // transportOrOther: still allow local start (offline resilience).
+
     _hardClearAtRideBoundary(reason: 'street_ride_start', bumpSession: true);
     final directPt = _directRideDestinationPoint;
     _installActiveNavTarget(
-      bookingId: _directRideKey ?? 'street_direct',
+      bookingId: directRideKey,
       phase: ActiveNavigationPhase.passengerLeg,
       targetLat: directPt?.lat,
       targetLng: directPt?.lon,
       targetAddress: destination,
       reason: 'street_ride_start',
     );
-    // NAV-MOBILE-DATA-MINIMAL-SAFE-RELEASE-P0-1 Part D: fixed safe navigation
-    // style + Street Level, before we go live. Any pre-start Satellite
-    // preview is discarded.
     _applyActiveRideStartStyleDecision(reason: 'street_ride_start');
+    final workerOk = workerResult.isOk;
     setState(() {
       _directRideActive = true;
       _activeTripId = null;
-      _activeDirectTripId = null;
-      _activeDirectBookingId = null;
-      _directRideKey = makeDirectRideKey(
-        driverId: kDriverId,
-        startedAtMs: DateTime.now().toUtc().millisecondsSinceEpoch,
-      );
-      _directTripStartWorkerOk = false;
+      _directRideKey = directRideKey;
+      _activeDirectTripId = workerOk ? workerResult.tripId : null;
+      _activeDirectBookingId = workerOk ? workerResult.bookingId : null;
+      _directTripStartWorkerOk = workerOk;
       _directTripStopWorkerOk = false;
       _activeBooking = null;
       _cameraMode = _CameraMode.follow;
@@ -11398,8 +11451,6 @@ class _DriverHomePageState extends State<DriverHomePage>
       _waitStartedAt = null;
       _waitElapsed = Duration.zero;
     });
-    // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
-    // ride START transition (street/direct) — publish bearer-busy=true.
     _publishBearerBusyState();
     _logNavRideBoundary(
       event: NavRideBoundaryEvent.sessionStarted,
@@ -11409,11 +11460,23 @@ class _DriverHomePageState extends State<DriverHomePage>
     await _applyMapStyleForMode();
     _startTrackingInternal();
     _startMeterTicker();
-    unawaited(_startDirectTripSessionOnWorker(destination: destination));
+    if (workerOk) {
+      unawaited(_persistDirectTripSession(
+        localLifecycle: kDirectTripLocalLifecycleActive,
+        bookingFinalizeState: kDirectTripFinalizePending,
+      ));
+    } else {
+      unawaited(
+        _startDirectTripSessionOnWorker(
+          destination: destination,
+          directRideKey: directRideKey,
+          requireLiveLocalRide: true,
+        ),
+      );
+    }
     await _forceFollowCameraNow(caller: 'direct_ride_start');
     await _buildDirectRouteToDestination(destination);
     unawaited(_reconcileMapZoomGestures(reason: 'direct_ride_start'));
-    // GOOGLE-MAPS-WITH-FLUXIDI-PIP-RELEASE-1: street START → destination B.
     unawaited(_maybeRelaunchGoogleMapsAfterStart());
   }
 

@@ -28,6 +28,7 @@ import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
+import 'package:fluxidi_tracking/company/subscription_entitlement_ux.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
@@ -1800,9 +1801,21 @@ class _CalculatorPageState extends State<CalculatorPage> {
       final txt = res.body;
       debugPrint('quote_response_raw=$txt');
       if (res.statusCode < 200 || res.statusCode >= 300) {
-        throw Exception(
-          'Quote failed: ${res.statusCode} ${txt.isNotEmpty ? txt : ''}',
+        final lang = widget.language == AppLanguage.en
+            ? 'en'
+            : widget.language == AppLanguage.fr
+            ? 'fr'
+            : widget.language == AppLanguage.es
+            ? 'es'
+            : 'nl';
+        final friendly = friendlyEntitlementUserMessage(
+          rawError: txt,
+          languageCode: lang,
+          isPublicCustomer:
+              widget.entryContext == BookingEntryContext.customer,
+          httpStatus: res.statusCode,
         );
+        throw Exception(friendly ?? 'Quote failed: ${res.statusCode}');
       }
 
       final data = jsonDecode(txt) as Map<String, dynamic>;
@@ -1810,7 +1823,8 @@ class _CalculatorPageState extends State<CalculatorPage> {
       setState(() => _lastQuote = data);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = e.toString());
+      final raw = e.toString().replaceFirst('Exception: ', '').trim();
+      setState(() => _error = raw);
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -4359,6 +4373,20 @@ class _BookingConfirmationPageState extends State<_BookingConfirmationPage> {
   }
 
   String _friendlyBookingError(String raw) {
+    final lang = widget.language == AppLanguage.en
+        ? 'en'
+        : widget.language == AppLanguage.fr
+        ? 'fr'
+        : widget.language == AppLanguage.es
+        ? 'es'
+        : 'nl';
+    final entitlementMsg = friendlyEntitlementUserMessage(
+      rawError: raw,
+      languageCode: lang,
+      isPublicCustomer:
+          widget.entryContext == BookingEntryContext.customer,
+    );
+    if (entitlementMsg != null) return entitlementMsg;
     final s = raw.trim().toLowerCase();
     if (s.contains('geen geschikt voertuig beschikbaar') ||
         s.contains('no suitable vehicle') ||

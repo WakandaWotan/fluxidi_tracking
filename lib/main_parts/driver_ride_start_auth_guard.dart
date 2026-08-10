@@ -18,6 +18,8 @@
 ///     never as a transient transport error that keeps the meter running.
 library;
 
+import 'package:fluxidi_tracking/company/subscription_entitlement_ux.dart';
+
 /// Outcome of the pre-flight START auth guard.
 class DriverRideStartAuthDecision {
   const DriverRideStartAuthDecision({
@@ -79,29 +81,39 @@ DriverRideStartAuthDecision evaluateDriverRideStartAuth({
 /// The tracking worker returns `401 unauthorized` when no bearer is present
 /// or the driver session is invalid, and `403 forbidden` when the caller-
 /// supplied scope conflicts with the session-derived scope. Both cases mean
-/// the ride must be torn down client-side. Any other status (or a raw
-/// transport error such as timeout/connection-refused/DNS) is a transient
-/// failure — the client keeps the ride running local-only and later renders
-/// it as a `backend_confirmed=false` local record.
+/// the ride must be torn down client-side.
+///
+/// COMMERCIAL-ENTITLEMENT-FLUTTER-P0: HTTP 402 / entitlement deny tokens are
+/// a hard operational abort — never local-only ghost rides.
+///
+/// Any other status (or a raw transport error such as timeout/connection-
+/// refused/DNS) is a transient failure — the client may keep a local-only
+/// ride and later render it as `backend_confirmed=false`.
 class DirectTripStartErrorClassification {
   const DirectTripStartErrorClassification({
     required this.isAuthFailure,
+    this.isEntitlementFailure = false,
     this.httpStatus,
   });
 
   /// `true` when the error indicates HTTP 401 or 403.
   final bool isAuthFailure;
 
+  /// `true` when the error is an authoritative subscription entitlement deny.
+  final bool isEntitlementFailure;
+
   /// Parsed HTTP status when the error string exposed one; `null` otherwise
   /// (e.g. transport-only errors, parse errors on the response body).
   final int? httpStatus;
 
-  bool get isTransportOrOther => !isAuthFailure;
+  bool get isHardAbort => isAuthFailure || isEntitlementFailure;
+
+  bool get isTransportOrOther => !isHardAbort;
 }
 
-/// Parses an error thrown from the direct-trip start path into an auth-vs-
-/// transport classification. The parser is tolerant of the two shapes used
-/// by the current caller (see `_startDirectTripSessionOnWorker`):
+/// Parses an error thrown from the direct-trip start path into an auth /
+/// entitlement / transport classification. The parser is tolerant of the two
+/// shapes used by the current caller (see `_startDirectTripSessionOnWorker`):
 ///
 ///   1. `Exception('HTTP 401: {...}')` — the `res.statusCode != 200` throw.
 ///   2. Any other thrown object (transport, timeout, JSON parse, etc.).
@@ -113,10 +125,19 @@ class DirectTripStartErrorClassification {
 DirectTripStartErrorClassification classifyDirectTripStartError(Object error) {
   final text = error.toString();
   final match = RegExp(r'HTTP\s+(\d{3})').firstMatch(text);
-  if (match == null) {
-    return const DirectTripStartErrorClassification(isAuthFailure: false);
+  final status =
+      match == null ? null : int.tryParse(match.group(1) ?? '');
+  final entitlement = classifySubscriptionEntitlementDeny(
+    httpStatus: status,
+    errorBody: text,
+  );
+  if (entitlement.isCompanyOperationalDeny) {
+    return DirectTripStartErrorClassification(
+      isAuthFailure: false,
+      isEntitlementFailure: true,
+      httpStatus: status ?? entitlement.httpStatus,
+    );
   }
-  final status = int.tryParse(match.group(1) ?? '');
   if (status == null) {
     return const DirectTripStartErrorClassification(isAuthFailure: false);
   }
@@ -125,4 +146,48 @@ DirectTripStartErrorClassification classifyDirectTripStartError(Object error) {
     isAuthFailure: isAuth,
     httpStatus: status,
   );
+}
+
+/// Result of awaiting `/trip/start-direct` before local street activation.
+enum DirectTripWorkerStartOutcome {
+  /// Worker accepted the start (or returned a linked/reused booking).
+  ok,
+
+  /// Authoritative entitlement deny — must not create local ride state.
+  entitlementDenied,
+
+  /// Auth failure (401/403).
+  authDenied,
+
+  /// Transport / other — caller may choose local-only only when already live.
+  transportOrOther,
+}
+
+/// Structured preflight result so callers can activate local state after OK.
+class DirectTripWorkerStartResult {
+  const DirectTripWorkerStartResult({
+    required this.outcome,
+    this.tripId = '',
+    this.bookingId,
+  });
+
+  final DirectTripWorkerStartOutcome outcome;
+  final String tripId;
+  final String? bookingId;
+
+  bool get isOk => outcome == DirectTripWorkerStartOutcome.ok;
+  bool get isEntitlementDenied =>
+      outcome == DirectTripWorkerStartOutcome.entitlementDenied;
+  bool get isAuthDenied => outcome == DirectTripWorkerStartOutcome.authDenied;
+}
+
+DirectTripWorkerStartOutcome directTripWorkerStartOutcomeFromError(
+  Object error,
+) {
+  final c = classifyDirectTripStartError(error);
+  if (c.isEntitlementFailure) {
+    return DirectTripWorkerStartOutcome.entitlementDenied;
+  }
+  if (c.isAuthFailure) return DirectTripWorkerStartOutcome.authDenied;
+  return DirectTripWorkerStartOutcome.transportOrOther;
 }
