@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/navigation/external/external_navigation_pip_meter.dart';
 import 'package:fluxidi_tracking/navigation/external/external_navigation_session.dart';
 import 'package:fluxidi_tracking/navigation/external/google_maps_launch_contract.dart';
@@ -52,6 +53,7 @@ void main() {
       phase: ExternalNavPhase.activeRide,
       isStreetRide: false,
       isFixedPrice: true,
+      language: AppLanguage.nl,
       fixedPriceText: '€12,20',
       kmText: '2.0 km',
       durationText: '00:10:00',
@@ -78,6 +80,7 @@ void main() {
       phase: ExternalNavPhase.activeRide,
       isStreetRide: true,
       isFixedPrice: false,
+      language: AppLanguage.nl,
       liveFareText: '€17,60',
       kmText: '1.0 km',
       durationText: '00:05:00',

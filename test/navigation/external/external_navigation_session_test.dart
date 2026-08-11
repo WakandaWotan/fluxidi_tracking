@@ -1,9 +1,11 @@
 // FLUXIDI-PIP-METER-EXTERNAL-NAV-1
 // PIP-COMPACT-KPI-READABILITY-P1
+// PIP-TABLET-READABILITY-LOCALE-P1
 
 import 'dart:ui' show Size;
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/navigation/external/external_navigation_pip_meter.dart';
 import 'package:fluxidi_tracking/navigation/external/external_navigation_session.dart';
 
@@ -63,6 +65,7 @@ void main() {
         phase: ExternalNavPhase.activeRide,
         isStreetRide: false,
         isFixedPrice: true,
+        language: AppLanguage.nl,
         fixedPriceText: '€12,20',
         kmText: '3.1 km',
         durationText: '00:12:01',
@@ -71,7 +74,13 @@ void main() {
       expect(m.kind, PipMeterKind.fixedPrice);
       expect(m.title, 'Naar bestemming');
       expect(m.primaryValue, '€12,20');
+      expect(m.primaryLabel, 'Prijs');
+      expect(m.metrics.length, 3);
       expect(m.secondaryLines.length, 3);
+      expect(m.metrics[0].label, 'Afstand');
+      expect(m.metrics[1].label, 'Tijd');
+      expect(m.metrics[1].value, '00:12:01');
+      expect(m.metrics[2].label, 'Wachttijd');
     });
 
     test('5) street live tariff', () {
@@ -79,6 +88,7 @@ void main() {
         phase: ExternalNavPhase.activeRide,
         isStreetRide: true,
         isFixedPrice: false,
+        language: AppLanguage.nl,
         liveFareText: '€17,60',
         kmText: '5.2 km',
         durationText: '00:18:00',
@@ -86,6 +96,8 @@ void main() {
       );
       expect(m.kind, PipMeterKind.liveTariff);
       expect(m.title, 'Naar bestemming');
+      expect(m.metrics[1].label, 'Tijd');
+      expect(m.metrics[1].value, '00:18:00');
     });
 
     test('5b) tablet PiP typography larger than phone', () {
@@ -98,11 +110,15 @@ void main() {
         compact: true,
       );
       expect(phone.primarySize, 34);
-      expect(tablet.titleSize, inInclusiveRange(18, 22));
-      expect(tablet.primarySize, inInclusiveRange(38, 48));
-      expect(tablet.metricSize, inInclusiveRange(22, 28));
-      expect(tablet.labelSize, inInclusiveRange(15, 18));
-      expect(tablet.horizontalPadding, inInclusiveRange(14, 20));
+      expect(phone.titleSize, 14);
+      expect(tablet.titleSize, inInclusiveRange(24, 30));
+      expect(tablet.primarySize, inInclusiveRange(32, 42));
+      expect(tablet.metricSize, inInclusiveRange(32, 42));
+      expect(tablet.labelSize, inInclusiveRange(16, 20));
+      expect(tablet.horizontalPadding, lessThanOrEqualTo(phone.horizontalPadding + 2));
+      expect(tablet.verticalPadding, lessThanOrEqualTo(14));
+      expect(tablet.frameWidth, greaterThan(0));
+      expect(phone.frameWidth, 0);
       expect(tablet.primarySize, greaterThan(phone.primarySize));
       expect(tablet.metricSize, greaterThan(phone.metricSize));
     });
@@ -112,6 +128,7 @@ void main() {
         phase: ExternalNavPhase.toPickup,
         isStreetRide: false,
         isFixedPrice: true,
+        language: AppLanguage.nl,
         fixedPriceText: '€12,20',
         liveFareText: '€0,00',
         etaText: '6 min',
@@ -119,8 +136,11 @@ void main() {
       );
       expect(m.kind, PipMeterKind.toCustomer);
       expect(m.title, 'Naar ophaalpunt');
+      expect(m.primaryLabel, 'ETA');
       expect(m.primaryValue, isNot(contains('€12')));
       expect(m.primaryValue, isNot(contains('€0')));
+      expect(m.metrics.single.label, 'Afstand');
+      expect(m.metrics.single.value, '2.4 km');
     });
   });
 

@@ -6,6 +6,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/navigation/external/external_navigation_pip_meter.dart';
 import 'package:fluxidi_tracking/navigation/external/external_navigation_session.dart';
 import 'package:fluxidi_tracking/navigation/presentation/driver_ride_meters.dart';
@@ -43,6 +44,7 @@ void main() {
         phase: ExternalNavPhase.activeRide,
         isStreetRide: true,
         isFixedPrice: false,
+        language: AppLanguage.en,
       );
       expect(m1.kind, PipMeterKind.liveTariff);
       expect(m1.primaryValue, '€ 12,40');
@@ -54,6 +56,7 @@ void main() {
         phase: ExternalNavPhase.activeRide,
         isStreetRide: true,
         isFixedPrice: false,
+        language: AppLanguage.en,
       );
       expect(m2.primaryValue, '€ 18,90');
       expect(m2.kmText, '5.1 km');
@@ -72,6 +75,7 @@ void main() {
         isStreetRide: false,
         isFixedPrice: true,
         fixedPriceText: '€ 22,00',
+        language: AppLanguage.en,
       );
       final later = buildExternalNavPipMeterModelFromRideMeters(
         snapshot: _snap(
@@ -84,6 +88,7 @@ void main() {
         isStreetRide: false,
         isFixedPrice: true,
         fixedPriceText: '€ 22,00',
+        language: AppLanguage.en,
       );
       expect(early.kind, PipMeterKind.fixedPrice);
       expect(early.primaryValue, '€ 22,00');
@@ -103,6 +108,7 @@ void main() {
           phase: ExternalNavPhase.activeRide,
           isStreetRide: true,
           isFixedPrice: false,
+          language: AppLanguage.en,
         );
         seen.add('${m.primaryValue}|${m.kmText}|${m.durationText}');
       });
@@ -141,6 +147,7 @@ void main() {
         phase: ExternalNavPhase.activeRide,
         isStreetRide: true,
         isFixedPrice: false,
+        language: AppLanguage.en,
       );
       expect(m.primaryValue, '€ 13,50');
       expect(m.kmText, '4.2 km');
@@ -167,6 +174,7 @@ void main() {
                   phase: ExternalNavPhase.activeRide,
                   isStreetRide: true,
                   isFixedPrice: false,
+                  language: AppLanguage.en,
                 ),
               );
             },
@@ -201,6 +209,8 @@ void main() {
       expect(homeSource, contains('GOOGLE-MAPS-PIP-LIVE-METER-P0'));
       expect(homeSource, contains('ValueListenableBuilder<DriverRideMetersSnapshot>'));
       expect(homeSource, contains('valueListenable: _driverRideMetersNotifier'));
+      expect(homeSource, contains('ValueListenableBuilder<AppLanguage>'));
+      expect(homeSource, contains('valueListenable: appLanguageNotifier'));
       expect(
         homeSource,
         contains('buildExternalNavPipMeterModelFromRideMeters'),

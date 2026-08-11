@@ -24559,9 +24559,11 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   ExternalNavPipMeterModel _buildCurrentPipMeterModel([
     DriverRideMetersSnapshot? snapshot,
+    AppLanguage? language,
   ]) {
     // GOOGLE-MAPS-PIP-LIVE-METER-P0: project the same authoritative meter
     // snapshot that Tellers/HUD observe. Never invent a second fare path.
+    // PIP-TABLET-READABILITY-LOCALE-P1: driver app language owns overlay copy.
     final snap = snapshot ?? _buildDriverRideMetersSnapshot();
     final phase =
         _externalNavigationSession?.phase ?? _resolveExternalNavPhase();
@@ -24573,6 +24575,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       isStreetRide: _directRideActive || _activeBookingIsStreetDirect,
       isFixedPrice: fixed != null && !_activeBookingIsStreetDirect,
       fixedPriceText: fixedText,
+      language: language ?? appConfig.currentLanguage,
     );
   }
 
@@ -34221,17 +34224,24 @@ class _DriverHomePageState extends State<DriverHomePage>
     // Tellers. Parent setState is rare while Maps owns the foreground; without
     // this, PiP would freeze on the enter-time snapshot while GPS/fare continue.
     // MapWidget stays Offstage-mounted — do NOT setState every meter tick.
+    // PIP-TABLET-READABILITY-LOCALE-P1: also observe driver app language so a
+    // language change while PiP is active updates chrome without relaunch.
     return Stack(
       fit: StackFit.expand,
       children: [
         Offstage(offstage: true, child: driverBody),
         Scaffold(
           backgroundColor: const Color(0xFF0B0F14),
-          body: ValueListenableBuilder<DriverRideMetersSnapshot>(
-            valueListenable: _driverRideMetersNotifier,
-            builder: (context, snap, _) {
-              return ExternalNavPipMeterCard(
-                model: _buildCurrentPipMeterModel(snap),
+          body: ValueListenableBuilder<AppLanguage>(
+            valueListenable: appLanguageNotifier,
+            builder: (context, lang, _) {
+              return ValueListenableBuilder<DriverRideMetersSnapshot>(
+                valueListenable: _driverRideMetersNotifier,
+                builder: (context, snap, _) {
+                  return ExternalNavPipMeterCard(
+                    model: _buildCurrentPipMeterModel(snap, lang),
+                  );
+                },
               );
             },
           ),
