@@ -109,10 +109,12 @@ void main() {
       final phone = PipMeterTypography.forSize(
         const Size(390, 844),
         compact: true,
+        hostIsTablet: false,
       );
       final tablet = PipMeterTypography.forSize(
         const Size(800, 1280),
         compact: true,
+        hostIsTablet: true,
       );
       expect(phone.primarySize, 34);
       expect(phone.titleSize, 14);
@@ -126,6 +128,17 @@ void main() {
       expect(phone.frameWidth, 0);
       expect(tablet.primaryValueSize, greaterThan(phone.primarySize));
       expect(tablet.secondaryValueSize, greaterThan(phone.metricSize));
+    });
+
+    test('5c) tiny PiP window keeps tablet branch when host latched', () {
+      final pip = PipMeterTypography.forSize(
+        const Size(352, 198),
+        compact: true,
+        hostIsTablet: true,
+      );
+      expect(pip.isTablet, isTrue);
+      expect(pip.frameWidth, greaterThan(0));
+      expect(pip.primaryValueSize, greaterThan(30));
     });
 
     test('6) pre-start shows no tariff as phone primary', () {

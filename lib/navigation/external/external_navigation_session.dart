@@ -63,6 +63,7 @@ class ExternalNavigationSession {
     required this.launchedAt,
     this.pipActive = false,
     this.nativeGuidanceSuppressed = true,
+    this.hostIsTablet,
   });
 
   final ExternalNavProvider provider;
@@ -74,6 +75,11 @@ class ExternalNavigationSession {
   final bool pipActive;
   final bool nativeGuidanceSuppressed;
 
+  /// PIP-TABLET-FORM-FACTOR-STABLE-P1: latched at Maps launch from the
+  /// pre-PiP device/window class. Survives PiP window shrink so the meter
+  /// does not flip to the phone branch after the first frame.
+  final bool? hostIsTablet;
+
   bool get isGoogleMaps => provider == ExternalNavProvider.googleMaps;
 
   ExternalNavigationSession copyWith({
@@ -83,6 +89,7 @@ class ExternalNavigationSession {
     bool? nativeGuidanceSuppressed,
     String? legId,
     DateTime? launchedAt,
+    bool? hostIsTablet,
   }) {
     return ExternalNavigationSession(
       provider: provider,
@@ -94,6 +101,7 @@ class ExternalNavigationSession {
       pipActive: pipActive ?? this.pipActive,
       nativeGuidanceSuppressed:
           nativeGuidanceSuppressed ?? this.nativeGuidanceSuppressed,
+      hostIsTablet: hostIsTablet ?? this.hostIsTablet,
     );
   }
 
@@ -106,6 +114,7 @@ class ExternalNavigationSession {
         'launchedAt': launchedAt.toIso8601String(),
         'pipActive': pipActive,
         'nativeGuidanceSuppressed': nativeGuidanceSuppressed,
+        'hostIsTablet': hostIsTablet,
       };
 
   factory ExternalNavigationSession.fromJson(Map<String, dynamic> j) {
@@ -129,6 +138,9 @@ class ExternalNavigationSession {
           DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       pipActive: j['pipActive'] == true,
       nativeGuidanceSuppressed: j['nativeGuidanceSuppressed'] != false,
+      hostIsTablet: j.containsKey('hostIsTablet')
+          ? j['hostIsTablet'] == true
+          : null,
     );
   }
 }

@@ -24704,6 +24704,11 @@ class _DriverHomePageState extends State<DriverHomePage>
           .trim();
       // Session is pending until Maps launch succeeds; guidance stays active
       // until then so a failed handoff never leaves the driver without Fluxidi.
+      // PIP-TABLET-FORM-FACTOR-STABLE-P1: latch device class BEFORE PiP shrinks
+      // MediaQuery. SM-X400 fullscreen is sw880dp; PiP window often << 600dp
+      // and must not flip the meter onto the phone compact body.
+      final hostIsTablet =
+          MediaQuery.sizeOf(context).shortestSide >= 600;
       final pendingSession = ExternalNavigationSession(
         provider: ExternalNavProvider.googleMaps,
         bookingId: bookingId,
@@ -24713,6 +24718,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         launchedAt: DateTime.now().toUtc(),
         pipActive: false,
         nativeGuidanceSuppressed: false,
+        hostIsTablet: hostIsTablet,
       );
 
       // Prepare PiP params only; never enter PiP before Maps dispatch.
@@ -34249,6 +34255,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                 builder: (context, snap, _) {
                   return ExternalNavPipMeterCard(
                     model: _buildCurrentPipMeterModel(snap, lang),
+                    hostIsTablet:
+                        _externalNavigationSession?.hostIsTablet,
                   );
                 },
               );

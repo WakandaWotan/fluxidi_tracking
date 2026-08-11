@@ -250,6 +250,122 @@ void main() {
     });
   });
 
+  group('PiP window shrink must not flip tablet → phone', () {
+    test('resolvePipMeterHostIsTablet prefers latch/device over tiny window', () {
+      const pipWindow = Size(352, 198); // typical 16:9 PiP on SM-X400
+      const device = Size(880, 1408); // fullscreen logical class
+      expect(pipWindow.shortestSide, lessThan(600));
+      expect(device.shortestSide, greaterThanOrEqualTo(600));
+
+      expect(
+        resolvePipMeterHostIsTablet(
+          latchedHostIsTablet: true,
+          deviceSize: device,
+          windowSize: pipWindow,
+        ),
+        isTrue,
+      );
+      expect(
+        resolvePipMeterHostIsTablet(
+          deviceSize: device,
+          windowSize: pipWindow,
+        ),
+        isTrue,
+      );
+      // Window-only fallback (unit tests) — tiny PiP alone is phone.
+      expect(
+        resolvePipMeterHostIsTablet(windowSize: pipWindow),
+        isFalse,
+      );
+    });
+
+    test('tablet typography stays tablet after PiP-sized window', () {
+      final fullscreen = PipMeterTypography.forSize(
+        const Size(800, 1280),
+        compact: true,
+        hostIsTablet: true,
+      );
+      final pipWindow = PipMeterTypography.forSize(
+        const Size(352, 198),
+        compact: true,
+        hostIsTablet: true,
+      );
+      expect(fullscreen.isTablet, isTrue);
+      expect(pipWindow.isTablet, isTrue);
+      expect(pipWindow.primaryValueSize, greaterThan(30));
+      expect(pipWindow.frameWidth, greaterThan(0));
+      // Phone path must remain distinct when host is not tablet.
+      final phonePip = PipMeterTypography.forSize(
+        const Size(352, 198),
+        compact: true,
+        hostIsTablet: false,
+      );
+      expect(phonePip.isTablet, isFalse);
+      expect(phonePip.primarySize, 34);
+      expect(phonePip.frameWidth, 0);
+    });
+
+    testWidgets(
+      'first large frame then PiP shrink keeps tablet taxi-meter body',
+      (tester) async {
+        final model = buildExternalNavPipMeterModel(
+          phase: ExternalNavPhase.activeRide,
+          isStreetRide: true,
+          isFixedPrice: false,
+          language: AppLanguage.en,
+          liveFareText: '€14,25',
+          remainingDistanceText: '4.1 km',
+          etaText: '11 min',
+          durationText: '00:11:00',
+          speedText: '50 km/h',
+        );
+
+        // Frame 1: fullscreen tablet (pre-PiP / transitional).
+        await _pumpMeter(
+          tester,
+          size: const Size(800, 1280),
+          model: model,
+        );
+        expect(find.text('Distance'), findsOneWidget);
+        expect(find.text('Current'), findsOneWidget);
+        expect(find.text('Ride time'), findsOneWidget);
+
+        // Frame 2: PiP window shrink — same latched hostIsTablet=true.
+        await tester.pumpWidget(
+          MediaQuery(
+            data: const MediaQueryData(size: Size(352, 198)),
+            child: MaterialApp(
+              home: Scaffold(
+                body: SizedBox(
+                  width: 352,
+                  height: 198,
+                  child: ExternalNavPipMeterCard(
+                    model: model,
+                    hostIsTablet: true,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        // Still taxi-meter columns — NOT the phone compact-only presentation.
+        expect(find.text('Distance'), findsOneWidget);
+        expect(find.text('Time'), findsOneWidget);
+        expect(find.text('Current'), findsOneWidget);
+        expect(find.text('Fare'), findsOneWidget);
+        expect(find.text('Ride time'), findsOneWidget);
+        final typo = PipMeterTypography.forSize(
+          const Size(352, 198),
+          compact: true,
+          hostIsTablet: true,
+        );
+        expect(typo.isTablet, isTrue);
+      },
+    );
+  });
+
   group('responsive layout', () {
     final activeModel = buildExternalNavPipMeterModel(
       phase: ExternalNavPhase.activeRide,
@@ -267,7 +383,23 @@ void main() {
       tester,
     ) async {
       const size = Size(800, 1280);
-      await _pumpMeter(tester, size: size, model: activeModel);
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(size: size),
+          child: MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: size.width,
+                height: size.height,
+                child: ExternalNavPipMeterCard(
+                  model: activeModel,
+                  hostIsTablet: true,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
       expect(tester.takeException(), isNull);
       expect(find.text('To destination'), findsOneWidget);
       expect(find.text('Distance'), findsOneWidget);
@@ -281,7 +413,11 @@ void main() {
       expect(find.text('50 km/h'), findsOneWidget);
       expect(find.text('00:11:00'), findsOneWidget);
 
-      final typo = PipMeterTypography.forSize(size, compact: true);
+      final typo = PipMeterTypography.forSize(
+        size,
+        compact: true,
+        hostIsTablet: true,
+      );
       expect(typo.isTablet, isTrue);
       expect(typo.titleSize, inInclusiveRange(28, 32));
       expect(typo.primaryValueSize, inInclusiveRange(44, 52));
@@ -481,14 +617,27 @@ void main() {
 
     test('meter source owns tablet taxi-meter density layout', () {
       expect(meterSource, contains('PIP-TABLET-KPI-DENSITY-P1'));
+      expect(meterSource, contains('PIP-TABLET-FORM-FACTOR-STABLE-P1'));
       expect(meterSource, contains('_TabletTaxiMeterBody'));
       expect(meterSource, contains('_PhonePipMeterBody'));
       expect(meterSource, contains('primaryMetrics'));
       expect(meterSource, contains('secondaryMetrics'));
+      expect(meterSource, contains('pipMeterDeviceLogicalSizeOf'));
+      expect(meterSource, contains('resolvePipMeterHostIsTablet'));
       expect(meterSource, contains('To pickup point'));
       expect(
         meterSource.contains("title: 'Naar ophaalpunt'"),
         isFalse,
+      );
+    });
+
+    test('driver home latches hostIsTablet before PiP and passes it to card', () {
+      expect(homeSource, contains('PIP-TABLET-FORM-FACTOR-STABLE-P1'));
+      expect(homeSource, contains('hostIsTablet: hostIsTablet'));
+      expect(homeSource, contains('hostIsTablet:'));
+      expect(
+        homeSource,
+        contains('_externalNavigationSession?.hostIsTablet'),
       );
     });
   });

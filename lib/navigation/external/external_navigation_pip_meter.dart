@@ -3,15 +3,24 @@
 // GOOGLE-MAPS-PIP-LIVE-METER-P0
 // PIP-TABLET-READABILITY-LOCALE-P1
 // PIP-TABLET-KPI-DENSITY-P1
+// PIP-TABLET-FORM-FACTOR-STABLE-P1
 //
 // Compact high-contrast PiP meter card. No map / menus.
 // Tablet PiP uses a passenger-facing taxi-meter layout that fills the card.
 // Phone PiP keeps the prior compact primary+secondary presentation.
 //
+// CRITICAL (field SM-X400): never classify tablet vs phone from the PiP
+// *window* size. Entering PiP shrinks MediaQuery from sw~880dp to a small
+// 16:9 surface (often shortestSide << 600). That falsely flipped the card
+// onto the phone body after the first frame(s). Host form-factor must come
+// from the device/display (or a latched pre-PiP flag).
+//
 // PiP MUST observe the same [DriverRideMetersSnapshot] stream as Tellers/HUD —
 // never a one-shot model baked at PiP enter. There is no second fare engine.
 //
 // Overlay copy follows the signed-in driver's Fluxidi app language (nl/en/fr/es).
+
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -22,6 +31,54 @@ import 'package:fluxidi_tracking/navigation/presentation/driver_ride_meters.dart
 import 'external_navigation_session.dart';
 
 enum PipMeterKind { fixedPrice, liveTariff, toCustomer }
+
+/// Logical shortest-side threshold for tablet PiP chrome (device class).
+const double kPipMeterTabletShortestSide = 600;
+
+/// Device/display logical size — independent of the current PiP window bounds.
+///
+/// Field sequence on SM-X400:
+/// 1) fullscreen MediaQuery ≈ sw880dp → tablet body
+/// 2) PiP window MediaQuery ≈ 200–400dp shortestSide → would falsely select phone
+/// Using [FlutterView.display] keeps the host form-factor stable across that
+/// transition.
+Size pipMeterDeviceLogicalSizeOf(BuildContext context) {
+  final view = View.of(context);
+  final dpr = view.devicePixelRatio;
+  if (!dpr.isFinite || dpr <= 0) {
+    return MediaQuery.sizeOf(context);
+  }
+  final physical = view.display.size;
+  if (!physical.width.isFinite ||
+      !physical.height.isFinite ||
+      physical.width <= 0 ||
+      physical.height <= 0) {
+    return MediaQuery.sizeOf(context);
+  }
+  return Size(physical.width / dpr, physical.height / dpr);
+}
+
+/// Resolve whether the PiP host device is a tablet.
+///
+/// Precedence:
+/// 1. explicit latched pre-PiP flag (session / launch-time)
+/// 2. device/display shortestSide
+/// 3. never the transient PiP window size alone
+bool resolvePipMeterHostIsTablet({
+  bool? latchedHostIsTablet,
+  Size? deviceSize,
+  Size? windowSize,
+}) {
+  if (latchedHostIsTablet != null) return latchedHostIsTablet;
+  if (deviceSize != null) {
+    return deviceSize.shortestSide >= kPipMeterTabletShortestSide;
+  }
+  // Last-resort fallback for pure unit tests without a view/display.
+  if (windowSize != null) {
+    return windowSize.shortestSide >= kPipMeterTabletShortestSide;
+  }
+  return false;
+}
 
 /// One labeled KPI cell. Value is always paired with [label] — never orphaned.
 @immutable
@@ -417,9 +474,18 @@ class PipMeterTypography {
   final double frameWidth;
   final bool isTablet;
 
-  static PipMeterTypography forSize(Size size, {required bool compact}) {
-    final isPhone = size.shortestSide < 600;
-    if (isPhone) {
+  /// [size] is the *window* (may be the tiny PiP surface).
+  /// [hostIsTablet] must reflect the *device* form-factor, not the window.
+  static PipMeterTypography forSize(
+    Size size, {
+    required bool compact,
+    bool? hostIsTablet,
+  }) {
+    final useTablet = resolvePipMeterHostIsTablet(
+      latchedHostIsTablet: hostIsTablet,
+      windowSize: size,
+    );
+    if (!useTablet) {
       return PipMeterTypography(
         titleSize: 14,
         primarySize: 34,
@@ -438,22 +504,26 @@ class PipMeterTypography {
         isTablet: false,
       );
     }
-    // Tablet SM-X400 PiP: fill width, passenger-readable KPI hierarchy.
+    // Tablet device: keep taxi-meter hierarchy even inside a small PiP window.
+    // Scale fonts to the window shortest side so content still fits, but never
+    // fall back to the phone branch (field flash → small steady-state bug).
     final landscape = size.width > size.height;
+    final scale = (size.shortestSide / 420.0).clamp(0.70, 1.0);
+    double s(double v) => v * scale;
     return PipMeterTypography(
-      titleSize: landscape ? 28 : 30,
-      primarySize: landscape ? 44 : 50,
-      metricSize: landscape ? 32 : 36,
-      labelSize: landscape ? 18 : 20,
-      primaryValueSize: landscape ? 44 : 50,
-      primaryLabelSize: landscape ? 20 : 22,
-      secondaryValueSize: landscape ? 32 : 36,
-      secondaryLabelSize: landscape ? 18 : 20,
-      horizontalPadding: 24,
-      verticalPadding: landscape ? 12 : 16,
-      titleGap: 8,
-      metricsGap: 6,
-      sectionGap: 10,
+      titleSize: s(landscape ? 28 : 30),
+      primarySize: s(landscape ? 44 : 50),
+      metricSize: s(landscape ? 32 : 36),
+      labelSize: s(landscape ? 18 : 20),
+      primaryValueSize: s(landscape ? 44 : 50),
+      primaryLabelSize: s(landscape ? 20 : 22),
+      secondaryValueSize: s(landscape ? 32 : 36),
+      secondaryLabelSize: s(landscape ? 18 : 20),
+      horizontalPadding: math.max(12.0, s(24)),
+      verticalPadding: math.max(8.0, s(landscape ? 12 : 16)),
+      titleGap: s(8),
+      metricsGap: s(6),
+      sectionGap: s(10),
       frameWidth: 1.5,
       isTablet: true,
     );
@@ -465,15 +535,43 @@ class ExternalNavPipMeterCard extends StatelessWidget {
     super.key,
     required this.model,
     this.compact = true,
+    this.hostIsTablet,
   });
 
   final ExternalNavPipMeterModel model;
   final bool compact;
 
+  /// Latched pre-PiP / session device class. When null, resolved from display.
+  final bool? hostIsTablet;
+
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.sizeOf(context);
-    final typo = PipMeterTypography.forSize(size, compact: compact);
+    final windowSize = MediaQuery.sizeOf(context);
+    final deviceSize = pipMeterDeviceLogicalSizeOf(context);
+    final useTablet = resolvePipMeterHostIsTablet(
+      latchedHostIsTablet: hostIsTablet,
+      deviceSize: deviceSize,
+      windowSize: windowSize,
+    );
+    final typo = PipMeterTypography.forSize(
+      windowSize,
+      compact: compact,
+      hostIsTablet: useTablet,
+    );
+
+    // PIP-TABLET-FORM-FACTOR-STABLE-P1: one-line proof for field logcat.
+    assert(() {
+      debugPrint(
+        '[PIP_METER] form_factor '
+        'window=${windowSize.width.toStringAsFixed(0)}x'
+        '${windowSize.height.toStringAsFixed(0)} '
+        'device=${deviceSize.width.toStringAsFixed(0)}x'
+        '${deviceSize.height.toStringAsFixed(0)} '
+        'latched=$hostIsTablet useTablet=$useTablet '
+        'branch=${useTablet ? "tablet_taxi" : "phone_compact"}',
+      );
+      return true;
+    }());
 
     final content = Padding(
       padding: EdgeInsets.symmetric(
