@@ -100,14 +100,6 @@ class DriverNavCameraPolicy {
   static const double minZoom = 13.0;
   static const double maxZoom = 18.5;
 
-  /// Conservative extra zoom-out for overview / north-up only.
-  ///
-  /// Street View / 3D cockpit steady-state targets come from the Pro2
-  /// cockpit profile and must not be shifted by this bias. Keeping the
-  /// bias off [NavCameraViewMode.streetView] also preserves the streetlevel
-  /// cold-start policy seed used before the first cockpit apply.
-  static const double nonStreetViewOverviewZoomBias = -0.45;
-
   // NAV-R13: cap tilt to reduce marker perspective distortion; 64° made the
   // viewport-anchored taxi sprite look flattened during angled follow.
   static const double maxTiltDeg = 58.0;
@@ -255,28 +247,13 @@ class DriverNavCameraPolicy {
     // --- NAV-R12-H dynamic zoom -------------------------------------------
     double targetZoom;
     String zoomReason;
-    // Overview / north-up bias applies to freshly resolved targets only.
-    // Holding `_lastZoom` must not re-apply the bias (that value is already
-    // the previously applied overview zoom).
-    var applyNonStreetViewBias =
-        input.viewMode != NavCameraViewMode.streetView;
     if (input.speedKmh == null || !input.speedKmh!.isFinite) {
-      if (_lastZoom != null) {
-        targetZoom = _lastZoom!;
-        applyNonStreetViewBias = false;
-      } else {
-        targetZoom = 16.5;
-      }
+      targetZoom = _lastZoom ?? 16.5;
       zoomReason = 'fallback';
     } else if (speedKmh < 3.0) {
       // Stopped/crawling: hold the current zoom instead of chasing a new
       // band on GPS jitter; first fix ever gets the stable close zoom.
-      if (_lastZoom != null) {
-        targetZoom = _lastZoom!;
-        applyNonStreetViewBias = false;
-      } else {
-        targetZoom = stoppedZoom;
-      }
+      targetZoom = _lastZoom ?? stoppedZoom;
       zoomReason = 'speed';
     } else {
       targetZoom = speedZoomFor(speedKmh);
@@ -291,9 +268,6 @@ class DriverNavCameraPolicy {
     if (maneuverZoom != null && maneuverZoom > targetZoom) {
       targetZoom = maneuverZoom;
       zoomReason = 'maneuver';
-      // Maneuver targets are raw band values; re-enable bias when overview.
-      applyNonStreetViewBias =
-          input.viewMode != NavCameraViewMode.streetView;
     }
 
     if (lowConfidence) {
@@ -312,16 +286,7 @@ class DriverNavCameraPolicy {
         zoomReason = 'adaptation';
         tilt = math.min(tilt, 52.0);
         reason = '${reason}_adaptation';
-        applyNonStreetViewBias =
-            input.viewMode != NavCameraViewMode.streetView;
       }
-    }
-
-    // Non-3D overview / north-up: raise the camera slightly (more road /
-    // context). Never applied to streetView so 3D cockpit framing stays put.
-    if (applyNonStreetViewBias) {
-      targetZoom = (targetZoom + nonStreetViewOverviewZoomBias)
-          .clamp(minZoom, maxZoom);
     }
 
     if (input.manualRecenter) {
