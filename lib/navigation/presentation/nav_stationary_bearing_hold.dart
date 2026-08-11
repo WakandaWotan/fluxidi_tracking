@@ -629,6 +629,47 @@ bool shouldSkipPassivePrestartFollowCamera({
   return true;
 }
 
+/// NAV-PRESTART-ROUTE-REPLACE-HEADING-HOLD-P0: keep an already-latched
+/// pre-START camera bearing across a later prepared-route accept while the
+/// vehicle is still stationary / movement-untrusted.
+///
+/// First prepared route (no held bearing yet) returns false so seed + preview
+/// may establish the initial route-up orientation. Post-START always false.
+/// Trustworthy movement before START also returns false so architecture may
+/// adopt a new route-up target again.
+bool shouldPreservePrestartHeldBearingAcrossRouteReplace({
+  required bool liveRideActive,
+  required bool preparedRouteDraft,
+  required bool hasHeldBearing,
+  required double speedKmh,
+  double? displacementM,
+  double? accuracyM,
+}) {
+  if (liveRideActive) return false;
+  if (!preparedRouteDraft) return false;
+  if (!hasHeldBearing) return false;
+  if (navBearingMovementTrustworthy(
+        speedKmh: speedKmh,
+        displacementM: displacementM,
+        accuracyM: accuracyM,
+      )) {
+    return false;
+  }
+  return true;
+}
+
+/// Route-tangent input for pre-START [resolveNavFixedRouteUpBearing].
+///
+/// When [preserveHeldBearing] is true the tangent is omitted so the already
+/// seeded/held bearing wins without changing global live route-up precedence.
+double? prestartPreviewRouteTangentForResolve({
+  required bool preserveHeldBearing,
+  required double? routeFirstSegmentBearingDeg,
+}) {
+  if (preserveHeldBearing) return null;
+  return routeFirstSegmentBearingDeg;
+}
+
 /// Pure pre-START hold: once a trusted preview/route bearing is latched, GPS
 /// pose jitter and route-progress noise must not change the camera bearing
 /// until START (live ride) takes over.

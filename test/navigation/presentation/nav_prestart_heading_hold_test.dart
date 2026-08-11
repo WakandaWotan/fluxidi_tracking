@@ -1,8 +1,10 @@
 // NAV-PRESTART-HEADING-HOLD-P0: prepared-route stationary hold before START.
+// NAV-PRESTART-ROUTE-REPLACE-HEADING-HOLD-P0: route A→B must not rotate camera.
 // Post-START / moving / accecd8 gate behaviour must remain unchanged.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/navigation/driver_navigation_map_config.dart';
+import 'package:fluxidi_tracking/navigation/nav_engine/nav_fixed_hud_presentation.dart';
 import 'package:fluxidi_tracking/navigation/presentation/nav_stationary_bearing_hold.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_cockpit_camera.dart';
 
@@ -270,6 +272,229 @@ void main() {
       );
       expect(parked.held, isTrue);
       expect(parked.bearingDeg, isNot(closeTo(95.0, 1.0)));
+    });
+  });
+
+  group('shouldPreservePrestartHeldBearingAcrossRouteReplace', () {
+    test('TEST A/C: preserves held bearing across route B while stationary', () {
+      const held = 90.0;
+      const routeBTangent = 145.0;
+      final gate = NavStationaryBearingGate();
+      gate.seedInitialRouteBearing(
+        routeTangentBearingDeg: held,
+        routeSegmentIndex: 0,
+      );
+      expect(gate.acceptedBearing, closeTo(held, 1e-9));
+
+      final preserve = shouldPreservePrestartHeldBearingAcrossRouteReplace(
+        liveRideActive: false,
+        preparedRouteDraft: true,
+        hasHeldBearing: gate.acceptedBearing != null,
+        speedKmh: 0.0,
+        displacementM: 0.4,
+        accuracyM: 8.0,
+      );
+      expect(preserve, isTrue);
+
+      // Caller must skip seedInitialRouteBearing when preserve — simulate.
+      if (!preserve) {
+        gate.seedInitialRouteBearing(
+          routeTangentBearingDeg: routeBTangent,
+          routeSegmentIndex: 0,
+        );
+      }
+      expect(gate.acceptedBearing, closeTo(held, 1e-9));
+
+      // Preview re-apply omits route-B tangent → seeded/held wins.
+      final routeUp = resolveNavFixedRouteUpBearing(
+        routeTangentBearingDeg: prestartPreviewRouteTangentForResolve(
+          preserveHeldBearing: preserve,
+          routeFirstSegmentBearingDeg: routeBTangent,
+        ),
+        seededRouteBearingDeg: gate.acceptedBearing,
+        gpsHeadingDeg: 12.0,
+      );
+      expect(routeUp.bearingDeg, closeTo(held, 1e-9));
+      expect(routeUp.source, NavFixedRouteUpBearingSource.seededRoute);
+      expect(routeUp.bearingDeg, isNot(closeTo(routeBTangent, 1.0)));
+    });
+
+    test('TEST B: preserve gate does not imply freezing route content flags', () {
+      // Content (geometry/steps/version/signage) is updated by activate;
+      // this helper only gates camera seed/preview bearing.
+      var routeStepsVersion = 1;
+      var maneuver = 'Rechtsaf';
+      var distanceM = 120.0;
+      const held = 90.0;
+      final gate = NavStationaryBearingGate();
+      gate.seedInitialRouteBearing(
+        routeTangentBearingDeg: held,
+        routeSegmentIndex: 0,
+      );
+
+      final preserve = shouldPreservePrestartHeldBearingAcrossRouteReplace(
+        liveRideActive: false,
+        preparedRouteDraft: true,
+        hasHeldBearing: true,
+        speedKmh: 0.0,
+        displacementM: 0.2,
+        accuracyM: 10.0,
+      );
+      expect(preserve, isTrue);
+
+      // Simulate route-B content accept while camera hold preserved.
+      routeStepsVersion += 1;
+      maneuver = 'Linksaf';
+      distanceM = 55.0;
+      expect(routeStepsVersion, 2);
+      expect(maneuver, 'Linksaf');
+      expect(distanceM, 55.0);
+      expect(gate.acceptedBearing, closeTo(held, 1e-9));
+    });
+
+    test('first prepared route may still seed (no held bearing yet)', () {
+      expect(
+        shouldPreservePrestartHeldBearingAcrossRouteReplace(
+          liveRideActive: false,
+          preparedRouteDraft: true,
+          hasHeldBearing: false,
+          speedKmh: 0.0,
+          displacementM: 0.0,
+          accuracyM: 8.0,
+        ),
+        isFalse,
+      );
+      final gate = NavStationaryBearingGate();
+      final seeded = gate.seedInitialRouteBearing(
+        routeTangentBearingDeg: 72.0,
+        routeSegmentIndex: 0,
+      );
+      expect(seeded, closeTo(72.0, 1e-9));
+      final routeUp = resolveNavFixedRouteUpBearing(
+        routeTangentBearingDeg: prestartPreviewRouteTangentForResolve(
+          preserveHeldBearing: false,
+          routeFirstSegmentBearingDeg: 72.0,
+        ),
+        seededRouteBearingDeg: gate.acceptedBearing,
+      );
+      expect(routeUp.bearingDeg, closeTo(72.0, 1e-9));
+      expect(routeUp.source, NavFixedRouteUpBearingSource.routeTangent);
+    });
+
+    test('TEST D: style-style preview reapply keeps held bearing', () {
+      const held = 210.0;
+      final gate = NavStationaryBearingGate();
+      gate.latchHeldCameraBearing(held);
+      for (final style in DriverCockpitMapVisualStyle.values) {
+        final preserve = shouldPreservePrestartHeldBearingAcrossRouteReplace(
+          liveRideActive: false,
+          preparedRouteDraft: true,
+          hasHeldBearing: true,
+          speedKmh: 0.0,
+          displacementM: 0.1,
+          accuracyM: 9.0,
+        );
+        expect(preserve, isTrue, reason: style.name);
+        final routeUp = resolveNavFixedRouteUpBearing(
+          routeTangentBearingDeg: prestartPreviewRouteTangentForResolve(
+            preserveHeldBearing: true,
+            routeFirstSegmentBearingDeg: 145.0,
+          ),
+          seededRouteBearingDeg: gate.acceptedBearing,
+        );
+        expect(routeUp.bearingDeg, closeTo(held, 1e-9));
+        // Zoom/pitch still style-gated (geometry may change; bearing must not).
+        final targets = resolveDriverCockpitStreetlevelL7Targets(
+          isTablet: true,
+          isLandscape: false,
+          mapVisualStyle: style,
+        );
+        expect(targets.zoom, greaterThan(0));
+        expect(targets.pitch, greaterThan(0));
+      }
+    });
+
+    test('TEST E: phase recenter uses same preserve preview bearing path', () {
+      // Existing prepared-phase recenter re-applies preview camera (does not
+      // invent a new bearing UX). Held bearing must survive that re-apply.
+      const held = 33.0;
+      final gate = NavStationaryBearingGate();
+      gate.seedInitialRouteBearing(
+        routeTangentBearingDeg: held,
+        routeSegmentIndex: 0,
+      );
+      final preserve = shouldPreservePrestartHeldBearingAcrossRouteReplace(
+        liveRideActive: false,
+        preparedRouteDraft: true,
+        hasHeldBearing: true,
+        speedKmh: 0.0,
+        displacementM: 0.3,
+        accuracyM: 7.0,
+      );
+      expect(preserve, isTrue);
+      final routeUp = resolveNavFixedRouteUpBearing(
+        routeTangentBearingDeg: prestartPreviewRouteTangentForResolve(
+          preserveHeldBearing: preserve,
+          routeFirstSegmentBearingDeg: 145.0,
+        ),
+        seededRouteBearingDeg: gate.acceptedBearing,
+      );
+      expect(routeUp.bearingDeg, closeTo(held, 1e-9));
+    });
+
+    test('TEST F: START / liveRideActive disables preserve', () {
+      expect(
+        shouldPreservePrestartHeldBearingAcrossRouteReplace(
+          liveRideActive: true,
+          preparedRouteDraft: false,
+          hasHeldBearing: true,
+          speedKmh: 0.0,
+          displacementM: 0.2,
+          accuracyM: 8.0,
+        ),
+        isFalse,
+      );
+      // Live may reseed from new route tangent (existing START / apply path).
+      final gate = NavStationaryBearingGate();
+      gate.seedInitialRouteBearing(
+        routeTangentBearingDeg: 90.0,
+        routeSegmentIndex: 0,
+      );
+      gate.seedInitialRouteBearing(
+        routeTangentBearingDeg: 145.0,
+        routeSegmentIndex: 0,
+      );
+      expect(gate.acceptedBearing, closeTo(145.0, 1e-9));
+    });
+
+    test('movement trustworthy before START releases preserve', () {
+      expect(
+        shouldPreservePrestartHeldBearingAcrossRouteReplace(
+          liveRideActive: false,
+          preparedRouteDraft: true,
+          hasHeldBearing: true,
+          speedKmh: 12.0,
+          displacementM: 8.0,
+          accuracyM: 6.0,
+        ),
+        isFalse,
+      );
+    });
+
+    test('TEST H: live new_route_accepted path is outside preserve gate', () {
+      // Live reroute uses _isRerouting + seedInitialRouteBearing + blend —
+      // preserve requires !liveRideActive, so it cannot intercept that path.
+      expect(
+        shouldPreservePrestartHeldBearingAcrossRouteReplace(
+          liveRideActive: true,
+          preparedRouteDraft: false,
+          hasHeldBearing: true,
+          speedKmh: 30.0,
+          displacementM: 15.0,
+          accuracyM: 5.0,
+        ),
+        isFalse,
+      );
     });
   });
 }

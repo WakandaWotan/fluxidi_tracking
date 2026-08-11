@@ -17758,19 +17758,50 @@ class _DriverHomePageState extends State<DriverHomePage>
     // NAV-FIXED-HUD-PRESENTATION-1: route-up, never raw GPS course. At
     // standstill `pos.heading` is noise (or 0), which is exactly why the
     // prepared route did not extend toward the top of the screen.
+    //
+    // NAV-PRESTART-ROUTE-REPLACE-HEADING-HOLD-P0: while a held pre-START
+    // bearing exists and movement is untrusted, omit the new first-segment
+    // tangent so preview re-apply (route-ready / style / phase recenter)
+    // restores zoom/pitch/center without adopting route-B's bearing.
+    final heldBearing = _navStationaryBearingGate.acceptedBearing;
+    final speedKmh = _speedKmhFor(pos);
+    double? displacementM;
+    if (_navBearingAnchorLat != null && _navBearingAnchorLon != null) {
+      displacementM = _metersBetween(
+        _LonLat(_navBearingAnchorLon!, _navBearingAnchorLat!),
+        _LonLat(pos.longitude, pos.latitude),
+      );
+    }
+    final preserveHeldBearing =
+        shouldPreservePrestartHeldBearingAcrossRouteReplace(
+      liveRideActive: _liveRideActive,
+      preparedRouteDraft: _fixedStreetLevelPreviewDraft,
+      hasHeldBearing: heldBearing != null && heldBearing.isFinite,
+      speedKmh: speedKmh,
+      displacementM: displacementM,
+      accuracyM: pos.accuracy.isFinite ? pos.accuracy : null,
+    );
     final routeUp = resolveNavFixedRouteUpBearing(
-      routeTangentBearingDeg: navFirstMeaningfulRouteSegmentBearing(
-        _routeCoords,
+      routeTangentBearingDeg: prestartPreviewRouteTangentForResolve(
+        preserveHeldBearing: preserveHeldBearing,
+        routeFirstSegmentBearingDeg: navFirstMeaningfulRouteSegmentBearing(
+          _routeCoords,
+        ),
       ),
-      seededRouteBearingDeg: _navStationaryBearingGate.acceptedBearing,
+      seededRouteBearingDeg: heldBearing,
       gpsHeadingDeg: pos.heading.isFinite ? pos.heading : null,
     );
     // Street pre-START: when route-up falls back to GPS/none, prefer the
     // already-rendered vehicle visual heading so road-up matches the nose.
     // Never invent north=0 when a trustworthy vehicle bearing exists.
+    // Preserving a held bearing skips this fallback — GPS/visual must not
+    // replace the latched pre-START orientation on preview re-apply.
     var bearingDeg = routeUp.bearingDeg;
-    var bearingSourceLabel = navFixedRouteUpBearingSourceLabel(routeUp.source);
-    if (!routeUp.isRouteUp &&
+    var bearingSourceLabel = preserveHeldBearing
+        ? 'prestart_held'
+        : navFixedRouteUpBearingSourceLabel(routeUp.source);
+    if (!preserveHeldBearing &&
+        !routeUp.isRouteUp &&
         _navR3VisualBearing.isFinite &&
         (_navR3VisualBearing != 0.0 ||
             routeUp.source == NavFixedRouteUpBearingSource.none)) {
@@ -21956,8 +21987,44 @@ class _DriverHomePageState extends State<DriverHomePage>
   /// NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 2): fixes the initial
   /// Street Level bearing from the first meaningful segment of the accepted
   /// route. Called on route activation, i.e. before any movement exists.
+  ///
+  /// NAV-PRESTART-ROUTE-REPLACE-HEADING-HOLD-P0: a later prepared-route accept
+  /// while still stationary must not overwrite the already-held camera bearing
+  /// or reset the smoother onto route-B's first-segment tangent. Route
+  /// geometry / steps / signage still update via the caller.
   void _seedNavStationaryBearingFromRoute({required String reason}) {
     if (_routeCoords.length < 2) return;
+    final pos = _lastPos;
+    final speedKmh = pos != null ? _speedKmhFor(pos) : 0.0;
+    double? displacementM;
+    if (pos != null &&
+        _navBearingAnchorLat != null &&
+        _navBearingAnchorLon != null) {
+      displacementM = _metersBetween(
+        _LonLat(_navBearingAnchorLon!, _navBearingAnchorLat!),
+        _LonLat(pos.longitude, pos.latitude),
+      );
+    }
+    final held = _navStationaryBearingGate.acceptedBearing;
+    final accuracyM =
+        pos != null && pos.accuracy.isFinite ? pos.accuracy : null;
+    if (shouldPreservePrestartHeldBearingAcrossRouteReplace(
+      liveRideActive: _liveRideActive,
+      preparedRouteDraft: _fixedStreetLevelPreviewDraft,
+      hasHeldBearing: held != null && held.isFinite,
+      speedKmh: speedKmh,
+      displacementM: displacementM,
+      accuracyM: accuracyM,
+    )) {
+      _logNavBounded(
+        'NAV_BEARING_SEED',
+        'reason=$reason preserved=1 '
+        'held=${held!.toStringAsFixed(1)} '
+        'source=prestart_held_across_route_replace',
+        intervalMs: 1000,
+      );
+      return;
+    }
     final seeded = _navStationaryBearingGate.seedInitialRouteBearing(
       routeTangentBearingDeg: navFirstMeaningfulRouteSegmentBearing(
         _routeCoords,
