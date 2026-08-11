@@ -390,8 +390,9 @@ void main() {
       );
       // Captioned plate owns the maneuver verb; external copy is distance + road.
       expect(find.text('Volg de route'), findsNothing);
-      expect(find.textContaining('N454'), findsOneWidget);
-      expect(find.textContaining('643'), findsOneWidget);
+      // Outlined map text paints stroke+fill Text widgets.
+      expect(find.textContaining('N454'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('643'), findsAtLeastNWidgets(1));
 
       await _writeBoundaryPng(
         tester,

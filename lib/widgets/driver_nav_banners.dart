@@ -9,6 +9,7 @@ import 'package:fluxidi_tracking/navigation/driver_navigation_formatters.dart';
 import 'package:fluxidi_tracking/navigation/driver_navigation_models.dart';
 import 'package:fluxidi_tracking/navigation/presentation/maneuver_presentation.dart';
 import 'package:fluxidi_tracking/navigation/presentation/nav_maneuver_sign.dart';
+import 'package:fluxidi_tracking/navigation/presentation/nav_outlined_map_text.dart';
 import 'package:fluxidi_tracking/navigation/presentation/nav_signage_tablet_readability.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_lane_guidance_strip.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_tablet_portrait_nav_layout.dart';
@@ -216,11 +217,17 @@ class DriverTurnInstructionBanner extends StatelessWidget {
 
   bool get _useLandscapeCompactRow => compact && !topRowLandscape;
 
-  /// NAV-FOLLOW-ROUTE-RUNTIME-TRUTH-P0-2 / NAV-TABLET-BRANDED-HEADER-P1:
+  /// NAV-FOLLOW-ROUTE-RUNTIME-TRUTH-P0-2 / NAV-TABLET-TRANSPARENT-HEADER-P1:
   /// tablet readability metrics stack distance above the road/instruction line
   /// (top-row follow header included) so the distance stays the dominant value.
   /// Phones never pass [tabletReadability].
   bool get _useTabletStackedText => tabletReadability != null;
+
+  /// Tablet transparent follow header only (menu/brand/maneuver top row).
+  /// Tellers split and other tabletReadability call sites keep prior chrome.
+  /// Phones never enable this.
+  bool get _useTabletTransparentHeader =>
+      tabletReadability != null && topRowLandscape;
 
   bool get _usePortraitTabletPolish =>
       portraitTabletMetrics != null &&
@@ -391,129 +398,124 @@ class DriverTurnInstructionBanner extends StatelessWidget {
           );
         }
 
-        final banner = ClipRRect(
-          key: const ValueKey<String>('nav_maneuver_banner'),
-          borderRadius: BorderRadius.circular(
-            _useLandscapeTopRow || _useLandscapeCompactRow
-                ? 14
-                : (compact ? 16 : 18),
+        final radius = BorderRadius.circular(
+          _useLandscapeTopRow || _useLandscapeCompactRow
+              ? 14
+              : (compact ? 16 : 18),
+        );
+        final tabletTransparent = _useTabletTransparentHeader;
+        final bannerBody = Container(
+          // NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1:
+          // Soft floor only. Height follows content; missing subtitle /
+          // lanes consume zero extra space (no fixed oversized band).
+          constraints: BoxConstraints(
+            minHeight:
+                _minBannerHeight +
+                (showLaneGuidance ? (_laneRowHeight + 4) : 0),
           ),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(
-              sigmaX: compact ? 10 : 12,
-              sigmaY: compact ? 10 : 12,
+          padding: EdgeInsets.symmetric(
+            horizontal: _horizontalPadding,
+            vertical: _verticalPadding,
+          ),
+          decoration: BoxDecoration(
+            // NAV-TABLET-TRANSPARENT-HEADER-P1: tablet paints over the map
+            // with no navy fill. Phone keeps the prior opaque panel.
+            color: tabletTransparent
+                ? Colors.transparent
+                : palette.surface.withOpacity(
+                    palette.isDark ? 0.88 : 0.96,
+                  ),
+            borderRadius: radius,
+            border: Border.all(
+              color: tabletTransparent
+                  ? const Color(0xFFFFD36A).withOpacity(
+                      isHighwayLike ? 0.95 : 0.72,
+                    )
+                  : borderColor,
+              width: isHighwayLike ? 1.8 : 1.2,
             ),
-            child: Container(
-              // NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1:
-              // Soft floor only. Height follows content; missing subtitle /
-              // lanes consume zero extra space (no fixed oversized band).
-              constraints: BoxConstraints(
-                minHeight:
-                    _minBannerHeight +
-                    (showLaneGuidance ? (_laneRowHeight + 4) : 0),
-              ),
-              padding: EdgeInsets.symmetric(
-                horizontal: _horizontalPadding,
-                vertical: _verticalPadding,
-              ),
-              decoration: BoxDecoration(
-                // NAV-MANEUVER-BANNER-COMPACT-WIDTH-POLISH-1: a touch less
-                // opaque in dark mode so the card reads as a panel over the
-                // map rather than a solid wall. Text/border contrast is
-                // unchanged; light mode stays at 0.96.
-                color: palette.surface.withOpacity(
-                  palette.isDark ? 0.88 : 0.96,
-                ),
-                borderRadius: BorderRadius.circular(
-                  _useLandscapeTopRow || _useLandscapeCompactRow
-                      ? 14
-                      : (compact ? 16 : 18),
-                ),
-                border: Border.all(
-                  color: borderColor,
-                  width: isHighwayLike ? 1.8 : 1.2,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: palette.shadow.withOpacity(
-                      palette.isDark ? 0.62 : 0.34,
-                    ),
-                    blurRadius: isHighwayLike ? 16 : 12,
-                    offset: const Offset(0, 5),
-                  ),
-                ],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                // NAV-MANEUVER-BANNER-COMPACT-WIDTH-POLISH-1: `start` instead
-                // of `stretch`. Stretch forced the column — and therefore the
-                // whole card — to the full incoming width even for a two-word
-                // instruction. The lane strip still fills the card because a
-                // horizontal ListView takes its bounded maximum, so lanes may
-                // widen the card up to the form-factor cap, never past it.
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      _buildManeuverIcon(palette),
-                      SizedBox(
-                        width: _useLandscapeTopRow
-                            ? 6
-                            : (_useLandscapeCompactRow
-                                  ? 8
-                                  : (compact
-                                        ? 10
-                                        : (_usePhonePortraitStack ? 10 : 12))),
+            boxShadow: tabletTransparent
+                ? const <BoxShadow>[]
+                : [
+                    BoxShadow(
+                      color: palette.shadow.withOpacity(
+                        palette.isDark ? 0.62 : 0.34,
                       ),
-                      // Loose `Flexible` rather than tight `Expanded`: the
-                      // text block still receives exactly the same maxWidth,
-                      // so wrapping, ellipsis and height are unchanged, but a
-                      // short instruction no longer stretches the card.
-                      Flexible(
-                        child: (_usePhonePortraitStack || _useTabletStackedText)
-                            ? _buildPhonePortraitTextColumn(
-                                palette: palette,
-                                secondaryLine: secondaryLine,
-                                showSecondary: showSecondary,
-                              )
-                            : _useLandscapeTopRow
-                            ? _buildLandscapeTopRowTextBlock(
-                                palette: palette,
-                                secondaryLine: secondaryLine,
-                                showSecondary: showSecondary,
-                              )
-                            : _useLandscapeCompactRow
-                            ? _buildLandscapeCompactTextBlock(
-                                palette: palette,
-                                secondaryLine: secondaryLine,
-                                showSecondary: showSecondary,
-                              )
-                            : _buildDefaultTextColumn(
-                                palette: palette,
-                                secondaryLine: secondaryLine,
-                                showSecondary: showSecondary,
-                              ),
-                      ),
-                    ],
-                  ),
-                  if (showLaneGuidance) ...[
-                    // Clearly separated row — never tiny icons inside the
-                    // maneuver text. Absent when lane data is empty/gated.
-                    SizedBox(height: _useLandscapeTopRow ? 4 : 6),
-                    DriverNavLaneGuidanceStrip(
-                      lanes: displayLanes,
-                      palette: palette,
-                      metrics: _laneStripMetrics,
-                      isHighwayLike: isHighwayLike,
-                      maneuverModifier: maneuverModifier,
+                      blurRadius: isHighwayLike ? 16 : 12,
+                      offset: const Offset(0, 5),
                     ),
                   ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  _buildManeuverIcon(palette),
+                  SizedBox(
+                    width: _useLandscapeTopRow
+                        ? 6
+                        : (_useLandscapeCompactRow
+                              ? 8
+                              : (compact
+                                    ? 10
+                                    : (_usePhonePortraitStack ? 10 : 12))),
+                  ),
+                  Flexible(
+                    child: (_usePhonePortraitStack || _useTabletStackedText)
+                        ? _buildPhonePortraitTextColumn(
+                            palette: palette,
+                            secondaryLine: secondaryLine,
+                            showSecondary: showSecondary,
+                          )
+                        : _useLandscapeTopRow
+                        ? _buildLandscapeTopRowTextBlock(
+                            palette: palette,
+                            secondaryLine: secondaryLine,
+                            showSecondary: showSecondary,
+                          )
+                        : _useLandscapeCompactRow
+                        ? _buildLandscapeCompactTextBlock(
+                            palette: palette,
+                            secondaryLine: secondaryLine,
+                            showSecondary: showSecondary,
+                          )
+                        : _buildDefaultTextColumn(
+                            palette: palette,
+                            secondaryLine: secondaryLine,
+                            showSecondary: showSecondary,
+                          ),
+                  ),
                 ],
               ),
-            ),
+              if (showLaneGuidance) ...[
+                SizedBox(height: _useLandscapeTopRow ? 4 : 6),
+                DriverNavLaneGuidanceStrip(
+                  lanes: displayLanes,
+                  palette: palette,
+                  metrics: _laneStripMetrics,
+                  isHighwayLike: isHighwayLike,
+                  maneuverModifier: maneuverModifier,
+                ),
+              ],
+            ],
           ),
+        );
+        final banner = ClipRRect(
+          key: const ValueKey<String>('nav_maneuver_banner'),
+          borderRadius: radius,
+          child: tabletTransparent
+              ? bannerBody
+              : BackdropFilter(
+                  filter: ImageFilter.blur(
+                    sigmaX: compact ? 10 : 12,
+                    sigmaY: compact ? 10 : 12,
+                  ),
+                  child: bannerBody,
+                ),
         );
         // NAV-RESPONSIVE-MANEUVER-BANNER-V1: single announcement per banner
         // update ("Over 400 meter de rotonde op. Neem de tweede afslag."), so
@@ -554,6 +556,22 @@ class DriverTurnInstructionBanner extends StatelessWidget {
       tabletReadability != null ? 16 : (compact ? 12 : 14),
     );
     if (presentation != null) {
+      // NAV-TABLET-TRANSPARENT-HEADER-P1: the large white tile was the
+      // wrapper fill (_signPlateSurface), not the BLACK-CONTOUR-V3 asset.
+      // Tablet paints the transparent PNG directly; phone keeps the plate.
+      if (_useTabletTransparentHeader) {
+        return SizedBox(
+          key: const ValueKey<String>('nav_tablet_maneuver_sign_slot'),
+          width: _iconBoxSize,
+          height: _iconBoxSize,
+          child: NavManeuverSign(
+            maneuver: presentation.signManeuver,
+            languageCode: presentation.signLanguageCode,
+            size: _signPaintSize,
+            useCaptioned: presentation.signCaptioned,
+          ),
+        );
+      }
       final inset = _signPlateInsetResolved;
       return Container(
         width: _iconBoxSize,
@@ -603,6 +621,23 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     final label = distancePrefix.trim().isEmpty
         ? distanceText
         : '$distancePrefix $distanceText';
+    final distanceStyle = TextStyle(
+      fontSize: _distanceFontSize,
+      fontWeight: FontWeight.w900,
+      color: palette.textPrimary.withOpacity(0.98),
+      letterSpacing: 0.2,
+      height: 1.05,
+    );
+    if (_useTabletTransparentHeader) {
+      return NavOutlinedMapText(
+        text: label,
+        style: distanceStyle,
+        maxLines: 1,
+        softWrap: false,
+        overflow: TextOverflow.visible,
+        strokeWidth: 3.6,
+      );
+    }
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 8 : (_usePhonePortraitStack ? 9 : 10),
@@ -625,12 +660,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
         maxLines: 1,
         softWrap: false,
         overflow: TextOverflow.visible,
-        style: TextStyle(
-          fontSize: _distanceFontSize,
-          fontWeight: FontWeight.w900,
-          color: palette.textPrimary.withOpacity(0.98),
-          letterSpacing: 0.2,
-        ),
+        style: distanceStyle,
       ),
     );
   }
@@ -648,17 +678,28 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     final resolvedMaxLines = (isArrival || _isRoundaboutPrimary)
         ? math.max(2, base)
         : base;
+    final style = TextStyle(
+      fontSize: _primaryFontSize,
+      fontWeight: FontWeight.w900,
+      color: palette.textPrimary,
+      height: 1.08,
+    );
+    if (_useTabletTransparentHeader) {
+      return NavOutlinedMapText(
+        text: primaryText,
+        style: style,
+        maxLines: resolvedMaxLines,
+        softWrap: true,
+        overflow: TextOverflow.visible,
+        strokeWidth: 3.4,
+      );
+    }
     return Text(
       primaryText,
       maxLines: resolvedMaxLines,
       softWrap: true,
       overflow: TextOverflow.visible,
-      style: TextStyle(
-        fontSize: _primaryFontSize,
-        fontWeight: FontWeight.w900,
-        color: palette.textPrimary,
-        height: 1.08,
-      ),
+      style: style,
     );
   }
 
@@ -667,16 +708,26 @@ class DriverTurnInstructionBanner extends StatelessWidget {
     String secondaryLine, {
     int? maxLines,
   }) {
+    final style = TextStyle(
+      fontSize: _secondaryFontSize,
+      fontWeight: FontWeight.w700,
+      color: palette.textPrimary.withOpacity(0.82),
+      height: 1.10,
+    );
+    if (_useTabletTransparentHeader) {
+      return NavOutlinedMapText(
+        text: secondaryLine,
+        style: style,
+        maxLines: maxLines ?? _secondaryMaxLines,
+        overflow: TextOverflow.ellipsis,
+        strokeWidth: 3.0,
+      );
+    }
     return Text(
       secondaryLine,
       maxLines: maxLines ?? _secondaryMaxLines,
       overflow: TextOverflow.ellipsis,
-      style: TextStyle(
-        fontSize: _secondaryFontSize,
-        fontWeight: FontWeight.w700,
-        color: palette.textPrimary.withOpacity(0.82),
-        height: 1.10,
-      ),
+      style: style,
     );
   }
 

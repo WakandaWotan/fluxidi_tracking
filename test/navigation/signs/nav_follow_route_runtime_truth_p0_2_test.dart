@@ -321,16 +321,16 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Volg de route'), findsOneWidget);
+      expect(find.text('Volg de route'), findsAtLeastNWidgets(1));
       expect(find.textContaining('Volg de…'), findsNothing);
       expect(find.textContaining('Volg de...'), findsNothing);
-      expect(find.textContaining('N454'), findsOneWidget);
+      expect(find.textContaining('N454'), findsAtLeastNWidgets(1));
 
       final sign = tester.widget<NavManeuverSign>(find.byType(NavManeuverSign));
       expect(sign.maneuver, NavSignManeuver.straight);
       expect(sign.assetPath, endsWith('/straight.png'));
 
-      final primary = tester.widget<Text>(find.text('Volg de route'));
+      final primary = tester.widgetList<Text>(find.text('Volg de route')).first;
       expect(primary.overflow, isNot(TextOverflow.ellipsis));
     });
 
@@ -372,7 +372,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      expect(find.text('Volg de route'), findsOneWidget);
+      // Transparent tablet header uses stroke+fill outlined text.
+      expect(find.text('Volg de route'), findsAtLeastNWidgets(1));
       final sign = tester.widget<NavManeuverSign>(find.byType(NavManeuverSign));
       expect(sign.assetPath, endsWith('/straight.png'));
     });

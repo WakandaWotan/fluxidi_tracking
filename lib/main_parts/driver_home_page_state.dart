@@ -33315,7 +33315,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           width: edge,
           height: edge,
           decoration: tabletChrome
-              ? navTabletBrandedHeaderCardDecoration(radius: radius)
+              ? navTabletHeaderMenuDecoration(radius: radius)
               : BoxDecoration(
                   color: Colors.black.withOpacity(0.26),
                   borderRadius: BorderRadius.circular(radius),
@@ -33370,8 +33370,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  /// NAV-TABLET-BRANDED-HEADER-P1: prominent white-label brand card. Height
-  /// matches the sign-driven maneuver card; logo uses BoxFit.contain.
+  /// NAV-TABLET-TRANSPARENT-HEADER-P1: transparent brand zone over the map.
+  /// No navy fill — the company/Fluxidi logo paints with BoxFit.contain.
   Widget _buildTabletNavBrandCard({
     required NavTabletBrandedHeaderMetrics header,
   }) {
@@ -33381,8 +33381,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         key: const ValueKey<String>('nav_tablet_header_brand'),
         width: header.brandWidth,
         height: header.cardHeight,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: navTabletBrandedHeaderCardDecoration(radius: header.radius),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        decoration: navTabletTransparentHeaderDecoration(radius: header.radius),
         child: Center(
           child: SizedBox(
             width: paint.width,

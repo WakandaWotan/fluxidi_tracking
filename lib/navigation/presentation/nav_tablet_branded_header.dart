@@ -2,14 +2,12 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-/// NAV-TABLET-BRANDED-HEADER-P1: tablet-only top-row proportions for
-/// `[ menu ] [ brand card ] [ maneuver card ]`.
+/// NAV-TABLET-TRANSPARENT-HEADER-P1: tablet-only top-row proportions for
+/// `[ menu ] [ brand 50% ] [ maneuver 50% ]` over the live map.
 ///
 /// Phone layouts never resolve these metrics. Width fractions are of the
-/// content band after the menu button and inter-card gaps — not the full
-/// viewport — so the Mapbox compass reserve (parent [Positioned.right]) stays
-/// free. Landscape keeps a compact left cluster (`mainAxisSize.min`) instead
-/// of stretching a full-width banner.
+/// content band after the menu button and inter-card gaps. Landscape keeps a
+/// compact left cluster (`mainAxisSize.min`) instead of a full-width banner.
 @immutable
 class NavTabletBrandedHeaderMetrics {
   const NavTabletBrandedHeaderMetrics({
@@ -24,18 +22,18 @@ class NavTabletBrandedHeaderMetrics {
 
   final bool isLandscape;
 
-  /// Compact square menu control edge length (vertically centered vs cards).
+  /// Compact square menu control edge length (vertically centered vs zones).
   final double menuSize;
 
   final double gap;
 
-  /// Brand / white-label logo card width.
+  /// Brand / white-label logo zone width (~50% of usable content).
   final double brandWidth;
 
-  /// Maneuver card width ceiling (dominant information element).
+  /// Maneuver / copy zone width (~50% of usable content).
   final double maneuverMaxWidth;
 
-  /// Shared visual height for brand + maneuver cards.
+  /// Shared visual height for brand + maneuver zones.
   final double cardHeight;
 
   final double radius;
@@ -44,27 +42,16 @@ class NavTabletBrandedHeaderMetrics {
   static const double gapDefault = 8;
   static const double radiusDefault = 16;
 
-  /// Gold border language shared with the existing logo capsule / recenter.
-  static const Color goldBorder = Color(0x66FFD36A);
+  /// Gold border language shared with recenter / prior chrome.
+  static const Color goldBorder = Color(0x99FFD36A);
 
-  /// Navy panel fill aligned with driver cockpit chrome.
-  static const Color navyFill = Color(0xEB07142D);
+  /// Equal spatial importance after the menu button.
+  static const double zoneFraction = 0.50;
 
-  /// Portrait: brand ≈ 33%, maneuver ≈ 58% of content after menu + gaps.
-  static const double portraitBrandFraction = 0.33;
-  static const double portraitManeuverFraction = 0.58;
-
-  /// Landscape compact cluster caps (map-first).
-  static const double landscapeBrandMin = 168;
-  static const double landscapeBrandMax = 228;
-  static const double landscapeManeuverMin = 300;
-  static const double landscapeManeuverMax = 480;
+  /// Landscape compact cluster usable width ceiling (map-first).
+  static const double landscapeClusterMax = 640;
 
   /// Resolve width/height tokens for the available header band.
-  ///
-  /// [cardHeight] should match the resolved tablet maneuver
-  /// [NavSignageTabletReadabilityMetrics.bannerMinHeight] so both cards share
-  /// one baseline.
   factory NavTabletBrandedHeaderMetrics.resolve({
     required double availableWidth,
     required bool isLandscape,
@@ -79,22 +66,9 @@ class NavTabletBrandedHeaderMetrics {
       availableWidth - safeMenu - (safeGap * 2),
     );
 
-    double brandW;
-    double manW;
-
-    if (isLandscape) {
-      brandW = (usable * 0.30).clamp(landscapeBrandMin, landscapeBrandMax);
-      manW = (usable * 0.55).clamp(landscapeManeuverMin, landscapeManeuverMax);
-      final total = brandW + manW;
-      if (total > usable) {
-        final scale = usable / total;
-        brandW *= scale;
-        manW *= scale;
-      }
-    } else {
-      brandW = usable * portraitBrandFraction;
-      manW = usable * portraitManeuverFraction;
-    }
+    final band = isLandscape ? math.min(usable, landscapeClusterMax) : usable;
+    final brandW = band * zoneFraction;
+    final manW = band * zoneFraction;
 
     return NavTabletBrandedHeaderMetrics(
       isLandscape: isLandscape,
@@ -107,11 +81,15 @@ class NavTabletBrandedHeaderMetrics {
     );
   }
 
-  /// True when brand card is smaller than the maneuver card (hierarchy).
-  bool get maneuverDominatesBrand => maneuverMaxWidth > brandWidth;
+  /// True when brand and maneuver zones are equal-width (±1 px).
+  bool get zonesAreEqualWidth =>
+      (brandWidth - maneuverMaxWidth).abs() <= 1.0;
 
-  /// Logo paint box inside the brand card (padding reserved).
-  Size logoPaintBox({double horizontalPadding = 14, double verticalPadding = 12}) {
+  /// Logo paint box — aggressive use of the 50% brand region.
+  Size logoPaintBox({
+    double horizontalPadding = 6,
+    double verticalPadding = 4,
+  }) {
     return Size(
       math.max(24, brandWidth - horizontalPadding * 2),
       math.max(24, cardHeight - verticalPadding * 2),
@@ -119,33 +97,47 @@ class NavTabletBrandedHeaderMetrics {
   }
 }
 
-/// Shared chrome for the tablet brand card (and matching menu outline).
-BoxDecoration navTabletBrandedHeaderCardDecoration({
+/// Transparent brand zone: no navy fill, optional gold hairline only when
+/// [showBorder] is true (brand itself stays borderless by default).
+BoxDecoration navTabletTransparentHeaderDecoration({
   required double radius,
-  bool emphasizeGold = true,
+  bool showBorder = false,
+  bool showShadow = false,
 }) {
   return BoxDecoration(
-    color: NavTabletBrandedHeaderMetrics.navyFill,
+    color: Colors.transparent,
+    borderRadius: BorderRadius.circular(radius),
+    border: showBorder
+        ? Border.all(
+            color: NavTabletBrandedHeaderMetrics.goldBorder,
+            width: 1.2,
+          )
+        : null,
+    boxShadow: showShadow
+        ? [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.28),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ]
+        : const <BoxShadow>[],
+  );
+}
+
+/// Gold-outline chrome for the compact tablet menu control only.
+BoxDecoration navTabletHeaderMenuDecoration({required double radius}) {
+  return BoxDecoration(
+    color: const Color(0x9907142D),
     borderRadius: BorderRadius.circular(radius),
     border: Border.all(
-      color: emphasizeGold
-          ? NavTabletBrandedHeaderMetrics.goldBorder
-          : Colors.white.withOpacity(0.14),
+      color: NavTabletBrandedHeaderMetrics.goldBorder,
       width: 1.2,
     ),
-    boxShadow: [
-      BoxShadow(
-        color: Colors.black.withOpacity(0.34),
-        blurRadius: 12,
-        offset: const Offset(0, 5),
-      ),
-    ],
   );
 }
 
 /// Layout shell used by the driver home tablet follow header and widget tests.
-///
-/// Children are opaque; this widget only enforces proportions / alignment.
 class NavTabletBrandedHeader extends StatelessWidget {
   const NavTabletBrandedHeader({
     super.key,
@@ -177,12 +169,13 @@ class NavTabletBrandedHeader extends StatelessWidget {
         ),
         if (maneuver != null) ...[
           SizedBox(width: metrics.gap),
-          // Maneuver keeps content-adaptive height (soft floor inside the
-          // banner). Width is capped so the cluster stays map-first.
-          ConstrainedBox(
+          SizedBox(
             key: const ValueKey<String>('nav_tablet_header_maneuver_slot'),
-            constraints: BoxConstraints(maxWidth: metrics.maneuverMaxWidth),
-            child: maneuver,
+            width: metrics.maneuverMaxWidth,
+            child: Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: maneuver,
+            ),
           ),
         ],
       ],
