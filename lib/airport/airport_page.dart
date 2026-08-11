@@ -10,6 +10,7 @@ import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
 import 'package:fluxidi_tracking/hotels/hotel_model.dart';
 import 'package:fluxidi_tracking/hotels/hotel_seed_data.dart';
 import 'package:fluxidi_tracking/hotels/hotels_page.dart';
+import 'package:fluxidi_tracking/company/subscription_entitlement_ux.dart';
 import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:geolocator/geolocator.dart' as geo;
@@ -3863,14 +3864,22 @@ class _AirportPageState extends State<AirportPage> {
         }
         return data;
       }
+      final entitlementMsg = friendlyEntitlementUserMessage(
+        rawError: response.body,
+        languageCode: Localizations.localeOf(context).languageCode,
+        isPublicCustomer: true,
+        httpStatus: response.statusCode,
+      );
       setState(() {
         _airportQuote = null;
-        _airportQuoteError = _t(
-          nl: 'Prijsberekening kon niet worden opgehaald.',
-          en: 'Price calculation could not be retrieved.',
-          fr: "Le calcul du prix n'a pas pu être récupéré.",
-          es: 'No se pudo obtener el cálculo del precio.',
-        );
+        _airportQuoteError =
+            entitlementMsg ??
+            _t(
+              nl: 'Prijsberekening kon niet worden opgehaald.',
+              en: 'Price calculation could not be retrieved.',
+              fr: "Le calcul du prix n'a pas pu être récupéré.",
+              es: 'No se pudo obtener el cálculo del precio.',
+            );
       });
       ScaffoldMessenger.of(
         context,

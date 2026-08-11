@@ -269,10 +269,10 @@ String companyEntitlementDeniedMessage({
 String publicCompanyUnavailableMessage({required String languageCode}) {
   return _t(
     languageCode,
-    nl: 'Dit bedrijf kan momenteel geen nieuwe boekingen ontvangen.',
-    en: 'This company cannot accept new bookings at the moment.',
-    fr: 'Cette entreprise ne peut pas accepter de nouvelles réservations pour le moment.',
-    es: 'Esta empresa no puede aceptar nuevas reservas en este momento.',
+    nl: 'Dit bedrijf is momenteel niet actief en kan geen nieuwe boekingen ontvangen.',
+    en: 'This company is currently inactive and cannot accept new bookings.',
+    fr: 'Cette entreprise est actuellement inactive et ne peut pas accepter de nouvelles réservations.',
+    es: 'Esta empresa está actualmente inactiva y no puede aceptar nuevas reservas.',
   );
 }
 

@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/company/subscription_entitlement_ux.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/customer_bookings_store.dart';
 import 'package:fluxidi_tracking/customer_profile_store.dart';
@@ -1528,13 +1529,21 @@ class _AirportBookingReviewPageState extends State<AirportBookingReviewPage> {
           (body['ok'] == null || body['ok'] == true);
       if (!mounted) return;
       if (!ok) {
+        final entitlementMsg = friendlyEntitlementUserMessage(
+          rawError: response.body,
+          languageCode: widget.languageCode,
+          isPublicCustomer: true,
+          httpStatus: response.statusCode,
+        );
         setState(() {
-          _submitError = _t(
-            nl: 'Boeking kon niet worden aangemaakt.',
-            en: 'Booking could not be created.',
-            fr: "La réservation n'a pas pu être créée.",
-            es: 'No se pudo crear la reserva.',
-          );
+          _submitError =
+              entitlementMsg ??
+              _t(
+                nl: 'Boeking kon niet worden aangemaakt.',
+                en: 'Booking could not be created.',
+                fr: "La réservation n'a pas pu être créée.",
+                es: 'No se pudo crear la reserva.',
+              );
         });
         return;
       }
