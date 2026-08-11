@@ -362,6 +362,7 @@ class DriverRideMetersSnapshot {
     this.fareLabel = 'Tarief',
     this.etaText = '',
     this.remainingDistanceText = '',
+    this.speedText = '',
     this.tariffName = '',
     this.companyName = '',
   });
@@ -377,6 +378,10 @@ class DriverRideMetersSnapshot {
   final String statusText;
   final String etaText;
   final String remainingDistanceText;
+
+  /// Formatted GPS speed for PiP secondary "Current" KPI (presentation only).
+  /// Empty when unknown — never a fabricated value.
+  final String speedText;
   final String tariffName;
   final String companyName;
 }

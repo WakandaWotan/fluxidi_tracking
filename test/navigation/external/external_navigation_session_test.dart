@@ -67,20 +67,23 @@ void main() {
         isFixedPrice: true,
         language: AppLanguage.nl,
         fixedPriceText: '€12,20',
-        kmText: '3.1 km',
+        remainingDistanceText: '3.1 km',
+        etaText: '12 min',
         durationText: '00:12:01',
-        waitText: '00:01:00',
+        speedText: '40 km/u',
       );
       expect(m.kind, PipMeterKind.fixedPrice);
       expect(m.title, 'Naar bestemming');
       expect(m.primaryValue, '€12,20');
       expect(m.primaryLabel, 'Prijs');
-      expect(m.metrics.length, 3);
-      expect(m.secondaryLines.length, 3);
-      expect(m.metrics[0].label, 'Afstand');
-      expect(m.metrics[1].label, 'Tijd');
-      expect(m.metrics[1].value, '00:12:01');
-      expect(m.metrics[2].label, 'Wachttijd');
+      expect(m.primaryMetrics.length, 2);
+      expect(m.secondaryMetrics.length, 3);
+      expect(m.primaryMetrics[0].label, 'Afstand');
+      expect(m.primaryMetrics[0].value, '3.1 km');
+      expect(m.primaryMetrics[1].label, 'Tijd');
+      expect(m.primaryMetrics[1].value, '12 min');
+      expect(m.secondaryMetrics[2].label, 'Ritduur');
+      expect(m.secondaryMetrics[2].value, '00:12:01');
     });
 
     test('5) street live tariff', () {
@@ -90,14 +93,16 @@ void main() {
         isFixedPrice: false,
         language: AppLanguage.nl,
         liveFareText: '€17,60',
-        kmText: '5.2 km',
+        remainingDistanceText: '5.2 km',
+        etaText: '18 min',
         durationText: '00:18:00',
-        waitText: '00:00:00',
+        speedText: '50 km/u',
       );
       expect(m.kind, PipMeterKind.liveTariff);
       expect(m.title, 'Naar bestemming');
-      expect(m.metrics[1].label, 'Tijd');
-      expect(m.metrics[1].value, '00:18:00');
+      expect(m.primaryMetrics[1].label, 'Tijd');
+      expect(m.primaryMetrics[1].value, '18 min');
+      expect(m.secondaryMetrics[1].value, '€17,60');
     });
 
     test('5b) tablet PiP typography larger than phone', () {
@@ -111,19 +116,19 @@ void main() {
       );
       expect(phone.primarySize, 34);
       expect(phone.titleSize, 14);
-      expect(tablet.titleSize, inInclusiveRange(24, 30));
-      expect(tablet.primarySize, inInclusiveRange(32, 42));
-      expect(tablet.metricSize, inInclusiveRange(32, 42));
-      expect(tablet.labelSize, inInclusiveRange(16, 20));
-      expect(tablet.horizontalPadding, lessThanOrEqualTo(phone.horizontalPadding + 2));
-      expect(tablet.verticalPadding, lessThanOrEqualTo(14));
+      expect(phone.horizontalPadding, 12);
+      expect(tablet.titleSize, inInclusiveRange(28, 32));
+      expect(tablet.primaryValueSize, inInclusiveRange(44, 52));
+      expect(tablet.secondaryValueSize, inInclusiveRange(32, 40));
+      expect(tablet.primaryLabelSize, inInclusiveRange(20, 24));
+      expect(tablet.horizontalPadding, inInclusiveRange(20, 28));
       expect(tablet.frameWidth, greaterThan(0));
       expect(phone.frameWidth, 0);
-      expect(tablet.primarySize, greaterThan(phone.primarySize));
-      expect(tablet.metricSize, greaterThan(phone.metricSize));
+      expect(tablet.primaryValueSize, greaterThan(phone.primarySize));
+      expect(tablet.secondaryValueSize, greaterThan(phone.metricSize));
     });
 
-    test('6) pre-start shows no tariff', () {
+    test('6) pre-start shows no tariff as phone primary', () {
       final m = buildExternalNavPipMeterModel(
         phase: ExternalNavPhase.toPickup,
         isStreetRide: false,
@@ -139,8 +144,9 @@ void main() {
       expect(m.primaryLabel, 'ETA');
       expect(m.primaryValue, isNot(contains('€12')));
       expect(m.primaryValue, isNot(contains('€0')));
-      expect(m.metrics.single.label, 'Afstand');
-      expect(m.metrics.single.value, '2.4 km');
+      expect(m.primaryMetrics[0].label, 'Afstand');
+      expect(m.primaryMetrics[0].value, '2.4 km');
+      expect(m.primaryMetrics[1].value, '6 min');
     });
   });
 

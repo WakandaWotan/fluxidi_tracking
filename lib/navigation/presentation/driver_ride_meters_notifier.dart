@@ -45,6 +45,7 @@ class DriverRideMetersNotifier
         a.statusText == b.statusText &&
         a.etaText == b.etaText &&
         a.remainingDistanceText == b.remainingDistanceText &&
+        a.speedText == b.speedText &&
         a.tariffName == b.tariffName &&
         a.companyName == b.companyName;
   }

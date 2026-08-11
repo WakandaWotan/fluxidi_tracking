@@ -24935,6 +24935,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         liveRideActive: false,
       );
     }
+    final last = _lastPos;
+    final speedText = last == null
+        ? ''
+        : formatPipMeterSpeedKmh(
+            _speedKmhFor(last),
+            appLanguageNotifier.value,
+          );
     return DriverRideMetersSnapshot(
       fareText: _displayTotalText,
       fareLabel: _tellersFareLabel,
@@ -24944,6 +24951,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       statusText: status,
       etaText: _etaText,
       remainingDistanceText: remainingText,
+      // PIP-TABLET-KPI-DENSITY-P1: existing GPS speed for PiP "Current" KPI.
+      speedText: speedText == '—' ? '' : speedText,
     );
   }
 

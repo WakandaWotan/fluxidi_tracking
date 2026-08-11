@@ -1,4 +1,5 @@
 // PIP-TABLET-READABILITY-LOCALE-P1
+// PIP-TABLET-KPI-DENSITY-P1
 //
 // Focused coverage for tablet PiP meter density + driver-locale contract.
 // Does not exercise Google Maps routing, fare engines, or PiP lifecycle natives.
@@ -24,6 +25,7 @@ DriverRideMetersSnapshot _snap({
   String wait = '00:00:00',
   String eta = '',
   String remaining = '',
+  String speed = '',
 }) {
   return DriverRideMetersSnapshot(
     fareText: fare,
@@ -33,6 +35,7 @@ DriverRideMetersSnapshot _snap({
     statusText: 'Rit actief',
     etaText: eta,
     remainingDistanceText: remaining,
+    speedText: speed,
   );
 }
 
@@ -91,6 +94,12 @@ void main() {
         AppLanguage.fr,
       );
     });
+
+    test('speed unit follows language (nl km/u, others km/h)', () {
+      expect(formatPipMeterSpeedKmh(50, AppLanguage.nl), '50 km/u');
+      expect(formatPipMeterSpeedKmh(50, AppLanguage.en), '50 km/h');
+      expect(formatPipMeterSpeedKmh(null, AppLanguage.en), '—');
+    });
   });
 
   group('localized chrome NL/EN/FR/ES', () {
@@ -102,6 +111,7 @@ void main() {
         String time,
         String price,
         String live,
+        String ride,
       })>{
         AppLanguage.nl: (
           pickup: 'Naar ophaalpunt',
@@ -110,14 +120,16 @@ void main() {
           time: 'Tijd',
           price: 'Prijs',
           live: 'Actueel',
+          ride: 'Ritduur',
         ),
         AppLanguage.en: (
-          pickup: 'To pickup',
+          pickup: 'To pickup point',
           dest: 'To destination',
           distance: 'Distance',
           time: 'Time',
-          price: 'Price',
+          price: 'Fare',
           live: 'Current',
+          ride: 'Ride time',
         ),
         AppLanguage.fr: (
           pickup: 'Vers le lieu de prise en charge',
@@ -126,6 +138,7 @@ void main() {
           time: 'Temps',
           price: 'Prix',
           live: 'Actuel',
+          ride: 'Durée',
         ),
         AppLanguage.es: (
           pickup: 'Hacia el punto de recogida',
@@ -134,6 +147,7 @@ void main() {
           time: 'Tiempo',
           price: 'Precio',
           live: 'Actual',
+          ride: 'Duración',
         ),
       };
 
@@ -147,10 +161,20 @@ void main() {
           language: lang,
           etaText: '5 min',
           remainingDistanceText: '1.2 km',
+          speedText: formatPipMeterSpeedKmh(40, lang),
+          liveFareText: '€18,40',
+          durationText: '00:28:00',
         );
         expect(pickup.title, expect_.pickup, reason: '$lang pickup title');
-        expect(pickup.primaryLabel, 'ETA');
-        expect(pickup.metrics.single.label, expect_.distance);
+        expect(pickup.primaryMetrics.length, 2);
+        expect(pickup.primaryMetrics[0].label, expect_.distance);
+        expect(pickup.primaryMetrics[0].value, '1.2 km');
+        expect(pickup.primaryMetrics[1].label, expect_.time);
+        expect(pickup.primaryMetrics[1].value, '5 min');
+        expect(pickup.secondaryMetrics.length, 3);
+        expect(pickup.secondaryMetrics[0].label, expect_.live);
+        expect(pickup.secondaryMetrics[1].label, expect_.price);
+        expect(pickup.secondaryMetrics[2].label, expect_.ride);
 
         final fixed = buildExternalNavPipMeterModel(
           phase: ExternalNavPhase.activeRide,
@@ -158,24 +182,16 @@ void main() {
           isFixedPrice: true,
           language: lang,
           fixedPriceText: '€20,00',
-          kmText: '3.0 km',
+          remainingDistanceText: '3.0 km',
+          etaText: '8 min',
           durationText: '00:10:00',
+          speedText: formatPipMeterSpeedKmh(50, lang),
         );
         expect(fixed.title, expect_.dest, reason: '$lang dest title');
         expect(fixed.primaryLabel, expect_.price);
-        expect(fixed.metrics[0].label, expect_.distance);
-        expect(fixed.metrics[1].label, expect_.time);
-
-        final live = buildExternalNavPipMeterModel(
-          phase: ExternalNavPhase.activeRide,
-          isStreetRide: true,
-          isFixedPrice: false,
-          language: lang,
-          liveFareText: '€11,00',
-          kmText: '2.0 km',
-          durationText: '00:04:00',
-        );
-        expect(live.primaryLabel, expect_.live);
+        expect(fixed.primaryMetrics[0].label, expect_.distance);
+        expect(fixed.primaryMetrics[1].label, expect_.time);
+        expect(fixed.secondaryMetrics[1].value, '€20,00');
       }
     });
 
@@ -188,10 +204,10 @@ void main() {
         etaText: '4 min',
         remainingDistanceText: '900 m',
       );
-      expect(m.title, 'To pickup');
+      expect(m.title, 'To pickup point');
       expect(m.title, isNot(contains('Naar')));
-      expect(m.metrics.single.label, 'Distance');
-      expect(m.metrics.single.label, isNot('Afstand'));
+      expect(m.primaryMetrics[0].label, 'Distance');
+      expect(m.primaryMetrics[0].label, isNot('Afstand'));
     });
 
     test('unknown primary renders em dash, not false zero', () {
@@ -202,6 +218,8 @@ void main() {
         language: AppLanguage.en,
       );
       expect(m.primaryValue, '—');
+      expect(m.primaryMetrics[0].value, '—');
+      expect(m.primaryMetrics[1].value, '—');
       expect(m.primaryValue, isNot('0'));
       expect(m.primaryValue, isNot('00:00'));
     });
@@ -213,18 +231,22 @@ void main() {
         isFixedPrice: false,
         language: AppLanguage.nl,
         liveFareText: '€9,00',
-        // Remaining distance preferred for distance KPI.
         remainingDistanceText: '1.5 km',
         durationText: '00:07:30',
-        // ETA must not overwrite duration (legacy pairing bug).
         etaText: '3 min',
+        speedText: '45 km/u',
       );
-      final distance = m.metrics.firstWhere((e) => e.label == 'Afstand');
-      final time = m.metrics.firstWhere((e) => e.label == 'Tijd');
+      final distance =
+          m.primaryMetrics.firstWhere((e) => e.label == 'Afstand');
+      final time = m.primaryMetrics.firstWhere((e) => e.label == 'Tijd');
+      final ride =
+          m.secondaryMetrics.firstWhere((e) => e.label == 'Ritduur');
       expect(distance.value, '1.5 km');
-      expect(time.value, '00:07:30');
-      expect(time.value, isNot('3 min'));
+      expect(time.value, '3 min');
+      expect(ride.value, '00:07:30');
       expect(distance.value, isNot('00:07:30'));
+      expect(distance.value, isNot('3 min'));
+      expect(time.value, isNot('1.5 km'));
     });
   });
 
@@ -235,37 +257,56 @@ void main() {
       isFixedPrice: false,
       language: AppLanguage.en,
       liveFareText: '€14,25',
-      kmText: '4.1 km',
+      remainingDistanceText: '4.1 km',
+      etaText: '11 min',
       durationText: '00:11:00',
-      waitText: '00:01:00',
+      speedText: '50 km/h',
     );
 
-    testWidgets('tablet portrait: large KPIs, labeled columns, no overflow', (
+    testWidgets('tablet portrait: taxi-meter hierarchy fills width', (
       tester,
     ) async {
       const size = Size(800, 1280);
       await _pumpMeter(tester, size: size, model: activeModel);
       expect(tester.takeException(), isNull);
       expect(find.text('To destination'), findsOneWidget);
-      expect(find.text('€14,25'), findsOneWidget);
       expect(find.text('Distance'), findsOneWidget);
       expect(find.text('Time'), findsOneWidget);
-      expect(find.text('Waiting'), findsOneWidget);
       expect(find.text('4.1 km'), findsOneWidget);
+      expect(find.text('11 min'), findsOneWidget);
+      expect(find.text('Current'), findsOneWidget);
+      expect(find.text('Fare'), findsOneWidget);
+      expect(find.text('Ride time'), findsOneWidget);
+      expect(find.text('€14,25'), findsOneWidget);
+      expect(find.text('50 km/h'), findsOneWidget);
       expect(find.text('00:11:00'), findsOneWidget);
 
       final typo = PipMeterTypography.forSize(size, compact: true);
-      expect(typo.metricSize, greaterThanOrEqualTo(32));
-      expect(typo.titleSize, greaterThanOrEqualTo(24));
-      expect(typo.verticalPadding, lessThanOrEqualTo(12));
+      expect(typo.isTablet, isTrue);
+      expect(typo.titleSize, inInclusiveRange(28, 32));
+      expect(typo.primaryValueSize, inInclusiveRange(44, 52));
+      expect(typo.primaryLabelSize, inInclusiveRange(20, 24));
+      expect(typo.secondaryValueSize, inInclusiveRange(32, 40));
+      expect(typo.secondaryLabelSize, inInclusiveRange(18, 22));
+      expect(typo.horizontalPadding, inInclusiveRange(20, 28));
+      expect(typo.verticalPadding, lessThanOrEqualTo(18));
+
+      // Content uses nearly full card width (not a tiny centered cluster).
+      final distance = tester.getRect(find.text('Distance'));
+      final time = tester.getRect(find.text('Time'));
+      expect(distance.left, lessThan(size.width * 0.35));
+      expect(time.right, greaterThan(size.width * 0.65));
+      expect(time.left - distance.right, greaterThan(40));
     });
 
-    testWidgets('tablet landscape: no overflow, labeled metrics retained', (
+    testWidgets('tablet landscape: large hierarchy, no overflow', (
       tester,
     ) async {
       const size = Size(1280, 800);
       await _pumpMeter(tester, size: size, model: activeModel);
       expect(tester.takeException(), isNull);
+      final typo = PipMeterTypography.forSize(size, compact: true);
+      expect(typo.primaryValueSize, inInclusiveRange(44, 52));
       expect(find.text('Current'), findsOneWidget);
       expect(find.text('Distance'), findsOneWidget);
       expect(find.text('Time'), findsOneWidget);
@@ -280,11 +321,14 @@ void main() {
       expect(phoneTypo.titleSize, 14);
       expect(phoneTypo.metricSize, 16);
       expect(phoneTypo.frameWidth, 0);
+      expect(phoneTypo.horizontalPadding, 12);
+      expect(phoneTypo.isTablet, isFalse);
 
       await _pumpMeter(tester, size: size, model: activeModel);
       expect(tester.takeException(), isNull);
+      // Phone keeps compact yellow primary fare presentation.
       expect(find.text('€14,25'), findsOneWidget);
-      expect(find.text('Distance'), findsOneWidget);
+      expect(find.text('Fare'), findsOneWidget);
     });
 
     testWidgets('increased text scale does not overflow tablet card', (
@@ -367,13 +411,11 @@ void main() {
         ),
       );
 
-      expect(find.text('To pickup'), findsOneWidget);
-      expect(find.text('ETA'), findsOneWidget);
+      expect(find.text('To pickup point'), findsOneWidget);
 
       setPhaseState(() => phase = ExternalNavPhase.activeRide);
       await tester.pump();
       expect(find.text('To destination'), findsOneWidget);
-      expect(find.text('Current'), findsOneWidget);
     });
 
     testWidgets('app language change rebuilds overlay chrome', (tester) async {
@@ -388,7 +430,12 @@ void main() {
             builder: (context, lang, _) {
               return ExternalNavPipMeterCard(
                 model: buildExternalNavPipMeterModelFromRideMeters(
-                  snapshot: _snap(fare: '€ 8,00', km: '1.0 km'),
+                  snapshot: _snap(
+                    fare: '€ 8,00',
+                    remaining: '1.0 km',
+                    eta: '4 min',
+                    speed: '30 km/u',
+                  ),
                   phase: ExternalNavPhase.activeRide,
                   isStreetRide: true,
                   isFixedPrice: false,
@@ -429,21 +476,18 @@ void main() {
       expect(homeSource, contains('ValueListenableBuilder<DriverRideMetersSnapshot>'));
       expect(homeSource, contains('valueListenable: _driverRideMetersNotifier'));
       expect(homeSource, contains('language: language ?? appConfig.currentLanguage'));
+      expect(homeSource, contains('formatPipMeterSpeedKmh'));
     });
 
-    test('meter source owns localized strings (no scattered Dutch literals only)', () {
-      expect(meterSource, contains('pipMeterToPickupTitle'));
-      expect(meterSource, contains('To pickup'));
-      expect(meterSource, contains('Vers le lieu de prise en charge'));
-      expect(meterSource, contains('Hacia el punto de recogida'));
-      expect(meterSource, contains('normalizePipMeterLanguageCode'));
-      // Builder no longer hard-codes Dutch titles as bare string literals.
+    test('meter source owns tablet taxi-meter density layout', () {
+      expect(meterSource, contains('PIP-TABLET-KPI-DENSITY-P1'));
+      expect(meterSource, contains('_TabletTaxiMeterBody'));
+      expect(meterSource, contains('_PhonePipMeterBody'));
+      expect(meterSource, contains('primaryMetrics'));
+      expect(meterSource, contains('secondaryMetrics'));
+      expect(meterSource, contains('To pickup point'));
       expect(
         meterSource.contains("title: 'Naar ophaalpunt'"),
-        isFalse,
-      );
-      expect(
-        meterSource.contains("title: 'Naar bestemming'"),
         isFalse,
       );
     });
