@@ -256,8 +256,10 @@ class NavStationaryBearingInput {
   /// When false, old/current route tangent cannot drive the camera bearing.
   final bool allowRouteTangent;
 
-  /// When true, travel/GPS may unlock immediately on a meaningful heading
-  /// change and uses a higher rotation-rate ceiling.
+  /// When true, travel/GPS may unlock the multi-fix streak early on a
+  /// meaningful heading change *after* movement is already trustworthy, and
+  /// uses a higher rotation-rate ceiling. Standstill GPS noise alone must
+  /// never unlock via this flag.
   final bool travelAuthority;
 
   /// Per-resolve rotation-rate ceiling (deg/s).
@@ -334,6 +336,23 @@ class NavStationaryBearingGate {
     return seeded;
   }
 
+  /// Latches a camera bearing already established by preview / force-flyTo
+  /// before the gate has a normal accepted seed.
+  ///
+  /// Closes the pre-seed gap: while [acceptedBearing] is still null the
+  /// streetlevel pump must not chase wandering pose headings. Does not
+  /// overwrite an existing accepted bearing (route seed wins). Returns the
+  /// held bearing, or null when [bearingDeg] is unusable.
+  double? latchHeldCameraBearing(double? bearingDeg) {
+    if (_accepted != null) return _accepted;
+    if (bearingDeg == null || !bearingDeg.isFinite) return null;
+    final latched = navBearingNormalize(bearingDeg);
+    _accepted = latched;
+    _eligibleStreak = 0;
+    // Not a route seed — route apply may still call [seedInitialRouteBearing].
+    return latched;
+  }
+
   NavStationaryBearingDecision resolve(NavStationaryBearingInput input) {
     final trustworthy = navBearingMovementTrustworthy(
       speedKmh: input.speedKmh,
@@ -353,9 +372,11 @@ class NavStationaryBearingGate {
         trustworthy && _eligibleStreak >= kNavBearingMovingConfidenceFixes;
 
     // NAV-CAMERA-ZERO-OLD-ROUTE-HOLD-P0: under travel authority, a meaningful
-    // heading change unlocks rotation immediately (incl. 180° reversals) even
-    // before the multi-fix confidence streak completes.
+    // heading change may skip the multi-fix streak — but only after movement
+    // itself is already trustworthy. A >=12° GPS/pose delta at standstill must
+    // not unlock the hold.
     if (input.travelAuthority &&
+        trustworthy &&
         _accepted != null &&
         _travelImmediateUnlock(
           previous: _accepted!,
@@ -387,7 +408,11 @@ class NavStationaryBearingGate {
         gps: input.gpsHeadingDeg,
         movement: input.movementBearingDeg,
       );
-      if (coldTravel != null && (movingConfident || input.travelAuthority)) {
+      // Cold travel may seed only once movement is confident (or travel
+      // authority with trustworthy movement). Standstill travelAuthority alone
+      // must not adopt noisy GPS/pose headings.
+      if (coldTravel != null &&
+          (movingConfident || (input.travelAuthority && trustworthy))) {
         _accepted = navBearingNormalize(coldTravel);
         _lastReliableMovingBearing = _accepted;
         return NavStationaryBearingDecision(

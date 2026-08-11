@@ -430,6 +430,199 @@ void main() {
     });
   });
 
+  group('NAV-STANDSTILL-HEADING-HOLD-P0 pre-seed + travelAuthority', () {
+    test('1) pre-seed: latch holds through wandering pose headings', () {
+      final gate = NavStationaryBearingGate();
+      expect(
+        gate.latchHeldCameraBearing(90.0),
+        closeTo(90.0, 1e-9),
+      );
+      expect(gate.acceptedBearing, closeTo(90.0, 1e-9));
+
+      // Street pre-START / pre-seed pump: accepted was latched from
+      // preview/flyTo; pose headings wander while speed=0.
+      for (final pose in const <double>[110.0, 70.0, 130.0, 85.0]) {
+        final decision = gate.resolve(
+          NavStationaryBearingInput(
+            speedKmh: 0.0,
+            travelBearingDeg: pose,
+            gpsHeadingDeg: pose,
+            displacementM: 0.3,
+            accuracyM: 8.0,
+          ),
+        );
+        expect(decision.held, isTrue);
+        expect(decision.bearingDeg, closeTo(90.0, 1e-9));
+      }
+      // Latch must not overwrite an already-accepted bearing.
+      expect(gate.latchHeldCameraBearing(200.0), closeTo(90.0, 1e-9));
+      expect(gate.acceptedBearing, closeTo(90.0, 1e-9));
+    });
+
+    test('2) route-delay window: no drift before seed, seed does not snap wrong',
+        () {
+      final gate = NavStationaryBearingGate();
+      // T0: forced/preview heading established.
+      gate.latchHeldCameraBearing(45.0);
+
+      // T+0–5s: stationary pump ticks with noisy pose.
+      for (var i = 0; i < 30; i++) {
+        final noisy = (i * 41.0) % 360.0;
+        final decision = gate.resolve(
+          NavStationaryBearingInput(
+            speedKmh: 0.0,
+            travelBearingDeg: noisy,
+            gpsHeadingDeg: noisy,
+            displacementM: 0.2,
+            accuracyM: 10.0,
+            travelAuthority: true,
+          ),
+        );
+        expect(decision.bearingDeg, closeTo(45.0, 1e-9));
+      }
+
+      // T+route apply: normal route seed arrives (same corridor).
+      final seeded = gate.seedInitialRouteBearing(
+        routeTangentBearingDeg: 48.0,
+        routeSegmentIndex: 0,
+      );
+      expect(seeded, closeTo(48.0, 1e-9));
+      final afterSeed = gate.resolve(parked(
+        routeTangentBearingDeg: 48.0,
+        routeSegmentIndex: 0,
+        gpsHeadingDeg: 200.0,
+      ));
+      expect(afterSeed.held, isTrue);
+      expect(afterSeed.bearingDeg, closeTo(48.0, 1e-9));
+    });
+
+    test('3) travelAuthority at standstill does not unlock on >=12° delta', () {
+      final gate = NavStationaryBearingGate();
+      gate.seedInitialRouteBearing(routeTangentBearingDeg: 10.0);
+      final decision = gate.resolve(
+        NavStationaryBearingInput(
+          speedKmh: 0.0,
+          travelBearingDeg: 90.0,
+          gpsHeadingDeg: 90.0,
+          displacementM: 0.4,
+          accuracyM: 8.0,
+          travelAuthority: true,
+          allowRouteTangent: false,
+          maxRotationRateDegPerSec: 220.0,
+        ),
+      );
+      expect(decision.held, isTrue);
+      expect(decision.movingConfident, isFalse);
+      expect(decision.bearingDeg, closeTo(10.0, 1e-9));
+    });
+
+    test('4) owner handoff at standstill does not unlock rotation', () {
+      final gate = NavStationaryBearingGate();
+      gate.seedInitialRouteBearing(routeTangentBearingDeg: 0.0);
+
+      // reliableRoute → deviationSuspected (travelAuthority) → reliableRoute
+      for (final travelAuthority in const <bool>[false, true, false]) {
+        final decision = gate.resolve(
+          NavStationaryBearingInput(
+            speedKmh: 0.5,
+            routeTangentBearingDeg: travelAuthority ? null : 0.0,
+            travelBearingDeg: 95.0,
+            gpsHeadingDeg: 95.0,
+            displacementM: 1.0,
+            accuracyM: 8.0,
+            allowRouteTangent: !travelAuthority,
+            travelAuthority: travelAuthority,
+            maxRotationRateDegPerSec: travelAuthority ? 220.0 : 45.0,
+          ),
+        );
+        expect(decision.held, isTrue);
+        expect(decision.bearingDeg, closeTo(0.0, 1e-9));
+      }
+    });
+
+    test('5) trustworthy movement resumes and accepts new bearing', () {
+      final gate = NavStationaryBearingGate();
+      gate.latchHeldCameraBearing(0.0);
+      // Still held while not yet confident.
+      final first = gate.resolve(driving(gpsHeadingDeg: 90.0));
+      expect(first.held, isTrue);
+      expect(first.bearingDeg, closeTo(0.0, 1e-9));
+
+      final second = gate.resolve(driving(gpsHeadingDeg: 90.0));
+      expect(second.movingConfident, isTrue);
+      expect(second.held, isFalse);
+      expect(second.bearingDeg, greaterThan(0.0));
+    });
+
+    test('6) stop again holds last trustworthy driving bearing', () {
+      final gate = NavStationaryBearingGate();
+      gate.seedInitialRouteBearing(routeTangentBearingDeg: 20.0);
+      gate.resolve(driving(gpsHeadingDeg: 110.0));
+      for (var i = 0; i < 4; i++) {
+        gate.resolve(driving(gpsHeadingDeg: 110.0));
+      }
+      expect(gate.acceptedBearing, closeTo(110.0, 1e-9));
+
+      for (var i = 0; i < 20; i++) {
+        final decision = gate.resolve(
+          NavStationaryBearingInput(
+            speedKmh: 0.0,
+            travelBearingDeg: (i * 53.0) % 360.0,
+            gpsHeadingDeg: (i * 53.0) % 360.0,
+            displacementM: 0.5,
+            accuracyM: 7.0,
+            travelAuthority: true,
+          ),
+        );
+        expect(decision.held, isTrue);
+        expect(decision.bearingDeg, closeTo(110.0, 1e-9));
+      }
+    });
+
+    test('7) moving travelAuthority still unlocks without multi-fix wait', () {
+      // Prove moving nav was not broken: with trustworthy speed + >=12° delta,
+      // travel authority still skips the streak (existing field-good path).
+      final gate = NavStationaryBearingGate();
+      gate.seedInitialRouteBearing(routeTangentBearingDeg: 0.0);
+      final decision = gate.resolve(
+        NavStationaryBearingInput(
+          speedKmh: 40.0,
+          travelBearingDeg: 90.0,
+          gpsHeadingDeg: 90.0,
+          displacementM: 20.0,
+          accuracyM: 5.0,
+          dtMs: 100,
+          allowRouteTangent: false,
+          travelAuthority: true,
+          maxRotationRateDegPerSec: 220.0,
+        ),
+      );
+      expect(decision.held, isFalse);
+      expect(decision.movingConfident, isTrue);
+      expect(
+        navBearingShortestDelta(0.0, decision.bearingDeg).abs(),
+        greaterThan(10.0),
+      );
+    });
+
+    test('cold_start travelAuthority alone cannot seed at standstill', () {
+      final gate = NavStationaryBearingGate();
+      final decision = gate.resolve(
+        NavStationaryBearingInput(
+          speedKmh: 0.0,
+          travelBearingDeg: 123.0,
+          gpsHeadingDeg: 123.0,
+          displacementM: 0.2,
+          accuracyM: 8.0,
+          travelAuthority: true,
+        ),
+      );
+      expect(decision.held, isTrue);
+      expect(decision.reason, 'no_reliable_bearing_yet');
+      expect(gate.acceptedBearing, isNull);
+    });
+  });
+
   group('NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 camera ownership', () {
     NavStreetlevelPose pose(int generation, double bearing) {
       return NavStreetlevelPose(

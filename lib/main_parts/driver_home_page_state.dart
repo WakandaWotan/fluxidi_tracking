@@ -17754,6 +17754,18 @@ class _DriverHomePageState extends State<DriverHomePage>
       seededRouteBearingDeg: _navStationaryBearingGate.acceptedBearing,
       gpsHeadingDeg: pos.heading.isFinite ? pos.heading : null,
     );
+    // Street pre-START: when route-up falls back to GPS/none, prefer the
+    // already-rendered vehicle visual heading so road-up matches the nose.
+    // Never invent north=0 when a trustworthy vehicle bearing exists.
+    var bearingDeg = routeUp.bearingDeg;
+    var bearingSourceLabel = navFixedRouteUpBearingSourceLabel(routeUp.source);
+    if (!routeUp.isRouteUp &&
+        _navR3VisualBearing.isFinite &&
+        (_navR3VisualBearing != 0.0 ||
+            routeUp.source == NavFixedRouteUpBearingSource.none)) {
+      bearingDeg = navBearingNormalize(_navR3VisualBearing);
+      bearingSourceLabel = 'vehicle_visual';
+    }
     // NAV-PHASE-CAMERA-TARGET-1: center on pickup A (prepared booking) or
     // the first route point (prepared street draft) rather than the raw
     // driver GPS. When the driver is not yet at A, targeting driver GPS put
@@ -17791,7 +17803,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       screenHeight: height,
       vehicleLat: target.lat,
       vehicleLon: target.lon,
-      bearingDeg: routeUp.bearingDeg,
+      bearingDeg: bearingDeg,
       speedKmh: 0.0,
       progress: null,
       directAdjust: true,
@@ -17800,7 +17812,6 @@ class _DriverHomePageState extends State<DriverHomePage>
       zoom: overrides.zoom,
       pitch: overrides.pitch,
     );
-    final bearingDeg = routeUp.bearingDeg;
     try {
       await _map!.flyTo(
         mb.CameraOptions(
@@ -17817,6 +17828,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         ),
         mb.MapAnimationOptions(duration: 650),
       );
+      _lastSmoothedCameraBearing = bearingDeg;
+      _navStationaryBearingGate.latchHeldCameraBearing(bearingDeg);
       _logNavBounded(
         'NAV_PRESTART_PREVIEW',
         'event=streetlevel_camera_apply reason=$reason '
@@ -17824,7 +17837,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         'zoom=${overrides.zoom.toStringAsFixed(2)} '
         'pitch=${overrides.pitch.toStringAsFixed(1)} '
         'bearing=${bearingDeg.toStringAsFixed(1)} '
-        'bearingSource=${navFixedRouteUpBearingSourceLabel(routeUp.source)} '
+        'bearingSource=$bearingSourceLabel '
         'targetSource=${navPhaseCameraTargetSourceLabel(target.source)} '
         'anchor=${overrides.anchorFraction.toStringAsFixed(3)}',
       );
@@ -22093,10 +22106,21 @@ class _DriverHomePageState extends State<DriverHomePage>
         ),
         intervalMs: 2000,
       );
-      // Nothing reliable yet: keep the pose bearing rather than snapping the
-      // camera to an arbitrary 0 degrees.
+      // Pre-seed gap: never chase wandering poseBearingDeg while the gate has
+      // no accepted bearing and movement is untrusted. Latch the last
+      // trustworthy preview/flyTo/camera bearing (or the first finite pose
+      // once) and hold it until route seed or trustworthy movement.
       if (_navStationaryBearingGate.acceptedBearing == null) {
-        return poseBearingDeg;
+        final latched = _navStationaryBearingGate.latchHeldCameraBearing(
+          _lastSmoothedCameraBearing,
+        );
+        if (latched != null) return latched;
+        if (poseBearingDeg.isFinite) {
+          return _navStationaryBearingGate.latchHeldCameraBearing(
+                poseBearingDeg,
+              ) ??
+              poseBearingDeg;
+        }
       }
     }
     return decision.bearingDeg;
@@ -22530,6 +22554,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       bearingSource = _isActiveDriverNavEngineContext()
           ? _driverNavEngine.lastBearingSource
           : _adaptiveBearingFor(pos, snap: snap).source;
+    }
+    // START / force-follow: latch the flyTo bearing so the streetlevel pump
+    // cannot overwrite it with pre-seed pose noise while still stationary.
+    if (force) {
+      _navStationaryBearingGate.latchHeldCameraBearing(heading);
     }
     var bearingDeltaDeg = 0.0;
     if (prevBearing != null && prevBearing.isFinite) {
