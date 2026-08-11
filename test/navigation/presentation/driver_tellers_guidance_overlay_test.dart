@@ -456,7 +456,7 @@ void main() {
     testWidgets('tablet portrait active navigation shows the instruction', (
       tester,
     ) async {
-      // Proof 1.
+      // Proof 1 — tablet cockpit owns maneuver in the branded header.
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await _pump(
         tester,
@@ -466,14 +466,18 @@ void main() {
         guidance: _instruction(kTurnLeftSnapshot),
       );
       final p = _present(kTurnLeftSnapshot);
-      expect(kOverlay, findsOneWidget);
+      expect(kOverlay, findsNothing);
+      expect(
+        find.byKey(const ValueKey<String>('driver_tellers_tablet_maneuver_slot')),
+        findsOneWidget,
+      );
       expect(find.text(p.primaryInstruction), findsOneWidget);
     });
 
     testWidgets('tablet landscape active navigation shows the instruction', (
       tester,
     ) async {
-      // Proof 2.
+      // Proof 2 — tablet cockpit owns maneuver in the branded header.
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await _pump(
         tester,
@@ -483,7 +487,11 @@ void main() {
         guidance: _instruction(kTurnLeftSnapshot),
       );
       final p = _present(kTurnLeftSnapshot);
-      expect(kOverlay, findsOneWidget);
+      expect(kOverlay, findsNothing);
+      expect(
+        find.byKey(const ValueKey<String>('driver_tellers_tablet_maneuver_slot')),
+        findsOneWidget,
+      );
       expect(find.text(p.primaryInstruction), findsOneWidget);
     });
 
@@ -682,7 +690,7 @@ void main() {
     testWidgets('the overlay never overlaps the Live navigation badge', (
       tester,
     ) async {
-      // Proof 8.
+      // Proof 8 — tablet header owns guidance (no map overlay over the badge).
       addTearDown(() => tester.binding.setSurfaceSize(null));
       for (final entry in <(Size, bool)>[
         (kTabletPortrait, false),
@@ -695,14 +703,14 @@ void main() {
           isLandscape: entry.$2,
           guidance: _instruction(kLongSnapshot),
         );
-        final overlay = tester.getRect(kBanner);
+        expect(kOverlay, findsNothing);
+        final banner = tester.getRect(kBanner);
         final label = tester.getRect(kLabel);
         expect(
-          overlay.overlaps(label),
+          banner.overlaps(label),
           isFalse,
-          reason: 'overlay $overlay overlaps badge $label',
+          reason: 'header banner $banner overlaps badge $label',
         );
-        expect(overlay.top, greaterThanOrEqualTo(label.bottom));
         expect(
           label.height,
           lessThanOrEqualTo(kDriverTellersLabelPaintedHeight),
@@ -713,8 +721,9 @@ void main() {
     testWidgets('portrait to landscape adopts the landscape constraints', (
       tester,
     ) async {
-      // Proof 9.
+      // Proof 9 — header maneuver remains visible across orientation.
       addTearDown(() => tester.binding.setSurfaceSize(null));
+      final p = _present(kLongSnapshot);
       await _pump(
         tester,
         size: kTabletPortrait,
@@ -722,7 +731,8 @@ void main() {
         isLandscape: false,
         guidance: _instruction(kLongSnapshot),
       );
-      final portraitWidth = tester.getSize(kBanner).width;
+      expect(find.text(p.primaryInstruction), findsOneWidget);
+      expect(kOverlay, findsNothing);
 
       await _pump(
         tester,
@@ -731,21 +741,19 @@ void main() {
         isLandscape: true,
         guidance: _instruction(kLongSnapshot),
       );
-      final landscapeLayout = resolveDriverTellersGuidanceLayout(
-        geometry: _geometryFor(kTabletLandscape, isTablet: true),
-        selectorVisible: true,
+      expect(find.text(p.primaryInstruction), findsOneWidget);
+      expect(kOverlay, findsNothing);
+      expect(
+        find.byKey(const ValueKey<String>('driver_tellers_tablet_maneuver_slot')),
+        findsOneWidget,
       );
-      final landscapeWidth = tester.getSize(kBanner).width;
-      expect(landscapeWidth, lessThanOrEqualTo(landscapeLayout.maxWidth + 0.5));
-      // The landscape map pane is narrower than the portrait one, so the card
-      // must actually shrink rather than keep a stale portrait width.
-      expect(landscapeWidth, lessThan(portraitWidth + 0.5));
-      expect(kOverlay, findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('landscape to portrait stays stable', (tester) async {
-      // Proof 10.
+      // Proof 10 — header maneuver remains visible across orientation.
       addTearDown(() => tester.binding.setSurfaceSize(null));
+      final p = _present(kLongSnapshot);
       await _pump(
         tester,
         size: kTabletLandscape,
@@ -760,15 +768,12 @@ void main() {
         isLandscape: false,
         guidance: _instruction(kLongSnapshot),
       );
-      final portraitLayout = resolveDriverTellersGuidanceLayout(
-        geometry: _geometryFor(kTabletPortrait, isTablet: true),
-        selectorVisible: true,
+      expect(kOverlay, findsNothing);
+      expect(find.text(p.primaryInstruction), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('driver_tellers_tablet_maneuver_slot')),
+        findsOneWidget,
       );
-      expect(kOverlay, findsOneWidget);
-      final banner = tester.getRect(kBanner);
-      expect(banner.width, lessThanOrEqualTo(portraitLayout.maxWidth + 0.5));
-      final window = tester.getRect(kLiveWindow);
-      expect(window.contains(banner.topLeft), isTrue);
       expect(tester.takeException(), isNull);
     });
 

@@ -63,6 +63,10 @@ class NavTabletBrandedHeaderMetrics {
     double menuSize = menuSizeDefault,
     double gap = gapDefault,
     bool includeMenu = true,
+    /// Override default nav min (110/120). Tellers cockpit uses a shorter band.
+    double? minCardHeight,
+    /// Override default nav max (152/220).
+    double? maxCardHeight,
   }) {
     final narrowPane = availableWidth < 480;
     final safeMenu = includeMenu
@@ -80,8 +84,10 @@ class NavTabletBrandedHeaderMetrics {
     final band = isLandscape ? math.min(usable, landscapeClusterMax) : usable;
     final brandW = band * zoneFraction;
     final manW = band * zoneFraction;
-    final maxCard = narrowPane ? 152.0 : 220.0;
-    final minCard = narrowPane ? 110.0 : 120.0;
+    final maxCard = maxCardHeight ?? (narrowPane ? 152.0 : 220.0);
+    final minCard = minCardHeight ?? (narrowPane ? 110.0 : 120.0);
+    final lo = math.min(minCard, maxCard);
+    final hi = math.max(minCard, maxCard);
 
     return NavTabletBrandedHeaderMetrics(
       isLandscape: isLandscape,
@@ -89,7 +95,7 @@ class NavTabletBrandedHeaderMetrics {
       gap: safeGap,
       brandWidth: brandW,
       maneuverMaxWidth: manW,
-      cardHeight: cardHeight.clamp(minCard, maxCard),
+      cardHeight: cardHeight.clamp(lo, hi),
       radius: radiusDefault,
     );
   }

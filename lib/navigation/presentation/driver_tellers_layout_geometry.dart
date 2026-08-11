@@ -23,6 +23,46 @@ const Color kFluxidiMapBackdrop = Color(0xFF0A0E14);
 /// Phone landscape only — tablet Tellers uses a map-first vertical cockpit.
 const double kTellersLandscapeLeftWidthFraction = 0.44;
 
+/// TABLET-TELLERS-COCKPIT-P1 repair: reserved chrome heights (logical px).
+/// Top chrome is reserved BEFORE the map so KPIs/header never collapse.
+const double kTellersTabletCockpitBrandHPortrait = 72.0;
+const double kTellersTabletCockpitBrandHLandscape = 56.0;
+const double kTellersTabletCockpitTitleH = 40.0;
+const double kTellersTabletCockpitKpiRowH = 78.0;
+const double kTellersTabletCockpitKpiWrapH = 160.0;
+const double kTellersTabletCockpitPanelPad = 20.0;
+const double kTellersTabletCockpitInnerGap = 6.0;
+/// Extra px so Column children never overflow the reserved Positioned band.
+const double kTellersTabletCockpitLayoutSlack = 4.0;
+const double kTellersTabletCockpitMinMapH = 180.0;
+const double kTellersTabletCockpitPriceHPortrait = 56.0;
+const double kTellersTabletCockpitPriceHLandscape = 48.0;
+const double kTellersTabletCockpitActionsHPortrait = 56.0;
+const double kTellersTabletCockpitActionsHLandscape = 52.0;
+
+/// Window-width gate for tablet KPI 4-across vs 2×2 (geometry + widgets).
+bool driverTellersTabletFourAcrossKpis(double panelWidth) => panelWidth >= 640;
+
+/// Minimum top chrome for tablet Tellers (brand + title + KPI + padding).
+double driverTellersTabletCockpitTopMinHeight({
+  required double contentWidth,
+  required bool isLandscape,
+}) {
+  final brandH = isLandscape
+      ? kTellersTabletCockpitBrandHLandscape
+      : kTellersTabletCockpitBrandHPortrait;
+  final kpiH = driverTellersTabletFourAcrossKpis(contentWidth)
+      ? kTellersTabletCockpitKpiRowH
+      : kTellersTabletCockpitKpiWrapH;
+  return brandH +
+      kTellersTabletCockpitInnerGap +
+      kTellersTabletCockpitTitleH +
+      kTellersTabletCockpitInnerGap +
+      kpiH +
+      kTellersTabletCockpitPanelPad +
+      kTellersTabletCockpitLayoutSlack;
+}
+
 /// Marker vertical position inside [DriverTellersLayoutGeometry.liveWindowRect]
 /// as a fraction of the window height (0 = top, 1 = bottom). Lower-centre
 /// matches the previous Alignment(0, 0.55) visual (≈ 0.775 from top).
@@ -105,6 +145,9 @@ class DriverTellersLayoutGeometry {
   final double cornerRadius;
 
   /// Resolve every Tellers rect from the safe viewport. Pure and deterministic.
+  ///
+  /// [reserveActionBar]: when false (no Pause/Recenter/Stop), tablet bottom
+  /// chrome collapses to the price summary only — no empty dark controls band.
   factory DriverTellersLayoutGeometry.resolve({
     required Size viewportSize,
     required double safeTop,
@@ -113,6 +156,7 @@ class DriverTellersLayoutGeometry {
     required double safeRight,
     required bool isLandscape,
     required bool isTablet,
+    bool reserveActionBar = true,
   }) {
     final hPad = isTablet ? 20.0 : 12.0;
     final vPad = isLandscape ? 8.0 : 12.0;
@@ -132,16 +176,30 @@ class DriverTellersLayoutGeometry {
     late final Rect priceSummaryRect;
 
     if (isTablet) {
-      // TABLET-TELLERS-COCKPIT-P1: map-first vertical stack in portrait and
-      // landscape. Phone landscape keeps the classic left chrome strip below.
-      final priceH = isLandscape ? 48.0 : 56.0;
-      final controlsH = isLandscape ? 56.0 : 64.0;
-      final bottomChrome = controlsH + gap + priceH;
+      // TABLET-TELLERS-COCKPIT-P1 repair: reserve header/KPI/price FIRST, then
+      // give remaining space to the map. Never force the map to overflow bottom
+      // chrome (old max(160, …) caused landscape overlap).
+      final priceH = isLandscape
+          ? kTellersTabletCockpitPriceHLandscape
+          : kTellersTabletCockpitPriceHPortrait;
+      final controlsH = !reserveActionBar
+          ? 0.0
+          : (isLandscape
+              ? kTellersTabletCockpitActionsHLandscape
+              : kTellersTabletCockpitActionsHPortrait);
+      final bottomChrome = controlsH > 0
+          ? controlsH + gap + priceH
+          : priceH;
+      final topMin = driverTellersTabletCockpitTopMinHeight(
+        contentWidth: contentW,
+        isLandscape: isLandscape,
+      );
       final topH = _tabletCockpitTopRegionHeight(
         contentH: contentH,
         bottomChromeH: bottomChrome,
         gap: gap,
         isLandscape: isLandscape,
+        topMin: topMin,
       );
       metersPanelRect = Rect.fromLTWH(
         contentLeft,
@@ -151,26 +209,37 @@ class DriverTellersLayoutGeometry {
       );
       final liveTop = contentTop + topH + gap;
       final liveBottom = contentBottom - bottomChrome - gap;
-      final liveH = math.max(160.0, liveBottom - liveTop);
+      // Map gets remaining space only — never expand into footer.
+      final liveH = math.max(0.0, liveBottom - liveTop);
       liveWindowRect = Rect.fromLTWH(
         contentLeft,
         liveTop,
         contentW,
         liveH,
       );
-      // Map → controls → price summary (price is the bottom cockpit band).
-      controlsRect = Rect.fromLTWH(
-        contentLeft,
-        contentBottom - bottomChrome,
-        contentW,
-        controlsH,
-      );
-      priceSummaryRect = Rect.fromLTWH(
-        contentLeft,
-        controlsRect.bottom + gap,
-        contentW,
-        priceH,
-      );
+      // Map → optional actions → price (price is the bottom cockpit band).
+      if (controlsH > 0) {
+        controlsRect = Rect.fromLTWH(
+          contentLeft,
+          contentBottom - bottomChrome,
+          contentW,
+          controlsH,
+        );
+        priceSummaryRect = Rect.fromLTWH(
+          contentLeft,
+          controlsRect.bottom + gap,
+          contentW,
+          priceH,
+        );
+      } else {
+        controlsRect = Rect.zero;
+        priceSummaryRect = Rect.fromLTWH(
+          contentLeft,
+          contentBottom - priceH,
+          contentW,
+          priceH,
+        );
+      }
       statusRect = Rect.fromLTWH(
         metersPanelRect.left + 10,
         metersPanelRect.bottom - 22,
@@ -425,17 +494,22 @@ double _portraitTopRegionHeight({
   return preferred.clamp(lower, maxTop);
 }
 
-/// TABLET-TELLERS-COCKPIT-P1: compact branded header + title + dense KPI row.
-/// Prefer a short top chrome so the live map owns most of the remaining height.
+/// TABLET-TELLERS-COCKPIT-P1 repair: reserve at least [topMin] for brand +
+/// title + readable KPIs. Map receives whatever remains after top + bottom.
 double _tabletCockpitTopRegionHeight({
   required double contentH,
   required double bottomChromeH,
   required double gap,
   required bool isLandscape,
+  required double topMin,
 }) {
-  final maxTop = math.max(120.0, contentH - bottomChromeH - 2 * gap - 180.0);
-  final preferred = isLandscape ? 162.0 : 208.0;
-  final lower = math.min(132.0, maxTop);
+  final maxTop = math.max(
+    topMin,
+    contentH - bottomChromeH - 2 * gap - kTellersTabletCockpitMinMapH,
+  );
+  // Prefer the content minimum; allow a little air on tall portrait panes.
+  final preferred = topMin + (isLandscape ? 0.0 : 8.0);
+  final lower = math.min(topMin, maxTop);
   return preferred.clamp(lower, maxTop);
 }
 

@@ -477,10 +477,6 @@ String driverTellersFixedRidePriceLabel(AppLanguage language) {
   ).of(language);
 }
 
-/// Window-width gate for tablet KPI 4-across vs 2×2 wrap. Host identity stays
-/// tablet; only chrome density adapts to the current pane.
-bool driverTellersTabletFourAcrossKpis(double panelWidth) => panelWidth >= 640;
-
 String driverTellersPauseLabel(AppLanguage language) {
   return const LocalizedText(
     nl: 'Pauze',
@@ -746,6 +742,9 @@ class _DriverRideMetersViewState extends State<DriverRideMetersView> {
   @override
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
+    final reserveActionBar = widget.onStop != null ||
+        widget.onToggleWait != null ||
+        widget.onRecenter != null;
     final candidate = DriverTellersLayoutGeometry.resolve(
       viewportSize: media.size,
       safeTop: media.padding.top,
@@ -754,6 +753,7 @@ class _DriverRideMetersViewState extends State<DriverRideMetersView> {
       safeRight: media.padding.right,
       isLandscape: widget.isLandscape,
       isTablet: widget.isTablet,
+      reserveActionBar: reserveActionBar,
     );
     // Retain the last VALID geometry until a new complete one resolves so a
     // transitional (zero/partial) rotation frame never installs an incomplete
@@ -908,8 +908,7 @@ class _DriverRideMetersContent extends StatelessWidget {
   /// layout never gets an empty dark rectangle over its map.
   /// Tablet cockpit moves maneuver into the branded header — avoid a second
   /// instruction card over the live map aperture.
-  bool get _tabletHeaderOwnsGuidance =>
-      isTablet && brandLogo != null && guidance.isVisible;
+  bool get _tabletHeaderOwnsGuidance => isTablet && guidance.isVisible;
 
   Positioned? _buildGuidanceOverlay({
     required DriverTellersLayoutGeometry geometry,
@@ -1048,8 +1047,10 @@ class _DriverRideMetersContent extends StatelessWidget {
             height: price.height,
             child: _buildPriceSummaryCard(palette),
           ),
-        // Portrait phone + all tablet: dedicated bottom controls panel.
-        if (!controlsInMetersPanel)
+        // Portrait phone + tablet action bar (skipped when rect is zero).
+        if (!controlsInMetersPanel &&
+            controls.width > 0 &&
+            controls.height > 0)
           Positioned(
             left: controls.left,
             top: controls.top,
@@ -1092,14 +1093,27 @@ class _DriverRideMetersContent extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             mainAxisSize: MainAxisSize.max,
             children: [
-              if (brandLogo != null) ...[
-                _buildTabletBrandedNavHeader(palette),
-                SizedBox(height: isLandscape ? 4 : 6),
-              ],
-              _buildHeader(palette, compact: true),
-              SizedBox(height: isLandscape ? 4 : 6),
-              Expanded(
-                child: _buildMetersGrid(palette, fillHeight: false, compact: true),
+              // Brand + maneuver always reserved (never collapses into KPIs).
+              _buildTabletBrandedNavHeader(palette),
+              SizedBox(height: kTellersTabletCockpitInnerGap),
+              SizedBox(
+                height: kTellersTabletCockpitTitleH,
+                child: _buildHeader(palette, compact: true),
+              ),
+              SizedBox(height: kTellersTabletCockpitInnerGap),
+              // Fixed KPI band — never Expanded into leftover scraps.
+              SizedBox(
+                key: const ValueKey<String>('driver_tellers_kpi_band'),
+                height: driverTellersTabletFourAcrossKpis(
+                  geometry.metersPanelRect.width,
+                )
+                    ? kTellersTabletCockpitKpiRowH
+                    : kTellersTabletCockpitKpiWrapH,
+                child: _buildMetersGrid(
+                  palette,
+                  fillHeight: true,
+                  compact: true,
+                ),
               ),
               if (withControls) ...[
                 SizedBox(height: isLandscape ? 6 : 8),
@@ -1146,65 +1160,115 @@ class _DriverRideMetersContent extends StatelessWidget {
   /// Compact transparent brand + maneuver strip — same conceptual family as
   /// [NavTabletBrandedHeader], theme-accent border, no second signage system.
   Widget _buildTabletBrandedNavHeader(DriverThemePalette palette) {
+    final brandH = isLandscape
+        ? kTellersTabletCockpitBrandHLandscape
+        : kTellersTabletCockpitBrandHPortrait;
     return LayoutBuilder(
       builder: (context, constraints) {
         final metrics = NavTabletBrandedHeaderMetrics.resolve(
           availableWidth: constraints.maxWidth,
           isLandscape: isLandscape,
-          cardHeight: isLandscape ? 64 : 72,
+          cardHeight: brandH,
           gap: 8,
           includeMenu: false,
+          // Tellers cockpit must stay compact — never inherit nav's 110/120 floor.
+          minCardHeight: isLandscape ? 48 : 60,
+          maxCardHeight: isLandscape ? 64 : 84,
         );
         final maneuver = _buildTabletHeaderManeuver(metrics);
         return KeyedSubtree(
           key: const ValueKey<String>('driver_tellers_tablet_branded_header'),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              SizedBox(
-                key: const ValueKey<String>('driver_tellers_tablet_brand_slot'),
-                width: metrics.brandWidth,
-                height: metrics.cardHeight,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.transparent,
-                    borderRadius: BorderRadius.circular(metrics.radius),
-                    border: Border.all(
-                      color: palette.accent.withOpacity(0.55),
-                      width: 1.2,
-                    ),
-                  ),
-                  child: Center(child: brandLogo),
-                ),
-              ),
-              SizedBox(width: metrics.gap),
-              Expanded(
-                child: Align(
-                  alignment: AlignmentDirectional.centerStart,
-                  child: SizedBox(
-                    key: const ValueKey<String>(
-                      'driver_tellers_tablet_maneuver_slot',
-                    ),
-                    height: metrics.cardHeight,
-                    child: ClipRect(
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: SizedBox(
-                          width: metrics.maneuverMaxWidth,
-                          child: maneuver ?? const SizedBox.shrink(),
-                        ),
+          child: SizedBox(
+            height: metrics.cardHeight,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                SizedBox(
+                  key: const ValueKey<String>('driver_tellers_tablet_brand_slot'),
+                  width: metrics.brandWidth,
+                  height: metrics.cardHeight,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.transparent,
+                      borderRadius: BorderRadius.circular(metrics.radius),
+                      border: Border.all(
+                        color: palette.accent.withOpacity(0.55),
+                        width: 1.2,
                       ),
                     ),
+                    child: Center(
+                      child: brandLogo ??
+                          Text(
+                            'Fluxidi',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: isLandscape ? 16 : 18,
+                              color: palette.textPrimary,
+                            ),
+                          ),
+                    ),
                   ),
                 ),
-              ),
-            ],
+                SizedBox(width: metrics.gap),
+                Expanded(
+                  child: Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: SizedBox(
+                      key: const ValueKey<String>(
+                        'driver_tellers_tablet_maneuver_slot',
+                      ),
+                      height: metrics.cardHeight,
+                      width: double.infinity,
+                      child: maneuver != null
+                          ? ClipRect(
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: SizedBox(
+                                  width: metrics.maneuverMaxWidth,
+                                  child: maneuver,
+                                ),
+                              ),
+                            )
+                          : _buildTabletManeuverPlaceholder(palette),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
+    );
+  }
+
+  /// Reserved maneuver chrome when guidance is momentarily hidden so the
+  /// header never collapses to logo-only.
+  Widget _buildTabletManeuverPlaceholder(DriverThemePalette palette) {
+    final label = driverTellersLiveNavigationLabel(markerLanguage);
+    return Container(
+      key: const ValueKey<String>('driver_tellers_tablet_maneuver_placeholder'),
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: palette.surface.withOpacity(palette.isDark ? 0.85 : 0.92),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: palette.border.withOpacity(0.55)),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: isLandscape ? 13 : 14,
+          fontWeight: FontWeight.w700,
+          color: palette.textPrimary.withOpacity(0.8),
+        ),
+      ),
     );
   }
 
@@ -1471,10 +1535,10 @@ class _DriverRideMetersContent extends StatelessWidget {
             style: FilledButton.styleFrom(
               backgroundColor: palette.accent,
               foregroundColor: palette.isDark ? Colors.black : Colors.white,
-              minimumSize: Size(compact ? 44 : 48, compact ? 40 : 48),
+              minimumSize: Size(compact ? 40 : 48, compact ? 36 : 48),
               padding: EdgeInsets.symmetric(
-                horizontal: compact ? 12 : 14,
-                vertical: compact ? 8 : 12,
+                horizontal: compact ? 10 : 14,
+                vertical: compact ? 6 : 12,
               ),
             ),
           ),
@@ -1745,6 +1809,9 @@ class _MeterTile extends StatelessWidget {
     return Semantics(
       label: semanticLabel,
       child: Container(
+        constraints: compact
+            ? const BoxConstraints(minHeight: 72)
+            : const BoxConstraints(),
         padding: EdgeInsets.symmetric(
           horizontal: compact ? 10 : (isTablet ? 18 : 12),
           vertical: compact ? 8 : (isTablet ? 16 : 10),

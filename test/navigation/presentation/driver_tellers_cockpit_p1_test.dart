@@ -15,7 +15,7 @@ import 'package:fluxidi_tracking/navigation/presentation/maneuver_presentation.d
 
 void main() {
   group('tablet Tellers cockpit geometry', () {
-    test('portrait map dominates meters + bottom chrome', () {
+    test('portrait reserves KPI chrome; map gets remainder (no overlap)', () {
       final g = DriverTellersLayoutGeometry.resolve(
         viewportSize: const Size(800, 1280),
         safeTop: 24,
@@ -25,11 +25,18 @@ void main() {
         isLandscape: false,
         isTablet: true,
       );
+      final topMin = driverTellersTabletCockpitTopMinHeight(
+        contentWidth: g.metersPanelRect.width,
+        isLandscape: false,
+      );
+      expect(g.metersPanelRect.height, greaterThanOrEqualTo(topMin - 0.5));
       expect(g.liveWindowRect.height, greaterThan(g.metersPanelRect.height));
       expect(g.priceSummaryRect.height, greaterThan(0));
       expect(g.metersPanelRect.bottom, lessThanOrEqualTo(g.liveWindowRect.top));
       expect(g.liveWindowRect.bottom, lessThanOrEqualTo(g.controlsRect.top));
       expect(g.controlsRect.bottom, lessThanOrEqualTo(g.priceSummaryRect.top));
+      expect(g.metersPanelRect.overlaps(g.liveWindowRect), isFalse);
+      expect(g.liveWindowRect.overlaps(g.priceSummaryRect), isFalse);
     });
 
     test('landscape stays tablet vertical cockpit (host identity)', () {
@@ -47,6 +54,24 @@ void main() {
       expect(g.priceSummaryRect.height, greaterThan(0));
       // Not the phone left-strip layout.
       expect(g.liveWindowRect.left, closeTo(g.metersPanelRect.left, 0.5));
+      // Map must never invade footer (old max(160) overlap bug).
+      expect(g.liveWindowRect.overlaps(g.controlsRect), isFalse);
+      expect(g.liveWindowRect.overlaps(g.priceSummaryRect), isFalse);
+    });
+
+    test('without action bar, no empty controls band under the map', () {
+      final g = DriverTellersLayoutGeometry.resolve(
+        viewportSize: const Size(800, 1280),
+        safeTop: 24,
+        safeBottom: 16,
+        safeLeft: 0,
+        safeRight: 0,
+        isLandscape: false,
+        isTablet: true,
+        reserveActionBar: false,
+      );
+      expect(g.controlsRect, Rect.zero);
+      expect(g.liveWindowRect.bottom, lessThanOrEqualTo(g.priceSummaryRect.top));
     });
 
     test('narrow split pane still tablet; KPI wrap gate uses window width', () {
@@ -146,6 +171,7 @@ void main() {
       DriverTellersGuidanceView guidance =
           const DriverTellersGuidanceView.hidden(),
       DriverThemeVariant? theme,
+      bool withActions = false,
     }) {
       if (theme != null) driverThemeNotifier.value = theme;
       return MediaQuery(
@@ -160,11 +186,24 @@ void main() {
               brandLogo: brandLogo,
               guidance: guidance,
               showMarkerSelector: false,
+              onStop: withActions ? () {} : null,
+              onToggleWait: withActions ? () {} : null,
+              onRecenter: withActions ? () {} : null,
             ),
           ),
         ),
       );
     }
+
+    const snapBase = DriverRideMetersSnapshot(
+      fareText: '€ 12.50',
+      fareLabel: 'Tarief',
+      usesFixedPrice: false,
+      distanceTravelledText: '3.2 km',
+      rideDurationText: '12:05',
+      waitingTimeText: '01:10',
+      statusText: 'Rit actief',
+    );
 
     testWidgets('street ride: Tarief KPI + estimated summary + large map', (
       tester,
@@ -376,14 +415,6 @@ void main() {
     testWidgets('tablet branded header owns guidance (no live-map duplicate)', (
       tester,
     ) async {
-      const snap = DriverRideMetersSnapshot(
-        fareText: '€ 10.00',
-        fareLabel: 'Tarief',
-        distanceTravelledText: '1.0 km',
-        rideDurationText: '04:00',
-        waitingTimeText: '00:00',
-        statusText: 'Rit actief',
-      );
       const guidance = DriverTellersGuidanceView(
         phase: DriverTellersGuidancePhase.instruction,
         presentation: ResponsiveManeuverPresentation(
@@ -399,7 +430,7 @@ void main() {
       );
       await tester.pumpWidget(
         harness(
-          snapshot: snap,
+          snapshot: snapBase,
           brandLogo: const FlutterLogo(),
           guidance: guidance,
         ),
@@ -416,6 +447,153 @@ void main() {
         find.byKey(const ValueKey('driver_tellers_guidance')),
         findsNothing,
       );
+    });
+
+    testWidgets('portrait: all cockpit regions visible with readable KPIs', (
+      tester,
+    ) async {
+      const guidance = DriverTellersGuidanceView(
+        phase: DriverTellersGuidancePhase.instruction,
+        presentation: ResponsiveManeuverPresentation(
+          distanceLabel: '200 m',
+          primaryInstruction: 'Sla rechtsaf',
+          secondaryInstruction: 'Hoofdstraat',
+          maneuverVisual: ManeuverVisual.right,
+          urgencyPhase: ManeuverUrgencyPhase.approaching,
+          accessibilityLabel: 'Sla rechtsaf',
+          isArrival: false,
+          isHighwayLike: false,
+        ),
+      );
+      await tester.binding.setSurfaceSize(const Size(800, 1280));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        harness(
+          snapshot: snapBase,
+          brandLogo: const Text('LOGO'),
+          guidance: guidance,
+          withActions: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('LOGO'), findsOneWidget);
+      expect(find.textContaining('Sla rechtsaf'), findsOneWidget);
+      expect(find.text('Tellers'), findsOneWidget);
+      expect(find.text('Navigatie'), findsOneWidget);
+      expect(find.text('Tarief'), findsWidgets);
+      expect(find.text('Afstand'), findsOneWidget);
+      expect(find.text('Ritduur'), findsOneWidget);
+      expect(find.text('Wachttijd'), findsOneWidget);
+      expect(find.text('€ 12.50'), findsWidgets);
+      expect(find.text('3.2 km'), findsOneWidget);
+      expect(find.text('12:05'), findsOneWidget);
+      expect(find.text('01:10'), findsOneWidget);
+
+      final kpiBand = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_kpi_band')),
+      );
+      expect(kpiBand.height, greaterThanOrEqualTo(72));
+
+      final live = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_live_window')),
+      );
+      final meters = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_meters_panel')),
+      );
+      final price = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_price_summary')),
+      );
+      expect(live.height, greaterThan(meters.height));
+      expect(live.bottom, lessThanOrEqualTo(price.top + 0.5));
+      expect(live.overlaps(meters), isFalse);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('landscape: no overlap/clip; KPIs + maneuver + price visible', (
+      tester,
+    ) async {
+      const guidance = DriverTellersGuidanceView(
+        phase: DriverTellersGuidancePhase.instruction,
+        presentation: ResponsiveManeuverPresentation(
+          distanceLabel: '120 m',
+          primaryInstruction: 'Rechtdoor',
+          secondaryInstruction: 'N454',
+          maneuverVisual: ManeuverVisual.straight,
+          urgencyPhase: ManeuverUrgencyPhase.approaching,
+          accessibilityLabel: 'Rechtdoor',
+          isArrival: false,
+          isHighwayLike: false,
+        ),
+      );
+      await tester.binding.setSurfaceSize(const Size(1280, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        harness(
+          snapshot: snapBase,
+          size: const Size(1280, 800),
+          isLandscape: true,
+          brandLogo: const Text('LOGO'),
+          guidance: guidance,
+          withActions: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Tellers'), findsOneWidget);
+      expect(find.text('Navigatie'), findsOneWidget);
+      expect(find.textContaining('Rechtdoor'), findsOneWidget);
+      expect(find.byKey(const ValueKey('driver_tellers_kpi_row_4')), findsOneWidget);
+
+      final live = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_live_window')),
+      );
+      final meters = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_meters_panel')),
+      );
+      final price = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_price_summary')),
+      );
+      final kpi = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_kpi_band')),
+      );
+      expect(kpi.height, greaterThanOrEqualTo(72));
+      expect(live.top, greaterThanOrEqualTo(meters.bottom - 0.5));
+      expect(live.bottom, lessThanOrEqualTo(price.top + 0.5));
+      expect(live.overlaps(meters), isFalse);
+      expect(live.overlaps(price), isFalse);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('no action bar → no empty controls band under map', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        harness(snapshot: snapBase, brandLogo: const FlutterLogo()),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('driver_tellers_controls_panel')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('driver_tellers_price_summary')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('hidden guidance keeps maneuver placeholder chrome', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        harness(snapshot: snapBase, brandLogo: const FlutterLogo()),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('driver_tellers_tablet_maneuver_placeholder')),
+        findsOneWidget,
+      );
+      expect(find.text('Live navigatie'), findsWidgets);
     });
   });
 }
