@@ -395,8 +395,20 @@ void main() {
         geometry: g,
         selectorVisible: false,
       );
-      expect(without.maxWidth, greaterThan(withSelector.maxWidth));
+      // Top band always relaxes when the selector is gone.
       expect(without.top, lessThan(withSelector.top));
+      // Reservation contract: with-selector width never exceeds usable-reserved.
+      // (On wide map-first landscape the fraction cap may equal both widths.)
+      final usable =
+          g.liveWindowRect.width - (kDriverTellersGuidanceInset * 2);
+      final reserved =
+          g.selectorRect.width + kDriverTellersGuidanceSelectorGap;
+      expect(
+        withSelector.maxWidth,
+        lessThanOrEqualTo(usable - reserved + 0.5),
+      );
+      expect(without.maxWidth, lessThanOrEqualTo(usable + 0.5));
+      expect(without.maxWidth, greaterThanOrEqualTo(withSelector.maxWidth));
     });
 
     test('the card starts below the badge and selector band', () {

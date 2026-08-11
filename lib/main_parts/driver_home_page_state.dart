@@ -25083,6 +25083,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     return DriverRideMetersSnapshot(
       fareText: _displayTotalText,
       fareLabel: _tellersFareLabel,
+      usesFixedPrice: _cockpitFarePresentation.usesFixedPrice,
       distanceTravelledText: distanceText,
       rideDurationText: _formatHms(_activeElapsed),
       waitingTimeText: _formatHms(_effectiveWaitElapsed),
@@ -25459,6 +25460,22 @@ class _DriverHomePageState extends State<DriverHomePage>
         // build, so the two surfaces cannot disagree, and Tellers keeps no
         // route steps, maneuver index or exit number of its own.
         guidance: _resolveTellersGuidance(),
+        // TABLET-TELLERS-COCKPIT-P1: tenant-scoped logo for compact branded
+        // header. Presentation only — same upload/storage SoT as nav header.
+        brandLogo: isTablet
+            ? _tenantLogo(
+                key: const ValueKey<String>('driver_tellers_tenant_logo'),
+                height: isLandscape ? 48 : 56,
+                width: isLandscape ? 160 : 180,
+                fit: BoxFit.contain,
+                fallback: Image.asset(
+                  kFluxidiLogoAsset,
+                  height: isLandscape ? 48 : 56,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                ),
+              )
+            : null,
         snapshot: snapshot,
         themeListenable: _activeDriverThemeListenable,
         isTablet: isTablet,

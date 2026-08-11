@@ -20,6 +20,7 @@ import 'package:fluxidi_tracking/navigation/nav_engine/nav_camera_view_mode.dart
 const Color kFluxidiMapBackdrop = Color(0xFF0A0E14);
 
 /// Landscape left (meters/controls) share of the safe content width.
+/// Phone landscape only — tablet Tellers uses a map-first vertical cockpit.
 const double kTellersLandscapeLeftWidthFraction = 0.44;
 
 /// Marker vertical position inside [DriverTellersLayoutGeometry.liveWindowRect]
@@ -55,6 +56,7 @@ class DriverTellersLayoutGeometry {
     required this.liveWindowRect,
     required this.controlsRect,
     required this.statusRect,
+    required this.priceSummaryRect,
     required this.markerAnchor,
     required this.selectorRect,
     required this.labelRect,
@@ -67,18 +69,21 @@ class DriverTellersLayoutGeometry {
   final bool isLandscape;
   final bool isTablet;
 
-  /// Opaque meters + header (+ landscape controls) panel.
+  /// Opaque meters + header (+ phone-landscape controls) panel.
   final Rect metersPanelRect;
 
   /// Exact map aperture — gold frame equals this rectangle.
   final Rect liveWindowRect;
 
-  /// Opaque Pauze | Centreren | Stop region (portrait bottom; landscape is
-  /// nested inside [metersPanelRect] but still reported for tests).
+  /// Opaque Pauze | Centreren | Stop region (portrait / tablet bottom; phone
+  /// landscape is nested inside [metersPanelRect] but still reported for tests).
   final Rect controlsRect;
 
   /// Compact status chip region (inside the meters panel).
   final Rect statusRect;
+
+  /// Tablet-only ride-price summary band (phone keeps [Rect.zero]).
+  final Rect priceSummaryRect;
 
   /// Absolute screen position of the selected Car/Arrow marker.
   final Offset markerAnchor;
@@ -124,9 +129,56 @@ class DriverTellersLayoutGeometry {
     late final Rect liveWindowRect;
     late final Rect controlsRect;
     late final Rect statusRect;
+    late final Rect priceSummaryRect;
 
-    if (isLandscape) {
-      // LEFT ≈ 44% opaque chrome; RIGHT = remaining after gap = live aperture.
+    if (isTablet) {
+      // TABLET-TELLERS-COCKPIT-P1: map-first vertical stack in portrait and
+      // landscape. Phone landscape keeps the classic left chrome strip below.
+      final priceH = isLandscape ? 48.0 : 56.0;
+      final controlsH = isLandscape ? 56.0 : 64.0;
+      final bottomChrome = controlsH + gap + priceH;
+      final topH = _tabletCockpitTopRegionHeight(
+        contentH: contentH,
+        bottomChromeH: bottomChrome,
+        gap: gap,
+        isLandscape: isLandscape,
+      );
+      metersPanelRect = Rect.fromLTWH(
+        contentLeft,
+        contentTop,
+        contentW,
+        topH,
+      );
+      final liveTop = contentTop + topH + gap;
+      final liveBottom = contentBottom - bottomChrome - gap;
+      final liveH = math.max(160.0, liveBottom - liveTop);
+      liveWindowRect = Rect.fromLTWH(
+        contentLeft,
+        liveTop,
+        contentW,
+        liveH,
+      );
+      // Map → controls → price summary (price is the bottom cockpit band).
+      controlsRect = Rect.fromLTWH(
+        contentLeft,
+        contentBottom - bottomChrome,
+        contentW,
+        controlsH,
+      );
+      priceSummaryRect = Rect.fromLTWH(
+        contentLeft,
+        controlsRect.bottom + gap,
+        contentW,
+        priceH,
+      );
+      statusRect = Rect.fromLTWH(
+        metersPanelRect.left + 10,
+        metersPanelRect.bottom - 22,
+        math.min(160.0, metersPanelRect.width - 20),
+        20,
+      );
+    } else if (isLandscape) {
+      // Phone landscape: LEFT ≈ 44% opaque chrome; RIGHT = live aperture.
       final leftW = contentW * kTellersLandscapeLeftWidthFraction;
       final liveW = math.max(0.0, contentW - leftW - gap);
       metersPanelRect = Rect.fromLTWH(
@@ -141,7 +193,6 @@ class DriverTellersLayoutGeometry {
         liveW,
         contentH,
       );
-      // Controls sit at the bottom of the left panel.
       final controlsH = math.min(72.0, contentH * 0.18);
       controlsRect = Rect.fromLTWH(
         metersPanelRect.left + 10,
@@ -149,7 +200,8 @@ class DriverTellersLayoutGeometry {
         math.max(0.0, metersPanelRect.width - 20),
         controlsH,
       );
-      final statusH = isTablet ? 28.0 : 24.0;
+      priceSummaryRect = Rect.zero;
+      const statusH = 24.0;
       statusRect = Rect.fromLTWH(
         metersPanelRect.left + 10,
         controlsRect.top - statusH - 8,
@@ -157,13 +209,13 @@ class DriverTellersLayoutGeometry {
         statusH,
       );
     } else {
-      // TOP opaque meters; MIDDLE live aperture; BOTTOM opaque controls.
-      final controlsH = isTablet ? 76.0 : 68.0;
+      // Phone portrait: TOP meters; MIDDLE live; BOTTOM controls.
+      const controlsH = 68.0;
       final topH = _portraitTopRegionHeight(
         contentH: contentH,
         controlsH: controlsH,
         gap: gap,
-        isTablet: isTablet,
+        isTablet: false,
       );
       metersPanelRect = Rect.fromLTWH(
         contentLeft,
@@ -186,7 +238,8 @@ class DriverTellersLayoutGeometry {
         contentW,
         controlsH,
       );
-      final statusH = isTablet ? 28.0 : 24.0;
+      priceSummaryRect = Rect.zero;
+      const statusH = 24.0;
       statusRect = Rect.fromLTWH(
         metersPanelRect.left + 10,
         metersPanelRect.bottom - statusH - 10,
@@ -260,6 +313,7 @@ class DriverTellersLayoutGeometry {
       liveWindowRect: liveWindowRect,
       controlsRect: controlsRect,
       statusRect: statusRect,
+      priceSummaryRect: priceSummaryRect,
       markerAnchor: markerAnchor,
       selectorRect: selectorRect,
       labelRect: labelRect,
@@ -360,14 +414,28 @@ double _portraitTopRegionHeight({
   required double gap,
   required bool isTablet,
 }) {
-  // Leave at least 120 px for the live band; prefer a readable meters block
-  // (header + 2×2 tiles + status + panel padding) that does not overflow.
+  // Phone path: leave at least 120 px for the live band; prefer a readable
+  // meters block (header + 2×2 tiles + status + panel padding).
   final maxTop = math.max(200.0, contentH - controlsH - 2 * gap - 120.0);
   final preferred = isTablet ? 340.0 : 310.0;
   // NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 1): on a
   // transitional rotation frame contentH can be tiny, making maxTop < 220.
   // clamp(lower, upper) requires lower <= upper, so bound the lower limit.
   final lower = math.min(220.0, maxTop);
+  return preferred.clamp(lower, maxTop);
+}
+
+/// TABLET-TELLERS-COCKPIT-P1: compact branded header + title + dense KPI row.
+/// Prefer a short top chrome so the live map owns most of the remaining height.
+double _tabletCockpitTopRegionHeight({
+  required double contentH,
+  required double bottomChromeH,
+  required double gap,
+  required bool isLandscape,
+}) {
+  final maxTop = math.max(120.0, contentH - bottomChromeH - 2 * gap - 180.0);
+  final preferred = isLandscape ? 162.0 : 208.0;
+  final lower = math.min(132.0, maxTop);
   return preferred.clamp(lower, maxTop);
 }
 

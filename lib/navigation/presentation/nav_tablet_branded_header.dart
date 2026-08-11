@@ -62,13 +62,16 @@ class NavTabletBrandedHeaderMetrics {
     required double cardHeight,
     double menuSize = menuSizeDefault,
     double gap = gapDefault,
+    bool includeMenu = true,
   }) {
     final narrowPane = availableWidth < 480;
-    final safeMenu =
-        (narrowPane ? math.min(menuSize, 48.0) : menuSize).clamp(40.0, 56.0);
+    final safeMenu = includeMenu
+        ? (narrowPane ? math.min(menuSize, 48.0) : menuSize).clamp(40.0, 56.0)
+        : 0.0;
     final safeGap = gap.clamp(6.0, 12.0);
+    final menuGaps = includeMenu ? (safeGap * 2) : safeGap;
     final contentBudget =
-        math.max(0.0, availableWidth - safeMenu - (safeGap * 2));
+        math.max(0.0, availableWidth - safeMenu - menuGaps);
     // Prefer the real budget; only apply a soft floor when space allows.
     final usable = contentBudget >= 200
         ? contentBudget

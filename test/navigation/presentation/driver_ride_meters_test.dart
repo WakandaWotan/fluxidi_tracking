@@ -819,7 +819,7 @@ void main() {
       expect(find.byKey(const ValueKey('driver_tellers_stop')), findsOneWidget);
     });
 
-    testWidgets('landscape meters column fills height (no unused spacer below)', (
+    testWidgets('tablet landscape map dominates compact top meters chrome', (
       tester,
     ) async {
       await tester.binding.setSurfaceSize(const Size(1194, 834));
@@ -847,12 +847,15 @@ void main() {
       final panelRect = tester.getRect(
         find.byKey(const ValueKey('driver_tellers_meters_panel')),
       );
-      // The meters column fills the vast majority of the available height —
-      // proving the grid expanded and no large black spacer remains below it.
-      expect(panelRect.height, greaterThan(834 * 0.7));
+      final windowRect = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_live_window')),
+      );
+      // TABLET-TELLERS-COCKPIT-P1: compact top chrome; map owns vertical space.
+      expect(panelRect.height, lessThan(834 * 0.35));
+      expect(windowRect.height, greaterThan(panelRect.height));
     });
 
-    testWidgets('landscape live window is clipped and stays right of meters', (
+    testWidgets('tablet landscape live window is below meters (vertical cockpit)', (
       tester,
     ) async {
       await tester.binding.setSurfaceSize(const Size(1194, 834));
@@ -884,14 +887,16 @@ void main() {
       final container = tester.widget<Container>(windowFinder);
       expect(container.clipBehavior, Clip.antiAlias);
 
-      // Live window never crosses the meters column.
       final panelRect = tester.getRect(
         find.byKey(const ValueKey('driver_tellers_meters_panel')),
       );
       final windowRect = tester.getRect(windowFinder);
-      expect(windowRect.left, greaterThanOrEqualTo(panelRect.right - 0.5));
-      // And stays within the screen bounds.
+      expect(windowRect.top, greaterThanOrEqualTo(panelRect.bottom - 0.5));
       expect(windowRect.right, lessThanOrEqualTo(1194 + 0.5));
+      expect(
+        find.byKey(const ValueKey('driver_tellers_price_summary')),
+        findsOneWidget,
+      );
     });
 
     testWidgets('portrait controls do not overlap the live window', (
@@ -1329,7 +1334,7 @@ void main() {
       expect(recenterRect.height, greaterThanOrEqualTo(48));
     });
 
-    testWidgets('landscape controls stay within panel without overflow', (
+    testWidgets('tablet landscape controls stay in bottom chrome without overflow', (
       tester,
     ) async {
       await tester.binding.setSurfaceSize(const Size(1194, 834));
@@ -1361,14 +1366,14 @@ void main() {
       );
       await tester.pump();
 
-      final panel = tester.getRect(
-        find.byKey(const ValueKey('driver_tellers_meters_panel')),
+      final controlsPanel = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_controls_panel')),
       );
       final controls = tester.getRect(
         find.byKey(const ValueKey('driver_tellers_controls')),
       );
-      expect(panel.contains(controls.topLeft), isTrue);
-      expect(panel.contains(controls.bottomRight), isTrue);
+      expect(controlsPanel.contains(controls.topLeft), isTrue);
+      expect(controlsPanel.contains(controls.bottomRight), isTrue);
       // Same order in landscape.
       expect(
         tester.getCenter(find.byKey(const ValueKey('driver_tellers_wait'))).dx,

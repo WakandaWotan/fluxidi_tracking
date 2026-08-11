@@ -1,7 +1,7 @@
 // NAV-TELLERS-EXACT-LIVE-VIEWPORT-1
 // NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1
 
-import 'dart:ui' show Offset, Size;
+import 'dart:ui' show Offset, Rect, Size;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
@@ -40,19 +40,39 @@ void main() {
       expect(g.goldFrameEqualsLiveWindow, isTrue);
     });
 
-    test('landscape left region is ~44%; right equals remaining space', () {
+    test('tablet landscape is map-first vertical cockpit (not 44% left)', () {
       final g = landscapeTablet();
+      // Tablet Tellers no longer uses the phone-landscape left chrome strip.
+      expect(g.metersPanelRect.bottom, lessThanOrEqualTo(g.liveWindowRect.top));
+      expect(
+        g.liveWindowRect.bottom,
+        lessThanOrEqualTo(g.controlsRect.top),
+      );
+      expect(g.priceSummaryRect.height, greaterThan(0));
+      expect(
+        g.controlsRect.bottom,
+        lessThanOrEqualTo(g.priceSummaryRect.top),
+      );
+      expect(g.metersPanelRect.overlaps(g.liveWindowRect), isFalse);
+      expect(g.liveWindowRect.height, greaterThan(g.metersPanelRect.height));
+    });
+
+    test('phone landscape left region remains ~44%', () {
+      final g = DriverTellersLayoutGeometry.resolve(
+        viewportSize: const Size(800, 380),
+        safeTop: 0,
+        safeBottom: 0,
+        safeLeft: 0,
+        safeRight: 0,
+        isLandscape: true,
+        isTablet: false,
+      );
       expect(
         g.landscapeLeftWidthFraction,
         closeTo(kTellersLandscapeLeftWidthFraction, 0.01),
       );
-      // Live window starts after meters + gap and fills remaining width.
       expect(g.liveWindowRect.left, greaterThan(g.metersPanelRect.right));
-      expect(
-        g.liveWindowRect.right,
-        closeTo(1194 - 20 /* hPad */, 0.5),
-      );
-      // No overlap between left chrome and live aperture.
+      expect(g.priceSummaryRect, Rect.zero);
       expect(g.metersPanelRect.overlaps(g.liveWindowRect), isFalse);
     });
 

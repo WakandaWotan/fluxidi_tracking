@@ -12,7 +12,7 @@ import 'package:fluxidi_tracking/navigation/presentation/driver_tellers_layout_g
 
 void main() {
   group('driverTellersLiveWindowCameraPadding', () {
-    test('landscape padding matches authoritative ~44% left geometry', () {
+    test('tablet landscape padding matches vertical cockpit geometry', () {
       const w = 1194.0;
       const h = 834.0;
       final pad = driverTellersLiveWindowCameraPadding(
@@ -33,16 +33,17 @@ void main() {
         isTablet: true,
       );
       expect(pad.left, closeTo(geo.cameraPadding.left, 0.01));
-      expect(pad.left, greaterThan(w * 0.4));
-      expect(pad.right, lessThan(pad.left));
+      expect(pad.top, closeTo(geo.cameraPadding.top, 0.01));
+      expect(pad.bottom, closeTo(geo.cameraPadding.bottom, 0.01));
+      expect(pad.right, closeTo(geo.cameraPadding.right, 0.01));
+      // Map-first vertical stack — aperture taller than top chrome.
+      expect(geo.liveWindowRect.height, greaterThan(geo.metersPanelRect.height));
+      expect(geo.priceSummaryRect.height, greaterThan(0));
       expect(pad.left + pad.right, lessThan(w));
-      expect(
-        geo.landscapeLeftWidthFraction,
-        closeTo(kTellersLandscapeLeftWidthFraction, 0.01),
-      );
+      expect(pad.top + pad.bottom, lessThan(h));
     });
 
-    test('phone landscape uses the same 44% left share', () {
+    test('phone landscape uses the classic 44% left share', () {
       const w = 800.0;
       final pad = driverTellersLiveWindowCameraPadding(
         screenWidth: w,
@@ -63,6 +64,10 @@ void main() {
       );
       expect(pad.left, closeTo(geo.cameraPadding.left, 0.01));
       expect(pad.left, greaterThan(pad.right));
+      expect(
+        geo.landscapeLeftWidthFraction,
+        closeTo(kTellersLandscapeLeftWidthFraction, 0.01),
+      );
     });
 
     test('portrait reserves top meters and bottom controls via geometry', () {
