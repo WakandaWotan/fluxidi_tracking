@@ -610,3 +610,40 @@ String formatNavStationaryBearingDiag({
       'segmentIndex=${segmentIndex ?? -1} '
       'reason=${decision.reason}';
 }
+
+/// NAV-PRESTART-HEADING-HOLD-P0: skip passive GPS `_followCameraTesla` writes
+/// while a prepared route draft is visible and START has not been pressed.
+///
+/// Post-START (`liveRideActive`) is never skipped. Forced one-shots
+/// (`style_switch`, preview apply, recenter, cockpit adjust) keep working.
+bool shouldSkipPassivePrestartFollowCamera({
+  required bool liveRideActive,
+  required bool preparedRouteDraft,
+  required bool force,
+  required String cameraReason,
+}) {
+  if (liveRideActive) return false;
+  if (!preparedRouteDraft) return false;
+  if (force) return false;
+  if (cameraReason != 'normal_follow') return false;
+  return true;
+}
+
+/// Pure pre-START hold: once a trusted preview/route bearing is latched, GPS
+/// pose jitter and route-progress noise must not change the camera bearing
+/// until START (live ride) takes over.
+double resolvePrestartHeldCameraBearing({
+  required NavStationaryBearingGate gate,
+  required double? lastSmoothedCameraBearing,
+  required double? previewRouteUpBearing,
+}) {
+  final held = gate.acceptedBearing;
+  if (held != null && held.isFinite) return held;
+  if (lastSmoothedCameraBearing != null && lastSmoothedCameraBearing.isFinite) {
+    return lastSmoothedCameraBearing;
+  }
+  if (previewRouteUpBearing != null && previewRouteUpBearing.isFinite) {
+    return previewRouteUpBearing;
+  }
+  return 0.0;
+}

@@ -22290,6 +22290,24 @@ class _DriverHomePageState extends State<DriverHomePage>
       _queuePendingFollowCamera(pos, skipReason: 'manual_view_zoom');
       return;
     }
+    // NAV-PRESTART-HEADING-HOLD-P0: prepared-route preview owns the camera
+    // bearing until START. Passive GPS `_followCameraTesla` ticks were
+    // overwriting the latched route-up heading while the vehicle marker
+    // stayed screen-up — map rotated under a correct nose. Post-START
+    // (`_liveRideActive`) never takes this branch.
+    if (shouldSkipPassivePrestartFollowCamera(
+      liveRideActive: _liveRideActive,
+      preparedRouteDraft: _fixedStreetLevelPreviewDraft,
+      force: force,
+      cameraReason: cameraReason,
+    )) {
+      _navValidationPendingCameraSkipReason = 'prestart_preview_hold';
+      _recordNavDiagCameraUpdate(
+        follow: false,
+        skippedReason: 'prestart_preview_hold',
+      );
+      return;
+    }
     _navValidationPendingCameraFollowed = false;
     _navValidationPendingCameraSkipReason = null;
 
