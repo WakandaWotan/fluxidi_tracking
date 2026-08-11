@@ -13,6 +13,7 @@ import 'customer_profile_store.dart';
 import 'customer_session_store.dart';
 import 'customer_theme_palette.dart';
 import 'customer_theme_store.dart';
+import 'nearby/public_partner_bookability.dart';
 import 'nearby/tablet_partner_branding_layout.dart';
 import 'payment/payment_method_catalog.dart';
 import 'payment/payment_method_logo.dart';
@@ -277,7 +278,35 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     }
   }
 
+  String _languageCode() {
+    final lang = appConfig.currentLanguage;
+    if (lang == AppLanguage.en) return 'en';
+    if (lang == AppLanguage.fr) return 'fr';
+    if (lang == AppLanguage.es) return 'es';
+    return 'nl';
+  }
+
+  void _showPartnerInactiveBookingMessage() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          publicPartnerInactiveBookingMessage(languageCode: _languageCode()),
+        ),
+      ),
+    );
+  }
+
+  bool get _profileBookable {
+    final profile = _profile;
+    if (profile == null) return false;
+    return isPublicPartnerBookable(profile);
+  }
+
   void _openPartnerBooking({required String companyName}) {
+    if (!_profileBookable) {
+      _showPartnerInactiveBookingMessage();
+      return;
+    }
     final partnerId = widget.partnerId.trim();
     if (partnerId.isEmpty) return;
     Navigator.of(context).push(
@@ -300,6 +329,10 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
   }
 
   void _openPartnerAirportBooking({required String companyName}) {
+    if (!_profileBookable) {
+      _showPartnerInactiveBookingMessage();
+      return;
+    }
     final partnerId = widget.partnerId.trim();
     if (partnerId.isEmpty) return;
     Navigator.of(context).push(
@@ -1358,10 +1391,10 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
       avg: companyRatingAvg,
       count: companyRatingCount,
     );
-    final companyName =
-        _profileTextAny(p, const ['company_name', 'companyName']).isNotEmpty
-        ? _profileTextAny(p, const ['company_name', 'companyName'])
-        : widget.companyNameFallback;
+    final companyName = publicPartnerDisplayName(
+      p,
+      fallback: widget.companyNameFallback,
+    );
     final tagline = _localizePublicDefaultTagline(
       _profileTextAny(p, const ['tagline']),
     );
@@ -1555,12 +1588,19 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                 size: 22,
                               ),
                               label: Text(
-                                _t(
-                                  nl: 'Taxi',
-                                  en: 'Taxi',
-                                  fr: 'Taxi',
-                                  es: 'Taxi',
-                                ),
+                                _profileBookable
+                                    ? _t(
+                                        nl: 'Taxi',
+                                        en: 'Taxi',
+                                        fr: 'Taxi',
+                                        es: 'Taxi',
+                                      )
+                                    : _t(
+                                        nl: 'Niet beschikbaar',
+                                        en: 'Unavailable',
+                                        fr: 'Indisponible',
+                                        es: 'No disponible',
+                                      ),
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w800,
                                   fontSize: 15,
@@ -1568,7 +1608,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                               ),
                             ),
                           ),
-                          if (airportServiceEnabled) ...[
+                          if (airportServiceEnabled && _profileBookable) ...[
                             const SizedBox(width: 8),
                             Expanded(
                               child: OutlinedButton.icon(
@@ -1744,6 +1784,39 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                           spacing: 6,
                           runSpacing: 6,
                           children: [
+                            if (isPublicPartnerBookable(p))
+                              _chip(
+                                _t(
+                                  nl: 'Actieve partner',
+                                  en: 'Active partner',
+                                  fr: 'Partenaire actif',
+                                  es: 'Socio activo',
+                                ),
+                                icon: Icons.verified_outlined,
+                                color: const Color(0xFF34D29A),
+                              )
+                            else ...[
+                              _chip(
+                                _t(
+                                  nl: 'Niet actief',
+                                  en: 'Inactive',
+                                  fr: 'Inactif',
+                                  es: 'Inactivo',
+                                ),
+                                icon: Icons.pause_circle_outline,
+                                color: const Color(0xFFFF8A65),
+                              ),
+                              _chip(
+                                _t(
+                                  nl: 'Momenteel niet beschikbaar',
+                                  en: 'Currently unavailable',
+                                  fr: 'Actuellement indisponible',
+                                  es: 'No disponible actualmente',
+                                ),
+                                icon: Icons.event_busy_outlined,
+                                color: const Color(0xFFFFB74D),
+                              ),
+                            ],
                             if (hasCompanyRating)
                               _chip(
                                 companyRatingLabel,
@@ -1774,9 +1847,11 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                     companyName: companyName,
                                   ),
                                   style: FilledButton.styleFrom(
-                                    backgroundColor: _isDarkTheme
-                                        ? _gold
-                                        : _bronze,
+                                    backgroundColor: isPublicPartnerBookable(p)
+                                        ? (_isDarkTheme ? _gold : _bronze)
+                                        : (_isDarkTheme
+                                              ? _gold.withOpacity(0.35)
+                                              : _bronze.withOpacity(0.45)),
                                     foregroundColor: _isDarkTheme
                                         ? Colors.black
                                         : Colors.white,
@@ -1793,12 +1868,19 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                     size: 21,
                                   ),
                                   label: Text(
-                                    _t(
-                                      nl: 'Taxi',
-                                      en: 'Taxi',
-                                      fr: 'Taxi',
-                                      es: 'Taxi',
-                                    ),
+                                    isPublicPartnerBookable(p)
+                                        ? _t(
+                                            nl: 'Taxi',
+                                            en: 'Taxi',
+                                            fr: 'Taxi',
+                                            es: 'Taxi',
+                                          )
+                                        : _t(
+                                            nl: 'Niet beschikbaar',
+                                            en: 'Unavailable',
+                                            fr: 'Indisponible',
+                                            es: 'No disponible',
+                                          ),
                                     style: const TextStyle(
                                       fontWeight: FontWeight.w800,
                                       fontSize: 14.5,

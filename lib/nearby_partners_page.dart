@@ -12,6 +12,7 @@ import 'customer_profile_store.dart';
 import 'customer_theme_palette.dart';
 import 'customer_theme_store.dart';
 import 'nearby/nearby_partner_hero_media.dart';
+import 'nearby/public_partner_bookability.dart';
 import 'nearby/tablet_partner_branding_layout.dart';
 import 'partner_public_profile_page.dart';
 
@@ -172,6 +173,9 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
         ]),
         'is_active':
             profile['is_active'] == true || profile['isActive'] == true,
+        'bookable': profile['bookable'],
+        'availability_status':
+            profile['availability_status'] ?? profile['availabilityStatus'],
         'logo_url': _mapTextAny(media, const ['logo_url', 'logoUrl']),
         'hero_photo_url': _mapTextAny(media, const [
           'hero_photo_url',
@@ -805,14 +809,35 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     await _refreshFavoritePartners(reason: 'after_partner_profile');
   }
 
+  String _languageCode() {
+    final lang = appConfig.currentLanguage;
+    if (lang == AppLanguage.en) return 'en';
+    if (lang == AppLanguage.fr) return 'fr';
+    if (lang == AppLanguage.es) return 'es';
+    return 'nl';
+  }
+
+  void _showPartnerInactiveBookingMessage() {
+    final message = publicPartnerInactiveBookingMessage(
+      languageCode: _languageCode(),
+    );
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
   void _openPartnerBooking(Map<String, dynamic> p) {
+    if (!isPublicPartnerBookable(p)) {
+      _showPartnerInactiveBookingMessage();
+      return;
+    }
     if (widget.selectionMode) {
       _selectAirportPartner(p);
       return;
     }
     final partnerId = _mapTextAny(p, const ['partner_id', 'partnerId']);
     if (partnerId.isEmpty) return;
-    final companyName = _mapTextAny(p, const ['company_name', 'companyName']);
+    final companyName = publicPartnerDisplayName(p);
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => CalculatorPage(
@@ -858,9 +883,9 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
   }
 
   Widget _partnerCard(Map<String, dynamic> p) {
-    final company = _mapTextAny(p, const ['company_name', 'companyName']);
+    final company = publicPartnerDisplayName(p);
     final partnerId = _mapTextAny(p, const ['partner_id', 'partnerId']);
-    final isActive = p['is_active'] == true || p['isActive'] == true;
+    final isBookable = isPublicPartnerBookable(p);
     final supported = _mapTextListAny(p, const [
       'supported_postcodes',
       'supportedPostcodes',
@@ -975,7 +1000,14 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
           const SizedBox(width: 7),
           Expanded(
             child: Text(
-              company.isEmpty ? partnerId : company,
+              company.isEmpty
+                  ? _t(
+                      nl: 'Fluxidi partner',
+                      en: 'Fluxidi partner',
+                      fr: 'Partenaire Fluxidi',
+                      es: 'Socio Fluxidi',
+                    )
+                  : company,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -992,7 +1024,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
         spacing: 6,
         runSpacing: 6,
         children: [
-          if (isActive)
+          if (isBookable)
             _infoChip(
               _t(
                 nl: 'Actieve partner',
@@ -1002,6 +1034,28 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
               ),
               icon: Icons.verified_outlined,
               color: const Color(0xFF34D29A),
+            )
+          else
+            _infoChip(
+              _t(
+                nl: 'Niet actief',
+                en: 'Inactive',
+                fr: 'Inactif',
+                es: 'Inactivo',
+              ),
+              icon: Icons.pause_circle_outline,
+              color: const Color(0xFFFF8A65),
+            ),
+          if (!isBookable)
+            _infoChip(
+              _t(
+                nl: 'Momenteel niet beschikbaar',
+                en: 'Currently unavailable',
+                fr: 'Actuellement indisponible',
+                es: 'No disponible actualmente',
+              ),
+              icon: Icons.event_busy_outlined,
+              color: const Color(0xFFFFB74D),
             ),
           if (supported.isNotEmpty)
             _infoChip(
@@ -1038,7 +1092,11 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
             child: FilledButton(
               onPressed: () => _openPartnerBooking(p),
               style: FilledButton.styleFrom(
-                backgroundColor: _isDarkTheme ? _gold : _bronze,
+                backgroundColor: isBookable
+                    ? (_isDarkTheme ? _gold : _bronze)
+                    : (_isDarkTheme
+                          ? _gold.withOpacity(0.35)
+                          : _bronze.withOpacity(0.45)),
                 foregroundColor: _isDarkTheme ? Colors.black : Colors.white,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(9),
@@ -1047,14 +1105,26 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
               ),
               child: Text(
                 _t(
-                  nl: widget.selectionMode ? 'Selecteer partner' : 'Boek rit',
-                  en: widget.selectionMode ? 'Select partner' : 'Book ride',
-                  fr: widget.selectionMode
-                      ? 'Choisir partenaire'
-                      : 'Réserver un trajet',
-                  es: widget.selectionMode
-                      ? 'Seleccionar socio'
-                      : 'Reservar viaje',
+                  nl: !isBookable
+                      ? 'Niet beschikbaar'
+                      : (widget.selectionMode
+                            ? 'Selecteer partner'
+                            : 'Boek rit'),
+                  en: !isBookable
+                      ? 'Unavailable'
+                      : (widget.selectionMode
+                            ? 'Select partner'
+                            : 'Book ride'),
+                  fr: !isBookable
+                      ? 'Indisponible'
+                      : (widget.selectionMode
+                            ? 'Choisir partenaire'
+                            : 'Réserver un trajet'),
+                  es: !isBookable
+                      ? 'No disponible'
+                      : (widget.selectionMode
+                            ? 'Seleccionar socio'
+                            : 'Reservar viaje'),
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -1112,10 +1182,13 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
           ),
         ],
       ),
-      if (partnerId.isNotEmpty) ...[
+      // partnerId is routing-only — never show company:/cmp_ references publicly.
+      if (partnerId.isNotEmpty &&
+          !looksLikeInternalPartnerIdentifier(partnerId) &&
+          partnerId != company) ...[
         const SizedBox(height: 5),
         Text(
-          '${_t(nl: "Referentie", en: "Reference", fr: "Référence", es: "Referencia")}: $partnerId',
+          partnerId,
           style: TextStyle(
             color: _textMuted.withOpacity(0.72),
             fontSize: 9.8,
@@ -1169,8 +1242,9 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
   }
 
   Widget _favoritePartnerCard(Map<String, dynamic> p, {double? width}) {
-    final company = _mapTextAny(p, const ['company_name', 'companyName']);
+    final company = publicPartnerDisplayName(p);
     final partnerId = _mapTextAny(p, const ['partner_id', 'partnerId']);
+    final isBookable = isPublicPartnerBookable(p);
     final logoCandidate = _mapTextAny(p, const ['logo_url', 'logoUrl']);
     final logoUrl = _isPublicHttpsUrl(logoCandidate) ? logoCandidate : '';
     final subtitle = _favoritePartnerSubtitle(p);
@@ -1232,7 +1306,14 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        company.isEmpty ? partnerId : company,
+                        company.isEmpty
+                            ? _t(
+                                nl: 'Fluxidi partner',
+                                en: 'Fluxidi partner',
+                                fr: 'Partenaire Fluxidi',
+                                es: 'Socio Fluxidi',
+                              )
+                            : company,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -1241,7 +1322,18 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                           fontSize: 13.8,
                         ),
                       ),
-                      if (subtitle.isNotEmpty) ...[
+                      if (!isBookable) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          _t(
+                            nl: 'Niet actief',
+                            en: 'Inactive',
+                            fr: 'Inactif',
+                            es: 'Inactivo',
+                          ),
+                          style: TextStyle(color: _textMuted, fontSize: 11.2),
+                        ),
+                      ] else if (subtitle.isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Text(
                           subtitle,
@@ -1295,7 +1387,11 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                   child: FilledButton(
                     onPressed: () => _openPartnerBooking(p),
                     style: FilledButton.styleFrom(
-                      backgroundColor: _isDarkTheme ? _gold : _bronze,
+                      backgroundColor: isBookable
+                          ? (_isDarkTheme ? _gold : _bronze)
+                          : (_isDarkTheme
+                                ? _gold.withOpacity(0.35)
+                                : _bronze.withOpacity(0.45)),
                       foregroundColor: _isDarkTheme
                           ? Colors.black
                           : Colors.white,
@@ -1306,10 +1402,20 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                     ),
                     child: Text(
                       _t(
-                        nl: widget.selectionMode ? 'Selecteer' : 'Boek rit',
-                        en: widget.selectionMode ? 'Select' : 'Book ride',
-                        fr: widget.selectionMode ? 'Choisir' : 'Réserver',
-                        es: widget.selectionMode ? 'Seleccionar' : 'Reservar',
+                        nl: !isBookable
+                            ? 'Niet beschikbaar'
+                            : (widget.selectionMode ? 'Selecteer' : 'Boek rit'),
+                        en: !isBookable
+                            ? 'Unavailable'
+                            : (widget.selectionMode ? 'Select' : 'Book ride'),
+                        fr: !isBookable
+                            ? 'Indisponible'
+                            : (widget.selectionMode ? 'Choisir' : 'Réserver'),
+                        es: !isBookable
+                            ? 'No disponible'
+                            : (widget.selectionMode
+                                  ? 'Seleccionar'
+                                  : 'Reservar'),
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
