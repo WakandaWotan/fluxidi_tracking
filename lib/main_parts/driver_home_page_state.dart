@@ -2706,8 +2706,10 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Widget _tenantLogo({
     required double height,
+    double? width,
     BoxFit fit = BoxFit.contain,
     Widget? fallback,
+    Key? key,
   }) {
     bool isHttpImageRef(String value) {
       final lower = value.trim().toLowerCase();
@@ -2719,6 +2721,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           Image.asset(
             kFluxidiLogoAsset,
             height: height,
+            width: width,
             fit: fit,
             filterQuality: FilterQuality.high,
             errorBuilder: (_, __, ___) =>
@@ -2727,6 +2730,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     return ValueListenableBuilder<ActiveDriverSession?>(
+      key: key,
       valueListenable: activeDriverSessionNotifier,
       builder: (context, session, _) {
         return ValueListenableBuilder<BusinessSettingsState>(
@@ -2742,6 +2746,7 @@ class _DriverHomePageState extends State<DriverHomePage>
               return Image.asset(
                 ref,
                 height: height,
+                width: width,
                 fit: fit,
                 filterQuality: FilterQuality.high,
                 errorBuilder: (_, ___, ____) => resolvedFallback(),
@@ -2751,6 +2756,7 @@ class _DriverHomePageState extends State<DriverHomePage>
               return Image.network(
                 ref,
                 height: height,
+                width: width,
                 fit: fit,
                 filterQuality: FilterQuality.high,
                 errorBuilder: (_, ___, ____) => resolvedFallback(),
@@ -2760,6 +2766,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             return Image.file(
               File(ref),
               height: height,
+              width: width,
               fit: fit,
               filterQuality: FilterQuality.high,
               errorBuilder: (_, ___, ____) => resolvedFallback(),
@@ -33290,23 +33297,38 @@ class _DriverHomePageState extends State<DriverHomePage>
     return null;
   }
 
-  Widget _buildCollapsedNavMenuButton() {
+  Widget _buildCollapsedNavMenuButton({
+    double size = 44,
+    double radius = 14,
+    bool tabletChrome = false,
+  }) {
+    final edge = size.clamp(40.0, 56.0);
+    final iconSize = tabletChrome ? 24.0 : 22.0;
     return ClipRRect(
-      borderRadius: BorderRadius.circular(14),
+      key: tabletChrome
+          ? const ValueKey<String>('nav_tablet_header_menu')
+          : null,
+      borderRadius: BorderRadius.circular(radius),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
         child: Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.26),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.white.withOpacity(0.14)),
-          ),
+          width: edge,
+          height: edge,
+          decoration: tabletChrome
+              ? navTabletBrandedHeaderCardDecoration(radius: radius)
+              : BoxDecoration(
+                  color: Colors.black.withOpacity(0.26),
+                  borderRadius: BorderRadius.circular(radius),
+                  border: Border.all(color: Colors.white.withOpacity(0.14)),
+                ),
           child: IconButton(
             tooltip: 'Menu',
             onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-            icon: const Icon(Icons.menu_rounded, size: 22),
+            icon: Icon(
+              Icons.menu_rounded,
+              size: iconSize,
+              color: tabletChrome ? const Color(0xFFFFD36A) : null,
+            ),
           ),
         ),
       ),
@@ -33348,11 +33370,50 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  /// NAV-TABLET-BRANDED-HEADER-P1: prominent white-label brand card. Height
+  /// matches the sign-driven maneuver card; logo uses BoxFit.contain.
+  Widget _buildTabletNavBrandCard({
+    required NavTabletBrandedHeaderMetrics header,
+  }) {
+    final paint = header.logoPaintBox();
+    return IgnorePointer(
+      child: Container(
+        key: const ValueKey<String>('nav_tablet_header_brand'),
+        width: header.brandWidth,
+        height: header.cardHeight,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: navTabletBrandedHeaderCardDecoration(radius: header.radius),
+        child: Center(
+          child: SizedBox(
+            width: paint.width,
+            height: paint.height,
+            child: _tenantLogo(
+              key: const ValueKey<String>('nav_tablet_header_brand_logo'),
+              height: paint.height,
+              width: paint.width,
+              fit: BoxFit.contain,
+              fallback: Image.asset(
+                kFluxidiLogoAsset,
+                height: paint.height,
+                width: paint.width,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Collapsed follow-mode top row: menu → logo → banner → free space.
   ///
   /// NAV-SIGNAGE-TABLET-READABILITY-1: tablet portrait uses this same single
   /// row (banner beside the logo) so the plate is never stacked under the
   /// logo. The Mapbox compass stays in the reserved trailing inset.
+  ///
+  /// NAV-TABLET-BRANDED-HEADER-P1: on tablet form-factor, brand + maneuver
+  /// share one height and matching chrome; phone path stays unchanged.
   Widget _buildCollapsedNavTopRowWithBanner({
     required bool isTablet,
     required bool isLandscape,
@@ -33360,42 +33421,72 @@ class _DriverHomePageState extends State<DriverHomePage>
   }) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final navSignageTablet = isNavSignageTabletLayout(
+          MediaQuery.sizeOf(context),
+        );
+
+        // Phone (incl. phone landscape collapse): preserve the prior chip row.
+        if (!navSignageTablet && tabletReadability == null) {
+          final banner = _buildFollowNavBannerForTopRow(isTablet: isTablet);
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              _buildCollapsedNavMenuButton(),
+              const SizedBox(width: 8),
+              _buildCollapsedNavLogoCapsule(
+                isLandscape: isLandscape,
+                hasInlineBanner: banner != null,
+              ),
+              if (banner != null) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: banner,
+                  ),
+                ),
+              ],
+            ],
+          );
+        }
+
         // Parent Positioned.right already reserved the compass; do not
         // subtract it again from [constraints.maxWidth].
+        final provisional = NavTabletBrandedHeaderMetrics.resolve(
+          availableWidth: constraints.maxWidth,
+          isLandscape: isLandscape,
+          cardHeight: isLandscape ? 160 : 176,
+        );
         final metrics =
             tabletReadability ??
-            (isNavSignageTabletLayout(MediaQuery.sizeOf(context))
-                ? NavSignageTabletReadabilityMetrics.resolve(
-                    isLandscape: isLandscape,
-                    availableBannerWidth:
-                        constraints.maxWidth - 44 - 118 - 16,
-                  )
-                : null);
+            NavSignageTabletReadabilityMetrics.resolve(
+              isLandscape: isLandscape,
+              availableBannerWidth: provisional.maneuverMaxWidth,
+            );
+        // Match brand height to the sign-driven maneuver card (icon plate +
+        // vertical padding), not a hard clip of the banner's soft floor.
+        final sharedCardHeight = math.max(
+          metrics.bannerMinHeight,
+          metrics.iconBoxSize + metrics.verticalPadding * 2,
+        );
+        final header = NavTabletBrandedHeaderMetrics.resolve(
+          availableWidth: constraints.maxWidth,
+          isLandscape: isLandscape,
+          cardHeight: sharedCardHeight,
+        );
         final banner = _buildFollowNavBannerForTopRow(
           isTablet: isTablet,
           tabletReadability: metrics,
         );
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            _buildCollapsedNavMenuButton(),
-            const SizedBox(width: 8),
-            _buildCollapsedNavLogoCapsule(
-              isLandscape: isLandscape || metrics != null,
-              hasInlineBanner: banner != null,
-            ),
-            if (banner != null) ...[
-              const SizedBox(width: 8),
-              // Expanded + start Align leaves trailing free space for the
-              // Mapbox compass (also reserved via Positioned.right).
-              Expanded(
-                child: Align(
-                  alignment: AlignmentDirectional.centerStart,
-                  child: banner,
-                ),
-              ),
-            ],
-          ],
+        return NavTabletBrandedHeader(
+          metrics: header,
+          menu: _buildCollapsedNavMenuButton(
+            size: header.menuSize,
+            radius: header.radius,
+            tabletChrome: true,
+          ),
+          brand: _buildTabletNavBrandCard(header: header),
+          maneuver: banner,
         );
       },
     );

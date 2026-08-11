@@ -216,14 +216,11 @@ class DriverTurnInstructionBanner extends StatelessWidget {
 
   bool get _useLandscapeCompactRow => compact && !topRowLandscape;
 
-  /// NAV-FOLLOW-ROUTE-RUNTIME-TRUTH-P0-2: tablet full-nav / split portrait must
-  /// stack distance above the primary line so "Volg de route" is never squeezed
-  /// onto one shared row with the chip at 28–32 sp.
-  bool get _useTabletStackedText =>
-      tabletReadability != null &&
-      !compact &&
-      !_useLandscapeTopRow &&
-      !_useLandscapeCompactRow;
+  /// NAV-FOLLOW-ROUTE-RUNTIME-TRUTH-P0-2 / NAV-TABLET-BRANDED-HEADER-P1:
+  /// tablet readability metrics stack distance above the road/instruction line
+  /// (top-row follow header included) so the distance stays the dominant value.
+  /// Phones never pass [tabletReadability].
+  bool get _useTabletStackedText => tabletReadability != null;
 
   bool get _usePortraitTabletPolish =>
       portraitTabletMetrics != null &&
