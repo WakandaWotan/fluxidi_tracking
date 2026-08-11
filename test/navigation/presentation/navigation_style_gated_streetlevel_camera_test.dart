@@ -39,10 +39,10 @@ void main() {
         isTablet: true,
         style: DriverCockpitMapVisualStyle.light,
       );
-      expect(out.targetZoom, closeTo(17.8, 1e-9));
-      expect(out.targetPitch, closeTo(72.0, 1e-9));
-      expect(out.zoom, closeTo(17.8, 1e-9));
-      expect(out.pitch, closeTo(72.0, 1e-9));
+      expect(out.targetZoom, closeTo(17.0, 1e-9));
+      expect(out.targetPitch, closeTo(62.0, 1e-9));
+      expect(out.zoom, closeTo(17.0, 1e-9));
+      expect(out.pitch, closeTo(62.0, 1e-9));
     });
 
     test('2) Dark matches Light camera geometry', () {
@@ -63,8 +63,8 @@ void main() {
         isTablet: true,
         style: DriverCockpitMapVisualStyle.satellite,
       );
-      expect(sat.targetZoom, closeTo(17.8, 1e-9));
-      expect(sat.targetPitch, closeTo(72.0, 1e-9));
+      expect(sat.targetZoom, closeTo(17.0, 1e-9));
+      expect(sat.targetPitch, closeTo(62.0, 1e-9));
     });
 
     test('4) 3D keeps exact Pro2 L7', () {
@@ -89,8 +89,8 @@ void main() {
         currentZoom: from3d.zoom,
         currentPitch: from3d.pitch,
       );
-      expect(toLight.zoom, closeTo(17.8, 1e-9));
-      expect(toLight.pitch, closeTo(72.0, 1e-9));
+      expect(toLight.zoom, closeTo(17.0, 1e-9));
+      expect(toLight.pitch, closeTo(62.0, 1e-9));
     });
 
     test('6) Switch Light → 3D restores exact Pro2', () {
@@ -124,8 +124,8 @@ void main() {
           currentZoom: currentZoom,
           currentPitch: currentPitch,
         );
-        expect(out.zoom, closeTo(17.8, 1e-9));
-        expect(out.pitch, closeTo(72.0, 1e-9));
+        expect(out.zoom, closeTo(17.0, 1e-9));
+        expect(out.pitch, closeTo(62.0, 1e-9));
         currentZoom = out.zoom;
         currentPitch = out.pitch;
       }
@@ -138,7 +138,7 @@ void main() {
         style: DriverCockpitMapVisualStyle.satellite,
       );
       expect(duringRerouteFeel.targetZoom, isNot(closeTo(18.4, 0.01)));
-      expect(duringRerouteFeel.targetZoom, closeTo(17.8, 1e-9));
+      expect(duringRerouteFeel.targetZoom, closeTo(17.0, 1e-9));
     });
   });
 
@@ -159,8 +159,8 @@ void main() {
         isTablet: false,
         style: DriverCockpitMapVisualStyle.light,
       );
-      expect(light.targetZoom, closeTo(18.5, 1e-9));
-      expect(light.targetPitch, closeTo(74.0, 1e-9));
+      expect(light.targetZoom, closeTo(17.7, 1e-9));
+      expect(light.targetPitch, closeTo(64.0, 1e-9));
     });
 
     test('9) standstill bearing hold still latches (accecd8)', () {

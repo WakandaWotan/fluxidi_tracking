@@ -188,13 +188,13 @@ const double kDriverCockpitPro2CompactAnchorL13 = 0.73;
 /// Style-gated streetlevel L7 for Light / Dark / Satellite only.
 ///
 /// [DriverCockpitMapVisualStyle.standard3d] keeps the exact Pro2 L7 values
-/// above. These tokens raise the camera slightly (more road/context) without
-/// changing anchor, bearing, center, or the 3D Pro2 profile.
-const double kDriverCockpitNon3dCompactZoomL7 = 17.8;
-const double kDriverCockpitNon3dCompactPitchL7 = 72.0;
-/// Phone uses the same conservative deltas as tablet (−0.6 zoom / −3° pitch).
-const double kDriverCockpitNon3dPhoneZoomL7 = 18.5;
-const double kDriverCockpitNon3dPhonePitchL7 = 74.0;
+/// above. These tokens raise the camera substantially (more road/context)
+/// without changing anchor, bearing, center, or the 3D Pro2 profile.
+const double kDriverCockpitNon3dCompactZoomL7 = 17.0;
+const double kDriverCockpitNon3dCompactPitchL7 = 62.0;
+/// Phone uses the same absolute deltas from Pro2 as tablet (−1.4 zoom / −13°).
+const double kDriverCockpitNon3dPhoneZoomL7 = 17.7;
+const double kDriverCockpitNon3dPhonePitchL7 = 64.0;
 
 /// True when the map-style selector should use the raised non-3D streetlevel
 /// L7 profile. [standard3d] and unknown/null keep exact Pro2.
