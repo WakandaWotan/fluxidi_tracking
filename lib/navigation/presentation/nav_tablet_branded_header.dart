@@ -52,6 +52,10 @@ class NavTabletBrandedHeaderMetrics {
   static const double landscapeClusterMax = 640;
 
   /// Resolve width/height tokens for the available header band.
+  ///
+  /// FLUXIDI-HOST-FORM-FACTOR-P0: narrow multi-window panes keep tablet
+  /// identity but clamp to the real content budget so brand+maneuver never
+  /// invent width larger than the pane (overflow).
   factory NavTabletBrandedHeaderMetrics.resolve({
     required double availableWidth,
     required bool isLandscape,
@@ -59,16 +63,22 @@ class NavTabletBrandedHeaderMetrics {
     double menuSize = menuSizeDefault,
     double gap = gapDefault,
   }) {
-    final safeMenu = menuSize.clamp(40.0, 56.0);
+    final narrowPane = availableWidth < 480;
+    final safeMenu =
+        (narrowPane ? math.min(menuSize, 48.0) : menuSize).clamp(40.0, 56.0);
     final safeGap = gap.clamp(6.0, 12.0);
-    final usable = math.max(
-      200.0,
-      availableWidth - safeMenu - (safeGap * 2),
-    );
+    final contentBudget =
+        math.max(0.0, availableWidth - safeMenu - (safeGap * 2));
+    // Prefer the real budget; only apply a soft floor when space allows.
+    final usable = contentBudget >= 200
+        ? contentBudget
+        : math.max(120.0, contentBudget);
 
     final band = isLandscape ? math.min(usable, landscapeClusterMax) : usable;
     final brandW = band * zoneFraction;
     final manW = band * zoneFraction;
+    final maxCard = narrowPane ? 152.0 : 220.0;
+    final minCard = narrowPane ? 110.0 : 120.0;
 
     return NavTabletBrandedHeaderMetrics(
       isLandscape: isLandscape,
@@ -76,7 +86,7 @@ class NavTabletBrandedHeaderMetrics {
       gap: safeGap,
       brandWidth: brandW,
       maneuverMaxWidth: manW,
-      cardHeight: cardHeight.clamp(120.0, 220.0),
+      cardHeight: cardHeight.clamp(minCard, maxCard),
       radius: radiusDefault,
     );
   }

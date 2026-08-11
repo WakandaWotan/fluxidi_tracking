@@ -921,6 +921,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   // stale, so old-orientation camera writes cannot land after a new
   // orientation has started rendering.
   int _navViewportEpoch = 0;
+  // FLUXIDI-HOST-FORM-FACTOR-P0: sticky physical-host tablet identity. Once
+  // true, Android split-screen / PiP window shrink must not demote the driver
+  // surface onto the phone header or phone camera family.
+  bool? _latchedHostIsTablet;
   // Last observed effective viewport signature (size + orientation). Compared
   // in build() to detect a viewport change and bump _navViewportEpoch exactly
   // once per settled transition.
@@ -13622,7 +13626,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final mgr = _destinationMarkerManager;
     if (mgr == null) return;
 
-    final isTablet = mounted && MediaQuery.sizeOf(context).width >= 600;
+    final isTablet = mounted && _hostIsTablet(context);
     final iconSize = driverDestinationMarkerIconSize(isTablet: isTablet);
     final geometry = _mbPoint(resolved.lon, resolved.lat);
     final previousMarker = _destinationMarker;
@@ -15522,7 +15526,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   /// NAV-PRES-3K-H: applied cockpit zoom/pitch for adaptive 3D vehicle scale.
   ({double zoom, double pitch}) _driverVehicleModelAppliedCameraState() {
-    final isTablet = mounted && MediaQuery.sizeOf(context).width >= 600;
+    final isTablet = mounted && _hostIsTablet(context);
     final isLandscape =
         mounted && MediaQuery.of(context).orientation == Orientation.landscape;
     final level = _driverCockpitViewLevel;
@@ -16901,7 +16905,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     final pos = _lastPos;
     if (pos != null) {
-      final isTablet = MediaQuery.sizeOf(context).width >= 600;
+      final isTablet = _hostIsTablet(context);
       logNavPresViewZoom(
         requestedLevel: input.desiredLevel,
         appliedLevel: _driverCockpitViewZoomLifecycle.appliedLevel,
@@ -16931,7 +16935,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         renderEpoch: _routeRenderEpoch,
         reason: 'no_last_position',
       );
-      final isTablet = MediaQuery.sizeOf(context).width >= 600;
+      final isTablet = _hostIsTablet(context);
       final isLandscape =
           MediaQuery.of(context).orientation == Orientation.landscape;
       _logNavPresCameraLevel(
@@ -16991,7 +16995,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (_cameraMode != _CameraMode.follow || !_liveRideActive) return;
     if (_mapStyleChanging) return;
 
-    final isTablet = MediaQuery.sizeOf(context).width >= 600;
+    final isTablet = _hostIsTablet(context);
     final formFactor = driverCockpitViewZoomFormFactorLabel(isTablet: isTablet);
 
     if (_driverCockpitViewZoomLifecycle.shouldIgnoreStaleCamera(generation)) {
@@ -17197,7 +17201,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   /// Compact zoom label for the +/- controls (never View N/13).
   String _driverCockpitViewLevelLabel() {
-    final isTablet = MediaQuery.sizeOf(context).width >= 600;
+    final isTablet = _hostIsTablet(context);
     final isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
     final zoom = _lastDriverCockpitAppliedZoom ??
@@ -17211,7 +17215,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   /// NAV-PRES-3G: compact field-test debug line — applied camera values.
   String _driverCockpitViewLevelDebugLabel() {
-    final isTablet = MediaQuery.sizeOf(context).width >= 600;
+    final isTablet = _hostIsTablet(context);
     final isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
     final level = _driverCockpitViewLevel;
@@ -17259,7 +17263,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     ).showDriverCockpitCameraControls) {
       return;
     }
-    final isTablet = MediaQuery.sizeOf(context).width >= 600;
+    final isTablet = _hostIsTablet(context);
     final isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
     final level = _driverCockpitViewLevel;
@@ -17573,7 +17577,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final level = _driverCockpitViewLevel;
     final resolvedLeadIn =
         leadInM ?? driverCockpitRouteVisualLeadInMeters(level);
-    final isTablet = mounted && MediaQuery.sizeOf(context).width >= 600;
+    final isTablet = mounted && _hostIsTablet(context);
     final isLandscape =
         mounted && MediaQuery.of(context).orientation == Orientation.landscape;
     final resolvedHudSize =
@@ -17819,12 +17823,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     final safe = MediaQuery.of(context).padding;
     final orientation = MediaQuery.of(context).orientation;
     final isLandscape = orientation == Orientation.landscape;
-    final screenClass = FluxidiBreakpoints.classifyDeviceSize(
-      Size(width, height),
-    );
-    final bool isTablet =
-        screenClass == FluxidiScreenClass.tablet ||
-        screenClass == FluxidiScreenClass.desktop;
+    // HOST-FORM-FACTOR-P0: preview + follow share the same host tablet family.
+    final bool isTablet = _hostIsTablet(context);
     final overrides = _driverCockpitCameraOverrides(
       policyZoom: _lastDriverCockpitAppliedZoom ??
           driverCockpitViewLevelTargetZoom(
@@ -22476,7 +22476,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final commandKind = navCameraCommandKindFromReason(cameraReason);
     final provisionalAnimMs = cameraReason == 'cockpit_adjust'
         ? resolveDriverCockpitViewZoomAnimationMs(
-            isTablet: MediaQuery.sizeOf(context).width >= 600,
+            isTablet: _hostIsTablet(context),
             manualViewAdjust: true,
           )
         : (force ? 220 : _followCameraAnimMsFor(pos));
@@ -22701,7 +22701,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (_cameraMode == _CameraMode.follow &&
         _navFixedHudPresentationActive &&
         navPresentation.useDriverCockpitCamera) {
-      final isTablet = MediaQuery.sizeOf(context).width >= 600;
+      final isTablet = _hostIsTablet(context);
       final directAdjust =
           (force && cameraReason == 'cockpit_adjust') || styleSwitchDirectAdjust;
       // NAV-PHASE-CAMERA-TARGET-1 (Correction 1): in the prepared-route
@@ -22922,7 +22922,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       'zoom=${cameraZoom.toStringAsFixed(1)} reason=$resolvedReason',
       intervalMs: 2500,
     );
-    final isTablet = MediaQuery.sizeOf(context).width >= 600;
+    final isTablet = _hostIsTablet(context);
     final animMs = cameraReason == 'cockpit_adjust'
         ? resolveDriverCockpitViewZoomAnimationMs(
             isTablet: isTablet,
@@ -24262,7 +24262,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   /// always `png/` (BLACK-CONTOUR-V3) — never legacy `png_captioned/`.
   bool get _useCaptionedNavSigns {
     if (!mounted) return false;
-    return isNavSignageTabletLayout(MediaQuery.sizeOf(context));
+    return isNavSignageTabletLayout(
+      MediaQuery.sizeOf(context),
+      hostIsTablet: _hostIsTablet(context),
+    );
   }
 
   ExternalNavPhase _resolveExternalNavPhase() {
@@ -24834,11 +24837,10 @@ class _DriverHomePageState extends State<DriverHomePage>
           .trim();
       // Session is pending until Maps launch succeeds; guidance stays active
       // until then so a failed handoff never leaves the driver without Fluxidi.
-      // PIP-TABLET-FORM-FACTOR-STABLE-P1: latch device class BEFORE PiP shrinks
-      // MediaQuery. SM-X400 fullscreen is sw880dp; PiP window often << 600dp
-      // and must not flip the meter onto the phone compact body.
-      final hostIsTablet =
-          MediaQuery.sizeOf(context).shortestSide >= 600;
+      // PIP-TABLET-FORM-FACTOR-STABLE-P1 / HOST-FORM-FACTOR-P0: latch device
+      // class from shared host identity (display + sticky latch), never from
+      // a already-shrunk multi-window pane alone.
+      final hostIsTablet = _hostIsTablet(context);
       final pendingSession = ExternalNavigationSession(
         provider: ExternalNavProvider.googleMaps,
         bookingId: bookingId,
@@ -25136,6 +25138,29 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     if (!mounted) return;
     setState(() {});
+  }
+
+  /// FLUXIDI-HOST-FORM-FACTOR-P0: physical host tablet identity for native
+  /// nav header + camera family. Independent of the current multi-window
+  /// MediaQuery pane. Sticky-latches true so split-screen cannot demote a
+  /// tablet onto the phone product path.
+  bool _hostIsTablet([BuildContext? ctx]) {
+    final context = ctx ?? (mounted ? this.context : null);
+    if (context == null) {
+      return _latchedHostIsTablet == true;
+    }
+    final device = fluxidiHostDeviceLogicalSizeOf(context);
+    final window = MediaQuery.sizeOf(context);
+    final resolved = resolveFluxidiHostIsTablet(
+      latchedHostIsTablet: _latchedHostIsTablet,
+      deviceSize: device,
+      windowSize: window,
+    );
+    _latchedHostIsTablet = latchFluxidiHostIsTablet(
+      previousLatch: _latchedHostIsTablet,
+      resolvedIsTablet: resolved,
+    );
+    return _latchedHostIsTablet == true;
   }
 
   /// NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: observe the current build-time
@@ -33508,9 +33533,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       builder: (context, constraints) {
         final navSignageTablet = isNavSignageTabletLayout(
           MediaQuery.sizeOf(context),
+          hostIsTablet: _hostIsTablet(context),
         );
 
-        // Phone (incl. phone landscape collapse): preserve the prior chip row.
+        // Phone host (incl. phone landscape collapse): preserve the prior
+        // chip row. Tablet host keeps branded header even in a narrow pane.
         if (!navSignageTablet && tabletReadability == null) {
           final banner = _buildFollowNavBannerForTopRow(isTablet: isTablet);
           return Row(
@@ -33708,21 +33735,23 @@ class _DriverHomePageState extends State<DriverHomePage>
             _routeCoords.length >= 2);
     final screenH = MediaQuery.of(context).size.height;
     final screenW = MediaQuery.of(context).size.width;
-    // NAV-MOBILE-COMPACT-CONTROLS-UNIFY-LANDSCAPE-1: classify form factor by
-    // the shortest side. A landscape phone can be 600+ logical px wide but
-    // must keep the exact same compact phone controls as portrait.
+    // FLUXIDI-HOST-FORM-FACTOR-P0: product tablet identity from physical
+    // display / sticky latch — not the current multi-window pane size.
+    // Window size still drives orientation and layout constraints below.
+    final bool hostIsTablet = _hostIsTablet(context);
+    // NAV-MOBILE-COMPACT-CONTROLS-UNIFY-LANDSCAPE-1: window class remains
+    // available for pane-local spacing; product isTablet follows the host.
     final screenClass = FluxidiBreakpoints.classifyDeviceSize(
       Size(screenW, screenH),
     );
-    final bool isTablet =
-        screenClass == FluxidiScreenClass.tablet ||
-        screenClass == FluxidiScreenClass.desktop;
+    final bool isTablet = hostIsTablet;
     final bool isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
-    // NAV-SIGNAGE-TABLET-READABILITY-1: shortestSide >= 600 only. Phones keep
-    // the historic below-logo portrait banner and smaller top-row metrics.
+    // NAV-SIGNAGE-TABLET-READABILITY-1 + HOST-FORM-FACTOR-P0: tablet branded
+    // header / captioned signs follow host identity through split-screen.
     final bool navSignageTablet = isNavSignageTabletLayout(
       Size(screenW, screenH),
+      hostIsTablet: hostIsTablet,
     );
     // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: observe the current navigation
     // viewport before any downstream geometry/camera work so a materially

@@ -28,56 +28,36 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/navigation/presentation/driver_ride_meters.dart'
     show DriverRideMetersSnapshot;
 
+import 'package:fluxidi_tracking/fluxidi_host_form_factor.dart';
+
 import 'external_navigation_session.dart';
 
 enum PipMeterKind { fixedPrice, liveTariff, toCustomer }
 
 /// Logical shortest-side threshold for tablet PiP chrome (device class).
-const double kPipMeterTabletShortestSide = 600;
+/// Alias of the shared host-form-factor constant.
+const double kPipMeterTabletShortestSide = kFluxidiHostTabletShortestSide;
 
 /// Device/display logical size — independent of the current PiP window bounds.
 ///
-/// Field sequence on SM-X400:
-/// 1) fullscreen MediaQuery ≈ sw880dp → tablet body
-/// 2) PiP window MediaQuery ≈ 200–400dp shortestSide → would falsely select phone
-/// Using [FlutterView.display] keeps the host form-factor stable across that
-/// transition.
-Size pipMeterDeviceLogicalSizeOf(BuildContext context) {
-  final view = View.of(context);
-  final dpr = view.devicePixelRatio;
-  if (!dpr.isFinite || dpr <= 0) {
-    return MediaQuery.sizeOf(context);
-  }
-  final physical = view.display.size;
-  if (!physical.width.isFinite ||
-      !physical.height.isFinite ||
-      physical.width <= 0 ||
-      physical.height <= 0) {
-    return MediaQuery.sizeOf(context);
-  }
-  return Size(physical.width / dpr, physical.height / dpr);
-}
+/// Delegates to [fluxidiHostDeviceLogicalSizeOf] so native nav and PiP share
+/// one host-identity primitive.
+Size pipMeterDeviceLogicalSizeOf(BuildContext context) =>
+    fluxidiHostDeviceLogicalSizeOf(context);
 
 /// Resolve whether the PiP host device is a tablet.
 ///
-/// Precedence:
-/// 1. explicit latched pre-PiP flag (session / launch-time)
-/// 2. device/display shortestSide
-/// 3. never the transient PiP window size alone
+/// Delegates to [resolveFluxidiHostIsTablet] (latch → display → window).
 bool resolvePipMeterHostIsTablet({
   bool? latchedHostIsTablet,
   Size? deviceSize,
   Size? windowSize,
 }) {
-  if (latchedHostIsTablet != null) return latchedHostIsTablet;
-  if (deviceSize != null) {
-    return deviceSize.shortestSide >= kPipMeterTabletShortestSide;
-  }
-  // Last-resort fallback for pure unit tests without a view/display.
-  if (windowSize != null) {
-    return windowSize.shortestSide >= kPipMeterTabletShortestSide;
-  }
-  return false;
+  return resolveFluxidiHostIsTablet(
+    latchedHostIsTablet: latchedHostIsTablet,
+    deviceSize: deviceSize,
+    windowSize: windowSize,
+  );
 }
 
 /// One labeled KPI cell. Value is always paired with [label] — never orphaned.

@@ -5,13 +5,20 @@ import 'package:flutter/material.dart';
 /// NAV-SIGNAGE-TABLET-READABILITY-1 / NAV-SIGNAGE-FIELD-QUALITY-P0-1:
 /// tablet form-factor gate for navigation signage sizing and top-row placement.
 ///
-/// Logical [Size.shortestSide] only — never device model names or physical
-/// pixels. Phones (shortestSide < 600) keep the existing banner metrics and
+/// FLUXIDI-HOST-FORM-FACTOR-P0: prefer [hostIsTablet] (physical display /
+/// sticky latch). Falling back to [Size.shortestSide] alone mis-classifies a
+/// tablet host when Android split-screen shrinks the current window below 600.
+/// Phones (host shortestSide < 600) keep the existing banner metrics and
 /// portrait-below-logo placement.
 const double kNavSignageTabletShortestSide = 600;
 
-bool isNavSignageTabletLayout(Size size) =>
-    size.shortestSide >= kNavSignageTabletShortestSide;
+bool isNavSignageTabletLayout(
+  Size size, {
+  bool? hostIsTablet,
+}) {
+  if (hostIsTablet != null) return hostIsTablet;
+  return size.shortestSide >= kNavSignageTabletShortestSide;
+}
 
 /// Resolved tablet banner metrics after clamping to the available width.
 @immutable
