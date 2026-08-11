@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import '../driver_navigation_geometry.dart';
+import '../driver_navigation_map_config.dart';
 import '../driver_navigation_models.dart';
 import '../nav_engine/nav_camera_view_mode.dart';
 
@@ -183,6 +184,63 @@ const double kDriverCockpitPro2CompactPitchL13 = 84.25;
 const double kDriverCockpitPro2CompactAnchorL1 = 0.55;
 const double kDriverCockpitPro2CompactAnchorL7 = 0.62;
 const double kDriverCockpitPro2CompactAnchorL13 = 0.73;
+
+/// Style-gated streetlevel L7 for Light / Dark / Satellite only.
+///
+/// [DriverCockpitMapVisualStyle.standard3d] keeps the exact Pro2 L7 values
+/// above. These tokens raise the camera slightly (more road/context) without
+/// changing anchor, bearing, center, or the 3D Pro2 profile.
+const double kDriverCockpitNon3dCompactZoomL7 = 17.8;
+const double kDriverCockpitNon3dCompactPitchL7 = 72.0;
+/// Phone uses the same conservative deltas as tablet (−0.6 zoom / −3° pitch).
+const double kDriverCockpitNon3dPhoneZoomL7 = 18.5;
+const double kDriverCockpitNon3dPhonePitchL7 = 74.0;
+
+/// True when the map-style selector should use the raised non-3D streetlevel
+/// L7 profile. [standard3d] and unknown/null keep exact Pro2.
+bool driverCockpitMapStyleUsesNon3dStreetlevelProfile(
+  DriverCockpitMapVisualStyle? mapVisualStyle,
+) {
+  if (mapVisualStyle == null) return false;
+  switch (mapVisualStyle) {
+    case DriverCockpitMapVisualStyle.light:
+    case DriverCockpitMapVisualStyle.dark:
+    case DriverCockpitMapVisualStyle.satellite:
+      return true;
+    case DriverCockpitMapVisualStyle.standard3d:
+      return false;
+  }
+}
+
+/// Resolved fixed-streetlevel L7 zoom/pitch for the selected map style.
+({double zoom, double pitch}) resolveDriverCockpitStreetlevelL7Targets({
+  required bool isTablet,
+  required bool isLandscape,
+  DriverCockpitMapVisualStyle? mapVisualStyle,
+}) {
+  final compact = driverCockpitUsesCompactChaseProfile(
+    isTablet: isTablet,
+    isLandscape: isLandscape,
+  );
+  if (driverCockpitMapStyleUsesNon3dStreetlevelProfile(mapVisualStyle)) {
+    return (
+      zoom: compact
+          ? kDriverCockpitNon3dCompactZoomL7
+          : kDriverCockpitNon3dPhoneZoomL7,
+      pitch: compact
+          ? kDriverCockpitNon3dCompactPitchL7
+          : kDriverCockpitNon3dPhonePitchL7,
+    );
+  }
+  return (
+    zoom: compact
+        ? kDriverCockpitPro2CompactZoomL7
+        : kDriverCockpitPro2PhoneZoomL7,
+    pitch: compact
+        ? kDriverCockpitPro2CompactPitchL7
+        : kDriverCockpitPro2PhonePitchL7,
+  );
+}
 
 /// NAV-PRES-3J: fixed HUD icon size at level 7 baseline for all view levels.
 const double kDriverCockpitPro2HudPhoneL1 = 94.0;
@@ -887,20 +945,54 @@ DriverCockpitCameraProfileOutput resolveDriverCockpitCameraProfile(
   bool directAdjust = false,
   // Release driver page passes true; unit tests of the Pro2 curves keep false.
   bool fixedStreetLevelZoomOnly = false,
+  /// Map-style selector state. Gates Light/Dark/Satellite vs exact 3D Pro2.
+  DriverCockpitMapVisualStyle? mapVisualStyle,
 }) {
   final level = clampDriverCockpitViewLevel(viewLevel);
   final pitchLevel =
       fixedStreetLevelZoomOnly ? kDriverCockpitViewLevelDefault : level;
-  final targetZoom = driverCockpitViewLevelTargetZoom(
-    isTablet: input.isTablet,
-    isLandscape: input.isLandscape,
-    level: level,
-  );
-  final targetPitch = driverCockpitViewLevelTargetPitch(
-    isTablet: input.isTablet,
-    isLandscape: input.isLandscape,
-    level: pitchLevel,
-  );
+  late final double targetZoom;
+  late final double targetPitch;
+  if (fixedStreetLevelZoomOnly) {
+    // Release streetlevel: L7 targets are style-gated. standard3d keeps exact
+    // Pro2; light/dark/satellite use the raised non-3D L7 profile.
+    final styleL7 = resolveDriverCockpitStreetlevelL7Targets(
+      isTablet: input.isTablet,
+      isLandscape: input.isLandscape,
+      mapVisualStyle: mapVisualStyle,
+    );
+    targetPitch = styleL7.pitch;
+    if (level == kDriverCockpitViewLevelDefault) {
+      targetZoom = styleL7.zoom;
+    } else {
+      // View-level +/- (when allowed) keeps the Pro2 curve shape but shifts
+      // the L7 anchor to the style-specific streetlevel target.
+      final pro2L7 = resolveDriverCockpitStreetlevelL7Targets(
+        isTablet: input.isTablet,
+        isLandscape: input.isLandscape,
+        mapVisualStyle: DriverCockpitMapVisualStyle.standard3d,
+      );
+      final delta = styleL7.zoom - pro2L7.zoom;
+      targetZoom = (driverCockpitViewLevelTargetZoom(
+                isTablet: input.isTablet,
+                isLandscape: input.isLandscape,
+                level: level,
+              ) +
+              delta)
+          .clamp(kDriverCockpitCameraMinZoom, kDriverCockpitCameraMaxZoom);
+    }
+  } else {
+    targetZoom = driverCockpitViewLevelTargetZoom(
+      isTablet: input.isTablet,
+      isLandscape: input.isLandscape,
+      level: level,
+    );
+    targetPitch = driverCockpitViewLevelTargetPitch(
+      isTablet: input.isTablet,
+      isLandscape: input.isLandscape,
+      level: pitchLevel,
+    );
+  }
   final maxZoomStep = directAdjust
       ? kDriverCockpitCameraDirectAdjustMaxZoomStep
       : kDriverCockpitCameraFollowMaxZoomStep;

@@ -16685,6 +16685,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       viewLevel: _driverCockpitViewLevel,
       directAdjust: directAdjust,
       fixedStreetLevelZoomOnly: true,
+      // Style-gated streetlevel L7: light/dark/satellite raised; 3D = Pro2.
+      mapVisualStyle: kNavigation3dCockpitSceneEnabled
+          ? _driverCockpitMapVisualStyle
+          : null,
     );
     final noseAnchor = resolveDriverCockpitNoseAnchorFraction(
       isTablet: isTablet,
@@ -22479,6 +22483,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     final instantCockpitBearing =
         force &&
         (cameraReason == 'cockpit_adjust' || cameraReason == 'style_switch');
+    // Style swaps must snap to the style-specific L7 profile immediately so
+    // 3D ↔ Light/Dark/Satellite never accumulate smoothed leftover zoom/pitch.
+    final styleSwitchDirectAdjust =
+        force && cameraReason == 'style_switch';
     final prevBearing = _lastSmoothedCameraBearing;
     late final double rawBearingTarget;
     late final double heading;
@@ -22602,7 +22610,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         _navFixedHudPresentationActive &&
         navPresentation.useDriverCockpitCamera) {
       final isTablet = MediaQuery.sizeOf(context).width >= 600;
-      final directAdjust = force && cameraReason == 'cockpit_adjust';
+      final directAdjust =
+          (force && cameraReason == 'cockpit_adjust') || styleSwitchDirectAdjust;
       // NAV-PHASE-CAMERA-TARGET-1 (Correction 1): in the prepared-route
       // phase the camera must stay pinned on the A→B route start across
       // every subsequent GPS fix. Without this override, later
