@@ -449,6 +449,10 @@ class DriverTellersLayoutGeometry {
   ///
   /// [reserveActionBar]: when false (no Pause/Recenter/Stop), tablet bottom
   /// chrome collapses to the price summary only — no empty dark controls band.
+  ///
+  /// [reservePriceSummary]: when false (phone active/paused/completed), phone
+  /// omits the estimate strip so the live corridor grows. Tablet ignores false
+  /// and always reserves the authoritative price band.
   factory DriverTellersLayoutGeometry.resolve({
     required Size viewportSize,
     required double safeTop,
@@ -458,10 +462,12 @@ class DriverTellersLayoutGeometry {
     required bool isLandscape,
     required bool isTablet,
     bool reserveActionBar = true,
+    bool reservePriceSummary = true,
   }) {
     final hPad = isTablet ? 20.0 : 12.0;
-    final vPad = isLandscape ? (isTablet ? 8.0 : 6.0) : 12.0;
-    const gap = 12.0;
+    final vPad = isLandscape ? (isTablet ? 8.0 : 6.0) : (isTablet ? 12.0 : 8.0);
+    final gap = isTablet ? 12.0 : 8.0;
+    final showPrice = isTablet || reservePriceSummary;
 
     final contentLeft = safeLeft + hPad;
     final contentTop = safeTop + vPad;
@@ -480,6 +486,7 @@ class DriverTellersLayoutGeometry {
       // TABLET-TELLERS-COCKPIT-P1 repair: reserve header/KPI/price FIRST, then
       // give remaining space to the map. Never force the map to overflow bottom
       // chrome (old max(160, …) caused landscape overlap).
+      // Tablet always reserves the price band (showPrice forced true above).
       final priceH = isLandscape
           ? kTellersTabletCockpitPriceHLandscape
           : kTellersTabletCockpitPriceHPortrait;
@@ -536,7 +543,7 @@ class DriverTellersLayoutGeometry {
         20,
       );
     } else if (isLandscape) {
-      // Phone landscape: LEFT ≈ 40% opaque chrome; RIGHT = live aperture.
+      // Phone landscape glass: floating left KPI cockpit; live corridor = right.
       final leftW = contentW * kTellersPhoneLandscapeLeftWidthFraction;
       final liveW = math.max(0.0, contentW - leftW - gap);
       metersPanelRect = Rect.fromLTWH(contentLeft, contentTop, leftW, contentH);
@@ -546,44 +553,52 @@ class DriverTellersLayoutGeometry {
         liveW,
         contentH,
       );
-      const priceH = kTellersPhonePriceSummaryHLandscape;
+      final priceH = showPrice ? kTellersPhonePriceSummaryHLandscape : 0.0;
       final controlsH = reserveActionBar ? kTellersPhoneControlsH : 0.0;
       if (controlsH > 0) {
         controlsRect = Rect.fromLTWH(
           metersPanelRect.left,
-          contentBottom - priceH - gap - controlsH,
+          contentBottom - priceH - (priceH > 0 ? gap : 0.0) - controlsH,
           leftW,
           controlsH,
         );
-        priceSummaryRect = Rect.fromLTWH(
-          metersPanelRect.left,
-          contentBottom - priceH,
-          leftW,
-          priceH,
-        );
+        priceSummaryRect = priceH > 0
+            ? Rect.fromLTWH(
+                metersPanelRect.left,
+                contentBottom - priceH,
+                leftW,
+                priceH,
+              )
+            : Rect.zero;
       } else {
         controlsRect = Rect.zero;
-        priceSummaryRect = Rect.fromLTWH(
-          metersPanelRect.left,
-          contentBottom - priceH,
-          leftW,
-          priceH,
-        );
+        priceSummaryRect = priceH > 0
+            ? Rect.fromLTWH(
+                metersPanelRect.left,
+                contentBottom - priceH,
+                leftW,
+                priceH,
+              )
+            : Rect.zero;
       }
       const statusH = 24.0;
+      final statusBottom = controlsH > 0
+          ? controlsRect.top
+          : (priceH > 0 ? priceSummaryRect.top : contentBottom);
       statusRect = Rect.fromLTWH(
         metersPanelRect.left + 10,
-        (controlsH > 0 ? controlsRect.top : priceSummaryRect.top) -
-            statusH -
-            8,
+        statusBottom - statusH - 8,
         math.min(180.0, metersPanelRect.width - 20),
         statusH,
       );
     } else {
-      // Phone portrait: TOP meters; MIDDLE live; BOTTOM controls + price.
-      const priceH = kTellersPhonePriceSummaryHPortrait;
+      // Phone portrait glass: floating top KPIs + bottom controls; live corridor
+      // is the unobstructed band between them (map paints full-screen behind).
+      final priceH = showPrice ? kTellersPhonePriceSummaryHPortrait : 0.0;
       final controlsH = reserveActionBar ? kTellersPhoneControlsH : 0.0;
-      final bottomChrome = controlsH > 0 ? controlsH + gap + priceH : priceH;
+      final bottomChrome = controlsH > 0
+          ? controlsH + (priceH > 0 ? gap + priceH : 0.0)
+          : priceH;
       final topH = _portraitTopRegionHeight(
         contentH: contentH,
         controlsH: bottomChrome,
@@ -592,7 +607,7 @@ class DriverTellersLayoutGeometry {
       );
       metersPanelRect = Rect.fromLTWH(contentLeft, contentTop, contentW, topH);
       final liveTop = contentTop + topH + gap;
-      final liveBottom = contentBottom - bottomChrome - gap;
+      final liveBottom = contentBottom - bottomChrome - (bottomChrome > 0 ? gap : 0.0);
       final liveH = math.max(120.0, liveBottom - liveTop);
       liveWindowRect = Rect.fromLTWH(contentLeft, liveTop, contentW, liveH);
       if (controlsH > 0) {
@@ -602,20 +617,24 @@ class DriverTellersLayoutGeometry {
           contentW,
           controlsH,
         );
-        priceSummaryRect = Rect.fromLTWH(
-          contentLeft,
-          controlsRect.bottom + gap,
-          contentW,
-          priceH,
-        );
+        priceSummaryRect = priceH > 0
+            ? Rect.fromLTWH(
+                contentLeft,
+                controlsRect.bottom + gap,
+                contentW,
+                priceH,
+              )
+            : Rect.zero;
       } else {
         controlsRect = Rect.zero;
-        priceSummaryRect = Rect.fromLTWH(
-          contentLeft,
-          contentBottom - priceH,
-          contentW,
-          priceH,
-        );
+        priceSummaryRect = priceH > 0
+            ? Rect.fromLTWH(
+                contentLeft,
+                contentBottom - priceH,
+                contentW,
+                priceH,
+              )
+            : Rect.zero;
       }
       const statusH = 24.0;
       statusRect = Rect.fromLTWH(
@@ -816,6 +835,8 @@ NavCameraViewPadding driverTellersLiveWindowCameraPadding({
   required double safeBottom,
   double safeLeft = 0,
   double safeRight = 0,
+  bool reserveActionBar = true,
+  bool reservePriceSummary = true,
 }) {
   return DriverTellersLayoutGeometry.resolve(
     viewportSize: Size(screenWidth, screenHeight),
@@ -825,6 +846,8 @@ NavCameraViewPadding driverTellersLiveWindowCameraPadding({
     safeRight: safeRight,
     isLandscape: isLandscape,
     isTablet: isTablet,
+    reserveActionBar: reserveActionBar,
+    reservePriceSummary: reservePriceSummary,
   ).cameraPadding;
 }
 

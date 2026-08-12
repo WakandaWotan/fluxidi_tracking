@@ -605,7 +605,7 @@ void main() {
       },
     );
 
-    testWidgets('meter panel is fully opaque and repaint-isolated', (
+    testWidgets('meter panel is glass on phone and repaint-isolated', (
       tester,
     ) async {
       final mode = DriverNavPresentationModeController()..showTellers();
@@ -626,9 +626,9 @@ void main() {
       );
       final container = tester.widget<Container>(panelFinder);
       final color = (container.decoration as BoxDecoration?)?.color;
-      // Fully opaque: no per-frame alpha blend over the HC platform view.
+      // Phone glass: theme palette @ PhoneCockpitOpacity.outer (map reads through).
       expect(color, isNotNull);
-      expect(color!.alpha, 0xFF);
+      expect(color!.a, closeTo(0.79, 0.02));
 
       // Isolated in its own RepaintBoundary so ticks don't dirty the map.
       expect(
@@ -1196,9 +1196,10 @@ void main() {
           find.byKey(const ValueKey('driver_tellers_geometry_stack')),
           findsOneWidget,
         );
+        // Phone glass: no opaque chrome slabs — map continues under cockpits.
         expect(
           find.byKey(const ValueKey('driver_tellers_chrome_0')),
-          findsOneWidget,
+          findsNothing,
         );
         expect(
           find.byKey(const ValueKey('driver_tellers_live_window')),

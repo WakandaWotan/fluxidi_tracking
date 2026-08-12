@@ -25449,13 +25449,30 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  /// Phone Tellers estimate strip: prepared route only (authoritative phase).
+  bool get _phoneTellersShowEstimatedPriceStrip {
+    final booking = _activeBooking;
+    final rideCompleted =
+        booking != null && _isClosedRideStatus(_effectiveStatusFor(booking));
+    final ridePrepared =
+        _directRideDraft || (booking != null && !_liveRideActive && !rideCompleted);
+    return resolveTellersEstimatedPriceStripVisible(
+      isTablet: false,
+      liveRideActive: _liveRideActive,
+      ridePrepared: ridePrepared,
+      rideCompleted: rideCompleted,
+    );
+  }
+
   /// Single host-identity Tellers layout resolve used by chrome + follow camera.
   DriverTellersLayoutGeometry _resolveTellersLayoutGeometryForCurrentViewport({
     required bool isLandscape,
-    bool reserveActionBar = true,
+    bool? reserveActionBar,
+    bool? reservePriceSummary,
   }) {
     final size = MediaQuery.sizeOf(context);
     final pad = MediaQuery.paddingOf(context);
+    final isTablet = _hostIsTablet(context);
     return DriverTellersLayoutGeometry.resolve(
       viewportSize: size,
       safeTop: pad.top,
@@ -25463,8 +25480,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       safeLeft: pad.left,
       safeRight: pad.right,
       isLandscape: isLandscape,
-      isTablet: _hostIsTablet(context),
-      reserveActionBar: reserveActionBar,
+      isTablet: isTablet,
+      // Match DriverRideMetersView: actions only while the live ride owns them.
+      reserveActionBar: reserveActionBar ?? _liveRideActive,
+      reservePriceSummary: reservePriceSummary ??
+          (isTablet || _phoneTellersShowEstimatedPriceStrip),
     );
   }
 
@@ -25703,6 +25723,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         isTablet: isTablet,
         isLandscape: isLandscape,
         isWaiting: _isWaiting,
+        showEstimatedPriceStrip: isTablet
+            ? true
+            : _phoneTellersShowEstimatedPriceStrip,
         // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: forward the current
         // navigation viewport epoch so the DriverTellersGeometryLatch treats
         // the FIRST valid candidate after a portrait ↔ landscape flip as
@@ -34765,6 +34788,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                                 !isTablet &&
                                 _phoneLandscapeKpiPriorityCollapsed,
                             flatterPhoneLandscape: isLandscape && !isTablet,
+                            phoneFloatingGlass: !isTablet,
                             secondaryActionGap:
                                 compactNavControlsLayout.horizontalGap,
                             secondaryActionRowHeight:

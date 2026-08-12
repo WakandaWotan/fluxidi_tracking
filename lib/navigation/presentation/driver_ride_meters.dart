@@ -15,17 +15,19 @@ import 'package:fluxidi_tracking/navigation/presentation/nav_signage_tablet_read
 import 'package:fluxidi_tracking/navigation/presentation/nav_tablet_branded_header.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_marker_choice.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_presentation_flags.dart';
+import 'package:fluxidi_tracking/navigation/presentation/phone_cockpit_opacity.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_vehicle_choice_selector.dart';
 import 'package:fluxidi_tracking/widgets/driver_nav_banners.dart';
 
 export 'package:fluxidi_tracking/navigation/presentation/driver_tellers_layout_geometry.dart';
+export 'package:fluxidi_tracking/navigation/presentation/phone_cockpit_opacity.dart';
 
 /// Presentation mode for the driver navigation surface.
 enum DriverNavPresentationMode {
   /// Live map + maneuver banner (default).
   navigation,
 
-  /// Opaque Tellers overlay; navigation subtree stays mounted underneath.
+  /// Tellers overlay over the retained MapWidget (phone glass / tablet chrome).
   tellers,
 }
 
@@ -681,12 +683,15 @@ class DriverTellersGeometryLatch {
     return a.viewportSize == b.viewportSize &&
         a.isLandscape == b.isLandscape &&
         a.isTablet == b.isTablet &&
-        a.liveWindowRect == b.liveWindowRect;
+        a.liveWindowRect == b.liveWindowRect &&
+        a.priceSummaryRect == b.priceSummaryRect &&
+        a.controlsRect == b.controlsRect;
   }
 }
 
-/// Large, theme-aware Tellers overlay. Opaque — does not show satellite/map
-/// behind the meters. Map style selection is unrelated to this UI theme.
+/// Large, theme-aware Tellers overlay. Phone paints glass surfaces over the
+/// retained full-screen map; tablet keeps opaque chrome. Map style selection
+/// is unrelated to this UI theme.
 ///
 /// NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 1): stateful only to
 /// own a [DriverTellersGeometryLatch] so the last complete geometry is retained
@@ -701,6 +706,7 @@ class DriverRideMetersView extends StatefulWidget {
     this.onToggleWait,
     this.onRecenter,
     this.isWaiting = false,
+    this.showEstimatedPriceStrip = true,
     this.themeListenable,
     this.compact = false,
     this.isTablet = false,
@@ -723,6 +729,9 @@ class DriverRideMetersView extends StatefulWidget {
   final VoidCallback? onToggleWait;
   final VoidCallback? onRecenter;
   final bool isWaiting;
+
+  /// Phone: prepared-route estimate only. Tablet always true (unchanged).
+  final bool showEstimatedPriceStrip;
   final ValueListenable<DriverThemeVariant>? themeListenable;
   final bool compact;
   final bool isTablet;
@@ -780,6 +789,7 @@ class _DriverRideMetersViewState extends State<DriverRideMetersView> {
       isLandscape: widget.isLandscape,
       isTablet: widget.isTablet,
       reserveActionBar: reserveActionBar,
+      reservePriceSummary: widget.showEstimatedPriceStrip,
     );
     // Retain the last VALID geometry until a new complete one resolves so a
     // transitional (zero/partial) rotation frame never installs an incomplete
@@ -800,6 +810,7 @@ class _DriverRideMetersViewState extends State<DriverRideMetersView> {
       onToggleWait: widget.onToggleWait,
       onRecenter: widget.onRecenter,
       isWaiting: widget.isWaiting,
+      showEstimatedPriceStrip: widget.showEstimatedPriceStrip,
       themeListenable: widget.themeListenable,
       compact: widget.compact,
       isTablet: widget.isTablet,
@@ -826,6 +837,7 @@ class _DriverRideMetersContent extends StatelessWidget {
     this.onToggleWait,
     this.onRecenter,
     this.isWaiting = false,
+    this.showEstimatedPriceStrip = true,
     this.themeListenable,
     this.compact = false,
     this.isTablet = false,
@@ -852,6 +864,7 @@ class _DriverRideMetersContent extends StatelessWidget {
   /// location owner.
   final VoidCallback? onRecenter;
   final bool isWaiting;
+  final bool showEstimatedPriceStrip;
   final ValueListenable<DriverThemeVariant>? themeListenable;
   final bool compact;
   final bool isTablet;
@@ -1000,15 +1013,20 @@ class _DriverRideMetersContent extends StatelessWidget {
     );
   }
 
-  /// Full-viewport Stack: opaque chrome slabs leave only [liveWindowRect]
-  /// uncovered; meters/controls panels and the gold live frame are positioned
-  /// from the same geometry.
+  /// Full-viewport Stack. Tablet: opaque chrome leaves only [liveWindowRect]
+  /// uncovered. Phone glass: no chrome slabs — floating translucent panels sit
+  /// over the continuous retained MapWidget; camera padding still uses the
+  /// settled live corridor between overlays.
   Widget _buildExactViewportStack(
     DriverThemePalette palette,
     DriverTellersLayoutGeometry geometry,
   ) {
-    final chrome = driverTellersOpaqueChromeRects(geometry);
-    final corners = driverTellersCornerBleedBlockers(geometry);
+    final chrome = isTablet
+        ? driverTellersOpaqueChromeRects(geometry)
+        : const <Rect>[];
+    final corners = isTablet
+        ? driverTellersCornerBleedBlockers(geometry)
+        : const <Rect>[];
     final live = geometry.liveWindowRect;
     final meters = geometry.metersPanelRect;
     final controls = geometry.controlsRect;
@@ -1016,6 +1034,7 @@ class _DriverRideMetersContent extends StatelessWidget {
     // Tablet cockpit: vertical chrome in both orientations. Phone landscape
     // still nests controls inside the left meters panel.
     final controlsInMetersPanel = isLandscape && !isTablet;
+    final phoneGlass = !isTablet;
 
     // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: explicit hard-edge clip on the
     // Tellers exact-viewport Stack — a stale Positioned child computed from a
@@ -1026,8 +1045,7 @@ class _DriverRideMetersContent extends StatelessWidget {
       fit: StackFit.expand,
       clipBehavior: Clip.hardEdge,
       children: [
-        // Opaque aperture chrome — fully covers every region outside the live
-        // window (outer margins, gaps, system-inset bands, inter-panel space).
+        // Tablet-only opaque aperture chrome.
         for (var i = 0; i < chrome.length; i++)
           if (chrome[i].width > 0 && chrome[i].height > 0)
             Positioned(
@@ -1040,7 +1058,6 @@ class _DriverRideMetersContent extends StatelessWidget {
                 child: ColoredBox(color: palette.background),
               ),
             ),
-        // Rounded-corner bleed blockers inside the live rect corners.
         for (var i = 0; i < corners.length; i++)
           Positioned(
             key: ValueKey<String>('driver_tellers_corner_$i'),
@@ -1050,7 +1067,6 @@ class _DriverRideMetersContent extends StatelessWidget {
             height: corners[i].height,
             child: IgnorePointer(child: ColoredBox(color: palette.background)),
           ),
-        // Opaque meters panel (phone landscape: left 44%; else top chrome).
         Positioned(
           left: meters.left,
           top: meters.top,
@@ -1063,7 +1079,7 @@ class _DriverRideMetersContent extends StatelessWidget {
             fillHeight: !isTablet,
           ),
         ),
-        if (price.width > 0 && price.height > 0)
+        if (showEstimatedPriceStrip && price.width > 0 && price.height > 0)
           Positioned(
             left: price.left,
             top: price.top,
@@ -1083,15 +1099,21 @@ class _DriverRideMetersContent extends StatelessWidget {
                 key: const ValueKey<String>('driver_tellers_controls_panel'),
                 padding: EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: palette.background,
+                  color: phoneGlass
+                      ? palette.background.withOpacity(PhoneCockpitOpacity.action)
+                      : palette.background,
                   borderRadius: BorderRadius.circular(isTablet ? 16 : 20),
-                  border: Border.all(color: palette.border.withOpacity(0.5)),
+                  border: Border.all(
+                    color: phoneGlass
+                        ? palette.accent.withOpacity(0.55)
+                        : palette.border.withOpacity(0.5),
+                  ),
                 ),
                 child: _buildFooterActions(palette),
               ),
             ),
           ),
-        // Exact live aperture — genuinely uncovered interior + gold frame.
+        // Live corridor frame (phone: map continues outside this rect too).
         Positioned(
           left: live.left,
           top: live.top,
@@ -1149,31 +1171,37 @@ class _DriverRideMetersContent extends StatelessWidget {
             mainAxisSize: fillHeight ? MainAxisSize.max : MainAxisSize.min,
             children: [
               _buildHeader(palette),
-              SizedBox(height: isLandscape ? 8 : 12),
+              SizedBox(height: isLandscape ? 6 : 8),
               if (fillHeight)
                 Expanded(child: _buildMetersGrid(palette, fillHeight: true))
               else
                 _buildMetersGrid(palette),
-              SizedBox(height: isLandscape ? 6 : 10),
+              SizedBox(height: isLandscape ? 4 : 6),
               _buildStatusChip(palette),
               if (withControls) ...[
-                SizedBox(height: isLandscape ? 8 : 12),
+                SizedBox(height: isLandscape ? 6 : 8),
                 _buildFooterActions(palette),
               ],
             ],
           );
-    // NAV-PHONE-DRIVER-VIEW-FLICKER-1: fully OPAQUE panel (no per-frame alpha
-    // blending over the HC platform view) isolated in its own RepaintBoundary,
-    // so fare/timer/location ticks repaint only this panel and never the map.
+    // Tablet: opaque panel. Phone glass: theme palette @ PhoneCockpitOpacity
+    // (no BackdropFilter) so the retained MapWidget reads through.
+    final panelColor = isTablet
+        ? palette.background
+        : palette.background.withOpacity(PhoneCockpitOpacity.outer);
     return RepaintBoundary(
       child: Container(
         key: const ValueKey<String>('driver_tellers_meters_panel'),
-        padding: EdgeInsets.all(isTablet ? 10 : 10),
+        padding: EdgeInsets.all(isTablet ? 10 : 8),
         clipBehavior: Clip.hardEdge,
         decoration: BoxDecoration(
-          color: palette.background,
+          color: panelColor,
           borderRadius: BorderRadius.circular(isTablet ? 16 : 20),
-          border: Border.all(color: palette.border.withOpacity(0.5)),
+          border: Border.all(
+            color: isTablet
+                ? palette.border.withOpacity(0.5)
+                : palette.accent.withOpacity(0.55),
+          ),
         ),
         child: content,
       ),
@@ -1345,7 +1373,11 @@ class _DriverRideMetersContent extends StatelessWidget {
         key: const ValueKey<String>('driver_tellers_price_summary'),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
-          color: palette.surface.withOpacity(palette.isDark ? 0.94 : 0.98),
+          color: palette.surface.withOpacity(
+            isTablet
+                ? (palette.isDark ? 0.94 : 0.98)
+                : PhoneCockpitOpacity.priceStrip,
+          ),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
             color: palette.accent.withOpacity(0.75),
@@ -1920,7 +1952,11 @@ class _MeterTile extends StatelessWidget {
         padding: EdgeInsets.symmetric(horizontal: hPad, vertical: vPad),
         clipBehavior: Clip.hardEdge,
         decoration: BoxDecoration(
-          color: palette.surface.withOpacity(palette.isDark ? 0.94 : 0.98),
+          color: palette.surface.withOpacity(
+            isTablet
+                ? (palette.isDark ? 0.94 : 0.98)
+                : PhoneCockpitOpacity.kpiTile,
+          ),
           borderRadius: BorderRadius.circular(
             compact || metrics != null ? 12 : 16,
           ),

@@ -203,6 +203,16 @@ String pipMeterToDestinationTitle(AppLanguage language) {
   ).of(language);
 }
 
+/// Active-ride PiP card heading — ride state, not the Fare KPI label.
+String pipMeterRideActiveTitle(AppLanguage language) {
+  return const LocalizedText(
+    nl: 'Rit actief',
+    en: 'Ride active',
+    fr: 'Course active',
+    es: 'Viaje activo',
+  ).of(language);
+}
+
 String pipMeterDistanceLabel(AppLanguage language) {
   return const LocalizedText(
     nl: 'Afstand',
@@ -650,9 +660,12 @@ class _PhonePipMeterBody extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Phone: ride-state heading for active legs — never repeat Fare.
             if (showTitle)
               Text(
-                model.primaryLabel,
+                model.kind == PipMeterKind.toCustomer
+                    ? model.title
+                    : pipMeterRideActiveTitle(model.language),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,

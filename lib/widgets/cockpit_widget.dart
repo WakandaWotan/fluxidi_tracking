@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_streetlevel_marker_anchor.dart';
+import 'package:fluxidi_tracking/navigation/presentation/phone_cockpit_opacity.dart';
 
 class _CockpitThemeTokens {
   const _CockpitThemeTokens({
@@ -85,6 +86,9 @@ class CockpitWidget extends StatefulWidget {
   /// Phone landscape Navigatie: tighter strip padding inside fixed panel height.
   final bool flatterPhoneLandscape;
 
+  /// Phone-only floating glass shell (no BackdropFilter). Tablet keeps blur.
+  final bool phoneFloatingGlass;
+
   const CockpitWidget({
     super.key,
     required this.etaText,
@@ -111,6 +115,7 @@ class CockpitWidget extends StatefulWidget {
     this.distributeSecondaryRowEvenly = false,
     this.landscapeKpiPriority = false,
     this.flatterPhoneLandscape = false,
+    this.phoneFloatingGlass = false,
   });
 
   @override
@@ -215,48 +220,63 @@ class _CockpitWidgetState extends State<CockpitWidget>
             final t = widget.tripStarted ? _pulse.value : 0.0;
             final borderOpacity = widget.tripStarted ? (0.74 + 0.08 * t) : 0.34;
 
+            final panelAlpha = widget.phoneFloatingGlass
+                ? PhoneCockpitOpacity.outer
+                : 0.92;
+            final panelBody = Container(
+              decoration: BoxDecoration(
+                color: _activeTheme.panelBackground.withOpacity(panelAlpha),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: _activeTheme.panelBorder.withOpacity(
+                    borderOpacity * 0.72,
+                  ),
+                  width: 1.0,
+                ),
+                boxShadow: widget.phoneFloatingGlass
+                    ? [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.18),
+                          blurRadius: 4,
+                          spreadRadius: 0,
+                        ),
+                      ]
+                    : [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.28),
+                          blurRadius: 6,
+                          spreadRadius: 0.2,
+                        ),
+                        BoxShadow(
+                          color: _activeTheme.panelGlow.withOpacity(0.35),
+                          blurRadius: 12,
+                          spreadRadius: 0.1,
+                        ),
+                      ],
+              ),
+              child: isLandscape
+                  ? _buildLandscapeStrip(
+                      eta: eta,
+                      km: km,
+                      price: price,
+                      priceLabel: priceLabel,
+                    )
+                  : _buildPortraitPanel(
+                      eta: eta,
+                      km: km,
+                      price: price,
+                      priceLabel: priceLabel,
+                    ),
+            );
+            // Phone glass: no BackdropFilter / blur — map stays sharp underneath.
             return ClipRRect(
               borderRadius: BorderRadius.circular(14),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: _activeTheme.panelBackground.withOpacity(0.92),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: _activeTheme.panelBorder.withOpacity(
-                        borderOpacity * 0.72,
-                      ),
-                      width: 1.0,
+              child: widget.phoneFloatingGlass
+                  ? panelBody
+                  : BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
+                      child: panelBody,
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.28),
-                        blurRadius: 6,
-                        spreadRadius: 0.2,
-                      ),
-                      BoxShadow(
-                        color: _activeTheme.panelGlow.withOpacity(0.35),
-                        blurRadius: 12,
-                        spreadRadius: 0.1,
-                      ),
-                    ],
-                  ),
-                  child: isLandscape
-                      ? _buildLandscapeStrip(
-                          eta: eta,
-                          km: km,
-                          price: price,
-                          priceLabel: priceLabel,
-                        )
-                      : _buildPortraitPanel(
-                          eta: eta,
-                          km: km,
-                          price: price,
-                          priceLabel: priceLabel,
-                        ),
-                ),
-              ),
             );
           },
         );
@@ -299,7 +319,12 @@ class _CockpitWidgetState extends State<CockpitWidget>
       // kCockpitPortraitBasePanelHeight (the value the anchor uses).
       height: kCockpitPortraitBaseContentHeight + secondaryBlockHeight,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
+        padding: EdgeInsets.fromLTRB(
+          6,
+          widget.phoneFloatingGlass ? 2 : 4,
+          6,
+          widget.phoneFloatingGlass ? 2 : 4,
+        ),
         child: Column(
           children: [
             Expanded(
@@ -511,7 +536,11 @@ class _CockpitWidgetState extends State<CockpitWidget>
                 vertical: dense ? 1 : 2,
               ),
               decoration: BoxDecoration(
-                color: _activeTheme.tileBackground.withOpacity(0.94),
+                color: _activeTheme.tileBackground.withOpacity(
+                  widget.phoneFloatingGlass
+                      ? PhoneCockpitOpacity.kpiTile
+                      : 0.94,
+                ),
                 borderRadius: BorderRadius.circular(11),
                 border: Border.all(
                   color: _activeTheme.tileBorder.withOpacity(0.88),
@@ -578,7 +607,9 @@ class _CockpitWidgetState extends State<CockpitWidget>
         : (isNavActive
               ? _activeTheme.hotBackground
               : _activeTheme.tileBackground);
-    final bgOpacity = isStop ? 0.96 : (hot && !isWait ? 0.92 : 0.86);
+    final bgOpacity = widget.phoneFloatingGlass
+        ? PhoneCockpitOpacity.action
+        : (isStop ? 0.96 : (hot && !isWait ? 0.92 : 0.86));
     final borderOpacity = isStop
         ? 0.78
         : (isNavActive ? 0.62 : (isWait ? 0.18 : 0.28));
