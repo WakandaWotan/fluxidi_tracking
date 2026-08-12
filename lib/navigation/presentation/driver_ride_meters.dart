@@ -1132,7 +1132,9 @@ class _DriverRideMetersContent extends StatelessWidget {
             top: status.top,
             width: status.width,
             height: status.height,
-            child: _buildStatusChip(palette),
+            child: ClipRect(
+              child: _buildStatusChip(palette),
+            ),
           ),
         // Action bar (phone + tablet) — skipped when rect is zero.
         if (!controlsInMetersPanel && controls.width > 0 && controls.height > 0)
@@ -1632,7 +1634,10 @@ class _DriverRideMetersContent extends StatelessWidget {
                     textColor: palette.textPrimary,
                     surfaceColor: palette.surface,
                     language: markerLanguage,
-                    compactLandscape: true,
+                    // Phone Tellers: transparent glass capsule (≥48 lp).
+                    // Tablet: prior compact opaque selector (bit-identical).
+                    compactLandscape: isTablet,
+                    phoneFloatingGlass: !isTablet,
                   ),
                 ),
               ),
@@ -1668,65 +1673,74 @@ class _DriverRideMetersContent extends StatelessWidget {
 
   Widget _buildStatusChip(DriverThemePalette palette) {
     // NAV-PARKING-2 Commit 4: status is a small secondary element, never a
-    // fifth equal meter tile.
+    // fifth equal meter tile. Phone: fit entirely inside settled statusRect.
     return Align(
       alignment: Alignment.centerLeft,
-      child: Container(
-        key: const ValueKey<String>('driver_tellers_status'),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: isTablet
-              ? palette.surface
-              : palette.surface.withOpacity(PhoneTellersSurfaceOpacity.statusChip),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(
-            color: isTablet
-                ? palette.border.withOpacity(0.6)
-                : PhoneTellersReadability.focusBorder.withOpacity(0.45),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerLeft,
+        child: Container(
+          key: const ValueKey<String>('driver_tellers_status'),
+          padding: EdgeInsets.symmetric(
+            horizontal: 10,
+            vertical: isTablet ? 5 : 4,
           ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: isWaiting ? const Color(0xFFFFB020) : palette.accent,
-                shape: BoxShape.circle,
-                boxShadow: isTablet
-                    ? null
-                    : const [
-                        BoxShadow(color: Color(0x99000000), blurRadius: 2),
-                      ],
-              ),
+          decoration: BoxDecoration(
+            color: isTablet
+                ? palette.surface
+                : palette.surface.withOpacity(PhoneTellersSurfaceOpacity.statusChip),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: isTablet
+                  ? palette.border.withOpacity(0.6)
+                  : PhoneTellersReadability.focusBorder.withOpacity(0.55),
             ),
-            const SizedBox(width: 6),
-            if (isTablet)
-              Text(
-                snapshot.statusText,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: palette.textPrimary.withOpacity(0.85),
-                ),
-              )
-            else
-              NavOutlinedMapText(
-                text: snapshot.statusText,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                fill: PhoneTellersReadability.labelFill,
-                stroke: PhoneTellersReadability.labelStroke,
-                strokeWidth: PhoneTellersReadability.labelStrokeWidth,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: isWaiting ? const Color(0xFFFFB020) : palette.accent,
+                  shape: BoxShape.circle,
+                  boxShadow: isTablet
+                      ? null
+                      : const [
+                          BoxShadow(color: Color(0x99000000), blurRadius: 2),
+                        ],
                 ),
               ),
-          ],
+              const SizedBox(width: 6),
+              if (isTablet)
+                Text(
+                  snapshot.statusText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: palette.textPrimary.withOpacity(0.85),
+                  ),
+                )
+              else
+                NavOutlinedMapText(
+                  text: snapshot.statusText,
+                  maxLines: 1,
+                  overflow: TextOverflow.clip,
+                  softWrap: false,
+                  fill: PhoneTellersReadability.labelFill,
+                  stroke: PhoneTellersReadability.labelStroke,
+                  strokeWidth: 2.0,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    height: 1.05,
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );

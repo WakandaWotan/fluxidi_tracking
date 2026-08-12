@@ -33831,8 +33831,13 @@ class _DriverHomePageState extends State<DriverHomePage>
             isTablet: isTablet,
             tabletReadability: metrics,
           );
+          // Phone landscape: top-align banner with the logo group so the
+          // maneuver card sits higher than a vertically-centred tall row.
+          final rowAlign = isLandscape
+              ? CrossAxisAlignment.start
+              : CrossAxisAlignment.center;
           return Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+            crossAxisAlignment: rowAlign,
             children: [
               _buildCollapsedNavMenuButton(),
               const SizedBox(width: 8),
@@ -33846,7 +33851,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 const SizedBox(width: 8),
                 Expanded(
                   child: Align(
-                    alignment: AlignmentDirectional.centerStart,
+                    alignment: AlignmentDirectional.topStart,
                     child: banner,
                   ),
                 ),
@@ -34481,9 +34486,14 @@ class _DriverHomePageState extends State<DriverHomePage>
           if (cockpitHudVisible &&
               (collapseTopBarInLandscapeNav || collapseTopBarInPortraitNav))
             Positioned(
-              top:
-                  MediaQuery.of(context).padding.top +
-                  (collapseTopBarInLandscapeNav ? 6 : 8),
+              // Phone ordinary landscape: sit tighter under the safe top so the
+              // inline route banner reads higher over the map. Portrait/tablet
+              // insets stay on the prior baseline via the resolver.
+              top: resolvePhoneOrdinaryNavCollapsedChromeTop(
+                safeTop: MediaQuery.of(context).padding.top,
+                isPhoneHost: !hostIsTablet,
+                isLandscape: collapseTopBarInLandscapeNav,
+              ),
               left: 10,
               // Tablet portrait/landscape: reserve trailing room for the
               // Mapbox compass so the larger banner never overlaps it.

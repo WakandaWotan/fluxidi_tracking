@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../app_strings.dart';
+import '../presentation/nav_outlined_map_text.dart';
 import '../presentation/navigation_driver_marker_choice.dart';
+import '../presentation/phone_cockpit_opacity.dart';
 
 /// NAV-VEHICLE-MODE-CAR-ARROW-1: tablet navigation marker selector with exactly
 /// two direct buttons — [ Auto ] [ Pijl ] (localized). It replaces the former
@@ -10,6 +12,9 @@ import '../presentation/navigation_driver_marker_choice.dart';
 /// This selector is independent of the map style: it is shown identically on
 /// Light, Dark, 3D-buildings and Satellite styles. Choosing a marker never
 /// changes the map style and vice versa.
+///
+/// Phone Tellers may opt into [phoneFloatingGlass] for the transparent cockpit
+/// language. Tablet styling remains the prior opaque capsule.
 class NavigationDriverMarkerChoiceSelector extends StatelessWidget {
   const NavigationDriverMarkerChoiceSelector({
     super.key,
@@ -20,6 +25,7 @@ class NavigationDriverMarkerChoiceSelector extends StatelessWidget {
     required this.surfaceColor,
     this.language = AppLanguage.en,
     this.compactLandscape = false,
+    this.phoneFloatingGlass = false,
   });
 
   final DriverNavigationMarkerChoice selectedChoice;
@@ -29,6 +35,9 @@ class NavigationDriverMarkerChoiceSelector extends StatelessWidget {
   final Color surfaceColor;
   final AppLanguage language;
   final bool compactLandscape;
+
+  /// Phone Tellers only: near-clear outer capsule + outlined glyphs.
+  final bool phoneFloatingGlass;
 
   /// Localized driving-friendly button label.
   static String buttonLabel(
@@ -46,10 +55,54 @@ class NavigationDriverMarkerChoiceSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final buttonHeight = compactLandscape ? 42.0 : 48.0;
-    final buttonMinWidth = compactLandscape ? 64.0 : 78.0;
-    final fontSize = compactLandscape ? 12.0 : 13.0;
+    // Phone glass: keep ≥48 lp targets even in landscape Tellers.
+    final buttonHeight = phoneFloatingGlass
+        ? 48.0
+        : (compactLandscape ? 42.0 : 48.0);
+    final buttonMinWidth = phoneFloatingGlass
+        ? 72.0
+        : (compactLandscape ? 64.0 : 78.0);
+    final fontSize = phoneFloatingGlass
+        ? 13.0
+        : (compactLandscape ? 12.0 : 13.0);
     const choices = DriverNavigationMarkerChoice.values;
+    final gold = PhoneTellersReadability.focusBorder;
+
+    if (phoneFloatingGlass) {
+      return Material(
+        color: Colors.transparent,
+        child: Container(
+          key: const ValueKey<String>('nav_marker_selector_phone_glass'),
+          decoration: BoxDecoration(
+            color: const Color(0xFF000000).withOpacity(PhoneCockpitOpacity.outer),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: gold.withOpacity(0.75), width: 1.1),
+          ),
+          padding: const EdgeInsets.all(4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < choices.length; i++) ...[
+                if (i > 0) const SizedBox(width: 4),
+                _MarkerChoiceButton(
+                  choice: choices[i],
+                  label: buttonLabel(choices[i], language),
+                  selected: choices[i] == selectedChoice,
+                  onSelected: onSelected,
+                  accentColor: gold,
+                  textColor: PhoneTellersReadability.primaryFill,
+                  height: buttonHeight,
+                  minWidth: buttonMinWidth,
+                  fontSize: fontSize,
+                  phoneFloatingGlass: true,
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+
     return Material(
       color: surfaceColor.withValues(alpha: 0.92),
       borderRadius: BorderRadius.circular(14),
@@ -95,6 +148,7 @@ class _MarkerChoiceButton extends StatelessWidget {
     required this.height,
     required this.minWidth,
     required this.fontSize,
+    this.phoneFloatingGlass = false,
   });
 
   final DriverNavigationMarkerChoice choice;
@@ -106,9 +160,13 @@ class _MarkerChoiceButton extends StatelessWidget {
   final double height;
   final double minWidth;
   final double fontSize;
+  final bool phoneFloatingGlass;
 
   @override
   Widget build(BuildContext context) {
+    final selectedFill = phoneFloatingGlass
+        ? accentColor.withOpacity(0.18)
+        : accentColor.withValues(alpha: 0.22);
     return Semantics(
       button: true,
       selected: selected,
@@ -119,19 +177,26 @@ class _MarkerChoiceButton extends StatelessWidget {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 120),
           height: height,
-          constraints: BoxConstraints(minWidth: minWidth),
+          constraints: BoxConstraints(
+            minWidth: minWidth,
+            minHeight: phoneFloatingGlass ? 48 : height,
+          ),
           alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
+          padding: EdgeInsets.symmetric(
+            horizontal: phoneFloatingGlass ? 8 : 10,
+          ),
           decoration: BoxDecoration(
-            color: selected
-                ? accentColor.withValues(alpha: 0.22)
-                : Colors.transparent,
+            color: selected ? selectedFill : Colors.transparent,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-              color: selected
-                  ? accentColor
-                  : textColor.withValues(alpha: 0.28),
-              width: selected ? 2 : 1,
+              color: phoneFloatingGlass
+                  ? (selected
+                      ? accentColor.withOpacity(0.95)
+                      : accentColor.withOpacity(0.40))
+                  : (selected
+                      ? accentColor
+                      : textColor.withValues(alpha: 0.28)),
+              width: selected ? (phoneFloatingGlass ? 1.2 : 2) : 1,
             ),
           ),
           child: Row(
@@ -141,16 +206,33 @@ class _MarkerChoiceButton extends StatelessWidget {
                 NavigationDriverMarkerChoiceSelector.iconFor(choice),
                 size: fontSize + 5,
                 color: selected ? accentColor : textColor,
+                shadows: phoneFloatingGlass
+                    ? PhoneTellersReadability.softShadow
+                    : null,
               ),
               const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  color: selected ? accentColor : textColor,
-                  fontSize: fontSize,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+              if (phoneFloatingGlass)
+                NavOutlinedMapText(
+                  text: label,
+                  fill: selected
+                      ? PhoneTellersReadability.focusBorder
+                      : PhoneTellersReadability.primaryFill,
+                  stroke: PhoneTellersReadability.primaryStroke,
+                  strokeWidth: 2.2,
+                  style: TextStyle(
+                    fontSize: fontSize,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+                  ),
+                )
+              else
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: selected ? accentColor : textColor,
+                    fontSize: fontSize,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                  ),
                 ),
-              ),
             ],
           ),
         ),

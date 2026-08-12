@@ -47,7 +47,8 @@ const double kTellersPhonePortraitMetersH = 224.0;
 const double kTellersPhoneLandscapeMetersH = 204.0;
 
 /// Phone runtime phase pill (Ride active / Paused / Waiting) height.
-const double kTellersPhonePhasePillH = 28.0;
+/// Tall enough for outlined label + padding without clipping the border.
+const double kTellersPhonePhasePillH = 36.0;
 
 /// TABLET-TELLERS-COCKPIT-P1 repair: reserved chrome heights (logical px).
 /// Top chrome is reserved BEFORE the map so KPIs/header never collapse.
@@ -698,8 +699,9 @@ class DriverTellersLayoutGeometry {
     final markerAnchor = vehicleAnchor.markerAnchor;
     final cameraPadding = vehicleAnchor.cameraPadding;
 
-    final selectorW = isTablet ? 168.0 : 148.0;
-    final selectorH = isTablet ? 40.0 : 36.0;
+    // Phone: wider slot for ≥48 lp Auto/Pijl glass targets + padding.
+    final selectorW = isTablet ? 168.0 : 172.0;
+    final selectorH = isTablet ? 40.0 : 56.0;
     final selectorRect = Rect.fromLTWH(
       liveWindowRect.right - 8 - selectorW,
       liveWindowRect.top + 8,

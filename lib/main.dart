@@ -143,6 +143,7 @@ import 'navigation/presentation/maneuver_presentation.dart';
 import 'navigation/presentation/nav_signage_tablet_readability.dart';
 import 'navigation/presentation/nav_tablet_branded_header.dart';
 import 'navigation/presentation/phone_nav_landscape_logo_metrics.dart';
+import 'navigation/presentation/phone_nav_landscape_banner_geometry.dart';
 import 'navigation/driver_navigation_location_config.dart';
 import 'navigation/driver_navigation_map_config.dart';
 import 'navigation/driver_map_visual_clarity.dart';
