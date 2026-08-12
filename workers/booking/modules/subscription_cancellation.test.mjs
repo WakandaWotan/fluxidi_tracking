@@ -13,7 +13,15 @@ import {
   applyProviderCancelOutcome,
   needsProviderCancel,
   summarizeActiveAddonsForUi,
+  clearCancellationLifecycleOnPaidActivation,
+  needsPaidActivationCancellationHeal,
 } from "./subscription_cancellation.mjs";
+
+/** Mirrors worker reconcile already_exists guard (sub_… present → no second create). */
+function recurringCreateWouldNoop(profile) {
+  const id = String(profile?.provider_subscription_id || "").trim();
+  return id.startsWith("sub_");
+}
 
 function baseProfile(extra = {}) {
   return {
@@ -312,4 +320,199 @@ test("non-active profiles cannot schedule cancel", () => {
   const r = scheduleBaseCancellation(baseProfile({ subscription_status: "suspended" }));
   assert.equal(r.ok, false);
   assert.equal(r.error, "subscription_not_cancelable");
+});
+
+// ---------------------------------------------------------------------------
+// Paid reactivation after expired/cancelled base (P0 regression)
+// ---------------------------------------------------------------------------
+
+function expiredCancelledProfile(extra = {}) {
+  return baseProfile({
+    subscription_status: "cancelled",
+    status: "cancelled",
+    cancel_at_period_end: true,
+    auto_renew: false,
+    cancel_requested_at: "2026-08-12T16:39:22.624Z",
+    cancellation_effective_at: "2026-07-26T20:51:06.937Z",
+    cancelled_at: "2026-08-12T16:39:22.816Z",
+    provider_cancel_pending: true,
+    provider_cancel_last_error: "upstream_500",
+    provider_cancel_attempted_at: "2026-08-12T16:39:22.700Z",
+    provider_cancel_completed_at: "",
+    past_due_since: "2026-08-01T00:00:00.000Z",
+    suspended_at: "",
+    current_period_start: "2026-06-26T20:51:06.937Z",
+    current_period_end: "2026-07-26T20:51:06.937Z",
+    locked_price_cents: 6900,
+    is_founder_customer: false,
+    founder_slot_number: null,
+    activation_id: "act_old",
+    provider_subscription_id: "",
+    extra_vehicle_active_quantity: 1,
+    max_vehicles: 2,
+    max_drivers: 6,
+    pdf_monthly_used: 32,
+    ...extra,
+  });
+}
+
+test("paid reactivation: clears cancel lifecycle, activates, materialize no-op, one sub, add-ons kept", () => {
+  const activationId = "act_995770da-fca5-48ee-ac2d-1c4098c2dec0";
+  const periodStart = "2026-08-12T16:44:36.124Z";
+  const periodEnd = "2026-09-11T16:44:36.124Z";
+  const newSubId = "sub_95EYivj6uP";
+
+  // 1–3. Expired/cancelled base → new activation + verified first payment paid
+  //    (modeled as the activator compose after payment status=paid).
+  const afterPaidActivate = clearCancellationLifecycleOnPaidActivation({
+    ...expiredCancelledProfile(),
+    activation_id: activationId,
+    current_period_start: periodStart,
+    current_period_end: periodEnd,
+    locked_price_cents: 6900,
+    is_founder_customer: false,
+    provider_subscription_id: newSubId,
+    provider_customer_id: "cst_AD",
+    mandate_id: "mdt_cV",
+  });
+
+  // 4–6. Active, every stale cancel field cleared, auto_renew true
+  assert.equal(afterPaidActivate.status, "active");
+  assert.equal(afterPaidActivate.subscription_status, "active");
+  assert.equal(afterPaidActivate.cancel_at_period_end, false);
+  assert.equal(afterPaidActivate.auto_renew, true);
+  assert.equal(afterPaidActivate.cancellation_effective_at, "");
+  assert.equal(afterPaidActivate.cancel_requested_at, "");
+  assert.equal(afterPaidActivate.cancelled_at, "");
+  assert.equal(afterPaidActivate.provider_cancel_pending, false);
+  assert.equal(afterPaidActivate.provider_cancel_last_error, "");
+  assert.equal(afterPaidActivate.provider_cancel_attempted_at, "");
+  assert.equal(afterPaidActivate.provider_cancel_completed_at, "");
+  assert.equal(afterPaidActivate.past_due_since, "");
+  assert.equal(afterPaidActivate.suspended_at, "");
+
+  // Period / price / identity preserved
+  assert.equal(afterPaidActivate.current_period_start, periodStart);
+  assert.equal(afterPaidActivate.current_period_end, periodEnd);
+  assert.equal(afterPaidActivate.locked_price_cents, 6900);
+  assert.equal(afterPaidActivate.activation_id, activationId);
+  assert.equal(afterPaidActivate.provider_subscription_id, newSubId);
+
+  // 7. Subsequent materialize is a no-op
+  const mat = materializeBaseCancellation(afterPaidActivate, {
+    nowMs: Date.parse("2026-08-12T16:44:40.253Z"),
+    nowIso: "2026-08-12T16:44:40.253Z",
+  });
+  assert.equal(mat.changed, false);
+  assert.equal(mat.applied, false);
+  assert.equal(mat.profile.subscription_status, "active");
+
+  // 8. Exactly one recurring subscription (create skipped when sub_ present)
+  assert.equal(recurringCreateWouldNoop(afterPaidActivate), true);
+
+  // 9–10. Duplicate heal / reconcile idempotent — no period extension, still one sub
+  const healedAgain = clearCancellationLifecycleOnPaidActivation(afterPaidActivate);
+  assert.equal(healedAgain.current_period_end, periodEnd);
+  assert.equal(healedAgain.current_period_start, periodStart);
+  assert.equal(healedAgain.provider_subscription_id, newSubId);
+  assert.equal(recurringCreateWouldNoop(healedAgain), true);
+  assert.equal(
+    needsPaidActivationCancellationHeal(healedAgain, { activationId }),
+    false,
+  );
+
+  // 11. Dunning / provider-cancel errors cleared (asserted above)
+  // 12. Add-on quantities and usage unchanged
+  assert.equal(afterPaidActivate.extra_vehicle_active_quantity, 1);
+  assert.equal(afterPaidActivate.max_vehicles, 2);
+  assert.equal(afterPaidActivate.max_drivers, 6);
+  assert.equal(afterPaidActivate.pdf_monthly_used, 32);
+});
+
+test("paid reactivation: without clear, materialize re-cancels (pre-fix proof)", () => {
+  const broken = {
+    ...expiredCancelledProfile({
+      activation_id: "act_995770da-fca5-48ee-ac2d-1c4098c2dec0",
+    }),
+    // Activator wrote active + new period but left cancel flags (bug shape).
+    subscription_status: "active",
+    status: "active",
+    current_period_start: "2026-08-12T16:44:36.124Z",
+    current_period_end: "2026-09-11T16:44:36.124Z",
+    provider_subscription_id: "sub_95EYivj6uP",
+  };
+  const mat = materializeBaseCancellation(broken, {
+    nowMs: Date.parse("2026-08-12T16:44:40.253Z"),
+  });
+  assert.equal(mat.applied, true);
+  assert.equal(mat.profile.subscription_status, "cancelled");
+  assert.equal(mat.profile.current_period_end, "2026-09-11T16:44:36.124Z");
+});
+
+test("needsPaidActivationCancellationHeal requires matching activation_id", () => {
+  const p = expiredCancelledProfile({
+    activation_id: "act_995770da-fca5-48ee-ac2d-1c4098c2dec0",
+  });
+  assert.equal(
+    needsPaidActivationCancellationHeal(p, {
+      activationId: "act_995770da-fca5-48ee-ac2d-1c4098c2dec0",
+    }),
+    true,
+  );
+  assert.equal(
+    needsPaidActivationCancellationHeal(p, { activationId: "act_other" }),
+    false,
+  );
+  const healthy = clearCancellationLifecycleOnPaidActivation({
+    ...p,
+    provider_subscription_id: "sub_95EYivj6uP",
+  });
+  assert.equal(
+    needsPaidActivationCancellationHeal(healthy, {
+      activationId: "act_995770da-fca5-48ee-ac2d-1c4098c2dec0",
+    }),
+    false,
+  );
+});
+
+test("same-period undo vs post-expiry reactivation: contracts stay distinct", () => {
+  // A. Undo before effective end: schedule only — status stays active, no new period.
+  const midPeriod = baseProfile({
+    current_period_end: "2026-09-01T00:00:00.000Z",
+    locked_price_cents: 5900,
+    is_founder_customer: true,
+  });
+  const scheduled = scheduleBaseCancellation(midPeriod, {
+    nowIso: "2026-08-12T10:00:00.000Z",
+  }).profile;
+  assert.equal(scheduled.subscription_status, "active");
+  assert.equal(scheduled.cancel_at_period_end, true);
+  assert.equal(scheduled.current_period_end, "2026-09-01T00:00:00.000Z");
+  assert.equal(scheduled.locked_price_cents, 5900);
+  // Clearing schedule flags (product undo) is NOT the paid-reactivation path;
+  // paid clear is only for verified first payment after expiry.
+  const undoLocal = {
+    ...scheduled,
+    cancel_at_period_end: false,
+    auto_renew: true,
+    cancellation_effective_at: "",
+    cancel_requested_at: "",
+  };
+  assert.equal(undoLocal.current_period_end, "2026-09-01T00:00:00.000Z");
+  assert.equal(undoLocal.locked_price_cents, 5900);
+
+  // B. Reactivate after effective end: new period + market price via paid clear.
+  const postExpiry = clearCancellationLifecycleOnPaidActivation({
+    ...expiredCancelledProfile(),
+    activation_id: "act_new",
+    current_period_start: "2026-08-12T16:44:36.124Z",
+    current_period_end: "2026-09-11T16:44:36.124Z",
+    locked_price_cents: 6900,
+    is_founder_customer: false,
+    provider_subscription_id: "sub_new",
+  });
+  assert.equal(postExpiry.subscription_status, "active");
+  assert.equal(postExpiry.current_period_end, "2026-09-11T16:44:36.124Z");
+  assert.equal(postExpiry.locked_price_cents, 6900);
+  assert.equal(postExpiry.is_founder_customer, false);
 });

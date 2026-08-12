@@ -140,6 +140,57 @@ export function scheduleBaseCancellation(profile, {
 }
 
 /**
+ * Clear base cancellation + provider-cancel + dunning lifecycle fields after a
+ * verified paid first activation / reactivation. Pure — does not touch period,
+ * price, founder, provider ids, or add-on quantities.
+ *
+ * Required so a later materializeBaseCancellation pass cannot flip a newly
+ * activated profile back to cancelled when the prior effective date is past.
+ */
+export function clearCancellationLifecycleOnPaidActivation(profile) {
+  if (!profile || typeof profile !== "object") return profile;
+  return {
+    ...profile,
+    subscription_status: "active",
+    status: "active",
+    cancel_at_period_end: false,
+    auto_renew: true,
+    cancellation_effective_at: "",
+    cancel_requested_at: "",
+    cancelled_at: "",
+    provider_cancel_pending: false,
+    provider_cancel_last_error: "",
+    provider_cancel_attempted_at: "",
+    provider_cancel_completed_at: "",
+    // Dunning markers cleared on the same successful paid path.
+    past_due_since: "",
+    suspended_at: "",
+  };
+}
+
+/**
+ * True when a profile still carries base-cancel lifecycle that would let
+ * materializeBaseCancellation undo a matching paid activation.
+ */
+export function needsPaidActivationCancellationHeal(profile, {
+  activationId = "",
+} = {}) {
+  if (!profile || typeof profile !== "object") return false;
+  const act = _str(activationId, 80);
+  const profileAct = _str(profile.activation_id, 80);
+  if (!act || !profileAct || act !== profileAct) return false;
+  if (profile.cancel_at_period_end === true) return true;
+  if (profile.provider_cancel_pending === true) return true;
+  if (_str(profile.cancellation_effective_at, 48)) return true;
+  if (_str(profile.cancel_requested_at, 48)) return true;
+  if (_str(profile.cancelled_at, 48)) return true;
+  if (profile.auto_renew === false) return true;
+  const status = _str(profile.subscription_status || profile.status).toLowerCase();
+  if (status === "cancelled" || status === "canceled") return true;
+  return false;
+}
+
+/**
  * Whether a verified Mollie recurring payment must be ignored because the
  * company already scheduled cancellation / disabled renew.
  */

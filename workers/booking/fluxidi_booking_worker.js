@@ -29,6 +29,8 @@ import {
   materializeBaseCancellation,
   applyProviderCancelOutcome,
   needsProviderCancel,
+  clearCancellationLifecycleOnPaidActivation,
+  needsPaidActivationCancellationHeal,
 } from "./modules/subscription_cancellation.mjs";
 import { buildBuildTagResponse, listKvKeyNames } from "./modules/diagnostics.js";
 import { BOOKING_TEST_RESET_CONFIRM_PHRASE, allowDevResetEndpoints } from "./modules/dev_reset.js";
@@ -16097,10 +16099,43 @@ async function activateFluxidiSubscriptionFromVerifiedPayment(env, { activationI
   const paymentId = _fluxidiSubscriptionSafeStr(payment?.id, 128);
 
   // Replay idempotency on pending.status==="applied".
+  // When the same paid payment replays but the profile still carries stale
+  // cancellation lifecycle (the d59e2cf reactivation bug), heal cancel fields
+  // in place WITHOUT changing period, price, provider subscription, or add-ons.
   const pendingStatus = _fluxidiSubscriptionSafeStr(pending.status).toLowerCase();
   if (pendingStatus === "applied") {
     const prevPaymentId = _fluxidiSubscriptionSafeStr(pending.provider_payment_id, 128);
     if (paymentId && prevPaymentId && prevPaymentId === paymentId) {
+      try {
+        const existingProfile = await loadSubscriptionProfile(env, scope, {
+          allowTenantLegacyFallback: false,
+        });
+        if (
+          needsPaidActivationCancellationHeal(existingProfile, {
+            activationId: cleanActivationId,
+          })
+        ) {
+          const healed = clearCancellationLifecycleOnPaidActivation(existingProfile);
+          const savedHealed = await saveSubscriptionProfile(env, healed, scope, {
+            allowTenantLegacyWrite: false,
+          });
+          console.log(
+            `[SUBSCRIPTION_ACTIVATE][OK] tenant=${tenantMask} company=${companyMask} idempotent=true reason=pending_already_applied_cancel_healed`,
+          );
+          return {
+            ok: true,
+            activated: true,
+            idempotent: true,
+            healed_cancellation_lifecycle: true,
+            reason: "pending_activation_already_applied_cancel_healed",
+            subscription_profile: savedHealed,
+          };
+        }
+      } catch (e) {
+        console.log(
+          `[SUBSCRIPTION_ACTIVATE][WARN] tenant=${tenantMask} company=${companyMask} stage=cancel_heal msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+        );
+      }
       console.log(
         `[SUBSCRIPTION_ACTIVATE][OK] tenant=${tenantMask} company=${companyMask} idempotent=true reason=pending_already_applied`,
       );
@@ -16310,7 +16345,9 @@ async function activateFluxidiSubscriptionFromVerifiedPayment(env, { activationI
     _fluxidiSubscriptionSafeStr(payment?.billingAddress?.email, 160) ||
     _fluxidiSubscriptionSafeStr(payment?.email, 160);
 
-  const updatedProfile = _clearFluxidiSubscriptionDunningOnReactivation({
+  // Last transform clears prior cancel/dunning lifecycle so a subsequent
+  // materializeDueBaseSubscriptionCancellation cannot undo this paid activate.
+  const updatedProfile = clearCancellationLifecycleOnPaidActivation({
     ...currentProfile,
     plan_code: _fluxidiSubscriptionSafeStr(pending.plan_code, 32) ||
       currentProfile.plan_code || "fluxidi_pro",
