@@ -82,6 +82,9 @@ class CockpitWidget extends StatefulWidget {
   /// only stop/end + pause in the direct ride-control zone.
   final bool landscapeKpiPriority;
 
+  /// Phone landscape Navigatie: tighter strip padding inside fixed panel height.
+  final bool flatterPhoneLandscape;
+
   const CockpitWidget({
     super.key,
     required this.etaText,
@@ -107,6 +110,7 @@ class CockpitWidget extends StatefulWidget {
     this.secondaryRowHorizontalInset = 0,
     this.distributeSecondaryRowEvenly = false,
     this.landscapeKpiPriority = false,
+    this.flatterPhoneLandscape = false,
   });
 
   @override
@@ -405,7 +409,10 @@ class _CockpitWidgetState extends State<CockpitWidget>
       // kCockpitLandscapePanelHeight (the value the anchor uses).
       height: kCockpitLandscapeContentHeight,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        padding: EdgeInsets.symmetric(
+          horizontal: 6,
+          vertical: widget.flatterPhoneLandscape ? 1 : 2,
+        ),
         child: Row(
           children: [
             Expanded(
@@ -416,18 +423,21 @@ class _CockpitWidgetState extends State<CockpitWidget>
                     'ETA',
                     eta,
                     compact: !widget.landscapeKpiPriority,
+                    dense: widget.flatterPhoneLandscape,
                   ),
                   const SizedBox(width: 4),
                   _metricTile(
                     'KM',
                     km,
                     compact: !widget.landscapeKpiPriority,
+                    dense: widget.flatterPhoneLandscape,
                   ),
                   const SizedBox(width: 4),
                   _metricTile(
                     priceLabel,
                     price,
                     compact: !widget.landscapeKpiPriority,
+                    dense: widget.flatterPhoneLandscape,
                   ),
                 ],
               ),
@@ -482,9 +492,9 @@ class _CockpitWidgetState extends State<CockpitWidget>
     );
   }
 
-  Widget _metricTile(String label, String value, {bool compact = false}) {
-    final valueFontSize = compact ? 12.0 : 13.0;
-    final labelFontSize = compact ? 8.0 : 8.5;
+  Widget _metricTile(String label, String value, {bool compact = false, bool dense = false}) {
+    final valueFontSize = dense ? 11.5 : (compact ? 12.0 : 13.0);
+    final labelFontSize = dense ? 7.5 : (compact ? 8.0 : 8.5);
 
     return Expanded(
       child: LayoutBuilder(
@@ -496,7 +506,10 @@ class _CockpitWidgetState extends State<CockpitWidget>
                 minHeight: constraints.maxHeight,
                 maxHeight: constraints.maxHeight,
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+              padding: EdgeInsets.symmetric(
+                horizontal: 2,
+                vertical: dense ? 1 : 2,
+              ),
               decoration: BoxDecoration(
                 color: _activeTheme.tileBackground.withOpacity(0.94),
                 borderRadius: BorderRadius.circular(11),

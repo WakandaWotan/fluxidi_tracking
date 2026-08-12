@@ -1063,7 +1063,7 @@ class _DriverRideMetersContent extends StatelessWidget {
             fillHeight: !isTablet,
           ),
         ),
-        if (isTablet && price.width > 0 && price.height > 0)
+        if (price.width > 0 && price.height > 0)
           Positioned(
             left: price.left,
             top: price.top,
@@ -1081,7 +1081,7 @@ class _DriverRideMetersContent extends StatelessWidget {
             child: RepaintBoundary(
               child: Container(
                 key: const ValueKey<String>('driver_tellers_controls_panel'),
-                padding: EdgeInsets.all(isTablet ? 8 : 8),
+                padding: EdgeInsets.all(8),
                 decoration: BoxDecoration(
                   color: palette.background,
                   borderRadius: BorderRadius.circular(isTablet ? 16 : 20),
@@ -1900,10 +1900,10 @@ class _MeterTile extends StatelessWidget {
         ? metrics.valueFontSize
         : isTablet
         ? (isLandscape ? 36.0 : 40.0)
-        : (isLandscape ? 18.0 : 28.0);
+        : (isLandscape ? 24.0 : 32.0);
     final labelSize = metrics != null
         ? metrics.labelFontSize
-        : (isTablet ? 14.0 : 12.0);
+        : (isTablet ? 14.0 : (isLandscape ? 13.0 : 14.0));
     final minH = metrics?.minHeight;
     final hPad =
         metrics?.horizontalPadding ??

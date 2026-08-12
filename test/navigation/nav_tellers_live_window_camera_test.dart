@@ -43,7 +43,7 @@ void main() {
       expect(pad.top + pad.bottom, lessThan(h));
     });
 
-    test('phone landscape uses the classic 44% left share', () {
+    test('phone landscape uses the 40% left share', () {
       const w = 800.0;
       final pad = driverTellersLiveWindowCameraPadding(
         screenWidth: w,
@@ -66,7 +66,7 @@ void main() {
       expect(pad.left, greaterThan(pad.right));
       expect(
         geo.landscapeLeftWidthFraction,
-        closeTo(kTellersLandscapeLeftWidthFraction, 0.01),
+        closeTo(kTellersPhoneLandscapeLeftWidthFraction, 0.01),
       );
     });
 

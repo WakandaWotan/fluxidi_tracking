@@ -57,7 +57,7 @@ void main() {
       expect(g.liveWindowRect.height, greaterThan(g.metersPanelRect.height));
     });
 
-    test('phone landscape left region remains ~44%', () {
+    test('phone landscape left region remains ~40%', () {
       final g = DriverTellersLayoutGeometry.resolve(
         viewportSize: const Size(800, 380),
         safeTop: 0,
@@ -69,10 +69,10 @@ void main() {
       );
       expect(
         g.landscapeLeftWidthFraction,
-        closeTo(kTellersLandscapeLeftWidthFraction, 0.01),
+        closeTo(kTellersPhoneLandscapeLeftWidthFraction, 0.01),
       );
       expect(g.liveWindowRect.left, greaterThan(g.metersPanelRect.right));
-      expect(g.priceSummaryRect, Rect.zero);
+      expect(g.priceSummaryRect.height, greaterThan(0));
       expect(g.metersPanelRect.overlaps(g.liveWindowRect), isFalse);
     });
 

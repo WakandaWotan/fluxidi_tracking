@@ -39,6 +39,7 @@ class NavSignageTabletReadabilityMetrics {
     required this.signPlateInset,
     this.isSplitNav = false,
     this.isNarrowPane = false,
+    this.useTransparentChrome = false,
   });
 
   final bool isLandscape;
@@ -74,6 +75,9 @@ class NavSignageTabletReadabilityMetrics {
   /// True when the banner occupies a narrow Android split pane (vertical
   /// split / small maneuver column). Host may still be tablet (HUD 132).
   final bool isNarrowPane;
+
+  /// Phone parity: paint maneuver chrome over the map (no navy fill).
+  final bool useTransparentChrome;
 
   /// Available maneuver-column width below which tablet hosts use the compact
   /// narrow-pane banner (LayoutBuilder / real pane constraints — not host
@@ -313,6 +317,55 @@ class NavSignageTabletReadabilityMetrics {
       verticalPadding: 8,
       compassReserve: 0,
       signPlateInset: inset,
+    );
+  }
+
+  /// Phone-only transparent maneuver metrics (tablet factories unchanged).
+  factory NavSignageTabletReadabilityMetrics.forPhoneParity({
+    required bool isLandscape,
+    required double availableBannerWidth,
+  }) {
+    final widthBudget = availableBannerWidth.isFinite && availableBannerWidth > 0
+        ? availableBannerWidth
+        : (isLandscape ? 320.0 : 360.0);
+    final signMin = isLandscape ? 64.0 : 72.0;
+    final signMax = isLandscape ? 88.0 : 96.0;
+    final heightMin = isLandscape ? 88.0 : 96.0;
+    final heightMax = isLandscape ? 120.0 : 120.0;
+    const fontMin = 18.0;
+    const fontMax = 22.0;
+    final widthT = ((widthBudget - 200) / (400 - 200)).clamp(0.0, 1.0);
+    final signSize =
+        (signMin + (signMax - signMin) * widthT).clamp(signMin, signMax);
+    const inset = 3.0;
+    final iconBox = signSize + inset * 2;
+    final bannerMinHeight =
+        (heightMin + (heightMax - heightMin) * widthT).clamp(
+          heightMin,
+          heightMax,
+        );
+    final maxWidth = math.min(widthBudget, isLandscape ? 480.0 : 700.0)
+        .clamp(220.0, isLandscape ? 480.0 : 700.0)
+        .toDouble();
+    final minWidth = math.min(isLandscape ? 240.0 : 260.0, maxWidth).toDouble();
+    final distanceFont =
+        (fontMin + (fontMax - fontMin) * widthT).clamp(fontMin, fontMax);
+    return NavSignageTabletReadabilityMetrics(
+      isLandscape: isLandscape,
+      bannerMinHeight: bannerMinHeight,
+      bannerMaxWidth: maxWidth,
+      bannerMinWidth: minWidth,
+      signSize: signSize,
+      iconBoxSize: iconBox,
+      distanceFontSize: distanceFont,
+      primaryFontSize: distanceFont,
+      secondaryFontSize: (fontMin + (fontMax - fontMin) * widthT * 0.92)
+          .clamp(fontMin - 1, fontMax - 1),
+      horizontalPadding: isLandscape ? 8 : 10,
+      verticalPadding: isLandscape ? 5 : 7,
+      compassReserve: 0,
+      signPlateInset: inset,
+      useTransparentChrome: true,
     );
   }
 

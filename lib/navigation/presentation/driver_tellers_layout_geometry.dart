@@ -21,8 +21,18 @@ import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_cockp
 const Color kFluxidiMapBackdrop = Color(0xFF0A0E14);
 
 /// Landscape left (meters/controls) share of the safe content width.
-/// Phone landscape only — tablet Tellers uses a map-first vertical cockpit.
+/// Tablet Tellers uses a map-first vertical cockpit; phone landscape uses
+/// [kTellersPhoneLandscapeLeftWidthFraction] instead.
 const double kTellersLandscapeLeftWidthFraction = 0.44;
+
+/// Phone landscape left-panel width fraction (dominant live map on right).
+const double kTellersPhoneLandscapeLeftWidthFraction = 0.40;
+
+/// Phone Tellers price summary band heights.
+const double kTellersPhonePriceSummaryHPortrait = 52.0;
+const double kTellersPhonePriceSummaryHLandscape = 48.0;
+/// Phone action row: 48 lp targets + 8 lp padding + 1 lp border (top/bottom).
+const double kTellersPhoneControlsH = 66.0;
 
 /// TABLET-TELLERS-COCKPIT-P1 repair: reserved chrome heights (logical px).
 /// Top chrome is reserved BEFORE the map so KPIs/header never collapse.
@@ -402,7 +412,7 @@ class DriverTellersLayoutGeometry {
   /// Compact status chip region (inside the meters panel).
   final Rect statusRect;
 
-  /// Tablet-only ride-price summary band (phone keeps [Rect.zero]).
+  /// Ride-price summary band (tablet + phone when non-zero).
   final Rect priceSummaryRect;
 
   /// Absolute screen position of the selected Car/Arrow marker (vehicle nose).
@@ -450,7 +460,7 @@ class DriverTellersLayoutGeometry {
     bool reserveActionBar = true,
   }) {
     final hPad = isTablet ? 20.0 : 12.0;
-    final vPad = isLandscape ? 8.0 : 12.0;
+    final vPad = isLandscape ? (isTablet ? 8.0 : 6.0) : 12.0;
     const gap = 12.0;
 
     final contentLeft = safeLeft + hPad;
@@ -526,8 +536,8 @@ class DriverTellersLayoutGeometry {
         20,
       );
     } else if (isLandscape) {
-      // Phone landscape: LEFT ≈ 44% opaque chrome; RIGHT = live aperture.
-      final leftW = contentW * kTellersLandscapeLeftWidthFraction;
+      // Phone landscape: LEFT ≈ 40% opaque chrome; RIGHT = live aperture.
+      final leftW = contentW * kTellersPhoneLandscapeLeftWidthFraction;
       final liveW = math.max(0.0, contentW - leftW - gap);
       metersPanelRect = Rect.fromLTWH(contentLeft, contentTop, leftW, contentH);
       liveWindowRect = Rect.fromLTWH(
@@ -536,42 +546,77 @@ class DriverTellersLayoutGeometry {
         liveW,
         contentH,
       );
-      final controlsH = math.min(72.0, contentH * 0.18);
-      controlsRect = Rect.fromLTWH(
-        metersPanelRect.left + 10,
-        metersPanelRect.bottom - controlsH - 10,
-        math.max(0.0, metersPanelRect.width - 20),
-        controlsH,
-      );
-      priceSummaryRect = Rect.zero;
+      const priceH = kTellersPhonePriceSummaryHLandscape;
+      final controlsH = reserveActionBar ? kTellersPhoneControlsH : 0.0;
+      if (controlsH > 0) {
+        controlsRect = Rect.fromLTWH(
+          metersPanelRect.left,
+          contentBottom - priceH - gap - controlsH,
+          leftW,
+          controlsH,
+        );
+        priceSummaryRect = Rect.fromLTWH(
+          metersPanelRect.left,
+          contentBottom - priceH,
+          leftW,
+          priceH,
+        );
+      } else {
+        controlsRect = Rect.zero;
+        priceSummaryRect = Rect.fromLTWH(
+          metersPanelRect.left,
+          contentBottom - priceH,
+          leftW,
+          priceH,
+        );
+      }
       const statusH = 24.0;
       statusRect = Rect.fromLTWH(
         metersPanelRect.left + 10,
-        controlsRect.top - statusH - 8,
+        (controlsH > 0 ? controlsRect.top : priceSummaryRect.top) -
+            statusH -
+            8,
         math.min(180.0, metersPanelRect.width - 20),
         statusH,
       );
     } else {
-      // Phone portrait: TOP meters; MIDDLE live; BOTTOM controls.
-      const controlsH = 68.0;
+      // Phone portrait: TOP meters; MIDDLE live; BOTTOM controls + price.
+      const priceH = kTellersPhonePriceSummaryHPortrait;
+      final controlsH = reserveActionBar ? kTellersPhoneControlsH : 0.0;
+      final bottomChrome = controlsH > 0 ? controlsH + gap + priceH : priceH;
       final topH = _portraitTopRegionHeight(
         contentH: contentH,
-        controlsH: controlsH,
+        controlsH: bottomChrome,
         gap: gap,
         isTablet: false,
       );
       metersPanelRect = Rect.fromLTWH(contentLeft, contentTop, contentW, topH);
       final liveTop = contentTop + topH + gap;
-      final liveBottom = contentBottom - controlsH - gap;
+      final liveBottom = contentBottom - bottomChrome - gap;
       final liveH = math.max(120.0, liveBottom - liveTop);
       liveWindowRect = Rect.fromLTWH(contentLeft, liveTop, contentW, liveH);
-      controlsRect = Rect.fromLTWH(
-        contentLeft,
-        contentBottom - controlsH,
-        contentW,
-        controlsH,
-      );
-      priceSummaryRect = Rect.zero;
+      if (controlsH > 0) {
+        controlsRect = Rect.fromLTWH(
+          contentLeft,
+          contentBottom - bottomChrome,
+          contentW,
+          controlsH,
+        );
+        priceSummaryRect = Rect.fromLTWH(
+          contentLeft,
+          controlsRect.bottom + gap,
+          contentW,
+          priceH,
+        );
+      } else {
+        controlsRect = Rect.zero;
+        priceSummaryRect = Rect.fromLTWH(
+          contentLeft,
+          contentBottom - priceH,
+          contentW,
+          priceH,
+        );
+      }
       const statusH = 24.0;
       statusRect = Rect.fromLTWH(
         metersPanelRect.left + 10,

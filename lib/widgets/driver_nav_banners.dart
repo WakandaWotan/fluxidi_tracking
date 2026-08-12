@@ -230,9 +230,10 @@ class DriverTurnInstructionBanner extends StatelessWidget {
 
   /// Tablet transparent follow header only (menu/brand/maneuver top row).
   /// Tellers split and other tabletReadability call sites keep prior chrome.
-  /// Phones never enable this.
+  /// Phone [forPhoneParity] may enable transparent chrome without top row.
   bool get _useTabletTransparentHeader =>
-      tabletReadability != null && topRowLandscape;
+      tabletReadability != null &&
+      (topRowLandscape || tabletReadability!.useTransparentChrome);
 
   bool get _usePortraitTabletPolish =>
       portraitTabletMetrics != null &&

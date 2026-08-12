@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
 
+/// Phone landscape compact strip height (Navigatie anchor reserve only).
+const double kDirectRideEstimatePanelPhoneLandscapeCompactReserve = 52.0;
+
 class _DirectRideEstimateTheme {
   const _DirectRideEstimateTheme({
     required this.panelGradient,
@@ -77,6 +80,9 @@ class DirectRideEstimatePanel extends StatelessWidget {
   final String Function(double amount, String currency) formatAmount;
   final ValueListenable<DriverThemeVariant>? themeListenable;
 
+  /// Phone landscape: single horizontal row, tighter vertical padding.
+  final bool compactHorizontal;
+
   const DirectRideEstimatePanel({
     super.key,
     required this.visible,
@@ -90,6 +96,7 @@ class DirectRideEstimatePanel extends StatelessWidget {
     required this.unavailableText,
     required this.formatAmount,
     this.themeListenable,
+    this.compactHorizontal = false,
   });
 
   @override
@@ -108,6 +115,77 @@ class DirectRideEstimatePanel extends StatelessWidget {
       valueListenable: themeListenable ?? driverThemeNotifier,
       builder: (context, variant, _) {
         final theme = _themeForDriverVariant(variant);
+        if (compactHorizontal) {
+          return Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(top: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              gradient: theme.panelGradient,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: theme.panelBorder),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.local_taxi_outlined,
+                  size: 13,
+                  color: theme.accent,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  flex: 4,
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: theme.accent,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    statusText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.end,
+                    style: TextStyle(
+                      color: valueIsEstimate
+                          ? theme.valueAccent
+                          : theme.primaryText,
+                      fontSize: valueIsEstimate ? 13.5 : 10.5,
+                      fontWeight: valueIsEstimate
+                          ? FontWeight.w800
+                          : FontWeight.w600,
+                    ),
+                  ),
+                ),
+                if (valueIsEstimate) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 4,
+                    child: Text(
+                      note,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                      style: TextStyle(
+                        color: theme.mutedText,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          );
+        }
         return Container(
           width: double.infinity,
           margin: const EdgeInsets.only(top: 8),

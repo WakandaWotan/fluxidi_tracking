@@ -308,6 +308,7 @@ ExternalNavPipMeterModel buildExternalNavPipMeterModel({
   final travelled = (kmText ?? '').trim();
   final eta = (etaText ?? '').trim();
   final duration = (durationText ?? '').trim();
+  final wait = (waitText ?? '').trim();
   final fare = isFixedPrice && !isStreetRide
       ? (fixedPriceText ?? '').trim()
       : (liveFareText ?? '').trim();
@@ -329,6 +330,14 @@ ExternalNavPipMeterModel buildExternalNavPipMeterModel({
     _metric(label: rideDurationLabel, value: duration),
   ];
 
+  final waitingLabel = pipMeterWaitingLabel(lang);
+  final phoneOrderedMetrics = <PipMeterMetric>[
+    _metric(label: fareLabel, value: fare),
+    _metric(label: rideDurationLabel, value: duration),
+    _metric(label: distanceLabel, value: distanceValue),
+    _metric(label: waitingLabel, value: wait),
+  ];
+
   if (phase == ExternalNavPhase.toPickup) {
     final useEta = eta.isNotEmpty;
     final phonePrimary = useEta
@@ -342,7 +351,7 @@ ExternalNavPipMeterModel buildExternalNavPipMeterModel({
       primaryLabel: useEta ? pipMeterEtaLabel(lang) : distanceLabel,
       kmText: remaining.isEmpty ? null : remaining,
       durationText: durationText,
-      metrics: secondaryMetrics,
+      metrics: phoneOrderedMetrics,
       primaryMetrics: primaryMetrics,
       secondaryMetrics: secondaryMetrics,
       language: lang,
@@ -359,7 +368,7 @@ ExternalNavPipMeterModel buildExternalNavPipMeterModel({
       kmText: remaining.isNotEmpty ? remaining : kmText,
       durationText: durationText,
       waitText: waitText,
-      metrics: secondaryMetrics,
+      metrics: phoneOrderedMetrics,
       primaryMetrics: primaryMetrics,
       secondaryMetrics: secondaryMetrics,
       language: lang,
@@ -373,7 +382,7 @@ ExternalNavPipMeterModel buildExternalNavPipMeterModel({
     kmText: remaining.isNotEmpty ? remaining : kmText,
     durationText: durationText,
     waitText: waitText,
-    metrics: secondaryMetrics,
+    metrics: phoneOrderedMetrics,
     primaryMetrics: primaryMetrics,
     secondaryMetrics: secondaryMetrics,
     language: lang,
@@ -584,7 +593,16 @@ class ExternalNavPipMeterCard extends StatelessWidget {
   }
 }
 
-/// Phone: preserve field-green compact primary + secondary presentation.
+/// Phone PiP layout tier from available shortest side (logical px).
+@visibleForTesting
+int resolvePhonePipMetricTier(double shortestSide) {
+  if (shortestSide >= 168) return 4;
+  if (shortestSide >= 132) return 3;
+  if (shortestSide >= 96) return 2;
+  return 1;
+}
+
+/// Phone: compact Prijs → Ritduur → Afstand → Wachttijd with size tiers.
 class _PhonePipMeterBody extends StatelessWidget {
   const _PhonePipMeterBody({
     required this.model,
@@ -594,39 +612,76 @@ class _PhonePipMeterBody extends StatelessWidget {
   final ExternalNavPipMeterModel model;
   final PipMeterTypography typo;
 
+  List<PipMeterMetric> get _orderedMetrics {
+    if (model.metrics.isNotEmpty) {
+      return model.metrics;
+    }
+    final waiting = pipMeterWaitingLabel(model.language);
+    return <PipMeterMetric>[
+      PipMeterMetric(label: model.primaryLabel, value: model.primaryValue),
+      if ((model.durationText ?? '').trim().isNotEmpty)
+        PipMeterMetric(
+          label: pipMeterRideDurationLabel(model.language),
+          value: model.durationText!,
+        ),
+      if ((model.kmText ?? '').trim().isNotEmpty)
+        PipMeterMetric(
+          label: pipMeterDistanceLabel(model.language),
+          value: model.kmText!,
+        ),
+      if ((model.waitText ?? '').trim().isNotEmpty)
+        PipMeterMetric(label: waiting, value: model.waitText!),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Keep phone primary (fare/ETA) unique — do not repeat it in the compact
-    // secondary row (tablet owns the full taxi-meter secondary set).
-    final metrics = (model.secondaryMetrics.isNotEmpty
-            ? model.secondaryMetrics
-            : model.metrics)
-        .where(
-          (m) =>
-              m.value != model.primaryValue &&
-              m.label != model.primaryLabel,
-        )
-        .toList(growable: false);
+    final metrics = _orderedMetrics;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final shortest = math.min(constraints.maxWidth, constraints.maxHeight);
+        final showTitle = shortest >= 120;
+        final tier = resolvePhonePipMetricTier(shortest);
+        final visible = metrics.take(tier).toList(growable: false);
+        final valueSize = tier >= 3 ? typo.metricSize : typo.primarySize * 0.72;
+        final labelSize = typo.labelSize * (tier >= 3 ? 1.0 : 0.92);
+
+        return Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (showTitle)
+              Text(
+                model.primaryLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: const Color(0xFF9AA7B5),
+                  fontSize: typo.labelSize * 0.95,
+                  fontWeight: FontWeight.w600,
+                  height: 1.05,
+                ),
+              ),
+            if (showTitle) SizedBox(height: typo.titleGap * 0.5),
+            if (tier == 1)
+              _phonePrimaryOnly(visible.first)
+            else if (tier == 2)
+              _phoneTwoUp(visible, valueSize, labelSize)
+            else
+              _phoneMetricGrid(visible, valueSize, labelSize, twoByTwo: tier >= 4),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _phonePrimaryOnly(PipMeterMetric metric) {
     return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          model.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: const Color(0xFFE8EEF5),
-            fontSize: typo.titleSize,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.3,
-            height: 1.1,
-          ),
-        ),
-        SizedBox(height: typo.titleGap),
-        Text(
-          model.primaryValue,
+          metric.value,
           textAlign: TextAlign.center,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
@@ -638,43 +693,107 @@ class _PhonePipMeterBody extends StatelessWidget {
           ),
         ),
         Text(
-          model.primaryLabel,
+          metric.label,
           textAlign: TextAlign.center,
           style: TextStyle(
             color: const Color(0xFF9AA7B5),
             fontSize: typo.labelSize,
             fontWeight: FontWeight.w600,
-            height: 1.1,
           ),
         ),
-        SizedBox(height: typo.metricsGap),
-        if (metrics.isNotEmpty)
-          _PipMeterMetricsRow(
-            metrics: metrics,
-            valueSize: typo.metricSize,
-            labelSize: typo.labelSize,
-            labelAboveValue: false,
-            showDividers: false,
-          )
-        else
-          Wrap(
-            spacing: 16,
-            runSpacing: 4,
-            alignment: WrapAlignment.center,
-            children: model.secondaryLines
-                .map(
-                  (line) => Text(
-                    line,
-                    style: TextStyle(
-                      color: const Color(0xFFE8EEF5),
-                      fontSize: typo.metricSize,
-                      fontWeight: FontWeight.w700,
-                      height: 1.1,
-                    ),
-                  ),
-                )
-                .toList(growable: false),
+      ],
+    );
+  }
+
+  Widget _phoneTwoUp(
+    List<PipMeterMetric> metrics,
+    double valueSize,
+    double labelSize,
+  ) {
+    return Row(
+      children: [
+        for (var i = 0; i < metrics.length; i++) ...[
+          if (i > 0) const SizedBox(width: 8),
+          Expanded(child: _phoneMetricCell(metrics[i], valueSize, labelSize)),
+        ],
+      ],
+    );
+  }
+
+  Widget _phoneMetricGrid(
+    List<PipMeterMetric> metrics,
+    double valueSize,
+    double labelSize, {
+    required bool twoByTwo,
+  }) {
+    if (!twoByTwo || metrics.length <= 3) {
+      return _PipMeterMetricsRow(
+        metrics: metrics,
+        valueSize: valueSize,
+        labelSize: labelSize,
+        labelAboveValue: true,
+        showDividers: false,
+        valueColor: const Color(0xFFFFC107),
+      );
+    }
+    return Column(
+      children: [
+        Expanded(
+          child: Row(
+            children: [
+              Expanded(child: _phoneMetricCell(metrics[0], valueSize, labelSize)),
+              const SizedBox(width: 8),
+              Expanded(child: _phoneMetricCell(metrics[1], valueSize, labelSize)),
+            ],
           ),
+        ),
+        const SizedBox(height: 6),
+        Expanded(
+          child: Row(
+            children: [
+              Expanded(child: _phoneMetricCell(metrics[2], valueSize, labelSize)),
+              const SizedBox(width: 8),
+              Expanded(child: _phoneMetricCell(metrics[3], valueSize, labelSize)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _phoneMetricCell(
+    PipMeterMetric metric,
+    double valueSize,
+    double labelSize,
+  ) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Text(
+          metric.label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: const Color(0xFF9AA7B5),
+            fontSize: labelSize,
+            fontWeight: FontWeight.w600,
+            height: 1.05,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          metric.value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: const Color(0xFFFFC107),
+            fontSize: valueSize,
+            fontWeight: FontWeight.w800,
+            height: 1.0,
+          ),
+        ),
       ],
     );
   }

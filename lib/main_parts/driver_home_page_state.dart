@@ -33688,30 +33688,25 @@ class _DriverHomePageState extends State<DriverHomePage>
     required bool isLandscape,
     required bool hasInlineBanner,
   }) {
-    final logoWidth = isLandscape ? (hasInlineBanner ? 118.0 : 146.0) : 124.0;
-    final logoHeight = isLandscape ? (hasInlineBanner ? 44.0 : 48.0) : 44.0;
-    final imageHeight = isLandscape ? (hasInlineBanner ? 28.0 : 36.0) : 30.0;
+    final paintHeight = isLandscape
+        ? (hasInlineBanner ? 40.0 : 44.0)
+        : 48.0;
+    final slotWidth = isLandscape
+        ? (hasInlineBanner ? 112.0 : 128.0)
+        : 120.0;
     return IgnorePointer(
-      child: Container(
-        width: logoWidth,
-        height: logoHeight,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.38),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0x66FFD36A)),
-        ),
+      child: SizedBox(
+        key: const ValueKey<String>('nav_phone_free_logo'),
+        width: slotWidth,
+        height: paintHeight,
         child: Center(
-          child: SizedBox(
-            width: double.infinity,
-            child: _tenantLogo(
-              height: imageHeight,
+          child: _tenantLogo(
+            height: paintHeight,
+            fit: BoxFit.contain,
+            fallback: Image.asset(
+              kFluxidiLogoAsset,
               fit: BoxFit.contain,
-              fallback: Image.asset(
-                kFluxidiLogoAsset,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-              ),
+              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
             ),
           ),
         ),
@@ -33778,7 +33773,18 @@ class _DriverHomePageState extends State<DriverHomePage>
         // Phone host (incl. phone landscape collapse): preserve the prior
         // chip row. Tablet host keeps branded header even in a narrow pane.
         if (!navSignageTablet && tabletReadability == null) {
-          final banner = _buildFollowNavBannerForTopRow(isTablet: isTablet);
+          final logoWidth = isLandscape ? 112.0 : 120.0;
+          final metrics = NavSignageTabletReadabilityMetrics.forPhoneParity(
+            isLandscape: isLandscape,
+            availableBannerWidth: math.max(
+              0.0,
+              constraints.maxWidth - 44 - 8 - logoWidth - 8,
+            ),
+          );
+          final banner = _buildFollowNavBannerForTopRow(
+            isTablet: isTablet,
+            tabletReadability: metrics,
+          );
           return Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
@@ -34020,6 +34026,13 @@ class _DriverHomePageState extends State<DriverHomePage>
       screenW * (isTablet ? 0.94 : 0.92),
       isTablet ? 820.0 : 700.0,
     );
+    final NavSignageTabletReadabilityMetrics? phoneParityBannerMetrics =
+        navSignageTablet
+        ? null
+        : NavSignageTabletReadabilityMetrics.forPhoneParity(
+            isLandscape: false,
+            availableBannerWidth: navBannerPortraitMaxWidth,
+          );
     final bool collapsedNavHeader =
         collapseTopBarInLandscapeNav || collapseTopBarInPortraitNav;
     final double navBannerTop =
@@ -34078,7 +34091,9 @@ class _DriverHomePageState extends State<DriverHomePage>
             primaryToSecondaryGap:
                 kpiNavControlsLayout.primaryToSecondaryGap,
             extraBottomChrome: estimatePanelForAnchor
-                ? kDirectRideEstimatePanelReserveForAnchor
+                ? (isLandscape && !hostIsTablet
+                      ? kDirectRideEstimatePanelPhoneLandscapeCompactReserve
+                      : kDirectRideEstimatePanelReserveForAnchor)
                 : 0.0,
           )
         : null;
@@ -34470,6 +34485,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                       compact: false,
                       isTablet: isTablet,
                       portraitTabletMetrics: tabletPortraitNavLayout?.banner,
+                      tabletReadability: phoneParityBannerMetrics,
                     ),
                     compact: false,
                     isTablet: isTablet,
@@ -34748,6 +34764,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                                 isLandscape &&
                                 !isTablet &&
                                 _phoneLandscapeKpiPriorityCollapsed,
+                            flatterPhoneLandscape: isLandscape && !isTablet,
                             secondaryActionGap:
                                 compactNavControlsLayout.horizontalGap,
                             secondaryActionRowHeight:
@@ -36448,6 +36465,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       loadingText: loadingText,
       unavailableText: unavailableText,
       formatAmount: _formatDirectRideEstimateText,
+      compactHorizontal: MediaQuery.orientationOf(context) ==
+              Orientation.landscape &&
+          !_hostIsTablet(context),
     );
   }
 

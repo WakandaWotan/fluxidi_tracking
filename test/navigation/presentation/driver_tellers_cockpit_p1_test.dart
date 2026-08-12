@@ -90,7 +90,7 @@ void main() {
       expect(g.priceSummaryRect.height, greaterThan(0));
     });
 
-    test('phone portrait has no price summary band', () {
+    test('phone portrait reserves price summary band', () {
       final g = DriverTellersLayoutGeometry.resolve(
         viewportSize: const Size(390, 844),
         safeTop: 47,
@@ -100,7 +100,12 @@ void main() {
         isLandscape: false,
         isTablet: false,
       );
-      expect(g.priceSummaryRect, Rect.zero);
+      expect(g.priceSummaryRect.height, greaterThan(0));
+      expect(
+        g.controlsRect.bottom,
+        lessThanOrEqualTo(g.priceSummaryRect.top),
+      );
+      expect(g.liveWindowRect.overlaps(g.priceSummaryRect), isFalse);
     });
   });
 
@@ -310,7 +315,7 @@ void main() {
       );
     });
 
-    testWidgets('phone path has no tablet price summary / brand header', (
+    testWidgets('phone path has price summary but no tablet brand header', (
       tester,
     ) async {
       const snap = DriverRideMetersSnapshot(
@@ -333,7 +338,7 @@ void main() {
 
       expect(
         find.byKey(const ValueKey('driver_tellers_price_summary')),
-        findsNothing,
+        findsOneWidget,
       );
       expect(
         find.byKey(const ValueKey('driver_tellers_tablet_branded_header')),
