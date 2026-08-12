@@ -50,6 +50,23 @@ const double kTellersPhoneLandscapeMetersH = 204.0;
 /// Tall enough for outlined label + padding without clipping the border.
 const double kTellersPhonePhasePillH = 36.0;
 
+/// Phone Auto/Pijl selector reservation (≥48 lp touch targets + chrome).
+const double kTellersPhoneSelectorW = 172.0;
+const double kTellersPhoneSelectorH = 56.0;
+
+/// Gap between the KPI panel and the post-KPI status|selector row.
+const double kTellersPhonePostKpiGap = 4.0;
+
+/// Horizontal gap between the phase pill and Auto/Pijl on the post-KPI row.
+const double kTellersPhoneStatusSelectorGap = 12.0;
+
+/// Phone landscape maneuver-banner band: clear of Mapbox compass top-right.
+const double kTellersPhoneBannerCompassReserve = 96.0;
+const double kTellersPhoneBannerBandH = 64.0;
+const double kTellersPhoneBannerInset = 8.0;
+/// Share of the live pane width reserved for the phone landscape banner.
+const double kTellersPhoneBannerLandscapeFraction = 0.70;
+
 /// TABLET-TELLERS-COCKPIT-P1 repair: reserved chrome heights (logical px).
 /// Top chrome is reserved BEFORE the map so KPIs/header never collapse.
 const double kTellersTabletCockpitBrandHPortrait = 72.0;
@@ -400,6 +417,7 @@ class DriverTellersLayoutGeometry {
     required this.markerAnchor,
     required this.selectorRect,
     required this.labelRect,
+    required this.bannerRect,
     required this.cameraPadding,
     required this.cameraScreenAnchor,
     required this.cornerRadius,
@@ -434,11 +452,16 @@ class DriverTellersLayoutGeometry {
   /// Absolute screen position of the selected Car/Arrow marker (vehicle nose).
   final Offset markerAnchor;
 
-  /// Absolute bounds reserved for the Car/Arrow selector (top-right of live).
+  /// Absolute bounds reserved for the Car/Arrow selector.
+  /// Phone: post-KPI row (right). Tablet: top-right of the live aperture.
   final Rect selectorRect;
 
   /// Absolute bounds reserved for the "Live navigatie" label (top-left of live).
   final Rect labelRect;
+
+  /// Absolute bounds reserved for the phone Tellers maneuver banner.
+  /// Zero on tablet and phone portrait (no overlay / header owns guidance).
+  final Rect bannerRect;
 
   /// Camera edge padding derived from [liveWindowRect] vs [viewportSize].
   final NavCameraViewPadding cameraPadding;
@@ -507,6 +530,8 @@ class DriverTellersLayoutGeometry {
     late final Rect controlsRect;
     late final Rect statusRect;
     late final Rect priceSummaryRect;
+    late final Rect selectorRect;
+    late final Rect bannerRect;
 
     if (isTablet) {
       // TABLET-TELLERS-COCKPIT-P1 repair: reserve header/KPI/price FIRST, then
@@ -568,9 +593,10 @@ class DriverTellersLayoutGeometry {
         math.min(160.0, metersPanelRect.width - 20),
         20,
       );
+      // selectorRect + bannerRect assigned after liveWindowRect (tablet path).
     } else if (isLandscape) {
-      // Phone landscape: compact floating KPIs top-left; optional phase pill
-      // directly under KPIs (settled geometry); live corridor = right map.
+      // Phone landscape: KPIs top-left; post-KPI row owns status (left) +
+      // Auto/Pijl (right). Live corridor on the right owns the raised banner.
       final leftW = contentW * kTellersPhoneLandscapeLeftWidthFraction;
       final liveW = math.max(0.0, contentW - leftW - gap);
       final priceH = showPrice ? kTellersPhonePriceSummaryHLandscape : 0.0;
@@ -579,26 +605,55 @@ class DriverTellersLayoutGeometry {
           ? controlsH + (priceH > 0 ? gap + priceH : 0.0)
           : priceH;
       final phaseH = reservePhasePill ? kTellersPhonePhasePillH : 0.0;
+      final chromeRowH = kTellersPhoneSelectorH;
       final metersH = math.min(
         kTellersPhoneLandscapeMetersH,
-        math.max(120.0, contentH - bottomChrome - gap - phaseH),
+        math.max(120.0, contentH - bottomChrome - gap - chromeRowH),
       );
       metersPanelRect = Rect.fromLTWH(contentLeft, contentTop, leftW, metersH);
+      final rowTop = metersPanelRect.bottom + kTellersPhonePostKpiGap;
+      final statusW = math.max(
+        0.0,
+        leftW - kTellersPhoneSelectorW - kTellersPhoneStatusSelectorGap,
+      );
+      selectorRect = Rect.fromLTWH(
+        contentLeft + leftW - kTellersPhoneSelectorW,
+        rowTop,
+        kTellersPhoneSelectorW,
+        kTellersPhoneSelectorH,
+      );
       statusRect = phaseH > 0
           ? Rect.fromLTWH(
               contentLeft,
-              metersPanelRect.bottom + 4,
-              leftW,
+              rowTop + (chromeRowH - phaseH) / 2.0,
+              statusW,
               phaseH,
             )
           : Rect.zero;
-      final liveBottom = contentBottom - bottomChrome - (bottomChrome > 0 ? gap : 0.0);
+      final liveBottom =
+          contentBottom - bottomChrome - (bottomChrome > 0 ? gap : 0.0);
       final liveH = math.max(80.0, liveBottom - contentTop);
       liveWindowRect = Rect.fromLTWH(
         contentLeft + leftW + gap,
         contentTop,
         liveW,
         liveH,
+      );
+      // Upper live band, clear of compass reserve — owned banner rectangle.
+      final bannerW = math.max(
+        0.0,
+        math.min(
+          liveW * kTellersPhoneBannerLandscapeFraction,
+          liveW -
+              kTellersPhoneBannerInset * 2 -
+              kTellersPhoneBannerCompassReserve,
+        ),
+      );
+      bannerRect = Rect.fromLTWH(
+        liveWindowRect.left + kTellersPhoneBannerInset,
+        liveWindowRect.top + kTellersPhoneBannerInset,
+        bannerW,
+        math.min(kTellersPhoneBannerBandH, liveH),
       );
       if (controlsH > 0) {
         controlsRect = Rect.fromLTWH(
@@ -627,38 +682,48 @@ class DriverTellersLayoutGeometry {
             : Rect.zero;
       }
     } else {
-      // Phone portrait: compact meters under SafeArea; optional phase pill in
-      // settled geometry between KPIs and live corridor; controls on SafeArea.bottom.
+      // Phone portrait: post-KPI row owns status (left) + Auto/Pijl (right).
+      // Live corridor starts below that settled row.
       final priceH = showPrice ? kTellersPhonePriceSummaryHPortrait : 0.0;
       final controlsH = reserveActionBar ? kTellersPhoneControlsH : 0.0;
       final bottomChrome = controlsH > 0
           ? controlsH + (priceH > 0 ? gap + priceH : 0.0)
           : priceH;
       final phaseH = reservePhasePill ? kTellersPhonePhasePillH : 0.0;
+      final chromeRowH = kTellersPhoneSelectorH;
       final metersH = math.min(
         kTellersPhonePortraitMetersH,
         math.max(
           160.0,
-          contentH - bottomChrome - 2 * gap - phaseH - 160.0,
+          contentH - bottomChrome - 2 * gap - chromeRowH - 160.0,
         ),
       );
       metersPanelRect = Rect.fromLTWH(contentLeft, contentTop, contentW, metersH);
+      final rowTop = metersPanelRect.bottom + kTellersPhonePostKpiGap;
+      final statusW = math.max(
+        0.0,
+        contentW - kTellersPhoneSelectorW - kTellersPhoneStatusSelectorGap,
+      );
+      selectorRect = Rect.fromLTWH(
+        contentLeft + contentW - kTellersPhoneSelectorW,
+        rowTop,
+        kTellersPhoneSelectorW,
+        kTellersPhoneSelectorH,
+      );
       statusRect = phaseH > 0
           ? Rect.fromLTWH(
               contentLeft,
-              metersPanelRect.bottom + 4,
-              contentW,
+              rowTop + (chromeRowH - phaseH) / 2.0,
+              statusW,
               phaseH,
             )
           : Rect.zero;
-      final topOverlayBottom = statusRect.height > 0
-          ? statusRect.bottom
-          : metersPanelRect.bottom;
-      final liveTop = topOverlayBottom + gap;
+      final liveTop = rowTop + chromeRowH + gap;
       final liveBottom =
           contentBottom - bottomChrome - (bottomChrome > 0 ? gap : 0.0);
       final liveH = math.max(120.0, liveBottom - liveTop);
       liveWindowRect = Rect.fromLTWH(contentLeft, liveTop, contentW, liveH);
+      bannerRect = Rect.zero;
       if (controlsH > 0) {
         controlsRect = Rect.fromLTWH(
           contentLeft,
@@ -699,15 +764,16 @@ class DriverTellersLayoutGeometry {
     final markerAnchor = vehicleAnchor.markerAnchor;
     final cameraPadding = vehicleAnchor.cameraPadding;
 
-    // Phone: wider slot for ≥48 lp Auto/Pijl glass targets + padding.
-    final selectorW = isTablet ? 168.0 : 172.0;
-    final selectorH = isTablet ? 40.0 : 56.0;
-    final selectorRect = Rect.fromLTWH(
-      liveWindowRect.right - 8 - selectorW,
-      liveWindowRect.top + 8,
-      selectorW,
-      selectorH,
-    );
+    if (isTablet) {
+      // Tablet: prior top-right live-window selector (bit-identical numbers).
+      selectorRect = Rect.fromLTWH(
+        liveWindowRect.right - 8 - 168.0,
+        liveWindowRect.top + 8,
+        168.0,
+        40.0,
+      );
+      bannerRect = Rect.zero;
+    }
 
     // Phone: no "Live navigation" badge — reclaim the band for map/guidance.
     final labelRect = isTablet
@@ -736,6 +802,7 @@ class DriverTellersLayoutGeometry {
       markerAnchor: markerAnchor,
       selectorRect: selectorRect,
       labelRect: labelRect,
+      bannerRect: bannerRect,
       cameraPadding: cameraPadding,
       cameraScreenAnchor: cameraScreenAnchor,
       cornerRadius: kTellersLiveWindowCornerRadius,

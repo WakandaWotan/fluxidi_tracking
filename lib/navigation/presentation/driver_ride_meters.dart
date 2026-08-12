@@ -689,7 +689,9 @@ class DriverTellersGeometryLatch {
         a.liveWindowRect == b.liveWindowRect &&
         a.priceSummaryRect == b.priceSummaryRect &&
         a.controlsRect == b.controlsRect &&
-        a.statusRect == b.statusRect;
+        a.statusRect == b.statusRect &&
+        a.selectorRect == b.selectorRect &&
+        a.bannerRect == b.bannerRect;
   }
 }
 
@@ -1060,11 +1062,14 @@ class _DriverRideMetersContent extends StatelessWidget {
     final controls = geometry.controlsRect;
     final price = geometry.priceSummaryRect;
     final status = geometry.statusRect;
+    final selector = geometry.selectorRect;
     final showPhasePill = resolveTellersPhasePillVisible(
       isTablet: isTablet,
       liveRideActive: liveRideActive,
       isWaiting: isWaiting,
     );
+    final selectorVisible =
+        showMarkerSelector && onMarkerChoiceSelected != null;
     // Phone glass: controls are bottom-anchored overlays (never nested inside
     // a tall left panel). Tablet landscape keeps bottom chrome outside meters.
     final controlsInMetersPanel = false;
@@ -1134,6 +1139,30 @@ class _DriverRideMetersContent extends StatelessWidget {
             height: status.height,
             child: ClipRect(
               child: _buildStatusChip(palette),
+            ),
+          ),
+        // Phone: Auto/Pijl from settled selectorRect (post-KPI row, right).
+        // Tablet keeps the selector inside the live aperture (bit-identical).
+        if (phoneGlass &&
+            selectorVisible &&
+            selector.width > 0 &&
+            selector.height > 0)
+          Positioned(
+            left: selector.left,
+            top: selector.top,
+            width: selector.width,
+            height: selector.height,
+            child: KeyedSubtree(
+              key: const ValueKey<String>('driver_tellers_marker_selector'),
+              child: NavigationDriverMarkerChoiceSelector(
+                selectedChoice: markerChoice,
+                onSelected: onMarkerChoiceSelected!,
+                accentColor: palette.accent,
+                textColor: palette.textPrimary,
+                surfaceColor: palette.surface,
+                language: markerLanguage,
+                phoneFloatingGlass: true,
+              ),
             ),
           ),
         // Action bar (phone + tablet) — skipped when rect is zero.
@@ -1571,9 +1600,12 @@ class _DriverRideMetersContent extends StatelessWidget {
     final liveLabel = driverTellersLiveNavigationLabel(markerLanguage);
     final selectorVisible =
         showMarkerSelector && onMarkerChoiceSelected != null;
+    // Phone paints Auto/Pijl from the outer geometry stack (post-KPI row).
+    // Tablet keeps the live-window top-right owner (bit-identical).
+    final selectorInLiveWindow = isTablet && selectorVisible;
     final guidanceOverlay = _buildGuidanceOverlay(
       geometry: geometry,
-      selectorVisible: selectorVisible,
+      selectorVisible: selectorInLiveWindow,
     );
 
     return RepaintBoundary(
@@ -1621,7 +1653,7 @@ class _DriverRideMetersContent extends StatelessWidget {
                   ),
                 ),
               ),
-            if (selectorVisible)
+            if (selectorInLiveWindow)
               Positioned(
                 top: selectorLocal.top,
                 right: 8,
@@ -1634,10 +1666,9 @@ class _DriverRideMetersContent extends StatelessWidget {
                     textColor: palette.textPrimary,
                     surfaceColor: palette.surface,
                     language: markerLanguage,
-                    // Phone Tellers: transparent glass capsule (≥48 lp).
                     // Tablet: prior compact opaque selector (bit-identical).
-                    compactLandscape: isTablet,
-                    phoneFloatingGlass: !isTablet,
+                    compactLandscape: true,
+                    phoneFloatingGlass: false,
                   ),
                 ),
               ),

@@ -97,7 +97,17 @@ void main() {
           expect(g.isTablet, isFalse);
           expect(g.labelRect, Rect.zero);
         }
-        expect(g.liveWindowRect.contains(g.selectorRect.center), isTrue);
+        // Tablet: selector stays inside the live aperture.
+        // Phone: selector owns the post-KPI row (outside the live corridor).
+        if (g.isTablet) {
+          expect(g.liveWindowRect.contains(g.selectorRect.center), isTrue);
+        } else {
+          expect(g.liveWindowRect.overlaps(g.selectorRect), isFalse);
+          expect(
+            g.selectorRect.top,
+            closeTo(g.metersPanelRect.bottom + kTellersPhonePostKpiGap, 0.5),
+          );
+        }
         expect(g.containsInLiveWindow(g.markerAnchor), isTrue);
         // Marker is lower-centre of the live window (may clamp below request).
         expect(g.markerAnchor.dx, closeTo(g.liveWindowRect.center.dx, 0.5));

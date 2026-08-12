@@ -200,12 +200,42 @@ DriverTellersGuidanceLayout resolveDriverTellersGuidanceLayout({
     );
   }
 
+  // Phone Tellers: only an explicit owned bannerRect (landscape) may host
+  // guidance. Portrait keeps fits=false — no cramped map-pane instruction card.
+  if (!geometry.isTablet) {
+    final Rect ownedBanner = geometry.bannerRect;
+    if (ownedBanner.width > 0 &&
+        ownedBanner.height > 0 &&
+        live.width > 0) {
+      final bool fits = ownedBanner.width >= kDriverTellersGuidanceMinWidthPhone &&
+          ownedBanner.height >= kDriverTellersGuidanceMinHeight;
+      return DriverTellersGuidanceLayout(
+        left: math.max(0.0, ownedBanner.left - live.left),
+        top: math.max(0.0, ownedBanner.top - live.top),
+        maxWidth: ownedBanner.width,
+        fits: fits,
+      );
+    }
+    return const DriverTellersGuidanceLayout(
+      left: kDriverTellersGuidanceInset,
+      top: kDriverTellersGuidanceInset,
+      maxWidth: 0,
+      fits: false,
+    );
+  }
+
   // Below the taller of the two top-band occupants, measured against their
   // painted heights rather than their (smaller) reserved bands.
   // Phone omits the Live-navigation badge (labelRect is zero) so guidance
   // can sit higher without reserving empty label space.
+  // Only selectors that occupy the live aperture reserve the top band
+  // (phone post-KPI selector sits outside the live corridor).
   final bool hasLiveLabel = geometry.labelRect.width > 0 &&
       geometry.labelRect.height > 0;
+  final bool selectorInLive = selectorVisible &&
+      geometry.selectorRect.width > 0 &&
+      geometry.selectorRect.height > 0 &&
+      live.overlaps(geometry.selectorRect);
   final double labelBottom = hasLiveLabel
       ? geometry.labelRect.top +
           math.max(geometry.labelRect.height, kDriverTellersLabelPaintedHeight)
@@ -216,10 +246,10 @@ DriverTellersGuidanceLayout resolveDriverTellersGuidanceLayout({
         geometry.selectorRect.height,
         kDriverTellersSelectorPaintedHeight,
       );
-  final double bandBottom = selectorVisible
+  final double bandBottom = selectorInLive
       ? (hasLiveLabel ? math.max(labelBottom, selectorBottom) : selectorBottom)
       : labelBottom;
-  final double top = hasLiveLabel || selectorVisible
+  final double top = hasLiveLabel || selectorInLive
       ? (bandBottom - live.top) + kDriverTellersGuidanceTopGap
       : kDriverTellersGuidanceInset;
 
@@ -227,7 +257,7 @@ DriverTellersGuidanceLayout resolveDriverTellersGuidanceLayout({
     0.0,
     mapWidth - kDriverTellersGuidanceInset * 2,
   );
-  final double reserved = selectorVisible
+  final double reserved = selectorInLive
       ? math.max(0.0, geometry.selectorRect.width) +
             kDriverTellersGuidanceSelectorGap
       : 0.0;

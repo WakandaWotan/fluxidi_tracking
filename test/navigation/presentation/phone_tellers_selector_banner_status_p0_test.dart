@@ -108,8 +108,10 @@ void main() {
 
     test('Tellers wires phoneFloatingGlass only on phone path', () {
       final src = _read('lib/navigation/presentation/driver_ride_meters.dart');
-      expect(src, contains('phoneFloatingGlass: !isTablet'));
-      expect(src, contains('compactLandscape: isTablet'));
+      // Phone outer-stack selector uses glass; tablet live-window stays opaque.
+      expect(src, contains('phoneFloatingGlass: true'));
+      expect(src, contains('phoneFloatingGlass: false'));
+      expect(src, contains('compactLandscape: true'));
     });
   });
 

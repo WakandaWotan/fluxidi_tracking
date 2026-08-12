@@ -71,34 +71,62 @@ class NavigationDriverMarkerChoiceSelector extends StatelessWidget {
     if (phoneFloatingGlass) {
       return Material(
         color: Colors.transparent,
-        child: Container(
-          key: const ValueKey<String>('nav_marker_selector_phone_glass'),
-          decoration: BoxDecoration(
-            color: const Color(0xFF000000).withOpacity(PhoneCockpitOpacity.outer),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: gold.withOpacity(0.75), width: 1.1),
-          ),
-          padding: const EdgeInsets.all(4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (var i = 0; i < choices.length; i++) ...[
-                if (i > 0) const SizedBox(width: 4),
-                _MarkerChoiceButton(
-                  choice: choices[i],
-                  label: buttonLabel(choices[i], language),
-                  selected: choices[i] == selectedChoice,
-                  onSelected: onSelected,
-                  accentColor: gold,
-                  textColor: PhoneTellersReadability.primaryFill,
-                  height: buttonHeight,
-                  minWidth: buttonMinWidth,
-                  fontSize: fontSize,
-                  phoneFloatingGlass: true,
-                ),
-              ],
-            ],
-          ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final fillOwnedRect = constraints.maxWidth.isFinite &&
+                constraints.maxWidth < 400;
+            return Container(
+              key: const ValueKey<String>('nav_marker_selector_phone_glass'),
+              width: fillOwnedRect ? constraints.maxWidth : null,
+              height: fillOwnedRect && constraints.maxHeight.isFinite
+                  ? constraints.maxHeight
+                  : null,
+              decoration: BoxDecoration(
+                color:
+                    const Color(0xFF000000).withOpacity(PhoneCockpitOpacity.outer),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: gold.withOpacity(0.75), width: 1.1),
+              ),
+              padding: const EdgeInsets.all(4),
+              child: Row(
+                mainAxisSize:
+                    fillOwnedRect ? MainAxisSize.max : MainAxisSize.min,
+                children: [
+                  for (var i = 0; i < choices.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 4),
+                    if (fillOwnedRect)
+                      Expanded(
+                        child: _MarkerChoiceButton(
+                          choice: choices[i],
+                          label: buttonLabel(choices[i], language),
+                          selected: choices[i] == selectedChoice,
+                          onSelected: onSelected,
+                          accentColor: gold,
+                          textColor: PhoneTellersReadability.primaryFill,
+                          height: buttonHeight,
+                          minWidth: 0,
+                          fontSize: fontSize,
+                          phoneFloatingGlass: true,
+                        ),
+                      )
+                    else
+                      _MarkerChoiceButton(
+                        choice: choices[i],
+                        label: buttonLabel(choices[i], language),
+                        selected: choices[i] == selectedChoice,
+                        onSelected: onSelected,
+                        accentColor: gold,
+                        textColor: PhoneTellersReadability.primaryFill,
+                        height: buttonHeight,
+                        minWidth: buttonMinWidth,
+                        fontSize: fontSize,
+                        phoneFloatingGlass: true,
+                      ),
+                  ],
+                ],
+              ),
+            );
+          },
         ),
       );
     }
@@ -201,6 +229,7 @@ class _MarkerChoiceButton extends StatelessWidget {
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
                 NavigationDriverMarkerChoiceSelector.iconFor(choice),
@@ -210,29 +239,36 @@ class _MarkerChoiceButton extends StatelessWidget {
                     ? PhoneTellersReadability.softShadow
                     : null,
               ),
-              const SizedBox(width: 6),
-              if (phoneFloatingGlass)
-                NavOutlinedMapText(
-                  text: label,
-                  fill: selected
-                      ? PhoneTellersReadability.focusBorder
-                      : PhoneTellersReadability.primaryFill,
-                  stroke: PhoneTellersReadability.primaryStroke,
-                  strokeWidth: 2.2,
-                  style: TextStyle(
-                    fontSize: fontSize,
-                    fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
-                  ),
-                )
-              else
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: selected ? accentColor : textColor,
-                    fontSize: fontSize,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-                  ),
-                ),
+              const SizedBox(width: 4),
+              Flexible(
+                child: phoneFloatingGlass
+                    ? NavOutlinedMapText(
+                        text: label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        fill: selected
+                            ? PhoneTellersReadability.focusBorder
+                            : PhoneTellersReadability.primaryFill,
+                        stroke: PhoneTellersReadability.primaryStroke,
+                        strokeWidth: 2.2,
+                        style: TextStyle(
+                          fontSize: fontSize,
+                          fontWeight:
+                              selected ? FontWeight.w800 : FontWeight.w700,
+                        ),
+                      )
+                    : Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: selected ? accentColor : textColor,
+                          fontSize: fontSize,
+                          fontWeight:
+                              selected ? FontWeight.w700 : FontWeight.w600,
+                        ),
+                      ),
+              ),
             ],
           ),
         ),

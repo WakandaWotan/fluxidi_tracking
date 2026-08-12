@@ -494,8 +494,20 @@ void main() {
       expect(withPill.statusRect.top, greaterThanOrEqualTo(withPill.metersPanelRect.bottom));
       expect(withPill.metersPanelRect.overlaps(withPill.statusRect), isFalse);
       expect(withPill.liveWindowRect.top, greaterThanOrEqualTo(withPill.statusRect.bottom));
-      // Removing the pill releases map space (no empty Live-nav band).
-      expect(without.liveWindowRect.height, greaterThan(withPill.liveWindowRect.height));
+      // Post-KPI selector row is always reserved; phase pill shares that row
+      // (does not add a second vertical band).
+      expect(
+        without.liveWindowRect.height,
+        closeTo(withPill.liveWindowRect.height, 0.5),
+      );
+      expect(withPill.statusRect.overlaps(withPill.selectorRect), isFalse);
+      expect(
+        withPill.selectorRect.top,
+        closeTo(
+          withPill.metersPanelRect.bottom + kTellersPhonePostKpiGap,
+          0.5,
+        ),
+      );
     });
   });
 }
