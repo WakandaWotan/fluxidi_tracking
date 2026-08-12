@@ -172,6 +172,7 @@ import 'navigation/presentation/navigation_presentation_state.dart';
 import 'navigation/presentation/navigation_presentation_mode.dart';
 import 'navigation/presentation/navigation_destination_marker.dart';
 import 'navigation/presentation/driver_ride_meters.dart';
+import 'navigation/presentation/tellers_estimated_ride_price.dart';
 import 'navigation/presentation/driver_tellers_guidance.dart';
 import 'navigation/presentation/driver_nav_header_logo_metrics.dart';
 import 'navigation/presentation/nav_camera_bearing_ownership.dart';

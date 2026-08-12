@@ -25107,10 +25107,18 @@ class _DriverHomePageState extends State<DriverHomePage>
             _speedKmhFor(last),
             appLanguageNotifier.value,
           );
+    final usesFixed = _cockpitFarePresentation.usesFixedPrice;
+    final estimatePresentation = _tellersEstimatedRidePricePresentation(
+      usesFixedPrice: usesFixed,
+    );
     return DriverRideMetersSnapshot(
       fareText: _displayTotalText,
       fareLabel: _tellersFareLabel,
-      usesFixedPrice: _cockpitFarePresentation.usesFixedPrice,
+      usesFixedPrice: usesFixed,
+      // FLUXIDI-TELLERS-PRICE-SOT: bottom card reuses ordinary Navigatie
+      // `/quote` / fixed-price presentation — never the live meter Tarief.
+      estimatedRidePriceText: estimatePresentation.amountText,
+      estimatedRidePriceNote: estimatePresentation.note,
       distanceTravelledText: distanceText,
       rideDurationText: _formatHms(_activeElapsed),
       waitingTimeText: _formatHms(_effectiveWaitElapsed),
@@ -25120,6 +25128,44 @@ class _DriverHomePageState extends State<DriverHomePage>
       // PIP-TABLET-KPI-DENSITY-P1: existing GPS speed for PiP "Current" KPI.
       speedText: speedText == '—' ? '' : speedText,
     );
+  }
+
+  /// Presentation-only Tellers bottom-card amount + VAT note.
+  ///
+  /// Reuses ordinary `_directRideEstimatedFare` / fixed booking price — does
+  /// not recalculate fare or invent a second pricing engine.
+  ({String amountText, String note}) _tellersEstimatedRidePricePresentation({
+    required bool usesFixedPrice,
+  }) {
+    final note = _tr(
+      nl: 'Incl. btw • Definitieve prijs bij STOP',
+      en: 'Incl. VAT • Final price at STOP',
+      fr: 'TVA incl. • Prix final à l’arrêt',
+      es: 'IVA incl. • Precio final al finalizar',
+    );
+    final amountText = resolveTellersEstimatedRidePriceText(
+      TellersEstimatedRidePriceInput(
+        usesFixedPrice: usesFixedPrice,
+        fixedPriceText: _displayTotalText,
+        estimatedFare: _directRideEstimatedFare,
+        currency: _directRideEstimateCurrency,
+        isLoading: _directRideEstimateLoading,
+        formatAmount: _formatDirectRideEstimateText,
+        loadingText: _tr(
+          nl: 'Prijs berekenen…',
+          en: 'Calculating fare…',
+          fr: 'Calcul du prix…',
+          es: 'Calculando precio…',
+        ),
+        unavailableText: _tr(
+          nl: 'Schatting niet beschikbaar',
+          en: 'Estimate unavailable',
+          fr: 'Estimation indisponible',
+          es: 'Estimación no disponible',
+        ),
+      ),
+    );
+    return (amountText: amountText, note: note);
   }
 
   void _openTellersView() {

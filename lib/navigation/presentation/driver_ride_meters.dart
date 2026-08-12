@@ -362,6 +362,8 @@ class DriverRideMetersSnapshot {
     required this.statusText,
     this.fareLabel = 'Tarief',
     this.usesFixedPrice = false,
+    this.estimatedRidePriceText = '',
+    this.estimatedRidePriceNote = '',
     this.etaText = '',
     this.remainingDistanceText = '',
     this.speedText = '',
@@ -378,6 +380,18 @@ class DriverRideMetersSnapshot {
   /// True when [fareText] is the authoritative planned booking fixed price
   /// (never the live meter). Same SoT as cockpit fare presentation.
   final bool usesFixedPrice;
+
+  /// Bottom "Geschatte ritprijs" / fixed-price summary amount.
+  ///
+  /// Street/metered: same authoritative `/quote` presentation as ordinary
+  /// Navigatie (`DirectRideEstimatePanel`). Never the live meter [fareText].
+  /// Fixed-price: same amount as [fareText]. Empty → card shows honest
+  /// unavailable/loading text supplied by the publisher.
+  final String estimatedRidePriceText;
+
+  /// Optional VAT / finality note under the summary amount (presentation only).
+  final String estimatedRidePriceNote;
+
   final String distanceTravelledText;
   final String rideDurationText;
   final String waitingTimeText;
@@ -390,6 +404,15 @@ class DriverRideMetersSnapshot {
   final String speedText;
   final String tariffName;
   final String companyName;
+
+  /// Amount shown on the bottom price summary card.
+  ///
+  /// Fixed rides use [fareText]. Street rides prefer [estimatedRidePriceText]
+  /// and must never silently fall back to the live meter.
+  String get priceSummaryAmountText {
+    if (usesFixedPrice) return fareText;
+    return estimatedRidePriceText;
+  }
 }
 
 /// Localized product title for the Tellers / Counters surface.
@@ -1308,6 +1331,10 @@ class _DriverRideMetersContent extends StatelessWidget {
     final label = snapshot.usesFixedPrice
         ? driverTellersFixedRidePriceLabel(markerLanguage)
         : driverTellersEstimatedRidePriceLabel(markerLanguage);
+    final amount = snapshot.priceSummaryAmountText;
+    final note = snapshot.estimatedRidePriceNote.trim();
+    final amountIsNumeric = amount.contains('€') ||
+        RegExp(r'\d').hasMatch(amount);
     return RepaintBoundary(
       child: Container(
         key: const ValueKey<String>('driver_tellers_price_summary'),
@@ -1320,33 +1347,76 @@ class _DriverRideMetersContent extends StatelessWidget {
             width: 1.4,
           ),
         ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: isLandscape ? 13 : 14,
-                  fontWeight: FontWeight.w700,
-                  color: palette.textPrimary.withOpacity(0.78),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: SizedBox(
+                width: constraints.maxWidth.isFinite
+                    ? constraints.maxWidth
+                    : 400,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: isLandscape ? 13 : 14,
+                              fontWeight: FontWeight.w700,
+                              color: palette.textPrimary.withOpacity(0.78),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          key: const ValueKey<String>(
+                            'driver_tellers_price_summary_amount',
+                          ),
+                          amount.isEmpty ? '—' : amount,
+                          maxLines: amountIsNumeric ? 1 : 2,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.end,
+                          style: TextStyle(
+                            fontSize: amountIsNumeric
+                                ? (isLandscape ? 22 : 24)
+                                : (isLandscape ? 12 : 13),
+                            fontWeight: amountIsNumeric
+                                ? FontWeight.w900
+                                : FontWeight.w600,
+                            color: palette.textPrimary,
+                            height: 1.05,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (note.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        key: const ValueKey<String>(
+                          'driver_tellers_price_summary_note',
+                        ),
+                        note,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: isLandscape ? 10.5 : 11,
+                          fontWeight: FontWeight.w500,
+                          color: palette.textPrimary.withOpacity(0.62),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
-            ),
-            const SizedBox(width: 10),
-            Text(
-              key: const ValueKey<String>('driver_tellers_price_summary_amount'),
-              snapshot.fareText,
-              maxLines: 1,
-              style: TextStyle(
-                fontSize: isLandscape ? 22 : 24,
-                fontWeight: FontWeight.w900,
-                color: palette.textPrimary,
-                height: 1.05,
-              ),
-            ),
-          ],
+            );
+          },
         ),
       ),
     );

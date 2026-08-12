@@ -209,9 +209,11 @@ void main() {
       tester,
     ) async {
       const snap = DriverRideMetersSnapshot(
-        fareText: '€ 12.50',
+        fareText: '€ 3.20',
         fareLabel: 'Tarief',
         usesFixedPrice: false,
+        estimatedRidePriceText: '€ 17.20',
+        estimatedRidePriceNote: 'Incl. btw • Definitieve prijs bij STOP',
         distanceTravelledText: '3.2 km',
         rideDurationText: '12:05',
         waitingTimeText: '01:10',
@@ -227,7 +229,8 @@ void main() {
 
       expect(find.byKey(const ValueKey('teller_fare')), findsOneWidget);
       expect(find.text('Tarief'), findsWidgets);
-      expect(find.text('€ 12.50'), findsNWidgets(2)); // KPI + summary
+      expect(find.text('€ 3.20'), findsOneWidget); // live Tarief only
+      expect(find.text('€ 17.20'), findsOneWidget); // authoritative estimate
       expect(
         find.byKey(const ValueKey('driver_tellers_price_summary')),
         findsOneWidget,
@@ -251,6 +254,7 @@ void main() {
         fareText: '€ 48.00',
         fareLabel: 'Vaste prijs',
         usesFixedPrice: true,
+        estimatedRidePriceText: '€ 48.00',
         distanceTravelledText: '5.0 km',
         rideDurationText: '20:00',
         waitingTimeText: '00:00',

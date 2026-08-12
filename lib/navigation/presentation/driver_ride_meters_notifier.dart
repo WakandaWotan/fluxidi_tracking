@@ -39,6 +39,10 @@ class DriverRideMetersNotifier
     DriverRideMetersSnapshot b,
   ) {
     return a.fareText == b.fareText &&
+        a.fareLabel == b.fareLabel &&
+        a.usesFixedPrice == b.usesFixedPrice &&
+        a.estimatedRidePriceText == b.estimatedRidePriceText &&
+        a.estimatedRidePriceNote == b.estimatedRidePriceNote &&
         a.distanceTravelledText == b.distanceTravelledText &&
         a.rideDurationText == b.rideDurationText &&
         a.waitingTimeText == b.waitingTimeText &&

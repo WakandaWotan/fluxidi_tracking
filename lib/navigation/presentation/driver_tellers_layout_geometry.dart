@@ -37,8 +37,9 @@ const double kTellersTabletCockpitInnerGap = 6.0;
 /// Extra px so Column children never overflow the reserved Positioned band.
 const double kTellersTabletCockpitLayoutSlack = 4.0;
 const double kTellersTabletCockpitMinMapH = 180.0;
-const double kTellersTabletCockpitPriceHPortrait = 56.0;
-const double kTellersTabletCockpitPriceHLandscape = 48.0;
+/// Room for amount + VAT/finality note (ordinary Navigatie parity).
+const double kTellersTabletCockpitPriceHPortrait = 72.0;
+const double kTellersTabletCockpitPriceHLandscape = 64.0;
 const double kTellersTabletCockpitActionsHPortrait = 56.0;
 const double kTellersTabletCockpitActionsHLandscape = 52.0;
 
