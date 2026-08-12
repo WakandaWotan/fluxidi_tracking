@@ -15,6 +15,7 @@ import 'package:fluxidi_tracking/navigation/presentation/nav_signage_tablet_read
 import 'package:fluxidi_tracking/navigation/presentation/nav_tablet_branded_header.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_marker_choice.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_presentation_flags.dart';
+import 'package:fluxidi_tracking/navigation/presentation/nav_outlined_map_text.dart';
 import 'package:fluxidi_tracking/navigation/presentation/phone_cockpit_opacity.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_vehicle_choice_selector.dart';
 import 'package:fluxidi_tracking/widgets/driver_nav_banners.dart';
@@ -967,11 +968,16 @@ class _DriverRideMetersContent extends StatelessWidget {
         final p = guidance.presentation!;
         // NAV-SIGNAGE-FIELD-QUALITY-P0-1: Tellers + navigatie split on tablet
         // must use dedicated split readability metrics — never phone-mini.
+        // Phone Tellers: floating transparent outlined banner (no plate).
+        // Tablet split keeps dedicated split readability metrics.
         final splitReadability = isTablet
             ? NavSignageTabletReadabilityMetrics.forSplitNav(
                 availableBannerWidth: layout.maxWidth,
               )
-            : null;
+            : NavSignageTabletReadabilityMetrics.forPhoneParity(
+                isLandscape: isLandscape,
+                availableBannerWidth: layout.maxWidth,
+              );
         card = DriverTurnInstructionBanner(
           // Lighter and smaller than the primary navigation banner, but the
           // same widget, the same icon resolver and the same localized text.
@@ -1031,9 +1037,9 @@ class _DriverRideMetersContent extends StatelessWidget {
     final meters = geometry.metersPanelRect;
     final controls = geometry.controlsRect;
     final price = geometry.priceSummaryRect;
-    // Tablet cockpit: vertical chrome in both orientations. Phone landscape
-    // still nests controls inside the left meters panel.
-    final controlsInMetersPanel = isLandscape && !isTablet;
+    // Phone glass: controls are bottom-anchored overlays (never nested inside
+    // a tall left panel). Tablet landscape keeps bottom chrome outside meters.
+    final controlsInMetersPanel = false;
     final phoneGlass = !isTablet;
 
     // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: explicit hard-edge clip on the
@@ -1075,8 +1081,8 @@ class _DriverRideMetersContent extends StatelessWidget {
           child: _buildMetersPanel(
             palette,
             withControls: controlsInMetersPanel,
-            // Phone fills tall 2×2 tiles; tablet cockpit stays compact.
-            fillHeight: !isTablet,
+            // Phone: compact intrinsic KPIs (no Expanded fill of leftover height).
+            fillHeight: isTablet,
           ),
         ),
         if (showEstimatedPriceStrip && price.width > 0 && price.height > 0)
@@ -1087,7 +1093,7 @@ class _DriverRideMetersContent extends StatelessWidget {
             height: price.height,
             child: _buildPriceSummaryCard(palette),
           ),
-        // Portrait phone + tablet action bar (skipped when rect is zero).
+        // Action bar (phone + tablet) — skipped when rect is zero.
         if (!controlsInMetersPanel && controls.width > 0 && controls.height > 0)
           Positioned(
             left: controls.left,
@@ -1097,23 +1103,25 @@ class _DriverRideMetersContent extends StatelessWidget {
             child: RepaintBoundary(
               child: Container(
                 key: const ValueKey<String>('driver_tellers_controls_panel'),
-                padding: EdgeInsets.all(8),
+                padding: EdgeInsets.symmetric(
+                  horizontal: phoneGlass ? 4 : 8,
+                  vertical: phoneGlass ? 2 : 8,
+                ),
                 decoration: BoxDecoration(
+                  // Phone: no monolithic control plate — only per-button tint.
                   color: phoneGlass
-                      ? palette.background.withOpacity(PhoneCockpitOpacity.action)
+                      ? Colors.transparent
                       : palette.background,
                   borderRadius: BorderRadius.circular(isTablet ? 16 : 20),
-                  border: Border.all(
-                    color: phoneGlass
-                        ? palette.accent.withOpacity(0.55)
-                        : palette.border.withOpacity(0.5),
-                  ),
+                  border: phoneGlass
+                      ? null
+                      : Border.all(color: palette.border.withOpacity(0.5)),
                 ),
                 child: _buildFooterActions(palette),
               ),
             ),
           ),
-        // Live corridor frame (phone: map continues outside this rect too).
+        // Live corridor: tablet keeps gold frame; phone is frame-less overlays.
         Positioned(
           left: live.left,
           top: live.top,
@@ -1168,15 +1176,12 @@ class _DriverRideMetersContent extends StatelessWidget {
           )
         : Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: fillHeight ? MainAxisSize.max : MainAxisSize.min,
+            mainAxisSize: MainAxisSize.min,
             children: [
               _buildHeader(palette),
-              SizedBox(height: isLandscape ? 6 : 8),
-              if (fillHeight)
-                Expanded(child: _buildMetersGrid(palette, fillHeight: true))
-              else
-                _buildMetersGrid(palette),
-              SizedBox(height: isLandscape ? 4 : 6),
+              SizedBox(height: isLandscape ? 4 : 4),
+              _buildMetersGrid(palette),
+              SizedBox(height: isLandscape ? 4 : 4),
               _buildStatusChip(palette),
               if (withControls) ...[
                 SizedBox(height: isLandscape ? 6 : 8),
@@ -1184,24 +1189,21 @@ class _DriverRideMetersContent extends StatelessWidget {
               ],
             ],
           );
-    // Tablet: opaque panel. Phone glass: theme palette @ PhoneCockpitOpacity
-    // (no BackdropFilter) so the retained MapWidget reads through.
+    // Tablet: opaque panel. Phone: transparent floating chrome (no gold frame).
     final panelColor = isTablet
         ? palette.background
-        : palette.background.withOpacity(PhoneCockpitOpacity.outer);
+        : palette.background.withOpacity(PhoneTellersSurfaceOpacity.panel);
     return RepaintBoundary(
       child: Container(
         key: const ValueKey<String>('driver_tellers_meters_panel'),
-        padding: EdgeInsets.all(isTablet ? 10 : 8),
+        padding: EdgeInsets.all(isTablet ? 10 : 6),
         clipBehavior: Clip.hardEdge,
         decoration: BoxDecoration(
           color: panelColor,
-          borderRadius: BorderRadius.circular(isTablet ? 16 : 20),
-          border: Border.all(
-            color: isTablet
-                ? palette.border.withOpacity(0.5)
-                : palette.accent.withOpacity(0.55),
-          ),
+          borderRadius: BorderRadius.circular(isTablet ? 16 : 12),
+          border: isTablet
+              ? Border.all(color: palette.border.withOpacity(0.5))
+              : null,
         ),
         child: content,
       ),
@@ -1376,12 +1378,14 @@ class _DriverRideMetersContent extends StatelessWidget {
           color: palette.surface.withOpacity(
             isTablet
                 ? (palette.isDark ? 0.94 : 0.98)
-                : PhoneCockpitOpacity.priceStrip,
+                : PhoneTellersSurfaceOpacity.priceStrip,
           ),
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(isTablet ? 14 : 12),
           border: Border.all(
-            color: palette.accent.withOpacity(0.75),
-            width: 1.4,
+            color: isTablet
+                ? palette.accent.withOpacity(0.75)
+                : PhoneTellersReadability.focusBorder.withOpacity(0.65),
+            width: isTablet ? 1.4 : 1.0,
           ),
         ),
         child: LayoutBuilder(
@@ -1400,37 +1404,74 @@ class _DriverRideMetersContent extends StatelessWidget {
                     Row(
                       children: [
                         Expanded(
-                          child: Text(
-                            label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: isLandscape ? 13 : 14,
-                              fontWeight: FontWeight.w700,
-                              color: palette.textPrimary.withOpacity(0.78),
-                            ),
-                          ),
+                          child: isTablet
+                              ? Text(
+                                  label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: isLandscape ? 13 : 14,
+                                    fontWeight: FontWeight.w700,
+                                    color: palette.textPrimary.withOpacity(0.78),
+                                  ),
+                                )
+                              : NavOutlinedMapText(
+                                  text: label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  fill: PhoneTellersReadability.labelFill,
+                                  stroke: PhoneTellersReadability.labelStroke,
+                                  strokeWidth:
+                                      PhoneTellersReadability.labelStrokeWidth,
+                                  style: TextStyle(
+                                    fontSize: isLandscape ? 12 : 13,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
                         ),
                         const SizedBox(width: 10),
-                        Text(
-                          key: const ValueKey<String>(
-                            'driver_tellers_price_summary_amount',
-                          ),
-                          amount.isEmpty ? '—' : amount,
-                          maxLines: amountIsNumeric ? 1 : 2,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.end,
-                          style: TextStyle(
-                            fontSize: amountIsNumeric
-                                ? (isLandscape ? 22 : 24)
-                                : (isLandscape ? 12 : 13),
-                            fontWeight: amountIsNumeric
-                                ? FontWeight.w900
-                                : FontWeight.w600,
-                            color: palette.textPrimary,
-                            height: 1.05,
-                          ),
-                        ),
+                        isTablet
+                            ? Text(
+                                key: const ValueKey<String>(
+                                  'driver_tellers_price_summary_amount',
+                                ),
+                                amount.isEmpty ? '—' : amount,
+                                maxLines: amountIsNumeric ? 1 : 2,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.end,
+                                style: TextStyle(
+                                  fontSize: amountIsNumeric
+                                      ? (isLandscape ? 22 : 24)
+                                      : (isLandscape ? 12 : 13),
+                                  fontWeight: amountIsNumeric
+                                      ? FontWeight.w900
+                                      : FontWeight.w600,
+                                  color: palette.textPrimary,
+                                  height: 1.05,
+                                ),
+                              )
+                            : NavOutlinedMapText(
+                                key: const ValueKey<String>(
+                                  'driver_tellers_price_summary_amount',
+                                ),
+                                text: amount.isEmpty ? '—' : amount,
+                                maxLines: amountIsNumeric ? 1 : 2,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.end,
+                                fill: PhoneTellersReadability.primaryFill,
+                                stroke: PhoneTellersReadability.primaryStroke,
+                                strokeWidth:
+                                    PhoneTellersReadability.primaryStrokeWidth,
+                                style: TextStyle(
+                                  fontSize: amountIsNumeric
+                                      ? (isLandscape ? 20 : 22)
+                                      : (isLandscape ? 11 : 12),
+                                  fontWeight: amountIsNumeric
+                                      ? FontWeight.w900
+                                      : FontWeight.w600,
+                                  height: 1.05,
+                                ),
+                              ),
                       ],
                     ),
                     if (note.isNotEmpty) ...[
@@ -1446,6 +1487,9 @@ class _DriverRideMetersContent extends StatelessWidget {
                           fontSize: isLandscape ? 10.5 : 11,
                           fontWeight: FontWeight.w500,
                           color: palette.textPrimary.withOpacity(0.62),
+                          shadows: isTablet
+                              ? null
+                              : PhoneTellersReadability.softShadow,
                         ),
                       ),
                     ],
@@ -1493,8 +1537,13 @@ class _DriverRideMetersContent extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: Colors.transparent,
-          borderRadius: BorderRadius.circular(geometry.cornerRadius),
-          border: Border.all(color: palette.accent.withOpacity(0.7), width: 2),
+          borderRadius: BorderRadius.circular(
+            isTablet ? geometry.cornerRadius : 0,
+          ),
+          // Phone: no continuous gold enclosing frame — map stays open.
+          border: isTablet
+              ? Border.all(color: palette.accent.withOpacity(0.7), width: 2)
+              : null,
         ),
         child: Stack(
           clipBehavior: Clip.hardEdge,
@@ -1509,19 +1558,34 @@ class _DriverRideMetersContent extends StatelessWidget {
                 key: const ValueKey<String>('driver_tellers_live_label'),
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: palette.background,
+                  color: isTablet
+                      ? palette.background
+                      : Colors.transparent,
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: Text(
-                  liveLabel,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: isTablet ? 12 : 11,
-                    fontWeight: FontWeight.w700,
-                    color: palette.textPrimary.withOpacity(0.85),
-                  ),
-                ),
+                child: isTablet
+                    ? Text(
+                        liveLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: palette.textPrimary.withOpacity(0.85),
+                        ),
+                      )
+                    : NavOutlinedMapText(
+                        text: liveLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        fill: PhoneTellersReadability.labelFill,
+                        stroke: PhoneTellersReadability.labelStroke,
+                        strokeWidth: PhoneTellersReadability.labelStrokeWidth,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
               ),
             ),
             if (selectorVisible)
@@ -1580,9 +1644,15 @@ class _DriverRideMetersContent extends StatelessWidget {
         key: const ValueKey<String>('driver_tellers_status'),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
-          color: palette.surface,
+          color: isTablet
+              ? palette.surface
+              : palette.surface.withOpacity(PhoneTellersSurfaceOpacity.statusChip),
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: palette.border.withOpacity(0.6)),
+          border: Border.all(
+            color: isTablet
+                ? palette.border.withOpacity(0.6)
+                : PhoneTellersReadability.focusBorder.withOpacity(0.45),
+          ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -1593,19 +1663,38 @@ class _DriverRideMetersContent extends StatelessWidget {
               decoration: BoxDecoration(
                 color: isWaiting ? const Color(0xFFFFB020) : palette.accent,
                 shape: BoxShape.circle,
+                boxShadow: isTablet
+                    ? null
+                    : const [
+                        BoxShadow(color: Color(0x99000000), blurRadius: 2),
+                      ],
               ),
             ),
             const SizedBox(width: 6),
-            Text(
-              snapshot.statusText,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: isTablet ? 13 : 12,
-                fontWeight: FontWeight.w700,
-                color: palette.textPrimary.withOpacity(0.85),
+            if (isTablet)
+              Text(
+                snapshot.statusText,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: palette.textPrimary.withOpacity(0.85),
+                ),
+              )
+            else
+              NavOutlinedMapText(
+                text: snapshot.statusText,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                fill: PhoneTellersReadability.labelFill,
+                stroke: PhoneTellersReadability.labelStroke,
+                strokeWidth: PhoneTellersReadability.labelStrokeWidth,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -1617,37 +1706,82 @@ class _DriverRideMetersContent extends StatelessWidget {
     final navLabel = driverTellersNavigationLabel(markerLanguage);
     final titleSize = compact
         ? (isLandscape ? 18.0 : 20.0)
-        : (isTablet ? 28.0 : 22.0);
+        : (isTablet ? 28.0 : 20.0);
     return Row(
       children: [
         Expanded(
-          child: Text(
-            title,
-            style: TextStyle(
-              fontSize: titleSize,
-              fontWeight: FontWeight.w900,
-              color: palette.textPrimary,
-            ),
-          ),
+          child: isTablet
+              ? Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: titleSize,
+                    fontWeight: FontWeight.w900,
+                    color: palette.textPrimary,
+                  ),
+                )
+              : NavOutlinedMapText(
+                  text: title,
+                  fill: PhoneTellersReadability.primaryFill,
+                  stroke: PhoneTellersReadability.primaryStroke,
+                  strokeWidth: PhoneTellersReadability.primaryStrokeWidth,
+                  style: TextStyle(
+                    fontSize: titleSize,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
         ),
         Semantics(
           button: true,
           label: navLabel,
-          child: FilledButton.icon(
-            key: const ValueKey<String>('driver_tellers_back_nav'),
-            onPressed: onBackToNavigation,
-            icon: Icon(Icons.map_outlined, size: compact ? 18 : 20),
-            label: Text(navLabel),
-            style: FilledButton.styleFrom(
-              backgroundColor: palette.accent,
-              foregroundColor: palette.isDark ? Colors.black : Colors.white,
-              minimumSize: Size(compact ? 40 : 48, compact ? 36 : 48),
-              padding: EdgeInsets.symmetric(
-                horizontal: compact ? 10 : 14,
-                vertical: compact ? 6 : 12,
-              ),
-            ),
-          ),
+          child: isTablet
+              ? FilledButton.icon(
+                  key: const ValueKey<String>('driver_tellers_back_nav'),
+                  onPressed: onBackToNavigation,
+                  icon: Icon(Icons.map_outlined, size: compact ? 18 : 20),
+                  label: Text(navLabel),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: palette.accent,
+                    foregroundColor: palette.isDark ? Colors.black : Colors.white,
+                    minimumSize: Size(compact ? 40 : 48, compact ? 36 : 48),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: compact ? 10 : 14,
+                      vertical: compact ? 6 : 12,
+                    ),
+                  ),
+                )
+              : OutlinedButton.icon(
+                  key: const ValueKey<String>('driver_tellers_back_nav'),
+                  onPressed: onBackToNavigation,
+                  icon: Icon(
+                    Icons.map_outlined,
+                    size: 18,
+                    shadows: PhoneTellersReadability.softShadow,
+                  ),
+                  label: NavOutlinedMapText(
+                    text: navLabel,
+                    fill: PhoneTellersReadability.primaryFill,
+                    stroke: PhoneTellersReadability.primaryStroke,
+                    strokeWidth: 2.4,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: palette.surface.withOpacity(
+                      PhoneTellersSurfaceOpacity.navButton,
+                    ),
+                    foregroundColor: PhoneTellersReadability.primaryFill,
+                    side: BorderSide(
+                      color: PhoneTellersReadability.focusBorder.withOpacity(0.7),
+                    ),
+                    minimumSize: const Size(48, 40),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                  ),
+                ),
         ),
       ],
     );
@@ -1772,13 +1906,13 @@ class _DriverRideMetersContent extends StatelessWidget {
     final duration = phoneTiles[2];
     final waiting = phoneTiles[3];
 
-    // Balanced 2x2 in all phone layouts. When [fillHeight] the rows expand to
-    // consume the available column height (tall, high-weight tiles).
+    // Balanced 2x2 in all phone layouts. Compact gaps — never Expanded-fill
+    // leftover viewport height (that vertically centered the cockpit).
     if (fillHeight) {
       return Column(
         children: [
           Expanded(child: row(fare, distance)),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           Expanded(child: row(duration, waiting)),
         ],
       );
@@ -1787,7 +1921,7 @@ class _DriverRideMetersContent extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         row(fare, distance),
-        const SizedBox(height: 10),
+        const SizedBox(height: 6),
         row(duration, waiting),
       ],
     );
@@ -1797,29 +1931,57 @@ class _DriverRideMetersContent extends StatelessWidget {
     // NAV-TELLERS-RECENTER-CONTROL-1: desired order Pauze | Recenter | Stop.
     // Pauze/Stop stay large Expanded buttons; Recenter is a central icon
     // button at the driving min touch-target (48).
+    final phone = !isTablet;
+    ButtonStyle phoneActionStyle({required bool stop}) {
+      return OutlinedButton.styleFrom(
+        foregroundColor: PhoneTellersReadability.primaryFill,
+        backgroundColor: (stop ? const Color(0xFF3A1821) : palette.surface)
+            .withOpacity(PhoneTellersSurfaceOpacity.actionHit),
+        side: BorderSide(
+          color: stop
+              ? const Color(0xFFFF6B5F).withOpacity(0.85)
+              : PhoneTellersReadability.focusBorder.withOpacity(0.55),
+        ),
+        minimumSize: const Size(48, 48),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+      );
+    }
+
     final actions = <Widget>[];
     if (onToggleWait != null) {
+      final waitLabel = isWaiting
+          ? driverTellersResumeLabel(markerLanguage)
+          : driverTellersPauseLabel(markerLanguage);
       actions.add(
         Expanded(
           child: OutlinedButton(
             key: const ValueKey('driver_tellers_wait'),
             onPressed: onToggleWait,
-            style: OutlinedButton.styleFrom(
-              foregroundColor: palette.textPrimary,
-              side: BorderSide(color: palette.border),
-              minimumSize: const Size(48, 48),
-            ),
-            child: Text(
-              isWaiting
-                  ? driverTellersResumeLabel(markerLanguage)
-                  : driverTellersPauseLabel(markerLanguage),
-            ),
+            style: phone
+                ? phoneActionStyle(stop: false)
+                : OutlinedButton.styleFrom(
+                    foregroundColor: palette.textPrimary,
+                    side: BorderSide(color: palette.border),
+                    minimumSize: const Size(48, 48),
+                  ),
+            child: phone
+                ? NavOutlinedMapText(
+                    text: waitLabel,
+                    fill: PhoneTellersReadability.primaryFill,
+                    stroke: PhoneTellersReadability.primaryStroke,
+                    strokeWidth: 2.4,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  )
+                : Text(waitLabel),
           ),
         ),
       );
     }
     if (onRecenter != null) {
-      if (actions.isNotEmpty) actions.add(const SizedBox(width: 10));
+      if (actions.isNotEmpty) actions.add(SizedBox(width: phone ? 8 : 10));
       final recenterLabel = driverTellersRecenterLabel(markerLanguage);
       actions.add(
         SizedBox(
@@ -1830,16 +1992,27 @@ class _DriverRideMetersContent extends StatelessWidget {
             child: OutlinedButton(
               key: const ValueKey('driver_tellers_recenter'),
               onPressed: onRecenter,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: palette.textPrimary,
-                side: BorderSide(color: palette.border),
-                minimumSize: const Size(48, 48),
-                padding: EdgeInsets.zero,
-              ),
+              style: phone
+                  ? phoneActionStyle(stop: false).copyWith(
+                      padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+                    )
+                  : OutlinedButton.styleFrom(
+                      foregroundColor: palette.textPrimary,
+                      side: BorderSide(color: palette.border),
+                      minimumSize: const Size(48, 48),
+                      padding: EdgeInsets.zero,
+                    ),
               child: Semantics(
                 button: true,
                 label: recenterLabel,
-                child: const Icon(Icons.my_location, size: 22),
+                child: Icon(
+                  Icons.my_location,
+                  size: 22,
+                  color: phone
+                      ? PhoneTellersReadability.primaryFill
+                      : palette.textPrimary,
+                  shadows: phone ? PhoneTellersReadability.softShadow : null,
+                ),
               ),
             ),
           ),
@@ -1847,18 +2020,31 @@ class _DriverRideMetersContent extends StatelessWidget {
       );
     }
     if (onStop != null) {
-      if (actions.isNotEmpty) actions.add(const SizedBox(width: 10));
+      if (actions.isNotEmpty) actions.add(SizedBox(width: phone ? 8 : 10));
       actions.add(
         Expanded(
           child: OutlinedButton(
             key: const ValueKey('driver_tellers_stop'),
             onPressed: onStop,
-            style: OutlinedButton.styleFrom(
-              foregroundColor: palette.textPrimary,
-              side: BorderSide(color: palette.accent.withOpacity(0.8)),
-              minimumSize: const Size(48, 48),
-            ),
-            child: const Text('Stop'),
+            style: phone
+                ? phoneActionStyle(stop: true)
+                : OutlinedButton.styleFrom(
+                    foregroundColor: palette.textPrimary,
+                    side: BorderSide(color: palette.accent.withOpacity(0.8)),
+                    minimumSize: const Size(48, 48),
+                  ),
+            child: phone
+                ? const NavOutlinedMapText(
+                    text: 'Stop',
+                    fill: PhoneTellersReadability.primaryFill,
+                    stroke: PhoneTellersReadability.primaryStroke,
+                    strokeWidth: 2.6,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  )
+                : const Text('Stop'),
           ),
         ),
       );
@@ -1939,10 +2125,11 @@ class _MeterTile extends StatelessWidget {
     final minH = metrics?.minHeight;
     final hPad =
         metrics?.horizontalPadding ??
-        (compact ? 12.0 : (isTablet ? 18.0 : 12.0));
+        (compact ? 12.0 : (isTablet ? 18.0 : 10.0));
     final vPad =
-        metrics?.verticalPadding ?? (compact ? 12.0 : (isTablet ? 16.0 : 10.0));
-    final gap = metrics?.labelValueGap ?? (compact ? 2.0 : 4.0);
+        metrics?.verticalPadding ??
+        (compact ? 12.0 : (isTablet ? 16.0 : 6.0));
+    final gap = metrics?.labelValueGap ?? (compact ? 2.0 : (isTablet ? 4.0 : 2.0));
     return Semantics(
       label: semanticLabel,
       child: Container(
@@ -1955,16 +2142,20 @@ class _MeterTile extends StatelessWidget {
           color: palette.surface.withOpacity(
             isTablet
                 ? (palette.isDark ? 0.94 : 0.98)
-                : PhoneCockpitOpacity.kpiTile,
+                : PhoneTellersSurfaceOpacity.kpiTile,
           ),
           borderRadius: BorderRadius.circular(
-            compact || metrics != null ? 12 : 16,
+            compact || metrics != null ? 12 : 12,
           ),
           border: Border.all(
             color: emphasize
-                ? palette.accent.withOpacity(0.85)
-                : palette.border.withOpacity(0.7),
-            width: emphasize ? 1.8 : 1.1,
+                ? (isTablet
+                      ? palette.accent.withOpacity(0.85)
+                      : PhoneTellersReadability.focusBorder)
+                : (isTablet
+                      ? palette.border.withOpacity(0.7)
+                      : PhoneTellersReadability.focusBorder.withOpacity(0.35)),
+            width: emphasize ? 1.6 : 1.0,
           ),
         ),
         // NAV-TELLERS-EXACT-LIVE-VIEWPORT-1: in Expanded geometry bands the
@@ -1974,35 +2165,55 @@ class _MeterTile extends StatelessWidget {
             final bounded =
                 constraints.hasBoundedHeight &&
                 constraints.maxHeight < double.infinity;
+            final valueStyle = TextStyle(
+              fontSize: valueSize,
+              fontWeight: FontWeight.w900,
+              height: 1.05,
+              color: isTablet ? palette.textPrimary : null,
+            );
             final valueText = FittedBox(
               fit: BoxFit.scaleDown,
               alignment: Alignment.centerLeft,
-              child: Text(
-                value,
-                maxLines: 1,
-                style: TextStyle(
-                  fontSize: valueSize,
-                  fontWeight: FontWeight.w900,
-                  color: palette.textPrimary,
-                  height: 1.05,
-                ),
-              ),
+              child: isTablet
+                  ? Text(value, maxLines: 1, style: valueStyle)
+                  : NavOutlinedMapText(
+                      text: value,
+                      maxLines: 1,
+                      fill: PhoneTellersReadability.primaryFill,
+                      stroke: PhoneTellersReadability.primaryStroke,
+                      strokeWidth: PhoneTellersReadability.primaryStrokeWidth,
+                      style: valueStyle,
+                    ),
             );
+            final labelWidget = isTablet
+                ? Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: labelSize,
+                      fontWeight: FontWeight.w700,
+                      color: palette.textPrimary.withOpacity(0.72),
+                    ),
+                  )
+                : NavOutlinedMapText(
+                    text: label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    fill: PhoneTellersReadability.labelFill,
+                    stroke: PhoneTellersReadability.labelStroke,
+                    strokeWidth: PhoneTellersReadability.labelStrokeWidth,
+                    style: TextStyle(
+                      fontSize: labelSize,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  );
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.center,
               mainAxisSize: bounded ? MainAxisSize.max : MainAxisSize.min,
               children: [
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: labelSize,
-                    fontWeight: FontWeight.w700,
-                    color: palette.textPrimary.withOpacity(0.72),
-                  ),
-                ),
+                labelWidget,
                 SizedBox(height: gap),
                 if (bounded) Flexible(child: valueText) else valueText,
               ],

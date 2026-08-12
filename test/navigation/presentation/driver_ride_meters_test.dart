@@ -10,6 +10,12 @@ import 'package:fluxidi_tracking/navigation/presentation/driver_ride_meters.dart
 import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_marker_choice.dart';
 import 'package:fluxidi_tracking/navigation/widgets/navigation_driver_hud_overlay.dart';
 
+/// Phone Tellers uses [NavOutlinedMapText] (stroke + fill) so the same label
+/// can appear twice in the tree without meaning a duplicated KPI tile.
+void expectPhoneReadableText(String text) {
+  expect(find.text(text), findsAtLeastNWidgets(1));
+}
+
 void main() {
   group('DriverNavPresentationModeController', () {
     test('idempotent Navigatie ↔ Tellers switching', () {
@@ -327,8 +333,8 @@ void main() {
       expect(find.text('NAV_OWNER'), findsOneWidget);
       // Owner may rebuild (setState) but must not be disposed/recreated away.
       expect(navBuildCount, greaterThanOrEqualTo(buildsBefore));
-      expect(find.text('€ 12.50'), findsOneWidget);
-      expect(find.text('3.2 km'), findsOneWidget);
+      expectPhoneReadableText('€ 12.50');
+      expectPhoneReadableText('3.2 km');
     });
 
     testWidgets('closing Tellers returns to navigation; switch is idempotent', (
@@ -351,7 +357,7 @@ void main() {
       await tester.pumpWidget(
         harness(snapshot: snap, navOwner: navOwner, mode: mode),
       );
-      expect(find.text('Tellers'), findsOneWidget);
+      expectPhoneReadableText('Tellers');
 
       await tester.tap(find.byKey(const ValueKey('driver_tellers_back_nav')));
       // Controller already flipped in onBack; rebuild harness.
@@ -378,7 +384,7 @@ void main() {
       await tester.pumpWidget(
         harness(snapshot: snap, navOwner: navOwner, mode: mode),
       );
-      expect(find.text('€ 2.00'), findsOneWidget);
+      expectPhoneReadableText('€ 2.00');
 
       snap = const DriverRideMetersSnapshot(
         fareText: '€ 3.40',
@@ -391,9 +397,9 @@ void main() {
         harness(snapshot: snap, navOwner: navOwner, mode: mode),
       );
       await tester.pump();
-      expect(find.text('€ 3.40'), findsOneWidget);
-      expect(find.text('1.7 km'), findsOneWidget);
-      expect(find.text('Wachten'), findsOneWidget);
+      expectPhoneReadableText('€ 3.40');
+      expectPhoneReadableText('1.7 km');
+      expectPhoneReadableText('Wachten');
     });
 
     testWidgets('theme change updates Tellers without losing nav owner', (
@@ -471,7 +477,7 @@ void main() {
         );
         await tester.pump();
         expect(tester.takeException(), isNull, reason: '${c.size}');
-        expect(find.text('Tellers'), findsOneWidget);
+        expectPhoneReadableText('Tellers');
       }
       addTearDown(() => tester.binding.setSurfaceSize(null));
     });
@@ -505,7 +511,7 @@ void main() {
       expect(find.byKey(const ValueKey('teller_status')), findsNothing);
       // Status exists as a smaller secondary element and is localized (Dutch).
       expect(find.byKey(const ValueKey('driver_tellers_status')), findsOneWidget);
-      expect(find.text('Rit gepauzeerd'), findsOneWidget);
+      expectPhoneReadableText('Rit gepauzeerd');
       expect(find.text('Ride active'), findsNothing);
     });
 
@@ -626,9 +632,9 @@ void main() {
       );
       final container = tester.widget<Container>(panelFinder);
       final color = (container.decoration as BoxDecoration?)?.color;
-      // Phone glass: theme palette @ PhoneCockpitOpacity.outer (map reads through).
+      // Phone Tellers: transparent floating panel (map reads through).
       expect(color, isNotNull);
-      expect(color!.a, closeTo(0.79, 0.02));
+      expect(color!.a, lessThan(0.05));
 
       // Isolated in its own RepaintBoundary so ticks don't dirty the map.
       expect(
@@ -809,11 +815,15 @@ void main() {
       );
       await tester.pump();
 
-      // No duplication of any principal value.
-      expect(find.text('€ 13.37'), findsOneWidget);
-      expect(find.text('7.7 km'), findsOneWidget);
-      expect(find.text('00:11:22'), findsOneWidget);
-      expect(find.text('00:02:33'), findsOneWidget);
+      // One tile key each; outlined glyphs may paint stroke+fill Text twins.
+      expect(find.byKey(const ValueKey('teller_fare')), findsOneWidget);
+      expect(find.byKey(const ValueKey('teller_distance')), findsOneWidget);
+      expect(find.byKey(const ValueKey('teller_duration')), findsOneWidget);
+      expect(find.byKey(const ValueKey('teller_waiting')), findsOneWidget);
+      expectPhoneReadableText('€ 13.37');
+      expectPhoneReadableText('7.7 km');
+      expectPhoneReadableText('00:11:22');
+      expectPhoneReadableText('00:02:33');
       // Exactly one Pause action and one Stop action.
       expect(find.byKey(const ValueKey('driver_tellers_wait')), findsOneWidget);
       expect(find.byKey(const ValueKey('driver_tellers_stop')), findsOneWidget);
@@ -991,7 +1001,7 @@ void main() {
         findsOneWidget,
       );
       // Status localized Dutch — never "Ride active" in Dutch UI.
-      expect(find.text('Rit actief'), findsOneWidget);
+      expectPhoneReadableText('Rit actief');
       expect(find.text('Ride active'), findsNothing);
     });
 

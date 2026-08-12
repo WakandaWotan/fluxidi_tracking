@@ -319,8 +319,14 @@ void main() {
         find.byKey(const ValueKey('driver_tellers_meters_panel')),
       );
       final deco = panel.decoration! as BoxDecoration;
-      expect(deco.color!.a, closeTo(PhoneCockpitOpacity.outer, 0.01));
+      expect(deco.color!.a, lessThan(0.05));
       expect(find.byType(BackdropFilter), findsNothing);
+      final meters = tester.getRect(
+        find.byKey(const ValueKey('driver_tellers_meters_panel')),
+      );
+      // Immediately under SafeArea (+ 8–12 breathing), not mid-screen.
+      expect(meters.top, lessThan(50));
+      expect(meters.height, lessThanOrEqualTo(260));
     });
   });
 
@@ -391,10 +397,31 @@ void main() {
   });
 
   group('opacity tokens', () {
-    test('central tokens sit in accepted ranges', () {
+    test('ordinary nav glass tokens preserved; Tellers stay near-clear', () {
       expect(PhoneCockpitOpacity.outer, inInclusiveRange(0.76, 0.82));
-      expect(PhoneCockpitOpacity.kpiTile, inInclusiveRange(0.86, 0.91));
-      expect(PhoneCockpitOpacity.action, inInclusiveRange(0.90, 0.96));
+      expect(PhoneTellersSurfaceOpacity.panel, lessThanOrEqualTo(0.08));
+      expect(PhoneTellersSurfaceOpacity.kpiTile, inInclusiveRange(0.0, 0.22));
+      expect(PhoneTellersSurfaceOpacity.actionHit, inInclusiveRange(0.25, 0.55));
+      expect(PhoneTellersReadability.primaryStrokeWidth, greaterThanOrEqualTo(2.0));
+    });
+
+    test('phone portrait meters sit under SafeArea with compact height', () {
+      final geo = DriverTellersLayoutGeometry.resolve(
+        viewportSize: const Size(407, 904),
+        safeTop: 32,
+        safeBottom: 20,
+        safeLeft: 0,
+        safeRight: 0,
+        isLandscape: false,
+        isTablet: false,
+        reserveActionBar: true,
+        reservePriceSummary: false,
+      );
+      expect(geo.metersPanelRect.top, closeTo(32 + kTellersPhoneTopBreathing, 0.5));
+      expect(geo.metersPanelRect.height, lessThanOrEqualTo(kTellersPhonePortraitMetersH + 1));
+      expect(geo.controlsRect.bottom, closeTo(904 - 20, 0.5));
+      expect(geo.liveWindowRect.top, greaterThan(geo.metersPanelRect.bottom));
+      expect(geo.liveWindowRect.bottom, lessThanOrEqualTo(geo.controlsRect.top + 0.5));
     });
   });
 }
