@@ -38,11 +38,13 @@ class NavigationDriverHudOverlay extends StatelessWidget {
     this.arrowScale = 1.0,
   });
 
-  /// NAV-PRES-3D-PRO2 / NAV-PHONE-LANDSCAPE-MARKER-SCALE-1: shared HUD base
-  /// size for Car and Arrow (and the camera nose-anchor baseline).
+  /// NAV-PRES-3D-PRO2 / NAV-PHONE-LANDSCAPE-MARKER-SCALE-1 /
+  /// FLUXIDI-VEHICLE-CAMERA-VIEWPORT-ANCHOR-P0: shared HUD base size for Car
+  /// and Arrow (and the camera nose-anchor baseline).
   ///
-  /// Classifies phone/tablet from the viewport [Size] via shortest side —
-  /// never from landscape width alone. Pass both width and height.
+  /// Pass [hostIsTablet] from the sticky host form-factor latch so a physical
+  /// tablet keeps size 132 in a narrow split pane. Without it, classification
+  /// falls back to window shortest side (never landscape width alone).
   /// Arrow-only responsive shrinkage lives in
   /// [resolveDriverNavigationArrowScale] and is applied via [arrowScale].
   static double resolveIconSize({
@@ -50,11 +52,13 @@ class NavigationDriverHudOverlay extends StatelessWidget {
     required double screenHeight,
     required bool cockpitBoost,
     int viewLevel = kDriverCockpitViewLevelDefault,
+    bool? hostIsTablet,
   }) {
     // viewLevel is retained for call-site compatibility; size is level-independent.
     return resolveDriverNavigationMarkerBaseIconSize(
       viewportSize: Size(screenWidth, screenHeight),
       cockpitBoost: cockpitBoost,
+      hostIsTablet: hostIsTablet,
     );
   }
 

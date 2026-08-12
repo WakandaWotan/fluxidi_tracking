@@ -69,6 +69,38 @@ void main() {
       );
     });
 
+    test(
+      'host tablet keeps 132 in narrow vertical-split pane (not window 94)',
+      () {
+        const narrow = Size(400, 1280);
+        expect(driverNavigationIsTabletDevice(narrow), isFalse);
+        expect(
+          resolveDriverNavigationMarkerBaseIconSize(
+            viewportSize: narrow,
+            cockpitBoost: true,
+          ),
+          kDriverCockpitPro2HudPhoneL7,
+        );
+        expect(
+          resolveDriverNavigationMarkerBaseIconSize(
+            viewportSize: narrow,
+            cockpitBoost: true,
+            hostIsTablet: true,
+          ),
+          kDriverCockpitPro2HudTabletL7,
+        );
+        expect(
+          NavigationDriverHudOverlay.resolveIconSize(
+            screenWidth: narrow.width,
+            screenHeight: narrow.height,
+            cockpitBoost: true,
+            hostIsTablet: true,
+          ),
+          kDriverCockpitPro2HudTabletL7,
+        );
+      },
+    );
+
     test('3. compact phone landscape uses the compact arrow scale', () {
       final scale = resolveDriverNavigationArrowScale(
         viewportWidth: 640,

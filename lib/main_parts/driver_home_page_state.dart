@@ -16639,6 +16639,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     required bool isLandscape,
     required double safeTop,
     required double safeBottom,
+    required double screenWidth,
     required double screenHeight,
     required double vehicleLat,
     required double vehicleLon,
@@ -16668,11 +16669,9 @@ class _DriverHomePageState extends State<DriverHomePage>
           : (progress?.hasReliableSnap ?? false),
       forceVehicleCenter: forceVehicleCenter,
     );
-    final hudSize = driverCockpitFixedHudIconSize(isTablet: isTablet);
-    // NAV-VEHICLE-MODE-CAR-ARROW-1 (Phase 7): use the same Street Level marker
-    // offset that positions the on-screen marker, so the camera nose anchor
-    // and route look-ahead track the low KPI-relative marker as one unit.
-    final bottomHud =
+    // FLUXIDI-VEHICLE-CAMERA-VIEWPORT-ANCHOR-P0: one shared host+window model
+    // for HUD icon size, paint bottom, nose fraction, and Mapbox padding.
+    final layoutBottom =
         (_streetLevelHudBottomOffset ??
             driverCockpitFixedHudBottomOffset(
               isLandscape: isLandscape,
@@ -16680,6 +16679,16 @@ class _DriverHomePageState extends State<DriverHomePage>
               isTablet: isTablet,
             )) +
         safeBottom;
+    final viewportAnchor = resolveDriverViewportAnchorGeometry(
+      hostIsTablet: isTablet,
+      viewportWidth: screenWidth,
+      viewportHeight: screenHeight,
+      layoutBottomHudHeightPx: layoutBottom,
+      safeTop: safeTop,
+      safeBottom: safeBottom,
+    );
+    final hudSize = viewportAnchor.vehicleIconSize;
+    final bottomHud = viewportAnchor.bottomHudHeightPx;
     final profile = resolveDriverCockpitCameraProfile(
       DriverCockpitCameraProfileInput(
         currentZoom: seedZoom,
@@ -16701,47 +16710,41 @@ class _DriverHomePageState extends State<DriverHomePage>
           ? _driverCockpitMapVisualStyle
           : null,
     );
-    final noseAnchor = resolveDriverCockpitNoseAnchorFraction(
-      isTablet: isTablet,
-      isLandscape: isLandscape,
-      viewLevel: _driverCockpitViewLevel,
-      appliedZoom: profile.zoom,
-      appliedPitch: profile.pitch,
-      hudVehicleSizePx: hudSize,
-      viewportHeightPx: screenHeight,
-      bottomHudHeightPx: bottomHud,
-    );
+    // Prefer the shared model's final clamped fraction + padding so paint and
+    // camera never diverge when the short-pane safety clamp binds.
+    final sharedPadding = viewportAnchor.cameraPadding;
+    final sharedAnchor = viewportAnchor.anchorFraction;
     _logNavPresNoseAnchor(
       isTablet: isTablet,
       level: _driverCockpitViewLevel,
-      geometry: noseAnchor.geometry,
+      geometry: viewportAnchor.vehicleGeometry,
       hudSize: hudSize,
       bottomHud: bottomHud,
-      anchor: noseAnchor.anchorFraction,
-      result: noseAnchor.result,
+      anchor: sharedAnchor,
+      result: viewportAnchor.anchorClamped ? 'clamped' : 'applied',
     );
     _logNavPresCameraTargetIfChanged(
       level: _driverCockpitViewLevel,
       targetZoom: profile.targetZoom,
       targetPitch: profile.targetPitch,
-      targetAnchor: profile.anchorFraction,
+      targetAnchor: sharedAnchor,
     );
     _logNavPresCameraAppliedIfChanged(
       level: _driverCockpitViewLevel,
       appliedZoom: profile.zoom,
       appliedPitch: profile.pitch,
-      appliedAnchor: profile.anchorFraction,
+      appliedAnchor: sharedAnchor,
       source: directAdjust ? 'direct_adjust' : seedSource,
       reason: profile.reason,
     );
     return (
       zoom: profile.zoom,
       pitch: profile.pitch,
-      padding: profile.padding,
+      padding: sharedPadding,
       centerLat: profile.centerLat,
       centerLon: profile.centerLon,
       centerMode: profile.centerMode,
-      anchorFraction: profile.anchorFraction,
+      anchorFraction: sharedAnchor,
       reason: profile.reason,
     );
   }
@@ -17842,6 +17845,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       isLandscape: isLandscape,
       safeTop: safe.top,
       safeBottom: safe.bottom,
+      screenWidth: width,
       screenHeight: height,
       vehicleLat: target.lat,
       vehicleLon: target.lon,
@@ -22723,6 +22727,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           phasePreviewTarget?.hasCoordinate == true
               ? phasePreviewTarget!.lon
               : visual.point.lon;
+      final mqSize = MediaQuery.sizeOf(context);
       final cockpit = _driverCockpitCameraOverrides(
         policyZoom: cameraZoom,
         policyPitch: cameraPitch,
@@ -22730,7 +22735,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         isLandscape: isLandscape,
         safeTop: safeTop,
         safeBottom: safeBottom,
-        screenHeight: MediaQuery.sizeOf(context).height,
+        screenWidth: mqSize.width,
+        screenHeight: mqSize.height,
         vehicleLat: effectiveVehicleLat,
         vehicleLon: effectiveVehicleLon,
         bearingDeg: heading,
@@ -25237,32 +25243,50 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  /// NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: issue exactly one forced
-  /// follow-camera application after the current viewport has been observed
-  /// stable across two consecutive builds. Runs only when the epoch is still
-  /// current and a follow-mode live ride is active — the reseed re-derives
-  /// fresh camera padding for the current viewport, unpausing the streetlevel
-  /// pump (which had paused while `_streetlevelFollowPadding` was null).
+  /// NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1 /
+  /// FLUXIDI-VEHICLE-CAMERA-VIEWPORT-ANCHOR-P0: issue exactly one forced
+  /// camera re-apply after the current viewport has been observed stable
+  /// across two consecutive builds. Live ride uses forced follow (pump
+  /// padding). Pre-START prepared preview uses the bearing-preserving
+  /// streetlevel preview path — never passive GPS follow, never a bearing
+  /// rewrite.
   void _reseedFollowCameraForCurrentViewport({required int epochAtSchedule}) {
     if (!mounted) return;
     if (_navViewportEpoch != epochAtSchedule) return;
     final map = _map;
     if (map == null || _mapStyleChanging) return;
-    final pos = _lastPos;
-    if (pos == null) return;
-    if (_cameraMode != _CameraMode.follow || !_liveRideActive) return;
-    _logNavBounded(
-      'NAV_VIEWPORT',
-      'event=reseed_follow epoch=$_navViewportEpoch',
-      intervalMs: 1,
-    );
-    unawaited(
-      _followCameraTesla(
-        pos,
-        force: true,
-        cameraReason: 'viewport_reseed',
-      ),
-    );
+    if (_cameraMode != _CameraMode.follow) return;
+    if (_liveRideActive) {
+      final pos = _lastPos;
+      if (pos == null) return;
+      _logNavBounded(
+        'NAV_VIEWPORT',
+        'event=reseed_follow epoch=$_navViewportEpoch',
+        intervalMs: 1,
+      );
+      unawaited(
+        _followCameraTesla(
+          pos,
+          force: true,
+          cameraReason: 'viewport_reseed',
+        ),
+      );
+      return;
+    }
+    // Pre-START: HUD may rebuild on resize; restore the same held camera
+    // anchor (padding/geometry) without altering latched bearing.
+    if (_navFixedHudPresentationActive && _fixedStreetLevelPreviewDraft) {
+      _logNavBounded(
+        'NAV_VIEWPORT',
+        'event=reseed_prestart epoch=$_navViewportEpoch',
+        intervalMs: 1,
+      );
+      unawaited(
+        _applyPreviewStreetlevelCameraIfEligible(
+          reason: 'viewport_reseed_prestart',
+        ),
+      );
+    }
   }
 
   /// NAV-TELLERS-EXACT-LIVE-VIEWPORT-1: on portrait ↔ landscape while Tellers
@@ -33861,7 +33885,10 @@ class _DriverHomePageState extends State<DriverHomePage>
           )
         : null;
     _streetLevelHudBottomOffset = streetLevelHudBottomOffset;
-    final double driverHudBottom = streetLevelHudBottomOffset != null
+    // FLUXIDI-VEHICLE-CAMERA-VIEWPORT-ANCHOR-P0: paint + camera share one
+    // host-tablet geometry model (icon 132 on SM-X400 even in a 400-wide
+    // pane; clamped nose/focal identical).
+    final double layoutHudBottom = streetLevelHudBottomOffset != null
         ? streetLevelHudBottomOffset + safeBottomInset
         : (showCockpit
             ? driverCockpitFixedHudBottomOffset(
@@ -33872,16 +33899,52 @@ class _DriverHomePageState extends State<DriverHomePage>
                   ) +
                   safeBottomInset
             : arrowBottom);
+    final DriverViewportAnchorGeometry? streetLevelViewportAnchor =
+        streetLevelCockpit && navPresentationState.showDriverHudOverlay
+            ? resolveDriverViewportAnchorGeometry(
+                hostIsTablet: hostIsTablet,
+                viewportWidth: screenW,
+                viewportHeight: screenH,
+                layoutBottomHudHeightPx: layoutHudBottom,
+                safeTop: MediaQuery.of(context).padding.top,
+                safeBottom: safeBottomInset,
+                cockpitBoost: navPresentationState.useDriverCockpitCamera,
+              )
+            : null;
+    final double driverHudBottom =
+        streetLevelViewportAnchor?.bottomHudHeightPx ?? layoutHudBottom;
     final double driverHudIconSize = navPresentationState.showDriverHudOverlay
-        ? NavigationDriverHudOverlay.resolveIconSize(
-            // NAV-PHONE-LANDSCAPE-MARKER-SCALE-1: pass both axes so phone
-            // landscape is classified by shortestSide, not wide width.
-            screenWidth: screenW,
-            screenHeight: screenH,
-            cockpitBoost: navPresentationState.useDriverCockpitCamera,
-            viewLevel: _driverCockpitViewLevel,
-          )
+        ? (streetLevelViewportAnchor?.vehicleIconSize ??
+            NavigationDriverHudOverlay.resolveIconSize(
+              screenWidth: screenW,
+              screenHeight: screenH,
+              cockpitBoost: navPresentationState.useDriverCockpitCamera,
+              viewLevel: _driverCockpitViewLevel,
+              hostIsTablet: hostIsTablet,
+            ))
         : 56.0;
+    // Resize atomicity: when viewport epoch cleared follow padding, refill
+    // from the same anchor model the HUD just painted — before post-frame
+    // reseed — so Mapbox never sits on stale padding against a new HUD.
+    if (streetLevelViewportAnchor != null &&
+        _cameraMode == _CameraMode.follow &&
+        _navFixedHudPresentationActive) {
+      final pad = streetLevelViewportAnchor.cameraPadding;
+      final cached = _streetlevelFollowPadding;
+      final needsSync = cached == null ||
+          (cached.top - pad.top).abs() > 0.5 ||
+          (cached.bottom - pad.bottom).abs() > 0.5 ||
+          (cached.left - pad.left).abs() > 0.5 ||
+          (cached.right - pad.right).abs() > 0.5;
+      if (needsSync) {
+        _streetlevelFollowPadding = mb.MbxEdgeInsets(
+          top: pad.top,
+          left: pad.left,
+          bottom: pad.bottom,
+          right: pad.right,
+        );
+      }
+    }
     // NAV-MARKER-ARROW-RESPONSIVE-SCALE-1: arrow-only responsive scale. Auto
     // and the camera nose-anchor keep [driverHudIconSize] unchanged so the
     // Street Level bottom anchor and Car ↔ Arrow camera stay stable.

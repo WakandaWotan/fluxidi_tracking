@@ -19,12 +19,16 @@ bool driverNavigationIsTabletDevice(Size viewportSize) {
 
 /// Shared base HUD icon size for Car and Arrow (camera nose-anchor baseline).
 ///
-/// Device class is orientation-independent. View level does not affect size.
+/// Prefer [hostIsTablet] (physical display / sticky latch) when available so a
+/// tablet host keeps size 132 in a narrow multi-window pane. Falls back to
+/// window shortest-side classification only when host identity is unknown.
+/// View level does not affect size.
 double resolveDriverNavigationMarkerBaseIconSize({
   required Size viewportSize,
   required bool cockpitBoost,
+  bool? hostIsTablet,
 }) {
-  final isTablet = driverNavigationIsTabletDevice(viewportSize);
+  final isTablet = hostIsTablet ?? driverNavigationIsTabletDevice(viewportSize);
   if (!cockpitBoost) {
     return isTablet ? 80.0 : 72.0;
   }
@@ -59,11 +63,13 @@ DriverNavigationMarkerSizeResolution resolveDriverNavigationMarkerSize({
   required Orientation orientation,
   required NavigationPresentationMode presentationMode,
   required bool isArrow,
+  bool? hostIsTablet,
 }) {
-  final isTablet = driverNavigationIsTabletDevice(viewportSize);
+  final isTablet = hostIsTablet ?? driverNavigationIsTabletDevice(viewportSize);
   final base = resolveDriverNavigationMarkerBaseIconSize(
     viewportSize: viewportSize,
     cockpitBoost: cockpitBoost,
+    hostIsTablet: isTablet,
   );
   final scale = isArrow
       ? resolveDriverNavigationArrowScale(
