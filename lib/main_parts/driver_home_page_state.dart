@@ -22820,34 +22820,34 @@ class _DriverHomePageState extends State<DriverHomePage>
     // landscape, centre band in portrait) via padding only. View level, zoom,
     // pitch and normal (non-Tellers) follow behaviour are unchanged.
     if (_navPresentationMode.isTellers) {
-      // NAV-TELLERS-EXACT-LIVE-VIEWPORT-1 / NAV-TELLERS-POSE-ANCHOR-AND-
-      // DIAGNOSTICS-UI-1: resolve the single authoritative Tellers geometry the
-      // chrome/aperture/marker all use, then wire BOTH the camera target and
-      // padding from it so the authoritative navigation pose projects onto the
-      // exact on-screen marker anchor (project(pose) == markerAnchorGlobal).
-      final tellersSize = MediaQuery.sizeOf(context);
-      final tellersPad = MediaQuery.paddingOf(context);
-      // NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 2): classify
-      // form factor by the SHORTEST side, identical to the Tellers marker
-      // widget (build() line — FluxidiBreakpoints.classifyDeviceSize). Using
-      // `width >= 600` here promoted a phone in landscape (width ≥ 600) to
-      // tablet, so the camera resolved a DIFFERENT liveWindowRect/markerAnchor
-      // than the marker widget — the multi-pixel displacement seen in the field
-      // that Centreren could not correct. Both must resolve the SAME geometry so
-      // project(matchedPose) == markerRoadContactAnchorGlobal.
-      final tellersClass = FluxidiBreakpoints.classifyDeviceSize(tellersSize);
-      final tellersIsTablet = tellersClass == FluxidiScreenClass.tablet ||
-          tellersClass == FluxidiScreenClass.desktop;
-      final tellersGeometry = DriverTellersLayoutGeometry.resolve(
-        viewportSize: tellersSize,
-        safeTop: tellersPad.top,
-        safeBottom: tellersPad.bottom,
-        safeLeft: tellersPad.left,
-        safeRight: tellersPad.right,
+      // NAV-TELLERS-EXACT-LIVE-VIEWPORT-1 / FLUXIDI-TELLERS-LIVE-MAP-FORWARD-
+      // VISIBILITY: chrome + camera must share ONE host-tablet liveWindowRect
+      // resolve (nose ≈ 72% of the aperture). Do not classify tablet from the
+      // multi-window pane — overlay build() already uses `_hostIsTablet`.
+      final tellersGeometry = _resolveTellersLayoutGeometryForCurrentViewport(
         isLandscape: isLandscape,
-        isTablet: tellersIsTablet,
       );
       viewPadding = tellersGeometry.cameraPadding;
+      if (_navViewportEpoch == navViewportEpochAtStart) {
+        _logNavBounded(
+          'NAV_TELLERS_LIVE_ANCHOR',
+          formatNavTellersLiveWindowGeometryDiagnostic(
+            reason: cameraReason,
+            viewportEpoch: _navViewportEpoch,
+            viewportGeneration: _tellersViewport.generation,
+            tellersActive: true,
+            anchor: resolveTellersLiveWindowVehicleAnchor(
+              liveWindowRect: tellersGeometry.liveWindowRect,
+              viewportSize: tellersGeometry.viewportSize,
+              isTablet: tellersGeometry.isTablet,
+              vehicleIconSize: tellersGeometry.vehicleIconSize,
+            ),
+            // Retained MapWidget is created once in initState (generation=1).
+            mapWidgetGeneration: 1,
+          ),
+          intervalMs: 750,
+        );
+      }
       // NAV-TELLERS-ROUTE-CENTERLINE-LOCK-1: resolve the single authoritative
       // Tellers pose. When the snap engine + confidence engine agree on a
       // trustworthy, on-route snap, the camera + pose-lock target follow the
@@ -25143,6 +25143,29 @@ class _DriverHomePageState extends State<DriverHomePage>
       'markerOwner=tellersLiveWindow',
       intervalMs: 1,
     );
+    if (mounted) {
+      final openGeo = _resolveTellersLayoutGeometryForCurrentViewport(
+        isLandscape:
+            MediaQuery.of(context).orientation == Orientation.landscape,
+      );
+      _logNavBounded(
+        'NAV_TELLERS_LIVE_ANCHOR',
+        formatNavTellersLiveWindowGeometryDiagnostic(
+          reason: 'enter',
+          viewportEpoch: _navViewportEpoch,
+          viewportGeneration: viewportToken,
+          tellersActive: true,
+          anchor: resolveTellersLiveWindowVehicleAnchor(
+            liveWindowRect: openGeo.liveWindowRect,
+            viewportSize: openGeo.viewportSize,
+            isTablet: openGeo.isTablet,
+            vehicleIconSize: openGeo.vehicleIconSize,
+          ),
+          mapWidgetGeneration: 1,
+        ),
+        intervalMs: 1,
+      );
+    }
     // One viewport/opacity request per actual mode transition — not on every
     // fare/timer tick. Marker choice is unchanged.
     unawaited(
@@ -25310,6 +25333,25 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  /// Single host-identity Tellers layout resolve used by chrome + follow camera.
+  DriverTellersLayoutGeometry _resolveTellersLayoutGeometryForCurrentViewport({
+    required bool isLandscape,
+    bool reserveActionBar = true,
+  }) {
+    final size = MediaQuery.sizeOf(context);
+    final pad = MediaQuery.paddingOf(context);
+    return DriverTellersLayoutGeometry.resolve(
+      viewportSize: size,
+      safeTop: pad.top,
+      safeBottom: pad.bottom,
+      safeLeft: pad.left,
+      safeRight: pad.right,
+      isLandscape: isLandscape,
+      isTablet: _hostIsTablet(context),
+      reserveActionBar: reserveActionBar,
+    );
+  }
+
   /// NAV-TELLERS-EXACT-LIVE-VIEWPORT-1: on portrait ↔ landscape while Tellers
   /// is active, bump the viewport generation once and issue one latest-wins
   /// camera update. Never recreates MapWidget, GPS, style, route, fare or
@@ -25357,6 +25399,12 @@ class _DriverHomePageState extends State<DriverHomePage>
       'NAV_TELLERS',
       'event=close viewportGeneration=${_tellersViewport.generation} '
       'styleRequest=false',
+      intervalMs: 1,
+    );
+    _logNavBounded(
+      'NAV_TELLERS_LIVE_ANCHOR',
+      'reason=exit tellers=0 epoch=$_navViewportEpoch '
+      'gen=${_tellersViewport.generation} mapGen=1',
       intervalMs: 1,
     );
     // Restore normal Mapbox/HUD opacity ownership once per transition.
@@ -33947,23 +33995,53 @@ class _DriverHomePageState extends State<DriverHomePage>
     // Resize atomicity: when viewport epoch cleared follow padding, refill
     // from the same anchor model the HUD just painted — before post-frame
     // reseed — so Mapbox never sits on stale padding against a new HUD.
-    if (streetLevelViewportAnchor != null &&
-        _cameraMode == _CameraMode.follow &&
-        _navFixedHudPresentationActive) {
-      final pad = streetLevelViewportAnchor.cameraPadding;
-      final cached = _streetlevelFollowPadding;
-      final needsSync = cached == null ||
-          (cached.top - pad.top).abs() > 0.5 ||
-          (cached.bottom - pad.bottom).abs() > 0.5 ||
-          (cached.left - pad.left).abs() > 0.5 ||
-          (cached.right - pad.right).abs() > 0.5;
-      if (needsSync) {
-        _streetlevelFollowPadding = mb.MbxEdgeInsets(
-          top: pad.top,
-          left: pad.left,
-          bottom: pad.bottom,
-          right: pad.right,
-        );
+    //
+    // FLUXIDI-TELLERS-LIVE-MAP-FORWARD-VISIBILITY: while Tellers is active the
+    // pump cache must track the liveWindowRect nose (~72%), never ordinary
+    // full-viewport Street Level padding (that lands the vehicle mid cut-out).
+    if (_cameraMode == _CameraMode.follow && _navFixedHudPresentationActive) {
+      final DriverTellersLayoutGeometry? tellersGeometry = tellersActive
+          ? _resolveTellersLayoutGeometryForCurrentViewport(
+              isLandscape: isLandscape,
+            )
+          : null;
+      final NavCameraViewPadding? pad =
+          tellersGeometry?.cameraPadding ??
+          streetLevelViewportAnchor?.cameraPadding;
+      if (pad != null) {
+        final cached = _streetlevelFollowPadding;
+        final needsSync = cached == null ||
+            (cached.top - pad.top).abs() > 0.5 ||
+            (cached.bottom - pad.bottom).abs() > 0.5 ||
+            (cached.left - pad.left).abs() > 0.5 ||
+            (cached.right - pad.right).abs() > 0.5;
+        if (needsSync) {
+          _streetlevelFollowPadding = mb.MbxEdgeInsets(
+            top: pad.top,
+            left: pad.left,
+            bottom: pad.bottom,
+            right: pad.right,
+          );
+          if (tellersGeometry != null) {
+            _logNavBounded(
+              'NAV_TELLERS_LIVE_ANCHOR',
+              formatNavTellersLiveWindowGeometryDiagnostic(
+                reason: 'resize_sync',
+                viewportEpoch: _navViewportEpoch,
+                viewportGeneration: _tellersViewport.generation,
+                tellersActive: true,
+                anchor: resolveTellersLiveWindowVehicleAnchor(
+                  liveWindowRect: tellersGeometry.liveWindowRect,
+                  viewportSize: tellersGeometry.viewportSize,
+                  isTablet: tellersGeometry.isTablet,
+                  vehicleIconSize: tellersGeometry.vehicleIconSize,
+                ),
+                mapWidgetGeneration: 1,
+              ),
+              intervalMs: 750,
+            );
+          }
+        }
       }
     }
     // NAV-MARKER-ARROW-RESPONSIVE-SCALE-1: arrow-only responsive scale. Auto

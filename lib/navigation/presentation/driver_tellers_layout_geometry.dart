@@ -10,6 +10,7 @@ import 'dart:ui' show Color, Offset, Rect, Size;
 
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/navigation/nav_engine/nav_camera_view_mode.dart';
+import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_cockpit_camera.dart';
 
 /// NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 1): opaque neutral
 /// map-background fallback. Painted directly below the retained MapWidget and
@@ -32,6 +33,7 @@ const double kTellersTabletCockpitKpiRowH = 78.0;
 const double kTellersTabletCockpitKpiWrapH = 160.0;
 const double kTellersTabletCockpitPanelPad = 20.0;
 const double kTellersTabletCockpitInnerGap = 6.0;
+
 /// Extra px so Column children never overflow the reserved Positioned band.
 const double kTellersTabletCockpitLayoutSlack = 4.0;
 const double kTellersTabletCockpitMinMapH = 180.0;
@@ -63,10 +65,23 @@ double driverTellersTabletCockpitTopMinHeight({
       kTellersTabletCockpitLayoutSlack;
 }
 
-/// Marker vertical position inside [DriverTellersLayoutGeometry.liveWindowRect]
-/// as a fraction of the window height (0 = top, 1 = bottom). Lower-centre
-/// matches the previous Alignment(0, 0.55) visual (≈ 0.775 from top).
-const double kTellersMarkerAnchorYFraction = 0.775;
+/// Requested vehicle-nose Y inside [DriverTellersLayoutGeometry.liveWindowRect]
+/// as a fraction of the live-window height (0 = top, 1 = bottom).
+///
+/// FLUXIDI-TELLERS-LIVE-MAP-FORWARD-VISIBILITY: ~72% maximises forward road
+/// ahead of the vehicle inside the Tellers cut-out. Realized fraction may be
+/// clamped lower on unusually short live windows so the vehicle tail stays in.
+const double kTellersLiveWindowNoseYFractionRequested = 0.72;
+
+/// Backward-compatible alias of [kTellersLiveWindowNoseYFractionRequested].
+const double kTellersMarkerAnchorYFraction =
+    kTellersLiveWindowNoseYFractionRequested;
+
+/// Bottom inset (logical px) keeping the vehicle tail inside the live aperture.
+const double kTellersLiveWindowVehicleBottomMarginPx = 12.0;
+
+/// Top inset (logical px) keeping the vehicle bitmap inside the live aperture.
+const double kTellersLiveWindowVehicleTopMarginPx = 8.0;
 
 /// Inner inset of the camera focus within the live window (border / chrome).
 const double kTellersLiveWindowCameraInnerInset = 8.0;
@@ -83,6 +98,179 @@ String driverTellersLiveNavigationLabel(AppLanguage language) {
     fr: 'Navigation en direct',
     es: 'Navegación en vivo',
   ).of(language);
+}
+
+/// Pure Tellers-only vehicle/camera anchor relative to a realized live window.
+///
+/// All points are in the same full-viewport global logical-pixel space used by
+/// Mapbox padding and (when painted) the Flutter HUD. Ordinary Navigation does
+/// not consume this type.
+class TellersLiveWindowVehicleAnchor {
+  const TellersLiveWindowVehicleAnchor({
+    required this.liveWindowRect,
+    required this.viewportSize,
+    required this.vehicleIconSize,
+    required this.requestedNoseFractionInLive,
+    required this.realizedNoseFractionInLive,
+    required this.noseClamped,
+    required this.vehicleNoseGlobal,
+    required this.vehicleCenterGlobal,
+    required this.vehicleTailGlobal,
+    required this.cameraPadding,
+    required this.cameraFocalScreenPoint,
+  });
+
+  final Rect liveWindowRect;
+  final Size viewportSize;
+  final double vehicleIconSize;
+  final double requestedNoseFractionInLive;
+  final double realizedNoseFractionInLive;
+  final bool noseClamped;
+
+  /// Global screen point of the vehicle nose (= Mapbox focal target).
+  final Offset vehicleNoseGlobal;
+  final Offset vehicleCenterGlobal;
+  final Offset vehicleTailGlobal;
+
+  final NavCameraViewPadding cameraPadding;
+  final Offset cameraFocalScreenPoint;
+
+  /// Alias used by Tellers layout / pose-lock (nose = marker road contact).
+  Offset get markerAnchor => vehicleNoseGlobal;
+
+  bool get noseMatchesFocal {
+    return (vehicleNoseGlobal.dx - cameraFocalScreenPoint.dx).abs() <= 0.5 &&
+        (vehicleNoseGlobal.dy - cameraFocalScreenPoint.dy).abs() <= 0.5;
+  }
+}
+
+/// Resolve the Tellers vehicle nose/centre/tail and Mapbox padding so that:
+/// - the nose targets [requestedNoseFractionInLive] of [liveWindowRect] height;
+/// - centre/tail follow the existing 132/94 HUD bitmap fractions;
+/// - the tail stays inside the live aperture with a bottom margin;
+/// - camera focal == nose in full-viewport space.
+TellersLiveWindowVehicleAnchor resolveTellersLiveWindowVehicleAnchor({
+  required Rect liveWindowRect,
+  required Size viewportSize,
+  required bool isTablet,
+  double requestedNoseFractionInLive = kTellersLiveWindowNoseYFractionRequested,
+  double vehicleIconSize = 0,
+  double bottomMarginPx = kTellersLiveWindowVehicleBottomMarginPx,
+  double topMarginPx = kTellersLiveWindowVehicleTopMarginPx,
+  double noseFractionFromTop = kDriverHudVehicleNoseFractionFromTop,
+  double tailFractionFromTop = kDriverHudVehicleTailFractionFromTop,
+}) {
+  final live = liveWindowRect;
+  final icon = vehicleIconSize > 0
+      ? vehicleIconSize
+      : driverCockpitFixedHudIconSize(isTablet: isTablet);
+  final requested = requestedNoseFractionInLive.clamp(0.0, 1.0).toDouble();
+  final noseFromTop = noseFractionFromTop.clamp(0.0, 1.0).toDouble();
+  final tailFromTop = tailFractionFromTop.clamp(0.0, 1.0).toDouble();
+  final bottomMargin = math.max(0.0, bottomMarginPx);
+  final topMargin = math.max(0.0, topMarginPx);
+
+  double noseY = live.height > 0
+      ? live.top + live.height * requested
+      : live.top;
+  var clamped = false;
+
+  double topFromNose(double nose) => nose - icon * noseFromTop;
+  double tailFromNose(double nose) => topFromNose(nose) + icon * tailFromTop;
+
+  // Keep the full vehicle bitmap inside the live aperture when possible.
+  final minTop = live.top + topMargin;
+  final maxTail = live.bottom - bottomMargin;
+  final minNose = minTop + icon * noseFromTop;
+  final maxNose = maxTail - icon * (tailFromTop - noseFromTop);
+
+  if (live.height > 0 && maxNose >= minNose) {
+    if (noseY > maxNose) {
+      noseY = maxNose;
+      clamped = true;
+    } else if (noseY < minNose) {
+      noseY = minNose;
+      clamped = true;
+    }
+  } else if (live.height > 0) {
+    // Unusually short window: pin as low as the aperture allows.
+    noseY = math.max(live.top, maxTail - icon * (1.0 - noseFromTop));
+    clamped = true;
+  }
+
+  // Final safety: never leave the aperture with a non-finite / NaN nose.
+  if (!noseY.isFinite) {
+    noseY = live.top + live.height * 0.5;
+    clamped = true;
+  }
+
+  final topY = topFromNose(noseY);
+  final centerY = topY + icon / 2.0;
+  final tailY = tailFromNose(noseY);
+  final nose = Offset(live.left + live.width / 2.0, noseY);
+  final center = Offset(nose.dx, centerY);
+  final tail = Offset(nose.dx, tailY);
+  final realized = live.height > 0
+      ? ((noseY - live.top) / live.height).clamp(0.0, 1.0).toDouble()
+      : 0.0;
+
+  final padLeft = math.max(0.0, 2 * nose.dx - viewportSize.width);
+  final padRight = math.max(0.0, viewportSize.width - 2 * nose.dx);
+  final padTop = math.max(0.0, 2 * nose.dy - viewportSize.height);
+  final padBottom = math.max(0.0, viewportSize.height - 2 * nose.dy);
+  final padding = NavCameraViewPadding(
+    top: padTop,
+    bottom: padBottom,
+    left: padLeft,
+    right: padRight,
+  );
+  final focal = Offset(
+    (padding.left + (viewportSize.width - padding.right)) / 2,
+    (padding.top + (viewportSize.height - padding.bottom)) / 2,
+  );
+
+  return TellersLiveWindowVehicleAnchor(
+    liveWindowRect: live,
+    viewportSize: viewportSize,
+    vehicleIconSize: icon,
+    requestedNoseFractionInLive: requested,
+    realizedNoseFractionInLive: realized,
+    noseClamped: clamped,
+    vehicleNoseGlobal: nose,
+    vehicleCenterGlobal: center,
+    vehicleTailGlobal: tail,
+    cameraPadding: padding,
+    cameraFocalScreenPoint: focal,
+  );
+}
+
+/// Bounded, PII-free diagnostic for Tellers live-window vehicle geometry.
+String formatNavTellersLiveWindowGeometryDiagnostic({
+  required String reason,
+  required int viewportEpoch,
+  required int viewportGeneration,
+  required bool tellersActive,
+  required TellersLiveWindowVehicleAnchor anchor,
+  int? mapWidgetGeneration,
+}) {
+  final live = anchor.liveWindowRect;
+  return 'reason=$reason '
+      'tellers=${tellersActive ? 1 : 0} '
+      'epoch=$viewportEpoch '
+      'gen=$viewportGeneration '
+      'liveL=${live.left.round()} '
+      'liveT=${live.top.round()} '
+      'liveW=${live.width.round()} '
+      'liveH=${live.height.round()} '
+      'reqNose=${anchor.requestedNoseFractionInLive.toStringAsFixed(3)} '
+      'realNose=${anchor.realizedNoseFractionInLive.toStringAsFixed(3)} '
+      'clamped=${anchor.noseClamped ? 1 : 0} '
+      'noseY=${anchor.vehicleNoseGlobal.dy.round()} '
+      'centerY=${anchor.vehicleCenterGlobal.dy.round()} '
+      'tailY=${anchor.vehicleTailGlobal.dy.round()} '
+      'focalY=${anchor.cameraFocalScreenPoint.dy.round()} '
+      'icon=${anchor.vehicleIconSize.round()}'
+      '${mapWidgetGeneration == null ? '' : ' mapGen=$mapWidgetGeneration'}';
 }
 
 /// Immutable, deterministic Tellers layout geometry in full-viewport coordinates
@@ -103,6 +291,12 @@ class DriverTellersLayoutGeometry {
     required this.cameraPadding,
     required this.cameraScreenAnchor,
     required this.cornerRadius,
+    this.requestedNoseFractionInLive = kTellersLiveWindowNoseYFractionRequested,
+    this.realizedNoseFractionInLive = kTellersLiveWindowNoseYFractionRequested,
+    this.noseFractionClamped = false,
+    this.vehicleIconSize = kDriverCockpitPro2HudTabletL7,
+    this.vehicleCenterGlobal = Offset.zero,
+    this.vehicleTailGlobal = Offset.zero,
   });
 
   final Size viewportSize;
@@ -125,7 +319,7 @@ class DriverTellersLayoutGeometry {
   /// Tablet-only ride-price summary band (phone keeps [Rect.zero]).
   final Rect priceSummaryRect;
 
-  /// Absolute screen position of the selected Car/Arrow marker.
+  /// Absolute screen position of the selected Car/Arrow marker (vehicle nose).
   final Offset markerAnchor;
 
   /// Absolute bounds reserved for the Car/Arrow selector (top-right of live).
@@ -143,6 +337,17 @@ class DriverTellersLayoutGeometry {
   final Offset cameraScreenAnchor;
 
   final double cornerRadius;
+
+  /// Requested nose Y as a fraction of [liveWindowRect] height.
+  final double requestedNoseFractionInLive;
+
+  /// Realized nose Y as a fraction of [liveWindowRect] height (after clamp).
+  final double realizedNoseFractionInLive;
+
+  final bool noseFractionClamped;
+  final double vehicleIconSize;
+  final Offset vehicleCenterGlobal;
+  final Offset vehicleTailGlobal;
 
   /// Resolve every Tellers rect from the safe viewport. Pure and deterministic.
   ///
@@ -185,11 +390,9 @@ class DriverTellersLayoutGeometry {
       final controlsH = !reserveActionBar
           ? 0.0
           : (isLandscape
-              ? kTellersTabletCockpitActionsHLandscape
-              : kTellersTabletCockpitActionsHPortrait);
-      final bottomChrome = controlsH > 0
-          ? controlsH + gap + priceH
-          : priceH;
+                ? kTellersTabletCockpitActionsHLandscape
+                : kTellersTabletCockpitActionsHPortrait);
+      final bottomChrome = controlsH > 0 ? controlsH + gap + priceH : priceH;
       final topMin = driverTellersTabletCockpitTopMinHeight(
         contentWidth: contentW,
         isLandscape: isLandscape,
@@ -201,22 +404,12 @@ class DriverTellersLayoutGeometry {
         isLandscape: isLandscape,
         topMin: topMin,
       );
-      metersPanelRect = Rect.fromLTWH(
-        contentLeft,
-        contentTop,
-        contentW,
-        topH,
-      );
+      metersPanelRect = Rect.fromLTWH(contentLeft, contentTop, contentW, topH);
       final liveTop = contentTop + topH + gap;
       final liveBottom = contentBottom - bottomChrome - gap;
       // Map gets remaining space only — never expand into footer.
       final liveH = math.max(0.0, liveBottom - liveTop);
-      liveWindowRect = Rect.fromLTWH(
-        contentLeft,
-        liveTop,
-        contentW,
-        liveH,
-      );
+      liveWindowRect = Rect.fromLTWH(contentLeft, liveTop, contentW, liveH);
       // Map → optional actions → price (price is the bottom cockpit band).
       if (controlsH > 0) {
         controlsRect = Rect.fromLTWH(
@@ -250,12 +443,7 @@ class DriverTellersLayoutGeometry {
       // Phone landscape: LEFT ≈ 44% opaque chrome; RIGHT = live aperture.
       final leftW = contentW * kTellersLandscapeLeftWidthFraction;
       final liveW = math.max(0.0, contentW - leftW - gap);
-      metersPanelRect = Rect.fromLTWH(
-        contentLeft,
-        contentTop,
-        leftW,
-        contentH,
-      );
+      metersPanelRect = Rect.fromLTWH(contentLeft, contentTop, leftW, contentH);
       liveWindowRect = Rect.fromLTWH(
         contentLeft + leftW + gap,
         contentTop,
@@ -286,21 +474,11 @@ class DriverTellersLayoutGeometry {
         gap: gap,
         isTablet: false,
       );
-      metersPanelRect = Rect.fromLTWH(
-        contentLeft,
-        contentTop,
-        contentW,
-        topH,
-      );
+      metersPanelRect = Rect.fromLTWH(contentLeft, contentTop, contentW, topH);
       final liveTop = contentTop + topH + gap;
       final liveBottom = contentBottom - controlsH - gap;
       final liveH = math.max(120.0, liveBottom - liveTop);
-      liveWindowRect = Rect.fromLTWH(
-        contentLeft,
-        liveTop,
-        contentW,
-        liveH,
-      );
+      liveWindowRect = Rect.fromLTWH(contentLeft, liveTop, contentW, liveH);
       controlsRect = Rect.fromLTWH(
         contentLeft,
         contentBottom - controlsH,
@@ -317,10 +495,16 @@ class DriverTellersLayoutGeometry {
       );
     }
 
-    final markerAnchor = Offset(
-      liveWindowRect.left + liveWindowRect.width / 2,
-      liveWindowRect.top + liveWindowRect.height * kTellersMarkerAnchorYFraction,
+    // FLUXIDI-TELLERS-LIVE-MAP-FORWARD-VISIBILITY: one liveWindowRect-based
+    // resolver owns nose (~72%), centre/tail (132/94 bitmap) and Mapbox
+    // padding/focal — never the full-page Navigatie cockpit anchor.
+    final vehicleAnchor = resolveTellersLiveWindowVehicleAnchor(
+      liveWindowRect: liveWindowRect,
+      viewportSize: viewportSize,
+      isTablet: isTablet,
     );
+    final markerAnchor = vehicleAnchor.markerAnchor;
+    final cameraPadding = vehicleAnchor.cameraPadding;
 
     final selectorW = isTablet ? 168.0 : 148.0;
     final selectorH = isTablet ? 40.0 : 36.0;
@@ -338,35 +522,6 @@ class DriverTellersLayoutGeometry {
       liveWindowRect.top + 8,
       labelW,
       labelH,
-    );
-
-    // NAV-TELLERS-POSE-ANCHOR-AND-DIAGNOSTICS-UI-1: solve the camera padding so
-    // the authoritative navigation pose projects onto EXACTLY the on-screen
-    // Car/Arrow anchor (lower-centre), not the geometric live-window centre.
-    //
-    // Mapbox places the camera `center` at the geometric centre of the viewport
-    // rectangle remaining after padding (zoom is set explicitly, so padding only
-    // moves the focal point):
-    //   focalX = (padLeft + (W - padRight)) / 2
-    //   focalY = (padTop  + (H - padBottom)) / 2
-    // We want focal == markerAnchor  ⇔  project(pose) == tellersVehicleMarker.
-    // Per axis that requires  padStart - padEnd == 2*anchor - extent, which we
-    // satisfy with the minimal non-negative split below (one side collapses to
-    // 0). This is exact for any anchor in [0, extent] and never negative.
-    //
-    // The previous formula centred the pose at the live-window MIDDLE (≈0.5)
-    // while the marker sits at kTellersMarkerAnchorYFraction (≈0.775) — the
-    // downward gap seen in the field where the blue route began above the
-    // marker. The camera padding never accounted for the marker's Y fraction.
-    final padLeft = math.max(0.0, 2 * markerAnchor.dx - viewportSize.width);
-    final padRight = math.max(0.0, viewportSize.width - 2 * markerAnchor.dx);
-    final padTop = math.max(0.0, 2 * markerAnchor.dy - viewportSize.height);
-    final padBottom = math.max(0.0, viewportSize.height - 2 * markerAnchor.dy);
-    final cameraPadding = NavCameraViewPadding(
-      top: padTop,
-      bottom: padBottom,
-      left: padLeft,
-      right: padRight,
     );
 
     final cameraScreenAnchor = Offset(
@@ -389,6 +544,12 @@ class DriverTellersLayoutGeometry {
       cameraPadding: cameraPadding,
       cameraScreenAnchor: cameraScreenAnchor,
       cornerRadius: kTellersLiveWindowCornerRadius,
+      requestedNoseFractionInLive: vehicleAnchor.requestedNoseFractionInLive,
+      realizedNoseFractionInLive: vehicleAnchor.realizedNoseFractionInLive,
+      noseFractionClamped: vehicleAnchor.noseClamped,
+      vehicleIconSize: vehicleAnchor.vehicleIconSize,
+      vehicleCenterGlobal: vehicleAnchor.vehicleCenterGlobal,
+      vehicleTailGlobal: vehicleAnchor.vehicleTailGlobal,
     );
   }
 
@@ -416,9 +577,9 @@ class DriverTellersLayoutGeometry {
   /// [cameraPadding] and [viewportSize]. Must equal [cameraTargetAnchorGlobal]
   /// within rounding, proving padding targets the marker (not the window mid).
   Offset get cameraPaddingFocalPoint => Offset(
-        (cameraPadding.left + (viewportSize.width - cameraPadding.right)) / 2,
-        (cameraPadding.top + (viewportSize.height - cameraPadding.bottom)) / 2,
-      );
+    (cameraPadding.left + (viewportSize.width - cameraPadding.right)) / 2,
+    (cameraPadding.top + (viewportSize.height - cameraPadding.bottom)) / 2,
+  );
 
   /// True when [point] lies inside the authoritative live aperture.
   bool containsInLiveWindow(Offset point) => liveWindowRect.contains(point);
@@ -539,7 +700,9 @@ NavCameraViewPadding driverTellersLiveWindowCameraPadding({
 
 /// Opaque aperture chrome slabs that leave only [liveWindowRect] uncovered.
 /// Coordinates are relative to the same full-viewport origin as [geometry].
-List<Rect> driverTellersOpaqueChromeRects(DriverTellersLayoutGeometry geometry) {
+List<Rect> driverTellersOpaqueChromeRects(
+  DriverTellersLayoutGeometry geometry,
+) {
   final live = geometry.liveWindowRect;
   final w = geometry.viewportSize.width;
   final h = geometry.viewportSize.height;
@@ -606,8 +769,9 @@ String formatNavTellersAnchorDiagnostic({
 }) {
   final deltaX = projectedPose.dx - markerAnchor.dx;
   final deltaY = projectedPose.dy - markerAnchor.dy;
-  final markerFracX =
-      viewportSize.width <= 0 ? double.nan : markerAnchor.dx / viewportSize.width;
+  final markerFracX = viewportSize.width <= 0
+      ? double.nan
+      : markerAnchor.dx / viewportSize.width;
   final markerFracY = viewportSize.height <= 0
       ? double.nan
       : markerAnchor.dy / viewportSize.height;
@@ -653,8 +817,9 @@ String formatNavTellersPoseLockDiagnostic({
 }) {
   final deltaX = projectedPose.dx - markerAnchor.dx;
   final deltaY = projectedPose.dy - markerAnchor.dy;
-  final markerFracX =
-      viewportSize.width <= 0 ? double.nan : markerAnchor.dx / viewportSize.width;
+  final markerFracX = viewportSize.width <= 0
+      ? double.nan
+      : markerAnchor.dx / viewportSize.width;
   final markerFracY = viewportSize.height <= 0
       ? double.nan
       : markerAnchor.dy / viewportSize.height;
@@ -665,7 +830,8 @@ String formatNavTellersPoseLockDiagnostic({
       ? double.nan
       : projectedPose.dy / viewportSize.height;
   final aligned = navTellersAnchorAligned(deltaX: deltaX, deltaY: deltaY);
-  final baseLine = 'gen=$viewportGeneration '
+  final baseLine =
+      'gen=$viewportGeneration '
       'device=${isTablet ? 'tablet' : 'phone'} '
       'orient=${isLandscape ? 'land' : 'port'} '
       'view=$viewLevel '
@@ -679,13 +845,17 @@ String formatNavTellersPoseLockDiagnostic({
   if (projectedSnappedRoute == null && poseSource == null) return baseLine;
   final parts = <String>[baseLine];
   if (poseSource != null) {
-    parts.add('poseSource=${poseSource == TellersAuthoritativePoseSource.snappedRoute ? 'snap' : 'visual'}');
+    parts.add(
+      'poseSource=${poseSource == TellersAuthoritativePoseSource.snappedRoute ? 'snap' : 'visual'}',
+    );
   }
   if (projectedSnappedRoute != null) {
     final snapDx = projectedSnappedRoute.dx - markerAnchor.dx;
     final snapDy = projectedSnappedRoute.dy - markerAnchor.dy;
-    final routeAligned =
-        navTellersAnchorAligned(deltaX: snapDx, deltaY: snapDy);
+    final routeAligned = navTellersAnchorAligned(
+      deltaX: snapDx,
+      deltaY: snapDy,
+    );
     parts.add('snapDx=${navTellersAnchorDeltaBucket(snapDx)}');
     parts.add('snapDy=${navTellersAnchorDeltaBucket(snapDy)}');
     parts.add('routeAligned=$routeAligned');
@@ -801,7 +971,8 @@ TellersAuthoritativePose resolveTellersAuthoritativePose(
   TellersAuthoritativePoseInput input,
 ) {
   final snapValid = _tellersLatLonValid(input.snappedLat, input.snappedLon);
-  final reliable = input.hasReliableMatchedSnap &&
+  final reliable =
+      input.hasReliableMatchedSnap &&
       input.trustRouteSnap &&
       !input.offRouteLikely &&
       snapValid;

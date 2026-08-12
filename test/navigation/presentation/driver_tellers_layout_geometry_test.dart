@@ -139,7 +139,7 @@ void main() {
 
     test('focal point is below the live-window centre (marker Y fraction)', () {
       // Regression guard for the field bug: the old padding centred the pose at
-      // the live-window middle; the fixed padding must sit ~0.775 down instead.
+      // the live-window middle; the fixed padding must sit ~0.72 down instead.
       final g = portraitPhone();
       expect(
         g.cameraPaddingFocalPoint.dy,
