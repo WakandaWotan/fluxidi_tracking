@@ -576,4 +576,151 @@ void main() {
       );
     });
   });
+
+  group('FLUXIDI-PRESTART-VIEWPORT-TARGET-PRESERVE-P0', () {
+    const routeLat = 50.77210;
+    const routeLon = 3.66960;
+    const driverLat = 50.77202;
+    const driverLon = 3.66950;
+
+    final latchedRoute = const NavPhaseCameraTarget(
+      lat: routeLat,
+      lon: routeLon,
+      source: NavPhaseCameraTargetSource.firstRoutePoint,
+    );
+    final resolvedDriver = const NavPhaseCameraTarget(
+      lat: driverLat,
+      lon: driverLon,
+      source: NavPhaseCameraTargetSource.driverGps,
+    );
+
+    test('1) resize keeps identical latched route target/source', () {
+      final after = resolvePrestartPreviewTargetAcrossViewportResize(
+        resolved: resolvedDriver,
+        latched: latchedRoute,
+        isViewportReseed: true,
+      );
+      expect(after.source, NavPhaseCameraTargetSource.firstRoutePoint);
+      expect(after.lat, routeLat);
+      expect(after.lon, routeLon);
+    });
+
+    test('2) with route latch + live GPS, reseed never selects driver_gps', () {
+      final after = resolvePrestartPreviewTargetAcrossViewportResize(
+        resolved: resolvedDriver,
+        latched: latchedRoute,
+        isViewportReseed: true,
+      );
+      expect(after.source, isNot(NavPhaseCameraTargetSource.driverGps));
+      expect(after.source, NavPhaseCameraTargetSource.firstRoutePoint);
+    });
+
+    test('3) vertical split 436×1360 constraints preserve route target', () {
+      // Geometry/padding may change with the 436×1360 pane; geographic
+      // center must not.
+      final after = resolvePrestartPreviewTargetAcrossViewportResize(
+        resolved: resolvedDriver,
+        latched: latchedRoute,
+        isViewportReseed: true,
+      );
+      expect(after.lat, latchedRoute.lat);
+      expect(after.lon, latchedRoute.lon);
+      expect(after.source, latchedRoute.source);
+    });
+
+    test('4) horizontal split 880×676 constraints preserve route target', () {
+      final after = resolvePrestartPreviewTargetAcrossViewportResize(
+        resolved: resolvedDriver,
+        latched: latchedRoute,
+        isViewportReseed: true,
+      );
+      expect(after.lat, latchedRoute.lat);
+      expect(after.lon, latchedRoute.lon);
+    });
+
+    test('5) geographic target stable while resolve may flip to GPS', () {
+      // Simulates epoch sequence: first_route → driver_gps on later reseed.
+      var latched = latchedRoute;
+      final epoch1 = resolvePrestartPreviewTargetAcrossViewportResize(
+        resolved: latchedRoute,
+        latched: latched,
+        isViewportReseed: true,
+      );
+      latched = epoch1;
+      final epoch2 = resolvePrestartPreviewTargetAcrossViewportResize(
+        resolved: resolvedDriver,
+        latched: latched,
+        isViewportReseed: true,
+      );
+      expect(epoch2.lat, epoch1.lat);
+      expect(epoch2.lon, epoch1.lon);
+      expect(epoch2.source, NavPhaseCameraTargetSource.firstRoutePoint);
+    });
+
+    test('6) repeated viewport epochs remain last-latched-wins', () {
+      var latched = latchedRoute;
+      for (var epoch = 1; epoch <= 5; epoch++) {
+        final next = resolvePrestartPreviewTargetAcrossViewportResize(
+          resolved: resolvedDriver,
+          latched: latched,
+          isViewportReseed: true,
+        );
+        expect(next.lat, routeLat, reason: 'epoch=$epoch');
+        expect(next.lon, routeLon, reason: 'epoch=$epoch');
+        latched = next;
+      }
+    });
+
+    test('7) no-route preview still permits driver_gps fallback', () {
+      final after = resolvePrestartPreviewTargetAcrossViewportResize(
+        resolved: resolvedDriver,
+        latched: null,
+        isViewportReseed: true,
+      );
+      expect(after.source, NavPhaseCameraTargetSource.driverGps);
+      expect(after.lat, driverLat);
+      expect(after.lon, driverLon);
+    });
+
+    test('8) live/toPickup snap order unchanged when not reseeding', () {
+      // Active guidance still prefers snapped → driver → first route.
+      final live = resolveNavPhaseCameraTarget(
+        phase: NavFixedHudPhase.liveRide,
+        hasPickup: false,
+        firstRouteLat: routeLat,
+        firstRouteLon: routeLon,
+        snappedLat: 50.77208,
+        snappedLon: 3.66955,
+        driverLat: driverLat,
+        driverLon: driverLon,
+      );
+      expect(live.source, NavPhaseCameraTargetSource.snappedProgress);
+      final toPickupNoSnap = resolveNavPhaseCameraTarget(
+        phase: NavFixedHudPhase.toPickup,
+        hasPickup: false,
+        firstRouteLat: routeLat,
+        firstRouteLon: routeLon,
+        driverLat: driverLat,
+        driverLon: driverLon,
+      );
+      expect(toPickupNoSnap.source, NavPhaseCameraTargetSource.driverGps);
+    });
+
+    test('authoritative latch helpers reject raw GPS', () {
+      expect(canLatchPrestartPreviewCameraTarget(latchedRoute), isTrue);
+      expect(canLatchPrestartPreviewCameraTarget(resolvedDriver), isFalse);
+      expect(
+        isAuthoritativePrestartPreviewTargetSource(
+          NavPhaseCameraTargetSource.firstRoutePoint,
+        ),
+        isTrue,
+      );
+      expect(
+        isAuthoritativePrestartPreviewTargetSource(
+          NavPhaseCameraTargetSource.driverGps,
+        ),
+        isFalse,
+      );
+    });
+  });
 }

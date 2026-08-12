@@ -265,3 +265,52 @@ bool navPhaseRecenterVisible({required NavFixedHudPhase phase}) {
 bool navPhaseManualCameraMutationAllowed({required NavFixedHudPhase phase}) {
   return phase == NavFixedHudPhase.idle;
 }
+
+/// FLUXIDI-PRESTART-VIEWPORT-TARGET-PRESERVE-P0: true when [source] is a
+/// durable prepared-route / route-projected preview center (never raw GPS).
+bool isAuthoritativePrestartPreviewTargetSource(
+  NavPhaseCameraTargetSource source,
+) {
+  switch (source) {
+    case NavPhaseCameraTargetSource.pickupA:
+    case NavPhaseCameraTargetSource.firstRoutePoint:
+    case NavPhaseCameraTargetSource.snappedProgress:
+      return true;
+    case NavPhaseCameraTargetSource.driverGps:
+    case NavPhaseCameraTargetSource.none:
+      return false;
+  }
+}
+
+/// True when [target] may be latched as the pre-START geographic camera center.
+bool canLatchPrestartPreviewCameraTarget(NavPhaseCameraTarget target) {
+  return target.hasCoordinate &&
+      isAuthoritativePrestartPreviewTargetSource(target.source);
+}
+
+/// Viewport-only resize must not silently replace a valid prepared-route
+/// preview center with raw [NavPhaseCameraTargetSource.driverGps].
+///
+/// Field evidence (`viewport_reseed_prestart`): PiP / split return can flip
+/// phase toward `toPickup` so `resolveNavPhaseCameraTarget` briefly prefers
+/// snapped → driver while the accepted route still exists (~12 m offset).
+/// [isViewportReseed] reuses the latched authoritative target when present.
+/// Non-reseed calls still fall back to the latched route target when the
+/// live resolve collapses to driver GPS / none.
+NavPhaseCameraTarget resolvePrestartPreviewTargetAcrossViewportResize({
+  required NavPhaseCameraTarget resolved,
+  NavPhaseCameraTarget? latched,
+  required bool isViewportReseed,
+}) {
+  if (latched == null || !canLatchPrestartPreviewCameraTarget(latched)) {
+    return resolved;
+  }
+  if (isViewportReseed) {
+    return latched;
+  }
+  if (!resolved.hasCoordinate ||
+      resolved.source == NavPhaseCameraTargetSource.driverGps) {
+    return latched;
+  }
+  return resolved;
+}

@@ -742,6 +742,12 @@ class _DriverHomePageState extends State<DriverHomePage>
   /// cockpit camera nose anchor so marker and camera move as one unit.
   double? _streetLevelHudBottomOffset;
 
+  /// FLUXIDI-PRESTART-VIEWPORT-TARGET-PRESERVE-P0: last authoritative
+  /// prepared-route preview camera center (first route point / pickup /
+  /// snapped). Viewport reseeds must reuse this so raw driver GPS cannot
+  /// silently replace the route-preview target on split / PiP resize.
+  NavPhaseCameraTarget? _latchedPrestartPreviewCameraTarget;
+
   /// Bounded-diagnostics de-dupe signatures for the marker choice/render logs.
   String? _lastNavMarkerChoiceLogSignature;
   String? _lastNavMarkerRenderLogSignature;
@@ -1358,6 +1364,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       _routeCoords = [];
       _routeKm = null;
       _routeDurationSec = null;
+      _latchedPrestartPreviewCameraTarget = null;
       // New ride / cleared session: allow a fresh terminal-fallback attempt.
       // App resume must never call this path solely to reopen the prompt.
       _resetExternalNavFallbackLatchForNewAttempt(reason: 'route_cleared');
@@ -17819,8 +17826,22 @@ class _DriverHomePageState extends State<DriverHomePage>
     // the first route point (prepared street draft) rather than the raw
     // driver GPS. When the driver is not yet at A, targeting driver GPS put
     // the HUD off the route line and let the route point sideways.
-    final target = _resolvePhaseCameraTargetForPreview(pos);
+    //
+    // FLUXIDI-PRESTART-VIEWPORT-TARGET-PRESERVE-P0: viewport reseeds must
+    // reuse the latched route-preview center. PiP/split can briefly flip
+    // phase so the live resolve falls through to driver_gps (~12 m off
+    // route) even though the prepared geometry is still valid.
+    final resolvedTarget = _resolvePhaseCameraTargetForPreview(pos);
+    final isViewportReseed = reason == 'viewport_reseed_prestart';
+    final target = resolvePrestartPreviewTargetAcrossViewportResize(
+      resolved: resolvedTarget,
+      latched: _latchedPrestartPreviewCameraTarget,
+      isViewportReseed: isViewportReseed,
+    );
     if (!target.hasCoordinate) return;
+    if (canLatchPrestartPreviewCameraTarget(target)) {
+      _latchedPrestartPreviewCameraTarget = target;
+    }
     final width = MediaQuery.sizeOf(context).width;
     final height = MediaQuery.sizeOf(context).height;
     final safe = MediaQuery.of(context).padding;
