@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
+import 'package:fluxidi_tracking/navigation/presentation/nav_outlined_map_text.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_streetlevel_marker_anchor.dart';
 import 'package:fluxidi_tracking/navigation/presentation/phone_cockpit_opacity.dart';
 
@@ -228,19 +229,17 @@ class _CockpitWidgetState extends State<CockpitWidget>
                 color: _activeTheme.panelBackground.withOpacity(panelAlpha),
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: _activeTheme.panelBorder.withOpacity(
-                    borderOpacity * 0.72,
-                  ),
+                  color: widget.phoneFloatingGlass
+                      ? PhoneTellersReadability.focusBorder.withOpacity(
+                          borderOpacity * 0.55,
+                        )
+                      : _activeTheme.panelBorder.withOpacity(
+                          borderOpacity * 0.72,
+                        ),
                   width: 1.0,
                 ),
                 boxShadow: widget.phoneFloatingGlass
-                    ? [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.18),
-                          blurRadius: 4,
-                          spreadRadius: 0,
-                        ),
-                      ]
+                    ? const <BoxShadow>[]
                     : [
                         BoxShadow(
                           color: Colors.black.withOpacity(0.28),
@@ -549,18 +548,33 @@ class _CockpitWidgetState extends State<CockpitWidget>
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.clip,
-                    style: TextStyle(
-                      color: _activeTheme.mutedText.withOpacity(0.86),
-                      fontSize: labelFontSize,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.5,
-                      height: 1.0,
-                    ),
-                  ),
+                  widget.phoneFloatingGlass
+                      ? NavOutlinedMapText(
+                          text: label,
+                          maxLines: 1,
+                          overflow: TextOverflow.clip,
+                          fill: PhoneTellersReadability.labelFill,
+                          stroke: PhoneTellersReadability.labelStroke,
+                          strokeWidth: 1.8,
+                          style: TextStyle(
+                            fontSize: labelFontSize,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.5,
+                            height: 1.0,
+                          ),
+                        )
+                      : Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.clip,
+                          style: TextStyle(
+                            color: _activeTheme.mutedText.withOpacity(0.86),
+                            fontSize: labelFontSize,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.5,
+                            height: 1.0,
+                          ),
+                        ),
                   const SizedBox(height: 2),
                   Expanded(
                     child: SizedBox(
@@ -568,17 +582,31 @@ class _CockpitWidgetState extends State<CockpitWidget>
                       child: FittedBox(
                         fit: BoxFit.scaleDown,
                         alignment: Alignment.center,
-                        child: Text(
-                          value,
-                          maxLines: 1,
-                          softWrap: false,
-                          style: TextStyle(
-                            color: _activeTheme.primaryText,
-                            fontSize: valueFontSize,
-                            fontWeight: FontWeight.w900,
-                            height: 1.0,
-                          ),
-                        ),
+                        child: widget.phoneFloatingGlass
+                            ? NavOutlinedMapText(
+                                text: value,
+                                maxLines: 1,
+                                softWrap: false,
+                                fill: PhoneTellersReadability.primaryFill,
+                                stroke: PhoneTellersReadability.primaryStroke,
+                                strokeWidth: 2.4,
+                                style: TextStyle(
+                                  fontSize: valueFontSize,
+                                  fontWeight: FontWeight.w900,
+                                  height: 1.0,
+                                ),
+                              )
+                            : Text(
+                                value,
+                                maxLines: 1,
+                                softWrap: false,
+                                style: TextStyle(
+                                  color: _activeTheme.primaryText,
+                                  fontSize: valueFontSize,
+                                  fontWeight: FontWeight.w900,
+                                  height: 1.0,
+                                ),
+                              ),
                       ),
                     ),
                   ),

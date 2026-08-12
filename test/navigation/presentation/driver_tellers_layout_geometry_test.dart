@@ -90,7 +90,13 @@ void main() {
 
     test('label, selector and marker stay within liveWindowRect', () {
       for (final g in [landscapeTablet(), portraitPhone()]) {
-        expect(g.liveWindowRect.contains(g.labelRect.center), isTrue);
+        // Phone removes the Live-navigation badge (labelRect is zero).
+        if (g.labelRect.width > 0 && g.labelRect.height > 0) {
+          expect(g.liveWindowRect.contains(g.labelRect.center), isTrue);
+        } else {
+          expect(g.isTablet, isFalse);
+          expect(g.labelRect, Rect.zero);
+        }
         expect(g.liveWindowRect.contains(g.selectorRect.center), isTrue);
         expect(g.containsInLiveWindow(g.markerAnchor), isTrue);
         // Marker is lower-centre of the live window (may clamp below request).

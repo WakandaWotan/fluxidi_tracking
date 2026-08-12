@@ -37,10 +37,13 @@ const double kTellersPhoneControlsH = 60.0;
 /// Breathing room below the top SafeArea for floating phone Tellers chrome.
 const double kTellersPhoneTopBreathing = 10.0;
 
-/// Compact intrinsic phone meters band (header + 2×2 KPIs + status).
-/// Must NOT fill leftover viewport height — that pushed content too low.
-const double kTellersPhonePortraitMetersH = 252.0;
-const double kTellersPhoneLandscapeMetersH = 232.0;
+/// Compact intrinsic phone meters band (header + 2×2 KPIs only).
+/// Phase pill is reserved separately via [kTellersPhonePhasePillH].
+const double kTellersPhonePortraitMetersH = 224.0;
+const double kTellersPhoneLandscapeMetersH = 204.0;
+
+/// Phone runtime phase pill (Ride active / Paused / Waiting) height.
+const double kTellersPhonePhasePillH = 28.0;
 
 /// TABLET-TELLERS-COCKPIT-P1 repair: reserved chrome heights (logical px).
 /// Top chrome is reserved BEFORE the map so KPIs/header never collapse.
@@ -471,6 +474,9 @@ class DriverTellersLayoutGeometry {
     required bool isTablet,
     bool reserveActionBar = true,
     bool reservePriceSummary = true,
+    /// Phone: reserve space for Ride active / Paused / Waiting only.
+    /// Tablet ignores this (status stays inside the meters panel).
+    bool reservePhasePill = false,
   }) {
     final hPad = isTablet ? 20.0 : 10.0;
     // Phone: breathe only under the top SafeArea; pin bottom chrome to
@@ -556,8 +562,8 @@ class DriverTellersLayoutGeometry {
         20,
       );
     } else if (isLandscape) {
-      // Phone landscape: compact floating KPIs in the top-left SafeArea band;
-      // bottom controls anchored to SafeArea.bottom; live corridor = right map.
+      // Phone landscape: compact floating KPIs top-left; optional phase pill
+      // directly under KPIs (settled geometry); live corridor = right map.
       final leftW = contentW * kTellersPhoneLandscapeLeftWidthFraction;
       final liveW = math.max(0.0, contentW - leftW - gap);
       final priceH = showPrice ? kTellersPhonePriceSummaryHLandscape : 0.0;
@@ -565,11 +571,20 @@ class DriverTellersLayoutGeometry {
       final bottomChrome = controlsH > 0
           ? controlsH + (priceH > 0 ? gap + priceH : 0.0)
           : priceH;
+      final phaseH = reservePhasePill ? kTellersPhonePhasePillH : 0.0;
       final metersH = math.min(
         kTellersPhoneLandscapeMetersH,
-        math.max(120.0, contentH - bottomChrome - gap),
+        math.max(120.0, contentH - bottomChrome - gap - phaseH),
       );
       metersPanelRect = Rect.fromLTWH(contentLeft, contentTop, leftW, metersH);
+      statusRect = phaseH > 0
+          ? Rect.fromLTWH(
+              contentLeft,
+              metersPanelRect.bottom + 4,
+              leftW,
+              phaseH,
+            )
+          : Rect.zero;
       final liveBottom = contentBottom - bottomChrome - (bottomChrome > 0 ? gap : 0.0);
       final liveH = math.max(80.0, liveBottom - contentTop);
       liveWindowRect = Rect.fromLTWH(
@@ -604,36 +619,40 @@ class DriverTellersLayoutGeometry {
               )
             : Rect.zero;
       }
-      const statusH = 22.0;
-      statusRect = Rect.fromLTWH(
-        metersPanelRect.left + 8,
-        metersPanelRect.bottom - statusH - 6,
-        math.min(160.0, metersPanelRect.width - 16),
-        statusH,
-      );
     } else {
-      // Phone portrait: compact meters immediately under SafeArea; controls
-      // anchored to SafeArea.bottom; live corridor = unobstructed mid band.
+      // Phone portrait: compact meters under SafeArea; optional phase pill in
+      // settled geometry between KPIs and live corridor; controls on SafeArea.bottom.
       final priceH = showPrice ? kTellersPhonePriceSummaryHPortrait : 0.0;
       final controlsH = reserveActionBar ? kTellersPhoneControlsH : 0.0;
       final bottomChrome = controlsH > 0
           ? controlsH + (priceH > 0 ? gap + priceH : 0.0)
           : priceH;
+      final phaseH = reservePhasePill ? kTellersPhonePhasePillH : 0.0;
       final metersH = math.min(
         kTellersPhonePortraitMetersH,
         math.max(
           160.0,
-          contentH - bottomChrome - 2 * gap - 160.0,
+          contentH - bottomChrome - 2 * gap - phaseH - 160.0,
         ),
       );
       metersPanelRect = Rect.fromLTWH(contentLeft, contentTop, contentW, metersH);
-      final liveTop = contentTop + metersH + gap;
+      statusRect = phaseH > 0
+          ? Rect.fromLTWH(
+              contentLeft,
+              metersPanelRect.bottom + 4,
+              contentW,
+              phaseH,
+            )
+          : Rect.zero;
+      final topOverlayBottom = statusRect.height > 0
+          ? statusRect.bottom
+          : metersPanelRect.bottom;
+      final liveTop = topOverlayBottom + gap;
       final liveBottom =
           contentBottom - bottomChrome - (bottomChrome > 0 ? gap : 0.0);
       final liveH = math.max(120.0, liveBottom - liveTop);
       liveWindowRect = Rect.fromLTWH(contentLeft, liveTop, contentW, liveH);
       if (controlsH > 0) {
-        // Anchor to SafeArea bottom — never an assumed full-screen height.
         controlsRect = Rect.fromLTWH(
           contentLeft,
           contentBottom - controlsH -
@@ -660,13 +679,6 @@ class DriverTellersLayoutGeometry {
               )
             : Rect.zero;
       }
-      const statusH = 22.0;
-      statusRect = Rect.fromLTWH(
-        metersPanelRect.left + 8,
-        metersPanelRect.bottom - statusH - 6,
-        math.min(160.0, metersPanelRect.width - 16),
-        statusH,
-      );
     }
 
     // FLUXIDI-TELLERS-LIVE-MAP-FORWARD-VISIBILITY: one liveWindowRect-based
@@ -689,14 +701,15 @@ class DriverTellersLayoutGeometry {
       selectorH,
     );
 
-    final labelW = isTablet ? 120.0 : 108.0;
-    final labelH = isTablet ? 28.0 : 24.0;
-    final labelRect = Rect.fromLTWH(
-      liveWindowRect.left + 8,
-      liveWindowRect.top + 8,
-      labelW,
-      labelH,
-    );
+    // Phone: no "Live navigation" badge — reclaim the band for map/guidance.
+    final labelRect = isTablet
+        ? Rect.fromLTWH(
+            liveWindowRect.left + 8,
+            liveWindowRect.top + 8,
+            120.0,
+            28.0,
+          )
+        : Rect.zero;
 
     final cameraScreenAnchor = Offset(
       viewportSize.width <= 0 ? 0.5 : markerAnchor.dx / viewportSize.width,
@@ -861,6 +874,7 @@ NavCameraViewPadding driverTellersLiveWindowCameraPadding({
   double safeRight = 0,
   bool reserveActionBar = true,
   bool reservePriceSummary = true,
+  bool reservePhasePill = false,
 }) {
   return DriverTellersLayoutGeometry.resolve(
     viewportSize: Size(screenWidth, screenHeight),
@@ -872,6 +886,7 @@ NavCameraViewPadding driverTellersLiveWindowCameraPadding({
     isTablet: isTablet,
     reserveActionBar: reserveActionBar,
     reservePriceSummary: reservePriceSummary,
+    reservePhasePill: reservePhasePill,
   ).cameraPadding;
 }
 

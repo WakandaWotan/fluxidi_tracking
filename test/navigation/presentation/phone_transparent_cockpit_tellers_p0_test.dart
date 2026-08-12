@@ -397,12 +397,47 @@ void main() {
   });
 
   group('opacity tokens', () {
-    test('ordinary nav glass tokens preserved; Tellers stay near-clear', () {
-      expect(PhoneCockpitOpacity.outer, inInclusiveRange(0.76, 0.82));
+    test('phone Navigatie + Tellers share near-clear glass family', () {
+      expect(PhoneCockpitOpacity.outer, inInclusiveRange(0.0, 0.28));
       expect(PhoneTellersSurfaceOpacity.panel, lessThanOrEqualTo(0.08));
       expect(PhoneTellersSurfaceOpacity.kpiTile, inInclusiveRange(0.0, 0.22));
       expect(PhoneTellersSurfaceOpacity.actionHit, inInclusiveRange(0.25, 0.55));
       expect(PhoneTellersReadability.primaryStrokeWidth, greaterThanOrEqualTo(2.0));
+    });
+
+    test('phone phase pill only for active/paused/waiting', () {
+      expect(
+        resolveTellersPhasePillVisible(
+          isTablet: false,
+          liveRideActive: false,
+          isWaiting: false,
+        ),
+        isFalse,
+      );
+      expect(
+        resolveTellersPhasePillVisible(
+          isTablet: false,
+          liveRideActive: true,
+          isWaiting: false,
+        ),
+        isTrue,
+      );
+      expect(
+        resolveTellersPhasePillVisible(
+          isTablet: false,
+          liveRideActive: true,
+          isWaiting: true,
+        ),
+        isTrue,
+      );
+      expect(
+        resolveTellersPhasePillVisible(
+          isTablet: true,
+          liveRideActive: false,
+          isWaiting: false,
+        ),
+        isTrue,
+      );
     });
 
     test('phone portrait meters sit under SafeArea with compact height', () {
@@ -422,6 +457,42 @@ void main() {
       expect(geo.controlsRect.bottom, closeTo(904 - 20, 0.5));
       expect(geo.liveWindowRect.top, greaterThan(geo.metersPanelRect.bottom));
       expect(geo.liveWindowRect.bottom, lessThanOrEqualTo(geo.controlsRect.top + 0.5));
+      // No Live-navigation badge reservation on phone.
+      expect(geo.labelRect, Rect.zero);
+    });
+
+    test('phone phase pill is in settled geometry below KPIs, never clipped', () {
+      final without = DriverTellersLayoutGeometry.resolve(
+        viewportSize: const Size(407, 904),
+        safeTop: 32,
+        safeBottom: 20,
+        safeLeft: 0,
+        safeRight: 0,
+        isLandscape: false,
+        isTablet: false,
+        reserveActionBar: true,
+        reservePriceSummary: false,
+        reservePhasePill: false,
+      );
+      final withPill = DriverTellersLayoutGeometry.resolve(
+        viewportSize: const Size(407, 904),
+        safeTop: 32,
+        safeBottom: 20,
+        safeLeft: 0,
+        safeRight: 0,
+        isLandscape: false,
+        isTablet: false,
+        reserveActionBar: true,
+        reservePriceSummary: false,
+        reservePhasePill: true,
+      );
+      expect(without.statusRect, Rect.zero);
+      expect(withPill.statusRect.height, closeTo(kTellersPhonePhasePillH, 0.5));
+      expect(withPill.statusRect.top, greaterThanOrEqualTo(withPill.metersPanelRect.bottom));
+      expect(withPill.metersPanelRect.overlaps(withPill.statusRect), isFalse);
+      expect(withPill.liveWindowRect.top, greaterThanOrEqualTo(withPill.statusRect.bottom));
+      // Removing the pill releases map space (no empty Live-nav band).
+      expect(without.liveWindowRect.height, greaterThan(withPill.liveWindowRect.height));
     });
   });
 }

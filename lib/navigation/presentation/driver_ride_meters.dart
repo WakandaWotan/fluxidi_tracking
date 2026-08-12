@@ -686,7 +686,8 @@ class DriverTellersGeometryLatch {
         a.isTablet == b.isTablet &&
         a.liveWindowRect == b.liveWindowRect &&
         a.priceSummaryRect == b.priceSummaryRect &&
-        a.controlsRect == b.controlsRect;
+        a.controlsRect == b.controlsRect &&
+        a.statusRect == b.statusRect;
   }
 }
 
@@ -707,6 +708,7 @@ class DriverRideMetersView extends StatefulWidget {
     this.onToggleWait,
     this.onRecenter,
     this.isWaiting = false,
+    this.liveRideActive = false,
     this.showEstimatedPriceStrip = true,
     this.themeListenable,
     this.compact = false,
@@ -730,6 +732,9 @@ class DriverRideMetersView extends StatefulWidget {
   final VoidCallback? onToggleWait;
   final VoidCallback? onRecenter;
   final bool isWaiting;
+
+  /// Authoritative live-ride flag for phone phase-pill visibility.
+  final bool liveRideActive;
 
   /// Phone: prepared-route estimate only. Tablet always true (unchanged).
   final bool showEstimatedPriceStrip;
@@ -781,6 +786,11 @@ class _DriverRideMetersViewState extends State<DriverRideMetersView> {
         widget.onStop != null ||
         widget.onToggleWait != null ||
         widget.onRecenter != null;
+    final reservePhasePill = resolveTellersPhasePillVisible(
+      isTablet: widget.isTablet,
+      liveRideActive: widget.liveRideActive,
+      isWaiting: widget.isWaiting,
+    );
     final candidate = DriverTellersLayoutGeometry.resolve(
       viewportSize: media.size,
       safeTop: media.padding.top,
@@ -791,6 +801,7 @@ class _DriverRideMetersViewState extends State<DriverRideMetersView> {
       isTablet: widget.isTablet,
       reserveActionBar: reserveActionBar,
       reservePriceSummary: widget.showEstimatedPriceStrip,
+      reservePhasePill: reservePhasePill && !widget.isTablet,
     );
     // Retain the last VALID geometry until a new complete one resolves so a
     // transitional (zero/partial) rotation frame never installs an incomplete
@@ -811,6 +822,7 @@ class _DriverRideMetersViewState extends State<DriverRideMetersView> {
       onToggleWait: widget.onToggleWait,
       onRecenter: widget.onRecenter,
       isWaiting: widget.isWaiting,
+      liveRideActive: widget.liveRideActive,
       showEstimatedPriceStrip: widget.showEstimatedPriceStrip,
       themeListenable: widget.themeListenable,
       compact: widget.compact,
@@ -838,6 +850,7 @@ class _DriverRideMetersContent extends StatelessWidget {
     this.onToggleWait,
     this.onRecenter,
     this.isWaiting = false,
+    this.liveRideActive = false,
     this.showEstimatedPriceStrip = true,
     this.themeListenable,
     this.compact = false,
@@ -865,6 +878,7 @@ class _DriverRideMetersContent extends StatelessWidget {
   /// location owner.
   final VoidCallback? onRecenter;
   final bool isWaiting;
+  final bool liveRideActive;
   final bool showEstimatedPriceStrip;
   final ValueListenable<DriverThemeVariant>? themeListenable;
   final bool compact;
@@ -1037,6 +1051,12 @@ class _DriverRideMetersContent extends StatelessWidget {
     final meters = geometry.metersPanelRect;
     final controls = geometry.controlsRect;
     final price = geometry.priceSummaryRect;
+    final status = geometry.statusRect;
+    final showPhasePill = resolveTellersPhasePillVisible(
+      isTablet: isTablet,
+      liveRideActive: liveRideActive,
+      isWaiting: isWaiting,
+    );
     // Phone glass: controls are bottom-anchored overlays (never nested inside
     // a tall left panel). Tablet landscape keeps bottom chrome outside meters.
     final controlsInMetersPanel = false;
@@ -1092,6 +1112,19 @@ class _DriverRideMetersContent extends StatelessWidget {
             width: price.width,
             height: price.height,
             child: _buildPriceSummaryCard(palette),
+          ),
+        // Phone: phase pill from settled statusRect (active/paused/waiting only).
+        // Tablet keeps status inside the meters panel.
+        if (phoneGlass &&
+            showPhasePill &&
+            status.width > 0 &&
+            status.height > 0)
+          Positioned(
+            left: status.left,
+            top: status.top,
+            width: status.width,
+            height: status.height,
+            child: _buildStatusChip(palette),
           ),
         // Action bar (phone + tablet) — skipped when rect is zero.
         if (!controlsInMetersPanel && controls.width > 0 && controls.height > 0)
@@ -1179,10 +1212,10 @@ class _DriverRideMetersContent extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               _buildHeader(palette),
-              SizedBox(height: isLandscape ? 4 : 4),
+              const SizedBox(height: 4),
               _buildMetersGrid(palette),
-              SizedBox(height: isLandscape ? 4 : 4),
-              _buildStatusChip(palette),
+              // Phone phase pill is Positioned from geometry.statusRect — never
+              // nested here (avoids clipping behind KPIs / empty Stand-by chrome).
               if (withControls) ...[
                 SizedBox(height: isLandscape ? 6 : 8),
                 _buildFooterActions(palette),
@@ -1548,46 +1581,34 @@ class _DriverRideMetersContent extends StatelessWidget {
         child: Stack(
           clipBehavior: Clip.hardEdge,
           children: [
-            // Label / selector use geometry insets (top-left / top-right) but
-            // intrinsic width so the compact selector never overflows the
-            // reserved band on narrow phone apertures.
-            Positioned(
-              left: labelLocal.left,
-              top: labelLocal.top,
-              child: Container(
-                key: const ValueKey<String>('driver_tellers_live_label'),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: isTablet
-                      ? palette.background
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(10),
+            // Tablet keeps the Live-navigation badge. Phone removes it entirely
+            // so Navigation return + phase pill are the only nav context owners.
+            if (isTablet &&
+                geometry.labelRect.width > 0 &&
+                geometry.labelRect.height > 0)
+              Positioned(
+                left: labelLocal.left,
+                top: labelLocal.top,
+                child: Container(
+                  key: const ValueKey<String>('driver_tellers_live_label'),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: palette.background,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    liveLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: palette.textPrimary.withOpacity(0.85),
+                    ),
+                  ),
                 ),
-                child: isTablet
-                    ? Text(
-                        liveLabel,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: palette.textPrimary.withOpacity(0.85),
-                        ),
-                      )
-                    : NavOutlinedMapText(
-                        text: liveLabel,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        fill: PhoneTellersReadability.labelFill,
-                        stroke: PhoneTellersReadability.labelStroke,
-                        strokeWidth: PhoneTellersReadability.labelStrokeWidth,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
               ),
-            ),
             if (selectorVisible)
               Positioned(
                 top: selectorLocal.top,

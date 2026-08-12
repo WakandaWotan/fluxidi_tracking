@@ -202,9 +202,14 @@ DriverTellersGuidanceLayout resolveDriverTellersGuidanceLayout({
 
   // Below the taller of the two top-band occupants, measured against their
   // painted heights rather than their (smaller) reserved bands.
-  final double labelBottom =
-      geometry.labelRect.top +
-      math.max(geometry.labelRect.height, kDriverTellersLabelPaintedHeight);
+  // Phone omits the Live-navigation badge (labelRect is zero) so guidance
+  // can sit higher without reserving empty label space.
+  final bool hasLiveLabel = geometry.labelRect.width > 0 &&
+      geometry.labelRect.height > 0;
+  final double labelBottom = hasLiveLabel
+      ? geometry.labelRect.top +
+          math.max(geometry.labelRect.height, kDriverTellersLabelPaintedHeight)
+      : live.top;
   final double selectorBottom =
       geometry.selectorRect.top +
       math.max(
@@ -212,10 +217,11 @@ DriverTellersGuidanceLayout resolveDriverTellersGuidanceLayout({
         kDriverTellersSelectorPaintedHeight,
       );
   final double bandBottom = selectorVisible
-      ? math.max(labelBottom, selectorBottom)
+      ? (hasLiveLabel ? math.max(labelBottom, selectorBottom) : selectorBottom)
       : labelBottom;
-  final double top =
-      (bandBottom - live.top) + kDriverTellersGuidanceTopGap;
+  final double top = hasLiveLabel || selectorVisible
+      ? (bandBottom - live.top) + kDriverTellersGuidanceTopGap
+      : kDriverTellersGuidanceInset;
 
   final double usable = math.max(
     0.0,

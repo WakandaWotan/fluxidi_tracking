@@ -344,7 +344,9 @@ void main() {
         find.byKey(const ValueKey('driver_tellers_tablet_branded_header')),
         findsNothing,
       );
-      expect(find.byKey(const ValueKey('driver_tellers_status')), findsOneWidget);
+      // Pre-START / non-live: no generic Navigation phase pill on phone.
+      expect(find.byKey(const ValueKey('driver_tellers_status')), findsNothing);
+      expect(find.byKey(const ValueKey('driver_tellers_live_label')), findsNothing);
     });
 
     testWidgets('theme tokens change surface while layout keys stay', (

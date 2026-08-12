@@ -261,6 +261,8 @@ void main() {
       Size size = const Size(390, 844),
       bool isTablet = false,
       bool isLandscape = false,
+      bool isWaiting = false,
+      bool liveRideActive = false,
     }) {
       if (theme != null) driverThemeNotifier.value = theme;
       return MediaQuery(
@@ -285,6 +287,8 @@ void main() {
                       },
                       isTablet: isTablet,
                       isLandscape: isLandscape,
+                      isWaiting: isWaiting,
+                      liveRideActive: liveRideActive,
                     ),
                   ),
               ],
@@ -382,9 +386,15 @@ void main() {
       final navOwner = const SizedBox.shrink();
 
       await tester.pumpWidget(
-        harness(snapshot: snap, navOwner: navOwner, mode: mode),
+        harness(
+          snapshot: snap,
+          navOwner: navOwner,
+          mode: mode,
+          liveRideActive: true,
+        ),
       );
       expectPhoneReadableText('€ 2.00');
+      expectPhoneReadableText('Rit actief');
 
       snap = const DriverRideMetersSnapshot(
         fareText: '€ 3.40',
@@ -394,7 +404,13 @@ void main() {
         statusText: 'Wachten',
       );
       await tester.pumpWidget(
-        harness(snapshot: snap, navOwner: navOwner, mode: mode),
+        harness(
+          snapshot: snap,
+          navOwner: navOwner,
+          mode: mode,
+          liveRideActive: true,
+          isWaiting: true,
+        ),
       );
       await tester.pump();
       expectPhoneReadableText('€ 3.40');
@@ -498,6 +514,8 @@ void main() {
           snapshot: snap,
           navOwner: const SizedBox.shrink(),
           mode: mode,
+          isWaiting: true,
+          liveRideActive: true,
         ),
       );
       await tester.pump();
@@ -509,10 +527,37 @@ void main() {
       expect(find.byKey(const ValueKey('teller_waiting')), findsOneWidget);
       // No fifth equal status tile.
       expect(find.byKey(const ValueKey('teller_status')), findsNothing);
-      // Status exists as a smaller secondary element and is localized (Dutch).
+      // Phase pill for paused/waiting — not a generic Navigation label.
       expect(find.byKey(const ValueKey('driver_tellers_status')), findsOneWidget);
       expectPhoneReadableText('Rit gepauzeerd');
       expect(find.text('Ride active'), findsNothing);
+      // Top-right Navigatie return button remains the sole Navigation owner.
+      expect(find.byKey(const ValueKey('driver_tellers_back_nav')), findsOneWidget);
+      expect(find.byKey(const ValueKey('driver_tellers_live_label')), findsNothing);
+    });
+
+    testWidgets('phone hides Stand-by / Navigation phase pill and Live label', (
+      tester,
+    ) async {
+      final mode = DriverNavPresentationModeController()..showTellers();
+      const snap = DriverRideMetersSnapshot(
+        fareText: '€ 0.00',
+        distanceTravelledText: '0.0 km',
+        rideDurationText: '00:00:00',
+        waitingTimeText: '00:00:00',
+        statusText: 'Navigatie',
+      );
+      await tester.pumpWidget(
+        harness(
+          snapshot: snap,
+          navOwner: const SizedBox.shrink(),
+          mode: mode,
+        ),
+      );
+      await tester.pump();
+      expect(find.byKey(const ValueKey('driver_tellers_status')), findsNothing);
+      expect(find.byKey(const ValueKey('driver_tellers_live_label')), findsNothing);
+      expect(find.byKey(const ValueKey('driver_tellers_back_nav')), findsOneWidget);
     });
 
     testWidgets('live navigation window is present and transparent', (
@@ -1000,9 +1045,6 @@ void main() {
         find.byKey(const ValueKey('driver_tellers_marker_selector')),
         findsOneWidget,
       );
-      // Status localized Dutch — never "Ride active" in Dutch UI.
-      expectPhoneReadableText('Rit actief');
-      expect(find.text('Ride active'), findsNothing);
     });
 
     testWidgets(
@@ -1215,23 +1257,16 @@ void main() {
           find.byKey(const ValueKey('driver_tellers_live_window')),
           findsOneWidget,
         );
+        // Phone: Live-navigation badge removed (Navigation button owns return).
         expect(
           find.byKey(const ValueKey('driver_tellers_live_label')),
-          findsOneWidget,
+          findsNothing,
         );
         // No full-screen transparent Material over the map aperture.
         final materials = tester.widgetList<Material>(find.byType(Material));
         for (final m in materials) {
           expect(m.type, isNot(MaterialType.transparency));
         }
-        // Gold frame equals the live window key region (single aperture).
-        final live = tester.getRect(
-          find.byKey(const ValueKey('driver_tellers_live_window')),
-        );
-        final label = tester.getRect(
-          find.byKey(const ValueKey('driver_tellers_live_label')),
-        );
-        expect(live.contains(label.center), isTrue);
       },
     );
 

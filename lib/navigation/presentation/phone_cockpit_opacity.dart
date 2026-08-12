@@ -1,41 +1,35 @@
 import 'package:flutter/material.dart';
 
 // Phone-only translucent cockpit / Tellers surface alphas + readability.
-// Colors come from the active driver theme where a tint is needed; Tellers
-// prefers outlined glyphs over large opaque plates (no BackdropFilter).
+// Colors come from the active driver theme where a tint is needed; phone
+// chrome prefers outlined glyphs over large opaque plates (no BackdropFilter).
 
-/// Ordinary Navigatie phone glass shell (prior trial — unchanged this pass).
+/// Ordinary Navigatie + Tellers phone glass — same transparent family.
 abstract final class PhoneCockpitOpacity {
-  static const double outer = 0.79;
-  static const double kpiTile = 0.885;
-  static const double action = 0.93;
-  static const double priceStrip = 0.88;
-}
+  /// Outer shell / meters panel (map must dominate).
+  static const double outer = 0.16;
 
-/// Phone Tellers overlay surface alphas — substantially more transparent than
-/// ordinary Navigatie glass. Large panels stay at/near zero; only tap targets
-/// may carry a restrained tint.
-abstract final class PhoneTellersSurfaceOpacity {
-  /// Outer meters/header panel fill (map must dominate).
-  static const double panel = 0.0;
-
-  /// KPI cell tint — extremely light glass, not a block.
+  /// KPI / metric tile tint.
   static const double kpiTile = 0.12;
 
-  /// Individual control hit surfaces (Pauze / STOP / recenter).
-  static const double actionHit = 0.40;
+  /// Primary control hit surfaces.
+  static const double action = 0.40;
 
-  /// Compact Navigatie action chip.
-  static const double navButton = 0.36;
-
-  /// Pre-START estimate pill only.
+  /// Compact estimate strip.
   static const double priceStrip = 0.26;
+}
 
-  /// Status chip tint.
+/// Phone Tellers overlay surface alphas (aligned with [PhoneCockpitOpacity]).
+abstract final class PhoneTellersSurfaceOpacity {
+  static const double panel = 0.0;
+  static const double kpiTile = PhoneCockpitOpacity.kpiTile;
+  static const double actionHit = PhoneCockpitOpacity.action;
+  static const double navButton = 0.36;
+  static const double priceStrip = PhoneCockpitOpacity.priceStrip;
   static const double statusChip = 0.18;
 }
 
-/// Phone Tellers readability tokens — outlined glyphs over the live map.
+/// Phone Tellers / Navigatie readability tokens — outlined glyphs over the map.
 abstract final class PhoneTellersReadability {
   static const Color primaryFill = Color(0xFFFFFFFF);
   static const Color primaryStroke = Color(0xFF0A0A0A);
@@ -58,10 +52,6 @@ abstract final class PhoneTellersReadability {
 }
 
 /// Phone Tellers estimate-strip visibility from authoritative ride phase.
-///
-/// Tablet always keeps the strip (existing behavior). Phone shows it only for
-/// a prepared route before START — never while active/paused/completed, and
-/// never inferred from fare text or timers.
 bool resolveTellersEstimatedPriceStripVisible({
   required bool isTablet,
   required bool liveRideActive,
@@ -72,4 +62,15 @@ bool resolveTellersEstimatedPriceStripVisible({
   if (liveRideActive) return false;
   if (rideCompleted) return false;
   return ridePrepared;
+}
+
+/// Phone phase pill: only meaningful runtime states (active / paused / waiting).
+/// Tablet always keeps its status chrome. Never show generic Navigation/Stand-by.
+bool resolveTellersPhasePillVisible({
+  required bool isTablet,
+  required bool liveRideActive,
+  required bool isWaiting,
+}) {
+  if (isTablet) return true;
+  return liveRideActive || isWaiting;
 }

@@ -25469,6 +25469,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     required bool isLandscape,
     bool? reserveActionBar,
     bool? reservePriceSummary,
+    bool? reservePhasePill,
   }) {
     final size = MediaQuery.sizeOf(context);
     final pad = MediaQuery.paddingOf(context);
@@ -25485,6 +25486,13 @@ class _DriverHomePageState extends State<DriverHomePage>
       reserveActionBar: reserveActionBar ?? _liveRideActive,
       reservePriceSummary: reservePriceSummary ??
           (isTablet || _phoneTellersShowEstimatedPriceStrip),
+      reservePhasePill: reservePhasePill ??
+          (!isTablet &&
+              resolveTellersPhasePillVisible(
+                isTablet: false,
+                liveRideActive: _liveRideActive,
+                isWaiting: _isWaiting,
+              )),
     );
   }
 
@@ -25723,6 +25731,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         isTablet: isTablet,
         isLandscape: isLandscape,
         isWaiting: _isWaiting,
+        liveRideActive: _liveRideActive,
         showEstimatedPriceStrip: isTablet
             ? true
             : _phoneTellersShowEstimatedPriceStrip,

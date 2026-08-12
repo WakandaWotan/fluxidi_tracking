@@ -956,7 +956,8 @@ void main() {
       final banner = tester.getRect(kBanner);
       expect(banner.width, lessThanOrEqualTo(layout.maxWidth + 0.5));
       expect(banner.overlaps(tester.getRect(kSelector)), isFalse);
-      expect(banner.overlaps(tester.getRect(kLabel)), isFalse);
+      // Phone removes the Live-navigation badge entirely.
+      expect(kLabel, findsNothing);
       final window = tester.getRect(kLiveWindow);
       expect(banner.bottom, lessThanOrEqualTo(window.bottom + 0.5));
       expect(banner.right, lessThanOrEqualTo(window.right + 0.5));
