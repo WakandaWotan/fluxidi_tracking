@@ -454,7 +454,10 @@ void main() {
       );
       expect(geo.metersPanelRect.top, closeTo(32 + kTellersPhoneTopBreathing, 0.5));
       expect(geo.metersPanelRect.height, lessThanOrEqualTo(kTellersPhonePortraitMetersH + 1));
-      expect(geo.controlsRect.bottom, closeTo(904 - 20, 0.5));
+      expect(
+        geo.controlsRect.bottom,
+        closeTo(904 - 20 - kTellersPhoneBottomBreathing, 0.5),
+      );
       expect(geo.liveWindowRect.top, greaterThan(geo.metersPanelRect.bottom));
       expect(geo.liveWindowRect.bottom, lessThanOrEqualTo(geo.controlsRect.top + 0.5));
       // No Live-navigation badge reservation on phone.

@@ -31,11 +31,15 @@ const double kTellersPhoneLandscapeLeftWidthFraction = 0.40;
 /// Phone Tellers price summary band heights.
 const double kTellersPhonePriceSummaryHPortrait = 48.0;
 const double kTellersPhonePriceSummaryHLandscape = 44.0;
-/// Phone action row: 48 lp targets + light chrome (no heavy outer panel).
-const double kTellersPhoneControlsH = 60.0;
+/// Phone action row: ≥48 lp touch targets + label chrome (settled geometry).
+const double kTellersPhoneControlsH = 64.0;
 
 /// Breathing room below the top SafeArea for floating phone Tellers chrome.
 const double kTellersPhoneTopBreathing = 10.0;
+
+/// Breathing room above the effective safe bottom so Pause/Recenter/Stop
+/// shapes and labels stay fully inside the viewport (not flush-clipped).
+const double kTellersPhoneBottomBreathing = 12.0;
 
 /// Compact intrinsic phone meters band (header + 2×2 KPIs only).
 /// Phase pill is reserved separately via [kTellersPhonePhasePillH].
@@ -479,12 +483,14 @@ class DriverTellersLayoutGeometry {
     bool reservePhasePill = false,
   }) {
     final hPad = isTablet ? 20.0 : 10.0;
-    // Phone: breathe only under the top SafeArea; pin bottom chrome to
-    // SafeArea.bottom (no mirrored bottom inset that floated controls upward).
+    // Phone: top SafeArea breathing + bottom breathing above the safe edge so
+    // the control row never sits flush against (or under) system insets.
     final topPad = isTablet
         ? (isLandscape ? 8.0 : 12.0)
         : (isLandscape ? 6.0 : kTellersPhoneTopBreathing);
-    final bottomPad = isTablet ? (isLandscape ? 8.0 : 12.0) : 0.0;
+    final bottomPad = isTablet
+        ? (isLandscape ? 8.0 : 12.0)
+        : kTellersPhoneBottomBreathing;
     final gap = isTablet ? 12.0 : 8.0;
     final showPrice = isTablet || reservePriceSummary;
 

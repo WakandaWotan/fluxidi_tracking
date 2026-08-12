@@ -3,6 +3,8 @@
 // Driver-facing "Tellers" presentation. Read-only view over live ride meters.
 // Does not own GPS, fare, waiting, route progress, or the Mapbox map.
 
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart' show ValueListenable, kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
@@ -782,6 +784,12 @@ class _DriverRideMetersViewState extends State<DriverRideMetersView> {
   @override
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
+    // Prefer the larger of padding/viewPadding so a consumed SafeArea still
+    // yields an effective bottom inset for settled controlsRect ownership.
+    final safeTop = math.max(media.padding.top, media.viewPadding.top);
+    final safeBottom = math.max(media.padding.bottom, media.viewPadding.bottom);
+    final safeLeft = math.max(media.padding.left, media.viewPadding.left);
+    final safeRight = math.max(media.padding.right, media.viewPadding.right);
     final reserveActionBar =
         widget.onStop != null ||
         widget.onToggleWait != null ||
@@ -793,10 +801,10 @@ class _DriverRideMetersViewState extends State<DriverRideMetersView> {
     );
     final candidate = DriverTellersLayoutGeometry.resolve(
       viewportSize: media.size,
-      safeTop: media.padding.top,
-      safeBottom: media.padding.bottom,
-      safeLeft: media.padding.left,
-      safeRight: media.padding.right,
+      safeTop: safeTop,
+      safeBottom: safeBottom,
+      safeLeft: safeLeft,
+      safeRight: safeRight,
       isLandscape: widget.isLandscape,
       isTablet: widget.isTablet,
       reserveActionBar: reserveActionBar,
@@ -1138,7 +1146,9 @@ class _DriverRideMetersContent extends StatelessWidget {
                 key: const ValueKey<String>('driver_tellers_controls_panel'),
                 padding: EdgeInsets.symmetric(
                   horizontal: phoneGlass ? 4 : 8,
-                  vertical: phoneGlass ? 2 : 8,
+                  // Phone: keep vertical chrome tight so the 48 lp target +
+                  // label stay inside settled controlsRect height.
+                  vertical: phoneGlass ? 4 : 8,
                 ),
                 decoration: BoxDecoration(
                   // Phone: no monolithic control plate — only per-button tint.

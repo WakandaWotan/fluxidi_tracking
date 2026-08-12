@@ -25473,13 +25473,14 @@ class _DriverHomePageState extends State<DriverHomePage>
   }) {
     final size = MediaQuery.sizeOf(context);
     final pad = MediaQuery.paddingOf(context);
+    final viewPad = MediaQuery.viewPaddingOf(context);
     final isTablet = _hostIsTablet(context);
     return DriverTellersLayoutGeometry.resolve(
       viewportSize: size,
-      safeTop: pad.top,
-      safeBottom: pad.bottom,
-      safeLeft: pad.left,
-      safeRight: pad.right,
+      safeTop: math.max(pad.top, viewPad.top),
+      safeBottom: math.max(pad.bottom, viewPad.bottom),
+      safeLeft: math.max(pad.left, viewPad.left),
+      safeRight: math.max(pad.right, viewPad.right),
       isLandscape: isLandscape,
       isTablet: isTablet,
       // Match DriverRideMetersView: actions only while the live ride owns them.
@@ -33719,13 +33720,17 @@ class _DriverHomePageState extends State<DriverHomePage>
   Widget _buildCollapsedNavLogoCapsule({
     required bool isLandscape,
     required bool hasInlineBanner,
+    double? slotWidthOverride,
+    double? paintHeightOverride,
   }) {
-    final paintHeight = isLandscape
-        ? (hasInlineBanner ? 40.0 : 44.0)
-        : 48.0;
-    final slotWidth = isLandscape
-        ? (hasInlineBanner ? 112.0 : 128.0)
-        : 120.0;
+    final paintHeight = paintHeightOverride ??
+        (isLandscape
+            ? (hasInlineBanner ? 40.0 : 44.0)
+            : 48.0);
+    final slotWidth = slotWidthOverride ??
+        (isLandscape
+            ? (hasInlineBanner ? 112.0 : 128.0)
+            : 120.0);
     return IgnorePointer(
       child: SizedBox(
         key: const ValueKey<String>('nav_phone_free_logo'),
@@ -33805,7 +33810,16 @@ class _DriverHomePageState extends State<DriverHomePage>
         // Phone host (incl. phone landscape collapse): preserve the prior
         // chip row. Tablet host keeps branded header even in a narrow pane.
         if (!navSignageTablet && tabletReadability == null) {
-          final logoWidth = isLandscape ? 112.0 : 120.0;
+          // Ordinary phone landscape: enlarge logo ~40% on wide panes only.
+          // Portrait / compact / Tellers / tablet keep existing metrics.
+          final logoMetrics = PhoneNavLandscapeLogoMetrics.resolve(
+            isPhoneHost: true,
+            isLandscape: isLandscape,
+            availableRowWidth: constraints.maxWidth,
+            hasInlineBanner: true,
+          );
+          final logoWidth =
+              logoMetrics?.slotWidth ?? (isLandscape ? 112.0 : 120.0);
           final metrics = NavSignageTabletReadabilityMetrics.forPhoneParity(
             isLandscape: isLandscape,
             availableBannerWidth: math.max(
@@ -33825,6 +33839,8 @@ class _DriverHomePageState extends State<DriverHomePage>
               _buildCollapsedNavLogoCapsule(
                 isLandscape: isLandscape,
                 hasInlineBanner: banner != null,
+                slotWidthOverride: logoMetrics?.slotWidth,
+                paintHeightOverride: logoMetrics?.paintHeight,
               ),
               if (banner != null) ...[
                 const SizedBox(width: 8),
