@@ -1635,47 +1635,54 @@ class _DriverRideMetersContent extends StatelessWidget {
     final distanceLabel = driverTellersDistanceLabel(markerLanguage);
     final durationLabel = driverTellersDurationLabel(markerLanguage);
     final waitingLabel = driverTellersWaitingLabel(markerLanguage);
-    final fare = _MeterTile(
-      key: const ValueKey('teller_fare'),
-      label: fareLabel,
-      value: snapshot.fareText,
-      semanticLabel: '$fareLabel ${snapshot.fareText}',
-      palette: palette,
-      emphasize: true,
-      isTablet: isTablet,
-      isLandscape: isLandscape,
-      compact: compact,
-    );
-    final distance = _MeterTile(
-      key: const ValueKey('teller_distance'),
-      label: distanceLabel,
-      value: snapshot.distanceTravelledText,
-      semanticLabel: '$distanceLabel ${snapshot.distanceTravelledText}',
-      palette: palette,
-      isTablet: isTablet,
-      isLandscape: isLandscape,
-      compact: compact,
-    );
-    final duration = _MeterTile(
-      key: const ValueKey('teller_duration'),
-      label: durationLabel,
-      value: snapshot.rideDurationText,
-      semanticLabel: '$durationLabel ${snapshot.rideDurationText}',
-      palette: palette,
-      isTablet: isTablet,
-      isLandscape: isLandscape,
-      compact: compact,
-    );
-    final waiting = _MeterTile(
-      key: const ValueKey('teller_waiting'),
-      label: waitingLabel,
-      value: snapshot.waitingTimeText,
-      semanticLabel: '$waitingLabel ${snapshot.waitingTimeText}',
-      palette: palette,
-      isTablet: isTablet,
-      isLandscape: isLandscape,
-      compact: compact,
-    );
+
+    List<_MeterTile> tilesFor(TellersTabletKpiMetrics? metrics) => [
+      _MeterTile(
+        key: const ValueKey('teller_fare'),
+        label: fareLabel,
+        value: snapshot.fareText,
+        semanticLabel: '$fareLabel ${snapshot.fareText}',
+        palette: palette,
+        emphasize: true,
+        isTablet: isTablet,
+        isLandscape: isLandscape,
+        compact: compact,
+        tabletMetrics: metrics,
+      ),
+      _MeterTile(
+        key: const ValueKey('teller_distance'),
+        label: distanceLabel,
+        value: snapshot.distanceTravelledText,
+        semanticLabel: '$distanceLabel ${snapshot.distanceTravelledText}',
+        palette: palette,
+        isTablet: isTablet,
+        isLandscape: isLandscape,
+        compact: compact,
+        tabletMetrics: metrics,
+      ),
+      _MeterTile(
+        key: const ValueKey('teller_duration'),
+        label: durationLabel,
+        value: snapshot.rideDurationText,
+        semanticLabel: '$durationLabel ${snapshot.rideDurationText}',
+        palette: palette,
+        isTablet: isTablet,
+        isLandscape: isLandscape,
+        compact: compact,
+        tabletMetrics: metrics,
+      ),
+      _MeterTile(
+        key: const ValueKey('teller_waiting'),
+        label: waitingLabel,
+        value: snapshot.waitingTimeText,
+        semanticLabel: '$waitingLabel ${snapshot.waitingTimeText}',
+        palette: palette,
+        isTablet: isTablet,
+        isLandscape: isLandscape,
+        compact: compact,
+        tabletMetrics: metrics,
+      ),
+    ];
 
     Widget row(Widget a, Widget b) => Row(
       crossAxisAlignment: fillHeight
@@ -1691,10 +1698,16 @@ class _DriverRideMetersContent extends StatelessWidget {
     if (compact) {
       return LayoutBuilder(
         builder: (context, constraints) {
-          final fourAcross = driverTellersTabletFourAcrossKpis(
-            constraints.maxWidth,
+          final metrics = TellersTabletKpiMetrics.resolve(
+            availableWidth: constraints.maxWidth,
+            isLandscape: isLandscape,
           );
-          if (fourAcross) {
+          final tiles = tilesFor(metrics);
+          final fare = tiles[0];
+          final distance = tiles[1];
+          final duration = tiles[2];
+          final waiting = tiles[3];
+          if (metrics.fourAcross) {
             return Row(
               key: const ValueKey<String>('driver_tellers_kpi_row_4'),
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1720,6 +1733,12 @@ class _DriverRideMetersContent extends StatelessWidget {
         },
       );
     }
+
+    final phoneTiles = tilesFor(null);
+    final fare = phoneTiles[0];
+    final distance = phoneTiles[1];
+    final duration = phoneTiles[2];
+    final waiting = phoneTiles[3];
 
     // Balanced 2x2 in all phone layouts. When [fillHeight] the rows expand to
     // consume the available column height (tall, high-weight tiles).
@@ -1860,6 +1879,7 @@ class _MeterTile extends StatelessWidget {
     required this.isLandscape,
     this.emphasize = false,
     this.compact = false,
+    this.tabletMetrics,
   });
 
   final String label;
@@ -1870,33 +1890,40 @@ class _MeterTile extends StatelessWidget {
   final bool isLandscape;
   final bool emphasize;
   final bool compact;
+  final TellersTabletKpiMetrics? tabletMetrics;
 
   @override
   Widget build(BuildContext context) {
-    // Tablet compact (Tellers cockpit): enlarge ~25–35% for passenger distance.
-    // Phone / non-compact tablet paths keep prior sizes.
-    final valueSize = compact
-        ? (isLandscape ? 28.0 : 32.0)
+    // Tablet Tellers: pane-driven [TellersTabletKpiMetrics]. Phone unchanged.
+    final metrics = tabletMetrics;
+    final valueSize = metrics != null
+        ? metrics.valueFontSize
         : isTablet
         ? (isLandscape ? 36.0 : 40.0)
         : (isLandscape ? 18.0 : 28.0);
-    final labelSize = compact
-        ? (isLandscape ? 13.0 : 15.0)
+    final labelSize = metrics != null
+        ? metrics.labelFontSize
         : (isTablet ? 14.0 : 12.0);
+    final minH = metrics?.minHeight;
+    final hPad =
+        metrics?.horizontalPadding ??
+        (compact ? 12.0 : (isTablet ? 18.0 : 12.0));
+    final vPad =
+        metrics?.verticalPadding ?? (compact ? 12.0 : (isTablet ? 16.0 : 10.0));
+    final gap = metrics?.labelValueGap ?? (compact ? 2.0 : 4.0);
     return Semantics(
       label: semanticLabel,
       child: Container(
-        constraints: compact
-            ? const BoxConstraints(minHeight: 92)
+        constraints: minH != null
+            ? BoxConstraints(minHeight: minH)
             : const BoxConstraints(),
-        padding: EdgeInsets.symmetric(
-          horizontal: compact ? 12 : (isTablet ? 18 : 12),
-          vertical: compact ? 12 : (isTablet ? 16 : 10),
-        ),
+        padding: EdgeInsets.symmetric(horizontal: hPad, vertical: vPad),
         clipBehavior: Clip.hardEdge,
         decoration: BoxDecoration(
           color: palette.surface.withOpacity(palette.isDark ? 0.94 : 0.98),
-          borderRadius: BorderRadius.circular(compact ? 12 : 16),
+          borderRadius: BorderRadius.circular(
+            compact || metrics != null ? 12 : 16,
+          ),
           border: Border.all(
             color: emphasize
                 ? palette.accent.withOpacity(0.85)
@@ -1940,7 +1967,7 @@ class _MeterTile extends StatelessWidget {
                     color: palette.textPrimary.withOpacity(0.72),
                   ),
                 ),
-                SizedBox(height: compact ? 2 : 4),
+                SizedBox(height: gap),
                 if (bounded) Flexible(child: valueText) else valueText,
               ],
             );

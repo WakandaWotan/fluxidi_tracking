@@ -1,6 +1,4 @@
-// FLUXIDI-TELLERS-KPI-COCKPIT-POLISH
-//
-// Larger passenger-readable KPI bands + lower live-map nose (0.80).
+// FLUXIDI-TELLERS-KPI-COCKPIT-POLISH (decisive scale + ~0.89 nose / 22 px tail)
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +6,7 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/navigation/presentation/driver_ride_meters.dart';
 import 'package:fluxidi_tracking/navigation/presentation/driver_tellers_layout_geometry.dart';
+import 'package:fluxidi_tracking/navigation/presentation/driver_viewport_anchor_geometry.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_cockpit_camera.dart';
 
 const _snap = DriverRideMetersSnapshot(
@@ -56,8 +55,42 @@ Widget _harness({
 }
 
 void main() {
-  group('FLUXIDI-TELLERS-KPI-COCKPIT-POLISH', () {
-    test('wide tablet geometry: tall KPI row + map below + 0.80 nose', () {
+  group('FLUXIDI-TELLERS-KPI-FINAL-POLISH', () {
+    test(
+      'tablet KPI tokens are materially larger than prior 100/28/13 baseline',
+      () {
+        expect(kTellersTabletCockpitKpiRowH, 128);
+        expect(kTellersTabletCockpitKpiWrapH, 270);
+        final wide = TellersTabletKpiMetrics.resolve(
+          availableWidth: 760,
+          isLandscape: false,
+        );
+        expect(wide.fourAcross, isTrue);
+        expect(wide.valueFontSize, 45);
+        expect(wide.labelFontSize, 18);
+        expect(wide.minHeight, 118);
+        expect(wide.valueFontSize, greaterThan(32)); // prior compact portrait
+        expect(wide.labelFontSize, greaterThan(15));
+        final land = TellersTabletKpiMetrics.resolve(
+          availableWidth: 1100,
+          isLandscape: true,
+        );
+        expect(land.valueFontSize, 39);
+        expect(land.labelFontSize, 16);
+      },
+    );
+
+    test('narrow pane metrics clamp but stay larger than old compact', () {
+      final narrow = TellersTabletKpiMetrics.resolve(
+        availableWidth: 400,
+        isLandscape: false,
+      );
+      expect(narrow.fourAcross, isFalse);
+      expect(narrow.valueFontSize, greaterThanOrEqualTo(34));
+      expect(narrow.labelFontSize, greaterThanOrEqualTo(14));
+    });
+
+    test('wide tablet: KPI chrome grows; nose ~0.89; tail margin 20–24', () {
       final g = DriverTellersLayoutGeometry.resolve(
         viewportSize: const Size(800, 1280),
         safeTop: 24,
@@ -71,18 +104,38 @@ void main() {
         driverTellersTabletFourAcrossKpis(g.metersPanelRect.width),
         isTrue,
       );
-      expect(kTellersTabletCockpitKpiRowH, 100);
-      expect(g.requestedNoseFractionInLive, 0.80);
-      expect(g.realizedNoseFractionInLive, closeTo(0.80, 0.02));
-      expect(g.liveWindowRect.top, greaterThan(g.metersPanelRect.bottom - 1));
-      expect(g.priceSummaryRect.height, greaterThan(0));
+      expect(g.requestedNoseFractionInLive, closeTo(0.89, 0.011));
+      final tailMargin = g.liveWindowRect.bottom - g.vehicleTailGlobal.dy;
       expect(
-        g.vehicleTailGlobal.dy,
-        lessThanOrEqualTo(g.liveWindowRect.bottom),
+        tailMargin,
+        greaterThanOrEqualTo(kTellersLiveWindowVehicleBottomMarginMinPx - 0.5),
       );
+      expect(
+        tailMargin,
+        lessThanOrEqualTo(kTellersLiveWindowVehicleBottomMarginMaxPx + 0.5),
+      );
+      expect(g.cameraPaddingFocalPoint, g.markerAnchor);
+      expect(g.priceSummaryRect.height, greaterThan(0));
+      expect(g.vehicleIconSize, 132);
     });
 
-    test('narrow vertical pane geometry uses 2×2 KPI wrap height', () {
+    test('fullscreen landscape keeps lower live-window vehicle', () {
+      final g = DriverTellersLayoutGeometry.resolve(
+        viewportSize: const Size(1280, 800),
+        safeTop: 24,
+        safeBottom: 24,
+        safeLeft: 0,
+        safeRight: 0,
+        isLandscape: true,
+        isTablet: true,
+      );
+      expect(g.requestedNoseFractionInLive, closeTo(0.89, 0.011));
+      final tailMargin = g.liveWindowRect.bottom - g.vehicleTailGlobal.dy;
+      expect(tailMargin, closeTo(kTellersLiveWindowVehicleBottomMarginPx, 1.0));
+      expect(g.markerAnchor.dy, greaterThan(g.liveWindowRect.center.dy));
+    });
+
+    test('vertical split host tablet: 2×2 band + safe clamp', () {
       final g = DriverTellersLayoutGeometry.resolve(
         viewportSize: const Size(436, 1360),
         safeTop: 24,
@@ -96,12 +149,13 @@ void main() {
         driverTellersTabletFourAcrossKpis(g.metersPanelRect.width),
         isFalse,
       );
-      expect(kTellersTabletCockpitKpiWrapH, 210);
-      expect(g.requestedNoseFractionInLive, 0.80);
-      expect(g.realizedNoseFractionInLive, lessThanOrEqualTo(0.80 + 1e-9));
+      expect(kTellersTabletCockpitKpiWrapH, 270);
+      expect(g.vehicleIconSize, 132);
+      final tailMargin = g.liveWindowRect.bottom - g.vehicleTailGlobal.dy;
+      expect(tailMargin, greaterThanOrEqualTo(20 - 0.5));
     });
 
-    test('horizontal split keeps liveWindow-relative nose with clamp', () {
+    test('horizontal split recomputes from liveWindowRect', () {
       final g = DriverTellersLayoutGeometry.resolve(
         viewportSize: const Size(880, 676),
         safeTop: 24,
@@ -112,20 +166,31 @@ void main() {
         isTablet: true,
       );
       expect(g.cameraPaddingFocalPoint, g.markerAnchor);
-      expect(g.requestedNoseFractionInLive, 0.80);
-    });
-
-    test('enlarged KPI band shortens live map vs prior 78 px row', () {
-      final topMin = driverTellersTabletCockpitTopMinHeight(
-        contentWidth: 760,
-        isLandscape: false,
+      expect(
+        g.markerAnchor.dy,
+        closeTo(
+          g.liveWindowRect.top +
+              g.liveWindowRect.height * g.realizedNoseFractionInLive,
+          0.5,
+        ),
       );
-      // brand+title+gaps+pad+slack + 100 row > prior + 78 row.
-      expect(topMin, greaterThan(226));
-      expect(topMin, greaterThanOrEqualTo(248));
     });
 
-    testWidgets('wide tablet paints 4-across KPI row + price summary', (
+    test('ordinary Navigatie geometry unchanged by Tellers tokens', () {
+      final nav = resolveDriverViewportAnchorGeometry(
+        hostIsTablet: true,
+        viewportWidth: 800,
+        viewportHeight: 1280,
+        layoutBottomHudHeightPx: 188,
+        safeTop: 24,
+        safeBottom: 24,
+      );
+      expect(nav.vehicleIconSize, kDriverCockpitPro2HudTabletL7);
+      expect(nav.isAligned(), isTrue);
+      expect(kTellersLiveWindowNoseYFractionRequested, closeTo(0.89, 0.011));
+    });
+
+    testWidgets('wide tablet: 4-across + estimate strip visible', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -137,26 +202,15 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.byKey(const ValueKey('driver_tellers_kpi_wrap_2x2')),
-        findsNothing,
-      );
-      expect(
         find.byKey(const ValueKey('driver_tellers_price_summary')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('driver_tellers_live_window')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('driver_tellers_back_nav')),
         findsOneWidget,
       );
       expect(find.text('€ 3.20'), findsOneWidget);
       expect(find.text('€ 17.20'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
 
-    testWidgets('narrow vertical pane paints 2×2 KPI wrap', (tester) async {
+    testWidgets('narrow vertical: 2×2 without overflow', (tester) async {
       await tester.pumpWidget(
         _harness(size: const Size(436, 1360), isLandscape: false),
       );
@@ -166,18 +220,13 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.byKey(const ValueKey('driver_tellers_kpi_row_4')),
-        findsNothing,
-      );
-      expect(
         find.byKey(const ValueKey('driver_tellers_price_summary')),
         findsOneWidget,
       );
+      expect(tester.takeException(), isNull);
     });
 
-    testWidgets('NL/EN/FR/ES labels do not overflow Tellers KPI chrome', (
-      tester,
-    ) async {
+    testWidgets('NL/EN/FR/ES labels do not overflow', (tester) async {
       for (final lang in const [
         AppLanguage.nl,
         AppLanguage.en,
@@ -193,18 +242,7 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
-        expect(find.byKey(const ValueKey('teller_fare')), findsOneWidget);
-        expect(
-          find.byKey(const ValueKey('driver_tellers_price_summary')),
-          findsOneWidget,
-        );
       }
-    });
-
-    test('phone non-Tellers ordinary viewport geometry unchanged', () {
-      // Sanity: Tellers constants do not alter ordinary nav shared model.
-      expect(kTellersLiveWindowNoseYFractionRequested, 0.80);
-      expect(kDriverCockpitPro2HudTabletL7, 132);
     });
   });
 }

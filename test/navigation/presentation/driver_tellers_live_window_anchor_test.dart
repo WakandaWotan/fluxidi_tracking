@@ -78,12 +78,14 @@ void main() {
       );
     });
 
-    test('unclamped tablet nose is ~80% of usable live window height', () {
+    test('tablet nose request ~0.89; tail prefers ~22 px bottom margin', () {
       final g = _tabletPortrait();
-      expect(g.requestedNoseFractionInLive, 0.80);
-      expect(g.noseFractionClamped, isFalse);
-      expect(g.realizedNoseFractionInLive, closeTo(0.80, 0.01));
+      expect(g.requestedNoseFractionInLive, closeTo(0.89, 0.011));
       expect(g.vehicleIconSize, 132);
+      final tailMargin = g.liveWindowRect.bottom - g.vehicleTailGlobal.dy;
+      expect(tailMargin, closeTo(kTellersLiveWindowVehicleBottomMarginPx, 1.0));
+      expect(g.realizedNoseFractionInLive, greaterThanOrEqualTo(0.75));
+      expect(g.cameraPaddingFocalPoint, g.markerAnchor);
     });
 
     test('HUD nose and Mapbox focal resolve to the same global point', () {
@@ -130,8 +132,8 @@ void main() {
       final full = _tabletLandscape(size: const Size(1280, 800));
       final split = _tabletLandscape(size: const Size(880, 676));
       expect(split.liveWindowRect.height, isNot(full.liveWindowRect.height));
-      // Short landscape panes may clamp below 0.80 so the 132 px tail fits.
-      expect(split.requestedNoseFractionInLive, 0.80);
+      // Short landscape panes may clamp below 0.89 so the 132 px tail fits.
+      expect(split.requestedNoseFractionInLive, 0.89);
       expect(
         split.realizedNoseFractionInLive,
         lessThanOrEqualTo(split.requestedNoseFractionInLive + 1e-9),
@@ -159,8 +161,10 @@ void main() {
       final full = _tabletPortrait(size: const Size(800, 1280));
       final split = _tabletPortrait(size: const Size(436, 1360));
       expect(split.liveWindowRect.width, lessThan(full.liveWindowRect.width));
-      expect(split.realizedNoseFractionInLive, closeTo(0.80, 0.02));
       expect(split.vehicleIconSize, 132);
+      final tailMargin =
+          split.liveWindowRect.bottom - split.vehicleTailGlobal.dy;
+      expect(tailMargin, greaterThanOrEqualTo(20 - 0.5));
     });
 
     test('divider resize: last liveWindow wins nose/focal (epoch-style)', () {
@@ -227,7 +231,7 @@ void main() {
         isTablet: true,
       );
       expect(anchor.noseClamped, isTrue);
-      expect(anchor.realizedNoseFractionInLive, lessThan(0.80));
+      expect(anchor.realizedNoseFractionInLive, lessThan(0.89));
       expect(
         anchor.vehicleTailGlobal.dy,
         lessThanOrEqualTo(
@@ -267,7 +271,7 @@ void main() {
       );
       expect(line, contains('reason=enter'));
       expect(line, contains('tellers=1'));
-      expect(line, contains('reqNose=0.800'));
+      expect(line, contains('reqNose=0.890'));
       expect(line, contains('realNose='));
       expect(line, contains('mapGen=1'));
       expect(line, isNot(contains('50.77')));

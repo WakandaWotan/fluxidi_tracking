@@ -30,17 +30,69 @@ const double kTellersTabletCockpitBrandHPortrait = 72.0;
 const double kTellersTabletCockpitBrandHLandscape = 56.0;
 const double kTellersTabletCockpitTitleH = 40.0;
 
-/// Wide-pane single-row KPI band (~+28% vs prior 78 for passenger readability).
-const double kTellersTabletCockpitKpiRowH = 100.0;
+/// Wide-pane single-row KPI band (decisive passenger-meter scale).
+const double kTellersTabletCockpitKpiRowH = 128.0;
 
-/// Narrow-pane 2×2 KPI band (~+31% vs prior 160).
-const double kTellersTabletCockpitKpiWrapH = 210.0;
+/// Narrow-pane 2×2 KPI band.
+const double kTellersTabletCockpitKpiWrapH = 270.0;
 const double kTellersTabletCockpitPanelPad = 20.0;
 const double kTellersTabletCockpitInnerGap = 6.0;
 
 /// Extra px so Column children never overflow the reserved Positioned band.
 const double kTellersTabletCockpitLayoutSlack = 4.0;
-const double kTellersTabletCockpitMinMapH = 180.0;
+
+/// Live map may shrink so KPIs stay primary; still enough aperture for route.
+const double kTellersTabletCockpitMinMapH = 150.0;
+
+/// Named tablet-Tellers KPI typography / padding tokens (pane-driven).
+class TellersTabletKpiMetrics {
+  const TellersTabletKpiMetrics({
+    required this.valueFontSize,
+    required this.labelFontSize,
+    required this.minHeight,
+    required this.horizontalPadding,
+    required this.verticalPadding,
+    required this.labelValueGap,
+    required this.fourAcross,
+  });
+
+  final double valueFontSize;
+  final double labelFontSize;
+  final double minHeight;
+  final double horizontalPadding;
+  final double verticalPadding;
+  final double labelValueGap;
+  final bool fourAcross;
+
+  /// Resolve from actual Tellers pane width (not host shortestSide).
+  factory TellersTabletKpiMetrics.resolve({
+    required double availableWidth,
+    required bool isLandscape,
+  }) {
+    final fourAcross = driverTellersTabletFourAcrossKpis(availableWidth);
+    // Decisive scale vs prior compact 28/32 value and 13/15 label.
+    if (isLandscape) {
+      return TellersTabletKpiMetrics(
+        valueFontSize: fourAcross ? 39.0 : 34.0,
+        labelFontSize: fourAcross ? 16.0 : 14.0,
+        minHeight: fourAcross ? 118.0 : 104.0,
+        horizontalPadding: fourAcross ? 14.0 : 12.0,
+        verticalPadding: fourAcross ? 15.0 : 12.0,
+        labelValueGap: 3.0,
+        fourAcross: fourAcross,
+      );
+    }
+    return TellersTabletKpiMetrics(
+      valueFontSize: fourAcross ? 45.0 : 38.0,
+      labelFontSize: fourAcross ? 18.0 : 15.0,
+      minHeight: fourAcross ? 118.0 : 110.0,
+      horizontalPadding: fourAcross ? 14.0 : 12.0,
+      verticalPadding: fourAcross ? 15.0 : 13.0,
+      labelValueGap: 4.0,
+      fourAcross: fourAcross,
+    );
+  }
+}
 
 /// Room for amount + VAT/finality note (ordinary Navigatie parity).
 const double kTellersTabletCockpitPriceHPortrait = 72.0;
@@ -74,17 +126,20 @@ double driverTellersTabletCockpitTopMinHeight({
 /// Requested vehicle-nose Y inside [DriverTellersLayoutGeometry.liveWindowRect]
 /// as a fraction of the live-window height (0 = top, 1 = bottom).
 ///
-/// FLUXIDI-TELLERS-LIVE-MAP-FORWARD-VISIBILITY: ~80% places the vehicle lower
-/// in the Tellers cut-out for more upcoming road. Realized fraction may be
-/// clamped lower on unusually short live windows so the vehicle tail stays in.
-const double kTellersLiveWindowNoseYFractionRequested = 0.80;
+/// FLUXIDI-TELLERS-LIVE-MAP-FORWARD-VISIBILITY: request ~89% of live-window
+/// height. Placement prefers a ~22 px tail margin so the vehicle sits near the
+/// bottom edge with maximum upcoming road above.
+const double kTellersLiveWindowNoseYFractionRequested = 0.89;
 
 /// Backward-compatible alias of [kTellersLiveWindowNoseYFractionRequested].
 const double kTellersMarkerAnchorYFraction =
     kTellersLiveWindowNoseYFractionRequested;
 
-/// Bottom inset (logical px) keeping the vehicle tail inside the live aperture.
-const double kTellersLiveWindowVehicleBottomMarginPx = 12.0;
+/// Target gap (logical px) between vehicle tail and live-window bottom.
+/// Acceptance band on a normal tablet pane: 20–24 px.
+const double kTellersLiveWindowVehicleBottomMarginPx = 22.0;
+const double kTellersLiveWindowVehicleBottomMarginMinPx = 20.0;
+const double kTellersLiveWindowVehicleBottomMarginMaxPx = 24.0;
 
 /// Top inset (logical px) keeping the vehicle bitmap inside the live aperture.
 const double kTellersLiveWindowVehicleTopMarginPx = 8.0;
@@ -151,9 +206,9 @@ class TellersLiveWindowVehicleAnchor {
 }
 
 /// Resolve the Tellers vehicle nose/centre/tail and Mapbox padding so that:
-/// - the nose targets [requestedNoseFractionInLive] of [liveWindowRect] height;
+/// - requested nose is ~0.88–0.90 of [liveWindowRect] height;
+/// - placement prefers a ~22 px tail↔bottom margin (max upcoming road);
 /// - centre/tail follow the existing 132/94 HUD bitmap fractions;
-/// - the tail stays inside the live aperture with a bottom margin;
 /// - camera focal == nose in full-viewport space.
 TellersLiveWindowVehicleAnchor resolveTellersLiveWindowVehicleAnchor({
   required Rect liveWindowRect,
@@ -176,11 +231,6 @@ TellersLiveWindowVehicleAnchor resolveTellersLiveWindowVehicleAnchor({
   final bottomMargin = math.max(0.0, bottomMarginPx);
   final topMargin = math.max(0.0, topMarginPx);
 
-  double noseY = live.height > 0
-      ? live.top + live.height * requested
-      : live.top;
-  var clamped = false;
-
   double topFromNose(double nose) => nose - icon * noseFromTop;
   double tailFromNose(double nose) => topFromNose(nose) + icon * tailFromTop;
 
@@ -190,17 +240,26 @@ TellersLiveWindowVehicleAnchor resolveTellersLiveWindowVehicleAnchor({
   final minNose = minTop + icon * noseFromTop;
   final maxNose = maxTail - icon * (tailFromTop - noseFromTop);
 
+  // Prefer pinning the tail to the target bottom margin (acceptance: 20–24 px).
+  // Fall back to the requested nose fraction only when that sits lower while
+  // still keeping the tail inside the safe margin.
+  final noseFromRequest = live.height > 0
+      ? live.top + live.height * requested
+      : live.top;
+  double noseY;
+  var clamped = false;
   if (live.height > 0 && maxNose >= minNose) {
-    if (noseY > maxNose) {
-      noseY = maxNose;
-      clamped = true;
-    } else if (noseY < minNose) {
-      noseY = minNose;
+    // Lowest safe nose (= tail at bottomMargin). Maximises forward road.
+    noseY = maxNose;
+    if ((noseY - noseFromRequest).abs() > 0.5) {
       clamped = true;
     }
   } else if (live.height > 0) {
     // Unusually short window: pin as low as the aperture allows.
     noseY = math.max(live.top, maxTail - icon * (1.0 - noseFromTop));
+    clamped = true;
+  } else {
+    noseY = live.top;
     clamped = true;
   }
 
@@ -260,6 +319,7 @@ String formatNavTellersLiveWindowGeometryDiagnostic({
   int? mapWidgetGeneration,
 }) {
   final live = anchor.liveWindowRect;
+  final tailMargin = live.bottom - anchor.vehicleTailGlobal.dy;
   return 'reason=$reason '
       'tellers=${tellersActive ? 1 : 0} '
       'epoch=$viewportEpoch '
@@ -274,6 +334,7 @@ String formatNavTellersLiveWindowGeometryDiagnostic({
       'noseY=${anchor.vehicleNoseGlobal.dy.round()} '
       'centerY=${anchor.vehicleCenterGlobal.dy.round()} '
       'tailY=${anchor.vehicleTailGlobal.dy.round()} '
+      'tailMargin=${tailMargin.round()} '
       'focalY=${anchor.cameraFocalScreenPoint.dy.round()} '
       'icon=${anchor.vehicleIconSize.round()}'
       '${mapWidgetGeneration == null ? '' : ' mapGen=$mapWidgetGeneration'}';
