@@ -5,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
 import 'package:fluxidi_tracking/navigation/presentation/driver_ride_meters.dart';
-import 'package:fluxidi_tracking/navigation/presentation/driver_tellers_layout_geometry.dart';
 import 'package:fluxidi_tracking/navigation/presentation/driver_viewport_anchor_geometry.dart';
 import 'package:fluxidi_tracking/navigation/presentation/navigation_driver_cockpit_camera.dart';
 
@@ -114,7 +113,7 @@ void main() {
         tailMargin,
         lessThanOrEqualTo(kTellersLiveWindowVehicleBottomMarginMaxPx + 0.5),
       );
-      expect(g.cameraPaddingFocalPoint, g.markerAnchor);
+      expect(g.cameraPaddingFocalPoint, g.vehicleCenterGlobal);
       expect(g.priceSummaryRect.height, greaterThan(0));
       expect(g.vehicleIconSize, 132);
     });
@@ -165,7 +164,7 @@ void main() {
         isLandscape: true,
         isTablet: true,
       );
-      expect(g.cameraPaddingFocalPoint, g.markerAnchor);
+      expect(g.cameraPaddingFocalPoint, g.vehicleCenterGlobal);
       expect(
         g.markerAnchor.dy,
         closeTo(

@@ -188,7 +188,7 @@ class TellersLiveWindowVehicleAnchor {
   final double realizedNoseFractionInLive;
   final bool noseClamped;
 
-  /// Global screen point of the vehicle nose (= Mapbox focal target).
+  /// Global screen point of the vehicle nose (bitmap).
   final Offset vehicleNoseGlobal;
   final Offset vehicleCenterGlobal;
   final Offset vehicleTailGlobal;
@@ -196,12 +196,18 @@ class TellersLiveWindowVehicleAnchor {
   final NavCameraViewPadding cameraPadding;
   final Offset cameraFocalScreenPoint;
 
-  /// Alias used by Tellers layout / pose-lock (nose = marker road contact).
+  /// Visual nose (layout/diagnostics). Mapbox annotation uses [vehicleCenterGlobal].
   Offset get markerAnchor => vehicleNoseGlobal;
 
   bool get noseMatchesFocal {
     return (vehicleNoseGlobal.dx - cameraFocalScreenPoint.dx).abs() <= 0.5 &&
         (vehicleNoseGlobal.dy - cameraFocalScreenPoint.dy).abs() <= 0.5;
+  }
+
+  /// Tellers Mapbox annotation uses IconAnchor.CENTER — focal must match centre.
+  bool get centerMatchesFocal {
+    return (vehicleCenterGlobal.dx - cameraFocalScreenPoint.dx).abs() <= 0.5 &&
+        (vehicleCenterGlobal.dy - cameraFocalScreenPoint.dy).abs() <= 0.5;
   }
 }
 
@@ -209,7 +215,7 @@ class TellersLiveWindowVehicleAnchor {
 /// - requested nose is ~0.88–0.90 of [liveWindowRect] height;
 /// - placement prefers a ~22 px tail↔bottom margin (max upcoming road);
 /// - centre/tail follow the existing 132/94 HUD bitmap fractions;
-/// - camera focal == nose in full-viewport space.
+/// - camera focal == vehicle **centre** (Mapbox `IconAnchor.CENTER`).
 TellersLiveWindowVehicleAnchor resolveTellersLiveWindowVehicleAnchor({
   required Rect liveWindowRect,
   required Size viewportSize,
@@ -241,8 +247,6 @@ TellersLiveWindowVehicleAnchor resolveTellersLiveWindowVehicleAnchor({
   final maxNose = maxTail - icon * (tailFromTop - noseFromTop);
 
   // Prefer pinning the tail to the target bottom margin (acceptance: 20–24 px).
-  // Fall back to the requested nose fraction only when that sits lower while
-  // still keeping the tail inside the safe margin.
   final noseFromRequest = live.height > 0
       ? live.top + live.height * requested
       : live.top;
@@ -279,10 +283,12 @@ TellersLiveWindowVehicleAnchor resolveTellersLiveWindowVehicleAnchor({
       ? ((noseY - live.top) / live.height).clamp(0.0, 1.0).toDouble()
       : 0.0;
 
-  final padLeft = math.max(0.0, 2 * nose.dx - viewportSize.width);
-  final padRight = math.max(0.0, viewportSize.width - 2 * nose.dx);
-  final padTop = math.max(0.0, 2 * nose.dy - viewportSize.height);
-  final padBottom = math.max(0.0, viewportSize.height - 2 * nose.dy);
+  // Mapbox Tellers annotation is IconAnchor.CENTER — pad so the geo point
+  // (icon centre) lands at [center], not the visual nose tip.
+  final padLeft = math.max(0.0, 2 * center.dx - viewportSize.width);
+  final padRight = math.max(0.0, viewportSize.width - 2 * center.dx);
+  final padTop = math.max(0.0, 2 * center.dy - viewportSize.height);
+  final padBottom = math.max(0.0, viewportSize.height - 2 * center.dy);
   final padding = NavCameraViewPadding(
     top: padTop,
     bottom: padBottom,
@@ -307,6 +313,19 @@ TellersLiveWindowVehicleAnchor resolveTellersLiveWindowVehicleAnchor({
     cameraPadding: padding,
     cameraFocalScreenPoint: focal,
   );
+}
+
+/// Tellers-active preview/follow must consume Tellers padding; Navigatie must
+/// keep the ordinary cockpit padding byte-identical.
+NavCameraViewPadding resolveTellersAwarePreviewCameraPadding({
+  required bool tellersActive,
+  required NavCameraViewPadding ordinaryCockpitPadding,
+  required NavCameraViewPadding? tellersLiveWindowPadding,
+}) {
+  if (tellersActive && tellersLiveWindowPadding != null) {
+    return tellersLiveWindowPadding;
+  }
+  return ordinaryCockpitPadding;
 }
 
 /// Bounded, PII-free diagnostic for Tellers live-window vehicle geometry.
@@ -630,9 +649,9 @@ class DriverTellersLayoutGeometry {
   Offset get markerAnchorGlobal => markerAnchor;
 
   /// The global screen point the authoritative navigation pose must project
-  /// onto while Tellers follow is active. Equal to [markerAnchorGlobal] by
-  /// construction, so project(authoritativeNavigationPose) lands on the marker.
-  Offset get cameraTargetAnchorGlobal => markerAnchor;
+  /// onto while Tellers follow is active. Mapbox Tellers annotation uses
+  /// IconAnchor.CENTER, so this is the vehicle centre (not the visual nose).
+  Offset get cameraTargetAnchorGlobal => vehicleCenterGlobal;
 
   /// The live map aperture in the same global coordinate space.
   Rect get liveWindowRectGlobal => liveWindowRect;
@@ -669,10 +688,9 @@ class DriverTellersLayoutGeometry {
   // last VALID geometry until a complete one resolves, and never install an
   // incomplete aperture that would expose the layer beneath the map.
 
-  /// The road-contact anchor (global logical pixels) of the visible Car/Arrow
-  /// marker. Identical to [cameraTargetAnchorGlobal] by construction so the
-  /// authoritative navigation pose projects exactly onto the marker.
-  Offset get markerRoadContactAnchorGlobal => markerAnchor;
+  /// The road-contact / annotation anchor (global logical pixels). Identical to
+  /// [cameraTargetAnchorGlobal] (Mapbox IconAnchor.CENTER) by construction.
+  Offset get markerRoadContactAnchorGlobal => cameraTargetAnchorGlobal;
 
   /// True only when every camera-facing rect is finite, positive and the live
   /// aperture lies within the viewport. An invalid geometry must never be

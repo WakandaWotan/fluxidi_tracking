@@ -112,19 +112,24 @@ void main() {
     });
 
     test('camera padding focal point lands exactly on the marker anchor', () {
-      // NAV-TELLERS-POSE-ANCHOR-AND-DIAGNOSTICS-UI-1: the padding must place the
-      // Mapbox camera `center` on the marker anchor (lower-centre), NOT the
-      // live-window middle. Prove focal == markerAnchor == cameraTargetAnchor.
+      // Mapbox Tellers annotation is IconAnchor.CENTER: focal == vehicle centre
+      // (== cameraTargetAnchor), not the visual nose tip.
       for (final g in [landscapeTablet(), portraitPhone()]) {
-        expect(g.cameraPaddingFocalPoint.dx, closeTo(g.markerAnchor.dx, 0.01));
-        expect(g.cameraPaddingFocalPoint.dy, closeTo(g.markerAnchor.dy, 0.01));
+        expect(
+          g.cameraPaddingFocalPoint.dx,
+          closeTo(g.vehicleCenterGlobal.dx, 0.01),
+        );
+        expect(
+          g.cameraPaddingFocalPoint.dy,
+          closeTo(g.vehicleCenterGlobal.dy, 0.01),
+        );
         expect(
           g.cameraTargetAnchorGlobal.dx,
-          closeTo(g.markerAnchorGlobal.dx, 0.001),
+          closeTo(g.vehicleCenterGlobal.dx, 0.001),
         );
         expect(
           g.cameraTargetAnchorGlobal.dy,
-          closeTo(g.markerAnchorGlobal.dy, 0.001),
+          closeTo(g.vehicleCenterGlobal.dy, 0.001),
         );
         // All four insets remain valid (non-negative, on-screen).
         expect(g.cameraPadding.left, greaterThanOrEqualTo(0));
@@ -319,8 +324,18 @@ void main() {
 
     cases.forEach((name, g) {
       test('$name: focal point == marker anchor', () {
-        expect(g.cameraPaddingFocalPoint.dx, closeTo(g.markerAnchor.dx, 0.02));
-        expect(g.cameraPaddingFocalPoint.dy, closeTo(g.markerAnchor.dy, 0.02));
+        expect(
+          g.cameraPaddingFocalPoint.dx,
+          closeTo(g.cameraTargetAnchorGlobal.dx, 0.02),
+        );
+        expect(
+          g.cameraPaddingFocalPoint.dy,
+          closeTo(g.cameraTargetAnchorGlobal.dy, 0.02),
+        );
+        expect(
+          g.cameraTargetAnchorGlobal.dy,
+          closeTo(g.vehicleCenterGlobal.dy, 0.02),
+        );
         // Padding stays valid (logical px, non-negative, on-screen).
         expect(g.cameraPadding.left, greaterThanOrEqualTo(0));
         expect(g.cameraPadding.right, greaterThanOrEqualTo(0));

@@ -85,25 +85,34 @@ void main() {
       final tailMargin = g.liveWindowRect.bottom - g.vehicleTailGlobal.dy;
       expect(tailMargin, closeTo(kTellersLiveWindowVehicleBottomMarginPx, 1.0));
       expect(g.realizedNoseFractionInLive, greaterThanOrEqualTo(0.75));
-      expect(g.cameraPaddingFocalPoint, g.markerAnchor);
+      // Mapbox IconAnchor.CENTER → focal == centre, not visual nose.
+      expect(g.cameraPaddingFocalPoint, g.vehicleCenterGlobal);
     });
 
-    test('HUD nose and Mapbox focal resolve to the same global point', () {
+    test('Mapbox CENTER focal matches vehicle centre (not nose tip)', () {
       for (final g in <DriverTellersLayoutGeometry>[
         _tabletPortrait(),
         _tabletLandscape(),
         _tabletPortrait(size: const Size(436, 1360)),
         _tabletLandscape(size: const Size(880, 676)),
       ]) {
-        expect(g.cameraPaddingFocalPoint.dx, closeTo(g.markerAnchor.dx, 0.5));
-        expect(g.cameraPaddingFocalPoint.dy, closeTo(g.markerAnchor.dy, 0.5));
+        expect(
+          g.cameraPaddingFocalPoint.dx,
+          closeTo(g.vehicleCenterGlobal.dx, 0.5),
+        );
+        expect(
+          g.cameraPaddingFocalPoint.dy,
+          closeTo(g.vehicleCenterGlobal.dy, 0.5),
+        );
         final anchor = resolveTellersLiveWindowVehicleAnchor(
           liveWindowRect: g.liveWindowRect,
           viewportSize: g.viewportSize,
           isTablet: g.isTablet,
         );
-        expect(anchor.noseMatchesFocal, isTrue);
+        expect(anchor.centerMatchesFocal, isTrue);
         expect(anchor.vehicleNoseGlobal, g.markerAnchor);
+        expect(g.markerRoadContactAnchorGlobal, g.vehicleCenterGlobal);
+        expect(g.cameraTargetAnchorGlobal, g.vehicleCenterGlobal);
       }
     });
 
@@ -146,7 +155,7 @@ void main() {
           0.5,
         ),
       );
-      expect(split.cameraPaddingFocalPoint, split.markerAnchor);
+      expect(split.cameraPaddingFocalPoint, split.vehicleCenterGlobal);
       expect(
         split.vehicleTailGlobal.dy,
         lessThanOrEqualTo(
@@ -174,7 +183,7 @@ void main() {
       // Latest resolve is authoritative — A and C match; B differs.
       expect(a.markerAnchor, c.markerAnchor);
       expect(b.markerAnchor, isNot(a.markerAnchor));
-      expect(c.cameraPaddingFocalPoint, c.markerAnchor);
+      expect(c.cameraPaddingFocalPoint, c.vehicleCenterGlobal);
     });
 
     test(

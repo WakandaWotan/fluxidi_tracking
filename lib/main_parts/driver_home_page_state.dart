@@ -17875,10 +17875,64 @@ class _DriverHomePageState extends State<DriverHomePage>
       progress: null,
       directAdjust: true,
     );
+    // FLUXIDI-TELLERS-PRESTART-LIVE-ANCHOR: same lat/lon/zoom/pitch/bearing;
+    // only padding switches to the realized Tellers liveWindowRect when active.
+    final tellersActive = _navPresentationMode.isTellers;
+    final navViewportEpochAtStart = _navViewportEpoch;
+    DriverTellersLayoutGeometry? tellersGeometry;
+    if (tellersActive) {
+      tellersGeometry = _resolveTellersLayoutGeometryForCurrentViewport(
+        isLandscape: isLandscape,
+      );
+    }
+    final viewPadding = resolveTellersAwarePreviewCameraPadding(
+      tellersActive: tellersActive,
+      ordinaryCockpitPadding: overrides.padding,
+      tellersLiveWindowPadding: tellersGeometry?.cameraPadding,
+    );
     _commitDriverCockpitAppliedCamera(
       zoom: overrides.zoom,
       pitch: overrides.pitch,
     );
+    // Drop the write when a newer viewport epoch won while we prepared.
+    if (_navViewportEpoch != navViewportEpochAtStart) {
+      _logNavBounded(
+        'NAV_PRESTART_PREVIEW',
+        'event=skip_stale_epoch reason=$reason '
+        'epochStart=$navViewportEpochAtStart epochNow=$_navViewportEpoch '
+        'tellers=${tellersActive ? 1 : 0}',
+        intervalMs: 1,
+      );
+      return;
+    }
+    if (tellersGeometry != null) {
+      _pendingTellersAnchorGeometry = tellersGeometry;
+      _pendingTellersAnchorPoseLat = target.lat;
+      _pendingTellersAnchorPoseLon = target.lon;
+      _streetlevelFollowPadding = mb.MbxEdgeInsets(
+        top: viewPadding.top,
+        left: viewPadding.left,
+        bottom: viewPadding.bottom,
+        right: viewPadding.right,
+      );
+      _logNavBounded(
+        'NAV_TELLERS_LIVE_ANCHOR',
+        formatNavTellersLiveWindowGeometryDiagnostic(
+          reason: 'prestart_$reason',
+          viewportEpoch: _navViewportEpoch,
+          viewportGeneration: _tellersViewport.generation,
+          tellersActive: true,
+          anchor: resolveTellersLiveWindowVehicleAnchor(
+            liveWindowRect: tellersGeometry.liveWindowRect,
+            viewportSize: tellersGeometry.viewportSize,
+            isTablet: tellersGeometry.isTablet,
+            vehicleIconSize: tellersGeometry.vehicleIconSize,
+          ),
+          mapWidgetGeneration: 1,
+        ),
+        intervalMs: 1,
+      );
+    }
     try {
       await _map!.flyTo(
         mb.CameraOptions(
@@ -17887,10 +17941,10 @@ class _DriverHomePageState extends State<DriverHomePage>
           pitch: overrides.pitch,
           bearing: bearingDeg,
           padding: mb.MbxEdgeInsets(
-            top: overrides.padding.top,
-            left: overrides.padding.left,
-            bottom: overrides.padding.bottom,
-            right: overrides.padding.right,
+            top: viewPadding.top,
+            left: viewPadding.left,
+            bottom: viewPadding.bottom,
+            right: viewPadding.right,
           ),
         ),
         mb.MapAnimationOptions(duration: 650),
@@ -17906,6 +17960,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         'bearing=${bearingDeg.toStringAsFixed(1)} '
         'bearingSource=$bearingSourceLabel '
         'targetSource=${navPhaseCameraTargetSourceLabel(target.source)} '
+        'tellers=${tellersActive ? 1 : 0} '
         'anchor=${overrides.anchorFraction.toStringAsFixed(3)}',
       );
     } catch (_) {
@@ -25232,6 +25287,21 @@ class _DriverHomePageState extends State<DriverHomePage>
       unawaited(
         _followCameraTesla(pos, force: true, cameraReason: 'tellers_open'),
       );
+    } else if (!_liveRideActive && _fixedStreetLevelPreviewDraft) {
+      // Apply after the Tellers overlay layout commits the final liveWindowRect
+      // (latest viewport epoch wins). Same latched preview target; padding only.
+      final epochAtOpen = _navViewportEpoch;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (!_navPresentationMode.isTellers) return;
+        if (_liveRideActive) return;
+        if (_navViewportEpoch != epochAtOpen) {
+          // Epoch advanced during open layout — still apply; reseed uses latest.
+        }
+        unawaited(
+          _applyPreviewStreetlevelCameraIfEligible(reason: 'tellers_open'),
+        );
+      });
     }
     if (!mounted) return;
     setState(() {});
@@ -25429,6 +25499,12 @@ class _DriverHomePageState extends State<DriverHomePage>
           cameraReason: 'tellers_orientation',
         ),
       );
+    } else if (!_liveRideActive && _fixedStreetLevelPreviewDraft) {
+      unawaited(
+        _applyPreviewStreetlevelCameraIfEligible(
+          reason: 'tellers_orientation',
+        ),
+      );
     }
   }
 
@@ -25441,6 +25517,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     assert(tellersPresentationMustNotChangeMapStyle());
     _tellersViewport.close();
     _lastTellersLandscape = null;
+    // Tellers-only pending camera state must never leak into Navigatie.
+    _pendingTellersAnchorGeometry = null;
+    _pendingTellersAnchorPoseLat = null;
+    _pendingTellersAnchorPoseLon = null;
+    _pendingTellersSnappedRouteLat = null;
+    _pendingTellersSnappedRouteLon = null;
+    _pendingTellersPoseSource = null;
     _logNavBounded(
       'NAV_TELLERS',
       'event=close viewportGeneration=${_tellersViewport.generation} '
