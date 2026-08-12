@@ -22,6 +22,14 @@ import {
 } from "./modules/crypto_utils.js";
 import { corsHeaders, json, html } from "./modules/http_response.js";
 import { finalizeLegPricingInclVat } from "./modules/leg_pricing_finalize.mjs";
+import {
+  scheduleBaseCancellation,
+  cascadeAddonCancellations,
+  shouldRejectRecurringAfterCancel,
+  materializeBaseCancellation,
+  applyProviderCancelOutcome,
+  needsProviderCancel,
+} from "./modules/subscription_cancellation.mjs";
 import { buildBuildTagResponse, listKvKeyNames } from "./modules/diagnostics.js";
 import { BOOKING_TEST_RESET_CONFIRM_PHRASE, allowDevResetEndpoints } from "./modules/dev_reset.js";
 import {
@@ -12149,6 +12157,12 @@ const DEFAULT_SUBSCRIPTION_PROFILE = {
   payment_provider: "",
   provider_customer_id: "",
   provider_subscription_id: "",
+  // Provider cancel reconciliation (base cancel cascade). When Mollie DELETE
+  // fails after a local cancel schedule, pending stays true for retry.
+  provider_cancel_pending: false,
+  provider_cancel_last_error: "",
+  provider_cancel_attempted_at: "",
+  provider_cancel_completed_at: "",
   // Patch 3.1: recurring-subscription + non-payment foundation fields. All
   // additive and inert — nothing reads or writes them yet. They give Patches
   // 3.2+ a stable place to record the Mollie mandate/subscription, the
@@ -13018,6 +13032,10 @@ function normalizeSubscriptionProfile(input = {}, scope = null) {
     payment_provider: sanitizeTenantString(source.payment_provider ?? source.paymentProvider ?? DEFAULT_SUBSCRIPTION_PROFILE.payment_provider, 48),
     provider_customer_id: sanitizeTenantString(source.provider_customer_id ?? source.providerCustomerId ?? DEFAULT_SUBSCRIPTION_PROFILE.provider_customer_id, 128),
     provider_subscription_id: sanitizeTenantString(source.provider_subscription_id ?? source.providerSubscriptionId ?? DEFAULT_SUBSCRIPTION_PROFILE.provider_subscription_id, 128),
+    provider_cancel_pending: source.provider_cancel_pending === true || source.providerCancelPending === true,
+    provider_cancel_last_error: sanitizeTenantString(source.provider_cancel_last_error ?? source.providerCancelLastError ?? DEFAULT_SUBSCRIPTION_PROFILE.provider_cancel_last_error, 200),
+    provider_cancel_attempted_at: sanitizeTenantString(source.provider_cancel_attempted_at ?? source.providerCancelAttemptedAt ?? DEFAULT_SUBSCRIPTION_PROFILE.provider_cancel_attempted_at, 48),
+    provider_cancel_completed_at: sanitizeTenantString(source.provider_cancel_completed_at ?? source.providerCancelCompletedAt ?? DEFAULT_SUBSCRIPTION_PROFILE.provider_cancel_completed_at, 48),
     // Patch 3.1: recurring-subscription + non-payment foundation fields. Pure
     // pass-through normalization (sanitize/clamp/default) with snake + camel
     // aliases. No transitions or behaviour are attached to these yet.
@@ -14329,6 +14347,26 @@ function _isFluxidiSubscriptionSuspensionDue(profile, nowMs) {
 // Saves the profile only when something actually changes, so a steady-state
 // read performs no write. Returns { profile, changed, suspended }. Existing
 // data is never deleted; periods/provider/add-ons/Mollie fields are untouched.
+// Materialize a due base cancel-at-period-end: status -> cancelled. Add-on
+// entitlement reductions are handled by the dedicated addon materializers
+// (same effective date when cascaded). Founder lock is never released here.
+async function materializeDueBaseSubscriptionCancellation(env, scope, profile) {
+  const result = materializeBaseCancellation(profile, {
+    nowMs: Date.now(),
+    nowIso: new Date().toISOString(),
+  });
+  if (!result?.changed || !result.profile) {
+    return { profile, changed: false, applied: false };
+  }
+  const saved = await saveSubscriptionProfile(env, result.profile, scope, {
+    allowTenantLegacyWrite: false,
+  });
+  console.log(
+    `[SUBSCRIPTION_BASE_CANCEL][MATERIALIZED] tenant=${_maskPublicDriverLoginValue(scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scope?.company_id)} applied=${result.applied === true}`,
+  );
+  return { profile: saved, changed: true, applied: result.applied === true };
+}
+
 async function materializeDueFluxidiSubscriptionSuspension(env, scope, profile) {
   if (!profile || typeof profile !== "object") {
     return { profile, changed: false, suspended: false };
@@ -15205,6 +15243,18 @@ async function _assertFluxidiCompanyCanCreateNewBooking(env, scope) {
     allowTenantLegacyFallback: false,
   });
   try {
+    const baseCancelMaterialized = await materializeDueBaseSubscriptionCancellation(
+      env,
+      scope,
+      profile,
+    );
+    if (baseCancelMaterialized?.profile) profile = baseCancelMaterialized.profile;
+  } catch (e) {
+    console.log(
+      `[BOOKING_SUSPENSION_GUARD][BASE_CANCEL_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
+    );
+  }
+  try {
     const suspensionMaterialized = await materializeDueFluxidiSubscriptionSuspension(
       env,
       scope,
@@ -15215,6 +15265,12 @@ async function _assertFluxidiCompanyCanCreateNewBooking(env, scope) {
     console.log(
       `[BOOKING_SUSPENSION_GUARD][SUSPENSION_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
     );
+  }
+  const cancelled = String(profile?.subscription_status || profile?.status || "")
+    .trim()
+    .toLowerCase();
+  if (cancelled === "cancelled" || cancelled === "canceled") {
+    return { ok: false, error: "subscription_cancelled" };
   }
   if (_isFluxidiSubscriptionSuspended(profile)) {
     return { ok: false, error: "subscription_suspended" };
@@ -15331,6 +15387,32 @@ async function applyFluxidiRecurringPaymentFromVerifiedPayment(env, { payment } 
   const profile = await loadSubscriptionProfile(env, scope, {
     allowTenantLegacyFallback: false,
   });
+
+  // Cancel defense: never advance / reactivate a profile that already
+  // scheduled cancel-at-period-end or disabled auto_renew. Prevents orphan
+  // Mollie charges from undoing a company cancellation.
+  const cancelGuard = shouldRejectRecurringAfterCancel(profile, {
+    nowMs: Date.now(),
+  });
+  if (cancelGuard.reject) {
+    try {
+      await markFluxidiRecurringPaymentApplied(env, paymentId, {
+        tenantId,
+        companyId,
+        subscriptionId,
+        outcome: "ignored_cancel_scheduled",
+        paymentStatus: "paid",
+      });
+    } catch (_) {}
+    console.log(
+      `[SUBSCRIPTION_RECURRING_PAYMENT][IGNORED] tenant=${tenantMask} company=${companyMask} reason=${cancelGuard.reason} sub=${subscriptionId}`,
+    );
+    return {
+      ok: true,
+      ignored: true,
+      reason: cancelGuard.reason || "cancel_scheduled",
+    };
+  }
 
   // Idempotency layer 2: profile-level guard (covers a marker-write failure
   // after a previous successful save of this exact payment).
@@ -27921,6 +28003,18 @@ async function handleCompanyBootstrap(request, env) {
   let subscriptionProfile = await loadSubscriptionProfile(env, scope, {
     allowTenantLegacyFallback: false,
   });
+  try {
+    const baseCancelMaterialized = await materializeDueBaseSubscriptionCancellation(
+      env,
+      scope,
+      subscriptionProfile,
+    );
+    if (baseCancelMaterialized?.profile) subscriptionProfile = baseCancelMaterialized.profile;
+  } catch (e) {
+    console.log(
+      `[COMPANY_BOOTSTRAP][BASE_CANCEL_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
+    );
+  }
   // Patch 3.5: lazily materialize a due past_due -> suspended transition (or
   // backfill a missing grace clock) so bootstrap reports the same state as the
   // dedicated profile route. Best-effort: never fails the bootstrap.
@@ -37550,6 +37644,20 @@ export default {
               `[COMPANY_SUBSCRIPTION_GET][PDF_5000_DOWNGRADE_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
             );
           }
+          // Base cancel materialize after addon downgrades share the same
+          // effective date when cascaded from POST /cancel.
+          try {
+            const baseCancelMaterialized = await materializeDueBaseSubscriptionCancellation(
+              env,
+              scope,
+              profile,
+            );
+            if (baseCancelMaterialized?.profile) profile = baseCancelMaterialized.profile;
+          } catch (e) {
+            console.log(
+              `[COMPANY_SUBSCRIPTION_GET][BASE_CANCEL_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
+            );
+          }
           // Patch 3.5: lazily materialize a due past_due -> suspended transition
           // (or backfill a missing grace clock). Runs last so it observes the
           // final profile state. Best-effort: never fails the read.
@@ -38550,12 +38658,13 @@ export default {
       //
       // POST /company/subscription/cancel
       //
-      // Schedules a cancel-at-period-end on the company-scoped subscription
-      // profile. Local state only: this NEVER calls Mollie, NEVER creates a
-      // payment/checkout, and NEVER touches the founder slot DO. The
-      // subscription keeps its current status (active/trialing) until the
-      // effective date so the company retains access for the paid period.
-      // A future patch wires the real Mollie recurring-subscription cancel.
+      // Schedules cancel-at-period-end, cascades all paid add-on cancellations
+      // to the same effective date, and best-effort DELETEs the Mollie
+      // recurring subscription so no further provider charges occur. Local
+      // access stays active/trialing until the effective date. Founder slot
+      // DO / locked_price_cents are never released here. Mollie failures keep
+      // a retryable provider_cancel_pending state (not reported as full
+      // success).
       // =========================
       if (
         url.pathname === "/company/subscription/cancel" &&
@@ -38586,96 +38695,87 @@ export default {
           const tenantMask = _maskPublicDriverLoginValue(scope.tenant_id);
           const companyMask = _maskPublicDriverLoginValue(scope.company_id);
 
-          // Load company-scoped profile WITHOUT trial creation and WITHOUT
-          // tenant legacy fallback. Cancellation never falls back to a shared
-          // tenant record.
           const profile = await loadSubscriptionProfile(env, scope, {
             allowTenantLegacyFallback: false,
           });
 
-          const currentStatus = _fluxidiSubscriptionSafeStr(
-            profile?.subscription_status || profile?.status,
-          ).toLowerCase();
-          if (currentStatus !== "active" && currentStatus !== "trialing") {
+          const scheduled = scheduleBaseCancellation(profile, {
+            nowIso: new Date().toISOString(),
+            nowMs: Date.now(),
+          });
+          if (!scheduled.ok) {
             console.log(
-              `[SUBSCRIPTION_CANCEL][REJECT] reason=not_cancelable status=${currentStatus || "-"} tenant=${tenantMask} company=${companyMask}`,
+              `[SUBSCRIPTION_CANCEL][REJECT] reason=${scheduled.error || "not_cancelable"} status=${scheduled.status || "-"} tenant=${tenantMask} company=${companyMask}`,
             );
             return json(
               {
                 ok: false,
-                error: "subscription_not_cancelable",
-                subscription_status: currentStatus || "",
+                error: scheduled.error || "subscription_not_cancelable",
+                subscription_status: scheduled.status || "",
               },
               422,
             );
           }
 
-          // Idempotent: a profile already scheduled for cancellation just
-          // echoes its current cancellation summary without re-writing KV.
-          if (profile?.cancel_at_period_end === true) {
-            console.log(
-              `[SUBSCRIPTION_CANCEL][IDEMPOTENT] tenant=${tenantMask} company=${companyMask} effective=${_fluxidiSubscriptionSafeStr(profile?.cancellation_effective_at, 48) || "-"}`,
+          let working = scheduled.profile;
+          // Re-cascade on idempotent re-entry so any add-ons activated after
+          // the first cancel schedule are also ended with the base.
+          if (scheduled.already_scheduled) {
+            const reCascade = cascadeAddonCancellations(working, {
+              effectiveAt: scheduled.effectiveAt,
+              requestedAt: new Date().toISOString(),
+            });
+            working = reCascade.profile;
+          }
+
+          let providerOk = true;
+          let providerError = "";
+          if (needsProviderCancel(working)) {
+            const customerId = _fluxidiSubscriptionSafeStr(
+              working.provider_customer_id,
+              128,
             );
-            return json(
-              {
+            const subscriptionId = _fluxidiSubscriptionSafeStr(
+              working.provider_subscription_id,
+              128,
+            );
+            if (customerId.startsWith("cst_") && subscriptionId.startsWith("sub_")) {
+              const apiResult = await _fluxidiMollieSubscriptionApiCall(env, {
+                method: "DELETE",
+                customerId,
+                subscriptionId,
+              });
+              const outcome = applyProviderCancelOutcome(working, {
+                ok: apiResult?.ok === true,
+                errorCode:
+                  _fluxidiSubscriptionSafeStr(apiResult?.error || apiResult?.data?.title, 200) ||
+                  `upstream_${Number(apiResult?.status) || 0}`,
+                nowIso: new Date().toISOString(),
+                subscriptionId,
+              });
+              working = outcome.profile;
+              providerOk = outcome.provider_ok === true;
+              providerError = providerOk
+                ? ""
+                : _fluxidiSubscriptionSafeStr(working.provider_cancel_last_error, 200);
+              console.log(
+                `[SUBSCRIPTION_CANCEL][MOLLIE_DELETE] tenant=${tenantMask} company=${companyMask} ok=${providerOk} sub=${subscriptionId}`,
+              );
+            } else {
+              // No provider sub to cancel — treat as complete locally.
+              const outcome = applyProviderCancelOutcome(working, {
                 ok: true,
-                already_scheduled: true,
-                subscription_status: currentStatus,
-                cancel_at_period_end: true,
-                auto_renew: false,
-                cancel_requested_at: _fluxidiSubscriptionSafeStr(
-                  profile?.cancel_requested_at,
-                  48,
-                ),
-                cancellation_effective_at: _fluxidiSubscriptionSafeStr(
-                  profile?.cancellation_effective_at,
-                  48,
-                ),
-                current_period_end: _fluxidiSubscriptionSafeStr(
-                  profile?.current_period_end,
-                  48,
-                ),
-                subscription_profile: profile,
-              },
-              200,
-            );
+                nowIso: new Date().toISOString(),
+                subscriptionId: "",
+              });
+              working = outcome.profile;
+              providerOk = true;
+            }
           }
-
-          const nowIso = new Date().toISOString();
-          // Effective date precedence: current_period_end -> trial_ends_at ->
-          // a 30-day fallback so the field is always populated for the UI.
-          const periodEnd = _fluxidiSubscriptionSafeStr(
-            profile?.current_period_end,
-            48,
-          );
-          const trialEnds = _fluxidiSubscriptionSafeStr(
-            profile?.trial_ends_at,
-            48,
-          );
-          let effectiveAt = "";
-          if (periodEnd && !Number.isNaN(Date.parse(periodEnd))) {
-            effectiveAt = periodEnd;
-          } else if (trialEnds && !Number.isNaN(Date.parse(trialEnds))) {
-            effectiveAt = trialEnds;
-          } else {
-            effectiveAt = new Date(
-              Date.now() + 30 * 24 * 60 * 60 * 1000,
-            ).toISOString();
-          }
-
-          // Keep status unchanged (active/trialing) until the effective date.
-          // Only the cancel-at-period-end lifecycle fields are mutated.
-          const updated = {
-            ...profile,
-            cancel_at_period_end: true,
-            auto_renew: false,
-            cancel_requested_at: nowIso,
-            cancellation_effective_at: effectiveAt,
-          };
 
           let saved;
           try {
-            saved = await saveSubscriptionProfile(env, updated, scope, {
+            saved = await saveSubscriptionProfile(env, working, scope, {
               allowTenantLegacyWrite: false,
             });
           } catch (e) {
@@ -38685,13 +38785,18 @@ export default {
             return json({ ok: false, error: "cancel_persist_failed" }, 500);
           }
 
+          const httpOk = providerOk;
           console.log(
-            `[SUBSCRIPTION_CANCEL][OK] tenant=${tenantMask} company=${companyMask} status=${currentStatus} effective=${effectiveAt}`,
+            `[SUBSCRIPTION_CANCEL][${httpOk ? "OK" : "PARTIAL"}] tenant=${tenantMask} company=${companyMask} already=${scheduled.already_scheduled === true} effective=${scheduled.effectiveAt} provider_ok=${providerOk}`,
           );
           return json(
             {
-              ok: true,
-              already_scheduled: false,
+              ok: httpOk,
+              already_scheduled: scheduled.already_scheduled === true,
+              provider_cancel_ok: providerOk,
+              provider_cancel_pending: saved?.provider_cancel_pending === true,
+              provider_cancel_error: providerError,
+              addon_cascade: scheduled.addon_cascade || {},
               subscription_status: _fluxidiSubscriptionSafeStr(
                 saved?.subscription_status || saved?.status,
               ).toLowerCase(),
@@ -38710,8 +38815,9 @@ export default {
                 48,
               ),
               subscription_profile: saved,
+              error: httpOk ? undefined : "provider_cancel_pending",
             },
-            200,
+            httpOk ? 200 : 202,
           );
         } catch (err) {
           console.log(
@@ -44435,6 +44541,18 @@ export default {
         let profile = await loadSubscriptionProfile(env, explicitScope, {
           allowTenantLegacyFallback: false,
         });
+        try {
+          const baseCancelMaterialized = await materializeDueBaseSubscriptionCancellation(
+            env,
+            explicitScope,
+            profile,
+          );
+          if (baseCancelMaterialized?.profile) profile = baseCancelMaterialized.profile;
+        } catch (e) {
+          console.log(
+            `[ADMIN_SUBSCRIPTION_GET][BASE_CANCEL_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
+          );
+        }
         // Patch 3.5: lazily materialize a due past_due -> suspended transition
         // (or backfill a missing grace clock) so admin reads match the company
         // route. Best-effort: never fails the read.

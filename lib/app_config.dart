@@ -1489,6 +1489,8 @@ class BackendSubscriptionProfile {
   final String paymentProvider;
   final String providerCustomerId;
   final String providerSubscriptionId;
+  /// True when Mollie DELETE after base cancel failed and needs retry.
+  final bool providerCancelPending;
   final String activationId;
   final List<String> warnings;
 
@@ -1562,6 +1564,7 @@ class BackendSubscriptionProfile {
     this.paymentProvider = '',
     this.providerCustomerId = '',
     this.providerSubscriptionId = '',
+    this.providerCancelPending = false,
     this.activationId = '',
     this.warnings = const <String>[],
   });
@@ -2007,6 +2010,11 @@ class BackendSubscriptionProfile {
         'providerSubscriptionId',
         fallback.providerSubscriptionId,
       ),
+      providerCancelPending: boolVal(
+        'provider_cancel_pending',
+        'providerCancelPending',
+        fallback.providerCancelPending,
+      ),
       activationId: text(
         'activation_id',
         'activationId',
@@ -2095,6 +2103,7 @@ class BackendSubscriptionProfile {
     'payment_provider': paymentProvider,
     'provider_customer_id': providerCustomerId,
     'provider_subscription_id': providerSubscriptionId,
+    'provider_cancel_pending': providerCancelPending,
     'activation_id': activationId,
     'warnings': warnings,
   };
@@ -6052,13 +6061,10 @@ Future<BackendSubscriptionProfile> fetchCompanySubscriptionProfile({
 /// POST /company/subscription/cancel (Patch 2.5, minimal cancel-at-period-end).
 ///
 /// Company-session auth (admin token when available, otherwise the company
-/// bearer). Schedules a cancel-at-period-end on the backend: the subscription
-/// stays active/trialing until [BackendSubscriptionProfile.cancellationEffectiveAt].
-/// This NEVER creates a payment/checkout and NEVER calls Mollie — it only
-/// mutates local backend state. Returns the refreshed profile (which carries
-/// `cancelAtPeriodEnd == true` on success). Throws on a non-2xx response so the
-/// caller can surface a generic error; the cancel button is only shown for an
-/// active/trialing, not-yet-cancelled subscription so rejections are rare.
+/// bearer). Schedules cancel-at-period-end, cascades paid add-ons, and asks
+/// the backend to stop the Mollie recurring subscription. Access stays until
+/// [BackendSubscriptionProfile.cancellationEffectiveAt]. Accepts HTTP 202 when
+/// local schedule succeeded but provider cancel is still pending retry.
 Future<BackendSubscriptionProfile> cancelCompanySubscription({
   String? tenantId,
   String? companyId,
@@ -6076,7 +6082,8 @@ Future<BackendSubscriptionProfile> cancelCompanySubscription({
   final res = await http
       .post(endpoint, headers: auth.headers, body: jsonEncode(scope))
       .timeout(const Duration(seconds: 15));
-  if (res.statusCode < 200 || res.statusCode >= 300) {
+  // 200 = full success; 202 = local schedule ok, provider cancel pending.
+  if (res.statusCode != 200 && res.statusCode != 202) {
     debugPrint(
       '[SUBSCRIPTION_CANCEL][FAIL] status=${res.statusCode} '
       'auth_mode=${auth.mode.name}',

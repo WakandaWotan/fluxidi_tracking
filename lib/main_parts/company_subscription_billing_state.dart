@@ -668,6 +668,14 @@ class _CompanySubscriptionBillingPageState
     }
 
     final effective = _extraVehicleEffectiveDate(profile);
+    final futureVehicles = (profile.maxVehicles - 1).clamp(
+      profile.includedVehicles,
+      profile.maxVehicles,
+    );
+    final futureDrivers = (profile.maxDrivers - 3).clamp(
+      profile.includedVehicles * 3,
+      profile.maxDrivers,
+    );
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -683,10 +691,10 @@ class _CompanySubscriptionBillingPageState
         ),
         content: Text(
           _t(
-            nl: '1 extra voertuig blijft actief tot $effective. Daarna wordt je voertuigenlimiet verlaagd. Bestaande voertuigen worden niet verwijderd.',
-            en: '1 extra vehicle stays active until $effective. Your vehicle limit is lowered after that. Existing vehicles are not removed.',
-            fr: '1 véhicule supplémentaire reste actif jusqu\'au $effective. Votre limite de véhicules sera ensuite réduite. Les véhicules existants ne sont pas supprimés.',
-            es: '1 vehículo extra permanece activo hasta el $effective. Tu límite de vehículos se reducirá después. Los vehículos existentes no se eliminan.',
+            nl: '1 extra voertuig blijft actief tot $effective. Daarna: voertuigenlimiet $futureVehicles en chauffeurslimiet $futureDrivers (−1 voertuig, −3 chauffeurs). Basisabonnement en PDF-pakketten blijven actief. Bestaande voertuigen/chauffeurs worden niet verwijderd.',
+            en: '1 extra vehicle stays active until $effective. Afterwards: vehicle limit $futureVehicles and driver limit $futureDrivers (−1 vehicle, −3 drivers). Base plan and PDF packs stay active. Existing vehicles/drivers are not removed.',
+            fr: '1 véhicule supplémentaire reste actif jusqu\'au $effective. Ensuite : limite véhicules $futureVehicles et chauffeurs $futureDrivers (−1 véhicule, −3 chauffeurs). L\'abonnement de base et les packs PDF restent actifs. Aucune suppression de données.',
+            es: '1 vehículo extra permanece activo hasta el $effective. Después: límite de vehículos $futureVehicles y de conductores $futureDrivers (−1 vehículo, −3 conductores). El plan base y los paquetes PDF siguen activos. No se eliminan datos.',
           ),
           style: TextStyle(color: _businessThemePalette.textMuted),
         ),
@@ -779,10 +787,10 @@ class _CompanySubscriptionBillingPageState
               Expanded(
                 child: Text(
                   _t(
-                    nl: '1 extra voertuig blijft actief tot ${_extraVehicleEffectiveDate(profile)}. Daarna wordt je voertuigenlimiet met 1 en je chauffeurslimiet met 3 verlaagd.',
-                    en: '1 extra vehicle stays active until ${_extraVehicleEffectiveDate(profile)}. After that your vehicle limit drops by 1 and your driver limit by 3.',
-                    fr: '1 véhicule supplémentaire reste actif jusqu\'au ${_extraVehicleEffectiveDate(profile)}. Ensuite, votre limite de véhicules baisse de 1 et votre limite de chauffeurs de 3.',
-                    es: '1 vehículo extra permanece activo hasta el ${_extraVehicleEffectiveDate(profile)}. Después tu límite de vehículos baja en 1 y el de conductores en 3.',
+                    nl: 'Opzegging gepland — 1 extra voertuig blijft actief tot ${_extraVehicleEffectiveDate(profile)}. Daarna −1 voertuig en −3 chauffeurs. Bestaande data blijft behouden.',
+                    en: 'Cancellation scheduled — 1 extra vehicle stays active until ${_extraVehicleEffectiveDate(profile)}. Then −1 vehicle and −3 drivers. Existing data is kept.',
+                    fr: 'Résiliation planifiée — 1 véhicule supplémentaire reste actif jusqu\'au ${_extraVehicleEffectiveDate(profile)}. Ensuite −1 véhicule et −3 chauffeurs. Les données existantes sont conservées.',
+                    es: 'Cancelación programada — 1 vehículo extra permanece activo hasta el ${_extraVehicleEffectiveDate(profile)}. Luego −1 vehículo y −3 conductores. Se conservan los datos existentes.',
                   ),
                   style: TextStyle(
                     color: _businessThemePalette.textPrimary,
@@ -800,33 +808,38 @@ class _CompanySubscriptionBillingPageState
 
     if (cancelable > 0) {
       children.add(
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: _cancellingExtraVehicle
-                ? null
-                : () => _confirmAndCancelOneExtraVehicle(profile),
-            style: TextButton.styleFrom(
-              foregroundColor: _businessThemePalette.textMuted,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            ),
-            icon: _cancellingExtraVehicle
-                ? const SizedBox(
-                    width: 15,
-                    height: 15,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.cancel_schedule_send_outlined, size: 17),
-            label: Text(
-              _t(
-                nl: 'Eén extra voertuig opzeggen',
-                en: 'Cancel one extra vehicle',
-                fr: 'Résilier un véhicule supplémentaire',
-                es: 'Cancelar un vehículo extra',
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _cancellingExtraVehicle
+                  ? null
+                  : () => _confirmAndCancelOneExtraVehicle(profile),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _warn,
+                side: BorderSide(color: _warn.withOpacity(0.85)),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                minimumSize: const Size.fromHeight(48),
               ),
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 12.5,
+              icon: _cancellingExtraVehicle
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.cancel_schedule_send_outlined, size: 18),
+              label: Text(
+                _t(
+                  nl: 'Eén extra voertuig opzeggen',
+                  en: 'Cancel one extra vehicle',
+                  fr: 'Résilier un véhicule supplémentaire',
+                  es: 'Cancelar un vehículo extra',
+                ),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                ),
               ),
             ),
           ),
@@ -1540,10 +1553,10 @@ class _CompanySubscriptionBillingPageState
               Expanded(
                 child: Text(
                   _t(
-                    nl: 'Dit pakket blijft actief tot ${_pdfBundleEffectiveDate(profile, pdfs)}. Daarna daalt je maandelijkse PDF-tegoed met $pdfs.',
-                    en: 'This bundle stays active until ${_pdfBundleEffectiveDate(profile, pdfs)}. After that your monthly PDF allowance drops by $pdfs.',
-                    fr: 'Ce pack reste actif jusqu\'au ${_pdfBundleEffectiveDate(profile, pdfs)}. Ensuite, votre quota PDF mensuel baisse de $pdfs.',
-                    es: 'Este paquete permanece activo hasta el ${_pdfBundleEffectiveDate(profile, pdfs)}. Después tu cupo mensual de PDF baja en $pdfs.',
+                    nl: 'Opzegging gepland — dit pakket blijft actief tot ${_pdfBundleEffectiveDate(profile, pdfs)}. Daarna daalt je maandelijkse PDF-tegoed met $pdfs.',
+                    en: 'Cancellation scheduled — this bundle stays active until ${_pdfBundleEffectiveDate(profile, pdfs)}. After that your monthly PDF allowance drops by $pdfs.',
+                    fr: 'Résiliation planifiée — ce pack reste actif jusqu\'au ${_pdfBundleEffectiveDate(profile, pdfs)}. Ensuite, votre quota PDF mensuel baisse de $pdfs.',
+                    es: 'Cancelación programada — este paquete permanece activo hasta el ${_pdfBundleEffectiveDate(profile, pdfs)}. Después tu cupo mensual de PDF baja en $pdfs.',
                   ),
                   style: TextStyle(
                     color: _businessThemePalette.textPrimary,
@@ -1561,33 +1574,39 @@ class _CompanySubscriptionBillingPageState
 
     if (cancelable > 0) {
       children.add(
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: busy
-                ? null
-                : () => _confirmAndCancelOnePdfBundle(profile, pdfs),
-            style: TextButton.styleFrom(
-              foregroundColor: _businessThemePalette.textMuted,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            ),
-            icon: busy
-                ? const SizedBox(
-                    width: 15,
-                    height: 15,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : Icon(Icons.remove_circle_outline, size: 16, color: _warn),
-            label: Text(
-              _t(
-                nl: 'Eén pakket van $pdfs PDF\u2019s opzeggen',
-                en: 'Cancel one $pdfs PDF bundle',
-                fr: 'Résilier un pack de $pdfs PDF',
-                es: 'Cancelar un paquete de $pdfs PDF',
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: busy
+                  ? null
+                  : () => _confirmAndCancelOnePdfBundle(profile, pdfs),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _warn,
+                side: BorderSide(color: _warn.withOpacity(0.85)),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                minimumSize: const Size.fromHeight(48),
               ),
-              style: const TextStyle(
-                fontSize: 12.2,
-                fontWeight: FontWeight.w600,
+              icon: busy
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.cancel_schedule_send_outlined, size: 18),
+              label: Text(
+                _t(
+                  nl: 'Eén pakket van $pdfs PDF\u2019s opzeggen',
+                  en: 'Cancel one $pdfs PDF bundle',
+                  fr: 'Résilier un pack de $pdfs PDF',
+                  es: 'Cancelar un paquete de $pdfs PDF',
+                ),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                ),
               ),
             ),
           ),
@@ -1620,6 +1639,51 @@ class _CompanySubscriptionBillingPageState
     }
     final bool isActive = _profileIsActive(profile);
     final bool starting = _pdfBundleBusyStarting(pdfs);
+    final activeQty = _pdfBundleActiveQuantity(profile, pdfs);
+    final cancelable = _pdfBundleCancelableQuantity(profile, pdfs);
+    final scheduled = _pdfBundleScheduledQuantity(profile, pdfs);
+    // When a pack is already active, do not dominate the card with another
+    // activation CTA — show status + cancel/pending controls instead.
+    if (isActive && (activeQty > 0 || scheduled > 0 || cancelable > 0)) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _chip(
+            text: _t(
+              nl: 'Actief: $activeQty × $pdfs PDF\u2019s / maand',
+              en: 'Active: $activeQty × $pdfs PDFs / month',
+              fr: 'Actif : $activeQty × $pdfs PDF / mois',
+              es: 'Activo: $activeQty × $pdfs PDF / mes',
+            ),
+            bg: _green.withOpacity(0.14),
+            border: _green.withOpacity(0.45),
+            textColor: _green,
+          ),
+          _pdfBundleCancellationControls(profile, pdfs),
+          if (cancelable > 0 || activeQty > 0) ...[
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: starting
+                  ? null
+                  : () => _startPdfBundleCheckout(profile, pdfs),
+              child: Text(
+                _t(
+                  nl: 'Nog een pakket van $pdfs toevoegen',
+                  en: 'Add another $pdfs pack',
+                  fr: 'Ajouter un autre pack de $pdfs',
+                  es: 'Añadir otro paquete de $pdfs',
+                ),
+                style: TextStyle(
+                  color: _businessThemePalette.textMuted,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ],
+      );
+    }
     final button = SizedBox(
       width: double.infinity,
       child: FilledButton.icon(
@@ -1738,6 +1802,7 @@ class _CompanySubscriptionBillingPageState
     }
 
     final effective = _effectiveCancelDate(profile);
+    final consequenceLines = _baseCancelConsequenceLines(profile, effective);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1751,14 +1816,23 @@ class _CompanySubscriptionBillingPageState
           ),
           style: TextStyle(color: _businessThemePalette.textPrimary),
         ),
-        content: Text(
-          _t(
-            nl: 'Je abonnement blijft actief tot $effective. Daarna wordt het niet meer verlengd.',
-            en: 'Your subscription stays active until $effective. It will not renew after that.',
-            fr: 'Votre abonnement reste actif jusqu\'au $effective. Il ne sera plus renouvelé ensuite.',
-            es: 'Tu suscripción permanece activa hasta el $effective. No se renovará después.',
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final line in consequenceLines) ...[
+                Text(
+                  '• $line',
+                  style: TextStyle(
+                    color: _businessThemePalette.textMuted,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 6),
+              ],
+            ],
           ),
-          style: TextStyle(color: _businessThemePalette.textMuted),
         ),
         actions: [
           TextButton(
@@ -1794,14 +1868,25 @@ class _CompanySubscriptionBillingPageState
         companyId: scopeId,
       );
       if (!mounted) return;
-      _showSnack(
-        _t(
-          nl: 'Je abonnement blijft actief tot ${_effectiveCancelDate(updated)}.',
-          en: 'Your subscription stays active until ${_effectiveCancelDate(updated)}.',
-          fr: 'Votre abonnement reste actif jusqu\'au ${_effectiveCancelDate(updated)}.',
-          es: 'Tu suscripción permanece activa hasta el ${_effectiveCancelDate(updated)}.',
-        ),
-      );
+      if (updated.providerCancelPending) {
+        _showSnack(
+          _t(
+            nl: 'Opzegging gepland tot ${_effectiveCancelDate(updated)}. Providerstop wordt opnieuw geprobeerd — controleer later opnieuw.',
+            en: 'Cancellation scheduled until ${_effectiveCancelDate(updated)}. Provider stop will be retried — check again later.',
+            fr: 'Résiliation planifiée jusqu\'au ${_effectiveCancelDate(updated)}. L\'arrêt fournisseur sera réessayé — vérifiez plus tard.',
+            es: 'Cancelación programada hasta el ${_effectiveCancelDate(updated)}. Se reintentará detener el proveedor — comprueba más tarde.',
+          ),
+        );
+      } else {
+        _showSnack(
+          _t(
+            nl: 'Je abonnement en betaalde uitbreidingen blijven actief tot ${_effectiveCancelDate(updated)}. Daarna geen verlenging meer.',
+            en: 'Your subscription and paid add-ons stay active until ${_effectiveCancelDate(updated)}. Nothing renews after that.',
+            fr: 'Votre abonnement et extensions payantes restent actifs jusqu\'au ${_effectiveCancelDate(updated)}. Plus de renouvellement ensuite.',
+            es: 'Tu suscripción y ampliaciones de pago siguen activas hasta el ${_effectiveCancelDate(updated)}. No se renovarán después.',
+          ),
+        );
+      }
       _refresh();
     } catch (_) {
       if (!mounted) return;
@@ -1818,10 +1903,84 @@ class _CompanySubscriptionBillingPageState
     }
   }
 
+  /// Bullet lines for the base-cancel confirmation dialog (NL/EN/FR/ES).
+  List<String> _baseCancelConsequenceLines(
+    BackendSubscriptionProfile profile,
+    String effective,
+  ) {
+    final lines = <String>[
+      _t(
+        nl: 'Basisplan blijft actief tot $effective.',
+        en: 'Base plan stays active until $effective.',
+        fr: 'Le plan de base reste actif jusqu\'au $effective.',
+        es: 'El plan base permanece activo hasta el $effective.',
+      ),
+    ];
+    final v = _extraVehicleActiveQuantity(profile);
+    if (v > 0) {
+      lines.add(
+        _t(
+          nl: '$v extra voertuig(en) (€19/maand excl. btw, +3 chauffeurs per stuk) eindigen op $effective.',
+          en: '$v extra vehicle(s) (€19/month excl. VAT, +3 drivers each) end on $effective.',
+          fr: '$v véhicule(s) supplémentaire(s) (19 €/mois HT, +3 chauffeurs chacun) se terminent le $effective.',
+          es: '$v vehículo(s) extra (19 €/mes sin IVA, +3 conductores cada uno) terminan el $effective.',
+        ),
+      );
+    }
+    final d = profile.extraDriverActiveQuantity;
+    if (d > 0) {
+      lines.add(
+        _t(
+          nl: '$d aparte extra chauffeur(s) eindigen op $effective.',
+          en: '$d separate extra driver(s) end on $effective.',
+          fr: '$d chauffeur(s) supplémentaire(s) séparés se terminent le $effective.',
+          es: '$d conductor(es) extra separados terminan el $effective.',
+        ),
+      );
+    }
+    for (final bundle in <(int, int)>[
+      (500, profile.pdf500ActiveQuantity),
+      (1000, profile.pdf1000ActiveQuantity),
+      (5000, profile.pdf5000ActiveQuantity),
+    ]) {
+      final pdfs = bundle.$1;
+      final qty = bundle.$2;
+      if (qty <= 0) continue;
+      lines.add(
+        _t(
+          nl: '$qty × $pdfs PDF-pakket(ten) eindigen op $effective.',
+          en: '$qty × $pdfs PDF pack(s) end on $effective.',
+          fr: '$qty × pack(s) de $pdfs PDF se terminent le $effective.',
+          es: '$qty × paquete(s) de $pdfs PDF terminan el $effective.',
+        ),
+      );
+    }
+    lines.add(
+      _t(
+        nl: 'Na $effective geen automatische verlenging meer van basis of uitbreidingen.',
+        en: 'After $effective there is no further automatic renewal of the base plan or add-ons.',
+        fr: 'Après le $effective, plus aucun renouvellement automatique du plan ou des extensions.',
+        es: 'Después del $effective no habrá más renovación automática del plan ni de las ampliaciones.',
+      ),
+    );
+    if (profile.isFounderCustomer || profile.lockedPriceCents == 5900) {
+      lines.add(
+        _t(
+          nl: 'Founderprijs €59 geldt zolang dit abonnement actief blijft. Bij latere heractivatie kan de normale prijs €69/maand gelden.',
+          en: 'The €59 founder price applies while this subscription stays active. Later reactivation may use the normal €69/month price.',
+          fr: 'Le tarif fondateur de 59 € s\'applique tant que cet abonnement reste actif. Une réactivation ultérieure peut utiliser le tarif normal de 69 €/mois.',
+          es: 'El precio fundador de 59 € aplica mientras esta suscripción siga activa. Una reactivación posterior puede usar el precio normal de 69 €/mes.',
+        ),
+      );
+    }
+    return lines;
+  }
+
   /// Cancel button (active/trialing, not yet scheduled) or a passive status
   /// card (already scheduled). Renders nothing for any other state.
   Widget _buildCancellationSection(BackendSubscriptionProfile profile) {
     if (profile.cancelAtPeriodEnd) {
+      final pendingProvider = profile.providerCancelPending;
       return Padding(
         padding: const EdgeInsets.only(top: 10),
         child: Container(
@@ -1832,27 +1991,48 @@ class _CompanySubscriptionBillingPageState
             borderRadius: BorderRadius.circular(10),
             border: Border.all(color: _warn.withOpacity(0.5)),
           ),
-          child: Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.info_outline, size: 18, color: _warn),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.info_outline, size: 18, color: _warn),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _t(
+                        nl: 'Opzegging gepland — abonnement en betaalde uitbreidingen blijven actief tot ${_effectiveCancelDate(profile)}. Daarna geen verlenging meer.',
+                        en: 'Cancellation scheduled — subscription and paid add-ons stay active until ${_effectiveCancelDate(profile)}. No renewal after that.',
+                        fr: 'Résiliation planifiée — abonnement et extensions payantes restent actifs jusqu\'au ${_effectiveCancelDate(profile)}. Plus de renouvellement ensuite.',
+                        es: 'Cancelación programada — la suscripción y ampliaciones de pago siguen activas hasta el ${_effectiveCancelDate(profile)}. Sin renovación después.',
+                      ),
+                      style: TextStyle(
+                        color: _businessThemePalette.textPrimary,
+                        fontSize: 12,
+                        height: 1.35,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (pendingProvider) ...[
+                const SizedBox(height: 8),
+                Text(
                   _t(
-                    nl: 'Je abonnement is opgezegd en blijft actief tot ${_effectiveCancelDate(profile)}. Daarna wordt het niet meer verlengd.',
-                    en: 'Your subscription is cancelled and stays active until ${_effectiveCancelDate(profile)}. It will not renew after that.',
-                    fr: 'Votre abonnement est résilié et reste actif jusqu\'au ${_effectiveCancelDate(profile)}. Il ne sera plus renouvelé ensuite.',
-                    es: 'Tu suscripción está cancelada y permanece activa hasta el ${_effectiveCancelDate(profile)}. No se renovará después.',
+                    nl: 'Providerstop nog niet bevestigd. Fluxidi probeert dit automatisch opnieuw — er wordt geen nieuwe verlenging gestart vanuit de app.',
+                    en: 'Provider stop not confirmed yet. Fluxidi will retry automatically — the app will not start a new renewal.',
+                    fr: 'Arrêt fournisseur pas encore confirmé. Fluxidi réessaiera automatiquement — l\'app ne démarrera pas de nouveau renouvellement.',
+                    es: 'Parada del proveedor aún no confirmada. Fluxidi reintentará automáticamente — la app no iniciará una nueva renovación.',
                   ),
                   style: TextStyle(
-                    color: _businessThemePalette.textPrimary,
-                    fontSize: 12,
+                    color: _businessThemePalette.textMuted,
+                    fontSize: 11.5,
                     height: 1.35,
-                    fontWeight: FontWeight.w600,
                   ),
                 ),
-              ),
+              ],
             ],
           ),
         ),
@@ -1863,23 +2043,25 @@ class _CompanySubscriptionBillingPageState
 
     return Padding(
       padding: const EdgeInsets.only(top: 10),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: TextButton.icon(
+      child: SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
           onPressed: _cancelling
               ? null
               : () => _confirmAndCancelSubscription(profile),
-          style: TextButton.styleFrom(
-            foregroundColor: _businessThemePalette.textMuted,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: _warn,
+            side: BorderSide(color: _warn.withOpacity(0.85)),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            minimumSize: const Size.fromHeight(48),
           ),
           icon: _cancelling
               ? const SizedBox(
-                  width: 15,
-                  height: 15,
+                  width: 16,
+                  height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Icon(Icons.cancel_schedule_send_outlined, size: 17),
+              : const Icon(Icons.cancel_schedule_send_outlined, size: 18),
           label: Text(
             _t(
               nl: 'Abonnement opzeggen',
@@ -1887,7 +2069,7 @@ class _CompanySubscriptionBillingPageState
               fr: 'Résilier l\'abonnement',
               es: 'Cancelar suscripción',
             ),
-            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5),
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
           ),
         ),
       ),
@@ -2886,13 +3068,16 @@ class _CompanySubscriptionBillingPageState
                         .toList(growable: false);
                     final usedVehicles = scopedVehicles.length;
                     final usedDrivers = scopedDrivers.length;
-                    final bottomSafeInset = MediaQuery.paddingOf(context).bottom;
+                    // Use viewPadding so gesture/nav bars are respected even
+                    // when nested MediaQuery.padding was consumed.
+                    final bottomSafeInset =
+                        MediaQuery.viewPaddingOf(context).bottom;
                     return ListView(
                       padding: EdgeInsets.fromLTRB(
                         12,
                         12,
                         12,
-                        14 + bottomSafeInset,
+                        24 + bottomSafeInset,
                       ),
                       children: [
                         _sectionCard(
