@@ -373,7 +373,7 @@ void main() {
   });
 
   group('phone PiP title', () {
-    test('model keeps destination title; phone heading uses ride-state', () {
+    test('model keeps destination title; phone UI drops duplicate headings', () {
       final model = buildExternalNavPipMeterModel(
         phase: ExternalNavPhase.activeRide,
         language: AppLanguage.en,
@@ -387,12 +387,12 @@ void main() {
       expect(model.title, 'To destination');
       expect(model.primaryLabel, 'Fare');
       expect(model.metrics.first.label, 'Fare');
-      expect(pipMeterRideActiveTitle(AppLanguage.en), 'Ride active');
-      expect(pipMeterRideActiveTitle(AppLanguage.en), isNot(model.primaryLabel));
       expect(model.metrics.length, greaterThanOrEqualTo(4));
       final src = _read('lib/navigation/external/external_navigation_pip_meter.dart');
-      expect(src, contains('pipMeterRideActiveTitle(model.language)'));
-      expect(src, isNot(contains('model.primaryLabel,\n                maxLines: 1')));
+      // Phone body no longer paints ride-state / destination titles.
+      expect(src, contains('_PhonePipMeterBody'));
+      expect(src, contains('PhonePipSurfaceOpacity'));
+      expect(src, isNot(contains('pipMeterRideActiveTitle(model.language)')));
     });
   });
 

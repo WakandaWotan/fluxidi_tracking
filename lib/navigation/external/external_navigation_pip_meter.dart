@@ -7,7 +7,8 @@
 //
 // Compact high-contrast PiP meter card. No map / menus.
 // Tablet PiP uses a passenger-facing taxi-meter layout that fills the card.
-// Phone PiP keeps the prior compact primary+secondary presentation.
+// Phone PiP: maximum-transparency floating KPIs over Google Maps (no dark
+// dashboard plate). Outlined ivory/gold glyphs; lightest stable outer tint.
 //
 // CRITICAL (field SM-X400): never classify tablet vs phone from the PiP
 // *window* size. Entering PiP shrinks MediaQuery from sw~880dp to a small
@@ -31,6 +32,27 @@ import 'package:fluxidi_tracking/navigation/presentation/driver_ride_meters.dart
 import 'package:fluxidi_tracking/fluxidi_host_form_factor.dart';
 
 import 'external_navigation_session.dart';
+
+/// Phone PiP surface — lightest stable plate (15–22% black). KPI cells stay
+/// fully clear. If an OEM composites transparent PiP as black, keep this floor
+/// rather than silently restoring a heavy opaque dashboard.
+abstract final class PhonePipSurfaceOpacity {
+  /// Measured Flutter outer floor used in field builds (≈18% black).
+  static const double outer = 0.18;
+
+  /// Individual KPI cells never carry their own plate.
+  static const double kpiCell = 0.0;
+
+  static const Color plate = Color(0x2E000000); // ≈0.18
+  static const Color goldStroke = Color(0xFFFFC107);
+  static const Color ivorySeparator = Color(0x55FFF3D0);
+  static const Color labelFill = Color(0xFFFFF8E7);
+  static const Color valueFill = Color(0xFFFFC107);
+  static const Color outline = Color(0xFF0A0A0A);
+  static const double labelStrokeWidth = 2.4;
+  static const double valueStrokeWidth = 3.0;
+  static const double outerStrokeWidth = 1.2;
+}
 
 enum PipMeterKind { fixedPrice, liveTariff, toCustomer }
 
@@ -249,6 +271,16 @@ String pipMeterPriceLabel(AppLanguage language) {
   ).of(language);
 }
 
+/// Phone PiP fare KPI label (NL field copy is Tarief; tablet keeps Prijs).
+String pipMeterPhoneFareLabel(AppLanguage language) {
+  return const LocalizedText(
+    nl: 'Tarief',
+    en: 'Fare',
+    fr: 'Tarif',
+    es: 'Tarifa',
+  ).of(language);
+}
+
 String pipMeterLiveLabel(AppLanguage language) {
   return const LocalizedText(
     nl: 'Actueel',
@@ -341,8 +373,9 @@ ExternalNavPipMeterModel buildExternalNavPipMeterModel({
   ];
 
   final waitingLabel = pipMeterWaitingLabel(lang);
+  final phoneFareLabel = pipMeterPhoneFareLabel(lang);
   final phoneOrderedMetrics = <PipMeterMetric>[
-    _metric(label: fareLabel, value: fare),
+    _metric(label: phoneFareLabel, value: fare),
     _metric(label: rideDurationLabel, value: duration),
     _metric(label: distanceLabel, value: distanceValue),
     _metric(label: waitingLabel, value: wait),
@@ -574,45 +607,91 @@ class ExternalNavPipMeterCard extends StatelessWidget {
 
     final content = Padding(
       padding: EdgeInsets.symmetric(
-        horizontal: typo.horizontalPadding,
-        vertical: typo.verticalPadding,
+        horizontal: useTablet ? typo.horizontalPadding : math.min(typo.horizontalPadding, 10),
+        vertical: useTablet ? typo.verticalPadding : math.min(typo.verticalPadding, 6),
       ),
       child: typo.isTablet
           ? _TabletTaxiMeterBody(model: model, typo: typo)
           : _PhonePipMeterBody(model: model, typo: typo),
     );
 
+    // Tablet keeps the opaque taxi-meter plate. Phone floats over Maps.
+    if (useTablet) {
+      return Material(
+        color: const Color(0xFF0B0F14),
+        child: SafeArea(
+          minimum: EdgeInsets.zero,
+          child: typo.frameWidth > 0
+              ? DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0B0F14),
+                    border: Border.all(
+                      color: const Color(0xFF1E88E5),
+                      width: typo.frameWidth,
+                    ),
+                  ),
+                  child: content,
+                )
+              : content,
+        ),
+      );
+    }
+
     return Material(
-      color: const Color(0xFF0B0F14),
+      type: MaterialType.transparency,
       child: SafeArea(
         minimum: EdgeInsets.zero,
-        child: typo.frameWidth > 0
-            ? DecoratedBox(
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0B0F14),
-                  border: Border.all(
-                    color: const Color(0xFF1E88E5),
-                    width: typo.frameWidth,
-                  ),
-                ),
-                child: content,
-              )
-            : content,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: PhonePipSurfaceOpacity.plate,
+            border: Border.all(
+              color: PhonePipSurfaceOpacity.goldStroke,
+              width: PhonePipSurfaceOpacity.outerStrokeWidth,
+            ),
+          ),
+          child: content,
+        ),
       ),
     );
   }
 }
 
 /// Phone PiP layout tier from available shortest side (logical px).
+///
+/// Large (4): compact 2×2 with labels. Smaller tiers collapse toward a
+/// single fare · duration line without labels.
 @visibleForTesting
 int resolvePhonePipMetricTier(double shortestSide) {
-  if (shortestSide >= 168) return 4;
-  if (shortestSide >= 132) return 3;
+  if (shortestSide >= 118) return 4;
   if (shortestSide >= 96) return 2;
   return 1;
 }
 
-/// Phone: compact Prijs → Ritduur → Afstand → Wachttijd with size tiers.
+/// True when the phone PiP window can host the labeled 2×2 KPI grid.
+@visibleForTesting
+bool resolvePhonePipUsesLargeGrid({
+  required double maxWidth,
+  required double maxHeight,
+}) {
+  final shortest = math.min(maxWidth, maxHeight);
+  return resolvePhonePipMetricTier(shortest) >= 4 &&
+      maxWidth >= 150 &&
+      maxHeight >= 84;
+}
+
+/// Compact `H:MM:SS` → `H:MM` when seconds are zero (small PiP line).
+@visibleForTesting
+String compactPipDurationText(String? raw) {
+  final t = (raw ?? '').trim();
+  if (t.isEmpty) return '';
+  final parts = t.split(':');
+  if (parts.length == 3 && parts[2] == '00') {
+    return '${parts[0]}:${parts[1]}';
+  }
+  return t;
+}
+
+/// Phone: floating Tarief / Ritduur / Afstand / Wachttijd — no duplicate title.
 class _PhonePipMeterBody extends StatelessWidget {
   const _PhonePipMeterBody({
     required this.model,
@@ -649,104 +728,61 @@ class _PhonePipMeterBody extends StatelessWidget {
     final metrics = _orderedMetrics;
     return LayoutBuilder(
       builder: (context, constraints) {
-        final shortest = math.min(constraints.maxWidth, constraints.maxHeight);
-        final showTitle = shortest >= 120;
-        final tier = resolvePhonePipMetricTier(shortest);
-        final visible = metrics.take(tier).toList(growable: false);
-        final valueSize = tier >= 3 ? typo.metricSize : typo.primarySize * 0.72;
-        final labelSize = typo.labelSize * (tier >= 3 ? 1.0 : 0.92);
-
-        return Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Phone: ride-state heading for active legs — never repeat Fare.
-            if (showTitle)
-              Text(
-                model.kind == PipMeterKind.toCustomer
-                    ? model.title
-                    : pipMeterRideActiveTitle(model.language),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: const Color(0xFF9AA7B5),
-                  fontSize: typo.labelSize * 0.95,
-                  fontWeight: FontWeight.w600,
-                  height: 1.05,
-                ),
-              ),
-            if (showTitle) SizedBox(height: typo.titleGap * 0.5),
-            if (tier == 1)
-              _phonePrimaryOnly(visible.first)
-            else if (tier == 2)
-              _phoneTwoUp(visible, valueSize, labelSize)
-            else
-              _phoneMetricGrid(visible, valueSize, labelSize, twoByTwo: tier >= 4),
-          ],
+        final large = resolvePhonePipUsesLargeGrid(
+          maxWidth: constraints.maxWidth,
+          maxHeight: constraints.maxHeight,
         );
+        if (!large) {
+          return _phoneCompactLine(metrics);
+        }
+        final visible = metrics.take(4).toList(growable: false);
+        final valueSize = typo.metricSize * 1.05;
+        final labelSize = typo.labelSize * 0.92;
+        return _phoneMetricGrid(visible, valueSize, labelSize);
       },
     );
   }
 
-  Widget _phonePrimaryOnly(PipMeterMetric metric) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          metric.value,
-          textAlign: TextAlign.center,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+  /// Small PiP: `€ 5,30 · 00:35` — values only, no labels / status / logo.
+  Widget _phoneCompactLine(List<PipMeterMetric> metrics) {
+    final fare = metrics.isNotEmpty
+        ? metrics.first.value
+        : model.primaryValue;
+    final duration = compactPipDurationText(
+      metrics.length > 1 ? metrics[1].value : model.durationText,
+    );
+    final line = duration.isEmpty ? fare : '$fare · $duration';
+    return Center(
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: _PhonePipOutlinedText(
+          text: line,
+          fill: PhonePipSurfaceOpacity.valueFill,
+          strokeWidth: PhonePipSurfaceOpacity.valueStrokeWidth,
           style: TextStyle(
-            color: const Color(0xFFFFC107),
-            fontSize: typo.primarySize,
+            fontSize: typo.primarySize * 0.62,
             fontWeight: FontWeight.w800,
             height: 1.0,
           ),
         ),
-        Text(
-          metric.label,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: const Color(0xFF9AA7B5),
-            fontSize: typo.labelSize,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _phoneTwoUp(
-    List<PipMeterMetric> metrics,
-    double valueSize,
-    double labelSize,
-  ) {
-    return Row(
-      children: [
-        for (var i = 0; i < metrics.length; i++) ...[
-          if (i > 0) const SizedBox(width: 8),
-          Expanded(child: _phoneMetricCell(metrics[i], valueSize, labelSize)),
-        ],
-      ],
+      ),
     );
   }
 
   Widget _phoneMetricGrid(
     List<PipMeterMetric> metrics,
     double valueSize,
-    double labelSize, {
-    required bool twoByTwo,
-  }) {
-    if (!twoByTwo || metrics.length <= 3) {
-      return _PipMeterMetricsRow(
-        metrics: metrics,
-        valueSize: valueSize,
-        labelSize: labelSize,
-        labelAboveValue: true,
-        showDividers: false,
-        valueColor: const Color(0xFFFFC107),
+    double labelSize,
+  ) {
+    if (metrics.length < 4) {
+      return Row(
+        children: [
+          for (var i = 0; i < metrics.length; i++) ...[
+            if (i > 0)
+              Container(width: 1, color: PhonePipSurfaceOpacity.ivorySeparator),
+            Expanded(child: _phoneMetricCell(metrics[i], valueSize, labelSize)),
+          ],
+        ],
       );
     }
     return Column(
@@ -755,17 +791,17 @@ class _PhonePipMeterBody extends StatelessWidget {
           child: Row(
             children: [
               Expanded(child: _phoneMetricCell(metrics[0], valueSize, labelSize)),
-              const SizedBox(width: 8),
+              Container(width: 1, color: PhonePipSurfaceOpacity.ivorySeparator),
               Expanded(child: _phoneMetricCell(metrics[1], valueSize, labelSize)),
             ],
           ),
         ),
-        const SizedBox(height: 6),
+        Container(height: 1, color: PhonePipSurfaceOpacity.ivorySeparator),
         Expanded(
           child: Row(
             children: [
               Expanded(child: _phoneMetricCell(metrics[2], valueSize, labelSize)),
-              const SizedBox(width: 8),
+              Container(width: 1, color: PhonePipSurfaceOpacity.ivorySeparator),
               Expanded(child: _phoneMetricCell(metrics[3], valueSize, labelSize)),
             ],
           ),
@@ -779,33 +815,87 @@ class _PhonePipMeterBody extends StatelessWidget {
     double valueSize,
     double labelSize,
   ) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
+    return ColoredBox(
+      color: Colors.transparent,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _PhonePipOutlinedText(
+            text: metric.label,
+            fill: PhonePipSurfaceOpacity.labelFill,
+            strokeWidth: PhonePipSurfaceOpacity.labelStrokeWidth,
+            style: TextStyle(
+              fontSize: labelSize,
+              fontWeight: FontWeight.w700,
+              height: 1.05,
+            ),
+          ),
+          const SizedBox(height: 2),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: _PhonePipOutlinedText(
+              text: metric.value,
+              fill: PhonePipSurfaceOpacity.valueFill,
+              strokeWidth: PhonePipSurfaceOpacity.valueStrokeWidth,
+              style: TextStyle(
+                fontSize: valueSize,
+                fontWeight: FontWeight.w800,
+                height: 1.0,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Centered stroke+fill glyphs for phone PiP over light/dark/satellite Maps.
+class _PhonePipOutlinedText extends StatelessWidget {
+  const _PhonePipOutlinedText({
+    required this.text,
+    required this.style,
+    required this.fill,
+    required this.strokeWidth,
+  });
+
+  final String text;
+  final TextStyle style;
+  final Color fill;
+  final double strokeWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    final base = style.copyWith(
+      color: null,
+      foreground: null,
+      shadows: const <Shadow>[
+        Shadow(color: Color(0x99000000), blurRadius: 3, offset: Offset(0, 1)),
+      ],
+    );
+    return Stack(
+      alignment: Alignment.center,
       children: [
         Text(
-          metric.label,
+          text,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           textAlign: TextAlign.center,
-          style: TextStyle(
-            color: const Color(0xFF9AA7B5),
-            fontSize: labelSize,
-            fontWeight: FontWeight.w600,
-            height: 1.05,
+          style: base.copyWith(
+            shadows: const <Shadow>[],
+            foreground: Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = strokeWidth
+              ..strokeJoin = StrokeJoin.round
+              ..color = PhonePipSurfaceOpacity.outline,
           ),
         ),
-        const SizedBox(height: 2),
         Text(
-          metric.value,
+          text,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           textAlign: TextAlign.center,
-          style: TextStyle(
-            color: const Color(0xFFFFC107),
-            fontSize: valueSize,
-            fontWeight: FontWeight.w800,
-            height: 1.0,
-          ),
+          style: base.copyWith(color: fill),
         ),
       ],
     );

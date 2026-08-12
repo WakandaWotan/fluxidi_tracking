@@ -8,6 +8,9 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.Icon
 import android.os.Build
 import android.util.Log
@@ -68,6 +71,8 @@ class ExternalNavigationPlugin :
   private var autoEnterArmed: Boolean = false
   /** Unique per external Maps/PiP session — PendingIntent requestCode owner. */
   private var pipSessionToken: String = ""
+  /** Restored when leaving phone PiP (tablet path never mutates the window). */
+  private var prePhonePipWindowBackground: Drawable? = null
   private var lastPipReturnRequestCode: Int = -1
 
   override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -132,10 +137,12 @@ class ExternalNavigationPlugin :
       // inside PiP so exiting PiP cannot poison future Recents/Home.
       refreshPipReturnAction(reason = "pip_entered")
       autoEnterArmed = false
+      applyPhonePipWindowSurface(inPip = true)
     } else {
       Log.i(TAG, "pip_exit_requested=system_or_expand flutter_resumed=pending")
       // FIX: leaving PiP must clear sticky auto-enter. Do NOT force-to-front.
       clearPipAutoEnter(reason = "pip_mode_exited")
+      applyPhonePipWindowSurface(inPip = false)
     }
     eventSink?.success(
       mapOf(
@@ -143,6 +150,45 @@ class ExternalNavigationPlugin :
         "pipActive" to isInPictureInPictureMode,
       ),
     )
+  }
+
+  /** Phone-only: lightest stable window tint while in PiP (never tablet). */
+  private fun isPhoneHostActivity(): Boolean {
+    val act = activity ?: return false
+    return act.resources.configuration.smallestScreenWidthDp < 600
+  }
+
+  private fun applyPhonePipWindowSurface(inPip: Boolean) {
+    val act = activity ?: return
+    if (!isPhoneHostActivity()) {
+      Log.i(TAG, "pip_phone_surface_skip=true reason=tablet_host")
+      return
+    }
+    try {
+      if (inPip) {
+        if (prePhonePipWindowBackground == null) {
+          prePhonePipWindowBackground = act.window.decorView.background
+        }
+        // ~18% black (alpha 46). OEMs may still composite an opaque PiP
+        // backing — report the Flutter floor; do not escalate to a dashboard.
+        act.window.setBackgroundDrawable(ColorDrawable(Color.argb(46, 0, 0, 0)))
+        Log.i(
+          TAG,
+          "pip_phone_surface_alpha=0.18 " +
+            "oem_may_force_opaque_backing=true " +
+            "kpi_cells_transparent=true",
+        )
+      } else {
+        val previous = prePhonePipWindowBackground
+        prePhonePipWindowBackground = null
+        if (previous != null) {
+          act.window.setBackgroundDrawable(previous)
+        }
+        Log.i(TAG, "pip_phone_surface_restored=true")
+      }
+    } catch (e: Exception) {
+      Log.w(TAG, "pip_phone_surface_failed=${e.message}")
+    }
   }
 
   /**
@@ -370,6 +416,8 @@ class ExternalNavigationPlugin :
       .setAspectRatio(Rational(16, 9))
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
       builder.setAutoEnterEnabled(autoEnter)
+      // Non-video Flutter PiP: disable seamless resize to avoid stretch artifacts.
+      builder.setSeamlessResizeEnabled(false)
     }
     val pending = GoogleMapsNavigationIntents.buildReturnToFluxidiPendingIntent(
       act,

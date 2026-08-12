@@ -51,11 +51,13 @@ bool resolveFluxidiHostIsTablet({
   Size? deviceSize,
   Size? windowSize,
 }) {
+  // Explicit session latch wins both ways: phone sessions must not flip to the
+  // tablet branch when the PiP/test View reports a large display size.
   if (latchedHostIsTablet == true) return true;
+  if (latchedHostIsTablet == false) return false;
   if (deviceSize != null) {
     return deviceSize.shortestSide >= kFluxidiHostTabletShortestSide;
   }
-  if (latchedHostIsTablet == false) return false;
   if (windowSize != null) {
     return windowSize.shortestSide >= kFluxidiHostTabletShortestSide;
   }

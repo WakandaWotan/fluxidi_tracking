@@ -34842,12 +34842,17 @@ class _DriverHomePageState extends State<DriverHomePage>
     // MapWidget stays Offstage-mounted — do NOT setState every meter tick.
     // PIP-TABLET-READABILITY-LOCALE-P1: also observe driver app language so a
     // language change while PiP is active updates chrome without relaunch.
+    // Phone PiP: transparent scaffold so the light glass card can float.
+    // Tablet PiP keeps the opaque taxi-meter backdrop (bit-identical).
+    final pipHostTablet = _externalNavigationSession?.hostIsTablet ??
+        _hostIsTablet(context);
     return Stack(
       fit: StackFit.expand,
       children: [
         Offstage(offstage: true, child: driverBody),
         Scaffold(
-          backgroundColor: const Color(0xFF0B0F14),
+          backgroundColor:
+              pipHostTablet ? const Color(0xFF0B0F14) : Colors.transparent,
           body: ValueListenableBuilder<AppLanguage>(
             valueListenable: appLanguageNotifier,
             builder: (context, lang, _) {

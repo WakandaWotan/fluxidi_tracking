@@ -63,11 +63,13 @@ void main() {
       MaterialApp(
         home: ExternalNavPipMeterCard(
           model: model,
+          hostIsTablet: false,
         ),
       ),
     );
-    expect(find.text('Naar bestemming'), findsOneWidget);
-    expect(find.text('€12,20'), findsOneWidget);
+    // Phone PiP drops destination/status headings — fare value remains.
+    expect(find.text('Naar bestemming'), findsNothing);
+    expect(find.text('€12,20'), findsWidgets);
     // Return is a system PiP RemoteAction — not a Flutter TextButton.
     expect(find.text('Terug naar Fluxidi'), findsNothing);
     expect(find.byType(TextButton), findsNothing);
@@ -89,16 +91,27 @@ void main() {
     await tester.pumpWidget(
       MediaQuery(
         data: const MediaQueryData(size: Size(390, 844)),
-        child: MaterialApp(home: ExternalNavPipMeterCard(model: model)),
+        child: MaterialApp(
+          home: ExternalNavPipMeterCard(
+            model: model,
+            hostIsTablet: false,
+          ),
+        ),
       ),
     );
-    expect(find.text('Naar bestemming'), findsOneWidget);
-    expect(find.text('€17,60'), findsOneWidget);
+    expect(find.text('Naar bestemming'), findsNothing);
+    expect(find.text('€17,60'), findsWidgets);
+    expect(find.text('Tarief'), findsWidgets);
 
     await tester.pumpWidget(
       MediaQuery(
         data: const MediaQueryData(size: Size(1024, 768)),
-        child: MaterialApp(home: ExternalNavPipMeterCard(model: model)),
+        child: MaterialApp(
+          home: ExternalNavPipMeterCard(
+            model: model,
+            hostIsTablet: true,
+          ),
+        ),
       ),
     );
     expect(find.text('Naar bestemming'), findsOneWidget);

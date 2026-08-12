@@ -376,6 +376,8 @@ class GoogleMapsNavigationIntentsTest {
 
     assertTrue(pluginSrc.contains("fun clearPipAutoEnter"))
     assertTrue(pluginSrc.contains("setAutoEnterEnabled(autoEnter)"))
+    assertTrue(pluginSrc.contains("setSeamlessResizeEnabled(false)"))
+    assertTrue(pluginSrc.contains("pip_phone_surface_alpha=0.18"))
     assertTrue(pluginSrc.contains("autoEnter = true"))
     assertTrue(pluginSrc.contains("clearPipAutoEnter(reason = \"maps_launch_failed"))
     assertTrue(pluginSrc.contains("clearPipAutoEnter(reason = \"pip_enter_failed\")"))

@@ -156,7 +156,7 @@ void main() {
         waitText: '00:01:30',
       );
       expect(m.metrics, hasLength(4));
-      expect(m.metrics[0].label, pipMeterPriceLabel(AppLanguage.nl));
+      expect(m.metrics[0].label, pipMeterPhoneFareLabel(AppLanguage.nl));
       expect(m.metrics[1].label, pipMeterRideDurationLabel(AppLanguage.nl));
       expect(m.metrics[2].label, pipMeterDistanceLabel(AppLanguage.nl));
       expect(m.metrics[3].label, pipMeterWaitingLabel(AppLanguage.nl));
@@ -165,8 +165,8 @@ void main() {
 
     test('phone PiP metric tier fallbacks', () {
       expect(resolvePhonePipMetricTier(80), 1);
-      expect(resolvePhonePipMetricTier(110), 2);
-      expect(resolvePhonePipMetricTier(140), 3);
+      expect(resolvePhonePipMetricTier(100), 2);
+      expect(resolvePhonePipMetricTier(120), 4);
       expect(resolvePhonePipMetricTier(180), 4);
     });
   });
