@@ -427,8 +427,8 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
               alignment: heroImageAlignment,
               errorBuilder: (_, __, ___) => FluxidiDecodeSizedAssetImage(
                 _isNightGold
-                    ? 'assets/fluxidi/customer_home_hero_dark.png'
-                    : 'assets/fluxidi/customer_home_hero_light.png',
+                    ? 'assets/fluxidi/customer_home_hero_dark.webp'
+                    : 'assets/fluxidi/customer_home_hero_light.webp',
                 fit: BoxFit.cover,
                 alignment: heroImageAlignment,
               ),
@@ -1272,16 +1272,16 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
             final usesSplitUtilityAndFeatureCards =
                 isPhonePortrait || isTabletPortrait || isTabletLandscape;
             final heroAsset = themeVariant == CustomerThemeVariant.nightGold
-                ? 'assets/fluxidi/customer_home_hero_dark.png'
-                : 'assets/fluxidi/customer_home_hero_light.png';
+                ? 'assets/fluxidi/customer_home_hero_dark.webp'
+                : 'assets/fluxidi/customer_home_hero_light.webp';
             final eventsAsset = isTabletLandscape
-                ? 'assets/fluxidi/evenementen_picture_landscape_tablet.png'
-                : 'assets/fluxidi/customer_home_events_banner.png';
+                ? 'assets/fluxidi/evenementen_picture_landscape_tablet.webp'
+                : 'assets/fluxidi/customer_home_events_banner.webp';
             final businessAsset = isTabletLandscape
-                ? 'assets/fluxidi/zakelijke_picture_landscape_tablet.png'
+                ? 'assets/fluxidi/zakelijke_picture_landscape_tablet.webp'
                 : _themePalette.isDark
-                ? 'assets/fluxidi/customer_home_business_banner_dark.png'
-                : 'assets/fluxidi/customer_home_business_banner.png';
+                ? 'assets/fluxidi/customer_home_business_banner_dark.webp'
+                : 'assets/fluxidi/customer_home_business_banner.webp';
             final customerHeroHeight = isTabletPortrait
                 ? clampDouble(H * 0.255, 330.0, 385.0)
                 : 288.0;
@@ -1338,7 +1338,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                                 ),
                                 subtitle: '',
                                 visualAsset:
-                                    'assets/fluxidi/customer_home_airport_banner.png',
+                                    'assets/fluxidi/customer_home_airport_banner.webp',
                                 visualHeight: customerWideCardHeight,
                                 visualAlignment: const Alignment(-0.35, -0.15),
                                 onTap: () => _openAirportFlow(context),
@@ -1354,7 +1354,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                                 ),
                                 subtitle: '',
                                 visualAsset:
-                                    'assets/fluxidi/customer_home_hotel_bb_banner.png',
+                                    'assets/fluxidi/customer_home_hotel_bb_banner.webp',
                                 visualHeight: customerWideCardHeight,
                                 visualAlignment: const Alignment(0.62, 0.08),
                                 onTap: () => _openHotelsPage(context),
@@ -1414,7 +1414,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                             ),
                             subtitle: '',
                             visualAsset:
-                                'assets/fluxidi/customer_home_airport_banner.png',
+                                'assets/fluxidi/customer_home_airport_banner.webp',
                             visualHeight: customerWideCardHeight,
                             visualAlignment: isTabletPortrait
                                 ? const Alignment(-0.35, -0.15)
@@ -1433,7 +1433,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                             ),
                             subtitle: '',
                             visualAsset:
-                                'assets/fluxidi/customer_home_hotel_bb_banner.png',
+                                'assets/fluxidi/customer_home_hotel_bb_banner.webp',
                             visualHeight: customerWideCardHeight,
                             visualAlignment: const Alignment(0.62, 0.08),
                             onTap: () => _openHotelsPage(context),

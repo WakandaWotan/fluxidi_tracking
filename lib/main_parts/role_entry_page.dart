@@ -39,9 +39,9 @@ class RoleEntryPage extends StatelessWidget {
 
   String _backgroundAssetForSize(Size size) {
     if (size.height > size.width && size.width < 600) {
-      return 'assets/fluxidi/background_sign_in_page_phone.png';
+      return 'assets/fluxidi/background_sign_in_page_phone.webp';
     }
-    return 'assets/fluxidi/background_sign_in_page.png';
+    return 'assets/fluxidi/background_sign_in_page.webp';
   }
 
   List<String> _carouselAssetsForSize(Size size) {
@@ -56,7 +56,7 @@ class RoleEntryPage extends StatelessWidget {
     // present in `assets/fluxidi/`.
     if (_isCompactPhoneLandscape(size)) {
       const phoneLandscapeAsset =
-          'assets/fluxidi/background_sign_in_page_landscape_gsm.png';
+          'assets/fluxidi/background_sign_in_page_landscape_gsm.webp';
       return const <String>[
         phoneLandscapeAsset,
         phoneLandscapeAsset,
@@ -65,20 +65,20 @@ class RoleEntryPage extends StatelessWidget {
       ];
     }
     final customerRoleAsset = isTabletPortrait
-        ? 'assets/fluxidi/role_customer_bg_tablet_portrait.png'
+        ? 'assets/fluxidi/role_customer_bg_tablet_portrait.webp'
         : isTabletLandscape
-        ? 'assets/fluxidi/role_customer_bg_tablet_landscape.png'
-        : 'assets/fluxidi/role_customer_bg.png';
+        ? 'assets/fluxidi/role_customer_bg_tablet_landscape.webp'
+        : 'assets/fluxidi/role_customer_bg.webp';
     final businessRoleAsset = isTabletPortrait
-        ? 'assets/fluxidi/role_business_bg_tablet_portrait.png'
+        ? 'assets/fluxidi/role_business_bg_tablet_portrait.webp'
         : isTabletLandscape
-        ? 'assets/fluxidi/role_business_bg_tablet_landscape.png'
-        : 'assets/fluxidi/role_business_bg.png';
+        ? 'assets/fluxidi/role_business_bg_tablet_landscape.webp'
+        : 'assets/fluxidi/role_business_bg.webp';
     final driverRoleAsset = isTabletPortrait
-        ? 'assets/fluxidi/role_driver_bg_tablet_portrait.png'
+        ? 'assets/fluxidi/role_driver_bg_tablet_portrait.webp'
         : isTabletLandscape
-        ? 'assets/fluxidi/role_driver_bg_tablet_landscape.png'
-        : 'assets/fluxidi/role_driver_bg.png';
+        ? 'assets/fluxidi/role_driver_bg_tablet_landscape.webp'
+        : 'assets/fluxidi/role_driver_bg.webp';
     return <String>[
       _backgroundAssetForSize(size),
       customerRoleAsset,

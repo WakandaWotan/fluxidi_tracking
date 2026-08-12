@@ -113,7 +113,7 @@ void main() {
           home: Scaffold(
             body: SizedBox.expand(
               child: FluxidiDecodeSizedAssetImage(
-                'assets/fluxidi/background_sign_in_page_phone.png',
+                'assets/fluxidi/background_sign_in_page_phone.webp',
                 fit: BoxFit.cover,
                 alignment: Alignment.topCenter,
               ),
@@ -144,7 +144,7 @@ void main() {
                 width: 170,
                 height: 118,
                 child: FluxidiDecodeSizedAssetImage(
-                  'assets/Midday Gold Chauffeur/driver_receipts_midday_gold.png',
+                  'assets/Midday Gold Chauffeur/driver_receipts_midday_gold.webp',
                   fit: BoxFit.cover,
                   alignment: Alignment.centerRight,
                 ),

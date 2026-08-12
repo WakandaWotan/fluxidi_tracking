@@ -283,9 +283,9 @@ class _FluxidiPinUnlockPageState extends State<FluxidiPinUnlockPage> {
 
   String _backgroundAssetForSize(Size size) {
     if (size.height > size.width && size.width < 600) {
-      return 'assets/fluxidi/background_sign_in_page_phone.png';
+      return 'assets/fluxidi/background_sign_in_page_phone.webp';
     }
-    return 'assets/fluxidi/background_sign_in_page.png';
+    return 'assets/fluxidi/background_sign_in_page.webp';
   }
 
   Widget _pinDot({required bool filled}) {

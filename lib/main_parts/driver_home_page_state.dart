@@ -32462,11 +32462,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                 ),
                 onTap: _openDirectRideEntry,
                 backgroundAsset: _driverAssetByTheme(
-                  defaultAsset: 'assets/fluxidi/driver_action_street_ride.png',
+                  defaultAsset: 'assets/fluxidi/driver_action_street_ride.webp',
                   midnightBlueAsset:
-                      'assets/Midnight Bleu Chauffeur/driver_street_ride_midnight_blue.png',
+                      'assets/Midnight Bleu Chauffeur/driver_street_ride_midnight_blue.webp',
                   middayGoldAsset:
-                      'assets/Midday Gold Chauffeur/driver_street_ride_midday_gold.png',
+                      'assets/Midday Gold Chauffeur/driver_street_ride_midday_gold.webp',
                 ),
               ),
             ),
@@ -32483,11 +32483,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                 onTap: _openCalculatorFromDashboard,
                 backgroundAsset: _driverAssetByTheme(
                   defaultAsset:
-                      'assets/fluxidi/driver_action_fare_calculator.png',
+                      'assets/fluxidi/driver_action_fare_calculator.webp',
                   midnightBlueAsset:
-                      'assets/Midnight Bleu Chauffeur/driver_fare_calculator_midnight_blue.png',
+                      'assets/Midnight Bleu Chauffeur/driver_fare_calculator_midnight_blue.webp',
                   middayGoldAsset:
-                      'assets/Midday Gold Chauffeur/driver_fare_calculator_midday_gold.png',
+                      'assets/Midday Gold Chauffeur/driver_fare_calculator_midday_gold.webp',
                 ),
               ),
             ),
@@ -32505,11 +32505,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                   initialSegment: _DriverRidesHubSegment.myRides,
                 ),
                 backgroundAsset: _driverAssetByTheme(
-                  defaultAsset: 'assets/fluxidi/driver_action_my_rides.png',
+                  defaultAsset: 'assets/fluxidi/driver_action_my_rides.webp',
                   midnightBlueAsset:
-                      'assets/Midnight Bleu Chauffeur/driver_my_rides_midnight_blue.png',
+                      'assets/Midnight Bleu Chauffeur/driver_my_rides_midnight_blue.webp',
                   middayGoldAsset:
-                      'assets/Midday Gold Chauffeur/driver_my_rides_midday_gold.png',
+                      'assets/Midday Gold Chauffeur/driver_my_rides_midday_gold.webp',
                 ),
               ),
             ),
@@ -32525,11 +32525,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                 ),
                 onTap: _openTripHistoryFromDashboard,
                 backgroundAsset: _driverAssetByTheme(
-                  defaultAsset: 'assets/fluxidi/driver_action_history.png',
+                  defaultAsset: 'assets/fluxidi/driver_action_history.webp',
                   midnightBlueAsset:
-                      'assets/Midnight Bleu Chauffeur/driver_history_midnight_blue.png',
+                      'assets/Midnight Bleu Chauffeur/driver_history_midnight_blue.webp',
                   middayGoldAsset:
-                      'assets/Midday Gold Chauffeur/driver_history_midday_gold.png',
+                      'assets/Midday Gold Chauffeur/driver_history_midday_gold.webp',
                 ),
               ),
             ),
@@ -32545,11 +32545,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                 ),
                 onTap: _openTripHistoryFromDashboard,
                 backgroundAsset: _driverAssetByTheme(
-                  defaultAsset: 'assets/fluxidi/driver_action_receipts.png',
+                  defaultAsset: 'assets/fluxidi/driver_action_receipts.webp',
                   midnightBlueAsset:
-                      'assets/Midnight Bleu Chauffeur/driver_receipts_midnight_blue.png',
+                      'assets/Midnight Bleu Chauffeur/driver_receipts_midnight_blue.webp',
                   middayGoldAsset:
-                      'assets/Midday Gold Chauffeur/driver_receipts_midday_gold.png',
+                      'assets/Midday Gold Chauffeur/driver_receipts_midday_gold.webp',
                 ),
               ),
             ),
@@ -32573,11 +32573,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                   );
                 },
                 backgroundAsset: _driverAssetByTheme(
-                  defaultAsset: 'assets/fluxidi/driver_action_documents.png',
+                  defaultAsset: 'assets/fluxidi/driver_action_documents.webp',
                   midnightBlueAsset:
-                      'assets/Midnight Bleu Chauffeur/driver_documents_midnight_blue.png',
+                      'assets/Midnight Bleu Chauffeur/driver_documents_midnight_blue.webp',
                   middayGoldAsset:
-                      'assets/Midday Gold Chauffeur/driver_documents_midday_gold.png',
+                      'assets/Midday Gold Chauffeur/driver_documents_midday_gold.webp',
                 ),
               ),
             ),
@@ -32994,11 +32994,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                             Image.asset(
                               _driverAssetByTheme(
                                 defaultAsset:
-                                    'assets/fluxidi/driver_header_portrait_tablet.png',
+                                    'assets/fluxidi/driver_header_portrait_tablet.webp',
                                 midnightBlueAsset:
-                                    'assets/Midnight Bleu Chauffeur/driver_home_header_midnight_blue.png',
+                                    'assets/Midnight Bleu Chauffeur/driver_home_header_midnight_blue.webp',
                                 middayGoldAsset:
-                                    'assets/Midday Gold Chauffeur/driver_home_header_midday_gold.png',
+                                    'assets/Midday Gold Chauffeur/driver_home_header_midday_gold.webp',
                               ),
                               fit: BoxFit.cover,
                               alignment: Alignment.centerRight,
@@ -33093,11 +33093,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                             Image.asset(
                               _driverAssetByTheme(
                                 defaultAsset:
-                                    'assets/fluxidi/driver_header_landscape_tablet.png',
+                                    'assets/fluxidi/driver_header_landscape_tablet.webp',
                                 midnightBlueAsset:
-                                    'assets/Midnight Bleu Chauffeur/driver_navigation_midnight_blue.png',
+                                    'assets/Midnight Bleu Chauffeur/driver_navigation_midnight_blue.webp',
                                 middayGoldAsset:
-                                    'assets/Midday Gold Chauffeur/driver_navigation_midday_gold.png',
+                                    'assets/Midday Gold Chauffeur/driver_navigation_midday_gold.webp',
                               ),
                               fit: BoxFit.cover,
                               alignment: Alignment.center,

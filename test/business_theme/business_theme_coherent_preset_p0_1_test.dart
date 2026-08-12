@@ -32,26 +32,26 @@ import 'package:fluxidi_tracking/widgets/business_theme_cycle_button.dart';
 /// Real Quick Actions artwork set (Settings card), one asset per preset.
 String _settingsArtwork(BusinessThemeVariant preset) => businessThemePresetAsset(
   preset: preset,
-  executiveGold: 'assets/fluxidi/settings_background_company.png',
+  executiveGold: 'assets/fluxidi/settings_background_company.webp',
   corporateBlue:
-      'assets/Corporate BLEU Compagny/company_settings_corporate_blue.png',
+      'assets/Corporate BLEU Compagny/company_settings_corporate_blue.webp',
   cleanProfessional:
-      'assets/Clean & Professional Compagny/company_settings_clean_professional.png',
+      'assets/Clean & Professional Compagny/company_settings_clean_professional.webp',
   emeraldIvory:
-      'assets/Emerald_Ivory_Company/company_settings_alt_emerald_ivory.png',
-  fluxidiNeonRush: 'assets/🥇 Fluxidi Neon Rush/company_settings_neon_rush.png',
+      'assets/Emerald_Ivory_Company/company_settings_alt_emerald_ivory.webp',
+  fluxidiNeonRush: 'assets/🥇 Fluxidi Neon Rush/company_settings_neon_rush.webp',
 );
 
 /// Real Quick Actions artwork set (Bookings card), one asset per preset.
 String _bookingsArtwork(BusinessThemeVariant preset) => businessThemePresetAsset(
   preset: preset,
-  executiveGold: 'assets/fluxidi/bookings_background_company.png',
+  executiveGold: 'assets/fluxidi/bookings_background_company.webp',
   corporateBlue:
-      'assets/Corporate BLEU Compagny/company_bookings_corporate_blue.png',
+      'assets/Corporate BLEU Compagny/company_bookings_corporate_blue.webp',
   cleanProfessional:
-      'assets/Clean & Professional Compagny/company_bookings_clean_professional.png',
-  emeraldIvory: 'assets/Emerald_Ivory_Company/company_bookings_emerald_ivory.png',
-  fluxidiNeonRush: 'assets/🥇 Fluxidi Neon Rush/company_bookings_neon_rush.png',
+      'assets/Clean & Professional Compagny/company_bookings_clean_professional.webp',
+  emeraldIvory: 'assets/Emerald_Ivory_Company/company_bookings_emerald_ivory.webp',
+  fluxidiNeonRush: 'assets/🥇 Fluxidi Neon Rush/company_bookings_neon_rush.webp',
 );
 
 /// Artwork for whatever preset is currently active, through the real owner.

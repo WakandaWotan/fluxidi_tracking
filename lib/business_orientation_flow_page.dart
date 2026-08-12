@@ -210,7 +210,7 @@ class _BusinessOrientationFlowPageState
   /// fallback while the MP4 initialises and as the permanent
   /// fallback if MP4 init fails.
   static const String _card1WelcomeTabletPortraitFallbackAsset =
-      'assets/fluxidi/onboarding/card1_welcome_tablet_portrait_bg.png';
+      'assets/fluxidi/onboarding/card1_welcome_tablet_portrait_bg.webp';
 
   /// Intrinsic aspect ratio (width / height) of the MP4 frame. The
   /// rounded hero panel is sized to this exact ratio via
@@ -232,7 +232,7 @@ class _BusinessOrientationFlowPageState
   /// fallback while the landscape MP4 initialises and as the
   /// permanent fallback if MP4 init fails.
   static const String _card1WelcomeTabletLandscapeFallbackAsset =
-      'assets/fluxidi/onboarding/card1_welcome_tablet_landscape_bg.png';
+      'assets/fluxidi/onboarding/card1_welcome_tablet_landscape_bg.webp';
 
   /// Intrinsic aspect ratio (width / height) of the landscape MP4
   /// frame (1586 / 992 ≈ 1.5988). The new asset's ratio matches the
@@ -246,12 +246,12 @@ class _BusinessOrientationFlowPageState
   /// Card 2 tablet-portrait PNG (1320 × 2112) — cockpit visual for the
   /// orientation flow's second card.
   static const String _card2WelcomeTabletPortraitAsset =
-      'assets/fluxidi/onboarding/card2_welcome_tablet_portrait_bg.png';
+      'assets/fluxidi/onboarding/card2_welcome_tablet_portrait_bg.webp';
 
   /// Card 2 tablet-landscape PNG — cockpit visual for the orientation
   /// flow's second card in landscape only.
   static const String _card2WelcomeTabletLandscapeAsset =
-      'assets/fluxidi/onboarding/card2_welcome_tablet_landscape_bg.png';
+      'assets/fluxidi/onboarding/card2_welcome_tablet_landscape_bg.webp';
 
   /// Card 3 tablet PNGs — present on disk and covered by the
   /// `assets/fluxidi/onboarding/` folder already declared in
@@ -262,9 +262,9 @@ class _BusinessOrientationFlowPageState
   /// text-only and never renders these, so there is no asset risk
   /// yet — the paths simply travel with the card data.
   static const String _card3TabletPortraitAsset =
-      'assets/fluxidi/onboarding/card3_welcome_tablet_portrait_bg.png';
+      'assets/fluxidi/onboarding/card3_welcome_tablet_portrait_bg.webp';
   static const String _card3TabletLandscapeAsset =
-      'assets/fluxidi/onboarding/card3_welcome_tablet_landscape_bg.png';
+      'assets/fluxidi/onboarding/card3_welcome_tablet_landscape_bg.webp';
 
   /// Card 4 tablet PNGs — vehicles & fleet management. The vehicle
   /// screenshot is baked into the artwork; Flutter overlays only the
@@ -272,9 +272,9 @@ class _BusinessOrientationFlowPageState
   /// screenshot. Rendered full-viewport so overlay fractions line up
   /// with the visible asset.
   static const String _card4VehiclesFleetTabletPortraitAsset =
-      'assets/fluxidi/onboarding/card4_welcome_tablet_portrait_bg.png';
+      'assets/fluxidi/onboarding/card4_welcome_tablet_portrait_bg.webp';
   static const String _card4VehiclesFleetTabletLandscapeAsset =
-      'assets/fluxidi/onboarding/card4_welcome_tablet_landscape_bg.png';
+      'assets/fluxidi/onboarding/card4_welcome_tablet_landscape_bg.webp';
 
   // ---------------------------------------------------------------
   // Slide 4 — Settings & company profile (the Fluxidi "settings
@@ -288,9 +288,9 @@ class _BusinessOrientationFlowPageState
   // ---------------------------------------------------------------
 
   static const String _settingsProfileTabletPortraitAsset =
-      'assets/fluxidi/onboarding/card14_welcome_tablet_portrait_bg.png';
+      'assets/fluxidi/onboarding/card14_welcome_tablet_portrait_bg.webp';
   static const String _settingsProfileTabletLandscapeAsset =
-      'assets/fluxidi/onboarding/card14_welcome_tablet_landscape_bg.png';
+      'assets/fluxidi/onboarding/card14_welcome_tablet_landscape_bg.webp';
 
   static const _Tr _settingsProfileTopTitle = _Tr(
     nl: 'Je bedrijfsklare cockpit',
@@ -855,74 +855,74 @@ class _BusinessOrientationFlowPageState
   /// and register screenshots are baked into the artwork; Flutter
   /// overlays only localised copy in measured safe zones.
   static const String _card5ChironDocumentsTabletPortraitAsset =
-      'assets/fluxidi/onboarding/card5_welcome_tablet_portrait_bg.png';
+      'assets/fluxidi/onboarding/card5_welcome_tablet_portrait_bg.webp';
   static const String _card5ChironDocumentsTabletLandscapeAsset =
-      'assets/fluxidi/onboarding/card5_welcome_tablet_landscape_bg.png';
+      'assets/fluxidi/onboarding/card5_welcome_tablet_landscape_bg.webp';
 
   /// Card 6 tablet PNGs — Drivers & documents. The driver management
   /// screenshots are baked into the artwork; Flutter overlays only the
   /// localised title/intro and the feature panel in measured safe
   /// zones (never over driver faces or important controls).
   static const String _card6DriverManagementTabletPortraitAsset =
-      'assets/fluxidi/onboarding/card6_welcome_tablet_portrait_bg.png';
+      'assets/fluxidi/onboarding/card6_welcome_tablet_portrait_bg.webp';
   static const String _card6DriverManagementTabletLandscapeAsset =
-      'assets/fluxidi/onboarding/card6_welcome_tablet_landscape_bg.png';
+      'assets/fluxidi/onboarding/card6_welcome_tablet_landscape_bg.webp';
 
   /// Card 7 tablet PNGs — Region Radar. The radar / service-area
   /// visual is baked into the artwork; Flutter overlays one bounded
   /// text panel in measured dark safe zones beside the visual.
   static const String _card7RegionRadarTabletPortraitAsset =
-      'assets/fluxidi/onboarding/card7_welcome_tablet_portrait_bg.png';
+      'assets/fluxidi/onboarding/card7_welcome_tablet_portrait_bg.webp';
   static const String _card7RegionRadarTabletLandscapeAsset =
-      'assets/fluxidi/onboarding/card7_welcome_tablet_landscape_bg.png';
+      'assets/fluxidi/onboarding/card7_welcome_tablet_landscape_bg.webp';
 
   /// Card 9 tablet PNGs — Public booking link / Scan to Book. The QR
   /// booking visual is baked into the artwork; Flutter overlays one
   /// bounded premium panel in measured dark safe zones.
   static const String _card9PublicBookingLinkTabletPortraitAsset =
-      'assets/fluxidi/onboarding/card9_welcome_tablet_portrait_bg.png';
+      'assets/fluxidi/onboarding/card9_welcome_tablet_portrait_bg.webp';
   static const String _card9PublicBookingLinkTabletLandscapeAsset =
-      'assets/fluxidi/onboarding/card9_welcome_tablet_landscape_bg.png';
+      'assets/fluxidi/onboarding/card9_welcome_tablet_landscape_bg.webp';
 
   /// Card 10 tablet PNGs — AI Dispatch. The dispatch cockpit visual is
   /// baked into the artwork; Flutter overlays measured premium panels
   /// in dark safe zones.
   static const String _card10AiDispatchTabletPortraitAsset =
-      'assets/fluxidi/onboarding/card10_welcome_tablet_portrait_bg.png';
+      'assets/fluxidi/onboarding/card10_welcome_tablet_portrait_bg.webp';
   static const String _card10AiDispatchTabletLandscapeAsset =
-      'assets/fluxidi/onboarding/card10_welcome_tablet_landscape_bg.png';
+      'assets/fluxidi/onboarding/card10_welcome_tablet_landscape_bg.webp';
 
   /// Card 8 tablet PNGs — Driver View / Chauffeurcockpit. The driver
   /// dashboard visual is baked into the artwork; Flutter overlays
   /// measured premium panels in dark safe zones.
   static const String _card8DriverViewTabletPortraitAsset =
-      'assets/fluxidi/onboarding/card8_welcome_tablet_portrait_bg.png';
+      'assets/fluxidi/onboarding/card8_welcome_tablet_portrait_bg.webp';
   static const String _card8DriverViewTabletLandscapeAsset =
-      'assets/fluxidi/onboarding/card8_welcome_tablet_landscape_bg.png';
+      'assets/fluxidi/onboarding/card8_welcome_tablet_landscape_bg.webp';
 
   /// Card 11 tablet PNGs — Calculator & ride pricing. The calculator
   /// visual is baked into the artwork; Flutter overlays measured
   /// premium panels in dark safe zones.
   static const String _card11CalculatorTabletPortraitAsset =
-      'assets/fluxidi/onboarding/card11_welcome_tablet_portrait_bg.png';
+      'assets/fluxidi/onboarding/card11_welcome_tablet_portrait_bg.webp';
   static const String _card11CalculatorTabletLandscapeAsset =
-      'assets/fluxidi/onboarding/card11_welcome_tablet_landscape_bg.png';
+      'assets/fluxidi/onboarding/card11_welcome_tablet_landscape_bg.webp';
 
   /// Card 12 tablet PNGs — Driver receipts, history & documents. The
   /// in-cockpit tablet visual is baked into the artwork; Flutter
   /// overlays measured premium panels in dark safe zones.
   static const String _card12DriverReceiptsTabletPortraitAsset =
-      'assets/fluxidi/onboarding/card12_welcome_tablet_portrait_bg.png';
+      'assets/fluxidi/onboarding/card12_welcome_tablet_portrait_bg.webp';
   static const String _card12DriverReceiptsTabletLandscapeAsset =
-      'assets/fluxidi/onboarding/card12_welcome_tablet_landscape_bg.png';
+      'assets/fluxidi/onboarding/card12_welcome_tablet_landscape_bg.webp';
 
   /// Card 13 tablet PNGs — Activate customers. The final customer-app
   /// visual is baked into the artwork; Flutter overlays one measured
   /// premium panel in the dark safe zone.
   static const String _card13ActivateCustomersTabletPortraitAsset =
-      'assets/fluxidi/onboarding/card13_welcome_tablet_portrait_bg.png';
+      'assets/fluxidi/onboarding/card13_welcome_tablet_portrait_bg.webp';
   static const String _card13ActivateCustomersTabletLandscapeAsset =
-      'assets/fluxidi/onboarding/card13_welcome_tablet_landscape_bg.png';
+      'assets/fluxidi/onboarding/card13_welcome_tablet_landscape_bg.webp';
 
   static const _Tr _chironDocumentsTitle = _Tr(
     nl: 'Chiron & rittenregister',

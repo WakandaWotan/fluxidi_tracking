@@ -4102,15 +4102,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         BusinessThemeVariant.cleanProfessional;
                     final businessHeaderAsset = _businessImageAsset(
                       executiveGoldAsset:
-                          'assets/fluxidi/zakelijke_tablet_header_foto.png',
+                          'assets/fluxidi/zakelijke_tablet_header_foto.webp',
                       corporateBlueAsset:
-                          'assets/Corporate BLEU Compagny/company_header_fleet_corporate_blue.png',
+                          'assets/Corporate BLEU Compagny/company_header_fleet_corporate_blue.webp',
                       cleanProfessionalAsset:
-                          'assets/Clean & Professional Compagny/company_header_fleet_clean_professional.png',
+                          'assets/Clean & Professional Compagny/company_header_fleet_clean_professional.webp',
                       emeraldIvoryAsset:
-                          'assets/Emerald_Ivory_Company/company_header_emerald_ivory.png',
+                          'assets/Emerald_Ivory_Company/company_header_emerald_ivory.webp',
                       fluxidiNeonRushAsset:
-                          'assets/🥇 Fluxidi Neon Rush/company_header_fleet_neon_rush.png',
+                          'assets/🥇 Fluxidi Neon Rush/company_header_fleet_neon_rush.webp',
                     );
                     return ListView(
                       padding: EdgeInsets.fromLTRB(
@@ -4674,15 +4674,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     },
                                     backgroundAsset: _businessImageAsset(
                                       executiveGoldAsset:
-                                          'assets/fluxidi/settings_background_company.png',
+                                          'assets/fluxidi/settings_background_company.webp',
                                       corporateBlueAsset:
-                                          'assets/Corporate BLEU Compagny/company_settings_corporate_blue.png',
+                                          'assets/Corporate BLEU Compagny/company_settings_corporate_blue.webp',
                                       cleanProfessionalAsset:
-                                          'assets/Clean & Professional Compagny/company_settings_clean_professional.png',
+                                          'assets/Clean & Professional Compagny/company_settings_clean_professional.webp',
                                       emeraldIvoryAsset:
-                                          'assets/Emerald_Ivory_Company/company_settings_alt_emerald_ivory.png',
+                                          'assets/Emerald_Ivory_Company/company_settings_alt_emerald_ivory.webp',
                                       fluxidiNeonRushAsset:
-                                          'assets/🥇 Fluxidi Neon Rush/company_settings_neon_rush.png',
+                                          'assets/🥇 Fluxidi Neon Rush/company_settings_neon_rush.webp',
                                     ),
                                     useImageBackground:
                                         useTabletVisualMode ||
@@ -4714,15 +4714,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           ),
                                       backgroundAsset: _businessImageAsset(
                                         executiveGoldAsset:
-                                            'assets/fluxidi/bookings_background_company.png',
+                                            'assets/fluxidi/bookings_background_company.webp',
                                         corporateBlueAsset:
-                                            'assets/Corporate BLEU Compagny/company_bookings_corporate_blue.png',
+                                            'assets/Corporate BLEU Compagny/company_bookings_corporate_blue.webp',
                                         cleanProfessionalAsset:
-                                            'assets/Clean & Professional Compagny/company_bookings_clean_professional.png',
+                                            'assets/Clean & Professional Compagny/company_bookings_clean_professional.webp',
                                         emeraldIvoryAsset:
-                                            'assets/Emerald_Ivory_Company/company_bookings_emerald_ivory.png',
+                                            'assets/Emerald_Ivory_Company/company_bookings_emerald_ivory.webp',
                                         fluxidiNeonRushAsset:
-                                            'assets/🥇 Fluxidi Neon Rush/company_bookings_neon_rush.png',
+                                            'assets/🥇 Fluxidi Neon Rush/company_bookings_neon_rush.webp',
                                       ),
                                       useImageBackground:
                                           useTabletVisualMode ||
@@ -4757,15 +4757,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     },
                                     backgroundAsset: _businessImageAsset(
                                       executiveGoldAsset:
-                                          'assets/fluxidi/plan_background_company.png',
+                                          'assets/fluxidi/plan_background_company.webp',
                                       corporateBlueAsset:
-                                          'assets/Corporate BLEU Compagny/company_subscriptions_corporate_blue.png',
+                                          'assets/Corporate BLEU Compagny/company_subscriptions_corporate_blue.webp',
                                       cleanProfessionalAsset:
-                                          'assets/Clean & Professional Compagny/company_subscriptions_clean_professional.png',
+                                          'assets/Clean & Professional Compagny/company_subscriptions_clean_professional.webp',
                                       emeraldIvoryAsset:
-                                          'assets/Emerald_Ivory_Company/company_plan_emerald_ivory.png',
+                                          'assets/Emerald_Ivory_Company/company_plan_emerald_ivory.webp',
                                       fluxidiNeonRushAsset:
-                                          'assets/🥇 Fluxidi Neon Rush/company_subscriptions_neon_rush.png',
+                                          'assets/🥇 Fluxidi Neon Rush/company_subscriptions_neon_rush.webp',
                                     ),
                                     useImageBackground:
                                         useTabletVisualMode ||
@@ -4800,15 +4800,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     },
                                     backgroundAsset: _businessImageAsset(
                                       executiveGoldAsset:
-                                          'assets/fluxidi/vehicles_background_company.png',
+                                          'assets/fluxidi/vehicles_background_company.webp',
                                       corporateBlueAsset:
-                                          'assets/Corporate BLEU Compagny/company_vehicles_corporate_blue.png',
+                                          'assets/Corporate BLEU Compagny/company_vehicles_corporate_blue.webp',
                                       cleanProfessionalAsset:
-                                          'assets/Clean & Professional Compagny/company_vehicles_clean_professional.png',
+                                          'assets/Clean & Professional Compagny/company_vehicles_clean_professional.webp',
                                       emeraldIvoryAsset:
-                                          'assets/Emerald_Ivory_Company/company_vehicle_emerald_ivory.png',
+                                          'assets/Emerald_Ivory_Company/company_vehicle_emerald_ivory.webp',
                                       fluxidiNeonRushAsset:
-                                          'assets/🥇 Fluxidi Neon Rush/company_vehicles_neon_rush.png',
+                                          'assets/🥇 Fluxidi Neon Rush/company_vehicles_neon_rush.webp',
                                     ),
                                     useImageBackground:
                                         useTabletVisualMode ||
@@ -4838,15 +4838,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     },
                                     backgroundAsset: _businessImageAsset(
                                       executiveGoldAsset:
-                                          'assets/fluxidi/chiron_background_company.png',
+                                          'assets/fluxidi/chiron_background_company.webp',
                                       corporateBlueAsset:
-                                          'assets/Corporate BLEU Compagny/company_branding_corporate_blue.png',
+                                          'assets/Corporate BLEU Compagny/company_branding_corporate_blue.webp',
                                       cleanProfessionalAsset:
-                                          'assets/Clean & Professional Compagny/company_chiron_clean_professional.png',
+                                          'assets/Clean & Professional Compagny/company_chiron_clean_professional.webp',
                                       emeraldIvoryAsset:
-                                          'assets/Emerald_Ivory_Company/company_chiron_emerald_ivory.png',
+                                          'assets/Emerald_Ivory_Company/company_chiron_emerald_ivory.webp',
                                       fluxidiNeonRushAsset:
-                                          'assets/🥇 Fluxidi Neon Rush/company_chiron_neon_rush.png',
+                                          'assets/🥇 Fluxidi Neon Rush/company_chiron_neon_rush.webp',
                                     ),
                                     useImageBackground:
                                         useTabletVisualMode ||
@@ -4908,15 +4908,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     },
                                     backgroundAsset: _businessImageAsset(
                                       executiveGoldAsset:
-                                          'assets/fluxidi/drivers_background_company.png',
+                                          'assets/fluxidi/drivers_background_company.webp',
                                       corporateBlueAsset:
-                                          'assets/Corporate BLEU Compagny/company_drivers_corporate_blue.png',
+                                          'assets/Corporate BLEU Compagny/company_drivers_corporate_blue.webp',
                                       cleanProfessionalAsset:
-                                          'assets/Clean & Professional Compagny/company_drivers_clean_professional.png',
+                                          'assets/Clean & Professional Compagny/company_drivers_clean_professional.webp',
                                       emeraldIvoryAsset:
-                                          'assets/Emerald_Ivory_Company/company_drivers_emerald_ivory.png',
+                                          'assets/Emerald_Ivory_Company/company_drivers_emerald_ivory.webp',
                                       fluxidiNeonRushAsset:
-                                          'assets/🥇 Fluxidi Neon Rush/company_drivers_neon_rush.png',
+                                          'assets/🥇 Fluxidi Neon Rush/company_drivers_neon_rush.webp',
                                     ),
                                     useImageBackground:
                                         useTabletVisualMode ||
@@ -4945,15 +4945,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                         _openDriverCockpitView(context),
                                     backgroundAsset: _businessImageAsset(
                                       executiveGoldAsset:
-                                          'assets/fluxidi/driver_view_background_company.png',
+                                          'assets/fluxidi/driver_view_background_company.webp',
                                       corporateBlueAsset:
-                                          'assets/Corporate BLEU Compagny/company_driver_view_corporate_blue.png',
+                                          'assets/Corporate BLEU Compagny/company_driver_view_corporate_blue.webp',
                                       cleanProfessionalAsset:
-                                          'assets/Clean & Professional Compagny/company_driver_view_clean_professional.png',
+                                          'assets/Clean & Professional Compagny/company_driver_view_clean_professional.webp',
                                       emeraldIvoryAsset:
-                                          'assets/Emerald_Ivory_Company/company_driver_view_emerald_ivory.png',
+                                          'assets/Emerald_Ivory_Company/company_driver_view_emerald_ivory.webp',
                                       fluxidiNeonRushAsset:
-                                          'assets/🥇 Fluxidi Neon Rush/company_driver_view_neon_rush.png',
+                                          'assets/🥇 Fluxidi Neon Rush/company_driver_view_neon_rush.webp',
                                     ),
                                     useImageBackground:
                                         useTabletVisualMode ||
@@ -4988,15 +4988,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     },
                                     backgroundAsset: _businessImageAsset(
                                       executiveGoldAsset:
-                                          'assets/fluxidi/demand_radar_background_company.png',
+                                          'assets/fluxidi/demand_radar_background_company.webp',
                                       corporateBlueAsset:
-                                          'assets/Corporate BLEU Compagny/company_network_corporate_blue.png',
+                                          'assets/Corporate BLEU Compagny/company_network_corporate_blue.webp',
                                       cleanProfessionalAsset:
-                                          'assets/Clean & Professional Compagny/company_demand_radar_clean_professional.png',
+                                          'assets/Clean & Professional Compagny/company_demand_radar_clean_professional.webp',
                                       emeraldIvoryAsset:
-                                          'assets/Emerald_Ivory_Company/company_demand_radar_emerald_ivory.png',
+                                          'assets/Emerald_Ivory_Company/company_demand_radar_emerald_ivory.webp',
                                       fluxidiNeonRushAsset:
-                                          'assets/🥇 Fluxidi Neon Rush/company_demand_radar_neon_rush.png',
+                                          'assets/🥇 Fluxidi Neon Rush/company_demand_radar_neon_rush.webp',
                                     ),
                                     useImageBackground:
                                         useTabletVisualMode ||
@@ -5027,15 +5027,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                         ),
                                     backgroundAsset: _businessImageAsset(
                                       executiveGoldAsset:
-                                          'assets/fluxidi/share_booking_link_background_company.png',
+                                          'assets/fluxidi/share_booking_link_background_company.webp',
                                       corporateBlueAsset:
-                                          'assets/Corporate BLEU Compagny/company_mobile_app_corporate_blue.png',
+                                          'assets/Corporate BLEU Compagny/company_mobile_app_corporate_blue.webp',
                                       cleanProfessionalAsset:
-                                          'assets/Clean & Professional Compagny/company_share_booking_link_clean_professional.png',
+                                          'assets/Clean & Professional Compagny/company_share_booking_link_clean_professional.webp',
                                       emeraldIvoryAsset:
-                                          'assets/Emerald_Ivory_Company/company_share_booking_emerald_ivory.png',
+                                          'assets/Emerald_Ivory_Company/company_share_booking_emerald_ivory.webp',
                                       fluxidiNeonRushAsset:
-                                          'assets/🥇 Fluxidi Neon Rush/company_share_booking_link_neon_rush.png',
+                                          'assets/🥇 Fluxidi Neon Rush/company_share_booking_link_neon_rush.webp',
                                     ),
                                     useImageBackground:
                                         useTabletVisualMode ||
@@ -5067,15 +5067,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                           ),
                                       backgroundAsset: _businessImageAsset(
                                         executiveGoldAsset:
-                                            'assets/fluxidi/bookings_background_company.png',
+                                            'assets/fluxidi/bookings_background_company.webp',
                                         corporateBlueAsset:
-                                            'assets/Corporate BLEU Compagny/company_bookings_corporate_blue.png',
+                                            'assets/Corporate BLEU Compagny/company_bookings_corporate_blue.webp',
                                         cleanProfessionalAsset:
-                                            'assets/Clean & Professional Compagny/company_bookings_clean_professional.png',
+                                            'assets/Clean & Professional Compagny/company_bookings_clean_professional.webp',
                                         emeraldIvoryAsset:
-                                            'assets/Emerald_Ivory_Company/company_bookings_emerald_ivory.png',
+                                            'assets/Emerald_Ivory_Company/company_bookings_emerald_ivory.webp',
                                         fluxidiNeonRushAsset:
-                                            'assets/🥇 Fluxidi Neon Rush/company_bookings_neon_rush.png',
+                                            'assets/🥇 Fluxidi Neon Rush/company_bookings_neon_rush.webp',
                                       ),
                                       useImageBackground:
                                           useTabletVisualMode ||
@@ -5109,15 +5109,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     ),
                                     backgroundAsset: _businessImageAsset(
                                       executiveGoldAsset:
-                                          'assets/fluxidi/ai_dispatch_background_company.png',
+                                          'assets/fluxidi/ai_dispatch_background_company.webp',
                                       corporateBlueAsset:
-                                          'assets/Corporate BLEU Compagny/company_ai_dispatch_corporate_blue.png',
+                                          'assets/Corporate BLEU Compagny/company_ai_dispatch_corporate_blue.webp',
                                       cleanProfessionalAsset:
-                                          'assets/Clean & Professional Compagny/company_ai_dispatch_clean_professional.png',
+                                          'assets/Clean & Professional Compagny/company_ai_dispatch_clean_professional.webp',
                                       emeraldIvoryAsset:
-                                          'assets/Emerald_Ivory_Company/company_ai_dispatch_emerald_ivory.png',
+                                          'assets/Emerald_Ivory_Company/company_ai_dispatch_emerald_ivory.webp',
                                       fluxidiNeonRushAsset:
-                                          'assets/🥇 Fluxidi Neon Rush/company_ai_dispatch_neon_rush.png',
+                                          'assets/🥇 Fluxidi Neon Rush/company_ai_dispatch_neon_rush.webp',
                                     ),
                                     useImageBackground:
                                         useTabletVisualMode ||
