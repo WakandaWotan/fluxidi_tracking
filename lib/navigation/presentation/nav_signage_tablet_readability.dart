@@ -38,6 +38,7 @@ class NavSignageTabletReadabilityMetrics {
     required this.compassReserve,
     required this.signPlateInset,
     this.isSplitNav = false,
+    this.isNarrowPane = false,
   });
 
   final bool isLandscape;
@@ -69,6 +70,15 @@ class NavSignageTabletReadabilityMetrics {
 
   /// True when metrics target the Tellers + navigatie split column.
   final bool isSplitNav;
+
+  /// True when the banner occupies a narrow Android split pane (vertical
+  /// split / small maneuver column). Host may still be tablet (HUD 132).
+  final bool isNarrowPane;
+
+  /// Available maneuver-column width below which tablet hosts use the compact
+  /// narrow-pane banner (LayoutBuilder / real pane constraints — not host
+  /// shortestSide alone).
+  static const double narrowPaneAvailableWidthThreshold = 360;
 
   /// Full-navigation target ranges before available-width clamping.
   /// TABLET-LOCALIZED-NAV-SIGNAGE-1: taller band for captioned ~160–180 px plates.
@@ -107,10 +117,28 @@ class NavSignageTabletReadabilityMetrics {
   static const double splitBannerWidthMin = 300;
   static const double splitBannerWidthMax = 420;
 
+  /// Vertical-split / narrow maneuver column — keep arrow + distance + action
+  /// readable without clipping into the Android divider.
+  static const double narrowSignSizeMin = 52;
+  static const double narrowSignSizeMax = 72;
+  static const double narrowPrimaryFontMin = 15;
+  static const double narrowPrimaryFontMax = 18;
+  static const double narrowDistanceFontMin = 14;
+  static const double narrowDistanceFontMax = 17;
+  static const double narrowSecondaryFontMin = 13;
+  static const double narrowSecondaryFontMax = 15;
+  static const double narrowBannerHeightMin = 88;
+  static const double narrowBannerHeightMax = 112;
+  static const double narrowBannerWidthFloor = 140;
+
   static const double defaultCompassReserve = 96;
 
   /// Resolve metrics for the current orientation and the width the banner may
   /// actually occupy (viewport minus menu, logo, gaps and compass reserve).
+  ///
+  /// When [availableBannerWidth] is below [narrowPaneAvailableWidthThreshold]
+  /// (typical vertical-split maneuver column), returns compact narrow-pane
+  /// metrics so the wide tablet plate cannot crush "Rechtdoor" / road text.
   factory NavSignageTabletReadabilityMetrics.resolve({
     required bool isLandscape,
     required double availableBannerWidth,
@@ -118,6 +146,16 @@ class NavSignageTabletReadabilityMetrics {
     final widthBudget = availableBannerWidth.isFinite && availableBannerWidth > 0
         ? availableBannerWidth
         : (isLandscape ? landscapeBannerWidthMax : portraitBannerWidthMax);
+
+    // Vertical Android split only: a short portrait maneuver column cannot
+    // host the 160–180 px tablet plate. Horizontal split / landscape keep
+    // the existing tablet readability band (field-acceptable).
+    if (!isLandscape && widthBudget < narrowPaneAvailableWidthThreshold) {
+      return NavSignageTabletReadabilityMetrics.forNarrowPane(
+        availableBannerWidth: widthBudget,
+        isLandscape: isLandscape,
+      );
+    }
 
     final targetMax = isLandscape
         ? landscapeBannerWidthMax
@@ -178,6 +216,53 @@ class NavSignageTabletReadabilityMetrics {
       horizontalPadding: isLandscape ? 12 : 14,
       verticalPadding: isLandscape ? 8 : 10,
       compassReserve: defaultCompassReserve,
+      signPlateInset: inset,
+    );
+  }
+
+  /// Compact banner metrics for a real narrow pane / maneuver column.
+  factory NavSignageTabletReadabilityMetrics.forNarrowPane({
+    required double availableBannerWidth,
+    required bool isLandscape,
+  }) {
+    final widthBudget = availableBannerWidth.isFinite && availableBannerWidth > 0
+        ? availableBannerWidth
+        : narrowPaneAvailableWidthThreshold;
+    final maxWidth = math
+        .max(narrowBannerWidthFloor, widthBudget)
+        .clamp(narrowBannerWidthFloor, narrowPaneAvailableWidthThreshold)
+        .toDouble();
+    final minWidth = math.min(narrowBannerWidthFloor, maxWidth).toDouble();
+    final widthT = ((maxWidth - narrowBannerWidthFloor) /
+            (narrowPaneAvailableWidthThreshold - narrowBannerWidthFloor))
+        .clamp(0.0, 1.0);
+    final signSize =
+        (narrowSignSizeMin + (narrowSignSizeMax - narrowSignSizeMin) * widthT)
+            .clamp(narrowSignSizeMin, narrowSignSizeMax);
+    const inset = 2.0;
+    final bannerMinHeight = (narrowBannerHeightMin +
+            (narrowBannerHeightMax - narrowBannerHeightMin) * widthT)
+        .clamp(narrowBannerHeightMin, narrowBannerHeightMax);
+    return NavSignageTabletReadabilityMetrics(
+      isLandscape: isLandscape,
+      isNarrowPane: true,
+      bannerMinHeight: bannerMinHeight,
+      bannerMaxWidth: maxWidth,
+      bannerMinWidth: minWidth,
+      signSize: signSize,
+      iconBoxSize: signSize + inset * 2,
+      distanceFontSize: (narrowDistanceFontMin +
+              (narrowDistanceFontMax - narrowDistanceFontMin) * widthT)
+          .clamp(narrowDistanceFontMin, narrowDistanceFontMax),
+      primaryFontSize: (narrowPrimaryFontMin +
+              (narrowPrimaryFontMax - narrowPrimaryFontMin) * widthT)
+          .clamp(narrowPrimaryFontMin, narrowPrimaryFontMax),
+      secondaryFontSize: (narrowSecondaryFontMin +
+              (narrowSecondaryFontMax - narrowSecondaryFontMin) * widthT)
+          .clamp(narrowSecondaryFontMin, narrowSecondaryFontMax),
+      horizontalPadding: 8,
+      verticalPadding: 6,
+      compassReserve: 0,
       signPlateInset: inset,
     );
   }

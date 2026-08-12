@@ -473,10 +473,13 @@ void main() {
         isLandscape: false,
         availableBannerWidth: 300,
       );
+      // FLUXIDI-NARROW-SPLIT-BANNER-P0: below the pane threshold the wide
+      // tablet plate is replaced by compact narrow metrics.
+      expect(narrow.isNarrowPane, isTrue);
       expect(narrow.bannerMaxWidth, lessThanOrEqualTo(300));
       expect(narrow.bannerMinWidth, lessThanOrEqualTo(narrow.bannerMaxWidth));
-      expect(narrow.signSize, greaterThanOrEqualTo(160));
-      expect(narrow.signSize, lessThanOrEqualTo(180));
+      expect(narrow.signSize, greaterThanOrEqualTo(52));
+      expect(narrow.signSize, lessThanOrEqualTo(72));
       final split = NavSignageTabletReadabilityMetrics.forSplitNav(
         availableBannerWidth: 320,
       );

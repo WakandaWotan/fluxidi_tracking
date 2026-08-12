@@ -217,6 +217,11 @@ class DriverTurnInstructionBanner extends StatelessWidget {
 
   bool get _useLandscapeCompactRow => compact && !topRowLandscape;
 
+  /// FLUXIDI-NARROW-SPLIT-BANNER-P0: LayoutBuilder-driven compact pane
+  /// (vertical split maneuver column). Host may still be tablet.
+  bool get _useNarrowPaneBanner =>
+      tabletReadability?.isNarrowPane == true;
+
   /// NAV-FOLLOW-ROUTE-RUNTIME-TRUTH-P0-2 / NAV-TABLET-TRANSPARENT-HEADER-P1:
   /// tablet readability metrics stack distance above the road/instruction line
   /// (top-row follow header included) so the distance stays the dominant value.
@@ -634,14 +639,20 @@ class DriverTurnInstructionBanner extends StatelessWidget {
         style: distanceStyle,
         maxLines: 1,
         softWrap: false,
-        overflow: TextOverflow.visible,
+        overflow: _useNarrowPaneBanner
+            ? TextOverflow.ellipsis
+            : TextOverflow.visible,
         strokeWidth: 3.6,
       );
     }
     return Container(
       padding: EdgeInsets.symmetric(
-        horizontal: compact ? 8 : (_usePhonePortraitStack ? 9 : 10),
-        vertical: compact ? 4 : (_usePhonePortraitStack ? 4 : 5),
+        horizontal: compact || _useNarrowPaneBanner
+            ? 8
+            : (_usePhonePortraitStack ? 9 : 10),
+        vertical: compact || _useNarrowPaneBanner
+            ? 4
+            : (_usePhonePortraitStack ? 4 : 5),
       ),
       decoration: BoxDecoration(
         color: palette.accent.withOpacity(isHighwayLike ? 0.30 : 0.22),
@@ -649,17 +660,15 @@ class DriverTurnInstructionBanner extends StatelessWidget {
         border: Border.all(color: palette.textPrimary.withOpacity(0.20)),
       ),
       // NAV-ROUNDABOUT-LANE-CLARITY-P0-2026-07-31: the distance chip must
-      // NEVER truncate. Distance labels are always short (e.g. "400 m",
-      // "1.2 km", "In 400 m") so `TextOverflow.visible` + `softWrap: false`
-      // preserves the whole label and lets the chip grow to its natural
-      // intrinsic width. On the extreme edge of a narrow phone we fall
-      // back to visible overflow rather than an ellipsis, so the driver
-      // always sees the full distance.
+      // NEVER truncate on normal panes. Narrow vertical-split panes may
+      // ellipsize rather than paint across the Android divider.
       child: Text(
         label,
         maxLines: 1,
         softWrap: false,
-        overflow: TextOverflow.visible,
+        overflow: _useNarrowPaneBanner
+            ? TextOverflow.ellipsis
+            : TextOverflow.visible,
         style: distanceStyle,
       ),
     );
@@ -675,9 +684,14 @@ class DriverTurnInstructionBanner extends StatelessWidget {
 
   Widget _buildPrimaryText(DriverThemePalette palette, {int? maxLines}) {
     final base = maxLines ?? _primaryMaxLines;
-    final resolvedMaxLines = (isArrival || _isRoundaboutPrimary)
+    final resolvedMaxLines = (isArrival ||
+            _isRoundaboutPrimary ||
+            _useNarrowPaneBanner)
         ? math.max(2, base)
         : base;
+    final overflow = _useNarrowPaneBanner
+        ? TextOverflow.ellipsis
+        : TextOverflow.visible;
     final style = TextStyle(
       fontSize: _primaryFontSize,
       fontWeight: FontWeight.w900,
@@ -690,7 +704,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
         style: style,
         maxLines: resolvedMaxLines,
         softWrap: true,
-        overflow: TextOverflow.visible,
+        overflow: overflow,
         strokeWidth: 3.4,
       );
     }
@@ -698,7 +712,7 @@ class DriverTurnInstructionBanner extends StatelessWidget {
       primaryText,
       maxLines: resolvedMaxLines,
       softWrap: true,
-      overflow: TextOverflow.visible,
+      overflow: overflow,
       style: style,
     );
   }
@@ -753,14 +767,18 @@ class DriverTurnInstructionBanner extends StatelessWidget {
           if (hasPrimary)
             _buildPrimaryText(
               palette,
-              maxLines: showSecondary ? 1 : 2,
+              maxLines: _useNarrowPaneBanner
+                  ? 2
+                  : (showSecondary ? 1 : 2),
             ),
           if (showSecondary) ...[
             if (hasPrimary) const SizedBox(height: 2),
             _buildSecondaryText(
               palette,
               secondaryLine,
-              maxLines: presentation!.signCaptioned ? 2 : 1,
+              maxLines: presentation!.signCaptioned || _useNarrowPaneBanner
+                  ? 2
+                  : 1,
             ),
           ],
         ],
@@ -776,12 +794,18 @@ class DriverTurnInstructionBanner extends StatelessWidget {
           const SizedBox(height: 3),
           _buildPrimaryText(
             palette,
-            maxLines: showSecondary ? 1 : 2,
+            maxLines: _useNarrowPaneBanner
+                ? 2
+                : (showSecondary ? 1 : 2),
           ),
         ],
         if (showSecondary) ...[
           const SizedBox(height: 2),
-          _buildSecondaryText(palette, secondaryLine, maxLines: 1),
+          _buildSecondaryText(
+            palette,
+            secondaryLine,
+            maxLines: _useNarrowPaneBanner ? 2 : 1,
+          ),
         ],
       ],
     );
