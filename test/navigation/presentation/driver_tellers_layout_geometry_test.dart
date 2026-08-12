@@ -93,13 +93,18 @@ void main() {
         expect(g.liveWindowRect.contains(g.labelRect.center), isTrue);
         expect(g.liveWindowRect.contains(g.selectorRect.center), isTrue);
         expect(g.containsInLiveWindow(g.markerAnchor), isTrue);
-        // Marker is lower-centre of the live window.
+        // Marker is lower-centre of the live window (may clamp below request).
         expect(g.markerAnchor.dx, closeTo(g.liveWindowRect.center.dx, 0.5));
+        expect(g.requestedNoseFractionInLive, kTellersMarkerAnchorYFraction);
+        expect(
+          g.realizedNoseFractionInLive,
+          lessThanOrEqualTo(g.requestedNoseFractionInLive + 1e-9),
+        );
         expect(
           g.markerAnchor.dy,
           closeTo(
             g.liveWindowRect.top +
-                g.liveWindowRect.height * kTellersMarkerAnchorYFraction,
+                g.liveWindowRect.height * g.realizedNoseFractionInLive,
             0.5,
           ),
         );
@@ -139,7 +144,7 @@ void main() {
 
     test('focal point is below the live-window centre (marker Y fraction)', () {
       // Regression guard for the field bug: the old padding centred the pose at
-      // the live-window middle; the fixed padding must sit ~0.72 down instead.
+      // the live-window middle; the fixed padding must sit ~0.80 down instead.
       final g = portraitPhone();
       expect(
         g.cameraPaddingFocalPoint.dy,

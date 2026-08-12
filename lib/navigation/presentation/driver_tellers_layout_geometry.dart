@@ -29,14 +29,19 @@ const double kTellersLandscapeLeftWidthFraction = 0.44;
 const double kTellersTabletCockpitBrandHPortrait = 72.0;
 const double kTellersTabletCockpitBrandHLandscape = 56.0;
 const double kTellersTabletCockpitTitleH = 40.0;
-const double kTellersTabletCockpitKpiRowH = 78.0;
-const double kTellersTabletCockpitKpiWrapH = 160.0;
+
+/// Wide-pane single-row KPI band (~+28% vs prior 78 for passenger readability).
+const double kTellersTabletCockpitKpiRowH = 100.0;
+
+/// Narrow-pane 2×2 KPI band (~+31% vs prior 160).
+const double kTellersTabletCockpitKpiWrapH = 210.0;
 const double kTellersTabletCockpitPanelPad = 20.0;
 const double kTellersTabletCockpitInnerGap = 6.0;
 
 /// Extra px so Column children never overflow the reserved Positioned band.
 const double kTellersTabletCockpitLayoutSlack = 4.0;
 const double kTellersTabletCockpitMinMapH = 180.0;
+
 /// Room for amount + VAT/finality note (ordinary Navigatie parity).
 const double kTellersTabletCockpitPriceHPortrait = 72.0;
 const double kTellersTabletCockpitPriceHLandscape = 64.0;
@@ -69,10 +74,10 @@ double driverTellersTabletCockpitTopMinHeight({
 /// Requested vehicle-nose Y inside [DriverTellersLayoutGeometry.liveWindowRect]
 /// as a fraction of the live-window height (0 = top, 1 = bottom).
 ///
-/// FLUXIDI-TELLERS-LIVE-MAP-FORWARD-VISIBILITY: ~72% maximises forward road
-/// ahead of the vehicle inside the Tellers cut-out. Realized fraction may be
+/// FLUXIDI-TELLERS-LIVE-MAP-FORWARD-VISIBILITY: ~80% places the vehicle lower
+/// in the Tellers cut-out for more upcoming road. Realized fraction may be
 /// clamped lower on unusually short live windows so the vehicle tail stays in.
-const double kTellersLiveWindowNoseYFractionRequested = 0.72;
+const double kTellersLiveWindowNoseYFractionRequested = 0.80;
 
 /// Backward-compatible alias of [kTellersLiveWindowNoseYFractionRequested].
 const double kTellersMarkerAnchorYFraction =

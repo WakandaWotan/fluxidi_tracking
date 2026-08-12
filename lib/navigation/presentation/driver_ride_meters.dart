@@ -86,7 +86,8 @@ enum DriverVehicleMarkerPresentationOwner {
 }
 
 /// Resolves the single vehicle-marker presentation owner.
-DriverVehicleMarkerPresentationOwner resolveDriverVehicleMarkerPresentationOwner({
+DriverVehicleMarkerPresentationOwner
+resolveDriverVehicleMarkerPresentationOwner({
   required bool tellersActive,
   required bool followLiveActive,
   required bool showDriverHudOverlay,
@@ -163,9 +164,9 @@ class DriverMarkerRotationPolicy {
   /// the map and route rotate UNDERNEATH the marker.
   static const DriverMarkerRotationPolicy viewportScreenUp =
       DriverMarkerRotationPolicy._(
-    DriverMarkerRotationAlignment.viewport,
-    true,
-  );
+        DriverMarkerRotationAlignment.viewport,
+        true,
+      );
 
   /// Where the icon rotation is anchored.
   final DriverMarkerRotationAlignment alignment;
@@ -305,8 +306,8 @@ class DriverNavHudVisibility {
       // painted inside the Tellers live window; the single Mapbox annotation
       // is projected onto the marker anchor by the follow-camera padding.
       tellersMarkerPresentationVisible: false,
-      tellersMarkerSelectorVisible: tellersActive &&
-          (followLiveActive || cameraFollow),
+      tellersMarkerSelectorVisible:
+          tellersActive && (followLiveActive || cameraFollow),
       markerOwner: owner,
     );
   }
@@ -760,12 +761,14 @@ class DriverRideMetersView extends StatefulWidget {
 }
 
 class _DriverRideMetersViewState extends State<DriverRideMetersView> {
-  final DriverTellersGeometryLatch _geometryLatch = DriverTellersGeometryLatch();
+  final DriverTellersGeometryLatch _geometryLatch =
+      DriverTellersGeometryLatch();
 
   @override
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
-    final reserveActionBar = widget.onStop != null ||
+    final reserveActionBar =
+        widget.onStop != null ||
         widget.onToggleWait != null ||
         widget.onRecenter != null;
     final candidate = DriverTellersLayoutGeometry.resolve(
@@ -1045,9 +1048,7 @@ class _DriverRideMetersContent extends StatelessWidget {
             top: corners[i].top,
             width: corners[i].width,
             height: corners[i].height,
-            child: IgnorePointer(
-              child: ColoredBox(color: palette.background),
-            ),
+            child: IgnorePointer(child: ColoredBox(color: palette.background)),
           ),
         // Opaque meters panel (phone landscape: left 44%; else top chrome).
         Positioned(
@@ -1071,9 +1072,7 @@ class _DriverRideMetersContent extends StatelessWidget {
             child: _buildPriceSummaryCard(palette),
           ),
         // Portrait phone + tablet action bar (skipped when rect is zero).
-        if (!controlsInMetersPanel &&
-            controls.width > 0 &&
-            controls.height > 0)
+        if (!controlsInMetersPanel && controls.width > 0 && controls.height > 0)
           Positioned(
             left: controls.left,
             top: controls.top,
@@ -1127,9 +1126,10 @@ class _DriverRideMetersContent extends StatelessWidget {
               // Fixed KPI band — never Expanded into leftover scraps.
               SizedBox(
                 key: const ValueKey<String>('driver_tellers_kpi_band'),
-                height: driverTellersTabletFourAcrossKpis(
-                  geometry.metersPanelRect.width,
-                )
+                height:
+                    driverTellersTabletFourAcrossKpis(
+                      geometry.metersPanelRect.width,
+                    )
                     ? kTellersTabletCockpitKpiRowH
                     : kTellersTabletCockpitKpiWrapH,
                 child: _buildMetersGrid(
@@ -1207,12 +1207,16 @@ class _DriverRideMetersContent extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 SizedBox(
-                  key: const ValueKey<String>('driver_tellers_tablet_brand_slot'),
+                  key: const ValueKey<String>(
+                    'driver_tellers_tablet_brand_slot',
+                  ),
                   width: metrics.brandWidth,
                   height: metrics.cardHeight,
                   child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.transparent,
                       borderRadius: BorderRadius.circular(metrics.radius),
@@ -1222,7 +1226,8 @@ class _DriverRideMetersContent extends StatelessWidget {
                       ),
                     ),
                     child: Center(
-                      child: brandLogo ??
+                      child:
+                          brandLogo ??
                           Text(
                             'Fluxidi',
                             maxLines: 1,
@@ -1333,8 +1338,8 @@ class _DriverRideMetersContent extends StatelessWidget {
         : driverTellersEstimatedRidePriceLabel(markerLanguage);
     final amount = snapshot.priceSummaryAmountText;
     final note = snapshot.estimatedRidePriceNote.trim();
-    final amountIsNumeric = amount.contains('€') ||
-        RegExp(r'\d').hasMatch(amount);
+    final amountIsNumeric =
+        amount.contains('€') || RegExp(r'\d').hasMatch(amount);
     return RepaintBoundary(
       child: Container(
         key: const ValueKey<String>('driver_tellers_price_summary'),
@@ -1457,10 +1462,7 @@ class _DriverRideMetersContent extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.transparent,
           borderRadius: BorderRadius.circular(geometry.cornerRadius),
-          border: Border.all(
-            color: palette.accent.withOpacity(0.7),
-            width: 2,
-          ),
+          border: Border.all(color: palette.accent.withOpacity(0.7), width: 2),
         ),
         child: Stack(
           clipBehavior: Clip.hardEdge,
@@ -1524,7 +1526,9 @@ class _DriverRideMetersContent extends StatelessWidget {
                 height: 24,
                 child: const IgnorePointer(
                   child: KeyedSubtree(
-                    key: ValueKey<String>('driver_tellers_pose_debug_crosshair'),
+                    key: ValueKey<String>(
+                      'driver_tellers_pose_debug_crosshair',
+                    ),
                     child: _TellersPoseDebugCrosshair(),
                   ),
                 ),
@@ -1674,21 +1678,22 @@ class _DriverRideMetersContent extends StatelessWidget {
     );
 
     Widget row(Widget a, Widget b) => Row(
-          crossAxisAlignment: fillHeight
-              ? CrossAxisAlignment.stretch
-              : CrossAxisAlignment.center,
-          children: [
-            Expanded(child: a),
-            SizedBox(width: compact ? 8 : 10),
-            Expanded(child: b),
-          ],
-        );
+      crossAxisAlignment: fillHeight
+          ? CrossAxisAlignment.stretch
+          : CrossAxisAlignment.center,
+      children: [
+        Expanded(child: a),
+        SizedBox(width: compact ? 8 : 10),
+        Expanded(child: b),
+      ],
+    );
 
     if (compact) {
       return LayoutBuilder(
         builder: (context, constraints) {
-          final fourAcross =
-              driverTellersTabletFourAcrossKpis(constraints.maxWidth);
+          final fourAcross = driverTellersTabletFourAcrossKpis(
+            constraints.maxWidth,
+          );
           if (fourAcross) {
             return Row(
               key: const ValueKey<String>('driver_tellers_kpi_row_4'),
@@ -1868,23 +1873,25 @@ class _MeterTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Tablet compact (Tellers cockpit): enlarge ~25–35% for passenger distance.
+    // Phone / non-compact tablet paths keep prior sizes.
     final valueSize = compact
-        ? (isLandscape ? 22.0 : 24.0)
+        ? (isLandscape ? 28.0 : 32.0)
         : isTablet
-            ? (isLandscape ? 36.0 : 40.0)
-            : (isLandscape ? 18.0 : 28.0);
+        ? (isLandscape ? 36.0 : 40.0)
+        : (isLandscape ? 18.0 : 28.0);
     final labelSize = compact
-        ? (isLandscape ? 11.0 : 12.0)
+        ? (isLandscape ? 13.0 : 15.0)
         : (isTablet ? 14.0 : 12.0);
     return Semantics(
       label: semanticLabel,
       child: Container(
         constraints: compact
-            ? const BoxConstraints(minHeight: 72)
+            ? const BoxConstraints(minHeight: 92)
             : const BoxConstraints(),
         padding: EdgeInsets.symmetric(
-          horizontal: compact ? 10 : (isTablet ? 18 : 12),
-          vertical: compact ? 8 : (isTablet ? 16 : 10),
+          horizontal: compact ? 12 : (isTablet ? 18 : 12),
+          vertical: compact ? 12 : (isTablet ? 16 : 10),
         ),
         clipBehavior: Clip.hardEdge,
         decoration: BoxDecoration(
@@ -1901,7 +1908,8 @@ class _MeterTile extends StatelessWidget {
         // value scales down; in unconstrained panels it sizes naturally.
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final bounded = constraints.hasBoundedHeight &&
+            final bounded =
+                constraints.hasBoundedHeight &&
                 constraints.maxHeight < double.infinity;
             final valueText = FittedBox(
               fit: BoxFit.scaleDown,
