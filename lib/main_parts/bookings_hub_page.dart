@@ -77,6 +77,31 @@ _BookingsHubThemeTokens _bookingsHubThemeForVariant(
       accent: Color(0xFFFFDFA3),
     );
   }
+  if (variant == DriverThemeVariant.lightEmerald) {
+    return const _BookingsHubThemeTokens(
+      background: Color(0xFFEEF5F2),
+      pageGradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Color(0xFFF4FAF7), Color(0xFFEEF5F2), Color(0xFFE4F1EB)],
+      ),
+      surfaceGradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFFFFFFFF), Color(0xFFEAF4EF)],
+      ),
+      panelGradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFFF4FAF7), Color(0xFFDCEEE6)],
+      ),
+      surfaceBorder: Color(0x99B7CEC4),
+      panelBorder: Color(0x801F8A65),
+      primaryText: Color(0xFF143028),
+      mutedText: Color(0xFF4A665C),
+      accent: Color(0xFF1F8A65),
+    );
+  }
   return _BookingsHubThemeTokens(
     background: const Color(0xFF07080C),
     pageGradient: const LinearGradient(

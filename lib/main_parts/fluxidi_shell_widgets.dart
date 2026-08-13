@@ -85,6 +85,9 @@ class FluxidiFrame extends StatelessWidget {
                     // matches the Documents/Bookings/History highContrast
                     // styling instead of reading as Night Gold.
                     DriverThemeVariant.highContrast => const Color(0xFFFFDFA3),
+                    DriverThemeVariant.lightEmerald => paletteForDriverTheme(
+                      DriverThemeVariant.lightEmerald,
+                    ).accent,
                     // Same value as the legacy `kFluxidiYellow` brand default
                     // (`appConfig.primaryColor` for the chauffeur build),
                     // so Night Gold keeps its existing frame look exactly.

@@ -53,6 +53,20 @@ _DirectRideEstimateTheme _themeForDriverVariant(DriverThemeVariant variant) {
       mutedText: Color(0xFFE1CCA0),
     );
   }
+  if (variant == DriverThemeVariant.lightEmerald) {
+    return const _DirectRideEstimateTheme(
+      panelGradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFFFFFFFF), Color(0xFFE4F1EB)],
+      ),
+      panelBorder: Color(0x99B7CEC4),
+      accent: Color(0xFF1F8A65),
+      valueAccent: Color(0xFF3AA87E),
+      primaryText: Color(0xFF143028),
+      mutedText: Color(0xFF4A665C),
+    );
+  }
   return const _DirectRideEstimateTheme(
     panelGradient: LinearGradient(
       begin: Alignment.topLeft,

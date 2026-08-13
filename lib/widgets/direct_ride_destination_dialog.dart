@@ -64,6 +64,21 @@ _DirectRideDestinationTheme _themeForDriverVariant(DriverThemeVariant variant) {
       buttonForeground: Color(0xFF3C2405),
     );
   }
+  if (variant == DriverThemeVariant.lightEmerald) {
+    return const _DirectRideDestinationTheme(
+      dialogBg: Color(0xFFF4FAF7),
+      fieldFill: Color(0xFFFFFFFF),
+      fieldBorder: Color(0x66B7CEC4),
+      fieldFocusedBorder: Color(0xFF1F8A65),
+      panelBg: Color(0xFFE4F1EB),
+      panelBorder: Color(0x66B7CEC4),
+      divider: Color(0x331F8A65),
+      primaryText: Color(0xFF143028),
+      mutedText: Color(0xFF4A665C),
+      accent: Color(0xFF1F8A65),
+      buttonForeground: Color(0xFFFFFFFF),
+    );
+  }
   return const _DirectRideDestinationTheme(
     dialogBg: Color(0xFF121212),
     fieldFill: Color(0xFF121212),

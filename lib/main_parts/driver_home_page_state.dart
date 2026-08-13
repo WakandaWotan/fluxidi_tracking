@@ -2796,16 +2796,22 @@ class _DriverHomePageState extends State<DriverHomePage>
     required String defaultAsset,
     String? midnightBlueAsset,
     String? middayGoldAsset,
+    String? lightEmeraldAsset,
   }) {
     final isMidnightBlue =
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final isLightEmerald =
+        driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
     if (isMidnightBlue && (midnightBlueAsset ?? '').trim().isNotEmpty) {
       return midnightBlueAsset!;
     }
     if (isMiddayGold && (middayGoldAsset ?? '').trim().isNotEmpty) {
       return middayGoldAsset!;
+    }
+    if (isLightEmerald && (lightEmeraldAsset ?? '').trim().isNotEmpty) {
+      return lightEmeraldAsset!;
     }
     return defaultAsset;
   }
@@ -2858,6 +2864,38 @@ class _DriverHomePageState extends State<DriverHomePage>
   Color _midnightBlueTextMuted() => const Color(0xFFAFCBEA);
   Color _midnightBlueBorderColor([double opacity = 0.46]) =>
       _midnightBlueAccent().withOpacity(opacity);
+
+  Color _lightEmeraldAccent() => const Color(0xFF1F8A65);
+  Color _lightEmeraldTextPrimary() => const Color(0xFF143028);
+  Color _lightEmeraldTextMuted() => const Color(0xFF4A665C);
+  Color _lightEmeraldTextOnSelected() => const Color(0xFFFFFFFF);
+  Color _lightEmeraldBorderColor([double opacity = 0.46]) =>
+      const Color(0xFFB7CEC4).withOpacity(opacity);
+  Color _lightEmeraldSurface() => const Color(0xFFFFFFFF);
+  Color _lightEmeraldSurfaceAlt() => const Color(0xFFE4F1EB);
+  Color _lightEmeraldBackground() => const Color(0xFFEEF5F2);
+
+  LinearGradient _lightEmeraldSurfaceGradient({bool soft = false}) {
+    return LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: soft
+          ? const [Color(0xFFF4FAF7), Color(0xFFE8F3EE), Color(0xFFDCEEE6)]
+          : const [Color(0xFFFFFFFF), Color(0xFFF2F9F5), Color(0xFFE4F1EB)],
+    );
+  }
+
+  LinearGradient _lightEmeraldSelectedSurfaceGradient() {
+    return LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        const Color(0xFF1F8A65).withOpacity(0.95),
+        const Color(0xFF177A58).withOpacity(0.90),
+        const Color(0xFF0F5E43).withOpacity(0.88),
+      ],
+    );
+  }
 
   LinearGradient _midnightBlueSurfaceGradient({bool soft = false}) {
     return LinearGradient(
@@ -25824,16 +25862,24 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final isLightEmerald =
+        driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
     return (
-      accent: isMidnightBlue
-          ? _midnightBlueAccent()
-          : (isMiddayGold ? const Color(0xFFE8C57E) : kFluxidiYellow),
-      text: isMidnightBlue
-          ? _midnightBlueTextPrimary()
-          : (isMiddayGold ? _middayGoldTextPrimary() : Colors.white),
-      surface: isMidnightBlue
-          ? const Color(0xCC07111F)
-          : (isMiddayGold ? const Color(0xCC2C2113) : const Color(0xCC0B1326)),
+      accent: isLightEmerald
+          ? _lightEmeraldAccent()
+          : (isMidnightBlue
+                ? _midnightBlueAccent()
+                : (isMiddayGold ? const Color(0xFFE8C57E) : kFluxidiYellow)),
+      text: isLightEmerald
+          ? _lightEmeraldTextPrimary()
+          : (isMidnightBlue
+                ? _midnightBlueTextPrimary()
+                : (isMiddayGold ? _middayGoldTextPrimary() : Colors.white)),
+      surface: isLightEmerald
+          ? const Color(0xCCFFFFFF)
+          : (isMidnightBlue
+                ? const Color(0xCC0B1B33)
+                : (isMiddayGold ? const Color(0xCC2C2113) : const Color(0xCC0B1326))),
     );
   }
 
@@ -30767,39 +30813,57 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
-    final sheetGradient = isMiddayGold
-        ? _middayGoldSurfaceGradient(soft: true)
+    final isLightEmerald =
+        driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
+    final sheetGradient = isLightEmerald
+        ? _lightEmeraldSurfaceGradient(soft: true)
+        : (isMiddayGold
+              ? _middayGoldSurfaceGradient(soft: true)
+              : (isMidnightBlue
+                    ? const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Color(0xFF020711),
+                          Color(0xFF07111F),
+                          Color(0xFF0B1B33),
+                        ],
+                      )
+                    : const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFF101113), Color(0xFF0D0E11)],
+                      )));
+    final sheetBorder = isLightEmerald
+        ? _lightEmeraldBorderColor(0.40)
+        : (isLightEmerald
+              ? _lightEmeraldBorderColor(0.34)
+              : (isMiddayGold
+                    ? _middayGoldBorderColor(0.34)
+                    : (isMidnightBlue
+                          ? _midnightBlueBorderColor(0.40)
+                          : Colors.white.withOpacity(0.10))));
+    final iconAccent = isLightEmerald
+        ? _lightEmeraldAccent()
         : (isMidnightBlue
-              ? const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    Color(0xFF020711),
-                    Color(0xFF07111F),
-                    Color(0xFF0B1B33),
-                  ],
-                )
-              : const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [Color(0xFF101113), Color(0xFF0D0E11)],
-                ));
-    final sheetBorder = isMiddayGold
-        ? _middayGoldBorderColor(0.34)
-        : (isMidnightBlue
-              ? _midnightBlueBorderColor(0.40)
-              : Colors.white.withOpacity(0.10));
-    final iconAccent = isMidnightBlue
-        ? _midnightBlueAccent()
-        : (isMiddayGold ? const Color(0xFFE8C57E) : const Color(0xFFFFD36A));
-    final titleColor = isMiddayGold
-        ? _middayGoldTextPrimary()
-        : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white);
-    final subtitleColor = isMiddayGold
-        ? _middayGoldTextMuted().withOpacity(0.92)
-        : (isMidnightBlue
-              ? _midnightBlueTextMuted().withOpacity(0.92)
-              : Colors.white.withOpacity(0.62));
+              ? _midnightBlueAccent()
+              : (isMiddayGold
+                    ? const Color(0xFFE8C57E)
+                    : const Color(0xFFFFD36A)));
+    final titleColor = isLightEmerald
+        ? _lightEmeraldTextPrimary()
+        : (isLightEmerald
+              ? _lightEmeraldTextPrimary()
+              : (isMiddayGold
+                    ? _middayGoldTextPrimary()
+                    : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white)));
+    final subtitleColor = isLightEmerald
+        ? _lightEmeraldTextMuted().withOpacity(0.92)
+        : (isMiddayGold
+              ? _middayGoldTextMuted().withOpacity(0.92)
+              : (isMidnightBlue
+                    ? _midnightBlueTextMuted().withOpacity(0.92)
+                    : Colors.white.withOpacity(0.62)));
 
     // `isScrollControlled: true` lifts the default 9/16-of-screen cap so the
     // sheet can grow tall enough to fit every menu item plus the Android
@@ -31103,6 +31167,13 @@ class _DriverHomePageState extends State<DriverHomePage>
             fr: 'Midday Gold',
             es: 'Midday Gold',
           );
+        case DriverThemeVariant.lightEmerald:
+          return _tr(
+            nl: 'Light Emerald',
+            en: 'Light Emerald',
+            fr: 'Light Emerald',
+            es: 'Light Emerald',
+          );
       }
     }
 
@@ -31129,6 +31200,13 @@ class _DriverHomePageState extends State<DriverHomePage>
             fr: 'Espresso et or champagne',
             es: 'Espresso y oro champan',
           );
+        case DriverThemeVariant.lightEmerald:
+          return _tr(
+            nl: 'Licht mint met smaragdgroene accenten',
+            en: 'Light mint with emerald accents',
+            fr: 'Menthe claire avec accents emeraude',
+            es: 'Menta clara con acentos esmeralda',
+          );
       }
     }
 
@@ -31146,41 +31224,59 @@ class _DriverHomePageState extends State<DriverHomePage>
                 selectedVariant == DriverThemeVariant.midnightBlue;
             final isMiddayGold =
                 selectedVariant == DriverThemeVariant.highContrast;
-            final sheetGradient = isMiddayGold
-                ? _middayGoldSurfaceGradient(soft: true)
-                : (isMidnightBlue
-                      ? const LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            Color(0xFF020711),
-                            Color(0xFF07111F),
-                            Color(0xFF0B1B33),
-                          ],
-                        )
-                      : const LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [Color(0xFF101113), Color(0xFF0D0E11)],
-                        ));
-            final sheetBorder = isMiddayGold
-                ? _middayGoldBorderColor(0.34)
-                : (isMidnightBlue
-                      ? _midnightBlueBorderColor(0.40)
-                      : Colors.white.withOpacity(0.10));
-            final iconAccent = isMidnightBlue
-                ? _midnightBlueAccent()
+            final isLightEmerald =
+                selectedVariant == DriverThemeVariant.lightEmerald;
+            final sheetGradient = isLightEmerald
+                ? _lightEmeraldSurfaceGradient(soft: true)
                 : (isMiddayGold
-                      ? const Color(0xFFE8C57E)
-                      : const Color(0xFFFFD36A));
-            final titleColor = isMiddayGold
-                ? _middayGoldTextPrimary()
-                : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white);
-            final subtitleColor = isMiddayGold
-                ? _middayGoldTextMuted().withOpacity(0.92)
+                      ? _middayGoldSurfaceGradient(soft: true)
+                      : (isMidnightBlue
+                            ? const LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  Color(0xFF020711),
+                                  Color(0xFF07111F),
+                                  Color(0xFF0B1B33),
+                                ],
+                              )
+                            : const LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [Color(0xFF101113), Color(0xFF0D0E11)],
+                              )));
+            final sheetBorder = isLightEmerald
+                ? _lightEmeraldBorderColor(0.40)
+                : (isLightEmerald
+                      ? _lightEmeraldBorderColor(0.34)
+                      : (isMiddayGold
+                            ? _middayGoldBorderColor(0.34)
+                            : (isMidnightBlue
+                                  ? _midnightBlueBorderColor(0.40)
+                                  : Colors.white.withOpacity(0.10))));
+            final iconAccent = isLightEmerald
+                ? _lightEmeraldAccent()
                 : (isMidnightBlue
-                      ? _midnightBlueTextMuted().withOpacity(0.92)
-                      : Colors.white.withOpacity(0.62));
+                      ? _midnightBlueAccent()
+                      : (isMiddayGold
+                            ? const Color(0xFFE8C57E)
+                            : const Color(0xFFFFD36A)));
+            final titleColor = isLightEmerald
+                ? _lightEmeraldTextPrimary()
+                : (isLightEmerald
+                      ? _lightEmeraldTextPrimary()
+                      : (isMiddayGold
+                            ? _middayGoldTextPrimary()
+                            : (isMidnightBlue
+                                        ? _midnightBlueTextPrimary()
+                                        : Colors.white)));
+            final subtitleColor = isLightEmerald
+                ? _lightEmeraldTextMuted().withOpacity(0.92)
+                : (isMiddayGold
+                      ? _middayGoldTextMuted().withOpacity(0.92)
+                      : (isMidnightBlue
+                            ? _midnightBlueTextMuted().withOpacity(0.92)
+                            : Colors.white.withOpacity(0.62)));
 
             return SafeArea(
               top: false,
@@ -31457,6 +31553,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final isLightEmerald =
+        driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
     const summaryIconContainerSize = 52.0;
     const summaryIconGlyphSize = 30.0;
     const compactIconContainerSize = 36.0;
@@ -31468,28 +31566,38 @@ class _DriverHomePageState extends State<DriverHomePage>
       required Color accentColor,
       VoidCallback? onTap,
     }) {
-      final iconChipColor = isMiddayGold
+      final iconChipColor = isLightEmerald
           ? Color.alphaBlend(
-              accentColor.withOpacity(0.15),
-              const Color(0xFF2A2216),
+              accentColor.withOpacity(0.14),
+              const Color(0xFFE4F1EB),
             )
-          : (isMidnightBlue
+          : (isMiddayGold
                 ? Color.alphaBlend(
-                    accentColor.withOpacity(0.22),
-                    const Color(0xFF0A1A30),
+                    accentColor.withOpacity(0.15),
+                    const Color(0xFF2A2216),
                   )
-                : accentColor.withOpacity(0.16));
-      final iconChipBorderColor = isMiddayGold
+                : (isMidnightBlue
+                      ? Color.alphaBlend(
+                          accentColor.withOpacity(0.22),
+                          const Color(0xFF0A1A30),
+                        )
+                      : accentColor.withOpacity(0.16)));
+      final iconChipBorderColor = isLightEmerald
           ? Color.alphaBlend(
               accentColor.withOpacity(0.34),
-              const Color(0x88E8C57E),
+              const Color(0x88B7CEC4),
             )
-          : (isMidnightBlue
+          : (isMiddayGold
                 ? Color.alphaBlend(
-                    accentColor.withOpacity(0.48),
-                    _midnightBlueBorderColor(0.40),
+                    accentColor.withOpacity(0.34),
+                    const Color(0x88E8C57E),
                   )
-                : accentColor.withOpacity(0.55));
+                : (isMidnightBlue
+                      ? Color.alphaBlend(
+                          accentColor.withOpacity(0.48),
+                          _midnightBlueBorderColor(0.40),
+                        )
+                      : accentColor.withOpacity(0.55)));
       final cardBody = Container(
         constraints: compactLandscape && compactMinHeight != null
             ? BoxConstraints(minHeight: compactMinHeight)
@@ -31498,22 +31606,28 @@ class _DriverHomePageState extends State<DriverHomePage>
             ? const EdgeInsets.fromLTRB(8, 6, 8, 6)
             : const EdgeInsets.fromLTRB(8, 8, 8, 8),
         decoration: BoxDecoration(
-          color: (isMiddayGold || isMidnightBlue)
+          color: (isMiddayGold || isMidnightBlue || isLightEmerald)
               ? null
               : const Color(0xFF111214),
-          gradient: isMiddayGold
-              ? _middayGoldSurfaceGradient()
-              : (isMidnightBlue ? _midnightBlueSurfaceGradient() : null),
+          gradient: isLightEmerald
+              ? _lightEmeraldSurfaceGradient()
+              : (isMiddayGold
+                    ? _middayGoldSurfaceGradient()
+                    : (isMidnightBlue ? _midnightBlueSurfaceGradient() : null)),
           borderRadius: BorderRadius.circular(13),
           border: Border.all(
-            color: isMiddayGold
-                ? _middayGoldBorderColor(0.40)
-                : (isMidnightBlue
-                      ? _midnightBlueBorderColor(0.42)
-                      : Colors.white.withOpacity(0.10)),
+            color: isLightEmerald
+                ? _lightEmeraldBorderColor(0.42)
+                : (isLightEmerald
+                      ? _lightEmeraldBorderColor(0.40)
+                      : (isMiddayGold
+                            ? _middayGoldBorderColor(0.40)
+                            : (isMidnightBlue
+                                  ? _midnightBlueBorderColor(0.42)
+                                  : Colors.white.withOpacity(0.10)))),
             width: 1.0,
           ),
-          boxShadow: (isMiddayGold || isMidnightBlue)
+          boxShadow: (isMiddayGold || isMidnightBlue || isLightEmerald)
               ? [
                   BoxShadow(
                     color: Colors.black.withOpacity(0.24),
@@ -31547,11 +31661,15 @@ class _DriverHomePageState extends State<DriverHomePage>
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: isMiddayGold
-                            ? _middayGoldTextMuted()
-                            : (isMidnightBlue
-                                  ? _midnightBlueTextMuted()
-                                  : Colors.white.withOpacity(0.78)),
+                        color: isLightEmerald
+                            ? _lightEmeraldTextMuted()
+                            : (isLightEmerald
+                                  ? _lightEmeraldTextMuted()
+                                  : (isMiddayGold
+                                        ? _middayGoldTextMuted()
+                                        : (isMidnightBlue
+                                                    ? _midnightBlueTextMuted()
+                                                    : Colors.white.withOpacity(0.78)))),
                         fontSize: 11.2,
                         fontWeight: FontWeight.w700,
                       ),
@@ -31563,11 +31681,15 @@ class _DriverHomePageState extends State<DriverHomePage>
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: isMiddayGold
-                          ? _middayGoldTextPrimary()
-                          : (isMidnightBlue
-                                ? _midnightBlueTextPrimary()
-                                : Colors.white),
+                      color: isLightEmerald
+                          ? _lightEmeraldTextPrimary()
+                          : (isLightEmerald
+                                ? _lightEmeraldTextPrimary()
+                                : (isMiddayGold
+                                      ? _middayGoldTextPrimary()
+                                      : (isMidnightBlue
+                                                  ? _midnightBlueTextPrimary()
+                                                  : Colors.white))),
                       fontSize: 16,
                       fontWeight: FontWeight.w900,
                     ),
@@ -31597,11 +31719,15 @@ class _DriverHomePageState extends State<DriverHomePage>
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: isMiddayGold
-                          ? _middayGoldTextPrimary()
-                          : (isMidnightBlue
-                                ? _midnightBlueTextPrimary()
-                                : Colors.white),
+                      color: isLightEmerald
+                          ? _lightEmeraldTextPrimary()
+                          : (isLightEmerald
+                                ? _lightEmeraldTextPrimary()
+                                : (isMiddayGold
+                                      ? _middayGoldTextPrimary()
+                                      : (isMidnightBlue
+                                                  ? _midnightBlueTextPrimary()
+                                                  : Colors.white))),
                       fontSize: 16,
                       fontWeight: FontWeight.w900,
                     ),
@@ -31612,11 +31738,15 @@ class _DriverHomePageState extends State<DriverHomePage>
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: isMiddayGold
-                          ? _middayGoldTextMuted()
-                          : (isMidnightBlue
-                                ? _midnightBlueTextMuted()
-                                : Colors.white.withOpacity(0.66)),
+                      color: isLightEmerald
+                          ? _lightEmeraldTextMuted()
+                          : (isLightEmerald
+                                ? _lightEmeraldTextMuted()
+                                : (isMiddayGold
+                                      ? _middayGoldTextMuted()
+                                      : (isMidnightBlue
+                                                  ? _midnightBlueTextMuted()
+                                                  : Colors.white.withOpacity(0.66)))),
                       fontSize: 10.2,
                       fontWeight: FontWeight.w700,
                     ),
@@ -31694,6 +31824,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final isLightEmerald =
+        driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
     if (nextRide == null) {
       Widget wrapMiddayButton(Widget button) {
         if (!isMiddayGold) return button;
@@ -31709,19 +31841,25 @@ class _DriverHomePageState extends State<DriverHomePage>
         width: double.infinity,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: (isMiddayGold || isMidnightBlue)
+          color: (isMiddayGold || isMidnightBlue || isLightEmerald)
               ? null
               : const Color(0xFF101113),
-          gradient: isMiddayGold
-              ? _middayGoldSurfaceGradient()
-              : (isMidnightBlue ? _midnightBlueSurfaceGradient() : null),
+          gradient: isLightEmerald
+              ? _lightEmeraldSurfaceGradient()
+              : (isMiddayGold
+                    ? _middayGoldSurfaceGradient()
+                    : (isMidnightBlue ? _midnightBlueSurfaceGradient() : null)),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isMiddayGold
-                ? _middayGoldBorderColor(0.38)
-                : (isMidnightBlue
-                      ? _midnightBlueBorderColor(0.42)
-                      : Colors.white.withOpacity(0.10)),
+            color: isLightEmerald
+                ? _lightEmeraldBorderColor(0.40)
+                : (isLightEmerald
+                      ? _lightEmeraldBorderColor(0.38)
+                      : (isMiddayGold
+                            ? _middayGoldBorderColor(0.38)
+                            : (isMidnightBlue
+                                  ? _midnightBlueBorderColor(0.42)
+                                  : Colors.white.withOpacity(0.10)))),
           ),
         ),
         child: Column(
@@ -31735,11 +31873,15 @@ class _DriverHomePageState extends State<DriverHomePage>
                 es: 'No hay viajes planificados',
               ),
               style: TextStyle(
-                color: isMiddayGold
-                    ? _middayGoldTextPrimary()
-                    : (isMidnightBlue
-                          ? _midnightBlueTextPrimary()
-                          : Colors.white),
+                color: isLightEmerald
+                    ? _lightEmeraldTextPrimary()
+                    : (isLightEmerald
+                          ? _lightEmeraldTextPrimary()
+                          : (isMiddayGold
+                                ? _middayGoldTextPrimary()
+                                : (isMidnightBlue
+                                            ? _midnightBlueTextPrimary()
+                                            : Colors.white))),
                 fontSize: 14.5,
                 fontWeight: FontWeight.w800,
               ),
@@ -31753,11 +31895,15 @@ class _DriverHomePageState extends State<DriverHomePage>
                 es: 'Actualiza la planificación o inicia un viaje directo.',
               ),
               style: TextStyle(
-                color: isMiddayGold
-                    ? _middayGoldTextMuted()
-                    : (isMidnightBlue
-                          ? _midnightBlueTextMuted()
-                          : Colors.white.withOpacity(0.68)),
+                color: isLightEmerald
+                    ? _lightEmeraldTextMuted()
+                    : (isLightEmerald
+                          ? _lightEmeraldTextMuted()
+                          : (isMiddayGold
+                                ? _middayGoldTextMuted()
+                                : (isMidnightBlue
+                                            ? _midnightBlueTextMuted()
+                                            : Colors.white.withOpacity(0.68)))),
                 fontSize: 11.2,
                 fontWeight: FontWeight.w600,
               ),
@@ -31768,11 +31914,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                 Expanded(
                   child: wrapMiddayButton(
                     OutlinedButton.icon(
-                      style: isMiddayGold
-                          ? _middayGoldOutlinedActionButtonStyle()
-                          : (isMidnightBlue
-                                ? _midnightBlueOutlinedActionButtonStyle()
-                                : _ghostButtonStyle()),
+                      style: isLightEmerald
+                          ? _ghostButtonStyle()
+                          : (isMiddayGold
+                                ? _middayGoldOutlinedActionButtonStyle()
+                                : (isMidnightBlue
+                                      ? _midnightBlueOutlinedActionButtonStyle()
+                                      : _ghostButtonStyle())),
                       onPressed: () =>
                           _refreshBookings(force: true, trigger: 'list_manual'),
                       icon: const Icon(Icons.refresh, size: 17),
@@ -31791,11 +31939,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                 Expanded(
                   child: wrapMiddayButton(
                     FilledButton.icon(
-                      style: isMiddayGold
-                          ? _middayGoldFilledActionButtonStyle()
-                          : (isMidnightBlue
-                                ? _midnightBlueFilledActionButtonStyle()
-                                : _startButtonStyle()),
+                      style: isLightEmerald
+                          ? _startButtonStyle()
+                          : (isMiddayGold
+                                ? _middayGoldFilledActionButtonStyle()
+                                : (isMidnightBlue
+                                      ? _midnightBlueFilledActionButtonStyle()
+                                      : _startButtonStyle())),
                       onPressed: _openDirectRideEntry,
                       icon: const Icon(Icons.local_taxi_outlined, size: 18),
                       label: Text(
@@ -31959,16 +32109,18 @@ class _DriverHomePageState extends State<DriverHomePage>
               : (isMidnightBlue
                     ? _midnightBlueSurfaceGradient(soft: true)
                     : null),
-          color: (isMiddayGold || isMidnightBlue)
+          color: (isMiddayGold || isMidnightBlue || isLightEmerald)
               ? null
               : const Color(0xFF17191C),
           borderRadius: BorderRadius.circular(999),
           border: Border.all(
-            color: isMiddayGold
-                ? _middayGoldBorderColor(0.40)
-                : (isMidnightBlue
-                      ? _midnightBlueBorderColor(0.45)
-                      : const Color(0x33FFD36A)),
+            color: isLightEmerald
+                ? _lightEmeraldBorderColor(0.40)
+                : (isMiddayGold
+                      ? _middayGoldBorderColor(0.40)
+                      : (isMidnightBlue
+                            ? _midnightBlueBorderColor(0.45)
+                            : const Color(0x33FFD36A))),
           ),
         ),
         child: Row(
@@ -32018,11 +32170,13 @@ class _DriverHomePageState extends State<DriverHomePage>
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: isMiddayGold
-                    ? _middayGoldTextMuted()
-                    : (isMidnightBlue
-                          ? _midnightBlueTextMuted()
-                          : const Color(0xFFF3D486)),
+                color: isLightEmerald
+                    ? _lightEmeraldTextMuted()
+                    : (isMiddayGold
+                          ? _middayGoldTextMuted()
+                          : (isMidnightBlue
+                                      ? _midnightBlueTextMuted()
+                                      : const Color(0xFFF3D486))),
                 fontSize: 10.8,
                 fontWeight: FontWeight.w600,
               ),
@@ -32036,7 +32190,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: (isMiddayGold || isMidnightBlue)
+        color: (isMiddayGold || isMidnightBlue || isLightEmerald)
             ? null
             : const Color(0xFF101113),
         gradient: isMiddayGold
@@ -32044,11 +32198,13 @@ class _DriverHomePageState extends State<DriverHomePage>
             : (isMidnightBlue ? _midnightBlueSurfaceGradient() : null),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: isMiddayGold
-              ? _middayGoldBorderColor(0.44)
-              : (isMidnightBlue
-                    ? _midnightBlueBorderColor(0.45)
-                    : const Color(0x55FFD36A)),
+          color: isLightEmerald
+              ? _lightEmeraldBorderColor(0.44)
+              : (isMiddayGold
+                    ? _middayGoldBorderColor(0.44)
+                    : (isMidnightBlue
+                          ? _midnightBlueBorderColor(0.45)
+                          : const Color(0x55FFD36A))),
         ),
       ),
       child: Column(
@@ -32221,6 +32377,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final isLightEmerald =
+        driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
     const quickActionIconContainerSize = 56.0;
     const quickActionIconGlyphSize = 31.0;
     Widget quickAction({
@@ -32248,47 +32406,65 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
           decoration: BoxDecoration(
             color: hasImageBackground
-                ? (isMiddayGold
-                      ? const Color(0xFF221B11).withOpacity(0.80)
-                      : (isMidnightBlue
-                            ? const Color(0xFF07111F).withOpacity(0.88)
-                            : const Color(0xFF0A0A0A).withOpacity(0.88)))
-                : (isMiddayGold
+                ? (isLightEmerald
+                      ? const Color(0xFFEEF5F2).withOpacity(0.72)
+                      : (isMiddayGold
+                            ? const Color(0xFF221B11).withOpacity(0.80)
+                            : (isMidnightBlue
+                                  ? const Color(0xFF07111F).withOpacity(0.88)
+                                  : const Color(0xFF0A0A0A).withOpacity(0.88))))
+                : (isLightEmerald
                       ? null
-                      : (isMidnightBlue
+                      : (isMiddayGold
                             ? null
-                            : const Color(0xFF111111).withOpacity(0.96))),
+                            : (isMidnightBlue
+                                  ? null
+                                  : const Color(0xFF111111).withOpacity(0.96)))),
             gradient: !hasImageBackground
-                ? (isMiddayGold
-                      ? _middayGoldSurfaceGradient()
-                      : (isMidnightBlue
-                            ? _midnightBlueSurfaceGradient()
-                            : null))
+                ? (isLightEmerald
+                      ? _lightEmeraldSurfaceGradient()
+                      : (isMiddayGold
+                            ? _middayGoldSurfaceGradient()
+                            : (isMidnightBlue
+                                  ? _midnightBlueSurfaceGradient()
+                                  : null)))
                 : null,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
               color: isTabletPortrait
                   ? Colors.transparent
                   : (active
-                        ? (isMiddayGold
-                              ? _middayGoldBorderColor(0.48)
-                              : (isMidnightBlue
-                                    ? _midnightBlueBorderColor(0.52)
-                                    : const Color(0x66FFD36A)))
-                        : (isMiddayGold
-                              ? _middayGoldBorderColor(0.28)
-                              : (isMidnightBlue
-                                    ? _midnightBlueBorderColor(0.34)
-                                    : Colors.white.withOpacity(0.12)))),
+                        ? (isLightEmerald
+                              ? _lightEmeraldBorderColor(0.55)
+                              : (isLightEmerald
+                                    ? _lightEmeraldBorderColor(0.48)
+                                    : (isMiddayGold
+                                          ? _middayGoldBorderColor(0.48)
+                                          : (isMidnightBlue
+                                                ? _midnightBlueBorderColor(0.52)
+                                                : const Color(0x66FFD36A)))))
+                        : (isLightEmerald
+                              ? _lightEmeraldBorderColor(0.34)
+                              : (isLightEmerald
+                                    ? _lightEmeraldBorderColor(0.28)
+                                    : (isMiddayGold
+                                          ? _middayGoldBorderColor(0.28)
+                                          : (isMidnightBlue
+                                                ? _midnightBlueBorderColor(0.34)
+                                                : Colors.white.withOpacity(0.12)))))),
             ),
           ),
           foregroundDecoration: isTabletPortrait
               ? BoxDecoration(
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(
-                    color: isMidnightBlue
-                        ? _midnightBlueBorderColor(0.56)
-                        : const Color(0xFFFFD36A).withOpacity(0.56),
+                    color: isLightEmerald
+                        ? _lightEmeraldBorderColor(0.56)
+                        : (isMidnightBlue
+                              ? _midnightBlueBorderColor(0.56)
+                              : (isMiddayGold
+                                    ? _middayGoldBorderColor(0.56)
+                                    : const Color(0xFFFFD36A).withOpacity(0.56))),
                     width: 1.0,
                   ),
                 )
@@ -32319,9 +32495,15 @@ class _DriverHomePageState extends State<DriverHomePage>
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
                         colors: [
-                          Colors.black.withOpacity(isMiddayGold ? 0.10 : 0.16),
-                          Colors.black.withOpacity(isMiddayGold ? 0.20 : 0.26),
-                          Colors.black.withOpacity(isMiddayGold ? 0.44 : 0.56),
+                          Colors.black.withOpacity(
+                            isLightEmerald ? 0.04 : (isMiddayGold ? 0.10 : 0.16),
+                          ),
+                          Colors.black.withOpacity(
+                            isLightEmerald ? 0.08 : (isMiddayGold ? 0.20 : 0.26),
+                          ),
+                          Colors.black.withOpacity(
+                            isLightEmerald ? 0.18 : (isMiddayGold ? 0.44 : 0.56),
+                          ),
                         ],
                       ),
                     ),
@@ -32338,37 +32520,49 @@ class _DriverHomePageState extends State<DriverHomePage>
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: active
-                            ? (isMiddayGold
-                                  ? const Color(0xFF3E2F1A)
-                                  : (isMidnightBlue
-                                        ? const Color(0xFF0F2747)
-                                        : const Color(0xFF21180A)))
-                            : (isMiddayGold
-                                  ? const Color(0xFF2D2316)
-                                  : (isMidnightBlue
-                                        ? const Color(0xFF0A1A31)
-                                        : const Color(0xFF17130B))),
+                            ? (isLightEmerald
+                                  ? const Color(0xFF1F8A65)
+                                  : (isMiddayGold
+                                        ? const Color(0xFF3E2F1A)
+                                        : (isMidnightBlue
+                                              ? const Color(0xFF0F2747)
+                                              : const Color(0xFF21180A))))
+                            : (isLightEmerald
+                                  ? const Color(0xFFE4F1EB)
+                                  : (isMiddayGold
+                                        ? const Color(0xFF2D2316)
+                                        : (isMidnightBlue
+                                              ? const Color(0xFF0A1A31)
+                                              : const Color(0xFF17130B)))),
                         border: Border.all(
                           color: active
-                              ? (isMiddayGold
-                                    ? const Color(0xCCE8C57E)
-                                    : (isMidnightBlue
-                                          ? _midnightBlueBorderColor(0.66)
-                                          : const Color(0x88FFD36A)))
-                              : (isMiddayGold
-                                    ? const Color(0x88DDBB76)
-                                    : (isMidnightBlue
-                                          ? _midnightBlueBorderColor(0.40)
-                                          : const Color(0x55FFD36A))),
+                              ? (isLightEmerald
+                                    ? _lightEmeraldAccent().withOpacity(0.85)
+                                    : (isMiddayGold
+                                          ? const Color(0xCCE8C57E)
+                                          : (isMidnightBlue
+                                                ? _midnightBlueBorderColor(0.66)
+                                                : const Color(0x88FFD36A))))
+                              : (isLightEmerald
+                                    ? _lightEmeraldBorderColor(0.55)
+                                    : (isMiddayGold
+                                          ? const Color(0x88DDBB76)
+                                          : (isMidnightBlue
+                                                ? _midnightBlueBorderColor(0.40)
+                                                : const Color(0x55FFD36A)))),
                         ),
                       ),
                       child: Icon(
                         icon,
-                        color: isMiddayGold
-                            ? _middayGoldTextPrimary()
-                            : (isMidnightBlue
-                                  ? _midnightBlueTextPrimary()
-                                  : const Color(0xFFFFD36A)),
+                        color: isLightEmerald
+                            ? (active
+                                  ? _lightEmeraldTextOnSelected()
+                                  : _lightEmeraldAccent())
+                            : (isMiddayGold
+                                  ? _middayGoldTextPrimary()
+                                  : (isMidnightBlue
+                                        ? _midnightBlueTextPrimary()
+                                        : const Color(0xFFFFD36A))),
                         size: quickActionIconGlyphSize,
                       ),
                     ),
@@ -32383,11 +32577,15 @@ class _DriverHomePageState extends State<DriverHomePage>
                             softWrap: false,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              color: isMiddayGold
-                                  ? _middayGoldTextPrimary()
-                                  : (isMidnightBlue
-                                        ? _midnightBlueTextPrimary()
-                                        : Colors.white),
+                              color: isLightEmerald
+                                  ? _lightEmeraldTextPrimary()
+                                  : (isLightEmerald
+                                        ? _lightEmeraldTextPrimary()
+                                        : (isMiddayGold
+                                              ? _middayGoldTextPrimary()
+                                              : (isMidnightBlue
+                                                          ? _midnightBlueTextPrimary()
+                                                          : Colors.white))),
                               fontWeight: FontWeight.w800,
                               fontSize: 10.4,
                             ),
@@ -32399,11 +32597,15 @@ class _DriverHomePageState extends State<DriverHomePage>
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: isMiddayGold
-                                    ? _middayGoldTextMuted()
-                                    : (isMidnightBlue
-                                          ? _midnightBlueTextMuted()
-                                          : Colors.white.withOpacity(0.67)),
+                                color: isLightEmerald
+                                    ? _lightEmeraldTextMuted()
+                                    : (isLightEmerald
+                                          ? _lightEmeraldTextMuted()
+                                          : (isMiddayGold
+                                                ? _middayGoldTextMuted()
+                                                : (isMidnightBlue
+                                                            ? _midnightBlueTextMuted()
+                                                            : Colors.white.withOpacity(0.67)))),
                                 fontSize: 11.5,
                               ),
                             ),
@@ -32467,6 +32669,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                       'assets/Midnight Bleu Chauffeur/driver_street_ride_midnight_blue.webp',
                   middayGoldAsset:
                       'assets/Midday Gold Chauffeur/driver_street_ride_midday_gold.webp',
+                  lightEmeraldAsset:
+                      'assets/Light Emerald Chauffeur/driver_street_ride_light_emerald.webp',
                 ),
               ),
             ),
@@ -32488,6 +32692,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                       'assets/Midnight Bleu Chauffeur/driver_fare_calculator_midnight_blue.webp',
                   middayGoldAsset:
                       'assets/Midday Gold Chauffeur/driver_fare_calculator_midday_gold.webp',
+                  lightEmeraldAsset:
+                      'assets/Light Emerald Chauffeur/driver_fare_calculator_light_emerald.webp',
                 ),
               ),
             ),
@@ -32510,6 +32716,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                       'assets/Midnight Bleu Chauffeur/driver_my_rides_midnight_blue.webp',
                   middayGoldAsset:
                       'assets/Midday Gold Chauffeur/driver_my_rides_midday_gold.webp',
+                  lightEmeraldAsset:
+                      'assets/Light Emerald Chauffeur/driver_my_rides_light_emerald.webp',
                 ),
               ),
             ),
@@ -32530,6 +32738,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                       'assets/Midnight Bleu Chauffeur/driver_history_midnight_blue.webp',
                   middayGoldAsset:
                       'assets/Midday Gold Chauffeur/driver_history_midday_gold.webp',
+                  lightEmeraldAsset:
+                      'assets/Light Emerald Chauffeur/driver_history_light_emerald.webp',
                 ),
               ),
             ),
@@ -32550,6 +32760,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                       'assets/Midnight Bleu Chauffeur/driver_receipts_midnight_blue.webp',
                   middayGoldAsset:
                       'assets/Midday Gold Chauffeur/driver_receipts_midday_gold.webp',
+                  lightEmeraldAsset:
+                      'assets/Light Emerald Chauffeur/driver_receipts_light_emerald.webp',
                 ),
               ),
             ),
@@ -32578,6 +32790,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                       'assets/Midnight Bleu Chauffeur/driver_documents_midnight_blue.webp',
                   middayGoldAsset:
                       'assets/Midday Gold Chauffeur/driver_documents_midday_gold.webp',
+                  lightEmeraldAsset:
+                      'assets/Light Emerald Chauffeur/driver_documents_light_emerald.webp',
                 ),
               ),
             ),
@@ -32622,6 +32836,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final isLightEmerald =
+        driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
     final driverHeaderHeight = isTabletPortrait
         ? clampDouble(H * 0.24, 300.0, 360.0)
         : 0.0;
@@ -32649,9 +32865,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       return Text(
         text,
         style: TextStyle(
-          color: isMiddayGold
-              ? const Color(0xFFF3E5C4)
-              : (isMidnightBlue ? _midnightBlueTextMuted() : Colors.white),
+          color: isLightEmerald
+              ? _lightEmeraldTextMuted()
+              : (isMiddayGold
+                    ? const Color(0xFFF3E5C4)
+                    : (isMidnightBlue ? _midnightBlueTextMuted() : Colors.white)),
           fontSize: 13.5,
           fontWeight: FontWeight.w800,
         ),
@@ -32664,13 +32882,15 @@ class _DriverHomePageState extends State<DriverHomePage>
       required VoidCallback onTap,
       bool active = false,
     }) {
-      final color = isMiddayGold
-          ? (active ? _middayGoldTextOnSelected() : _middayGoldTextMuted())
-          : (isMidnightBlue
-                ? (active
-                      ? _midnightBlueTextPrimary()
-                      : _midnightBlueTextMuted())
-                : (active ? const Color(0xFFFFD36A) : Colors.white70));
+      final color = isLightEmerald
+          ? (active ? _lightEmeraldAccent() : _lightEmeraldTextMuted())
+          : (isMiddayGold
+                ? (active ? _middayGoldTextOnSelected() : _middayGoldTextMuted())
+                : (isMidnightBlue
+                      ? (active
+                            ? _midnightBlueTextPrimary()
+                            : _midnightBlueTextMuted())
+                      : (active ? const Color(0xFFFFD36A) : Colors.white70)));
       return Expanded(
         child: InkWell(
           onTap: onTap,
@@ -32756,7 +32976,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (isMiddayGold || isMidnightBlue)
+                    if (isMiddayGold || isMidnightBlue || isLightEmerald)
                       Container(
                         width: 29,
                         height: 29,
@@ -32888,7 +33108,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                     vertical: 6,
                   ),
                   decoration: BoxDecoration(
-                    color: (isMiddayGold || isMidnightBlue)
+                    color: (isMiddayGold || isMidnightBlue || isLightEmerald)
                         ? null
                         : const Color(0xFF101113),
                     gradient: isMiddayGold
@@ -32900,11 +33120,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                     border: Border.all(
                       color: statusReady
                           ? const Color(0x664CD964)
-                          : (isMiddayGold
-                                ? _middayGoldBorderColor(0.46)
-                                : (isMidnightBlue
-                                      ? _midnightBlueBorderColor(0.52)
-                                      : const Color(0x66FFD36A))),
+                          : (isLightEmerald
+                                ? _lightEmeraldBorderColor(0.46)
+                                : (isMiddayGold
+                                      ? _middayGoldBorderColor(0.46)
+                                      : (isMidnightBlue
+                                            ? _midnightBlueBorderColor(0.52)
+                                            : const Color(0x66FFD36A)))),
                     ),
                   ),
                   child: Row(
@@ -32981,11 +33203,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(18),
                           border: Border.all(
-                            color: isMiddayGold
-                                ? const Color(0xFFFFD36A).withOpacity(0.56)
-                                : (isMidnightBlue
-                                      ? _midnightBlueBorderColor(0.56)
-                                      : const Color(0x55FFD36A)),
+                            color: isLightEmerald
+                                ? _lightEmeraldBorderColor(0.56)
+                                : (isMiddayGold
+                                      ? const Color(0xFFFFD36A).withOpacity(0.56)
+                                      : (isMidnightBlue
+                                            ? _midnightBlueBorderColor(0.56)
+                                            : const Color(0x55FFD36A))),
                           ),
                         ),
                         child: Stack(
@@ -32999,6 +33223,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                                     'assets/Midnight Bleu Chauffeur/driver_home_header_midnight_blue.webp',
                                 middayGoldAsset:
                                     'assets/Midday Gold Chauffeur/driver_home_header_midday_gold.webp',
+                                lightEmeraldAsset:
+                                    'assets/Light Emerald Chauffeur/driver_home_header_light_emerald.webp',
                               ),
                               fit: BoxFit.cover,
                               alignment: Alignment.centerRight,
@@ -33080,11 +33306,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(18),
                           border: Border.all(
-                            color: isMiddayGold
-                                ? const Color(0xFFFFD36A).withOpacity(0.56)
-                                : (isMidnightBlue
-                                      ? _midnightBlueBorderColor(0.56)
-                                      : const Color(0x55FFD36A)),
+                            color: isLightEmerald
+                                ? _lightEmeraldBorderColor(0.56)
+                                : (isMiddayGold
+                                      ? const Color(0xFFFFD36A).withOpacity(0.56)
+                                      : (isMidnightBlue
+                                            ? _midnightBlueBorderColor(0.56)
+                                            : const Color(0x55FFD36A))),
                           ),
                         ),
                         child: Stack(
@@ -33098,6 +33326,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                                     'assets/Midnight Bleu Chauffeur/driver_navigation_midnight_blue.webp',
                                 middayGoldAsset:
                                     'assets/Midday Gold Chauffeur/driver_navigation_midday_gold.webp',
+                                lightEmeraldAsset:
+                                    'assets/Light Emerald Chauffeur/driver_navigation_light_emerald.webp',
                               ),
                               fit: BoxFit.cover,
                               alignment: Alignment.center,
@@ -35022,23 +35252,35 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
-    final sheetGradient = isMiddayGold
-        ? _middayGoldSurfaceGradient(soft: true)
-        : (isMidnightBlue
-              ? _midnightBlueSurfaceGradient(soft: true)
-              : const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [Color(0xFF141B2F), Color(0xFF101113)],
-                ));
-    final sheetBorder = isMiddayGold
-        ? _middayGoldBorderColor(0.34)
-        : (isMidnightBlue ? _midnightBlueBorderColor(0.38) : Colors.white12);
-    final sheetGlow = isMidnightBlue
-        ? _midnightBlueAccent().withOpacity(0.20)
+    final isLightEmerald =
+        driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
+    final sheetGradient = isLightEmerald
+        ? _lightEmeraldSurfaceGradient(soft: true)
         : (isMiddayGold
-              ? const Color(0x66E8C57E).withOpacity(0.34)
-              : kFluxidiYellowSoft);
+              ? _middayGoldSurfaceGradient(soft: true)
+              : (isMidnightBlue
+                    ? _midnightBlueSurfaceGradient(soft: true)
+                    : const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFF141B2F), Color(0xFF101113)],
+                      )));
+    final sheetBorder = isLightEmerald
+        ? _lightEmeraldBorderColor(0.40)
+        : (isLightEmerald
+              ? _lightEmeraldBorderColor(0.34)
+              : (isMiddayGold
+                    ? _middayGoldBorderColor(0.34)
+                    : (isMidnightBlue
+                          ? _midnightBlueBorderColor(0.38)
+                          : Colors.white12)));
+    final sheetGlow = isLightEmerald
+        ? _lightEmeraldAccent().withOpacity(0.18)
+        : (isMidnightBlue
+              ? _midnightBlueAccent().withOpacity(0.20)
+              : (isMiddayGold
+                    ? const Color(0x66E8C57E).withOpacity(0.34)
+                    : kFluxidiYellowSoft));
 
     return Container(
       margin: const EdgeInsets.all(12),
@@ -35066,25 +35308,37 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
-    final panelGradient = isMiddayGold
-        ? _middayGoldSurfaceGradient(soft: true)
-        : (isMidnightBlue ? _midnightBlueSurfaceGradient(soft: true) : null);
-    final panelFill = (isMiddayGold || isMidnightBlue)
+    final isLightEmerald =
+        driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
+    final panelGradient = isLightEmerald
+        ? _lightEmeraldSurfaceGradient(soft: true)
+        : (isMiddayGold
+              ? _middayGoldSurfaceGradient(soft: true)
+              : (isMidnightBlue ? _midnightBlueSurfaceGradient(soft: true) : null));
+    final panelFill = (isMiddayGold || isMidnightBlue || isLightEmerald)
         ? null
         : const Color(0xFF101113);
-    final panelBorder = isMiddayGold
-        ? _middayGoldBorderColor(0.34)
-        : (isMidnightBlue
-              ? _midnightBlueBorderColor(0.40)
-              : kFluxidiYellow.withOpacity(0.30));
-    final textPrimary = isMiddayGold
-        ? _middayGoldTextPrimary()
-        : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white);
-    final textMuted = isMiddayGold
-        ? _middayGoldTextMuted()
-        : (isMidnightBlue
-              ? _midnightBlueTextMuted()
-              : Colors.white.withOpacity(0.72));
+    final panelBorder = isLightEmerald
+        ? _lightEmeraldBorderColor(0.40)
+        : (isLightEmerald
+              ? _lightEmeraldBorderColor(0.34)
+              : (isMiddayGold
+                    ? _middayGoldBorderColor(0.34)
+                    : (isMidnightBlue
+                          ? _midnightBlueBorderColor(0.40)
+                          : kFluxidiYellow.withOpacity(0.30))));
+    final textPrimary = isLightEmerald
+        ? _lightEmeraldTextPrimary()
+        : (isMiddayGold
+              ? _middayGoldTextPrimary()
+              : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white));
+    final textMuted = isLightEmerald
+        ? _lightEmeraldTextMuted()
+        : (isMiddayGold
+              ? _middayGoldTextMuted()
+              : (isMidnightBlue
+                          ? _midnightBlueTextMuted()
+                          : Colors.white.withOpacity(0.72)));
     final spinnerColor = isMidnightBlue
         ? _midnightBlueAccent()
         : (isMiddayGold ? const Color(0xFFE8C57E) : kFluxidiYellow);
@@ -35336,11 +35590,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                   gradient: panelGradient,
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(
-                    color: isMiddayGold
-                        ? _middayGoldBorderColor(0.28)
-                        : (isMidnightBlue
-                              ? _midnightBlueBorderColor(0.34)
-                              : kFluxidiYellow.withOpacity(0.25)),
+                    color: isLightEmerald
+                        ? _lightEmeraldBorderColor(0.28)
+                        : (isMiddayGold
+                              ? _middayGoldBorderColor(0.28)
+                              : (isMidnightBlue
+                                    ? _midnightBlueBorderColor(0.34)
+                                    : kFluxidiYellow.withOpacity(0.25))),
                   ),
                 ),
                 child: Column(
@@ -35488,14 +35744,20 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
-    final cardPrimary = isMiddayGold
-        ? _middayGoldTextPrimary()
-        : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white);
-    final cardMuted = isMiddayGold
-        ? _middayGoldTextMuted()
-        : (isMidnightBlue
-              ? _midnightBlueTextMuted()
-              : Colors.white.withOpacity(0.66));
+    final isLightEmerald =
+        driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
+    final cardPrimary = isLightEmerald
+        ? _lightEmeraldTextPrimary()
+        : (isMiddayGold
+              ? _middayGoldTextPrimary()
+              : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white));
+    final cardMuted = isLightEmerald
+        ? _lightEmeraldTextMuted()
+        : (isMiddayGold
+              ? _middayGoldTextMuted()
+              : (isMidnightBlue
+                          ? _midnightBlueTextMuted()
+                          : Colors.white.withOpacity(0.66)));
     final cardAccent = isMidnightBlue
         ? _midnightBlueAccent()
         : (isMiddayGold ? const Color(0xFFE8C57E) : const Color(0xFFFFD36A));
@@ -35538,11 +35800,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                     )),
         borderRadius: BorderRadius.circular(22),
         border: Border.all(
-          color: isMiddayGold
-              ? _middayGoldBorderColor(0.36)
-              : (isMidnightBlue
-                    ? _midnightBlueBorderColor(0.42)
-                    : kFluxidiYellow.withOpacity(0.24)),
+          color: isLightEmerald
+              ? _lightEmeraldBorderColor(0.36)
+              : (isMiddayGold
+                    ? _middayGoldBorderColor(0.36)
+                    : (isMidnightBlue
+                          ? _midnightBlueBorderColor(0.42)
+                          : kFluxidiYellow.withOpacity(0.24))),
         ),
       ),
       child: Column(
@@ -35801,14 +36065,20 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
-    final cardPrimary = isMiddayGold
-        ? _middayGoldTextPrimary()
-        : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white);
-    final cardMuted = isMiddayGold
-        ? _middayGoldTextMuted()
-        : (isMidnightBlue
-              ? _midnightBlueTextMuted()
-              : Colors.white.withOpacity(0.66));
+    final isLightEmerald =
+        driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
+    final cardPrimary = isLightEmerald
+        ? _lightEmeraldTextPrimary()
+        : (isMiddayGold
+              ? _middayGoldTextPrimary()
+              : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white));
+    final cardMuted = isLightEmerald
+        ? _lightEmeraldTextMuted()
+        : (isMiddayGold
+              ? _middayGoldTextMuted()
+              : (isMidnightBlue
+                          ? _midnightBlueTextMuted()
+                          : Colors.white.withOpacity(0.66)));
     final cardAccent = isMidnightBlue
         ? _midnightBlueAccent()
         : (isMiddayGold ? const Color(0xFFE8C57E) : const Color(0xFFFFD36A));
@@ -35885,11 +36155,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                           )),
               borderRadius: BorderRadius.circular(22),
               border: Border.all(
-                color: isMiddayGold
-                    ? _middayGoldBorderColor(0.36)
-                    : (isMidnightBlue
-                          ? _midnightBlueBorderColor(0.42)
-                          : kFluxidiYellow.withOpacity(0.24)),
+                color: isLightEmerald
+                    ? _lightEmeraldBorderColor(0.36)
+                    : (isMiddayGold
+                          ? _middayGoldBorderColor(0.36)
+                          : (isMidnightBlue
+                                ? _midnightBlueBorderColor(0.42)
+                                : kFluxidiYellow.withOpacity(0.24))),
               ),
               boxShadow: [
                 BoxShadow(
@@ -36115,11 +36387,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                         )),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: isMiddayGold
-                  ? _middayGoldBorderColor(0.36)
-                  : (isMidnightBlue
-                        ? _midnightBlueBorderColor(0.42)
-                        : kFluxidiYellow.withOpacity(0.24)),
+              color: isLightEmerald
+                  ? _lightEmeraldBorderColor(0.36)
+                  : (isMiddayGold
+                        ? _middayGoldBorderColor(0.36)
+                        : (isMidnightBlue
+                              ? _midnightBlueBorderColor(0.42)
+                              : kFluxidiYellow.withOpacity(0.24))),
             ),
             boxShadow: [
               BoxShadow(
@@ -36332,6 +36606,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final isLightEmerald =
+        driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
     final cockpitGradient = isMiddayGold
         ? _middayGoldSurfaceGradient(soft: true)
         : (isMidnightBlue
@@ -36341,11 +36617,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                   end: Alignment.bottomRight,
                   colors: [Color(0xFF0B1733), Color(0xFF0A1328)],
                 ));
-    final cockpitBorder = isMiddayGold
-        ? _middayGoldBorderColor(tripStarted ? 0.52 : 0.34)
-        : (isMidnightBlue
-              ? _midnightBlueBorderColor(tripStarted ? 0.56 : 0.36)
-              : kGlow.withOpacity(tripStarted ? 0.50 : 0.22));
+    final cockpitBorder = isLightEmerald
+        ? _lightEmeraldBorderColor(tripStarted ? 0.52 : 0.34)
+        : (isMiddayGold
+              ? _middayGoldBorderColor(tripStarted ? 0.52 : 0.34)
+              : (isMidnightBlue
+                    ? _midnightBlueBorderColor(tripStarted ? 0.56 : 0.36)
+                    : kGlow.withOpacity(tripStarted ? 0.50 : 0.22)));
     final cockpitGlow = isMidnightBlue
         ? _midnightBlueAccent().withOpacity(tripStarted ? 0.18 : 0.10)
         : (isMiddayGold
@@ -36415,6 +36693,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                             enabled: _routeCoords.isNotEmpty,
                             isMidnightBlue: isMidnightBlue,
                             isMiddayGold: isMiddayGold,
+                            isLightEmerald: isLightEmerald,
                           ),
                         ),
                         const SizedBox(width: 10),
@@ -36448,6 +36727,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                           enabled: (tripStarted || _activeBooking != null),
                           isMidnightBlue: isMidnightBlue,
                           isMiddayGold: isMiddayGold,
+                          isLightEmerald: isLightEmerald,
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -36476,6 +36756,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                           enabled: tripStarted,
                           isMidnightBlue: isMidnightBlue,
                           isMiddayGold: isMiddayGold,
+                          isLightEmerald: isLightEmerald,
                         ),
                       ),
                     ],
@@ -36621,11 +36902,27 @@ class _DriverHomePageState extends State<DriverHomePage>
     bool emphasis = false,
     required bool isMidnightBlue,
     required bool isMiddayGold,
+    required bool isLightEmerald,
   }) {
-    final accent = isMidnightBlue
-        ? _midnightBlueAccent()
-        : (isMiddayGold ? const Color(0xFFE8C57E) : kGlow);
+    final accent = isLightEmerald
+        ? _lightEmeraldAccent()
+        : (isMidnightBlue
+              ? _midnightBlueAccent()
+              : (isMiddayGold ? const Color(0xFFE8C57E) : kGlow));
     final baseOpacity = enabled ? 1.0 : 0.45;
+    final themedForeground = isLightEmerald
+        ? (emphasis
+              ? accent.withOpacity(baseOpacity)
+              : _lightEmeraldTextPrimary().withOpacity(baseOpacity))
+        : (isMidnightBlue
+              ? (emphasis
+                    ? accent.withOpacity(baseOpacity)
+                    : _midnightBlueTextPrimary().withOpacity(baseOpacity))
+              : (isMiddayGold
+                    ? (emphasis
+                          ? accent.withOpacity(baseOpacity)
+                          : _middayGoldTextPrimary().withOpacity(baseOpacity))
+                    : Colors.white.withOpacity(baseOpacity)));
     return InkWell(
       borderRadius: BorderRadius.circular(16),
       onTap: enabled ? onTap : null,
@@ -36633,11 +36930,15 @@ class _DriverHomePageState extends State<DriverHomePage>
         height: 46,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          color: isMidnightBlue
-              ? const Color(0xCC0B1B33).withOpacity(emphasis ? 1.0 : 0.88)
-              : (isMiddayGold
-                    ? const Color(0xCC2C2113).withOpacity(emphasis ? 1.0 : 0.88)
-                    : Colors.white.withOpacity(emphasis ? 0.10 : 0.06)),
+          color: isLightEmerald
+              ? const Color(0xCCFFFFFF).withOpacity(emphasis ? 1.0 : 0.92)
+              : (isMidnightBlue
+                    ? const Color(0xCC0B1B33).withOpacity(emphasis ? 1.0 : 0.88)
+                    : (isMiddayGold
+                          ? const Color(
+                              0xCC2C2113,
+                            ).withOpacity(emphasis ? 1.0 : 0.88)
+                          : Colors.white.withOpacity(emphasis ? 0.10 : 0.06))),
           border: Border.all(
             color: accent.withOpacity(
               emphasis ? 0.55 * baseOpacity : 0.28 * baseOpacity,
@@ -36648,38 +36949,14 @@ class _DriverHomePageState extends State<DriverHomePage>
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              icon,
-              size: 18,
-              color: (isMidnightBlue || isMiddayGold)
-                  ? (emphasis
-                        ? accent.withOpacity(baseOpacity)
-                        : (isMidnightBlue
-                              ? _midnightBlueTextPrimary().withOpacity(
-                                  baseOpacity,
-                                )
-                              : _middayGoldTextPrimary().withOpacity(
-                                  baseOpacity,
-                                )))
-                  : Colors.white.withOpacity(baseOpacity),
-            ),
+            Icon(icon, size: 18, color: themedForeground),
             const SizedBox(width: 8),
             Text(
               label,
               style: TextStyle(
                 fontWeight: FontWeight.w800,
                 letterSpacing: 0.4,
-                color: (isMidnightBlue || isMiddayGold)
-                    ? (emphasis
-                          ? accent.withOpacity(baseOpacity)
-                          : (isMidnightBlue
-                                ? _midnightBlueTextPrimary().withOpacity(
-                                    baseOpacity,
-                                  )
-                                : _middayGoldTextPrimary().withOpacity(
-                                    baseOpacity,
-                                  )))
-                    : Colors.white.withOpacity(baseOpacity),
+                color: themedForeground,
               ),
             ),
           ],
@@ -37120,17 +37397,23 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final isLightEmerald =
+        driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
     final defaultFill = isMiddayGold
         ? const Color(0xFF21170D)
         : (isMidnightBlue ? const Color(0xFF0A172B) : const Color(0xFF111111));
-    final defaultBorder = isMiddayGold
-        ? _middayGoldBorderColor(0.34)
-        : (isMidnightBlue
-              ? _midnightBlueBorderColor(0.38)
-              : Colors.white.withOpacity(0.18));
-    final defaultText = isMiddayGold
-        ? _middayGoldTextPrimary()
-        : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white);
+    final defaultBorder = isLightEmerald
+        ? _lightEmeraldBorderColor(0.34)
+        : (isMiddayGold
+              ? _middayGoldBorderColor(0.34)
+              : (isMidnightBlue
+                    ? _midnightBlueBorderColor(0.38)
+                    : Colors.white.withOpacity(0.18)));
+    final defaultText = isLightEmerald
+        ? _lightEmeraldTextPrimary()
+        : (isMiddayGold
+              ? _middayGoldTextPrimary()
+              : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white));
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 8 : 10,
@@ -37173,30 +37456,38 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final isLightEmerald =
+        driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
     final activeFill = isMiddayGold
         ? const Color(0xFF3A2A15)
         : (isMidnightBlue ? const Color(0xFF0F2747) : const Color(0xFF17120A));
     final idleFill = isMiddayGold
         ? const Color(0xFF23190D)
         : (isMidnightBlue ? const Color(0xFF0A1A31) : const Color(0xFF111214));
-    final activeBorder = isMiddayGold
-        ? _middayGoldBorderColor(0.68)
-        : (isMidnightBlue
-              ? _midnightBlueBorderColor(0.72)
-              : kFluxidiYellow.withOpacity(0.68));
-    final idleBorder = isMiddayGold
-        ? _middayGoldBorderColor(0.34)
-        : (isMidnightBlue
-              ? _midnightBlueBorderColor(0.36)
-              : Colors.white.withOpacity(0.14));
+    final activeBorder = isLightEmerald
+        ? _lightEmeraldBorderColor(0.68)
+        : (isMiddayGold
+              ? _middayGoldBorderColor(0.68)
+              : (isMidnightBlue
+                    ? _midnightBlueBorderColor(0.72)
+                    : kFluxidiYellow.withOpacity(0.68)));
+    final idleBorder = isLightEmerald
+        ? _lightEmeraldBorderColor(0.34)
+        : (isMiddayGold
+              ? _middayGoldBorderColor(0.34)
+              : (isMidnightBlue
+                    ? _midnightBlueBorderColor(0.36)
+                    : Colors.white.withOpacity(0.14)));
     final activeText = isMiddayGold
         ? _middayGoldTextPrimary()
         : (isMidnightBlue ? _midnightBlueTextPrimary() : kFluxidiYellow);
-    final idleText = isMiddayGold
-        ? _middayGoldTextMuted()
-        : (isMidnightBlue
-              ? _midnightBlueTextMuted()
-              : Colors.white.withOpacity(0.78));
+    final idleText = isLightEmerald
+        ? _lightEmeraldTextMuted()
+        : (isMiddayGold
+              ? _middayGoldTextMuted()
+              : (isMidnightBlue
+                          ? _midnightBlueTextMuted()
+                          : Colors.white.withOpacity(0.78)));
     final chip = Container(
       constraints: const BoxConstraints(minHeight: 34),
       padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
@@ -37484,6 +37775,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (variant == DriverThemeVariant.highContrast) {
       return const Color(0xFFE8C57E);
     }
+    if (variant == DriverThemeVariant.lightEmerald) {
+      return _lightEmeraldAccent();
+    }
     return const Color(0xFFFFD36A);
   }
 
@@ -37701,6 +37995,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
+    final isLightEmerald =
+        driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
 
     final drawerBg = isMidnightBlue
         ? const Color(0xFF020711)

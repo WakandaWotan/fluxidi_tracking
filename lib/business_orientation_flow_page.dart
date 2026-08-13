@@ -675,10 +675,10 @@ class _BusinessOrientationFlowPageState
             es: 'Vista conductor',
           ),
           description: _Tr(
-            nl: 'Night Gold, Midnight Blue en Midday Gold voor onderweg.',
-            en: 'Night Gold, Midnight Blue and Midday Gold for the road.',
-            fr: 'Night Gold, Midnight Blue et Midday Gold pour la route.',
-            es: 'Night Gold, Midnight Blue y Midday Gold para la carretera.',
+            nl: 'Night Gold, Midnight Blue, Midday Gold en Light Emerald voor onderweg.',
+            en: 'Night Gold, Midnight Blue, Midday Gold and Light Emerald for the road.',
+            fr: 'Night Gold, Midnight Blue, Midday Gold et Light Emerald pour la route.',
+            es: 'Night Gold, Midnight Blue, Midday Gold y Light Emerald para la carretera.',
           ),
         ),
         _SettingsProfileFeature(

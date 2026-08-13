@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-enum DriverThemeVariant { nightGold, midnightBlue, highContrast }
+enum DriverThemeVariant { nightGold, midnightBlue, highContrast, lightEmerald }
 
 @immutable
 class DriverThemePalette {
@@ -73,6 +73,20 @@ const DriverThemePalette _highContrastPalette = DriverThemePalette(
   isDark: true,
 );
 
+const DriverThemePalette _lightEmeraldPalette = DriverThemePalette(
+  background: Color(0xFFEEF5F2),
+  surface: Color(0xFFFFFFFF),
+  surfaceAlt: Color(0xFFE4F1EB),
+  textPrimary: Color(0xFF143028),
+  textMuted: Color(0xFF4A665C),
+  accent: Color(0xFF1F8A65),
+  border: Color(0xFFB7CEC4),
+  danger: Color(0xFFC23B3B),
+  success: Color(0xFF1F8A65),
+  shadow: Color(0x1A143028),
+  isDark: false,
+);
+
 DriverThemePalette paletteForDriverTheme(DriverThemeVariant variant) {
   switch (variant) {
     case DriverThemeVariant.nightGold:
@@ -81,5 +95,7 @@ DriverThemePalette paletteForDriverTheme(DriverThemeVariant variant) {
       return _midnightBluePalette;
     case DriverThemeVariant.highContrast:
       return _highContrastPalette;
+    case DriverThemeVariant.lightEmerald:
+      return _lightEmeraldPalette;
   }
 }

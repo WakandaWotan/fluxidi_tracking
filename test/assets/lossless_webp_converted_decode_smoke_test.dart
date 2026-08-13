@@ -13,7 +13,7 @@ void main() {
     expect(allowlist.existsSync(), isTrue);
     final paths = (jsonDecode(allowlist.readAsStringSync()) as List)
         .cast<String>();
-    expect(paths.length, 139);
+    expect(paths.length, 147);
 
     var loaded = 0;
     for (final assetPath in paths) {
@@ -24,6 +24,6 @@ void main() {
       expect(String.fromCharCodes(head.sublist(8, 12)), 'WEBP', reason: assetPath);
       loaded++;
     }
-    expect(loaded, 139);
+    expect(loaded, 147);
   });
 }

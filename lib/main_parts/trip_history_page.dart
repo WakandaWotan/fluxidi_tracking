@@ -222,6 +222,40 @@ _TripHistoryThemeTokens _tripHistoryThemeForVariant(
         textMuted: Color(0xFFB4B4B4),
         accentForeground: Color(0xFF101010),
       );
+    case DriverThemeVariant.lightEmerald:
+      return const _TripHistoryThemeTokens(
+        background: Color(0xFFEEF5F2),
+        surface: Color(0xFFFFFFFF),
+        surfaceAlt: Color(0xFFE4F1EB),
+        border: Color(0xFFB7CEC4),
+        accent: Color(0xFF1F8A65),
+        textPrimary: Color(0xFF143028),
+        textMuted: Color(0xFF4A665C),
+        accentForeground: Color(0xFFFFFFFF),
+        pageGradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFF4FAF7), Color(0xFFEEF5F2), Color(0xFFE4F1EB)],
+        ),
+        overviewGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFF4FAF7), Color(0xFFDCEEE6)],
+        ),
+        overviewBorder: Color(0x991F8A65),
+        tileGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFFFFFF), Color(0xFFEAF4EF)],
+        ),
+        tileBorder: Color(0x66B7CEC4),
+        cardGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFFFFFF), Color(0xFFEAF4EF)],
+        ),
+        cardBorder: Color(0x99B7CEC4),
+      );
   }
 }
 

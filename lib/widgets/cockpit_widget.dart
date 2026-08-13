@@ -159,6 +159,19 @@ class _CockpitWidgetState extends State<CockpitWidget>
         hotBackground: Color(0xFF3A2A15),
       );
     }
+    if (variant == DriverThemeVariant.lightEmerald) {
+      return const _CockpitThemeTokens(
+        panelBackground: Color(0xFFFFFFFF),
+        panelBorder: Color(0x991F8A65),
+        panelGlow: Color(0x331F8A65),
+        tileBackground: Color(0xFFE4F1EB),
+        tileBorder: Color(0x88B7CEC4),
+        primaryText: Color(0xFF143028),
+        mutedText: Color(0xFF4A665C),
+        accent: Color(0xFF1F8A65),
+        hotBackground: Color(0xFFDCEEE6),
+      );
+    }
     return const _CockpitThemeTokens(
       panelBackground: Color(0xFF08142D),
       panelBorder: Color(0x80FFD54F),

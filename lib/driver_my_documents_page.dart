@@ -128,6 +128,30 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
         bottomSheetBackground: Color(0xFF2B1B09),
       );
     }
+    if (variant == DriverThemeVariant.lightEmerald) {
+      return const _DriverDocumentsThemeTokens(
+        background: Color(0xFFEEF5F2),
+        cardGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFFFFFF), Color(0xFFE4F1EB)],
+        ),
+        panelGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFF4FAF7), Color(0xFFDCEEE6)],
+        ),
+        cardBorder: Color(0x66B7CEC4),
+        panelBorder: Color(0x991F8A65),
+        accentPrimary: Color(0xFF1F8A65),
+        accentSecondary: Color(0xFF3AA87E),
+        textPrimary: Color(0xFF143028),
+        textMuted: Color(0xFF4A665C),
+        textSubtle: Color(0xFF6A847A),
+        primaryButtonForeground: Color(0xFFFFFFFF),
+        bottomSheetBackground: Color(0xFFF4FAF7),
+      );
+    }
     return const _DriverDocumentsThemeTokens(
       background: Color(0xFF07080C),
       cardGradient: LinearGradient(
