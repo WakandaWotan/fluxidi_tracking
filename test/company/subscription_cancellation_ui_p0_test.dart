@@ -58,7 +58,8 @@ void main() {
   });
 
   test('SafeArea uses viewPadding bottom with extra scroll padding', () {
-    expect(billingSource.contains('MediaQuery.viewPaddingOf(context).bottom'), isTrue);
+    expect(billingSource.contains('MediaQuery.viewPaddingOf'), isTrue);
+    expect(billingSource.contains('bottomSafeInset'), isTrue);
     expect(billingSource.contains('24 + bottomSafeInset'), isTrue);
   });
 

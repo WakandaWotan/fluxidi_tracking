@@ -1,5 +1,8 @@
 part of '../main.dart';
 
+/// Premium card icon hierarchy roles. Sized from host LayoutBuilder width.
+enum _PremiumIconRole { kpi, extension, pdfBalance, pdfPackage }
+
 class CompanySubscriptionBillingPage extends StatefulWidget {
   const CompanySubscriptionBillingPage({super.key});
 
@@ -290,6 +293,114 @@ class _CompanySubscriptionBillingPageState
   Color get _gold => _businessThemePalette.accent;
   Color get _green => _businessThemePalette.success;
 
+  /// Secondary accent derived from the active palette (never a fixed mock blue).
+  Color get _secondaryAccent => Color.lerp(_gold, _green, 0.42) ?? _gold;
+
+  /// Icon role for premium card hierarchy sizing.
+  ///
+  /// Geometry is driven by the host [layoutWidth] from LayoutBuilder (and
+  /// optional [cardWidth]), not solely by device form-factor queries.
+  ({double circle, double glyph}) _premiumIconMetrics({
+    required double layoutWidth,
+    required _PremiumIconRole role,
+    double? cardWidth,
+  }) {
+    final bool tabletClass = layoutWidth >= 600;
+    late final double cMin;
+    late final double cMax;
+    late final double gMin;
+    late final double gMax;
+    switch (role) {
+      case _PremiumIconRole.kpi:
+        if (tabletClass) {
+          cMin = 52;
+          cMax = 60;
+          gMin = 28;
+          gMax = 34;
+        } else {
+          cMin = 42;
+          cMax = 48;
+          gMin = 24;
+          gMax = 28;
+        }
+      case _PremiumIconRole.extension:
+        if (tabletClass) {
+          cMin = 56;
+          cMax = 64;
+          gMin = 30;
+          gMax = 38;
+        } else {
+          cMin = 46;
+          cMax = 54;
+          gMin = 26;
+          gMax = 32;
+        }
+      case _PremiumIconRole.pdfBalance:
+        if (tabletClass) {
+          cMin = 60;
+          cMax = 68;
+          gMin = 32;
+          gMax = 40;
+        } else {
+          cMin = 50;
+          cMax = 58;
+          gMin = 28;
+          gMax = 34;
+        }
+      case _PremiumIconRole.pdfPackage:
+        if (tabletClass) {
+          cMin = 46;
+          cMax = 54;
+          gMin = 26;
+          gMax = 32;
+        } else {
+          cMin = 40;
+          cMax = 46;
+          gMin = 22;
+          gMax = 28;
+        }
+    }
+    final double ref = cardWidth ?? layoutWidth;
+    final double t = tabletClass
+        ? ((ref - 180) / 120).clamp(0.0, 1.0)
+        : ((ref - 280) / 140).clamp(0.0, 1.0);
+    return (circle: cMin + (cMax - cMin) * t, glyph: gMin + (gMax - gMin) * t);
+  }
+
+  Widget _premiumIconBadge({
+    required IconData icon,
+    required Color accent,
+    required double layoutWidth,
+    required _PremiumIconRole role,
+    double? cardWidth,
+    bool muted = false,
+  }) {
+    final palette = _businessThemePalette;
+    final metrics = _premiumIconMetrics(
+      layoutWidth: layoutWidth,
+      role: role,
+      cardWidth: cardWidth,
+    );
+    final Color fg = muted ? palette.textMuted : accent;
+    final Color fill = muted
+        ? palette.surfaceAlt.withOpacity(palette.isDark ? 0.85 : 0.95)
+        : accent.withOpacity(palette.isDark ? 0.24 : 0.16);
+    final Color ring = muted
+        ? palette.border.withOpacity(0.95)
+        : accent.withOpacity(palette.isDark ? 0.72 : 0.58);
+    return Container(
+      width: metrics.circle,
+      height: metrics.circle,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: fill,
+        shape: BoxShape.circle,
+        border: Border.all(color: ring, width: 1.2),
+      ),
+      child: Icon(icon, size: metrics.glyph, color: fg),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -398,9 +509,7 @@ class _CompanySubscriptionBillingPageState
   Future<void> _startCheckout(BackendSubscriptionProfile profile) async {
     if (!kFluxidiCompanySaasCheckoutEnabled) {
       _showSnack(
-        fluxidiPlaySaasManagedOutsideMessage(
-          languageCode: currentLanguageCode,
-        ),
+        fluxidiPlaySaasManagedOutsideMessage(languageCode: currentLanguageCode),
       );
       return;
     }
@@ -614,9 +723,7 @@ class _CompanySubscriptionBillingPageState
   ) async {
     if (!kFluxidiCompanySaasCheckoutEnabled) {
       _showSnack(
-        fluxidiPlaySaasManagedOutsideMessage(
-          languageCode: currentLanguageCode,
-        ),
+        fluxidiPlaySaasManagedOutsideMessage(languageCode: currentLanguageCode),
       );
       return;
     }
@@ -698,9 +805,7 @@ class _CompanySubscriptionBillingPageState
   ) async {
     if (!kFluxidiCompanySaasCheckoutEnabled) {
       _showSnack(
-        fluxidiPlaySaasManagedOutsideMessage(
-          languageCode: currentLanguageCode,
-        ),
+        fluxidiPlaySaasManagedOutsideMessage(languageCode: currentLanguageCode),
       );
       return;
     }
@@ -862,12 +967,7 @@ class _CompanySubscriptionBillingPageState
             ),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: Text(
-              _t(
-                nl: 'Opzeggen',
-                en: 'Cancel',
-                fr: 'Résilier',
-                es: 'Cancelar',
-              ),
+              _t(nl: 'Opzeggen', en: 'Cancel', fr: 'Résilier', es: 'Cancelar'),
             ),
           ),
         ],
@@ -964,9 +1064,7 @@ class _CompanySubscriptionBillingPageState
   }
 
   /// Cancel-one / scheduled-status / undo for the Extra vehicle add-on.
-  Widget _extraVehicleCancellationControls(
-    BackendSubscriptionProfile profile,
-  ) {
+  Widget _extraVehicleCancellationControls(BackendSubscriptionProfile profile) {
     final scheduled = profile.extraVehicleCancelAtPeriodEndQuantity;
     final cancelable = _extraVehicleCancelableQuantity(profile);
     final activeQty = _extraVehicleActiveQuantity(profile);
@@ -1033,7 +1131,10 @@ class _CompanySubscriptionBillingPageState
               style: OutlinedButton.styleFrom(
                 foregroundColor: _green,
                 side: BorderSide(color: _green.withOpacity(0.85)),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 12,
+                ),
                 minimumSize: const Size.fromHeight(48),
               ),
               icon: _undoingExtraVehicle
@@ -1074,7 +1175,10 @@ class _CompanySubscriptionBillingPageState
               style: OutlinedButton.styleFrom(
                 foregroundColor: _warn,
                 side: BorderSide(color: _warn.withOpacity(0.85)),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 12,
+                ),
                 minimumSize: const Size.fromHeight(48),
               ),
               icon: _cancellingExtraVehicle
@@ -1103,7 +1207,10 @@ class _CompanySubscriptionBillingPageState
     }
 
     if (children.isEmpty) return const SizedBox.shrink();
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: children);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: children,
+    );
   }
 
   /// Footer for the Extra vehicle add-on card only. When the base subscription
@@ -1150,7 +1257,10 @@ class _CompanySubscriptionBillingPageState
                   : const Icon(Icons.add_circle_outline, size: 18),
               label: Text(
                 purchaseLabel,
-                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                ),
               ),
             )
           : FilledButton.icon(
@@ -1161,9 +1271,7 @@ class _CompanySubscriptionBillingPageState
                 backgroundColor: _gold,
                 foregroundColor: Colors.black,
                 disabledBackgroundColor: _businessThemePalette.surfaceAlt
-                    .withOpacity(
-                  _businessThemePalette.isDark ? 0.66 : 0.92,
-                ),
+                    .withOpacity(_businessThemePalette.isDark ? 0.66 : 0.92),
                 disabledForegroundColor: _businessThemePalette.textMuted,
                 minimumSize: const Size.fromHeight(44),
                 shape: RoundedRectangleBorder(
@@ -1182,7 +1290,10 @@ class _CompanySubscriptionBillingPageState
                   : const Icon(Icons.directions_car_filled_outlined, size: 18),
               label: Text(
                 purchaseLabel,
-                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                ),
               ),
             ),
     );
@@ -1301,12 +1412,7 @@ class _CompanySubscriptionBillingPageState
             ),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: Text(
-              _t(
-                nl: 'Opzeggen',
-                en: 'Cancel',
-                fr: 'Résilier',
-                es: 'Cancelar',
-              ),
+              _t(nl: 'Opzeggen', en: 'Cancel', fr: 'Résilier', es: 'Cancelar'),
             ),
           ),
         ],
@@ -1402,9 +1508,7 @@ class _CompanySubscriptionBillingPageState
     }
   }
 
-  Widget _extraDriverCancellationControls(
-    BackendSubscriptionProfile profile,
-  ) {
+  Widget _extraDriverCancellationControls(BackendSubscriptionProfile profile) {
     final scheduled = profile.extraDriverCancelAtPeriodEndQuantity;
     final cancelable = _extraDriverCancelableQuantity(profile);
     final activeQty = _extraDriverActiveQuantity(profile);
@@ -1471,7 +1575,10 @@ class _CompanySubscriptionBillingPageState
               style: OutlinedButton.styleFrom(
                 foregroundColor: _green,
                 side: BorderSide(color: _green.withOpacity(0.85)),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 12,
+                ),
                 minimumSize: const Size.fromHeight(48),
               ),
               icon: _undoingExtraDriver
@@ -1525,7 +1632,10 @@ class _CompanySubscriptionBillingPageState
                 fr: 'Résilier un chauffeur supplémentaire',
                 es: 'Cancelar un conductor extra',
               ),
-              style: const TextStyle(fontSize: 12.2, fontWeight: FontWeight.w600),
+              style: const TextStyle(
+                fontSize: 12.2,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ),
@@ -1533,7 +1643,10 @@ class _CompanySubscriptionBillingPageState
     }
 
     if (children.isEmpty) return const SizedBox.shrink();
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: children);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: children,
+    );
   }
 
   Widget _extraDriverAddonFooter(BackendSubscriptionProfile profile) {
@@ -1577,7 +1690,10 @@ class _CompanySubscriptionBillingPageState
                   : const Icon(Icons.add_circle_outline, size: 18),
               label: Text(
                 purchaseLabel,
-                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                ),
               ),
             )
           : FilledButton.icon(
@@ -1588,9 +1704,7 @@ class _CompanySubscriptionBillingPageState
                 backgroundColor: _gold,
                 foregroundColor: Colors.black,
                 disabledBackgroundColor: _businessThemePalette.surfaceAlt
-                    .withOpacity(
-                  _businessThemePalette.isDark ? 0.66 : 0.92,
-                ),
+                    .withOpacity(_businessThemePalette.isDark ? 0.66 : 0.92),
                 disabledForegroundColor: _businessThemePalette.textMuted,
                 minimumSize: const Size.fromHeight(44),
                 shape: RoundedRectangleBorder(
@@ -1609,7 +1723,10 @@ class _CompanySubscriptionBillingPageState
                   : const Icon(Icons.person_add_alt_1_outlined, size: 18),
               label: Text(
                 purchaseLabel,
-                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                ),
               ),
             ),
     );
@@ -1695,9 +1812,7 @@ class _CompanySubscriptionBillingPageState
   ) async {
     if (!kFluxidiCompanySaasCheckoutEnabled) {
       _showSnack(
-        fluxidiPlaySaasManagedOutsideMessage(
-          languageCode: currentLanguageCode,
-        ),
+        fluxidiPlaySaasManagedOutsideMessage(languageCode: currentLanguageCode),
       );
       return;
     }
@@ -1859,12 +1974,7 @@ class _CompanySubscriptionBillingPageState
             ),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: Text(
-              _t(
-                nl: 'Opzeggen',
-                en: 'Cancel',
-                fr: 'Résilier',
-                es: 'Cancelar',
-              ),
+              _t(nl: 'Opzeggen', en: 'Cancel', fr: 'Résilier', es: 'Cancelar'),
             ),
           ),
         ],
@@ -2191,94 +2301,49 @@ class _CompanySubscriptionBillingPageState
     final bool isSupported = _isSupportedMarket(rawMarket);
 
     if (isActive) {
-      final periodStart = profile.currentPeriodStart.trim();
-      final periodEnd = profile.currentPeriodEnd.trim();
+      // Status, active period and next payment are shown once in the premium
+      // hero. Keep only founder-slot chips that the hero banner does not cover.
       final lockedCents =
           profile.lockedPriceCents ??
           profile.founderPriceCents ??
           catalog.founderPriceCents;
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 8),
-          _chip(
-            text: _t(
-              nl: 'Abonnement actief',
-              en: 'Subscription active',
-              fr: 'Abonnement actif',
-              es: 'Suscripción activa',
-            ),
-            bg: _green.withOpacity(0.14),
-            border: _green.withOpacity(0.52),
-            textColor: _green,
-            icon: Icons.verified_outlined,
-          ),
-          if (profile.isFounderCustomer) ...[
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 7,
-              runSpacing: 7,
-              children: [
-                if (lockedCents != null)
-                  _chip(
-                    text: _t(
-                      nl: 'Founderprijs vastgezet: ${_priceFromCents(lockedCents)}/maand',
-                      en: 'Founder price locked: ${_priceFromCents(lockedCents)}/month',
-                      fr: 'Prix fondateur verrouillé : ${_priceFromCents(lockedCents)}/mois',
-                      es: 'Precio fundador fijado: ${_priceFromCents(lockedCents)}/mes',
-                    ),
-                    bg: _gold.withOpacity(0.13),
-                    border: _gold.withOpacity(0.45),
-                    textColor: _gold,
-                    icon: Icons.lock_outline,
-                  ),
-                if (profile.founderSlotNumber != null)
-                  _chip(
-                    text: _t(
-                      nl: 'Founderslot #${profile.founderSlotNumber}',
-                      en: 'Founder slot #${profile.founderSlotNumber}',
-                      fr: 'Slot fondateur #${profile.founderSlotNumber}',
-                      es: 'Plaza fundador #${profile.founderSlotNumber}',
-                    ),
-                    bg: _gold.withOpacity(0.13),
-                    border: _gold.withOpacity(0.45),
-                    textColor: _gold,
-                    icon: Icons.workspace_premium_outlined,
-                  ),
-              ],
-            ),
-          ],
-          if (periodStart.isNotEmpty || periodEnd.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            _infoLine(
-              _t(
-                nl: 'Actief van',
-                en: 'Active from',
-                fr: 'Actif du',
-                es: 'Activo desde',
+      if (!profile.isFounderCustomer) {
+        return const SizedBox.shrink();
+      }
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Wrap(
+          spacing: 7,
+          runSpacing: 7,
+          children: [
+            if (lockedCents != null)
+              _chip(
+                text: _t(
+                  nl: 'Founderprijs vastgezet: ${_priceFromCents(lockedCents)}/maand',
+                  en: 'Founder price locked: ${_priceFromCents(lockedCents)}/month',
+                  fr: 'Prix fondateur verrouillé : ${_priceFromCents(lockedCents)}/mois',
+                  es: 'Precio fundador fijado: ${_priceFromCents(lockedCents)}/mes',
+                ),
+                bg: _gold.withOpacity(0.13),
+                border: _gold.withOpacity(0.45),
+                textColor: _gold,
+                icon: Icons.lock_outline,
               ),
-              periodStart.isEmpty
-                  ? '—'
-                  : '${_humanDate(periodStart)} t/m ${periodEnd.isEmpty ? "—" : _humanDate(periodEnd)}',
-              icon: Icons.event_available_outlined,
-            ),
-          ],
-          if (_hasProviderSubscription(profile) &&
-              profile.recurringAmountCents != null &&
-              periodEnd.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            _infoLine(
-              _t(
-                nl: 'Volgende betaling',
-                en: 'Next payment',
-                fr: 'Prochain paiement',
-                es: 'Próximo pago',
+            if (profile.founderSlotNumber != null)
+              _chip(
+                text: _t(
+                  nl: 'Founderslot #${profile.founderSlotNumber}',
+                  en: 'Founder slot #${profile.founderSlotNumber}',
+                  fr: 'Slot fondateur #${profile.founderSlotNumber}',
+                  es: 'Plaza fundador #${profile.founderSlotNumber}',
+                ),
+                bg: _gold.withOpacity(0.13),
+                border: _gold.withOpacity(0.45),
+                textColor: _gold,
+                icon: Icons.workspace_premium_outlined,
               ),
-              '${_priceFromCents(profile.recurringAmountCents!)} op ${_humanDate(periodEnd)}',
-              icon: Icons.payments_outlined,
-            ),
           ],
-        ],
+        ),
       );
     }
 
@@ -2414,11 +2479,12 @@ class _CompanySubscriptionBillingPageState
   }
 
   Widget _buildEntitlementStateBanner(BackendSubscriptionProfile profile) {
-    final status = (profile.subscriptionStatus.trim().isNotEmpty
-            ? profile.subscriptionStatus
-            : profile.status)
-        .trim()
-        .toLowerCase();
+    final status =
+        (profile.subscriptionStatus.trim().isNotEmpty
+                ? profile.subscriptionStatus
+                : profile.status)
+            .trim()
+            .toLowerCase();
     final warning = subscriptionDunningWarningMessage(
       statusRaw: status,
       languageCode: currentLanguageCode,
@@ -2750,9 +2816,7 @@ class _CompanySubscriptionBillingPageState
         ),
         active: profile.features['whatsapp_email_receipts'] != false,
       ),
-      row(
-        _featureLabel('airport_module'),
-      ),
+      row(_featureLabel('airport_module')),
       row(
         _featureLabel('live_dispatch'),
         active: false,
@@ -2825,10 +2889,7 @@ class _CompanySubscriptionBillingPageState
         return Wrap(
           spacing: spacing,
           runSpacing: spacing,
-          children: [
-            for (final e in entries)
-              SizedBox(width: cardW, child: e),
-          ],
+          children: [for (final e in entries) SizedBox(width: cardW, child: e)],
         );
       },
     );
@@ -2871,19 +2932,11 @@ class _CompanySubscriptionBillingPageState
     return (value < 0 ? '-' : '') + buf.toString();
   }
 
-  String _pdfOneTimeLabel() => _t(
-    nl: 'eenmalig',
-    en: 'one-time',
-    fr: 'ponctuel',
-    es: 'único',
-  );
+  String _pdfOneTimeLabel() =>
+      _t(nl: 'eenmalig', en: 'one-time', fr: 'ponctuel', es: 'único');
 
-  String _pdfBuyLabel() => _t(
-    nl: 'Kopen',
-    en: 'Buy',
-    fr: 'Acheter',
-    es: 'Comprar',
-  );
+  String _pdfBuyLabel() =>
+      _t(nl: 'Kopen', en: 'Buy', fr: 'Acheter', es: 'Comprar');
 
   /// Premium PDF-credits section with a full-width balance card at the top,
   /// three responsive purchase cards below (500/€5, 1000/€9, 5000/€29) and an
@@ -2915,141 +2968,142 @@ class _CompanySubscriptionBillingPageState
       es: 'Incluidas este mes: $used de $includedCap',
     );
 
-    final balance = Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-      decoration: BoxDecoration(
-        color: _panelSoft,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _gold.withOpacity(palette.isDark ? 0.55 : 0.42)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: _gold.withOpacity(palette.isDark ? 0.22 : 0.18),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: _gold.withOpacity(0.55)),
+    Widget buildBalance(double layoutWidth) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+        decoration: BoxDecoration(
+          color: _panelSoft,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: _gold.withOpacity(palette.isDark ? 0.55 : 0.42),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                _premiumIconBadge(
+                  icon: Icons.picture_as_pdf_outlined,
+                  accent: _gold,
+                  layoutWidth: layoutWidth,
+                  role: _PremiumIconRole.pdfBalance,
+                  cardWidth: layoutWidth,
                 ),
-                child: Icon(
-                  Icons.picture_as_pdf_outlined,
-                  color: _gold,
-                  size: 22,
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _t(
+                          nl: '$purchasedText credits resterend',
+                          en: '$purchasedText credits remaining',
+                          fr: '$purchasedText crédits restants',
+                          es: '$purchasedText créditos restantes',
+                        ),
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                          height: 1.15,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _t(
+                          nl: 'Aangekochte PDF-credits · Vervallen nooit',
+                          en: 'Purchased PDF credits · Never expire',
+                          fr: 'Crédits PDF achetés · N\'expirent jamais',
+                          es: 'Créditos PDF comprados · No caducan nunca',
+                        ),
+                        style: TextStyle(
+                          color: palette.textSecondary,
+                          fontSize: 12.4,
+                          fontWeight: FontWeight.w600,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              decoration: BoxDecoration(
+                color: palette.surface,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: palette.border.withOpacity(0.9)),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _t(
-                        nl: '$purchasedText credits resterend',
-                        en: '$purchasedText credits remaining',
-                        fr: '$purchasedText crédits restants',
-                        es: '$purchasedText créditos restantes',
-                      ),
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w900,
-                        height: 1.15,
-                      ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    includedText,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      height: 1.3,
                     ),
-                    const SizedBox(height: 2),
+                  ),
+                  if (periodEnd.isNotEmpty) ...[
+                    const SizedBox(height: 4),
                     Text(
                       _t(
-                        nl: 'Aangekochte PDF-credits · Vervallen nooit',
-                        en: 'Purchased PDF credits · Never expire',
-                        fr: 'Crédits PDF achetés · N\'expirent jamais',
-                        es: 'Créditos PDF comprados · No caducan nunca',
+                        nl: 'Nieuwe maandbundel op ${_humanDate(periodEnd)}',
+                        en: 'New monthly bundle on ${_humanDate(periodEnd)}',
+                        fr: 'Nouveau lot mensuel le ${_humanDate(periodEnd)}',
+                        es: 'Nuevo paquete mensual el ${_humanDate(periodEnd)}',
                       ),
                       style: TextStyle(
                         color: palette.textSecondary,
-                        fontSize: 12.4,
-                        fontWeight: FontWeight.w600,
-                        height: 1.3,
+                        fontSize: 12,
+                        height: 1.35,
                       ),
                     ),
                   ],
-                ),
+                  if (lastGranted.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      _t(
+                        nl: 'Laatst aangekocht op ${_humanDate(lastGranted)}',
+                        en: 'Last purchased on ${_humanDate(lastGranted)}',
+                        fr: 'Dernier achat le ${_humanDate(lastGranted)}',
+                        es: 'Última compra el ${_humanDate(lastGranted)}',
+                      ),
+                      style: TextStyle(
+                        color: palette.textSecondary,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ],
               ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-            decoration: BoxDecoration(
-              color: palette.surface,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: palette.border.withOpacity(0.9)),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  includedText,
-                  style: TextStyle(
-                    color: palette.textPrimary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    height: 1.3,
-                  ),
-                ),
-                if (periodEnd.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    _t(
-                      nl: 'Nieuwe maandbundel op ${_humanDate(periodEnd)}',
-                      en: 'New monthly bundle on ${_humanDate(periodEnd)}',
-                      fr: 'Nouveau lot mensuel le ${_humanDate(periodEnd)}',
-                      es: 'Nuevo paquete mensual el ${_humanDate(periodEnd)}',
-                    ),
-                    style: TextStyle(
-                      color: palette.textSecondary,
-                      fontSize: 12,
-                      height: 1.35,
-                    ),
-                  ),
-                ],
-                if (lastGranted.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    _t(
-                      nl: 'Laatst aangekocht op ${_humanDate(lastGranted)}',
-                      en: 'Last purchased on ${_humanDate(lastGranted)}',
-                      fr: 'Dernier achat le ${_humanDate(lastGranted)}',
-                      es: 'Última compra el ${_humanDate(lastGranted)}',
-                    ),
-                    style: TextStyle(
-                      color: palette.textSecondary,
-                      fontSize: 12,
-                      height: 1.35,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
+          ],
+        ),
+      );
+    }
 
-    Widget buildBundleCard(PdfBundleOffer bundle, {double? maxWidth}) {
+    Widget buildBundleCard(
+      PdfBundleOffer bundle, {
+      required double layoutWidth,
+      required double cardWidth,
+    }) {
       final pdfs = bundle.pdfs;
       final actionable = _pdfBundleIsActionable(pdfs);
       final busy = actionable && _pdfBundleBusyStarting(pdfs);
       final ownedQty = _pdfBundleActiveQuantity(profile, pdfs);
       final canPress = actionable && isActive && checkoutEnabled && !busy;
-      final card = Container(
-        constraints: BoxConstraints(maxWidth: maxWidth ?? double.infinity),
+      return Container(
+        width: cardWidth,
         padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
         decoration: BoxDecoration(
           color: _panelSoft,
@@ -3062,20 +3116,34 @@ class _CompanySubscriptionBillingPageState
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              _t(
-                nl: '${_formatThousands(pdfs)} PDF\u2019s',
-                en: '${_formatThousands(pdfs)} PDFs',
-                fr: '${_formatThousands(pdfs)} PDF',
-                es: '${_formatThousands(pdfs)} PDF',
-              ),
-              style: TextStyle(
-                color: palette.textPrimary,
-                fontSize: 14.5,
-                fontWeight: FontWeight.w900,
-              ),
+            Row(
+              children: [
+                _premiumIconBadge(
+                  icon: Icons.picture_as_pdf_outlined,
+                  accent: _gold,
+                  layoutWidth: layoutWidth,
+                  role: _PremiumIconRole.pdfPackage,
+                  cardWidth: cardWidth,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    _t(
+                      nl: '${_formatThousands(pdfs)} PDF\u2019s',
+                      en: '${_formatThousands(pdfs)} PDFs',
+                      fr: '${_formatThousands(pdfs)} PDF',
+                      es: '${_formatThousands(pdfs)} PDF',
+                    ),
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 8),
             Row(
               crossAxisAlignment: CrossAxisAlignment.baseline,
               textBaseline: TextBaseline.alphabetic,
@@ -3129,7 +3197,7 @@ class _CompanySubscriptionBillingPageState
                     palette.isDark ? 0.66 : 0.92,
                   ),
                   disabledForegroundColor: palette.textMuted,
-                  minimumSize: const Size.fromHeight(44),
+                  minimumSize: const Size.fromHeight(48),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
@@ -3156,11 +3224,10 @@ class _CompanySubscriptionBillingPageState
           ],
         ),
       );
-      return card;
     }
 
     final bundles = catalog.pdfBundles;
-    final purchaseGrid = LayoutBuilder(
+    return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
         final int cols = width >= 720 ? 3 : (width >= 420 ? 2 : 1);
@@ -3168,48 +3235,40 @@ class _CompanySubscriptionBillingPageState
         final double cardW = cols == 1
             ? width
             : (width - spacing * (cols - 1)) / cols;
-        return Wrap(
-          spacing: spacing,
-          runSpacing: spacing,
+        final purchaseCards = <Widget>[
+          for (final bundle in bundles)
+            buildBundleCard(bundle, layoutWidth: width, cardWidth: cardW),
+        ];
+        final history = _pdfPurchaseHistoryExpander(profile);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            for (final b in bundles)
-              SizedBox(
-                width: cardW,
-                child: buildBundleCard(b, maxWidth: cardW),
+            buildBalance(width),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: spacing,
+              runSpacing: spacing,
+              children: purchaseCards,
+            ),
+            if (!isActive && checkoutEnabled) ...[
+              const SizedBox(height: 8),
+              Text(
+                _addonRequiresActiveMessage(),
+                style: TextStyle(
+                  color: palette.textSecondary,
+                  fontSize: 12,
+                  height: 1.3,
+                ),
               ),
+            ],
+            if (!checkoutEnabled) ...[
+              const SizedBox(height: 8),
+              _playSaasManagedOutsideNotice(),
+            ],
+            if (history != null) ...[const SizedBox(height: 8), history],
           ],
         );
       },
-    );
-
-    final history = _pdfPurchaseHistoryExpander(profile);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        balance,
-        const SizedBox(height: 12),
-        purchaseGrid,
-        if (!isActive && checkoutEnabled) ...[
-          const SizedBox(height: 8),
-          Text(
-            _addonRequiresActiveMessage(),
-            style: TextStyle(
-              color: palette.textSecondary,
-              fontSize: 12,
-              height: 1.3,
-            ),
-          ),
-        ],
-        if (!checkoutEnabled) ...[
-          const SizedBox(height: 8),
-          _playSaasManagedOutsideNotice(),
-        ],
-        if (history != null) ...[
-          const SizedBox(height: 8),
-          history,
-        ],
-      ],
     );
   }
 
@@ -3301,21 +3360,22 @@ class _CompanySubscriptionBillingPageState
     final effectiveStatus = profile.subscriptionStatus.trim().isNotEmpty
         ? profile.subscriptionStatus
         : profile.status;
-    final isPaidActive =
-        effectiveStatus.trim().toLowerCase() == 'active';
+    final isPaidActive = effectiveStatus.trim().toLowerCase() == 'active';
     final statusColors = _statusColors(effectiveStatus);
 
     final int? lockedCents = profile.lockedPriceCents;
     final int? founderCents =
         profile.founderPriceCents ?? catalog.founderPriceCents;
-    final bool isFounderLocked = profile.isFounderCustomer ||
+    final bool isFounderLocked =
+        profile.isFounderCustomer ||
         (lockedCents != null &&
             founderCents != null &&
             lockedCents == founderCents);
 
     // Big monthly amount: prefer the actual provider recurring when linked,
     // else fall back to locked/normal price.
-    final int monthlyCents = (_hasProviderSubscription(profile) &&
+    final int monthlyCents =
+        (_hasProviderSubscription(profile) &&
             profile.recurringAmountCents != null)
         ? profile.recurringAmountCents!
         : (lockedCents ?? catalog.normalPriceCents);
@@ -3326,10 +3386,12 @@ class _CompanySubscriptionBillingPageState
     final int dQty = _extraDriverActiveQuantity(profile);
     final int baseCents = lockedCents ?? catalog.normalPriceCents;
     final String baseText = _priceFromCents(baseCents);
-    final String extraVehicleText =
-        _priceFromCents(catalog.extraVehiclePriceCents);
-    final String extraDriverText =
-        _priceFromCents(catalog.extraDriverPriceCents);
+    final String extraVehicleText = _priceFromCents(
+      catalog.extraVehiclePriceCents,
+    );
+    final String extraDriverText = _priceFromCents(
+      catalog.extraDriverPriceCents,
+    );
     final breakdownParts = <String>[
       _t(
         nl: 'Basis $baseText',
@@ -3497,8 +3559,11 @@ class _CompanySubscriptionBillingPageState
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.workspace_premium_outlined,
-                      size: 18, color: _gold),
+                  Icon(
+                    Icons.workspace_premium_outlined,
+                    size: 18,
+                    color: _gold,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -3604,7 +3669,12 @@ class _CompanySubscriptionBillingPageState
       case 'BE':
         return _t(nl: 'België', en: 'Belgium', fr: 'Belgique', es: 'Bélgica');
       case 'NL':
-        return _t(nl: 'Nederland', en: 'Netherlands', fr: 'Pays-Bas', es: 'Países Bajos');
+        return _t(
+          nl: 'Nederland',
+          en: 'Netherlands',
+          fr: 'Pays-Bas',
+          es: 'Países Bajos',
+        );
       case 'FR':
         return _t(nl: 'Frankrijk', en: 'France', fr: 'France', es: 'Francia');
       case 'ES':
@@ -3617,9 +3687,19 @@ class _CompanySubscriptionBillingPageState
           es: 'Luxemburgo',
         );
       case 'DE':
-        return _t(nl: 'Duitsland', en: 'Germany', fr: 'Allemagne', es: 'Alemania');
+        return _t(
+          nl: 'Duitsland',
+          en: 'Germany',
+          fr: 'Allemagne',
+          es: 'Alemania',
+        );
       case 'PT':
-        return _t(nl: 'Portugal', en: 'Portugal', fr: 'Portugal', es: 'Portugal');
+        return _t(
+          nl: 'Portugal',
+          en: 'Portugal',
+          fr: 'Portugal',
+          es: 'Portugal',
+        );
       default:
         return '';
     }
@@ -3647,6 +3727,8 @@ class _CompanySubscriptionBillingPageState
       required int used,
       required int max,
       required Color accent,
+      required double layoutWidth,
+      required double cardWidth,
     }) {
       final double progress = max <= 0 ? 0.0 : (used / max).clamp(0.0, 1.0);
       return Container(
@@ -3662,17 +3744,14 @@ class _CompanySubscriptionBillingPageState
           children: [
             Row(
               children: [
-                Container(
-                  width: 32,
-                  height: 32,
-                  decoration: BoxDecoration(
-                    color: accent.withOpacity(0.18),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: accent.withOpacity(0.55)),
-                  ),
-                  child: Icon(icon, size: 18, color: accent),
+                _premiumIconBadge(
+                  icon: icon,
+                  accent: accent,
+                  layoutWidth: layoutWidth,
+                  role: _PremiumIconRole.kpi,
+                  cardWidth: cardWidth,
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     title,
@@ -3716,8 +3795,9 @@ class _CompanySubscriptionBillingPageState
               child: LinearProgressIndicator(
                 minHeight: 7,
                 value: progress,
-                backgroundColor:
-                    palette.border.withOpacity(palette.isDark ? 0.55 : 0.65),
+                backgroundColor: palette.border.withOpacity(
+                  palette.isDark ? 0.55 : 0.65,
+                ),
                 valueColor: AlwaysStoppedAnimation<Color>(accent),
               ),
             ),
@@ -3748,6 +3828,8 @@ class _CompanySubscriptionBillingPageState
               used: usedVehicles,
               max: profile.maxVehicles,
               accent: _green,
+              layoutWidth: width,
+              cardWidth: cardW,
             ),
           ),
           SizedBox(
@@ -3762,7 +3844,9 @@ class _CompanySubscriptionBillingPageState
               ),
               used: usedDrivers,
               max: profile.maxDrivers,
-              accent: _green,
+              accent: _secondaryAccent,
+              layoutWidth: width,
+              cardWidth: cardW,
             ),
           ),
           SizedBox(
@@ -3778,14 +3862,12 @@ class _CompanySubscriptionBillingPageState
               used: pdfUsed,
               max: pdfCap,
               accent: _gold,
+              layoutWidth: width,
+              cardWidth: cardW,
             ),
           ),
         ];
-        return Wrap(
-          spacing: spacing,
-          runSpacing: spacing,
-          children: cards,
-        );
+        return Wrap(spacing: spacing, runSpacing: spacing, children: cards);
       },
     );
   }
@@ -3803,12 +3885,15 @@ class _CompanySubscriptionBillingPageState
 
     Widget card({
       required IconData icon,
+      required Color accent,
       required String title,
       required String priceLabel,
       required String benefitLabel,
       required int qtyActive,
       required String qtyBadge,
       required Widget footer,
+      required double layoutWidth,
+      required double cardWidth,
     }) {
       return Container(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
@@ -3824,17 +3909,15 @@ class _CompanySubscriptionBillingPageState
           children: [
             Row(
               children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: _gold.withOpacity(0.18),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: _gold.withOpacity(0.55)),
-                  ),
-                  child: Icon(icon, size: 20, color: _gold),
+                _premiumIconBadge(
+                  icon: icon,
+                  accent: accent,
+                  layoutWidth: layoutWidth,
+                  role: _PremiumIconRole.extension,
+                  cardWidth: cardWidth,
+                  muted: qtyActive <= 0,
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     title,
@@ -3883,85 +3966,89 @@ class _CompanySubscriptionBillingPageState
       );
     }
 
-    final vehicleCard = card(
-      icon: Icons.directions_car_filled_outlined,
-      title: _t(
-        nl: 'Extra voertuig',
-        en: 'Extra vehicle',
-        fr: 'Véhicule supplémentaire',
-        es: 'Vehículo extra',
-      ),
-      priceLabel: _t(
-        nl: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / maand',
-        en: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / month',
-        fr: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mois',
-        es: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mes',
-      ),
-      benefitLabel: _t(
-        nl: 'Voegt 1 voertuigplek toe, inclusief ${catalog.includedDriversPerVehicle} chauffeurs.',
-        en: 'Adds 1 vehicle slot, including ${catalog.includedDriversPerVehicle} drivers.',
-        fr: 'Ajoute 1 emplacement de véhicule, y compris ${catalog.includedDriversPerVehicle} chauffeurs.',
-        es: 'Añade 1 plaza de vehículo, incluidos ${catalog.includedDriversPerVehicle} conductores.',
-      ),
-      qtyActive: vQty,
-      qtyBadge: _t(
-        nl: '$vQty actief',
-        en: '$vQty active',
-        fr: '$vQty actif',
-        es: '$vQty activo',
-      ),
-      footer: _extraVehicleAddonFooter(profile),
-    );
-
-    final driverCard = card(
-      icon: Icons.badge_outlined,
-      title: _t(
-        nl: 'Extra chauffeur',
-        en: 'Extra driver',
-        fr: 'Chauffeur supplémentaire',
-        es: 'Conductor extra',
-      ),
-      priceLabel: _t(
-        nl: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / maand',
-        en: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / month',
-        fr: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mois',
-        es: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mes',
-      ),
-      benefitLabel: _t(
-        nl: 'Voegt 1 chauffeur toe zonder een voertuigplek te openen.',
-        en: 'Adds 1 driver without opening a new vehicle slot.',
-        fr: 'Ajoute 1 chauffeur sans ouvrir de nouvel emplacement.',
-        es: 'Añade 1 conductor sin abrir una plaza de vehículo.',
-      ),
-      qtyActive: dQty,
-      qtyBadge: _t(
-        nl: '$dQty actief',
-        en: '$dQty active',
-        fr: '$dQty actif',
-        es: '$dQty activo',
-      ),
-      footer: _extraDriverAddonFooter(profile),
-    );
-
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
         final bool twoCols = width >= 720;
-        if (twoCols) {
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: vehicleCard),
-              const SizedBox(width: 10),
-              Expanded(child: driverCard),
-            ],
+        final double spacing = 10;
+        final double cardW = twoCols ? (width - spacing) / 2 : width;
+        final vehicleCard = card(
+          icon: Icons.directions_car_filled_outlined,
+          accent: _green,
+          title: _t(
+            nl: 'Extra voertuig',
+            en: 'Extra vehicle',
+            fr: 'Véhicule supplémentaire',
+            es: 'Vehículo extra',
+          ),
+          priceLabel: _t(
+            nl: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / maand',
+            en: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / month',
+            fr: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mois',
+            es: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mes',
+          ),
+          benefitLabel: _t(
+            nl: 'Voegt 1 voertuigplek toe, inclusief ${catalog.includedDriversPerVehicle} chauffeurs.',
+            en: 'Adds 1 vehicle slot, including ${catalog.includedDriversPerVehicle} drivers.',
+            fr: 'Ajoute 1 emplacement de véhicule, y compris ${catalog.includedDriversPerVehicle} chauffeurs.',
+            es: 'Añade 1 plaza de vehículo, incluidos ${catalog.includedDriversPerVehicle} conductores.',
+          ),
+          qtyActive: vQty,
+          qtyBadge: _t(
+            nl: '$vQty actief',
+            en: '$vQty active',
+            fr: '$vQty actif',
+            es: '$vQty activo',
+          ),
+          footer: _extraVehicleAddonFooter(profile),
+          layoutWidth: width,
+          cardWidth: cardW,
+        );
+
+        final driverCard = card(
+          icon: Icons.badge_outlined,
+          accent: _secondaryAccent,
+          title: _t(
+            nl: 'Extra chauffeur',
+            en: 'Extra driver',
+            fr: 'Chauffeur supplémentaire',
+            es: 'Conductor extra',
+          ),
+          priceLabel: _t(
+            nl: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / maand',
+            en: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / month',
+            fr: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mois',
+            es: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mes',
+          ),
+          benefitLabel: _t(
+            nl: 'Voegt 1 chauffeur toe zonder een voertuigplek te openen.',
+            en: 'Adds 1 driver without opening a new vehicle slot.',
+            fr: 'Ajoute 1 chauffeur sans ouvrir de nouvel emplacement.',
+            es: 'Añade 1 conductor sin abrir una plaza de vehículo.',
+          ),
+          qtyActive: dQty,
+          qtyBadge: _t(
+            nl: '$dQty actief',
+            en: '$dQty active',
+            fr: '$dQty actif',
+            es: '$dQty activo',
+          ),
+          footer: _extraDriverAddonFooter(profile),
+          layoutWidth: width,
+          cardWidth: cardW,
+        );
+
+        if (!twoCols) {
+          return Column(
+            children: [vehicleCard, const SizedBox(height: 10), driverCard],
           );
         }
-        return Column(
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            vehicleCard,
-            const SizedBox(height: 10),
-            driverCard,
+            Expanded(child: vehicleCard),
+            SizedBox(width: spacing),
+            Expanded(child: driverCard),
           ],
         );
       },
@@ -4078,8 +4165,9 @@ class _CompanySubscriptionBillingPageState
                     final usedDrivers = scopedDrivers.length;
                     // Use viewPadding so gesture/nav bars are respected even
                     // when nested MediaQuery.padding was consumed.
-                    final bottomSafeInset =
-                        MediaQuery.viewPaddingOf(context).bottom;
+                    final bottomSafeInset = MediaQuery.viewPaddingOf(
+                      context,
+                    ).bottom;
                     return ListView(
                       padding: EdgeInsets.fromLTRB(
                         12,

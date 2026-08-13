@@ -46,7 +46,8 @@ void main() {
       expect(
         count >= 3,
         isTrue,
-        reason: 'expected at least 3 LayoutBuilder uses '
+        reason:
+            'expected at least 3 LayoutBuilder uses '
             '(usage row / add-ons / PDF grid), found $count',
       );
     });
@@ -58,12 +59,16 @@ void main() {
       // €69 accounts — the new founder banner is only rendered when
       // profile.isFounderCustomer OR the locked price equals the founder
       // price.
-      expect(billingSource.contains('Eerste \${catalog.founderSlotsLimit}'),
-          isFalse,
-          reason: 'legacy "Eerste N bedrijven" banner must be removed');
-      expect(billingSource.contains('First \${catalog.founderSlotsLimit}'),
-          isFalse,
-          reason: 'legacy "First N companies" banner must be removed');
+      expect(
+        billingSource.contains('Eerste \${catalog.founderSlotsLimit}'),
+        isFalse,
+        reason: 'legacy "Eerste N bedrijven" banner must be removed',
+      );
+      expect(
+        billingSource.contains('First \${catalog.founderSlotsLimit}'),
+        isFalse,
+        reason: 'legacy "First N companies" banner must be removed',
+      );
       // Guarded rendering must reference either flag.
       expect(billingSource.contains('profile.isFounderCustomer'), isTrue);
       expect(
@@ -108,46 +113,74 @@ void main() {
     });
 
     test('legacy PDF add-on copy is gone', () {
-      expect(billingSource.contains('Beschikbaar als add-on'), isFalse,
-          reason: 'legacy fallback label must be removed');
-      expect(billingSource.contains('Actief: 1 × 500'), isFalse,
-          reason: 'legacy PDF active-quantity chip wording must be removed');
+      expect(
+        billingSource.contains('Beschikbaar als add-on'),
+        isFalse,
+        reason: 'legacy fallback label must be removed',
+      );
+      expect(
+        billingSource.contains('Actief: 1 × 500'),
+        isFalse,
+        reason: 'legacy PDF active-quantity chip wording must be removed',
+      );
       // Substring form of the templated qty × pdfs badge.
       expect(billingSource.contains('Actief: \$activeQty × \$pdfs'), isFalse);
-      expect(billingSource.contains('Nog een pakket'), isFalse,
-          reason: 'legacy "Nog een pakket" wording must be removed');
+      expect(
+        billingSource.contains('Nog een pakket'),
+        isFalse,
+        reason: 'legacy "Nog een pakket" wording must be removed',
+      );
       expect(billingSource.contains('_pdfBundleCancellationControls'), isFalse);
       expect(billingSource.contains('_confirmAndCancelOnePdfBundle'), isFalse);
     });
   });
 
   group('theme + contrast', () {
-    test('theme resolved via businessThemeNotifier + paletteForBusinessTheme',
-        () {
-      expect(billingSource.contains('businessThemeNotifier'), isTrue);
-      expect(billingSource.contains('paletteForBusinessTheme'), isTrue);
-    });
+    test(
+      'theme resolved via businessThemeNotifier + paletteForBusinessTheme',
+      () {
+        expect(billingSource.contains('businessThemeNotifier'), isTrue);
+        expect(billingSource.contains('paletteForBusinessTheme'), isTrue);
+      },
+    );
 
     test('no hardcoded Corporate Blue accent hex in billing file', () {
       // Guard against reintroducing the concept-image Corporate Blue accents.
       final lower = billingSource.toLowerCase();
-      expect(lower.contains('0xff60a5fa'), isFalse,
-          reason: 'Corporate Blue accent 0xFF60A5FA must not be hardcoded');
-      expect(lower.contains('0xff3b82f6'), isFalse,
-          reason: 'Blue-500 hex 0xFF3B82F6 must not be hardcoded');
-      expect(lower.contains('0xff1d4ed8'), isFalse,
-          reason: 'Blue-700 hex 0xFF1D4ED8 must not be hardcoded');
+      expect(
+        lower.contains('0xff60a5fa'),
+        isFalse,
+        reason: 'Corporate Blue accent 0xFF60A5FA must not be hardcoded',
+      );
+      expect(
+        lower.contains('0xff3b82f6'),
+        isFalse,
+        reason: 'Blue-500 hex 0xFF3B82F6 must not be hardcoded',
+      );
+      expect(
+        lower.contains('0xff1d4ed8'),
+        isFalse,
+        reason: 'Blue-700 hex 0xFF1D4ED8 must not be hardcoded',
+      );
     });
 
     test('prefers textPrimary/textSecondary over heavy opacity dimming', () {
-      final primaryHits =
-          RegExp(r'textPrimary').allMatches(billingSource).length;
-      final secondaryHits =
-          RegExp(r'textSecondary').allMatches(billingSource).length;
-      expect(primaryHits > 20, isTrue,
-          reason: 'expected many textPrimary references, got $primaryHits');
-      expect(secondaryHits >= 3, isTrue,
-          reason: 'expected textSecondary references for legible captions');
+      final primaryHits = RegExp(
+        r'textPrimary',
+      ).allMatches(billingSource).length;
+      final secondaryHits = RegExp(
+        r'textSecondary',
+      ).allMatches(billingSource).length;
+      expect(
+        primaryHits > 20,
+        isTrue,
+        reason: 'expected many textPrimary references, got $primaryHits',
+      );
+      expect(
+        secondaryHits >= 3,
+        isTrue,
+        reason: 'expected textSecondary references for legible captions',
+      );
     });
   });
 
@@ -195,14 +228,20 @@ void main() {
     test('"Inbegrepen mogelijkheden" section title localized', () {
       expect(billingSource.contains("nl: 'Inbegrepen mogelijkheden'"), isTrue);
       expect(
-          billingSource.contains("en: 'Included capabilities'"), isTrue,
-          reason: 'English equivalent of "Inbegrepen mogelijkheden" missing');
+        billingSource.contains("en: 'Included capabilities'"),
+        isTrue,
+        reason: 'English equivalent of "Inbegrepen mogelijkheden" missing',
+      );
       expect(
-          billingSource.contains("fr: 'Fonctionnalités incluses'"), isTrue,
-          reason: 'French equivalent missing');
+        billingSource.contains("fr: 'Fonctionnalités incluses'"),
+        isTrue,
+        reason: 'French equivalent missing',
+      );
       expect(
-          billingSource.contains("es: 'Capacidades incluidas'"), isTrue,
-          reason: 'Spanish equivalent missing');
+        billingSource.contains("es: 'Capacidades incluidas'"),
+        isTrue,
+        reason: 'Spanish equivalent missing',
+      );
     });
 
     test('"Nog één toevoegen" NL/EN/FR/ES present', () {
@@ -230,10 +269,8 @@ void main() {
 
   group('SafeArea + no raw ISO dates', () {
     test('viewPadding-based scroll padding present', () {
-      expect(
-        billingSource.contains('MediaQuery.viewPaddingOf(context).bottom'),
-        isTrue,
-      );
+      expect(billingSource.contains('MediaQuery.viewPaddingOf'), isTrue);
+      expect(billingSource.contains('bottomSafeInset'), isTrue);
       expect(billingSource.contains('24 + bottomSafeInset'), isTrue);
     });
 
@@ -241,6 +278,89 @@ void main() {
       // We do not attempt to detect every raw ISO print, but the source must
       // still route dates through _humanDate.
       expect(billingSource.contains('_humanDate('), isTrue);
+    });
+  });
+
+  group('duplicate hero cleanup P0', () {
+    test('duplicate "subscription active" detail block is gone', () {
+      expect(
+        billingSource.contains("nl: 'Abonnement actief'"),
+        isFalse,
+        reason: 'legacy duplicate "Abonnement actief" chip must be removed',
+      );
+      expect(billingSource.contains("en: 'Subscription active'"), isFalse);
+      expect(billingSource.contains("fr: 'Abonnement actif'"), isFalse);
+      expect(billingSource.contains("es: 'Suscripción activa'"), isFalse);
+      // Old activation-section period join "t/m" next to Actief van is gone;
+      // hero keeps a single period line.
+      expect(
+        billingSource.contains(
+          r'${_humanDate(periodStart)} t/m ${periodEnd.isEmpty ? "—" : _humanDate(periodEnd)}',
+        ),
+        isFalse,
+        reason: 'duplicate activation-section period line must be gone',
+      );
+    });
+
+    test('hero shows period and next payment once; cancel CTA remains', () {
+      expect(
+        "nl: 'Actief van'".allMatches(billingSource).length,
+        1,
+        reason: 'Actief van label must appear once (hero only)',
+      );
+      expect(
+        "nl: 'Volgende betaling'".allMatches(billingSource).length,
+        1,
+        reason: 'Volgende betaling label must appear once (hero only)',
+      );
+      expect(billingSource.contains('_buildCancellationSection'), isTrue);
+      expect(billingSource.contains("nl: 'Abonnement opzeggen'"), isTrue);
+      expect(billingSource.contains('Opzegging ongedaan maken'), isTrue);
+      expect(billingSource.contains('Undo cancellation'), isTrue);
+    });
+  });
+
+  group('responsive icon hierarchy P0', () {
+    test('icon geometry uses host layoutWidth and role metrics', () {
+      expect(billingSource.contains('_premiumIconMetrics'), isTrue);
+      expect(billingSource.contains('_premiumIconBadge'), isTrue);
+      expect(billingSource.contains('_PremiumIconRole'), isTrue);
+      expect(
+        billingSource.contains('layoutWidth >= 600'),
+        isTrue,
+        reason: 'tablet class must use layoutWidth, not shortestSide alone',
+      );
+      expect(
+        billingSource.contains('MediaQuery') &&
+            billingSource.contains('shortestSide'),
+        isFalse,
+        reason: 'do not size premium icons via MediaQuery.shortestSide',
+      );
+      // Tablet KPI circle range includes 52–60.
+      expect(billingSource.contains('cMin = 52'), isTrue);
+      expect(billingSource.contains('cMax = 60'), isTrue);
+      // Phone KPI circle range includes 42–48.
+      expect(billingSource.contains('cMin = 42'), isTrue);
+      expect(billingSource.contains('cMax = 48'), isTrue);
+      expect(billingSource.contains('role: _PremiumIconRole.kpi'), isTrue);
+      expect(
+        billingSource.contains('role: _PremiumIconRole.extension'),
+        isTrue,
+      );
+      expect(
+        billingSource.contains('role: _PremiumIconRole.pdfBalance'),
+        isTrue,
+      );
+    });
+
+    test('theme colours come from palette, not fixed mock blues', () {
+      expect(billingSource.contains('_secondaryAccent'), isTrue);
+      expect(billingSource.contains('Color.lerp(_gold, _green'), isTrue);
+      expect(billingSource.contains('_businessThemePalette.success'), isTrue);
+      expect(billingSource.contains('_businessThemePalette.accent'), isTrue);
+      final lower = billingSource.toLowerCase();
+      expect(lower.contains('0xff60a5fa'), isFalse);
+      expect(lower.contains('0xff3b82f6'), isFalse);
     });
   });
 }
