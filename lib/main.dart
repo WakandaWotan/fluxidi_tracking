@@ -111,9 +111,11 @@ import 'package:fluxidi_tracking/driver_document_sheet.dart';
 import 'package:fluxidi_tracking/driver_my_documents_page.dart';
 import 'package:fluxidi_tracking/navigation/driver_offline_maps_page.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
+import 'package:fluxidi_tracking/driver_theme_cycle.dart';
 import 'package:fluxidi_tracking/company_driver_view_theme_store.dart';
 import 'package:fluxidi_tracking/driver_app_theme_store.dart';
 import 'package:fluxidi_tracking/driver_theme_store.dart';
+import 'package:fluxidi_tracking/widgets/driver_theme_cycle_button.dart';
 import 'package:fluxidi_tracking/driver_creator_dialog.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
 import 'package:fluxidi_tracking/fluxidi_responsive.dart';
@@ -1422,10 +1424,7 @@ Future<void> _switchCompanyFromRecoveryDialog(BuildContext context) async {
         es: 'Finalice el viaje antes de cambiar de empresa.',
       ).of(language);
       messenger.showSnackBar(
-        SnackBar(
-          duration: const Duration(seconds: 4),
-          content: Text(message),
-        ),
+        SnackBar(duration: const Duration(seconds: 4), content: Text(message)),
       );
     }
     return;

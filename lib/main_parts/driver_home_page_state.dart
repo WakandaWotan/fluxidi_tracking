@@ -30,10 +30,10 @@ bool _tripMapIsOperationalLeg(Map<String, dynamic> t) {
     final s = flag.toLowerCase();
     if (s == 'true' || s == '1') return true;
   }
-  final legId =
-      (details['leg_id'] ?? details['legId'] ?? '').toString().trim();
-  final legType =
-      (details['leg_type'] ?? details['legType'] ?? '').toString().trim();
+  final legId = (details['leg_id'] ?? details['legId'] ?? '').toString().trim();
+  final legType = (details['leg_type'] ?? details['legType'] ?? '')
+      .toString()
+      .trim();
   return legId.isNotEmpty || legType.isNotEmpty;
 }
 
@@ -168,20 +168,20 @@ class _DriverHomePageState extends State<DriverHomePage>
   // http state themselves — the runner closures live inside this class.
   late final NavBackgroundDispatcher<geo.Position> _pingDispatcher =
       NavBackgroundDispatcher<geo.Position>(
-    runner: _runPingDispatcherOwner,
-    eligibility: (_) => mounted && _activeTripId != null,
-    observer: (event) => logNavBackgroundDispatch(
-      owner: NavFieldDispatcherLabel.ping,
-      event: event,
-    ),
-    onError: (_, __) {
-      // Errors surface through observer(failed|timedOut); no PII in stack.
-    },
-    timeout: const Duration(seconds: 12),
-  );
+        runner: _runPingDispatcherOwner,
+        eligibility: (_) => mounted && _activeTripId != null,
+        observer: (event) => logNavBackgroundDispatch(
+          owner: NavFieldDispatcherLabel.ping,
+          event: event,
+        ),
+        onError: (_, __) {
+          // Errors surface through observer(failed|timedOut); no PII in stack.
+        },
+        timeout: const Duration(seconds: 12),
+      );
 
-  late final NavBackgroundDispatcher<geo.Position> _routePresentationDispatcher =
-      NavBackgroundDispatcher<geo.Position>(
+  late final NavBackgroundDispatcher<geo.Position>
+  _routePresentationDispatcher = NavBackgroundDispatcher<geo.Position>(
     runner: _runRoutePresentationDispatcherOwner,
     eligibility: (_) => mounted && _map != null && !_mapStyleChanging,
     observer: (event) => logNavBackgroundDispatch(
@@ -230,7 +230,8 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   // GOOGLE-MAPS-WITH-FLUXIDI-PIP-RELEASE-1 / FLUXIDI-PIP-METER-EXTERNAL-NAV-1
   // GOOGLE-MAPS-LAUNCH-FAILURE-UI-P0-2: busy gate never sticks permanently.
-  final ExternalNavigationHost _externalNavigationHost = ExternalNavigationHost();
+  final ExternalNavigationHost _externalNavigationHost =
+      ExternalNavigationHost();
   final GoogleMapsLaunchBusyGate _googleMapsLaunchBusyGate =
       GoogleMapsLaunchBusyGate();
   ExternalNavigationSession? _externalNavigationSession;
@@ -503,8 +504,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   // ("No manager found with id: N") — every native op must pass the gate first.
   final NavAnnotationManagerGate _routeAnnotationGate =
       NavAnnotationManagerGate(NavAnnotationManagerRole.route);
-  final NavAnnotationManagerGate _pinsAnnotationGate =
-      NavAnnotationManagerGate(NavAnnotationManagerRole.pins);
+  final NavAnnotationManagerGate _pinsAnnotationGate = NavAnnotationManagerGate(
+    NavAnnotationManagerRole.pins,
+  );
   final NavAnnotationManagerGate _destinationAnnotationGate =
       NavAnnotationManagerGate(NavAnnotationManagerRole.destination);
   final NavAnnotationManagerGate _driverAnnotationGate =
@@ -663,6 +665,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   double? _lastDriverCockpitAppliedZoom;
   double? _lastDriverCockpitAppliedPitch;
   int? _lastDriverCockpitAppliedLevel;
+
   /// Sticky bottom-chrome reserve for fixed streetlevel (never shrinks on a
   /// temporary incomplete measurement).
   double? _lastReliableBottomChromeReserve;
@@ -1050,7 +1053,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   // NAV-PARKING-2 Commit 1: bounded startup readiness for parking/private-access
   // departures — suppresses expected startup uncertainty (complexity / opposite
   // reroute storms) until reliable movement/matching exists.
-  final NavStartupBootstrapGate _navStartupBootstrap = NavStartupBootstrapGate();
+  final NavStartupBootstrapGate _navStartupBootstrap =
+      NavStartupBootstrapGate();
   NavStartupBootstrapPhase _lastNavBootstrapPhase =
       NavStartupBootstrapPhase.started;
   DateTime? _navSessionStartedAt;
@@ -1097,6 +1101,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   final NavRerouteDecisionTracker _rerouteDecision =
       NavRerouteDecisionTracker();
   NavRerouteDecisionTickOutput? _lastRerouteDecision;
+
   /// NAV-REROUTE-CURRENT-POSITION-HEADING-P0: single reroute lifecycle owner.
   final NavRerouteCoordinator _navRerouteCoordinator = NavRerouteCoordinator();
   int _activeRerouteRequestGeneration = 0;
@@ -1105,14 +1110,17 @@ class _DriverHomePageState extends State<DriverHomePage>
   // | 'backward_progress' | 'snap_distance'.
   String _offRouteReason = 'none';
   bool _isRerouting = false;
+
   /// When a newer deviation arrives while a request is in flight, bump
   /// generation (stale responses cannot apply) and retry after the in-flight
   /// attempt finishes.
   bool _pendingRerouteAfterInFlight = false;
   String? _pendingRerouteReason;
+
   /// True once an accepted package owns the new route version while the
   /// async reroute Future may still be finishing transport cleanup.
   bool _rerouteOwnershipAccepted = false;
+
   /// RELEASE-P0: apply-time forward progress/trim/snap/bearing must survive
   /// `_resetOffRouteStateAfterReroute` (briefly-correct-then-behind guard).
   bool _rerouteApplyForwardOwnershipActive = false;
@@ -2021,7 +2029,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         _logNavLatencyReroute(
           phase: 'package_accepted',
           reason: _rerouteReason ?? 'reroute',
-          requestDurationMs: acceptedAt.difference(requestStarted).inMilliseconds,
+          requestDurationMs: acceptedAt
+              .difference(requestStarted)
+              .inMilliseconds,
           oldRouteVersion: appliedVersion - 1,
           newRouteVersion: appliedVersion,
           elapsedFromCandidateMs: eligibleAt == null
@@ -2057,9 +2067,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         ],
         progress: applyProgress,
       );
-      activeCoords = [
-        for (final c in trimmed) _LonLat(c.lon, c.lat),
-      ];
+      activeCoords = [for (final c in trimmed) _LonLat(c.lon, c.lat)];
       final originDelta = package.coords.isEmpty
           ? 0.0
           : _metersBetween(
@@ -2126,7 +2134,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       // Seed camera from the accepted forward segment, not route index 0 of
       // the untrimmed request-origin stub.
-      final seedBearing = applyProgress.segmentBearingDeg ??
+      final seedBearing =
+          applyProgress.segmentBearingDeg ??
           navFirstMeaningfulRouteSegmentBearing(_routeCoords);
       if (seedBearing != null) {
         // NAV-CAMERA-ZERO-OLD-ROUTE-HOLD-P0: seed the *target* from the new
@@ -2484,13 +2493,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     // response or a future read path cannot resurrect the ghost row under
     // Gepland / Volgende rit. History and completed-count canonicalisation are
     // untouched (they do not flow through this getter).
-    final withoutStreetDirect = filterPlannedRidesExcludingStreetDirect<BookingItem>(
-      _bookings,
-      canonicalFieldsOf: _canonicalRideIdentityFor,
-      statusOf: (b) => _effectiveStatusFor(b) ?? '',
-      segment: segment,
-      onLog: (log) => debugPrint(log.toLogLine()),
-    );
+    final withoutStreetDirect =
+        filterPlannedRidesExcludingStreetDirect<BookingItem>(
+          _bookings,
+          canonicalFieldsOf: _canonicalRideIdentityFor,
+          statusOf: (b) => _effectiveStatusFor(b) ?? '',
+          segment: segment,
+          onLog: (log) => debugPrint(log.toLogLine()),
+        );
     return withoutStreetDirect
         .where((b) => !_deletedBookingIds.contains(b.bookingId))
         .where((b) => !_isClosedRideStatus(_effectiveStatusFor(b)))
@@ -2873,9 +2883,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       paletteForDriverTheme(DriverThemeVariant.lightEmerald).textMuted;
   Color _lightEmeraldTextOnSelected() => const Color(0xFFFFFFFF);
   Color _lightEmeraldBorderColor([double opacity = 0.46]) =>
-      paletteForDriverTheme(DriverThemeVariant.lightEmerald)
-          .border
-          .withOpacity(opacity);
+      paletteForDriverTheme(
+        DriverThemeVariant.lightEmerald,
+      ).border.withOpacity(opacity);
   // Warm ivory surface (not harsh pure white) for Light Emerald cards/shell.
   Color _lightEmeraldSurface() => const Color(0xFFF7FAF8);
   Color _lightEmeraldSurfaceAlt() =>
@@ -2898,11 +2908,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     return const LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [
-        Color(0xFFD8EFE5),
-        Color(0xFFC5E6D8),
-        Color(0xFFB3DDCC),
-      ],
+      colors: [Color(0xFFD8EFE5), Color(0xFFC5E6D8), Color(0xFFB3DDCC)],
     );
   }
 
@@ -3605,8 +3611,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     // guarantees a subsequent notifier write during dispose cannot
     // rebuild a defunct Element.
     if (_activeDriverSessionListener != null) {
-      activeDriverSessionNotifier
-          .removeListener(_activeDriverSessionListener!);
+      activeDriverSessionNotifier.removeListener(_activeDriverSessionListener!);
       _activeDriverSessionListener = null;
     }
     // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Field Failure Fix, Blocker Fix):
@@ -4513,24 +4518,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     messenger.hideCurrentSnackBar();
     final message = reason == 'expired_token'
         ? _tr(
-            nl:
-                'Chauffeurssessie verlopen. Meld de chauffeur opnieuw aan om een rit te starten.',
-            en:
-                'Driver session expired. Have the driver log in again to start a ride.',
-            fr:
-                'Session chauffeur expirée. Faites connecter le chauffeur pour démarrer une course.',
-            es:
-                'Sesión de chofer caducada. El chofer debe volver a iniciar sesión para comenzar un viaje.',
+            nl: 'Chauffeurssessie verlopen. Meld de chauffeur opnieuw aan om een rit te starten.',
+            en: 'Driver session expired. Have the driver log in again to start a ride.',
+            fr: 'Session chauffeur expirée. Faites connecter le chauffeur pour démarrer une course.',
+            es: 'Sesión de chofer caducada. El chofer debe volver a iniciar sesión para comenzar un viaje.',
           )
         : _tr(
-            nl:
-                'Geen actieve chauffeurssessie. Meld de chauffeur aan om een rit te starten.',
-            en:
-                'No active driver session. Sign the driver in to start a ride.',
-            fr:
-                'Aucune session chauffeur active. Connectez le chauffeur pour démarrer une course.',
-            es:
-                'No hay sesión de chofer activa. Inicia sesión del chofer para empezar un viaje.',
+            nl: 'Geen actieve chauffeurssessie. Meld de chauffeur aan om een rit te starten.',
+            en: 'No active driver session. Sign the driver in to start a ride.',
+            fr: 'Aucune session chauffeur active. Connectez le chauffeur pour démarrer une course.',
+            es: 'No hay sesión de chofer activa. Inicia sesión del chofer para empezar un viaje.',
           );
     messenger.showSnackBar(
       SnackBar(duration: const Duration(seconds: 6), content: Text(message)),
@@ -4644,13 +4641,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         duration: const Duration(seconds: 4),
         content: Text(
           _tr(
-            nl:
-                'Chauffeurwissel is bezig. Even geduld voordat u een rit start.',
+            nl: 'Chauffeurwissel is bezig. Even geduld voordat u een rit start.',
             en: 'Driver switch in progress. Please wait before starting a ride.',
-            fr:
-                'Changement de chauffeur en cours. Veuillez patienter avant de démarrer une course.',
-            es:
-                'Cambio de conductor en curso. Espere antes de iniciar un viaje.',
+            fr: 'Changement de chauffeur en cours. Veuillez patienter avant de démarrer une course.',
+            es: 'Cambio de conductor en curso. Espere antes de iniciar un viaje.',
           ),
         ),
       ),
@@ -4671,14 +4665,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         duration: const Duration(seconds: 6),
         content: Text(
           _tr(
-            nl:
-                'Rit gestopt. Afronding blijft lokaal bewaard — herverbind voor betaling.',
-            en:
-                'Ride stopped. Finalization is saved locally — reconnect to continue payment.',
-            fr:
-                'Course arrêtée. Finalisation enregistrée localement — reconnectez pour le paiement.',
-            es:
-                'Viaje detenido. Finalización guardada localmente: reconéctese para el pago.',
+            nl: 'Rit gestopt. Afronding blijft lokaal bewaard — herverbind voor betaling.',
+            en: 'Ride stopped. Finalization is saved locally — reconnect to continue payment.',
+            fr: 'Course arrêtée. Finalisation enregistrée localement — reconnectez pour le paiement.',
+            es: 'Viaje detenido. Finalización guardada localmente: reconéctese para el pago.',
           ),
         ),
       ),
@@ -4717,10 +4707,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
           onPressed: () {
             unawaited(
-              _refreshBookings(
-                force: true,
-                trigger: 'street_stop_retry',
-              ),
+              _refreshBookings(force: true, trigger: 'street_stop_retry'),
             );
           },
         ),
@@ -4757,10 +4744,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
           onPressed: () {
             unawaited(
-              _refreshBookings(
-                force: true,
-                trigger: 'street_reopen_retry',
-              ),
+              _refreshBookings(force: true, trigger: 'street_reopen_retry'),
             );
           },
         ),
@@ -4801,10 +4785,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     // Cut the previous ride, then hand the authoritative direct-ride
     // identifiers back BEFORE any state-visible frame so no code path can see
     // this record with `_directRideActive == false`.
-    _hardClearAtRideBoundary(
-      reason: 'street_direct_resume',
-      bumpSession: true,
-    );
+    _hardClearAtRideBoundary(reason: 'street_direct_resume', bumpSession: true);
     if (mounted) {
       setState(() {
         _activeBooking = b;
@@ -5015,8 +4996,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       _hardClearAtRideBoundary(reason: 'planned_ride_start', bumpSession: true);
       // NAVIGATION-ARRIVAL-STATE-RESET-P0-5: end pickup snapshot + wipe arrival
       // before passenger route / Maps / PiP can see B.
-      final dropoffStored =
-          _usableNavLonLat(_extractPreviewEndpoints(b).dropoff);
+      final dropoffStored = _usableNavLonLat(
+        _extractPreviewEndpoints(b).dropoff,
+      );
       _installActiveNavTarget(
         bookingId: b.bookingId,
         phase: ActiveNavigationPhase.passengerLeg,
@@ -5100,9 +5082,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (mounted) setState(() => _isStartingTrip = false);
       if (isSubscriptionEntitlementHardAbort(e)) {
         _toast(
-          companyEntitlementDeniedMessage(
-            languageCode: _fluxidiLanguageCode(),
-          ),
+          companyEntitlementDeniedMessage(languageCode: _fluxidiLanguageCode()),
         );
         return;
       }
@@ -6180,12 +6160,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       await _refreshBookings(force: true, trigger: 'delete_action');
     } catch (e) {
       _toast(
-        '❌ ${_tr(
-          nl: 'Verwijderen mislukt',
-          en: 'Delete failed',
-          fr: 'Échec de la suppression',
-          es: 'Error al eliminar',
-        )}',
+        '❌ ${_tr(nl: 'Verwijderen mislukt', en: 'Delete failed', fr: 'Échec de la suppression', es: 'Error al eliminar')}',
       );
     } finally {
       if (mounted) {
@@ -6209,22 +6184,16 @@ class _DriverHomePageState extends State<DriverHomePage>
         ),
         content: Text(
           _tr(
-            nl:
-                'Dit verwijdert de boeking uit de lijst.\n\nID: ${b.bookingId}',
-            en:
-                'This removes the booking from the list.\n\nID: ${b.bookingId}',
-            fr:
-                'Cela supprime la réservation de la liste.\n\nID : ${b.bookingId}',
-            es:
-                'Esto elimina la reserva de la lista.\n\nID: ${b.bookingId}',
+            nl: 'Dit verwijdert de boeking uit de lijst.\n\nID: ${b.bookingId}',
+            en: 'This removes the booking from the list.\n\nID: ${b.bookingId}',
+            fr: 'Cela supprime la réservation de la liste.\n\nID : ${b.bookingId}',
+            es: 'Esto elimina la reserva de la lista.\n\nID: ${b.bookingId}',
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: Text(
-              _tr(nl: 'Nee', en: 'No', fr: 'Non', es: 'No'),
-            ),
+            child: Text(_tr(nl: 'Nee', en: 'No', fr: 'Non', es: 'No')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -6528,9 +6497,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       // rebuilding the MapWidget subtree once every 5 s.
       _publishDriverRideMetersSnapshot();
       if (_externalNavigationSession != null) {
-        unawaited(
-          _persistActiveRideDurableSnapshot(reason: 'meter_ticker'),
-        );
+        unawaited(_persistActiveRideDurableSnapshot(reason: 'meter_ticker'));
       }
     });
   }
@@ -6578,8 +6545,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   /// bracketing this reset. The reset itself does NOT run setState — the
   /// caller's setState covers the same frame.
   void _applyActiveRideStartStyleDecision({required String reason}) {
-    final prefersDark = _effectiveMapThemeFor(_CameraMode.follow) ==
-        MapThemeMode.dark;
+    final prefersDark =
+        _effectiveMapThemeFor(_CameraMode.follow) == MapThemeMode.dark;
     final decision = decideNavActiveRideStart(prefersDark: prefersDark);
     // NAV-PRESTART-PREVIEW-AND-STABLE-BEARING-P0 (Problem 1): a style the driver
     // deliberately chose on the preview surface is the active-ride style. Only
@@ -6621,11 +6588,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     _logNavBounded(
       'NAV_ACTIVE_RIDE_START',
       'reason=$reason '
-      'style=${carryOver.preserveStyle ? _driverCockpitMapStyleLabel() : navActiveRideStyleLabel(decision.style)} '
-      'streetLevel=${decision.enterStreetLevel} '
-      'preserveStyle=${carryOver.preserveStyle} '
-      'startViewLevel=$_driverCockpitViewLevel '
-      'carryOver=${carryOver.reason}',
+          'style=${carryOver.preserveStyle ? _driverCockpitMapStyleLabel() : navActiveRideStyleLabel(decision.style)} '
+          'streetLevel=${decision.enterStreetLevel} '
+          'preserveStyle=${carryOver.preserveStyle} '
+          'startViewLevel=$_driverCockpitViewLevel '
+          'carryOver=${carryOver.reason}',
     );
   }
 
@@ -6682,19 +6649,19 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   /// NAV-FIXED-HUD-PRESENTATION-1: which route phase the surface is in.
   NavFixedHudPhase get _navFixedHudPhase => resolveNavFixedHudPhase(
-        liveRideActive: _liveRideActive,
-        navigationGuidanceActive: _navigationGuidanceActive,
-        preparedRouteDraft: _fixedStreetLevelPreviewDraft,
-      );
+    liveRideActive: _liveRideActive,
+    navigationGuidanceActive: _navigationGuidanceActive,
+    preparedRouteDraft: _fixedStreetLevelPreviewDraft,
+  );
 
   /// NAV-FIXED-HUD-PRESENTATION-1: the single activation predicate for the
   /// screen-fixed HUD marker and the fixed Street Level camera. Replaces the
   /// former `follow && _liveRideActive` gate so prepared route, NAV-to-pickup
   /// and the live ride share one identical deterministic presentation.
   bool get _navFixedHudPresentationActive => navFixedHudPresentationActive(
-        phase: _navFixedHudPhase,
-        cameraFollowMode: _cameraMode == _CameraMode.follow,
-      );
+    phase: _navFixedHudPhase,
+    cameraFollowMode: _cameraMode == _CameraMode.follow,
+  );
 
   /// NAV-PHASE-CAMERA-TARGET-1: resolves the camera target coordinate for
   /// the preview surface. Uses the phase to decide whether pickup A, the
@@ -6728,10 +6695,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   /// NAV-RELEASE-FINAL-FLOW-1: NAV-to-pickup is booking-only on the prepared
   /// surface. Direct street draft is already at A.
   bool get _showNavToPickupAction => navToPickupActionVisible(
-        hasBooking: _activeBooking != null,
-        directRideDraft: _directRideDraft,
-        directRideActive: _directRideActive,
-      );
+    hasBooking: _activeBooking != null,
+    directRideDraft: _directRideDraft,
+    directRideActive: _directRideActive,
+  );
 
   double? get _fixedBookingPriceEur {
     final b = _activeBooking;
@@ -8153,10 +8120,12 @@ class _DriverHomePageState extends State<DriverHomePage>
           _directTripStartWorkerOk = true;
           _directTripStopWorkerOk = false;
         });
-        unawaited(_persistDirectTripSession(
-          localLifecycle: kDirectTripLocalLifecycleActive,
-          bookingFinalizeState: kDirectTripFinalizePending,
-        ));
+        unawaited(
+          _persistDirectTripSession(
+            localLifecycle: kDirectTripLocalLifecycleActive,
+            bookingFinalizeState: kDirectTripFinalizePending,
+          ),
+        );
       }
       return DirectTripWorkerStartResult(
         outcome: DirectTripWorkerStartOutcome.ok,
@@ -8313,8 +8282,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _publishBearerBusyState();
     final generation = _stopTeardownGeneration;
     try {
-      final drawerOpen =
-          _scaffoldKey.currentState?.isDrawerOpen ?? false;
+      final drawerOpen = _scaffoldKey.currentState?.isDrawerOpen ?? false;
       final context = DriverStopTeardownContext(
         outcome: outcome,
         isMounted: mounted,
@@ -8436,6 +8404,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           _directTripStopWorkerOk = false;
         }
       }
+
       if (mounted) {
         setState(clearOperationalRideState);
       } else {
@@ -8696,11 +8665,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     ExternalNavigationSession? externalSession,
   }) {
     if (!_liveRideActive) return null;
-    final bookingId = (_activeBooking?.bookingId ??
-            _activeDirectBookingId ??
-            _directRideKey ??
-            '')
-        .trim();
+    final bookingId =
+        (_activeBooking?.bookingId ??
+                _activeDirectBookingId ??
+                _directRideKey ??
+                '')
+            .trim();
     if (bookingId.isEmpty) return null;
     final street = _directRideActive || _activeBookingIsStreetDirect;
     final last = _lastPos;
@@ -8710,7 +8680,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       parentBookingId: street
           ? (_directRideKey ?? bookingId)
           : (_activeBooking?.details['parent_booking_id']?.toString() ??
-              _activeBooking?.details['parentBookingId']?.toString()),
+                _activeBooking?.details['parentBookingId']?.toString()),
       activeLegId: (_activeBooking?.legId ?? '').trim().isEmpty
           ? null
           : _activeBooking!.legId,
@@ -8849,11 +8819,11 @@ class _DriverHomePageState extends State<DriverHomePage>
           if (snap.isStreet) {
             _directRideActive = true;
             _activeTripId = null;
-            _activeDirectTripId =
-                (snap.tripId ?? '').trim().isEmpty ? null : snap.tripId;
+            _activeDirectTripId = (snap.tripId ?? '').trim().isEmpty
+                ? null
+                : snap.tripId;
             _activeDirectBookingId = snap.bookingId;
-            _directRideKey =
-                (snap.parentBookingId ?? snap.bookingId).trim();
+            _directRideKey = (snap.parentBookingId ?? snap.bookingId).trim();
             _directTripStartWorkerOk = true;
           } else {
             _directRideActive = false;
@@ -8874,8 +8844,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           _hasSwitchedToFollow = true;
           _followCar = true;
           _externalNavigationSession = ext;
-          _navigationGuidanceActive =
-              !(ext?.nativeGuidanceSuppressed ?? false);
+          _navigationGuidanceActive = !(ext?.nativeGuidanceSuppressed ?? false);
         });
       }
 
@@ -8932,7 +8901,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       final res = await http
           .post(
-            _uriWithScope(kWorkerBaseUrl, kReconcileDirectBookingPath, strictScope),
+            _uriWithScope(
+              kWorkerBaseUrl,
+              kReconcileDirectBookingPath,
+              strictScope,
+            ),
             headers: _driverBearerHeaders(),
             body: jsonEncode(<String, dynamic>{
               'trip_id': reqTrip,
@@ -9115,8 +9088,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       session: session,
       outcome: outcome,
     );
-    final identityMatch = (outcome.responseTripId ?? '').trim() ==
-            session.tripId.trim() &&
+    final identityMatch =
+        (outcome.responseTripId ?? '').trim() == session.tripId.trim() &&
         (outcome.responseBookingId ?? '').trim() == session.bookingId.trim();
     debugPrint(
       '[DIRECT_TRIP_RECOVERY_PROBE] lifecycle=${session.localLifecycle} '
@@ -9134,10 +9107,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
         _clearStaleInMemoryDirectIdentityIfMatching(session);
         unawaited(
-          _refreshBookings(
-            force: true,
-            trigger: 'street_recovery_finalize_ok',
-          ),
+          _refreshBookings(force: true, trigger: 'street_recovery_finalize_ok'),
         );
         return;
       case DirectTripRecoveryProbeAction.retainServerActive:
@@ -9258,8 +9228,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     // future caller can bypass the `_stopTrip` decision helper.
     if (isStreetDirectBooking(<String, dynamic>{
       ...booking.details,
-      if (booking.bookingId.trim().isNotEmpty)
-        'booking_id': booking.bookingId,
+      if (booking.bookingId.trim().isNotEmpty) 'booking_id': booking.bookingId,
     })) {
       debugPrint(
         '[PLANNED_STOP_GUARD] action=skip source=streetRide '
@@ -9388,7 +9357,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       // chain, and no server route can recreate a trip row that was never
       // written, so a request lost to poor network must leave behind a
       // replayable intent rather than a completed ride with no history.
-      durableIntent = _buildPlannedStopIntent(booking: booking, payload: payload);
+      durableIntent = _buildPlannedStopIntent(
+        booking: booking,
+        payload: payload,
+      );
       _plannedStopIntentDurable =
           durableIntent != null &&
           await _PlannedStopIntentStore.save(durableIntent);
@@ -9429,11 +9401,11 @@ class _DriverHomePageState extends State<DriverHomePage>
           : '';
       final emitStateRaw = decoded is Map
           ? (decoded['compliance_emit_state'] ??
-                  decoded['complianceEmitState'] ??
-                  '')
-              .toString()
-              .trim()
-              .toLowerCase()
+                    decoded['complianceEmitState'] ??
+                    '')
+                .toString()
+                .trim()
+                .toLowerCase()
           : '';
       if (tripIdFromResp.isNotEmpty && emitStateRaw != 'applied') {
         unawaited(
@@ -9537,7 +9509,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       final payload = _buildOperationalLegPlannedStopPayload(booking);
       if (payload == null) return false;
-      final intent = _buildPlannedStopIntent(booking: booking, payload: payload);
+      final intent = _buildPlannedStopIntent(
+        booking: booking,
+        payload: payload,
+      );
       if (intent == null) return false;
       return await _PlannedStopIntentStore.save(intent);
     } catch (e) {
@@ -9587,7 +9562,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       // Fail closed rather than replay another tenant/company's ride.
       final scopeTenant = (strictScope['tenant_id'] ?? '').trim();
       final scopeCompany = (strictScope['company_id'] ?? '').trim();
-      if (scopeTenant.isNotEmpty && scopeTenant != intent.tenantId) return false;
+      if (scopeTenant.isNotEmpty && scopeTenant != intent.tenantId)
+        return false;
       if (scopeCompany.isNotEmpty && scopeCompany != intent.companyId) {
         return false;
       }
@@ -9774,14 +9750,12 @@ class _DriverHomePageState extends State<DriverHomePage>
           reconciledStops =
               int.tryParse((decoded['reconciled_stops'] ?? 0).toString()) ?? 0;
           reconciledStarts =
-              int.tryParse((decoded['reconciled_starts'] ?? 0).toString()) ??
-                  0;
+              int.tryParse((decoded['reconciled_starts'] ?? 0).toString()) ?? 0;
           stillPendingStops =
               int.tryParse((decoded['still_pending_stops'] ?? 0).toString()) ??
-                  0;
-          stillPendingStarts = int.tryParse(
-                (decoded['still_pending_starts'] ?? 0).toString(),
-              ) ??
+              0;
+          stillPendingStarts =
+              int.tryParse((decoded['still_pending_starts'] ?? 0).toString()) ??
               0;
         }
       } catch (_) {}
@@ -10530,7 +10504,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     // DIRECT-RIDE-FINALIZE-ACK-GATE-1: local COMPLETED only after authoritative
     // booking finalize acknowledgement (matching booking id + completed state
     // + totals). Tracking stop alone is insufficient.
-    var directFinalizeAcknowledged = wasDirectRide &&
+    var directFinalizeAcknowledged =
+        wasDirectRide &&
         directStopOutcome != null &&
         isDirectRideFinalizeAcknowledged(
           outcome: directStopOutcome,
@@ -10567,8 +10542,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       // client fallback (worker total absent) is rounded here — exactly once —
       // before it becomes the persisted amount. Offline STOP already froze
       // [frozenDirectFare] before the network call.
-      final double finalDirectTotal =
-          serverDirectTotal ?? frozenDirectFare;
+      final double finalDirectTotal = serverDirectTotal ?? frozenDirectFare;
       final directLedger = _buildComplianceDirectLedgerRecord(
         tripId: directTripId,
         bookingId: directBookingId,
@@ -10610,10 +10584,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           directTripId.trim().isNotEmpty) {
         _directStopFinalizePending = true;
         _publishBearerBusyState();
-        final trackingStopped =
-            directStopOutcome?.trackingTripStopped == true;
-        if (trackingStopped &&
-            (directBookingId ?? '').trim().isNotEmpty) {
+        final trackingStopped = directStopOutcome?.trackingTripStopped == true;
+        if (trackingStopped && (directBookingId ?? '').trim().isNotEmpty) {
           // Bounded single in-session reconcile — only after `/trip/stop`
           // landed. Offline STOP must NOT call reconcile alone (NON_TERMINAL).
           final reconcileOutcome = await _reconcileDirectBookingOnWorker(
@@ -10707,15 +10679,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     await _deterministicStopTeardown(
       outcome: stopOutcome,
-      preservePendingDirectIdentity: wasDirectRide && !directFinalizeAcknowledged,
+      preservePendingDirectIdentity:
+          wasDirectRide && !directFinalizeAcknowledged,
     );
     if (wasDirectRide && directFinalizeAcknowledged) {
       // Mirror the canonical finalized amount: server total wins as-is;
       // otherwise the €0.10-rounded client fallback.
       final shownTotal =
           serverDirectTotal ??
-              roundFareEuroToNearestTenCents(finalTotal) ??
-              finalTotal;
+          roundFareEuroToNearestTenCents(finalTotal) ??
+          finalTotal;
       _toast(
         _tr(
           nl: 'Straatrit afgerond: € ${shownTotal.toStringAsFixed(2)}',
@@ -10754,7 +10727,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       '[ROUNDTRIP_STATUS][LEG_COMPLETE] parent=$bookingId leg=${legId.isEmpty ? "-" : legId} leg_type=$legType old=${previousStatus.isEmpty ? "-" : previousStatus} new=COMPLETED scope=${isLegScopedCompletion ? "leg" : "parent"} source=driver_cockpit_stop street_direct=$isStreetDirect finalize_ack=$directFinalizeAcknowledged',
     );
 
-    if (isStreetDirect && !isLegScopedCompletion && !directFinalizeAcknowledged) {
+    if (isStreetDirect &&
+        !isLegScopedCompletion &&
+        !directFinalizeAcknowledged) {
       debugPrint(
         '[STREET_DIRECT_COMPLETE_GUARD] action=skip_local_completed booking=$bookingId '
         'reason=finalize_not_acknowledged',
@@ -11318,15 +11293,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     // GOOGLE-MAPS-WITH-FLUXIDI-PIP-RELEASE-1: ask per NAV start (no settings
     // preference contract exists for nav provider yet).
     if (!mounted) return;
-    final choice = await showNavigationProviderChoiceDialog(
-      context,
-      tr: _tr,
-    );
+    final choice = await showNavigationProviderChoiceDialog(context, tr: _tr);
     if (!mounted || choice == null) return;
     if (choice == NavigationProviderChoice.googleMapsWithMeter) {
-      await _launchGoogleMapsWithFluxidiPip(
-        phase: _resolveExternalNavPhase(),
-      );
+      await _launchGoogleMapsWithFluxidiPip(phase: _resolveExternalNavPhase());
       return;
     }
 
@@ -11357,8 +11327,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     final target = decideNavOpenRouteTarget(
       hasBooking: b != null,
       tripActive: _activeTripId != null,
-      hasDirectDestination:
-          (_directRideDestinationText ?? '').trim().isNotEmpty,
+      hasDirectDestination: (_directRideDestinationText ?? '')
+          .trim()
+          .isNotEmpty,
       directRideActive: _directRideActive,
     );
     switch (target) {
@@ -11520,9 +11491,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
     if (workerResult.isEntitlementDenied) {
       _toast(
-        companyEntitlementDeniedMessage(
-          languageCode: _fluxidiLanguageCode(),
-        ),
+        companyEntitlementDeniedMessage(languageCode: _fluxidiLanguageCode()),
       );
       return;
     }
@@ -11580,10 +11549,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     _startTrackingInternal();
     _startMeterTicker();
     if (workerOk) {
-      unawaited(_persistDirectTripSession(
-        localLifecycle: kDirectTripLocalLifecycleActive,
-        bookingFinalizeState: kDirectTripFinalizePending,
-      ));
+      unawaited(
+        _persistDirectTripSession(
+          localLifecycle: kDirectTripLocalLifecycleActive,
+          bookingFinalizeState: kDirectTripFinalizePending,
+        ),
+      );
     } else {
       unawaited(
         _startDirectTripSessionOnWorker(
@@ -12060,8 +12031,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       currentStyleGeneration: () => _styleRequestGeneration,
       nativeDelete: () => mgr.delete(annotation),
     );
-    final durationMs =
-        DateTime.now().difference(startedAt).inMilliseconds.clamp(0, 60000);
+    final durationMs = DateTime.now()
+        .difference(startedAt)
+        .inMilliseconds
+        .clamp(0, 60000);
     // Safety: never clear current route handles from delete completion.
     assert(() {
       // ownershipStillCurrent false ⇒ must not mutate shared route refs.
@@ -12449,7 +12422,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     } catch (e, st) {
       // NAV-ANNOTATION-LIFECYCLE-REPAIR-1: delete/deleteAll must never escape
       // unhandled through DartMessenger (unawaited clear/replace paths).
-      final isDelete = kind == NavAnnotationOperationKind.delete ||
+      final isDelete =
+          kind == NavAnnotationOperationKind.delete ||
           kind == NavAnnotationOperationKind.deleteAll;
       if (isDelete) {
         final stale = isStalePolylineAnnotationDeleteError(e);
@@ -12844,7 +12818,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     // NAV-RELEASE-SIMPLE-STREETLEVEL-1: real 3D is active whenever the driver
     // selected the 3D style on a preview draft or live follow surface.
     // Previously preview required follow+live, so UI "3D" stayed visualMode=street.
-    if (_driverCockpitMapVisualStyle == DriverCockpitMapVisualStyle.standard3d ||
+    if (_driverCockpitMapVisualStyle ==
+            DriverCockpitMapVisualStyle.standard3d ||
         _driverMapVisualMode == DriverMapVisualMode.threeD) {
       return _directRideDraft ||
           (_cameraMode == _CameraMode.follow && _liveRideActive);
@@ -13317,9 +13292,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         gate: _routeAnnotationGate,
         event: 'restore_rejected',
         operation: NavAnnotationOperationKind.restore,
-        reason: routeGateOk
-            ? null
-            : NavAnnotationRejectReason.notActive,
+        reason: routeGateOk ? null : NavAnnotationRejectReason.notActive,
       );
     }
     if (driverGateOk) {
@@ -13341,16 +13314,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (decision.allowed) {
       restoreCoords = frozenRouteCoords != null && frozenRouteCoords.length >= 2
           ? frozenRouteCoords
-          : (_routeCoords.length >= 2 ? List<_LonLat>.from(_routeCoords) : null);
+          : (_routeCoords.length >= 2
+                ? List<_LonLat>.from(_routeCoords)
+                : null);
       _logNavRouteRenderOwner(
         event: NavRouteRenderOwnerEvent.styleRestoreAllowed,
       );
     } else if ((decision.reason ==
                 StyleRestoreRejectReason.routeVersionMismatch ||
-            decision.reason ==
-                StyleRestoreRejectReason.renderEpochMismatch ||
-            decision.reason ==
-                StyleRestoreRejectReason.packageOwnerMismatch) &&
+            decision.reason == StyleRestoreRejectReason.renderEpochMismatch ||
+            decision.reason == StyleRestoreRejectReason.packageOwnerMismatch) &&
         capture.sessionGeneration == _navigationSessionGeneration &&
         capture.styleGeneration == _styleRequestGeneration &&
         (_liveRideActive || previewRestoreEligibleNow) &&
@@ -13507,7 +13480,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       previous: _activeNavTargetOwner.previous,
       routeSessionId: _activeNavTargetOwner.current?.routeId,
       visibleRouteEndpointHash: _visibleRouteEndpointHash(),
-      arrivalDetectorTargetHash: _activeNavTargetOwner.current?.targetCoordinateHash,
+      arrivalDetectorTargetHash:
+          _activeNavTargetOwner.current?.targetCoordinateHash,
       googleMapsTargetHash: googleMapsTargetHash,
       pipTargetHash: pipTargetHash,
       remainingRouteMetres: remainingRouteMetres,
@@ -13570,8 +13544,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final routeId = _nextActiveNavRouteId();
     // Align target coords to the visible route endpoint so arrival/KPI/Maps
     // share one hash (geocode POI and routed endpoint often differ).
-    final endpoint =
-        _routeCoords.isNotEmpty ? _routeCoords.last : destination;
+    final endpoint = _routeCoords.isNotEmpty ? _routeCoords.last : destination;
     final bound = _activeNavTargetOwner.bindRoute(
       routeId: routeId,
       targetLat: endpoint.lat,
@@ -13963,16 +13936,17 @@ class _DriverHomePageState extends State<DriverHomePage>
         final opacity = _resolveDesiredMapboxTaxiOpacity(source: restoreSource);
         // Create under a lease so it cannot race a concurrent disposal.
         final createdMgr = mgr;
-        final leaseRun = await _driverAnnotationGate.runGuarded<mb.PointAnnotation?>(
-          ownership: _driverAnnotationGate.capture(),
-          kind: NavAnnotationOperationKind.create,
-          nativeOp: () => _createDriverMarkerAnnotation(
-            mgr: createdMgr,
-            geometry: _mbPoint(visual.lon, visual.lat),
-            markerBearing: visual.bearing,
-            iconOpacity: opacity,
-          ),
-        );
+        final leaseRun = await _driverAnnotationGate
+            .runGuarded<mb.PointAnnotation?>(
+              ownership: _driverAnnotationGate.capture(),
+              kind: NavAnnotationOperationKind.create,
+              nativeOp: () => _createDriverMarkerAnnotation(
+                mgr: createdMgr,
+                geometry: _mbPoint(visual.lon, visual.lat),
+                markerBearing: visual.bearing,
+                iconOpacity: opacity,
+              ),
+            );
         _driverMarker = leaseRun.ran ? leaseRun.value : null;
         success = _driverMarker != null;
         if (success) {
@@ -15125,10 +15099,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     final previousSignature = _lastNav3dHudRenderDecisionSignature;
     final previousParts = previousSignature?.split('|');
-    final previousOwner =
-        (previousParts != null && previousParts.length > 5)
-            ? previousParts[5]
-            : 'unknown';
+    final previousOwner = (previousParts != null && previousParts.length > 5)
+        ? previousParts[5]
+        : 'unknown';
     _lastNav3dHudRenderDecisionSignature = decision.diagnosticSignature;
     logNav3dHudRenderDecision(decision);
     _logNav3dOwnerTransition(
@@ -15239,10 +15212,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       });
     }
     if (resolution.wasStored) {
-      _logNavMarkerChoice(
-        choice: resolution.choice,
-        source: resolution.source,
-      );
+      _logNavMarkerChoice(choice: resolution.choice, source: resolution.source);
     }
   }
 
@@ -15298,8 +15268,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     required DriverNavigationMarkerChoiceSource source,
   }) {
     final mapStyle = _navMarkerMapStyleLabel();
-    final signature =
-        '${choice.name}|${source.name}|$mapStyle';
+    final signature = '${choice.name}|${source.name}|$mapStyle';
     if (signature == _lastNavMarkerChoiceLogSignature) return;
     _lastNavMarkerChoiceLogSignature = signature;
     debugPrint(
@@ -16344,8 +16313,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       timedOut: timedOut,
       // Timeout already counted via timedOut — do not double-count.
       countFailure:
-          !timedOut &&
-          result == DriverVehicleModelMovementUpdateResult.failed,
+          !timedOut && result == DriverVehicleModelMovementUpdateResult.failed,
       operationId: operationId,
     );
 
@@ -16896,7 +16864,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       reason: increase ? 'plus' : 'minus',
     );
     // NAV-RELEASE-SIMPLE-STREETLEVEL-1: zoom +/- allowed in preview and live.
-    final blockReason = navActiveRideZoomAllowed(liveRideActive: _liveRideActive);
+    final blockReason = navActiveRideZoomAllowed(
+      liveRideActive: _liveRideActive,
+    );
     if (blockReason != NavActiveRideBlockReason.none) {
       logNavActiveRideBlocked(
         interaction: increase
@@ -17032,10 +17002,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       // update desired level only; route restore runs after an applied camera.
       if (input.decision == DriverCockpitViewZoomInputDecision.startCamera) {
         unawaited(
-          _applyDriverCockpitViewZoomCamera(
-            pos,
-            generation: input.generation,
-          ),
+          _applyDriverCockpitViewZoomCamera(pos, generation: input.generation),
         );
       }
     } else {
@@ -17168,8 +17135,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           formatNavRerouteApplyStaleWriterDiag(
             writer: 'camera_bearing',
             writerGeneration: generation,
-            activeGeneration:
-                _driverCockpitViewZoomLifecycle.generation,
+            activeGeneration: _driverCockpitViewZoomLifecycle.generation,
             rejectedCount: _rerouteApplyStaleWriters.total,
           ),
           intervalMs: 800,
@@ -17315,7 +17281,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     final isTablet = _hostIsTablet(context);
     final isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
-    final zoom = _lastDriverCockpitAppliedZoom ??
+    final zoom =
+        _lastDriverCockpitAppliedZoom ??
         driverCockpitViewLevelTargetZoom(
           isTablet: isTablet,
           isLandscape: isLandscape,
@@ -17889,13 +17856,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     final preserveHeldBearing =
         shouldPreservePrestartHeldBearingAcrossRouteReplace(
-      liveRideActive: _liveRideActive,
-      preparedRouteDraft: _fixedStreetLevelPreviewDraft,
-      hasHeldBearing: heldBearing != null && heldBearing.isFinite,
-      speedKmh: speedKmh,
-      displacementM: displacementM,
-      accuracyM: pos.accuracy.isFinite ? pos.accuracy : null,
-    );
+          liveRideActive: _liveRideActive,
+          preparedRouteDraft: _fixedStreetLevelPreviewDraft,
+          hasHeldBearing: heldBearing != null && heldBearing.isFinite,
+          speedKmh: speedKmh,
+          displacementM: displacementM,
+          accuracyM: pos.accuracy.isFinite ? pos.accuracy : null,
+        );
     final routeUp = resolveNavFixedRouteUpBearing(
       routeTangentBearingDeg: prestartPreviewRouteTangentForResolve(
         preserveHeldBearing: preserveHeldBearing,
@@ -17951,13 +17918,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     // HOST-FORM-FACTOR-P0: preview + follow share the same host tablet family.
     final bool isTablet = _hostIsTablet(context);
     final overrides = _driverCockpitCameraOverrides(
-      policyZoom: _lastDriverCockpitAppliedZoom ??
+      policyZoom:
+          _lastDriverCockpitAppliedZoom ??
           driverCockpitViewLevelTargetZoom(
             isTablet: isTablet,
             isLandscape: isLandscape,
             level: _driverCockpitViewLevel,
           ),
-      policyPitch: _lastDriverCockpitAppliedPitch ??
+      policyPitch:
+          _lastDriverCockpitAppliedPitch ??
           driverCockpitViewLevelTargetPitch(
             isTablet: isTablet,
             isLandscape: isLandscape,
@@ -18000,8 +17969,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       _logNavBounded(
         'NAV_PRESTART_PREVIEW',
         'event=skip_stale_epoch reason=$reason '
-        'epochStart=$navViewportEpochAtStart epochNow=$_navViewportEpoch '
-        'tellers=${tellersActive ? 1 : 0}',
+            'epochStart=$navViewportEpochAtStart epochNow=$_navViewportEpoch '
+            'tellers=${tellersActive ? 1 : 0}',
         intervalMs: 1,
       );
       return;
@@ -18055,14 +18024,14 @@ class _DriverHomePageState extends State<DriverHomePage>
       _logNavBounded(
         'NAV_PRESTART_PREVIEW',
         'event=streetlevel_camera_apply reason=$reason '
-        'level=$_driverCockpitViewLevel '
-        'zoom=${overrides.zoom.toStringAsFixed(2)} '
-        'pitch=${overrides.pitch.toStringAsFixed(1)} '
-        'bearing=${bearingDeg.toStringAsFixed(1)} '
-        'bearingSource=$bearingSourceLabel '
-        'targetSource=${navPhaseCameraTargetSourceLabel(target.source)} '
-        'tellers=${tellersActive ? 1 : 0} '
-        'anchor=${overrides.anchorFraction.toStringAsFixed(3)}',
+            'level=$_driverCockpitViewLevel '
+            'zoom=${overrides.zoom.toStringAsFixed(2)} '
+            'pitch=${overrides.pitch.toStringAsFixed(1)} '
+            'bearing=${bearingDeg.toStringAsFixed(1)} '
+            'bearingSource=$bearingSourceLabel '
+            'targetSource=${navPhaseCameraTargetSourceLabel(target.source)} '
+            'tellers=${tellersActive ? 1 : 0} '
+            'anchor=${overrides.anchorFraction.toStringAsFixed(3)}',
       );
     } catch (_) {
       // Transient Mapbox flyTo errors are retried by the next preview event.
@@ -18492,10 +18461,13 @@ class _DriverHomePageState extends State<DriverHomePage>
       final snapLon = _pendingTellersSnappedRouteLon;
       if (snapLat != null && snapLon != null) {
         try {
-          final snapScreen =
-              await map.pixelForCoordinate(_mbPoint(snapLon, snapLat));
-          projectedSnap =
-              Offset(snapScreen.x.toDouble(), snapScreen.y.toDouble());
+          final snapScreen = await map.pixelForCoordinate(
+            _mbPoint(snapLon, snapLat),
+          );
+          projectedSnap = Offset(
+            snapScreen.x.toDouble(),
+            snapScreen.y.toDouble(),
+          );
         } catch (_) {
           projectedSnap = null;
         }
@@ -18664,14 +18636,15 @@ class _DriverHomePageState extends State<DriverHomePage>
         gpsFixAgeMs: fixAgeMs,
         gpsAccuracyM: pos.accuracy,
         speedKmh: speedKmh,
-        hasUsableCourse: pos.heading.isFinite && pos.heading >= 0 &&
-            speedKmh >= 6.0,
+        hasUsableCourse:
+            pos.heading.isFinite && pos.heading >= 0 && speedKmh >= 6.0,
         mapMatched: _useMatchedVisual,
         routeEntryProgressing: routeEntry,
         coherentWithPreviousSample: coherent,
       ),
     );
-    if (bootstrapResult.changed || bootstrapResult.phase != _lastNavBootstrapPhase) {
+    if (bootstrapResult.changed ||
+        bootstrapResult.phase != _lastNavBootstrapPhase) {
       _lastNavBootstrapPhase = bootstrapResult.phase;
       _logNavBounded(
         'NAV_STARTUP_BOOTSTRAP',
@@ -18738,8 +18711,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       // After toPickup→passengerLeg, block arrival while still far from B so a
       // leftover "pickup bereikt" completion cannot become "bestemming B".
-      final phaseStaleCompletion = _navPhaseTransitionStaleGuard &&
-          toOriginal > 80.0;
+      final phaseStaleCompletion =
+          _navPhaseTransitionStaleGuard && toOriginal > 80.0;
       final guard = evaluateNavArrivalTruth(
         NavArrivalTruthInput(
           activeTarget: target,
@@ -18808,12 +18781,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
-
   bool _navBootstrapPositionCoherent(geo.Position pos) {
     final lat = _navBootstrapPrevLat;
     final lon = _navBootstrapPrevLon;
     if (lat == null || lon == null) return false;
-    final d = geo.Geolocator.distanceBetween(lat, lon, pos.latitude, pos.longitude);
+    final d = geo.Geolocator.distanceBetween(
+      lat,
+      lon,
+      pos.latitude,
+      pos.longitude,
+    );
     // Reject teleports/large GPS jumps; a coherent sample is spatially close.
     return d.isFinite && d <= 120.0;
   }
@@ -19632,9 +19609,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     required NavRerouteDecisionTickOutput decision,
   }) {
     final now = DateTime.now();
-    final suspected = decision.strongMismatchSuspected ||
+    final suspected =
+        decision.strongMismatchSuspected ||
         (progress?.strongMismatchSuspected ?? false);
-    final confirmed = decision.strongMismatchConfirmed || decision.offRouteLikely;
+    final confirmed =
+        decision.strongMismatchConfirmed || decision.offRouteLikely;
     if (suspected) {
       final firstSuspect = _rerouteSuspectedAt == null;
       _rerouteSuspectedAt ??= now;
@@ -19663,8 +19642,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     final headingDelta = progress?.headingDeltaDeg;
     final accuracyM = pos.accuracy.isFinite ? pos.accuracy : null;
-    final growStreak = progress?.strongMismatchSampleCount ??
-        decision.wrongStreetSampleCount;
+    final growStreak =
+        progress?.strongMismatchSampleCount ?? decision.wrongStreetSampleCount;
     final candidateSig =
         '${decision.offRouteReason}|$suspected|$confirmed|'
         '${decision.samplesOffRoute}|${navRerouteDistanceBucket(snapDistance)}|'
@@ -19862,7 +19841,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     // NAV-REROUTE-P0: confirmed wrong-street / junction-exit must not wait
     // on this opposite-direction thrash gate — request start stays in the
     // same location-processing cycle as shouldTrigger=true.
-    final isOppositeOrBacktrack = reason == 'opposite_direction' ||
+    final isOppositeOrBacktrack =
+        reason == 'opposite_direction' ||
         reason == 'opposite_direction_strong' ||
         reason == 'backward_progress';
     if (isOppositeOrBacktrack) {
@@ -19925,8 +19905,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       // Keep snap/trim/matched visual. Re-seed bearing from the *new* forward
       // segment so a prior streetlevel reset cannot restore diagonal bearing.
       _streetlevelBearingController.reset();
-      final seedBearing =
-          navFirstMeaningfulRouteSegmentBearing(_routeCoords);
+      final seedBearing = navFirstMeaningfulRouteSegmentBearing(_routeCoords);
       if (seedBearing != null) {
         final seeded = _navStationaryBearingGate.seedInitialRouteBearing(
           routeTangentBearingDeg: seedBearing,
@@ -20011,12 +19990,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _logNavBounded(
       'NAV_REROUTE_COORD',
       'event=old_guidance_invalidated reason=$reason '
-          '${_navRerouteCoordinator.latency.toDiagLine(
-            navigationSessionGeneration:
-                _navRerouteCoordinator.navigationSessionGeneration,
-            rerouteGeneration: _navRerouteCoordinator.rerouteGeneration,
-            routeVersion: _routeStepsVersion,
-          )}',
+          '${_navRerouteCoordinator.latency.toDiagLine(navigationSessionGeneration: _navRerouteCoordinator.navigationSessionGeneration, rerouteGeneration: _navRerouteCoordinator.rerouteGeneration, routeVersion: _routeStepsVersion)}',
       intervalMs: 400,
     );
   }
@@ -20253,10 +20227,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             Future<void>.delayed(const Duration(milliseconds: 200), () {
               if (!mounted) return;
               unawaited(
-                _triggerOffRouteReroute(
-                  reason: followUp,
-                  forceFollowUp: true,
-                ),
+                _triggerOffRouteReroute(reason: followUp, forceFollowUp: true),
               );
             }),
           );
@@ -21163,8 +21134,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     // its iconRotate is forced to 0 — the pose bearing rotates the map
     // underneath, never the marker itself. Outside that case the
     // authoritative pose bearing passes through unchanged.
-    marker.iconRotate =
-        _currentDriverMarkerRotationPolicy().iconRotateFor(bearing);
+    marker.iconRotate = _currentDriverMarkerRotationPolicy().iconRotateFor(
+      bearing,
+    );
     // NAV-3D-MAPBOX-2D-MARKER-ISOLATION-FIX-1: rebase opacity from the
     // authoritative resolver every visual update so route_snap paths
     // never re-push a stale 1.0 during active 3D isolation.
@@ -21289,7 +21261,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   /// any Arrow rasterisation failure) → taxi PNG. Distinct byte sources mean
   /// Car and Arrow never share a stale cached icon.
   Future<({Uint8List? bytes, bool isArrow})>
-      _resolveDriverMarkerImageBytesForChoice() async {
+  _resolveDriverMarkerImageBytesForChoice() async {
     if (_driverNavigationMarkerChoice == DriverNavigationMarkerChoice.arrow) {
       final arrow = await _ensureDriverArrowMarkerBytes();
       final arrowAvailable = arrow != null && arrow.isNotEmpty;
@@ -21302,10 +21274,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
     }
     final taxiReady = await _ensureDriverTaxiMarkerBytes();
-    return (
-      bytes: taxiReady ? _driverTaxiMarkerBytes : null,
-      isArrow: false,
-    );
+    return (bytes: taxiReady ? _driverTaxiMarkerBytes : null, isArrow: false);
   }
 
   /// NAV-TELLERS-MARKER-CHOICE-APPLY-1: immediately apply the selected marker
@@ -21431,8 +21400,9 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
         );
         _driverMarkerUsesTaxiAsset = true;
-        _driverMarkerIcon =
-            resolved.isArrow ? 'fluxidi-driver-arrow' : 'fluxidi-driver-taxi';
+        _driverMarkerIcon = resolved.isArrow
+            ? 'fluxidi-driver-arrow'
+            : 'fluxidi-driver-taxi';
         _driverMarkerAppliedChoice = _driverNavigationMarkerChoice;
         debugPrint('[NAV_MARKER] mode=${resolved.isArrow ? 'arrow' : 'taxi'}');
         return marker;
@@ -22092,7 +22062,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     final commit = decideNavCameraCommandCommit(
       candidate: NavCameraCommandToken(
         routeVersion: pose.routeGeneration,
-        ownerMode: navCameraBearingOwnerFromLabel(pose.ownerMode) ??
+        ownerMode:
+            navCameraBearingOwnerFromLabel(pose.ownerMode) ??
             NavCameraBearingOwner.reliableRoute,
         poseGeneration: pose.poseGeneration,
         renderEpoch: pose.renderEpoch,
@@ -22119,8 +22090,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           appliedBearing:
               _streetlevelBearingController.appliedBearing ?? pose.bearingDeg,
           angularDelta: 0,
-          targetAgeMs:
-              DateTime.now().millisecondsSinceEpoch - pose.timestampMs,
+          targetAgeMs: DateTime.now().millisecondsSinceEpoch - pose.timestampMs,
           staleCommandCancelled: commit.staleCommandCancelled,
         ).replaceFirst('[NAV_CAMERA_OWNER] ', ''),
         intervalMs: 1,
@@ -22187,8 +22157,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
     }
     final held = _navStationaryBearingGate.acceptedBearing;
-    final accuracyM =
-        pos != null && pos.accuracy.isFinite ? pos.accuracy : null;
+    final accuracyM = pos != null && pos.accuracy.isFinite
+        ? pos.accuracy
+        : null;
     if (shouldPreservePrestartHeldBearingAcrossRouteReplace(
       liveRideActive: _liveRideActive,
       preparedRouteDraft: _fixedStreetLevelPreviewDraft,
@@ -22200,8 +22171,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       _logNavBounded(
         'NAV_BEARING_SEED',
         'reason=$reason preserved=1 '
-        'held=${held!.toStringAsFixed(1)} '
-        'source=prestart_held_across_route_replace',
+            'held=${held!.toStringAsFixed(1)} '
+            'source=prestart_held_across_route_replace',
         intervalMs: 1000,
       );
       return;
@@ -22219,7 +22190,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _logNavBounded(
       'NAV_BEARING_SEED',
       'reason=$reason bearing=${seeded.toStringAsFixed(1)} '
-      'source=${navBearingSourceLabel(NavBearingSource.initialRouteSegment)}',
+          'source=${navBearingSourceLabel(NavBearingSource.initialRouteSegment)}',
       intervalMs: 1000,
     );
   }
@@ -22227,18 +22198,21 @@ class _DriverHomePageState extends State<DriverHomePage>
   /// NAV-CAMERA-ZERO-OLD-ROUTE-HOLD-P0: resolve + publish owner transitions.
   NavCameraBearingOwner _resolveNavCameraBearingOwnerNow() {
     final progress = _lastNavRouteProgress;
-    final deviationSuspected = _offRouteLikely ||
+    final deviationSuspected =
+        _offRouteLikely ||
         _rerouteSuspectedAt != null ||
         (progress?.strongMismatchSuspected ?? false) ||
         (progress?.routeDeviationLikely ?? false) ||
         (progress?.oppositeDirectionLikely ?? false);
     final reroutePending = _isRerouting && !_rerouteOwnershipAccepted;
-    final newRouteBlendActive = _navCameraNewRouteBlendUntil != null &&
+    final newRouteBlendActive =
+        _navCameraNewRouteBlendUntil != null &&
         DateTime.now().isBefore(_navCameraNewRouteBlendUntil!);
     if (_navCameraNewRouteBlendUntil != null && !newRouteBlendActive) {
       _navCameraNewRouteBlendUntil = null;
     }
-    final routeMatchReliable = !_offRouteLikely &&
+    final routeMatchReliable =
+        !_offRouteLikely &&
         (_useMatchedVisual || (progress?.forwardProgress ?? true)) &&
         !reroutePending;
     return resolveNavCameraBearingOwner(
@@ -22266,7 +22240,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       // commit after ownership advanced.
       _cameraInFlightLifecycle.invalidate(reason: 'camera_owner_$reason');
     }
-    final applied = _streetlevelBearingController.appliedBearing ??
+    final applied =
+        _streetlevelBearingController.appliedBearing ??
         _navStationaryBearingGate.acceptedBearing ??
         0.0;
     final target = _streetlevelBearingController.lastTargetDeg;
@@ -22282,8 +22257,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         appliedBearing: applied,
         angularDelta: navBearingShortestDelta(applied, target),
         targetAgeMs: 0,
-        staleCommandCancelled:
-            _streetlevelFollowPump.staleCommandCancelled > 0,
+        staleCommandCancelled: _streetlevelFollowPump.staleCommandCancelled > 0,
       ).replaceFirst('[NAV_CAMERA_OWNER] ', ''),
       intervalMs: 1,
     );
@@ -22690,386 +22664,445 @@ class _DriverHomePageState extends State<DriverHomePage>
     int elapsedMsFromStart() =>
         DateTime.now().difference(runStartAt).inMilliseconds;
     try {
-    final snap =
-        _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
-    final speedKmh = _speedKmhFor(pos);
+      final snap =
+          _lastRouteSnap ?? _snapToRoute(_LonLat(pos.longitude, pos.latitude));
+      final speedKmh = _speedKmhFor(pos);
 
-    // NAV-R12-E1: pure target decision — deviation prefers the freshest
-    // raw/live position, prediction only when confident and fresh.
-    final progress = _lastNavRouteProgress;
-    final strongMismatchSuspected =
-        (progress?.strongMismatchSuspected ?? false) ||
-        (_lastRerouteDecision?.strongMismatchSuspected ?? false);
-    final targetDecision = NavCameraTargetPolicy.resolve(
-      NavCameraTargetInput(
-        followMode: _cameraMode == _CameraMode.follow,
-        manualRecenter: manualRecenter,
-        routeDeviationLikely: progress?.routeDeviationLikely ?? false,
-        oppositeDirectionLikely: progress?.oppositeDirectionLikely ?? false,
-        backwardProgressLikely: progress?.backwardProgressLikely ?? false,
-        offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
-        strongMismatchSuspected: strongMismatchSuspected,
-        hasReliableSnap: progress?.hasReliableSnap ?? false,
-        predictionActive: _lastNavMotionPrediction?.predictionActive ?? false,
-        predictionAgeMs: _gapSinceLastNavEngineMs(),
-        cameraScore: _lastNavConfidence?.cameraScore ?? 0.0,
-      ),
-    );
-    if (targetDecision.source == NavCameraTargetSource.skipped) {
-      // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: outer finally clears in-flight.
-      _navValidationPendingCameraSkipReason = targetDecision.reason;
-      _logNavR12Camera(
-        animation: 'skipped_manual',
-        targetSource: targetDecision.sourceLabel,
-        skipReason: targetDecision.reason,
-      );
-      _recordNavDiagCameraUpdate(
-        follow: false,
-        skippedReason: targetDecision.reason,
-        zoom: policy.zoom,
-        tilt: policy.tilt,
-      );
-      return;
-    }
-    var visual =
-        _isActiveDriverNavEngineContext() && _lastNavEngineOutput != null
-        ? _resolveNavVisualForLiveNav(
-            pos,
-            snap,
-            allowPrediction:
-                targetDecision.source == NavCameraTargetSource.prediction,
-          )
-        : (
-            point: _displayRoutePointFor(pos),
-            bearing: _adaptiveBearingFor(pos, snap: snap).bearing,
-          );
-    if (targetDecision.forceRawTarget) {
-      // Route is adapting: aim at the live driver position, keep the
-      // already-resolved display bearing (NAV-R12-C output).
-      visual = (
-        point: _LonLat(pos.longitude, pos.latitude),
-        bearing: visual.bearing,
-      );
-    }
-    final viewMode = _navCameraViewMode;
-    final navPresentation = _navigationPresentationStateFor(viewMode);
-    final instantCockpitBearing =
-        force &&
-        (cameraReason == 'cockpit_adjust' || cameraReason == 'style_switch');
-    // Style swaps must snap to the style-specific L7 profile immediately so
-    // 3D ↔ Light/Dark/Satellite never accumulate smoothed leftover zoom/pitch.
-    final styleSwitchDirectAdjust =
-        force && cameraReason == 'style_switch';
-    final prevBearing = _lastSmoothedCameraBearing;
-    late final double rawBearingTarget;
-    late final double heading;
-    late final String bearingSource;
-    if (_cameraMode == _CameraMode.follow &&
-        _liveRideActive &&
-        navPresentation.useDriverCockpitCamera) {
-      // During mismatch / force-raw, planned-route tangent must not own
-      // heading-up — follow actual travel evidence until the new route applies.
-      final bearingOffRoute = (progress?.offRouteLikely ?? _offRouteLikely) ||
-          targetDecision.forceRawTarget ||
-          strongMismatchSuspected;
-      final routeLocked = resolveDriverRouteBearing(
-        DriverRouteBearingInput(
-          routeCoords: _routeCoords,
-          segmentIndex: progress?.segmentIndex,
-          snappedLat: progress?.snappedLatitude,
-          snappedLon: progress?.snappedLongitude,
-          hasReliableSnap: bearingOffRoute
-              ? false
-              : (progress?.hasReliableSnap ?? false),
-          gpsHeadingDeg: pos.heading.isFinite && pos.heading >= 0
-              ? pos.heading
-              : null,
-          previousBearingDeg: prevBearing,
-          routeConfidence: progress?.confidence,
-          offRouteLikely: bearingOffRoute,
-          forwardProgress: progress?.forwardProgress ?? true,
-          speedKmh: speedKmh,
-          maxStepDeg: instantCockpitBearing
-              ? 0.0
-              : driverRouteBearingMaxStep(speedKmh: speedKmh),
+      // NAV-R12-E1: pure target decision — deviation prefers the freshest
+      // raw/live position, prediction only when confident and fresh.
+      final progress = _lastNavRouteProgress;
+      final strongMismatchSuspected =
+          (progress?.strongMismatchSuspected ?? false) ||
+          (_lastRerouteDecision?.strongMismatchSuspected ?? false);
+      final targetDecision = NavCameraTargetPolicy.resolve(
+        NavCameraTargetInput(
+          followMode: _cameraMode == _CameraMode.follow,
+          manualRecenter: manualRecenter,
+          routeDeviationLikely: progress?.routeDeviationLikely ?? false,
+          oppositeDirectionLikely: progress?.oppositeDirectionLikely ?? false,
+          backwardProgressLikely: progress?.backwardProgressLikely ?? false,
+          offRouteLikely: progress?.offRouteLikely ?? _offRouteLikely,
+          strongMismatchSuspected: strongMismatchSuspected,
+          hasReliableSnap: progress?.hasReliableSnap ?? false,
+          predictionActive: _lastNavMotionPrediction?.predictionActive ?? false,
+          predictionAgeMs: _gapSinceLastNavEngineMs(),
+          cameraScore: _lastNavConfidence?.cameraScore ?? 0.0,
         ),
       );
-      final bearingLock = applyDriverCockpitStreetlevelBearingLock(
-        DriverCockpitStreetlevelBearingLockInput(
-          routeBearing: routeLocked,
+      if (targetDecision.source == NavCameraTargetSource.skipped) {
+        // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: outer finally clears in-flight.
+        _navValidationPendingCameraSkipReason = targetDecision.reason;
+        _logNavR12Camera(
+          animation: 'skipped_manual',
+          targetSource: targetDecision.sourceLabel,
+          skipReason: targetDecision.reason,
+        );
+        _recordNavDiagCameraUpdate(
+          follow: false,
+          skippedReason: targetDecision.reason,
+          zoom: policy.zoom,
+          tilt: policy.tilt,
+        );
+        return;
+      }
+      var visual =
+          _isActiveDriverNavEngineContext() && _lastNavEngineOutput != null
+          ? _resolveNavVisualForLiveNav(
+              pos,
+              snap,
+              allowPrediction:
+                  targetDecision.source == NavCameraTargetSource.prediction,
+            )
+          : (
+              point: _displayRoutePointFor(pos),
+              bearing: _adaptiveBearingFor(pos, snap: snap).bearing,
+            );
+      if (targetDecision.forceRawTarget) {
+        // Route is adapting: aim at the live driver position, keep the
+        // already-resolved display bearing (NAV-R12-C output).
+        visual = (
+          point: _LonLat(pos.longitude, pos.latitude),
+          bearing: visual.bearing,
+        );
+      }
+      final viewMode = _navCameraViewMode;
+      final navPresentation = _navigationPresentationStateFor(viewMode);
+      final instantCockpitBearing =
+          force &&
+          (cameraReason == 'cockpit_adjust' || cameraReason == 'style_switch');
+      // Style swaps must snap to the style-specific L7 profile immediately so
+      // 3D ↔ Light/Dark/Satellite never accumulate smoothed leftover zoom/pitch.
+      final styleSwitchDirectAdjust = force && cameraReason == 'style_switch';
+      final prevBearing = _lastSmoothedCameraBearing;
+      late final double rawBearingTarget;
+      late final double heading;
+      late final String bearingSource;
+      if (_cameraMode == _CameraMode.follow &&
+          _liveRideActive &&
+          navPresentation.useDriverCockpitCamera) {
+        // During mismatch / force-raw, planned-route tangent must not own
+        // heading-up — follow actual travel evidence until the new route applies.
+        final bearingOffRoute =
+            (progress?.offRouteLikely ?? _offRouteLikely) ||
+            targetDecision.forceRawTarget ||
+            strongMismatchSuspected;
+        final routeLocked = resolveDriverRouteBearing(
+          DriverRouteBearingInput(
+            routeCoords: _routeCoords,
+            segmentIndex: progress?.segmentIndex,
+            snappedLat: progress?.snappedLatitude,
+            snappedLon: progress?.snappedLongitude,
+            hasReliableSnap: bearingOffRoute
+                ? false
+                : (progress?.hasReliableSnap ?? false),
+            gpsHeadingDeg: pos.heading.isFinite && pos.heading >= 0
+                ? pos.heading
+                : null,
+            previousBearingDeg: prevBearing,
+            routeConfidence: progress?.confidence,
+            offRouteLikely: bearingOffRoute,
+            forwardProgress: progress?.forwardProgress ?? true,
+            speedKmh: speedKmh,
+            maxStepDeg: instantCockpitBearing
+                ? 0.0
+                : driverRouteBearingMaxStep(speedKmh: speedKmh),
+          ),
+        );
+        final bearingLock = applyDriverCockpitStreetlevelBearingLock(
+          DriverCockpitStreetlevelBearingLockInput(
+            routeBearing: routeLocked,
+            viewLevel: _driverCockpitViewLevel,
+            speedKmh: speedKmh,
+            gpsHeadingDeg: pos.heading.isFinite && pos.heading >= 0
+                ? pos.heading
+                : null,
+            gpsAccuracyM: pos.accuracy.isFinite && pos.accuracy > 0
+                ? pos.accuracy
+                : null,
+            previousAppliedBearingDeg: prevBearing,
+            instantApply: instantCockpitBearing,
+          ),
+        );
+        heading = bearingLock.appliedBearing;
+        rawBearingTarget = bearingLock.targetBearing;
+        bearingSource = bearingLock.mode == 'route_tangent'
+            ? 'applied_route_tangent'
+            : bearingLock.mode;
+        _lastSmoothedCameraBearing = heading;
+        _logNavPresBearing(
+          output: routeLocked,
           viewLevel: _driverCockpitViewLevel,
+        );
+        _logNavPresBearingLock(
+          level: _driverCockpitViewLevel,
           speedKmh: speedKmh,
-          gpsHeadingDeg: pos.heading.isFinite && pos.heading >= 0
-              ? pos.heading
-              : null,
-          gpsAccuracyM: pos.accuracy.isFinite && pos.accuracy > 0
-              ? pos.accuracy
-              : null,
-          previousAppliedBearingDeg: prevBearing,
-          instantApply: instantCockpitBearing,
-        ),
-      );
-      heading = bearingLock.appliedBearing;
-      rawBearingTarget = bearingLock.targetBearing;
-      bearingSource = bearingLock.mode == 'route_tangent'
-          ? 'applied_route_tangent'
-          : bearingLock.mode;
-      _lastSmoothedCameraBearing = heading;
-      _logNavPresBearing(
-        output: routeLocked,
-        viewLevel: _driverCockpitViewLevel,
-      );
-      _logNavPresBearingLock(
-        level: _driverCockpitViewLevel,
+          output: bearingLock,
+        );
+      } else {
+        rawBearingTarget = visual.bearing;
+        heading = _smoothFollowCameraBearing(
+          rawBearingTarget,
+          speedKmh,
+          bearingModeWeight: policy.bearingModeWeight,
+          viewMode: viewMode,
+        );
+        bearingSource = _isActiveDriverNavEngineContext()
+            ? _driverNavEngine.lastBearingSource
+            : _adaptiveBearingFor(pos, snap: snap).source;
+      }
+      // START / force-follow: latch the flyTo bearing so the streetlevel pump
+      // cannot overwrite it with pre-seed pose noise while still stationary.
+      if (force) {
+        _navStationaryBearingGate.latchHeldCameraBearing(heading);
+      }
+      var bearingDeltaDeg = 0.0;
+      if (prevBearing != null && prevBearing.isFinite) {
+        var delta = rawBearingTarget - prevBearing;
+        while (delta > 180) delta -= 360;
+        while (delta < -180) delta += 360;
+        bearingDeltaDeg = delta;
+      }
+      _logNavR15CameraBearing(
+        mode: viewMode,
         speedKmh: speedKmh,
-        output: bearingLock,
+        bearingSource: bearingSource,
+        bearingWeight: navPresentation.useDriverCockpitCamera
+            ? 1.0
+            : policy.bearingModeWeight,
+        bearingDeltaDeg: bearingDeltaDeg,
+        routeConfidence: progress?.confidence,
       );
-    } else {
-      rawBearingTarget = visual.bearing;
-      heading = _smoothFollowCameraBearing(
-        rawBearingTarget,
-        speedKmh,
-        bearingModeWeight: policy.bearingModeWeight,
-        viewMode: viewMode,
-      );
-      bearingSource = _isActiveDriverNavEngineContext()
-          ? _driverNavEngine.lastBearingSource
-          : _adaptiveBearingFor(pos, snap: snap).source;
-    }
-    // START / force-follow: latch the flyTo bearing so the streetlevel pump
-    // cannot overwrite it with pre-seed pose noise while still stationary.
-    if (force) {
-      _navStationaryBearingGate.latchHeldCameraBearing(heading);
-    }
-    var bearingDeltaDeg = 0.0;
-    if (prevBearing != null && prevBearing.isFinite) {
-      var delta = rawBearingTarget - prevBearing;
-      while (delta > 180) delta -= 360;
-      while (delta < -180) delta += 360;
-      bearingDeltaDeg = delta;
-    }
-    _logNavR15CameraBearing(
-      mode: viewMode,
-      speedKmh: speedKmh,
-      bearingSource: bearingSource,
-      bearingWeight: navPresentation.useDriverCockpitCamera
-          ? 1.0
-          : policy.bearingModeWeight,
-      bearingDeltaDeg: bearingDeltaDeg,
-      routeConfidence: progress?.confidence,
-    );
-    final p = _mbPoint(visual.point.lon, visual.point.lat);
-    var cameraCenter = p;
-    final resolvedReason = manualRecenter ? 'manual_recenter' : policy.reason;
-    var cameraZoom = policy.zoom;
-    var cameraPitch = policy.tilt;
-    final isLandscape =
-        MediaQuery.of(context).orientation == Orientation.landscape;
-    final safeTop = MediaQuery.of(context).padding.top;
-    final safeBottom = MediaQuery.of(context).padding.bottom;
-    var viewPadding = navCameraViewPadding(
-      mode: viewMode,
-      isLandscape: isLandscape,
-      safeTop: safeTop,
-      safeBottom: safeBottom,
-    );
-    // NAV-PHASE-CAMERA-TARGET-1: prepared route, NAV-to-pickup A and the
-    // active customer ride must all resolve through the same fixed L7 cockpit
-    // profile. The former `_liveRideActive` gate here let the prepared and
-    // toPickup phases fall through to the raw policy zoom (~17.0-17.6 street-
-    // view tuned), which is exactly what the tablet field failure recorded on
-    // manual recenter ([NAV_R1_CAMERA] zoom=17.6 reason=manual_recenter).
-    if (_cameraMode == _CameraMode.follow &&
-        _navFixedHudPresentationActive &&
-        navPresentation.useDriverCockpitCamera) {
-      final isTablet = _hostIsTablet(context);
-      final directAdjust =
-          (force && cameraReason == 'cockpit_adjust') || styleSwitchDirectAdjust;
-      // NAV-PHASE-CAMERA-TARGET-1 (Correction 1): in the prepared-route
-      // phase the camera must stay pinned on the A→B route start across
-      // every subsequent GPS fix. Without this override, later
-      // `_followCameraTesla` calls resolved `visual.point` from the driver
-      // GPS (via `_displayRoutePointFor`) and re-centered the map on the
-      // driver, moving the HUD nose off the route origin. Route the target
-      // through the same phase resolver used by the initial preview apply.
-      final phasePreviewTarget =
-          _navFixedHudPhase == NavFixedHudPhase.preparedRoute
-              ? _resolvePhaseCameraTargetForPreview(pos)
-              : null;
-      final effectiveVehicleLat =
-          phasePreviewTarget?.hasCoordinate == true
-              ? phasePreviewTarget!.lat
-              : visual.point.lat;
-      final effectiveVehicleLon =
-          phasePreviewTarget?.hasCoordinate == true
-              ? phasePreviewTarget!.lon
-              : visual.point.lon;
-      final mqSize = MediaQuery.sizeOf(context);
-      final cockpit = _driverCockpitCameraOverrides(
-        policyZoom: cameraZoom,
-        policyPitch: cameraPitch,
-        isTablet: isTablet,
+      final p = _mbPoint(visual.point.lon, visual.point.lat);
+      var cameraCenter = p;
+      final resolvedReason = manualRecenter ? 'manual_recenter' : policy.reason;
+      var cameraZoom = policy.zoom;
+      var cameraPitch = policy.tilt;
+      final isLandscape =
+          MediaQuery.of(context).orientation == Orientation.landscape;
+      final safeTop = MediaQuery.of(context).padding.top;
+      final safeBottom = MediaQuery.of(context).padding.bottom;
+      var viewPadding = navCameraViewPadding(
+        mode: viewMode,
         isLandscape: isLandscape,
         safeTop: safeTop,
         safeBottom: safeBottom,
-        screenWidth: mqSize.width,
-        screenHeight: mqSize.height,
-        vehicleLat: effectiveVehicleLat,
-        vehicleLon: effectiveVehicleLon,
-        bearingDeg: heading,
-        speedKmh: speedKmh,
-        progress: progress,
-        directAdjust: directAdjust,
-        forceVehicleCenter: targetDecision.forceRawTarget ||
-            strongMismatchSuspected ||
-            // Prepared preview keeps phase target; never force-raw there.
-            (_navFixedHudPhase != NavFixedHudPhase.preparedRoute &&
-                (progress?.routeDeviationLikely ?? false)),
       );
-      cameraZoom = cockpit.zoom;
-      cameraPitch = cockpit.pitch;
-      viewPadding = cockpit.padding;
-      if (cockpit.centerLat != null && cockpit.centerLon != null) {
-        cameraCenter = _mbPoint(cockpit.centerLon!, cockpit.centerLat!);
-      } else if (phasePreviewTarget?.hasCoordinate == true) {
-        cameraCenter =
-            _mbPoint(phasePreviewTarget!.lon, phasePreviewTarget.lat);
-      }
-      _commitDriverCockpitAppliedCamera(zoom: cameraZoom, pitch: cameraPitch);
-      if (_isDriver3dVehicleModelEffectivelyActive()) {
-        _requestDriverVehicleModelMovementSync(
-          lon: visual.point.lon,
-          lat: visual.point.lat,
+      // NAV-PHASE-CAMERA-TARGET-1: prepared route, NAV-to-pickup A and the
+      // active customer ride must all resolve through the same fixed L7 cockpit
+      // profile. The former `_liveRideActive` gate here let the prepared and
+      // toPickup phases fall through to the raw policy zoom (~17.0-17.6 street-
+      // view tuned), which is exactly what the tablet field failure recorded on
+      // manual recenter ([NAV_R1_CAMERA] zoom=17.6 reason=manual_recenter).
+      if (_cameraMode == _CameraMode.follow &&
+          _navFixedHudPresentationActive &&
+          navPresentation.useDriverCockpitCamera) {
+        final isTablet = _hostIsTablet(context);
+        final directAdjust =
+            (force && cameraReason == 'cockpit_adjust') ||
+            styleSwitchDirectAdjust;
+        // NAV-PHASE-CAMERA-TARGET-1 (Correction 1): in the prepared-route
+        // phase the camera must stay pinned on the A→B route start across
+        // every subsequent GPS fix. Without this override, later
+        // `_followCameraTesla` calls resolved `visual.point` from the driver
+        // GPS (via `_displayRoutePointFor`) and re-centered the map on the
+        // driver, moving the HUD nose off the route origin. Route the target
+        // through the same phase resolver used by the initial preview apply.
+        final phasePreviewTarget =
+            _navFixedHudPhase == NavFixedHudPhase.preparedRoute
+            ? _resolvePhaseCameraTargetForPreview(pos)
+            : null;
+        final effectiveVehicleLat = phasePreviewTarget?.hasCoordinate == true
+            ? phasePreviewTarget!.lat
+            : visual.point.lat;
+        final effectiveVehicleLon = phasePreviewTarget?.hasCoordinate == true
+            ? phasePreviewTarget!.lon
+            : visual.point.lon;
+        final mqSize = MediaQuery.sizeOf(context);
+        final cockpit = _driverCockpitCameraOverrides(
+          policyZoom: cameraZoom,
+          policyPitch: cameraPitch,
+          isTablet: isTablet,
+          isLandscape: isLandscape,
+          safeTop: safeTop,
+          safeBottom: safeBottom,
+          screenWidth: mqSize.width,
+          screenHeight: mqSize.height,
+          vehicleLat: effectiveVehicleLat,
+          vehicleLon: effectiveVehicleLon,
           bearingDeg: heading,
-          source: 'camera_scale_$cameraReason',
+          speedKmh: speedKmh,
+          progress: progress,
+          directAdjust: directAdjust,
+          forceVehicleCenter:
+              targetDecision.forceRawTarget ||
+              strongMismatchSuspected ||
+              // Prepared preview keeps phase target; never force-raw there.
+              (_navFixedHudPhase != NavFixedHudPhase.preparedRoute &&
+                  (progress?.routeDeviationLikely ?? false)),
         );
-      }
-      _logNavPresCameraAnchorDeferred();
-      _logNavPresCamera(
-        zoom: cameraZoom,
-        pitch: cameraPitch,
-        bearing: heading,
-        anchorFraction: cockpit.anchorFraction,
-        centerMode: cockpit.centerMode,
-        reason: cockpit.reason,
-      );
-      _logNavPresRouteAlign(
-        vehicleLat: visual.point.lat,
-        vehicleLon: visual.point.lon,
-        progress: progress,
-        leadInM: driverCockpitRouteVisualLeadInMeters(_driverCockpitViewLevel),
-        hudSize: driverCockpitFixedHudIconSize(isTablet: isTablet),
-        anchor: cockpit.anchorFraction,
-      );
-      if (instantCockpitBearing) {
-        _logNavPresCameraLevel(
-          level: _driverCockpitViewLevel,
+        cameraZoom = cockpit.zoom;
+        cameraPitch = cockpit.pitch;
+        viewPadding = cockpit.padding;
+        if (cockpit.centerLat != null && cockpit.centerLon != null) {
+          cameraCenter = _mbPoint(cockpit.centerLon!, cockpit.centerLat!);
+        } else if (phasePreviewTarget?.hasCoordinate == true) {
+          cameraCenter = _mbPoint(
+            phasePreviewTarget!.lon,
+            phasePreviewTarget.lat,
+          );
+        }
+        _commitDriverCockpitAppliedCamera(zoom: cameraZoom, pitch: cameraPitch);
+        if (_isDriver3dVehicleModelEffectivelyActive()) {
+          _requestDriverVehicleModelMovementSync(
+            lon: visual.point.lon,
+            lat: visual.point.lat,
+            bearingDeg: heading,
+            source: 'camera_scale_$cameraReason',
+          );
+        }
+        _logNavPresCameraAnchorDeferred();
+        _logNavPresCamera(
           zoom: cameraZoom,
           pitch: cameraPitch,
-          bearingSource: bearingSource,
-          result: 'applied',
+          bearing: heading,
+          anchorFraction: cockpit.anchorFraction,
+          centerMode: cockpit.centerMode,
+          reason: cockpit.reason,
         );
-      }
-    }
-    // NAV-TELLERS-COMPOSITION-CORRECTION-1: while Tellers is presented, bias the
-    // follow camera into the dedicated live-navigation window (right column in
-    // landscape, centre band in portrait) via padding only. View level, zoom,
-    // pitch and normal (non-Tellers) follow behaviour are unchanged.
-    if (_navPresentationMode.isTellers) {
-      // NAV-TELLERS-EXACT-LIVE-VIEWPORT-1 / FLUXIDI-TELLERS-LIVE-MAP-FORWARD-
-      // VISIBILITY: chrome + camera must share ONE host-tablet liveWindowRect
-      // resolve (nose ≈ 72% of the aperture). Do not classify tablet from the
-      // multi-window pane — overlay build() already uses `_hostIsTablet`.
-      final tellersGeometry = _resolveTellersLayoutGeometryForCurrentViewport(
-        isLandscape: isLandscape,
-      );
-      viewPadding = tellersGeometry.cameraPadding;
-      if (_navViewportEpoch == navViewportEpochAtStart) {
-        _logNavBounded(
-          'NAV_TELLERS_LIVE_ANCHOR',
-          formatNavTellersLiveWindowGeometryDiagnostic(
-            reason: cameraReason,
-            viewportEpoch: _navViewportEpoch,
-            viewportGeneration: _tellersViewport.generation,
-            tellersActive: true,
-            anchor: resolveTellersLiveWindowVehicleAnchor(
-              liveWindowRect: tellersGeometry.liveWindowRect,
-              viewportSize: tellersGeometry.viewportSize,
-              isTablet: tellersGeometry.isTablet,
-              vehicleIconSize: tellersGeometry.vehicleIconSize,
-            ),
-            // Retained MapWidget is created once in initState (generation=1).
-            mapWidgetGeneration: 1,
+        _logNavPresRouteAlign(
+          vehicleLat: visual.point.lat,
+          vehicleLon: visual.point.lon,
+          progress: progress,
+          leadInM: driverCockpitRouteVisualLeadInMeters(
+            _driverCockpitViewLevel,
           ),
-          intervalMs: 750,
+          hudSize: driverCockpitFixedHudIconSize(isTablet: isTablet),
+          anchor: cockpit.anchorFraction,
         );
-      }
-      // NAV-TELLERS-ROUTE-CENTERLINE-LOCK-1: resolve the single authoritative
-      // Tellers pose. When the snap engine + confidence engine agree on a
-      // trustworthy, on-route snap, the camera + pose-lock target follow the
-      // same snapped point that owns the visible remaining-route START. Under
-      // any deviation / off-route / no-snap signal, retain the existing visual
-      // (prediction / interpolation / raw) pose so recovery UX is unchanged.
-      final tellersProgress = _lastNavRouteProgress;
-      final tellersConfidence = _lastNavConfidence;
-      final tellersInput = TellersAuthoritativePoseInput(
-        visualLat: visual.point.lat,
-        visualLon: visual.point.lon,
-        snappedLat: tellersProgress?.snappedLatitude,
-        snappedLon: tellersProgress?.snappedLongitude,
-        hasReliableMatchedSnap: _routeProgressMatchedVisual(tellersProgress),
-        trustRouteSnap: tellersConfidence?.trustRouteSnap ?? true,
-        offRouteLikely:
-            tellersProgress?.offRouteLikely ?? _offRouteLikely,
-      );
-      final tellersPose = resolveTellersAuthoritativePose(tellersInput);
-      final tellersCenterPoint =
-          _mbPoint(tellersPose.lon, tellersPose.lat);
-      // Center on the SAME authoritative pose the visible route trim owns
-      // (matched snap when reliable; visual otherwise) so the padded focal
-      // point places that pose directly beneath the Car/Arrow marker AND
-      // over the polyline centreline.
-      cameraCenter = tellersCenterPoint;
-      // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: only publish pending Tellers
-      // anchor state when the viewport epoch is still current. A stale pass
-      // must never resurrect a previous-epoch anchor over the newly settled
-      // viewport.
-      if (_navViewportEpoch == navViewportEpochAtStart) {
-        _pendingTellersAnchorGeometry = tellersGeometry;
-        _pendingTellersAnchorPoseLat = tellersPose.lat;
-        _pendingTellersAnchorPoseLon = tellersPose.lon;
-        _pendingTellersPoseSource = tellersPose.source;
-        if (tellersInput.hasReliableMatchedSnap &&
-            tellersInput.trustRouteSnap &&
-            !tellersInput.offRouteLikely &&
-            tellersProgress?.snappedLatitude != null &&
-            tellersProgress?.snappedLongitude != null) {
-          _pendingTellersSnappedRouteLat = tellersProgress!.snappedLatitude;
-          _pendingTellersSnappedRouteLon = tellersProgress.snappedLongitude;
-        } else {
-          _pendingTellersSnappedRouteLat = null;
-          _pendingTellersSnappedRouteLon = null;
+        if (instantCockpitBearing) {
+          _logNavPresCameraLevel(
+            level: _driverCockpitViewLevel,
+            zoom: cameraZoom,
+            pitch: cameraPitch,
+            bearingSource: bearingSource,
+            result: 'applied',
+          );
         }
       }
-    } else {
-      _pendingTellersAnchorGeometry = null;
-      _pendingTellersSnappedRouteLat = null;
-      _pendingTellersSnappedRouteLon = null;
-      _pendingTellersPoseSource = null;
-    }
-    _lastMapCameraZoom = cameraZoom;
-    unawaited(_syncDriverMarkerIconSizeForZoom());
-    // NAV-STREETLEVEL-REALTIME-FOLLOW-PIPELINE-1: refresh the pump's cached
-    // zoom/pitch/padding from this full per-fix computation. For passive
-    // follow, hand camera writes to the pump and skip the heavy flyTo here so
-    // there is a single continuous camera driver. Forced/manual camera moves
-    // still apply immediately below.
-    if (streetlevelPump) {
-      // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: reject the pump-cache write
-      // when the viewport epoch has advanced since we entered this pass.
-      // Reseeding padding from a stale pass would immediately restart the
-      // pump with previous-orientation padding — precisely the "old
-      // landscape padding into portrait" failure mode this commit removes.
+      // NAV-TELLERS-COMPOSITION-CORRECTION-1: while Tellers is presented, bias the
+      // follow camera into the dedicated live-navigation window (right column in
+      // landscape, centre band in portrait) via padding only. View level, zoom,
+      // pitch and normal (non-Tellers) follow behaviour are unchanged.
+      if (_navPresentationMode.isTellers) {
+        // NAV-TELLERS-EXACT-LIVE-VIEWPORT-1 / FLUXIDI-TELLERS-LIVE-MAP-FORWARD-
+        // VISIBILITY: chrome + camera must share ONE host-tablet liveWindowRect
+        // resolve (nose ≈ 72% of the aperture). Do not classify tablet from the
+        // multi-window pane — overlay build() already uses `_hostIsTablet`.
+        final tellersGeometry = _resolveTellersLayoutGeometryForCurrentViewport(
+          isLandscape: isLandscape,
+        );
+        viewPadding = tellersGeometry.cameraPadding;
+        if (_navViewportEpoch == navViewportEpochAtStart) {
+          _logNavBounded(
+            'NAV_TELLERS_LIVE_ANCHOR',
+            formatNavTellersLiveWindowGeometryDiagnostic(
+              reason: cameraReason,
+              viewportEpoch: _navViewportEpoch,
+              viewportGeneration: _tellersViewport.generation,
+              tellersActive: true,
+              anchor: resolveTellersLiveWindowVehicleAnchor(
+                liveWindowRect: tellersGeometry.liveWindowRect,
+                viewportSize: tellersGeometry.viewportSize,
+                isTablet: tellersGeometry.isTablet,
+                vehicleIconSize: tellersGeometry.vehicleIconSize,
+              ),
+              // Retained MapWidget is created once in initState (generation=1).
+              mapWidgetGeneration: 1,
+            ),
+            intervalMs: 750,
+          );
+        }
+        // NAV-TELLERS-ROUTE-CENTERLINE-LOCK-1: resolve the single authoritative
+        // Tellers pose. When the snap engine + confidence engine agree on a
+        // trustworthy, on-route snap, the camera + pose-lock target follow the
+        // same snapped point that owns the visible remaining-route START. Under
+        // any deviation / off-route / no-snap signal, retain the existing visual
+        // (prediction / interpolation / raw) pose so recovery UX is unchanged.
+        final tellersProgress = _lastNavRouteProgress;
+        final tellersConfidence = _lastNavConfidence;
+        final tellersInput = TellersAuthoritativePoseInput(
+          visualLat: visual.point.lat,
+          visualLon: visual.point.lon,
+          snappedLat: tellersProgress?.snappedLatitude,
+          snappedLon: tellersProgress?.snappedLongitude,
+          hasReliableMatchedSnap: _routeProgressMatchedVisual(tellersProgress),
+          trustRouteSnap: tellersConfidence?.trustRouteSnap ?? true,
+          offRouteLikely: tellersProgress?.offRouteLikely ?? _offRouteLikely,
+        );
+        final tellersPose = resolveTellersAuthoritativePose(tellersInput);
+        final tellersCenterPoint = _mbPoint(tellersPose.lon, tellersPose.lat);
+        // Center on the SAME authoritative pose the visible route trim owns
+        // (matched snap when reliable; visual otherwise) so the padded focal
+        // point places that pose directly beneath the Car/Arrow marker AND
+        // over the polyline centreline.
+        cameraCenter = tellersCenterPoint;
+        // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: only publish pending Tellers
+        // anchor state when the viewport epoch is still current. A stale pass
+        // must never resurrect a previous-epoch anchor over the newly settled
+        // viewport.
+        if (_navViewportEpoch == navViewportEpochAtStart) {
+          _pendingTellersAnchorGeometry = tellersGeometry;
+          _pendingTellersAnchorPoseLat = tellersPose.lat;
+          _pendingTellersAnchorPoseLon = tellersPose.lon;
+          _pendingTellersPoseSource = tellersPose.source;
+          if (tellersInput.hasReliableMatchedSnap &&
+              tellersInput.trustRouteSnap &&
+              !tellersInput.offRouteLikely &&
+              tellersProgress?.snappedLatitude != null &&
+              tellersProgress?.snappedLongitude != null) {
+            _pendingTellersSnappedRouteLat = tellersProgress!.snappedLatitude;
+            _pendingTellersSnappedRouteLon = tellersProgress.snappedLongitude;
+          } else {
+            _pendingTellersSnappedRouteLat = null;
+            _pendingTellersSnappedRouteLon = null;
+          }
+        }
+      } else {
+        _pendingTellersAnchorGeometry = null;
+        _pendingTellersSnappedRouteLat = null;
+        _pendingTellersSnappedRouteLon = null;
+        _pendingTellersPoseSource = null;
+      }
+      _lastMapCameraZoom = cameraZoom;
+      unawaited(_syncDriverMarkerIconSizeForZoom());
+      // NAV-STREETLEVEL-REALTIME-FOLLOW-PIPELINE-1: refresh the pump's cached
+      // zoom/pitch/padding from this full per-fix computation. For passive
+      // follow, hand camera writes to the pump and skip the heavy flyTo here so
+      // there is a single continuous camera driver. Forced/manual camera moves
+      // still apply immediately below.
+      if (streetlevelPump) {
+        // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: reject the pump-cache write
+        // when the viewport epoch has advanced since we entered this pass.
+        // Reseeding padding from a stale pass would immediately restart the
+        // pump with previous-orientation padding — precisely the "old
+        // landscape padding into portrait" failure mode this commit removes.
+        if (_navViewportEpoch != navViewportEpochAtStart) {
+          _navValidationPendingCameraSkipReason = 'viewport_epoch_stale';
+          _recordNavDiagCameraUpdate(
+            follow: false,
+            skippedReason: 'viewport_epoch_stale',
+          );
+          return;
+        }
+        _streetlevelFollowZoom = cameraZoom;
+        _streetlevelFollowPitch = cameraPitch;
+        _streetlevelFollowPadding = mb.MbxEdgeInsets(
+          top: viewPadding.top,
+          left: viewPadding.left,
+          bottom: viewPadding.bottom,
+          right: viewPadding.right,
+        );
+        _ensureStreetlevelFollowPumpRunning();
+        if (!force) {
+          // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: outer finally clears in-flight.
+          _navValidationPendingCameraFollowed = true;
+          _navValidationPendingCameraSkipReason = null;
+          _recordNavDiagCameraUpdate(
+            follow: true,
+            zoom: cameraZoom,
+            tilt: cameraPitch,
+            bearing: _streetlevelBearingController.appliedBearing ?? heading,
+          );
+          return;
+        }
+      }
+      _logNavBounded(
+        'NAV_R1_CAMERA',
+        'zoom=${cameraZoom.toStringAsFixed(1)} reason=$resolvedReason',
+        intervalMs: 2500,
+      );
+      final isTablet = _hostIsTablet(context);
+      final animMs = cameraReason == 'cockpit_adjust'
+          ? resolveDriverCockpitViewZoomAnimationMs(
+              isTablet: isTablet,
+              manualViewAdjust: true,
+            )
+          : (force ? 220 : _followCameraAnimMsFor(pos));
+      flyToAnimMs = animMs;
+      final fixAgeSec = _gpsFixAgeSec(pos);
+      _logNavR12Camera(
+        animation: 'started',
+        targetSource: targetDecision.sourceLabel,
+        targetAgeMs: fixAgeSec != null ? (fixAgeSec * 1000).round() : null,
+      );
+
+      // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: drop the flyTo when the
+      // viewport epoch has advanced since this pass began — the padding and
+      // center were computed against the previous-epoch viewport and applying
+      // them now would flash the wrong aperture into the new orientation
+      // until the subsequent pass corrects. The scheduled post-layout reseed
+      // (owner: 'viewport_reseed') supplies a fresh forced flyTo once the new
+      // viewport has settled.
       if (_navViewportEpoch != navViewportEpochAtStart) {
         _navValidationPendingCameraSkipReason = 'viewport_epoch_stale';
         _recordNavDiagCameraUpdate(
@@ -23078,134 +23111,77 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
         return;
       }
-      _streetlevelFollowZoom = cameraZoom;
-      _streetlevelFollowPitch = cameraPitch;
-      _streetlevelFollowPadding = mb.MbxEdgeInsets(
-        top: viewPadding.top,
-        left: viewPadding.left,
-        bottom: viewPadding.bottom,
-        right: viewPadding.right,
+      // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: bounded timeout around Mapbox flyTo.
+      // A never-completing Mapbox Future used to leave `_followCameraInFlight`
+      // stuck true for ~38 s in the field test. The outer try/finally guarantees
+      // clear on every outcome; the .timeout() guarantees the await returns.
+      final flyToFuture = _map?.flyTo(
+        mb.CameraOptions(
+          center: cameraCenter,
+          zoom: cameraZoom,
+          bearing: heading,
+          pitch: cameraPitch,
+          padding: mb.MbxEdgeInsets(
+            top: viewPadding.top,
+            left: viewPadding.left,
+            bottom: viewPadding.bottom,
+            right: viewPadding.right,
+          ),
+        ),
+        mb.MapAnimationOptions(duration: animMs),
       );
-      _ensureStreetlevelFollowPumpRunning();
-      if (!force) {
-        // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: outer finally clears in-flight.
+      if (flyToFuture == null) {
+        _logNavCameraInFlight(
+          phase: NavCameraInFlightPhase.complete,
+          generation: runGen,
+          animMs: animMs,
+          ageMs: elapsedMsFromStart(),
+          reason: 'no_map',
+          commandKind: commandKind.label,
+          event: NavCameraInFlightEvent.commandCompleted.label,
+        );
+        return;
+      }
+      try {
+        await flyToFuture.timeout(computeNavCameraInFlightTimeout(animMs));
+        _logNavCameraInFlight(
+          phase: NavCameraInFlightPhase.complete,
+          generation: runGen,
+          animMs: animMs,
+          ageMs: elapsedMsFromStart(),
+          commandKind: commandKind.label,
+          event: NavCameraInFlightEvent.commandCompleted.label,
+        );
         _navValidationPendingCameraFollowed = true;
         _navValidationPendingCameraSkipReason = null;
         _recordNavDiagCameraUpdate(
           follow: true,
           zoom: cameraZoom,
           tilt: cameraPitch,
-          bearing: _streetlevelBearingController.appliedBearing ?? heading,
+          bearing: heading,
         );
-        return;
+        unawaited(_logNavTellersAnchorSettledIfActive());
+      } on TimeoutException {
+        _logNavCameraInFlight(
+          phase: NavCameraInFlightPhase.timeout,
+          generation: runGen,
+          animMs: animMs,
+          ageMs: elapsedMsFromStart(),
+          reason: 'flyTo_no_completion',
+          commandKind: commandKind.label,
+          event: NavCameraInFlightEvent.commandTimedOut.label,
+        );
+      } catch (_) {
+        _logNavCameraInFlight(
+          phase: NavCameraInFlightPhase.error,
+          generation: runGen,
+          animMs: animMs,
+          ageMs: elapsedMsFromStart(),
+          reason: 'async_throw',
+          commandKind: commandKind.label,
+          event: NavCameraInFlightEvent.commandFailed.label,
+        );
       }
-    }
-    _logNavBounded(
-      'NAV_R1_CAMERA',
-      'zoom=${cameraZoom.toStringAsFixed(1)} reason=$resolvedReason',
-      intervalMs: 2500,
-    );
-    final isTablet = _hostIsTablet(context);
-    final animMs = cameraReason == 'cockpit_adjust'
-        ? resolveDriverCockpitViewZoomAnimationMs(
-            isTablet: isTablet,
-            manualViewAdjust: true,
-          )
-        : (force ? 220 : _followCameraAnimMsFor(pos));
-    flyToAnimMs = animMs;
-    final fixAgeSec = _gpsFixAgeSec(pos);
-    _logNavR12Camera(
-      animation: 'started',
-      targetSource: targetDecision.sourceLabel,
-      targetAgeMs: fixAgeSec != null ? (fixAgeSec * 1000).round() : null,
-    );
-
-    // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: drop the flyTo when the
-    // viewport epoch has advanced since this pass began — the padding and
-    // center were computed against the previous-epoch viewport and applying
-    // them now would flash the wrong aperture into the new orientation
-    // until the subsequent pass corrects. The scheduled post-layout reseed
-    // (owner: 'viewport_reseed') supplies a fresh forced flyTo once the new
-    // viewport has settled.
-    if (_navViewportEpoch != navViewportEpochAtStart) {
-      _navValidationPendingCameraSkipReason = 'viewport_epoch_stale';
-      _recordNavDiagCameraUpdate(
-        follow: false,
-        skippedReason: 'viewport_epoch_stale',
-      );
-      return;
-    }
-    // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: bounded timeout around Mapbox flyTo.
-    // A never-completing Mapbox Future used to leave `_followCameraInFlight`
-    // stuck true for ~38 s in the field test. The outer try/finally guarantees
-    // clear on every outcome; the .timeout() guarantees the await returns.
-    final flyToFuture = _map?.flyTo(
-      mb.CameraOptions(
-        center: cameraCenter,
-        zoom: cameraZoom,
-        bearing: heading,
-        pitch: cameraPitch,
-        padding: mb.MbxEdgeInsets(
-          top: viewPadding.top,
-          left: viewPadding.left,
-          bottom: viewPadding.bottom,
-          right: viewPadding.right,
-        ),
-      ),
-      mb.MapAnimationOptions(duration: animMs),
-    );
-    if (flyToFuture == null) {
-      _logNavCameraInFlight(
-        phase: NavCameraInFlightPhase.complete,
-        generation: runGen,
-        animMs: animMs,
-        ageMs: elapsedMsFromStart(),
-        reason: 'no_map',
-        commandKind: commandKind.label,
-        event: NavCameraInFlightEvent.commandCompleted.label,
-      );
-      return;
-    }
-    try {
-      await flyToFuture.timeout(computeNavCameraInFlightTimeout(animMs));
-      _logNavCameraInFlight(
-        phase: NavCameraInFlightPhase.complete,
-        generation: runGen,
-        animMs: animMs,
-        ageMs: elapsedMsFromStart(),
-        commandKind: commandKind.label,
-        event: NavCameraInFlightEvent.commandCompleted.label,
-      );
-      _navValidationPendingCameraFollowed = true;
-      _navValidationPendingCameraSkipReason = null;
-      _recordNavDiagCameraUpdate(
-        follow: true,
-        zoom: cameraZoom,
-        tilt: cameraPitch,
-        bearing: heading,
-      );
-      unawaited(_logNavTellersAnchorSettledIfActive());
-    } on TimeoutException {
-      _logNavCameraInFlight(
-        phase: NavCameraInFlightPhase.timeout,
-        generation: runGen,
-        animMs: animMs,
-        ageMs: elapsedMsFromStart(),
-        reason: 'flyTo_no_completion',
-        commandKind: commandKind.label,
-        event: NavCameraInFlightEvent.commandTimedOut.label,
-      );
-    } catch (_) {
-      _logNavCameraInFlight(
-        phase: NavCameraInFlightPhase.error,
-        generation: runGen,
-        animMs: animMs,
-        ageMs: elapsedMsFromStart(),
-        reason: 'async_throw',
-        commandKind: commandKind.label,
-        event: NavCameraInFlightEvent.commandFailed.label,
-      );
-    }
     } catch (_) {
       // NAV-CAMERA-INFLIGHT-SELF-HEAL-1: synchronous throw somewhere in the
       // ~275 lines of prep between begin() and flyTo. The outer finally will
@@ -23469,8 +23445,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         'NAV_E2',
         'source=${snapshot.source.name} highway=${snapshot.isHighwayLike} lanes=${snapshot.lanes.length}',
       );
-      final maneuverIndex =
-          activeBanner?.maneuverStepIndex ?? _nextStepIndex;
+      final maneuverIndex = activeBanner?.maneuverStepIndex ?? _nextStepIndex;
       if (maneuverIndex >= 0 && maneuverIndex < _routeSteps.length) {
         final step = _routeSteps[maneuverIndex];
         final rawPrimary = snapshot.primaryText.trim();
@@ -23602,10 +23577,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       // RELEASE-P0: when apply already trimmed + synced the ahead line, do not
       // redraw the full polyline (avoids briefly-correct-then-wrong).
       if (!_routeLineProgressTrimmed) {
-        await _drawRouteLine(
-          _routeCoords,
-          routeRenderEpoch: renderEpoch,
-        );
+        await _drawRouteLine(_routeCoords, routeRenderEpoch: renderEpoch);
       }
       unawaited(
         _syncNavigationDestinationMarker(
@@ -23707,10 +23679,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       await _drawPins(fromLL, toLL, routeRenderEpoch: renderEpoch);
       if (!_routeLineProgressTrimmed) {
-        await _drawRouteLine(
-          _routeCoords,
-          routeRenderEpoch: renderEpoch,
-        );
+        await _drawRouteLine(_routeCoords, routeRenderEpoch: renderEpoch);
       }
       unawaited(
         _syncNavigationDestinationMarker(
@@ -23814,8 +23783,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       _logNavBounded(
         'NAV_PRESTART_PREVIEW',
         'event=route_ready points=${_routeCoords.length} '
-        'km=${(_routeKm ?? 0).toStringAsFixed(2)} '
-        'durationSec=${_routeDurationSec ?? -1}',
+            'km=${(_routeKm ?? 0).toStringAsFixed(2)} '
+            'durationSec=${_routeDurationSec ?? -1}',
       );
       return true;
     } catch (e) {
@@ -23882,10 +23851,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       await _drawPins(fromLL, toLL, routeRenderEpoch: renderEpoch);
       if (!_routeLineProgressTrimmed) {
-        await _drawRouteLine(
-          _routeCoords,
-          routeRenderEpoch: renderEpoch,
-        );
+        await _drawRouteLine(_routeCoords, routeRenderEpoch: renderEpoch);
       }
       unawaited(
         _syncNavigationDestinationMarker(
@@ -24336,8 +24302,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         _cameraMode == _CameraMode.follow ||
         _routePhase == _RideRoutePhase.toPickup ||
         _routePhase == _RideRoutePhase.trip;
-    final hasUsable =
-        _hasValidActiveRoute || _routeCoords.length >= 2;
+    final hasUsable = _hasValidActiveRoute || _routeCoords.length >= 2;
     final decision = resolveExternalNavAutoPrompt(
       NavExternalFallbackPromptInput(
         navigationSuccessfullyStarted:
@@ -24346,8 +24311,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         failureIsTerminal: failureIsTerminal,
         fluxidiCanProvideNavigation: hasUsable || activeNav,
         driverInActiveNavigation: activeNav,
-        alreadyShownOrDismissedThisAttempt:
-            _externalNavFallbackLatch.isLatched,
+        alreadyShownOrDismissedThisAttempt: _externalNavFallbackLatch.isLatched,
         transientNavigationSignal: transientNavigationSignal,
       ),
     );
@@ -24375,9 +24339,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  void _resetExternalNavFallbackLatchForNewAttempt({
-    required String reason,
-  }) {
+  void _resetExternalNavFallbackLatchForNewAttempt({required String reason}) {
     _externalNavFallbackLatch.beginNewNavigationAttempt();
     _logNavBounded(
       'NAV_EXTERNAL_FALLBACK',
@@ -24432,9 +24394,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _openInGoogleMaps() async {
     // GOOGLE-MAPS-DIRECT-LAUNCH-ANDROID-1: never open the HTTPS browser URL.
-    await _launchGoogleMapsWithFluxidiPip(
-      phase: _resolveExternalNavPhase(),
-    );
+    await _launchGoogleMapsWithFluxidiPip(phase: _resolveExternalNavPhase());
   }
 
   bool get _externalNavGuidanceSuppressed =>
@@ -24500,13 +24460,16 @@ class _DriverHomePageState extends State<DriverHomePage>
           snap.bookingId == booking.bookingId) {
         final snapHash = snap.targetCoordinateHash;
         final canonHash = ep.coordinateHash;
-        final phaseOk = (toPickup &&
+        final phaseOk =
+            (toPickup &&
                 snap.navigationPhase == ActiveNavigationPhase.toPickup) ||
             (!toPickup &&
                 (snap.navigationPhase == ActiveNavigationPhase.passengerLeg ||
                     snap.navigationPhase == ActiveNavigationPhase.returnLeg));
         if (phaseOk &&
-            (canonHash == 'none' || snapHash == canonHash || !ep.hasCoordinates)) {
+            (canonHash == 'none' ||
+                snapHash == canonHash ||
+                !ep.hasCoordinates)) {
           return ExternalNavigationDestinationPoint(
             latitude: snap.targetLat,
             longitude: snap.targetLng,
@@ -24526,7 +24489,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     // NAVIGATION-SINGLE-ACTIVE-TARGET-TRUTH-P0-5 fallback.
     final snap = _activeNavTargetOwner.current;
     if (snap != null && snap.isValid) {
-      final snapPhaseMatches = (phase == ExternalNavPhase.toPickup &&
+      final snapPhaseMatches =
+          (phase == ExternalNavPhase.toPickup &&
               snap.navigationPhase == ActiveNavigationPhase.toPickup) ||
           (phase == ExternalNavPhase.activeRide &&
               (snap.navigationPhase == ActiveNavigationPhase.passengerLeg ||
@@ -24539,8 +24503,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
       }
     }
-    final endpoints =
-        booking == null ? null : _extractPreviewEndpoints(booking);
+    final endpoints = booking == null
+        ? null
+        : _extractPreviewEndpoints(booking);
     final pickup = endpoints?.pickup;
     final dropoff = endpoints?.dropoff;
     if (phase == ExternalNavPhase.toPickup && booking != null) {
@@ -24569,8 +24534,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       pickupAddress: (booking?.from ?? '').trim(),
       dropoffLat: dropoff?.lat,
       dropoffLon: dropoff?.lon,
-      dropoffAddress:
-          (booking?.to ?? _directRideDestinationText ?? '').trim(),
+      dropoffAddress: (booking?.to ?? _directRideDestinationText ?? '').trim(),
     );
   }
 
@@ -24711,12 +24675,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(false),
           child: Text(
-            _tr(
-              nl: 'Annuleren',
-              en: 'Cancel',
-              fr: 'Annuler',
-              es: 'Cancelar',
-            ),
+            _tr(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
           ),
         ),
         TextButton(
@@ -24746,25 +24705,16 @@ class _DriverHomePageState extends State<DriverHomePage>
         es: 'Contador Fluxidi no disponible',
       ),
       content: _tr(
-        nl:
-            'Picture-in-Picture wordt niet ondersteund of is uitgeschakeld. Google Maps opent zonder zichtbare Fluxidi-teller. Doorgaan?',
-        en:
-            'Picture-in-Picture is unsupported or disabled. Google Maps will open without a visible Fluxidi meter. Continue?',
-        fr:
-            'Le mode PiP n’est pas pris en charge ou est désactivé. Google Maps s’ouvrira sans compteur Fluxidi visible. Continuer ?',
-        es:
-            'PiP no es compatible o está desactivado. Google Maps se abrirá sin contador Fluxidi visible. ¿Continuar?',
+        nl: 'Picture-in-Picture wordt niet ondersteund of is uitgeschakeld. Google Maps opent zonder zichtbare Fluxidi-teller. Doorgaan?',
+        en: 'Picture-in-Picture is unsupported or disabled. Google Maps will open without a visible Fluxidi meter. Continue?',
+        fr: 'Le mode PiP n’est pas pris en charge ou est désactivé. Google Maps s’ouvrira sans compteur Fluxidi visible. Continuer ?',
+        es: 'PiP no es compatible o está desactivado. Google Maps se abrirá sin contador Fluxidi visible. ¿Continuar?',
       ),
       actions: (ctx) => [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(false),
           child: Text(
-            _tr(
-              nl: 'Annuleren',
-              en: 'Cancel',
-              fr: 'Annuler',
-              es: 'Cancelar',
-            ),
+            _tr(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
           ),
         ),
         TextButton(
@@ -24818,34 +24768,30 @@ class _DriverHomePageState extends State<DriverHomePage>
   }) async {
     final message = switch (status) {
       GoogleMapsLaunchStatus.invalidDestination => _tr(
-          nl:
-              'Google Maps kon niet worden gestart omdat de bestemming ontbreekt.',
-          en: 'Google Maps could not start because the destination is missing.',
-          fr:
-              'Google Maps n’a pas pu démarrer car la destination est manquante.',
-          es:
-              'Google Maps no pudo iniciarse porque falta el destino.',
-        ),
+        nl: 'Google Maps kon niet worden gestart omdat de bestemming ontbreekt.',
+        en: 'Google Maps could not start because the destination is missing.',
+        fr: 'Google Maps n’a pas pu démarrer car la destination est manquante.',
+        es: 'Google Maps no pudo iniciarse porque falta el destino.',
+      ),
       GoogleMapsLaunchStatus.intentNotResolved ||
-      GoogleMapsLaunchStatus.activityNotFound =>
-        _tr(
-          nl: 'Google Maps kon niet worden geopend op dit toestel.',
-          en: 'Google Maps could not be opened on this device.',
-          fr: 'Google Maps n’a pas pu être ouvert sur cet appareil.',
-          es: 'No se pudo abrir Google Maps en este dispositivo.',
-        ),
+      GoogleMapsLaunchStatus.activityNotFound => _tr(
+        nl: 'Google Maps kon niet worden geopend op dit toestel.',
+        en: 'Google Maps could not be opened on this device.',
+        fr: 'Google Maps n’a pas pu être ouvert sur cet appareil.',
+        es: 'No se pudo abrir Google Maps en este dispositivo.',
+      ),
       GoogleMapsLaunchStatus.securityException => _tr(
-          nl: 'Google Maps kon niet worden gestart (beveiligingsfout).',
-          en: 'Google Maps could not start (security error).',
-          fr: 'Google Maps n’a pas pu démarrer (erreur de sécurité).',
-          es: 'Google Maps no pudo iniciarse (error de seguridad).',
-        ),
+        nl: 'Google Maps kon niet worden gestart (beveiligingsfout).',
+        en: 'Google Maps could not start (security error).',
+        fr: 'Google Maps n’a pas pu démarrer (erreur de sécurité).',
+        es: 'Google Maps no pudo iniciarse (error de seguridad).',
+      ),
       _ => _tr(
-          nl: 'Google Maps kon niet worden gestart.',
-          en: 'Google Maps could not be started.',
-          fr: 'Google Maps n’a pas pu démarrer.',
-          es: 'No se pudo iniciar Google Maps.',
-        ),
+        nl: 'Google Maps kon niet worden gestart.',
+        en: 'Google Maps could not be started.',
+        fr: 'Google Maps n’a pas pu démarrer.',
+        es: 'No se pudo iniciar Google Maps.',
+      ),
     };
     await _showExternalNavDialog<void>(
       title: _tr(
@@ -24860,14 +24806,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       actions: (ctx) => [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(),
-          child: Text(
-            _tr(
-              nl: 'OK',
-              en: 'OK',
-              fr: 'OK',
-              es: 'OK',
-            ),
-          ),
+          child: Text(_tr(nl: 'OK', en: 'OK', fr: 'OK', es: 'OK')),
         ),
       ],
     );
@@ -24919,8 +24858,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
       return;
     }
-    final destinationSource =
-        phase == ExternalNavPhase.toPickup ? 'pickup_a' : 'destination_b';
+    final destinationSource = phase == ExternalNavPhase.toPickup
+        ? 'pickup_a'
+        : 'destination_b';
     _logNavBounded(
       'EXTERNAL_NAV',
       'event=google_button_pressed phase=${phase.name} '
@@ -24966,12 +24906,15 @@ class _DriverHomePageState extends State<DriverHomePage>
         longitude: destination.longitude,
         address: destination.address,
       );
-      final latValid =
-          GoogleMapsDestinationValidator.isValidLatitude(channelDest.latitude);
-      final lngValid =
-          GoogleMapsDestinationValidator.isValidLongitude(channelDest.longitude);
-      final addressPresent =
-          GoogleMapsDestinationValidator.hasUsableAddress(channelDest.address);
+      final latValid = GoogleMapsDestinationValidator.isValidLatitude(
+        channelDest.latitude,
+      );
+      final lngValid = GoogleMapsDestinationValidator.isValidLongitude(
+        channelDest.longitude,
+      );
+      final addressPresent = GoogleMapsDestinationValidator.hasUsableAddress(
+        channelDest.address,
+      );
       _logNavBounded(
         'EXTERNAL_NAV',
         'event=external_navigation_phase phase=${phase.name} '
@@ -25013,11 +24956,12 @@ class _DriverHomePageState extends State<DriverHomePage>
       _ensureExternalNavPipListener();
       _setNavigationWakelock(true);
 
-      final bookingId = (_activeBooking?.bookingId ??
-              _activeDirectBookingId ??
-              _directRideKey ??
-              'pending')
-          .trim();
+      final bookingId =
+          (_activeBooking?.bookingId ??
+                  _activeDirectBookingId ??
+                  _directRideKey ??
+                  'pending')
+              .trim();
       // Session is pending until Maps launch succeeds; guidance stays active
       // until then so a failed handoff never leaves the driver without Fluxidi.
       // PIP-TABLET-FORM-FACTOR-STABLE-P1 / HOST-FORM-FACTOR-P0: latch device
@@ -25046,8 +24990,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         }
       }
 
-      final launch =
-          await _externalNavigationHost.launchGoogleNavigationResult(
+      final launch = await _externalNavigationHost.launchGoogleNavigationResult(
         channelDest,
         destinationSource: destinationSource,
       );
@@ -25131,10 +25074,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         externalSession: activeSession,
       );
       if (_directRideActive) {
-        unawaited(_persistDirectTripSession(
-          localLifecycle: kDirectTripLocalLifecycleActive,
-          bookingFinalizeState: kDirectTripFinalizePending,
-        ));
+        unawaited(
+          _persistDirectTripSession(
+            localLifecycle: kDirectTripLocalLifecycleActive,
+            bookingFinalizeState: kDirectTripFinalizePending,
+          ),
+        );
       }
       debugPrint(
         '[EXTERNAL_NAV] event=external_nav_return_requested '
@@ -25155,8 +25100,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           setState(() {
             _externalNavigationSession =
                 (_externalNavigationSession ?? activeSession).copyWith(
-              pipActive: pipOk,
-            );
+                  pipActive: pipOk,
+                );
           });
         }
         _logNavBounded(
@@ -25198,9 +25143,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _maybeRelaunchGoogleMapsAfterStart() async {
     final session = _externalNavigationSession;
     if (session == null || !session.isGoogleMaps) return;
-    await _launchGoogleMapsWithFluxidiPip(
-      phase: ExternalNavPhase.activeRide,
-    );
+    await _launchGoogleMapsWithFluxidiPip(phase: ExternalNavPhase.activeRide);
   }
 
   Future<void> _openInWaze() async {
@@ -25259,10 +25202,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final last = _lastPos;
     final speedText = last == null
         ? ''
-        : formatPipMeterSpeedKmh(
-            _speedKmhFor(last),
-            appLanguageNotifier.value,
-          );
+        : formatPipMeterSpeedKmh(_speedKmhFor(last), appLanguageNotifier.value);
     final usesFixed = _cockpitFarePresentation.usesFixedPrice;
     final estimatePresentation = _tellersEstimatedRidePricePresentation(
       usesFixedPrice: usesFixed,
@@ -25342,7 +25282,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _logNavBounded(
       'NAV_TELLERS',
       'event=open viewportGeneration=$viewportToken styleRequest=false '
-      'markerOwner=tellersLiveWindow',
+          'markerOwner=tellersLiveWindow',
       intervalMs: 1,
     );
     if (mounted) {
@@ -25378,13 +25318,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     // screen-up policy so alignment flips to VIEWPORT and any lingering
     // pose-bearing iconRotate is snapped to 0 immediately, without waiting
     // for the next GPS/route tick.
-    unawaited(
-      _reapplyDriverMarkerRotationPolicy(source: 'tellers_open'),
-    );
+    unawaited(_reapplyDriverMarkerRotationPolicy(source: 'tellers_open'));
     final pos = _lastPos;
-    if (pos != null &&
-        _cameraMode == _CameraMode.follow &&
-        _liveRideActive) {
+    if (pos != null && _cameraMode == _CameraMode.follow && _liveRideActive) {
       unawaited(
         _followCameraTesla(pos, force: true, cameraReason: 'tellers_open'),
       );
@@ -25526,11 +25462,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         intervalMs: 1,
       );
       unawaited(
-        _followCameraTesla(
-          pos,
-          force: true,
-          cameraReason: 'viewport_reseed',
-        ),
+        _followCameraTesla(pos, force: true, cameraReason: 'viewport_reseed'),
       );
       return;
     }
@@ -25556,7 +25488,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     final rideCompleted =
         booking != null && _isClosedRideStatus(_effectiveStatusFor(booking));
     final ridePrepared =
-        _directRideDraft || (booking != null && !_liveRideActive && !rideCompleted);
+        _directRideDraft ||
+        (booking != null && !_liveRideActive && !rideCompleted);
     return resolveTellersEstimatedPriceStripVisible(
       isTablet: false,
       liveRideActive: _liveRideActive,
@@ -25586,9 +25519,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       isTablet: isTablet,
       // Match DriverRideMetersView: actions only while the live ride owns them.
       reserveActionBar: reserveActionBar ?? _liveRideActive,
-      reservePriceSummary: reservePriceSummary ??
+      reservePriceSummary:
+          reservePriceSummary ??
           (isTablet || _phoneTellersShowEstimatedPriceStrip),
-      reservePhasePill: reservePhasePill ??
+      reservePhasePill:
+          reservePhasePill ??
           (!isTablet &&
               resolveTellersPhasePillVisible(
                 isTablet: false,
@@ -25615,13 +25550,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     _logNavBounded(
       'NAV_TELLERS',
       'event=orientation_geometry viewportGeneration=$token '
-      'landscape=$isLandscape styleRequest=false',
+          'landscape=$isLandscape styleRequest=false',
       intervalMs: 1,
     );
     final pos = _lastPos;
-    if (pos != null &&
-        _cameraMode == _CameraMode.follow &&
-        _liveRideActive) {
+    if (pos != null && _cameraMode == _CameraMode.follow && _liveRideActive) {
       unawaited(
         _followCameraTesla(
           pos,
@@ -25631,9 +25564,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
     } else if (!_liveRideActive && _fixedStreetLevelPreviewDraft) {
       unawaited(
-        _applyPreviewStreetlevelCameraIfEligible(
-          reason: 'tellers_orientation',
-        ),
+        _applyPreviewStreetlevelCameraIfEligible(reason: 'tellers_orientation'),
       );
     }
   }
@@ -25657,13 +25588,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     _logNavBounded(
       'NAV_TELLERS',
       'event=close viewportGeneration=${_tellersViewport.generation} '
-      'styleRequest=false',
+          'styleRequest=false',
       intervalMs: 1,
     );
     _logNavBounded(
       'NAV_TELLERS_LIVE_ANCHOR',
       'reason=exit tellers=0 epoch=$_navViewportEpoch '
-      'gen=${_tellersViewport.generation} mapGen=1',
+          'gen=${_tellersViewport.generation} mapGen=1',
       intervalMs: 1,
     );
     // Restore normal Mapbox/HUD opacity ownership once per transition.
@@ -25675,9 +25606,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     // Mapbox marker) — restore MAP alignment so any subsequent visible
     // Mapbox marker rotates with the road again. The next GPS tick writes
     // the pose bearing back through the legacy policy.
-    unawaited(
-      _reapplyDriverMarkerRotationPolicy(source: 'tellers_close'),
-    );
+    unawaited(_reapplyDriverMarkerRotationPolicy(source: 'tellers_close'));
     // NAV-RELEASE-SIMPLE-STREETLEVEL-1: returning to Navigatie restores the
     // single fixed streetlevel camera owner (no presentation re-init).
     if (_navCameraViewMode != NavCameraViewMode.streetView) {
@@ -25685,9 +25614,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     _allowOverviewCamera = false;
     final pos = _lastPos;
-    if (pos != null &&
-        _cameraMode == _CameraMode.follow &&
-        _liveRideActive) {
+    if (pos != null && _cameraMode == _CameraMode.follow && _liveRideActive) {
       unawaited(
         _followCameraTesla(pos, force: true, cameraReason: 'tellers_close'),
       );
@@ -25736,7 +25663,11 @@ class _DriverHomePageState extends State<DriverHomePage>
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.speed_outlined, size: layout.iconSize, color: colors.text),
+                  Icon(
+                    Icons.speed_outlined,
+                    size: layout.iconSize,
+                    color: colors.text,
+                  ),
                   const SizedBox(width: 6),
                   Text(
                     label,
@@ -25775,8 +25706,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       showInstructionBanner: showInstruction,
       navStepsLoading: _navStepsLoading,
       isRerouting: _isRerouting,
-      snapshotIsLoadingSource:
-          snapshot.source == NavInstructionSource.loading,
+      snapshotIsLoadingSource: snapshot.source == NavInstructionSource.loading,
       presentation: showInstruction
           ? buildResponsiveManeuverPresentation(
               snapshot: snapshot,
@@ -25806,74 +25736,74 @@ class _DriverHomePageState extends State<DriverHomePage>
       child: ValueListenableBuilder<DriverRideMetersSnapshot>(
         valueListenable: _driverRideMetersNotifier,
         builder: (context, snapshot, _) => DriverRideMetersView(
-        // TELLERS-LIVE-NAV-INSTRUCTION-OVERLAY-1: the Tellers live map shows
-        // the SAME maneuver the main navigation banner shows. Both read
-        // _effectiveNavInstructionSnapshot() and the same gates in the same
-        // build, so the two surfaces cannot disagree, and Tellers keeps no
-        // route steps, maneuver index or exit number of its own.
-        guidance: _resolveTellersGuidance(),
-        // TABLET-TELLERS-COCKPIT-P1: tenant-scoped logo for compact branded
-        // header. Presentation only — same upload/storage SoT as nav header.
-        brandLogo: isTablet
-            ? _tenantLogo(
-                key: const ValueKey<String>('driver_tellers_tenant_logo'),
-                height: isLandscape ? 48 : 56,
-                width: isLandscape ? 160 : 180,
-                fit: BoxFit.contain,
-                fallback: Image.asset(
-                  kFluxidiLogoAsset,
+          // TELLERS-LIVE-NAV-INSTRUCTION-OVERLAY-1: the Tellers live map shows
+          // the SAME maneuver the main navigation banner shows. Both read
+          // _effectiveNavInstructionSnapshot() and the same gates in the same
+          // build, so the two surfaces cannot disagree, and Tellers keeps no
+          // route steps, maneuver index or exit number of its own.
+          guidance: _resolveTellersGuidance(),
+          // TABLET-TELLERS-COCKPIT-P1: tenant-scoped logo for compact branded
+          // header. Presentation only — same upload/storage SoT as nav header.
+          brandLogo: isTablet
+              ? _tenantLogo(
+                  key: const ValueKey<String>('driver_tellers_tenant_logo'),
                   height: isLandscape ? 48 : 56,
+                  width: isLandscape ? 160 : 180,
                   fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                ),
-              )
-            : null,
-        snapshot: snapshot,
-        themeListenable: _activeDriverThemeListenable,
-        isTablet: isTablet,
-        isLandscape: isLandscape,
-        isWaiting: _isWaiting,
-        liveRideActive: _liveRideActive,
-        showEstimatedPriceStrip: isTablet
-            ? true
-            : _phoneTellersShowEstimatedPriceStrip,
-        // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: forward the current
-        // navigation viewport epoch so the DriverTellersGeometryLatch treats
-        // the FIRST valid candidate after a portrait ↔ landscape flip as
-        // unsettled — it must match a second consecutive candidate at the
-        // same epoch before promoting a new committed Tellers geometry.
-        viewportEpoch: _navViewportEpoch,
-        // NAV-PARKING-2 Commit 4: reserve a transparent live-navigation window
-        // over the single mounted MapWidget. No second MapWidget is created.
-        showLiveWindow: true,
-        // NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1: the single vehicle marker in
-        // Tellers is the SAME Mapbox annotation ordinary Navigation owns,
-        // projected at the Tellers marker anchor by the follow-camera padding.
-        // No Flutter Car/Arrow child is painted inside the live window; the
-        // param is retained on the widget's public API but has no visual
-        // effect here (defense-in-depth false).
-        showVehicleMarker: false,
-        showMarkerSelector: followLive,
-        markerChoice: _driverNavigationMarkerChoice,
-        onMarkerChoiceSelected: _setDriverNavigationMarkerChoice,
-        markerLanguage: appLanguageNotifier.value,
-        onBackToNavigation: _closeTellersView,
-        onStop: _liveRideActive ? _stopTrip : null,
-        onToggleWait: _liveRideActive
-            ? () {
-                if (_isWaiting) {
-                  _exitWaitMode();
-                } else {
-                  _enterWaitMode();
+                  fallback: Image.asset(
+                    kFluxidiLogoAsset,
+                    height: isLandscape ? 48 : 56,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                  ),
+                )
+              : null,
+          snapshot: snapshot,
+          themeListenable: _activeDriverThemeListenable,
+          isTablet: isTablet,
+          isLandscape: isLandscape,
+          isWaiting: _isWaiting,
+          liveRideActive: _liveRideActive,
+          showEstimatedPriceStrip: isTablet
+              ? true
+              : _phoneTellersShowEstimatedPriceStrip,
+          // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: forward the current
+          // navigation viewport epoch so the DriverTellersGeometryLatch treats
+          // the FIRST valid candidate after a portrait ↔ landscape flip as
+          // unsettled — it must match a second consecutive candidate at the
+          // same epoch before promoting a new committed Tellers geometry.
+          viewportEpoch: _navViewportEpoch,
+          // NAV-PARKING-2 Commit 4: reserve a transparent live-navigation window
+          // over the single mounted MapWidget. No second MapWidget is created.
+          showLiveWindow: true,
+          // NAV-TELLERS-SINGLE-MAP-MARKER-OWNER-1: the single vehicle marker in
+          // Tellers is the SAME Mapbox annotation ordinary Navigation owns,
+          // projected at the Tellers marker anchor by the follow-camera padding.
+          // No Flutter Car/Arrow child is painted inside the live window; the
+          // param is retained on the widget's public API but has no visual
+          // effect here (defense-in-depth false).
+          showVehicleMarker: false,
+          showMarkerSelector: followLive,
+          markerChoice: _driverNavigationMarkerChoice,
+          onMarkerChoiceSelected: _setDriverNavigationMarkerChoice,
+          markerLanguage: appLanguageNotifier.value,
+          onBackToNavigation: _closeTellersView,
+          onStop: _liveRideActive ? _stopTrip : null,
+          onToggleWait: _liveRideActive
+              ? () {
+                  if (_isWaiting) {
+                    _exitWaitMode();
+                  } else {
+                    _enterWaitMode();
+                  }
                 }
-              }
-            : null,
-        // NAV-TELLERS-RECENTER-CONTROL-1: existing authoritative recenter/
-        // follow owner. Preserves View level + Tellers padding (applied inside
-        // _followCameraTesla while Tellers is active). Idempotent when already
-        // following. Does not leave Tellers or create a second camera/GPS owner.
-        onRecenter: _liveRideActive ? () => unawaited(_centerOnMe()) : null,
-      ),
+              : null,
+          // NAV-TELLERS-RECENTER-CONTROL-1: existing authoritative recenter/
+          // follow owner. Preserves View level + Tellers padding (applied inside
+          // _followCameraTesla while Tellers is active). Idempotent when already
+          // following. Does not leave Tellers or create a second camera/GPS owner.
+          onRecenter: _liveRideActive ? () => unawaited(_centerOnMe()) : null,
+        ),
       ),
     );
   }
@@ -25942,7 +25872,9 @@ class _DriverHomePageState extends State<DriverHomePage>
           ? const Color(0xCCFFFFFF)
           : (isMidnightBlue
                 ? const Color(0xCC0B1B33)
-                : (isMiddayGold ? const Color(0xCC2C2113) : const Color(0xCC0B1326))),
+                : (isMiddayGold
+                      ? const Color(0xCC2C2113)
+                      : const Color(0xCC0B1326))),
     );
   }
 
@@ -26048,7 +25980,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     // NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1: Tellers entry point.
     // Presentation mode only — does not touch GPS/fare/route ownership.
     if (inFollowNav || _liveRideActive) {
-      chips.add(_buildTellersEntryChip(colors: colors, layout: compactNavLayout));
+      chips.add(
+        _buildTellersEntryChip(colors: colors, layout: compactNavLayout),
+      );
     }
 
     if (showMapStyleToggle) {
@@ -26383,10 +26317,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             storedDropoff,
             routeRenderEpoch: renderEpoch,
           );
-          await _drawRouteLine(
-            _routeCoords,
-            routeRenderEpoch: renderEpoch,
-          );
+          await _drawRouteLine(_routeCoords, routeRenderEpoch: renderEpoch);
           final allowFit =
               _allowOverviewCamera &&
               _cameraMode == _CameraMode.overview &&
@@ -26435,10 +26366,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         _routePhase = _RideRoutePhase.trip;
       });
       await _drawPins(fromLL, toLL, routeRenderEpoch: renderEpoch);
-      await _drawRouteLine(
-        _routeCoords,
-        routeRenderEpoch: renderEpoch,
-      );
+      await _drawRouteLine(_routeCoords, routeRenderEpoch: renderEpoch);
       final allowFit =
           _allowOverviewCamera &&
           _cameraMode == _CameraMode.overview &&
@@ -26696,10 +26624,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   /// Central handler for a caught route/geocode request failure. NEVER logs or
   /// shows the raw exception, token, URI or coordinates. Sets the initial-failure
   /// state only when no valid route exists, and schedules bounded auto-retry.
-  void _handleNavRouteRequestFailure(
-    Object error, {
-    required bool isReroute,
-  }) {
+  void _handleNavRouteRequestFailure(Object error, {required bool isReroute}) {
     final kind = classifyNavRouteError(error);
     // Bounded, PII-free diagnostic: coarse code + redacted detail (no token,
     // URI, host or coordinates can survive redaction).
@@ -27040,6 +26965,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (!ep.hasCoordinates) return null;
       return _usableNavLonLat(_LonLat(ep.longitude!, ep.latitude!));
     }
+
     return (
       pickup: toLonLat(canonical.pickup),
       dropoff: toLonLat(canonical.dropoff),
@@ -28024,10 +27950,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                           // NAV-PARKING-2 Commit 3: larger, driving-readable
                           // brand logo (aspect preserved via BoxFit.contain).
                           child: SizedBox(
-                            width: _driverNavHeaderLogoBox(compactNavHeader)
-                                .boxWidth,
-                            height: _driverNavHeaderLogoBox(compactNavHeader)
-                                .boxHeight,
+                            width: _driverNavHeaderLogoBox(
+                              compactNavHeader,
+                            ).boxWidth,
+                            height: _driverNavHeaderLogoBox(
+                              compactNavHeader,
+                            ).boxHeight,
                             child: Center(
                               child: _tenantLogo(
                                 height: _driverNavHeaderLogoBox(
@@ -29540,7 +29468,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     // `isOperatorMintedSession` stays true, `_hydrateBusinessPreviewDriverSession`
     // routes to `setOperatorMintedDriverSessionInMemory`, and downstream code
     // (e.g. `_clearOperatorMintedSessionIfOwned`) recognises the ownership.
-    final preservedOperatorMint = resolvedToken.source == 'operator_mint_preserved';
+    final preservedOperatorMint =
+        resolvedToken.source == 'operator_mint_preserved';
     final effectiveLinkMethod = preservedOperatorMint
         ? kOperatorMintDriverLinkMethod
         : kCompanyAdminDriverViewLinkMethod;
@@ -29913,18 +29842,14 @@ class _DriverHomePageState extends State<DriverHomePage>
         es: 'El viaje se está cerrando. Espere un momento.',
       ),
       BusinessPreviewExitBlockReason.directFinalize => _tr(
-        nl:
-            'De afrekening wordt nog afgerond. Even geduld voordat u de weergave verlaat.',
+        nl: 'De afrekening wordt nog afgerond. Even geduld voordat u de weergave verlaat.',
         en: 'Finalization is still in progress. Please wait a moment.',
         fr: 'La finalisation est encore en cours. Veuillez patienter.',
         es: 'La finalización sigue en curso. Espere un momento.',
       ),
     };
     messenger.showSnackBar(
-      SnackBar(
-        duration: const Duration(seconds: 4),
-        content: Text(message),
-      ),
+      SnackBar(duration: const Duration(seconds: 4), content: Text(message)),
     );
   }
 
@@ -29960,8 +29885,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
     final capturedCompanySession = activeCompanySessionNotifier.value;
-    final companyToken =
-        (capturedCompanySession?.companySessionToken ?? '').trim();
+    final companyToken = (capturedCompanySession?.companySessionToken ?? '')
+        .trim();
     if (capturedCompanySession == null || companyToken.isEmpty) {
       _showOperatorMintFailureSnackbarForSwitch(reason: 'unauthorized');
       return;
@@ -30015,9 +29940,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     // authoritative one for the pending switch.
     final currentCompanySession = activeCompanySessionNotifier.value;
     if (!identical(currentCompanySession, capturedCompanySession)) {
-      debugPrint(
-        '[DRIVER_SWITCH_MINT][DROP] reason=company_session_changed',
-      );
+      debugPrint('[DRIVER_SWITCH_MINT][DROP] reason=company_session_changed');
       // Post-await company mismatch on the CURRENT generation: invalidate
       // this pending switch so START is not left disabled by a stranded
       // `isMinting` flag. Then publish bearer-busy so the notifier
@@ -30032,9 +29955,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (currentScope == null ||
         currentScope.tenantId != scope.tenantId ||
         currentScope.companyId != scope.companyId) {
-      debugPrint(
-        '[DRIVER_SWITCH_MINT][DROP] reason=scope_changed_during_mint',
-      );
+      debugPrint('[DRIVER_SWITCH_MINT][DROP] reason=scope_changed_during_mint');
       // Post-await scope mismatch on the CURRENT generation: same
       // invalidation as company mismatch above.
       _driverSwitchMintController.invalidatePendingResponses();
@@ -30059,9 +29980,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         setState(() {});
         return;
       case DriverSwitchMintFailed(reason: final r, httpStatus: final http):
-        debugPrint(
-          '[DRIVER_SWITCH_MINT][FAIL] reason=$r http=${http ?? -1}',
-        );
+        debugPrint('[DRIVER_SWITCH_MINT][FAIL] reason=$r http=${http ?? -1}');
         // `resolveResponse` already cleared pending state on failure; the
         // notifier now sees `isMinting == false` and publishes false
         // unless a ride/teardown/finalize is active.
@@ -30192,14 +30111,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     switch (reason) {
       case 'unauthorized':
         message = _tr(
-          nl:
-              'Bedrijfssessie is verlopen. Meld opnieuw aan om van chauffeur te wisselen.',
-          en:
-              'Company session expired. Sign in again to switch drivers.',
-          fr:
-              'Session entreprise expirée. Reconnectez-vous pour changer de chauffeur.',
-          es:
-              'La sesión de empresa ha caducado. Inicie sesión de nuevo para cambiar de conductor.',
+          nl: 'Bedrijfssessie is verlopen. Meld opnieuw aan om van chauffeur te wisselen.',
+          en: 'Company session expired. Sign in again to switch drivers.',
+          fr: 'Session entreprise expirée. Reconnectez-vous pour changer de chauffeur.',
+          es: 'La sesión de empresa ha caducado. Inicie sesión de nuevo para cambiar de conductor.',
         );
       case 'forbidden':
         message = _tr(
@@ -30242,10 +30157,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
     }
     messenger.showSnackBar(
-      SnackBar(
-        duration: const Duration(seconds: 4),
-        content: Text(message),
-      ),
+      SnackBar(duration: const Duration(seconds: 4), content: Text(message)),
     );
   }
 
@@ -30919,7 +30831,9 @@ class _DriverHomePageState extends State<DriverHomePage>
               ? _lightEmeraldTextPrimary()
               : (isMiddayGold
                     ? _middayGoldTextPrimary()
-                    : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white)));
+                    : (isMidnightBlue
+                          ? _midnightBlueTextPrimary()
+                          : Colors.white)));
     final subtitleColor = isLightEmerald
         ? _lightEmeraldTextMuted().withOpacity(0.92)
         : (isMiddayGold
@@ -31331,8 +31245,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                       : (isMiddayGold
                             ? _middayGoldTextPrimary()
                             : (isMidnightBlue
-                                        ? _midnightBlueTextPrimary()
-                                        : Colors.white)));
+                                  ? _midnightBlueTextPrimary()
+                                  : Colors.white)));
             final subtitleColor = isLightEmerald
                 ? _lightEmeraldTextMuted().withOpacity(0.92)
                 : (isMiddayGold
@@ -31468,15 +31382,28 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  Future<void> _applyDriverThemeFromHeaderCycle(DriverThemeVariant next) async {
+    if (widget.openedFromBusinessHome) {
+      await applyCompanyDriverViewThemePreference(next);
+    } else {
+      await applyDriverAppThemePreference(next);
+    }
+  }
+
   Widget _buildDriverDashboardHeader() {
     final screenSize = MediaQuery.sizeOf(context);
     final screenW = screenSize.width;
     const driverLogoTargetMaxWidth = 260.0;
-    const rightClusterWidth = 128.0;
+    // Language pill (~72) + gap + theme cycle (48) + gap + avatar (50).
+    final bool narrowHeader = screenW < 420;
+    final double themeCycleSize = 48;
+    final double clusterGap = narrowHeader ? 4.0 : 8.0;
+    final double rightClusterWidth =
+        72 + clusterGap + themeCycleSize + clusterGap + 50;
     final isPhonePortrait = screenW < 600 && screenSize.height > screenW;
     final logoWidth = isPhonePortrait
-        ? math.min(200.0, math.max(150.0, screenW - rightClusterWidth - 12.0))
-        : math.min(driverLogoTargetMaxWidth, math.max(220.0, screenW - 118));
+        ? math.min(200.0, math.max(140.0, screenW - rightClusterWidth - 12.0))
+        : math.min(driverLogoTargetMaxWidth, math.max(200.0, screenW - 160));
     final logoHeight = logoWidth * 0.39;
     final topBandHeight = math.max(62.0, logoHeight - 34.0);
     final headerLeftPull = isPhonePortrait ? -8.0 : -16.0;
@@ -31534,7 +31461,31 @@ class _DriverHomePageState extends State<DriverHomePage>
                   child: Row(
                     children: [
                       _driverLanguagePill(),
-                      const SizedBox(width: 8),
+                      SizedBox(width: clusterGap),
+                      DriverThemeCycleButton(
+                        themeListenable: _activeDriverThemeListenable,
+                        heroOverlay: true,
+                        size: themeCycleSize,
+                        semanticLabel: _tr(
+                          nl: 'Volgend thema',
+                          en: 'Next theme',
+                          fr: 'Thème suivant',
+                          es: 'Siguiente tema',
+                        ),
+                        onApply: _applyDriverThemeFromHeaderCycle,
+                        onCycled: (next) {
+                          if (!mounted) return;
+                          _toast(
+                            _tr(
+                              nl: 'Thema: ${driverThemeProductLabel(next)}',
+                              en: 'Theme: ${driverThemeProductLabel(next)}',
+                              fr: 'Thème : ${driverThemeProductLabel(next)}',
+                              es: 'Tema: ${driverThemeProductLabel(next)}',
+                            ),
+                          );
+                        },
+                      ),
+                      SizedBox(width: clusterGap),
                       Stack(
                         clipBehavior: Clip.none,
                         children: [
@@ -31731,8 +31682,10 @@ class _DriverHomePageState extends State<DriverHomePage>
                                   : (isMiddayGold
                                         ? _middayGoldTextMuted()
                                         : (isMidnightBlue
-                                                    ? _midnightBlueTextMuted()
-                                                    : Colors.white.withOpacity(0.78)))),
+                                              ? _midnightBlueTextMuted()
+                                              : Colors.white.withOpacity(
+                                                  0.78,
+                                                )))),
                         fontSize: 11.2,
                         fontWeight: FontWeight.w700,
                       ),
@@ -31751,8 +31704,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                                 : (isMiddayGold
                                       ? _middayGoldTextPrimary()
                                       : (isMidnightBlue
-                                                  ? _midnightBlueTextPrimary()
-                                                  : Colors.white))),
+                                            ? _midnightBlueTextPrimary()
+                                            : Colors.white))),
                       fontSize: 16,
                       fontWeight: FontWeight.w900,
                     ),
@@ -31789,8 +31742,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                                 : (isMiddayGold
                                       ? _middayGoldTextPrimary()
                                       : (isMidnightBlue
-                                                  ? _midnightBlueTextPrimary()
-                                                  : Colors.white))),
+                                            ? _midnightBlueTextPrimary()
+                                            : Colors.white))),
                       fontSize: 16,
                       fontWeight: FontWeight.w900,
                     ),
@@ -31808,8 +31761,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                                 : (isMiddayGold
                                       ? _middayGoldTextMuted()
                                       : (isMidnightBlue
-                                                  ? _midnightBlueTextMuted()
-                                                  : Colors.white.withOpacity(0.66)))),
+                                            ? _midnightBlueTextMuted()
+                                            : Colors.white.withOpacity(0.66)))),
                       fontSize: 10.2,
                       fontWeight: FontWeight.w700,
                     ),
@@ -31947,8 +31900,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                           : (isMiddayGold
                                 ? _middayGoldTextPrimary()
                                 : (isMidnightBlue
-                                            ? _midnightBlueTextPrimary()
-                                            : Colors.white))),
+                                      ? _midnightBlueTextPrimary()
+                                      : Colors.white))),
                 fontSize: 14.5,
                 fontWeight: FontWeight.w800,
               ),
@@ -31969,8 +31922,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                           : (isMiddayGold
                                 ? _middayGoldTextMuted()
                                 : (isMidnightBlue
-                                            ? _midnightBlueTextMuted()
-                                            : Colors.white.withOpacity(0.68)))),
+                                      ? _midnightBlueTextMuted()
+                                      : Colors.white.withOpacity(0.68)))),
                 fontSize: 11.2,
                 fontWeight: FontWeight.w600,
               ),
@@ -32248,8 +32201,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                     : (isMiddayGold
                           ? _middayGoldTextMuted()
                           : (isMidnightBlue
-                                      ? _midnightBlueTextMuted()
-                                      : const Color(0xFFF3D486))),
+                                ? _midnightBlueTextMuted()
+                                : const Color(0xFFF3D486))),
                 fontSize: 10.8,
                 fontWeight: FontWeight.w600,
               ),
@@ -32302,7 +32255,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                               ? _middayGoldTextPrimary()
                               : (isMidnightBlue
                                     ? _midnightBlueTextPrimary()
-                                    : const Color(0xFFFFD36A).withOpacity(0.95))),
+                                    : const Color(
+                                        0xFFFFD36A,
+                                      ).withOpacity(0.95))),
                     fontWeight: FontWeight.w800,
                     fontSize: 11.5,
                   ),
@@ -32500,7 +32455,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                             ? null
                             : (isMidnightBlue
                                   ? null
-                                  : const Color(0xFF111111).withOpacity(0.96)))),
+                                  : const Color(
+                                      0xFF111111,
+                                    ).withOpacity(0.96)))),
             gradient: !hasImageBackground
                 ? (isLightEmerald
                       ? _lightEmeraldSurfaceGradient()
@@ -32532,7 +32489,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                                           ? _middayGoldBorderColor(0.28)
                                           : (isMidnightBlue
                                                 ? _midnightBlueBorderColor(0.34)
-                                                : Colors.white.withOpacity(0.12)))))),
+                                                : Colors.white.withOpacity(
+                                                    0.12,
+                                                  )))))),
             ),
           ),
           foregroundDecoration: isTabletPortrait
@@ -32545,7 +32504,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                               ? _midnightBlueBorderColor(0.56)
                               : (isMiddayGold
                                     ? _middayGoldBorderColor(0.56)
-                                    : const Color(0xFFFFD36A).withOpacity(0.56))),
+                                    : const Color(
+                                        0xFFFFD36A,
+                                      ).withOpacity(0.56))),
                     width: 1.0,
                   ),
                 )
@@ -32690,8 +32651,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                                               ? _middayGoldTextMuted()
                                               : (isMidnightBlue
                                                     ? _midnightBlueTextMuted()
-                                                    : Colors.white
-                                                          .withOpacity(0.67))),
+                                                    : Colors.white.withOpacity(
+                                                        0.67,
+                                                      ))),
                                     fontSize: 11.5,
                                   ),
                                 ),
@@ -32705,7 +32667,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                                 vertical: 6,
                               ),
                               decoration: BoxDecoration(
-                                color: const Color(0xFFF7FAF8).withOpacity(0.88),
+                                color: const Color(
+                                  0xFFF7FAF8,
+                                ).withOpacity(0.88),
                                 borderRadius: BorderRadius.circular(10),
                                 border: Border.all(
                                   color: _lightEmeraldBorderColor(0.28),
@@ -32974,7 +32938,9 @@ class _DriverHomePageState extends State<DriverHomePage>
               ? _lightEmeraldTextPrimary()
               : (isMiddayGold
                     ? const Color(0xFFF3E5C4)
-                    : (isMidnightBlue ? _midnightBlueTextMuted() : Colors.white)),
+                    : (isMidnightBlue
+                          ? _midnightBlueTextMuted()
+                          : Colors.white)),
           fontSize: 13.5,
           fontWeight: FontWeight.w800,
         ),
@@ -32990,7 +32956,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       final color = isLightEmerald
           ? (active ? _lightEmeraldAccent() : _lightEmeraldTextMuted())
           : (isMiddayGold
-                ? (active ? _middayGoldTextOnSelected() : _middayGoldTextMuted())
+                ? (active
+                      ? _middayGoldTextOnSelected()
+                      : _middayGoldTextMuted())
                 : (isMidnightBlue
                       ? (active
                             ? _midnightBlueTextPrimary()
@@ -33367,7 +33335,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                             color: isLightEmerald
                                 ? _lightEmeraldBorderColor(0.56)
                                 : (isMiddayGold
-                                      ? const Color(0xFFFFD36A).withOpacity(0.56)
+                                      ? const Color(
+                                          0xFFFFD36A,
+                                        ).withOpacity(0.56)
                                       : (isMidnightBlue
                                             ? _midnightBlueBorderColor(0.56)
                                             : const Color(0x55FFD36A))),
@@ -33410,12 +33380,15 @@ class _DriverHomePageState extends State<DriverHomePage>
                                     end: Alignment.bottomCenter,
                                     colors: isLightEmerald
                                         ? [
-                                            const Color(0xFFEEF5F2)
-                                                .withOpacity(0.0),
-                                            const Color(0xFF0F3D2E)
-                                                .withOpacity(0.12),
-                                            const Color(0xFF0F3D2E)
-                                                .withOpacity(0.34),
+                                            const Color(
+                                              0xFFEEF5F2,
+                                            ).withOpacity(0.0),
+                                            const Color(
+                                              0xFF0F3D2E,
+                                            ).withOpacity(0.12),
+                                            const Color(
+                                              0xFF0F3D2E,
+                                            ).withOpacity(0.34),
                                           ]
                                         : [
                                             Colors.black.withOpacity(0.16),
@@ -33479,7 +33452,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                             color: isLightEmerald
                                 ? _lightEmeraldBorderColor(0.56)
                                 : (isMiddayGold
-                                      ? const Color(0xFFFFD36A).withOpacity(0.56)
+                                      ? const Color(
+                                          0xFFFFD36A,
+                                        ).withOpacity(0.56)
                                       : (isMidnightBlue
                                             ? _midnightBlueBorderColor(0.56)
                                             : const Color(0x55FFD36A))),
@@ -33522,12 +33497,15 @@ class _DriverHomePageState extends State<DriverHomePage>
                                     end: Alignment.bottomCenter,
                                     colors: isLightEmerald
                                         ? [
-                                            const Color(0xFFEEF5F2)
-                                                .withOpacity(0.0),
-                                            const Color(0xFF0F3D2E)
-                                                .withOpacity(0.12),
-                                            const Color(0xFF0F3D2E)
-                                                .withOpacity(0.34),
+                                            const Color(
+                                              0xFFEEF5F2,
+                                            ).withOpacity(0.0),
+                                            const Color(
+                                              0xFF0F3D2E,
+                                            ).withOpacity(0.12),
+                                            const Color(
+                                              0xFF0F3D2E,
+                                            ).withOpacity(0.34),
                                           ]
                                         : [
                                             Colors.black.withOpacity(0.20),
@@ -33774,8 +33752,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final snap = _navInstructionSnapshot;
     if (snap != null && snap.hasInstruction) {
       // NAV-SIGNAL-P1: normalize against the maneuver step the banner describes.
-      final maneuverIndex =
-          _activeBanner?.maneuverStepIndex ?? _nextStepIndex;
+      final maneuverIndex = _activeBanner?.maneuverStepIndex ?? _nextStepIndex;
       if (maneuverIndex >= 0 && maneuverIndex < _routeSteps.length) {
         result = applyDriverNavInstructionDisplayLines(
           snapshot: snap,
@@ -34149,14 +34126,12 @@ class _DriverHomePageState extends State<DriverHomePage>
     double? slotWidthOverride,
     double? paintHeightOverride,
   }) {
-    final paintHeight = paintHeightOverride ??
-        (isLandscape
-            ? (hasInlineBanner ? 40.0 : 44.0)
-            : 48.0);
-    final slotWidth = slotWidthOverride ??
-        (isLandscape
-            ? (hasInlineBanner ? 112.0 : 128.0)
-            : 120.0);
+    final paintHeight =
+        paintHeightOverride ??
+        (isLandscape ? (hasInlineBanner ? 40.0 : 44.0) : 48.0);
+    final slotWidth =
+        slotWidthOverride ??
+        (isLandscape ? (hasInlineBanner ? 112.0 : 128.0) : 120.0);
     return IgnorePointer(
       child: SizedBox(
         key: const ValueKey<String>('nav_phone_free_logo'),
@@ -34482,10 +34457,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     // changed viewport bumps [_navViewportEpoch] and invalidates cached
     // camera state (streetlevel follow padding + pending Tellers anchor)
     // exactly once per settled transition.
-    _observeNavViewport(
-      size: Size(screenW, screenH),
-      isLandscape: isLandscape,
-    );
+    _observeNavViewport(size: Size(screenW, screenH), isLandscape: isLandscape);
     // NAV-TELLERS-EXACT-LIVE-VIEWPORT-1: portrait ↔ landscape recalculates the
     // authoritative liveWindowRect once (latest-wins camera), no MapWidget/
     // GPS/style recreation.
@@ -34537,22 +34509,22 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
     final NavigationPresentationState navPresentationState =
         _navFixedHudPresentationActive
-            ? _navigationPresentationStateFor(_navCameraViewMode)
-            : (navPreviewDecision.isStreetLevel
-                ? _navigationPresentationStateFor(NavCameraViewMode.streetView)
-                : _navigationPresentationStateFor(NavCameraViewMode.overview));
+        ? _navigationPresentationStateFor(_navCameraViewMode)
+        : (navPreviewDecision.isStreetLevel
+              ? _navigationPresentationStateFor(NavCameraViewMode.streetView)
+              : _navigationPresentationStateFor(NavCameraViewMode.overview));
     // NAV-VEHICLE-MODE-CAR-ARROW-1 (Phase 7): in Street Level (driver cockpit)
     // mode the marker sits just above the KPI meters, derived from the real
     // KPI panel layout. The resolved offset is shared with the cockpit camera
     // nose anchor (see [_driverCockpitCameraOverrides]) so marker and camera
     // move together and switching Car ↔ Arrow never shifts either.
-    final bool streetLevelCockpit = showCockpit &&
+    final bool streetLevelCockpit =
+        showCockpit &&
         navPresentationState.useDriverCockpitCamera &&
         navPresentationState.mode == NavigationPresentationMode.driver;
     final kpiNavControlsLayout = resolveDriverCompactNavControlsLayoutForNav(
       screenClass: screenClass,
-      orientation:
-          isLandscape ? Orientation.landscape : Orientation.portrait,
+      orientation: isLandscape ? Orientation.landscape : Orientation.portrait,
     );
     // NAV-CAMERA-FIELD-REGRESSION-1: include the fare-estimate panel in the
     // streetlevel nose-anchor / marker bottom offset so the vehicle clears
@@ -34567,8 +34539,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             isLandscape: isLandscape,
             hasSecondaryActions: showNavQuickActions,
             secondaryActionRowHeight: kpiNavControlsLayout.rowHeight,
-            primaryToSecondaryGap:
-                kpiNavControlsLayout.primaryToSecondaryGap,
+            primaryToSecondaryGap: kpiNavControlsLayout.primaryToSecondaryGap,
             extraBottomChrome: estimatePanelForAnchor
                 ? (isLandscape && !hostIsTablet
                       ? kDirectRideEstimatePanelPhoneLandscapeCompactReserve
@@ -34583,37 +34554,37 @@ class _DriverHomePageState extends State<DriverHomePage>
     final double layoutHudBottom = streetLevelHudBottomOffset != null
         ? streetLevelHudBottomOffset + safeBottomInset
         : (showCockpit
-            ? driverCockpitFixedHudBottomOffset(
-                    isLandscape: isLandscape,
-                    cockpitChaseCamera:
-                        navPresentationState.useDriverCockpitCamera,
-                    isTablet: isTablet,
-                  ) +
-                  safeBottomInset
-            : arrowBottom);
+              ? driverCockpitFixedHudBottomOffset(
+                      isLandscape: isLandscape,
+                      cockpitChaseCamera:
+                          navPresentationState.useDriverCockpitCamera,
+                      isTablet: isTablet,
+                    ) +
+                    safeBottomInset
+              : arrowBottom);
     final DriverViewportAnchorGeometry? streetLevelViewportAnchor =
         streetLevelCockpit && navPresentationState.showDriverHudOverlay
-            ? resolveDriverViewportAnchorGeometry(
-                hostIsTablet: hostIsTablet,
-                viewportWidth: screenW,
-                viewportHeight: screenH,
-                layoutBottomHudHeightPx: layoutHudBottom,
-                safeTop: MediaQuery.of(context).padding.top,
-                safeBottom: safeBottomInset,
-                cockpitBoost: navPresentationState.useDriverCockpitCamera,
-              )
-            : null;
+        ? resolveDriverViewportAnchorGeometry(
+            hostIsTablet: hostIsTablet,
+            viewportWidth: screenW,
+            viewportHeight: screenH,
+            layoutBottomHudHeightPx: layoutHudBottom,
+            safeTop: MediaQuery.of(context).padding.top,
+            safeBottom: safeBottomInset,
+            cockpitBoost: navPresentationState.useDriverCockpitCamera,
+          )
+        : null;
     final double driverHudBottom =
         streetLevelViewportAnchor?.bottomHudHeightPx ?? layoutHudBottom;
     final double driverHudIconSize = navPresentationState.showDriverHudOverlay
         ? (streetLevelViewportAnchor?.vehicleIconSize ??
-            NavigationDriverHudOverlay.resolveIconSize(
-              screenWidth: screenW,
-              screenHeight: screenH,
-              cockpitBoost: navPresentationState.useDriverCockpitCamera,
-              viewLevel: _driverCockpitViewLevel,
-              hostIsTablet: hostIsTablet,
-            ))
+              NavigationDriverHudOverlay.resolveIconSize(
+                screenWidth: screenW,
+                screenHeight: screenH,
+                cockpitBoost: navPresentationState.useDriverCockpitCamera,
+                viewLevel: _driverCockpitViewLevel,
+                hostIsTablet: hostIsTablet,
+              ))
         : 56.0;
     // Resize atomicity: when viewport epoch cleared follow padding, refill
     // from the same anchor model the HUD just painted — before post-frame
@@ -34633,7 +34604,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           streetLevelViewportAnchor?.cameraPadding;
       if (pad != null) {
         final cached = _streetlevelFollowPadding;
-        final needsSync = cached == null ||
+        final needsSync =
+            cached == null ||
             (cached.top - pad.top).abs() > 0.5 ||
             (cached.bottom - pad.bottom).abs() > 0.5 ||
             (cached.left - pad.left).abs() > 0.5 ||
@@ -34674,9 +34646,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       viewportWidth: screenW,
       viewportHeight: screenH,
       isTablet: isTablet,
-      orientation: isLandscape
-          ? Orientation.landscape
-          : Orientation.portrait,
+      orientation: isLandscape ? Orientation.landscape : Orientation.portrait,
       presentationMode: navPresentationState.mode,
     );
     if (_cameraMode == _CameraMode.follow &&
@@ -34776,13 +34746,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     const double kDirectRideEstimatePanelReserve = 96.0;
     final double measuredBottomChromeReserve = !isLandscape
         ? (kCockpitPortraitBasePanelHeight +
-            (showNavQuickActions
-                ? (kpiNavControlsLayout.rowHeight +
-                    kpiNavControlsLayout.primaryToSecondaryGap)
-                : 0.0) +
-            (directRideEstimatePanelVisible
-                ? kDirectRideEstimatePanelReserve
-                : 0.0))
+              (showNavQuickActions
+                  ? (kpiNavControlsLayout.rowHeight +
+                        kpiNavControlsLayout.primaryToSecondaryGap)
+                  : 0.0) +
+              (directRideEstimatePanelVisible
+                  ? kDirectRideEstimatePanelReserve
+                  : 0.0))
         : 0.0;
     final double bottomChromeReserve = stickyBottomChromeReserve(
       measured: measuredBottomChromeReserve,
@@ -34851,445 +34821,456 @@ class _DriverHomePageState extends State<DriverHomePage>
         _attemptBusinessPreviewRouteExit(source: 'pop_scope_system_back');
       },
       child: Scaffold(
-      key: _scaffoldKey,
-      // NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 1): fully
-      // opaque Fluxidi root surface. This driver page is pushed OVER the
-      // Business page (which stays mounted below in the Navigator); an opaque
-      // Scaffold background guarantees the previous route can never paint
-      // through during an orientation change or PlatformView surface delay.
-      // Light Emerald uses its mint page background so the under-dashboard
-      // shell does not flash Night Gold black behind the light theme.
-      backgroundColor:
-          driverThemeNotifier.value == DriverThemeVariant.lightEmerald
-          ? _lightEmeraldBackground()
-          : kFluxidiBlack,
-      drawer: _buildDrawer(),
-      // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: hard-clip the entire
-      // navigation composition to the current Scaffold body viewport bounds
-      // so no Positioned child computed from a previous-epoch geometry
-      // (banner, HUD, chrome, cockpit control) can ever paint outside the
-      // new viewport during a portrait ↔ landscape transition. This is a
-      // NESTED clip (wraps the body Stack) so the outer Scaffold drawer /
-      // Navigator overlay behaviour is untouched, and the inner Stack keeps
-      // its existing `Clip.none` layout semantics.
-      body: ClipRect(
-        clipBehavior: Clip.hardEdge,
-        child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          // NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 1):
-          // ALWAYS-present opaque theme backing directly BELOW the retained
-          // MapWidget (independent of showCockpit). During Android
-          // portrait↔landscape rotation the Hybrid-Composition map surface is
-          // briefly unavailable; this backing makes the live-window aperture —
-          // and any transient PlatformView gap — reveal an opaque neutral map
-          // background, never the underlying Business/previous route.
-          Positioned.fill(
-            key: const ValueKey<String>('driver_root_opaque_backing'),
-            child: const IgnorePointer(
-              child: ColoredBox(color: kFluxidiMapBackdrop),
-            ),
-          ),
-          // Map always at the back (above the opaque backing).
-          // NAV-PHONE-DRIVER-VIEW-FLICKER-1: isolate the Android HC platform
-          // view in its own repaint boundary so overlay/meter/timer repaints
-          // above it never dirty the map layer (prevents phone HC flicker).
-          Positioned.fill(child: RepaintBoundary(child: _buildMapLayer())),
-          if (!showCockpit)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: Container(
-                  color:
-                      driverThemeNotifier.value ==
-                          DriverThemeVariant.lightEmerald
-                      ? _lightEmeraldBackground().withOpacity(0.985)
-                      : const Color(0xFF040404).withOpacity(0.985),
+        key: _scaffoldKey,
+        // NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 1): fully
+        // opaque Fluxidi root surface. This driver page is pushed OVER the
+        // Business page (which stays mounted below in the Navigator); an opaque
+        // Scaffold background guarantees the previous route can never paint
+        // through during an orientation change or PlatformView surface delay.
+        // Light Emerald uses its mint page background so the under-dashboard
+        // shell does not flash Night Gold black behind the light theme.
+        backgroundColor:
+            driverThemeNotifier.value == DriverThemeVariant.lightEmerald
+            ? _lightEmeraldBackground()
+            : kFluxidiBlack,
+        drawer: _buildDrawer(),
+        // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: hard-clip the entire
+        // navigation composition to the current Scaffold body viewport bounds
+        // so no Positioned child computed from a previous-epoch geometry
+        // (banner, HUD, chrome, cockpit control) can ever paint outside the
+        // new viewport during a portrait ↔ landscape transition. This is a
+        // NESTED clip (wraps the body Stack) so the outer Scaffold drawer /
+        // Navigator overlay behaviour is untouched, and the inner Stack keeps
+        // its existing `Clip.none` layout semantics.
+        body: ClipRect(
+          clipBehavior: Clip.hardEdge,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              // NAV-TELLERS-ROTATION-COMPOSITION-AND-POSE-LOCK-1 (Commit 1):
+              // ALWAYS-present opaque theme backing directly BELOW the retained
+              // MapWidget (independent of showCockpit). During Android
+              // portrait↔landscape rotation the Hybrid-Composition map surface is
+              // briefly unavailable; this backing makes the live-window aperture —
+              // and any transient PlatformView gap — reveal an opaque neutral map
+              // background, never the underlying Business/previous route.
+              Positioned.fill(
+                key: const ValueKey<String>('driver_root_opaque_backing'),
+                child: const IgnorePointer(
+                  child: ColoredBox(color: kFluxidiMapBackdrop),
                 ),
               ),
-            ),
-
-          // Top status / header (Fluxidi strip).
-          if (cockpitHudVisible &&
-              !collapseTopBarInLandscapeNav &&
-              !collapseTopBarInPortraitNav)
-            Positioned(
-              top: MediaQuery.of(context).padding.top + 10,
-              left: 12,
-              right: 12,
-              child: _buildStatusStrip(state),
-            ),
-          if (cockpitHudVisible &&
-              (collapseTopBarInLandscapeNav || collapseTopBarInPortraitNav))
-            Positioned(
-              // Phone ordinary landscape: sit tighter under the safe top so the
-              // inline route banner reads higher over the map. Portrait/tablet
-              // insets stay on the prior baseline via the resolver.
-              top: resolvePhoneOrdinaryNavCollapsedChromeTop(
-                safeTop: MediaQuery.of(context).padding.top,
-                isPhoneHost: !hostIsTablet,
-                isLandscape: collapseTopBarInLandscapeNav,
-              ),
-              left: 10,
-              // Tablet portrait/landscape: reserve trailing room for the
-              // Mapbox compass so the larger banner never overlaps it.
-              right: collapseTopBarInLandscapeNav ||
-                      (collapseTopBarInPortraitNav && navSignageTablet)
-                  ? (navSignageTablet
-                        ? NavSignageTabletReadabilityMetrics
-                              .defaultCompassReserve
-                        : 10)
-                  : null,
-              child: collapseTopBarInLandscapeNav ||
-                      (collapseTopBarInPortraitNav && navSignageTablet)
-                  ? _buildCollapsedNavTopRowWithBanner(
-                      isTablet: isTablet || navSignageTablet,
-                      isLandscape: isLandscape,
-                    )
-                  : Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _buildCollapsedNavMenuButton(),
-                        const SizedBox(width: 8),
-                        _buildCollapsedNavLogoCapsule(
-                          isLandscape: false,
-                          hasInlineBanner: false,
-                        ),
-                      ],
-                    ),
-            ),
-          // Phone portrait (and non-tablet): banner stays on its own row under
-          // the logo. Tablet portrait mounts the banner inline above instead.
-          if (navHudVisible &&
-              _showNavInstructionBanner() &&
-              !collapseTopBarInLandscapeNav &&
-              !(collapseTopBarInPortraitNav && navSignageTablet))
-            Positioned(
-              top: navBannerTop,
-              left: 12,
-              right: 12,
-              child: Align(
-                alignment: Alignment.topCenter,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: navBannerPortraitMaxWidth,
-                  ),
-                  child: _wrapNavBannerWithComplexityCaution(
-                    banner: _buildTurnInstructionBanner(
-                      compact: false,
-                      isTablet: isTablet,
-                      portraitTabletMetrics: tabletPortraitNavLayout?.banner,
-                      tabletReadability: phoneParityBannerMetrics,
-                    ),
-                    compact: false,
-                    isTablet: isTablet,
-                  ),
-                ),
-              ),
-            ),
-          if (navHudVisible &&
-              !_showNavInstructionBanner() &&
-              (_navStepsLoading ||
-                  _isRerouting ||
-                  _navInstructionSnapshot?.source ==
-                      NavInstructionSource.loading) &&
-              !collapseTopBarInLandscapeNav &&
-              !(collapseTopBarInPortraitNav && navSignageTablet))
-            Positioned(
-              top: navBannerTop,
-              left: 12,
-              right: 12,
-              child: Align(
-                alignment: Alignment.topCenter,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: navBannerPortraitMaxWidth,
-                  ),
-                  child: _wrapNavBannerWithComplexityCaution(
-                    banner: _buildNavLoadingBanner(
-                      compact: false,
-                      isTablet: isTablet,
-                    ),
-                    compact: false,
-                    isTablet: isTablet,
-                  ),
-                ),
-              ),
-            ),
-          if (navHudVisible &&
-              !_showNavInstructionBanner() &&
-              !_navStepsLoading &&
-              !_isRerouting &&
-              _routeSteps.isEmpty &&
-              !collapseTopBarInLandscapeNav &&
-              !(collapseTopBarInPortraitNav && navSignageTablet))
-            Positioned(
-              top: navBannerTop,
-              left: 12,
-              right: 12,
-              child: Align(
-                alignment: Alignment.topCenter,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: navBannerPortraitMaxWidth,
-                  ),
-                  child: _wrapNavBannerWithComplexityCaution(
-                    // NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1: a failed
-                    // initial route shows the sanitized connectivity/retry
-                    // banner instead of the generic "Follow the route".
-                    banner: _showRouteUnavailableBanner
-                        ? _buildRouteUnavailableBanner(
-                            compact: false,
-                            isTablet: isTablet,
-                          )
-                        : _buildNoNavInstructionsBanner(
-                            compact: false,
-                            isTablet: isTablet,
-                          ),
-                    compact: false,
-                    isTablet: isTablet,
-                  ),
-                ),
-              ),
-            ),
-          if (!hideMapUserPuck && !tellersActive)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: arrowBottom,
-              child: IgnorePointer(
-                child: Center(
-                  child: Transform.rotate(
-                    angle: _uiArrowBearing * math.pi / 180.0,
+              // Map always at the back (above the opaque backing).
+              // NAV-PHONE-DRIVER-VIEW-FLICKER-1: isolate the Android HC platform
+              // view in its own repaint boundary so overlay/meter/timer repaints
+              // above it never dirty the map layer (prevents phone HC flicker).
+              Positioned.fill(child: RepaintBoundary(child: _buildMapLayer())),
+              if (!showCockpit)
+                Positioned.fill(
+                  child: IgnorePointer(
                     child: Container(
-                      width: 52,
-                      height: 52,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF2D8CFF).withOpacity(0.96),
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.92),
-                          width: 2.0,
+                      color:
+                          driverThemeNotifier.value ==
+                              DriverThemeVariant.lightEmerald
+                          ? _lightEmeraldBackground().withOpacity(0.985)
+                          : const Color(0xFF040404).withOpacity(0.985),
+                    ),
+                  ),
+                ),
+
+              // Top status / header (Fluxidi strip).
+              if (cockpitHudVisible &&
+                  !collapseTopBarInLandscapeNav &&
+                  !collapseTopBarInPortraitNav)
+                Positioned(
+                  top: MediaQuery.of(context).padding.top + 10,
+                  left: 12,
+                  right: 12,
+                  child: _buildStatusStrip(state),
+                ),
+              if (cockpitHudVisible &&
+                  (collapseTopBarInLandscapeNav || collapseTopBarInPortraitNav))
+                Positioned(
+                  // Phone ordinary landscape: sit tighter under the safe top so the
+                  // inline route banner reads higher over the map. Portrait/tablet
+                  // insets stay on the prior baseline via the resolver.
+                  top: resolvePhoneOrdinaryNavCollapsedChromeTop(
+                    safeTop: MediaQuery.of(context).padding.top,
+                    isPhoneHost: !hostIsTablet,
+                    isLandscape: collapseTopBarInLandscapeNav,
+                  ),
+                  left: 10,
+                  // Tablet portrait/landscape: reserve trailing room for the
+                  // Mapbox compass so the larger banner never overlaps it.
+                  right:
+                      collapseTopBarInLandscapeNav ||
+                          (collapseTopBarInPortraitNav && navSignageTablet)
+                      ? (navSignageTablet
+                            ? NavSignageTabletReadabilityMetrics
+                                  .defaultCompassReserve
+                            : 10)
+                      : null,
+                  child:
+                      collapseTopBarInLandscapeNav ||
+                          (collapseTopBarInPortraitNav && navSignageTablet)
+                      ? _buildCollapsedNavTopRowWithBanner(
+                          isTablet: isTablet || navSignageTablet,
+                          isLandscape: isLandscape,
+                        )
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _buildCollapsedNavMenuButton(),
+                            const SizedBox(width: 8),
+                            _buildCollapsedNavLogoCapsule(
+                              isLandscape: false,
+                              hasInlineBanner: false,
+                            ),
+                          ],
                         ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.42),
-                            blurRadius: 14,
-                            spreadRadius: 1.0,
-                          ),
-                        ],
-                      ),
-                      child: const Icon(
-                        Icons.navigation,
-                        color: Colors.white,
-                        size: 34,
-                      ),
-                    ),
-                  ),
                 ),
-              ),
-            ),
-          // NAV-UI-R6F: map actions live inside the bottom cockpit bar during
-          // route/nav context; only the idle map keeps a floating recenter.
-          // NAV-PHASE-CAMERA-TARGET-1: also gate on the route phase so the
-          // floating button can never re-appear on top of a prepared route.
-          if (_mapSupported &&
-              !showNavQuickActions &&
-              !tellersActive &&
-              navPhaseRecenterVisible(phase: _navFixedHudPhase))
-            Positioned(
-              right: 14,
-              bottom: recenterBottom,
-              child: _buildRecenterButton(),
-            ),
-
-          // NAV-PRES-2A / 3K-C / NAV-3D-HUD-ACTUAL-VISIBILITY-FIX-2:
-          // optional screen-fixed driver HUD vehicle icon.
-          if (followLiveActive &&
-              nav3dHudRenderDecision.actualHudVisible &&
-              !tellersActive)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: driverHudBottom,
-              child: Center(
-                child: NavigationDriverHudOverlay(
-                  iconSize: driverHudIconSize,
-                  markerChoice: _driverNavigationMarkerChoice,
-                  arrowScale: driverHudArrowScale,
-                ),
-              ),
-            ),
-
-          // NAV-PRES-3C / NAV-MOBILE-ENTERPRISE-COCKPIT-COMPACT-CONTROLS-1:
-          // live +/- cockpit camera controls. Tablet keeps the existing View
-          // panel (level + debug labels); phone gets two independent compact
-          // buttons with no panel and no View/debug text.
-          if (showDriverCockpitCameraControls &&
-              cockpitControlsLayout != null &&
-              !tellersActive)
-            Positioned(
-              right: cockpitControlsLayout.right,
-              bottom: cockpitControlsLayout.bottom,
-              child: isTablet
-                  ? NavigationDriverCockpitCameraControls(
-                      onPlus: () =>
-                          _adjustDriverCockpitCameraViewLevel(increase: true),
-                      onMinus: () =>
-                          _adjustDriverCockpitCameraViewLevel(increase: false),
-                      accentColor: navActionColors.accent,
-                      textColor: navActionColors.text,
-                      surfaceColor: navActionColors.surface,
-                      // Compact zoom value only — never View N/13 / preset names.
-                      levelLabel: _driverCockpitViewLevelLabel(),
-                      debugSubLabel: null,
-                      compactLandscape: isLandscape,
-                      portraitPanelLayout: viewPanelPortraitLayout,
-                    )
-                  : NavigationDriverPhoneZoomControls(
-                      onPlus: () =>
-                          _adjustDriverCockpitCameraViewLevel(increase: true),
-                      onMinus: () =>
-                          _adjustDriverCockpitCameraViewLevel(increase: false),
-                      accentColor: navActionColors.accent,
-                      textColor: navActionColors.text,
-                      surfaceColor: navActionColors.surface,
-                    ),
-            ),
-
-          // NAV-VEHICLE-MODE-CAR-ARROW-1: tablet gets two direct marker
-          // buttons [ Auto ] [ Pijl ] above the View panel — on every map
-          // style.
-          if (showNavMarkerSelector &&
-              cockpitControlsLayout != null &&
-              isTablet &&
-              !tellersActive)
-            Positioned(
-              right: cockpitControlsLayout.right,
-              bottom:
-                  cockpitControlsLayout.bottom +
-                  cockpitControlsPanelSize.height +
-                  8,
-              child: NavigationDriverMarkerChoiceSelector(
-                selectedChoice: _driverNavigationMarkerChoice,
-                onSelected: _setDriverNavigationMarkerChoice,
-                accentColor: navActionColors.accent,
-                textColor: navActionColors.text,
-                surfaceColor: navActionColors.surface,
-                language: navMarkerLanguage,
-                compactLandscape: isLandscape,
-              ),
-            ),
-
-          // NAV-VEHICLE-MODE-CAR-ARROW-1: phone gets one compact marker icon
-          // on the left side of the map-control zone; the popup drives the
-          // same Car/Arrow callback — on every map style.
-          if (showNavMarkerSelector &&
-              phoneVehicleButtonPlacement != null &&
-              !isTablet &&
-              !tellersActive)
-            Positioned(
-              left: phoneVehicleButtonPlacement.left,
-              bottom: phoneVehicleButtonPlacement.bottom,
-              child: NavigationDriverMarkerCompactButton(
-                selectedChoice: _driverNavigationMarkerChoice,
-                onSelected: _setDriverNavigationMarkerChoice,
-                accentColor: navActionColors.accent,
-                textColor: navActionColors.text,
-                surfaceColor: navActionColors.surface,
-                language: navMarkerLanguage,
-              ),
-            ),
-
-          if (!showCockpit) Positioned.fill(child: _buildHintPanel()),
-
-          // Bottom overlay layer (cockpit only).
-          if (cockpitHudVisible)
-            Positioned.fill(
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 180),
-                switchInCurve: Curves.easeOut,
-                switchOutCurve: Curves.easeOut,
-                // NAV-UI-R6F: cockpit is full width in both orientations and
-                // hosts the compact map action icons (recenter, satellite,
-                // offline, diagnostics, more) during route/nav context.
-                child: SafeArea(
-                  key: ValueKey<String>(
-                    isLandscape ? 'landscape_cockpit' : 'portrait_cockpit',
-                  ),
-                  minimum: EdgeInsets.zero,
+              // Phone portrait (and non-tablet): banner stays on its own row under
+              // the logo. Tablet portrait mounts the banner inline above instead.
+              if (navHudVisible &&
+                  _showNavInstructionBanner() &&
+                  !collapseTopBarInLandscapeNav &&
+                  !(collapseTopBarInPortraitNav && navSignageTablet))
+                Positioned(
+                  top: navBannerTop,
+                  left: 12,
+                  right: 12,
                   child: Align(
-                    alignment: Alignment.bottomCenter,
-                    child: Padding(
-                      padding: EdgeInsets.only(
-                        left: 8,
-                        right: 8,
-                        bottom: MediaQuery.of(context).viewInsets.bottom,
+                    alignment: Alignment.topCenter,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: navBannerPortraitMaxWidth,
                       ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (showNavQuickActions) _buildCockpitR9StatusChip(),
-                          CockpitWidget(
-                            embedded: true,
-                            themeListenable: _activeDriverThemeListenable,
-                            etaText: _etaText,
-                            kmText: _kmRemainingText,
-                            priceText: _cockpitPriceText,
-                            priceLabel: _displayPriceLabel,
-                            tripStarted: _liveRideActive,
-                            isWaiting: _isWaiting,
-                            navActive: _cameraMode == _CameraMode.follow,
-                            showNavToPickupAction: _showNavToPickupAction,
-                            onNav: _openNavigation,
-                            onStart: _handleCockpitStart,
-                            onStop: _stopTrip,
-                            onWait: _enterWaitMode,
-                            onGo: _exitWaitMode,
-                            secondaryActions: showNavQuickActions
-                                ? _buildCockpitSecondaryActions(
-                                    phoneLandscapeKpiPriorityCollapsed:
-                                        isLandscape &&
-                                        !isTablet &&
-                                        _phoneLandscapeKpiPriorityCollapsed,
-                                  )
-                                : const <Widget>[],
-                            landscapeKpiPriority:
-                                isLandscape &&
-                                !isTablet &&
-                                _phoneLandscapeKpiPriorityCollapsed,
-                            flatterPhoneLandscape: isLandscape && !isTablet,
-                            phoneFloatingGlass: !isTablet,
-                            secondaryActionGap:
-                                compactNavControlsLayout.horizontalGap,
-                            secondaryActionRowHeight:
-                                compactNavControlsLayout.rowHeight,
-                            metricsToPrimaryGap:
-                                compactNavControlsLayout.metricsToPrimaryGap,
-                            primaryToSecondaryGap:
-                                compactNavControlsLayout.primaryToSecondaryGap,
-                            secondaryRowHorizontalInset:
-                                compactNavControlsLayout
-                                    .secondaryRowHorizontalInset,
-                            distributeSecondaryRowEvenly:
-                                compactNavControlsLayout
-                                    .distributeSecondaryRowEvenly,
-                          ),
-                          _buildDirectRideEstimatePanel(),
-                        ],
+                      child: _wrapNavBannerWithComplexityCaution(
+                        banner: _buildTurnInstructionBanner(
+                          compact: false,
+                          isTablet: isTablet,
+                          portraitTabletMetrics:
+                              tabletPortraitNavLayout?.banner,
+                          tabletReadability: phoneParityBannerMetrics,
+                        ),
+                        compact: false,
+                        isTablet: isTablet,
                       ),
                     ),
                   ),
                 ),
-              ),
-            ),
-          // NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1:
-          // Opaque Tellers overlay keeps MapWidget + nav State mounted below.
-          if (_navPresentationMode.isTellers)
-            _buildTellersOverlay(isTablet: isTablet, isLandscape: isLandscape),
-        ],
+              if (navHudVisible &&
+                  !_showNavInstructionBanner() &&
+                  (_navStepsLoading ||
+                      _isRerouting ||
+                      _navInstructionSnapshot?.source ==
+                          NavInstructionSource.loading) &&
+                  !collapseTopBarInLandscapeNav &&
+                  !(collapseTopBarInPortraitNav && navSignageTablet))
+                Positioned(
+                  top: navBannerTop,
+                  left: 12,
+                  right: 12,
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: navBannerPortraitMaxWidth,
+                      ),
+                      child: _wrapNavBannerWithComplexityCaution(
+                        banner: _buildNavLoadingBanner(
+                          compact: false,
+                          isTablet: isTablet,
+                        ),
+                        compact: false,
+                        isTablet: isTablet,
+                      ),
+                    ),
+                  ),
+                ),
+              if (navHudVisible &&
+                  !_showNavInstructionBanner() &&
+                  !_navStepsLoading &&
+                  !_isRerouting &&
+                  _routeSteps.isEmpty &&
+                  !collapseTopBarInLandscapeNav &&
+                  !(collapseTopBarInPortraitNav && navSignageTablet))
+                Positioned(
+                  top: navBannerTop,
+                  left: 12,
+                  right: 12,
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: navBannerPortraitMaxWidth,
+                      ),
+                      child: _wrapNavBannerWithComplexityCaution(
+                        // NAV-DIRECTIONS-FAILURE-SECURITY-AND-RECOVERY-1: a failed
+                        // initial route shows the sanitized connectivity/retry
+                        // banner instead of the generic "Follow the route".
+                        banner: _showRouteUnavailableBanner
+                            ? _buildRouteUnavailableBanner(
+                                compact: false,
+                                isTablet: isTablet,
+                              )
+                            : _buildNoNavInstructionsBanner(
+                                compact: false,
+                                isTablet: isTablet,
+                              ),
+                        compact: false,
+                        isTablet: isTablet,
+                      ),
+                    ),
+                  ),
+                ),
+              if (!hideMapUserPuck && !tellersActive)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: arrowBottom,
+                  child: IgnorePointer(
+                    child: Center(
+                      child: Transform.rotate(
+                        angle: _uiArrowBearing * math.pi / 180.0,
+                        child: Container(
+                          width: 52,
+                          height: 52,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF2D8CFF).withOpacity(0.96),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.92),
+                              width: 2.0,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.42),
+                                blurRadius: 14,
+                                spreadRadius: 1.0,
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.navigation,
+                            color: Colors.white,
+                            size: 34,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              // NAV-UI-R6F: map actions live inside the bottom cockpit bar during
+              // route/nav context; only the idle map keeps a floating recenter.
+              // NAV-PHASE-CAMERA-TARGET-1: also gate on the route phase so the
+              // floating button can never re-appear on top of a prepared route.
+              if (_mapSupported &&
+                  !showNavQuickActions &&
+                  !tellersActive &&
+                  navPhaseRecenterVisible(phase: _navFixedHudPhase))
+                Positioned(
+                  right: 14,
+                  bottom: recenterBottom,
+                  child: _buildRecenterButton(),
+                ),
+
+              // NAV-PRES-2A / 3K-C / NAV-3D-HUD-ACTUAL-VISIBILITY-FIX-2:
+              // optional screen-fixed driver HUD vehicle icon.
+              if (followLiveActive &&
+                  nav3dHudRenderDecision.actualHudVisible &&
+                  !tellersActive)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: driverHudBottom,
+                  child: Center(
+                    child: NavigationDriverHudOverlay(
+                      iconSize: driverHudIconSize,
+                      markerChoice: _driverNavigationMarkerChoice,
+                      arrowScale: driverHudArrowScale,
+                    ),
+                  ),
+                ),
+
+              // NAV-PRES-3C / NAV-MOBILE-ENTERPRISE-COCKPIT-COMPACT-CONTROLS-1:
+              // live +/- cockpit camera controls. Tablet keeps the existing View
+              // panel (level + debug labels); phone gets two independent compact
+              // buttons with no panel and no View/debug text.
+              if (showDriverCockpitCameraControls &&
+                  cockpitControlsLayout != null &&
+                  !tellersActive)
+                Positioned(
+                  right: cockpitControlsLayout.right,
+                  bottom: cockpitControlsLayout.bottom,
+                  child: isTablet
+                      ? NavigationDriverCockpitCameraControls(
+                          onPlus: () => _adjustDriverCockpitCameraViewLevel(
+                            increase: true,
+                          ),
+                          onMinus: () => _adjustDriverCockpitCameraViewLevel(
+                            increase: false,
+                          ),
+                          accentColor: navActionColors.accent,
+                          textColor: navActionColors.text,
+                          surfaceColor: navActionColors.surface,
+                          // Compact zoom value only — never View N/13 / preset names.
+                          levelLabel: _driverCockpitViewLevelLabel(),
+                          debugSubLabel: null,
+                          compactLandscape: isLandscape,
+                          portraitPanelLayout: viewPanelPortraitLayout,
+                        )
+                      : NavigationDriverPhoneZoomControls(
+                          onPlus: () => _adjustDriverCockpitCameraViewLevel(
+                            increase: true,
+                          ),
+                          onMinus: () => _adjustDriverCockpitCameraViewLevel(
+                            increase: false,
+                          ),
+                          accentColor: navActionColors.accent,
+                          textColor: navActionColors.text,
+                          surfaceColor: navActionColors.surface,
+                        ),
+                ),
+
+              // NAV-VEHICLE-MODE-CAR-ARROW-1: tablet gets two direct marker
+              // buttons [ Auto ] [ Pijl ] above the View panel — on every map
+              // style.
+              if (showNavMarkerSelector &&
+                  cockpitControlsLayout != null &&
+                  isTablet &&
+                  !tellersActive)
+                Positioned(
+                  right: cockpitControlsLayout.right,
+                  bottom:
+                      cockpitControlsLayout.bottom +
+                      cockpitControlsPanelSize.height +
+                      8,
+                  child: NavigationDriverMarkerChoiceSelector(
+                    selectedChoice: _driverNavigationMarkerChoice,
+                    onSelected: _setDriverNavigationMarkerChoice,
+                    accentColor: navActionColors.accent,
+                    textColor: navActionColors.text,
+                    surfaceColor: navActionColors.surface,
+                    language: navMarkerLanguage,
+                    compactLandscape: isLandscape,
+                  ),
+                ),
+
+              // NAV-VEHICLE-MODE-CAR-ARROW-1: phone gets one compact marker icon
+              // on the left side of the map-control zone; the popup drives the
+              // same Car/Arrow callback — on every map style.
+              if (showNavMarkerSelector &&
+                  phoneVehicleButtonPlacement != null &&
+                  !isTablet &&
+                  !tellersActive)
+                Positioned(
+                  left: phoneVehicleButtonPlacement.left,
+                  bottom: phoneVehicleButtonPlacement.bottom,
+                  child: NavigationDriverMarkerCompactButton(
+                    selectedChoice: _driverNavigationMarkerChoice,
+                    onSelected: _setDriverNavigationMarkerChoice,
+                    accentColor: navActionColors.accent,
+                    textColor: navActionColors.text,
+                    surfaceColor: navActionColors.surface,
+                    language: navMarkerLanguage,
+                  ),
+                ),
+
+              if (!showCockpit) Positioned.fill(child: _buildHintPanel()),
+
+              // Bottom overlay layer (cockpit only).
+              if (cockpitHudVisible)
+                Positioned.fill(
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    switchInCurve: Curves.easeOut,
+                    switchOutCurve: Curves.easeOut,
+                    // NAV-UI-R6F: cockpit is full width in both orientations and
+                    // hosts the compact map action icons (recenter, satellite,
+                    // offline, diagnostics, more) during route/nav context.
+                    child: SafeArea(
+                      key: ValueKey<String>(
+                        isLandscape ? 'landscape_cockpit' : 'portrait_cockpit',
+                      ),
+                      minimum: EdgeInsets.zero,
+                      child: Align(
+                        alignment: Alignment.bottomCenter,
+                        child: Padding(
+                          padding: EdgeInsets.only(
+                            left: 8,
+                            right: 8,
+                            bottom: MediaQuery.of(context).viewInsets.bottom,
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (showNavQuickActions)
+                                _buildCockpitR9StatusChip(),
+                              CockpitWidget(
+                                embedded: true,
+                                themeListenable: _activeDriverThemeListenable,
+                                etaText: _etaText,
+                                kmText: _kmRemainingText,
+                                priceText: _cockpitPriceText,
+                                priceLabel: _displayPriceLabel,
+                                tripStarted: _liveRideActive,
+                                isWaiting: _isWaiting,
+                                navActive: _cameraMode == _CameraMode.follow,
+                                showNavToPickupAction: _showNavToPickupAction,
+                                onNav: _openNavigation,
+                                onStart: _handleCockpitStart,
+                                onStop: _stopTrip,
+                                onWait: _enterWaitMode,
+                                onGo: _exitWaitMode,
+                                secondaryActions: showNavQuickActions
+                                    ? _buildCockpitSecondaryActions(
+                                        phoneLandscapeKpiPriorityCollapsed:
+                                            isLandscape &&
+                                            !isTablet &&
+                                            _phoneLandscapeKpiPriorityCollapsed,
+                                      )
+                                    : const <Widget>[],
+                                landscapeKpiPriority:
+                                    isLandscape &&
+                                    !isTablet &&
+                                    _phoneLandscapeKpiPriorityCollapsed,
+                                flatterPhoneLandscape: isLandscape && !isTablet,
+                                phoneFloatingGlass: !isTablet,
+                                secondaryActionGap:
+                                    compactNavControlsLayout.horizontalGap,
+                                secondaryActionRowHeight:
+                                    compactNavControlsLayout.rowHeight,
+                                metricsToPrimaryGap: compactNavControlsLayout
+                                    .metricsToPrimaryGap,
+                                primaryToSecondaryGap: compactNavControlsLayout
+                                    .primaryToSecondaryGap,
+                                secondaryRowHorizontalInset:
+                                    compactNavControlsLayout
+                                        .secondaryRowHorizontalInset,
+                                distributeSecondaryRowEvenly:
+                                    compactNavControlsLayout
+                                        .distributeSecondaryRowEvenly,
+                              ),
+                              _buildDirectRideEstimatePanel(),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              // NAV-PRESENTATION-COMPACT-BANNER-LANES-TELLERS-1:
+              // Opaque Tellers overlay keeps MapWidget + nav State mounted below.
+              if (_navPresentationMode.isTellers)
+                _buildTellersOverlay(
+                  isTablet: isTablet,
+                  isLandscape: isLandscape,
+                ),
+            ],
+          ),
+        ),
       ),
-      ),
-    ),
     );
     if (!pipActive) return driverBody;
     // EXTERNAL-NAV-RETURN-LIFECYCLE-P0-7: meter overlay + keep MapWidget alive.
@@ -35305,15 +35286,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     // language change while PiP is active updates chrome without relaunch.
     // Phone PiP: transparent scaffold so the light glass card can float.
     // Tablet PiP keeps the opaque taxi-meter backdrop (bit-identical).
-    final pipHostTablet = _externalNavigationSession?.hostIsTablet ??
-        _hostIsTablet(context);
+    final pipHostTablet =
+        _externalNavigationSession?.hostIsTablet ?? _hostIsTablet(context);
     return Stack(
       fit: StackFit.expand,
       children: [
         Offstage(offstage: true, child: driverBody),
         Scaffold(
-          backgroundColor:
-              pipHostTablet ? const Color(0xFF0B0F14) : Colors.transparent,
+          backgroundColor: pipHostTablet
+              ? const Color(0xFF0B0F14)
+              : Colors.transparent,
           body: ValueListenableBuilder<AppLanguage>(
             valueListenable: appLanguageNotifier,
             builder: (context, lang, _) {
@@ -35322,8 +35304,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 builder: (context, snap, _) {
                   return ExternalNavPipMeterCard(
                     model: _buildCurrentPipMeterModel(snap, lang),
-                    hostIsTablet:
-                        _externalNavigationSession?.hostIsTablet,
+                    hostIsTablet: _externalNavigationSession?.hostIsTablet,
                   );
                 },
               );
@@ -35519,7 +35500,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         ? _lightEmeraldSurfaceGradient(soft: true)
         : (isMiddayGold
               ? _middayGoldSurfaceGradient(soft: true)
-              : (isMidnightBlue ? _midnightBlueSurfaceGradient(soft: true) : null));
+              : (isMidnightBlue
+                    ? _midnightBlueSurfaceGradient(soft: true)
+                    : null));
     final panelFill = (isMiddayGold || isMidnightBlue || isLightEmerald)
         ? null
         : const Color(0xFF101113);
@@ -35542,8 +35525,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         : (isMiddayGold
               ? _middayGoldTextMuted()
               : (isMidnightBlue
-                          ? _midnightBlueTextMuted()
-                          : Colors.white.withOpacity(0.72)));
+                    ? _midnightBlueTextMuted()
+                    : Colors.white.withOpacity(0.72)));
     final spinnerColor = isMidnightBlue
         ? _midnightBlueAccent()
         : (isMiddayGold ? const Color(0xFFE8C57E) : kFluxidiYellow);
@@ -35961,8 +35944,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         : (isMiddayGold
               ? _middayGoldTextMuted()
               : (isMidnightBlue
-                          ? _midnightBlueTextMuted()
-                          : Colors.white.withOpacity(0.66)));
+                    ? _midnightBlueTextMuted()
+                    : Colors.white.withOpacity(0.66)));
     final cardAccent = isMidnightBlue
         ? _midnightBlueAccent()
         : (isMiddayGold ? const Color(0xFFE8C57E) : const Color(0xFFFFD36A));
@@ -36282,8 +36265,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         : (isMiddayGold
               ? _middayGoldTextMuted()
               : (isMidnightBlue
-                          ? _midnightBlueTextMuted()
-                          : Colors.white.withOpacity(0.66)));
+                    ? _midnightBlueTextMuted()
+                    : Colors.white.withOpacity(0.66)));
     final cardAccent = isMidnightBlue
         ? _midnightBlueAccent()
         : (isMiddayGold ? const Color(0xFFE8C57E) : const Color(0xFFFFD36A));
@@ -37015,8 +36998,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       loadingText: loadingText,
       unavailableText: unavailableText,
       formatAmount: _formatDirectRideEstimateText,
-      compactHorizontal: MediaQuery.orientationOf(context) ==
-              Orientation.landscape &&
+      compactHorizontal:
+          MediaQuery.orientationOf(context) == Orientation.landscape &&
           !_hostIsTablet(context),
     );
   }
@@ -37691,8 +37674,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         : (isMiddayGold
               ? _middayGoldTextMuted()
               : (isMidnightBlue
-                          ? _midnightBlueTextMuted()
-                          : Colors.white.withOpacity(0.78)));
+                    ? _midnightBlueTextMuted()
+                    : Colors.white.withOpacity(0.78)));
     final chip = Container(
       constraints: const BoxConstraints(minHeight: 34),
       padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
@@ -37976,7 +37959,8 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Color _driverKpiAccentColor() {
     final variant = driverThemeNotifier.value;
-    if (variant == DriverThemeVariant.midnightBlue) return _midnightBlueAccent();
+    if (variant == DriverThemeVariant.midnightBlue)
+      return _midnightBlueAccent();
     if (variant == DriverThemeVariant.highContrast) {
       return const Color(0xFFE8C57E);
     }
@@ -38580,7 +38564,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                             onTap: () {
                               Navigator.pop(context);
                               final driverId =
-                                  (activeDriverSessionNotifier.value?.driverId ??
+                                  (activeDriverSessionNotifier
+                                              .value
+                                              ?.driverId ??
                                           '')
                                       .trim();
                               openFluxidiPrivacyAccountPage(

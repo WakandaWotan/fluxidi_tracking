@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'driver_theme_cycle.dart';
 import 'driver_theme_palette.dart';
 
 const DriverThemeVariant _kDefaultCompanyDriverViewTheme =
@@ -59,18 +60,56 @@ Future<void> loadCompanyDriverViewThemePreference() async {
   }
 }
 
-Future<void> saveCompanyDriverViewThemePreference(
+bool _companyDriverViewThemeWriteInFlight = false;
+bool _companyDriverViewThemeWriteSuperseded = false;
+
+/// Applies [variant] immediately, then persists with a serialized coalescing
+/// write so rapid one-tap cycles cannot finish out of order.
+Future<void> applyCompanyDriverViewThemePreference(
   DriverThemeVariant variant,
 ) async {
   companyDriverViewThemeNotifier.value = variant;
-  try {
-    final file = await _companyDriverViewThemeFile();
-    final payload = <String, dynamic>{
-      'variant': variant.name,
-      'updatedAt': DateTime.now().toUtc().toIso8601String(),
-    };
-    await file.writeAsString(jsonEncode(payload), flush: true);
-  } catch (_) {
-    // Keep in-memory value when persistence temporarily fails.
+  await _persistActiveCompanyDriverViewTheme();
+}
+
+/// Retained name for existing callers (business theme settings page).
+Future<void> saveCompanyDriverViewThemePreference(DriverThemeVariant variant) =>
+    applyCompanyDriverViewThemePreference(variant);
+
+Future<void> _persistActiveCompanyDriverViewTheme() async {
+  if (_companyDriverViewThemeWriteInFlight) {
+    _companyDriverViewThemeWriteSuperseded = true;
+    return;
   }
+  _companyDriverViewThemeWriteInFlight = true;
+  try {
+    do {
+      _companyDriverViewThemeWriteSuperseded = false;
+      final preset = companyDriverViewThemeNotifier.value;
+      try {
+        final file = await _companyDriverViewThemeFile();
+        final payload = <String, dynamic>{
+          'variant': preset.name,
+          'updatedAt': DateTime.now().toUtc().toIso8601String(),
+        };
+        await file.writeAsString(jsonEncode(payload), flush: true);
+      } catch (_) {
+        // Keep in-memory value when persistence temporarily fails.
+      }
+    } while (_companyDriverViewThemeWriteSuperseded);
+  } finally {
+    _companyDriverViewThemeWriteInFlight = false;
+  }
+}
+
+@visibleForTesting
+void resetCompanyDriverViewThemePersistenceLatchForTest() {
+  _companyDriverViewThemeWriteInFlight = false;
+  _companyDriverViewThemeWriteSuperseded = false;
+}
+
+Future<DriverThemeVariant> cycleCompanyDriverViewThemePreference() async {
+  final next = nextDriverThemeVariant(companyDriverViewThemeNotifier.value);
+  await applyCompanyDriverViewThemePreference(next);
+  return next;
 }
