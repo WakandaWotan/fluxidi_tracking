@@ -22,24 +22,39 @@ void main() {
     expect(billingSource.contains('tarif fondateur'), isTrue);
     expect(billingSource.contains('precio fundador'), isTrue);
     expect(billingSource.contains('extra voertuig'), isTrue);
-    expect(billingSource.contains('PDF-pakket'), isTrue);
+    expect(billingSource.contains('Vervallen nooit'), isTrue);
     expect(billingSource.contains('geen automatische verlenging'), isTrue);
+    expect(
+      billingSource.contains('PDF-pakket(ten) eindigen op'),
+      isFalse,
+    );
   });
 
-  test('separate vehicle and PDF cancellation actions are visible CTAs', () {
+  test('vehicle cancel CTA remains; PDF cancel CTA removed', () {
     expect(billingSource.contains('Eén extra voertuig opzeggen'), isTrue);
     expect(billingSource.contains('Cancel one extra vehicle'), isTrue);
-    expect(billingSource.contains('Eén pakket van \$pdfs PDF'), isTrue);
-    expect(billingSource.contains('Cancel one \$pdfs PDF bundle'), isTrue);
+    expect(billingSource.contains('Eén pakket van \$pdfs PDF'), isFalse);
+    expect(billingSource.contains('Cancel one \$pdfs PDF bundle'), isFalse);
+    expect(billingSource.contains('_pdfBundleCancellationControls'), isFalse);
+    expect(billingSource.contains('_confirmAndCancelOnePdfBundle'), isFalse);
     expect(billingSource.contains('minimumSize: const Size.fromHeight(48)'), isTrue);
     expect(billingSource.contains('OutlinedButton.icon'), isTrue);
   });
 
-  test('pending cancellation copy renders after schedule', () {
-    expect(billingSource.contains('Opzegging gepland'), isTrue);
-    expect(billingSource.contains('Cancellation scheduled'), isTrue);
-    expect(billingSource.contains('Résiliation planifiée'), isTrue);
-    expect(billingSource.contains('Cancelación programada'), isTrue);
+  test('scheduled cancellation shows undo copy and nothing-charged-today', () {
+    expect(billingSource.contains('Opgezegd — actief t/m'), isTrue);
+    expect(billingSource.contains('Cancelled — active until'), isTrue);
+    expect(billingSource.contains('Opzegging ongedaan maken'), isTrue);
+    expect(billingSource.contains('Undo cancellation'), isTrue);
+    expect(billingSource.contains('Vandaag wordt niets aangerekend'), isTrue);
+    expect(billingSource.contains('Nothing is charged today'), isTrue);
+    expect(billingSource.contains('undoCancelCompanySubscription'), isTrue);
+  });
+
+  test('trial marketing hidden when subscription is paid active', () {
+    expect(billingSource.contains('if (!isPaidActive)'), isTrue);
+    expect(billingSource.contains('2 weken gratis proefperiode'), isTrue);
+    expect(billingSource.contains('Proefperiode start/einde'), isTrue);
   });
 
   test('SafeArea uses viewPadding bottom with extra scroll padding', () {
@@ -47,25 +62,24 @@ void main() {
     expect(billingSource.contains('24 + bottomSafeInset'), isTrue);
   });
 
-  test('PDF active state does not dominate with activation CTA', () {
-    expect(billingSource.contains('Actief: \$activeQty'), isTrue);
-    expect(billingSource.contains('Nog een pakket van \$pdfs toevoegen'), isTrue);
+  test('PDF section shows included and purchased credits separately', () {
+    expect(billingSource.contains('_buildPdfCreditsSection'), isTrue);
+    expect(billingSource.contains('Inbegrepen deze maand'), isTrue);
+    expect(billingSource.contains('Aangekochte PDF-credits'), isTrue);
+    expect(billingSource.contains('purchasedPdfCredits'), isTrue);
+    expect(billingSource.contains('Nieuwe maandbundel op'), isTrue);
   });
 
-  test('client accepts provider_cancel_pending and HTTP 202', () {
+  test('client accepts provider_cancel_pending, undo routes, and HTTP 202', () {
     expect(appConfigSource.contains('providerCancelPending'), isTrue);
     expect(appConfigSource.contains('provider_cancel_pending'), isTrue);
+    expect(appConfigSource.contains('undoCancelCompanySubscription'), isTrue);
+    expect(appConfigSource.contains('undoCancelOneExtraVehicleAddon'), isTrue);
+    expect(appConfigSource.contains('undoCancelOneExtraDriverAddon'), isTrue);
     expect(appConfigSource.contains("res.statusCode != 200 && res.statusCode != 202"), isTrue);
-  });
-
-  test('entitlement PDF totals remain source-of-truth driven', () {
-    expect(
-      billingSource.contains(
-        'catalog.includedPdfCreationsPerVehicleMonth *',
-      ),
-      isTrue,
-    );
-    expect(billingSource.contains('addonAllowance: profile.pdfMonthlyAllowance'), isTrue);
+    expect(appConfigSource.contains('AddonCheckoutProration'), isTrue);
+    expect(appConfigSource.contains('pdfPurchasedCreditsRemaining'), isTrue);
+    expect(appConfigSource.contains('recurringAmountCents'), isTrue);
   });
 
   test('localization covers NL EN FR ES for cancel labels', () {

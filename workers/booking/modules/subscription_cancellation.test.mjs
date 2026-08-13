@@ -75,23 +75,27 @@ test("2. base cancellation with vehicle add-on cascades qty", () => {
   assert.equal(r.profile.max_vehicles, 2); // unchanged until materialize
 });
 
-test("3. base cancellation with PDF add-on cascades all bundles", () => {
+test("3. base cancellation does NOT cascade prepaid PDF packs", () => {
   const r = scheduleBaseCancellation(
     baseProfile({
       pdf500_active_quantity: 1,
       pdf1000_active_quantity: 2,
       pdf5000_active_quantity: 1,
       pdf_monthly_allowance: 7500,
+      pdf_purchased_credits_remaining: 7500,
     }),
     { nowIso: "2026-08-12T10:00:00.000Z" },
   );
-  assert.equal(r.profile.pdf500_cancel_at_period_end_quantity, 1);
-  assert.equal(r.profile.pdf1000_cancel_at_period_end_quantity, 2);
-  assert.equal(r.profile.pdf5000_cancel_at_period_end_quantity, 1);
-  assert.equal(r.profile.pdf_monthly_allowance, 7500);
+  assert.equal(r.profile.pdf500_cancel_at_period_end_quantity, 0);
+  assert.equal(r.profile.pdf1000_cancel_at_period_end_quantity, 0);
+  assert.equal(r.profile.pdf5000_cancel_at_period_end_quantity, 0);
+  assert.equal(r.addon_cascade.pdf500, 0);
+  assert.equal(r.addon_cascade.pdf1000, 0);
+  assert.equal(r.addon_cascade.pdf5000, 0);
+  assert.equal(r.profile.pdf_purchased_credits_remaining, 7500);
 });
 
-test("4. base cancellation with both add-on types", () => {
+test("4. base cancellation cascades vehicle/driver only (not PDF)", () => {
   const r = scheduleBaseCancellation(
     baseProfile({
       extra_vehicle_active_quantity: 1,
@@ -101,7 +105,7 @@ test("4. base cancellation with both add-on types", () => {
   );
   assert.equal(r.addon_cascade.extra_vehicle, 1);
   assert.equal(r.addon_cascade.extra_driver, 2);
-  assert.equal(r.addon_cascade.pdf5000, 1);
+  assert.equal(r.addon_cascade.pdf5000, 0);
 });
 
 test("5. no orphan add-on renewal after base cancellation (recurring reject)", () => {
@@ -127,10 +131,7 @@ test("7. cancel vehicles from quantity greater than one", () => {
   assert.equal(profile.extra_vehicle_cancel_at_period_end_quantity, 3);
 });
 
-test("8. vehicle-only cascade leaves PDF active qty until its own schedule", () => {
-  // Independent vehicle cancel-one is route-level; cascade with only vehicles
-  // set still preserves PDF active quantities when cascading from a vehicle-only
-  // profile change simulation (PDF active stays, cancel qty 0 when active 0).
+test("8. vehicle cascade preserves PDF active qty and never schedules PDF cancel", () => {
   const { profile, summary } = cascadeAddonCancellations(
     baseProfile({
       extra_vehicle_active_quantity: 1,
@@ -139,11 +140,12 @@ test("8. vehicle-only cascade leaves PDF active qty until its own schedule", () 
     { effectiveAt: "2026-09-01T00:00:00.000Z", requestedAt: "2026-08-12T10:00:00.000Z" },
   );
   assert.equal(summary.extra_vehicle, 1);
-  assert.equal(summary.pdf5000, 1);
+  assert.equal(summary.pdf5000, 0);
   assert.equal(profile.pdf5000_active_quantity, 1);
+  assert.equal(profile.pdf5000_cancel_at_period_end_quantity, 0);
 });
 
-test("9. PDF schedule leaves vehicle active quantity", () => {
+test("9. cascade never schedules PDF cancel; vehicle active qty preserved", () => {
   const { profile } = cascadeAddonCancellations(
     baseProfile({
       extra_vehicle_active_quantity: 1,
@@ -152,7 +154,7 @@ test("9. PDF schedule leaves vehicle active quantity", () => {
     { effectiveAt: "2026-09-01T00:00:00.000Z", requestedAt: "2026-08-12T10:00:00.000Z" },
   );
   assert.equal(profile.extra_vehicle_active_quantity, 1);
-  assert.equal(profile.pdf1000_cancel_at_period_end_quantity, 1);
+  assert.equal(profile.pdf1000_cancel_at_period_end_quantity, 0);
 });
 
 test("10. bundled 3-driver capacity is not reduced until materialize (schedule only)", () => {

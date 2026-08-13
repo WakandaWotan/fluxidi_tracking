@@ -24,8 +24,9 @@ export function resolveCancellationEffectiveAt(profile, nowMs = Date.now()) {
 }
 
 /**
- * Schedule cancel for every remaining cancelable paid add-on quantity onto
- * the same effective date. Does not touch founder fields, max_*, or Mollie ids.
+ * Schedule cancel for recurring add-ons (vehicle/driver) onto the same
+ * effective date. PDF packs are prepaid consumables and are NEVER cascaded.
+ * Does not touch founder fields, max_*, purchased PDF credits, or Mollie ids.
  */
 export function cascadeAddonCancellations(profile, {
   effectiveAt,
@@ -39,9 +40,6 @@ export function cascadeAddonCancellations(profile, {
 
   const vehicleActive = _qty(profile.extra_vehicle_active_quantity);
   const driverActive = _qty(profile.extra_driver_active_quantity);
-  const pdf500Active = _qty(profile.pdf500_active_quantity);
-  const pdf1000Active = _qty(profile.pdf1000_active_quantity);
-  const pdf5000Active = _qty(profile.pdf5000_active_quantity);
 
   const next = {
     ...profile,
@@ -55,31 +53,26 @@ export function cascadeAddonCancellations(profile, {
     extra_driver_cancellation_effective_at: driverActive > 0 ? eff : _str(profile.extra_driver_cancellation_effective_at, 48),
     extra_driver_auto_renew: driverActive > 0 ? false : profile.extra_driver_auto_renew !== false,
 
-    pdf500_cancel_at_period_end_quantity: pdf500Active,
-    pdf500_cancel_requested_at: pdf500Active > 0 ? req : _str(profile.pdf500_cancel_requested_at, 48),
-    pdf500_cancellation_effective_at: pdf500Active > 0 ? eff : _str(profile.pdf500_cancellation_effective_at, 48),
-    pdf500_auto_renew: pdf500Active > 0 ? false : profile.pdf500_auto_renew !== false,
-
-    pdf1000_cancel_at_period_end_quantity: pdf1000Active,
-    pdf1000_cancel_requested_at: pdf1000Active > 0 ? req : _str(profile.pdf1000_cancel_requested_at, 48),
-    pdf1000_cancellation_effective_at: pdf1000Active > 0 ? eff : _str(profile.pdf1000_cancellation_effective_at, 48),
-    pdf1000_auto_renew: pdf1000Active > 0 ? false : profile.pdf1000_auto_renew !== false,
-
-    pdf5000_cancel_at_period_end_quantity: pdf5000Active,
-    pdf5000_cancel_requested_at: pdf5000Active > 0 ? req : _str(profile.pdf5000_cancel_requested_at, 48),
-    pdf5000_cancellation_effective_at: pdf5000Active > 0 ? eff : _str(profile.pdf5000_cancellation_effective_at, 48),
-    pdf5000_auto_renew: pdf5000Active > 0 ? false : profile.pdf5000_auto_renew !== false,
+    // PDF prepaid: never schedule cancellation from base cancel.
+    pdf500_cancel_at_period_end_quantity: 0,
+    pdf500_cancel_requested_at: "",
+    pdf500_cancellation_effective_at: "",
+    pdf1000_cancel_at_period_end_quantity: 0,
+    pdf1000_cancel_requested_at: "",
+    pdf1000_cancellation_effective_at: "",
+    pdf5000_cancel_at_period_end_quantity: 0,
+    pdf5000_cancel_requested_at: "",
+    pdf5000_cancellation_effective_at: "",
   };
 
   const summary = {
     extra_vehicle: vehicleActive,
     extra_driver: driverActive,
-    pdf500: pdf500Active,
-    pdf1000: pdf1000Active,
-    pdf5000: pdf5000Active,
+    pdf500: 0,
+    pdf1000: 0,
+    pdf5000: 0,
   };
-  const cascaded =
-    vehicleActive + driverActive + pdf500Active + pdf1000Active + pdf5000Active > 0;
+  const cascaded = vehicleActive + driverActive > 0;
 
   return { profile: next, cascaded, summary, effectiveAt: eff, requestedAt: req };
 }

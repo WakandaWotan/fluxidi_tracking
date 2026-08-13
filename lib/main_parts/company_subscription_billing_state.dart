@@ -27,14 +27,15 @@ class _CompanySubscriptionBillingPageState
   bool _startingExtraDriverAddonCheckout = false;
   // Patch 2.8: guard against double-tapping the cancel-one-extra-driver button.
   bool _cancellingExtraDriver = false;
-  // Patch 2.9: per-bundle loading flags for the PDF add-on checkout/cancel so
+  // Undo cancel-at-period-end (base + add-ons).
+  bool _undoingCancellation = false;
+  bool _undoingExtraVehicle = false;
+  bool _undoingExtraDriver = false;
+  // Patch 2.9: per-bundle loading flags for the PDF add-on checkout so
   // each PDF tile is independent and cannot be double-tapped.
   bool _startingPdf500Checkout = false;
   bool _startingPdf1000Checkout = false;
   bool _startingPdf5000Checkout = false;
-  bool _cancellingPdf500 = false;
-  bool _cancellingPdf1000 = false;
-  bool _cancellingPdf5000 = false;
   // Set true while a Mollie checkout window is open so the next app resume
   // triggers exactly one profile refresh (no infinite resume loops). Shared by
   // both the base subscription checkout and the add-on checkout.
@@ -48,6 +49,208 @@ class _CompanySubscriptionBillingPageState
     final whole = cents ~/ 100;
     final fraction = (cents % 100).toString().padLeft(2, '0');
     return '€$whole.$fraction';
+  }
+
+  bool _hasProviderSubscription(BackendSubscriptionProfile profile) =>
+      profile.providerSubscriptionId.trim().startsWith('sub_');
+
+  String? _consolidatedRenewalLine(BackendSubscriptionProfile profile) {
+    if (!_hasProviderSubscription(profile)) return null;
+    final cents = profile.recurringAmountCents;
+    if (cents == null) return null;
+    final periodEnd = profile.currentPeriodEnd.trim();
+    if (periodEnd.isEmpty) return null;
+    final date = _humanDate(periodEnd);
+    return _t(
+      nl: 'Volgende verlenging: ${_priceFromCents(cents)} op $date',
+      en: 'Next renewal: ${_priceFromCents(cents)} on $date',
+      fr: 'Prochain renouvellement : ${_priceFromCents(cents)} le $date',
+      es: 'Próxima renovación: ${_priceFromCents(cents)} el $date',
+    );
+  }
+
+  String _localizedMonthName(int month) {
+    assert(month >= 1 && month <= 12);
+    switch (currentLanguageCode) {
+      case 'fr':
+        const fr = [
+          'janvier',
+          'février',
+          'mars',
+          'avril',
+          'mai',
+          'juin',
+          'juillet',
+          'août',
+          'septembre',
+          'octobre',
+          'novembre',
+          'décembre',
+        ];
+        return fr[month - 1];
+      case 'es':
+        const es = [
+          'enero',
+          'febrero',
+          'marzo',
+          'abril',
+          'mayo',
+          'junio',
+          'julio',
+          'agosto',
+          'septiembre',
+          'octubre',
+          'noviembre',
+          'diciembre',
+        ];
+        return es[month - 1];
+      case 'en':
+        const en = [
+          'January',
+          'February',
+          'March',
+          'April',
+          'May',
+          'June',
+          'July',
+          'August',
+          'September',
+          'October',
+          'November',
+          'December',
+        ];
+        return en[month - 1];
+      default:
+        const nl = [
+          'januari',
+          'februari',
+          'maart',
+          'april',
+          'mei',
+          'juni',
+          'juli',
+          'augustus',
+          'september',
+          'oktober',
+          'november',
+          'december',
+        ];
+        return nl[month - 1];
+    }
+  }
+
+  /// Localized long-form date from a backend ISO timestamp (device timezone).
+  String _humanDate(String iso) {
+    final raw = iso.trim();
+    if (raw.isEmpty) return '—';
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) return raw;
+    final local = parsed.toLocal();
+    return '${local.day} ${_localizedMonthName(local.month)} ${local.year}';
+  }
+
+  Future<bool> _confirmAddonProration(
+    BackendSubscriptionCheckoutStartResult result,
+  ) async {
+    final proration = result.proration;
+    if (proration == null || !proration.hasProration) return true;
+    final proratedCents = proration.proratedCents!;
+    final periodStart = _humanDate(proration.periodStart);
+    final periodEnd = _humanDate(proration.periodEnd);
+    final nextMonthly = proration.nextRenewalMonthlyCents;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _panel,
+        title: Text(
+          _t(
+            nl: 'Betaling bevestigen',
+            en: 'Confirm payment',
+            fr: 'Confirmer le paiement',
+            es: 'Confirmar pago',
+          ),
+          style: TextStyle(color: _businessThemePalette.textPrimary),
+        ),
+        content: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _t(
+                nl: 'Vandaag: ${_priceFromCents(proratedCents)} voor $periodStart t/m $periodEnd',
+                en: 'Today: ${_priceFromCents(proratedCents)} for $periodStart through $periodEnd',
+                fr: 'Aujourd\'hui : ${_priceFromCents(proratedCents)} pour $periodStart au $periodEnd',
+                es: 'Hoy: ${_priceFromCents(proratedCents)} del $periodStart al $periodEnd',
+              ),
+              style: TextStyle(color: _businessThemePalette.textMuted),
+            ),
+            if (nextMonthly != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _t(
+                  nl: 'Vanaf $periodEnd: ${_priceFromCents(nextMonthly)} per maand',
+                  en: 'From $periodEnd: ${_priceFromCents(nextMonthly)} per month',
+                  fr: 'À partir du $periodEnd : ${_priceFromCents(nextMonthly)} par mois',
+                  es: 'Desde el $periodEnd: ${_priceFromCents(nextMonthly)} al mes',
+                ),
+                style: TextStyle(color: _businessThemePalette.textMuted),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              _t(
+                nl: 'Doorgaan naar betaling',
+                en: 'Continue to payment',
+                fr: 'Continuer vers le paiement',
+                es: 'Continuar al pago',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
+  Future<bool> _launchAddonCheckoutUrl(String url) async {
+    final uri = Uri.tryParse(url);
+    if (url.isEmpty || uri == null || !uri.isScheme('https')) {
+      _showSnack(_genericAddonError());
+      return false;
+    }
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!mounted) return false;
+    if (!launched) {
+      _showSnack(
+        _t(
+          nl: 'Kon het betaalvenster niet openen.',
+          en: 'Could not open the payment window.',
+          fr: 'Impossible d’ouvrir la fenêtre de paiement.',
+          es: 'No se pudo abrir la ventana de pago.',
+        ),
+      );
+      return false;
+    }
+    _awaitingCheckoutReturn = true;
+    _showSnack(
+      _t(
+        nl: 'Betaalvenster geopend. Na betaling wordt je add-on automatisch bijgewerkt.',
+        en: 'Payment window opened. After payment, your add-on will update automatically.',
+        fr: 'Fenêtre de paiement ouverte. Après le paiement, votre option sera mise à jour automatiquement.',
+        es: 'Ventana de pago abierta. Después del pago, tu complemento se actualizará automáticamente.',
+      ),
+    );
+    return true;
   }
 
   String _planDisplayName(BackendSubscriptionProfile profile, String market) {
@@ -451,41 +654,10 @@ class _CompanySubscriptionBillingPageState
         return;
       }
 
+      if (!await _confirmAddonProration(result)) return;
+
       final url = result.checkoutUrl.trim();
-      final uri = Uri.tryParse(url);
-      if (url.isEmpty || uri == null || !uri.isScheme('https')) {
-        _showSnack(_genericAddonError());
-        return;
-      }
-
-      final launched = await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
-      if (!mounted) return;
-      if (!launched) {
-        _showSnack(
-          _t(
-            nl: 'Kon het betaalvenster niet openen.',
-            en: 'Could not open the payment window.',
-            fr: 'Impossible d’ouvrir la fenêtre de paiement.',
-            es: 'No se pudo abrir la ventana de pago.',
-          ),
-        );
-        return;
-      }
-
-      // Reuse the shared resume-refresh flag so max_vehicles/max_drivers update
-      // automatically once the user returns from a completed payment.
-      _awaitingCheckoutReturn = true;
-      _showSnack(
-        _t(
-          nl: 'Betaalvenster geopend. Na betaling wordt je add-on automatisch bijgewerkt.',
-          en: 'Payment window opened. After payment, your add-on will update automatically.',
-          fr: 'Fenêtre de paiement ouverte. Après le paiement, votre option sera mise à jour automatiquement.',
-          es: 'Ventana de pago abierta. Después del pago, tu complemento se actualizará automáticamente.',
-        ),
-      );
+      await _launchAddonCheckoutUrl(url);
     } catch (_) {
       if (!mounted) return;
       _showSnack(
@@ -566,39 +738,10 @@ class _CompanySubscriptionBillingPageState
         return;
       }
 
+      if (!await _confirmAddonProration(result)) return;
+
       final url = result.checkoutUrl.trim();
-      final uri = Uri.tryParse(url);
-      if (url.isEmpty || uri == null || !uri.isScheme('https')) {
-        _showSnack(_genericAddonError());
-        return;
-      }
-
-      final launched = await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
-      if (!mounted) return;
-      if (!launched) {
-        _showSnack(
-          _t(
-            nl: 'Kon het betaalvenster niet openen.',
-            en: 'Could not open the payment window.',
-            fr: 'Impossible d’ouvrir la fenêtre de paiement.',
-            es: 'No se pudo abrir la ventana de pago.',
-          ),
-        );
-        return;
-      }
-
-      _awaitingCheckoutReturn = true;
-      _showSnack(
-        _t(
-          nl: 'Betaalvenster geopend. Na betaling wordt je add-on automatisch bijgewerkt.',
-          en: 'Payment window opened. After payment, your add-on will update automatically.',
-          fr: 'Fenêtre de paiement ouverte. Après le paiement, votre option sera mise à jour automatiquement.',
-          es: 'Ventana de pago abierta. Después del pago, tu complemento se actualizará automáticamente.',
-        ),
-      );
+      await _launchAddonCheckoutUrl(url);
     } catch (_) {
       if (!mounted) return;
       _showSnack(
@@ -756,17 +899,77 @@ class _CompanySubscriptionBillingPageState
     }
   }
 
-  /// Cancel-one action and/or passive scheduled-status card for the Extra
-  /// vehicle add-on. Returns nothing when there is no active extra vehicle and
-  /// none scheduled. Active-quantity text is intentionally omitted (the Usage &
-  /// limits card already shows Vehicles used/limit).
+  Future<void> _undoCancelOneExtraVehicle(
+    BackendSubscriptionProfile profile,
+  ) async {
+    if (_undoingExtraVehicle) return;
+    final scopeId = _activeCompanyId();
+    if (scopeId == null || scopeId.trim().isEmpty) {
+      _showSnack(
+        _t(
+          nl: 'Geen actief bedrijf gevonden. Probeer opnieuw.',
+          en: 'No active company found. Please try again.',
+          fr: 'Aucune entreprise active trouvée. Veuillez réessayer.',
+          es: 'No se encontró ninguna empresa activa. Inténtalo de nuevo.',
+        ),
+      );
+      return;
+    }
+    setState(() => _undoingExtraVehicle = true);
+    try {
+      final updated = await undoCancelOneExtraVehicleAddon(
+        tenantId: scopeId,
+        companyId: scopeId,
+      );
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Opzegging extra voertuig ongedaan gemaakt.',
+          en: 'Extra vehicle cancellation undone.',
+          fr: 'Résiliation du véhicule supplémentaire annulée.',
+          es: 'Cancelación del vehículo extra deshecha.',
+        ),
+      );
+      if (updated.providerAmountSyncPending) {
+        _showSnack(
+          _t(
+            nl: 'Providerbedrag wordt opnieuw gesynchroniseerd.',
+            en: 'Provider amount is being re-synced.',
+            fr: 'Le montant fournisseur est resynchronisé.',
+            es: 'El importe del proveedor se está resincronizando.',
+          ),
+        );
+      }
+      _refresh();
+    } catch (_) {
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Ongedaan maken is niet gelukt. Probeer opnieuw.',
+          en: 'Undo failed. Please try again.',
+          fr: 'Échec de l\'annulation. Veuillez réessayer.',
+          es: 'No se pudo deshacer. Inténtalo de nuevo.',
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _undoingExtraVehicle = false);
+    }
+  }
+
+  /// Cancel-one / scheduled-status / undo for the Extra vehicle add-on.
   Widget _extraVehicleCancellationControls(
     BackendSubscriptionProfile profile,
   ) {
     final scheduled = profile.extraVehicleCancelAtPeriodEndQuantity;
     final cancelable = _extraVehicleCancelableQuantity(profile);
+    final activeQty = _extraVehicleActiveQuantity(profile);
+    if (activeQty <= 0 && scheduled <= 0) {
+      return const SizedBox.shrink();
+    }
 
     final children = <Widget>[];
+    final effectiveDate = _extraVehicleEffectiveDate(profile);
+    final renewalLine = _consolidatedRenewalLine(profile);
 
     if (scheduled > 0) {
       children.add(
@@ -779,28 +982,73 @@ class _CompanySubscriptionBillingPageState
             borderRadius: BorderRadius.circular(10),
             border: Border.all(color: _warn.withOpacity(0.5)),
           ),
-          child: Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.info_outline, size: 18, color: _warn),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  _t(
-                    nl: 'Opzegging gepland — 1 extra voertuig blijft actief tot ${_extraVehicleEffectiveDate(profile)}. Daarna −1 voertuig en −3 chauffeurs. Bestaande data blijft behouden.',
-                    en: 'Cancellation scheduled — 1 extra vehicle stays active until ${_extraVehicleEffectiveDate(profile)}. Then −1 vehicle and −3 drivers. Existing data is kept.',
-                    fr: 'Résiliation planifiée — 1 véhicule supplémentaire reste actif jusqu\'au ${_extraVehicleEffectiveDate(profile)}. Ensuite −1 véhicule et −3 chauffeurs. Les données existantes sont conservées.',
-                    es: 'Cancelación programada — 1 vehículo extra permanece activo hasta el ${_extraVehicleEffectiveDate(profile)}. Luego −1 vehículo y −3 conductores. Se conservan los datos existentes.',
-                  ),
-                  style: TextStyle(
-                    color: _businessThemePalette.textPrimary,
-                    fontSize: 12,
-                    height: 1.35,
-                    fontWeight: FontWeight.w600,
-                  ),
+              Text(
+                _t(
+                  nl: 'Opgezegd — actief t/m $effectiveDate',
+                  en: 'Cancelled — active until $effectiveDate',
+                  fr: 'Résilié — actif jusqu\'au $effectiveDate',
+                  es: 'Cancelado — activo hasta el $effectiveDate',
+                ),
+                style: TextStyle(
+                  color: _businessThemePalette.textPrimary,
+                  fontSize: 12,
+                  height: 1.35,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
+              if (renewalLine != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  renewalLine,
+                  style: TextStyle(
+                    color: _businessThemePalette.textMuted,
+                    fontSize: 11.5,
+                    height: 1.35,
+                  ),
+                ),
+              ],
             ],
+          ),
+        ),
+      );
+      children.add(
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _undoingExtraVehicle
+                  ? null
+                  : () => _undoCancelOneExtraVehicle(profile),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _green,
+                side: BorderSide(color: _green.withOpacity(0.85)),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                minimumSize: const Size.fromHeight(48),
+              ),
+              icon: _undoingExtraVehicle
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.undo_outlined, size: 18),
+              label: Text(
+                _t(
+                  nl: 'Opzegging ongedaan maken',
+                  en: 'Undo cancellation',
+                  fr: 'Annuler la résiliation',
+                  es: 'Deshacer cancelación',
+                ),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                ),
+              ),
+            ),
           ),
         ),
       );
@@ -865,53 +1113,86 @@ class _CompanySubscriptionBillingPageState
       );
     }
     final bool isActive = _profileIsActive(profile);
-    final button = SizedBox(
+    final hasExtra = _extraVehicleActiveQuantity(profile) > 0;
+    final purchaseLabel = hasExtra
+        ? _t(
+            nl: 'Nog één toevoegen',
+            en: 'Add one more',
+            fr: 'Ajouter un de plus',
+            es: 'Añadir uno más',
+          )
+        : _activateExtraVehicleLabel();
+    final purchaseButton = SizedBox(
       width: double.infinity,
-      child: FilledButton.icon(
-        onPressed: (!isActive || _startingAddonCheckout)
-            ? null
-            : () => _startExtraVehicleAddonCheckout(profile),
-        style: FilledButton.styleFrom(
-          backgroundColor: _gold,
-          foregroundColor: Colors.black,
-          disabledBackgroundColor: _businessThemePalette.surfaceAlt.withOpacity(
-            _businessThemePalette.isDark ? 0.66 : 0.92,
-          ),
-          disabledForegroundColor: _businessThemePalette.textMuted,
-          minimumSize: const Size.fromHeight(44),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-        icon: _startingAddonCheckout
-            ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.black54,
+      child: hasExtra
+          ? OutlinedButton.icon(
+              onPressed: (!isActive || _startingAddonCheckout)
+                  ? null
+                  : () => _startExtraVehicleAddonCheckout(profile),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _gold,
+                side: BorderSide(color: _gold.withOpacity(0.85)),
+                minimumSize: const Size.fromHeight(44),
+              ),
+              icon: _startingAddonCheckout
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.add_circle_outline, size: 18),
+              label: Text(
+                purchaseLabel,
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+              ),
+            )
+          : FilledButton.icon(
+              onPressed: (!isActive || _startingAddonCheckout)
+                  ? null
+                  : () => _startExtraVehicleAddonCheckout(profile),
+              style: FilledButton.styleFrom(
+                backgroundColor: _gold,
+                foregroundColor: Colors.black,
+                disabledBackgroundColor: _businessThemePalette.surfaceAlt
+                    .withOpacity(
+                  _businessThemePalette.isDark ? 0.66 : 0.92,
                 ),
-              )
-            : const Icon(Icons.directions_car_filled_outlined, size: 18),
-        label: Text(
-          _activateExtraVehicleLabel(),
-          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
-        ),
-      ),
+                disabledForegroundColor: _businessThemePalette.textMuted,
+                minimumSize: const Size.fromHeight(44),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              icon: _startingAddonCheckout
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.black54,
+                      ),
+                    )
+                  : const Icon(Icons.directions_car_filled_outlined, size: 18),
+              label: Text(
+                purchaseLabel,
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+              ),
+            ),
     );
     if (isActive) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          button,
           _extraVehicleCancellationControls(profile),
+          const SizedBox(height: 8),
+          purchaseButton,
         ],
       );
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        button,
+        purchaseButton,
         const SizedBox(height: 6),
         Text(
           _addonRequiresActiveMessage(),
@@ -1057,13 +1338,76 @@ class _CompanySubscriptionBillingPageState
     }
   }
 
+  Future<void> _undoCancelOneExtraDriver(
+    BackendSubscriptionProfile profile,
+  ) async {
+    if (_undoingExtraDriver) return;
+    final scopeId = _activeCompanyId();
+    if (scopeId == null || scopeId.trim().isEmpty) {
+      _showSnack(
+        _t(
+          nl: 'Geen actief bedrijf gevonden. Probeer opnieuw.',
+          en: 'No active company found. Please try again.',
+          fr: 'Aucune entreprise active trouvée. Veuillez réessayer.',
+          es: 'No se encontró ninguna empresa activa. Inténtalo de nuevo.',
+        ),
+      );
+      return;
+    }
+    setState(() => _undoingExtraDriver = true);
+    try {
+      final updated = await undoCancelOneExtraDriverAddon(
+        tenantId: scopeId,
+        companyId: scopeId,
+      );
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Opzegging extra chauffeur ongedaan gemaakt.',
+          en: 'Extra driver cancellation undone.',
+          fr: 'Résiliation du chauffeur supplémentaire annulée.',
+          es: 'Cancelación del conductor extra deshecha.',
+        ),
+      );
+      if (updated.providerAmountSyncPending) {
+        _showSnack(
+          _t(
+            nl: 'Providerbedrag wordt opnieuw gesynchroniseerd.',
+            en: 'Provider amount is being re-synced.',
+            fr: 'Le montant fournisseur est resynchronisé.',
+            es: 'El importe del proveedor se está resincronizando.',
+          ),
+        );
+      }
+      _refresh();
+    } catch (_) {
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Ongedaan maken is niet gelukt. Probeer opnieuw.',
+          en: 'Undo failed. Please try again.',
+          fr: 'Échec de l\'annulation. Veuillez réessayer.',
+          es: 'No se pudo deshacer. Inténtalo de nuevo.',
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _undoingExtraDriver = false);
+    }
+  }
+
   Widget _extraDriverCancellationControls(
     BackendSubscriptionProfile profile,
   ) {
     final scheduled = profile.extraDriverCancelAtPeriodEndQuantity;
     final cancelable = _extraDriverCancelableQuantity(profile);
+    final activeQty = _extraDriverActiveQuantity(profile);
+    if (activeQty <= 0 && scheduled <= 0) {
+      return const SizedBox.shrink();
+    }
 
     final children = <Widget>[];
+    final effectiveDate = _extraDriverEffectiveDate(profile);
+    final renewalLine = _consolidatedRenewalLine(profile);
 
     if (scheduled > 0) {
       children.add(
@@ -1076,28 +1420,73 @@ class _CompanySubscriptionBillingPageState
             borderRadius: BorderRadius.circular(10),
             border: Border.all(color: _warn.withOpacity(0.5)),
           ),
-          child: Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.info_outline, size: 18, color: _warn),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  _t(
-                    nl: '1 extra chauffeur blijft actief tot ${_extraDriverEffectiveDate(profile)}. Daarna wordt je chauffeurslimiet met 1 verlaagd.',
-                    en: '1 extra driver stays active until ${_extraDriverEffectiveDate(profile)}. After that your driver limit drops by 1.',
-                    fr: '1 chauffeur supplémentaire reste actif jusqu\'au ${_extraDriverEffectiveDate(profile)}. Ensuite, votre limite de chauffeurs baisse de 1.',
-                    es: '1 conductor extra permanece activo hasta el ${_extraDriverEffectiveDate(profile)}. Después tu límite de conductores baja en 1.',
-                  ),
-                  style: TextStyle(
-                    color: _businessThemePalette.textPrimary,
-                    fontSize: 12,
-                    height: 1.35,
-                    fontWeight: FontWeight.w600,
-                  ),
+              Text(
+                _t(
+                  nl: 'Opgezegd — actief t/m $effectiveDate',
+                  en: 'Cancelled — active until $effectiveDate',
+                  fr: 'Résilié — actif jusqu\'au $effectiveDate',
+                  es: 'Cancelado — activo hasta el $effectiveDate',
+                ),
+                style: TextStyle(
+                  color: _businessThemePalette.textPrimary,
+                  fontSize: 12,
+                  height: 1.35,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
+              if (renewalLine != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  renewalLine,
+                  style: TextStyle(
+                    color: _businessThemePalette.textMuted,
+                    fontSize: 11.5,
+                    height: 1.35,
+                  ),
+                ),
+              ],
             ],
+          ),
+        ),
+      );
+      children.add(
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _undoingExtraDriver
+                  ? null
+                  : () => _undoCancelOneExtraDriver(profile),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _green,
+                side: BorderSide(color: _green.withOpacity(0.85)),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                minimumSize: const Size.fromHeight(48),
+              ),
+              icon: _undoingExtraDriver
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.undo_outlined, size: 18),
+              label: Text(
+                _t(
+                  nl: 'Opzegging ongedaan maken',
+                  en: 'Undo cancellation',
+                  fr: 'Annuler la résiliation',
+                  es: 'Deshacer cancelación',
+                ),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                ),
+              ),
+            ),
           ),
         ),
       );
@@ -1151,53 +1540,86 @@ class _CompanySubscriptionBillingPageState
       );
     }
     final bool isActive = _profileIsActive(profile);
-    final button = SizedBox(
+    final hasExtra = _extraDriverActiveQuantity(profile) > 0;
+    final purchaseLabel = hasExtra
+        ? _t(
+            nl: 'Nog één toevoegen',
+            en: 'Add one more',
+            fr: 'Ajouter un de plus',
+            es: 'Añadir uno más',
+          )
+        : _activateExtraDriverLabel();
+    final purchaseButton = SizedBox(
       width: double.infinity,
-      child: FilledButton.icon(
-        onPressed: (!isActive || _startingExtraDriverAddonCheckout)
-            ? null
-            : () => _startExtraDriverAddonCheckout(profile),
-        style: FilledButton.styleFrom(
-          backgroundColor: _gold,
-          foregroundColor: Colors.black,
-          disabledBackgroundColor: _businessThemePalette.surfaceAlt.withOpacity(
-            _businessThemePalette.isDark ? 0.66 : 0.92,
-          ),
-          disabledForegroundColor: _businessThemePalette.textMuted,
-          minimumSize: const Size.fromHeight(44),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-        icon: _startingExtraDriverAddonCheckout
-            ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.black54,
+      child: hasExtra
+          ? OutlinedButton.icon(
+              onPressed: (!isActive || _startingExtraDriverAddonCheckout)
+                  ? null
+                  : () => _startExtraDriverAddonCheckout(profile),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _gold,
+                side: BorderSide(color: _gold.withOpacity(0.85)),
+                minimumSize: const Size.fromHeight(44),
+              ),
+              icon: _startingExtraDriverAddonCheckout
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.add_circle_outline, size: 18),
+              label: Text(
+                purchaseLabel,
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+              ),
+            )
+          : FilledButton.icon(
+              onPressed: (!isActive || _startingExtraDriverAddonCheckout)
+                  ? null
+                  : () => _startExtraDriverAddonCheckout(profile),
+              style: FilledButton.styleFrom(
+                backgroundColor: _gold,
+                foregroundColor: Colors.black,
+                disabledBackgroundColor: _businessThemePalette.surfaceAlt
+                    .withOpacity(
+                  _businessThemePalette.isDark ? 0.66 : 0.92,
                 ),
-              )
-            : const Icon(Icons.person_add_alt_1_outlined, size: 18),
-        label: Text(
-          _activateExtraDriverLabel(),
-          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
-        ),
-      ),
+                disabledForegroundColor: _businessThemePalette.textMuted,
+                minimumSize: const Size.fromHeight(44),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              icon: _startingExtraDriverAddonCheckout
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.black54,
+                      ),
+                    )
+                  : const Icon(Icons.person_add_alt_1_outlined, size: 18),
+              label: Text(
+                purchaseLabel,
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+              ),
+            ),
     );
     if (isActive) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          button,
           _extraDriverCancellationControls(profile),
+          const SizedBox(height: 8),
+          purchaseButton,
         ],
       );
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        button,
+        purchaseButton,
         const SizedBox(height: 6),
         Text(
           _addonRequiresActiveMessage(),
@@ -1237,54 +1659,10 @@ class _CompanySubscriptionBillingPageState
     return 0;
   }
 
-  int _pdfBundleScheduledQuantity(BackendSubscriptionProfile profile, int pdfs) {
-    if (pdfs == 500) return profile.pdf500CancelAtPeriodEndQuantity;
-    if (pdfs == 1000) return profile.pdf1000CancelAtPeriodEndQuantity;
-    if (pdfs == 5000) return profile.pdf5000CancelAtPeriodEndQuantity;
-    return 0;
-  }
-
-  int _pdfBundleCancelableQuantity(
-    BackendSubscriptionProfile profile,
-    int pdfs,
-  ) {
-    final cancelable =
-        _pdfBundleActiveQuantity(profile, pdfs) -
-        _pdfBundleScheduledQuantity(profile, pdfs);
-    return cancelable > 0 ? cancelable : 0;
-  }
-
-  String _pdfBundleEffectiveDate(
-    BackendSubscriptionProfile profile,
-    int pdfs,
-  ) {
-    final String effectiveRaw;
-    if (pdfs == 500) {
-      effectiveRaw = profile.pdf500CancellationEffectiveAt;
-    } else if (pdfs == 1000) {
-      effectiveRaw = profile.pdf1000CancellationEffectiveAt;
-    } else {
-      effectiveRaw = profile.pdf5000CancellationEffectiveAt;
-    }
-    final effective = effectiveRaw.trim();
-    if (effective.isNotEmpty) return _humanDate(effective);
-    final periodEnd = profile.currentPeriodEnd.trim();
-    if (periodEnd.isNotEmpty) return _humanDate(periodEnd);
-    final trialEnds = profile.trialEndsAt.trim();
-    if (trialEnds.isNotEmpty) return _humanDate(trialEnds);
-    return '—';
-  }
-
   bool _pdfBundleBusyStarting(int pdfs) {
     if (pdfs == 500) return _startingPdf500Checkout;
     if (pdfs == 1000) return _startingPdf1000Checkout;
     return _startingPdf5000Checkout;
-  }
-
-  bool _pdfBundleBusyCancelling(int pdfs) {
-    if (pdfs == 500) return _cancellingPdf500;
-    if (pdfs == 1000) return _cancellingPdf1000;
-    return _cancellingPdf5000;
   }
 
   void _setPdfBundleStarting(int pdfs, bool value) {
@@ -1294,16 +1672,6 @@ class _CompanySubscriptionBillingPageState
       _startingPdf1000Checkout = value;
     } else {
       _startingPdf5000Checkout = value;
-    }
-  }
-
-  void _setPdfBundleCancelling(int pdfs, bool value) {
-    if (pdfs == 500) {
-      _cancellingPdf500 = value;
-    } else if (pdfs == 1000) {
-      _cancellingPdf1000 = value;
-    } else {
-      _cancellingPdf5000 = value;
     }
   }
 
@@ -1368,39 +1736,10 @@ class _CompanySubscriptionBillingPageState
         return;
       }
 
+      if (!await _confirmAddonProration(result)) return;
+
       final url = result.checkoutUrl.trim();
-      final uri = Uri.tryParse(url);
-      if (url.isEmpty || uri == null || !uri.isScheme('https')) {
-        _showSnack(_genericAddonError());
-        return;
-      }
-
-      final launched = await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
-      if (!mounted) return;
-      if (!launched) {
-        _showSnack(
-          _t(
-            nl: 'Kon het betaalvenster niet openen.',
-            en: 'Could not open the payment window.',
-            fr: 'Impossible d’ouvrir la fenêtre de paiement.',
-            es: 'No se pudo abrir la ventana de pago.',
-          ),
-        );
-        return;
-      }
-
-      _awaitingCheckoutReturn = true;
-      _showSnack(
-        _t(
-          nl: 'Betaalvenster geopend. Na betaling wordt je add-on automatisch bijgewerkt.',
-          en: 'Payment window opened. After payment, your add-on will update automatically.',
-          fr: 'Fenêtre de paiement ouverte. Après le paiement, votre option sera mise à jour automatiquement.',
-          es: 'Ventana de pago abierta. Después del pago, tu complemento se actualizará automáticamente.',
-        ),
-      );
+      await _launchAddonCheckoutUrl(url);
     } catch (_) {
       if (!mounted) return;
       _showSnack(
@@ -1416,271 +1755,52 @@ class _CompanySubscriptionBillingPageState
     }
   }
 
-  Future<void> _confirmAndCancelOnePdfBundle(
-    BackendSubscriptionProfile profile,
-    int pdfs,
-  ) async {
-    if (!_pdfBundleIsActionable(pdfs)) return;
-    if (_pdfBundleBusyCancelling(pdfs)) return;
-    final scopeId = _activeCompanyId();
-    if (scopeId == null || scopeId.trim().isEmpty) {
-      _showSnack(
-        _t(
-          nl: 'Geen actief bedrijf gevonden. Probeer opnieuw.',
-          en: 'No active company found. Please try again.',
-          fr: 'Aucune entreprise active trouvée. Veuillez réessayer.',
-          es: 'No se encontró ninguna empresa activa. Inténtalo de nuevo.',
-        ),
-      );
-      return;
-    }
-
-    final effective = _pdfBundleEffectiveDate(profile, pdfs);
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: _panel,
-        title: Text(
-          _t(
-            nl: 'Eén pakket van $pdfs PDF\u2019s opzeggen?',
-            en: 'Cancel one $pdfs PDF bundle?',
-            fr: 'Résilier un pack de $pdfs PDF ?',
-            es: '¿Cancelar un paquete de $pdfs PDF?',
-          ),
-          style: TextStyle(color: _businessThemePalette.textPrimary),
-        ),
-        content: Text(
-          _t(
-            nl: 'Dit pakket blijft actief tot $effective. Daarna daalt je maandelijkse PDF-tegoed met $pdfs.',
-            en: 'This bundle stays active until $effective. Your monthly PDF allowance drops by $pdfs after that.',
-            fr: 'Ce pack reste actif jusqu\'au $effective. Votre quota PDF mensuel baissera ensuite de $pdfs.',
-            es: 'Este paquete permanece activo hasta el $effective. Tu cupo mensual de PDF bajará en $pdfs después.',
-          ),
-          style: TextStyle(color: _businessThemePalette.textMuted),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(
-              _t(nl: 'Behouden', en: 'Keep', fr: 'Conserver', es: 'Mantener'),
-            ),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: _warn,
-              foregroundColor: Colors.black,
-            ),
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text(
-              _t(nl: 'Opzeggen', en: 'Cancel', fr: 'Résilier', es: 'Cancelar'),
-            ),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    setState(() => _setPdfBundleCancelling(pdfs, true));
-    try {
-      final BackendSubscriptionProfile updated;
-      if (pdfs == 500) {
-        updated = await cancelOnePdf500Addon(
-          tenantId: scopeId,
-          companyId: scopeId,
-        );
-      } else if (pdfs == 1000) {
-        updated = await cancelOnePdf1000Addon(
-          tenantId: scopeId,
-          companyId: scopeId,
-        );
-      } else {
-        updated = await cancelOnePdf5000Addon(
-          tenantId: scopeId,
-          companyId: scopeId,
-        );
-      }
-      if (!mounted) return;
-      _showSnack(
-        _t(
-          nl: 'Dit pakket blijft actief tot ${_pdfBundleEffectiveDate(updated, pdfs)}.',
-          en: 'This bundle stays active until ${_pdfBundleEffectiveDate(updated, pdfs)}.',
-          fr: 'Ce pack reste actif jusqu\'au ${_pdfBundleEffectiveDate(updated, pdfs)}.',
-          es: 'Este paquete permanece activo hasta el ${_pdfBundleEffectiveDate(updated, pdfs)}.',
-        ),
-      );
-      _refresh();
-    } catch (_) {
-      if (!mounted) return;
-      _showSnack(
-        _t(
-          nl: 'Opzeggen is niet gelukt. Controleer je verbinding en probeer opnieuw.',
-          en: 'Cancellation failed. Check your connection and try again.',
-          fr: 'Échec de la résiliation. Vérifiez votre connexion et réessayez.',
-          es: 'Error al cancelar. Comprueba tu conexión e inténtalo de nuevo.',
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _setPdfBundleCancelling(pdfs, false));
-    }
-  }
-
-  Widget _pdfBundleCancellationControls(
-    BackendSubscriptionProfile profile,
-    int pdfs,
-  ) {
-    final scheduled = _pdfBundleScheduledQuantity(profile, pdfs);
-    final cancelable = _pdfBundleCancelableQuantity(profile, pdfs);
-    final busy = _pdfBundleBusyCancelling(pdfs);
-
-    final children = <Widget>[];
-
-    if (scheduled > 0) {
-      children.add(
-        Container(
-          width: double.infinity,
-          margin: const EdgeInsets.only(top: 8),
-          padding: const EdgeInsets.fromLTRB(11, 10, 11, 11),
-          decoration: BoxDecoration(
-            color: _warn.withOpacity(0.12),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: _warn.withOpacity(0.5)),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(Icons.info_outline, size: 18, color: _warn),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  _t(
-                    nl: 'Opzegging gepland — dit pakket blijft actief tot ${_pdfBundleEffectiveDate(profile, pdfs)}. Daarna daalt je maandelijkse PDF-tegoed met $pdfs.',
-                    en: 'Cancellation scheduled — this bundle stays active until ${_pdfBundleEffectiveDate(profile, pdfs)}. After that your monthly PDF allowance drops by $pdfs.',
-                    fr: 'Résiliation planifiée — ce pack reste actif jusqu\'au ${_pdfBundleEffectiveDate(profile, pdfs)}. Ensuite, votre quota PDF mensuel baisse de $pdfs.',
-                    es: 'Cancelación programada — este paquete permanece activo hasta el ${_pdfBundleEffectiveDate(profile, pdfs)}. Después tu cupo mensual de PDF baja en $pdfs.',
-                  ),
-                  style: TextStyle(
-                    color: _businessThemePalette.textPrimary,
-                    fontSize: 12,
-                    height: 1.35,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    if (cancelable > 0) {
-      children.add(
-        Padding(
-          padding: const EdgeInsets.only(top: 8),
-          child: SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: busy
-                  ? null
-                  : () => _confirmAndCancelOnePdfBundle(profile, pdfs),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _warn,
-                side: BorderSide(color: _warn.withOpacity(0.85)),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                minimumSize: const Size.fromHeight(48),
-              ),
-              icon: busy
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.cancel_schedule_send_outlined, size: 18),
-              label: Text(
-                _t(
-                  nl: 'Eén pakket van $pdfs PDF\u2019s opzeggen',
-                  en: 'Cancel one $pdfs PDF bundle',
-                  fr: 'Résilier un pack de $pdfs PDF',
-                  es: 'Cancelar un paquete de $pdfs PDF',
-                ),
-                style: const TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 13,
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    if (children.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: children,
-    );
-  }
-
-  /// Footer for a PDF bundle add-on card. Returns null only for bundles with no
-  /// real lifecycle; pdf_500 / pdf_1000 / pdf_5000 all render activate + cancel.
+  /// Footer for a PDF bundle add-on card — purchase only (no cancel CTA).
   Widget? _pdfBundleAddonFooter(
     BackendSubscriptionProfile profile,
     int pdfs,
   ) {
     if (!_pdfBundleIsActionable(pdfs)) return null;
     if (!kFluxidiCompanySaasCheckoutEnabled) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _playSaasManagedOutsideNotice(),
-          _pdfBundleCancellationControls(profile, pdfs),
-        ],
-      );
+      return _playSaasManagedOutsideNotice();
     }
     final bool isActive = _profileIsActive(profile);
     final bool starting = _pdfBundleBusyStarting(pdfs);
     final activeQty = _pdfBundleActiveQuantity(profile, pdfs);
-    final cancelable = _pdfBundleCancelableQuantity(profile, pdfs);
-    final scheduled = _pdfBundleScheduledQuantity(profile, pdfs);
-    // When a pack is already active, do not dominate the card with another
-    // activation CTA — show status + cancel/pending controls instead.
-    if (isActive && (activeQty > 0 || scheduled > 0 || cancelable > 0)) {
+    if (isActive && activeQty > 0) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _chip(
             text: _t(
-              nl: 'Actief: $activeQty × $pdfs PDF\u2019s / maand',
-              en: 'Active: $activeQty × $pdfs PDFs / month',
-              fr: 'Actif : $activeQty × $pdfs PDF / mois',
-              es: 'Activo: $activeQty × $pdfs PDF / mes',
+              nl: 'Actief: $activeQty × $pdfs PDF\u2019s gekocht',
+              en: 'Active: $activeQty × $pdfs PDFs purchased',
+              fr: 'Actif : $activeQty × $pdfs PDF achetés',
+              es: 'Activo: $activeQty × $pdfs PDF comprados',
             ),
             bg: _green.withOpacity(0.14),
             border: _green.withOpacity(0.45),
             textColor: _green,
           ),
-          _pdfBundleCancellationControls(profile, pdfs),
-          if (cancelable > 0 || activeQty > 0) ...[
-            const SizedBox(height: 8),
-            TextButton(
-              onPressed: starting
-                  ? null
-                  : () => _startPdfBundleCheckout(profile, pdfs),
-              child: Text(
-                _t(
-                  nl: 'Nog een pakket van $pdfs toevoegen',
-                  en: 'Add another $pdfs pack',
-                  fr: 'Ajouter un autre pack de $pdfs',
-                  es: 'Añadir otro paquete de $pdfs',
-                ),
-                style: TextStyle(
-                  color: _businessThemePalette.textMuted,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 12,
-                ),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: starting
+                ? null
+                : () => _startPdfBundleCheckout(profile, pdfs),
+            child: Text(
+              _t(
+                nl: 'Nog een pakket van $pdfs toevoegen',
+                en: 'Add another $pdfs pack',
+                fr: 'Ajouter un autre pack de $pdfs',
+                es: 'Añadir otro paquete de $pdfs',
+              ),
+              style: TextStyle(
+                color: _businessThemePalette.textMuted,
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
               ),
             ),
-          ],
+          ),
         ],
       );
     }
@@ -1718,15 +1838,7 @@ class _CompanySubscriptionBillingPageState
         ),
       ),
     );
-    if (isActive) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          button,
-          _pdfBundleCancellationControls(profile, pdfs),
-        ],
-      );
-    }
+    if (isActive) return button;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1759,19 +1871,6 @@ class _CompanySubscriptionBillingPageState
         status == 'trialing' ||
         legacy == 'active' ||
         legacy == 'trialing';
-  }
-
-  /// Best-effort human date from a backend ISO timestamp. Falls back to the
-  /// trimmed raw string (or em dash) when it cannot be parsed.
-  String _humanDate(String iso) {
-    final raw = iso.trim();
-    if (raw.isEmpty) return '—';
-    final parsed = DateTime.tryParse(raw);
-    if (parsed == null) return raw;
-    final local = parsed.toLocal();
-    final d = local.day.toString().padLeft(2, '0');
-    final m = local.month.toString().padLeft(2, '0');
-    return '$d-$m-${local.year}';
   }
 
   String _effectiveCancelDate(BackendSubscriptionProfile profile) {
@@ -1903,6 +2002,63 @@ class _CompanySubscriptionBillingPageState
     }
   }
 
+  Future<void> _undoCancelSubscription(
+    BackendSubscriptionProfile profile,
+  ) async {
+    if (_undoingCancellation) return;
+    final scopeId = _activeCompanyId();
+    if (scopeId == null || scopeId.trim().isEmpty) {
+      _showSnack(
+        _t(
+          nl: 'Geen actief bedrijf gevonden. Probeer opnieuw.',
+          en: 'No active company found. Please try again.',
+          fr: 'Aucune entreprise active trouvée. Veuillez réessayer.',
+          es: 'No se encontró ninguna empresa activa. Inténtalo de nuevo.',
+        ),
+      );
+      return;
+    }
+    setState(() => _undoingCancellation = true);
+    try {
+      final updated = await undoCancelCompanySubscription(
+        tenantId: scopeId,
+        companyId: scopeId,
+      );
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Opzegging ongedaan gemaakt. Je abonnement blijft actief.',
+          en: 'Cancellation undone. Your subscription stays active.',
+          fr: 'Résiliation annulée. Votre abonnement reste actif.',
+          es: 'Cancelación deshecha. Tu suscripción sigue activa.',
+        ),
+      );
+      if (updated.providerAmountSyncPending) {
+        _showSnack(
+          _t(
+            nl: 'Providerbedrag wordt opnieuw gesynchroniseerd.',
+            en: 'Provider amount is being re-synced.',
+            fr: 'Le montant fournisseur est resynchronisé.',
+            es: 'El importe del proveedor se está resincronizando.',
+          ),
+        );
+      }
+      _refresh();
+    } catch (_) {
+      if (!mounted) return;
+      _showSnack(
+        _t(
+          nl: 'Ongedaan maken is niet gelukt. Probeer opnieuw.',
+          en: 'Undo failed. Please try again.',
+          fr: 'Échec de l\'annulation. Veuillez réessayer.',
+          es: 'No se pudo deshacer. Inténtalo de nuevo.',
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _undoingCancellation = false);
+    }
+  }
+
   /// Bullet lines for the base-cancel confirmation dialog (NL/EN/FR/ES).
   List<String> _baseCancelConsequenceLines(
     BackendSubscriptionProfile profile,
@@ -1938,29 +2094,20 @@ class _CompanySubscriptionBillingPageState
         ),
       );
     }
-    for (final bundle in <(int, int)>[
-      (500, profile.pdf500ActiveQuantity),
-      (1000, profile.pdf1000ActiveQuantity),
-      (5000, profile.pdf5000ActiveQuantity),
-    ]) {
-      final pdfs = bundle.$1;
-      final qty = bundle.$2;
-      if (qty <= 0) continue;
-      lines.add(
-        _t(
-          nl: '$qty × $pdfs PDF-pakket(ten) eindigen op $effective.',
-          en: '$qty × $pdfs PDF pack(s) end on $effective.',
-          fr: '$qty × pack(s) de $pdfs PDF se terminent le $effective.',
-          es: '$qty × paquete(s) de $pdfs PDF terminan el $effective.',
-        ),
-      );
-    }
     lines.add(
       _t(
         nl: 'Na $effective geen automatische verlenging meer van basis of uitbreidingen.',
         en: 'After $effective there is no further automatic renewal of the base plan or add-ons.',
         fr: 'Après le $effective, plus aucun renouvellement automatique du plan ou des extensions.',
         es: 'Después del $effective no habrá más renovación automática del plan ni de las ampliaciones.',
+      ),
+    );
+    lines.add(
+      _t(
+        nl: 'Aangekochte PDF-credits vervallen nooit en blijven beschikbaar.',
+        en: 'Purchased PDF credits never expire and remain available.',
+        fr: 'Les crédits PDF achetés n\'expirent jamais et restent disponibles.',
+        es: 'Los créditos PDF comprados no caducan y siguen disponibles.',
       ),
     );
     if (profile.isFounderCustomer || profile.lockedPriceCents == 5900) {
@@ -1981,6 +2128,7 @@ class _CompanySubscriptionBillingPageState
   Widget _buildCancellationSection(BackendSubscriptionProfile profile) {
     if (profile.cancelAtPeriodEnd) {
       final pendingProvider = profile.providerCancelPending;
+      final effective = _effectiveCancelDate(profile);
       return Padding(
         padding: const EdgeInsets.only(top: 10),
         child: Container(
@@ -1994,28 +2142,33 @@ class _CompanySubscriptionBillingPageState
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.info_outline, size: 18, color: _warn),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _t(
-                        nl: 'Opzegging gepland — abonnement en betaalde uitbreidingen blijven actief tot ${_effectiveCancelDate(profile)}. Daarna geen verlenging meer.',
-                        en: 'Cancellation scheduled — subscription and paid add-ons stay active until ${_effectiveCancelDate(profile)}. No renewal after that.',
-                        fr: 'Résiliation planifiée — abonnement et extensions payantes restent actifs jusqu\'au ${_effectiveCancelDate(profile)}. Plus de renouvellement ensuite.',
-                        es: 'Cancelación programada — la suscripción y ampliaciones de pago siguen activas hasta el ${_effectiveCancelDate(profile)}. Sin renovación después.',
-                      ),
-                      style: TextStyle(
-                        color: _businessThemePalette.textPrimary,
-                        fontSize: 12,
-                        height: 1.35,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
+              Text(
+                _t(
+                  nl: 'Opgezegd — actief t/m $effective',
+                  en: 'Cancelled — active until $effective',
+                  fr: 'Résilié — actif jusqu\'au $effective',
+                  es: 'Cancelado — activo hasta el $effective',
+                ),
+                style: TextStyle(
+                  color: _businessThemePalette.textPrimary,
+                  fontSize: 12,
+                  height: 1.35,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _t(
+                  nl: 'Vandaag wordt niets aangerekend',
+                  en: 'Nothing is charged today',
+                  fr: 'Rien n\'est facturé aujourd\'hui',
+                  es: 'Hoy no se cobra nada',
+                ),
+                style: TextStyle(
+                  color: _businessThemePalette.textMuted,
+                  fontSize: 11.5,
+                  height: 1.35,
+                ),
               ),
               if (pendingProvider) ...[
                 const SizedBox(height: 8),
@@ -2033,6 +2186,43 @@ class _CompanySubscriptionBillingPageState
                   ),
                 ),
               ],
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _undoingCancellation
+                      ? null
+                      : () => _undoCancelSubscription(profile),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _green,
+                    side: BorderSide(color: _green.withOpacity(0.85)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                  icon: _undoingCancellation
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.undo_outlined, size: 18),
+                  label: Text(
+                    _t(
+                      nl: 'Opzegging ongedaan maken',
+                      en: 'Undo cancellation',
+                      fr: 'Annuler la résiliation',
+                      es: 'Deshacer cancelación',
+                    ),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -2150,13 +2340,30 @@ class _CompanySubscriptionBillingPageState
             const SizedBox(height: 6),
             _infoLine(
               _t(
-                nl: 'Periode start/einde',
-                en: 'Period start/end',
-                fr: 'Début/fin de période',
-                es: 'Inicio/fin del periodo',
+                nl: 'Actief van',
+                en: 'Active from',
+                fr: 'Actif du',
+                es: 'Activo desde',
               ),
-              '${periodStart.isEmpty ? "—" : periodStart} / ${periodEnd.isEmpty ? "—" : periodEnd}',
+              periodStart.isEmpty
+                  ? '—'
+                  : '${_humanDate(periodStart)} t/m ${periodEnd.isEmpty ? "—" : _humanDate(periodEnd)}',
               icon: Icons.event_available_outlined,
+            ),
+          ],
+          if (_hasProviderSubscription(profile) &&
+              profile.recurringAmountCents != null &&
+              periodEnd.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            _infoLine(
+              _t(
+                nl: 'Volgende betaling',
+                en: 'Next payment',
+                fr: 'Prochain paiement',
+                es: 'Próximo pago',
+              ),
+              '${_priceFromCents(profile.recurringAmountCents!)} op ${_humanDate(periodEnd)}',
+              icon: Icons.payments_outlined,
             ),
           ],
         ],
@@ -2840,107 +3047,117 @@ class _CompanySubscriptionBillingPageState
   ///
   /// [used] is a display-only placeholder until real PDF-creation tracking is
   /// wired; [tracked] flips the helper text once a real counter feeds it.
-  Widget _pdfUsageCard({
-    required int used,
-    required int baseAllowance,
-    required int addonAllowance,
-    required bool tracked,
-  }) {
-    final safeUsed = used > 0 ? used : 0;
-    final safeBase = baseAllowance > 0 ? baseAllowance : 0;
-    final safeAddon = addonAllowance > 0 ? addonAllowance : 0;
-    final total = safeBase + safeAddon;
-    // Usage is informational only in Patch 2.10 — never show an alarming accent.
-    final accent = _green;
-    final progress = total <= 0 ? 0.0 : (safeUsed / total).clamp(0.0, 1.0);
+  Widget _buildPdfCreditsSection(
+    BackendSubscriptionProfile profile,
+    SubscriptionPlanCatalogEntry catalog,
+  ) {
+    final vehicleSlots = profile.maxVehicles > 0 ? profile.maxVehicles : 1;
+    final includedCap =
+        catalog.includedPdfCreationsPerVehicleMonth * vehicleSlots;
+    final used = profile.pdfMonthlyUsed > 0 ? profile.pdfMonthlyUsed : 0;
+    final purchased = profile.purchasedPdfCredits;
+    final periodEnd = profile.currentPeriodEnd.trim();
+    final lastGranted = profile.pdfPurchasedLastGrantedAt.trim();
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
       decoration: BoxDecoration(
         color: _panelSoft,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: accent.withOpacity(0.42)),
+        border: Border.all(color: _green.withOpacity(0.42)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  _t(
-                    nl: 'PDF-creaties',
-                    en: 'PDF creations',
-                    fr: 'Créations PDF',
-                    es: 'Creaciones PDF',
-                  ),
-                  style: TextStyle(
-                    color: _businessThemePalette.textPrimary,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 12.8,
-                  ),
-                ),
-              ),
-              _chip(
-                text: '$safeUsed / $total',
-                bg: accent.withOpacity(0.14),
-                border: accent.withOpacity(0.50),
-                textColor: accent,
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: LinearProgressIndicator(
-              minHeight: 7,
-              value: progress,
-              backgroundColor: _businessThemePalette.border.withOpacity(
-                _businessThemePalette.isDark ? 0.30 : 0.55,
-              ),
-              valueColor: AlwaysStoppedAnimation<Color>(accent),
+          Text(
+            _t(
+              nl: 'PDF-creaties',
+              en: 'PDF creations',
+              fr: 'Créations PDF',
+              es: 'Creaciones PDF',
+            ),
+            style: TextStyle(
+              color: _businessThemePalette.textPrimary,
+              fontWeight: FontWeight.w800,
+              fontSize: 12.8,
             ),
           ),
-          const SizedBox(height: 7),
+          const SizedBox(height: 8),
           Text(
-            safeAddon > 0
-                ? _t(
-                    nl: '$safeBase basis + $safeAddon uitbreiding / maand',
-                    en: '$safeBase base + $safeAddon add-on / month',
-                    fr: '$safeBase de base + $safeAddon extension / mois',
-                    es: '$safeBase base + $safeAddon ampliación / mes',
-                  )
-                : _t(
-                    nl: '$safeBase inbegrepen / maand',
-                    en: '$safeBase included / month',
-                    fr: '$safeBase inclus / mois',
-                    es: '$safeBase incluidas / mes',
-                  ),
+            _t(
+              nl: 'Inbegrepen deze maand: $used van $includedCap gebruikt',
+              en: 'Included this month: $used of $includedCap used',
+              fr: 'Inclus ce mois : $used sur $includedCap utilisés',
+              es: 'Incluidas este mes: $used de $includedCap usadas',
+            ),
             style: TextStyle(
               color: _businessThemePalette.textMuted,
               fontSize: 12.1,
+              height: 1.35,
             ),
           ),
-          const SizedBox(height: 2),
+          if (periodEnd.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              _t(
+                nl: 'Nieuwe maandbundel op ${_humanDate(periodEnd)}',
+                en: 'New monthly bundle on ${_humanDate(periodEnd)}',
+                fr: 'Nouveau lot mensuel le ${_humanDate(periodEnd)}',
+                es: 'Nuevo paquete mensual el ${_humanDate(periodEnd)}',
+              ),
+              style: TextStyle(
+                color: _businessThemePalette.textMuted,
+                fontSize: 12.1,
+                height: 1.35,
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
           Text(
-            tracked
-                ? _t(
-                    nl: 'Wordt maandelijks gereset met je facturatieperiode.',
-                    en: 'Resets monthly with your billing period.',
-                    fr: 'Réinitialisé chaque mois avec votre période de facturation.',
-                    es: 'Se restablece mensualmente con tu período de facturación.',
-                  )
-                : _t(
-                    nl: 'Telt uitgegeven factuur-PDF\'s. Maandelijkse reset volgt later.',
-                    en: 'Counts issued invoice PDFs. Monthly reset coming later.',
-                    fr: 'Compte les PDF de facture émis. Réinitialisation mensuelle à venir.',
-                    es: 'Cuenta los PDF de factura emitidos. El reinicio mensual llegará después.',
-                  ),
+            _t(
+              nl: 'Aangekochte PDF-credits: $purchased resterend',
+              en: 'Purchased PDF credits: $purchased remaining',
+              fr: 'Crédits PDF achetés : $purchased restants',
+              es: 'Créditos PDF comprados: $purchased restantes',
+            ),
             style: TextStyle(
-              color: _businessThemePalette.textMuted.withOpacity(0.86),
-              fontSize: 11.8,
+              color: _businessThemePalette.textPrimary,
+              fontSize: 12.2,
+              fontWeight: FontWeight.w700,
+              height: 1.35,
             ),
           ),
+          const SizedBox(height: 4),
+          Text(
+            _t(
+              nl: 'Vervallen nooit',
+              en: 'Never expire',
+              fr: 'N\'expirent jamais',
+              es: 'No caducan nunca',
+            ),
+            style: TextStyle(
+              color: _businessThemePalette.textMuted,
+              fontSize: 11.8,
+              height: 1.35,
+            ),
+          ),
+          if (lastGranted.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              _t(
+                nl: 'Laatst aangekocht op ${_humanDate(lastGranted)}',
+                en: 'Last purchased on ${_humanDate(lastGranted)}',
+                fr: 'Dernier achat le ${_humanDate(lastGranted)}',
+                es: 'Última compra el ${_humanDate(lastGranted)}',
+              ),
+              style: TextStyle(
+                color: _businessThemePalette.textMuted,
+                fontSize: 11.8,
+                height: 1.35,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -3016,9 +3233,11 @@ class _CompanySubscriptionBillingPageState
                 profile.subscriptionStatus.trim().isNotEmpty
                 ? profile.subscriptionStatus
                 : profile.status;
+            final isPaidActive =
+                effectiveStatus.trim().toLowerCase() == 'active';
             final statusColors = _statusColors(effectiveStatus);
             final trialRange =
-                '${profile.trialStartedAt.trim().isEmpty ? "—" : profile.trialStartedAt.trim()} / ${profile.trialEndsAt.trim().isEmpty ? "—" : profile.trialEndsAt.trim()}';
+                '${profile.trialStartedAt.trim().isEmpty ? "—" : _humanDate(profile.trialStartedAt)} / ${profile.trialEndsAt.trim().isEmpty ? "—" : _humanDate(profile.trialEndsAt)}';
             // Country-aware catalog drives all visible pricing copy. If the
             // backend profile didn't ship catalog fields the resolver fills
             // in BE/NL/FR/ES/PT defaults from the active company's market.
@@ -3183,22 +3402,20 @@ class _CompanySubscriptionBillingPageState
                                 ),
                               ],
                               const SizedBox(height: 6),
-                              // Visible trial copy is intentionally expressed in
-                              // weeks ("2 weken / 2 weeks") even though the
-                              // catalog keeps trialDays = 14 internally. Do not
-                              // surface the day count in the UI.
-                              _chip(
-                                text: _t(
-                                  nl: '2 weken gratis proefperiode',
-                                  en: '2 weeks free trial',
-                                  fr: '2 semaines d\'essai gratuit',
-                                  es: '2 semanas de prueba gratis',
+                              if (!isPaidActive) ...[
+                                _chip(
+                                  text: _t(
+                                    nl: '2 weken gratis proefperiode',
+                                    en: '2 weeks free trial',
+                                    fr: '2 semaines d\'essai gratuit',
+                                    es: '2 semanas de prueba gratis',
+                                  ),
+                                  bg: _green.withOpacity(0.14),
+                                  border: _green.withOpacity(0.48),
+                                  textColor: _green,
+                                  icon: Icons.schedule_outlined,
                                 ),
-                                bg: _green.withOpacity(0.14),
-                                border: _green.withOpacity(0.48),
-                                textColor: _green,
-                                icon: Icons.schedule_outlined,
-                              ),
+                              ],
                               _buildEntitlementStateBanner(profile),
                               _buildActivationSection(profile, catalog),
                               _buildCancellationSection(profile),
@@ -3213,16 +3430,17 @@ class _CompanySubscriptionBillingPageState
                                 profile.billingEmail,
                                 icon: Icons.email_outlined,
                               ),
-                              _infoLine(
-                                _t(
-                                  nl: 'Proefperiode start/einde',
-                                  en: 'Trial start/end',
-                                  fr: 'Debut/fin essai',
-                                  es: 'Inicio/fin de prueba',
+                              if (!isPaidActive)
+                                _infoLine(
+                                  _t(
+                                    nl: 'Proefperiode start/einde',
+                                    en: 'Trial start/end',
+                                    fr: 'Debut/fin essai',
+                                    es: 'Inicio/fin de prueba',
+                                  ),
+                                  trialRange,
+                                  icon: Icons.schedule_outlined,
                                 ),
-                                trialRange,
-                                icon: Icons.schedule_outlined,
-                              ),
                               const SizedBox(height: 5),
                               Wrap(
                                 spacing: 7,
@@ -3463,23 +3681,7 @@ class _CompanySubscriptionBillingPageState
                                 ),
                               ),
                               const SizedBox(height: 8),
-                              // Patch 2.10/2.13: PDF creations usage bar. Total
-                              // = base (included per-vehicle x vehicle slots) +
-                              // purchased add-on allowance. Usage now counts
-                              // backend-issued official invoice PDFs (Patch
-                              // 2.13). tracked stays false until a monthly reset
-                              // / per-period rollover is wired, so the copy does
-                              // not promise a monthly reset yet.
-                              _pdfUsageCard(
-                                used: profile.pdfMonthlyUsed,
-                                baseAllowance:
-                                    catalog.includedPdfCreationsPerVehicleMonth *
-                                    (profile.maxVehicles > 0
-                                        ? profile.maxVehicles
-                                        : 1),
-                                addonAllowance: profile.pdfMonthlyAllowance,
-                                tracked: false,
-                              ),
+                              _buildPdfCreditsSection(profile, catalog),
                               if (isBelgiumMarket) ...[
                                 const SizedBox(height: 8),
                                 Container(

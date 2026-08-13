@@ -32,6 +32,29 @@ import {
   clearCancellationLifecycleOnPaidActivation,
   needsPaidActivationCancellationHeal,
 } from "./modules/subscription_cancellation.mjs";
+import {
+  computeConsolidatedRecurringCentsFromProfile,
+  computeProrationCents,
+  centsToMollieAmountValue,
+  futureRecurringAddonQuantities,
+  scheduleCancelOneExtraVehicle,
+  undoCancelOneExtraVehicle,
+  scheduleCancelOneExtraDriver,
+  undoCancelOneExtraDriver,
+  undoBaseCancellation,
+  DEFAULT_EXTRA_VEHICLE_MONTHLY_CENTS,
+  DEFAULT_EXTRA_DRIVER_MONTHLY_CENTS,
+} from "./modules/recurring_billing.mjs";
+import {
+  grantPurchasedPdfCredits,
+  consumePdfCreation,
+  withLegacyPdfAllowanceProjection,
+  resetIncludedPdfUsageForNewPeriod,
+  pdfPackCreditsForCode,
+  clearPdfCancellationSchedules,
+  projectLegacyPdfMonthlyAllowance,
+  INCLUDED_PDF_PER_VEHICLE_MONTH,
+} from "./modules/pdf_credits.mjs";
 import { buildBuildTagResponse, listKvKeyNames } from "./modules/diagnostics.js";
 import { BOOKING_TEST_RESET_CONFIRM_PHRASE, allowDevResetEndpoints } from "./modules/dev_reset.js";
 import {
@@ -12126,6 +12149,11 @@ const DEFAULT_SUBSCRIPTION_PROFILE = {
   // enforced by any gate (PDF usage tracking is wired later). Each bundle
   // code tracks its own active quantity and cancellation schedule.
   pdf_monthly_allowance: 0,
+  // Prepaid PDF credits (source of truth). pdf_monthly_allowance is a legacy
+  // projection of pdf_purchased_credits_remaining for old clients only.
+  pdf_purchased_credits_remaining: 0,
+  pdf_purchased_credits_granted_total: 0,
+  pdf_purchased_last_granted_at: "",
   // Patch 2.10: display-only monthly PDF usage counter. There is no central
   // PDF-creation tracking point yet, so this stays 0 and is surfaced purely as
   // a placeholder usage bar in Flutter. No gate reads it; nothing increments it
@@ -12173,6 +12201,9 @@ const DEFAULT_SUBSCRIPTION_PROFILE = {
   // are introduced here.
   mandate_id: "",
   recurring_amount_cents: null,
+  provider_amount_sync_pending: false,
+  provider_amount_sync_last_error: "",
+  provider_amount_desired_cents: null,
   recurring_currency: "EUR",
   recurring_interval: "1 month",
   past_due_since: "",
@@ -12998,6 +13029,29 @@ function normalizeSubscriptionProfile(input = {}, scope = null) {
     // Patch 2.9: PDF bundle add-ons (pdf_500 / pdf_1000). Same pattern as
     // extra_driver. The lazy backfill of pdfNNN_active_quantity happens at the
     // route layer (needs KV write-back), NOT here — this normalizer stays pure.
+    pdf_purchased_credits_remaining: (() => {
+      const rawRemaining =
+        source.pdf_purchased_credits_remaining ?? source.pdfPurchasedCreditsRemaining;
+      if (rawRemaining === undefined || rawRemaining === null || rawRemaining === "") {
+        return DEFAULT_SUBSCRIPTION_PROFILE.pdf_purchased_credits_remaining;
+      }
+      return Math.max(
+        0,
+        clampInt(rawRemaining, DEFAULT_SUBSCRIPTION_PROFILE.pdf_purchased_credits_remaining, 100000000),
+      );
+    })(),
+    pdf_purchased_credits_granted_total: Math.max(
+      0,
+      clampInt(
+        source.pdf_purchased_credits_granted_total ?? source.pdfPurchasedCreditsGrantedTotal,
+        DEFAULT_SUBSCRIPTION_PROFILE.pdf_purchased_credits_granted_total,
+        100000000,
+      ),
+    ),
+    pdf_purchased_last_granted_at: sanitizeTenantString(
+      source.pdf_purchased_last_granted_at ?? source.pdfPurchasedLastGrantedAt ?? DEFAULT_SUBSCRIPTION_PROFILE.pdf_purchased_last_granted_at,
+      48,
+    ),
     pdf_monthly_allowance: Math.max(0, clampInt(source.pdf_monthly_allowance ?? source.pdfMonthlyAllowance, DEFAULT_SUBSCRIPTION_PROFILE.pdf_monthly_allowance, 100000000)),
     // Patch 2.10: display-only usage counter (see DEFAULT_SUBSCRIPTION_PROFILE).
     pdf_monthly_used: Math.max(0, clampInt(source.pdf_monthly_used ?? source.pdfMonthlyUsed, DEFAULT_SUBSCRIPTION_PROFILE.pdf_monthly_used, 100000000)),
@@ -13043,6 +13097,16 @@ function normalizeSubscriptionProfile(input = {}, scope = null) {
     // aliases. No transitions or behaviour are attached to these yet.
     mandate_id: sanitizeTenantString(source.mandate_id ?? source.mandateId ?? DEFAULT_SUBSCRIPTION_PROFILE.mandate_id, 128),
     recurring_amount_cents: nullableCents(source.recurring_amount_cents, source.recurringAmountCents),
+    provider_amount_sync_pending:
+      source.provider_amount_sync_pending === true || source.providerAmountSyncPending === true,
+    provider_amount_sync_last_error: sanitizeTenantString(
+      source.provider_amount_sync_last_error ?? source.providerAmountSyncLastError ?? DEFAULT_SUBSCRIPTION_PROFILE.provider_amount_sync_last_error,
+      200,
+    ),
+    provider_amount_desired_cents: nullableCents(
+      source.provider_amount_desired_cents,
+      source.providerAmountDesiredCents,
+    ),
     recurring_currency: sanitizeTenantString(
       source.recurring_currency ?? source.recurringCurrency ?? DEFAULT_SUBSCRIPTION_PROFILE.recurring_currency,
       8,
@@ -13874,10 +13938,10 @@ async function saveSubscriptionProfile(
 ) {
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const nowIso = new Date().toISOString();
-  const normalized = normalizeSubscriptionProfile({
+  const normalized = withLegacyPdfAllowanceProjection(normalizeSubscriptionProfile({
     ...profile,
     updated_at: nowIso,
-  }, scope);
+  }, scope));
   const scopedKeys = buildScopedSettingsKeys(scope);
   const targetKey = scopedKeys?.subscriptionProfileKey ||
     (allowTenantLegacyWrite ? TENANT_SUBSCRIPTION_PROFILE_KEY : "");
@@ -13931,16 +13995,27 @@ async function _incrementSubscriptionPdfMonthlyUsedForScope(
     const profile = await loadSubscriptionProfile(env, scope, {
       allowTenantLegacyFallback: false,
     });
-    const current = Math.max(0, Math.trunc(Number(profile?.pdf_monthly_used) || 0));
-    const next = current + step;
-    const updated = { ...profile, pdf_monthly_used: next };
-    await saveSubscriptionProfile(env, updated, scope, {
+    const consumeResult = consumePdfCreation(profile, {
+      count: step,
+      perVehicle: INCLUDED_PDF_PER_VEHICLE_MONTH,
+    });
+    if (!consumeResult?.ok) {
+      console.log(
+        `[PDF_USAGE][CONSUME_SKIP] tenant=${_maskPublicDriverLoginValue(scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scope?.company_id)} reason=${safeStr(consumeResult?.error, 40) || "insufficient"} delta=${step}`,
+      );
+      return { ok: false, skipped: true, reason: consumeResult?.error || "insufficient_pdf_credits" };
+    }
+    await saveSubscriptionProfile(env, consumeResult.profile, scope, {
       allowTenantLegacyWrite: false,
     });
-    console.log(
-      `[PDF_USAGE][INCREMENT] tenant=${_maskPublicDriverLoginValue(scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scope?.company_id)} reason=${safeStr(reason, 40) || "-"} delta=${step} pdf_monthly_used=${next}`,
+    const nextUsed = Math.max(
+      0,
+      Math.trunc(Number(consumeResult.profile?.pdf_monthly_used) || 0),
     );
-    return { ok: true, pdf_monthly_used: next };
+    console.log(
+      `[PDF_USAGE][CONSUME] tenant=${_maskPublicDriverLoginValue(scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scope?.company_id)} reason=${safeStr(reason, 40) || "-"} delta=${step} pdf_monthly_used=${nextUsed} consumed_included=${consumeResult.consumed_included || 0} consumed_purchased=${consumeResult.consumed_purchased || 0}`,
+    );
+    return { ok: true, pdf_monthly_used: nextUsed };
   } catch (e) {
     console.log(
       `[PDF_USAGE][INCREMENT_SKIP] reason=${safeStr(e?.message, 80) || "error"}`,
@@ -14214,14 +14289,13 @@ function pdfBundleCancelableQuantity(profile, cfg) {
   return Math.max(0, active - scheduled);
 }
 
-// Lazily materialize a due PDF-bundle downgrade. Saves only on a real change;
-// pdf_monthly_allowance is reduced by allowanceStep per applied unit (floored
-// at 0). max_vehicles / max_drivers are never touched.
+// Lazily materialize a due PDF-bundle downgrade. Prepaid packs never lose
+// credits on cancel; only clear stale cancel-schedule fields and re-project
+// legacy allowance from purchased remaining.
 async function materializeDuePdfBundleCancellation(env, scope, profile, cfg) {
   if (!profile || typeof profile !== "object") {
     return { profile, changed: false, applied: 0 };
   }
-  const activeQty = derivePdfBundleActiveQuantity(profile, cfg);
   const scheduled = Math.max(0, Math.trunc(Number(profile[cfg.cancelQty]) || 0));
   const effectiveAt = _fluxidiSubscriptionSafeStr(profile[cfg.effectiveAt], 48);
   const effectiveMs = effectiveAt ? Date.parse(effectiveAt) : NaN;
@@ -14230,28 +14304,14 @@ async function materializeDuePdfBundleCancellation(env, scope, profile, cfg) {
   if (!due) {
     return { profile, changed: false, applied: 0 };
   }
-  const applied = Math.min(scheduled, activeQty);
-  const curAllowance = Math.max(
-    0,
-    Math.trunc(Number(profile.pdf_monthly_allowance) || 0),
-  );
-  const newAllowance = Math.max(0, curAllowance - applied * cfg.allowanceStep);
-  const newActive = Math.max(0, activeQty - applied);
-  const updated = {
-    ...profile,
-    pdf_monthly_allowance: newAllowance,
-    [cfg.active]: newActive,
-    [cfg.cancelQty]: 0,
-    [cfg.requestedAt]: "",
-    [cfg.effectiveAt]: "",
-  };
+  const updated = withLegacyPdfAllowanceProjection(clearPdfCancellationSchedules(profile));
   const saved = await saveSubscriptionProfile(env, updated, scope, {
     allowTenantLegacyWrite: false,
   });
   console.log(
-    `[SUBSCRIPTION_ADDON_DOWNGRADE][${cfg.logLabel}_APPLIED] tenant=${_maskPublicDriverLoginValue(scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scope?.company_id)} applied=${applied} new_pdf_monthly_allowance=${newAllowance}`,
+    `[SUBSCRIPTION_ADDON_DOWNGRADE][${cfg.logLabel}_NOOP] tenant=${_maskPublicDriverLoginValue(scope?.tenant_id)} company=${_maskPublicDriverLoginValue(scope?.company_id)} cleared_schedule=true`,
   );
-  return { profile: saved, changed: true, applied };
+  return { profile: saved, changed: true, applied: 0 };
 }
 
 // Thin named wrappers (mirror the extra_driver helper surface).
@@ -14414,12 +14474,8 @@ async function materializeDueFluxidiSubscriptionSuspension(env, scope, profile) 
   return { profile: saved, changed: true, suspended: true };
 }
 
-// Shared cancel-one route handler for the PDF bundles. Schedules a downgrade of
-// exactly one paid bundle of the given code at period end. The paid allowance
-// stays available (pdf_monthly_allowance unchanged) until the effective date;
-// the reduction is applied lazily on the next GET profile after that date.
-// Local state only: NEVER calls Mollie, NEVER creates payment/checkout, NEVER
-// touches max_vehicles / max_drivers. Mirrors the extra-driver cancel-one route.
+// Shared cancel-one route handler for the PDF bundles. Prepaid packs cannot be
+// cancelled; returns 410 immediately after auth.
 async function _handleFluxidiPdfBundleCancelOne(
   env,
   request,
@@ -14445,143 +14501,10 @@ async function _handleFluxidiPdfBundleCancelOne(
   });
   if (!authScope.ok) return authScope.response;
 
-  try {
-    const scope = {
-      tenant_id: authScope.explicitScope.tenant_id,
-      company_id: authScope.explicitScope.company_id,
-    };
-    const tenantMask = _maskPublicDriverLoginValue(scope.tenant_id);
-    const companyMask = _maskPublicDriverLoginValue(scope.company_id);
-
-    const profile = await loadSubscriptionProfile(env, scope, {
-      allowTenantLegacyFallback: false,
-    });
-
-    const currentStatus = _fluxidiSubscriptionSafeStr(
-      profile?.subscription_status || profile?.status,
-    ).toLowerCase();
-    if (currentStatus !== "active" && currentStatus !== "trialing") {
-      console.log(
-        `[${routeLabel}][REJECT] reason=not_cancelable status=${currentStatus || "-"} tenant=${tenantMask} company=${companyMask}`,
-      );
-      return json(
-        {
-          ok: false,
-          error: "subscription_not_cancelable",
-          subscription_status: currentStatus || "",
-        },
-        422,
-      );
-    }
-
-    const activeQty = derivePdfBundleActiveQuantity(profile, cfg);
-    const scheduledQty = Math.max(
-      0,
-      Math.trunc(Number(profile?.[cfg.cancelQty]) || 0),
-    );
-
-    const summary = (p) => ({
-      subscription_status: _fluxidiSubscriptionSafeStr(
-        p?.subscription_status || p?.status,
-      ).toLowerCase(),
-      [cfg.active]: derivePdfBundleActiveQuantity(p, cfg),
-      [cfg.cancelQty]: Math.max(
-        0,
-        Math.trunc(Number(p?.[cfg.cancelQty]) || 0),
-      ),
-      [cfg.requestedAt]: _fluxidiSubscriptionSafeStr(p?.[cfg.requestedAt], 48),
-      [cfg.effectiveAt]: _fluxidiSubscriptionSafeStr(p?.[cfg.effectiveAt], 48),
-      [cfg.autoRenew]: p?.[cfg.autoRenew] === true,
-      pdf_monthly_allowance: Math.max(
-        0,
-        Math.trunc(Number(p?.pdf_monthly_allowance) || 0),
-      ),
-      current_period_end: _fluxidiSubscriptionSafeStr(p?.current_period_end, 48),
-    });
-
-    if (scheduledQty >= activeQty && scheduledQty > 0) {
-      console.log(
-        `[${routeLabel}][IDEMPOTENT] tenant=${tenantMask} company=${companyMask} active=${activeQty} scheduled=${scheduledQty}`,
-      );
-      return json(
-        {
-          ok: true,
-          already_scheduled: true,
-          ...summary(profile),
-          subscription_profile: profile,
-        },
-        200,
-      );
-    }
-
-    if (activeQty - scheduledQty < 1) {
-      console.log(
-        `[${routeLabel}][REJECT] reason=${noCancelError} active=${activeQty} scheduled=${scheduledQty} tenant=${tenantMask} company=${companyMask}`,
-      );
-      return json(
-        {
-          ok: false,
-          error: noCancelError,
-          [cfg.active]: activeQty,
-          [cfg.cancelQty]: scheduledQty,
-        },
-        422,
-      );
-    }
-
-    const nowIso = new Date().toISOString();
-    const periodEnd = _fluxidiSubscriptionSafeStr(profile?.current_period_end, 48);
-    const trialEnds = _fluxidiSubscriptionSafeStr(profile?.trial_ends_at, 48);
-    let effectiveAt = "";
-    if (periodEnd && !Number.isNaN(Date.parse(periodEnd))) {
-      effectiveAt = periodEnd;
-    } else if (trialEnds && !Number.isNaN(Date.parse(trialEnds))) {
-      effectiveAt = trialEnds;
-    } else {
-      effectiveAt = new Date(
-        Date.now() + 30 * 24 * 60 * 60 * 1000,
-      ).toISOString();
-    }
-
-    const updated = {
-      ...profile,
-      [cfg.active]: activeQty,
-      [cfg.cancelQty]: scheduledQty + 1,
-      [cfg.requestedAt]: nowIso,
-      [cfg.effectiveAt]: effectiveAt,
-      [cfg.autoRenew]: false,
-    };
-
-    let saved;
-    try {
-      saved = await saveSubscriptionProfile(env, updated, scope, {
-        allowTenantLegacyWrite: false,
-      });
-    } catch (e) {
-      console.log(
-        `[${routeLabel}][ERR] stage=save msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
-      );
-      return json({ ok: false, error: "cancel_persist_failed" }, 500);
-    }
-
-    console.log(
-      `[${routeLabel}][OK] tenant=${tenantMask} company=${companyMask} active=${activeQty} scheduled=${scheduledQty + 1} effective=${effectiveAt}`,
-    );
-    return json(
-      {
-        ok: true,
-        already_scheduled: false,
-        ...summary(saved),
-        subscription_profile: saved,
-      },
-      200,
-    );
-  } catch (err) {
-    console.log(
-      `[${routeLabel}][ERR] ${_fluxidiSubscriptionSafeStr(err?.message, 160) || "unknown"}`,
-    );
-    return json({ ok: false, error: "internal_error" }, 500);
-  }
+  void env;
+  void cfg;
+  void noCancelError;
+  return json({ ok: false, error: "pdf_packs_are_prepaid" }, 410);
 }
 
 // =========================
@@ -15457,17 +15380,19 @@ async function applyFluxidiRecurringPaymentFromVerifiedPayment(env, { payment } 
   // Patch 3.6: clearing stale past_due_since/suspended_at is the LAST transform
   // so it cannot be undone by the spread. Period advance and last_recurring_*
   // audit fields are preserved.
-  const updatedProfile = _clearFluxidiSubscriptionDunningOnReactivation({
-    ...profile,
-    subscription_status: "active",
-    status: "active",
-    current_period_start: newPeriodStart,
-    current_period_end: newPeriodEnd,
-    last_recurring_payment_id: paymentId,
-    last_recurring_payment_status: "paid",
-    last_recurring_payment_at: paidAtIso,
-    last_recurring_webhook_at: nowIso,
-  });
+  const updatedProfile = resetIncludedPdfUsageForNewPeriod(
+    _clearFluxidiSubscriptionDunningOnReactivation({
+      ...profile,
+      subscription_status: "active",
+      status: "active",
+      current_period_start: newPeriodStart,
+      current_period_end: newPeriodEnd,
+      last_recurring_payment_id: paymentId,
+      last_recurring_payment_status: "paid",
+      last_recurring_payment_at: paidAtIso,
+      last_recurring_webhook_at: nowIso,
+    }),
+  );
 
   try {
     await saveSubscriptionProfile(env, updatedProfile, scope, {
@@ -15761,6 +15686,125 @@ function _fluxidiRecurringStartDateFromIso(iso) {
   return `${y}-${m}-${day}`;
 }
 
+function _recurringAddonUnitCentsForProfile(profile) {
+  const market = normalizeSubscriptionMarket(profile?.market);
+  const catalog = resolveSubscriptionAddonCatalog(market);
+  return {
+    vehicleUnitCents:
+      catalog?.extra_vehicle_price_cents ?? DEFAULT_EXTRA_VEHICLE_MONTHLY_CENTS,
+    driverUnitCents:
+      catalog?.extra_driver_price_cents ?? DEFAULT_EXTRA_DRIVER_MONTHLY_CENTS,
+  };
+}
+
+// PATCH consolidated recurring amount to Mollie (never creates a subscription).
+async function _syncFluxidiConsolidatedRecurringAmount(
+  env,
+  scope,
+  profile,
+  { vehicleUnitCents, driverUnitCents } = {},
+) {
+  const units = _recurringAddonUnitCentsForProfile(profile);
+  const vUnit = vehicleUnitCents ?? units.vehicleUnitCents;
+  const dUnit = driverUnitCents ?? units.driverUnitCents;
+  const desired = computeConsolidatedRecurringCentsFromProfile(profile, {
+    vehicleUnitCents: vUnit,
+    driverUnitCents: dUnit,
+  });
+  if (desired === null) {
+    return { ok: false, skipped: true, reason: "invalid_consolidated_amount", profile };
+  }
+
+  const customerId = _fluxidiSubscriptionSafeStr(profile?.provider_customer_id, 128);
+  const subscriptionId = _fluxidiSubscriptionSafeStr(profile?.provider_subscription_id, 128);
+  const tenantMask = _maskPublicDriverLoginValue(scope?.tenant_id);
+  const companyMask = _maskPublicDriverLoginValue(scope?.company_id);
+
+  if (!subscriptionId.startsWith("sub_") || !customerId.startsWith("cst_")) {
+    const localOnly = {
+      ...profile,
+      recurring_amount_cents: desired,
+      provider_amount_desired_cents: desired,
+    };
+    let saved = localOnly;
+    try {
+      saved = await saveSubscriptionProfile(env, localOnly, scope, {
+        allowTenantLegacyWrite: false,
+      });
+    } catch (e) {
+      console.log(
+        `[SUBSCRIPTION_RECURRING_SYNC][WARN] tenant=${tenantMask} company=${companyMask} stage=local_save msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+      );
+    }
+    return { ok: true, skipped: true, profile: saved };
+  }
+
+  const currency = (
+    _fluxidiSubscriptionSafeStr(profile?.recurring_currency, 8).toUpperCase() || "EUR"
+  ).slice(0, 8);
+  const apiResult = await _fluxidiMollieSubscriptionApiCall(env, {
+    method: "PATCH",
+    customerId,
+    subscriptionId,
+    body: {
+      amount: {
+        currency,
+        value: centsToMollieAmountValue(desired),
+      },
+    },
+  });
+
+  if (apiResult?.ok) {
+    const updated = {
+      ...profile,
+      recurring_amount_cents: desired,
+      provider_amount_sync_pending: false,
+      provider_amount_sync_last_error: "",
+      provider_amount_desired_cents: desired,
+    };
+    let saved = updated;
+    try {
+      saved = await saveSubscriptionProfile(env, updated, scope, {
+        allowTenantLegacyWrite: false,
+      });
+    } catch (e) {
+      console.log(
+        `[SUBSCRIPTION_RECURRING_SYNC][ERR] tenant=${tenantMask} company=${companyMask} stage=save_ok msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+      );
+      return { ok: false, provider_ok: true, profile: updated, error: "profile_save_failed" };
+    }
+    console.log(
+      `[SUBSCRIPTION_RECURRING_SYNC][OK] tenant=${tenantMask} company=${companyMask} sub=${subscriptionId} amount_cents=${desired}`,
+    );
+    return { ok: true, provider_ok: true, profile: saved };
+  }
+
+  const providerError =
+    _fluxidiSubscriptionSafeStr(apiResult?.error || apiResult?.data?.title, 200) ||
+    `upstream_${Number(apiResult?.status) || 0}`;
+  const failed = {
+    ...profile,
+    recurring_amount_cents: desired,
+    provider_amount_sync_pending: true,
+    provider_amount_sync_last_error: providerError,
+    provider_amount_desired_cents: desired,
+  };
+  let saved = failed;
+  try {
+    saved = await saveSubscriptionProfile(env, failed, scope, {
+      allowTenantLegacyWrite: false,
+    });
+  } catch (e) {
+    console.log(
+      `[SUBSCRIPTION_RECURRING_SYNC][ERR] tenant=${tenantMask} company=${companyMask} stage=save_fail msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+    );
+  }
+  console.log(
+    `[SUBSCRIPTION_RECURRING_SYNC][ERR] tenant=${tenantMask} company=${companyMask} sub=${subscriptionId} amount_cents=${desired} reason=${providerError}`,
+  );
+  return { ok: false, provider_ok: false, profile: saved, error: providerError };
+}
+
 // Lifecycle orchestrator. Patch 3.2 only wires "needs create"; update/cancel
 // are stub-skipped so the call site does not change in future patches.
 async function _reconcileFluxidiRecurringSubscriptionForProfile(env, {
@@ -15827,12 +15871,15 @@ async function _reconcileFluxidiRecurringSubscriptionForProfile(env, {
     );
     return { ok: false, skipped: true, reason: "missing_locked_price" };
   }
+  const unitCents = _recurringAddonUnitCentsForProfile(savedProfile);
+  const consolidatedCents = computeConsolidatedRecurringCentsFromProfile(savedProfile, unitCents);
+  const recurringCents = consolidatedCents ?? lockedCents;
   const currency = (
     _fluxidiSubscriptionSafeStr(savedProfile?.currency, 8).toUpperCase() ||
     _fluxidiSubscriptionSafeStr(payment?.amount?.currency, 8).toUpperCase() ||
     "EUR"
   ).slice(0, 8);
-  const amountValue = (lockedCents / 100).toFixed(2);
+  const amountValue = centsToMollieAmountValue(recurringCents) || (recurringCents / 100).toFixed(2);
   const periodEndIso = _fluxidiSubscriptionSafeStr(savedProfile?.current_period_end, 48);
   const startDate = _fluxidiRecurringStartDateFromIso(periodEndIso);
   if (!startDate) {
@@ -15885,7 +15932,7 @@ async function _reconcileFluxidiRecurringSubscriptionForProfile(env, {
         market: savedProfile?.market,
         customer_id: customerId,
         mandate_id: mandateId,
-        amount_cents: lockedCents,
+        amount_cents: recurringCents,
         currency,
         interval,
         attempted_at: new Date().toISOString(),
@@ -15917,7 +15964,7 @@ async function _reconcileFluxidiRecurringSubscriptionForProfile(env, {
         market: savedProfile?.market,
         customer_id: customerId,
         mandate_id: mandateId,
-        amount_cents: lockedCents,
+        amount_cents: recurringCents,
         currency,
         interval,
         attempted_at: new Date().toISOString(),
@@ -15940,7 +15987,7 @@ async function _reconcileFluxidiRecurringSubscriptionForProfile(env, {
     ...savedProfile,
     provider_subscription_id: subscriptionId,
     mandate_id: mandateId,
-    recurring_amount_cents: lockedCents,
+    recurring_amount_cents: recurringCents,
     recurring_currency: currency,
     recurring_interval: interval,
   };
@@ -15961,7 +16008,7 @@ async function _reconcileFluxidiRecurringSubscriptionForProfile(env, {
         market: savedProfile?.market,
         customer_id: customerId,
         mandate_id: mandateId,
-        amount_cents: lockedCents,
+        amount_cents: recurringCents,
         currency,
         interval,
         attempted_at: nowIso,
@@ -15998,7 +16045,7 @@ async function _reconcileFluxidiRecurringSubscriptionForProfile(env, {
   }
 
   console.log(
-    `[SUBSCRIPTION_RECURRING_RECONCILE][OK] tenant=${tenantMask} company=${companyMask} action=${action} sub_id=${subscriptionId} amount_cents=${lockedCents} currency=${currency} interval=${interval} start_date=${startDate}`,
+    `[SUBSCRIPTION_RECURRING_RECONCILE][OK] tenant=${tenantMask} company=${companyMask} action=${action} sub_id=${subscriptionId} amount_cents=${recurringCents} currency=${currency} interval=${interval} start_date=${startDate}`,
   );
   return {
     ok: true,
@@ -17089,7 +17136,6 @@ async function activateFluxidiAddonFromVerifiedPayment(env, { activationId, paym
   }
   const vehiclesDelta = Math.max(0, Math.trunc(Number(deltas.max_vehicles_delta) || 0));
   const driversDelta = Math.max(0, Math.trunc(Number(deltas.max_drivers_delta) || 0));
-  const pdfAllowanceDelta = Math.max(0, Math.trunc(Number(deltas.pdf_allowance_delta) || 0));
   // Baseline = the profile's effective limit. If a legacy/corrupted record
   // ever reads as non-finite, fall back to the plan baseline rather than 0 so
   // a paid add-on can never silently zero out entitlements. This only replaces
@@ -17110,33 +17156,40 @@ async function activateFluxidiAddonFromVerifiedPayment(env, { activationId, paym
   const newMaxVehicles = currentMaxVehicles + vehiclesDelta;
   const newMaxDrivers = currentMaxDrivers + driversDelta;
 
-  // Patch 2.9: PDF allowance entitlement (persisted/increased only, not gated).
-  const currentPdfAllowance = Math.max(
-    0,
-    Number.isFinite(Number(currentProfile.pdf_monthly_allowance))
-      ? Math.trunc(Number(currentProfile.pdf_monthly_allowance))
-      : DEFAULT_SUBSCRIPTION_PROFILE.pdf_monthly_allowance,
-  );
-  const newPdfAllowance = currentPdfAllowance + pdfAllowanceDelta * quantity;
-
   const nowIso = new Date().toISOString();
-  const updatedProfile = {
+  let updatedProfile = {
     ...currentProfile,
     max_vehicles: newMaxVehicles,
     max_drivers: newMaxDrivers,
-    pdf_monthly_allowance: newPdfAllowance,
     updated_at: nowIso,
   };
+
+  const isPdfPack = addonCode === "pdf_500" || addonCode === "pdf_1000" || addonCode === "pdf_5000";
+  if (isPdfPack) {
+    const packCredits = pdfPackCreditsForCode(addonCode);
+    const grantResult = grantPurchasedPdfCredits(updatedProfile, {
+      credits: packCredits,
+      grantedAt: nowIso,
+      quantity,
+    });
+    if (!grantResult?.ok) {
+      return await rejectAndIgnore("pdf_credit_grant_failed");
+    }
+    updatedProfile = clearPdfCancellationSchedules(grantResult.profile);
+  }
+
+  if (addonCode === "extra_vehicle") {
+    const priorActive = deriveExtraVehicleActiveQuantity(currentProfile);
+    updatedProfile.extra_vehicle_active_quantity = priorActive + quantity;
+  }
   // Patch 2.8: extra_driver uses an explicit active-quantity counter that is
   // incremented here and decremented only when a scheduled cancellation
-  // materializes. extra_vehicle behaviour is unchanged (no field write here).
+  // materializes.
   if (addonCode === "extra_driver") {
     const priorActive = deriveExtraDriverActiveQuantity(currentProfile);
     updatedProfile.extra_driver_active_quantity = priorActive + quantity;
   }
-  // Patch 2.9: PDF bundles use the same explicit-active-quantity counter, one
-  // per bundle code. Incremented here; decremented only on materialized
-  // cancellation. extra_vehicle / extra_driver behaviour is unchanged.
+  // Patch 2.9: PDF bundles track explicit active quantity per pack code.
   if (addonCode === "pdf_500") {
     const priorActive = derivePdf500ActiveQuantity(currentProfile);
     updatedProfile.pdf500_active_quantity = priorActive + quantity;
@@ -17149,6 +17202,7 @@ async function activateFluxidiAddonFromVerifiedPayment(env, { activationId, paym
     const priorActive = derivePdf5000ActiveQuantity(currentProfile);
     updatedProfile.pdf5000_active_quantity = priorActive + quantity;
   }
+  updatedProfile = withLegacyPdfAllowanceProjection(updatedProfile);
 
   let savedProfile;
   try {
@@ -17226,6 +17280,21 @@ async function activateFluxidiAddonFromVerifiedPayment(env, { activationId, paym
   console.log(
     `[SUBSCRIPTION_ADDON_ACTIVATE][OK] tenant=${tenantMask} company=${companyMask} addon=${addonCode} activation_id=${cleanActivationId} payment_id=${paymentId ? "set" : "-"} vehicles_delta=${vehiclesDelta} drivers_delta=${driversDelta} new_max_vehicles=${newMaxVehicles} new_max_drivers=${newMaxDrivers}`,
   );
+
+  if (addonCode === "extra_vehicle" || addonCode === "extra_driver") {
+    try {
+      const syncResult = await _syncFluxidiConsolidatedRecurringAmount(
+        env,
+        scope,
+        savedProfile,
+      );
+      if (syncResult?.profile) savedProfile = syncResult.profile;
+    } catch (e) {
+      console.log(
+        `[SUBSCRIPTION_ADDON_ACTIVATE][WARN] tenant=${tenantMask} company=${companyMask} stage=recurring_sync msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+      );
+    }
+  }
 
   return {
     ok: true,
@@ -37717,7 +37786,15 @@ export default {
                 scopedKeys?.subscriptionProfileKey ||
                 TENANT_SUBSCRIPTION_PROFILE_KEY,
               created,
-              subscription_profile: profile,
+              subscription_profile: (() => {
+                const projected = withLegacyPdfAllowanceProjection(profile);
+                const futureQty = futureRecurringAddonQuantities(projected);
+                return {
+                  ...projected,
+                  future_extra_vehicle_recurring_quantity: futureQty.vehicle_qty,
+                  future_extra_driver_recurring_quantity: futureQty.driver_qty,
+                };
+              })(),
             },
             200,
           );
@@ -38211,7 +38288,61 @@ export default {
           ) {
             return json({ ok: false, error: "invalid_addon_price" }, 422);
           }
-          const expectedAmountCents = Number(unitPriceCents) * quantity;
+
+          const isRecurringAddon =
+            addonCode === "extra_vehicle" || addonCode === "extra_driver";
+          const periodStartIso = _fluxidiSubscriptionSafeStr(profile?.current_period_start, 48);
+          const periodEndIso = _fluxidiSubscriptionSafeStr(profile?.current_period_end, 48);
+          let expectedAmountCents = Number(unitPriceCents) * quantity;
+          let proration = null;
+
+          if (
+            isRecurringAddon &&
+            periodStartIso &&
+            periodEndIso &&
+            currentStatus === "active"
+          ) {
+            const monthlyCents = Number(unitPriceCents);
+            let proratedCents = computeProrationCents({
+              monthlyCents,
+              periodStartIso,
+              periodEndIso,
+              nowMs: Date.now(),
+            });
+            if (proratedCents === null || !Number.isFinite(Number(proratedCents))) {
+              proratedCents = monthlyCents;
+            }
+            if (proratedCents === 0) {
+              return json({ ok: false, error: "addon_period_ended_reactivate" }, 422);
+            }
+            expectedAmountCents = proratedCents;
+
+            const hypotheticalProfile = { ...profile };
+            if (addonCode === "extra_vehicle") {
+              hypotheticalProfile.extra_vehicle_active_quantity =
+                deriveExtraVehicleActiveQuantity(profile) + quantity;
+            } else {
+              hypotheticalProfile.extra_driver_active_quantity =
+                deriveExtraDriverActiveQuantity(profile) + quantity;
+            }
+            const nextRenewalMonthlyCents = computeConsolidatedRecurringCentsFromProfile(
+              hypotheticalProfile,
+              {
+                vehicleUnitCents:
+                  addonCatalog.extra_vehicle_price_cents ?? DEFAULT_EXTRA_VEHICLE_MONTHLY_CENTS,
+                driverUnitCents:
+                  addonCatalog.extra_driver_price_cents ?? DEFAULT_EXTRA_DRIVER_MONTHLY_CENTS,
+              },
+            );
+            proration = {
+              monthly_cents: monthlyCents,
+              prorated_cents: proratedCents,
+              period_start: periodStartIso,
+              period_end: periodEndIso,
+              next_renewal_monthly_cents: nextRenewalMonthlyCents,
+            };
+          }
+
           const amountValue = (expectedAmountCents / 100).toFixed(2);
 
           // Currency reconciliation: catalog is EUR-only; if profile currency
@@ -38550,6 +38681,14 @@ export default {
             ? returnUrlRaw
             : `${base}/`;
 
+          const addonPaymentDescriptions = {
+            extra_vehicle: "Fluxidi extra vehicle add-on",
+            extra_driver: "Fluxidi extra driver add-on",
+            pdf_500: "Fluxidi PDF pack 500",
+            pdf_1000: "Fluxidi PDF pack 1000",
+            pdf_5000: "Fluxidi PDF pack 5000",
+          };
+
           let paymentResult;
           try {
             paymentResult = await createFluxidiAddonFirstPayment(env, {
@@ -38557,9 +38696,7 @@ export default {
               amountValue,
               currency,
               description:
-                addonCode === "extra_driver"
-                  ? "Fluxidi extra driver add-on"
-                  : "Fluxidi extra vehicle add-on",
+                addonPaymentDescriptions[addonCode] || "Fluxidi add-on",
               redirectUrl,
               webhookUrl,
               metadata: {
@@ -38674,7 +38811,9 @@ export default {
               activation_id: activationId,
               addon_code: addonCode,
               quantity,
+              unit_price_cents: Number(unitPriceCents),
               expected_amount_cents: expectedAmountCents,
+              ...(proration ? { proration } : {}),
               currency,
               billing_model: "addon_activation_v1",
               checkout_url: checkoutUrl,
@@ -38864,6 +39003,127 @@ export default {
         }
       }
 
+      // POST /company/subscription/cancel/undo — undo base cancel-at-period-end.
+      if (
+        url.pathname === "/company/subscription/cancel/undo" &&
+        request.method === "POST"
+      ) {
+        let body = {};
+        try {
+          body = await safeJson(request);
+        } catch (_) {
+          body = {};
+        }
+        if (!body || typeof body !== "object" || Array.isArray(body)) body = {};
+
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "COMPANY_SUBSCRIPTION_CANCEL_UNDO",
+        });
+        if (!authScope.ok) return authScope.response;
+
+        try {
+          const scope = {
+            tenant_id: authScope.explicitScope.tenant_id,
+            company_id: authScope.explicitScope.company_id,
+          };
+          const tenantMask = _maskPublicDriverLoginValue(scope.tenant_id);
+          const companyMask = _maskPublicDriverLoginValue(scope.company_id);
+
+          const profile = await loadSubscriptionProfile(env, scope, {
+            allowTenantLegacyFallback: false,
+          });
+          const undo = undoBaseCancellation(profile, { nowMs: Date.now() });
+          if (!undo.ok) {
+            const statusCode = undo.error === "reactivation_required" ? 422 : 422;
+            return json(
+              { ok: false, error: undo.error || "undo_failed" },
+              statusCode,
+            );
+          }
+
+          let saved;
+          try {
+            saved = await saveSubscriptionProfile(env, undo.profile, scope, {
+              allowTenantLegacyWrite: false,
+            });
+          } catch (e) {
+            console.log(
+              `[SUBSCRIPTION_CANCEL_UNDO][ERR] stage=save msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+            );
+            return json({ ok: false, error: "undo_persist_failed" }, 500);
+          }
+
+          const subId = _fluxidiSubscriptionSafeStr(saved?.provider_subscription_id, 128);
+          let providerAmountSyncPending = false;
+          if (!subId.startsWith("sub_")) {
+            try {
+              const reconcileResult = await _reconcileFluxidiRecurringSubscriptionForProfile(env, {
+                scope,
+                savedProfile: saved,
+                payment: null,
+                pending: null,
+                activationId:
+                  _fluxidiSubscriptionNormalizeActivationId(saved?.activation_id) ||
+                  `undo_${crypto.randomUUID()}`,
+              });
+              if (reconcileResult?.updatedProfile) {
+                saved = reconcileResult.updatedProfile;
+              } else {
+                const syncResult = await _syncFluxidiConsolidatedRecurringAmount(
+                  env,
+                  scope,
+                  saved,
+                );
+                if (syncResult?.profile) saved = syncResult.profile;
+                providerAmountSyncPending =
+                  syncResult?.ok === false && syncResult?.provider_ok === false;
+              }
+            } catch (e) {
+              console.log(
+                `[SUBSCRIPTION_CANCEL_UNDO][WARN] stage=reconcile msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+              );
+            }
+          } else {
+            try {
+              const syncResult = await _syncFluxidiConsolidatedRecurringAmount(
+                env,
+                scope,
+                saved,
+              );
+              if (syncResult?.profile) saved = syncResult.profile;
+              providerAmountSyncPending =
+                syncResult?.ok === false && syncResult?.provider_ok === false;
+            } catch (e) {
+              console.log(
+                `[SUBSCRIPTION_CANCEL_UNDO][WARN] stage=recurring_sync msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+              );
+            }
+          }
+
+          console.log(
+            `[SUBSCRIPTION_CANCEL_UNDO][OK] tenant=${tenantMask} company=${companyMask} already=${undo.already === true}`,
+          );
+          return json(
+            {
+              ok: true,
+              already: undo.already === true,
+              provider_amount_sync_pending: providerAmountSyncPending,
+              subscription_profile: withLegacyPdfAllowanceProjection(saved),
+            },
+            providerAmountSyncPending ? 202 : 200,
+          );
+        } catch (err) {
+          console.log(
+            `[SUBSCRIPTION_CANCEL_UNDO][ERR] ${_fluxidiSubscriptionSafeStr(err?.message, 160) || "unknown"}`,
+          );
+          return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
       // =========================
       // Patch 2.6: cancel ONE extra-vehicle add-on at period end.
       //
@@ -39017,21 +39277,28 @@ export default {
             ).toISOString();
           }
 
-          // Schedule exactly one more slot for cancellation. Persist the
-          // backfilled active quantity so the explicit count is authoritative.
-          // max_vehicles/max_drivers are intentionally left unchanged here.
-          const updated = {
-            ...profile,
-            extra_vehicle_active_quantity: activeQty,
-            extra_vehicle_cancel_at_period_end_quantity: scheduledQty + 1,
-            extra_vehicle_cancel_requested_at: nowIso,
-            extra_vehicle_cancellation_effective_at: effectiveAt,
-            extra_vehicle_auto_renew: false,
-          };
+          const scheduledResult = scheduleCancelOneExtraVehicle(
+            { ...profile, extra_vehicle_active_quantity: activeQty },
+            { nowIso, effectiveAt },
+          );
+          if (!scheduledResult.ok) {
+            console.log(
+              `[SUBSCRIPTION_ADDON_CANCEL_ONE][REJECT] reason=${scheduledResult.error || "no_extra_vehicle_to_cancel"} active=${activeQty} scheduled=${scheduledQty} tenant=${tenantMask} company=${companyMask}`,
+            );
+            return json(
+              {
+                ok: false,
+                error: scheduledResult.error || "no_extra_vehicle_to_cancel",
+                extra_vehicle_active_quantity: activeQty,
+                extra_vehicle_cancel_at_period_end_quantity: scheduledQty,
+              },
+              422,
+            );
+          }
 
           let saved;
           try {
-            saved = await saveSubscriptionProfile(env, updated, scope, {
+            saved = await saveSubscriptionProfile(env, scheduledResult.profile, scope, {
               allowTenantLegacyWrite: false,
             });
           } catch (e) {
@@ -39041,6 +39308,22 @@ export default {
             return json({ ok: false, error: "cancel_persist_failed" }, 500);
           }
 
+          let providerAmountSyncPending = false;
+          try {
+            const syncResult = await _syncFluxidiConsolidatedRecurringAmount(
+              env,
+              scope,
+              saved,
+            );
+            if (syncResult?.profile) saved = syncResult.profile;
+            providerAmountSyncPending =
+              syncResult?.ok === false && syncResult?.provider_ok === false;
+          } catch (e) {
+            console.log(
+              `[SUBSCRIPTION_ADDON_CANCEL_ONE][WARN] stage=recurring_sync msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+            );
+          }
+
           console.log(
             `[SUBSCRIPTION_ADDON_CANCEL_ONE][OK] tenant=${tenantMask} company=${companyMask} active=${activeQty} scheduled=${scheduledQty + 1} effective=${effectiveAt}`,
           );
@@ -39048,15 +39331,76 @@ export default {
             {
               ok: true,
               already_scheduled: false,
+              provider_amount_sync_pending: providerAmountSyncPending,
               ...summary(saved),
               subscription_profile: saved,
             },
-            200,
+            providerAmountSyncPending ? 202 : 200,
           );
         } catch (err) {
           console.log(
             `[SUBSCRIPTION_ADDON_CANCEL_ONE][ERR] ${_fluxidiSubscriptionSafeStr(err?.message, 160) || "unknown"}`,
           );
+          return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
+      // POST /company/subscription/add-ons/extra-vehicle/cancel-one/undo
+      if (
+        url.pathname === "/company/subscription/add-ons/extra-vehicle/cancel-one/undo" &&
+        request.method === "POST"
+      ) {
+        let body = {};
+        try {
+          body = await safeJson(request);
+        } catch (_) {
+          body = {};
+        }
+        if (!body || typeof body !== "object" || Array.isArray(body)) body = {};
+
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "COMPANY_SUBSCRIPTION_ADDON_EXTRA_VEHICLE_CANCEL_ONE_UNDO",
+        });
+        if (!authScope.ok) return authScope.response;
+
+        try {
+          const scope = {
+            tenant_id: authScope.explicitScope.tenant_id,
+            company_id: authScope.explicitScope.company_id,
+          };
+          const profile = await loadSubscriptionProfile(env, scope, {
+            allowTenantLegacyFallback: false,
+          });
+          const undo = undoCancelOneExtraVehicle(profile);
+          if (!undo.ok) {
+            return json({ ok: false, error: undo.error || "undo_failed" }, 422);
+          }
+          let saved = await saveSubscriptionProfile(env, undo.profile, scope, {
+            allowTenantLegacyWrite: false,
+          });
+          let providerAmountSyncPending = false;
+          const syncResult = await _syncFluxidiConsolidatedRecurringAmount(
+            env,
+            scope,
+            saved,
+          );
+          if (syncResult?.profile) saved = syncResult.profile;
+          providerAmountSyncPending =
+            syncResult?.ok === false && syncResult?.provider_ok === false;
+          return json(
+            {
+              ok: true,
+              already: undo.already === true,
+              provider_amount_sync_pending: providerAmountSyncPending,
+              subscription_profile: saved,
+            },
+            providerAmountSyncPending ? 202 : 200,
+          );
+        } catch (err) {
           return json({ ok: false, error: "internal_error" }, 500);
         }
       }
@@ -39207,18 +39551,28 @@ export default {
             ).toISOString();
           }
 
-          const updated = {
-            ...profile,
-            extra_driver_active_quantity: activeQty,
-            extra_driver_cancel_at_period_end_quantity: scheduledQty + 1,
-            extra_driver_cancel_requested_at: nowIso,
-            extra_driver_cancellation_effective_at: effectiveAt,
-            extra_driver_auto_renew: false,
-          };
+          const scheduledResult = scheduleCancelOneExtraDriver(
+            { ...profile, extra_driver_active_quantity: activeQty },
+            { nowIso, effectiveAt },
+          );
+          if (!scheduledResult.ok) {
+            console.log(
+              `[SUBSCRIPTION_ADDON_EXTRA_DRIVER_CANCEL_ONE][REJECT] reason=${scheduledResult.error || "no_extra_driver_to_cancel"} active=${activeQty} scheduled=${scheduledQty} tenant=${tenantMask} company=${companyMask}`,
+            );
+            return json(
+              {
+                ok: false,
+                error: scheduledResult.error || "no_extra_driver_to_cancel",
+                extra_driver_active_quantity: activeQty,
+                extra_driver_cancel_at_period_end_quantity: scheduledQty,
+              },
+              422,
+            );
+          }
 
           let saved;
           try {
-            saved = await saveSubscriptionProfile(env, updated, scope, {
+            saved = await saveSubscriptionProfile(env, scheduledResult.profile, scope, {
               allowTenantLegacyWrite: false,
             });
           } catch (e) {
@@ -39228,6 +39582,22 @@ export default {
             return json({ ok: false, error: "cancel_persist_failed" }, 500);
           }
 
+          let providerAmountSyncPending = false;
+          try {
+            const syncResult = await _syncFluxidiConsolidatedRecurringAmount(
+              env,
+              scope,
+              saved,
+            );
+            if (syncResult?.profile) saved = syncResult.profile;
+            providerAmountSyncPending =
+              syncResult?.ok === false && syncResult?.provider_ok === false;
+          } catch (e) {
+            console.log(
+              `[SUBSCRIPTION_ADDON_EXTRA_DRIVER_CANCEL_ONE][WARN] stage=recurring_sync msg=${_fluxidiSubscriptionSafeStr(e?.message, 160)}`,
+            );
+          }
+
           console.log(
             `[SUBSCRIPTION_ADDON_EXTRA_DRIVER_CANCEL_ONE][OK] tenant=${tenantMask} company=${companyMask} active=${activeQty} scheduled=${scheduledQty + 1} effective=${effectiveAt}`,
           );
@@ -39235,15 +39605,76 @@ export default {
             {
               ok: true,
               already_scheduled: false,
+              provider_amount_sync_pending: providerAmountSyncPending,
               ...summary(saved),
               subscription_profile: saved,
             },
-            200,
+            providerAmountSyncPending ? 202 : 200,
           );
         } catch (err) {
           console.log(
             `[SUBSCRIPTION_ADDON_EXTRA_DRIVER_CANCEL_ONE][ERR] ${_fluxidiSubscriptionSafeStr(err?.message, 160) || "unknown"}`,
           );
+          return json({ ok: false, error: "internal_error" }, 500);
+        }
+      }
+
+      // POST /company/subscription/add-ons/extra-driver/cancel-one/undo
+      if (
+        url.pathname === "/company/subscription/add-ons/extra-driver/cancel-one/undo" &&
+        request.method === "POST"
+      ) {
+        let body = {};
+        try {
+          body = await safeJson(request);
+        } catch (_) {
+          body = {};
+        }
+        if (!body || typeof body !== "object" || Array.isArray(body)) body = {};
+
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "COMPANY_SUBSCRIPTION_ADDON_EXTRA_DRIVER_CANCEL_ONE_UNDO",
+        });
+        if (!authScope.ok) return authScope.response;
+
+        try {
+          const scope = {
+            tenant_id: authScope.explicitScope.tenant_id,
+            company_id: authScope.explicitScope.company_id,
+          };
+          const profile = await loadSubscriptionProfile(env, scope, {
+            allowTenantLegacyFallback: false,
+          });
+          const undo = undoCancelOneExtraDriver(profile);
+          if (!undo.ok) {
+            return json({ ok: false, error: undo.error || "undo_failed" }, 422);
+          }
+          let saved = await saveSubscriptionProfile(env, undo.profile, scope, {
+            allowTenantLegacyWrite: false,
+          });
+          let providerAmountSyncPending = false;
+          const syncResult = await _syncFluxidiConsolidatedRecurringAmount(
+            env,
+            scope,
+            saved,
+          );
+          if (syncResult?.profile) saved = syncResult.profile;
+          providerAmountSyncPending =
+            syncResult?.ok === false && syncResult?.provider_ok === false;
+          return json(
+            {
+              ok: true,
+              already: undo.already === true,
+              provider_amount_sync_pending: providerAmountSyncPending,
+              subscription_profile: saved,
+            },
+            providerAmountSyncPending ? 202 : 200,
+          );
+        } catch (err) {
           return json({ ok: false, error: "internal_error" }, 500);
         }
       }

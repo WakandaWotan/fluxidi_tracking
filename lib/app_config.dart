@@ -1491,8 +1491,16 @@ class BackendSubscriptionProfile {
   final String providerSubscriptionId;
   /// True when Mollie DELETE after base cancel failed and needs retry.
   final bool providerCancelPending;
+  // Patch 2.14: purchased PDF credits (never expire) + consolidated renewal.
+  final int pdfPurchasedCreditsRemaining;
+  final String pdfPurchasedLastGrantedAt;
+  final int? recurringAmountCents;
+  final bool providerAmountSyncPending;
   final String activationId;
   final List<String> warnings;
+
+  /// Purchased PDF credits remaining (authoritative; no fallback to allowance).
+  int get purchasedPdfCredits => pdfPurchasedCreditsRemaining;
 
   const BackendSubscriptionProfile({
     required this.tenantId,
@@ -1565,6 +1573,10 @@ class BackendSubscriptionProfile {
     this.providerCustomerId = '',
     this.providerSubscriptionId = '',
     this.providerCancelPending = false,
+    this.pdfPurchasedCreditsRemaining = 0,
+    this.pdfPurchasedLastGrantedAt = '',
+    this.recurringAmountCents,
+    this.providerAmountSyncPending = false,
     this.activationId = '',
     this.warnings = const <String>[],
   });
@@ -2015,6 +2027,26 @@ class BackendSubscriptionProfile {
         'providerCancelPending',
         fallback.providerCancelPending,
       ),
+      pdfPurchasedCreditsRemaining: intVal(
+        'pdf_purchased_credits_remaining',
+        'pdfPurchasedCreditsRemaining',
+        fallback.pdfPurchasedCreditsRemaining,
+      ),
+      pdfPurchasedLastGrantedAt: text(
+        'pdf_purchased_last_granted_at',
+        'pdfPurchasedLastGrantedAt',
+        fallback.pdfPurchasedLastGrantedAt,
+      ),
+      recurringAmountCents: nullableIntVal(
+        'recurring_amount_cents',
+        'recurringAmountCents',
+        fallback.recurringAmountCents,
+      ),
+      providerAmountSyncPending: boolVal(
+        'provider_amount_sync_pending',
+        'providerAmountSyncPending',
+        fallback.providerAmountSyncPending,
+      ),
       activationId: text(
         'activation_id',
         'activationId',
@@ -2104,6 +2136,10 @@ class BackendSubscriptionProfile {
     'provider_customer_id': providerCustomerId,
     'provider_subscription_id': providerSubscriptionId,
     'provider_cancel_pending': providerCancelPending,
+    'pdf_purchased_credits_remaining': pdfPurchasedCreditsRemaining,
+    'pdf_purchased_last_granted_at': pdfPurchasedLastGrantedAt,
+    'recurring_amount_cents': recurringAmountCents,
+    'provider_amount_sync_pending': providerAmountSyncPending,
     'activation_id': activationId,
     'warnings': warnings,
   };
@@ -6099,6 +6135,46 @@ Future<BackendSubscriptionProfile> cancelCompanySubscription({
   );
 }
 
+/// POST /company/subscription/cancel/undo — undo base cancel-at-period-end.
+///
+/// Company-session auth. Clears the scheduled cancellation before the effective
+/// date. Accepts HTTP 202 when local undo succeeded but provider amount sync
+/// is still pending retry.
+Future<BackendSubscriptionProfile> undoCancelCompanySubscription({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse(
+      '${appConfig.bookingBaseUrl}/company/subscription/cancel/undo',
+    ),
+    tenantId: scope['tenant_id'],
+    companyId: scope['company_id'],
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(endpoint, headers: auth.headers, body: jsonEncode(scope))
+      .timeout(const Duration(seconds: 15));
+  if (res.statusCode != 200 && res.statusCode != 202) {
+    debugPrint(
+      '[SUBSCRIPTION_CANCEL_UNDO][FAIL] status=${res.statusCode} '
+      'auth_mode=${auth.mode.name}',
+    );
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final profile = decoded['subscription_profile'];
+  if (profile is! Map) throw Exception('Missing subscription_profile');
+  return BackendSubscriptionProfile.fromJson(
+    Map<String, dynamic>.from(profile),
+  );
+}
+
 /// POST /company/subscription/add-ons/extra-vehicle/cancel-one (Patch 2.6).
 ///
 /// Company-session auth. Schedules a downgrade of exactly ONE paid extra
@@ -6145,6 +6221,45 @@ Future<BackendSubscriptionProfile> cancelOneExtraVehicleAddon({
   );
 }
 
+/// POST /company/subscription/add-ons/extra-vehicle/cancel-one/undo.
+///
+/// Undoes one scheduled extra-vehicle cancellation before the effective date.
+/// Accepts HTTP 202 when provider amount sync is still pending.
+Future<BackendSubscriptionProfile> undoCancelOneExtraVehicleAddon({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse(
+      '${appConfig.bookingBaseUrl}/company/subscription/add-ons/extra-vehicle/cancel-one/undo',
+    ),
+    tenantId: scope['tenant_id'],
+    companyId: scope['company_id'],
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(endpoint, headers: auth.headers, body: jsonEncode(scope))
+      .timeout(const Duration(seconds: 15));
+  if (res.statusCode != 200 && res.statusCode != 202) {
+    debugPrint(
+      '[SUBSCRIPTION_ADDON_CANCEL_ONE_UNDO][FAIL] status=${res.statusCode} '
+      'auth_mode=${auth.mode.name}',
+    );
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final profile = decoded['subscription_profile'];
+  if (profile is! Map) throw Exception('Missing subscription_profile');
+  return BackendSubscriptionProfile.fromJson(
+    Map<String, dynamic>.from(profile),
+  );
+}
+
 /// POST /company/subscription/add-ons/extra-driver/cancel-one (Patch 2.8).
 ///
 /// Schedules the cancellation of exactly one paid extra-driver slot at the
@@ -6176,6 +6291,45 @@ Future<BackendSubscriptionProfile> cancelOneExtraDriverAddon({
     debugPrint(
       '[SUBSCRIPTION_ADDON_EXTRA_DRIVER_CANCEL_ONE][FAIL] status=${res.statusCode} '
       'auth_mode=${auth.mode.name}',
+    );
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+  final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final profile = decoded['subscription_profile'];
+  if (profile is! Map) throw Exception('Missing subscription_profile');
+  return BackendSubscriptionProfile.fromJson(
+    Map<String, dynamic>.from(profile),
+  );
+}
+
+/// POST /company/subscription/add-ons/extra-driver/cancel-one/undo.
+///
+/// Undoes one scheduled extra-driver cancellation before the effective date.
+/// Accepts HTTP 202 when provider amount sync is still pending.
+Future<BackendSubscriptionProfile> undoCancelOneExtraDriverAddon({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse(
+      '${appConfig.bookingBaseUrl}/company/subscription/add-ons/extra-driver/cancel-one/undo',
+    ),
+    tenantId: scope['tenant_id'],
+    companyId: scope['company_id'],
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(endpoint, headers: auth.headers, body: jsonEncode(scope))
+      .timeout(const Duration(seconds: 15));
+  if (res.statusCode != 200 && res.statusCode != 202) {
+    debugPrint(
+      '[SUBSCRIPTION_ADDON_EXTRA_DRIVER_CANCEL_ONE_UNDO][FAIL] '
+      'status=${res.statusCode} auth_mode=${auth.mode.name}',
     );
     throw Exception('HTTP ${res.statusCode}: ${res.body}');
   }
@@ -6315,6 +6469,54 @@ Future<BackendSubscriptionProfile> cancelOnePdf5000Addon({
 /// the backend never returns Mollie API keys, webhook secrets, or tokens.
 /// `ok == false` carries a machine-readable [error] (e.g. `unsupported_market`,
 /// `mollie_payment_failed`) plus the HTTP [statusCode] for UI branching.
+class AddonCheckoutProration {
+  const AddonCheckoutProration({
+    this.monthlyCents,
+    this.proratedCents,
+    this.periodStart = '',
+    this.periodEnd = '',
+    this.nextRenewalMonthlyCents,
+  });
+
+  final int? monthlyCents;
+  final int? proratedCents;
+  final String periodStart;
+  final String periodEnd;
+  final int? nextRenewalMonthlyCents;
+
+  bool get hasProration =>
+      proratedCents != null &&
+      proratedCents! > 0 &&
+      periodStart.trim().isNotEmpty &&
+      periodEnd.trim().isNotEmpty;
+
+  factory AddonCheckoutProration.fromJson(Map<String, dynamic>? json) {
+    if (json == null || json.isEmpty) {
+      return const AddonCheckoutProration();
+    }
+    int? intField(String snake, String camel) {
+      final raw = json[snake] ?? json[camel];
+      if (raw == null) return null;
+      if (raw is num) return raw.toInt();
+      return int.tryParse(raw.toString());
+    }
+
+    String textField(String snake, String camel) =>
+        (json[snake] ?? json[camel] ?? '').toString().trim();
+
+    return AddonCheckoutProration(
+      monthlyCents: intField('monthly_cents', 'monthlyCents'),
+      proratedCents: intField('prorated_cents', 'proratedCents'),
+      periodStart: textField('period_start', 'periodStart'),
+      periodEnd: textField('period_end', 'periodEnd'),
+      nextRenewalMonthlyCents: intField(
+        'next_renewal_monthly_cents',
+        'nextRenewalMonthlyCents',
+      ),
+    );
+  }
+}
+
 class BackendSubscriptionCheckoutStartResult {
   const BackendSubscriptionCheckoutStartResult({
     required this.ok,
@@ -6331,6 +6533,7 @@ class BackendSubscriptionCheckoutStartResult {
     this.subscriptionStatus = '',
     this.market = '',
     this.error = '',
+    this.proration,
   });
 
   final bool ok;
@@ -6347,6 +6550,7 @@ class BackendSubscriptionCheckoutStartResult {
   final String subscriptionStatus;
   final String market;
   final String error;
+  final AddonCheckoutProration? proration;
 
   bool get hasCheckoutUrl => checkoutUrl.trim().isNotEmpty;
   bool get isUnsupportedMarket => error.trim() == 'unsupported_market';
@@ -6397,6 +6601,11 @@ class BackendSubscriptionCheckoutStartResult {
       ),
       market: textField('market', 'market').toUpperCase(),
       error: textField('error', 'error'),
+      proration: json['proration'] is Map
+          ? AddonCheckoutProration.fromJson(
+              Map<String, dynamic>.from(json['proration'] as Map),
+            )
+          : null,
     );
   }
 }
