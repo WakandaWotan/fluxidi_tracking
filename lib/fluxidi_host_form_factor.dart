@@ -74,6 +74,18 @@ bool latchFluxidiHostIsTablet({
   return resolvedIsTablet;
 }
 
+/// Phone-landscape product layouts (e.g. chauffeur quick-action 4×2 grid).
+///
+/// Requires a physical phone host — never activate from a shrunk tablet
+/// split/PiP pane that only looks "phone-wide".
+bool fluxidiIsPhoneLandscapeHost({
+  required bool hostIsTablet,
+  required Size windowSize,
+}) {
+  if (hostIsTablet) return false;
+  return windowSize.width > windowSize.height;
+}
+
 /// Pure inputs for tests and call sites that already have sizes.
 @immutable
 class FluxidiHostFormFactor {

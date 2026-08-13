@@ -32408,6 +32408,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     bool isPhoneVisual = false,
     double? phoneVisualCardMinHeight,
     double? phoneVisualSpacing,
+    // Genuine phone host + landscape: balanced 4×2 grid with Meer extras.
+    // Gated by physical host form-factor (not pane width alone).
+    bool isPhoneLandscapeHost = false,
   }) {
     final isMidnightBlue =
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
@@ -32711,6 +32714,9 @@ class _DriverHomePageState extends State<DriverHomePage>
           if (preferredWidth < 105.0) {
             columns = 2;
           }
+        } else if (isPhoneLandscapeHost) {
+          // Genuine phone landscape: fixed balanced 4×2 (8 actions).
+          columns = 4;
         } else if (isPhoneVisual) {
           columns = 1;
         } else {
@@ -32866,6 +32872,36 @@ class _DriverHomePageState extends State<DriverHomePage>
                 ),
               ),
             ),
+            if (isPhoneLandscapeHost) ...[
+              SizedBox(
+                width: width,
+                child: quickAction(
+                  icon: Icons.insights_rounded,
+                  title: _tr(
+                    nl: 'Mijn prestaties',
+                    en: 'My performance',
+                    fr: 'Mes performances',
+                    es: 'Mi rendimiento',
+                  ),
+                  // Same handler as Meer → Mijn prestaties.
+                  onTap: _openDriverKpiPage,
+                ),
+              ),
+              SizedBox(
+                width: width,
+                child: quickAction(
+                  icon: Icons.toggle_on_outlined,
+                  title: _tr(
+                    nl: 'Beschikbaarheid',
+                    en: 'Availability',
+                    fr: 'Disponibilite',
+                    es: 'Disponibilidad',
+                  ),
+                  // Same handler as Meer → Beschikbaarheid.
+                  onTap: () => unawaited(_handleDriverStatusAction()),
+                ),
+              ),
+            ],
           ],
         );
       },
@@ -32903,6 +32939,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverHomeMobileLayoutNotifier.value == DriverHomeMobileLayout.visual;
     final phoneVisualCardMinHeight = clampDouble(W * 0.28, 100.0, 116.0);
     const phoneVisualSpacing = 10.0;
+    // Phone-landscape 4×2 quick actions: physical phone host only so tablet
+    // split/narrow panes never inherit this layout from width alone.
+    final isPhoneLandscapeHost = fluxidiIsPhoneLandscapeHost(
+      hostIsTablet: _hostIsTablet(context),
+      windowSize: size,
+    );
     final isMidnightBlue =
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
     final isMiddayGold =
@@ -33615,12 +33657,16 @@ class _DriverHomePageState extends State<DriverHomePage>
                         isTabletPortrait: isTabletPortrait,
                         tabletPortraitCardMinHeight:
                             driverQuickActionCardMinHeight,
+                        // Phone landscape uses themed icon cards (no new photos).
                         useImageBackgrounds:
-                            isTabletPortrait || useDriverPhoneVisualMode,
+                            !isPhoneLandscapeHost &&
+                            (isTabletPortrait || useDriverPhoneVisualMode),
                         tabletPortraitSpacing: driverQuickActionGap,
                         isPhoneVisual: useDriverPhoneVisualMode,
                         phoneVisualCardMinHeight: phoneVisualCardMinHeight,
                         phoneVisualSpacing: phoneVisualSpacing,
+                        isPhoneLandscapeHost: isPhoneLandscapeHost,
+                        compactLandscape: isPhoneLandscapeHost,
                       ),
                     ],
                   ],
