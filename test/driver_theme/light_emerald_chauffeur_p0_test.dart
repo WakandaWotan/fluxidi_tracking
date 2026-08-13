@@ -51,6 +51,14 @@ String _nextRideRegion(String source) {
   return source.substring(start, end);
 }
 
+String _quickActionsRegion(String source) {
+  final start = source.indexOf('Widget _buildDriverQuickActionsGrid({');
+  expect(start, greaterThanOrEqualTo(0));
+  final end = source.indexOf('Widget _buildPremiumDriverDashboard()', start);
+  expect(end, greaterThan(start));
+  return source.substring(start, end);
+}
+
 void main() {
   test('lightEmerald enum + light palette contract', () {
     expect(DriverThemeVariant.values, contains(DriverThemeVariant.lightEmerald));
@@ -287,6 +295,42 @@ void main() {
       );
       // Other themes still keep black fills via frameFill fallback.
       expect(shell, contains('kFluxidiBlack'));
+    });
+
+    test('LE quick-action ivory label capsule is content-sized, not full-width',
+        () {
+      final qa = _quickActionsRegion(_driverHomeSource());
+
+      // LE image-card arm uses loose Flexible + widthFactor hug, not Expanded.
+      expect(qa, contains('if (isLightEmerald && hasImageBackground)'));
+      expect(qa, contains('fit: FlexFit.loose'));
+      expect(qa, contains('widthFactor: 1.0'));
+      expect(qa, contains('horizontal: 14'));
+      expect(qa, contains('vertical: 6'));
+      expect(qa, contains('0xFFF7FAF8'));
+      expect(qa, contains('.withOpacity(0.88)'));
+
+      // Ellipsis / single-line safety retained on the title Text.
+      expect(qa, contains('maxLines: 1'));
+      expect(qa, contains('overflow: TextOverflow.ellipsis'));
+      expect(qa, contains('softWrap: false'));
+
+      // LE capsule branch itself must not force full remaining width.
+      final leArmStart = qa.indexOf('if (isLightEmerald && hasImageBackground)');
+      expect(leArmStart, greaterThanOrEqualTo(0));
+      final elseExpanded = qa.indexOf(
+        'else\n                      Expanded(child: labelColumn)',
+        leArmStart,
+      );
+      expect(elseExpanded, greaterThan(leArmStart));
+      final leArm = qa.substring(leArmStart, elseExpanded);
+      expect(leArm, isNot(contains('Expanded(')));
+      expect(leArm, isNot(contains('double.infinity')));
+      expect(leArm, isNot(contains('IntrinsicWidth')));
+      expect(leArm, contains('Flexible('));
+
+      // Non-LE path still expands label into remaining card width.
+      expect(qa, contains('Expanded(child: labelColumn)'));
     });
   });
 }

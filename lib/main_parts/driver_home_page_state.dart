@@ -32427,6 +32427,47 @@ class _DriverHomePageState extends State<DriverHomePage>
     }) {
       final hasImageBackground =
           useImageBackgrounds && (backgroundAsset ?? '').trim().isNotEmpty;
+      final labelColumn = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            title,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: isLightEmerald
+                  ? _lightEmeraldTextPrimary()
+                  : (isMiddayGold
+                        ? _middayGoldTextPrimary()
+                        : (isMidnightBlue
+                              ? _midnightBlueTextPrimary()
+                              : Colors.white)),
+              fontWeight: FontWeight.w800,
+              fontSize: 10.4,
+            ),
+          ),
+          if (subtitle.trim().isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: isLightEmerald
+                    ? _lightEmeraldTextMuted()
+                    : (isMiddayGold
+                          ? _middayGoldTextMuted()
+                          : (isMidnightBlue
+                                ? _midnightBlueTextMuted()
+                                : Colors.white.withOpacity(0.67))),
+                fontSize: 11.5,
+              ),
+            ),
+          ],
+        ],
+      );
       return InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(14),
@@ -32615,73 +32656,34 @@ class _DriverHomePageState extends State<DriverHomePage>
                       ),
                     ),
                     const SizedBox(width: 12),
-                    Expanded(
-                      child: Builder(
-                        builder: (context) {
-                          final labelColumn = Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                title,
-                                maxLines: 1,
-                                softWrap: false,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: isLightEmerald
-                                      ? _lightEmeraldTextPrimary()
-                                      : (isMiddayGold
-                                            ? _middayGoldTextPrimary()
-                                            : (isMidnightBlue
-                                                  ? _midnightBlueTextPrimary()
-                                                  : Colors.white)),
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 10.4,
-                                ),
+                    // Light Emerald image cards: hug label text (compact ivory
+                    // capsule). Other themes keep Expanded fill of remaining width.
+                    if (isLightEmerald && hasImageBackground)
+                      Flexible(
+                        fit: FlexFit.loose,
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          widthFactor: 1.0,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(
+                                0xFFF7FAF8,
+                              ).withOpacity(0.88),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: _lightEmeraldBorderColor(0.28),
                               ),
-                              if (subtitle.trim().isNotEmpty) ...[
-                                const SizedBox(height: 4),
-                                Text(
-                                  subtitle,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: isLightEmerald
-                                        ? _lightEmeraldTextMuted()
-                                        : (isMiddayGold
-                                              ? _middayGoldTextMuted()
-                                              : (isMidnightBlue
-                                                    ? _midnightBlueTextMuted()
-                                                    : Colors.white.withOpacity(
-                                                        0.67,
-                                                      ))),
-                                    fontSize: 11.5,
-                                  ),
-                                ),
-                              ],
-                            ],
-                          );
-                          if (isLightEmerald && hasImageBackground) {
-                            return Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 6,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(
-                                  0xFFF7FAF8,
-                                ).withOpacity(0.88),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: _lightEmeraldBorderColor(0.28),
-                                ),
-                              ),
-                              child: labelColumn,
-                            );
-                          }
-                          return labelColumn;
-                        },
-                      ),
-                    ),
+                            ),
+                            child: labelColumn,
+                          ),
+                        ),
+                      )
+                    else
+                      Expanded(child: labelColumn),
                   ],
                 ),
               ),
