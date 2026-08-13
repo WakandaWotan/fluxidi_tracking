@@ -12,7 +12,14 @@ class _CompanySubscriptionBillingPageState
     extends State<CompanySubscriptionBillingPage>
     with WidgetsBindingObserver {
   late Future<BackendSubscriptionProfile> _future;
-  static const Color _warn = Color(0xFFFFB457);
+  // Soft warn/danger derived from the current business palette so we never
+  // hard-code Corporate Blue tones or amber; blends danger toward accent so
+  // scheduled-cancel / cancel CTAs read legibly on both dark and light
+  // surfaces without introducing a Corporate Blue hex or concept-image blue.
+  Color get _warn {
+    final p = _businessThemePalette;
+    return Color.lerp(p.danger, p.accent, 0.30) ?? p.danger;
+  }
 
   // Patch 2.2B activation wiring state.
   bool _activating = false;
@@ -1755,106 +1762,11 @@ class _CompanySubscriptionBillingPageState
     }
   }
 
-  /// Footer for a PDF bundle add-on card — purchase only (no cancel CTA).
-  Widget? _pdfBundleAddonFooter(
-    BackendSubscriptionProfile profile,
-    int pdfs,
-  ) {
-    if (!_pdfBundleIsActionable(pdfs)) return null;
-    if (!kFluxidiCompanySaasCheckoutEnabled) {
-      return _playSaasManagedOutsideNotice();
-    }
-    final bool isActive = _profileIsActive(profile);
-    final bool starting = _pdfBundleBusyStarting(pdfs);
-    final activeQty = _pdfBundleActiveQuantity(profile, pdfs);
-    if (isActive && activeQty > 0) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _chip(
-            text: _t(
-              nl: 'Actief: $activeQty × $pdfs PDF\u2019s gekocht',
-              en: 'Active: $activeQty × $pdfs PDFs purchased',
-              fr: 'Actif : $activeQty × $pdfs PDF achetés',
-              es: 'Activo: $activeQty × $pdfs PDF comprados',
-            ),
-            bg: _green.withOpacity(0.14),
-            border: _green.withOpacity(0.45),
-            textColor: _green,
-          ),
-          const SizedBox(height: 8),
-          TextButton(
-            onPressed: starting
-                ? null
-                : () => _startPdfBundleCheckout(profile, pdfs),
-            child: Text(
-              _t(
-                nl: 'Nog een pakket van $pdfs toevoegen',
-                en: 'Add another $pdfs pack',
-                fr: 'Ajouter un autre pack de $pdfs',
-                es: 'Añadir otro paquete de $pdfs',
-              ),
-              style: TextStyle(
-                color: _businessThemePalette.textMuted,
-                fontWeight: FontWeight.w600,
-                fontSize: 12,
-              ),
-            ),
-          ),
-        ],
-      );
-    }
-    final button = SizedBox(
-      width: double.infinity,
-      child: FilledButton.icon(
-        onPressed: (!isActive || starting)
-            ? null
-            : () => _startPdfBundleCheckout(profile, pdfs),
-        style: FilledButton.styleFrom(
-          backgroundColor: _gold,
-          foregroundColor: Colors.black,
-          disabledBackgroundColor: _businessThemePalette.surfaceAlt.withOpacity(
-            _businessThemePalette.isDark ? 0.66 : 0.92,
-          ),
-          disabledForegroundColor: _businessThemePalette.textMuted,
-          minimumSize: const Size.fromHeight(44),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-        icon: starting
-            ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.black54,
-                ),
-              )
-            : const Icon(Icons.picture_as_pdf_outlined, size: 18),
-        label: Text(
-          _activatePdfBundleLabel(pdfs),
-          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
-        ),
-      ),
-    );
-    if (isActive) return button;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        button,
-        const SizedBox(height: 6),
-        Text(
-          _addonRequiresActiveMessage(),
-          style: TextStyle(
-            color: _businessThemePalette.textMuted,
-            fontSize: 11.4,
-            height: 1.3,
-          ),
-        ),
-      ],
-    );
-  }
+  // Note: the legacy PDF bundle footer widget was removed in the premium
+  // redesign; the new `_buildPdfCreditsSection` builds one purchase card per
+  // bundle and calls `_startPdfBundleCheckout` directly with cleaner copy
+  // ("eenmalig", "Kopen") without the previous quantity chip / "extra pack"
+  // secondary action.
 
   // ---------------------------------------------------------------------------
   // Patch 2.5: minimal subscription cancellation (cancel-at-period-end).
@@ -2629,14 +2541,10 @@ class _CompanySubscriptionBillingPageState
     }
   }
 
-  String _addonAvailableLabel() {
-    return _t(
-      nl: 'Beschikbaar als add-on',
-      en: 'Available as add-on',
-      fr: 'Disponible comme option',
-      es: 'Disponible como complemento',
-    );
-  }
+  // The legacy `_addonAvailableLabel` (which returned "Beschikbaar als
+  // add-on") is intentionally not defined here anymore. The premium redesign
+  // no longer surfaces that wording, and the source-contract test asserts the
+  // string is gone from this file.
 
   Widget _chip({
     required String text,
@@ -2740,303 +2648,193 @@ class _CompanySubscriptionBillingPageState
     );
   }
 
-  Widget _moduleRow({
-    required String label,
-    required bool active,
-    String? subtitle,
-    String? priceLabel,
-    String? inactiveLabel,
-    bool comingSoon = false,
-  }) {
-    // Coming-soon modules use a neutral grey accent so users do not confuse
-    // them with "Actief" (green) or paid add-ons (gold). When comingSoon is
-    // true the `active` flag is forced to false and the inactiveLabel is the
-    // visible badge text.
-    final neutralColor = _businessThemePalette.textMuted;
-    final neutralBg = _businessThemePalette.surfaceAlt.withOpacity(
-      _businessThemePalette.isDark ? 0.66 : 0.92,
-    );
-    final neutralBorder = _businessThemePalette.border.withOpacity(
-      _businessThemePalette.isDark ? 0.52 : 0.78,
-    );
-    final effectiveActive = comingSoon ? false : active;
-    final statusText = comingSoon
-        ? (inactiveLabel ??
-              _t(
-                nl: 'Binnenkort',
-                en: 'Coming soon',
-                fr: 'Bientôt',
-                es: 'Próximamente',
-              ))
-        : (effectiveActive
-              ? _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo')
-              : (inactiveLabel ?? _addonAvailableLabel()));
-    final statusBg = comingSoon
-        ? neutralBg
-        : (effectiveActive
-              ? _green.withOpacity(0.14)
-              : _gold.withOpacity(0.13));
-    final statusBorder = comingSoon
-        ? neutralBorder
-        : (effectiveActive
-              ? _green.withOpacity(0.52)
-              : _gold.withOpacity(0.42));
-    final statusColor = comingSoon
-        ? neutralColor
-        : (effectiveActive ? _green : _gold);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 7),
-      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-      decoration: BoxDecoration(
-        color: _panelSoft,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: comingSoon
-              ? neutralBorder
-              : (effectiveActive
-                    ? _green.withOpacity(0.42)
-                    : _gold.withOpacity(0.28)),
+  // Note: the legacy `_moduleRow`, `_addonCard`, `_comingSoonLabel` and
+  // `_usageCard` widgets were removed in the premium redesign. Included
+  // capabilities are now rendered by `_buildIncludedFeatures` as compact
+  // check-rows, monthly add-ons by `_buildMonthlyAddonsSection`, and usage
+  // KPIs by `_buildUsageLimitsRow`.
+
+  /// Compact responsive grid of feature check-rows for the "Inbegrepen
+  /// mogelijkheden" section. Preserves the previously-listed Fluxidi
+  /// capabilities (branding, booking, PDF receipts, WhatsApp/email, and
+  /// Belgian Chiron/Billit-Peppol) but in a lighter visual form.
+  Widget _buildIncludedFeatures(
+    BackendSubscriptionProfile profile,
+    SubscriptionPlanCatalogEntry catalog,
+    bool isBelgiumMarket,
+  ) {
+    final palette = _businessThemePalette;
+    Widget row(String label, {bool active = true, String? note}) {
+      final Color dotColor = active ? _green : palette.textMuted;
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: _panelSoft,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: palette.border.withOpacity(0.85)),
         ),
-      ),
-      // Keep status/price chips below the title to avoid narrow-phone clipping.
-      // This prevents fragmented wrapping like "AI-assi / stent".
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 22,
-                height: 22,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: comingSoon
-                      ? neutralColor.withOpacity(0.15)
-                      : (effectiveActive
-                            ? _green.withOpacity(0.15)
-                            : _gold.withOpacity(0.15)),
-                  border: Border.all(
-                    color: comingSoon
-                        ? neutralColor.withOpacity(0.45)
-                        : (effectiveActive
-                              ? _green.withOpacity(0.50)
-                              : _gold.withOpacity(0.45)),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              active ? Icons.check_circle_rounded : Icons.schedule_outlined,
+              size: 18,
+              color: dotColor,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      height: 1.25,
+                    ),
                   ),
-                ),
-                child: Icon(
-                  comingSoon
-                      ? Icons.schedule_outlined
-                      : (effectiveActive
-                            ? Icons.check
-                            : Icons.add_circle_outline),
-                  size: 13,
-                  color: comingSoon
-                      ? neutralColor
-                      : (effectiveActive ? _green : _gold),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+                  if ((note ?? '').isNotEmpty) ...[
+                    const SizedBox(height: 2),
                     Text(
-                      label,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                      note!,
                       style: TextStyle(
-                        color: _businessThemePalette.textPrimary,
-                        fontSize: 12.6,
-                        fontWeight: FontWeight.w700,
+                        color: palette.textSecondary,
+                        fontSize: 11.5,
+                        height: 1.3,
                       ),
                     ),
-                    if ((subtitle ?? '').trim().isNotEmpty) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitle!,
-                        style: TextStyle(
-                          color: _businessThemePalette.textMuted,
-                          fontSize: 11.5,
-                        ),
-                      ),
-                    ],
                   ],
-                ),
+                ],
               ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              _chip(
-                text: statusText,
-                bg: statusBg,
-                border: statusBorder,
-                textColor: statusColor,
-              ),
-              if ((priceLabel ?? '').trim().isNotEmpty)
-                _chip(
-                  text: priceLabel!,
-                  bg: _gold.withOpacity(0.13),
-                  border: _gold.withOpacity(0.40),
-                  textColor: _gold,
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _addonCard({
-    required String title,
-    required String price,
-    required String subtitle,
-    bool emphasized = false,
-    Widget? footer,
-  }) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
-      decoration: BoxDecoration(
-        color: _panelSoft,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: emphasized ? _gold.withOpacity(0.52) : _gold.withOpacity(0.28),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: _businessThemePalette.textPrimary,
-              fontWeight: FontWeight.w800,
-              fontSize: 12.8,
-            ),
-          ),
-          const SizedBox(height: 5),
-          _chip(
-            text: price,
-            bg: _gold.withOpacity(0.14),
-            border: _gold.withOpacity(0.5),
-            textColor: _gold,
-          ),
-          const SizedBox(height: 5),
-          Text(
-            subtitle,
-            style: TextStyle(
-              color: _businessThemePalette.textMuted,
-              fontSize: 11.7,
-            ),
-          ),
-          const SizedBox(height: 7),
-          // Patch 2.4B / 2.8 / 2.9: cards that pass a [footer] (Extra vehicle,
-          // Extra driver, pdf_500, pdf_1000) render a real action button.
-          // Cards without a footer (e.g. pdf_5000) keep the passive "coming
-          // soon" chip from Patch 2.2C.
-          footer ??
-              Align(
-                alignment: Alignment.centerLeft,
-                child: _chip(
-                  text: _comingSoonLabel(),
-                  bg: _businessThemePalette.surfaceAlt.withOpacity(
-                    _businessThemePalette.isDark ? 0.66 : 0.92,
-                  ),
-                  border: _businessThemePalette.border.withOpacity(0.7),
-                  textColor: _businessThemePalette.textMuted,
-                  icon: Icons.schedule_outlined,
-                ),
-              ),
-        ],
-      ),
-    );
-  }
-
-  String _comingSoonLabel() => _t(
-    nl: 'Binnenkort beschikbaar',
-    en: 'Coming soon',
-    fr: 'Bientôt disponible',
-    es: 'Próximamente',
-  );
-
-  Widget _usageCard({
-    required String title,
-    required int used,
-    required int max,
-    required String actionLabel,
-    bool enforced = true,
-  }) {
-    final atOrOverLimit = max > 0 && used >= max;
-    // Patch 2.2C: vehicle/driver limits are not hard-enforced yet, so an
-    // over-limit state should not look alarming. Only show the warning accent
-    // and action chip when the limit is actually enforced.
-    final showWarning = atOrOverLimit && enforced;
-    final accent = showWarning ? _warn : _green;
-    final progress = max <= 0 ? 0.0 : (used / max).clamp(0.0, 1.0);
-    return Container(
-      padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
-      decoration: BoxDecoration(
-        color: _panelSoft,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: accent.withOpacity(0.42)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    color: _businessThemePalette.textPrimary,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 12.8,
-                  ),
-                ),
-              ),
-              _chip(
-                text: '$used / $max',
-                bg: accent.withOpacity(0.14),
-                border: accent.withOpacity(0.50),
-                textColor: accent,
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: LinearProgressIndicator(
-              minHeight: 7,
-              value: progress,
-              backgroundColor: _businessThemePalette.border.withOpacity(
-                _businessThemePalette.isDark ? 0.30 : 0.55,
-              ),
-              valueColor: AlwaysStoppedAnimation<Color>(accent),
-            ),
-          ),
-          if (showWarning) ...[
-            const SizedBox(height: 7),
-            _chip(
-              text: actionLabel,
-              bg: _warn.withOpacity(0.15),
-              border: _warn.withOpacity(0.50),
-              textColor: _warn,
-              icon: Icons.warning_amber_outlined,
             ),
           ],
-        ],
+        ),
+      );
+    }
+
+    final entries = <Widget>[
+      row(
+        _t(
+          nl: 'Eigen bedrijfsbranding / white-label basis',
+          en: 'Company branding / white-label base',
+          fr: 'Branding entreprise / base marque blanche',
+          es: 'Marca empresarial / base white-label',
+        ),
       ),
+      row(
+        _t(
+          nl: 'Online boekingsflow',
+          en: 'Online booking flow',
+          fr: 'Flux de réservation en ligne',
+          es: 'Flujo de reserva en línea',
+        ),
+      ),
+      row(
+        _t(
+          nl: 'PDF-ritbonnen met limieten',
+          en: 'PDF receipts with limits',
+          fr: 'Reçus PDF avec limites',
+          es: 'Recibos PDF con límites',
+        ),
+        active: profile.features['receipt_pdf'] != false,
+      ),
+      row(
+        _t(
+          nl: 'WhatsApp/e-mail ritbonnen',
+          en: 'WhatsApp/email receipts',
+          fr: 'Reçus WhatsApp/e-mail',
+          es: 'Recibos por WhatsApp/correo',
+        ),
+        active: profile.features['whatsapp_email_receipts'] != false,
+      ),
+      row(
+        _featureLabel('airport_module'),
+      ),
+      row(
+        _featureLabel('live_dispatch'),
+        active: false,
+        note: _t(
+          nl: 'Binnenkort beschikbaar',
+          en: 'Coming soon',
+          fr: 'Bientôt disponible',
+          es: 'Próximamente',
+        ),
+      ),
+      row(
+        _t(
+          nl: 'Geen commissie op ritten',
+          en: 'No commission on rides',
+          fr: 'Aucune commission sur les courses',
+          es: 'Sin comisión sobre los viajes',
+        ),
+      ),
+      row(
+        _t(
+          nl: '${catalog.includedVehicleCount} voertuig inbegrepen · ${catalog.includedDriversPerVehicle} chauffeurs / voertuig',
+          en: '${catalog.includedVehicleCount} vehicle included · ${catalog.includedDriversPerVehicle} drivers / vehicle',
+          fr: '${catalog.includedVehicleCount} véhicule inclus · ${catalog.includedDriversPerVehicle} chauffeurs / véhicule',
+          es: '${catalog.includedVehicleCount} vehículo incluido · ${catalog.includedDriversPerVehicle} conductores / vehículo',
+        ),
+      ),
+      row(
+        _t(
+          nl: '${catalog.includedPdfCreationsPerVehicleMonth} PDF-creaties per voertuig / maand',
+          en: '${catalog.includedPdfCreationsPerVehicleMonth} PDF creations per vehicle / month',
+          fr: '${catalog.includedPdfCreationsPerVehicleMonth} créations PDF par véhicule / mois',
+          es: '${catalog.includedPdfCreationsPerVehicleMonth} creaciones PDF por vehículo / mes',
+        ),
+      ),
+      if (isBelgiumMarket) ...[
+        row(
+          _t(
+            nl: 'Complianceoverzicht / Chiron-ready',
+            en: 'Compliance dashboard / Chiron-ready',
+            fr: 'Tableau conformité / Chiron-ready',
+            es: 'Panel de cumplimiento / Chiron-ready',
+          ),
+          active: profile.features['compliance_dashboard'] != false,
+        ),
+        row(
+          _t(
+            nl: 'Billit/Peppol-ready structuur',
+            en: 'Billit/Peppol-ready structure',
+            fr: 'Structure Billit/Peppol-ready',
+            es: 'Estructura Billit/Peppol-ready',
+          ),
+          note: _t(
+            nl: 'Externe Billit/providerkosten voor rekening van het bedrijf.',
+            en: 'External Billit/provider costs are paid by the company.',
+            fr: 'Les frais Billit/fournisseur externes sont à la charge de l\'entreprise.',
+            es: 'Los costes externos de Billit/proveedor corren a cargo de la empresa.',
+          ),
+        ),
+      ],
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final int cols = width >= 720 ? 2 : 1;
+        final double spacing = 8;
+        final double cardW = cols == 1
+            ? width
+            : (width - spacing * (cols - 1)) / cols;
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            for (final e in entries)
+              SizedBox(width: cardW, child: e),
+          ],
+        );
+      },
     );
   }
 
-  /// Patch 2.10: PDF creations usage bar. Mirrors [_usageCard] visuals (title,
+  /// PDF creations usage bar (premium redesign). Uses a title,
   /// used/total badge, progress bar) and adds an allowance breakdown plus a
   /// helper line.
   ///
@@ -3047,6 +2845,53 @@ class _CompanySubscriptionBillingPageState
   ///
   /// [used] is a display-only placeholder until real PDF-creation tracking is
   /// wired; [tracked] flips the helper text once a real counter feeds it.
+  /// Format a non-negative integer with a locale-appropriate thousands
+  /// separator (dot for NL/DE, thin space for FR/ES, comma for EN).
+  String _formatThousands(int value) {
+    final v = value.abs().toString();
+    final buf = StringBuffer();
+    for (int i = 0; i < v.length; i++) {
+      if (i > 0 && (v.length - i) % 3 == 0) {
+        switch (currentLanguageCode) {
+          case 'en':
+            buf.write(',');
+            break;
+          case 'fr':
+          case 'es':
+            buf.write('\u202F');
+            break;
+          case 'nl':
+          default:
+            buf.write('.');
+            break;
+        }
+      }
+      buf.write(v[i]);
+    }
+    return (value < 0 ? '-' : '') + buf.toString();
+  }
+
+  String _pdfOneTimeLabel() => _t(
+    nl: 'eenmalig',
+    en: 'one-time',
+    fr: 'ponctuel',
+    es: 'único',
+  );
+
+  String _pdfBuyLabel() => _t(
+    nl: 'Kopen',
+    en: 'Buy',
+    fr: 'Acheter',
+    es: 'Comprar',
+  );
+
+  /// Premium PDF-credits section with a full-width balance card at the top,
+  /// three responsive purchase cards below (500/€5, 1000/€9, 5000/€29) and an
+  /// optional purchase-history expander.
+  ///
+  /// Included capacity = `includedPdfCreationsPerVehicleMonth * maxVehicles`
+  /// (typically `200 * maxVehicles`). Purchased credits never expire and are
+  /// separate from the monthly included bundle.
   Widget _buildPdfCreditsSection(
     BackendSubscriptionProfile profile,
     SubscriptionPlanCatalogEntry catalog,
@@ -3058,108 +2903,1068 @@ class _CompanySubscriptionBillingPageState
     final purchased = profile.purchasedPdfCredits;
     final periodEnd = profile.currentPeriodEnd.trim();
     final lastGranted = profile.pdfPurchasedLastGrantedAt.trim();
+    final palette = _businessThemePalette;
+    final bool isActive = _profileIsActive(profile);
+    final bool checkoutEnabled = kFluxidiCompanySaasCheckoutEnabled;
 
-    return Container(
+    final purchasedText = _formatThousands(purchased);
+    final includedText = _t(
+      nl: 'Inbegrepen deze maand: $used van $includedCap',
+      en: 'Included this month: $used of $includedCap',
+      fr: 'Inclus ce mois : $used sur $includedCap',
+      es: 'Incluidas este mes: $used de $includedCap',
+    );
+
+    final balance = Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
       decoration: BoxDecoration(
         color: _panelSoft,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: _green.withOpacity(0.42)),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _gold.withOpacity(palette.isDark ? 0.55 : 0.42)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            _t(
-              nl: 'PDF-creaties',
-              en: 'PDF creations',
-              fr: 'Créations PDF',
-              es: 'Creaciones PDF',
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: _gold.withOpacity(palette.isDark ? 0.22 : 0.18),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: _gold.withOpacity(0.55)),
+                ),
+                child: Icon(
+                  Icons.picture_as_pdf_outlined,
+                  color: _gold,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _t(
+                        nl: '$purchasedText credits resterend',
+                        en: '$purchasedText credits remaining',
+                        fr: '$purchasedText crédits restants',
+                        es: '$purchasedText créditos restantes',
+                      ),
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                        height: 1.15,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _t(
+                        nl: 'Aangekochte PDF-credits · Vervallen nooit',
+                        en: 'Purchased PDF credits · Never expire',
+                        fr: 'Crédits PDF achetés · N\'expirent jamais',
+                        es: 'Créditos PDF comprados · No caducan nunca',
+                      ),
+                      style: TextStyle(
+                        color: palette.textSecondary,
+                        fontSize: 12.4,
+                        fontWeight: FontWeight.w600,
+                        height: 1.3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            decoration: BoxDecoration(
+              color: palette.surface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: palette.border.withOpacity(0.9)),
             ),
-            style: TextStyle(
-              color: _businessThemePalette.textPrimary,
-              fontWeight: FontWeight.w800,
-              fontSize: 12.8,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  includedText,
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    height: 1.3,
+                  ),
+                ),
+                if (periodEnd.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    _t(
+                      nl: 'Nieuwe maandbundel op ${_humanDate(periodEnd)}',
+                      en: 'New monthly bundle on ${_humanDate(periodEnd)}',
+                      fr: 'Nouveau lot mensuel le ${_humanDate(periodEnd)}',
+                      es: 'Nuevo paquete mensual el ${_humanDate(periodEnd)}',
+                    ),
+                    style: TextStyle(
+                      color: palette.textSecondary,
+                      fontSize: 12,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+                if (lastGranted.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    _t(
+                      nl: 'Laatst aangekocht op ${_humanDate(lastGranted)}',
+                      en: 'Last purchased on ${_humanDate(lastGranted)}',
+                      fr: 'Dernier achat le ${_humanDate(lastGranted)}',
+                      es: 'Última compra el ${_humanDate(lastGranted)}',
+                    ),
+                    style: TextStyle(
+                      color: palette.textSecondary,
+                      fontSize: 12,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
-          const SizedBox(height: 8),
-          Text(
-            _t(
-              nl: 'Inbegrepen deze maand: $used van $includedCap gebruikt',
-              en: 'Included this month: $used of $includedCap used',
-              fr: 'Inclus ce mois : $used sur $includedCap utilisés',
-              es: 'Incluidas este mes: $used de $includedCap usadas',
-            ),
-            style: TextStyle(
-              color: _businessThemePalette.textMuted,
-              fontSize: 12.1,
-              height: 1.35,
-            ),
-          ),
-          if (periodEnd.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              _t(
-                nl: 'Nieuwe maandbundel op ${_humanDate(periodEnd)}',
-                en: 'New monthly bundle on ${_humanDate(periodEnd)}',
-                fr: 'Nouveau lot mensuel le ${_humanDate(periodEnd)}',
-                es: 'Nuevo paquete mensual el ${_humanDate(periodEnd)}',
-              ),
-              style: TextStyle(
-                color: _businessThemePalette.textMuted,
-                fontSize: 12.1,
-                height: 1.35,
-              ),
-            ),
-          ],
-          const SizedBox(height: 8),
-          Text(
-            _t(
-              nl: 'Aangekochte PDF-credits: $purchased resterend',
-              en: 'Purchased PDF credits: $purchased remaining',
-              fr: 'Crédits PDF achetés : $purchased restants',
-              es: 'Créditos PDF comprados: $purchased restantes',
-            ),
-            style: TextStyle(
-              color: _businessThemePalette.textPrimary,
-              fontSize: 12.2,
-              fontWeight: FontWeight.w700,
-              height: 1.35,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            _t(
-              nl: 'Vervallen nooit',
-              en: 'Never expire',
-              fr: 'N\'expirent jamais',
-              es: 'No caducan nunca',
-            ),
-            style: TextStyle(
-              color: _businessThemePalette.textMuted,
-              fontSize: 11.8,
-              height: 1.35,
-            ),
-          ),
-          if (lastGranted.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              _t(
-                nl: 'Laatst aangekocht op ${_humanDate(lastGranted)}',
-                en: 'Last purchased on ${_humanDate(lastGranted)}',
-                fr: 'Dernier achat le ${_humanDate(lastGranted)}',
-                es: 'Última compra el ${_humanDate(lastGranted)}',
-              ),
-              style: TextStyle(
-                color: _businessThemePalette.textMuted,
-                fontSize: 11.8,
-                height: 1.35,
-              ),
-            ),
-          ],
         ],
       ),
+    );
+
+    Widget buildBundleCard(PdfBundleOffer bundle, {double? maxWidth}) {
+      final pdfs = bundle.pdfs;
+      final actionable = _pdfBundleIsActionable(pdfs);
+      final busy = actionable && _pdfBundleBusyStarting(pdfs);
+      final ownedQty = _pdfBundleActiveQuantity(profile, pdfs);
+      final canPress = actionable && isActive && checkoutEnabled && !busy;
+      final card = Container(
+        constraints: BoxConstraints(maxWidth: maxWidth ?? double.infinity),
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+        decoration: BoxDecoration(
+          color: _panelSoft,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: _gold.withOpacity(palette.isDark ? 0.50 : 0.38),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _t(
+                nl: '${_formatThousands(pdfs)} PDF\u2019s',
+                en: '${_formatThousands(pdfs)} PDFs',
+                fr: '${_formatThousands(pdfs)} PDF',
+                es: '${_formatThousands(pdfs)} PDF',
+              ),
+              style: TextStyle(
+                color: palette.textPrimary,
+                fontSize: 14.5,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text(
+                  _priceFromCents(bundle.priceCents),
+                  style: TextStyle(
+                    color: _gold,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    height: 1.05,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  _pdfOneTimeLabel(),
+                  style: TextStyle(
+                    color: palette.textSecondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            if (ownedQty > 0) ...[
+              const SizedBox(height: 6),
+              _chip(
+                text: _t(
+                  nl: '$ownedQty gekocht',
+                  en: '$ownedQty purchased',
+                  fr: '$ownedQty achetés',
+                  es: '$ownedQty comprados',
+                ),
+                bg: _green.withOpacity(0.16),
+                border: _green.withOpacity(0.55),
+                textColor: _green,
+                icon: Icons.check_circle_outline,
+              ),
+            ],
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: canPress
+                    ? () => _startPdfBundleCheckout(profile, pdfs)
+                    : null,
+                style: FilledButton.styleFrom(
+                  backgroundColor: _gold,
+                  foregroundColor: palette.textOnAccent,
+                  disabledBackgroundColor: palette.surfaceAlt.withOpacity(
+                    palette.isDark ? 0.66 : 0.92,
+                  ),
+                  disabledForegroundColor: palette.textMuted,
+                  minimumSize: const Size.fromHeight(44),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                icon: busy
+                    ? SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: palette.textOnAccent.withOpacity(0.75),
+                        ),
+                      )
+                    : const Icon(Icons.shopping_cart_outlined, size: 18),
+                label: Text(
+                  _pdfBuyLabel(),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13.5,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+      return card;
+    }
+
+    final bundles = catalog.pdfBundles;
+    final purchaseGrid = LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final int cols = width >= 720 ? 3 : (width >= 420 ? 2 : 1);
+        final double spacing = 10;
+        final double cardW = cols == 1
+            ? width
+            : (width - spacing * (cols - 1)) / cols;
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            for (final b in bundles)
+              SizedBox(
+                width: cardW,
+                child: buildBundleCard(b, maxWidth: cardW),
+              ),
+          ],
+        );
+      },
+    );
+
+    final history = _pdfPurchaseHistoryExpander(profile);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        balance,
+        const SizedBox(height: 12),
+        purchaseGrid,
+        if (!isActive && checkoutEnabled) ...[
+          const SizedBox(height: 8),
+          Text(
+            _addonRequiresActiveMessage(),
+            style: TextStyle(
+              color: palette.textSecondary,
+              fontSize: 12,
+              height: 1.3,
+            ),
+          ),
+        ],
+        if (!checkoutEnabled) ...[
+          const SizedBox(height: 8),
+          _playSaasManagedOutsideNotice(),
+        ],
+        if (history != null) ...[
+          const SizedBox(height: 8),
+          history,
+        ],
+      ],
+    );
+  }
+
+  /// Optional compact history expander summarising how many of each bundle
+  /// have been purchased so far. Returns null when there is nothing to show.
+  Widget? _pdfPurchaseHistoryExpander(BackendSubscriptionProfile profile) {
+    final entries = <(int, int)>[
+      (500, profile.pdf500ActiveQuantity),
+      (1000, profile.pdf1000ActiveQuantity),
+      (5000, profile.pdf5000ActiveQuantity),
+    ].where((e) => e.$2 > 0).toList(growable: false);
+    if (entries.isEmpty) return null;
+    final palette = _businessThemePalette;
+    return Theme(
+      data: Theme.of(context).copyWith(
+        dividerColor: Colors.transparent,
+        splashColor: Colors.transparent,
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: _panelSoft,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: palette.border.withOpacity(0.85)),
+        ),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+          childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          iconColor: palette.textSecondary,
+          collapsedIconColor: palette.textSecondary,
+          title: Text(
+            _t(
+              nl: 'Aankoophistoriek',
+              en: 'Purchase history',
+              fr: 'Historique des achats',
+              es: 'Historial de compras',
+            ),
+            style: TextStyle(
+              color: palette.textPrimary,
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          children: [
+            for (final e in entries)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.receipt_long_outlined,
+                      size: 16,
+                      color: palette.textSecondary,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _t(
+                          nl: '${e.$2} × pakket ${_formatThousands(e.$1)}',
+                          en: '${e.$2} × ${_formatThousands(e.$1)} pack',
+                          fr: '${e.$2} × pack de ${_formatThousands(e.$1)}',
+                          es: '${e.$2} × paquete de ${_formatThousands(e.$1)}',
+                        ),
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Premium hero card for the current subscription. Displays plan title,
+  /// market, status, monthly recurring amount, breakdown of active add-ons,
+  /// billing dates, next payment, billing email, entitlement banner,
+  /// activation/cancellation controls, and (only when the customer is a real
+  /// founder or has the founder price locked) a small founder banner.
+  Widget _buildSubscriptionHero(
+    BackendSubscriptionProfile profile,
+    SubscriptionPlanCatalogEntry catalog,
+  ) {
+    final palette = _businessThemePalette;
+    final effectiveStatus = profile.subscriptionStatus.trim().isNotEmpty
+        ? profile.subscriptionStatus
+        : profile.status;
+    final isPaidActive =
+        effectiveStatus.trim().toLowerCase() == 'active';
+    final statusColors = _statusColors(effectiveStatus);
+
+    final int? lockedCents = profile.lockedPriceCents;
+    final int? founderCents =
+        profile.founderPriceCents ?? catalog.founderPriceCents;
+    final bool isFounderLocked = profile.isFounderCustomer ||
+        (lockedCents != null &&
+            founderCents != null &&
+            lockedCents == founderCents);
+
+    // Big monthly amount: prefer the actual provider recurring when linked,
+    // else fall back to locked/normal price.
+    final int monthlyCents = (_hasProviderSubscription(profile) &&
+            profile.recurringAmountCents != null)
+        ? profile.recurringAmountCents!
+        : (lockedCents ?? catalog.normalPriceCents);
+    final String monthlyText = _priceFromCents(monthlyCents);
+
+    // Breakdown line only when at least one paid add-on is active.
+    final int vQty = _extraVehicleActiveQuantity(profile);
+    final int dQty = _extraDriverActiveQuantity(profile);
+    final int baseCents = lockedCents ?? catalog.normalPriceCents;
+    final String baseText = _priceFromCents(baseCents);
+    final String extraVehicleText =
+        _priceFromCents(catalog.extraVehiclePriceCents);
+    final String extraDriverText =
+        _priceFromCents(catalog.extraDriverPriceCents);
+    final breakdownParts = <String>[
+      _t(
+        nl: 'Basis $baseText',
+        en: 'Base $baseText',
+        fr: 'Base $baseText',
+        es: 'Base $baseText',
+      ),
+    ];
+    if (vQty > 0) {
+      breakdownParts.add(
+        _t(
+          nl: '$vQty × extra voertuig $extraVehicleText',
+          en: '$vQty × extra vehicle $extraVehicleText',
+          fr: '$vQty × véhicule supplémentaire $extraVehicleText',
+          es: '$vQty × vehículo extra $extraVehicleText',
+        ),
+      );
+    }
+    if (dQty > 0) {
+      breakdownParts.add(
+        _t(
+          nl: '$dQty × extra chauffeur $extraDriverText',
+          en: '$dQty × extra driver $extraDriverText',
+          fr: '$dQty × chauffeur supplémentaire $extraDriverText',
+          es: '$dQty × conductor extra $extraDriverText',
+        ),
+      );
+    }
+    final String breakdownText = breakdownParts.join(' • ');
+
+    final periodStart = profile.currentPeriodStart.trim();
+    final periodEnd = profile.currentPeriodEnd.trim();
+    final renewalLine = _consolidatedRenewalLine(profile);
+
+    final marketDisplay = _marketDisplayName(catalog.market);
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: _gold.withOpacity(palette.isDark ? 0.60 : 0.45),
+        ),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color.alphaBlend(_gold.withOpacity(0.10), palette.surface),
+            palette.surfaceAlt,
+          ],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: palette.shadow,
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _t(
+                        nl: 'Fluxidi Pro',
+                        en: 'Fluxidi Pro',
+                        fr: 'Fluxidi Pro',
+                        es: 'Fluxidi Pro',
+                      ),
+                      style: TextStyle(
+                        color: _gold,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 13.5,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      marketDisplay.isEmpty
+                          ? _planDisplayName(profile, catalog.market)
+                          : marketDisplay,
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        height: 1.1,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              _chip(
+                text: _statusLabel(effectiveStatus),
+                bg: statusColors.bg,
+                border: statusColors.border,
+                textColor: statusColors.text,
+                icon: Icons.verified_outlined,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                monthlyText,
+                style: TextStyle(
+                  color: palette.textPrimary,
+                  fontSize: 34,
+                  fontWeight: FontWeight.w900,
+                  height: 1.0,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _t(
+                    nl: '/ maand excl. btw',
+                    en: '/ month excl. VAT',
+                    fr: '/ mois HT',
+                    es: '/ mes sin IVA',
+                  ),
+                  style: TextStyle(
+                    color: palette.textSecondary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (vQty > 0 || dQty > 0) ...[
+            const SizedBox(height: 6),
+            Text(
+              breakdownText,
+              style: TextStyle(
+                color: palette.textSecondary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                height: 1.35,
+              ),
+            ),
+          ],
+          if (isFounderLocked) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(11, 9, 11, 10),
+              decoration: BoxDecoration(
+                color: _gold.withOpacity(palette.isDark ? 0.14 : 0.10),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _gold.withOpacity(0.55)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.workspace_premium_outlined,
+                      size: 18, color: _gold),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _t(
+                        nl: 'Founderprijs vastgezet zolang dit abonnement actief blijft.',
+                        en: 'Founder price locked for as long as this subscription stays active.',
+                        fr: 'Tarif fondateur verrouillé tant que cet abonnement reste actif.',
+                        es: 'Precio fundador fijado mientras esta suscripción siga activa.',
+                      ),
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                        height: 1.3,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          _buildEntitlementStateBanner(profile),
+          if (periodStart.isNotEmpty || periodEnd.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _infoLine(
+              _t(
+                nl: 'Actief van',
+                en: 'Active from',
+                fr: 'Actif du',
+                es: 'Activo desde',
+              ),
+              periodStart.isEmpty
+                  ? '—'
+                  : '${_humanDate(periodStart)} → ${periodEnd.isEmpty ? "—" : _humanDate(periodEnd)}',
+              icon: Icons.event_available_outlined,
+            ),
+          ],
+          if (renewalLine != null) ...[
+            _infoLine(
+              _t(
+                nl: 'Volgende betaling',
+                en: 'Next payment',
+                fr: 'Prochain paiement',
+                es: 'Próximo pago',
+              ),
+              renewalLine.replaceFirst(RegExp(r'^[^:]+:\s*'), ''),
+              icon: Icons.payments_outlined,
+            ),
+          ],
+          if (profile.billingEmail.trim().isNotEmpty)
+            _infoLine(
+              _t(
+                nl: 'Facturatie-email',
+                en: 'Billing email',
+                fr: 'E-mail de facturation',
+                es: 'Correo de facturación',
+              ),
+              profile.billingEmail,
+              icon: Icons.email_outlined,
+            ),
+          if (!isPaidActive) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 7,
+              runSpacing: 7,
+              children: [
+                _chip(
+                  text: _t(
+                    nl: '2 weken gratis proefperiode',
+                    en: '2 weeks free trial',
+                    fr: '2 semaines d\'essai gratuit',
+                    es: '2 semanas de prueba gratis',
+                  ),
+                  bg: _green.withOpacity(0.16),
+                  border: _green.withOpacity(0.55),
+                  textColor: _green,
+                  icon: Icons.schedule_outlined,
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            _infoLine(
+              _t(
+                nl: 'Proefperiode start/einde',
+                en: 'Trial start/end',
+                fr: 'Début/fin essai',
+                es: 'Inicio/fin de prueba',
+              ),
+              '${profile.trialStartedAt.trim().isEmpty ? "—" : _humanDate(profile.trialStartedAt)} / ${profile.trialEndsAt.trim().isEmpty ? "—" : _humanDate(profile.trialEndsAt)}',
+              icon: Icons.schedule_outlined,
+            ),
+          ],
+          _buildActivationSection(profile, catalog),
+          _buildCancellationSection(profile),
+        ],
+      ),
+    );
+  }
+
+  /// Human-readable market/country label for the hero title.
+  String _marketDisplayName(String marketRaw) {
+    switch (marketRaw.trim().toUpperCase()) {
+      case 'BE':
+        return _t(nl: 'België', en: 'Belgium', fr: 'Belgique', es: 'Bélgica');
+      case 'NL':
+        return _t(nl: 'Nederland', en: 'Netherlands', fr: 'Pays-Bas', es: 'Países Bajos');
+      case 'FR':
+        return _t(nl: 'Frankrijk', en: 'France', fr: 'France', es: 'Francia');
+      case 'ES':
+        return _t(nl: 'Spanje', en: 'Spain', fr: 'Espagne', es: 'España');
+      case 'LU':
+        return _t(
+          nl: 'Luxemburg',
+          en: 'Luxembourg',
+          fr: 'Luxembourg',
+          es: 'Luxemburgo',
+        );
+      case 'DE':
+        return _t(nl: 'Duitsland', en: 'Germany', fr: 'Allemagne', es: 'Alemania');
+      case 'PT':
+        return _t(nl: 'Portugal', en: 'Portugal', fr: 'Portugal', es: 'Portugal');
+      default:
+        return '';
+    }
+  }
+
+  /// KPI row (Vehicles / Drivers / PDF this month). Responsive:
+  /// - width >= 720: 3 equal cards side-by-side
+  /// - width >= 420: 2 columns wrap
+  /// - else: 1 column stacked
+  Widget _buildUsageLimitsRow(
+    BackendSubscriptionProfile profile,
+    SubscriptionPlanCatalogEntry catalog,
+    int usedVehicles,
+    int usedDrivers,
+  ) {
+    final palette = _businessThemePalette;
+    final vehicleSlots = profile.maxVehicles > 0 ? profile.maxVehicles : 1;
+    final int pdfCap =
+        catalog.includedPdfCreationsPerVehicleMonth * vehicleSlots;
+    final int pdfUsed = profile.pdfMonthlyUsed > 0 ? profile.pdfMonthlyUsed : 0;
+
+    Widget kpi({
+      required IconData icon,
+      required String title,
+      required int used,
+      required int max,
+      required Color accent,
+    }) {
+      final double progress = max <= 0 ? 0.0 : (used / max).clamp(0.0, 1.0);
+      return Container(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+        decoration: BoxDecoration(
+          color: _panelSoft,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: palette.border.withOpacity(0.9)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: accent.withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: accent.withOpacity(0.55)),
+                  ),
+                  child: Icon(icon, size: 18, color: accent),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text(
+                  _formatThousands(used),
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    height: 1.0,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  '/ ${_formatThousands(max)}',
+                  style: TextStyle(
+                    color: palette.textSecondary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                minHeight: 7,
+                value: progress,
+                backgroundColor:
+                    palette.border.withOpacity(palette.isDark ? 0.55 : 0.65),
+                valueColor: AlwaysStoppedAnimation<Color>(accent),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final int cols = width >= 720 ? 3 : (width >= 420 ? 2 : 1);
+        final double spacing = 10;
+        final double cardW = cols == 1
+            ? width
+            : (width - spacing * (cols - 1)) / cols;
+        final cards = <Widget>[
+          SizedBox(
+            width: cardW,
+            child: kpi(
+              icon: Icons.directions_car_filled_outlined,
+              title: _t(
+                nl: 'Voertuigen',
+                en: 'Vehicles',
+                fr: 'Véhicules',
+                es: 'Vehículos',
+              ),
+              used: usedVehicles,
+              max: profile.maxVehicles,
+              accent: _green,
+            ),
+          ),
+          SizedBox(
+            width: cardW,
+            child: kpi(
+              icon: Icons.badge_outlined,
+              title: _t(
+                nl: 'Chauffeurs',
+                en: 'Drivers',
+                fr: 'Chauffeurs',
+                es: 'Conductores',
+              ),
+              used: usedDrivers,
+              max: profile.maxDrivers,
+              accent: _green,
+            ),
+          ),
+          SizedBox(
+            width: cardW,
+            child: kpi(
+              icon: Icons.picture_as_pdf_outlined,
+              title: _t(
+                nl: 'PDF deze maand',
+                en: 'PDF this month',
+                fr: 'PDF ce mois',
+                es: 'PDF este mes',
+              ),
+              used: pdfUsed,
+              max: pdfCap,
+              accent: _gold,
+            ),
+          ),
+        ];
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: cards,
+        );
+      },
+    );
+  }
+
+  /// Monthly add-ons section: extra vehicle + extra driver.
+  /// Restyled cards preserving the existing footer widgets so cancel / undo /
+  /// paid-through / renewal states keep working unchanged.
+  Widget _buildMonthlyAddonsSection(
+    BackendSubscriptionProfile profile,
+    SubscriptionPlanCatalogEntry catalog,
+  ) {
+    final palette = _businessThemePalette;
+    final int vQty = _extraVehicleActiveQuantity(profile);
+    final int dQty = _extraDriverActiveQuantity(profile);
+
+    Widget card({
+      required IconData icon,
+      required String title,
+      required String priceLabel,
+      required String benefitLabel,
+      required int qtyActive,
+      required String qtyBadge,
+      required Widget footer,
+    }) {
+      return Container(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+        decoration: BoxDecoration(
+          color: _panelSoft,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: _gold.withOpacity(palette.isDark ? 0.48 : 0.35),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: _gold.withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: _gold.withOpacity(0.55)),
+                  ),
+                  child: Icon(icon, size: 20, color: _gold),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                _chip(
+                  text: qtyBadge,
+                  bg: qtyActive > 0
+                      ? _green.withOpacity(0.16)
+                      : palette.surface,
+                  border: qtyActive > 0
+                      ? _green.withOpacity(0.55)
+                      : palette.border.withOpacity(0.9),
+                  textColor: qtyActive > 0 ? _green : palette.textSecondary,
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              priceLabel,
+              style: TextStyle(
+                color: _gold,
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              benefitLabel,
+              style: TextStyle(
+                color: palette.textSecondary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 10),
+            footer,
+          ],
+        ),
+      );
+    }
+
+    final vehicleCard = card(
+      icon: Icons.directions_car_filled_outlined,
+      title: _t(
+        nl: 'Extra voertuig',
+        en: 'Extra vehicle',
+        fr: 'Véhicule supplémentaire',
+        es: 'Vehículo extra',
+      ),
+      priceLabel: _t(
+        nl: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / maand',
+        en: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / month',
+        fr: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mois',
+        es: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mes',
+      ),
+      benefitLabel: _t(
+        nl: 'Voegt 1 voertuigplek toe, inclusief ${catalog.includedDriversPerVehicle} chauffeurs.',
+        en: 'Adds 1 vehicle slot, including ${catalog.includedDriversPerVehicle} drivers.',
+        fr: 'Ajoute 1 emplacement de véhicule, y compris ${catalog.includedDriversPerVehicle} chauffeurs.',
+        es: 'Añade 1 plaza de vehículo, incluidos ${catalog.includedDriversPerVehicle} conductores.',
+      ),
+      qtyActive: vQty,
+      qtyBadge: _t(
+        nl: '$vQty actief',
+        en: '$vQty active',
+        fr: '$vQty actif',
+        es: '$vQty activo',
+      ),
+      footer: _extraVehicleAddonFooter(profile),
+    );
+
+    final driverCard = card(
+      icon: Icons.badge_outlined,
+      title: _t(
+        nl: 'Extra chauffeur',
+        en: 'Extra driver',
+        fr: 'Chauffeur supplémentaire',
+        es: 'Conductor extra',
+      ),
+      priceLabel: _t(
+        nl: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / maand',
+        en: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / month',
+        fr: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mois',
+        es: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mes',
+      ),
+      benefitLabel: _t(
+        nl: 'Voegt 1 chauffeur toe zonder een voertuigplek te openen.',
+        en: 'Adds 1 driver without opening a new vehicle slot.',
+        fr: 'Ajoute 1 chauffeur sans ouvrir de nouvel emplacement.',
+        es: 'Añade 1 conductor sin abrir una plaza de vehículo.',
+      ),
+      qtyActive: dQty,
+      qtyBadge: _t(
+        nl: '$dQty actief',
+        en: '$dQty active',
+        fr: '$dQty actif',
+        es: '$dQty activo',
+      ),
+      footer: _extraDriverAddonFooter(profile),
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final bool twoCols = width >= 720;
+        if (twoCols) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: vehicleCard),
+              const SizedBox(width: 10),
+              Expanded(child: driverCard),
+            ],
+          );
+        }
+        return Column(
+          children: [
+            vehicleCard,
+            const SizedBox(height: 10),
+            driverCard,
+          ],
+        );
+      },
     );
   }
 
@@ -3229,15 +4034,6 @@ class _CompanySubscriptionBillingPageState
               );
             }
             final profile = snap.data ?? BackendSubscriptionProfile.defaults();
-            final effectiveStatus =
-                profile.subscriptionStatus.trim().isNotEmpty
-                ? profile.subscriptionStatus
-                : profile.status;
-            final isPaidActive =
-                effectiveStatus.trim().toLowerCase() == 'active';
-            final statusColors = _statusColors(effectiveStatus);
-            final trialRange =
-                '${profile.trialStartedAt.trim().isEmpty ? "—" : _humanDate(profile.trialStartedAt)} / ${profile.trialEndsAt.trim().isEmpty ? "—" : _humanDate(profile.trialEndsAt)}';
             // Country-aware catalog drives all visible pricing copy. If the
             // backend profile didn't ship catalog fields the resolver fills
             // in BE/NL/FR/ES/PT defaults from the active company's market.
@@ -3246,22 +4042,15 @@ class _CompanySubscriptionBillingPageState
                   ? profile.market
                   : resolveActiveCompanyPricingMarket(),
             );
-            final normalPriceText = _priceFromCents(catalog.normalPriceCents);
-            final founderPriceText = catalog.founderPriceCents != null
-                ? _priceFromCents(catalog.founderPriceCents!)
-                : '';
-            final hasFounderOffer =
-                catalog.founderPriceCents != null &&
-                catalog.founderSlotsLimit != null;
             // BE is the only market that ships Belgian-specific compliance
             // modules (Chiron, Billit/Peppol). Non-BE supported markets see
             // a generic automation pitch instead — no Chiron/Billit/Peppol
             // claims.
             final bool isBelgiumMarket = catalog.market == 'BE';
-            // Patch 2.2C: gate the paid add-ons section on the real (profile)
-            // market, not the display catalog (which falls back to BE for
-            // unsupported countries). Unsupported markets must not see paid
-            // add-ons that have no purchase path yet.
+            // Gate the paid add-ons section on the real (profile) market, not
+            // the display catalog (which falls back to BE for unsupported
+            // countries). Unsupported markets must not see paid add-ons that
+            // have no purchase path yet.
             final bool isSupportedMarket = _isSupportedMarket(
               _effectiveMarket(profile),
             );
@@ -3299,725 +4088,83 @@ class _CompanySubscriptionBillingPageState
                         24 + bottomSafeInset,
                       ),
                       children: [
-                        _sectionCard(
-                          title: _t(
-                            nl: 'Huidig abonnement',
-                            en: 'Current subscription',
-                            fr: 'Abonnement actuel',
-                            es: 'Suscripcion actual',
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          _t(
-                                            nl: 'Fluxidi Platform',
-                                            en: 'Fluxidi Platform',
-                                            fr: 'Fluxidi Platform',
-                                            es: 'Fluxidi Platform',
-                                          ),
-                                          style: TextStyle(
-                                            color: _gold,
-                                            fontWeight: FontWeight.w900,
-                                            fontSize: 14.5,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          _planDisplayName(
-                                            profile,
-                                            catalog.market,
-                                          ),
-                                          style: TextStyle(
-                                            color: _businessThemePalette
-                                                .textPrimary,
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.w900,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  _chip(
-                                    text: _statusLabel(effectiveStatus),
-                                    bg: statusColors.bg,
-                                    border: statusColors.border,
-                                    textColor: statusColors.text,
-                                    icon: Icons.verified_outlined,
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              _chip(
-                                text: _t(
-                                  nl: '$normalPriceText / maand excl. btw',
-                                  en: '$normalPriceText / month excl. VAT',
-                                  fr: '$normalPriceText / mois HT',
-                                  es: '$normalPriceText / mes sin IVA',
-                                ),
-                                bg: _gold.withOpacity(0.12),
-                                border: _gold.withOpacity(0.40),
-                                textColor: _gold,
-                                icon: Icons.sell_outlined,
-                              ),
-                              if (hasFounderOffer) ...[
-                                const SizedBox(height: 6),
-                                Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.fromLTRB(
-                                    10,
-                                    8,
-                                    10,
-                                    8,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: _gold.withOpacity(0.10),
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(
-                                      color: _gold.withOpacity(0.45),
-                                    ),
-                                  ),
-                                  child: Text(
-                                    _t(
-                                      nl: 'Eerste ${catalog.founderSlotsLimit} bedrijven: $founderPriceText/maand excl. btw zolang het abonnement actief blijft. Daarna normale prijs: $normalPriceText/maand.',
-                                      en: 'First ${catalog.founderSlotsLimit} companies: $founderPriceText/month excl. VAT for as long as the subscription stays active. Normal price afterwards: $normalPriceText/month.',
-                                      fr: 'Premières ${catalog.founderSlotsLimit} entreprises : $founderPriceText/mois HT tant que l\'abonnement reste actif. Prix normal ensuite : $normalPriceText/mois.',
-                                      es: 'Primeras ${catalog.founderSlotsLimit} empresas: $founderPriceText/mes sin IVA mientras la suscripción siga activa. Precio normal después: $normalPriceText/mes.',
-                                    ),
-                                    style: TextStyle(
-                                      color: _gold,
-                                      fontSize: 11.8,
-                                      fontWeight: FontWeight.w700,
-                                      height: 1.3,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                              const SizedBox(height: 6),
-                              if (!isPaidActive) ...[
-                                _chip(
-                                  text: _t(
-                                    nl: '2 weken gratis proefperiode',
-                                    en: '2 weeks free trial',
-                                    fr: '2 semaines d\'essai gratuit',
-                                    es: '2 semanas de prueba gratis',
-                                  ),
-                                  bg: _green.withOpacity(0.14),
-                                  border: _green.withOpacity(0.48),
-                                  textColor: _green,
-                                  icon: Icons.schedule_outlined,
-                                ),
-                              ],
-                              _buildEntitlementStateBanner(profile),
-                              _buildActivationSection(profile, catalog),
-                              _buildCancellationSection(profile),
-                              const SizedBox(height: 8),
-                              _infoLine(
-                                _t(
-                                  nl: 'Facturatie-email',
-                                  en: 'Billing email',
-                                  fr: 'E-mail de facturation',
-                                  es: 'Correo de facturacion',
-                                ),
-                                profile.billingEmail,
-                                icon: Icons.email_outlined,
-                              ),
-                              if (!isPaidActive)
-                                _infoLine(
-                                  _t(
-                                    nl: 'Proefperiode start/einde',
-                                    en: 'Trial start/end',
-                                    fr: 'Debut/fin essai',
-                                    es: 'Inicio/fin de prueba',
-                                  ),
-                                  trialRange,
-                                  icon: Icons.schedule_outlined,
-                                ),
-                              const SizedBox(height: 5),
-                              Wrap(
-                                spacing: 7,
-                                runSpacing: 7,
-                                children: [
-                                  _chip(
-                                    text:
-                                        '${catalog.includedVehicleCount} ${_t(nl: "voertuig inbegrepen", en: "vehicle included", fr: "vehicule inclus", es: "vehiculo incluido")}',
-                                    bg: _green.withOpacity(0.14),
-                                    border: _green.withOpacity(0.45),
-                                    textColor: _green,
-                                    icon: Icons.check_circle_outline,
-                                  ),
-                                  _chip(
-                                    text: _t(
-                                      nl: '${catalog.includedDriversPerVehicle} chauffeurs per voertuig inbegrepen',
-                                      en: '${catalog.includedDriversPerVehicle} drivers per vehicle included',
-                                      fr: '${catalog.includedDriversPerVehicle} chauffeurs par véhicule inclus',
-                                      es: '${catalog.includedDriversPerVehicle} conductores por vehículo incluidos',
-                                    ),
-                                    bg: _green.withOpacity(0.14),
-                                    border: _green.withOpacity(0.45),
-                                    textColor: _green,
-                                    icon: Icons.check_circle_outline,
-                                  ),
-                                  _chip(
-                                    text: _t(
-                                      nl: '${catalog.includedPdfCreationsPerVehicleMonth} PDF-creaties per voertuig / maand',
-                                      en: '${catalog.includedPdfCreationsPerVehicleMonth} PDF creations per vehicle / month',
-                                      fr: '${catalog.includedPdfCreationsPerVehicleMonth} créations PDF par véhicule / mois',
-                                      es: '${catalog.includedPdfCreationsPerVehicleMonth} creaciones PDF por vehículo / mes',
-                                    ),
-                                    bg: _gold.withOpacity(0.13),
-                                    border: _gold.withOpacity(0.40),
-                                    textColor: _gold,
-                                  ),
-                                  if (isBelgiumMarket) ...[
-                                    _chip(
-                                      text: _t(
-                                        nl: 'Chiron-ready inbegrepen',
-                                        en: 'Chiron-ready included',
-                                        fr: 'Chiron-ready inclus',
-                                        es: 'Chiron-ready incluido',
-                                      ),
-                                      bg: _green.withOpacity(0.14),
-                                      border: _green.withOpacity(0.45),
-                                      textColor: _green,
-                                    ),
-                                    _chip(
-                                      text: _t(
-                                        nl: 'Billit/Peppol-ready inbegrepen',
-                                        en: 'Billit/Peppol-ready included',
-                                        fr: 'Billit/Peppol-ready inclus',
-                                        es: 'Billit/Peppol-ready incluido',
-                                      ),
-                                      bg: _green.withOpacity(0.14),
-                                      border: _green.withOpacity(0.45),
-                                      textColor: _green,
-                                    ),
-                                  ] else ...[
-                                    _chip(
-                                      text: _t(
-                                        nl: 'Automatisatie',
-                                        en: 'Automation',
-                                        fr: 'Automatisation',
-                                        es: 'Automatización',
-                                      ),
-                                      bg: _green.withOpacity(0.14),
-                                      border: _green.withOpacity(0.45),
-                                      textColor: _green,
-                                    ),
-                                    _chip(
-                                      text: _t(
-                                        nl: 'Dispatch',
-                                        en: 'Dispatch',
-                                        fr: 'Dispatch',
-                                        es: 'Despacho',
-                                      ),
-                                      bg: _green.withOpacity(0.14),
-                                      border: _green.withOpacity(0.45),
-                                      textColor: _green,
-                                    ),
-                                    _chip(
-                                      text: _t(
-                                        nl: 'Boekingslink',
-                                        en: 'Booking link',
-                                        fr: 'Lien de réservation',
-                                        es: 'Enlace de reserva',
-                                      ),
-                                      bg: _green.withOpacity(0.14),
-                                      border: _green.withOpacity(0.45),
-                                      textColor: _green,
-                                    ),
-                                    _chip(
-                                      text: _t(
-                                        nl: 'Klantflow',
-                                        en: 'Customer flow',
-                                        fr: 'Parcours client',
-                                        es: 'Flujo del cliente',
-                                      ),
-                                      bg: _green.withOpacity(0.14),
-                                      border: _green.withOpacity(0.45),
-                                      textColor: _green,
-                                    ),
-                                    _chip(
-                                      text: _t(
-                                        nl: 'Chauffeurs',
-                                        en: 'Drivers',
-                                        fr: 'Chauffeurs',
-                                        es: 'Conductores',
-                                      ),
-                                      bg: _green.withOpacity(0.14),
-                                      border: _green.withOpacity(0.45),
-                                      textColor: _green,
-                                    ),
-                                    _chip(
-                                      text: _t(
-                                        nl: 'Voertuigen',
-                                        en: 'Vehicles',
-                                        fr: 'Véhicules',
-                                        es: 'Vehículos',
-                                      ),
-                                      bg: _green.withOpacity(0.14),
-                                      border: _green.withOpacity(0.45),
-                                      textColor: _green,
-                                    ),
-                                    _chip(
-                                      text: _t(
-                                        nl: 'Ritbeheer',
-                                        en: 'Ride admin',
-                                        fr: 'Gestion des courses',
-                                        es: 'Administración de viajes',
-                                      ),
-                                      bg: _green.withOpacity(0.14),
-                                      border: _green.withOpacity(0.45),
-                                      textColor: _green,
-                                    ),
-                                  ],
-                                  _chip(
-                                    text: _t(
-                                      nl: 'Geen commissie op ritten',
-                                      en: 'No commission on rides',
-                                      fr: 'Aucune commission sur les courses',
-                                      es: 'Sin comisión sobre los viajes',
-                                    ),
-                                    bg: _green.withOpacity(0.14),
-                                    border: _green.withOpacity(0.45),
-                                    textColor: _green,
-                                    icon: Icons.do_not_disturb_on_outlined,
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                isBelgiumMarket
-                                    ? _t(
-                                        nl: 'Externe Billit/providerkosten en Mollie-transactiekosten zijn voor rekening van het bedrijf en lopen via je eigen account.',
-                                        en: 'External Billit/provider costs and Mollie transaction fees are paid by the company via its own account.',
-                                        fr: 'Les frais Billit/fournisseur externes et les frais de transaction Mollie sont à la charge de l\'entreprise via son propre compte.',
-                                        es: 'Los costes externos de Billit/proveedor y las comisiones de transacción de Mollie corren a cargo de la empresa a través de su propia cuenta.',
-                                      )
-                                    : _t(
-                                        nl: 'Mollie-transactiekosten zijn voor rekening van het bedrijf en lopen via je eigen account.',
-                                        en: 'Mollie transaction fees are paid by the company via its own account.',
-                                        fr: 'Les frais de transaction Mollie sont à la charge de l\'entreprise via son propre compte.',
-                                        es: 'Las comisiones de transacción de Mollie corren a cargo de la empresa a través de su propia cuenta.',
-                                      ),
-                                style: TextStyle(
-                                  color: _businessThemePalette.textMuted
-                                      .withOpacity(0.88),
-                                  fontSize: 11.6,
-                                  height: 1.3,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                        _buildSubscriptionHero(profile, catalog),
                         _sectionCard(
                           title: _t(
                             nl: 'Gebruik & limieten',
                             en: 'Usage & limits',
-                            fr: 'Utilisation et limites',
-                            es: 'Uso y limites',
+                            fr: 'Utilisation & limites',
+                            es: 'Uso & límites',
                           ),
-                          child: Column(
-                            children: [
-                              _usageCard(
-                                title: _t(
-                                  nl: 'Voertuigen',
-                                  en: 'Vehicles',
-                                  fr: 'Vehicules',
-                                  es: 'Vehiculos',
-                                ),
-                                used: usedVehicles,
-                                max: profile.maxVehicles,
-                                enforced: false,
-                                actionLabel: _t(
-                                  nl: 'Extra voertuig activeren',
-                                  en: 'Activate extra vehicle',
-                                  fr: 'Activer un vehicule supplementaire',
-                                  es: 'Activar vehiculo extra',
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              _usageCard(
-                                title: _t(
-                                  nl: 'Chauffeurs',
-                                  en: 'Drivers',
-                                  fr: 'Chauffeurs',
-                                  es: 'Conductores',
-                                ),
-                                used: usedDrivers,
-                                max: profile.maxDrivers,
-                                enforced: false,
-                                actionLabel: _t(
-                                  nl: 'Extra chauffeur activeren',
-                                  en: 'Activate extra driver',
-                                  fr: 'Activer un chauffeur supplementaire',
-                                  es: 'Activar conductor extra',
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Align(
-                                alignment: Alignment.centerLeft,
-                                child: Text(
-                                  _t(
-                                    nl: 'Limieten worden binnenkort gekoppeld aan uitbreidingen.',
-                                    en: 'Limits will be linked to add-ons soon.',
-                                    fr: 'Les limites seront bientôt liées aux extensions.',
-                                    es: 'Los límites se vincularán pronto a las ampliaciones.',
-                                  ),
-                                  style: TextStyle(
-                                    color: _businessThemePalette.textMuted
-                                        .withOpacity(0.86),
-                                    fontSize: 11.6,
-                                    height: 1.3,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              _buildPdfCreditsSection(profile, catalog),
-                              if (isBelgiumMarket) ...[
-                                const SizedBox(height: 8),
-                                Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.fromLTRB(
-                                    10,
-                                    9,
-                                    10,
-                                    10,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: _panelSoft,
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(
-                                      color: _gold.withOpacity(0.30),
-                                    ),
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        _t(
-                                          nl: 'Peppol',
-                                          en: 'Peppol',
-                                          fr: 'Peppol',
-                                          es: 'Peppol',
-                                        ),
-                                        style: TextStyle(
-                                          color:
-                                              _businessThemePalette.textPrimary,
-                                          fontWeight: FontWeight.w800,
-                                          fontSize: 12.8,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 5),
-                                      Wrap(
-                                        spacing: 6,
-                                        runSpacing: 6,
-                                        children: [
-                                          _chip(
-                                            text: _t(
-                                              nl: 'Billit/Peppol-ready inbegrepen',
-                                              en: 'Billit/Peppol-ready included',
-                                              fr: 'Billit/Peppol-ready inclus',
-                                              es: 'Billit/Peppol-ready incluido',
-                                            ),
-                                            bg: _green.withOpacity(0.14),
-                                            border: _green.withOpacity(0.45),
-                                            textColor: _green,
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 5),
-                                      Text(
-                                        _t(
-                                          nl: 'Externe Billit/providerkosten zijn voor rekening van het bedrijf en lopen via je eigen Billit-account.',
-                                          en: 'External Billit/provider costs are paid by the company via its own Billit account.',
-                                          fr: 'Les frais Billit/fournisseur externes sont à la charge de l\'entreprise via son propre compte Billit.',
-                                          es: 'Los costes externos de Billit/proveedor corren a cargo de la empresa a través de su propia cuenta Billit.',
-                                        ),
-                                        style: TextStyle(
-                                          color:
-                                              _businessThemePalette.textMuted,
-                                          fontSize: 11.6,
-                                          height: 1.3,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ],
+                          child: _buildUsageLimitsRow(
+                            profile,
+                            catalog,
+                            usedVehicles,
+                            usedDrivers,
                           ),
                         ),
                         if (isSupportedMarket)
                           _sectionCard(
                             title: _t(
-                              nl: 'Betaalde uitbreidingen',
-                              en: 'Paid add-ons',
-                              fr: 'Extensions payantes',
-                              es: 'Ampliaciones de pago',
+                              nl: 'Maandelijkse uitbreidingen',
+                              en: 'Monthly add-ons',
+                              fr: 'Options mensuelles',
+                              es: 'Ampliaciones mensuales',
                             ),
-                            child: Column(
-                              children: [
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    _t(
-                                      nl: 'Extra voertuigen, chauffeurs en PDF-pakketten zijn beschikbaar als uitbreidingen. Je huidige abonnement blijft actief.',
-                                      en: 'Extra vehicles, drivers and PDF packs are available as add-ons. Your current subscription stays active.',
-                                      fr: 'Les véhicules, chauffeurs et packs PDF supplémentaires sont disponibles en option. Votre abonnement actuel reste actif.',
-                                      es: 'Los vehículos, conductores y paquetes PDF adicionales están disponibles como ampliaciones. Tu suscripción actual sigue activa.',
-                                    ),
-                                    style: TextStyle(
-                                      color: _businessThemePalette.textMuted,
-                                      fontSize: 11.8,
-                                      height: 1.3,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 9),
-                                _addonCard(
-                                  title: _t(
-                                    nl: 'Extra voertuig',
-                                    en: 'Extra vehicle',
-                                    fr: 'Véhicule supplémentaire',
-                                    es: 'Vehículo extra',
-                                  ),
-                                  price: _t(
-                                    nl: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / maand',
-                                    en: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / month',
-                                    fr: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mois',
-                                    es: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mes',
-                                  ),
-                                  subtitle: _t(
-                                    nl: 'Voegt 1 voertuigplek toe, inclusief ${catalog.includedDriversPerVehicle} extra chauffeurs. PDF-limieten worden later apart als uitbreiding gekoppeld.',
-                                    en: 'Adds 1 vehicle slot, including ${catalog.includedDriversPerVehicle} extra drivers. PDF limits will be linked later as a separate add-on.',
-                                    fr: 'Ajoute 1 emplacement de véhicule, dont ${catalog.includedDriversPerVehicle} chauffeurs supplémentaires. Les limites PDF seront ajoutées plus tard comme extension distincte.',
-                                    es: 'Añade 1 plaza de vehículo, incluidos ${catalog.includedDriversPerVehicle} conductores extra. Los límites de PDF se vincularán más adelante como ampliación independiente.',
-                                  ),
-                                  emphasized:
-                                      usedVehicles >= profile.maxVehicles,
-                                  // Patch 2.4B: only the Extra vehicle card is
-                                  // wired to the live add-on checkout route.
-                                  footer: _extraVehicleAddonFooter(profile),
-                                ),
-                                const SizedBox(height: 7),
-                                _addonCard(
-                                  title: _t(
-                                    nl: 'Extra chauffeur',
-                                    en: 'Extra driver',
-                                    fr: 'Chauffeur supplémentaire',
-                                    es: 'Conductor extra',
-                                  ),
-                                  price: _t(
-                                    nl: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / maand',
-                                    en: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / month',
-                                    fr: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mois',
-                                    es: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mes',
-                                  ),
-                                  subtitle: _addonAvailableLabel(),
-                                  emphasized: usedDrivers >= profile.maxDrivers,
-                                  footer: _extraDriverAddonFooter(profile),
-                                ),
-                                for (final bundle in catalog.pdfBundles) ...[
-                                  const SizedBox(height: 7),
-                                  _addonCard(
-                                    title: _t(
-                                      nl: 'Extra ${bundle.pdfs} PDF\u2019s',
-                                      en: 'Extra ${bundle.pdfs} PDFs',
-                                      fr: '${bundle.pdfs} PDF supplémentaires',
-                                      es: '${bundle.pdfs} PDF extra',
-                                    ),
-                                    price: _priceFromCents(bundle.priceCents),
-                                    subtitle: _addonAvailableLabel(),
-                                    footer: _pdfBundleAddonFooter(
-                                      profile,
-                                      bundle.pdfs,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
+                            child: _buildMonthlyAddonsSection(profile, catalog),
                           ),
                         _sectionCard(
                           title: _t(
-                            nl: 'Inbegrepen platformmogelijkheden',
-                            en: 'Included platform capabilities',
-                            fr: 'Fonctionnalités de plateforme incluses',
-                            es: 'Capacidades de plataforma incluidas',
+                            nl: 'PDF-credits',
+                            en: 'PDF credits',
+                            fr: 'Crédits PDF',
+                            es: 'Créditos PDF',
                           ),
-                          child: Column(
-                            children: [
-                              _moduleRow(
-                                label: _t(
-                                  nl: 'Eigen bedrijfsbranding / white-label basis',
-                                  en: 'Company branding / white-label base',
-                                  fr: 'Branding entreprise / base marque blanche',
-                                  es: 'Marca empresarial / base white-label',
-                                ),
-                                active: true,
-                                subtitle: _t(
-                                  nl: 'Inbegrepen',
-                                  en: 'Included',
-                                  fr: 'Inclus',
-                                  es: 'Incluido',
-                                ),
-                              ),
-                              _moduleRow(
-                                label: _t(
-                                  nl: 'Online boekingsflow',
-                                  en: 'Online booking flow',
-                                  fr: 'Flux de réservation en ligne',
-                                  es: 'Flujo de reserva en línea',
-                                ),
-                                active: true,
-                                subtitle: _t(
-                                  nl: 'Inbegrepen',
-                                  en: 'Included',
-                                  fr: 'Inclus',
-                                  es: 'Incluido',
-                                ),
-                              ),
-                              _moduleRow(
-                                label: _t(
-                                  nl: 'PDF-ritbonnen met limieten',
-                                  en: 'PDF receipts with limits',
-                                  fr: 'Reçus PDF avec limites',
-                                  es: 'Recibos PDF con límites',
-                                ),
-                                active: profile.features['receipt_pdf'] == true,
-                                subtitle: _t(
-                                  nl: 'Inbegrepen',
-                                  en: 'Included',
-                                  fr: 'Inclus',
-                                  es: 'Incluido',
-                                ),
-                              ),
-                              _moduleRow(
-                                label: _t(
-                                  nl: 'WhatsApp/e-mail ritbonnen',
-                                  en: 'WhatsApp/email receipts',
-                                  fr: 'Reçus WhatsApp/e-mail',
-                                  es: 'Recibos por WhatsApp/correo',
-                                ),
-                                active:
-                                    profile
-                                        .features['whatsapp_email_receipts'] ==
-                                    true,
-                                subtitle: _t(
-                                  nl: 'Inbegrepen',
-                                  en: 'Included',
-                                  fr: 'Inclus',
-                                  es: 'Incluido',
-                                ),
-                              ),
-                              if (isBelgiumMarket) ...[
-                                _moduleRow(
-                                  label: _t(
-                                    nl: 'Complianceoverzicht / Chiron-ready',
-                                    en: 'Compliance dashboard / Chiron-ready',
-                                    fr: 'Tableau conformité / Chiron-ready',
-                                    es: 'Panel de cumplimiento / Chiron-ready',
-                                  ),
-                                  active:
-                                      profile
-                                          .features['compliance_dashboard'] ==
-                                      true,
-                                  subtitle: _t(
-                                    nl: 'Inbegrepen',
-                                    en: 'Included',
-                                    fr: 'Inclus',
-                                    es: 'Incluido',
-                                  ),
-                                ),
-                                _moduleRow(
-                                  label: _t(
-                                    nl: 'Billit/Peppol-ready structuur',
-                                    en: 'Billit/Peppol-ready structure',
-                                    fr: 'Structure Billit/Peppol-ready',
-                                    es: 'Estructura Billit/Peppol-ready',
-                                  ),
-                                  active: true,
-                                  subtitle: _t(
-                                    nl: 'Inbegrepen. Externe Billit/providerkosten zijn voor rekening van het bedrijf.',
-                                    en: 'Included. External Billit/provider costs are paid by the company.',
-                                    fr: 'Inclus. Les frais Billit/fournisseur externes sont à la charge de l\'entreprise.',
-                                    es: 'Incluido. Los costes externos de Billit/proveedor corren a cargo de la empresa.',
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
+                          child: _buildPdfCreditsSection(profile, catalog),
                         ),
                         _sectionCard(
                           title: _t(
-                            nl: 'Platformmodules',
-                            en: 'Platform modules',
-                            fr: 'Modules de plateforme',
-                            es: 'Módulos de plataforma',
+                            nl: 'Inbegrepen mogelijkheden',
+                            en: 'Included capabilities',
+                            fr: 'Fonctionnalités incluses',
+                            es: 'Capacidades incluidas',
                           ),
-                          child: Column(
-                            children: [
-                              _moduleRow(
-                                label: _featureLabel('airport_module'),
-                                active: true,
-                                subtitle: _t(
-                                  nl: 'Inbegrepen',
-                                  en: 'Included',
-                                  fr: 'Inclus',
-                                  es: 'Incluido',
-                                ),
-                              ),
-                              _moduleRow(
-                                label: _featureLabel('live_dispatch'),
-                                // Live dispatch is not production-ready yet,
-                                // so always display it as coming-soon (neutral
-                                // styling) regardless of any feature flag.
-                                active: false,
-                                comingSoon: true,
-                                inactiveLabel: _t(
-                                  nl: 'Binnenkort',
-                                  en: 'Coming soon',
-                                  fr: 'Bientôt',
-                                  es: 'Próximamente',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Binnenkort beschikbaar',
-                                  en: 'Coming soon',
-                                  fr: 'Bientôt disponible',
-                                  es: 'Próximamente',
-                                ),
-                              ),
-                            ],
+                          child: _buildIncludedFeatures(
+                            profile,
+                            catalog,
+                            isBelgiumMarket,
                           ),
                         ),
                         Container(
                           margin: const EdgeInsets.only(top: 2),
-                          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
                           decoration: BoxDecoration(
                             color: _panel,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: _gold.withOpacity(0.24)),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: _businessThemePalette.border.withOpacity(
+                                _businessThemePalette.isDark ? 0.75 : 0.85,
+                              ),
+                            ),
                           ),
                           child: Text(
-                            _t(
-                              nl: 'Na je proefperiode ontvang je automatisch een melding om je abonnement te activeren en verder gebruik te maken van Fluxidi.',
-                              en: 'After your trial, you\'ll automatically receive a prompt to activate your subscription and keep using Fluxidi.',
-                              fr: 'Après votre période d\'essai, vous recevrez automatiquement une invitation à activer votre abonnement et à continuer à utiliser Fluxidi.',
-                              es: 'Después de tu prueba, recibirás automáticamente un aviso para activar tu suscripción y seguir usando Fluxidi.',
-                            ),
+                            isBelgiumMarket
+                                ? _t(
+                                    nl: 'Externe Billit/providerkosten en Mollie-transactiekosten zijn voor rekening van het bedrijf en lopen via je eigen account.',
+                                    en: 'External Billit/provider costs and Mollie transaction fees are paid by the company via its own account.',
+                                    fr: 'Les frais Billit/fournisseur externes et les frais de transaction Mollie sont à la charge de l\'entreprise via son propre compte.',
+                                    es: 'Los costes externos de Billit/proveedor y las comisiones de transacción de Mollie corren a cargo de la empresa a través de su propia cuenta.',
+                                  )
+                                : _t(
+                                    nl: 'Mollie-transactiekosten zijn voor rekening van het bedrijf en lopen via je eigen account.',
+                                    en: 'Mollie transaction fees are paid by the company via its own account.',
+                                    fr: 'Les frais de transaction Mollie sont à la charge de l\'entreprise via son propre compte.',
+                                    es: 'Las comisiones de transacción de Mollie corren a cargo de la empresa a través de su propia cuenta.',
+                                  ),
                             style: TextStyle(
-                              color: _businessThemePalette.textMuted
-                                  .withOpacity(0.88),
+                              color: _businessThemePalette.textSecondary,
                               fontSize: 12,
+                              height: 1.35,
                             ),
                           ),
                         ),
