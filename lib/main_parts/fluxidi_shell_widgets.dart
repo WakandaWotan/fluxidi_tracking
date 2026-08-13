@@ -123,8 +123,16 @@ class FluxidiFrame extends StatelessWidget {
                 }
                 // Hard Frame A: a visible HUD border that contains the whole UI.
                 // Target: visually ~2–3mm on phone screens.
+                // Light Emerald chauffeur shell fills use the mint background so
+                // the outer/inner frame does not flash Night Gold black.
+                final Color frameFill =
+                    chauffeurShellTheme == DriverThemeVariant.lightEmerald
+                    ? paletteForDriverTheme(
+                        DriverThemeVariant.lightEmerald,
+                      ).background
+                    : kFluxidiBlack;
                 return Container(
-                  color: kFluxidiBlack,
+                  color: frameFill,
                   child: SafeArea(
                     top: false,
                     bottom: false,
@@ -132,7 +140,7 @@ class FluxidiFrame extends StatelessWidget {
                       padding: const EdgeInsets.all(8),
                       child: DecoratedBox(
                         decoration: BoxDecoration(
-                          color: kFluxidiBlack,
+                          color: frameFill,
                           borderRadius: BorderRadius.circular(28),
                           border: Border.all(
                             color: frameAccent.withOpacity(0.98),
@@ -151,7 +159,7 @@ class FluxidiFrame extends StatelessWidget {
                           padding: const EdgeInsets.all(3),
                           child: DecoratedBox(
                             decoration: BoxDecoration(
-                              color: kFluxidiBlack,
+                              color: frameFill,
                               borderRadius: BorderRadius.circular(24),
                               border: Border.all(
                                 color: frameAccent.withOpacity(0.55),
