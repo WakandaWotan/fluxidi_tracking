@@ -4617,8 +4617,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         ),
                       ),
                     ],
-                    LayoutBuilder(
-                      builder: (context, constraints) {
+                    ValueListenableBuilder<BrandSignaturePalette>(
+                      valueListenable: brandSignaturePaletteNotifier,
+                      builder: (context, _, __) {
+                        return LayoutBuilder(
+                          builder: (context, constraints) {
                         final stacked =
                             !isTabletLandscape && constraints.maxWidth < 430;
                         if (stacked) {
@@ -4806,6 +4809,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                               ),
                             ),
                           ],
+                        );
+                          },
                         );
                       },
                     ),

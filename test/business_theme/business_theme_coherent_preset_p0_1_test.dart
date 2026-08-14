@@ -116,6 +116,7 @@ void main() {
       null,
     );
     businessSettingsNotifier.value = settingsBefore;
+    resetBusinessThemePersistenceLatchForTest();
     if (await tempDir.exists()) {
       await tempDir.delete(recursive: true);
     }

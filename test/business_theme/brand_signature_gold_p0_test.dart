@@ -18,7 +18,10 @@ import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 import 'package:fluxidi_tracking/widgets/brand_signature_gold_action_card.dart';
 import 'package:fluxidi_tracking/widgets/brand_signature_gold_header.dart';
+import 'package:fluxidi_tracking/widgets/brand_signature_color_rail.dart';
+import 'package:fluxidi_tracking/widgets/brand_signature_style_dock.dart';
 import 'package:fluxidi_tracking/widgets/business_theme_cycle_button.dart';
+import 'package:fluxidi_tracking/widgets/business_theme_root_canvas.dart';
 import 'package:fluxidi_tracking/widgets/business_theme_selector_sheet.dart';
 
 void main() {
@@ -46,6 +49,9 @@ void main() {
   tearDown(() async {
     activeCompanySessionNotifier.value = sessionBefore;
     resetBusinessThemePersistenceLatchForTest();
+    businessThemeNotifier.value = BusinessThemeVariant.executiveGold;
+    businessAppearanceNotifier.value = BusinessThemeVariant.executiveGold;
+    brandSignaturePaletteNotifier.value = BrandSignaturePalette.defaults;
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(
@@ -496,6 +502,8 @@ void main() {
         expect(businessThemeSelectorApplyLabel(), isNotEmpty);
         expect(businessThemeSelectorCancelLabel(), isNotEmpty);
         expect(brandSignatureCustomizeStyleLabel(), isNotEmpty);
+        expect(brandSignatureRailTitle(), isNotEmpty);
+        expect(brandSignatureResetDefaultLabel(), isNotEmpty);
       }
       appLanguageNotifier.value = AppLanguage.nl;
       expect(businessThemeSelectorTitle(), 'Kies je uitstraling');
@@ -509,6 +517,8 @@ void main() {
       expect(businessThemeSelectorApplyLabel(), 'Toepassen');
       expect(businessThemeSelectorCancelLabel(), 'Annuleren');
       expect(brandSignatureCustomizeStyleLabel(), 'Huisstijl aanpassen');
+      expect(brandSignatureRailTitle(), 'Kies je achtergrondkleur');
+      expect(brandSignatureResetDefaultLabel(), 'Standaard herstellen');
     });
 
     test('25 all 13 WebP assets exist, decode and preserve alpha', () async {
@@ -534,25 +544,37 @@ void main() {
     });
 
     test('26 Brand color contrast safeguards work', () {
-      final bad = sanitizeBrandSignaturePalette(
-        const BrandSignaturePalette(
-          header: Color(0xFF808080),
-          page: Color(0xFF808080),
-          card: Color(0xFF808080),
-          accent: Color(0xFF808080),
-        ),
-      );
-      final pageText = brandSignatureReadableTextOn(bad.page);
-      final cardText = brandSignatureReadableTextOn(bad.card);
-      expect(brandSignatureHasReadableText(pageText, bad.page), isTrue);
-      expect(brandSignatureHasReadableText(cardText, bad.card), isTrue);
-      expect(
-        brandSignatureContrastRatio(
-          brandSignatureReadableTextOn(bad.accent),
-          bad.accent,
-        ),
-        greaterThanOrEqualTo(4.5),
-      );
+      for (final position in <double>[
+        0,
+        kBrandSignatureBordeauxPosition,
+        kBrandSignatureMidnightPosition,
+        kBrandSignatureEmeraldPosition,
+        1,
+      ]) {
+        final derived = BrandSignaturePalette.fromPosition(position);
+        expect(derived.accent, kBrandSignatureGoldAccent);
+        expect(
+          brandSignatureHasReadableText(
+            brandSignatureReadableTextOn(derived.page),
+            derived.page,
+          ),
+          isTrue,
+        );
+        expect(
+          brandSignatureHasReadableText(
+            brandSignatureReadableTextOn(derived.card),
+            derived.card,
+          ),
+          isTrue,
+        );
+        expect(
+          brandSignatureHasReadableText(
+            brandSignatureReadableTextOn(derived.kpi),
+            derived.kpi,
+          ),
+          isTrue,
+        );
+      }
       final gold = paletteForBusinessTheme(
         BusinessThemeVariant.brandSignatureGold,
       );
@@ -560,6 +582,322 @@ void main() {
         brandSignatureContrastRatio(gold.textPrimary, gold.surface),
         greaterThanOrEqualTo(4.5),
       );
+    });
+  });
+
+  group('Brand Signature huisstijl rail', () {
+    test('27 old four color rows are gone', () {
+      expect(
+        File('lib/widgets/brand_signature_palette_sheet.dart').existsSync(),
+        isFalse,
+      );
+      final dock = File(
+        'lib/widgets/brand_signature_style_dock.dart',
+      ).readAsStringSync();
+      final rail = File(
+        'lib/widgets/brand_signature_color_rail.dart',
+      ).readAsStringSync();
+      expect(dock.contains('_headerChoices'), isFalse);
+      expect(dock.contains('_pageChoices'), isFalse);
+      expect(dock.contains('_cardChoices'), isFalse);
+      expect(dock.contains('_accentChoices'), isFalse);
+      expect(dock.contains('showModalBottomSheet'), isFalse);
+      expect(rail.contains('kBrandSignatureColorRailKey'), isTrue);
+      expect(
+        'lib/widgets/brand_signature_style_dock.dart'
+            .split('/')
+            .isNotEmpty,
+        isTrue,
+      );
+      expect(find.byType(BrandSignatureColorRail), findsNothing);
+    });
+
+    test('28 one position derives the full background family', () {
+      final bordeaux = BrandSignaturePalette.fromPosition(
+        kBrandSignatureBordeauxPosition,
+      );
+      final midnight = BrandSignaturePalette.fromPosition(
+        kBrandSignatureMidnightPosition,
+      );
+      final emerald = BrandSignaturePalette.fromPosition(
+        kBrandSignatureEmeraldPosition,
+      );
+      expect(bordeaux.familyId, 'bordeaux');
+      expect(midnight.familyId, 'midnight');
+      expect(emerald.familyId, 'emerald');
+      expect(bordeaux.page, isNot(midnight.page));
+      expect(midnight.header, isNot(emerald.header));
+      expect(bordeaux.card, isNot(emerald.card));
+      expect(bordeaux.kpi, isNot(midnight.kpi));
+      expect(bordeaux.accent, kBrandSignatureGoldAccent);
+      expect(midnight.accent, kBrandSignatureGoldAccent);
+      expect(emerald.accent, kBrandSignatureGoldAccent);
+      expect(BrandSignaturePalette.defaults.position, 1.0);
+      expect(BrandSignaturePalette.defaults.familyId, 'goldBrown');
+    });
+
+    testWidgets('29 editor is a bright dock with one rail', (tester) async {
+      businessThemeNotifier.value = BusinessThemeVariant.brandSignatureGold;
+      await tester.binding.setSurfaceSize(const Size(800, 1280));
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: BusinessThemeRootCanvas(
+            child: BrandSignatureStyleEditor(),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byKey(kBrandSignatureStyleDockKey), findsOneWidget);
+      expect(find.byKey(kBrandSignatureColorRailKey), findsOneWidget);
+      expect(find.byKey(kBrandSignatureColorRailThumbKey), findsOneWidget);
+      expect(find.text('Kies je achtergrondkleur'), findsOneWidget);
+      expect(find.text('Header'), findsNothing);
+      expect(find.text('Pagina'), findsNothing);
+      expect(find.text('Kaarten'), findsNothing);
+      expect(find.text('Accent'), findsNothing);
+      _expectNoDarkScrim(tester);
+      final rail = tester.getSize(find.byKey(kBrandSignatureColorRailKey));
+      expect(rail.height, greaterThanOrEqualTo(56));
+      expect(rail.width, greaterThan(600));
+      await tester.binding.setSurfaceSize(null);
+    });
+
+    testWidgets('30 drag and tap move the continuous rail', (tester) async {
+      businessThemeNotifier.value = BusinessThemeVariant.brandSignatureGold;
+      brandSignaturePaletteNotifier.value = BrandSignaturePalette.defaults;
+      await tester.binding.setSurfaceSize(const Size(800, 1280));
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: BrandSignatureStyleDock())),
+      );
+      await tester.pump();
+      final before = brandSignaturePaletteNotifier.value;
+      await tester.tapAt(
+        tester.getTopLeft(find.byKey(kBrandSignatureColorRailKey)) +
+            const Offset(40, 28),
+      );
+      await tester.pump();
+      final afterTap = brandSignaturePaletteNotifier.value;
+      expect(afterTap.position, lessThan(before.position));
+      expect(afterTap.page, isNot(before.page));
+      expect(afterTap.header, isNot(before.header));
+      expect(afterTap.card, isNot(before.card));
+      expect(afterTap.kpi, isNot(before.kpi));
+      expect(afterTap.accent, kBrandSignatureGoldAccent);
+      await tester.drag(
+        find.byKey(kBrandSignatureColorRailKey),
+        const Offset(420, 0),
+      );
+      await tester.pump();
+      expect(
+        brandSignaturePaletteNotifier.value.position,
+        greaterThan(afterTap.position),
+      );
+      await tester.binding.setSurfaceSize(null);
+    });
+
+    testWidgets('31 live chrome follows the rail without tinting gold icons', (
+      tester,
+    ) async {
+      businessThemeNotifier.value = BusinessThemeVariant.brandSignatureGold;
+      brandSignaturePaletteNotifier.value = BrandSignaturePalette.fromPosition(
+        kBrandSignatureBordeauxPosition,
+      );
+      await tester.binding.setSurfaceSize(const Size(800, 1280));
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: BusinessThemeRootCanvas(
+            child: _GoldTabletPreview(includeDock: true),
+          ),
+        ),
+      );
+      await tester.pump();
+      final headerBox = tester.widget<DecoratedBox>(
+        find.descendant(
+          of: find.byKey(kBrandSignatureGoldHeaderKey),
+          matching: find.byType(DecoratedBox),
+        ),
+      );
+      expect(
+        (headerBox.decoration as BoxDecoration).color,
+        BrandSignaturePalette.fromPosition(
+          kBrandSignatureBordeauxPosition,
+        ).header,
+      );
+      expect(find.byKey(kBrandSignatureGoldLogoFallbackKey), findsOneWidget);
+      final settingsCard = tester.widget<Ink>(
+        find.descendant(
+          of: find.byKey(const Key('brand_signature_action_settings')),
+          matching: find.byType(Ink),
+        ),
+      );
+      expect(
+        (settingsCard.decoration as BoxDecoration).color,
+        BrandSignaturePalette.fromPosition(
+          kBrandSignatureBordeauxPosition,
+        ).card,
+      );
+      final image = tester.widget<Image>(
+        find.descendant(
+          of: find.byKey(const Key('brand_signature_action_settings')),
+          matching: find.byType(Image),
+        ),
+      );
+      expect(image.color, isNull);
+      expect(image.colorBlendMode, isNull);
+      await tester.binding.setSurfaceSize(null);
+    });
+
+    test('32 cancel restores the previously applied position', () async {
+      _setCompany('co_style_cancel');
+      await applyBrandSignaturePalette(
+        BrandSignaturePalette.fromPosition(kBrandSignatureMidnightPosition),
+      );
+      previewBrandSignatureRailPosition(kBrandSignatureEmeraldPosition);
+      expect(
+        brandSignaturePaletteNotifier.value.familyId,
+        'emerald',
+      );
+      cancelBrandSignaturePalettePreview();
+      expect(
+        brandSignaturePaletteNotifier.value.position,
+        closeTo(kBrandSignatureMidnightPosition, 0.0001),
+      );
+    });
+
+    test('33 apply persists one position per company', () async {
+      _setCompany('co_style_a');
+      await applyBrandSignaturePalette(
+        BrandSignaturePalette.fromPosition(kBrandSignatureBordeauxPosition),
+      );
+      _setCompany('co_style_b');
+      syncBusinessThemeForActiveCompany();
+      await applyBrandSignaturePalette(
+        BrandSignaturePalette.fromPosition(kBrandSignatureEmeraldPosition),
+      );
+      final file = File(
+        '${tempDir.path}${Platform.pathSeparator}business_state'
+        '${Platform.pathSeparator}business_theme_v1.json',
+      );
+      final decoded = jsonDecode(await file.readAsString()) as Map;
+      final palettes = decoded['brandSignaturePalettes'] as Map;
+      expect(
+        (palettes['co_style_a'] as Map)['position'],
+        closeTo(kBrandSignatureBordeauxPosition, 0.0001),
+      );
+      expect(
+        (palettes['co_style_b'] as Map)['position'],
+        closeTo(kBrandSignatureEmeraldPosition, 0.0001),
+      );
+      expect((palettes['co_style_a'] as Map).containsKey('header'), isFalse);
+      _setCompany('co_style_a');
+      syncBusinessThemeForActiveCompany();
+      expect(
+        brandSignaturePaletteNotifier.value.familyId,
+        'bordeaux',
+      );
+    });
+
+    test('34 restart restores the applied rail position', () async {
+      _setCompany('co_style_restart');
+      await applyBrandSignaturePalette(
+        BrandSignaturePalette.fromPosition(kBrandSignatureMidnightPosition),
+      );
+      brandSignaturePaletteNotifier.value = BrandSignaturePalette.defaults;
+      await loadBusinessThemePreference();
+      expect(
+        brandSignaturePaletteNotifier.value.position,
+        closeTo(kBrandSignatureMidnightPosition, 0.0001),
+      );
+    });
+
+    test('35 reset default only previews warm gold-brown', () async {
+      previewBrandSignatureRailPosition(kBrandSignatureBordeauxPosition);
+      previewBrandSignatureRailPosition(kBrandSignatureDefaultPosition);
+      expect(brandSignaturePaletteNotifier.value.familyId, 'goldBrown');
+      expect(brandSignaturePaletteNotifier.value.position, 1.0);
+    });
+
+    test('36 legacy four-color JSON falls back to the default position', () {
+      final restored = BrandSignaturePalette.fromJson(<String, int>{
+        'header': 0xFF1A1408,
+        'page': 0xFF0C0A07,
+        'card': 0xFF1C160C,
+        'accent': 0xFFD4AF37,
+      });
+      expect(restored.position, 1.0);
+    });
+
+    testWidgets('37 customize closes the selector then opens the dock', (
+      tester,
+    ) async {
+      businessThemeNotifier.value = BusinessThemeVariant.brandSignatureGold;
+      await tester.binding.setSurfaceSize(const Size(800, 1280));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => showBusinessThemeSelectorSheet(context),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(kBusinessThemeSelectorSheetKey), findsOneWidget);
+      await tester.tap(find.byKey(kBrandSignatureCustomizeStyleKey));
+      await tester.pumpAndSettle();
+      expect(find.byKey(kBusinessThemeSelectorSheetKey), findsNothing);
+      expect(find.byKey(kBrandSignatureStyleDockKey), findsOneWidget);
+      _expectNoDarkScrim(tester);
+      expect(
+        businessThemeNotifier.value,
+        BusinessThemeVariant.brandSignatureGold,
+      );
+      await tester.binding.setSurfaceSize(null);
+    });
+
+    testWidgets('38 dock fits narrow and tablet widths', (tester) async {
+      for (final size in <Size>[const Size(360, 780), const Size(800, 1280)]) {
+        await tester.binding.setSurfaceSize(size);
+        await tester.pumpWidget(
+          const MaterialApp(home: Scaffold(body: BrandSignatureStyleDock())),
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(find.byKey(kBrandSignatureColorRailKey), findsOneWidget);
+      }
+      await tester.binding.setSurfaceSize(null);
+    });
+
+    test('39 rail positions render distinct tablet pages', () {
+      final out = Directory('test_reports/brand_signature_huisstijl')
+        ..createSync(recursive: true);
+      final pages = <String, BrandSignaturePalette>{
+        'bordeaux': BrandSignaturePalette.fromPosition(
+          kBrandSignatureBordeauxPosition,
+        ),
+        'nachtblauw': BrandSignaturePalette.fromPosition(
+          kBrandSignatureMidnightPosition,
+        ),
+        'smaragd': BrandSignaturePalette.fromPosition(
+          kBrandSignatureEmeraldPosition,
+        ),
+      };
+      for (final entry in pages.entries) {
+        File(
+          '${out.path}${Platform.pathSeparator}rail_${entry.key}.bmp',
+        ).writeAsBytesSync(_tabletFamilyBmp(entry.value));
+      }
+      expect(pages['bordeaux']!.page, isNot(pages['nachtblauw']!.page));
+      expect(pages['nachtblauw']!.page, isNot(pages['smaragd']!.page));
+      expect(pages['bordeaux']!.header, isNot(pages['smaragd']!.header));
+      expect(pages['bordeaux']!.card, isNot(pages['smaragd']!.card));
+      expect(pages['bordeaux']!.accent, kBrandSignatureGoldAccent);
+      expect(pages['nachtblauw']!.accent, kBrandSignatureGoldAccent);
+      expect(pages['smaragd']!.accent, kBrandSignatureGoldAccent);
     });
   });
 
@@ -587,6 +925,182 @@ void main() {
     expect(isBusinessThemePreviewActive, isFalse);
     expect(businessThemeNotifier.value, BusinessThemeVariant.corporateBlue);
   });
+}
+
+Uint8List _tabletFamilyBmp(BrandSignaturePalette colors) {
+  const width = 400;
+  const height = 640;
+  const rowSize = width * 3;
+  final pixels = Uint8List(rowSize * height);
+  void put(int x, int y, Color color) {
+    final i = (y * width + x) * 3;
+    pixels[i] = color.blue;
+    pixels[i + 1] = color.green;
+    pixels[i + 2] = color.red;
+  }
+
+  void fillRect(int left, int top, int right, int bottom, Color color) {
+    for (var y = top; y < bottom; y++) {
+      for (var x = left; x < right; x++) {
+        put(x, y, color);
+      }
+    }
+  }
+
+  fillRect(0, 0, width, height, colors.page);
+  fillRect(12, 12, width - 12, 110, colors.header);
+  fillRect(12, 122, 104, 166, colors.kpi);
+  fillRect(110, 122, 202, 166, colors.kpi);
+  fillRect(208, 122, 300, 166, colors.kpi);
+  fillRect(306, 122, 388, 166, colors.kpi);
+  fillRect(12, 178, 194, 280, colors.card);
+  fillRect(206, 178, 388, 280, colors.card);
+  fillRect(8, 520, width - 8, 632, colors.kpi);
+  final anchors = kBrandSignatureRailAnchors;
+  for (var x = 20; x < width - 20; x++) {
+    final t = (x - 20) / (width - 40);
+    final stop = t * (anchors.length - 1);
+    final index = stop.floor().clamp(0, anchors.length - 1);
+    final next = (index + 1).clamp(0, anchors.length - 1);
+    final color = Color.lerp(anchors[index], anchors[next], stop - index)!;
+    for (var y = 554; y < 582; y++) {
+      put(x, y, color);
+    }
+  }
+  final fileSize = 54 + pixels.length;
+  final bytes = Uint8List(fileSize);
+  bytes[0] = 0x42;
+  bytes[1] = 0x4D;
+  bytes[2] = fileSize & 0xFF;
+  bytes[3] = (fileSize >> 8) & 0xFF;
+  bytes[4] = (fileSize >> 16) & 0xFF;
+  bytes[5] = (fileSize >> 24) & 0xFF;
+  bytes[10] = 54;
+  bytes[14] = 40;
+  bytes[18] = width & 0xFF;
+  bytes[19] = (width >> 8) & 0xFF;
+  bytes[22] = height & 0xFF;
+  bytes[23] = (height >> 8) & 0xFF;
+  bytes[26] = 1;
+  bytes[28] = 24;
+  bytes[34] = pixels.length & 0xFF;
+  bytes[35] = (pixels.length >> 8) & 0xFF;
+  bytes[36] = (pixels.length >> 16) & 0xFF;
+  bytes[37] = (pixels.length >> 24) & 0xFF;
+  var offset = 54;
+  for (var y = height - 1; y >= 0; y--) {
+    bytes.setRange(offset, offset + rowSize, pixels, y * rowSize);
+    offset += rowSize;
+  }
+  return bytes;
+}
+
+void _expectNoDarkScrim(WidgetTester tester) {
+  for (final barrier in tester.widgetList<ModalBarrier>(
+    find.byType(ModalBarrier),
+  )) {
+    final color = barrier.color;
+    expect(
+      color == null || color.opacity == 0,
+      isTrue,
+      reason: 'huisstijl editor must not dim the dashboard',
+    );
+  }
+}
+
+class _GoldTabletPreview extends StatelessWidget {
+  const _GoldTabletPreview({this.includeDock = false});
+
+  final bool includeDock;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<BrandSignaturePalette>(
+      valueListenable: brandSignaturePaletteNotifier,
+      builder: (context, colors, _) {
+        return RepaintBoundary(
+          key: const Key('brand_signature_tablet_preview'),
+          child: Stack(
+            children: [
+              ListView(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 220),
+                children: [
+                  const BrandSignatureGoldHeader(
+                    height: 168,
+                    logoRef: '',
+                    hasCompanyLogo: false,
+                    companyName: 'FLX',
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      for (final label in <String>[
+                        'Open',
+                        'Ritten',
+                        'Te betalen',
+                        'Omzet',
+                      ])
+                        Expanded(
+                          child: Container(
+                            key: Key('brand_signature_preview_kpi_$label'),
+                            margin: const EdgeInsets.only(right: 6),
+                            height: 64,
+                            decoration: BoxDecoration(
+                              color: colors.kpi,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: colors.border),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              label,
+                              style: TextStyle(
+                                color: brandSignatureReadableTextOn(
+                                  colors.kpi,
+                                ),
+                                fontWeight: FontWeight.w700,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const SizedBox(
+                    height: 168,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: BrandSignatureGoldActionCard(
+                            actionKey: 'settings',
+                            title: 'Instellingen',
+                            subtitle: 'Bedrijf',
+                          ),
+                        ),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: BrandSignatureGoldActionCard(
+                            actionKey: 'payments',
+                            title: 'Betalingen',
+                            subtitle: 'Abonnement',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              if (includeDock)
+                const Align(
+                  alignment: Alignment.bottomCenter,
+                  child: BrandSignatureStyleDock(),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 }
 
 void _setCompany(String companyId) {

@@ -30,6 +30,7 @@ void main() {
       const MethodChannel('plugins.flutter.io/path_provider'),
       (call) async => tempDir.path,
     );
+    resetBusinessThemePersistenceLatchForTest();
     businessThemeNotifier.value = BusinessThemeVariant.executiveGold;
     businessAppearanceNotifier.value = BusinessThemeVariant.executiveGold;
     customerThemeNotifier.value = CustomerThemeVariant.premiumLight;
@@ -42,6 +43,7 @@ void main() {
       const MethodChannel('plugins.flutter.io/path_provider'),
       null,
     );
+    resetBusinessThemePersistenceLatchForTest();
     if (await tempDir.exists()) {
       await tempDir.delete(recursive: true);
     }

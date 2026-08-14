@@ -217,7 +217,13 @@ void previewBrandSignaturePalette(BrandSignaturePalette palette) {
     _previewCompanyId = currentBusinessThemeCompanyId();
     _businessThemePreviewActive = true;
   }
-  brandSignaturePaletteNotifier.value = sanitizeBrandSignaturePalette(palette);
+  brandSignaturePaletteNotifier.value = BrandSignaturePalette.fromPosition(
+    palette.position,
+  );
+}
+
+void previewBrandSignatureRailPosition(double position) {
+  previewBrandSignaturePalette(BrandSignaturePalette.fromPosition(position));
 }
 
 void cancelBusinessThemePreview() {
@@ -269,8 +275,8 @@ Map<String, String> _encodeThemeByCompany() {
   };
 }
 
-Map<String, Map<String, int>> _encodeBrandSignaturePalettes() {
-  return <String, Map<String, int>>{
+Map<String, Map<String, Object>> _encodeBrandSignaturePalettes() {
+  return <String, Map<String, Object>>{
     for (final entry in _brandSignaturePaletteByCompanyId.entries)
       entry.key: entry.value.toJson(),
   };
@@ -320,7 +326,8 @@ Future<void> applyBusinessThemePreset(BusinessThemeVariant variant) async {
 }
 
 Future<void> applyBrandSignaturePalette(BrandSignaturePalette palette) async {
-  final safe = sanitizeBrandSignaturePalette(palette);
+  final safe = BrandSignaturePalette.fromPosition(palette.position);
+  _clearPreviewCheckpoint();
   brandSignaturePaletteNotifier.value = safe;
   final companyId = currentBusinessThemeCompanyId();
   if (companyId != null) {
@@ -369,6 +376,8 @@ void resetBusinessThemePersistenceLatchForTest() {
   _legacyGlobalBusinessTheme = _kDefaultBusinessTheme;
   _businessThemeByCompanyId.clear();
   _brandSignaturePaletteByCompanyId.clear();
+  businessThemeNotifier.value = _kDefaultBusinessTheme;
+  businessAppearanceNotifier.value = _kDefaultBusinessTheme;
   brandSignaturePaletteNotifier.value = BrandSignaturePalette.defaults;
 }
 

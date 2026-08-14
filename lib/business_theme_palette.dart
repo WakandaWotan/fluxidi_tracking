@@ -157,22 +157,22 @@ BusinessThemePalette brandSignatureBusinessPalette(
   BrandSignaturePalette colors,
 ) {
   final safe = sanitizeBrandSignaturePalette(colors);
-  final textPrimary = brandSignatureReadableTextOn(safe.card);
+  final textPrimary = brandSignatureReadableTextOn(safe.page);
   final textOnAccent = brandSignatureReadableTextOn(safe.accent);
   final isDark =
       brandSignatureContrastRatio(const Color(0xFFFFFFFF), safe.page) >=
       brandSignatureContrastRatio(const Color(0xFF000000), safe.page);
   return BusinessThemePalette(
     background: safe.page,
-    surface: safe.card,
+    surface: safe.kpi,
     surfaceAlt: safe.header,
     textPrimary: textPrimary,
-    textSecondary: _readableMuted(textPrimary, safe.card, 0.18),
-    textMuted: _readableMuted(textPrimary, safe.card, 0.28),
+    textSecondary: _readableMuted(textPrimary, safe.kpi, 0.18),
+    textMuted: _readableMuted(textPrimary, safe.kpi, 0.28),
     textOnAccent: textOnAccent,
     textOnWarning: const Color(0xFFFFF2CC),
     accent: safe.accent,
-    border: Color.lerp(safe.accent, safe.card, 0.45)!,
+    border: safe.border,
     danger: const Color(0xFFD07A82),
     success: const Color(0xFF49B889),
     shadow: const Color(0x99000000),

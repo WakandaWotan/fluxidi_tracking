@@ -33,10 +33,11 @@ class BrandSignatureGoldHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final logo = hasCompanyLogo ? _CompanyLogo(ref: logoRef) : null;
     return ValueListenableBuilder<BrandSignaturePalette>(
       valueListenable: brandSignaturePaletteNotifier,
-      builder: (context, colors, _) {
-        final safe = sanitizeBrandSignaturePalette(colors);
+      child: logo,
+      builder: (context, colors, logoChild) {
         final palette = paletteForBusinessTheme(
           BusinessThemeVariant.brandSignatureGold,
         );
@@ -46,11 +47,11 @@ class BrandSignatureGoldHeader extends StatelessWidget {
           width: double.infinity,
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: safe.header,
+              color: colors.header,
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: safe.accent.withOpacity(0.42)),
+              border: Border.all(color: colors.border.withOpacity(0.72)),
               boxShadow: <BoxShadow>[
-                BoxShadow(color: safe.accent.withOpacity(0.18), blurRadius: 18),
+                BoxShadow(color: colors.border.withOpacity(0.22), blurRadius: 18),
               ],
             ),
             child: Stack(
@@ -58,12 +59,11 @@ class BrandSignatureGoldHeader extends StatelessWidget {
                 Positioned.fill(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(28, 16, 28, 16),
-                    child: hasCompanyLogo
-                        ? _CompanyLogo(ref: logoRef)
-                        : _MonogramFallback(
-                            name: companyName,
-                            color: palette.textPrimary,
-                          ),
+                    child: logoChild ??
+                        _MonogramFallback(
+                          name: companyName,
+                          color: palette.textPrimary,
+                        ),
                   ),
                 ),
                 Positioned(

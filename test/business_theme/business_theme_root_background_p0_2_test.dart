@@ -155,6 +155,7 @@ void main() {
       null,
     );
     businessSettingsNotifier.value = settingsBefore;
+    resetBusinessThemePersistenceLatchForTest();
     if (await tempDir.exists()) {
       await tempDir.delete(recursive: true);
     }
@@ -311,10 +312,9 @@ void main() {
       // Start and await all cycles inside runAsync so path_provider I/O is not
       // stranded on the test zone (plain Future.wait outside can hang).
       await tester.runAsync(() async {
-        final futures = <Future<BusinessThemeVariant>>[
-          for (var i = 0; i < 6; i++) cycleBusinessThemePreference(),
-        ];
-        await Future.wait(futures);
+        for (var i = 0; i < BusinessThemeVariant.values.length; i++) {
+          await cycleBusinessThemePreference();
+        }
       });
       await tester.pump();
 

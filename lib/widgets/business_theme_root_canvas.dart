@@ -84,13 +84,14 @@ class BusinessThemeRootCanvas extends StatelessWidget {
       builder: (context, _, __) {
         return ValueListenableBuilder<BrandSignaturePalette>(
           valueListenable: brandSignaturePaletteNotifier,
-          builder: (context, __, ___) {
+          child: child,
+          builder: (context, __, pageChild) {
             final preset = activeBusinessThemePreset();
             final palette = paletteForBusinessTheme(preset);
             final gradient = DecoratedBox(
               key: gradientKey,
               decoration: businessThemeRootBoxDecoration(preset),
-              child: child,
+              child: pageChild,
             );
             return AnnotatedRegion<SystemUiOverlayStyle>(
               value: systemUiOverlayStyleForBusinessTheme(palette),

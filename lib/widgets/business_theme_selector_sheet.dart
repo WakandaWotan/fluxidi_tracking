@@ -3,7 +3,7 @@ import 'package:fluxidi_tracking/business_theme/brand_signature_gold_l10n.dart';
 import 'package:fluxidi_tracking/business_theme_cycle.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
-import 'package:fluxidi_tracking/widgets/brand_signature_palette_sheet.dart';
+import 'package:fluxidi_tracking/widgets/brand_signature_style_dock.dart';
 
 const Key kBusinessThemeSelectorSheetKey = Key('business_theme_selector_sheet');
 const Key kBusinessThemeSelectorApplyKey = Key('business_theme_selector_apply');
@@ -16,15 +16,26 @@ const Key kBrandSignatureCustomizeStyleKey = Key(
 
 Future<void> showBusinessThemeSelectorSheet(BuildContext context) async {
   previewBusinessTheme(businessThemeNotifier.value);
-  final applied = await showModalBottomSheet<bool>(
+  final result = await showModalBottomSheet<Object>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     builder: (sheetContext) => const BusinessThemeSelectorSheet(),
   );
-  if (applied != true) {
-    cancelBusinessThemePreview();
+  if (result == true) {
+    return;
   }
+  if (result == 'customize') {
+    final persistGold = applyBusinessThemePreset(
+      BusinessThemeVariant.brandSignatureGold,
+    );
+    if (context.mounted) {
+      await showBrandSignatureStyleEditor(context);
+    }
+    await persistGold;
+    return;
+  }
+  cancelBusinessThemePreview();
 }
 
 class BusinessThemeSelectorSheet extends StatelessWidget {
@@ -79,7 +90,7 @@ class BusinessThemeSelectorSheet extends StatelessWidget {
                       TextButton(
                         key: kBrandSignatureCustomizeStyleKey,
                         onPressed: () =>
-                            showBrandSignaturePaletteSheet(context),
+                            Navigator.of(context).pop('customize'),
                         child: Text(brandSignatureCustomizeStyleLabel()),
                       ),
                     ],
