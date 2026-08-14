@@ -48,6 +48,8 @@ fun resolveMapboxToken(): String {
 }
 
 val mapboxAccessToken = resolveMapboxToken()
+val fluxidiE2e = (project.findProperty("fluxidiE2e") as String?) == "true" ||
+    System.getenv("FLUXIDI_E2E_BUILD") == "true"
 
 android {
     namespace = "com.fluxidi.tracking"
@@ -65,6 +67,9 @@ android {
 
     defaultConfig {
         applicationId = "com.fluxidi.tracking"
+        if (fluxidiE2e) {
+            applicationIdSuffix = ".e2e"
+        }
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

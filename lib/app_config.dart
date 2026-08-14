@@ -2502,6 +2502,63 @@ const String kBookingBaseUrlOverride = String.fromEnvironment(
   'BOOKING_BASE_URL',
   defaultValue: '',
 );
+const bool kFluxidiE2eBuild = bool.fromEnvironment(
+  'FLUXIDI_E2E_BUILD',
+  defaultValue: false,
+);
+const String kFluxidiE2eTestToken = String.fromEnvironment(
+  'FLUXIDI_E2E_TEST_TOKEN',
+  defaultValue: '',
+);
+const String kFluxidiE2eCompanyCode = String.fromEnvironment(
+  'FLUXIDI_E2E_COMPANY_CODE',
+  defaultValue: 'FLX-99001',
+);
+const String kFluxidiProductionBookingHost =
+    'fluxidi-booking-api.fluxidi.workers.dev';
+const String kFluxidiE2eBookingHostMarker = 'fluxidi-booking-vat-e2e-test';
+const String kFluxidiE2eBannerText =
+    'FLUXIDI E2E TEST — GEEN ECHTE BETALING';
+
+/// Pure guard used by production/E2E builds and unit tests.
+String? fluxidiBookingEndpointGuardError({
+  required bool e2eBuild,
+  required String bookingBaseUrl,
+  required String e2eToken,
+}) {
+  final url = bookingBaseUrl.trim().toLowerCase();
+  final hasToken = e2eToken.trim().isNotEmpty;
+  final pointsAtProd = url.contains(kFluxidiProductionBookingHost);
+  final pointsAtE2e = url.contains(kFluxidiE2eBookingHostMarker);
+  if (e2eBuild) {
+    if (pointsAtProd || !pointsAtE2e) {
+      return 'e2e_build_must_not_use_production_api';
+    }
+    if (!hasToken) return 'e2e_build_missing_test_token';
+    return null;
+  }
+  if (hasToken) return 'production_build_must_not_include_e2e_token';
+  if (pointsAtE2e) return 'production_build_must_not_use_e2e_endpoint';
+  return null;
+}
+
+void assertFluxidiBookingEndpointGuards() {
+  final error = fluxidiBookingEndpointGuardError(
+    e2eBuild: kFluxidiE2eBuild,
+    bookingBaseUrl: kBookingBaseUrl,
+    e2eToken: kFluxidiE2eTestToken,
+  );
+  if (error != null) {
+    throw StateError(error);
+  }
+}
+
+Map<String, String> withFluxidiE2eHeaders(Map<String, String> headers) {
+  if (!kFluxidiE2eBuild) return headers;
+  final token = kFluxidiE2eTestToken.trim();
+  if (token.isEmpty) return headers;
+  return <String, String>{...headers, 'X-Fluxidi-E2E-Token': token};
+}
 const String kMapboxToken = String.fromEnvironment(
   'MAPBOX_TOKEN',
   defaultValue: '',
@@ -4253,14 +4310,14 @@ Future<CompanyOwnerAuthHeaders> resolveCompanyOwnerAuthHeaders({
       '[COMPANY_OWNER_AUTH][MODE] auth_mode=company_session source=${resolved.source}',
     );
     return CompanyOwnerAuthHeaders(
-      headers: headers,
+      headers: withFluxidiE2eHeaders(headers),
       mode: CompanyOwnerAuthMode.companySession,
     );
   }
 
   debugPrint('[COMPANY_OWNER_AUTH][MODE] auth_mode=none');
   return CompanyOwnerAuthHeaders(
-    headers: headers,
+    headers: withFluxidiE2eHeaders(headers),
     mode: CompanyOwnerAuthMode.none,
   );
 }
@@ -7999,7 +8056,9 @@ Future<Map<String, dynamic>> verifyPublicCompanyReviewAccess({
   final res = await http
       .post(
         endpoint,
-        headers: const <String, String>{'Content-Type': 'application/json'},
+        headers: withFluxidiE2eHeaders(const <String, String>{
+          'Content-Type': 'application/json',
+        }),
         body: jsonEncode(payload),
       )
       .timeout(const Duration(seconds: 12));
@@ -8014,6 +8073,55 @@ Future<Map<String, dynamic>> verifyPublicCompanyReviewAccess({
   final errorCode = (map['error'] ?? '').toString().trim();
   if (errorCode.isNotEmpty) throw Exception(errorCode);
   throw Exception('review_access_verify_failed');
+}
+
+/// E2E-only session mint against the isolated test Worker. Token comes from
+/// dart-define and is never committed.
+Future<bool> tryFluxidiE2eAutoLogin() async {
+  if (!kFluxidiE2eBuild) return false;
+  final token = kFluxidiE2eTestToken.trim();
+  final companyCode = kFluxidiE2eCompanyCode.trim().toUpperCase();
+  if (token.isEmpty || companyCode.isEmpty) return false;
+  final existingCode =
+      (activeCompanySessionNotifier.value?.companyCode ?? '').trim().toUpperCase();
+  if (existingCode == companyCode &&
+      CompanySessionStore.instance.hasValidCompanyContext) {
+    return true;
+  }
+  final verified = await verifyPublicCompanyReviewAccess(
+    payload: <String, dynamic>{
+      'company_code': companyCode,
+      'access_code': token,
+      'device_label': 'VAT E2E test device',
+      'device_type': 'mobile',
+    },
+  );
+  if (verified['ok'] != true) return false;
+  final tenantId = (verified['tenant_id'] ?? '').toString().trim();
+  final companyId = (verified['company_id'] ?? '').toString().trim();
+  final sessionToken =
+      (verified['company_session_token'] ?? verified['companySessionToken'] ?? '')
+          .toString()
+          .trim();
+  if (tenantId.isEmpty || companyId.isEmpty || sessionToken.isEmpty) return false;
+  final companyMap = verified['company'] is Map
+      ? Map<String, dynamic>.from(verified['company'] as Map)
+      : <String, dynamic>{};
+  await CompanySessionStore.instance.saveVerifiedCompanyPairingSession(
+    tenantId: tenantId,
+    companyId: companyId,
+    companyCode: (verified['company_code'] ?? companyCode).toString(),
+    companyName: (companyMap['display_name'] ?? 'Fluxidi VAT E2E Test').toString(),
+    countryCode: (companyMap['country'] ?? 'BE').toString(),
+    issuedAt: DateTime.tryParse((verified['issued_at'] ?? '').toString()),
+    expiresAt: DateTime.tryParse((verified['expires_at'] ?? '').toString()),
+    companySessionToken: sessionToken,
+    expiresInSeconds: int.tryParse(
+      (verified['expires_in'] ?? verified['expiresIn'] ?? '').toString(),
+    ),
+    linkMethod: (verified['link_method'] ?? verified['linkMethod'] ?? '').toString(),
+  );
+  return CompanySessionStore.instance.hasValidCompanyContext;
 }
 
 Future<Map<String, dynamic>> startPublicCustomerPhoneAuth({
@@ -10793,7 +10901,9 @@ const AppConfig appConfig = AppConfig(
     showDetailedBreakdown: true,
   ),
   workerBaseUrl: 'https://fluxidi-tracking-api.fluxidi.workers.dev',
-  bookingBaseUrl: 'https://fluxidi-booking-api.fluxidi.workers.dev',
+  bookingBaseUrl: kBookingBaseUrlOverride == ''
+      ? 'https://fluxidi-booking-api.fluxidi.workers.dev'
+      : kBookingBaseUrlOverride,
   navigationWorkerBaseUrl: 'https://fluxidi-navigation-api.fluxidi.workers.dev',
   defaultLanguage: AppLanguage.en,
   enabledServices: <AppOption>[

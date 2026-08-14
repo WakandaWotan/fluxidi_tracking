@@ -168,7 +168,39 @@ class FluxidiFrame extends StatelessWidget {
                             ),
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(22),
-                              child: child,
+                              child: kFluxidiE2eBuild
+                                  ? Column(
+                                      children: [
+                                        Material(
+                                          color: const Color(0xFF8B0000),
+                                          child: SafeArea(
+                                            bottom: false,
+                                            child: SizedBox(
+                                              width: double.infinity,
+                                              child: Padding(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                  vertical: 8,
+                                                  horizontal: 12,
+                                                ),
+                                                child: Text(
+                                                  kFluxidiE2eBannerText,
+                                                  textAlign: TextAlign.center,
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.w800,
+                                                    fontSize: 13,
+                                                    letterSpacing: 0.2,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        Expanded(child: child),
+                                      ],
+                                    )
+                                  : child,
                             ),
                           ),
                         ),

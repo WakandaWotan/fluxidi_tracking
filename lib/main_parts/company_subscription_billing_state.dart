@@ -66,7 +66,6 @@ class _CompanySubscriptionBillingPageState
       profile.providerSubscriptionId.trim().startsWith('sub_');
 
   String? _consolidatedRenewalLine(BackendSubscriptionProfile profile) {
-    if (!_hasProviderSubscription(profile)) return null;
     return _t(
       nl: 'Volgende betaling nog niet gesynchroniseerd.',
       en: 'Next charge not yet synchronized.',

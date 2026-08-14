@@ -2159,6 +2159,7 @@ Future<void> _prewarmLocalRideAssignmentForEntry(
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  assertFluxidiBookingEndpointGuards();
   _registerComplianceRegisterReceiptBridge();
   registerLocalRideAssignmentPrewarmHandler(
     _prewarmLocalRideAssignmentForEntry,
@@ -2171,6 +2172,14 @@ Future<void> main() async {
   await loadDriverAppThemePreference();
   await loadLocalTenantState();
   await CompanySessionStore.instance.bootstrap();
+  if (kFluxidiE2eBuild) {
+    final e2eReady = await tryFluxidiE2eAutoLogin();
+    if (e2eReady) {
+      setAppRole(AppRole.companyAdmin);
+      _startInCompanyAdminHome = true;
+      _startInDriverHome = false;
+    }
+  }
   var hasBootstrapToken = false;
   var startupTokenSource = 'unchecked';
   var hasLocalCompanyContext =

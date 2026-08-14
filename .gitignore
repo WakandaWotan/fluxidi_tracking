@@ -60,3 +60,7 @@ backup_*.patch
 *_dryrun_body.json
 invoice_issue_outbound.json
 invoice_negative_parent_only.json
+
+# Isolated VAT E2E local dart-defines / secrets
+tool/e2e/.local.defines.json
+tool/e2e/.local.env
