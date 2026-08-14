@@ -164,7 +164,9 @@ class _CompanySubscriptionBillingPageState
   ) async {
     final proration = result.proration;
     if (proration == null || !proration.hasProration) return true;
-    final proratedCents = proration.proratedCents!;
+    final proratedCents = result.amountExclVatCents ?? proration.proratedCents!;
+    final vatCents = result.vatAmountCents;
+    final dueCents = result.expectedAmountCents ?? proration.proratedCents!;
     final periodStart = _humanDate(proration.periodStart);
     final periodEnd = _humanDate(proration.periodEnd);
     final nextMonthly = proration.nextRenewalMonthlyCents;
@@ -187,21 +189,46 @@ class _CompanySubscriptionBillingPageState
           children: [
             Text(
               _t(
-                nl: 'Vandaag: ${_priceFromCents(proratedCents)} voor $periodStart t/m $periodEnd',
-                en: 'Today: ${_priceFromCents(proratedCents)} for $periodStart through $periodEnd',
-                fr: 'Aujourd\'hui : ${_priceFromCents(proratedCents)} pour $periodStart au $periodEnd',
-                es: 'Hoy: ${_priceFromCents(proratedCents)} del $periodStart al $periodEnd',
+                nl: 'Vandaag excl. btw: ${_priceFromCents(proratedCents)} voor $periodStart t/m $periodEnd',
+                en: 'Today excl. VAT: ${_priceFromCents(proratedCents)} for $periodStart through $periodEnd',
+                fr: 'Aujourd\'hui HT : ${_priceFromCents(proratedCents)} pour $periodStart au $periodEnd',
+                es: 'Hoy sin IVA: ${_priceFromCents(proratedCents)} del $periodStart al $periodEnd',
               ),
               style: TextStyle(color: _businessThemePalette.textMuted),
+            ),
+            if (vatCents != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _t(
+                  nl: 'Btw: ${_priceFromCents(vatCents)}',
+                  en: 'VAT: ${_priceFromCents(vatCents)}',
+                  fr: 'TVA : ${_priceFromCents(vatCents)}',
+                  es: 'IVA: ${_priceFromCents(vatCents)}',
+                ),
+                style: TextStyle(color: _businessThemePalette.textMuted),
+              ),
+            ],
+            const SizedBox(height: 8),
+            Text(
+              _t(
+                nl: 'Te betalen totaal: ${_priceFromCents(dueCents)}',
+                en: 'Amount due: ${_priceFromCents(dueCents)}',
+                fr: 'Total à payer : ${_priceFromCents(dueCents)}',
+                es: 'Total a pagar: ${_priceFromCents(dueCents)}',
+              ),
+              style: TextStyle(
+                color: _businessThemePalette.textPrimary,
+                fontWeight: FontWeight.w800,
+              ),
             ),
             if (nextMonthly != null) ...[
               const SizedBox(height: 8),
               Text(
                 _t(
-                  nl: 'Vanaf $periodEnd: ${_priceFromCents(nextMonthly)} per maand',
-                  en: 'From $periodEnd: ${_priceFromCents(nextMonthly)} per month',
-                  fr: 'À partir du $periodEnd : ${_priceFromCents(nextMonthly)} par mois',
-                  es: 'Desde el $periodEnd: ${_priceFromCents(nextMonthly)} al mes',
+                  nl: 'Vanaf $periodEnd: ${_priceFromCents(nextMonthly)} / maand excl. btw',
+                  en: 'From $periodEnd: ${_priceFromCents(nextMonthly)} / month excl. VAT',
+                  fr: 'À partir du $periodEnd : ${_priceFromCents(nextMonthly)} / mois HT',
+                  es: 'Desde el $periodEnd: ${_priceFromCents(nextMonthly)} / mes sin IVA',
                 ),
                 style: TextStyle(color: _businessThemePalette.textMuted),
               ),
@@ -533,11 +560,34 @@ class _CompanySubscriptionBillingPageState
       return;
     }
 
+    final quote = await fetchCompanySubscriptionCheckoutQuote(
+      tenantId: scopeId,
+      companyId: scopeId,
+    );
+    if (!mounted) return;
+    if (quote == null || quote.mollieAmountCents == null) {
+      _showSnack(
+        _t(
+          nl: 'Prijsopgave niet beschikbaar. Probeer later opnieuw.',
+          en: 'Checkout quote unavailable. Please try again later.',
+          fr: 'Devis indisponible. Réessayez plus tard.',
+          es: 'Presupuesto no disponible. Inténtalo más tarde.',
+        ),
+      );
+      return;
+    }
+    final accepted = await _confirmCheckoutQuote(
+      quote,
+      trialEndsAt: profile.trialEndsAt,
+    );
+    if (accepted != true || !mounted) return;
+
     setState(() => _activating = true);
     try {
       final result = await startCompanySubscriptionCheckout(
         tenantId: scopeId,
         companyId: scopeId,
+        quoteId: quote.quoteId,
       );
 
       if (!mounted) return;
@@ -636,6 +686,171 @@ class _CompanySubscriptionBillingPageState
     } finally {
       if (mounted) setState(() => _activating = false);
     }
+  }
+
+  String _quoteLineLabel(SubscriptionQuoteLineItem item) {
+    final qty = item.quantity > 1 ? ' ×${item.quantity}' : '';
+    final amount = _priceFromCents(item.subtotalExclVatCents ?? 0);
+    switch (item.code) {
+      case 'extra_vehicle':
+        return _t(
+          nl: 'Extra voertuig$qty excl. btw: $amount',
+          en: 'Extra vehicle$qty excl. VAT: $amount',
+          fr: 'Véhicule extra$qty HT : $amount',
+          es: 'Vehículo extra$qty sin IVA: $amount',
+        );
+      case 'extra_driver':
+        return _t(
+          nl: 'Extra chauffeur$qty excl. btw: $amount',
+          en: 'Extra driver$qty excl. VAT: $amount',
+          fr: 'Chauffeur extra$qty HT : $amount',
+          es: 'Conductor extra$qty sin IVA: $amount',
+        );
+      default:
+        return _t(
+          nl: 'Basisplan excl. btw: $amount',
+          en: 'Base plan excl. VAT: $amount',
+          fr: 'Formule HT : $amount',
+          es: 'Plan base sin IVA: $amount',
+        );
+    }
+  }
+
+  Future<bool?> _confirmCheckoutQuote(
+    SubscriptionCheckoutQuote quote, {
+    String trialEndsAt = '',
+  }) {
+    final excl = quote.subtotalExclVatCents;
+    final vat = quote.vatAmountCents;
+    final total = quote.totalInclVatCents ?? quote.mollieAmountCents;
+    final recurring = quote.recurringExclVatCents ?? excl;
+    final reverse = quote.isReverseCharge;
+    final lines = quote.lineItems.isEmpty
+        ? <Widget>[
+            Text(
+              _t(
+                nl: 'Basisplan excl. btw: ${_priceFromCents(excl ?? 0)}',
+                en: 'Base plan excl. VAT: ${_priceFromCents(excl ?? 0)}',
+                fr: 'Formule HT : ${_priceFromCents(excl ?? 0)}',
+                es: 'Plan base sin IVA: ${_priceFromCents(excl ?? 0)}',
+              ),
+            ),
+          ]
+        : quote.lineItems.map((item) => Text(_quoteLineLabel(item))).toList();
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          _t(
+            nl: 'Bevestig abonnement',
+            en: 'Confirm subscription',
+            fr: 'Confirmer l’abonnement',
+            es: 'Confirmar suscripción',
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ...lines,
+            const SizedBox(height: 6),
+            Text(
+              _t(
+                nl: 'Subtotaal excl. btw: ${_priceFromCents(excl ?? 0)}',
+                en: 'Subtotal excl. VAT: ${_priceFromCents(excl ?? 0)}',
+                fr: 'Sous-total HT : ${_priceFromCents(excl ?? 0)}',
+                es: 'Subtotal sin IVA: ${_priceFromCents(excl ?? 0)}',
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              reverse
+                  ? _t(
+                      nl: 'Btw-behandeling: btw verlegd',
+                      en: 'VAT treatment: reverse charge',
+                      fr: 'TVA : autoliquidation',
+                      es: 'IVA: inversión del sujeto pasivo',
+                    )
+                  : _t(
+                      nl: 'Btw-behandeling: Belgische btw',
+                      en: 'VAT treatment: Belgian VAT',
+                      fr: 'TVA : TVA belge',
+                      es: 'IVA: IVA belga',
+                    ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              reverse
+                  ? _t(
+                      nl: 'Btw: €0 (verlegd)',
+                      en: 'VAT: €0 (reverse charged)',
+                      fr: 'TVA : 0 € (autoliquidation)',
+                      es: 'IVA: 0 € (inversión)',
+                    )
+                  : _t(
+                      nl: 'Btw: ${_priceFromCents(vat ?? 0)}',
+                      en: 'VAT: ${_priceFromCents(vat ?? 0)}',
+                      fr: 'TVA : ${_priceFromCents(vat ?? 0)}',
+                      es: 'IVA: ${_priceFromCents(vat ?? 0)}',
+                    ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _t(
+                nl: 'Te betalen totaal: ${_priceFromCents(total ?? 0)}',
+                en: 'Amount due: ${_priceFromCents(total ?? 0)}',
+                fr: 'Total à payer : ${_priceFromCents(total ?? 0)}',
+                es: 'Total a pagar: ${_priceFromCents(total ?? 0)}',
+              ),
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+            if (recurring != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                _t(
+                  nl: 'Volgende recurring excl. btw: ${_priceFromCents(recurring)}',
+                  en: 'Next recurring excl. VAT: ${_priceFromCents(recurring)}',
+                  fr: 'Prochain récurrent HT : ${_priceFromCents(recurring)}',
+                  es: 'Próximo recurrente sin IVA: ${_priceFromCents(recurring)}',
+                ),
+              ),
+            ],
+            if (trialEndsAt.trim().isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                _t(
+                  nl: 'Proefperiode tot ${_humanDate(trialEndsAt)}',
+                  en: 'Trial until ${_humanDate(trialEndsAt)}',
+                  fr: 'Essai jusqu’au ${_humanDate(trialEndsAt)}',
+                  es: 'Prueba hasta ${_humanDate(trialEndsAt)}',
+                ),
+              ),
+            ],
+            if (quote.founder) ...[
+              const SizedBox(height: 8),
+              Text(
+                _t(
+                  nl: 'Founderprijs blijft vast zolang het abonnement actief is.',
+                  en: 'Founder price stays locked while the subscription stays active.',
+                  fr: 'Le tarif fondateur reste verrouillé tant que l’abonnement est actif.',
+                  es: 'El precio fundador permanece fijo mientras la suscripción esté activa.',
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(_t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(_t(nl: 'Betalen', en: 'Pay', fr: 'Payer', es: 'Pagar')),
+          ),
+        ],
+      ),
+    );
   }
 
   String _unsupportedMarketMessage() => _t(

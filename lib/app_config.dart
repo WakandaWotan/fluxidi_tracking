@@ -6517,6 +6517,153 @@ class AddonCheckoutProration {
   }
 }
 
+class SubscriptionQuoteLineItem {
+  const SubscriptionQuoteLineItem({
+    this.code = '',
+    this.quantity = 0,
+    this.unitExclVatCents,
+    this.subtotalExclVatCents,
+  });
+
+  final String code;
+  final int quantity;
+  final int? unitExclVatCents;
+  final int? subtotalExclVatCents;
+
+  factory SubscriptionQuoteLineItem.fromJson(Map<String, dynamic>? json) {
+    if (json == null || json.isEmpty) return const SubscriptionQuoteLineItem();
+    int? intField(String snake, String camel) {
+      final raw = json[snake] ?? json[camel];
+      if (raw == null) return null;
+      if (raw is num) return raw.toInt();
+      return int.tryParse(raw.toString());
+    }
+
+    return SubscriptionQuoteLineItem(
+      code: (json['code'] ?? '').toString().trim(),
+      quantity: intField('quantity', 'quantity') ?? 0,
+      unitExclVatCents: intField('unit_excl_vat_cents', 'unitExclVatCents'),
+      subtotalExclVatCents: intField(
+        'subtotal_excl_vat_cents',
+        'subtotalExclVatCents',
+      ),
+    );
+  }
+}
+
+class SubscriptionCheckoutQuote {
+  const SubscriptionCheckoutQuote({
+    this.quoteId = '',
+    this.planCode = '',
+    this.founder = false,
+    this.currency = 'EUR',
+    this.lineItems = const <SubscriptionQuoteLineItem>[],
+    this.subtotalExclVatCents,
+    this.recurringExclVatCents,
+    this.vatAmountCents,
+    this.totalInclVatCents,
+    this.mollieAmountCents,
+    this.taxBasis = '',
+    this.taxTreatment = '',
+    this.taxCountry = '',
+    this.vatRate,
+    this.invoiceSemantics = '',
+    this.expiresAt = '',
+  });
+
+  final String quoteId;
+  final String planCode;
+  final bool founder;
+  final String currency;
+  final List<SubscriptionQuoteLineItem> lineItems;
+  final int? subtotalExclVatCents;
+  final int? recurringExclVatCents;
+  final int? vatAmountCents;
+  final int? totalInclVatCents;
+  final int? mollieAmountCents;
+  final String taxBasis;
+  final String taxTreatment;
+  final String taxCountry;
+  final double? vatRate;
+  final String invoiceSemantics;
+  final String expiresAt;
+
+  bool get isReverseCharge => taxTreatment == 'eu_reverse_charge';
+
+  factory SubscriptionCheckoutQuote.fromJson(Map<String, dynamic>? json) {
+    if (json == null || json.isEmpty) return const SubscriptionCheckoutQuote();
+    int? intField(String snake, String camel) {
+      final raw = json[snake] ?? json[camel];
+      if (raw == null) return null;
+      if (raw is num) return raw.toInt();
+      return int.tryParse(raw.toString());
+    }
+
+    double? doubleField(String snake, String camel) {
+      final raw = json[snake] ?? json[camel];
+      if (raw == null) return null;
+      if (raw is num) return raw.toDouble();
+      return double.tryParse(raw.toString());
+    }
+
+    String textField(String snake, String camel) =>
+        (json[snake] ?? json[camel] ?? '').toString().trim();
+
+    bool boolField(String snake, String camel) {
+      final v = json[snake] ?? json[camel];
+      if (v is bool) return v;
+      if (v is num) return v != 0;
+      if (v is String) {
+        final s = v.trim().toLowerCase();
+        return s == 'true' || s == '1' || s == 'yes';
+      }
+      return false;
+    }
+
+    final rawItems = json['line_items'] ?? json['lineItems'];
+    final items = <SubscriptionQuoteLineItem>[];
+    if (rawItems is List) {
+      for (final row in rawItems) {
+        if (row is Map) {
+          items.add(
+            SubscriptionQuoteLineItem.fromJson(
+              Map<String, dynamic>.from(row),
+            ),
+          );
+        }
+      }
+    }
+
+    return SubscriptionCheckoutQuote(
+      quoteId: textField('quote_id', 'quoteId'),
+      planCode: textField('plan_code', 'planCode'),
+      founder: boolField('founder', 'founder'),
+      currency: textField('currency', 'currency').toUpperCase(),
+      lineItems: items,
+      subtotalExclVatCents: intField(
+        'subtotal_excl_vat_cents',
+        'subtotalExclVatCents',
+      ),
+      recurringExclVatCents: intField(
+        'recurring_excl_vat_cents',
+        'recurringExclVatCents',
+      ),
+      vatAmountCents: intField('vat_amount_cents', 'vatAmountCents'),
+      totalInclVatCents: intField(
+        'total_incl_vat_cents',
+        'totalInclVatCents',
+      ),
+      mollieAmountCents: intField('mollie_amount_cents', 'mollieAmountCents'),
+      taxBasis: textField('tax_basis', 'taxBasis'),
+      taxTreatment: textField('tax_treatment', 'taxTreatment'),
+      taxCountry: textField('tax_country', 'taxCountry'),
+      vatRate: doubleField('vat_rate', 'vatRate'),
+      invoiceSemantics: textField('invoice_semantics', 'invoiceSemantics'),
+      expiresAt: textField('expires_at', 'expiresAt'),
+    );
+  }
+}
+
 class BackendSubscriptionCheckoutStartResult {
   const BackendSubscriptionCheckoutStartResult({
     required this.ok,
@@ -6526,6 +6673,8 @@ class BackendSubscriptionCheckoutStartResult {
     this.activationId = '',
     this.providerPaymentId = '',
     this.expectedAmountCents,
+    this.amountExclVatCents,
+    this.vatAmountCents,
     this.currency = '',
     this.founderReserved = false,
     this.founderSlotNumber,
@@ -6534,6 +6683,7 @@ class BackendSubscriptionCheckoutStartResult {
     this.market = '',
     this.error = '',
     this.proration,
+    this.quote,
   });
 
   final bool ok;
@@ -6543,6 +6693,8 @@ class BackendSubscriptionCheckoutStartResult {
   final String activationId;
   final String providerPaymentId;
   final int? expectedAmountCents;
+  final int? amountExclVatCents;
+  final int? vatAmountCents;
   final String currency;
   final bool founderReserved;
   final int? founderSlotNumber;
@@ -6551,6 +6703,7 @@ class BackendSubscriptionCheckoutStartResult {
   final String market;
   final String error;
   final AddonCheckoutProration? proration;
+  final SubscriptionCheckoutQuote? quote;
 
   bool get hasCheckoutUrl => checkoutUrl.trim().isNotEmpty;
   bool get isUnsupportedMarket => error.trim() == 'unsupported_market';
@@ -6591,6 +6744,11 @@ class BackendSubscriptionCheckoutStartResult {
         'expected_amount_cents',
         'expectedAmountCents',
       ),
+      amountExclVatCents: intField(
+        'amount_excl_vat_cents',
+        'amountExclVatCents',
+      ),
+      vatAmountCents: intField('vat_amount_cents', 'vatAmountCents'),
       currency: textField('currency', 'currency').toUpperCase(),
       founderReserved: boolField('founder_reserved', 'founderReserved'),
       founderSlotNumber: intField('founder_slot_number', 'founderSlotNumber'),
@@ -6606,6 +6764,11 @@ class BackendSubscriptionCheckoutStartResult {
               Map<String, dynamic>.from(json['proration'] as Map),
             )
           : null,
+      quote: json['quote'] is Map
+          ? SubscriptionCheckoutQuote.fromJson(
+              Map<String, dynamic>.from(json['quote'] as Map),
+            )
+          : null,
     );
   }
 }
@@ -6618,11 +6781,51 @@ class BackendSubscriptionCheckoutStartResult {
 /// query string and the JSON body. Never throws on a non-2xx backend response;
 /// instead it returns a typed result carrying `ok=false`, the HTTP status, and
 /// the machine-readable error so the UI can branch (e.g. `unsupported_market`).
+Future<SubscriptionCheckoutQuote?> fetchCompanySubscriptionCheckoutQuote({
+  required String tenantId,
+  required String companyId,
+}) async {
+  if (!kFluxidiCompanySaasCheckoutEnabled) return null;
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse(
+      '${appConfig.bookingBaseUrl}/company/subscription/checkout/quote',
+    ),
+    tenantId: scope['tenant_id'],
+    companyId: scope['company_id'],
+  );
+  try {
+    final auth = await resolveCompanyOwnerAuthHeaders();
+    final res = await http
+        .post(
+          endpoint,
+          headers: auth.headers,
+          body: jsonEncode(scope),
+        )
+        .timeout(const Duration(seconds: 20));
+    final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+    if (decoded is! Map) return null;
+    final map = Map<String, dynamic>.from(decoded);
+    if (map['quote'] is Map) {
+      return SubscriptionCheckoutQuote.fromJson(
+        Map<String, dynamic>.from(map['quote'] as Map),
+      );
+    }
+    return SubscriptionCheckoutQuote.fromJson(map);
+  } catch (_) {
+    return null;
+  }
+}
+
 Future<BackendSubscriptionCheckoutStartResult>
 startCompanySubscriptionCheckout({
   required String tenantId,
   required String companyId,
   String? returnUrl,
+  String? quoteId,
 }) async {
   // GOOGLE-PLAY-SAAS-CONSUMPTION-ONLY-P0: Play AAB must not start SaaS Mollie
   // checkout. Entitlement/status reads use fetchCompanySubscriptionProfile.
@@ -6651,6 +6854,7 @@ startCompanySubscriptionCheckout({
     ...scope,
     if (returnUrl != null && returnUrl.trim().isNotEmpty)
       'return_url': returnUrl.trim(),
+    if (quoteId != null && quoteId.trim().isNotEmpty) 'quote_id': quoteId.trim(),
   };
   try {
     final auth = await resolveCompanyOwnerAuthHeaders();

@@ -363,4 +363,32 @@ void main() {
       expect(lower.contains('0xff3b82f6'), isFalse);
     });
   });
+
+  group('server-authoritative VAT checkout', () {
+    late String configSource;
+
+    setUpAll(() {
+      configSource = File('lib/app_config.dart').readAsStringSync();
+    });
+
+    test('client fetches quote and never sends a price', () {
+      expect(billingSource.contains('fetchCompanySubscriptionCheckoutQuote'), isTrue);
+      expect(billingSource.contains('_confirmCheckoutQuote'), isTrue);
+      expect(billingSource.contains('quoteId: quote.quoteId'), isTrue);
+      expect(billingSource.contains('amount_cents'), isFalse);
+      expect(configSource.contains('0.21'), isFalse);
+      expect(billingSource.contains('0.21'), isFalse);
+    });
+
+    test('confirm dialog shows excl VAT, treatment, VAT and total', () {
+      expect(billingSource.contains('Basisplan excl. btw'), isTrue);
+      expect(billingSource.contains('Extra voertuig'), isTrue);
+      expect(billingSource.contains('Subtotaal excl. btw'), isTrue);
+      expect(billingSource.contains('Btw-behandeling'), isTrue);
+      expect(billingSource.contains('btw verlegd'), isTrue);
+      expect(billingSource.contains('Te betalen totaal'), isTrue);
+      expect(billingSource.contains('Volgende recurring excl. btw'), isTrue);
+      expect(billingSource.contains('Proefperiode tot'), isTrue);
+    });
+  });
 }
