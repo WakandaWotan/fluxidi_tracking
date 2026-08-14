@@ -30,7 +30,9 @@ import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:fluxidi_tracking/widgets/business_theme_cycle_button.dart';
 
 /// Real Quick Actions artwork set (Settings card), one asset per preset.
-String _settingsArtwork(BusinessThemeVariant preset) => businessThemePresetAsset(
+String _settingsArtwork(
+  BusinessThemeVariant preset,
+) => businessThemePresetAsset(
   preset: preset,
   executiveGold: 'assets/fluxidi/settings_background_company.webp',
   corporateBlue:
@@ -39,23 +41,29 @@ String _settingsArtwork(BusinessThemeVariant preset) => businessThemePresetAsset
       'assets/Clean & Professional Compagny/company_settings_clean_professional.webp',
   emeraldIvory:
       'assets/Emerald_Ivory_Company/company_settings_alt_emerald_ivory.webp',
-  fluxidiNeonRush: 'assets/🥇 Fluxidi Neon Rush/company_settings_neon_rush.webp',
+  fluxidiNeonRush:
+      'assets/🥇 Fluxidi Neon Rush/company_settings_neon_rush.webp',
 );
 
 /// Real Quick Actions artwork set (Bookings card), one asset per preset.
-String _bookingsArtwork(BusinessThemeVariant preset) => businessThemePresetAsset(
+String _bookingsArtwork(
+  BusinessThemeVariant preset,
+) => businessThemePresetAsset(
   preset: preset,
   executiveGold: 'assets/fluxidi/bookings_background_company.webp',
   corporateBlue:
       'assets/Corporate BLEU Compagny/company_bookings_corporate_blue.webp',
   cleanProfessional:
       'assets/Clean & Professional Compagny/company_bookings_clean_professional.webp',
-  emeraldIvory: 'assets/Emerald_Ivory_Company/company_bookings_emerald_ivory.webp',
-  fluxidiNeonRush: 'assets/🥇 Fluxidi Neon Rush/company_bookings_neon_rush.webp',
+  emeraldIvory:
+      'assets/Emerald_Ivory_Company/company_bookings_emerald_ivory.webp',
+  fluxidiNeonRush:
+      'assets/🥇 Fluxidi Neon Rush/company_bookings_neon_rush.webp',
 );
 
 /// Artwork for whatever preset is currently active, through the real owner.
-String _activeSettingsArtwork() => _settingsArtwork(activeBusinessThemePreset());
+String _activeSettingsArtwork() =>
+    _settingsArtwork(activeBusinessThemePreset());
 
 const BusinessDashboardKpiSnapshot _kpiSnapshot = BusinessDashboardKpiSnapshot(
   tenantId: 'fluxidi',
@@ -205,7 +213,7 @@ void main() {
     test('five presses wrap back to Executive Gold', () async {
       await applyBusinessThemePreset(BusinessThemeVariant.executiveGold);
       final seen = <BusinessThemeVariant>[];
-      for (var i = 0; i < 5; i++) {
+      for (var i = 0; i < 6; i++) {
         seen.add(await cycleBusinessThemePreference());
       }
       expect(seen, <BusinessThemeVariant>[
@@ -213,10 +221,14 @@ void main() {
         BusinessThemeVariant.cleanProfessional,
         BusinessThemeVariant.emeraldIvory,
         BusinessThemeVariant.fluxidiNeonRush,
+        BusinessThemeVariant.brandSignatureGold,
         BusinessThemeVariant.executiveGold,
       ]);
-      expect(seen.toSet().length, 5, reason: 'no duplicate or hidden state');
-      expect(kBusinessThemeCycleOrder.toSet(), BusinessThemeVariant.values.toSet());
+      expect(seen.toSet().length, 6, reason: 'no duplicate or hidden state');
+      expect(
+        kBusinessThemeCycleOrder.toSet(),
+        BusinessThemeVariant.values.toSet(),
+      );
     });
 
     // Test 8.
@@ -245,7 +257,7 @@ void main() {
       await applyBusinessThemePreset(BusinessThemeVariant.executiveGold);
       final futures = <Future<BusinessThemeVariant>>[];
       final observed = <bool>[];
-      for (var i = 0; i < 5; i++) {
+      for (var i = 0; i < 6; i++) {
         futures.add(cycleBusinessThemePreference());
         observed.add(
           businessThemeNotifier.value == businessAppearanceNotifier.value,
@@ -258,7 +270,7 @@ void main() {
       expect(
         businessThemeNotifier.value,
         BusinessThemeVariant.executiveGold,
-        reason: 'five rapid presses complete one full cycle',
+        reason: 'six rapid presses complete one full cycle',
       );
       expect(
         businessThemeAssetMatchesPreset(
@@ -288,7 +300,10 @@ void main() {
         BusinessThemeVariant.emeraldIvory,
       );
       expect(businessThemeNotifier.value, BusinessThemeVariant.emeraldIvory);
-      expect(businessAppearanceNotifier.value, BusinessThemeVariant.emeraldIvory);
+      expect(
+        businessAppearanceNotifier.value,
+        BusinessThemeVariant.emeraldIvory,
+      );
       expect(_activeSettingsArtwork(), contains('emerald_ivory'));
 
       // The shortcut continues from the settings selection.
@@ -300,7 +315,10 @@ void main() {
 
     test('legacy single-owner savers now apply the complete preset', () async {
       await saveBusinessThemePreference(BusinessThemeVariant.corporateBlue);
-      expect(businessAppearanceNotifier.value, BusinessThemeVariant.corporateBlue);
+      expect(
+        businessAppearanceNotifier.value,
+        BusinessThemeVariant.corporateBlue,
+      );
       expect(_activeSettingsArtwork(), contains('corporate_blue'));
 
       await saveBusinessAppearancePreference(
@@ -350,7 +368,10 @@ void main() {
       await loadBusinessThemePreference();
       await loadBusinessAppearancePreference();
 
-      expect(businessAppearanceNotifier.value, BusinessThemeVariant.emeraldIvory);
+      expect(
+        businessAppearanceNotifier.value,
+        BusinessThemeVariant.emeraldIvory,
+      );
       expect(_activeSettingsArtwork(), contains('emerald_ivory'));
       // The legacy file is healed on disk, not just in memory.
       final healed = jsonDecode(await appearanceFile.readAsString()) as Map;
@@ -361,11 +382,11 @@ void main() {
     testWidgets('pause/resume preserves colors, artwork and overlay', (
       tester,
     ) async {
-      await tester.runAsync(() => applyBusinessThemePreset(BusinessThemeVariant.cleanProfessional));
+      await tester.runAsync(
+        () => applyBusinessThemePreset(BusinessThemeVariant.cleanProfessional),
+      );
       await tester.pumpWidget(
-        const MaterialApp(
-          home: Scaffold(body: BusinessThemeCycleButton()),
-        ),
+        const MaterialApp(home: Scaffold(body: BusinessThemeCycleButton())),
       );
 
       for (final state in <AppLifecycleState>[
@@ -402,7 +423,9 @@ void main() {
     testWidgets('navigating away and back preserves the complete preset', (
       tester,
     ) async {
-      await tester.runAsync(() => applyBusinessThemePreset(BusinessThemeVariant.corporateBlue));
+      await tester.runAsync(
+        () => applyBusinessThemePreset(BusinessThemeVariant.corporateBlue),
+      );
       final navKey = GlobalKey<NavigatorState>();
       await tester.pumpWidget(
         MaterialApp(
@@ -461,26 +484,29 @@ void main() {
     });
 
     // Test 16.
-    test('KPI values and loading state are unaffected by preset changes', () async {
-      BusinessDashboardKpiView view() => resolveBusinessDashboardKpiView(
-        lastSuccessfulForActiveScope: _kpiSnapshot,
-        requestInFlight: true,
-        lastRequestFailed: false,
-      );
-      final before = view();
+    test(
+      'KPI values and loading state are unaffected by preset changes',
+      () async {
+        BusinessDashboardKpiView view() => resolveBusinessDashboardKpiView(
+          lastSuccessfulForActiveScope: _kpiSnapshot,
+          requestInFlight: true,
+          lastRequestFailed: false,
+        );
+        final before = view();
 
-      for (var i = 0; i < 5; i++) {
-        await cycleBusinessThemePreference();
-        final after = view();
-        expect(after.phase, before.phase);
-        expect(after.showRefreshIndicator, before.showRefreshIndicator);
-        expect(after.showRetry, before.showRetry);
-        expect(after.snapshot?.openBookingsCount, 7);
-        expect(after.snapshot?.completedRidesCount, 42);
-        expect(after.snapshot?.monthlyIncomeCents, 128450);
-        expect(after.snapshot?.currency, 'EUR');
-      }
-    });
+        for (var i = 0; i < 5; i++) {
+          await cycleBusinessThemePreference();
+          final after = view();
+          expect(after.phase, before.phase);
+          expect(after.showRefreshIndicator, before.showRefreshIndicator);
+          expect(after.showRetry, before.showRetry);
+          expect(after.snapshot?.openBookingsCount, 7);
+          expect(after.snapshot?.completedRidesCount, 42);
+          expect(after.snapshot?.monthlyIncomeCents, 128450);
+          expect(after.snapshot?.currency, 'EUR');
+        }
+      },
+    );
 
     test('theme sources never reference company branding or KPI owners', () {
       for (final path in <String>[
@@ -506,17 +532,20 @@ void main() {
       }
     });
 
-    test('customer presentation is untouched by a business preset change', () async {
-      customerThemeNotifier.value = CustomerThemeVariant.premiumLight;
-      businessPublishedCustomerThemeNotifier.value =
-          CustomerThemeVariant.premiumLight;
-      await cycleBusinessThemePreference();
-      expect(customerThemeNotifier.value, CustomerThemeVariant.premiumLight);
-      expect(
-        businessPublishedCustomerThemeNotifier.value,
-        CustomerThemeVariant.premiumLight,
-      );
-    });
+    test(
+      'customer presentation is untouched by a business preset change',
+      () async {
+        customerThemeNotifier.value = CustomerThemeVariant.premiumLight;
+        businessPublishedCustomerThemeNotifier.value =
+            CustomerThemeVariant.premiumLight;
+        await cycleBusinessThemePreference();
+        expect(customerThemeNotifier.value, CustomerThemeVariant.premiumLight);
+        expect(
+          businessPublishedCustomerThemeNotifier.value,
+          CustomerThemeVariant.premiumLight,
+        );
+      },
+    );
   });
 
   group('system overlay follows the complete preset', () {
@@ -540,7 +569,11 @@ void main() {
         final style = systemUiOverlayStyleForBusinessTheme(
           paletteForBusinessTheme(preset),
         );
-        expect(style.statusBarIconBrightness, Brightness.light, reason: '$preset');
+        expect(
+          style.statusBarIconBrightness,
+          Brightness.light,
+          reason: '$preset',
+        );
         expect(style.statusBarBrightness, Brightness.dark, reason: '$preset');
       }
     });
@@ -558,10 +591,7 @@ void main() {
       }
       // Clean Professional is the light preset; it is the third press.
       expect(brightnesses[1], Brightness.dark);
-      expect(
-        brightnesses.where((b) => b == Brightness.light).length,
-        4,
-      );
+      expect(brightnesses.where((b) => b == Brightness.light).length, 4);
     });
   });
 
@@ -632,7 +662,9 @@ void main() {
       tester,
     ) async {
       for (final size in <Size>[Size(390, 844), Size(844, 390)]) {
-        await tester.runAsync(() => applyBusinessThemePreset(BusinessThemeVariant.executiveGold));
+        await tester.runAsync(
+          () => applyBusinessThemePreset(BusinessThemeVariant.executiveGold),
+        );
         await pumpHeader(
           tester,
           size: size,
@@ -659,7 +691,9 @@ void main() {
         (size: Size(800, 1280), height: 320),
         (size: Size(1280, 800), height: 160),
       ]) {
-        await tester.runAsync(() => applyBusinessThemePreset(BusinessThemeVariant.emeraldIvory));
+        await tester.runAsync(
+          () => applyBusinessThemePreset(BusinessThemeVariant.emeraldIvory),
+        );
         await pumpHeader(
           tester,
           size: layout.size,
@@ -720,7 +754,9 @@ void main() {
       // navy page gradient rebuilds with the same preset as cards/artwork.
       expect(home.contains('BusinessThemeRootCanvas('), isTrue);
       expect(
-        home.contains('applyBusinessThemeSystemUiOverlay(_businessThemePalette)'),
+        home.contains(
+          'applyBusinessThemeSystemUiOverlay(_businessThemePalette)',
+        ),
         isTrue,
       );
       final rootCanvas = File(

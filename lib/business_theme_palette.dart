@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/business_theme/brand_signature_palette.dart';
 
 enum BusinessThemeVariant {
   executiveGold,
@@ -6,6 +7,7 @@ enum BusinessThemeVariant {
   cleanProfessional,
   emeraldIvory,
   fluxidiNeonRush,
+  brandSignatureGold,
 }
 
 @immutable
@@ -144,5 +146,44 @@ BusinessThemePalette paletteForBusinessTheme(BusinessThemeVariant variant) {
       return _emeraldIvoryPalette;
     case BusinessThemeVariant.fluxidiNeonRush:
       return _fluxidiNeonRushPalette;
+    case BusinessThemeVariant.brandSignatureGold:
+      return brandSignatureBusinessPalette(brandSignaturePaletteNotifier.value);
   }
+}
+
+/// Maps the isolated Brand Signature colors onto the shared palette shape
+/// without mutating any existing preset constants.
+BusinessThemePalette brandSignatureBusinessPalette(
+  BrandSignaturePalette colors,
+) {
+  final safe = sanitizeBrandSignaturePalette(colors);
+  final textPrimary = brandSignatureReadableTextOn(safe.card);
+  final textOnAccent = brandSignatureReadableTextOn(safe.accent);
+  final isDark =
+      brandSignatureContrastRatio(const Color(0xFFFFFFFF), safe.page) >=
+      brandSignatureContrastRatio(const Color(0xFF000000), safe.page);
+  return BusinessThemePalette(
+    background: safe.page,
+    surface: safe.card,
+    surfaceAlt: safe.header,
+    textPrimary: textPrimary,
+    textSecondary: _readableMuted(textPrimary, safe.card, 0.18),
+    textMuted: _readableMuted(textPrimary, safe.card, 0.28),
+    textOnAccent: textOnAccent,
+    textOnWarning: const Color(0xFFFFF2CC),
+    accent: safe.accent,
+    border: Color.lerp(safe.accent, safe.card, 0.45)!,
+    danger: const Color(0xFFD07A82),
+    success: const Color(0xFF49B889),
+    shadow: const Color(0x99000000),
+    isDark: isDark,
+  );
+}
+
+Color _readableMuted(Color text, Color background, double mix) {
+  final candidate = Color.lerp(text, background, mix)!;
+  if (brandSignatureContrastRatio(candidate, background) >= 4.5) {
+    return candidate;
+  }
+  return text;
 }

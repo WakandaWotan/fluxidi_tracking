@@ -23,9 +23,7 @@ void main() {
   late Directory tempDir;
 
   setUp(() async {
-    tempDir = await Directory.systemTemp.createTemp(
-      'fluxidi_biz_theme_cycle_',
-    );
+    tempDir = await Directory.systemTemp.createTemp('fluxidi_biz_theme_cycle_');
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(
@@ -84,9 +82,16 @@ void main() {
       );
     });
 
-    test('5 Fluxy Neon Rush → Executive Gold (wrap)', () {
+    test('5 Fluxy Neon Rush → Brand Signature Gold', () {
       expect(
         nextBusinessThemeVariant(BusinessThemeVariant.fluxidiNeonRush),
+        BusinessThemeVariant.brandSignatureGold,
+      );
+    });
+
+    test('6 Brand Signature Gold → Executive Gold (wrap)', () {
+      expect(
+        nextBusinessThemeVariant(BusinessThemeVariant.brandSignatureGold),
         BusinessThemeVariant.executiveGold,
       );
     });
@@ -98,6 +103,7 @@ void main() {
         BusinessThemeVariant.cleanProfessional,
         BusinessThemeVariant.emeraldIvory,
         BusinessThemeVariant.fluxidiNeonRush,
+        BusinessThemeVariant.brandSignatureGold,
       ]);
       expect(
         businessThemeProductLabel(BusinessThemeVariant.fluxidiNeonRush),
@@ -107,18 +113,20 @@ void main() {
   });
 
   group('persistence + notifier owner', () {
-    test('6-7 current persisted theme determines next; one tap advances once',
-        () async {
-      await saveBusinessThemePreference(BusinessThemeVariant.corporateBlue);
-      expect(businessThemeNotifier.value, BusinessThemeVariant.corporateBlue);
+    test(
+      '6-7 current persisted theme determines next; one tap advances once',
+      () async {
+        await saveBusinessThemePreference(BusinessThemeVariant.corporateBlue);
+        expect(businessThemeNotifier.value, BusinessThemeVariant.corporateBlue);
 
-      final next = await cycleBusinessThemePreference();
-      expect(next, BusinessThemeVariant.cleanProfessional);
-      expect(
-        businessThemeNotifier.value,
-        BusinessThemeVariant.cleanProfessional,
-      );
-    });
+        final next = await cycleBusinessThemePreference();
+        expect(next, BusinessThemeVariant.cleanProfessional);
+        expect(
+          businessThemeNotifier.value,
+          BusinessThemeVariant.cleanProfessional,
+        );
+      },
+    );
 
     test('8 one tap advances exactly once', () async {
       businessThemeNotifier.value = BusinessThemeVariant.executiveGold;
@@ -137,6 +145,7 @@ void main() {
         BusinessThemeVariant.cleanProfessional,
         BusinessThemeVariant.emeraldIvory,
         BusinessThemeVariant.fluxidiNeonRush,
+        BusinessThemeVariant.brandSignatureGold,
         BusinessThemeVariant.executiveGold,
         BusinessThemeVariant.corporateBlue,
       ];
@@ -166,10 +175,7 @@ void main() {
       await saveBusinessThemePreference(BusinessThemeVariant.fluxidiNeonRush);
       businessThemeNotifier.value = BusinessThemeVariant.executiveGold;
       await loadBusinessThemePreference();
-      expect(
-        businessThemeNotifier.value,
-        BusinessThemeVariant.fluxidiNeonRush,
-      );
+      expect(businessThemeNotifier.value, BusinessThemeVariant.fluxidiNeonRush);
     });
 
     test('invalid legacy storage falls back to Executive Gold', () async {
@@ -185,10 +191,7 @@ void main() {
         flush: true,
       );
       await loadBusinessThemePreference();
-      expect(
-        businessThemeNotifier.value,
-        BusinessThemeVariant.executiveGold,
-      );
+      expect(businessThemeNotifier.value, BusinessThemeVariant.executiveGold);
     });
   });
 
@@ -225,9 +228,12 @@ void main() {
       expect(businessThemeNotifier.value, next);
       businessThemeNotifier.value = beforeBiz;
 
-      final cycleSource = File('lib/business_theme_cycle.dart').readAsStringSync();
-      final buttonSource =
-          File('lib/widgets/business_theme_cycle_button.dart').readAsStringSync();
+      final cycleSource = File(
+        'lib/business_theme_cycle.dart',
+      ).readAsStringSync();
+      final buttonSource = File(
+        'lib/widgets/business_theme_cycle_button.dart',
+      ).readAsStringSync();
       expect(cycleSource.contains('MapThemeMode'), isFalse);
       expect(buttonSource.contains('MapThemeMode'), isFalse);
     });
@@ -337,15 +343,16 @@ void main() {
       );
       expect(semantics.label, kBusinessThemeCycleSemanticLabel);
       expect(semantics.hasFlag(SemanticsFlag.isButton), isTrue);
-      expect(semantics.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+      expect(
+        semantics.getSemanticsData().hasAction(SemanticsAction.tap),
+        isTrue,
+      );
     });
 
     testWidgets('23 no SnackBar or dialog loop is introduced', (tester) async {
       await tester.pumpWidget(
         const MaterialApp(
-          home: Scaffold(
-            body: Center(child: BusinessThemeCycleButton()),
-          ),
+          home: Scaffold(body: Center(child: BusinessThemeCycleButton())),
         ),
       );
       for (var i = 0; i < 6; i++) {
@@ -358,7 +365,9 @@ void main() {
       expect(find.byType(PopupMenuButton<dynamic>), findsNothing);
     });
 
-    testWidgets('button tap advances business theme immediately', (tester) async {
+    testWidgets('button tap advances business theme immediately', (
+      tester,
+    ) async {
       businessThemeNotifier.value = BusinessThemeVariant.executiveGold;
       await tester.pumpWidget(
         const MaterialApp(
@@ -445,7 +454,9 @@ Future<void> _pumpHeaderHarness(
                 heroDecoration: mode == BusinessHomeHeaderThemeMode.hero
                     ? BoxDecoration(
                         borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: palette.accent.withOpacity(0.3)),
+                        border: Border.all(
+                          color: palette.accent.withOpacity(0.3),
+                        ),
                       )
                     : BoxDecoration(
                         color: palette.surface,
@@ -486,7 +497,9 @@ void _expectHeaderGeometry(WidgetTester tester) {
   final greeting = tester.getRect(
     find.byKey(BusinessHomeHeaderThemeRegion.greetingKey),
   );
-  final kpi = tester.getRect(find.byKey(BusinessHomeHeaderThemeRegion.kpiSlotKey));
+  final kpi = tester.getRect(
+    find.byKey(BusinessHomeHeaderThemeRegion.kpiSlotKey),
+  );
 
   expect(button.width, greaterThanOrEqualTo(40));
   expect(button.height, greaterThanOrEqualTo(40));

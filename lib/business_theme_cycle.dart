@@ -12,6 +12,7 @@ const List<BusinessThemeVariant> kBusinessThemeCycleOrder =
       BusinessThemeVariant.cleanProfessional,
       BusinessThemeVariant.emeraldIvory,
       BusinessThemeVariant.fluxidiNeonRush,
+      BusinessThemeVariant.brandSignatureGold,
     ];
 
 /// Accessible label for the one-tap business theme cycle control.
@@ -27,7 +28,8 @@ BusinessThemeVariant nextBusinessThemeVariant(BusinessThemeVariant current) {
   if (index < 0) {
     return kBusinessThemeCycleOrder.first;
   }
-  return kBusinessThemeCycleOrder[(index + 1) % kBusinessThemeCycleOrder.length];
+  return kBusinessThemeCycleOrder[(index + 1) %
+      kBusinessThemeCycleOrder.length];
 }
 
 /// Human-readable product name for the active business theme.
@@ -43,5 +45,7 @@ String businessThemeProductLabel(BusinessThemeVariant variant) {
       return 'Emerald Ivory';
     case BusinessThemeVariant.fluxidiNeonRush:
       return 'Fluxy Neon Rush';
+    case BusinessThemeVariant.brandSignatureGold:
+      return 'Brand Signature Gold';
   }
 }

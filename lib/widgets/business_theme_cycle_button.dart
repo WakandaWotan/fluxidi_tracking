@@ -16,6 +16,8 @@ class BusinessThemeCycleButton extends StatelessWidget {
     super.key,
     this.heroOverlay = false,
     this.onCycled,
+    this.onPressed,
+    this.goldThemeAsset,
   });
 
   /// When true (tablet hero header), keep a slightly stronger frosted chip so
@@ -25,9 +27,21 @@ class BusinessThemeCycleButton extends StatelessWidget {
   /// Optional test/hook callback after a successful cycle (not used for UX).
   final ValueChanged<BusinessThemeVariant>? onCycled;
 
+  /// When set, the dashboard opens the theme selector instead of cycling.
+  /// Standalone / existing cycle tests omit this and keep one-tap cycling.
+  final VoidCallback? onPressed;
+
+  /// Brand Signature Gold only: golden theme asset. Existing themes keep
+  /// [Icons.palette_outlined].
+  final String? goldThemeAsset;
+
   static const Key buttonKey = Key('business_theme_cycle_button');
 
   Future<void> _onTap() async {
+    if (onPressed != null) {
+      onPressed!();
+      return;
+    }
     final next = nextBusinessThemeVariant(businessThemeNotifier.value);
     await applyBusinessThemePreset(next);
     onCycled?.call(next);
@@ -65,11 +79,16 @@ class BusinessThemeCycleButton extends StatelessWidget {
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: border),
                   ),
-                  child: Icon(
-                    Icons.palette_outlined,
-                    size: 20,
-                    color: fg,
-                  ),
+                  child: goldThemeAsset == null
+                      ? Icon(Icons.palette_outlined, size: 20, color: fg)
+                      : Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: Image.asset(
+                            goldThemeAsset!,
+                            fit: BoxFit.contain,
+                            filterQuality: FilterQuality.high,
+                          ),
+                        ),
                 ),
               ),
             ),
@@ -137,7 +156,8 @@ class BusinessHomeHeaderThemeRegion extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              if (heroBackground != null) Positioned.fill(child: heroBackground!),
+              if (heroBackground != null)
+                Positioned.fill(child: heroBackground!),
               Positioned.fill(
                 child: Padding(
                   padding: contentPadding,
@@ -193,21 +213,13 @@ class BusinessHomeHeaderThemeRegion extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      greeting,
-                      key: greetingKey,
-                      style: greetingStyle,
-                    ),
+                    Text(greeting, key: greetingKey, style: greetingStyle),
                     SizedBox(height: textGap),
                     Text(subtitle, style: subtitleStyle),
                   ],
                 ),
               ),
-              Positioned(
-                right: 0,
-                bottom: 0,
-                child: cycleButton,
-              ),
+              Positioned(right: 0, bottom: 0, child: cycleButton),
             ],
           ),
         ),

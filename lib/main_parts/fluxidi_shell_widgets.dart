@@ -118,6 +118,10 @@ class FluxidiFrame extends StatelessWidget {
                       paletteForBusinessTheme(
                         BusinessThemeVariant.fluxidiNeonRush,
                       ).accent,
+                    BusinessThemeVariant.brandSignatureGold =>
+                      paletteForBusinessTheme(
+                        BusinessThemeVariant.brandSignatureGold,
+                      ).accent,
                   };
                   frameSource = 'business';
                 }
@@ -180,9 +184,9 @@ class FluxidiFrame extends StatelessWidget {
                                               child: Padding(
                                                 padding:
                                                     const EdgeInsets.symmetric(
-                                                  vertical: 8,
-                                                  horizontal: 12,
-                                                ),
+                                                      vertical: 8,
+                                                      horizontal: 12,
+                                                    ),
                                                 child: Text(
                                                   kFluxidiE2eBannerText,
                                                   textAlign: TextAlign.center,

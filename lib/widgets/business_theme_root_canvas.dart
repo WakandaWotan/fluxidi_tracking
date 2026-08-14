@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:fluxidi_tracking/business_theme/brand_signature_palette.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/business_theme_system_ui.dart';
@@ -14,11 +15,7 @@ Color businessThemeRootBackground(BusinessThemeVariant preset) =>
 /// Canonical business-dashboard page gradient (top → bottom).
 List<Color> businessThemeRootGradientColors(BusinessThemeVariant preset) {
   final palette = paletteForBusinessTheme(preset);
-  return <Color>[
-    palette.background,
-    palette.background,
-    palette.surfaceAlt,
-  ];
+  return <Color>[palette.background, palette.background, palette.surfaceAlt];
 }
 
 /// Full root [BoxDecoration] (gradient + outer frame accents) for one preset.
@@ -70,8 +67,12 @@ class BusinessThemeRootCanvas extends StatelessWidget {
     this.wrapSafeArea = true,
   });
 
-  static const Key scaffoldKey = ValueKey<String>('business_theme_root_scaffold');
-  static const Key gradientKey = ValueKey<String>('business_theme_root_gradient');
+  static const Key scaffoldKey = ValueKey<String>(
+    'business_theme_root_scaffold',
+  );
+  static const Key gradientKey = ValueKey<String>(
+    'business_theme_root_gradient',
+  );
 
   final Widget child;
   final bool wrapSafeArea;
@@ -81,20 +82,25 @@ class BusinessThemeRootCanvas extends StatelessWidget {
     return ValueListenableBuilder<BusinessThemeVariant>(
       valueListenable: businessThemeNotifier,
       builder: (context, _, __) {
-        final preset = activeBusinessThemePreset();
-        final palette = paletteForBusinessTheme(preset);
-        final gradient = DecoratedBox(
-          key: gradientKey,
-          decoration: businessThemeRootBoxDecoration(preset),
-          child: child,
-        );
-        return AnnotatedRegion<SystemUiOverlayStyle>(
-          value: systemUiOverlayStyleForBusinessTheme(palette),
-          child: Scaffold(
-            key: scaffoldKey,
-            backgroundColor: businessThemeRootBackground(preset),
-            body: wrapSafeArea ? SafeArea(child: gradient) : gradient,
-          ),
+        return ValueListenableBuilder<BrandSignaturePalette>(
+          valueListenable: brandSignaturePaletteNotifier,
+          builder: (context, __, ___) {
+            final preset = activeBusinessThemePreset();
+            final palette = paletteForBusinessTheme(preset);
+            final gradient = DecoratedBox(
+              key: gradientKey,
+              decoration: businessThemeRootBoxDecoration(preset),
+              child: child,
+            );
+            return AnnotatedRegion<SystemUiOverlayStyle>(
+              value: systemUiOverlayStyleForBusinessTheme(palette),
+              child: Scaffold(
+                key: scaffoldKey,
+                backgroundColor: businessThemeRootBackground(preset),
+                body: wrapSafeArea ? SafeArea(child: gradient) : gradient,
+              ),
+            );
+          },
         );
       },
     );

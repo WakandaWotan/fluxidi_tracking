@@ -4,8 +4,10 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'business_theme/brand_signature_palette.dart';
 import 'business_theme_cycle.dart';
 import 'business_theme_palette.dart';
+import 'company_session_store.dart';
 import 'customer_theme_palette.dart';
 
 const BusinessThemeVariant _kDefaultBusinessTheme =
@@ -130,6 +132,120 @@ DriverHomeMobileLayout _driverHomeMobileLayoutFromStorage(String raw) {
   return _kDefaultDriverHomeMobileLayout;
 }
 
+BusinessThemeVariant _legacyGlobalBusinessTheme = _kDefaultBusinessTheme;
+final Map<String, BusinessThemeVariant> _businessThemeByCompanyId =
+    <String, BusinessThemeVariant>{};
+final Map<String, BrandSignaturePalette> _brandSignaturePaletteByCompanyId =
+    <String, BrandSignaturePalette>{};
+
+bool _businessThemePreviewActive = false;
+BusinessThemeVariant? _previewCheckpointTheme;
+BrandSignaturePalette? _previewCheckpointPalette;
+String? _previewCompanyId;
+bool _companyThemeListenerAttached = false;
+
+/// True only while a dashboard/settings selector is showing an uncommitted
+/// live preview. Restarts never restore this flag.
+bool get isBusinessThemePreviewActive => _businessThemePreviewActive;
+
+String? currentBusinessThemeCompanyId() {
+  final sessionId = (activeCompanySessionNotifier.value?.companyId ?? '')
+      .trim();
+  if (sessionId.isNotEmpty) return sessionId;
+  return null;
+}
+
+BusinessThemeVariant resolveStoredBusinessThemeForCompany(String? companyId) {
+  final id = (companyId ?? '').trim();
+  if (id.isNotEmpty) {
+    final scoped = _businessThemeByCompanyId[id];
+    if (scoped != null) return scoped;
+  }
+  return _legacyGlobalBusinessTheme;
+}
+
+BrandSignaturePalette resolveStoredBrandSignaturePalette(String? companyId) {
+  final id = (companyId ?? '').trim();
+  if (id.isNotEmpty) {
+    final scoped = _brandSignaturePaletteByCompanyId[id];
+    if (scoped != null) return scoped;
+  }
+  return BrandSignaturePalette.defaults;
+}
+
+void _attachCompanyThemeListener() {
+  if (_companyThemeListenerAttached) return;
+  _companyThemeListenerAttached = true;
+  activeCompanySessionNotifier.addListener(syncBusinessThemeForActiveCompany);
+}
+
+/// Cancels any leaked preview and activates the stored theme for the live
+/// company. Existing companies without a scoped entry keep the legacy global
+/// variant — they are never auto-migrated to Brand Signature Gold.
+void syncBusinessThemeForActiveCompany() {
+  final companyId = currentBusinessThemeCompanyId();
+  if (_businessThemePreviewActive &&
+      _previewCompanyId != null &&
+      _previewCompanyId != companyId) {
+    cancelBusinessThemePreview();
+  }
+  if (_businessThemePreviewActive) return;
+  final resolved = resolveStoredBusinessThemeForCompany(companyId);
+  businessThemeNotifier.value = resolved;
+  businessAppearanceNotifier.value = resolved;
+  brandSignaturePaletteNotifier.value = resolveStoredBrandSignaturePalette(
+    companyId,
+  );
+}
+
+/// Starts a reversible live preview. Persistence is unchanged until apply.
+void previewBusinessTheme(BusinessThemeVariant variant) {
+  if (!_businessThemePreviewActive) {
+    _previewCheckpointTheme = businessThemeNotifier.value;
+    _previewCheckpointPalette = brandSignaturePaletteNotifier.value;
+    _previewCompanyId = currentBusinessThemeCompanyId();
+    _businessThemePreviewActive = true;
+  }
+  businessThemeNotifier.value = variant;
+  businessAppearanceNotifier.value = variant;
+}
+
+void previewBrandSignaturePalette(BrandSignaturePalette palette) {
+  if (!_businessThemePreviewActive) {
+    _previewCheckpointTheme = businessThemeNotifier.value;
+    _previewCheckpointPalette = brandSignaturePaletteNotifier.value;
+    _previewCompanyId = currentBusinessThemeCompanyId();
+    _businessThemePreviewActive = true;
+  }
+  brandSignaturePaletteNotifier.value = sanitizeBrandSignaturePalette(palette);
+}
+
+void cancelBusinessThemePreview() {
+  if (!_businessThemePreviewActive) return;
+  final theme = _previewCheckpointTheme ?? _legacyGlobalBusinessTheme;
+  final palette = _previewCheckpointPalette ?? BrandSignaturePalette.defaults;
+  _clearPreviewCheckpoint();
+  businessThemeNotifier.value = theme;
+  businessAppearanceNotifier.value = theme;
+  brandSignaturePaletteNotifier.value = palette;
+}
+
+void cancelBrandSignaturePalettePreview() {
+  if (_previewCheckpointPalette != null) {
+    brandSignaturePaletteNotifier.value = _previewCheckpointPalette!;
+  }
+  if (_previewCheckpointTheme == businessThemeNotifier.value) {
+    _clearPreviewCheckpoint();
+  }
+}
+
+void _clearPreviewCheckpoint() {
+  _businessThemePreviewActive = false;
+  _previewCheckpointTheme = null;
+  _previewCheckpointPalette = null;
+  _previewCompanyId = null;
+}
+
 Future<void> _writeBusinessThemeVariantFile(
   String fileName,
   BusinessThemeVariant variant,
@@ -138,6 +254,41 @@ Future<void> _writeBusinessThemeVariantFile(
     final file = await _businessThemeFile(fileName);
     final payload = <String, dynamic>{
       'variant': variant.name,
+      'updatedAt': DateTime.now().toUtc().toIso8601String(),
+    };
+    await file.writeAsString(jsonEncode(payload), flush: true);
+  } catch (_) {
+    // Keep in-memory value when persistence temporarily fails.
+  }
+}
+
+Map<String, String> _encodeThemeByCompany() {
+  return <String, String>{
+    for (final entry in _businessThemeByCompanyId.entries)
+      entry.key: entry.value.name,
+  };
+}
+
+Map<String, Map<String, int>> _encodeBrandSignaturePalettes() {
+  return <String, Map<String, int>>{
+    for (final entry in _brandSignaturePaletteByCompanyId.entries)
+      entry.key: entry.value.toJson(),
+  };
+}
+
+Future<void> _writeBusinessThemeDocument({
+  required BusinessThemeVariant liveVariant,
+  required bool updateLegacyGlobal,
+}) async {
+  try {
+    if (updateLegacyGlobal) {
+      _legacyGlobalBusinessTheme = liveVariant;
+    }
+    final file = await _businessThemeFile(_businessThemeFileName);
+    final payload = <String, dynamic>{
+      'variant': _legacyGlobalBusinessTheme.name,
+      'byCompanyId': _encodeThemeByCompany(),
+      'brandSignaturePalettes': _encodeBrandSignaturePalettes(),
       'updatedAt': DateTime.now().toUtc().toIso8601String(),
     };
     await file.writeAsString(jsonEncode(payload), flush: true);
@@ -158,8 +309,23 @@ Future<void> _writeBusinessThemeVariantFile(
 /// company name, identity, booking/KPI, pricing and subscription state are
 /// never read or written by this path.
 Future<void> applyBusinessThemePreset(BusinessThemeVariant variant) async {
+  _clearPreviewCheckpoint();
   businessThemeNotifier.value = variant;
   businessAppearanceNotifier.value = variant;
+  final companyId = currentBusinessThemeCompanyId();
+  if (companyId != null) {
+    _businessThemeByCompanyId[companyId] = variant;
+  }
+  await _persistActiveBusinessThemePreset();
+}
+
+Future<void> applyBrandSignaturePalette(BrandSignaturePalette palette) async {
+  final safe = sanitizeBrandSignaturePalette(palette);
+  brandSignaturePaletteNotifier.value = safe;
+  final companyId = currentBusinessThemeCompanyId();
+  if (companyId != null) {
+    _brandSignaturePaletteByCompanyId[companyId] = safe;
+  }
   await _persistActiveBusinessThemePreset();
 }
 
@@ -183,7 +349,10 @@ Future<void> _persistActiveBusinessThemePreset() async {
     do {
       _businessThemeWriteSuperseded = false;
       final preset = businessThemeNotifier.value;
-      await _writeBusinessThemeVariantFile(_businessThemeFileName, preset);
+      await _writeBusinessThemeDocument(
+        liveVariant: preset,
+        updateLegacyGlobal: currentBusinessThemeCompanyId() == null,
+      );
       await _writeBusinessThemeVariantFile(_businessAppearanceFileName, preset);
     } while (_businessThemeWriteSuperseded);
   } finally {
@@ -196,10 +365,18 @@ Future<void> _persistActiveBusinessThemePreset() async {
 void resetBusinessThemePersistenceLatchForTest() {
   _businessThemeWriteInFlight = false;
   _businessThemeWriteSuperseded = false;
+  _clearPreviewCheckpoint();
+  _legacyGlobalBusinessTheme = _kDefaultBusinessTheme;
+  _businessThemeByCompanyId.clear();
+  _brandSignaturePaletteByCompanyId.clear();
+  brandSignaturePaletteNotifier.value = BrandSignaturePalette.defaults;
 }
 
 Future<void> loadBusinessThemePreference() async {
+  _attachCompanyThemeListener();
   var restored = _kDefaultBusinessTheme;
+  _businessThemeByCompanyId.clear();
+  _brandSignaturePaletteByCompanyId.clear();
   try {
     final file = await _businessThemeFile(_businessThemeFileName);
     if (await file.exists()) {
@@ -210,15 +387,43 @@ Future<void> loadBusinessThemePreference() async {
           restored = _businessThemeVariantFromStorage(
             (decoded['variant'] ?? '').toString(),
           );
+          final byCompany = decoded['byCompanyId'];
+          if (byCompany is Map) {
+            byCompany.forEach((key, value) {
+              final id = key.toString().trim();
+              if (id.isEmpty) return;
+              _businessThemeByCompanyId[id] = _businessThemeVariantFromStorage(
+                value.toString(),
+              );
+            });
+          }
+          final palettes = decoded['brandSignaturePalettes'];
+          if (palettes is Map) {
+            palettes.forEach((key, value) {
+              final id = key.toString().trim();
+              if (id.isEmpty) return;
+              _brandSignaturePaletteByCompanyId[id] =
+                  BrandSignaturePalette.fromJson(value);
+            });
+          }
         }
       }
     }
   } catch (_) {
     restored = _kDefaultBusinessTheme;
   }
+  _legacyGlobalBusinessTheme = restored;
+  _clearPreviewCheckpoint();
   // Restore the complete preset: artwork can never come back stale.
-  businessThemeNotifier.value = restored;
-  businessAppearanceNotifier.value = restored;
+  // Companies without a scoped entry keep [restored] — no auto-migration.
+  final scoped = resolveStoredBusinessThemeForCompany(
+    currentBusinessThemeCompanyId(),
+  );
+  businessThemeNotifier.value = scoped;
+  businessAppearanceNotifier.value = scoped;
+  brandSignaturePaletteNotifier.value = resolveStoredBrandSignaturePalette(
+    currentBusinessThemeCompanyId(),
+  );
 }
 
 /// Applies [variant] as a complete preset.

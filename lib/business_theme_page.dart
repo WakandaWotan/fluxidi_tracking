@@ -70,6 +70,8 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
         return 'Emerald Ivory';
       case BusinessThemeVariant.fluxidiNeonRush:
         return 'Fluxidi Neon Rush';
+      case BusinessThemeVariant.brandSignatureGold:
+        return 'Brand Signature Gold';
     }
   }
 
@@ -79,6 +81,8 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
         return 'Luxury emerald, ivory and gold business look';
       case BusinessThemeVariant.fluxidiNeonRush:
         return 'Donker neon, premium taxi-energie';
+      case BusinessThemeVariant.brandSignatureGold:
+        return 'Brand Signature Gold';
       case BusinessThemeVariant.executiveGold:
       case BusinessThemeVariant.corporateBlue:
       case BusinessThemeVariant.cleanProfessional:
@@ -114,8 +118,8 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
         return es;
       case AppLanguage.nl:
         return nl;
-    case AppLanguage.de:
-      return en;
+      case AppLanguage.de:
+        return en;
     }
   }
 

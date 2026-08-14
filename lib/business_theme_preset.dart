@@ -13,6 +13,7 @@
 // logo and company identity are company-owned branding, live in the tenant
 // settings state, and are never resolved here.
 
+import 'business_theme/brand_signature_gold_assets.dart';
 import 'business_theme_palette.dart';
 
 /// Resolves the Fluxidi theme-owned artwork asset for [preset].
@@ -27,6 +28,7 @@ String businessThemePresetAsset({
   String? cleanProfessional,
   String? emeraldIvory,
   String? fluxidiNeonRush,
+  String? brandSignatureGold,
 }) {
   switch (preset) {
     case BusinessThemeVariant.executiveGold:
@@ -39,6 +41,8 @@ String businessThemePresetAsset({
       return emeraldIvory ?? executiveGold;
     case BusinessThemeVariant.fluxidiNeonRush:
       return fluxidiNeonRush ?? executiveGold;
+    case BusinessThemeVariant.brandSignatureGold:
+      return brandSignatureGold ?? kBrandSignatureGoldSettingsAsset;
   }
 }
 
@@ -54,6 +58,7 @@ const Map<BusinessThemeVariant, String> kBusinessThemeArtworkPackMarkers =
       BusinessThemeVariant.cleanProfessional: 'clean_professional',
       BusinessThemeVariant.emeraldIvory: 'emerald_ivory',
       BusinessThemeVariant.fluxidiNeonRush: 'neon_rush',
+      BusinessThemeVariant.brandSignatureGold: kBrandSignatureGoldPackMarker,
     };
 
 /// Whether [asset] belongs to [preset]'s own artwork pack.

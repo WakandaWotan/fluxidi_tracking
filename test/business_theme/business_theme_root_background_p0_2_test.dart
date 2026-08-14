@@ -312,7 +312,7 @@ void main() {
       // stranded on the test zone (plain Future.wait outside can hang).
       await tester.runAsync(() async {
         final futures = <Future<BusinessThemeVariant>>[
-          for (var i = 0; i < 5; i++) cycleBusinessThemePreference(),
+          for (var i = 0; i < 6; i++) cycleBusinessThemePreference(),
         ];
         await Future.wait(futures);
       });
