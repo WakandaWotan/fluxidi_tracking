@@ -129,13 +129,27 @@ class FluxidiFrame extends StatelessWidget {
                 // Target: visually ~2–3mm on phone screens.
                 // Light Emerald chauffeur shell fills use the mint background so
                 // the outer/inner frame does not flash Night Gold black.
-                final Color frameFill =
-                    chauffeurShellTheme == DriverThemeVariant.lightEmerald
-                    ? paletteForDriverTheme(
+                return ValueListenableBuilder<BrandSignaturePalette>(
+                  valueListenable: brandSignaturePaletteNotifier,
+                  builder: (context, _, __) {
+                    final goldOverlay = brandSignatureBusinessOverlayTheme(
+                      businessShellActive: businessShellActive,
+                      chauffeurShellTheme: chauffeurShellTheme,
+                      variant: themeVariant,
+                    );
+                    final Color frameFill;
+                    if (chauffeurShellTheme == DriverThemeVariant.lightEmerald) {
+                      frameFill = paletteForDriverTheme(
                         DriverThemeVariant.lightEmerald,
-                      ).background
-                    : kFluxidiBlack;
-                return Container(
+                      ).background;
+                    } else if (goldOverlay != null) {
+                      frameFill = paletteForBusinessTheme(
+                        themeVariant,
+                      ).background;
+                    } else {
+                      frameFill = kFluxidiBlack;
+                    }
+                    Widget framed = Container(
                   color: frameFill,
                   child: SafeArea(
                     top: false,
@@ -211,6 +225,12 @@ class FluxidiFrame extends StatelessWidget {
                       ),
                     ),
                   ),
+                );
+                    if (goldOverlay != null) {
+                      framed = Theme(data: goldOverlay, child: framed);
+                    }
+                    return framed;
+                  },
                 );
               },
             );

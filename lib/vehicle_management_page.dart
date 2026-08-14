@@ -9,6 +9,7 @@ import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_fleet_operational.dart';
 import 'package:fluxidi_tracking/driver_creator_dialog.dart';
+import 'package:fluxidi_tracking/business_theme/brand_signature_palette.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
@@ -63,6 +64,7 @@ class _VehicleThemeTokens {
 _VehicleThemeTokens _vehicleThemeTokensFor(BusinessThemeVariant variant) {
   final palette = paletteForBusinessTheme(variant);
   final isClean = variant == BusinessThemeVariant.cleanProfessional;
+  final isGold = variant == BusinessThemeVariant.brandSignatureGold;
   final linkedAccent = variant == BusinessThemeVariant.executiveGold
       ? const Color(0xFF6BCBFF)
       : palette.accent;
@@ -77,11 +79,11 @@ _VehicleThemeTokens _vehicleThemeTokensFor(BusinessThemeVariant variant) {
     textSecondary: palette.textSecondary,
     textMuted: palette.textMuted.withOpacity(isClean ? 0.98 : 0.9),
     textFaint: palette.textMuted.withOpacity(isClean ? 0.9 : 0.74),
-    sheetBg: isClean ? palette.surface : palette.surfaceAlt,
-    inputFill: isClean
-        ? palette.surfaceAlt.withOpacity(0.95)
+    sheetBg: isClean || isGold ? palette.surface : palette.surfaceAlt,
+    inputFill: isClean || isGold
+        ? palette.surfaceAlt.withOpacity(isClean ? 0.95 : 1)
         : const Color(0xFF0B0B0B),
-    dropdownBg: isClean ? palette.surface : const Color(0xFF111111),
+    dropdownBg: isClean || isGold ? palette.surface : const Color(0xFF111111),
     inputBorder: palette.border.withOpacity(isClean ? 0.8 : 0.44),
     overlayDark: isClean ? const Color(0xB31C2430) : const Color(0xB8000000),
     overlaySoft: isClean ? const Color(0xA61C2430) : const Color(0x8A000000),
@@ -4215,7 +4217,11 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Listenable.merge([appLanguageNotifier, businessThemeNotifier]),
+      animation: Listenable.merge([
+        appLanguageNotifier,
+        businessThemeNotifier,
+        brandSignaturePaletteNotifier,
+      ]),
       builder: (context, _) => Scaffold(
         backgroundColor: _pageBg,
         appBar: AppBar(

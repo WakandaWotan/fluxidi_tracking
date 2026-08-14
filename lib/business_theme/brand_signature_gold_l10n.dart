@@ -65,47 +65,33 @@ String brandSignatureResetDefaultLabel() => brandSignatureGoldL10n(
 
 String brandSignatureFamilyLabel(String familyId) {
   switch (familyId) {
-    case 'bronze':
+    case 'white':
       return brandSignatureGoldL10n(
-        nl: 'Warm brons',
-        en: 'Warm bronze',
-        fr: 'Bronze chaud',
-        es: 'Bronce cálido',
+        nl: 'Wit',
+        en: 'White',
+        fr: 'Blanc',
+        es: 'Blanco',
       );
-    case 'bordeaux':
+    case 'warmWhite':
       return brandSignatureGoldL10n(
-        nl: 'Diep bordeaux',
-        en: 'Deep burgundy',
-        fr: 'Bordeaux profond',
-        es: 'Burdeos profundo',
+        nl: 'Warm wit',
+        en: 'Warm white',
+        fr: 'Blanc chaud',
+        es: 'Blanco cálido',
       );
-    case 'aubergine':
+    case 'lightGray':
       return brandSignatureGoldL10n(
-        nl: 'Aubergine',
-        en: 'Aubergine',
-        fr: 'Aubergine',
-        es: 'Berenjena',
+        nl: 'Lichtgrijs',
+        en: 'Light gray',
+        fr: 'Gris clair',
+        es: 'Gris claro',
       );
-    case 'midnight':
+    case 'midGray':
       return brandSignatureGoldL10n(
-        nl: 'Nachtblauw',
-        en: 'Midnight blue',
-        fr: 'Bleu nuit',
-        es: 'Azul noche',
-      );
-    case 'petroleum':
-      return brandSignatureGoldL10n(
-        nl: 'Petroleum',
-        en: 'Petroleum',
-        fr: 'Pétrole',
-        es: 'Petróleo',
-      );
-    case 'emerald':
-      return brandSignatureGoldL10n(
-        nl: 'Smaragd',
-        en: 'Emerald',
-        fr: 'Émeraude',
-        es: 'Esmeralda',
+        nl: 'Middengrijs',
+        en: 'Mid gray',
+        fr: 'Gris moyen',
+        es: 'Gris medio',
       );
     case 'anthracite':
       return brandSignatureGoldL10n(
@@ -114,13 +100,103 @@ String brandSignatureFamilyLabel(String familyId) {
         fr: 'Anthracite',
         es: 'Antracita',
       );
-    case 'goldBrown':
+    case 'black':
+      return brandSignatureGoldL10n(
+        nl: 'Zwart',
+        en: 'Black',
+        fr: 'Noir',
+        es: 'Negro',
+      );
+    case 'red':
+      return brandSignatureGoldL10n(
+        nl: 'Rood',
+        en: 'Red',
+        fr: 'Rouge',
+        es: 'Rojo',
+      );
+    case 'orange':
+      return brandSignatureGoldL10n(
+        nl: 'Oranje',
+        en: 'Orange',
+        fr: 'Orange',
+        es: 'Naranja',
+      );
+    case 'yellow':
+      return brandSignatureGoldL10n(
+        nl: 'Geel',
+        en: 'Yellow',
+        fr: 'Jaune',
+        es: 'Amarillo',
+      );
+    case 'lime':
+      return brandSignatureGoldL10n(
+        nl: 'Lime',
+        en: 'Lime',
+        fr: 'Citron vert',
+        es: 'Lima',
+      );
+    case 'green':
+      return brandSignatureGoldL10n(
+        nl: 'Groen',
+        en: 'Green',
+        fr: 'Vert',
+        es: 'Verde',
+      );
+    case 'turquoise':
+      return brandSignatureGoldL10n(
+        nl: 'Turquoise',
+        en: 'Turquoise',
+        fr: 'Turquoise',
+        es: 'Turquesa',
+      );
+    case 'cyan':
+      return brandSignatureGoldL10n(
+        nl: 'Cyaan',
+        en: 'Cyan',
+        fr: 'Cyan',
+        es: 'Cian',
+      );
+    case 'blue':
+      return brandSignatureGoldL10n(
+        nl: 'Blauw',
+        en: 'Blue',
+        fr: 'Bleu',
+        es: 'Azul',
+      );
+    case 'indigo':
+      return brandSignatureGoldL10n(
+        nl: 'Indigo',
+        en: 'Indigo',
+        fr: 'Indigo',
+        es: 'Índigo',
+      );
+    case 'violet':
+      return brandSignatureGoldL10n(
+        nl: 'Violet',
+        en: 'Violet',
+        fr: 'Violet',
+        es: 'Violeta',
+      );
+    case 'purple':
+      return brandSignatureGoldL10n(
+        nl: 'Paars',
+        en: 'Purple',
+        fr: 'Violet',
+        es: 'Morado',
+      );
+    case 'magenta':
+      return brandSignatureGoldL10n(
+        nl: 'Magenta',
+        en: 'Magenta',
+        fr: 'Magenta',
+        es: 'Magenta',
+      );
     default:
       return brandSignatureGoldL10n(
-        nl: 'Warm goudbruin',
-        en: 'Warm gold-brown',
-        fr: 'Brun doré chaud',
-        es: 'Marrón dorado',
+        nl: 'Achtergrondkleur',
+        en: 'Background color',
+        fr: 'Couleur de fond',
+        es: 'Color de fondo',
       );
   }
 }

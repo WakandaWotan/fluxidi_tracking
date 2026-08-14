@@ -40,6 +40,21 @@ class BrandSignatureGoldActionCard extends StatelessWidget {
           BusinessThemeVariant.brandSignatureGold,
         );
         final active = onTap != null && !isFuture;
+        final lightCard = brandSignatureRelativeLuminance(colors.card) >= 0.62;
+        final iconOnCard = lightCard
+            ? DecoratedBox(
+                decoration: const BoxDecoration(
+                  boxShadow: <BoxShadow>[
+                    BoxShadow(
+                      color: Color(0x33000000),
+                      blurRadius: 12,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+                child: iconChild,
+              )
+            : iconChild;
         return Material(
           key: Key('brand_signature_action_$actionKey'),
           color: Colors.transparent,
@@ -63,7 +78,7 @@ class BrandSignatureGoldActionCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(child: Center(child: iconChild)),
+                    Expanded(child: Center(child: iconOnCard)),
                     const SizedBox(height: 6),
                     Text(
                       title,

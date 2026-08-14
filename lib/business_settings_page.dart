@@ -9,6 +9,7 @@ import 'package:fluxidi_tracking/airport/airport_catalog.generated.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/branding/company_logo_ref.dart';
+import 'package:fluxidi_tracking/business_theme/brand_signature_palette.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_page.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
@@ -432,7 +433,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   Color get _success => _palette.success;
   Color get _danger => _palette.danger;
   Color get _shadow => _palette.shadow;
-  Color get _inputFill => _isDark
+  Color get _inputFill =>
+      businessThemeNotifier.value == BusinessThemeVariant.brandSignatureGold
+      ? _palette.surfaceAlt
+      : _isDark
       ? (_isCorporateBlue ? const Color(0xFF0F1A2F) : const Color(0xFF0B0B0B))
       : const Color(0xFFF7F9FC);
   Color get _inputBorderColor =>
@@ -10597,7 +10601,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Listenable.merge([appLanguageNotifier, businessThemeNotifier]),
+      animation: Listenable.merge([
+        appLanguageNotifier,
+        businessThemeNotifier,
+        brandSignaturePaletteNotifier,
+      ]),
       builder: (context, _) => Theme(
         data: Theme.of(context).copyWith(
           // Scope a brightness/text-theme override to BusinessSettingsPage

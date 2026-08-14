@@ -22,6 +22,7 @@ import 'package:fluxidi_tracking/widgets/brand_signature_color_rail.dart';
 import 'package:fluxidi_tracking/widgets/brand_signature_style_dock.dart';
 import 'package:fluxidi_tracking/widgets/business_theme_cycle_button.dart';
 import 'package:fluxidi_tracking/widgets/business_theme_root_canvas.dart';
+import 'package:fluxidi_tracking/business_theme/brand_signature_theme_data.dart';
 import 'package:fluxidi_tracking/widgets/business_theme_selector_sheet.dart';
 
 void main() {
@@ -544,14 +545,14 @@ void main() {
     });
 
     test('26 Brand color contrast safeguards work', () {
-      for (final position in <double>[
-        0,
-        kBrandSignatureBordeauxPosition,
-        kBrandSignatureMidnightPosition,
-        kBrandSignatureEmeraldPosition,
-        1,
+      for (final color in <Color>[
+        const Color(0xFFFFFFFF),
+        const Color(0xFF000000),
+        const Color(0xFFFF2D00),
+        const Color(0xFF00E5FF),
+        kBrandSignatureDefaultBase,
       ]) {
-        final derived = BrandSignaturePalette.fromPosition(position);
+        final derived = BrandSignaturePalette.fromColor(color);
         expect(derived.accent, kBrandSignatureGoldAccent);
         expect(
           brandSignatureHasReadableText(
@@ -585,7 +586,7 @@ void main() {
     });
   });
 
-  group('Brand Signature huisstijl rail', () {
+  group('Brand Signature full-spectrum studio', () {
     test('27 old four color rows are gone', () {
       expect(
         File('lib/widgets/brand_signature_palette_sheet.dart').existsSync(),
@@ -603,40 +604,31 @@ void main() {
       expect(dock.contains('_accentChoices'), isFalse);
       expect(dock.contains('showModalBottomSheet'), isFalse);
       expect(rail.contains('kBrandSignatureColorRailKey'), isTrue);
-      expect(
-        'lib/widgets/brand_signature_style_dock.dart'
-            .split('/')
-            .isNotEmpty,
-        isTrue,
-      );
-      expect(find.byType(BrandSignatureColorRail), findsNothing);
+      expect(rail.contains('kBrandSignatureSvFieldKey'), isTrue);
+      expect(dock.contains('kBrandSignatureHexFieldKey'), isTrue);
     });
 
-    test('28 one position derives the full background family', () {
-      final bordeaux = BrandSignaturePalette.fromPosition(
-        kBrandSignatureBordeauxPosition,
-      );
-      final midnight = BrandSignaturePalette.fromPosition(
-        kBrandSignatureMidnightPosition,
-      );
-      final emerald = BrandSignaturePalette.fromPosition(
-        kBrandSignatureEmeraldPosition,
-      );
-      expect(bordeaux.familyId, 'bordeaux');
-      expect(midnight.familyId, 'midnight');
-      expect(emerald.familyId, 'emerald');
-      expect(bordeaux.page, isNot(midnight.page));
-      expect(midnight.header, isNot(emerald.header));
-      expect(bordeaux.card, isNot(emerald.card));
-      expect(bordeaux.kpi, isNot(midnight.kpi));
-      expect(bordeaux.accent, kBrandSignatureGoldAccent);
-      expect(midnight.accent, kBrandSignatureGoldAccent);
-      expect(emerald.accent, kBrandSignatureGoldAccent);
-      expect(BrandSignaturePalette.defaults.position, 1.0);
-      expect(BrandSignaturePalette.defaults.familyId, 'goldBrown');
+    test('28 one exact color derives the full background family', () {
+      final white = BrandSignaturePalette.fromColor(const Color(0xFFFFFFFF));
+      final black = BrandSignaturePalette.fromColor(const Color(0xFF000000));
+      final red = BrandSignaturePalette.fromColor(const Color(0xFFFF0000));
+      expect(white.familyId, 'white');
+      expect(black.familyId, 'black');
+      expect(red.familyId, 'red');
+      expect(white.page, isNot(black.page));
+      expect(white.header, isNot(red.header));
+      expect(white.card, isNot(black.card));
+      expect(white.accent, kBrandSignatureGoldAccent);
+      expect(black.accent, kBrandSignatureGoldAccent);
+      expect(red.accent, kBrandSignatureGoldAccent);
+      expect(white.border, kBrandSignatureGoldBronze);
+      expect(black.border, kBrandSignatureGoldAccent);
+      expect(BrandSignaturePalette.defaults.base, kBrandSignatureDefaultBase);
     });
 
-    testWidgets('29 editor is a bright dock with one rail', (tester) async {
+    testWidgets('29 editor is a bright dock with hue rail and SV field', (
+      tester,
+    ) async {
       businessThemeNotifier.value = BusinessThemeVariant.brandSignatureGold;
       await tester.binding.setSurfaceSize(const Size(800, 1280));
       await tester.pumpWidget(
@@ -649,7 +641,7 @@ void main() {
       await tester.pump();
       expect(find.byKey(kBrandSignatureStyleDockKey), findsOneWidget);
       expect(find.byKey(kBrandSignatureColorRailKey), findsOneWidget);
-      expect(find.byKey(kBrandSignatureColorRailThumbKey), findsOneWidget);
+      expect(find.byKey(kBrandSignatureSvFieldKey), findsOneWidget);
       expect(find.text('Kies je achtergrondkleur'), findsOneWidget);
       expect(find.text('Header'), findsNothing);
       expect(find.text('Pagina'), findsNothing);
@@ -657,12 +649,14 @@ void main() {
       expect(find.text('Accent'), findsNothing);
       _expectNoDarkScrim(tester);
       final rail = tester.getSize(find.byKey(kBrandSignatureColorRailKey));
-      expect(rail.height, greaterThanOrEqualTo(56));
+      expect(rail.height, greaterThanOrEqualTo(48));
       expect(rail.width, greaterThan(600));
       await tester.binding.setSurfaceSize(null);
     });
 
-    testWidgets('30 drag and tap move the continuous rail', (tester) async {
+    testWidgets('30 hue rail and neutrals reach white black and vivid hues', (
+      tester,
+    ) async {
       businessThemeNotifier.value = BusinessThemeVariant.brandSignatureGold;
       brandSignaturePaletteNotifier.value = BrandSignaturePalette.defaults;
       await tester.binding.setSurfaceSize(const Size(800, 1280));
@@ -670,37 +664,39 @@ void main() {
         const MaterialApp(home: Scaffold(body: BrandSignatureStyleDock())),
       );
       await tester.pump();
-      final before = brandSignaturePaletteNotifier.value;
-      await tester.tapAt(
-        tester.getTopLeft(find.byKey(kBrandSignatureColorRailKey)) +
-            const Offset(40, 28),
-      );
+      await tester.tap(find.byKey(const Key('brand_signature_neutral_white')));
       await tester.pump();
-      final afterTap = brandSignaturePaletteNotifier.value;
-      expect(afterTap.position, lessThan(before.position));
-      expect(afterTap.page, isNot(before.page));
-      expect(afterTap.header, isNot(before.header));
-      expect(afterTap.card, isNot(before.card));
-      expect(afterTap.kpi, isNot(before.kpi));
-      expect(afterTap.accent, kBrandSignatureGoldAccent);
-      await tester.drag(
-        find.byKey(kBrandSignatureColorRailKey),
-        const Offset(420, 0),
-      );
+      expect(brandSignaturePaletteNotifier.value.base, const Color(0xFFFFFFFF));
+      await tester.tap(find.byKey(const Key('brand_signature_neutral_black')));
       await tester.pump();
-      expect(
-        brandSignaturePaletteNotifier.value.position,
-        greaterThan(afterTap.position),
-      );
+      expect(brandSignaturePaletteNotifier.value.base, const Color(0xFF000000));
+      previewBrandSignatureColor(const Color(0xFFFF0000));
+      await tester.pump();
+      expect(brandSignaturePaletteNotifier.value.familyId, 'red');
+      previewBrandSignatureColor(const Color(0xFFFFFF00));
+      await tester.pump();
+      expect(brandSignaturePaletteNotifier.value.familyId, 'yellow');
+      previewBrandSignatureColor(const Color(0xFF00FF00));
+      await tester.pump();
+      expect(brandSignaturePaletteNotifier.value.familyId, 'green');
+      previewBrandSignatureColor(const Color(0xFF00FFFF));
+      await tester.pump();
+      expect(brandSignaturePaletteNotifier.value.familyId, 'cyan');
+      previewBrandSignatureColor(const Color(0xFF0000FF));
+      await tester.pump();
+      expect(brandSignaturePaletteNotifier.value.familyId, 'blue');
+      previewBrandSignatureColor(const Color(0xFFFF00FF));
+      await tester.pump();
+      expect(brandSignaturePaletteNotifier.value.familyId, 'magenta');
       await tester.binding.setSurfaceSize(null);
     });
 
-    testWidgets('31 live chrome follows the rail without tinting gold icons', (
+    testWidgets('31 live chrome follows the chosen color without tinting icons', (
       tester,
     ) async {
       businessThemeNotifier.value = BusinessThemeVariant.brandSignatureGold;
-      brandSignaturePaletteNotifier.value = BrandSignaturePalette.fromPosition(
-        kBrandSignatureBordeauxPosition,
+      brandSignaturePaletteNotifier.value = BrandSignaturePalette.fromColor(
+        const Color(0xFFFF2D00),
       );
       await tester.binding.setSurfaceSize(const Size(800, 1280));
       await tester.pumpWidget(
@@ -719,9 +715,7 @@ void main() {
       );
       expect(
         (headerBox.decoration as BoxDecoration).color,
-        BrandSignaturePalette.fromPosition(
-          kBrandSignatureBordeauxPosition,
-        ).header,
+        BrandSignaturePalette.fromColor(const Color(0xFFFF2D00)).header,
       );
       expect(find.byKey(kBrandSignatureGoldLogoFallbackKey), findsOneWidget);
       final settingsCard = tester.widget<Ink>(
@@ -732,9 +726,7 @@ void main() {
       );
       expect(
         (settingsCard.decoration as BoxDecoration).color,
-        BrandSignaturePalette.fromPosition(
-          kBrandSignatureBordeauxPosition,
-        ).card,
+        BrandSignaturePalette.fromColor(const Color(0xFFFF2D00)).card,
       );
       final image = tester.widget<Image>(
         find.descendant(
@@ -747,32 +739,26 @@ void main() {
       await tester.binding.setSurfaceSize(null);
     });
 
-    test('32 cancel restores the previously applied position', () async {
+    test('32 cancel restores the previously applied color', () async {
       _setCompany('co_style_cancel');
       await applyBrandSignaturePalette(
-        BrandSignaturePalette.fromPosition(kBrandSignatureMidnightPosition),
+        BrandSignaturePalette.fromColor(const Color(0xFF000000)),
       );
-      previewBrandSignatureRailPosition(kBrandSignatureEmeraldPosition);
-      expect(
-        brandSignaturePaletteNotifier.value.familyId,
-        'emerald',
-      );
+      previewBrandSignatureColor(const Color(0xFFFFFFFF));
+      expect(brandSignaturePaletteNotifier.value.familyId, 'white');
       cancelBrandSignaturePalettePreview();
-      expect(
-        brandSignaturePaletteNotifier.value.position,
-        closeTo(kBrandSignatureMidnightPosition, 0.0001),
-      );
+      expect(brandSignaturePaletteNotifier.value.base, const Color(0xFF000000));
     });
 
-    test('33 apply persists one position per company', () async {
+    test('33 apply persists one exact color per company', () async {
       _setCompany('co_style_a');
       await applyBrandSignaturePalette(
-        BrandSignaturePalette.fromPosition(kBrandSignatureBordeauxPosition),
+        BrandSignaturePalette.fromColor(const Color(0xFFFFFFFF)),
       );
       _setCompany('co_style_b');
       syncBusinessThemeForActiveCompany();
       await applyBrandSignaturePalette(
-        BrandSignaturePalette.fromPosition(kBrandSignatureEmeraldPosition),
+        BrandSignaturePalette.fromColor(const Color(0xFFFF2D00)),
       );
       final file = File(
         '${tempDir.path}${Platform.pathSeparator}business_state'
@@ -780,51 +766,56 @@ void main() {
       );
       final decoded = jsonDecode(await file.readAsString()) as Map;
       final palettes = decoded['brandSignaturePalettes'] as Map;
-      expect(
-        (palettes['co_style_a'] as Map)['position'],
-        closeTo(kBrandSignatureBordeauxPosition, 0.0001),
-      );
-      expect(
-        (palettes['co_style_b'] as Map)['position'],
-        closeTo(kBrandSignatureEmeraldPosition, 0.0001),
-      );
+      expect((palettes['co_style_a'] as Map)['argb'], 0xFFFFFFFF);
+      expect((palettes['co_style_b'] as Map)['argb'], 0xFFFF2D00);
       expect((palettes['co_style_a'] as Map).containsKey('header'), isFalse);
       _setCompany('co_style_a');
       syncBusinessThemeForActiveCompany();
-      expect(
-        brandSignaturePaletteNotifier.value.familyId,
-        'bordeaux',
-      );
+      expect(brandSignaturePaletteNotifier.value.familyId, 'white');
     });
 
-    test('34 restart restores the applied rail position', () async {
+    test('34 restart restores the applied exact color', () async {
       _setCompany('co_style_restart');
       await applyBrandSignaturePalette(
-        BrandSignaturePalette.fromPosition(kBrandSignatureMidnightPosition),
+        BrandSignaturePalette.fromColor(const Color(0xFF00E5FF)),
       );
       brandSignaturePaletteNotifier.value = BrandSignaturePalette.defaults;
       await loadBusinessThemePreference();
       expect(
-        brandSignaturePaletteNotifier.value.position,
-        closeTo(kBrandSignatureMidnightPosition, 0.0001),
+        brandSignaturePaletteNotifier.value.base,
+        const Color(0xFF00E5FF),
       );
     });
 
     test('35 reset default only previews warm gold-brown', () async {
-      previewBrandSignatureRailPosition(kBrandSignatureBordeauxPosition);
-      previewBrandSignatureRailPosition(kBrandSignatureDefaultPosition);
-      expect(brandSignaturePaletteNotifier.value.familyId, 'goldBrown');
-      expect(brandSignaturePaletteNotifier.value.position, 1.0);
+      previewBrandSignatureColor(const Color(0xFFFFFFFF));
+      previewBrandSignatureColor(kBrandSignatureDefaultBase);
+      expect(
+        brandSignaturePaletteNotifier.value.base,
+        kBrandSignatureDefaultBase,
+      );
     });
 
-    test('36 legacy four-color JSON falls back to the default position', () {
+    test('36 legacy four-color JSON falls back to the default color', () {
       final restored = BrandSignaturePalette.fromJson(<String, int>{
         'header': 0xFF1A1408,
         'page': 0xFF0C0A07,
         'card': 0xFF1C160C,
         'accent': 0xFFD4AF37,
       });
-      expect(restored.position, 1.0);
+      expect(restored.base, kBrandSignatureDefaultBase);
+    });
+
+    test('36b legacy rail position migrates to matching RGB', () {
+      final migrated = BrandSignaturePalette.fromJson(<String, double>{
+        'position': kBrandSignatureMidnightPosition,
+      });
+      expect(
+        migrated.base,
+        BrandSignaturePalette.fromPosition(
+          kBrandSignatureMidnightPosition,
+        ).base,
+      );
     });
 
     testWidgets('37 customize closes the selector then opens the dock', (
@@ -868,36 +859,177 @@ void main() {
         await tester.pump();
         expect(tester.takeException(), isNull);
         expect(find.byKey(kBrandSignatureColorRailKey), findsOneWidget);
+        expect(find.byKey(kBrandSignatureSvFieldKey), findsOneWidget);
       }
       await tester.binding.setSurfaceSize(null);
     });
 
-    test('39 rail positions render distinct tablet pages', () {
+    testWidgets('38b valid HEX previews and invalid HEX does not crash', (
+      tester,
+    ) async {
+      businessThemeNotifier.value = BusinessThemeVariant.brandSignatureGold;
+      await tester.binding.setSurfaceSize(const Size(800, 1280));
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: BrandSignatureStyleDock())),
+      );
+      await tester.pump();
+      await tester.enterText(find.byKey(kBrandSignatureHexFieldKey), '#00FF80');
+      await tester.pump();
+      expect(brandSignaturePaletteNotifier.value.hex, '#00FF80');
+      await tester.enterText(find.byKey(kBrandSignatureHexFieldKey), 'ZZZZZZ');
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(brandSignaturePaletteNotifier.value.hex, '#00FF80');
+      await tester.binding.setSurfaceSize(null);
+    });
+
+    test('39 exact colors render distinct tablet pages', () {
       final out = Directory('test_reports/brand_signature_huisstijl')
         ..createSync(recursive: true);
       final pages = <String, BrandSignaturePalette>{
-        'bordeaux': BrandSignaturePalette.fromPosition(
-          kBrandSignatureBordeauxPosition,
-        ),
-        'nachtblauw': BrandSignaturePalette.fromPosition(
-          kBrandSignatureMidnightPosition,
-        ),
-        'smaragd': BrandSignaturePalette.fromPosition(
-          kBrandSignatureEmeraldPosition,
-        ),
+        'white': BrandSignaturePalette.fromColor(const Color(0xFFFFFFFF)),
+        'black': BrandSignaturePalette.fromColor(const Color(0xFF000000)),
+        'vivid': BrandSignaturePalette.fromColor(const Color(0xFFFF2D00)),
       };
       for (final entry in pages.entries) {
         File(
           '${out.path}${Platform.pathSeparator}rail_${entry.key}.bmp',
         ).writeAsBytesSync(_tabletFamilyBmp(entry.value));
       }
-      expect(pages['bordeaux']!.page, isNot(pages['nachtblauw']!.page));
-      expect(pages['nachtblauw']!.page, isNot(pages['smaragd']!.page));
-      expect(pages['bordeaux']!.header, isNot(pages['smaragd']!.header));
-      expect(pages['bordeaux']!.card, isNot(pages['smaragd']!.card));
-      expect(pages['bordeaux']!.accent, kBrandSignatureGoldAccent);
-      expect(pages['nachtblauw']!.accent, kBrandSignatureGoldAccent);
-      expect(pages['smaragd']!.accent, kBrandSignatureGoldAccent);
+      expect(pages['white']!.page, isNot(pages['black']!.page));
+      expect(pages['black']!.page, isNot(pages['vivid']!.page));
+      expect(pages['white']!.header, isNot(pages['vivid']!.header));
+      expect(pages['white']!.card, isNot(pages['black']!.card));
+      expect(pages['white']!.accent, kBrandSignatureGoldAccent);
+      expect(pages['black']!.accent, kBrandSignatureGoldAccent);
+      expect(pages['vivid']!.accent, kBrandSignatureGoldAccent);
+    });
+  });
+
+  group('Brand Signature business-wide inheritance', () {
+    test('40 white black and vivid Gold pages share one derived palette', () {
+      for (final color in <Color>[
+        const Color(0xFFFFFFFF),
+        const Color(0xFF000000),
+        const Color(0xFFFF2D00),
+      ]) {
+        brandSignaturePaletteNotifier.value =
+            BrandSignaturePalette.fromColor(color);
+        final palette = paletteForBusinessTheme(
+          BusinessThemeVariant.brandSignatureGold,
+        );
+        expect(palette.background, BrandSignaturePalette.fromColor(color).page);
+        expect(palette.accent, kBrandSignatureGoldAccent);
+        expect(palette.success, const Color(0xFF49B889));
+        expect(palette.danger, const Color(0xFFD07A82));
+        final theme = themeDataForBrandSignatureGold(palette);
+        expect(theme.scaffoldBackgroundColor, palette.background);
+        expect(theme.appBarTheme.backgroundColor, palette.surfaceAlt);
+        expect(theme.dialogTheme.backgroundColor, palette.surface);
+        expect(theme.cardTheme.color, palette.surface);
+        expect(theme.colorScheme.error, palette.danger);
+      }
+    });
+
+    test('41 Gold overlay stays inside the business shell only', () {
+      businessThemeNotifier.value = BusinessThemeVariant.brandSignatureGold;
+      brandSignaturePaletteNotifier.value = BrandSignaturePalette.fromColor(
+        const Color(0xFFFFFFFF),
+      );
+      expect(
+        brandSignatureBusinessOverlayTheme(
+          businessShellActive: true,
+          chauffeurShellTheme: null,
+          variant: BusinessThemeVariant.brandSignatureGold,
+        )?.scaffoldBackgroundColor,
+        BrandSignaturePalette.fromColor(const Color(0xFFFFFFFF)).page,
+      );
+      expect(
+        brandSignatureBusinessOverlayTheme(
+          businessShellActive: true,
+          chauffeurShellTheme: DriverThemeVariant.nightGold,
+          variant: BusinessThemeVariant.brandSignatureGold,
+        ),
+        isNull,
+      );
+      expect(
+        brandSignatureBusinessOverlayTheme(
+          businessShellActive: false,
+          chauffeurShellTheme: null,
+          variant: BusinessThemeVariant.brandSignatureGold,
+        ),
+        isNull,
+      );
+      expect(
+        brandSignatureBusinessOverlayTheme(
+          businessShellActive: true,
+          chauffeurShellTheme: null,
+          variant: BusinessThemeVariant.executiveGold,
+        ),
+        isNull,
+      );
+    });
+
+    testWidgets('42 business routes inherit Gold without a default flash', (
+      tester,
+    ) async {
+      businessThemeNotifier.value = BusinessThemeVariant.brandSignatureGold;
+      brandSignaturePaletteNotifier.value = BrandSignaturePalette.fromColor(
+        const Color(0xFFFFFFFF),
+      );
+      final overlay = brandSignatureBusinessOverlayTheme(
+        businessShellActive: true,
+        chauffeurShellTheme: null,
+        variant: BusinessThemeVariant.brandSignatureGold,
+      )!;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(),
+          builder: (context, child) => Theme(data: overlay, child: child!),
+          home: const Scaffold(body: Text('billing')),
+        ),
+      );
+      await tester.pump();
+      expect(
+        Theme.of(tester.element(find.text('billing'))).scaffoldBackgroundColor,
+        BrandSignaturePalette.fromColor(const Color(0xFFFFFFFF)).page,
+      );
+      brandSignaturePaletteNotifier.value = BrandSignaturePalette.fromColor(
+        const Color(0xFF000000),
+      );
+      final next = themeDataForBrandSignatureGold(
+        paletteForBusinessTheme(BusinessThemeVariant.brandSignatureGold),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(),
+          builder: (context, child) => Theme(data: next, child: child!),
+          home: const Scaffold(body: Text('vehicles')),
+        ),
+      );
+      await tester.pump();
+      expect(
+        Theme.of(tester.element(find.text('vehicles'))).scaffoldBackgroundColor,
+        BrandSignaturePalette.fromColor(const Color(0xFF000000)).page,
+      );
+    });
+
+    test('43 switching to an existing theme does not leak Gold', () {
+      brandSignaturePaletteNotifier.value = BrandSignaturePalette.fromColor(
+        const Color(0xFFFF2D00),
+      );
+      final executive = paletteForBusinessTheme(
+        BusinessThemeVariant.executiveGold,
+      );
+      expect(executive.background, isNot(const Color(0xFFFF2D00)));
+      expect(
+        brandSignatureBusinessOverlayTheme(
+          businessShellActive: true,
+          chauffeurShellTheme: null,
+          variant: BusinessThemeVariant.corporateBlue,
+        ),
+        isNull,
+      );
     });
   });
 

@@ -1847,7 +1847,11 @@ class _CompanyBookingsOverviewPageState
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: tokens.accent,
-              foregroundColor: tokens.palette.isDark
+              foregroundColor:
+                  businessThemeNotifier.value ==
+                      BusinessThemeVariant.brandSignatureGold
+                  ? tokens.palette.textOnAccent
+                  : tokens.palette.isDark
                   ? const Color(0xFF0B0B0B)
                   : Colors.white,
             ),
@@ -1943,7 +1947,11 @@ class _CompanyBookingsOverviewPageState
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: tokens.accent,
-              foregroundColor: tokens.palette.isDark
+              foregroundColor:
+                  businessThemeNotifier.value ==
+                      BusinessThemeVariant.brandSignatureGold
+                  ? tokens.palette.textOnAccent
+                  : tokens.palette.isDark
                   ? const Color(0xFF0B0B0B)
                   : Colors.white,
             ),
@@ -3671,6 +3679,9 @@ class _CompanyBookingsOverviewPageState
     return ValueListenableBuilder<BusinessThemeVariant>(
       valueListenable: businessThemeNotifier,
       builder: (context, themeVariant, _) {
+        return ValueListenableBuilder<BrandSignaturePalette>(
+          valueListenable: brandSignaturePaletteNotifier,
+          builder: (context, _, __) {
         final tokens = _themeTokensFor(themeVariant);
         return Scaffold(
           backgroundColor: tokens.background,
@@ -4037,6 +4048,8 @@ class _CompanyBookingsOverviewPageState
               ),
             ),
           ),
+        );
+          },
         );
       },
     );

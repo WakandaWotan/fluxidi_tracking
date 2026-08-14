@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show Color;
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -217,9 +218,13 @@ void previewBrandSignaturePalette(BrandSignaturePalette palette) {
     _previewCompanyId = currentBusinessThemeCompanyId();
     _businessThemePreviewActive = true;
   }
-  brandSignaturePaletteNotifier.value = BrandSignaturePalette.fromPosition(
-    palette.position,
+  brandSignaturePaletteNotifier.value = BrandSignaturePalette.fromColor(
+    palette.base,
   );
+}
+
+void previewBrandSignatureColor(Color color) {
+  previewBrandSignaturePalette(BrandSignaturePalette.fromColor(color));
 }
 
 void previewBrandSignatureRailPosition(double position) {
@@ -326,7 +331,7 @@ Future<void> applyBusinessThemePreset(BusinessThemeVariant variant) async {
 }
 
 Future<void> applyBrandSignaturePalette(BrandSignaturePalette palette) async {
-  final safe = BrandSignaturePalette.fromPosition(palette.position);
+  final safe = BrandSignaturePalette.fromColor(palette.base);
   _clearPreviewCheckpoint();
   brandSignaturePaletteNotifier.value = safe;
   final companyId = currentBusinessThemeCompanyId();

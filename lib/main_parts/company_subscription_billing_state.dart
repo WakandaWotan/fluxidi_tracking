@@ -4465,7 +4465,10 @@ class _CompanySubscriptionBillingPageState
   Widget build(BuildContext context) {
     return ValueListenableBuilder<BusinessThemeVariant>(
       valueListenable: businessThemeNotifier,
-      builder: (context, _, __) => Scaffold(
+      builder: (context, _, __) =>
+          ValueListenableBuilder<BrandSignaturePalette>(
+        valueListenable: brandSignaturePaletteNotifier,
+        builder: (context, _, __) => Scaffold(
         backgroundColor: _bg,
         appBar: AppBar(
           backgroundColor: _bg,
@@ -4671,6 +4674,7 @@ class _CompanySubscriptionBillingPageState
           },
         ),
       ),
+        ),
     );
   }
 }

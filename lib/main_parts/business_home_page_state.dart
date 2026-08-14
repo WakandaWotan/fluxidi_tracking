@@ -2478,8 +2478,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: const Color(0xFF111111),
+      builder: (dialogContext) {
+        final isGold =
+            businessThemeNotifier.value ==
+            BusinessThemeVariant.brandSignatureGold;
+        final dialogPalette = _businessThemePalette;
+        return AlertDialog(
+        backgroundColor: isGold
+            ? dialogPalette.surface
+            : const Color(0xFF111111),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
           side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
@@ -2503,12 +2510,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   fr: 'Génération du code d’activation...',
                   es: 'Generando código de activación...',
                 ),
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(
+                  color: isGold ? dialogPalette.textPrimary : Colors.white,
+                ),
               ),
             ),
           ],
         ),
-      ),
+      );
+      },
     );
 
     Map<String, dynamic> payload = const <String, dynamic>{};
@@ -2635,8 +2645,16 @@ class _BusinessHomePageState extends State<BusinessHomePage>
 
     await showDialog<void>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: const Color(0xFF111111),
+      builder: (dialogContext) {
+        final isGold =
+            businessThemeNotifier.value ==
+            BusinessThemeVariant.brandSignatureGold;
+        final dialogPalette = _businessThemePalette;
+        final dialogText = isGold ? dialogPalette.textPrimary : Colors.white;
+        return AlertDialog(
+        backgroundColor: isGold
+            ? dialogPalette.surface
+            : const Color(0xFF111111),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
           side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
@@ -2648,7 +2666,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             fr: 'Associer un nouvel appareil',
             es: 'Vincular nuevo dispositivo',
           ),
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: dialogText),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -2662,7 +2680,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 es: 'Abre Fluxidi en el nuevo dispositivo e introduce este código de activación.',
               ),
               style: TextStyle(
-                color: Colors.white.withOpacity(0.82),
+                color: isGold
+                    ? dialogPalette.textSecondary
+                    : Colors.white.withOpacity(0.82),
                 fontSize: 12.5,
               ),
             ),
@@ -2671,14 +2691,16 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
-                color: const Color(0xFF1A1A1A),
+                color: isGold
+                    ? dialogPalette.surfaceAlt
+                    : const Color(0xFF1A1A1A),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: kFluxidiYellow.withOpacity(0.36)),
               ),
               child: SelectableText(
                 activationCode,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: dialogText,
                   fontWeight: FontWeight.w800,
                   fontSize: 16,
                   letterSpacing: 0.5,
@@ -2703,7 +2725,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         es: 'Válido durante aproximadamente ${expiresInSeconds ?? 0} segundos.',
                       ),
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.7),
+                  color: isGold
+                      ? dialogPalette.textMuted
+                      : Colors.white.withOpacity(0.7),
                   fontSize: 11.8,
                 ),
               ),
@@ -2729,7 +2753,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               );
             },
             style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.white,
+              foregroundColor: dialogText,
               side: BorderSide(color: kFluxidiYellow.withOpacity(0.5)),
             ),
             icon: const Icon(Icons.copy_rounded, size: 16),
@@ -2744,7 +2768,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             ),
           ),
         ],
-      ),
+      );
+      },
     );
   }
 

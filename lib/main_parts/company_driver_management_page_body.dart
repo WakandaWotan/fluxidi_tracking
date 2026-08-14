@@ -38,7 +38,10 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
       businessThemeNotifier.value == BusinessThemeVariant.cleanProfessional;
   bool get _isCorporateBlue =>
       businessThemeNotifier.value == BusinessThemeVariant.corporateBlue;
-  Color get _inputFill => _isDark
+  Color get _inputFill =>
+      businessThemeNotifier.value == BusinessThemeVariant.brandSignatureGold
+      ? _palette.surfaceAlt
+      : _isDark
       ? (_isCorporateBlue ? const Color(0xFF0F1A2F) : const Color(0xFF0B0B0B))
       : const Color(0xFFF7F9FC);
   Color get _inputBorderColor =>
@@ -3533,7 +3536,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: _isDark
+          colors:
+              businessThemeNotifier.value ==
+                  BusinessThemeVariant.brandSignatureGold
+              ? [_panelBg, _subPanelBg]
+              : _isDark
               ? const [Color(0xFF07080C), Color(0xFF101010)]
               : [_subPanelBg, _panelBg],
         ),
@@ -4792,7 +4799,11 @@ class _CompanyDriverManagementPageBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Listenable.merge([appLanguageNotifier, businessThemeNotifier]),
+      animation: Listenable.merge([
+        appLanguageNotifier,
+        businessThemeNotifier,
+        brandSignaturePaletteNotifier,
+      ]),
       builder: (context, _) {
         final appMedia = MediaQuery.of(context);
         final isPortraitHeader = appMedia.size.width < appMedia.size.height;

@@ -29,12 +29,13 @@ DriverCreatorDialogStyle driverCreatorDialogStyleFor(
 ) {
   final palette = paletteForBusinessTheme(variant);
   final isClean = variant == BusinessThemeVariant.cleanProfessional;
+  final isGold = variant == BusinessThemeVariant.brandSignatureGold;
   return DriverCreatorDialogStyle(
-    sheetBg: isClean ? palette.surface : palette.surfaceAlt,
+    sheetBg: isClean || isGold ? palette.surface : palette.surfaceAlt,
     textPrimary: palette.textPrimary,
     textSecondary: palette.textSecondary,
-    inputFill: isClean
-        ? palette.surfaceAlt.withOpacity(0.95)
+    inputFill: isClean || isGold
+        ? palette.surfaceAlt.withOpacity(isClean ? 0.95 : 1)
         : const Color(0xFF0B0B0B),
     inputBorder: palette.border.withOpacity(isClean ? 0.8 : 0.44),
     gold: palette.accent,
