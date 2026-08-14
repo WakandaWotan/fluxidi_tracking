@@ -6555,11 +6555,17 @@ class SubscriptionCheckoutQuote {
   const SubscriptionCheckoutQuote({
     this.quoteId = '',
     this.planCode = '',
+    this.productType = '',
     this.founder = false,
     this.currency = 'EUR',
     this.lineItems = const <SubscriptionQuoteLineItem>[],
     this.subtotalExclVatCents,
     this.recurringExclVatCents,
+    this.recurringVatAmountCents,
+    this.recurringInclVatCents,
+    this.unitExclVatCents,
+    this.unitVatAmountCents,
+    this.unitInclVatCents,
     this.vatAmountCents,
     this.totalInclVatCents,
     this.mollieAmountCents,
@@ -6573,11 +6579,17 @@ class SubscriptionCheckoutQuote {
 
   final String quoteId;
   final String planCode;
+  final String productType;
   final bool founder;
   final String currency;
   final List<SubscriptionQuoteLineItem> lineItems;
   final int? subtotalExclVatCents;
   final int? recurringExclVatCents;
+  final int? recurringVatAmountCents;
+  final int? recurringInclVatCents;
+  final int? unitExclVatCents;
+  final int? unitVatAmountCents;
+  final int? unitInclVatCents;
   final int? vatAmountCents;
   final int? totalInclVatCents;
   final int? mollieAmountCents;
@@ -6637,6 +6649,7 @@ class SubscriptionCheckoutQuote {
     return SubscriptionCheckoutQuote(
       quoteId: textField('quote_id', 'quoteId'),
       planCode: textField('plan_code', 'planCode'),
+      productType: textField('product_type', 'productType'),
       founder: boolField('founder', 'founder'),
       currency: textField('currency', 'currency').toUpperCase(),
       lineItems: items,
@@ -6648,6 +6661,17 @@ class SubscriptionCheckoutQuote {
         'recurring_excl_vat_cents',
         'recurringExclVatCents',
       ),
+      recurringVatAmountCents: intField(
+        'recurring_vat_amount_cents',
+        'recurringVatAmountCents',
+      ),
+      recurringInclVatCents: intField(
+        'recurring_incl_vat_cents',
+        'recurringInclVatCents',
+      ),
+      unitExclVatCents: intField('unit_excl_vat_cents', 'unitExclVatCents'),
+      unitVatAmountCents: intField('unit_vat_amount_cents', 'unitVatAmountCents'),
+      unitInclVatCents: intField('unit_incl_vat_cents', 'unitInclVatCents'),
       vatAmountCents: intField('vat_amount_cents', 'vatAmountCents'),
       totalInclVatCents: intField(
         'total_incl_vat_cents',
@@ -6784,6 +6808,8 @@ class BackendSubscriptionCheckoutStartResult {
 Future<SubscriptionCheckoutQuote?> fetchCompanySubscriptionCheckoutQuote({
   required String tenantId,
   required String companyId,
+  String? addonCode,
+  String? productType,
 }) async {
   if (!kFluxidiCompanySaasCheckoutEnabled) return null;
   final scope = _resolveAdminTenantCompanyScope(
@@ -6803,7 +6829,13 @@ Future<SubscriptionCheckoutQuote?> fetchCompanySubscriptionCheckoutQuote({
         .post(
           endpoint,
           headers: auth.headers,
-          body: jsonEncode(scope),
+          body: jsonEncode({
+            ...scope,
+            if (addonCode != null && addonCode.trim().isNotEmpty)
+              'addon_code': addonCode.trim(),
+            if (productType != null && productType.trim().isNotEmpty)
+              'product_type': productType.trim(),
+          }),
         )
         .timeout(const Duration(seconds: 20));
     final decoded = jsonDecode(utf8.decode(res.bodyBytes));
@@ -6815,6 +6847,62 @@ Future<SubscriptionCheckoutQuote?> fetchCompanySubscriptionCheckoutQuote({
       );
     }
     return SubscriptionCheckoutQuote.fromJson(map);
+  } catch (_) {
+    return null;
+  }
+}
+
+class SubscriptionDisplayQuotes {
+  const SubscriptionDisplayQuotes({this.current, this.products = const {}});
+
+  final SubscriptionCheckoutQuote? current;
+  final Map<String, SubscriptionCheckoutQuote> products;
+
+  bool get hasTaxAuthority =>
+      current != null && current!.taxTreatment.trim().isNotEmpty;
+}
+
+Future<SubscriptionDisplayQuotes?> fetchCompanySubscriptionDisplayQuotes({
+  required String tenantId,
+  required String companyId,
+}) async {
+  if (!kFluxidiCompanySaasCheckoutEnabled) return null;
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse(
+      '${appConfig.bookingBaseUrl}/company/subscription/checkout/quotes',
+    ),
+    tenantId: scope['tenant_id'],
+    companyId: scope['company_id'],
+  );
+  try {
+    final auth = await resolveCompanyOwnerAuthHeaders();
+    final res = await http
+        .post(endpoint, headers: auth.headers, body: jsonEncode(scope))
+        .timeout(const Duration(seconds: 20));
+    final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+    if (decoded is! Map) return null;
+    final map = Map<String, dynamic>.from(decoded);
+    SubscriptionCheckoutQuote? current;
+    if (map['current'] is Map) {
+      current = SubscriptionCheckoutQuote.fromJson(
+        Map<String, dynamic>.from(map['current'] as Map),
+      );
+    }
+    final products = <String, SubscriptionCheckoutQuote>{};
+    if (map['products'] is Map) {
+      Map<String, dynamic>.from(map['products'] as Map).forEach((key, value) {
+        if (value is Map) {
+          products[key] = SubscriptionCheckoutQuote.fromJson(
+            Map<String, dynamic>.from(value),
+          );
+        }
+      });
+    }
+    return SubscriptionDisplayQuotes(current: current, products: products);
   } catch (_) {
     return null;
   }
@@ -6932,6 +7020,7 @@ startCompanySubscriptionAddonCheckout({
   required String addonCode,
   int quantity = 1,
   String? returnUrl,
+  String? quoteId,
 }) async {
   // GOOGLE-PLAY-SAAS-CONSUMPTION-ONLY-P0: block paid SaaS add-on Mollie
   // checkout on Play-distributed builds.
@@ -6962,6 +7051,7 @@ startCompanySubscriptionAddonCheckout({
     'quantity': quantity,
     if (returnUrl != null && returnUrl.trim().isNotEmpty)
       'return_url': returnUrl.trim(),
+    if (quoteId != null && quoteId.trim().isNotEmpty) 'quote_id': quoteId.trim(),
   };
   try {
     final auth = await resolveCompanyOwnerAuthHeaders();

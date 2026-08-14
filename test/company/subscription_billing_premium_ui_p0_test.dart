@@ -373,6 +373,7 @@ void main() {
 
     test('client fetches quote and never sends a price', () {
       expect(billingSource.contains('fetchCompanySubscriptionCheckoutQuote'), isTrue);
+      expect(billingSource.contains('fetchCompanySubscriptionDisplayQuotes'), isTrue);
       expect(billingSource.contains('_confirmCheckoutQuote'), isTrue);
       expect(billingSource.contains('quoteId: quote.quoteId'), isTrue);
       expect(billingSource.contains('amount_cents'), isFalse);
@@ -387,8 +388,10 @@ void main() {
       expect(billingSource.contains('Btw-behandeling'), isTrue);
       expect(billingSource.contains('btw verlegd'), isTrue);
       expect(billingSource.contains('Te betalen totaal'), isTrue);
-      expect(billingSource.contains('Volgende recurring excl. btw'), isTrue);
+      expect(billingSource.contains('Nieuwe recurring'), isTrue);
       expect(billingSource.contains('Proefperiode tot'), isTrue);
+      expect(billingSource.contains('Volgende betaling nog niet gesynchroniseerd'), isTrue);
+      expect(billingSource.contains('Fiscale behandeling onbekend'), isTrue);
     });
   });
 }

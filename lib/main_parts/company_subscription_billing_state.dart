@@ -26,6 +26,7 @@ class _CompanySubscriptionBillingPageState
 
   // Patch 2.2B activation wiring state.
   bool _activating = false;
+  SubscriptionDisplayQuotes? _displayQuotes;
   // Patch 2.4B: dedicated loading flag for the Extra vehicle add-on checkout so
   // it cannot be double-tapped and is independent of the base-activation flag.
   bool _startingAddonCheckout = false;
@@ -66,16 +67,11 @@ class _CompanySubscriptionBillingPageState
 
   String? _consolidatedRenewalLine(BackendSubscriptionProfile profile) {
     if (!_hasProviderSubscription(profile)) return null;
-    final cents = profile.recurringAmountCents;
-    if (cents == null) return null;
-    final periodEnd = profile.currentPeriodEnd.trim();
-    if (periodEnd.isEmpty) return null;
-    final date = _humanDate(periodEnd);
     return _t(
-      nl: 'Volgende verlenging: ${_priceFromCents(cents)} op $date',
-      en: 'Next renewal: ${_priceFromCents(cents)} on $date',
-      fr: 'Prochain renouvellement : ${_priceFromCents(cents)} le $date',
-      es: 'Próxima renovación: ${_priceFromCents(cents)} el $date',
+      nl: 'Volgende betaling nog niet gesynchroniseerd.',
+      en: 'Next charge not yet synchronized.',
+      fr: 'Prochain paiement pas encore synchronisé.',
+      es: 'El próximo cargo aún no está sincronizado.',
     );
   }
 
@@ -485,9 +481,43 @@ class _CompanySubscriptionBillingPageState
       );
       return BackendSubscriptionProfile.defaults();
     }
-    return fetchCompanySubscriptionProfile(
+    final profile = await fetchCompanySubscriptionProfile(
       tenantId: scopeId,
       companyId: scopeId,
+    );
+    _displayQuotes = await fetchCompanySubscriptionDisplayQuotes(
+      tenantId: scopeId,
+      companyId: scopeId,
+    );
+    return profile;
+  }
+
+  SubscriptionCheckoutQuote? _productQuote(String code) =>
+      _displayQuotes?.products[code];
+
+  bool get _taxKnown =>
+      (_displayQuotes?.current?.taxTreatment.trim().isNotEmpty ?? false);
+
+  String _vatBreakdown({
+    required int? excl,
+    required int? vat,
+    required int? incl,
+    required SubscriptionCheckoutQuote? quote,
+  }) {
+    final reverse = quote?.isReverseCharge == true;
+    if (reverse) {
+      return _t(
+        nl: 'Btw verlegd — ${_priceFromCents(excl ?? 0)} excl. btw — ${_priceFromCents(incl ?? excl ?? 0)} te betalen',
+        en: 'VAT reverse-charged — ${_priceFromCents(excl ?? 0)} excl. VAT — ${_priceFromCents(incl ?? excl ?? 0)} to pay',
+        fr: 'TVA autoliquidée — ${_priceFromCents(excl ?? 0)} HT — ${_priceFromCents(incl ?? excl ?? 0)} à payer',
+        es: 'IVA invertido — ${_priceFromCents(excl ?? 0)} sin IVA — ${_priceFromCents(incl ?? excl ?? 0)} a pagar',
+      );
+    }
+    return _t(
+      nl: '${_priceFromCents(excl ?? 0)} excl. btw · ${_priceFromCents(vat ?? 0)} btw · ${_priceFromCents(incl ?? 0)} incl. btw',
+      en: '${_priceFromCents(excl ?? 0)} excl. VAT · ${_priceFromCents(vat ?? 0)} VAT · ${_priceFromCents(incl ?? 0)} incl. VAT',
+      fr: '${_priceFromCents(excl ?? 0)} HT · ${_priceFromCents(vat ?? 0)} TVA · ${_priceFromCents(incl ?? 0)} TTC',
+      es: '${_priceFromCents(excl ?? 0)} sin IVA · ${_priceFromCents(vat ?? 0)} IVA · ${_priceFromCents(incl ?? 0)} con IVA',
     );
   }
 
@@ -804,14 +834,16 @@ class _CompanySubscriptionBillingPageState
               ),
               style: const TextStyle(fontWeight: FontWeight.w800),
             ),
-            if (recurring != null) ...[
+            if (recurring != null &&
+                recurring != excl &&
+                quote.recurringInclVatCents != null) ...[
               const SizedBox(height: 6),
               Text(
                 _t(
-                  nl: 'Volgende recurring excl. btw: ${_priceFromCents(recurring)}',
-                  en: 'Next recurring excl. VAT: ${_priceFromCents(recurring)}',
-                  fr: 'Prochain récurrent HT : ${_priceFromCents(recurring)}',
-                  es: 'Próximo recurrente sin IVA: ${_priceFromCents(recurring)}',
+                  nl: 'Nieuwe recurring: ${_vatBreakdown(excl: recurring, vat: quote.recurringVatAmountCents, incl: quote.recurringInclVatCents, quote: quote)}',
+                  en: 'New recurring: ${_vatBreakdown(excl: recurring, vat: quote.recurringVatAmountCents, incl: quote.recurringInclVatCents, quote: quote)}',
+                  fr: 'Nouveau récurrent : ${_vatBreakdown(excl: recurring, vat: quote.recurringVatAmountCents, incl: quote.recurringInclVatCents, quote: quote)}',
+                  es: 'Nuevo recurrente: ${_vatBreakdown(excl: recurring, vat: quote.recurringVatAmountCents, incl: quote.recurringInclVatCents, quote: quote)}',
                 ),
               ),
             ],
@@ -852,6 +884,20 @@ class _CompanySubscriptionBillingPageState
       ),
     );
   }
+
+  String _quoteUnavailableMessage() => _t(
+    nl: 'Prijsopgave niet beschikbaar. Probeer later opnieuw.',
+    en: 'Checkout quote unavailable. Please try again later.',
+    fr: 'Devis indisponible. Réessayez plus tard.',
+    es: 'Presupuesto no disponible. Inténtalo más tarde.',
+  );
+
+  String _unknownTaxMessage() => _t(
+    nl: 'Fiscale behandeling onbekend. Checkout is geblokkeerd.',
+    en: 'Tax treatment unknown. Checkout is blocked.',
+    fr: 'Traitement fiscal inconnu. Le paiement est bloqué.',
+    es: 'Tratamiento fiscal desconocido. El pago está bloqueado.',
+  );
 
   String _unsupportedMarketMessage() => _t(
     nl: 'Nog niet beschikbaar in dit land.',
@@ -965,13 +1011,31 @@ class _CompanySubscriptionBillingPageState
       return;
     }
 
+    if (!_taxKnown) {
+      _showSnack(_unknownTaxMessage());
+      return;
+    }
     setState(() => _startingAddonCheckout = true);
     try {
+      final quote =
+          _productQuote('extra_vehicle') ??
+          await fetchCompanySubscriptionCheckoutQuote(
+            tenantId: scopeId,
+            companyId: scopeId,
+            addonCode: 'extra_vehicle',
+          );
+      if (!mounted) return;
+      if (quote == null || quote.mollieAmountCents == null) {
+        _showSnack(_quoteUnavailableMessage());
+        return;
+      }
+      if (await _confirmCheckoutQuote(quote) != true || !mounted) return;
       final result = await startCompanySubscriptionAddonCheckout(
         tenantId: scopeId,
         companyId: scopeId,
         addonCode: 'extra_vehicle',
         quantity: 1,
+        quoteId: quote.quoteId,
         returnUrl:
             '${appConfig.bookingBaseUrl}/company/subscription/add-ons/checkout/return',
       );
@@ -982,8 +1046,6 @@ class _CompanySubscriptionBillingPageState
         _showSnack(_addonCheckoutErrorMessage(result));
         return;
       }
-
-      if (!await _confirmAddonProration(result)) return;
 
       final url = result.checkoutUrl.trim();
       await _launchAddonCheckoutUrl(url);
@@ -1047,13 +1109,31 @@ class _CompanySubscriptionBillingPageState
       return;
     }
 
+    if (!_taxKnown) {
+      _showSnack(_unknownTaxMessage());
+      return;
+    }
     setState(() => _startingExtraDriverAddonCheckout = true);
     try {
+      final quote =
+          _productQuote('extra_driver') ??
+          await fetchCompanySubscriptionCheckoutQuote(
+            tenantId: scopeId,
+            companyId: scopeId,
+            addonCode: 'extra_driver',
+          );
+      if (!mounted) return;
+      if (quote == null || quote.mollieAmountCents == null) {
+        _showSnack(_quoteUnavailableMessage());
+        return;
+      }
+      if (await _confirmCheckoutQuote(quote) != true || !mounted) return;
       final result = await startCompanySubscriptionAddonCheckout(
         tenantId: scopeId,
         companyId: scopeId,
         addonCode: 'extra_driver',
         quantity: 1,
+        quoteId: quote.quoteId,
         returnUrl:
             '${appConfig.bookingBaseUrl}/company/subscription/add-ons/checkout/return',
       );
@@ -1064,8 +1144,6 @@ class _CompanySubscriptionBillingPageState
         _showSnack(_addonCheckoutErrorMessage(result));
         return;
       }
-
-      if (!await _confirmAddonProration(result)) return;
 
       final url = result.checkoutUrl.trim();
       await _launchAddonCheckoutUrl(url);
@@ -2055,13 +2133,32 @@ class _CompanySubscriptionBillingPageState
       return;
     }
 
+    if (!_taxKnown) {
+      _showSnack(_unknownTaxMessage());
+      return;
+    }
     setState(() => _setPdfBundleStarting(pdfs, true));
     try {
+      final code = _pdfBundleAddonCode(pdfs);
+      final quote =
+          _productQuote(code) ??
+          await fetchCompanySubscriptionCheckoutQuote(
+            tenantId: scopeId,
+            companyId: scopeId,
+            addonCode: code,
+          );
+      if (!mounted) return;
+      if (quote == null || quote.mollieAmountCents == null) {
+        _showSnack(_quoteUnavailableMessage());
+        return;
+      }
+      if (await _confirmCheckoutQuote(quote) != true || !mounted) return;
       final result = await startCompanySubscriptionAddonCheckout(
         tenantId: scopeId,
         companyId: scopeId,
-        addonCode: _pdfBundleAddonCode(pdfs),
+        addonCode: code,
         quantity: 1,
+        quoteId: quote.quoteId,
         returnUrl:
             '${appConfig.bookingBaseUrl}/company/subscription/add-ons/checkout/return',
       );
@@ -2072,8 +2169,6 @@ class _CompanySubscriptionBillingPageState
         _showSnack(_addonCheckoutErrorMessage(result));
         return;
       }
-
-      if (!await _confirmAddonProration(result)) return;
 
       final url = result.checkoutUrl.trim();
       await _launchAddonCheckoutUrl(url);
@@ -3364,7 +3459,10 @@ class _CompanySubscriptionBillingPageState
               textBaseline: TextBaseline.alphabetic,
               children: [
                 Text(
-                  _priceFromCents(bundle.priceCents),
+                  _priceFromCents(
+                    _productQuote(_pdfBundleAddonCode(pdfs))?.unitExclVatCents ??
+                        bundle.priceCents,
+                  ),
                   style: TextStyle(
                     color: _gold,
                     fontSize: 22,
@@ -3374,7 +3472,7 @@ class _CompanySubscriptionBillingPageState
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  _pdfOneTimeLabel(),
+                  '${_pdfOneTimeLabel()} · ${_t(nl: 'excl. btw', en: 'excl. VAT', fr: 'HT', es: 'sin IVA')}',
                   style: TextStyle(
                     color: palette.textSecondary,
                     fontSize: 12,
@@ -3383,6 +3481,23 @@ class _CompanySubscriptionBillingPageState
                 ),
               ],
             ),
+            if (_productQuote(_pdfBundleAddonCode(pdfs)) != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                _vatBreakdown(
+                  excl: _productQuote(_pdfBundleAddonCode(pdfs))!.subtotalExclVatCents,
+                  vat: _productQuote(_pdfBundleAddonCode(pdfs))!.vatAmountCents,
+                  incl: _productQuote(_pdfBundleAddonCode(pdfs))!.totalInclVatCents,
+                  quote: _productQuote(_pdfBundleAddonCode(pdfs)),
+                ),
+                style: TextStyle(
+                  color: palette.textSecondary,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  height: 1.3,
+                ),
+              ),
+            ],
             if (ownedQty > 0) ...[
               const SizedBox(height: 6),
               _chip(
@@ -3589,11 +3704,10 @@ class _CompanySubscriptionBillingPageState
 
     // Big monthly amount: prefer the actual provider recurring when linked,
     // else fall back to locked/normal price.
+    final currentQuote = _displayQuotes?.current;
     final int monthlyCents =
-        (_hasProviderSubscription(profile) &&
-            profile.recurringAmountCents != null)
-        ? profile.recurringAmountCents!
-        : (lockedCents ?? catalog.normalPriceCents);
+        currentQuote?.subtotalExclVatCents ??
+        (lockedCents ?? catalog.normalPriceCents);
     final String monthlyText = _priceFromCents(monthlyCents);
 
     // Breakdown line only when at least one paid add-on is active.
@@ -3734,12 +3848,19 @@ class _CompanySubscriptionBillingPageState
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  _t(
-                    nl: '/ maand excl. btw',
-                    en: '/ month excl. VAT',
-                    fr: '/ mois HT',
-                    es: '/ mes sin IVA',
-                  ),
+                  currentQuote == null
+                      ? _t(
+                          nl: '/ maand excl. btw',
+                          en: '/ month excl. VAT',
+                          fr: '/ mois HT',
+                          es: '/ mes sin IVA',
+                        )
+                      : _t(
+                          nl: '/ maand',
+                          en: '/ month',
+                          fr: '/ mois',
+                          es: '/ mes',
+                        ),
                   style: TextStyle(
                     color: palette.textSecondary,
                     fontSize: 13,
@@ -3749,6 +3870,23 @@ class _CompanySubscriptionBillingPageState
               ),
             ],
           ),
+          if (currentQuote != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _vatBreakdown(
+                excl: currentQuote.subtotalExclVatCents,
+                vat: currentQuote.vatAmountCents,
+                incl: currentQuote.totalInclVatCents,
+                quote: currentQuote,
+              ),
+              style: TextStyle(
+                color: palette.textPrimary,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                height: 1.35,
+              ),
+            ),
+          ],
           if (vQty > 0 || dQty > 0) ...[
             const SizedBox(height: 6),
             Text(
@@ -4196,12 +4334,19 @@ class _CompanySubscriptionBillingPageState
             fr: 'Véhicule supplémentaire',
             es: 'Vehículo extra',
           ),
-          priceLabel: _t(
-            nl: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / maand',
-            en: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / month',
-            fr: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mois',
-            es: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mes',
-          ),
+          priceLabel: _productQuote('extra_vehicle') == null
+              ? _t(
+                  nl: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / maand excl. btw',
+                  en: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / month excl. VAT',
+                  fr: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mois HT',
+                  es: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mes sin IVA',
+                )
+              : _vatBreakdown(
+                  excl: _productQuote('extra_vehicle')!.unitExclVatCents,
+                  vat: _productQuote('extra_vehicle')!.unitVatAmountCents,
+                  incl: _productQuote('extra_vehicle')!.unitInclVatCents,
+                  quote: _productQuote('extra_vehicle'),
+                ),
           benefitLabel: _t(
             nl: 'Voegt 1 voertuigplek toe, inclusief ${catalog.includedDriversPerVehicle} chauffeurs.',
             en: 'Adds 1 vehicle slot, including ${catalog.includedDriversPerVehicle} drivers.',
@@ -4229,12 +4374,19 @@ class _CompanySubscriptionBillingPageState
             fr: 'Chauffeur supplémentaire',
             es: 'Conductor extra',
           ),
-          priceLabel: _t(
-            nl: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / maand',
-            en: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / month',
-            fr: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mois',
-            es: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mes',
-          ),
+          priceLabel: _productQuote('extra_driver') == null
+              ? _t(
+                  nl: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / maand excl. btw',
+                  en: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / month excl. VAT',
+                  fr: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mois HT',
+                  es: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mes sin IVA',
+                )
+              : _vatBreakdown(
+                  excl: _productQuote('extra_driver')!.unitExclVatCents,
+                  vat: _productQuote('extra_driver')!.unitVatAmountCents,
+                  incl: _productQuote('extra_driver')!.unitInclVatCents,
+                  quote: _productQuote('extra_driver'),
+                ),
           benefitLabel: _t(
             nl: 'Voegt 1 chauffeur toe zonder een voertuigplek te openen.',
             en: 'Adds 1 driver without opening a new vehicle slot.',
