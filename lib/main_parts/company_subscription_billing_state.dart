@@ -494,6 +494,44 @@ class _CompanySubscriptionBillingPageState
   SubscriptionCheckoutQuote? _productQuote(String code) =>
       _displayQuotes?.products[code];
 
+  /// Card price is the recurring unit, never active quantity × unit.
+  /// Zero/null extra-driver quote units fall back to the catalog unit plus
+  /// the server quote's vat_rate / tax treatment.
+  AddonCardUnitMoney _addonCardUnitMoney({
+    required String productCode,
+    required int catalogUnitExclCents,
+  }) {
+    final product = _productQuote(productCode);
+    final taxSource = product ?? _displayQuotes?.current;
+    return resolveAddonCardUnitMoney(
+      catalogUnitExclCents: catalogUnitExclCents,
+      quoteUnitExclCents: product?.unitExclVatCents,
+      quoteUnitVatCents: product?.unitVatAmountCents,
+      quoteUnitInclCents: product?.unitInclVatCents,
+      quoteVatRate: taxSource?.vatRate,
+      taxTreatment: taxSource?.taxTreatment ?? '',
+    );
+  }
+
+  String _addonCardPriceLabel({
+    required String productCode,
+    required int catalogUnitExclCents,
+    required String catalogFallback,
+  }) {
+    final taxSource = _productQuote(productCode) ?? _displayQuotes?.current;
+    if (taxSource == null) return catalogFallback;
+    final money = _addonCardUnitMoney(
+      productCode: productCode,
+      catalogUnitExclCents: catalogUnitExclCents,
+    );
+    return _vatBreakdown(
+      excl: money.exclCents,
+      vat: money.vatCents,
+      incl: money.inclCents,
+      quote: taxSource,
+    );
+  }
+
   bool get _taxKnown =>
       (_displayQuotes?.current?.taxTreatment.trim().isNotEmpty ?? false);
 
@@ -873,7 +911,9 @@ class _CompanySubscriptionBillingPageState
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(_t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar')),
+            child: Text(
+              _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
@@ -3459,7 +3499,9 @@ class _CompanySubscriptionBillingPageState
               children: [
                 Text(
                   _priceFromCents(
-                    _productQuote(_pdfBundleAddonCode(pdfs))?.unitExclVatCents ??
+                    _productQuote(
+                          _pdfBundleAddonCode(pdfs),
+                        )?.unitExclVatCents ??
                         bundle.priceCents,
                   ),
                   style: TextStyle(
@@ -3484,9 +3526,13 @@ class _CompanySubscriptionBillingPageState
               const SizedBox(height: 4),
               Text(
                 _vatBreakdown(
-                  excl: _productQuote(_pdfBundleAddonCode(pdfs))!.subtotalExclVatCents,
+                  excl: _productQuote(
+                    _pdfBundleAddonCode(pdfs),
+                  )!.subtotalExclVatCents,
                   vat: _productQuote(_pdfBundleAddonCode(pdfs))!.vatAmountCents,
-                  incl: _productQuote(_pdfBundleAddonCode(pdfs))!.totalInclVatCents,
+                  incl: _productQuote(
+                    _pdfBundleAddonCode(pdfs),
+                  )!.totalInclVatCents,
                   quote: _productQuote(_pdfBundleAddonCode(pdfs)),
                 ),
                 style: TextStyle(
@@ -4333,19 +4379,16 @@ class _CompanySubscriptionBillingPageState
             fr: 'Véhicule supplémentaire',
             es: 'Vehículo extra',
           ),
-          priceLabel: _productQuote('extra_vehicle') == null
-              ? _t(
-                  nl: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / maand excl. btw',
-                  en: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / month excl. VAT',
-                  fr: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mois HT',
-                  es: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mes sin IVA',
-                )
-              : _vatBreakdown(
-                  excl: _productQuote('extra_vehicle')!.unitExclVatCents,
-                  vat: _productQuote('extra_vehicle')!.unitVatAmountCents,
-                  incl: _productQuote('extra_vehicle')!.unitInclVatCents,
-                  quote: _productQuote('extra_vehicle'),
-                ),
+          priceLabel: _addonCardPriceLabel(
+            productCode: 'extra_vehicle',
+            catalogUnitExclCents: catalog.extraVehiclePriceCents,
+            catalogFallback: _t(
+              nl: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / maand excl. btw',
+              en: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / month excl. VAT',
+              fr: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mois HT',
+              es: '+ ${_priceFromCents(catalog.extraVehiclePriceCents)} / mes sin IVA',
+            ),
+          ),
           benefitLabel: _t(
             nl: 'Voegt 1 voertuigplek toe, inclusief ${catalog.includedDriversPerVehicle} chauffeurs.',
             en: 'Adds 1 vehicle slot, including ${catalog.includedDriversPerVehicle} drivers.',
@@ -4373,19 +4416,16 @@ class _CompanySubscriptionBillingPageState
             fr: 'Chauffeur supplémentaire',
             es: 'Conductor extra',
           ),
-          priceLabel: _productQuote('extra_driver') == null
-              ? _t(
-                  nl: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / maand excl. btw',
-                  en: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / month excl. VAT',
-                  fr: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mois HT',
-                  es: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mes sin IVA',
-                )
-              : _vatBreakdown(
-                  excl: _productQuote('extra_driver')!.unitExclVatCents,
-                  vat: _productQuote('extra_driver')!.unitVatAmountCents,
-                  incl: _productQuote('extra_driver')!.unitInclVatCents,
-                  quote: _productQuote('extra_driver'),
-                ),
+          priceLabel: _addonCardPriceLabel(
+            productCode: 'extra_driver',
+            catalogUnitExclCents: catalog.extraDriverPriceCents,
+            catalogFallback: _t(
+              nl: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / maand excl. btw',
+              en: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / month excl. VAT',
+              fr: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mois HT',
+              es: '+ ${_priceFromCents(catalog.extraDriverPriceCents)} / mes sin IVA',
+            ),
+          ),
           benefitLabel: _t(
             nl: 'Voegt 1 chauffeur toe zonder een voertuigplek te openen.',
             en: 'Adds 1 driver without opening a new vehicle slot.',

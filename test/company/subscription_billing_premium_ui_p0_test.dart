@@ -372,14 +372,59 @@ void main() {
     });
 
     test('client fetches quote and never sends a price', () {
-      expect(billingSource.contains('fetchCompanySubscriptionCheckoutQuote'), isTrue);
-      expect(billingSource.contains('fetchCompanySubscriptionDisplayQuotes'), isTrue);
+      expect(
+        billingSource.contains('fetchCompanySubscriptionCheckoutQuote'),
+        isTrue,
+      );
+      expect(
+        billingSource.contains('fetchCompanySubscriptionDisplayQuotes'),
+        isTrue,
+      );
       expect(billingSource.contains('_confirmCheckoutQuote'), isTrue);
       expect(billingSource.contains('quoteId: quote.quoteId'), isTrue);
       expect(billingSource.contains('amount_cents'), isFalse);
       expect(configSource.contains('0.21'), isFalse);
       expect(billingSource.contains('0.21'), isFalse);
     });
+
+    test('extra chauffeur card uses catalog unit helper, not qty × unit', () {
+      expect(billingSource.contains('_addonCardPriceLabel'), isTrue);
+      expect(billingSource.contains('_addonCardUnitMoney'), isTrue);
+      expect(billingSource.contains('resolveAddonCardUnitMoney'), isTrue);
+      expect(billingSource.contains("productCode: 'extra_driver'"), isTrue);
+      expect(billingSource.contains('catalog.extraDriverPriceCents'), isTrue);
+      expect(
+        billingSource.contains("nl: '\$dQty actief'"),
+        isTrue,
+        reason: '0 actief chip must remain quantity-based',
+      );
+      expect(
+        billingSource.contains('unitExclVatCents *'),
+        isFalse,
+        reason: 'card must not multiply quote unit by active quantity',
+      );
+      expect(
+        billingSource.contains('extraDriverActiveQuantity *'),
+        isFalse,
+        reason: 'card must not multiply catalog unit by active quantity',
+      );
+    });
+
+    test(
+      'activation preview stays on the server quote and does not start checkout',
+      () {
+        expect(billingSource.contains('_confirmCheckoutQuote'), isTrue);
+        expect(billingSource.contains('quote.subtotalExclVatCents'), isTrue);
+        expect(billingSource.contains('quote.recurringExclVatCents'), isTrue);
+        expect(billingSource.contains('quote.recurringInclVatCents'), isTrue);
+        expect(billingSource.contains('Nieuwe recurring'), isTrue);
+        expect(
+          billingSource.contains('startCompanySubscriptionAddonCheckout'),
+          isTrue,
+        );
+        expect(billingSource.contains("addonCode: 'extra_driver'"), isTrue);
+      },
+    );
 
     test('confirm dialog shows excl VAT, treatment, VAT and total', () {
       expect(billingSource.contains('Basisplan excl. btw'), isTrue);
@@ -390,7 +435,10 @@ void main() {
       expect(billingSource.contains('Te betalen totaal'), isTrue);
       expect(billingSource.contains('Nieuwe recurring'), isTrue);
       expect(billingSource.contains('Proefperiode tot'), isTrue);
-      expect(billingSource.contains('Volgende betaling nog niet gesynchroniseerd'), isTrue);
+      expect(
+        billingSource.contains('Volgende betaling nog niet gesynchroniseerd'),
+        isTrue,
+      );
       expect(billingSource.contains('Fiscale behandeling onbekend'), isTrue);
     });
   });
