@@ -411,6 +411,7 @@ void main() {
       expect(kBrandSignatureGoldActionAssetKeys['settings'], 'settings');
       expect(kBrandSignatureGoldActionAssetKeys['payments'], 'payments');
       expect(kBrandSignatureGoldActionAssetKeys['vehicles'], 'vehicles');
+      expect(kBrandSignatureGoldActionAssetKeys['chiron'], 'chiron');
       expect(kBrandSignatureGoldActionAssetKeys['documents'], 'documents');
       expect(kBrandSignatureGoldActionAssetKeys['customers'], 'customers');
       expect(kBrandSignatureGoldActionAssetKeys['drivers'], 'drivers');
@@ -425,6 +426,18 @@ void main() {
       expect(kBrandSignatureGoldActionAssetKeys['planning'], 'planning');
       expect(kBrandSignatureGoldActionAssetKeys['ai_dispatch'], 'ai_dispatch');
       expect(kBrandSignatureGoldActionAssetKeys['theme'], 'theme');
+      expect(
+        brandSignatureGoldAssetPath('chiron'),
+        'assets/business_themes/brand_signature_gold/fluxidi_gold_chiron.webp',
+      );
+      expect(
+        brandSignatureGoldAssetPath('documents'),
+        'assets/business_themes/brand_signature_gold/fluxidi_gold_documents.webp',
+      );
+      expect(
+        brandSignatureGoldAssetPath('chiron'),
+        isNot(contains('fluxidi_gold_documents.webp')),
+      );
     });
 
     test('21 existing action handlers and destinations are preserved', () {
@@ -440,6 +453,129 @@ void main() {
       expect(home.contains('const BusinessRegionalDemandPage()'), isTrue);
       expect(home.contains('_showPublicBookingShareQuickAccess'), isTrue);
       expect(home.contains('_openBusinessBookingsOverview'), isTrue);
+    });
+
+    test('21b Gold Chiron uses the lion-shield asset, not Documents', () {
+      const requiredPurposeKeys = <String>[
+        'ai_dispatch',
+        'booking_link',
+        'customers',
+        'demand_radar',
+        'payments',
+        'planning',
+        'settings',
+        'drivers',
+        'vehicles',
+        'chiron',
+      ];
+      expect(
+        brandSignatureGoldAssetPath('chiron'),
+        'assets/business_themes/brand_signature_gold/fluxidi_gold_chiron.webp',
+      );
+      expect(
+        brandSignatureGoldAssetPath('documents'),
+        'assets/business_themes/brand_signature_gold/fluxidi_gold_documents.webp',
+      );
+      expect(kBrandSignatureGoldActionAssetKeys['chiron'], isNot('documents'));
+      expect(
+        brandSignatureGoldAssetPath(
+          kBrandSignatureGoldActionAssetKeys['chiron']!,
+        ),
+        isNot(contains('fluxidi_gold_documents.webp')),
+      );
+      for (final key in requiredPurposeKeys) {
+        final path = brandSignatureGoldAssetPath(
+          kBrandSignatureGoldActionAssetKeys[key] ?? key,
+        );
+        expect(File(path).existsSync(), isTrue, reason: path);
+      }
+      expect(
+        File(
+          'assets/business_themes/brand_signature_gold/fluxidi_gold_documents.webp',
+        ).existsSync(),
+        isTrue,
+      );
+
+      final home = File(
+        'lib/main_parts/business_home_page_state.dart',
+      ).readAsStringSync();
+      expect(home.contains("actionKey: 'chiron'"), isTrue);
+      expect(
+        home.contains(
+          "actionKey: 'documents',\n              title: _t(nl: 'Chiron'",
+        ),
+        isFalse,
+      );
+      expect(
+        home.contains(
+          "executiveGoldAsset:\n                                        'assets/fluxidi/chiron_background_company.webp'",
+        ),
+        isTrue,
+      );
+    });
+
+    testWidgets('21c Chiron card image is the lion shield, not Documents', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 360,
+              height: 240,
+              child: BrandSignatureGoldActionCard(
+                actionKey: 'chiron',
+                title: 'Chiron',
+                subtitle: 'Compliance',
+              ),
+            ),
+          ),
+        ),
+      );
+      final images = tester.widgetList<Image>(find.byType(Image)).toList();
+      expect(
+        images.any((image) {
+          final provider = image.image;
+          return provider is AssetImage &&
+              provider.assetName.endsWith('fluxidi_gold_chiron.webp');
+        }),
+        isTrue,
+      );
+      expect(
+        images.any((image) {
+          final provider = image.image;
+          return provider is AssetImage &&
+              provider.assetName.endsWith('fluxidi_gold_documents.webp');
+        }),
+        isFalse,
+      );
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 360,
+              height: 240,
+              child: BrandSignatureGoldActionCard(
+                actionKey: 'documents',
+                title: 'Documents',
+                subtitle: 'Files',
+              ),
+            ),
+          ),
+        ),
+      );
+      final documentImages = tester
+          .widgetList<Image>(find.byType(Image))
+          .toList();
+      expect(
+        documentImages.any((image) {
+          final provider = image.image;
+          return provider is AssetImage &&
+              provider.assetName.endsWith('fluxidi_gold_documents.webp');
+        }),
+        isTrue,
+      );
     });
 
     test('22 AI Dispatch remains disabled / coming soon', () {
@@ -469,6 +605,7 @@ void main() {
                       'settings',
                       'payments',
                       'vehicles',
+                      'chiron',
                       'documents',
                       'customers',
                       'drivers',
@@ -522,8 +659,8 @@ void main() {
       expect(brandSignatureResetDefaultLabel(), 'Standaard herstellen');
     });
 
-    test('25 all 13 WebP assets exist, decode and preserve alpha', () async {
-      expect(kBrandSignatureGoldAssetKeys, hasLength(13));
+    test('25 all 14 WebP assets exist, decode and preserve alpha', () async {
+      expect(kBrandSignatureGoldAssetKeys, hasLength(14));
       for (final key in kBrandSignatureGoldAssetKeys) {
         final path = brandSignatureGoldAssetPath(key);
         final file = File(path);
@@ -633,9 +770,7 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(800, 1280));
       await tester.pumpWidget(
         const MaterialApp(
-          home: BusinessThemeRootCanvas(
-            child: BrandSignatureStyleEditor(),
-          ),
+          home: BusinessThemeRootCanvas(child: BrandSignatureStyleEditor()),
         ),
       );
       await tester.pump();
@@ -691,53 +826,54 @@ void main() {
       await tester.binding.setSurfaceSize(null);
     });
 
-    testWidgets('31 live chrome follows the chosen color without tinting icons', (
-      tester,
-    ) async {
-      businessThemeNotifier.value = BusinessThemeVariant.brandSignatureGold;
-      brandSignaturePaletteNotifier.value = BrandSignaturePalette.fromColor(
-        const Color(0xFFFF2D00),
-      );
-      await tester.binding.setSurfaceSize(const Size(800, 1280));
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: BusinessThemeRootCanvas(
-            child: _GoldTabletPreview(includeDock: true),
+    testWidgets(
+      '31 live chrome follows the chosen color without tinting icons',
+      (tester) async {
+        businessThemeNotifier.value = BusinessThemeVariant.brandSignatureGold;
+        brandSignaturePaletteNotifier.value = BrandSignaturePalette.fromColor(
+          const Color(0xFFFF2D00),
+        );
+        await tester.binding.setSurfaceSize(const Size(800, 1280));
+        await tester.pumpWidget(
+          const MaterialApp(
+            home: BusinessThemeRootCanvas(
+              child: _GoldTabletPreview(includeDock: true),
+            ),
           ),
-        ),
-      );
-      await tester.pump();
-      final headerBox = tester.widget<DecoratedBox>(
-        find.descendant(
-          of: find.byKey(kBrandSignatureGoldHeaderKey),
-          matching: find.byType(DecoratedBox),
-        ),
-      );
-      expect(
-        (headerBox.decoration as BoxDecoration).color,
-        BrandSignaturePalette.fromColor(const Color(0xFFFF2D00)).header,
-      );
-      expect(find.byKey(kBrandSignatureGoldLogoFallbackKey), findsOneWidget);
-      final settingsCard = tester.widget<Ink>(
-        find.descendant(
-          of: find.byKey(const Key('brand_signature_action_settings')),
-          matching: find.byType(Ink),
-        ),
-      );
-      expect(
-        (settingsCard.decoration as BoxDecoration).color,
-        BrandSignaturePalette.fromColor(const Color(0xFFFF2D00)).card,
-      );
-      final image = tester.widget<Image>(
-        find.descendant(
-          of: find.byKey(const Key('brand_signature_action_settings')),
-          matching: find.byType(Image),
-        ),
-      );
-      expect(image.color, isNull);
-      expect(image.colorBlendMode, isNull);
-      await tester.binding.setSurfaceSize(null);
-    });
+        );
+        await tester.pump();
+        final headerBox = tester.widget<DecoratedBox>(
+          find.descendant(
+            of: find.byKey(kBrandSignatureGoldHeaderKey),
+            matching: find.byType(DecoratedBox),
+          ),
+        );
+        expect(
+          (headerBox.decoration as BoxDecoration).color,
+          BrandSignaturePalette.fromColor(const Color(0xFFFF2D00)).header,
+        );
+        expect(find.byKey(kBrandSignatureGoldLogoFallbackKey), findsOneWidget);
+        final settingsCard = tester.widget<Ink>(
+          find.descendant(
+            of: find.byKey(const Key('brand_signature_action_settings')),
+            matching: find.byType(Ink),
+          ),
+        );
+        expect(
+          (settingsCard.decoration as BoxDecoration).color,
+          BrandSignaturePalette.fromColor(const Color(0xFFFF2D00)).card,
+        );
+        final image = tester.widget<Image>(
+          find.descendant(
+            of: find.byKey(const Key('brand_signature_action_settings')),
+            matching: find.byType(Image),
+          ),
+        );
+        expect(image.color, isNull);
+        expect(image.colorBlendMode, isNull);
+        await tester.binding.setSurfaceSize(null);
+      },
+    );
 
     test('32 cancel restores the previously applied color', () async {
       _setCompany('co_style_cancel');
@@ -781,10 +917,7 @@ void main() {
       );
       brandSignaturePaletteNotifier.value = BrandSignaturePalette.defaults;
       await loadBusinessThemePreference();
-      expect(
-        brandSignaturePaletteNotifier.value.base,
-        const Color(0xFF00E5FF),
-      );
+      expect(brandSignaturePaletteNotifier.value.base, const Color(0xFF00E5FF));
     });
 
     test('35 reset default only previews warm gold-brown', () async {
@@ -913,8 +1046,9 @@ void main() {
         const Color(0xFF000000),
         const Color(0xFFFF2D00),
       ]) {
-        brandSignaturePaletteNotifier.value =
-            BrandSignaturePalette.fromColor(color);
+        brandSignaturePaletteNotifier.value = BrandSignaturePalette.fromColor(
+          color,
+        );
         final palette = paletteForBusinessTheme(
           BusinessThemeVariant.brandSignatureGold,
         );
@@ -1186,9 +1320,7 @@ class _GoldTabletPreview extends StatelessWidget {
                             child: Text(
                               label,
                               style: TextStyle(
-                                color: brandSignatureReadableTextOn(
-                                  colors.kpi,
-                                ),
+                                color: brandSignatureReadableTextOn(colors.kpi),
                                 fontWeight: FontWeight.w700,
                                 fontSize: 11,
                               ),

@@ -7,6 +7,7 @@ const String kBrandSignatureGoldPackMarker = 'brand_signature_gold';
 
 const List<String> kBrandSignatureGoldAssetKeys = <String>[
   'customers',
+  'chiron',
   'documents',
   'drivers',
   'more',
@@ -25,6 +26,7 @@ const Map<String, String> kBrandSignatureGoldActionAssetKeys = <String, String>{
   'settings': 'settings',
   'payments': 'payments',
   'vehicles': 'vehicles',
+  'chiron': 'chiron',
   'documents': 'documents',
   'customers': 'customers',
   'drivers': 'drivers',

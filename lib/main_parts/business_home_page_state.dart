@@ -3686,7 +3686,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               },
             ),
             card(
-              actionKey: 'documents',
+              actionKey: 'chiron',
               title: _t(nl: 'Chiron', en: 'Chiron', fr: 'Chiron', es: 'Chiron'),
               subtitle: 'Compliance',
               onTap: () {
