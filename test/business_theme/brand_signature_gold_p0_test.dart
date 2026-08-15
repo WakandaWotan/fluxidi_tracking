@@ -578,6 +578,134 @@ void main() {
       );
     });
 
+    testWidgets(
+      '21d company Gold cards keep transparent icons without a rectangular matte',
+      (tester) async {
+        final light = BrandSignaturePalette.fromColor(const Color(0xFFF6EFE4));
+        brandSignaturePaletteNotifier.value = light;
+        expect(brandSignatureRelativeLuminance(light.card) >= 0.62, isTrue);
+
+        await tester.binding.setSurfaceSize(const Size(400, 800));
+        await tester.pumpWidget(
+          const MaterialApp(
+            home: Scaffold(
+              body: Center(
+                child: SizedBox(
+                  width: 96,
+                  height: 96,
+                  child: BrandSignatureGoldContainedIllustration(
+                    assetKey: 'settings',
+                    width: 96,
+                    height: 96,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(
+          find.byKey(kBrandSignatureGoldLightCardIconShadowKey),
+          findsNothing,
+        );
+        final bare = tester.widget<Image>(find.byType(Image));
+        expect(bare.color, isNull);
+        expect(bare.colorBlendMode, isNull);
+        expect(bare.fit, kBrandSignatureGoldIllustrationFit);
+
+        await tester.pumpWidget(
+          const MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 200,
+                height: 180,
+                child: BrandSignatureGoldActionCard(
+                  actionKey: 'settings',
+                  title: 'Instellingen',
+                  subtitle: 'Profiel & branding',
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(
+          find.byKey(kBrandSignatureGoldLightCardIconShadowKey),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const Key('brand_signature_action_settings')),
+          findsOneWidget,
+        );
+        final cardImage = tester.widget<Image>(
+          find.descendant(
+            of: find.byKey(const Key('brand_signature_action_settings')),
+            matching: find.byType(Image),
+          ),
+        );
+        expect(cardImage.color, isNull);
+        expect(cardImage.colorBlendMode, isNull);
+        expect(cardImage.fit, BoxFit.contain);
+        expect(cardImage.width, isNull);
+        expect(cardImage.height, isNull);
+        expect(
+          find.byKey(kBrandSignatureGoldPhoneActionIconBoxKey),
+          findsNothing,
+        );
+        final ink = tester.widget<Ink>(
+          find.descendant(
+            of: find.byKey(const Key('brand_signature_action_settings')),
+            matching: find.byType(Ink),
+          ),
+        );
+        final decoration = ink.decoration as BoxDecoration;
+        expect(decoration.color, light.card);
+        expect(decoration.borderRadius, BorderRadius.circular(16));
+        expect(decoration.border, isNotNull);
+        await tester.binding.setSurfaceSize(null);
+      },
+    );
+
+    test('21e company Gold source keeps mappings and drops the icon matte', () {
+      final card = File(
+        'lib/widgets/brand_signature_gold_action_card.dart',
+      ).readAsStringSync();
+      expect(card.contains('rectangularLightCardIconShadow = false'), isTrue);
+      expect(
+        card.contains('kBrandSignatureGoldLightCardIconShadowKey'),
+        isTrue,
+      );
+
+      final home = File(
+        'lib/main_parts/business_home_page_state.dart',
+      ).readAsStringSync();
+      expect(home.contains('rectangularLightCardIconShadow: true'), isFalse);
+      expect(home.contains('phoneGoldIconBox'), isFalse);
+      expect(home.contains("actionKey: 'settings'"), isTrue);
+      expect(home.contains("actionKey: 'vehicles'"), isTrue);
+      expect(home.contains("actionKey: 'drivers'"), isTrue);
+      expect(home.contains("actionKey: 'booking_link'"), isTrue);
+      expect(home.contains("actionKey: 'chiron'"), isTrue);
+      expect(home.contains("actionKey: 'documents'"), isFalse);
+      expect(home.contains('const BusinessSettingsPage()'), isTrue);
+      expect(home.contains('const VehicleManagementPage()'), isTrue);
+      expect(home.contains('const ChironComplianceDashboardPage()'), isTrue);
+      expect(home.contains('const CompanyDriverManagementPage()'), isTrue);
+      expect(home.contains('_showPublicBookingShareQuickAccess'), isTrue);
+
+      final chauffeur = File(
+        'lib/main_parts/driver_home_page_state.dart',
+      ).readAsStringSync();
+      expect(
+        chauffeur.contains('rectangularLightCardIconShadow: false'),
+        isTrue,
+      );
+      expect(
+        chauffeur.contains('rectangularLightCardIconShadow: true'),
+        isFalse,
+      );
+    });
+
     test('22 AI Dispatch remains disabled / coming soon', () {
       final home = File(
         'lib/main_parts/business_home_page_state.dart',

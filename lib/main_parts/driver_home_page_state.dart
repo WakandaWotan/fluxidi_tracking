@@ -3113,16 +3113,14 @@ class _DriverHomePageState extends State<DriverHomePage>
       paletteForDriverTheme(DriverThemeVariant.customHuisstijl);
 
   Color _customHuisstijlAccent() => _customHuisstijlPalette().accent;
-  Color _customHuisstijlTextPrimary() =>
-      _customHuisstijlPalette().textPrimary;
+  Color _customHuisstijlTextPrimary() => _customHuisstijlPalette().textPrimary;
   Color _customHuisstijlTextMuted() => _customHuisstijlPalette().textMuted;
   Color _customHuisstijlBorderColor([double opacity = 0.46]) =>
       _customHuisstijlPalette().border.withOpacity(opacity);
   Color _customHuisstijlSurface() => _customHuisstijlPalette().surface;
   Color _customHuisstijlSurfaceAlt() => _customHuisstijlPalette().surfaceAlt;
   Color _customHuisstijlBackground() => _customHuisstijlPalette().background;
-  Color _customHuisstijlTextOnSelected() =>
-      _customHuisstijlPalette().isDark
+  Color _customHuisstijlTextOnSelected() => _customHuisstijlPalette().isDark
       ? const Color(0xFFFFFFFF)
       : const Color(0xFF1A1408);
 
@@ -3171,7 +3169,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
     ).copyWith(
       side: MaterialStateProperty.all(
-        BorderSide(color: _customHuisstijlAccent().withOpacity(0.90), width: 1.1),
+        BorderSide(
+          color: _customHuisstijlAccent().withOpacity(0.90),
+          width: 1.1,
+        ),
       ),
       elevation: MaterialStateProperty.all(0),
       overlayColor: MaterialStateProperty.all(
@@ -31096,17 +31097,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                       key: kDriverHomeThemeMenuTileKey,
                       dense: true,
                       contentPadding: EdgeInsets.zero,
-                      leading: Icon(
-                        Icons.palette_outlined,
-                        color: iconAccent,
-                      ),
+                      leading: Icon(Icons.palette_outlined, color: iconAccent),
                       title: Text(
-                        _tr(
-                          nl: 'Thema',
-                          en: 'Theme',
-                          fr: 'Theme',
-                          es: 'Tema',
-                        ),
+                        _tr(nl: 'Thema', en: 'Theme', fr: 'Theme', es: 'Tema'),
                         style: TextStyle(color: titleColor),
                       ),
                       subtitle: Text(
@@ -31116,10 +31109,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                           fr: 'Choisissez votre theme chauffeur personnel',
                           es: 'Elige tu tema personal de conductor',
                         ),
-                        style: TextStyle(
-                          color: subtitleColor,
-                          fontSize: 11.5,
-                        ),
+                        style: TextStyle(color: subtitleColor, fontSize: 11.5),
                       ),
                       onTap: () {
                         Navigator.of(ctx).pop();
@@ -31290,6 +31280,137 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  Widget _buildDriverHeaderActionCluster({
+    required double themeCycleSize,
+    required double clusterGap,
+  }) {
+    final avatarPhotoPath = _dashboardAvatarPhotoPath();
+    final avatarPhotoUrl = _dashboardAvatarNetworkUrl();
+    final avatarDriverId = _effectiveActiveDriverIdForRideScope();
+    final avatarCacheKey =
+        '${avatarDriverId}_${avatarPhotoPath ?? avatarPhotoUrl ?? 'none'}';
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _driverLanguagePill(),
+        SizedBox(width: clusterGap),
+        DriverThemeCycleButton(
+          themeListenable: _activeDriverThemeListenable,
+          heroOverlay: true,
+          size: themeCycleSize,
+          semanticLabel: _tr(
+            nl: 'Kies je uitstraling',
+            en: 'Choose your appearance',
+            fr: 'Choisissez votre apparence',
+            es: 'Elige tu estilo',
+          ),
+          onApply: _applyDriverThemeFromHeaderCycle,
+          onPressed: () {
+            unawaited(
+              showDriverThemeSelectorSheet(
+                context,
+                companyDriverView: widget.openedFromBusinessHome,
+              ),
+            );
+          },
+        ),
+        SizedBox(width: clusterGap),
+        Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Container(
+              width: 50,
+              height: 50,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: const Color(0xFF16181B),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white.withOpacity(0.20)),
+              ),
+              child: ClipOval(
+                child: SizedBox.expand(
+                  child: avatarPhotoPath == null
+                      ? (avatarPhotoUrl == null
+                            ? Center(child: _dashboardAvatarFallback())
+                            : Image.network(
+                                avatarPhotoUrl,
+                                key: ValueKey<String>(avatarCacheKey),
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) =>
+                                    Center(child: _dashboardAvatarFallback()),
+                              ))
+                      : Image.file(
+                          File(avatarPhotoPath),
+                          key: ValueKey<String>(avatarCacheKey),
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) =>
+                              Center(child: _dashboardAvatarFallback()),
+                        ),
+                ),
+              ),
+            ),
+            Positioned(
+              right: -1,
+              bottom: 1,
+              child: Container(
+                width: 11,
+                height: 11,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2ECC71),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: const Color(0xFF050505),
+                    width: 1.2,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildChauffeurBrandSignatureGoldHeader({
+    required bool isTabletLandscape,
+    required bool useTabletVisualMode,
+  }) {
+    final screenW = MediaQuery.sizeOf(context).width;
+    final clusterGap = screenW < 420 ? 4.0 : 8.0;
+    return ValueListenableBuilder<BusinessSettingsState>(
+      valueListenable: businessSettingsNotifier,
+      builder: (context, settings, _) {
+        return ValueListenableBuilder<ActiveDriverSession?>(
+          valueListenable: activeDriverSessionNotifier,
+          builder: (context, session, __) {
+            final ref =
+                _resolveDriverHomeBrandLogoRef(
+                  businessSettings: settings,
+                  session: session,
+                ) ??
+                kFluxidiLogoAsset;
+            final hasCompanyLogo =
+                ref.trim().isNotEmpty && ref != kFluxidiLogoAsset;
+            return BrandSignatureGoldHeader(
+              height: brandSignatureGoldHeaderHeightForLayout(
+                isTabletLandscape: isTabletLandscape,
+                useTabletVisualMode: useTabletVisualMode,
+              ),
+              logoRef: ref,
+              hasCompanyLogo: hasCompanyLogo,
+              companyName: settings.companyName.trim(),
+              paletteListenable: driverBrandSignaturePaletteNotifier,
+              trailing: _buildDriverHeaderActionCluster(
+                themeCycleSize: 48,
+                clusterGap: clusterGap,
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildDriverDashboardHeader() {
     final screenSize = MediaQuery.sizeOf(context);
     final screenW = screenSize.width;
@@ -31309,11 +31430,6 @@ class _DriverHomePageState extends State<DriverHomePage>
     final headerLeftPull = isPhonePortrait ? -8.0 : -16.0;
     const headerTopPull = -8.0;
     final logoVisualLift = isPhonePortrait ? -6.0 : -14.0;
-    final avatarPhotoPath = _dashboardAvatarPhotoPath();
-    final avatarPhotoUrl = _dashboardAvatarNetworkUrl();
-    final avatarDriverId = _effectiveActiveDriverIdForRideScope();
-    final avatarCacheKey =
-        '${avatarDriverId}_${avatarPhotoPath ?? avatarPhotoUrl ?? 'none'}';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -31358,93 +31474,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                 Positioned(
                   top: 10,
                   right: 0,
-                  child: Row(
-                    children: [
-                      _driverLanguagePill(),
-                      SizedBox(width: clusterGap),
-                      DriverThemeCycleButton(
-                        themeListenable: _activeDriverThemeListenable,
-                        heroOverlay: true,
-                        size: themeCycleSize,
-                        semanticLabel: _tr(
-                          nl: 'Kies je uitstraling',
-                          en: 'Choose your appearance',
-                          fr: 'Choisissez votre apparence',
-                          es: 'Elige tu estilo',
-                        ),
-                        onApply: _applyDriverThemeFromHeaderCycle,
-                        onPressed: () {
-                          unawaited(
-                            showDriverThemeSelectorSheet(
-                              context,
-                              companyDriverView: widget.openedFromBusinessHome,
-                            ),
-                          );
-                        },
-                      ),
-                      SizedBox(width: clusterGap),
-                      Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          Container(
-                            width: 50,
-                            height: 50,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF16181B),
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: Colors.white.withOpacity(0.20),
-                              ),
-                            ),
-                            child: ClipOval(
-                              child: SizedBox.expand(
-                                child: avatarPhotoPath == null
-                                    ? (avatarPhotoUrl == null
-                                          ? Center(
-                                              child: _dashboardAvatarFallback(),
-                                            )
-                                          : Image.network(
-                                              avatarPhotoUrl,
-                                              key: ValueKey<String>(
-                                                avatarCacheKey,
-                                              ),
-                                              fit: BoxFit.cover,
-                                              errorBuilder: (_, __, ___) => Center(
-                                                child:
-                                                    _dashboardAvatarFallback(),
-                                              ),
-                                            ))
-                                    : Image.file(
-                                        File(avatarPhotoPath),
-                                        key: ValueKey<String>(avatarCacheKey),
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (_, __, ___) => Center(
-                                          child: _dashboardAvatarFallback(),
-                                        ),
-                                      ),
-                              ),
-                            ),
-                          ),
-                          Positioned(
-                            right: -1,
-                            bottom: 1,
-                            child: Container(
-                              width: 11,
-                              height: 11,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF2ECC71),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: const Color(0xFF050505),
-                                  width: 1.2,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                  child: _buildDriverHeaderActionCluster(
+                    themeCycleSize: themeCycleSize,
+                    clusterGap: clusterGap,
                   ),
                 ),
               ],
@@ -31530,7 +31562,11 @@ class _DriverHomePageState extends State<DriverHomePage>
             ? const EdgeInsets.fromLTRB(8, 6, 8, 6)
             : const EdgeInsets.fromLTRB(8, 8, 8, 8),
         decoration: BoxDecoration(
-          color: (isMiddayGold || isMidnightBlue || isLightEmerald || isCustomHuisstijl)
+          color:
+              (isMiddayGold ||
+                  isMidnightBlue ||
+                  isLightEmerald ||
+                  isCustomHuisstijl)
               ? null
               : const Color(0xFF111214),
           gradient: isCustomHuisstijl
@@ -31557,7 +31593,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                                   : Colors.white.withOpacity(0.10)))),
             width: 1.0,
           ),
-          boxShadow: (isMiddayGold || isMidnightBlue || isLightEmerald || isCustomHuisstijl)
+          boxShadow:
+              (isMiddayGold ||
+                  isMidnightBlue ||
+                  isLightEmerald ||
+                  isCustomHuisstijl)
               ? [
                   BoxShadow(
                     color: Colors.black.withOpacity(0.24),
@@ -31570,25 +31610,25 @@ class _DriverHomePageState extends State<DriverHomePage>
         child: compactLandscape
             ? Row(
                 children: [
-                  Container(
-                    width: compactIconContainerSize,
-                    height: compactIconContainerSize,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: iconChipColor,
-                      border: Border.all(color: iconChipBorderColor),
-                    ),
-                    child: isCustomHuisstijl && goldAssetKey != null
-                        ? ChauffeurGoldIcon(
-                            assetKey: goldAssetKey,
-                            size: compactIconGlyphSize,
-                          )
-                        : Icon(
+                  isCustomHuisstijl && goldAssetKey != null
+                      ? ChauffeurGoldIcon(
+                          assetKey: goldAssetKey,
+                          size: compactIconContainerSize,
+                        )
+                      : Container(
+                          width: compactIconContainerSize,
+                          height: compactIconContainerSize,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: iconChipColor,
+                            border: Border.all(color: iconChipBorderColor),
+                          ),
+                          child: Icon(
                             icon,
                             size: compactIconGlyphSize,
                             color: accentColor,
                           ),
-                  ),
+                        ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -31644,25 +31684,25 @@ class _DriverHomePageState extends State<DriverHomePage>
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: summaryIconContainerSize,
-                    height: summaryIconContainerSize,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: iconChipColor,
-                      border: Border.all(color: iconChipBorderColor),
-                    ),
-                    child: isCustomHuisstijl && goldAssetKey != null
-                        ? ChauffeurGoldIcon(
-                            assetKey: goldAssetKey,
-                            size: summaryIconGlyphSize,
-                          )
-                        : Icon(
+                  isCustomHuisstijl && goldAssetKey != null
+                      ? ChauffeurGoldIcon(
+                          assetKey: goldAssetKey,
+                          size: summaryIconContainerSize,
+                        )
+                      : Container(
+                          width: summaryIconContainerSize,
+                          height: summaryIconContainerSize,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: iconChipColor,
+                            border: Border.all(color: iconChipBorderColor),
+                          ),
+                          child: Icon(
                             icon,
                             size: summaryIconGlyphSize,
                             color: accentColor,
                           ),
-                  ),
+                        ),
                   const SizedBox(height: 7),
                   Text(
                     value,
@@ -31810,7 +31850,11 @@ class _DriverHomePageState extends State<DriverHomePage>
         width: double.infinity,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: (isMiddayGold || isMidnightBlue || isLightEmerald || isCustomHuisstijl)
+          color:
+              (isMiddayGold ||
+                  isMidnightBlue ||
+                  isLightEmerald ||
+                  isCustomHuisstijl)
               ? null
               : const Color(0xFF101113),
           gradient: isCustomHuisstijl
@@ -32100,7 +32144,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                     : (isMidnightBlue
                           ? _midnightBlueSurfaceGradient(soft: true)
                           : null)),
-          color: (isMiddayGold || isMidnightBlue || isLightEmerald || isCustomHuisstijl)
+          color:
+              (isMiddayGold ||
+                  isMidnightBlue ||
+                  isLightEmerald ||
+                  isCustomHuisstijl)
               ? null
               : const Color(0xFF17191C),
           borderRadius: BorderRadius.circular(999),
@@ -32193,7 +32241,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: (isMiddayGold || isMidnightBlue || isLightEmerald || isCustomHuisstijl)
+        color:
+            (isMiddayGold ||
+                isMidnightBlue ||
+                isLightEmerald ||
+                isCustomHuisstijl)
             ? null
             : const Color(0xFF101113),
         gradient: isCustomHuisstijl
@@ -32416,7 +32468,33 @@ class _DriverHomePageState extends State<DriverHomePage>
       required VoidCallback onTap,
       bool active = false,
       String? backgroundAsset,
+      String? goldActionKey,
     }) {
+      if (isCustomHuisstijl && (goldActionKey ?? '').trim().isNotEmpty) {
+        final phoneGold = !isTabletPortrait && !isTabletLandscape;
+        final minHeight = isTabletPortrait
+            ? (tabletPortraitCardMinHeight ?? 120.0)
+            : isTabletLandscape
+            ? (landscapeCardMinHeight ?? 98.0)
+            : isPhoneVisual
+            ? (phoneVisualCardMinHeight ?? 104.0)
+            : isPhoneLandscapeHost
+            ? 110.0
+            : kBrandSignatureGoldPhoneCompactCardHeight;
+        return SizedBox(
+          height: minHeight + kBrandSignatureGoldActionCardHeightBoost,
+          child: BrandSignatureGoldActionCard(
+            actionKey: goldActionKey!,
+            title: title,
+            subtitle: subtitle,
+            onTap: onTap,
+            paletteListenable: driverBrandSignaturePaletteNotifier,
+            contrastTextAgainstCard: true,
+            rectangularLightCardIconShadow: false,
+            phoneGoldIconBox: phoneGold,
+          ),
+        );
+      }
       final hasImageBackground =
           useImageBackgrounds && (backgroundAsset ?? '').trim().isNotEmpty;
       final labelColumn = Column(
@@ -32686,9 +32764,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                               vertical: 6,
                             ),
                             decoration: BoxDecoration(
-                              color: const Color(
-                                0xFFF7FAF8,
-                              ).withOpacity(0.88),
+                              color: const Color(0xFFF7FAF8).withOpacity(0.88),
                               borderRadius: BorderRadius.circular(10),
                               border: Border.all(
                                 color: _lightEmeraldBorderColor(0.28),
@@ -32761,8 +32837,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                       'assets/Midday Gold Chauffeur/driver_street_ride_midday_gold.webp',
                   lightEmeraldAsset:
                       'assets/Light Emerald Chauffeur/driver_street_ride_light_emerald.webp',
-                  goldAsset: brandSignatureGoldAssetPath('street_ride'),
                 ),
+                goldActionKey: 'street_ride',
               ),
             ),
             SizedBox(
@@ -32785,8 +32861,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                       'assets/Midday Gold Chauffeur/driver_fare_calculator_midday_gold.webp',
                   lightEmeraldAsset:
                       'assets/Light Emerald Chauffeur/driver_fare_calculator_light_emerald.webp',
-                  goldAsset: brandSignatureGoldAssetPath('fare_calculator'),
                 ),
+                goldActionKey: 'fare_calculator',
               ),
             ),
             SizedBox(
@@ -32810,8 +32886,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                       'assets/Midday Gold Chauffeur/driver_my_rides_midday_gold.webp',
                   lightEmeraldAsset:
                       'assets/Light Emerald Chauffeur/driver_my_rides_light_emerald.webp',
-                  goldAsset: brandSignatureGoldAssetPath('rides'),
                 ),
+                goldActionKey: 'rides',
               ),
             ),
             SizedBox(
@@ -32833,8 +32909,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                       'assets/Midday Gold Chauffeur/driver_history_midday_gold.webp',
                   lightEmeraldAsset:
                       'assets/Light Emerald Chauffeur/driver_history_light_emerald.webp',
-                  goldAsset: brandSignatureGoldAssetPath('history'),
                 ),
+                goldActionKey: 'history',
               ),
             ),
             SizedBox(
@@ -32856,8 +32932,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                       'assets/Midday Gold Chauffeur/driver_receipts_midday_gold.webp',
                   lightEmeraldAsset:
                       'assets/Light Emerald Chauffeur/driver_receipts_light_emerald.webp',
-                  goldAsset: brandSignatureGoldAssetPath('receipts'),
                 ),
+                goldActionKey: 'receipts',
               ),
             ),
             SizedBox(
@@ -32887,8 +32963,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                       'assets/Midday Gold Chauffeur/driver_documents_midday_gold.webp',
                   lightEmeraldAsset:
                       'assets/Light Emerald Chauffeur/driver_documents_light_emerald.webp',
-                  goldAsset: brandSignatureGoldAssetPath('documents'),
                 ),
+                goldActionKey: 'documents',
               ),
             ),
             if (isPhoneLandscapeHost) ...[
@@ -33148,7 +33224,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (isMiddayGold || isMidnightBlue || isLightEmerald || isCustomHuisstijl)
+                    if (isCustomHuisstijl && goldAssetKey != null)
+                      ChauffeurGoldIcon(
+                        assetKey: goldAssetKey,
+                        size: navIconSize,
+                      )
+                    else if (isMiddayGold || isMidnightBlue || isLightEmerald)
                       Container(
                         width: 29,
                         height: 29,
@@ -33184,17 +33265,10 @@ class _DriverHomePageState extends State<DriverHomePage>
                                             : _midnightBlueBorderColor(0.32))),
                           ),
                         ),
-                        child: isCustomHuisstijl && goldAssetKey != null
-                            ? ChauffeurGoldIcon(assetKey: goldAssetKey, size: 20)
-                            : Icon(icon, size: 20, color: color),
+                        child: Icon(icon, size: 20, color: color),
                       )
                     else
-                      isCustomHuisstijl && goldAssetKey != null
-                          ? ChauffeurGoldIcon(
-                              assetKey: goldAssetKey,
-                              size: navIconSize,
-                            )
-                          : Icon(icon, size: navIconSize, color: color),
+                      Icon(icon, size: navIconSize, color: color),
                     const SizedBox(height: 2),
                     Text(
                       label,
@@ -33302,7 +33376,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                     vertical: 6,
                   ),
                   decoration: BoxDecoration(
-                    color: (isMiddayGold || isMidnightBlue || isLightEmerald || isCustomHuisstijl)
+                    color:
+                        (isMiddayGold ||
+                            isMidnightBlue ||
+                            isLightEmerald ||
+                            isCustomHuisstijl)
                         ? null
                         : const Color(0xFF101113),
                     gradient: isCustomHuisstijl
@@ -33387,7 +33465,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
     }
 
-    return ColoredBox(
+    final dashboard = ColoredBox(
       color: isCustomHuisstijl
           ? _customHuisstijlBackground()
           : isLightEmerald
@@ -33413,102 +33491,110 @@ class _DriverHomePageState extends State<DriverHomePage>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (isTabletPortrait) ...[
-                      Container(
-                        height: driverHeaderHeight,
-                        clipBehavior: Clip.antiAlias,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(
-                            color: isCustomHuisstijl
-                                ? _customHuisstijlBorderColor(0.56)
-                                : isLightEmerald
-                                ? _lightEmeraldBorderColor(0.56)
-                                : (isMiddayGold
-                                      ? const Color(
-                                          0xFFFFD36A,
-                                        ).withOpacity(0.56)
-                                      : (isMidnightBlue
-                                            ? _midnightBlueBorderColor(0.56)
-                                            : const Color(0x55FFD36A))),
+                      if (isCustomHuisstijl)
+                        _buildChauffeurBrandSignatureGoldHeader(
+                          isTabletLandscape: false,
+                          useTabletVisualMode: true,
+                        )
+                      else
+                        Container(
+                          height: driverHeaderHeight,
+                          clipBehavior: Clip.antiAlias,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(
+                              color: isCustomHuisstijl
+                                  ? _customHuisstijlBorderColor(0.56)
+                                  : isLightEmerald
+                                  ? _lightEmeraldBorderColor(0.56)
+                                  : (isMiddayGold
+                                        ? const Color(
+                                            0xFFFFD36A,
+                                          ).withOpacity(0.56)
+                                        : (isMidnightBlue
+                                              ? _midnightBlueBorderColor(0.56)
+                                              : const Color(0x55FFD36A))),
+                            ),
                           ),
-                        ),
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            Image.asset(
-                              _driverAssetByTheme(
-                                defaultAsset:
-                                    'assets/fluxidi/driver_header_portrait_tablet.webp',
-                                midnightBlueAsset:
-                                    'assets/Midnight Bleu Chauffeur/driver_home_header_midnight_blue.webp',
-                                middayGoldAsset:
-                                    'assets/Midday Gold Chauffeur/driver_home_header_midday_gold.webp',
-                                lightEmeraldAsset:
-                                    'assets/Light Emerald Chauffeur/driver_home_header_light_emerald.webp',
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              Image.asset(
+                                _driverAssetByTheme(
+                                  defaultAsset:
+                                      'assets/fluxidi/driver_header_portrait_tablet.webp',
+                                  midnightBlueAsset:
+                                      'assets/Midnight Bleu Chauffeur/driver_home_header_midnight_blue.webp',
+                                  middayGoldAsset:
+                                      'assets/Midday Gold Chauffeur/driver_home_header_midday_gold.webp',
+                                  lightEmeraldAsset:
+                                      'assets/Light Emerald Chauffeur/driver_home_header_light_emerald.webp',
+                                ),
+                                fit: BoxFit.cover,
+                                alignment: Alignment.centerRight,
+                                errorBuilder: (_, __, ___) =>
+                                    const DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(
+                                          begin: Alignment.topCenter,
+                                          end: Alignment.bottomCenter,
+                                          colors: [
+                                            Color(0xFF101010),
+                                            Color(0xFF07080C),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
                               ),
-                              fit: BoxFit.cover,
-                              alignment: Alignment.centerRight,
-                              errorBuilder: (_, __, ___) => const DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      Color(0xFF101010),
-                                      Color(0xFF07080C),
+                              Positioned.fill(
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: isLightEmerald
+                                          ? [
+                                              const Color(
+                                                0xFFEEF5F2,
+                                              ).withOpacity(0.0),
+                                              const Color(
+                                                0xFF0F3D2E,
+                                              ).withOpacity(0.12),
+                                              const Color(
+                                                0xFF0F3D2E,
+                                              ).withOpacity(0.34),
+                                            ]
+                                          : [
+                                              Colors.black.withOpacity(0.16),
+                                              Colors.black.withOpacity(0.26),
+                                              Colors.black.withOpacity(0.56),
+                                            ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Positioned.fill(
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    10,
+                                    8,
+                                    10,
+                                    10,
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      _buildDriverDashboardHeader(),
+                                      const Spacer(),
+                                      driverIdentityBlock(),
                                     ],
                                   ),
                                 ),
                               ),
-                            ),
-                            Positioned.fill(
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: isLightEmerald
-                                        ? [
-                                            const Color(
-                                              0xFFEEF5F2,
-                                            ).withOpacity(0.0),
-                                            const Color(
-                                              0xFF0F3D2E,
-                                            ).withOpacity(0.12),
-                                            const Color(
-                                              0xFF0F3D2E,
-                                            ).withOpacity(0.34),
-                                          ]
-                                        : [
-                                            Colors.black.withOpacity(0.16),
-                                            Colors.black.withOpacity(0.26),
-                                            Colors.black.withOpacity(0.56),
-                                          ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                            Positioned.fill(
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  10,
-                                  8,
-                                  10,
-                                  10,
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    _buildDriverDashboardHeader(),
-                                    const Spacer(),
-                                    driverIdentityBlock(),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
                       const SizedBox(height: 6),
                       _buildDriverSummaryCards(nextRide: nextRide),
                       const SizedBox(height: 10),
@@ -33532,102 +33618,110 @@ class _DriverHomePageState extends State<DriverHomePage>
                       ),
                       const SizedBox(height: 10),
                     ] else if (isTabletLandscape) ...[
-                      Container(
-                        height: driverLandscapeHeaderHeight,
-                        clipBehavior: Clip.antiAlias,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(
-                            color: isCustomHuisstijl
-                                ? _customHuisstijlBorderColor(0.56)
-                                : isLightEmerald
-                                ? _lightEmeraldBorderColor(0.56)
-                                : (isMiddayGold
-                                      ? const Color(
-                                          0xFFFFD36A,
-                                        ).withOpacity(0.56)
-                                      : (isMidnightBlue
-                                            ? _midnightBlueBorderColor(0.56)
-                                            : const Color(0x55FFD36A))),
+                      if (isCustomHuisstijl)
+                        _buildChauffeurBrandSignatureGoldHeader(
+                          isTabletLandscape: true,
+                          useTabletVisualMode: true,
+                        )
+                      else
+                        Container(
+                          height: driverLandscapeHeaderHeight,
+                          clipBehavior: Clip.antiAlias,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(
+                              color: isCustomHuisstijl
+                                  ? _customHuisstijlBorderColor(0.56)
+                                  : isLightEmerald
+                                  ? _lightEmeraldBorderColor(0.56)
+                                  : (isMiddayGold
+                                        ? const Color(
+                                            0xFFFFD36A,
+                                          ).withOpacity(0.56)
+                                        : (isMidnightBlue
+                                              ? _midnightBlueBorderColor(0.56)
+                                              : const Color(0x55FFD36A))),
+                            ),
                           ),
-                        ),
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            Image.asset(
-                              _driverAssetByTheme(
-                                defaultAsset:
-                                    'assets/fluxidi/driver_header_landscape_tablet.webp',
-                                midnightBlueAsset:
-                                    'assets/Midnight Bleu Chauffeur/driver_navigation_midnight_blue.webp',
-                                middayGoldAsset:
-                                    'assets/Midday Gold Chauffeur/driver_navigation_midday_gold.webp',
-                                lightEmeraldAsset:
-                                    'assets/Light Emerald Chauffeur/driver_navigation_light_emerald.webp',
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              Image.asset(
+                                _driverAssetByTheme(
+                                  defaultAsset:
+                                      'assets/fluxidi/driver_header_landscape_tablet.webp',
+                                  midnightBlueAsset:
+                                      'assets/Midnight Bleu Chauffeur/driver_navigation_midnight_blue.webp',
+                                  middayGoldAsset:
+                                      'assets/Midday Gold Chauffeur/driver_navigation_midday_gold.webp',
+                                  lightEmeraldAsset:
+                                      'assets/Light Emerald Chauffeur/driver_navigation_light_emerald.webp',
+                                ),
+                                fit: BoxFit.cover,
+                                alignment: Alignment.center,
+                                errorBuilder: (_, __, ___) =>
+                                    const DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(
+                                          begin: Alignment.topCenter,
+                                          end: Alignment.bottomCenter,
+                                          colors: [
+                                            Color(0xFF101010),
+                                            Color(0xFF07080C),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
                               ),
-                              fit: BoxFit.cover,
-                              alignment: Alignment.center,
-                              errorBuilder: (_, __, ___) => const DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      Color(0xFF101010),
-                                      Color(0xFF07080C),
+                              Positioned.fill(
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: isLightEmerald
+                                          ? [
+                                              const Color(
+                                                0xFFEEF5F2,
+                                              ).withOpacity(0.0),
+                                              const Color(
+                                                0xFF0F3D2E,
+                                              ).withOpacity(0.12),
+                                              const Color(
+                                                0xFF0F3D2E,
+                                              ).withOpacity(0.34),
+                                            ]
+                                          : [
+                                              Colors.black.withOpacity(0.20),
+                                              Colors.black.withOpacity(0.32),
+                                              Colors.black.withOpacity(0.62),
+                                            ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Positioned.fill(
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    10,
+                                    6,
+                                    10,
+                                    8,
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      _buildDriverDashboardHeader(),
+                                      const SizedBox(height: 2),
+                                      driverIdentityBlock(),
                                     ],
                                   ),
                                 ),
                               ),
-                            ),
-                            Positioned.fill(
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: isLightEmerald
-                                        ? [
-                                            const Color(
-                                              0xFFEEF5F2,
-                                            ).withOpacity(0.0),
-                                            const Color(
-                                              0xFF0F3D2E,
-                                            ).withOpacity(0.12),
-                                            const Color(
-                                              0xFF0F3D2E,
-                                            ).withOpacity(0.34),
-                                          ]
-                                        : [
-                                            Colors.black.withOpacity(0.20),
-                                            Colors.black.withOpacity(0.32),
-                                            Colors.black.withOpacity(0.62),
-                                          ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                            Positioned.fill(
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  10,
-                                  6,
-                                  10,
-                                  8,
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    _buildDriverDashboardHeader(),
-                                    const SizedBox(height: 2),
-                                    driverIdentityBlock(),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
                       const SizedBox(height: 8),
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -33683,9 +33777,16 @@ class _DriverHomePageState extends State<DriverHomePage>
                         ],
                       ),
                     ] else ...[
-                      _buildDriverDashboardHeader(),
-                      const SizedBox(height: 1),
-                      driverIdentityBlock(),
+                      if (isCustomHuisstijl)
+                        _buildChauffeurBrandSignatureGoldHeader(
+                          isTabletLandscape: false,
+                          useTabletVisualMode: false,
+                        )
+                      else ...[
+                        _buildDriverDashboardHeader(),
+                        const SizedBox(height: 1),
+                        driverIdentityBlock(),
+                      ],
                       const SizedBox(height: 6),
                       _buildDriverSummaryCards(nextRide: nextRide),
                       const SizedBox(height: 10),
@@ -33793,6 +33894,12 @@ class _DriverHomePageState extends State<DriverHomePage>
           ],
         ),
       ),
+    );
+    if (!isCustomHuisstijl) return dashboard;
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      key: kChauffeurGoldStatusBarRegionKey,
+      value: systemUiOverlayStyleForDriverTheme(_customHuisstijlPalette()),
+      child: dashboard,
     );
   }
 
@@ -35621,7 +35728,8 @@ class _DriverHomePageState extends State<DriverHomePage>
               : (isMidnightBlue
                     ? _midnightBlueSurfaceGradient(soft: true)
                     : null));
-    final panelFill = (isMiddayGold || isMidnightBlue || isLightEmerald || isCustomHuisstijl)
+    final panelFill =
+        (isMiddayGold || isMidnightBlue || isLightEmerald || isCustomHuisstijl)
         ? null
         : const Color(0xFF101113);
     final panelBorder = isCustomHuisstijl
