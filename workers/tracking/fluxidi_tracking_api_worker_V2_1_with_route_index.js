@@ -2909,6 +2909,20 @@ function buildDeterministicRideStartEventId(tenantId, companyId, sessionId) {
   if (!t || !c || !s) return "";
   return `ride_start:${t}:${c}:${s}`;
 }
+function buildDeterministicDirectRideStartEventId(tenantId, companyId, tripId) {
+  const t = _dbfStr(tenantId, 96);
+  const c = _dbfStr(companyId, 96);
+  const r = _dbfStr(tripId, 160);
+  if (!t || !c || !r) return "";
+  return `ride_start:${t}:${c}:${r}`;
+}
+function directTripStartRetryEligible(trip) {
+  if (!trip || typeof trip !== "object") return false;
+  const state = _dbfStr(trip.compliance_emit_start_state).toLowerCase();
+  // Only explicit pending retries. Empty/absent must not re-emit historical
+  // starts that already landed in compliance under a random UUID.
+  return state === COMPLIANCE_EMIT_STATE.PENDING;
+}
 function applyComplianceEmitStartAttempt(
   session,
   { state, errorCode = null, eventId = null, nowIso, attemptDelta = 1 } = {},
@@ -5826,7 +5840,83 @@ async function handleArchiveTrip(req, url, env, origin) {
   );
 }
 
-async function handleStartDirectTrip(req, url, env, origin) {
+async function ensureDirectTripStartComplianceEmit(
+  env,
+  {
+    trip,
+    key,
+    scope,
+    startedAt,
+    ctx = null,
+    logLabel = "ride_start_direct",
+    timeoutMs = 1500,
+  } = {},
+) {
+  if (!trip || typeof trip !== "object") {
+    return { event: null, emitted: false };
+  }
+  if (complianceEmitStartAlreadyApplied(trip)) {
+    return { event: null, emitted: false, already_applied: true };
+  }
+  const event = buildDirectTripStartComplianceEvent(trip, startedAt, scope);
+  if (!event) return { event: null, emitted: false };
+  const tripId = _dbfStr(trip.trip_id ?? trip.tripId, 160);
+  const eventId =
+    _dbfStr(trip.compliance_emit_start_event_id, 200) ||
+    buildDeterministicDirectRideStartEventId(
+      event.tenant_id,
+      event.company_id,
+      event.trip_id ?? tripId,
+    );
+  if (eventId) event.event_id = eventId;
+  applyComplianceEmitStartAttempt(trip, {
+    state: COMPLIANCE_EMIT_STATE.PENDING,
+    errorCode: null,
+    eventId,
+    nowIso: nowIso(),
+  });
+  applyCanonicalScopeToRecord(trip, scope);
+  if (key) await kvPutJson(env.FLUXIDI_TRACKING, key, trip, TTL_TRIP);
+
+  const emitTask = (async () => {
+    let emitRes;
+    try {
+      emitRes = await emitComplianceEventBestEffort(env, event, {
+        timeoutMs,
+        logLabel,
+      });
+    } catch (err) {
+      emitRes = { ok: false, error: _dbfStr(err?.message || err, 120) || "internal_error" };
+    }
+    try {
+      const latest = key ? await kvGetJson(env.FLUXIDI_TRACKING, key) : trip;
+      const target =
+        latest && recordMatchesTenantCompanyScope(latest, scope) ? latest : trip;
+      const nextState = deriveComplianceEmitStateFromResult(emitRes);
+      applyComplianceEmitStartAttempt(target, {
+        state: nextState,
+        errorCode: complianceEmitErrorCodeFromResult(emitRes),
+        eventId: event.event_id,
+        nowIso: nowIso(),
+        attemptDelta: 0,
+      });
+      applyCanonicalScopeToRecord(target, scope);
+      if (key) await kvPutJson(env.FLUXIDI_TRACKING, key, target, TTL_TRIP);
+    } catch (_) {
+      // Best-effort; PENDING remains for reconcile.
+    }
+    return emitRes;
+  })();
+
+  if (ctx && typeof ctx.waitUntil === "function") {
+    ctx.waitUntil(emitTask);
+    return { event, emitted: true, deferred: true };
+  }
+  const emitRes = await emitTask;
+  return { event, emitted: emitRes?.ok === true, result: emitRes };
+}
+
+async function handleStartDirectTrip(req, url, env, origin, ctx) {
   const rawBody = await readJson(req);
   const auth = await requireDriverSessionOrAdminForScope(req, url, env, {
     body: rawBody,
@@ -6018,13 +6108,15 @@ async function handleStartDirectTrip(req, url, env, origin) {
   await prependIndex(env.FLUXIDI_TRACKING, scopedTripsIndexKey(scope), trip_id, 500);
   await prependIndex(env.FLUXIDI_TRACKING, scopedTripsDriverIndexKey(scope, driver_id), trip_id, 200);
 
-  const startComplianceEvent = buildDirectTripStartComplianceEvent(trip, startedAt, scope);
-  if (startComplianceEvent) {
-    await emitComplianceEventBestEffort(env, startComplianceEvent, {
-      timeoutMs: 1500,
-      logLabel: "ride_start_direct",
-    });
-  }
+  await ensureDirectTripStartComplianceEmit(env, {
+    trip,
+    key: scopedTripKey(scope, trip_id),
+    scope,
+    startedAt,
+    ctx,
+    logLabel: "ride_start_direct",
+    timeoutMs: 1500,
+  });
 
   return withCors(
     json(
@@ -7217,6 +7309,16 @@ async function handleReconcileDirectBooking(req, url, env, origin) {
   // ensure/retry. Runs BEFORE the booking-finalize short-circuit so a trip
   // whose booking already completed but whose compliance emit is still
   // PENDING/absent gets drained. Never regresses APPLIED (idempotent).
+  if (directTripStartRetryEligible(trip)) {
+    await ensureDirectTripStartComplianceEmit(env, {
+      trip,
+      key,
+      scope,
+      startedAt: trip.started_at || trip.startedAt || nowIso(),
+      logLabel: "reconcile_retry_start",
+      timeoutMs: 1500,
+    });
+  }
   if (complianceEmitRetryEligible(trip)) {
     await ensureDirectTripStopComplianceEmit(env, {
       trip,
@@ -9083,7 +9185,7 @@ export default {
       }
       if (req.method === "GET" && url.pathname === "/trips/history") return await handleTripsHistory(req, url, env, origin, ctx);
       if (req.method === "POST" && url.pathname === "/trips/archive") return await handleArchiveTrip(req, url, env, origin);
-      if (req.method === "POST" && url.pathname === "/trip/start-direct") return await handleStartDirectTrip(req, url, env, origin);
+      if (req.method === "POST" && url.pathname === "/trip/start-direct") return await handleStartDirectTrip(req, url, env, origin, ctx);
       if (req.method === "POST" && url.pathname === "/trip/record-planned-stop") return await handleRecordPlannedStopTrip(req, url, env, origin, ctx);
       if (req.method === "POST" && url.pathname === "/trip/wait-start") return await handleWaitStartTrip(req, url, env, origin);
       if (req.method === "POST" && url.pathname === "/trip/wait-end") return await handleWaitEndTrip(req, url, env, origin);

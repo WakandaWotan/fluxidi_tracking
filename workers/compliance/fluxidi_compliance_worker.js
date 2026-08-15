@@ -7750,6 +7750,15 @@ async function handleChironTestflowSubmitOnePost(request, env, origin) {
     return jsonResponse({ ok: false, error: "message_type_event_mismatch" }, 400, origin);
   }
 
+  const pairing = _chironDepartureCanonicalDecision(event, found.contextEntries || []);
+  if (parsed.messageType === "departure" && pairing.allow !== true) {
+    return jsonResponse(
+      { ok: false, error: pairing.reason || "extra_start_not_canonical_trip" },
+      409,
+      origin,
+    );
+  }
+
   const scopedHydrationCache = await _chironLoadScopedHydrationCache(
     env,
     { tenant_id: parsed.tenantId, company_id: parsed.companyId },
@@ -7775,29 +7784,23 @@ async function handleChironTestflowSubmitOnePost(request, env, origin) {
   });
 
   const officialDraft = exportPayload?.chiron_official_draft;
-  const officialValidation = officialDraft?.validation || {};
-  const officialPayload = officialDraft?.payload;
   const expectedOfficialStatus = _chironExpectedOfficialStatusForMessageType(parsed.messageType);
-  const officialStatus = cleanText(officialDraft?.status, 32).toLowerCase();
-  const officialIdempotencyKey = cleanText(officialDraft?.idempotency_key, 256);
-  const ritnummer = cleanText(officialPayload?.ritnummer, 256);
-  const validationStatus = cleanText(officialValidation.status, 64).toLowerCase();
-  const validationMissing = Array.isArray(officialValidation.missing)
-    ? officialValidation.missing
-    : [];
-  const validationErrors = Array.isArray(officialValidation.errors)
-    ? officialValidation.errors
-    : [];
-  const validationBlockers = Array.isArray(officialValidation.blockers)
-    ? officialValidation.blockers
-    : [];
-  const officialValidationAcceptable =
-    officialValidation.exportable === true &&
-    (validationStatus === "ready" || validationStatus === "warning") &&
-    validationMissing.length === 0 &&
-    validationErrors.length === 0 &&
-    validationBlockers.length === 0 &&
-    officialValidation.sequence_safe !== false;
+  const effectiveEnvironment = _chironDeriveEffectiveChironEnvironment(statusPayload);
+  const ready = _chironOfficialDraftReadyForSubmit({
+    officialDraft,
+    expectedOfficialStatus,
+    effectiveEnvironment,
+  });
+  const officialValidation = ready.officialValidation;
+  const officialPayload = ready.officialPayload;
+  const officialStatus = ready.officialStatus;
+  const officialIdempotencyKey = ready.officialIdempotencyKey;
+  const ritnummer = ready.ritnummer;
+  const validationStatus = ready.validationStatus;
+  const validationMissing = ready.missing;
+  const validationErrors = ready.errors;
+  const validationBlockers = ready.blockers;
+  const officialValidationAcceptable = ready.acceptable;
 
   const baseResponse = {
     ok: true,
@@ -7835,7 +7838,7 @@ async function handleChironTestflowSubmitOnePost(request, env, origin) {
       {
         ...baseResponse,
         ok: false,
-        error: "official_payload_not_ready",
+        error: ready.reason || "official_payload_not_ready",
       },
       400,
       origin,
@@ -11373,6 +11376,197 @@ function _chironAutoSubmitMessageTypeForEventType(eventType) {
   return null;
 }
 
+// ACC demo cards used by the test company contain the substring "demo".
+// That must never silently drop a ride, and it must never block ACC submit.
+// Production still treats placeholder_driver_pass as a hard blocker.
+const CHIRON_ACC_SOFT_VERIFICATION_ERRORS = new Set(["placeholder_driver_pass"]);
+
+function _chironCanonicalTripIdFromEntries(entries, bookingId) {
+  const wanted = cleanText(bookingId, 128);
+  if (!wanted) return "";
+  let stopTrip = "";
+  const list = Array.isArray(entries) ? entries : [];
+  for (const entry of list) {
+    const ev = entry?.event && typeof entry.event === "object" ? entry.event : entry;
+    if (!ev || typeof ev !== "object" || Array.isArray(ev)) continue;
+    if (cleanText(ev.booking_id, 128) !== wanted) continue;
+    const type = cleanText(ev.event_type, 64).toLowerCase();
+    if (!CHIRON_OFFICIAL_ARRIVAL_EVENT_TYPES.has(type)) continue;
+    const tripId = cleanText(ev.trip_id, 128);
+    if (tripId) stopTrip = tripId;
+  }
+  return stopTrip;
+}
+
+function _chironDepartureCanonicalDecision(event, entries) {
+  const type = cleanText(event?.event_type, 64).toLowerCase();
+  if (!CHIRON_OFFICIAL_DEPARTURE_EVENT_TYPES.has(type)) {
+    return { allow: true, reason: null, canonical_trip_id: cleanText(event?.trip_id, 128) };
+  }
+  const bookingId = cleanText(event?.booking_id, 128);
+  const tripId = cleanText(event?.trip_id, 128);
+  if (!bookingId || !tripId) {
+    return { allow: true, reason: null, canonical_trip_id: tripId };
+  }
+  const canonical = _chironCanonicalTripIdFromEntries(entries, bookingId);
+  if (canonical && tripId !== canonical) {
+    return {
+      allow: false,
+      reason: "extra_start_not_canonical_trip",
+      canonical_trip_id: canonical,
+    };
+  }
+  return { allow: true, reason: null, canonical_trip_id: canonical || tripId };
+}
+
+function _chironOfficialDraftReadyForSubmit({
+  officialDraft,
+  expectedOfficialStatus,
+  effectiveEnvironment,
+}) {
+  const officialValidation = officialDraft?.validation || {};
+  const officialPayload = officialDraft?.payload;
+  const officialStatus = cleanText(officialDraft?.status, 32).toLowerCase();
+  const officialIdempotencyKey = cleanText(officialDraft?.idempotency_key, 256);
+  const ritnummer = cleanText(officialPayload?.ritnummer, 256);
+  const validationStatus = cleanText(officialValidation.status, 64).toLowerCase();
+  const missing = Array.isArray(officialValidation.missing)
+    ? officialValidation.missing
+    : [];
+  const errors = Array.isArray(officialValidation.errors)
+    ? officialValidation.errors
+    : [];
+  const blockers = Array.isArray(officialValidation.blockers)
+    ? officialValidation.blockers
+    : [];
+  const hardErrors =
+    effectiveEnvironment === "test"
+      ? errors.filter((code) => !CHIRON_ACC_SOFT_VERIFICATION_ERRORS.has(code))
+      : errors;
+  const acceptable =
+    !!officialDraft &&
+    officialDraft.category === "ride_payload" &&
+    officialStatus === expectedOfficialStatus &&
+    missing.length === 0 &&
+    hardErrors.length === 0 &&
+    blockers.length === 0 &&
+    officialValidation.sequence_safe !== false &&
+    !!officialPayload &&
+    typeof officialPayload === "object" &&
+    !Array.isArray(officialPayload) &&
+    !!officialIdempotencyKey &&
+    !!ritnummer &&
+    (officialValidation.exportable === true ||
+      (effectiveEnvironment === "test" &&
+        errors.length > 0 &&
+        hardErrors.length === 0));
+  return {
+    acceptable,
+    officialValidation,
+    officialPayload,
+    officialStatus,
+    officialIdempotencyKey,
+    ritnummer,
+    validationStatus,
+    missing,
+    errors,
+    hardErrors,
+    blockers,
+    reason: acceptable
+      ? null
+      : hardErrors[0] ||
+        missing[0] ||
+        blockers[0] ||
+        (officialValidation.sequence_safe === false
+          ? "sequence_unsafe"
+          : "official_payload_not_ready"),
+  };
+}
+
+function _chironCandidateExportStatusKey(tenantId, companyId, event, officialIdempotencyKey) {
+  const tenantSegment = safeSegment(tenantId, "");
+  const companySegment = safeSegment(companyId, "");
+  if (officialIdempotencyKey) {
+    return buildChironExportStatusKey(
+      tenantSegment,
+      companySegment,
+      officialIdempotencyKey,
+    );
+  }
+  const eventId = cleanText(event?.event_id, 200) || "unknown";
+  return buildChironExportStatusKey(
+    tenantSegment,
+    companySegment,
+    `candidate_v1:${eventId}`,
+  );
+}
+
+async function _chironPersistCandidateExportStatus(env, {
+  tenantId,
+  companyId,
+  event,
+  messageType,
+  syncState,
+  reasonCode,
+  officialIdempotencyKey = null,
+  ritnummer = null,
+  source = "auto_submit",
+  extra = {},
+} = {}) {
+  const statusKey = _chironCandidateExportStatusKey(
+    tenantId,
+    companyId,
+    event,
+    officialIdempotencyKey,
+  );
+  const existing = await _chironReadExportStatus(env, statusKey);
+  const existingState = cleanText(existing?.sync_state, 32).toLowerCase();
+  if (
+    existingState === "synced" ||
+    existingState === "verification_required" ||
+    existingState === CHIRON_DEPARTURE_CONFIRMED_EXTERNAL
+  ) {
+    return { ok: true, skipped: true, status_key: statusKey, existing };
+  }
+  if (existingState === "failed" && existing?.failure_kind === "definitive") {
+    return { ok: true, skipped: true, status_key: statusKey, existing };
+  }
+  const doc = {
+    schema_version: CHIRON_EXPORT_STATUS_SCHEMA,
+    tenant_id: tenantId,
+    company_id: companyId,
+    event_id: cleanText(event?.event_id, 200) || null,
+    trip_id: cleanText(event?.trip_id, 128) || null,
+    booking_id: cleanText(event?.booking_id, 128) || null,
+    official_idempotency_key: officialIdempotencyKey || null,
+    official_ritnummer: ritnummer || null,
+    official_status:
+      messageType === "departure"
+        ? "vertrek"
+        : messageType === "arrival"
+          ? "aankomst"
+          : null,
+    official_payload_shape: "chiron_taxirit_api_v1",
+    sync_state: syncState,
+    reason_code: cleanText(reasonCode, 96) || null,
+    failure_kind:
+      syncState === "failed" || syncState === "blocked" ? "retryable" : null,
+    verification_required_reason: null,
+    external_status_code: null,
+    external_reference: null,
+    response_shape: null,
+    fouten_count: null,
+    last_attempt_at: nowIso(),
+    attempt_count: Number(existing?.attempt_count || 0),
+    sanitized_error: null,
+    auto_submit: true,
+    auto_submit_source: source,
+    ...extra,
+  };
+  const written = await _chironWriteExportStatus(env, statusKey, doc);
+  return { ok: written.ok === true, status_key: statusKey, doc };
+}
+
 // Pure eligibility check. Returns null when the event qualifies for automatic
 // submit, or a short reason string otherwise. Callers log the reason without
 // leaking any PII / secrets.
@@ -11603,82 +11797,137 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
       cleanText(event?.company_id, 128),
       statusRead.doc,
     );
+    const tenantId = cleanText(event?.tenant_id, 128);
+    const companyId = cleanText(event?.company_id, 128);
     const ineligibleReason = _chironAutoSubmitEligibleForEvent(
       statusPayload,
       env,
       event,
     );
+    const messageType = _chironAutoSubmitMessageTypeForEventType(event.event_type);
+    if (!messageType) {
+      return { ok: false, skipped: true, reason: "event_type_not_auto_submittable", source };
+    }
+    const contextEntries = Array.isArray(options?.preloadedContextEntries)
+      ? options.preloadedContextEntries
+      : null;
+    const pairing = _chironDepartureCanonicalDecision(event, contextEntries);
+    if (pairing.allow !== true) {
+      const persisted = await _chironPersistCandidateExportStatus(env, {
+        tenantId,
+        companyId,
+        event,
+        messageType,
+        syncState: "blocked",
+        reasonCode: pairing.reason,
+        source,
+        extra: { canonical_trip_id: pairing.canonical_trip_id || null },
+      });
+      return {
+        ok: false,
+        skipped: true,
+        reason: pairing.reason,
+        message_type: messageType,
+        source,
+        sync_state: "blocked",
+        status_key: persisted.status_key,
+      };
+    }
     if (ineligibleReason) {
+      await _chironPersistCandidateExportStatus(env, {
+        tenantId,
+        companyId,
+        event,
+        messageType,
+        syncState: "blocked",
+        reasonCode: ineligibleReason,
+        source,
+      });
       return {
         ok: false,
         skipped: true,
         reason: ineligibleReason,
         source,
+        sync_state: "blocked",
       };
     }
 
-    const messageType = _chironAutoSubmitMessageTypeForEventType(event.event_type);
-    if (!messageType) {
-      return { ok: false, skipped: true, reason: "event_type_not_auto_submittable", source };
-    }
+    await _chironPersistCandidateExportStatus(env, {
+      tenantId,
+      companyId,
+      event,
+      messageType,
+      syncState: "pending_build",
+      reasonCode: "payload_build",
+      source,
+    });
 
     const built = await _chironBuildOfficialDraftForSingleEvent(
       env,
       event,
       eventKey,
       {
-        preloadedContextEntries: Array.isArray(options?.preloadedContextEntries)
-          ? options.preloadedContextEntries
-          : null,
+        preloadedContextEntries: contextEntries,
       },
     );
     if (built.error) {
-      return { ok: false, skipped: true, reason: built.error, source };
-    }
-    const { scope, exportPayload } = built;
-    const officialDraft = exportPayload?.chiron_official_draft;
-    const officialValidation = officialDraft?.validation || {};
-    const officialPayload = officialDraft?.payload;
-    const expectedOfficialStatus =
-      _chironExpectedOfficialStatusForMessageType(messageType);
-    const officialStatus = cleanText(officialDraft?.status, 32).toLowerCase();
-    const officialIdempotencyKey = cleanText(officialDraft?.idempotency_key, 256);
-    const ritnummer = cleanText(officialPayload?.ritnummer, 256);
-    const validationStatus = cleanText(officialValidation.status, 64).toLowerCase();
-    const validationMissing = Array.isArray(officialValidation.missing)
-      ? officialValidation.missing
-      : [];
-    const validationErrors = Array.isArray(officialValidation.errors)
-      ? officialValidation.errors
-      : [];
-    const validationBlockers = Array.isArray(officialValidation.blockers)
-      ? officialValidation.blockers
-      : [];
-    const officialValidationAcceptable =
-      officialValidation.exportable === true &&
-      (validationStatus === "ready" || validationStatus === "warning") &&
-      validationMissing.length === 0 &&
-      validationErrors.length === 0 &&
-      validationBlockers.length === 0 &&
-      officialValidation.sequence_safe !== false;
-
-    if (
-      !officialDraft ||
-      officialDraft.category !== "ride_payload" ||
-      officialStatus !== expectedOfficialStatus ||
-      !officialValidationAcceptable ||
-      !officialPayload ||
-      typeof officialPayload !== "object" ||
-      Array.isArray(officialPayload) ||
-      !officialIdempotencyKey ||
-      !ritnummer
-    ) {
+      const persisted = await _chironPersistCandidateExportStatus(env, {
+        tenantId,
+        companyId,
+        event,
+        messageType,
+        syncState: "blocked",
+        reasonCode: built.error,
+        source,
+      });
       return {
         ok: false,
         skipped: true,
-        reason: "official_payload_not_ready",
+        reason: built.error,
+        source,
+        sync_state: "blocked",
+        status_key: persisted.status_key,
+      };
+    }
+    const { scope, exportPayload } = built;
+    const officialDraft = exportPayload?.chiron_official_draft;
+    const expectedOfficialStatus =
+      _chironExpectedOfficialStatusForMessageType(messageType);
+    const effectiveEnvironment = _chironDeriveEffectiveChironEnvironment(statusPayload);
+    const ready = _chironOfficialDraftReadyForSubmit({
+      officialDraft,
+      expectedOfficialStatus,
+      effectiveEnvironment,
+    });
+    const officialValidation = ready.officialValidation;
+    const officialPayload = ready.officialPayload;
+    const officialStatus = ready.officialStatus;
+    const officialIdempotencyKey = ready.officialIdempotencyKey;
+    const ritnummer = ready.ritnummer;
+    const officialValidationAcceptable = ready.acceptable;
+
+    if (!ready.acceptable) {
+      const persistReason = ready.reason || "official_payload_not_ready";
+      const returnReason = ready.hardErrors[0] || "official_payload_not_ready";
+      const persisted = await _chironPersistCandidateExportStatus(env, {
+        tenantId,
+        companyId,
+        event,
+        messageType,
+        syncState: "blocked",
+        reasonCode: persistReason,
+        officialIdempotencyKey: officialIdempotencyKey || null,
+        ritnummer: ritnummer || null,
+        source,
+      });
+      return {
+        ok: false,
+        skipped: true,
+        reason: returnReason,
         message_type: messageType,
         source,
+        sync_state: "blocked",
+        status_key: persisted.status_key,
       };
     }
 
@@ -11811,12 +12060,25 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
     });
     const chironApiPayload = buildChironTaxiritApiPayload(freeze.payload);
     if (!chironApiPayload) {
+      const persisted = await _chironPersistCandidateExportStatus(env, {
+        tenantId,
+        companyId,
+        event,
+        messageType,
+        syncState: "blocked",
+        reasonCode: "official_payload_serialization_failed",
+        officialIdempotencyKey,
+        ritnummer,
+        source,
+      });
       return {
         ok: false,
         skipped: true,
         reason: "official_payload_serialization_failed",
         message_type: messageType,
         source,
+        sync_state: "blocked",
+        status_key: persisted.status_key,
       };
     }
     const outboundFingerprint = _chironOutboundFingerprint(chironApiPayload);
@@ -12148,7 +12410,26 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
     console.log(
       `[CHIRON_AUTO_SUBMIT][EXCEPTION] source=${source} error_name=${err?.name || "-"} error_message=${cleanText(err?.message, 120) || "-"}`,
     );
-    return { ok: false, skipped: false, reason: "internal_exception", source };
+    try {
+      await _chironPersistCandidateExportStatus(env, {
+        tenantId: cleanText(event?.tenant_id, 128),
+        companyId: cleanText(event?.company_id, 128),
+        event,
+        messageType: _chironAutoSubmitMessageTypeForEventType(event?.event_type),
+        syncState: "blocked",
+        reasonCode: "internal_exception",
+        source,
+      });
+    } catch (_) {
+      // Best-effort; the candidate must never disappear without a reason.
+    }
+    return {
+      ok: false,
+      skipped: false,
+      reason: "internal_exception",
+      source,
+      sync_state: "blocked",
+    };
   }
 }
 
@@ -12376,19 +12657,8 @@ async function _chironAutoReconcileScopeBestEffort(
         });
       }
 
-      // Hard stop on unrecoverable Chiron rejection so the reconciler never
-      // loops on the same failure. `_chironAutoSubmitOneEvent` already wrote
-      // failure_kind=definitive; the duplicate guard will let a subsequent
-      // manual retry through only when explicitly allowed. Per task
-      // requirement: "Stop bij de eerste definitieve Chiron-fout."
-      if (
-        submitOutcome.sync_state === "failed" &&
-        submitOutcome.reason !== "oauth_failure" &&
-        submitOutcome.repeat_definitive_failure !== true
-      ) {
-        outcome.stopped_on_definitive_failure = true;
-        break;
-      }
+      // A failed candidate now persists its own status/reason. Continue so
+      // sibling bookings and the paired arrival/departure are not starved.
     }
 
     // Stamp the throttle marker so subsequent config-status GETs skip the
@@ -12615,6 +12885,10 @@ export const __testInternals = {
   // launching a full worker instance.
   _chironAutoSubmitEligibleForEvent,
   _chironAutoSubmitMessageTypeForEventType,
+  _chironCanonicalTripIdFromEntries,
+  _chironDepartureCanonicalDecision,
+  _chironOfficialDraftReadyForSubmit,
+  _chironPersistCandidateExportStatus,
   _chironPairedDepartureIdempotencyKeyForArrivalDraft,
   _chironAutoSubmitOneEvent,
   _chironAutoSubmitAfterAppendBestEffort,
