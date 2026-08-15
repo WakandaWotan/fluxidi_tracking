@@ -19,6 +19,21 @@ const double kBrandSignatureGoldActionCardHeightBoost = 28;
 /// minus padding, title, subtitle. Chauffeur Gold phone tiles reuse this box.
 const double kBrandSignatureGoldPhoneCompactCardHeight = 132;
 const double kBrandSignatureGoldPhoneActionIconBox = 96;
+const int kBrandSignatureGoldPhonePortraitColumns = 2;
+const double kBrandSignatureGoldPhoneActionSpacing = 12;
+const Key kBrandSignatureGoldPhoneActionGridKey = Key(
+  'brand_signature_gold_phone_action_grid',
+);
+
+/// Company phone-portrait Gold tiles are always two columns. Chauffeur Gold
+/// phone portrait reuses that token. Landscape keeps the existing 4-column
+/// chauffeur host grid so Meer extras stay an even 4×2.
+int brandSignatureGoldChauffeurPhoneActionColumns({
+  required bool isPhoneLandscapeHost,
+}) {
+  if (isPhoneLandscapeHost) return 4;
+  return kBrandSignatureGoldPhonePortraitColumns;
+}
 
 /// Gold WebPs carry 10–35% transparent margin. A uniform contain-scale
 /// makes the visible metal match fuller company tiles in the same box.
@@ -227,7 +242,7 @@ class BrandSignatureGoldActionCard extends StatelessWidget {
                     Text(
                       title,
                       key: brandSignatureGoldActionTitleKey(actionKey),
-                      maxLines: 1,
+                      maxLines: phoneGoldIconBox ? 2 : 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: titleColor,

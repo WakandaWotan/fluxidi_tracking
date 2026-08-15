@@ -277,15 +277,24 @@ void main() {
       expect(homeSource.contains('onPressed: ()'), isTrue);
       expect(homeSource.contains('_applyDriverThemeFromHeaderCycle'), isTrue);
 
-      final headerStart = homeSource.indexOf('Widget _buildDriverDashboardHeader()');
-      expect(headerStart, greaterThan(0));
-      final headerSlice = homeSource.substring(headerStart, headerStart + 6000);
-      final langIdx = headerSlice.indexOf('_driverLanguagePill()');
-      final cycleIdx = headerSlice.indexOf('DriverThemeCycleButton(');
-      final avatarIdx = headerSlice.indexOf('width: 50');
+      final clusterStart = homeSource.indexOf(
+        'Widget _buildDriverHeaderActionCluster(',
+      );
+      expect(clusterStart, greaterThan(0));
+      final clusterSlice = homeSource.substring(
+        clusterStart,
+        clusterStart + 4000,
+      );
+      final langIdx = clusterSlice.indexOf('_driverLanguagePill()');
+      final cycleIdx = clusterSlice.indexOf('DriverThemeCycleButton(');
+      final avatarIdx = clusterSlice.indexOf('width: 50');
       expect(langIdx, greaterThan(0));
       expect(cycleIdx, greaterThan(langIdx));
       expect(avatarIdx, greaterThan(cycleIdx));
+      expect(
+        homeSource.contains('_buildDriverHeaderActionCluster('),
+        isTrue,
+      );
     });
   });
 }

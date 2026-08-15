@@ -2484,40 +2484,40 @@ class _BusinessHomePageState extends State<BusinessHomePage>
             BusinessThemeVariant.brandSignatureGold;
         final dialogPalette = _businessThemePalette;
         return AlertDialog(
-        backgroundColor: isGold
-            ? dialogPalette.surface
-            : const Color(0xFF111111),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
-        ),
-        content: Row(
-          children: [
-            SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(
-                strokeWidth: 2.3,
-                color: kFluxidiYellow.withOpacity(0.95),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                _t(
-                  nl: 'Activatiecode aanmaken...',
-                  en: 'Generating activation code...',
-                  fr: 'Génération du code d’activation...',
-                  es: 'Generando código de activación...',
-                ),
-                style: TextStyle(
-                  color: isGold ? dialogPalette.textPrimary : Colors.white,
+          backgroundColor: isGold
+              ? dialogPalette.surface
+              : const Color(0xFF111111),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
+          ),
+          content: Row(
+            children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.3,
+                  color: kFluxidiYellow.withOpacity(0.95),
                 ),
               ),
-            ),
-          ],
-        ),
-      );
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  _t(
+                    nl: 'Activatiecode aanmaken...',
+                    en: 'Generating activation code...',
+                    fr: 'Génération du code d’activation...',
+                    es: 'Generando código de activación...',
+                  ),
+                  style: TextStyle(
+                    color: isGold ? dialogPalette.textPrimary : Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
       },
     );
 
@@ -2652,123 +2652,126 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         final dialogPalette = _businessThemePalette;
         final dialogText = isGold ? dialogPalette.textPrimary : Colors.white;
         return AlertDialog(
-        backgroundColor: isGold
-            ? dialogPalette.surface
-            : const Color(0xFF111111),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
-        ),
-        title: Text(
-          _t(
-            nl: 'Nieuw toestel koppelen',
-            en: 'Pair new device',
-            fr: 'Associer un nouvel appareil',
-            es: 'Vincular nuevo dispositivo',
+          backgroundColor: isGold
+              ? dialogPalette.surface
+              : const Color(0xFF111111),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: kFluxidiYellow.withOpacity(0.45)),
           ),
-          style: TextStyle(color: dialogText),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              _t(
-                nl: 'Open Fluxidi op het nieuwe toestel en voer deze activatiecode in.',
-                en: 'Open Fluxidi on the new device and enter this activation code.',
-                fr: 'Ouvrez Fluxidi sur le nouvel appareil et saisissez ce code d’activation.',
-                es: 'Abre Fluxidi en el nuevo dispositivo e introduce este código de activación.',
-              ),
-              style: TextStyle(
-                color: isGold
-                    ? dialogPalette.textSecondary
-                    : Colors.white.withOpacity(0.82),
-                fontSize: 12.5,
-              ),
+          title: Text(
+            _t(
+              nl: 'Nieuw toestel koppelen',
+              en: 'Pair new device',
+              fr: 'Associer un nouvel appareil',
+              es: 'Vincular nuevo dispositivo',
             ),
-            const SizedBox(height: 10),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: isGold
-                    ? dialogPalette.surfaceAlt
-                    : const Color(0xFF1A1A1A),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: kFluxidiYellow.withOpacity(0.36)),
-              ),
-              child: SelectableText(
-                activationCode,
-                style: TextStyle(
-                  color: dialogText,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 16,
-                  letterSpacing: 0.5,
-                  fontFamily: 'monospace',
-                ),
-              ),
-            ),
-            if (expiresAt.isNotEmpty || expiresInSeconds != null) ...[
-              const SizedBox(height: 8),
+            style: TextStyle(color: dialogText),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Text(
-                expiresAt.isNotEmpty
-                    ? _t(
-                        nl: 'Vervalt op: $expiresAt',
-                        en: 'Expires at: $expiresAt',
-                        fr: 'Expire le : $expiresAt',
-                        es: 'Caduca el: $expiresAt',
-                      )
-                    : _t(
-                        nl: 'Geldig voor ongeveer ${expiresInSeconds ?? 0} seconden.',
-                        en: 'Valid for about ${expiresInSeconds ?? 0} seconds.',
-                        fr: 'Valable pendant environ ${expiresInSeconds ?? 0} secondes.',
-                        es: 'Válido durante aproximadamente ${expiresInSeconds ?? 0} segundos.',
-                      ),
+                _t(
+                  nl: 'Open Fluxidi op het nieuwe toestel en voer deze activatiecode in.',
+                  en: 'Open Fluxidi on the new device and enter this activation code.',
+                  fr: 'Ouvrez Fluxidi sur le nouvel appareil et saisissez ce code d’activation.',
+                  es: 'Abre Fluxidi en el nuevo dispositivo e introduce este código de activación.',
+                ),
                 style: TextStyle(
                   color: isGold
-                      ? dialogPalette.textMuted
-                      : Colors.white.withOpacity(0.7),
-                  fontSize: 11.8,
+                      ? dialogPalette.textSecondary
+                      : Colors.white.withOpacity(0.82),
+                  fontSize: 12.5,
                 ),
               ),
-            ],
-          ],
-        ),
-        actions: [
-          OutlinedButton.icon(
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: activationCode));
-              if (!dialogContext.mounted) return;
-              ScaffoldMessenger.of(dialogContext).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    _t(
-                      nl: 'Activatiecode gekopieerd.',
-                      en: 'Activation code copied.',
-                      fr: 'Code d’activation copié.',
-                      es: 'Código de activación copiado.',
-                    ),
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: isGold
+                      ? dialogPalette.surfaceAlt
+                      : const Color(0xFF1A1A1A),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: kFluxidiYellow.withOpacity(0.36)),
+                ),
+                child: SelectableText(
+                  activationCode,
+                  style: TextStyle(
+                    color: dialogText,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                    letterSpacing: 0.5,
+                    fontFamily: 'monospace',
                   ),
                 ),
-              );
-            },
-            style: OutlinedButton.styleFrom(
-              foregroundColor: dialogText,
-              side: BorderSide(color: kFluxidiYellow.withOpacity(0.5)),
-            ),
-            icon: const Icon(Icons.copy_rounded, size: 16),
-            label: Text(
-              _t(nl: 'Kopiëren', en: 'Copy', fr: 'Copier', es: 'Copiar'),
-            ),
+              ),
+              if (expiresAt.isNotEmpty || expiresInSeconds != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  expiresAt.isNotEmpty
+                      ? _t(
+                          nl: 'Vervalt op: $expiresAt',
+                          en: 'Expires at: $expiresAt',
+                          fr: 'Expire le : $expiresAt',
+                          es: 'Caduca el: $expiresAt',
+                        )
+                      : _t(
+                          nl: 'Geldig voor ongeveer ${expiresInSeconds ?? 0} seconden.',
+                          en: 'Valid for about ${expiresInSeconds ?? 0} seconds.',
+                          fr: 'Valable pendant environ ${expiresInSeconds ?? 0} secondes.',
+                          es: 'Válido durante aproximadamente ${expiresInSeconds ?? 0} segundos.',
+                        ),
+                  style: TextStyle(
+                    color: isGold
+                        ? dialogPalette.textMuted
+                        : Colors.white.withOpacity(0.7),
+                    fontSize: 11.8,
+                  ),
+                ),
+              ],
+            ],
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: Text(
-              _t(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar'),
+          actions: [
+            OutlinedButton.icon(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: activationCode));
+                if (!dialogContext.mounted) return;
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      _t(
+                        nl: 'Activatiecode gekopieerd.',
+                        en: 'Activation code copied.',
+                        fr: 'Code d’activation copié.',
+                        es: 'Código de activación copiado.',
+                      ),
+                    ),
+                  ),
+                );
+              },
+              style: OutlinedButton.styleFrom(
+                foregroundColor: dialogText,
+                side: BorderSide(color: kFluxidiYellow.withOpacity(0.5)),
+              ),
+              icon: const Icon(Icons.copy_rounded, size: 16),
+              label: Text(
+                _t(nl: 'Kopiëren', en: 'Copy', fr: 'Copier', es: 'Copiar'),
+              ),
             ),
-          ),
-        ],
-      );
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(
+                _t(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar'),
+              ),
+            ),
+          ],
+        );
       },
     );
   }
@@ -3602,7 +3605,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         }) {
           return SizedBox(
             width: cardWidth,
-            height: cardHeight + 28,
+            height: cardHeight + kBrandSignatureGoldActionCardHeightBoost,
             child: BrandSignatureGoldActionCard(
               actionKey: actionKey,
               title: title,
@@ -4392,9 +4395,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                   ? settingsName
                                   : profileName;
                               return BrandSignatureGoldHeader(
-                                height: isTabletLandscape
-                                    ? 156
-                                    : (useTabletVisualMode ? 208 : 168),
+                                height: brandSignatureGoldHeaderHeightForLayout(
+                                  isTabletLandscape: isTabletLandscape,
+                                  useTabletVisualMode: useTabletVisualMode,
+                                ),
                                 logoRef: resolution.ref,
                                 hasCompanyLogo: hasCompanyLogo,
                                 companyName: companyName,
@@ -4647,194 +4651,200 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                       builder: (context, _, __) {
                         return LayoutBuilder(
                           builder: (context, constraints) {
-                        final stacked =
-                            !isTabletLandscape && constraints.maxWidth < 430;
-                        if (stacked) {
-                          return Column(
-                            children: [
-                              _metricCard(
-                                icon: Icons.calendar_month_outlined,
-                                title: _t(
-                                  nl: 'Open boekingen',
-                                  en: 'Open bookings',
-                                  fr: 'Réservations ouvertes',
-                                  es: 'Reservas abiertas',
+                            final stacked =
+                                !isTabletLandscape &&
+                                constraints.maxWidth < 430;
+                            if (stacked) {
+                              return Column(
+                                children: [
+                                  _metricCard(
+                                    icon: Icons.calendar_month_outlined,
+                                    title: _t(
+                                      nl: 'Open boekingen',
+                                      en: 'Open bookings',
+                                      fr: 'Réservations ouvertes',
+                                      es: 'Reservas abiertas',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Gepland',
+                                      en: 'Planned',
+                                      fr: 'Planifiées',
+                                      es: 'Planificadas',
+                                    ),
+                                    value: _metricCountText(_openBookingsCount),
+                                    accentColor: const Color(0xFF60A5FA),
+                                    compact: isTabletLandscape,
+                                  ),
+                                  SizedBox(height: isTabletLandscape ? 6 : 8),
+                                  _metricCard(
+                                    icon: Icons.directions_car_outlined,
+                                    title: _t(
+                                      nl: 'Voltooide ritten',
+                                      en: 'Completed rides',
+                                      fr: 'Courses terminées',
+                                      es: 'Viajes completados',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Afgerond',
+                                      en: 'Completed',
+                                      fr: 'Terminées',
+                                      es: 'Completados',
+                                    ),
+                                    value: _metricCountText(
+                                      _completedRidesCount,
+                                    ),
+                                    accentColor: const Color(0xFF4ADE80),
+                                    compact: isTabletLandscape,
+                                  ),
+                                  SizedBox(height: isTabletLandscape ? 6 : 8),
+                                  _metricCard(
+                                    icon: Icons.payments_outlined,
+                                    title: _t(
+                                      nl: 'Nog te betalen',
+                                      en: 'To be paid',
+                                      fr: 'À payer',
+                                      es: 'Por pagar',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Afgerond maar onbetaald',
+                                      en: 'Completed but unpaid',
+                                      fr: 'Terminées mais impayées',
+                                      es: 'Completados sin pagar',
+                                    ),
+                                    value: _metricCountText(
+                                      _unpaidCompletedRidesCount,
+                                    ),
+                                    accentColor: const Color(0xFFF97373),
+                                    compact: isTabletLandscape,
+                                  ),
+                                  SizedBox(height: isTabletLandscape ? 6 : 8),
+                                  _metricCard(
+                                    icon: Icons.euro_rounded,
+                                    title: _t(
+                                      nl: 'Maandomzet',
+                                      en: 'Monthly income',
+                                      fr: 'Revenus mensuels',
+                                      es: 'Ingresos mensuales',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Betaald',
+                                      en: 'Paid',
+                                      fr: 'Payées',
+                                      es: 'Pagado',
+                                    ),
+                                    value: _metricIncomeText(),
+                                    accentColor: const Color(0xFFE5B641),
+                                    compact: isTabletLandscape,
+                                  ),
+                                ],
+                              );
+                            }
+                            final columns = isTabletLandscape
+                                ? 4
+                                : constraints.maxWidth < 760
+                                ? 2
+                                : 4;
+                            final spacing = isTabletLandscape ? 6.0 : 8.0;
+                            final cardWidth =
+                                (constraints.maxWidth -
+                                    ((columns - 1) * spacing)) /
+                                columns;
+                            return Wrap(
+                              spacing: spacing,
+                              runSpacing: spacing,
+                              children: [
+                                SizedBox(
+                                  width: cardWidth,
+                                  child: _metricCard(
+                                    icon: Icons.calendar_month_outlined,
+                                    title: _t(
+                                      nl: 'Open boekingen',
+                                      en: 'Open bookings',
+                                      fr: 'Réservations ouvertes',
+                                      es: 'Reservas abiertas',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Gepland',
+                                      en: 'Planned',
+                                      fr: 'Planifiées',
+                                      es: 'Planificadas',
+                                    ),
+                                    value: _metricCountText(_openBookingsCount),
+                                    accentColor: const Color(0xFF60A5FA),
+                                    compact: isTabletLandscape,
+                                  ),
                                 ),
-                                subtitle: _t(
-                                  nl: 'Gepland',
-                                  en: 'Planned',
-                                  fr: 'Planifiées',
-                                  es: 'Planificadas',
+                                SizedBox(
+                                  width: cardWidth,
+                                  child: _metricCard(
+                                    icon: Icons.directions_car_outlined,
+                                    title: _t(
+                                      nl: 'Voltooide ritten',
+                                      en: 'Completed rides',
+                                      fr: 'Courses terminées',
+                                      es: 'Viajes completados',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Afgerond',
+                                      en: 'Completed',
+                                      fr: 'Terminées',
+                                      es: 'Completados',
+                                    ),
+                                    value: _metricCountText(
+                                      _completedRidesCount,
+                                    ),
+                                    accentColor: const Color(0xFF4ADE80),
+                                    compact: isTabletLandscape,
+                                  ),
                                 ),
-                                value: _metricCountText(_openBookingsCount),
-                                accentColor: const Color(0xFF60A5FA),
-                                compact: isTabletLandscape,
-                              ),
-                              SizedBox(height: isTabletLandscape ? 6 : 8),
-                              _metricCard(
-                                icon: Icons.directions_car_outlined,
-                                title: _t(
-                                  nl: 'Voltooide ritten',
-                                  en: 'Completed rides',
-                                  fr: 'Courses terminées',
-                                  es: 'Viajes completados',
+                                SizedBox(
+                                  width: cardWidth,
+                                  child: _metricCard(
+                                    icon: Icons.payments_outlined,
+                                    title: _t(
+                                      nl: 'Nog te betalen',
+                                      en: 'To be paid',
+                                      fr: 'À payer',
+                                      es: 'Por pagar',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Afgerond maar onbetaald',
+                                      en: 'Completed but unpaid',
+                                      fr: 'Terminées mais impayées',
+                                      es: 'Completados sin pagar',
+                                    ),
+                                    value: _metricCountText(
+                                      _unpaidCompletedRidesCount,
+                                    ),
+                                    accentColor: const Color(0xFFF97373),
+                                    compact: isTabletLandscape,
+                                  ),
                                 ),
-                                subtitle: _t(
-                                  nl: 'Afgerond',
-                                  en: 'Completed',
-                                  fr: 'Terminées',
-                                  es: 'Completados',
+                                SizedBox(
+                                  width: cardWidth,
+                                  child: _metricCard(
+                                    icon: Icons.euro_rounded,
+                                    title: _t(
+                                      nl: 'Maandomzet',
+                                      en: 'Monthly income',
+                                      fr: 'Revenus mensuels',
+                                      es: 'Ingresos mensuales',
+                                    ),
+                                    subtitle: _t(
+                                      nl: 'Betaald',
+                                      en: 'Paid',
+                                      fr: 'Payées',
+                                      es: 'Pagado',
+                                    ),
+                                    value: _metricIncomeText(),
+                                    accentColor: isExecutiveGold
+                                        ? const Color(0xFFE5B641)
+                                        : _businessThemePalette.accent,
+                                    compact: isTabletLandscape,
+                                  ),
                                 ),
-                                value: _metricCountText(_completedRidesCount),
-                                accentColor: const Color(0xFF4ADE80),
-                                compact: isTabletLandscape,
-                              ),
-                              SizedBox(height: isTabletLandscape ? 6 : 8),
-                              _metricCard(
-                                icon: Icons.payments_outlined,
-                                title: _t(
-                                  nl: 'Nog te betalen',
-                                  en: 'To be paid',
-                                  fr: 'À payer',
-                                  es: 'Por pagar',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Afgerond maar onbetaald',
-                                  en: 'Completed but unpaid',
-                                  fr: 'Terminées mais impayées',
-                                  es: 'Completados sin pagar',
-                                ),
-                                value: _metricCountText(
-                                  _unpaidCompletedRidesCount,
-                                ),
-                                accentColor: const Color(0xFFF97373),
-                                compact: isTabletLandscape,
-                              ),
-                              SizedBox(height: isTabletLandscape ? 6 : 8),
-                              _metricCard(
-                                icon: Icons.euro_rounded,
-                                title: _t(
-                                  nl: 'Maandomzet',
-                                  en: 'Monthly income',
-                                  fr: 'Revenus mensuels',
-                                  es: 'Ingresos mensuales',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Betaald',
-                                  en: 'Paid',
-                                  fr: 'Payées',
-                                  es: 'Pagado',
-                                ),
-                                value: _metricIncomeText(),
-                                accentColor: const Color(0xFFE5B641),
-                                compact: isTabletLandscape,
-                              ),
-                            ],
-                          );
-                        }
-                        final columns = isTabletLandscape
-                            ? 4
-                            : constraints.maxWidth < 760
-                            ? 2
-                            : 4;
-                        final spacing = isTabletLandscape ? 6.0 : 8.0;
-                        final cardWidth =
-                            (constraints.maxWidth - ((columns - 1) * spacing)) /
-                            columns;
-                        return Wrap(
-                          spacing: spacing,
-                          runSpacing: spacing,
-                          children: [
-                            SizedBox(
-                              width: cardWidth,
-                              child: _metricCard(
-                                icon: Icons.calendar_month_outlined,
-                                title: _t(
-                                  nl: 'Open boekingen',
-                                  en: 'Open bookings',
-                                  fr: 'Réservations ouvertes',
-                                  es: 'Reservas abiertas',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Gepland',
-                                  en: 'Planned',
-                                  fr: 'Planifiées',
-                                  es: 'Planificadas',
-                                ),
-                                value: _metricCountText(_openBookingsCount),
-                                accentColor: const Color(0xFF60A5FA),
-                                compact: isTabletLandscape,
-                              ),
-                            ),
-                            SizedBox(
-                              width: cardWidth,
-                              child: _metricCard(
-                                icon: Icons.directions_car_outlined,
-                                title: _t(
-                                  nl: 'Voltooide ritten',
-                                  en: 'Completed rides',
-                                  fr: 'Courses terminées',
-                                  es: 'Viajes completados',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Afgerond',
-                                  en: 'Completed',
-                                  fr: 'Terminées',
-                                  es: 'Completados',
-                                ),
-                                value: _metricCountText(_completedRidesCount),
-                                accentColor: const Color(0xFF4ADE80),
-                                compact: isTabletLandscape,
-                              ),
-                            ),
-                            SizedBox(
-                              width: cardWidth,
-                              child: _metricCard(
-                                icon: Icons.payments_outlined,
-                                title: _t(
-                                  nl: 'Nog te betalen',
-                                  en: 'To be paid',
-                                  fr: 'À payer',
-                                  es: 'Por pagar',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Afgerond maar onbetaald',
-                                  en: 'Completed but unpaid',
-                                  fr: 'Terminées mais impayées',
-                                  es: 'Completados sin pagar',
-                                ),
-                                value: _metricCountText(
-                                  _unpaidCompletedRidesCount,
-                                ),
-                                accentColor: const Color(0xFFF97373),
-                                compact: isTabletLandscape,
-                              ),
-                            ),
-                            SizedBox(
-                              width: cardWidth,
-                              child: _metricCard(
-                                icon: Icons.euro_rounded,
-                                title: _t(
-                                  nl: 'Maandomzet',
-                                  en: 'Monthly income',
-                                  fr: 'Revenus mensuels',
-                                  es: 'Ingresos mensuales',
-                                ),
-                                subtitle: _t(
-                                  nl: 'Betaald',
-                                  en: 'Paid',
-                                  fr: 'Payées',
-                                  es: 'Pagado',
-                                ),
-                                value: _metricIncomeText(),
-                                accentColor: isExecutiveGold
-                                    ? const Color(0xFFE5B641)
-                                    : _businessThemePalette.accent,
-                                compact: isTabletLandscape,
-                              ),
-                            ),
-                          ],
-                        );
+                              ],
+                            );
                           },
                         );
                       },

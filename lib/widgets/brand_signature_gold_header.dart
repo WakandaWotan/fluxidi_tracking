@@ -15,6 +15,32 @@ const Key kBrandSignatureGoldLogoFallbackKey = Key(
   'brand_signature_gold_logo_fallback',
 );
 
+/// Production Brand Signature header heights from the company home.
+const double kBrandSignatureGoldHeaderHeightTabletLandscape = 156;
+const double kBrandSignatureGoldHeaderHeightTablet = 208;
+const double kBrandSignatureGoldHeaderHeightPhone = 168;
+const EdgeInsets kBrandSignatureGoldHeaderLogoPadding = EdgeInsets.fromLTRB(
+  28,
+  16,
+  28,
+  16,
+);
+const double kBrandSignatureGoldHeaderRadius = 18;
+const double kBrandSignatureGoldHeaderActionInset = 10;
+
+double brandSignatureGoldHeaderHeightForLayout({
+  required bool isTabletLandscape,
+  required bool useTabletVisualMode,
+}) {
+  if (isTabletLandscape) {
+    return kBrandSignatureGoldHeaderHeightTabletLandscape;
+  }
+  if (useTabletVisualMode) {
+    return kBrandSignatureGoldHeaderHeightTablet;
+  }
+  return kBrandSignatureGoldHeaderHeightPhone;
+}
+
 class BrandSignatureGoldHeader extends StatelessWidget {
   const BrandSignatureGoldHeader({
     super.key,
@@ -23,6 +49,8 @@ class BrandSignatureGoldHeader extends StatelessWidget {
     required this.hasCompanyLogo,
     required this.companyName,
     this.onOpenThemeSelector,
+    this.paletteListenable,
+    this.trailing,
   });
 
   final double height;
@@ -31,11 +59,19 @@ class BrandSignatureGoldHeader extends StatelessWidget {
   final String companyName;
   final VoidCallback? onOpenThemeSelector;
 
+  /// Defaults to the company Brand Signature store. Chauffeur Gold passes its
+  /// isolated chauffeur palette listenable.
+  final ValueListenable<BrandSignaturePalette>? paletteListenable;
+
+  /// Defaults to the company theme chip. Chauffeur Gold may pass language /
+  /// theme / profile controls in this same top-right inset.
+  final Widget? trailing;
+
   @override
   Widget build(BuildContext context) {
     final logo = hasCompanyLogo ? _CompanyLogo(ref: logoRef) : null;
     return ValueListenableBuilder<BrandSignaturePalette>(
-      valueListenable: brandSignaturePaletteNotifier,
+      valueListenable: paletteListenable ?? brandSignaturePaletteNotifier,
       child: logo,
       builder: (context, colors, logoChild) {
         final palette = paletteForBusinessTheme(
@@ -48,18 +84,24 @@ class BrandSignatureGoldHeader extends StatelessWidget {
           child: DecoratedBox(
             decoration: BoxDecoration(
               color: colors.header,
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(
+                kBrandSignatureGoldHeaderRadius,
+              ),
               border: Border.all(color: colors.border.withOpacity(0.72)),
               boxShadow: <BoxShadow>[
-                BoxShadow(color: colors.border.withOpacity(0.22), blurRadius: 18),
+                BoxShadow(
+                  color: colors.border.withOpacity(0.22),
+                  blurRadius: 18,
+                ),
               ],
             ),
             child: Stack(
               children: [
                 Positioned.fill(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(28, 16, 28, 16),
-                    child: logoChild ??
+                    padding: kBrandSignatureGoldHeaderLogoPadding,
+                    child:
+                        logoChild ??
                         _MonogramFallback(
                           name: companyName,
                           color: palette.textPrimary,
@@ -67,14 +109,16 @@ class BrandSignatureGoldHeader extends StatelessWidget {
                   ),
                 ),
                 Positioned(
-                  top: 10,
-                  right: 10,
-                  child: BusinessThemeCycleButton(
-                    goldThemeAsset: kBrandSignatureGoldThemeAsset,
-                    onPressed:
-                        onOpenThemeSelector ??
-                        () => showBusinessThemeSelectorSheet(context),
-                  ),
+                  top: kBrandSignatureGoldHeaderActionInset,
+                  right: kBrandSignatureGoldHeaderActionInset,
+                  child:
+                      trailing ??
+                      BusinessThemeCycleButton(
+                        goldThemeAsset: kBrandSignatureGoldThemeAsset,
+                        onPressed:
+                            onOpenThemeSelector ??
+                            () => showBusinessThemeSelectorSheet(context),
+                      ),
                 ),
               ],
             ),

@@ -32476,8 +32476,6 @@ class _DriverHomePageState extends State<DriverHomePage>
             ? (tabletPortraitCardMinHeight ?? 120.0)
             : isTabletLandscape
             ? (landscapeCardMinHeight ?? 98.0)
-            : isPhoneVisual
-            ? (phoneVisualCardMinHeight ?? 104.0)
             : isPhoneLandscapeHost
             ? 110.0
             : kBrandSignatureGoldPhoneCompactCardHeight;
@@ -32791,6 +32789,8 @@ class _DriverHomePageState extends State<DriverHomePage>
             ? (tabletPortraitSpacing ?? 11.0)
             : isTabletLandscape
             ? (landscapeSpacing ?? 8.0)
+            : isCustomHuisstijl && !isPhoneLandscapeHost
+            ? kBrandSignatureGoldPhoneActionSpacing
             : isPhoneVisual
             ? (phoneVisualSpacing ?? 10.0)
             : 8.0;
@@ -32806,6 +32806,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         } else if (isPhoneLandscapeHost) {
           // Genuine phone landscape: fixed balanced 4×2 (8 actions).
           columns = 4;
+        } else if (isCustomHuisstijl) {
+          columns = brandSignatureGoldChauffeurPhoneActionColumns(
+            isPhoneLandscapeHost: false,
+          );
         } else if (isPhoneVisual) {
           columns = 1;
         } else {
@@ -32815,6 +32819,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         }
         final width = (c.maxWidth - (gap * (columns - 1))) / columns;
         return Wrap(
+          key: isCustomHuisstijl && !isTabletPortrait && !isTabletLandscape
+              ? kBrandSignatureGoldPhoneActionGridKey
+              : null,
           spacing: gap,
           runSpacing: gap,
           children: [

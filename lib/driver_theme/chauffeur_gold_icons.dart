@@ -1,5 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:fluxidi_tracking/business_theme/brand_signature_gold_assets.dart';
+import 'package:fluxidi_tracking/widgets/brand_signature_gold_action_card.dart';
+
+const List<String> kChauffeurGoldQuickActionAssetKeys = <String>[
+  'street_ride',
+  'fare_calculator',
+  'rides',
+  'history',
+  'receipts',
+  'documents',
+];
 
 const List<String> kChauffeurGoldIconKeys = <String>[
   'home',
@@ -19,7 +28,7 @@ const List<String> kChauffeurGoldIconKeys = <String>[
 Key chauffeurGoldIconKey(String assetKey) =>
     Key('chauffeur_gold_icon_$assetKey');
 
-/// Bounded Gold WebP icon. Used only while chauffeur Brand Signature Gold is active.
+/// Bounded Gold WebP icon. Uses the company contained-illustration fit.
 class ChauffeurGoldIcon extends StatelessWidget {
   const ChauffeurGoldIcon({
     super.key,
@@ -34,18 +43,16 @@ class ChauffeurGoldIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final dpr = MediaQuery.maybeDevicePixelRatioOf(context) ?? 2.0;
     final decode = (size * dpr).round().clamp(48, 256);
-    return Image.asset(
-      brandSignatureGoldAssetPath(assetKey),
-      key: chauffeurGoldIconKey(assetKey),
+    return SizedBox(
       width: size,
       height: size,
-      fit: BoxFit.contain,
-      alignment: Alignment.center,
-      filterQuality: FilterQuality.medium,
-      gaplessPlayback: true,
-      cacheWidth: decode,
-      cacheHeight: decode,
-      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      child: BrandSignatureGoldContainedIllustration(
+        imageKey: chauffeurGoldIconKey(assetKey),
+        assetKey: assetKey,
+        width: size,
+        height: size,
+        cacheSize: decode,
+      ),
     );
   }
 }

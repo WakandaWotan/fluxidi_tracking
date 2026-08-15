@@ -652,6 +652,10 @@ void main() {
           find.byKey(kBrandSignatureGoldPhoneActionIconBoxKey),
           findsNothing,
         );
+        final companyTitle = tester.widget<Text>(
+          find.byKey(brandSignatureGoldActionTitleKey('settings')),
+        );
+        expect(companyTitle.maxLines, 1);
         final ink = tester.widget<Ink>(
           find.descendant(
             of: find.byKey(const Key('brand_signature_action_settings')),

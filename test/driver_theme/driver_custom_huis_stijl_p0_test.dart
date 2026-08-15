@@ -567,6 +567,10 @@ void main() {
     expect(phoneIcon.width, kBrandSignatureGoldPhoneActionIconBox);
     expect(phoneIcon.height, kBrandSignatureGoldPhoneActionIconBox);
     expect(phoneIcon.fit, BoxFit.contain);
+    final title = tester.widget<Text>(
+      find.byKey(brandSignatureGoldActionTitleKey('street_ride')),
+    );
+    expect(title.maxLines, 2);
     await tester.pumpWidget(
       const MaterialApp(
         home: Scaffold(body: ChauffeurGoldIcon(assetKey: 'planning', size: 28)),
@@ -694,6 +698,11 @@ void main() {
     expect(src.contains('contrastTextAgainstCard: true'), isTrue);
     expect(src.contains('phoneGoldIconBox: phoneGold'), isTrue);
     expect(src.contains('kBrandSignatureGoldPhoneCompactCardHeight'), isTrue);
+    expect(
+      src.contains('brandSignatureGoldChauffeurPhoneActionColumns('),
+      isTrue,
+    );
+    expect(src.contains('kBrandSignatureGoldPhoneActionSpacing'), isTrue);
     expect(src.contains('kChauffeurGoldStatusBarRegionKey'), isTrue);
     expect(src.contains('BoxFit.cover'), isTrue);
     expect(src.contains("goldAsset: brandSignatureGoldAssetPath("), isFalse);
