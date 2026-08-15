@@ -4,6 +4,7 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/company_driver_view_theme_store.dart';
+import 'package:fluxidi_tracking/driver_theme/driver_theme_selector.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 
 class BusinessThemePage extends StatefulWidget {
@@ -100,6 +101,8 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
         return 'Midday Gold';
       case DriverThemeVariant.lightEmerald:
         return 'Light Emerald';
+      case DriverThemeVariant.customHuisstijl:
+        return 'Brand Signature Gold';
     }
   }
 
@@ -257,6 +260,7 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
   late _BusinessThemePageVisuals _activeVisuals;
 
   Widget _selectableThemeTile({
+    Key? key,
     required String title,
     required String subtitle,
     required bool selected,
@@ -269,6 +273,7 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
         : visuals.tileBorder;
     final fill = selected ? visuals.tileSelectedBg : visuals.tileBg;
     return Material(
+      key: key,
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
@@ -377,10 +382,13 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
       builder: (context, current, _) {
         return Column(
           children: [
-            for (final variant in DriverThemeVariant.values) ...[
+            for (final variant in kDriverThemeSelectorVariants) ...[
               _selectableThemeTile(
+                key: driverThemeSelectorTileKey(variant),
                 title: _labelForDriver(variant),
-                subtitle: 'Chauffeursweergave',
+                subtitle: variant == DriverThemeVariant.customHuisstijl
+                    ? 'Brand Signature Gold'
+                    : 'Chauffeursweergave',
                 selected: variant == current,
                 swatches: [
                   paletteForDriverTheme(variant).background,
@@ -396,7 +404,7 @@ class _BusinessThemePageState extends State<BusinessThemePage> {
                 },
                 visuals: _activeVisuals,
               ),
-              if (variant != DriverThemeVariant.values.last)
+              if (variant != kDriverThemeSelectorVariants.last)
                 const SizedBox(height: 8),
             ],
           ],

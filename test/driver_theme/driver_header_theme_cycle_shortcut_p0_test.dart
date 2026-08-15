@@ -271,12 +271,11 @@ void main() {
 
     test('header wires DriverThemeCycleButton between language and avatar', () {
       expect(homeSource.contains('DriverThemeCycleButton('), isTrue);
-      expect(homeSource.contains("nl: 'Volgend thema'"), isTrue);
-      expect(homeSource.contains("en: 'Next theme'"), isTrue);
-      expect(homeSource.contains("fr: 'Thème suivant'"), isTrue);
-      expect(homeSource.contains("es: 'Siguiente tema'"), isTrue);
+      expect(homeSource.contains("nl: 'Kies je uitstraling'"), isTrue);
+      expect(homeSource.contains("en: 'Choose your appearance'"), isTrue);
+      expect(homeSource.contains('showDriverThemeSelectorSheet('), isTrue);
+      expect(homeSource.contains('onPressed: ()'), isTrue);
       expect(homeSource.contains('_applyDriverThemeFromHeaderCycle'), isTrue);
-      expect(homeSource.contains('driverThemeProductLabel(next)'), isTrue);
 
       final headerStart = homeSource.indexOf('Widget _buildDriverDashboardHeader()');
       expect(headerStart, greaterThan(0));

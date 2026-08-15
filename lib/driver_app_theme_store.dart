@@ -1,9 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show Color;
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'business_theme/brand_signature_palette.dart';
+import 'company_driver_view_theme_store.dart';
+import 'driver_theme/driver_custom_huis_stijl.dart';
 import 'driver_theme_cycle.dart';
 import 'driver_theme_palette.dart';
 
@@ -39,25 +43,165 @@ Future<void> loadDriverAppThemePreference() async {
     final file = await _driverAppThemeFile();
     if (!await file.exists()) {
       driverAppThemeNotifier.value = _kDefaultDriverAppTheme;
+      driverBrandSignaturePaletteNotifier.value =
+          BrandSignaturePalette.defaults;
       return;
     }
     final raw = await file.readAsString();
     if (raw.trim().isEmpty) {
       driverAppThemeNotifier.value = _kDefaultDriverAppTheme;
+      driverBrandSignaturePaletteNotifier.value =
+          BrandSignaturePalette.defaults;
       return;
     }
     final decoded = jsonDecode(raw);
     if (decoded is! Map) {
       driverAppThemeNotifier.value = _kDefaultDriverAppTheme;
+      driverBrandSignaturePaletteNotifier.value =
+          BrandSignaturePalette.defaults;
       return;
     }
     final variantRaw = (decoded['variant'] ?? '').toString();
     driverAppThemeNotifier.value = _driverAppThemeVariantFromStorage(
       variantRaw,
     );
+    driverBrandSignaturePaletteNotifier.value = BrandSignaturePalette.fromJson(
+      decoded['customHuisstijlPalette'],
+    );
   } catch (_) {
     driverAppThemeNotifier.value = _kDefaultDriverAppTheme;
+    driverBrandSignaturePaletteNotifier.value = BrandSignaturePalette.defaults;
   }
+}
+
+bool _driverCustomPreviewActive = false;
+DriverThemeVariant? _driverCustomPreviewTheme;
+BrandSignaturePalette? _driverCustomPreviewPalette;
+
+void _clearDriverCustomPreviewCheckpoint() {
+  _driverCustomPreviewActive = false;
+  _driverCustomPreviewTheme = null;
+  _driverCustomPreviewPalette = null;
+}
+
+void previewDriverCustomHuisstijlColor(Color color) {
+  if (!_driverCustomPreviewActive) {
+    _driverCustomPreviewTheme = driverAppThemeNotifier.value;
+    _driverCustomPreviewPalette = driverBrandSignaturePaletteNotifier.value;
+    _driverCustomPreviewActive = true;
+  }
+  driverAppThemeNotifier.value = DriverThemeVariant.customHuisstijl;
+  driverBrandSignaturePaletteNotifier.value = BrandSignaturePalette.fromColor(
+    color,
+  );
+}
+
+void cancelDriverCustomHuisstijlPreview() {
+  if (!_driverCustomPreviewActive) return;
+  driverAppThemeNotifier.value =
+      _driverCustomPreviewTheme ?? _kDefaultDriverAppTheme;
+  driverBrandSignaturePaletteNotifier.value =
+      _driverCustomPreviewPalette ?? BrandSignaturePalette.defaults;
+  _clearDriverCustomPreviewCheckpoint();
+}
+
+Future<void> applyDriverCustomHuisstijlPalette(
+  BrandSignaturePalette palette,
+) async {
+  _clearDriverCustomPreviewCheckpoint();
+  driverAppThemeNotifier.value = DriverThemeVariant.customHuisstijl;
+  driverBrandSignaturePaletteNotifier.value = BrandSignaturePalette.fromColor(
+    palette.base,
+  );
+  await _persistActiveDriverAppTheme();
+}
+
+bool _chauffeurSelectorPreviewActive = false;
+DriverThemeVariant? _chauffeurSelectorPreviewStandalone;
+DriverThemeVariant? _chauffeurSelectorPreviewCompany;
+
+void previewChauffeurTheme(
+  DriverThemeVariant variant, {
+  required bool companyDriverView,
+}) {
+  if (!_chauffeurSelectorPreviewActive) {
+    _chauffeurSelectorPreviewStandalone = driverAppThemeNotifier.value;
+    _chauffeurSelectorPreviewCompany = companyDriverViewThemeNotifier.value;
+    _chauffeurSelectorPreviewActive = true;
+  }
+  if (companyDriverView) {
+    companyDriverViewThemeNotifier.value = variant;
+  } else {
+    driverAppThemeNotifier.value = variant;
+  }
+}
+
+void cancelChauffeurThemePreview({required bool companyDriverView}) {
+  if (!_chauffeurSelectorPreviewActive) return;
+  if (companyDriverView) {
+    companyDriverViewThemeNotifier.value =
+        _chauffeurSelectorPreviewCompany ?? _kDefaultDriverAppTheme;
+  } else {
+    driverAppThemeNotifier.value =
+        _chauffeurSelectorPreviewStandalone ?? _kDefaultDriverAppTheme;
+  }
+  _chauffeurSelectorPreviewActive = false;
+  _chauffeurSelectorPreviewStandalone = null;
+  _chauffeurSelectorPreviewCompany = null;
+}
+
+Future<void> applyChauffeurTheme(
+  DriverThemeVariant variant, {
+  required bool companyDriverView,
+}) async {
+  _chauffeurSelectorPreviewActive = false;
+  _chauffeurSelectorPreviewStandalone = null;
+  _chauffeurSelectorPreviewCompany = null;
+  if (companyDriverView) {
+    await applyCompanyDriverViewThemePreference(variant);
+    return;
+  }
+  await applyDriverAppThemePreference(variant);
+}
+
+bool _companyCustomPreviewActive = false;
+DriverThemeVariant? _companyCustomPreviewTheme;
+
+void previewChauffeurCustomHuisstijlColor(
+  Color color, {
+  required bool companyDriverView,
+}) {
+  previewDriverCustomHuisstijlColor(color);
+  if (!companyDriverView) return;
+  if (!_companyCustomPreviewActive) {
+    _companyCustomPreviewTheme = companyDriverViewThemeNotifier.value;
+    _companyCustomPreviewActive = true;
+  }
+  companyDriverViewThemeNotifier.value = DriverThemeVariant.customHuisstijl;
+}
+
+void cancelChauffeurCustomHuisstijlPreview({
+  required bool companyDriverView,
+}) {
+  cancelDriverCustomHuisstijlPreview();
+  if (!companyDriverView || !_companyCustomPreviewActive) return;
+  companyDriverViewThemeNotifier.value =
+      _companyCustomPreviewTheme ?? _kDefaultDriverAppTheme;
+  _companyCustomPreviewActive = false;
+  _companyCustomPreviewTheme = null;
+}
+
+Future<void> applyChauffeurCustomHuisstijlPalette(
+  BrandSignaturePalette palette, {
+  required bool companyDriverView,
+}) async {
+  await applyDriverCustomHuisstijlPalette(palette);
+  if (!companyDriverView) return;
+  _companyCustomPreviewActive = false;
+  _companyCustomPreviewTheme = null;
+  await applyCompanyDriverViewThemePreference(
+    DriverThemeVariant.customHuisstijl,
+  );
 }
 
 bool _driverAppThemeWriteInFlight = false;
@@ -92,6 +236,8 @@ Future<void> _persistActiveDriverAppTheme() async {
         final file = await _driverAppThemeFile();
         final payload = <String, dynamic>{
           'variant': preset.name,
+          'customHuisstijlPalette':
+              driverBrandSignaturePaletteNotifier.value.toJson(),
           'updatedAt': DateTime.now().toUtc().toIso8601String(),
         };
         await file.writeAsString(jsonEncode(payload), flush: true);
@@ -109,6 +255,14 @@ Future<void> _persistActiveDriverAppTheme() async {
 void resetDriverAppThemePersistenceLatchForTest() {
   _driverAppThemeWriteInFlight = false;
   _driverAppThemeWriteSuperseded = false;
+  _clearDriverCustomPreviewCheckpoint();
+  _companyCustomPreviewActive = false;
+  _companyCustomPreviewTheme = null;
+  _chauffeurSelectorPreviewActive = false;
+  _chauffeurSelectorPreviewStandalone = null;
+  _chauffeurSelectorPreviewCompany = null;
+  driverAppThemeNotifier.value = _kDefaultDriverAppTheme;
+  driverBrandSignaturePaletteNotifier.value = BrandSignaturePalette.defaults;
 }
 
 /// One-tap advance for the driver header theme shortcut.

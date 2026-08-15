@@ -1,6 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:fluxidi_tracking/business_theme/brand_signature_palette.dart';
+import 'package:fluxidi_tracking/driver_theme/driver_custom_huis_stijl.dart';
 
-enum DriverThemeVariant { nightGold, midnightBlue, highContrast, lightEmerald }
+enum DriverThemeVariant {
+  nightGold,
+  midnightBlue,
+  highContrast,
+  lightEmerald,
+  customHuisstijl,
+}
 
 @immutable
 class DriverThemePalette {
@@ -97,5 +105,33 @@ DriverThemePalette paletteForDriverTheme(DriverThemeVariant variant) {
       return _highContrastPalette;
     case DriverThemeVariant.lightEmerald:
       return _lightEmeraldPalette;
+    case DriverThemeVariant.customHuisstijl:
+      return _paletteForCustomHuisstijl();
   }
+}
+
+bool isDriverCustomHuisstijl(DriverThemeVariant variant) =>
+    variant == DriverThemeVariant.customHuisstijl;
+
+DriverThemePalette _paletteForCustomHuisstijl() {
+  final safe = sanitizeBrandSignaturePalette(
+    driverBrandSignaturePaletteNotifier.value,
+  );
+  final textPrimary = brandSignatureReadableTextOn(safe.page);
+  final isDark =
+      brandSignatureContrastRatio(const Color(0xFFFFFFFF), safe.page) >=
+      brandSignatureContrastRatio(const Color(0xFF000000), safe.page);
+  return DriverThemePalette(
+    background: safe.page,
+    surface: safe.kpi,
+    surfaceAlt: safe.header,
+    textPrimary: textPrimary,
+    textMuted: Color.lerp(textPrimary, safe.kpi, 0.28)!,
+    accent: safe.accent,
+    border: safe.border,
+    danger: const Color(0xFFD07A82),
+    success: const Color(0xFF49B889),
+    shadow: const Color(0x99000000),
+    isDark: isDark,
+  );
 }

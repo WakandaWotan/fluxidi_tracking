@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluxidi_tracking/business_theme/brand_signature_gold_l10n.dart';
@@ -17,13 +18,60 @@ const Key kBrandSignatureFamilySwatchKey = Key('brand_signature_family_swatch');
 const Key kBrandSignatureHexFieldKey = Key('brand_signature_hex_field');
 const Key kBrandSignatureHexValueKey = Key('brand_signature_hex_value');
 
-Future<void> showBrandSignatureStyleEditor(BuildContext context) async {
-  previewBrandSignaturePalette(brandSignaturePaletteNotifier.value);
+class BrandSignatureStyleController {
+  const BrandSignatureStyleController({
+    required this.paletteListenable,
+    required this.onPreviewColor,
+    required this.onApply,
+    required this.onCancel,
+  });
+
+  final ValueListenable<BrandSignaturePalette> paletteListenable;
+  final void Function(Color color) onPreviewColor;
+  final Future<void> Function(BrandSignaturePalette palette) onApply;
+  final VoidCallback onCancel;
+}
+
+final BrandSignatureStyleController kBusinessBrandSignatureStyleController =
+    BrandSignatureStyleController(
+      paletteListenable: brandSignaturePaletteNotifier,
+      onPreviewColor: previewBrandSignatureColor,
+      onApply: applyBrandSignaturePalette,
+      onCancel: cancelBrandSignaturePalettePreview,
+    );
+
+class BrandSignatureStyleScope extends InheritedWidget {
+  const BrandSignatureStyleScope({
+    super.key,
+    required this.controller,
+    required super.child,
+  });
+
+  final BrandSignatureStyleController controller;
+
+  static BrandSignatureStyleController of(BuildContext context) {
+    return context
+            .dependOnInheritedWidgetOfExactType<BrandSignatureStyleScope>()
+            ?.controller ??
+        kBusinessBrandSignatureStyleController;
+  }
+
+  @override
+  bool updateShouldNotify(BrandSignatureStyleScope oldWidget) =>
+      oldWidget.controller != controller;
+}
+
+Future<void> showBrandSignatureStyleEditor(
+  BuildContext context, {
+  BrandSignatureStyleController? controller,
+}) async {
+  final host = controller ?? kBusinessBrandSignatureStyleController;
+  host.onPreviewColor(host.paletteListenable.value.base);
   final applied = await Navigator.of(context).push<bool>(
-    BrandSignatureStyleEditorRoute(),
+    BrandSignatureStyleEditorRoute(styleController: host),
   );
   if (applied != true) {
-    cancelBrandSignaturePalettePreview();
+    host.onCancel();
   }
 }
 
@@ -31,7 +79,11 @@ Future<void> showBrandSignaturePaletteSheet(BuildContext context) =>
     showBrandSignatureStyleEditor(context);
 
 class BrandSignatureStyleEditorRoute extends PageRoute<bool> {
-  BrandSignatureStyleEditorRoute() : super(fullscreenDialog: true);
+  BrandSignatureStyleEditorRoute({
+    this.styleController,
+  }) : super(fullscreenDialog: true);
+
+  final BrandSignatureStyleController? styleController;
 
   @override
   bool get opaque => false;
@@ -57,20 +109,25 @@ class BrandSignatureStyleEditorRoute extends PageRoute<bool> {
     Animation<double> animation,
     Animation<double> secondaryAnimation,
   ) {
-    return const BrandSignatureStyleEditor();
+    return BrandSignatureStyleEditor(controller: styleController);
   }
 }
 
 class BrandSignatureStyleEditor extends StatelessWidget {
-  const BrandSignatureStyleEditor({super.key});
+  const BrandSignatureStyleEditor({super.key, this.controller});
+
+  final BrandSignatureStyleController? controller;
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
+    final host = controller ?? kBusinessBrandSignatureStyleController;
+    return BrandSignatureStyleScope(
+      controller: host,
+      child: PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        cancelBrandSignaturePalettePreview();
+        host.onCancel();
         Navigator.of(context).pop(false);
       },
       child: Material(
@@ -83,19 +140,22 @@ class BrandSignatureStyleEditor extends StatelessWidget {
                 child: SizedBox.expand(),
               ),
             ),
-            const Align(
+            Align(
               alignment: Alignment.bottomCenter,
-              child: BrandSignatureStyleDock(),
+              child: BrandSignatureStyleDock(controller: host),
             ),
           ],
         ),
+      ),
       ),
     );
   }
 }
 
 class BrandSignatureStyleDock extends StatefulWidget {
-  const BrandSignatureStyleDock({super.key});
+  const BrandSignatureStyleDock({super.key, this.controller});
+
+  final BrandSignatureStyleController? controller;
 
   @override
   State<BrandSignatureStyleDock> createState() =>
@@ -105,19 +165,21 @@ class BrandSignatureStyleDock extends StatefulWidget {
 class _BrandSignatureStyleDockState extends State<BrandSignatureStyleDock> {
   late final TextEditingController _hexController;
   final FocusNode _hexFocus = FocusNode();
+  late final BrandSignatureStyleController _host;
 
   @override
   void initState() {
     super.initState();
+    _host = widget.controller ?? kBusinessBrandSignatureStyleController;
     _hexController = TextEditingController(
-      text: brandSignaturePaletteNotifier.value.hex,
+      text: _host.paletteListenable.value.hex,
     );
-    brandSignaturePaletteNotifier.addListener(_syncHexFromPalette);
+    _host.paletteListenable.addListener(_syncHexFromPalette);
   }
 
   @override
   void dispose() {
-    brandSignaturePaletteNotifier.removeListener(_syncHexFromPalette);
+    _host.paletteListenable.removeListener(_syncHexFromPalette);
     _hexController.dispose();
     _hexFocus.dispose();
     super.dispose();
@@ -125,7 +187,7 @@ class _BrandSignatureStyleDockState extends State<BrandSignatureStyleDock> {
 
   void _syncHexFromPalette() {
     if (!mounted || _hexFocus.hasFocus) return;
-    final hex = brandSignaturePaletteNotifier.value.hex;
+    final hex = _host.paletteListenable.value.hex;
     if (_hexController.text.toUpperCase() != hex) {
       _hexController.value = TextEditingValue(
         text: hex,
@@ -137,17 +199,15 @@ class _BrandSignatureStyleDockState extends State<BrandSignatureStyleDock> {
   void _onHexChanged(String raw) {
     final parsed = parseBrandSignatureHex(raw);
     if (parsed == null) return;
-    previewBrandSignatureColor(parsed);
+    _host.onPreviewColor(parsed);
   }
 
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<BrandSignaturePalette>(
-      valueListenable: brandSignaturePaletteNotifier,
+      valueListenable: _host.paletteListenable,
       builder: (context, colors, _) {
-        final chrome = paletteForBusinessTheme(
-          BusinessThemeVariant.brandSignatureGold,
-        );
+        final chrome = brandSignatureBusinessPalette(colors);
         final hsv = colors.hsv;
         final maxH = MediaQuery.sizeOf(context).height * 0.62;
         final fieldH = MediaQuery.sizeOf(context).shortestSide < 520
@@ -222,7 +282,7 @@ class _BrandSignatureStyleDockState extends State<BrandSignatureStyleDock> {
                       child: BrandSignatureSvField(
                         hsv: hsv,
                         onChanged: (next) =>
-                            previewBrandSignatureColor(next.toColor()),
+                            _host.onPreviewColor(next.toColor()),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -231,7 +291,7 @@ class _BrandSignatureStyleDockState extends State<BrandSignatureStyleDock> {
                       width: double.infinity,
                       child: BrandSignatureColorRail(
                         hue: hsv.hue,
-                        onHueChanged: (hue) => previewBrandSignatureColor(
+                        onHueChanged: (hue) => _host.onPreviewColor(
                           HSVColor.fromAHSV(
                             1,
                             hue,
@@ -252,6 +312,7 @@ class _BrandSignatureStyleDockState extends State<BrandSignatureStyleDock> {
                             id: entry.key,
                             color: entry.value,
                             selected: colors.base == entry.value,
+                            onPreview: _host.onPreviewColor,
                           ),
                       ],
                     ),
@@ -282,7 +343,7 @@ class _BrandSignatureStyleDockState extends State<BrandSignatureStyleDock> {
                       alignment: Alignment.centerLeft,
                       child: TextButton(
                         key: kBrandSignatureResetDefaultKey,
-                        onPressed: () => previewBrandSignatureColor(
+                        onPressed: () => _host.onPreviewColor(
                           kBrandSignatureDefaultBase,
                         ),
                         style: TextButton.styleFrom(
@@ -297,7 +358,7 @@ class _BrandSignatureStyleDockState extends State<BrandSignatureStyleDock> {
                           child: OutlinedButton(
                             key: kBrandSignatureStyleCancelKey,
                             onPressed: () {
-                              cancelBrandSignaturePalettePreview();
+                              _host.onCancel();
                               Navigator.of(context).pop(false);
                             },
                             style: OutlinedButton.styleFrom(
@@ -314,7 +375,7 @@ class _BrandSignatureStyleDockState extends State<BrandSignatureStyleDock> {
                           child: FilledButton(
                             key: kBrandSignatureStyleApplyKey,
                             onPressed: () async {
-                              await applyBrandSignaturePalette(colors);
+                              await _host.onApply(colors);
                               if (context.mounted) {
                                 Navigator.of(context).pop(true);
                               }
@@ -344,11 +405,13 @@ class _NeutralChip extends StatelessWidget {
     required this.id,
     required this.color,
     required this.selected,
+    required this.onPreview,
   });
 
   final String id;
   final Color color;
   final bool selected;
+  final ValueChanged<Color> onPreview;
 
   @override
   Widget build(BuildContext context) {
@@ -362,7 +425,7 @@ class _NeutralChip extends StatelessWidget {
       ),
       child: InkWell(
         key: Key('brand_signature_neutral_$id'),
-        onTap: () => previewBrandSignatureColor(color),
+        onTap: () => onPreview(color),
         customBorder: const StadiumBorder(),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),

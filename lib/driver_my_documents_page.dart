@@ -80,6 +80,33 @@ class _DriverMyDocumentsPageState extends State<DriverMyDocumentsPage> {
   static const Color _orange = Color(0xFFF59E0B);
 
   _DriverDocumentsThemeTokens _themeTokens(DriverThemeVariant variant) {
+    if (variant == DriverThemeVariant.customHuisstijl) {
+      final palette = paletteForDriverTheme(variant);
+      return _DriverDocumentsThemeTokens(
+        background: palette.background,
+        cardGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [palette.surface, palette.surfaceAlt],
+        ),
+        panelGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [palette.surfaceAlt, palette.surface],
+        ),
+        cardBorder: palette.border.withOpacity(0.55),
+        panelBorder: palette.border.withOpacity(0.72),
+        accentPrimary: palette.accent,
+        accentSecondary: palette.accent,
+        textPrimary: palette.textPrimary,
+        textMuted: palette.textMuted,
+        textSubtle: palette.textMuted,
+        primaryButtonForeground: palette.isDark
+            ? const Color(0xFF1A1408)
+            : const Color(0xFFF8F0D8),
+        bottomSheetBackground: palette.surface,
+      );
+    }
     if (variant == DriverThemeVariant.midnightBlue) {
       return const _DriverDocumentsThemeTokens(
         background: Color(0xFF060B16),

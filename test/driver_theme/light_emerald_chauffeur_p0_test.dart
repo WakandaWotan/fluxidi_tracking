@@ -11,6 +11,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fluxidi_tracking/driver_theme/driver_theme_selector.dart';
+import 'package:fluxidi_tracking/driver_theme_cycle.dart';
 import 'package:fluxidi_tracking/driver_theme_palette.dart';
 
 String _normalizeNewlines(String source) => source.replaceAll('\r\n', '\n');
@@ -111,24 +113,20 @@ void main() {
     }
   });
 
-  test('theme selector labels/subtitles include Light Emerald NL/EN/FR/ES', () {
-    final source = _driverHomeSource();
-    final start = source.indexOf(
-      'Future<void> _showDriverAppThemeSelectorSheet()',
+  test('theme selector still includes Light Emerald as a chauffeur row', () {
+    expect(
+      driverThemeProductLabel(DriverThemeVariant.lightEmerald),
+      'Light Emerald',
     );
-    expect(start, greaterThanOrEqualTo(0));
-    final end = source.indexOf('\n  Widget _driverLanguagePill()', start);
-    expect(end, greaterThan(start));
-    final region = source.substring(start, end);
-
-    expect(region, contains("nl: 'Light Emerald'"));
-    expect(region, contains("en: 'Light Emerald'"));
-    expect(region, contains("fr: 'Light Emerald'"));
-    expect(region, contains("es: 'Light Emerald'"));
-    expect(region, contains("nl: 'Licht mint met smaragdgroene accenten'"));
-    expect(region, contains("en: 'Light mint with emerald accents'"));
-    expect(region, contains("fr: 'Menthe claire avec accents emeraude'"));
-    expect(region, contains("es: 'Menta clara con acentos esmeralda'"));
+    expect(
+      kDriverThemeSelectorVariants.contains(DriverThemeVariant.lightEmerald),
+      isTrue,
+    );
+    final selector = File(
+      'lib/widgets/driver_theme_selector_sheet.dart',
+    ).readAsStringSync();
+    expect(selector, contains('kDriverThemeSelectorVariants'));
+    expect(selector, contains('driverThemeProductLabel(variant)'));
   });
 
   test('no Light Emerald Chauffeur PNG refs in dart/pubspec/allowlist', () {

@@ -133,6 +133,20 @@ class _CockpitWidgetState extends State<CockpitWidget>
   static const double _minTapSize = 44.0;
 
   static _CockpitThemeTokens _themeForVariant(DriverThemeVariant variant) {
+    if (variant == DriverThemeVariant.customHuisstijl) {
+      final palette = paletteForDriverTheme(variant);
+      return _CockpitThemeTokens(
+        panelBackground: palette.surface,
+        panelBorder: palette.border.withOpacity(0.72),
+        panelGlow: palette.accent.withOpacity(0.20),
+        tileBackground: palette.surfaceAlt,
+        tileBorder: palette.border.withOpacity(0.55),
+        primaryText: palette.textPrimary,
+        mutedText: palette.textMuted,
+        accent: palette.accent,
+        hotBackground: palette.surfaceAlt,
+      );
+    }
     if (variant == DriverThemeVariant.midnightBlue) {
       return const _CockpitThemeTokens(
         panelBackground: Color(0xFF0A162B),

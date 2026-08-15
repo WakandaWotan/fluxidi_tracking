@@ -256,6 +256,31 @@ _TripHistoryThemeTokens _tripHistoryThemeForVariant(
         ),
         cardBorder: Color(0x99B7CEC4),
       );
+    case DriverThemeVariant.customHuisstijl:
+      final palette = paletteForDriverTheme(variant);
+      return _TripHistoryThemeTokens(
+        background: palette.background,
+        surface: palette.surface,
+        surfaceAlt: palette.surfaceAlt,
+        border: palette.border,
+        accent: palette.accent,
+        textPrimary: palette.textPrimary,
+        textMuted: palette.textMuted,
+        accentForeground: palette.isDark
+            ? const Color(0xFF1A1408)
+            : const Color(0xFFF8F0D8),
+        pageGradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [palette.background, palette.surfaceAlt, palette.surface],
+        ),
+        cardGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [palette.surface, palette.surfaceAlt],
+        ),
+        cardBorder: palette.border.withOpacity(0.72),
+      );
   }
 }
 

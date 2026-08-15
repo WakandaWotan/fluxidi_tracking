@@ -94,6 +94,10 @@ class FluxidiFrame extends StatelessWidget {
                     DriverThemeVariant.nightGold => paletteForDriverTheme(
                       DriverThemeVariant.nightGold,
                     ).accent,
+                    DriverThemeVariant.customHuisstijl =>
+                      paletteForDriverTheme(
+                        DriverThemeVariant.customHuisstijl,
+                      ).accent,
                   };
                   frameSource = 'driver';
                 } else if (!businessShellActive) {
@@ -129,9 +133,12 @@ class FluxidiFrame extends StatelessWidget {
                 // Target: visually ~2–3mm on phone screens.
                 // Light Emerald chauffeur shell fills use the mint background so
                 // the outer/inner frame does not flash Night Gold black.
-                return ValueListenableBuilder<BrandSignaturePalette>(
-                  valueListenable: brandSignaturePaletteNotifier,
-                  builder: (context, _, __) {
+                return AnimatedBuilder(
+                  animation: Listenable.merge(<Listenable>[
+                    brandSignaturePaletteNotifier,
+                    driverBrandSignaturePaletteNotifier,
+                  ]),
+                  builder: (context, _) {
                     final goldOverlay = brandSignatureBusinessOverlayTheme(
                       businessShellActive: businessShellActive,
                       chauffeurShellTheme: chauffeurShellTheme,
@@ -141,6 +148,11 @@ class FluxidiFrame extends StatelessWidget {
                     if (chauffeurShellTheme == DriverThemeVariant.lightEmerald) {
                       frameFill = paletteForDriverTheme(
                         DriverThemeVariant.lightEmerald,
+                      ).background;
+                    } else if (chauffeurShellTheme ==
+                        DriverThemeVariant.customHuisstijl) {
+                      frameFill = paletteForDriverTheme(
+                        DriverThemeVariant.customHuisstijl,
                       ).background;
                     } else if (goldOverlay != null) {
                       frameFill = paletteForBusinessTheme(
@@ -228,6 +240,16 @@ class FluxidiFrame extends StatelessWidget {
                 );
                     if (goldOverlay != null) {
                       framed = Theme(data: goldOverlay, child: framed);
+                    } else if (chauffeurShellTheme ==
+                        DriverThemeVariant.customHuisstijl) {
+                      framed = Theme(
+                        data: themeDataForBrandSignatureGold(
+                          brandSignatureBusinessPalette(
+                            driverBrandSignaturePaletteNotifier.value,
+                          ),
+                        ),
+                        child: framed,
+                      );
                     }
                     return framed;
                   },

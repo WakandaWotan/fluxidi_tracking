@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'business_theme/brand_signature_palette.dart';
+import 'driver_theme/driver_custom_huis_stijl.dart';
 import 'driver_theme_cycle.dart';
 import 'driver_theme_palette.dart';
 
@@ -55,6 +57,11 @@ Future<void> loadCompanyDriverViewThemePreference() async {
     final variantRaw = (decoded['variant'] ?? '').toString();
     companyDriverViewThemeNotifier.value =
         _companyDriverViewThemeVariantFromStorage(variantRaw);
+    if (companyDriverViewThemeNotifier.value ==
+        DriverThemeVariant.customHuisstijl) {
+      driverBrandSignaturePaletteNotifier.value =
+          BrandSignaturePalette.fromJson(decoded['customHuisstijlPalette']);
+    }
   } catch (_) {
     companyDriverViewThemeNotifier.value = _kDefaultCompanyDriverViewTheme;
   }
@@ -90,6 +97,8 @@ Future<void> _persistActiveCompanyDriverViewTheme() async {
         final file = await _companyDriverViewThemeFile();
         final payload = <String, dynamic>{
           'variant': preset.name,
+          'customHuisstijlPalette':
+              driverBrandSignaturePaletteNotifier.value.toJson(),
           'updatedAt': DateTime.now().toUtc().toIso8601String(),
         };
         await file.writeAsString(jsonEncode(payload), flush: true);

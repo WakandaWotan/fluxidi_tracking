@@ -27,6 +27,32 @@ class _BookingsHubThemeTokens {
 _BookingsHubThemeTokens _bookingsHubThemeForVariant(
   DriverThemeVariant variant,
 ) {
+  if (variant == DriverThemeVariant.customHuisstijl) {
+    final palette = paletteForDriverTheme(variant);
+    return _BookingsHubThemeTokens(
+      background: palette.background,
+      pageGradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [palette.background, palette.surfaceAlt, palette.surface],
+      ),
+      surfaceGradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [palette.surface, palette.surfaceAlt],
+      ),
+      panelGradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [palette.surfaceAlt, palette.surface],
+      ),
+      surfaceBorder: palette.border.withOpacity(0.55),
+      panelBorder: palette.border.withOpacity(0.72),
+      primaryText: palette.textPrimary,
+      mutedText: palette.textMuted,
+      accent: palette.accent,
+    );
+  }
   if (variant == DriverThemeVariant.midnightBlue) {
     return const _BookingsHubThemeTokens(
       background: Color(0xFF060C17),

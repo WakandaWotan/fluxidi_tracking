@@ -2807,6 +2807,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     String? midnightBlueAsset,
     String? middayGoldAsset,
     String? lightEmeraldAsset,
+    String? goldAsset,
   }) {
     final isMidnightBlue =
         driverThemeNotifier.value == DriverThemeVariant.midnightBlue;
@@ -2814,6 +2815,11 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     final isLightEmerald =
         driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
+    final isGold =
+        driverThemeNotifier.value == DriverThemeVariant.customHuisstijl;
+    if (isGold && (goldAsset ?? '').trim().isNotEmpty) {
+      return goldAsset!;
+    }
     if (isMidnightBlue && (midnightBlueAsset ?? '').trim().isNotEmpty) {
       return midnightBlueAsset!;
     }
@@ -3103,6 +3109,77 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
+  DriverThemePalette _customHuisstijlPalette() =>
+      paletteForDriverTheme(DriverThemeVariant.customHuisstijl);
+
+  Color _customHuisstijlAccent() => _customHuisstijlPalette().accent;
+  Color _customHuisstijlTextPrimary() =>
+      _customHuisstijlPalette().textPrimary;
+  Color _customHuisstijlTextMuted() => _customHuisstijlPalette().textMuted;
+  Color _customHuisstijlBorderColor([double opacity = 0.46]) =>
+      _customHuisstijlPalette().border.withOpacity(opacity);
+  Color _customHuisstijlSurface() => _customHuisstijlPalette().surface;
+  Color _customHuisstijlSurfaceAlt() => _customHuisstijlPalette().surfaceAlt;
+  Color _customHuisstijlBackground() => _customHuisstijlPalette().background;
+  Color _customHuisstijlTextOnSelected() =>
+      _customHuisstijlPalette().isDark
+      ? const Color(0xFFFFFFFF)
+      : const Color(0xFF1A1408);
+
+  LinearGradient _customHuisstijlSurfaceGradient({bool soft = false}) {
+    final palette = _customHuisstijlPalette();
+    return LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: soft
+          ? [palette.background, palette.surface, palette.surfaceAlt]
+          : [palette.surface, palette.surfaceAlt, palette.background],
+    );
+  }
+
+  LinearGradient _customHuisstijlSelectedSurfaceGradient() {
+    final palette = _customHuisstijlPalette();
+    return LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        Color.alphaBlend(palette.accent.withOpacity(0.28), palette.surface),
+        Color.alphaBlend(palette.accent.withOpacity(0.16), palette.surfaceAlt),
+        palette.surfaceAlt,
+      ],
+    );
+  }
+
+  ButtonStyle _customHuisstijlGhostButtonStyle() {
+    return OutlinedButton.styleFrom(
+      foregroundColor: _customHuisstijlTextPrimary(),
+      side: BorderSide(color: _customHuisstijlBorderColor(0.72), width: 1.1),
+      backgroundColor: _customHuisstijlSurface(),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+    ).copyWith(
+      overlayColor: MaterialStateProperty.all(
+        _customHuisstijlAccent().withOpacity(0.12),
+      ),
+    );
+  }
+
+  ButtonStyle _customHuisstijlStartButtonStyle() {
+    return FilledButton.styleFrom(
+      backgroundColor: _customHuisstijlAccent(),
+      foregroundColor: _customHuisstijlTextOnSelected(),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+    ).copyWith(
+      side: MaterialStateProperty.all(
+        BorderSide(color: _customHuisstijlAccent().withOpacity(0.90), width: 1.1),
+      ),
+      elevation: MaterialStateProperty.all(0),
+      overlayColor: MaterialStateProperty.all(
+        _customHuisstijlAccent().withOpacity(0.16),
+      ),
+    );
+  }
+
   // ===============================
   // JSON helpers (local)
   // ===============================
@@ -3228,6 +3305,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     // stop was lost to poor network or process death.
     unawaited(_drainPlannedStopIntents());
     _activeDriverThemeListenable.addListener(_onDriverThemeSourceChanged);
+    driverBrandSignaturePaletteNotifier.addListener(
+      _onDriverThemeSourceChanged,
+    );
     chauffeurShellFrameThemeNotifier.value = _activeDriverThemeListenable.value;
     fluxidiPendingPaymentNotifier.addListener(_onPendingPaymentStatusChanged);
     driverHomeMobileLayoutNotifier.addListener(
@@ -3657,6 +3737,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     _setNavigationWakelock(false);
     appLanguageNotifier.removeListener(_onAppLanguageChanged);
     _activeDriverThemeListenable.removeListener(_onDriverThemeSourceChanged);
+    driverBrandSignaturePaletteNotifier.removeListener(
+      _onDriverThemeSourceChanged,
+    );
     driverHomeMobileLayoutNotifier.removeListener(
       _onDriverHomeMobileLayoutChanged,
     );
@@ -25857,18 +25940,26 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     final isLightEmerald =
         driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
+    final isCustomHuisstijl =
+        driverThemeNotifier.value == DriverThemeVariant.customHuisstijl;
     return (
-      accent: isLightEmerald
+      accent: isCustomHuisstijl
+          ? _customHuisstijlAccent()
+          : isLightEmerald
           ? _lightEmeraldAccent()
           : (isMidnightBlue
                 ? _midnightBlueAccent()
                 : (isMiddayGold ? const Color(0xFFE8C57E) : kFluxidiYellow)),
-      text: isLightEmerald
+      text: isCustomHuisstijl
+          ? _customHuisstijlTextPrimary()
+          : isLightEmerald
           ? _lightEmeraldTextPrimary()
           : (isMidnightBlue
                 ? _midnightBlueTextPrimary()
                 : (isMiddayGold ? _middayGoldTextPrimary() : Colors.white)),
-      surface: isLightEmerald
+      surface: isCustomHuisstijl
+          ? _customHuisstijlSurface().withOpacity(0.80)
+          : isLightEmerald
           ? const Color(0xCCFFFFFF)
           : (isMidnightBlue
                 ? const Color(0xCC0B1B33)
@@ -30790,7 +30881,11 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     final isLightEmerald =
         driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
-    final sheetGradient = isLightEmerald
+    final isCustomHuisstijl =
+        driverThemeNotifier.value == DriverThemeVariant.customHuisstijl;
+    final sheetGradient = isCustomHuisstijl
+        ? _customHuisstijlSurfaceGradient(soft: true)
+        : isLightEmerald
         ? _lightEmeraldSurfaceGradient(soft: true)
         : (isMiddayGold
               ? _middayGoldSurfaceGradient(soft: true)
@@ -30809,32 +30904,44 @@ class _DriverHomePageState extends State<DriverHomePage>
                         end: Alignment.bottomRight,
                         colors: [Color(0xFF101113), Color(0xFF0D0E11)],
                       )));
-    final sheetBorder = isLightEmerald
+    final sheetBorder = isCustomHuisstijl
+        ? _customHuisstijlBorderColor(0.40)
+        : isLightEmerald
         ? _lightEmeraldBorderColor(0.40)
-        : (isLightEmerald
+        : (isCustomHuisstijl
+              ? _customHuisstijlBorderColor(0.34)
+              : isLightEmerald
               ? _lightEmeraldBorderColor(0.34)
               : (isMiddayGold
                     ? _middayGoldBorderColor(0.34)
                     : (isMidnightBlue
                           ? _midnightBlueBorderColor(0.40)
                           : Colors.white.withOpacity(0.10))));
-    final iconAccent = isLightEmerald
+    final iconAccent = isCustomHuisstijl
+        ? _customHuisstijlAccent()
+        : isLightEmerald
         ? _lightEmeraldAccent()
         : (isMidnightBlue
               ? _midnightBlueAccent()
               : (isMiddayGold
                     ? const Color(0xFFE8C57E)
                     : const Color(0xFFFFD36A)));
-    final titleColor = isLightEmerald
+    final titleColor = isCustomHuisstijl
+        ? _customHuisstijlTextPrimary()
+        : isLightEmerald
         ? _lightEmeraldTextPrimary()
-        : (isLightEmerald
+        : (isCustomHuisstijl
+              ? _customHuisstijlTextPrimary()
+              : isLightEmerald
               ? _lightEmeraldTextPrimary()
               : (isMiddayGold
                     ? _middayGoldTextPrimary()
                     : (isMidnightBlue
                           ? _midnightBlueTextPrimary()
                           : Colors.white)));
-    final subtitleColor = isLightEmerald
+    final subtitleColor = isCustomHuisstijl
+        ? _customHuisstijlTextMuted()
+        : isLightEmerald
         ? _lightEmeraldTextMuted().withOpacity(0.92)
         : (isMiddayGold
               ? _middayGoldTextMuted().withOpacity(0.92)
@@ -30985,40 +31092,45 @@ class _DriverHomePageState extends State<DriverHomePage>
                         unawaited(_handleDriverStatusAction());
                       },
                     ),
-                    if (!widget.openedFromBusinessHome)
-                      ListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(
-                          Icons.palette_outlined,
-                          color: iconAccent,
-                        ),
-                        title: Text(
-                          _tr(
-                            nl: 'Thema',
-                            en: 'Theme',
-                            fr: 'Theme',
-                            es: 'Tema',
-                          ),
-                          style: TextStyle(color: titleColor),
-                        ),
-                        subtitle: Text(
-                          _tr(
-                            nl: 'Kies je persoonlijke chauffeurweergave',
-                            en: 'Choose your personal driver theme',
-                            fr: 'Choisissez votre theme chauffeur personnel',
-                            es: 'Elige tu tema personal de conductor',
-                          ),
-                          style: TextStyle(
-                            color: subtitleColor,
-                            fontSize: 11.5,
-                          ),
-                        ),
-                        onTap: () {
-                          Navigator.of(ctx).pop();
-                          unawaited(_showDriverAppThemeSelectorSheet());
-                        },
+                    ListTile(
+                      key: kDriverHomeThemeMenuTileKey,
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        Icons.palette_outlined,
+                        color: iconAccent,
                       ),
+                      title: Text(
+                        _tr(
+                          nl: 'Thema',
+                          en: 'Theme',
+                          fr: 'Theme',
+                          es: 'Tema',
+                        ),
+                        style: TextStyle(color: titleColor),
+                      ),
+                      subtitle: Text(
+                        _tr(
+                          nl: 'Kies je persoonlijke chauffeurweergave',
+                          en: 'Choose your personal driver theme',
+                          fr: 'Choisissez votre theme chauffeur personnel',
+                          es: 'Elige tu tema personal de conductor',
+                        ),
+                        style: TextStyle(
+                          color: subtitleColor,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                      onTap: () {
+                        Navigator.of(ctx).pop();
+                        unawaited(
+                          showDriverThemeSelectorSheet(
+                            context,
+                            companyDriverView: widget.openedFromBusinessHome,
+                          ),
+                        );
+                      },
+                    ),
                     if (_canSwitchCompanyDriversFromDashboard())
                       ListTile(
                         dense: true,
@@ -31111,222 +31223,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  Future<void> _showDriverAppThemeSelectorSheet() async {
-    if (widget.openedFromBusinessHome) return;
-
-    final selectorTitle = _tr(
-      nl: 'Persoonlijk thema',
-      en: 'Personal theme',
-      fr: 'Theme personnel',
-      es: 'Tema personal',
-    );
-
-    String labelForVariant(DriverThemeVariant variant) {
-      switch (variant) {
-        case DriverThemeVariant.nightGold:
-          return _tr(
-            nl: 'Night Gold',
-            en: 'Night Gold',
-            fr: 'Night Gold',
-            es: 'Night Gold',
-          );
-        case DriverThemeVariant.midnightBlue:
-          return _tr(
-            nl: 'Midnight Blue',
-            en: 'Midnight Blue',
-            fr: 'Midnight Blue',
-            es: 'Midnight Blue',
-          );
-        case DriverThemeVariant.highContrast:
-          return _tr(
-            nl: 'Midday Gold',
-            en: 'Midday Gold',
-            fr: 'Midday Gold',
-            es: 'Midday Gold',
-          );
-        case DriverThemeVariant.lightEmerald:
-          return _tr(
-            nl: 'Light Emerald',
-            en: 'Light Emerald',
-            fr: 'Light Emerald',
-            es: 'Light Emerald',
-          );
-      }
-    }
-
-    String subtitleForVariant(DriverThemeVariant variant) {
-      switch (variant) {
-        case DriverThemeVariant.nightGold:
-          return _tr(
-            nl: 'Klassiek donker met gouden accenten',
-            en: 'Classic dark with golden accents',
-            fr: 'Sombre classique avec accents dores',
-            es: 'Oscuro clasico con acentos dorados',
-          );
-        case DriverThemeVariant.midnightBlue:
-          return _tr(
-            nl: 'Diep blauw met cyaan accenten',
-            en: 'Deep blue with cyan accents',
-            fr: 'Bleu profond avec accents cyan',
-            es: 'Azul profundo con acentos cian',
-          );
-        case DriverThemeVariant.highContrast:
-          return _tr(
-            nl: 'Espresso en champagne goud',
-            en: 'Espresso and champagne gold',
-            fr: 'Espresso et or champagne',
-            es: 'Espresso y oro champan',
-          );
-        case DriverThemeVariant.lightEmerald:
-          return _tr(
-            nl: 'Licht mint met smaragdgroene accenten',
-            en: 'Light mint with emerald accents',
-            fr: 'Menthe claire avec accents emeraude',
-            es: 'Menta clara con acentos esmeralda',
-          );
-      }
-    }
-
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (ctx) {
-        return ValueListenableBuilder<DriverThemeVariant>(
-          valueListenable: driverAppThemeNotifier,
-          builder: (context, selectedVariant, _) {
-            final isMidnightBlue =
-                selectedVariant == DriverThemeVariant.midnightBlue;
-            final isMiddayGold =
-                selectedVariant == DriverThemeVariant.highContrast;
-            final isLightEmerald =
-                selectedVariant == DriverThemeVariant.lightEmerald;
-            final sheetGradient = isLightEmerald
-                ? _lightEmeraldSurfaceGradient(soft: true)
-                : (isMiddayGold
-                      ? _middayGoldSurfaceGradient(soft: true)
-                      : (isMidnightBlue
-                            ? const LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [
-                                  Color(0xFF020711),
-                                  Color(0xFF07111F),
-                                  Color(0xFF0B1B33),
-                                ],
-                              )
-                            : const LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [Color(0xFF101113), Color(0xFF0D0E11)],
-                              )));
-            final sheetBorder = isLightEmerald
-                ? _lightEmeraldBorderColor(0.40)
-                : (isLightEmerald
-                      ? _lightEmeraldBorderColor(0.34)
-                      : (isMiddayGold
-                            ? _middayGoldBorderColor(0.34)
-                            : (isMidnightBlue
-                                  ? _midnightBlueBorderColor(0.40)
-                                  : Colors.white.withOpacity(0.10))));
-            final iconAccent = isLightEmerald
-                ? _lightEmeraldAccent()
-                : (isMidnightBlue
-                      ? _midnightBlueAccent()
-                      : (isMiddayGold
-                            ? const Color(0xFFE8C57E)
-                            : const Color(0xFFFFD36A)));
-            final titleColor = isLightEmerald
-                ? _lightEmeraldTextPrimary()
-                : (isLightEmerald
-                      ? _lightEmeraldTextPrimary()
-                      : (isMiddayGold
-                            ? _middayGoldTextPrimary()
-                            : (isMidnightBlue
-                                  ? _midnightBlueTextPrimary()
-                                  : Colors.white)));
-            final subtitleColor = isLightEmerald
-                ? _lightEmeraldTextMuted().withOpacity(0.92)
-                : (isMiddayGold
-                      ? _middayGoldTextMuted().withOpacity(0.92)
-                      : (isMidnightBlue
-                            ? _midnightBlueTextMuted().withOpacity(0.92)
-                            : Colors.white.withOpacity(0.62)));
-
-            return SafeArea(
-              top: false,
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: sheetGradient,
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(18),
-                  ),
-                  border: Border.all(color: sheetBorder),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        selectorTitle,
-                        style: TextStyle(
-                          color: titleColor,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      for (final variant in DriverThemeVariant.values)
-                        ListTile(
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                          leading: Icon(
-                            selectedVariant == variant
-                                ? Icons.radio_button_checked
-                                : Icons.radio_button_unchecked,
-                            color: iconAccent,
-                          ),
-                          title: Text(
-                            labelForVariant(variant),
-                            style: TextStyle(color: titleColor),
-                          ),
-                          subtitle: Text(
-                            subtitleForVariant(variant),
-                            style: TextStyle(
-                              color: subtitleColor,
-                              fontSize: 11.5,
-                            ),
-                          ),
-                          trailing: selectedVariant == variant
-                              ? Icon(Icons.check_rounded, color: iconAccent)
-                              : null,
-                          onTap: () async {
-                            final navigator = Navigator.of(ctx);
-                            await saveDriverAppThemePreference(variant);
-                            if (!mounted) return;
-                            navigator.pop();
-                            _toast(
-                              _tr(
-                                nl: 'Persoonlijk thema opgeslagen',
-                                en: 'Personal theme saved',
-                                fr: 'Theme personnel enregistre',
-                                es: 'Tema personal guardado',
-                              ),
-                            );
-                          },
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
+  Future<void> _showDriverAppThemeSelectorSheet() {
+    return showDriverThemeSelectorSheet(
+      context,
+      companyDriverView: widget.openedFromBusinessHome,
     );
   }
 
@@ -31467,20 +31367,17 @@ class _DriverHomePageState extends State<DriverHomePage>
                         heroOverlay: true,
                         size: themeCycleSize,
                         semanticLabel: _tr(
-                          nl: 'Volgend thema',
-                          en: 'Next theme',
-                          fr: 'Thème suivant',
-                          es: 'Siguiente tema',
+                          nl: 'Kies je uitstraling',
+                          en: 'Choose your appearance',
+                          fr: 'Choisissez votre apparence',
+                          es: 'Elige tu estilo',
                         ),
                         onApply: _applyDriverThemeFromHeaderCycle,
-                        onCycled: (next) {
-                          if (!mounted) return;
-                          _toast(
-                            _tr(
-                              nl: 'Thema: ${driverThemeProductLabel(next)}',
-                              en: 'Theme: ${driverThemeProductLabel(next)}',
-                              fr: 'Thème : ${driverThemeProductLabel(next)}',
-                              es: 'Tema: ${driverThemeProductLabel(next)}',
+                        onPressed: () {
+                          unawaited(
+                            showDriverThemeSelectorSheet(
+                              context,
+                              companyDriverView: widget.openedFromBusinessHome,
                             ),
                           );
                         },
@@ -31569,6 +31466,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     final isLightEmerald =
         driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
+    final isCustomHuisstijl =
+        driverThemeNotifier.value == DriverThemeVariant.customHuisstijl;
     const summaryIconContainerSize = 52.0;
     const summaryIconGlyphSize = 30.0;
     const compactIconContainerSize = 36.0;
@@ -31579,8 +31478,14 @@ class _DriverHomePageState extends State<DriverHomePage>
       required String value,
       required Color accentColor,
       VoidCallback? onTap,
+      String? goldAssetKey,
     }) {
-      final iconChipColor = isLightEmerald
+      final iconChipColor = isCustomHuisstijl
+          ? Color.alphaBlend(
+              accentColor.withOpacity(0.16),
+              _customHuisstijlSurfaceAlt(),
+            )
+          : isLightEmerald
           ? Color.alphaBlend(
               accentColor.withOpacity(0.14),
               const Color(0xFFE4F1EB),
@@ -31596,7 +31501,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                           const Color(0xFF0A1A30),
                         )
                       : accentColor.withOpacity(0.16)));
-      final iconChipBorderColor = isLightEmerald
+      final iconChipBorderColor = isCustomHuisstijl
+          ? Color.alphaBlend(
+              accentColor.withOpacity(0.40),
+              _customHuisstijlBorderColor(0.40),
+            )
+          : isLightEmerald
           ? Color.alphaBlend(
               accentColor.withOpacity(0.34),
               const Color(0x88B7CEC4),
@@ -31620,19 +31530,25 @@ class _DriverHomePageState extends State<DriverHomePage>
             ? const EdgeInsets.fromLTRB(8, 6, 8, 6)
             : const EdgeInsets.fromLTRB(8, 8, 8, 8),
         decoration: BoxDecoration(
-          color: (isMiddayGold || isMidnightBlue || isLightEmerald)
+          color: (isMiddayGold || isMidnightBlue || isLightEmerald || isCustomHuisstijl)
               ? null
               : const Color(0xFF111214),
-          gradient: isLightEmerald
+          gradient: isCustomHuisstijl
+              ? _customHuisstijlSurfaceGradient()
+              : isLightEmerald
               ? _lightEmeraldSurfaceGradient()
               : (isMiddayGold
                     ? _middayGoldSurfaceGradient()
                     : (isMidnightBlue ? _midnightBlueSurfaceGradient() : null)),
           borderRadius: BorderRadius.circular(13),
           border: Border.all(
-            color: isLightEmerald
+            color: isCustomHuisstijl
+                ? _customHuisstijlBorderColor(0.42)
+                : isLightEmerald
                 ? _lightEmeraldBorderColor(0.42)
-                : (isLightEmerald
+                : (isCustomHuisstijl
+                      ? _customHuisstijlBorderColor(0.40)
+                      : isLightEmerald
                       ? _lightEmeraldBorderColor(0.40)
                       : (isMiddayGold
                             ? _middayGoldBorderColor(0.40)
@@ -31641,7 +31557,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                                   : Colors.white.withOpacity(0.10)))),
             width: 1.0,
           ),
-          boxShadow: (isMiddayGold || isMidnightBlue || isLightEmerald)
+          boxShadow: (isMiddayGold || isMidnightBlue || isLightEmerald || isCustomHuisstijl)
               ? [
                   BoxShadow(
                     color: Colors.black.withOpacity(0.24),
@@ -31662,11 +31578,16 @@ class _DriverHomePageState extends State<DriverHomePage>
                       color: iconChipColor,
                       border: Border.all(color: iconChipBorderColor),
                     ),
-                    child: Icon(
-                      icon,
-                      size: compactIconGlyphSize,
-                      color: accentColor,
-                    ),
+                    child: isCustomHuisstijl && goldAssetKey != null
+                        ? ChauffeurGoldIcon(
+                            assetKey: goldAssetKey,
+                            size: compactIconGlyphSize,
+                          )
+                        : Icon(
+                            icon,
+                            size: compactIconGlyphSize,
+                            color: accentColor,
+                          ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
@@ -31675,9 +31596,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: isLightEmerald
+                        color: isCustomHuisstijl
+                            ? _customHuisstijlTextMuted()
+                            : isLightEmerald
                             ? _lightEmeraldTextMuted()
-                            : (isLightEmerald
+                            : (isCustomHuisstijl
+                                  ? _customHuisstijlTextMuted()
+                                  : isLightEmerald
                                   ? _lightEmeraldTextMuted()
                                   : (isMiddayGold
                                         ? _middayGoldTextMuted()
@@ -31697,9 +31622,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: isLightEmerald
+                      color: isCustomHuisstijl
+                          ? _customHuisstijlTextPrimary()
+                          : isLightEmerald
                           ? _lightEmeraldTextPrimary()
-                          : (isLightEmerald
+                          : (isCustomHuisstijl
+                                ? _customHuisstijlTextPrimary()
+                                : isLightEmerald
                                 ? _lightEmeraldTextPrimary()
                                 : (isMiddayGold
                                       ? _middayGoldTextPrimary()
@@ -31723,11 +31652,16 @@ class _DriverHomePageState extends State<DriverHomePage>
                       color: iconChipColor,
                       border: Border.all(color: iconChipBorderColor),
                     ),
-                    child: Icon(
-                      icon,
-                      size: summaryIconGlyphSize,
-                      color: accentColor,
-                    ),
+                    child: isCustomHuisstijl && goldAssetKey != null
+                        ? ChauffeurGoldIcon(
+                            assetKey: goldAssetKey,
+                            size: summaryIconGlyphSize,
+                          )
+                        : Icon(
+                            icon,
+                            size: summaryIconGlyphSize,
+                            color: accentColor,
+                          ),
                   ),
                   const SizedBox(height: 7),
                   Text(
@@ -31735,9 +31669,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: isLightEmerald
+                      color: isCustomHuisstijl
+                          ? _customHuisstijlTextPrimary()
+                          : isLightEmerald
                           ? _lightEmeraldTextPrimary()
-                          : (isLightEmerald
+                          : (isCustomHuisstijl
+                                ? _customHuisstijlTextPrimary()
+                                : isLightEmerald
                                 ? _lightEmeraldTextPrimary()
                                 : (isMiddayGold
                                       ? _middayGoldTextPrimary()
@@ -31754,9 +31692,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: isLightEmerald
+                      color: isCustomHuisstijl
+                          ? _customHuisstijlTextMuted()
+                          : isLightEmerald
                           ? _lightEmeraldTextMuted()
-                          : (isLightEmerald
+                          : (isCustomHuisstijl
+                                ? _customHuisstijlTextMuted()
+                                : isLightEmerald
                                 ? _lightEmeraldTextMuted()
                                 : (isMiddayGold
                                       ? _middayGoldTextMuted()
@@ -31789,7 +31731,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         Expanded(
           child: card(
             icon: Icons.event_note_rounded,
-            accentColor: isLightEmerald
+            goldAssetKey: 'planning',
+            accentColor: isCustomHuisstijl
+                ? _customHuisstijlAccent()
+                : isLightEmerald
                 ? _lightEmeraldAccent()
                 : const Color(0xFF2ECC71),
             label: _tr(
@@ -31805,6 +31750,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         Expanded(
           child: card(
             icon: Icons.check_circle_outline_rounded,
+            goldAssetKey: 'completed',
             accentColor: isLightEmerald
                 ? const Color(0xFF0F766E)
                 : const Color(0xFF4C9BFF),
@@ -31822,6 +31768,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         Expanded(
           child: card(
             icon: Icons.schedule_rounded,
+            goldAssetKey: 'next_ride',
             accentColor: const Color(0xFFFFB54D),
             label: _tr(
               nl: 'Volgende',
@@ -31846,6 +31793,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     final isLightEmerald =
         driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
+    final isCustomHuisstijl =
+        driverThemeNotifier.value == DriverThemeVariant.customHuisstijl;
     if (nextRide == null) {
       Widget wrapMiddayButton(Widget button) {
         if (!isMiddayGold) return button;
@@ -31861,19 +31810,25 @@ class _DriverHomePageState extends State<DriverHomePage>
         width: double.infinity,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: (isMiddayGold || isMidnightBlue || isLightEmerald)
+          color: (isMiddayGold || isMidnightBlue || isLightEmerald || isCustomHuisstijl)
               ? null
               : const Color(0xFF101113),
-          gradient: isLightEmerald
+          gradient: isCustomHuisstijl
+              ? _customHuisstijlSurfaceGradient()
+              : isLightEmerald
               ? _lightEmeraldSurfaceGradient()
               : (isMiddayGold
                     ? _middayGoldSurfaceGradient()
                     : (isMidnightBlue ? _midnightBlueSurfaceGradient() : null)),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isLightEmerald
+            color: isCustomHuisstijl
+                ? _customHuisstijlBorderColor(0.40)
+                : isLightEmerald
                 ? _lightEmeraldBorderColor(0.40)
-                : (isLightEmerald
+                : (isCustomHuisstijl
+                      ? _customHuisstijlBorderColor(0.38)
+                      : isLightEmerald
                       ? _lightEmeraldBorderColor(0.38)
                       : (isMiddayGold
                             ? _middayGoldBorderColor(0.38)
@@ -31893,9 +31848,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                 es: 'No hay viajes planificados',
               ),
               style: TextStyle(
-                color: isLightEmerald
+                color: isCustomHuisstijl
+                    ? _customHuisstijlTextPrimary()
+                    : isLightEmerald
                     ? _lightEmeraldTextPrimary()
-                    : (isLightEmerald
+                    : (isCustomHuisstijl
+                          ? _customHuisstijlTextPrimary()
+                          : isLightEmerald
                           ? _lightEmeraldTextPrimary()
                           : (isMiddayGold
                                 ? _middayGoldTextPrimary()
@@ -31915,9 +31874,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                 es: 'Actualiza la planificación o inicia un viaje directo.',
               ),
               style: TextStyle(
-                color: isLightEmerald
+                color: isCustomHuisstijl
+                    ? _customHuisstijlTextMuted()
+                    : isLightEmerald
                     ? _lightEmeraldTextMuted()
-                    : (isLightEmerald
+                    : (isCustomHuisstijl
+                          ? _customHuisstijlTextMuted()
+                          : isLightEmerald
                           ? _lightEmeraldTextMuted()
                           : (isMiddayGold
                                 ? _middayGoldTextMuted()
@@ -31934,7 +31897,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                 Expanded(
                   child: wrapMiddayButton(
                     OutlinedButton.icon(
-                      style: isLightEmerald
+                      style: isCustomHuisstijl
+                          ? _customHuisstijlGhostButtonStyle()
+                          : isLightEmerald
                           ? _lightEmeraldGhostButtonStyle()
                           : (isMiddayGold
                                 ? _middayGoldOutlinedActionButtonStyle()
@@ -31959,7 +31924,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                 Expanded(
                   child: wrapMiddayButton(
                     FilledButton.icon(
-                      style: isLightEmerald
+                      style: isCustomHuisstijl
+                          ? _customHuisstijlStartButtonStyle()
+                          : isLightEmerald
                           ? _lightEmeraldStartButtonStyle()
                           : (isMiddayGold
                                 ? _middayGoldFilledActionButtonStyle()
@@ -32124,19 +32091,23 @@ class _DriverHomePageState extends State<DriverHomePage>
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
         decoration: BoxDecoration(
-          gradient: isLightEmerald
+          gradient: isCustomHuisstijl
+              ? _customHuisstijlSurfaceGradient(soft: true)
+              : isLightEmerald
               ? _lightEmeraldSurfaceGradient(soft: true)
               : (isMiddayGold
                     ? _middayGoldSurfaceGradient(soft: true)
                     : (isMidnightBlue
                           ? _midnightBlueSurfaceGradient(soft: true)
                           : null)),
-          color: (isMiddayGold || isMidnightBlue || isLightEmerald)
+          color: (isMiddayGold || isMidnightBlue || isLightEmerald || isCustomHuisstijl)
               ? null
               : const Color(0xFF17191C),
           borderRadius: BorderRadius.circular(999),
           border: Border.all(
-            color: isLightEmerald
+            color: isCustomHuisstijl
+                ? _customHuisstijlBorderColor(0.40)
+                : isLightEmerald
                 ? _lightEmeraldBorderColor(0.40)
                 : (isMiddayGold
                       ? _middayGoldBorderColor(0.40)
@@ -32152,7 +32123,9 @@ class _DriverHomePageState extends State<DriverHomePage>
               Icon(
                 icon,
                 size: 12,
-                color: isLightEmerald
+                color: isCustomHuisstijl
+                    ? _customHuisstijlAccent()
+                    : isLightEmerald
                     ? _lightEmeraldAccent()
                     : (isMiddayGold
                           ? const Color(0xFFE8C57E)
@@ -32165,7 +32138,9 @@ class _DriverHomePageState extends State<DriverHomePage>
             Text(
               text,
               style: TextStyle(
-                color: isLightEmerald
+                color: isCustomHuisstijl
+                    ? _customHuisstijlTextPrimary()
+                    : isLightEmerald
                     ? _lightEmeraldTextPrimary()
                     : (isMiddayGold
                           ? _middayGoldTextPrimary()
@@ -32196,7 +32171,9 @@ class _DriverHomePageState extends State<DriverHomePage>
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: isLightEmerald
+                color: isCustomHuisstijl
+                    ? _customHuisstijlTextMuted()
+                    : isLightEmerald
                     ? _lightEmeraldTextMuted()
                     : (isMiddayGold
                           ? _middayGoldTextMuted()
@@ -32216,17 +32193,21 @@ class _DriverHomePageState extends State<DriverHomePage>
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: (isMiddayGold || isMidnightBlue || isLightEmerald)
+        color: (isMiddayGold || isMidnightBlue || isLightEmerald || isCustomHuisstijl)
             ? null
             : const Color(0xFF101113),
-        gradient: isLightEmerald
+        gradient: isCustomHuisstijl
+            ? _customHuisstijlSurfaceGradient()
+            : isLightEmerald
             ? _lightEmeraldSurfaceGradient()
             : (isMiddayGold
                   ? _middayGoldSurfaceGradient()
                   : (isMidnightBlue ? _midnightBlueSurfaceGradient() : null)),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: isLightEmerald
+          color: isCustomHuisstijl
+              ? _customHuisstijlBorderColor(0.44)
+              : isLightEmerald
               ? _lightEmeraldBorderColor(0.44)
               : (isMiddayGold
                     ? _middayGoldBorderColor(0.44)
@@ -32249,7 +32230,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                     es: 'Siguiente viaje',
                   ),
                   style: TextStyle(
-                    color: isLightEmerald
+                    color: isCustomHuisstijl
+                        ? _customHuisstijlTextPrimary()
+                        : isLightEmerald
                         ? _lightEmeraldTextPrimary()
                         : (isMiddayGold
                               ? _middayGoldTextPrimary()
@@ -32353,7 +32336,9 @@ class _DriverHomePageState extends State<DriverHomePage>
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  style: isLightEmerald
+                  style: isCustomHuisstijl
+                      ? _customHuisstijlGhostButtonStyle()
+                      : isLightEmerald
                       ? _lightEmeraldGhostButtonStyle()
                       : (isMiddayGold
                             ? _middayGoldOutlinedActionButtonStyle()
@@ -32372,7 +32357,9 @@ class _DriverHomePageState extends State<DriverHomePage>
               const SizedBox(width: 8),
               Expanded(
                 child: FilledButton.icon(
-                  style: isLightEmerald
+                  style: isCustomHuisstijl
+                      ? _customHuisstijlStartButtonStyle()
+                      : isLightEmerald
                       ? _lightEmeraldStartButtonStyle()
                       : (isMiddayGold
                             ? _middayGoldFilledActionButtonStyle()
@@ -32418,6 +32405,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     final isLightEmerald =
         driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
+    final isCustomHuisstijl =
+        driverThemeNotifier.value == DriverThemeVariant.customHuisstijl;
     const quickActionIconContainerSize = 56.0;
     const quickActionIconGlyphSize = 31.0;
     Widget quickAction({
@@ -32440,7 +32429,9 @@ class _DriverHomePageState extends State<DriverHomePage>
             softWrap: false,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: isLightEmerald
+              color: isCustomHuisstijl
+                  ? _customHuisstijlTextPrimary()
+                  : isLightEmerald
                   ? _lightEmeraldTextPrimary()
                   : (isMiddayGold
                         ? _middayGoldTextPrimary()
@@ -32458,7 +32449,9 @@ class _DriverHomePageState extends State<DriverHomePage>
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: isLightEmerald
+                color: isCustomHuisstijl
+                    ? _customHuisstijlTextMuted()
+                    : isLightEmerald
                     ? _lightEmeraldTextMuted()
                     : (isMiddayGold
                           ? _middayGoldTextMuted()
@@ -32503,7 +32496,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                                       0xFF111111,
                                     ).withOpacity(0.96)))),
             gradient: !hasImageBackground
-                ? (isLightEmerald
+                ? (isCustomHuisstijl
+                      ? _customHuisstijlSurfaceGradient()
+                      : isLightEmerald
                       ? _lightEmeraldSurfaceGradient()
                       : (isMiddayGold
                             ? _middayGoldSurfaceGradient()
@@ -32516,18 +32511,26 @@ class _DriverHomePageState extends State<DriverHomePage>
               color: isTabletPortrait
                   ? Colors.transparent
                   : (active
-                        ? (isLightEmerald
+                        ? (isCustomHuisstijl
+                              ? _customHuisstijlBorderColor(0.55)
+                              : isLightEmerald
                               ? _lightEmeraldBorderColor(0.55)
-                              : (isLightEmerald
+                              : (isCustomHuisstijl
+                                    ? _customHuisstijlBorderColor(0.48)
+                                    : isLightEmerald
                                     ? _lightEmeraldBorderColor(0.48)
                                     : (isMiddayGold
                                           ? _middayGoldBorderColor(0.48)
                                           : (isMidnightBlue
                                                 ? _midnightBlueBorderColor(0.52)
                                                 : const Color(0x66FFD36A)))))
-                        : (isLightEmerald
+                        : (isCustomHuisstijl
+                              ? _customHuisstijlBorderColor(0.34)
+                              : isLightEmerald
                               ? _lightEmeraldBorderColor(0.34)
-                              : (isLightEmerald
+                              : (isCustomHuisstijl
+                                    ? _customHuisstijlBorderColor(0.28)
+                                    : isLightEmerald
                                     ? _lightEmeraldBorderColor(0.28)
                                     : (isMiddayGold
                                           ? _middayGoldBorderColor(0.28)
@@ -32542,7 +32545,9 @@ class _DriverHomePageState extends State<DriverHomePage>
               ? BoxDecoration(
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(
-                    color: isLightEmerald
+                    color: isCustomHuisstijl
+                        ? _customHuisstijlBorderColor(0.56)
+                        : isLightEmerald
                         ? _lightEmeraldBorderColor(0.56)
                         : (isMidnightBlue
                               ? _midnightBlueBorderColor(0.56)
@@ -32612,14 +32617,18 @@ class _DriverHomePageState extends State<DriverHomePage>
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: active
-                            ? (isLightEmerald
+                            ? (isCustomHuisstijl
+                                  ? _customHuisstijlAccent()
+                                  : isLightEmerald
                                   ? _lightEmeraldAccent()
                                   : (isMiddayGold
                                         ? const Color(0xFF3E2F1A)
                                         : (isMidnightBlue
                                               ? const Color(0xFF0F2747)
                                               : const Color(0xFF21180A))))
-                            : (isLightEmerald
+                            : (isCustomHuisstijl
+                                  ? _customHuisstijlSurfaceAlt()
+                                  : isLightEmerald
                                   ? _lightEmeraldSurfaceAlt()
                                   : (isMiddayGold
                                         ? const Color(0xFF2D2316)
@@ -32628,14 +32637,18 @@ class _DriverHomePageState extends State<DriverHomePage>
                                               : const Color(0xFF17130B)))),
                         border: Border.all(
                           color: active
-                              ? (isLightEmerald
+                              ? (isCustomHuisstijl
+                                    ? _customHuisstijlAccent()
+                                    : isLightEmerald
                                     ? _lightEmeraldAccent().withOpacity(0.85)
                                     : (isMiddayGold
                                           ? const Color(0xCCE8C57E)
                                           : (isMidnightBlue
                                                 ? _midnightBlueBorderColor(0.66)
                                                 : const Color(0x88FFD36A))))
-                              : (isLightEmerald
+                              : (isCustomHuisstijl
+                                    ? _customHuisstijlBorderColor(0.55)
+                                    : isLightEmerald
                                     ? _lightEmeraldBorderColor(0.55)
                                     : (isMiddayGold
                                           ? const Color(0x88DDBB76)
@@ -32748,6 +32761,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                       'assets/Midday Gold Chauffeur/driver_street_ride_midday_gold.webp',
                   lightEmeraldAsset:
                       'assets/Light Emerald Chauffeur/driver_street_ride_light_emerald.webp',
+                  goldAsset: brandSignatureGoldAssetPath('street_ride'),
                 ),
               ),
             ),
@@ -32771,6 +32785,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                       'assets/Midday Gold Chauffeur/driver_fare_calculator_midday_gold.webp',
                   lightEmeraldAsset:
                       'assets/Light Emerald Chauffeur/driver_fare_calculator_light_emerald.webp',
+                  goldAsset: brandSignatureGoldAssetPath('fare_calculator'),
                 ),
               ),
             ),
@@ -32795,6 +32810,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                       'assets/Midday Gold Chauffeur/driver_my_rides_midday_gold.webp',
                   lightEmeraldAsset:
                       'assets/Light Emerald Chauffeur/driver_my_rides_light_emerald.webp',
+                  goldAsset: brandSignatureGoldAssetPath('rides'),
                 ),
               ),
             ),
@@ -32817,6 +32833,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                       'assets/Midday Gold Chauffeur/driver_history_midday_gold.webp',
                   lightEmeraldAsset:
                       'assets/Light Emerald Chauffeur/driver_history_light_emerald.webp',
+                  goldAsset: brandSignatureGoldAssetPath('history'),
                 ),
               ),
             ),
@@ -32839,6 +32856,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                       'assets/Midday Gold Chauffeur/driver_receipts_midday_gold.webp',
                   lightEmeraldAsset:
                       'assets/Light Emerald Chauffeur/driver_receipts_light_emerald.webp',
+                  goldAsset: brandSignatureGoldAssetPath('receipts'),
                 ),
               ),
             ),
@@ -32869,6 +32887,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                       'assets/Midday Gold Chauffeur/driver_documents_midday_gold.webp',
                   lightEmeraldAsset:
                       'assets/Light Emerald Chauffeur/driver_documents_light_emerald.webp',
+                  goldAsset: brandSignatureGoldAssetPath('documents'),
                 ),
               ),
             ),
@@ -32951,6 +32970,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     final isLightEmerald =
         driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
+    final isCustomHuisstijl =
+        driverThemeNotifier.value == DriverThemeVariant.customHuisstijl;
     final driverHeaderHeight = isTabletPortrait
         ? clampDouble(H * 0.24, 300.0, 360.0)
         : 0.0;
@@ -32978,7 +32999,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       return Text(
         text,
         style: TextStyle(
-          color: isLightEmerald
+          color: isCustomHuisstijl
+              ? _customHuisstijlTextPrimary()
+              : isLightEmerald
               ? _lightEmeraldTextPrimary()
               : (isMiddayGold
                     ? const Color(0xFFF3E5C4)
@@ -32996,6 +33019,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       required String label,
       required VoidCallback onTap,
       bool active = false,
+      String? goldAssetKey,
     }) {
       final color = isLightEmerald
           ? (active ? _lightEmeraldAccent() : _lightEmeraldTextMuted())
@@ -33124,7 +33148,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (isMiddayGold || isMidnightBlue || isLightEmerald)
+                    if (isMiddayGold || isMidnightBlue || isLightEmerald || isCustomHuisstijl)
                       Container(
                         width: 29,
                         height: 29,
@@ -33160,10 +33184,17 @@ class _DriverHomePageState extends State<DriverHomePage>
                                             : _midnightBlueBorderColor(0.32))),
                           ),
                         ),
-                        child: Icon(icon, size: 20, color: color),
+                        child: isCustomHuisstijl && goldAssetKey != null
+                            ? ChauffeurGoldIcon(assetKey: goldAssetKey, size: 20)
+                            : Icon(icon, size: 20, color: color),
                       )
                     else
-                      Icon(icon, size: navIconSize, color: color),
+                      isCustomHuisstijl && goldAssetKey != null
+                          ? ChauffeurGoldIcon(
+                              assetKey: goldAssetKey,
+                              size: navIconSize,
+                            )
+                          : Icon(icon, size: navIconSize, color: color),
                     const SizedBox(height: 2),
                     Text(
                       label,
@@ -33189,12 +33220,14 @@ class _DriverHomePageState extends State<DriverHomePage>
         children: [
           navItem(
             icon: Icons.home_filled,
+            goldAssetKey: 'home',
             label: _tr(nl: 'Home', en: 'Home', fr: 'Accueil', es: 'Inicio'),
             active: true,
             onTap: () {},
           ),
           navItem(
             icon: Icons.list_alt_rounded,
+            goldAssetKey: 'rides',
             label: _tr(nl: 'Ritten', en: 'Rides', fr: 'Courses', es: 'Viajes'),
             onTap: () => _openBookingsHubFromDashboard(
               initialSegment: _DriverRidesHubSegment.available,
@@ -33202,6 +33235,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
           navItem(
             icon: Icons.local_taxi_outlined,
+            goldAssetKey: 'street_ride',
             label: _tr(
               nl: 'Straatrit',
               en: 'Street ride',
@@ -33212,6 +33246,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
           navItem(
             icon: Icons.menu_rounded,
+            goldAssetKey: 'more',
             label: _tr(nl: 'Meer', en: 'More', fr: 'Plus', es: 'Mas'),
             onTap: _showDashboardMoreSheet,
           ),
@@ -33267,10 +33302,12 @@ class _DriverHomePageState extends State<DriverHomePage>
                     vertical: 6,
                   ),
                   decoration: BoxDecoration(
-                    color: (isMiddayGold || isMidnightBlue || isLightEmerald)
+                    color: (isMiddayGold || isMidnightBlue || isLightEmerald || isCustomHuisstijl)
                         ? null
                         : const Color(0xFF101113),
-                    gradient: isLightEmerald
+                    gradient: isCustomHuisstijl
+                        ? _customHuisstijlSurfaceGradient(soft: true)
+                        : isLightEmerald
                         ? _lightEmeraldSurfaceGradient(soft: true)
                         : (isMiddayGold
                               ? _middayGoldSurfaceGradient(soft: true)
@@ -33281,7 +33318,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                     border: Border.all(
                       color: statusReady
                           ? const Color(0x664CD964)
-                          : (isLightEmerald
+                          : (isCustomHuisstijl
+                                ? _customHuisstijlBorderColor(0.46)
+                                : isLightEmerald
                                 ? _lightEmeraldBorderColor(0.46)
                                 : (isMiddayGold
                                       ? _middayGoldBorderColor(0.46)
@@ -33300,7 +33339,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                           shape: BoxShape.circle,
                           color: statusReady
                               ? const Color(0xFF2ECC71)
-                              : (isLightEmerald
+                              : (isCustomHuisstijl
+                                    ? _customHuisstijlAccent()
+                                    : isLightEmerald
                                     ? _lightEmeraldAccent()
                                     : (isMidnightBlue
                                           ? _midnightBlueAccent()
@@ -33347,7 +33388,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     return ColoredBox(
-      color: isLightEmerald
+      color: isCustomHuisstijl
+          ? _customHuisstijlBackground()
+          : isLightEmerald
           ? _lightEmeraldBackground()
           : (isMiddayGold
                 ? const Color(0xFF0F0D0A)
@@ -33376,7 +33419,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(18),
                           border: Border.all(
-                            color: isLightEmerald
+                            color: isCustomHuisstijl
+                                ? _customHuisstijlBorderColor(0.56)
+                                : isLightEmerald
                                 ? _lightEmeraldBorderColor(0.56)
                                 : (isMiddayGold
                                       ? const Color(
@@ -33493,7 +33538,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(18),
                           border: Border.all(
-                            color: isLightEmerald
+                            color: isCustomHuisstijl
+                                ? _customHuisstijlBorderColor(0.56)
+                                : isLightEmerald
                                 ? _lightEmeraldBorderColor(0.56)
                                 : (isMiddayGold
                                       ? const Color(
@@ -34880,6 +34927,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         backgroundColor:
             driverThemeNotifier.value == DriverThemeVariant.lightEmerald
             ? _lightEmeraldBackground()
+            : driverThemeNotifier.value == DriverThemeVariant.customHuisstijl
+            ? paletteForDriverTheme(
+                DriverThemeVariant.customHuisstijl,
+              ).background
             : kFluxidiBlack,
         drawer: _buildDrawer(),
         // NAV-ORIENTATION-VIEWPORT-STABILITY-P0-1: hard-clip the entire
@@ -34921,6 +34972,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                           driverThemeNotifier.value ==
                               DriverThemeVariant.lightEmerald
                           ? _lightEmeraldBackground().withOpacity(0.985)
+                          : driverThemeNotifier.value ==
+                                DriverThemeVariant.customHuisstijl
+                          ? paletteForDriverTheme(
+                              DriverThemeVariant.customHuisstijl,
+                            ).background.withOpacity(0.985)
                           : const Color(0xFF040404).withOpacity(0.985),
                     ),
                   ),
@@ -35488,7 +35544,11 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     final isLightEmerald =
         driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
-    final sheetGradient = isLightEmerald
+    final isCustomHuisstijl =
+        driverThemeNotifier.value == DriverThemeVariant.customHuisstijl;
+    final sheetGradient = isCustomHuisstijl
+        ? _customHuisstijlSurfaceGradient(soft: true)
+        : isLightEmerald
         ? _lightEmeraldSurfaceGradient(soft: true)
         : (isMiddayGold
               ? _middayGoldSurfaceGradient(soft: true)
@@ -35499,16 +35559,22 @@ class _DriverHomePageState extends State<DriverHomePage>
                         end: Alignment.bottomRight,
                         colors: [Color(0xFF141B2F), Color(0xFF101113)],
                       )));
-    final sheetBorder = isLightEmerald
+    final sheetBorder = isCustomHuisstijl
+        ? _customHuisstijlBorderColor(0.40)
+        : isLightEmerald
         ? _lightEmeraldBorderColor(0.40)
-        : (isLightEmerald
+        : (isCustomHuisstijl
+              ? _customHuisstijlBorderColor(0.34)
+              : isLightEmerald
               ? _lightEmeraldBorderColor(0.34)
               : (isMiddayGold
                     ? _middayGoldBorderColor(0.34)
                     : (isMidnightBlue
                           ? _midnightBlueBorderColor(0.38)
                           : Colors.white12)));
-    final sheetGlow = isLightEmerald
+    final sheetGlow = isCustomHuisstijl
+        ? _customHuisstijlAccent()
+        : isLightEmerald
         ? _lightEmeraldAccent().withOpacity(0.18)
         : (isMidnightBlue
               ? _midnightBlueAccent().withOpacity(0.20)
@@ -35544,31 +35610,43 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     final isLightEmerald =
         driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
-    final panelGradient = isLightEmerald
+    final isCustomHuisstijl =
+        driverThemeNotifier.value == DriverThemeVariant.customHuisstijl;
+    final panelGradient = isCustomHuisstijl
+        ? _customHuisstijlSurfaceGradient(soft: true)
+        : isLightEmerald
         ? _lightEmeraldSurfaceGradient(soft: true)
         : (isMiddayGold
               ? _middayGoldSurfaceGradient(soft: true)
               : (isMidnightBlue
                     ? _midnightBlueSurfaceGradient(soft: true)
                     : null));
-    final panelFill = (isMiddayGold || isMidnightBlue || isLightEmerald)
+    final panelFill = (isMiddayGold || isMidnightBlue || isLightEmerald || isCustomHuisstijl)
         ? null
         : const Color(0xFF101113);
-    final panelBorder = isLightEmerald
+    final panelBorder = isCustomHuisstijl
+        ? _customHuisstijlBorderColor(0.40)
+        : isLightEmerald
         ? _lightEmeraldBorderColor(0.40)
-        : (isLightEmerald
+        : (isCustomHuisstijl
+              ? _customHuisstijlBorderColor(0.34)
+              : isLightEmerald
               ? _lightEmeraldBorderColor(0.34)
               : (isMiddayGold
                     ? _middayGoldBorderColor(0.34)
                     : (isMidnightBlue
                           ? _midnightBlueBorderColor(0.40)
                           : kFluxidiYellow.withOpacity(0.30))));
-    final textPrimary = isLightEmerald
+    final textPrimary = isCustomHuisstijl
+        ? _customHuisstijlTextPrimary()
+        : isLightEmerald
         ? _lightEmeraldTextPrimary()
         : (isMiddayGold
               ? _middayGoldTextPrimary()
               : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white));
-    final textMuted = isLightEmerald
+    final textMuted = isCustomHuisstijl
+        ? _customHuisstijlTextMuted()
+        : isLightEmerald
         ? _lightEmeraldTextMuted()
         : (isMiddayGold
               ? _middayGoldTextMuted()
@@ -35826,7 +35904,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                   gradient: panelGradient,
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(
-                    color: isLightEmerald
+                    color: isCustomHuisstijl
+                        ? _customHuisstijlBorderColor(0.28)
+                        : isLightEmerald
                         ? _lightEmeraldBorderColor(0.28)
                         : (isMiddayGold
                               ? _middayGoldBorderColor(0.28)
@@ -35982,19 +36062,27 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     final isLightEmerald =
         driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
-    final cardPrimary = isLightEmerald
+    final isCustomHuisstijl =
+        driverThemeNotifier.value == DriverThemeVariant.customHuisstijl;
+    final cardPrimary = isCustomHuisstijl
+        ? _customHuisstijlTextPrimary()
+        : isLightEmerald
         ? _lightEmeraldTextPrimary()
         : (isMiddayGold
               ? _middayGoldTextPrimary()
               : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white));
-    final cardMuted = isLightEmerald
+    final cardMuted = isCustomHuisstijl
+        ? _customHuisstijlTextMuted()
+        : isLightEmerald
         ? _lightEmeraldTextMuted()
         : (isMiddayGold
               ? _middayGoldTextMuted()
               : (isMidnightBlue
                     ? _midnightBlueTextMuted()
                     : Colors.white.withOpacity(0.66)));
-    final cardAccent = isMidnightBlue
+    final cardAccent = isCustomHuisstijl
+        ? _customHuisstijlAccent()
+        : isMidnightBlue
         ? _midnightBlueAccent()
         : (isMiddayGold ? const Color(0xFFE8C57E) : const Color(0xFFFFD36A));
     final dt = _formatPickup(b.pickupIso);
@@ -36036,7 +36124,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                     )),
         borderRadius: BorderRadius.circular(22),
         border: Border.all(
-          color: isLightEmerald
+          color: isCustomHuisstijl
+              ? _customHuisstijlBorderColor(0.36)
+              : isLightEmerald
               ? _lightEmeraldBorderColor(0.36)
               : (isMiddayGold
                     ? _middayGoldBorderColor(0.36)
@@ -36303,25 +36393,37 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     final isLightEmerald =
         driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
-    final cardPrimary = isLightEmerald
+    final isCustomHuisstijl =
+        driverThemeNotifier.value == DriverThemeVariant.customHuisstijl;
+    final cardPrimary = isCustomHuisstijl
+        ? _customHuisstijlTextPrimary()
+        : isLightEmerald
         ? _lightEmeraldTextPrimary()
         : (isMiddayGold
               ? _middayGoldTextPrimary()
               : (isMidnightBlue ? _midnightBlueTextPrimary() : Colors.white));
-    final cardMuted = isLightEmerald
+    final cardMuted = isCustomHuisstijl
+        ? _customHuisstijlTextMuted()
+        : isLightEmerald
         ? _lightEmeraldTextMuted()
         : (isMiddayGold
               ? _middayGoldTextMuted()
               : (isMidnightBlue
                     ? _midnightBlueTextMuted()
                     : Colors.white.withOpacity(0.66)));
-    final cardAccent = isMidnightBlue
+    final cardAccent = isCustomHuisstijl
+        ? _customHuisstijlAccent()
+        : isMidnightBlue
         ? _midnightBlueAccent()
         : (isMiddayGold ? const Color(0xFFE8C57E) : const Color(0xFFFFD36A));
-    final cardActionStyle = isMiddayGold
+    final cardActionStyle = isCustomHuisstijl
+        ? _customHuisstijlStartButtonStyle()
+        : isMiddayGold
         ? _middayGoldFilledActionButtonStyle()
         : (isMidnightBlue ? _midnightBlueFilledActionButtonStyle() : null);
-    final cardOutlineStyle = isMiddayGold
+    final cardOutlineStyle = isCustomHuisstijl
+        ? _customHuisstijlGhostButtonStyle()
+        : isMiddayGold
         ? _middayGoldOutlinedActionButtonStyle()
         : (isMidnightBlue ? _midnightBlueOutlinedActionButtonStyle() : null);
     final dt = _formatPickup(b.pickupIso);
@@ -36391,7 +36493,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                           )),
               borderRadius: BorderRadius.circular(22),
               border: Border.all(
-                color: isLightEmerald
+                color: isCustomHuisstijl
+                    ? _customHuisstijlBorderColor(0.36)
+                    : isLightEmerald
                     ? _lightEmeraldBorderColor(0.36)
                     : (isMiddayGold
                           ? _middayGoldBorderColor(0.36)
@@ -36623,7 +36727,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                         )),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: isLightEmerald
+              color: isCustomHuisstijl
+                  ? _customHuisstijlBorderColor(0.36)
+                  : isLightEmerald
                   ? _lightEmeraldBorderColor(0.36)
                   : (isMiddayGold
                         ? _middayGoldBorderColor(0.36)
@@ -36844,7 +36950,11 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     final isLightEmerald =
         driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
-    final cockpitGradient = isMiddayGold
+    final isCustomHuisstijl =
+        driverThemeNotifier.value == DriverThemeVariant.customHuisstijl;
+    final cockpitGradient = isCustomHuisstijl
+        ? _customHuisstijlSurfaceGradient(soft: true)
+        : isMiddayGold
         ? _middayGoldSurfaceGradient(soft: true)
         : (isMidnightBlue
               ? _midnightBlueSurfaceGradient(soft: true)
@@ -36853,14 +36963,18 @@ class _DriverHomePageState extends State<DriverHomePage>
                   end: Alignment.bottomRight,
                   colors: [Color(0xFF0B1733), Color(0xFF0A1328)],
                 ));
-    final cockpitBorder = isLightEmerald
+    final cockpitBorder = isCustomHuisstijl
+        ? _customHuisstijlBorderColor(tripStarted ? 0.52 : 0.34)
+        : isLightEmerald
         ? _lightEmeraldBorderColor(tripStarted ? 0.52 : 0.34)
         : (isMiddayGold
               ? _middayGoldBorderColor(tripStarted ? 0.52 : 0.34)
               : (isMidnightBlue
                     ? _midnightBlueBorderColor(tripStarted ? 0.56 : 0.36)
                     : kGlow.withOpacity(tripStarted ? 0.50 : 0.22)));
-    final cockpitGlow = isMidnightBlue
+    final cockpitGlow = isCustomHuisstijl
+        ? _customHuisstijlAccent().withOpacity(tripStarted ? 0.18 : 0.10)
+        : isMidnightBlue
         ? _midnightBlueAccent().withOpacity(tripStarted ? 0.18 : 0.10)
         : (isMiddayGold
               ? const Color(0x66E8C57E).withOpacity(tripStarted ? 0.22 : 0.12)
@@ -37140,13 +37254,21 @@ class _DriverHomePageState extends State<DriverHomePage>
     required bool isMiddayGold,
     required bool isLightEmerald,
   }) {
-    final accent = isLightEmerald
+    final isCustomHuisstijl =
+        driverThemeNotifier.value == DriverThemeVariant.customHuisstijl;
+    final accent = isCustomHuisstijl
+        ? _customHuisstijlAccent()
+        : isLightEmerald
         ? _lightEmeraldAccent()
         : (isMidnightBlue
               ? _midnightBlueAccent()
               : (isMiddayGold ? const Color(0xFFE8C57E) : kGlow));
     final baseOpacity = enabled ? 1.0 : 0.45;
-    final themedForeground = isLightEmerald
+    final themedForeground = isCustomHuisstijl
+        ? (emphasis
+              ? accent.withOpacity(baseOpacity)
+              : _customHuisstijlTextPrimary().withOpacity(baseOpacity))
+        : isLightEmerald
         ? (emphasis
               ? accent.withOpacity(baseOpacity)
               : _lightEmeraldTextPrimary().withOpacity(baseOpacity))
@@ -37166,7 +37288,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         height: 46,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          color: isLightEmerald
+          color: isCustomHuisstijl
+              ? _customHuisstijlSurface().withOpacity(emphasis ? 1.0 : 0.88)
+              : isLightEmerald
               ? const Color(0xCCFFFFFF).withOpacity(emphasis ? 1.0 : 0.92)
               : (isMidnightBlue
                     ? const Color(0xCC0B1B33).withOpacity(emphasis ? 1.0 : 0.88)
@@ -37635,17 +37759,25 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     final isLightEmerald =
         driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
-    final defaultFill = isMiddayGold
+    final isCustomHuisstijl =
+        driverThemeNotifier.value == DriverThemeVariant.customHuisstijl;
+    final defaultFill = isCustomHuisstijl
+        ? _customHuisstijlSurface()
+        : isMiddayGold
         ? const Color(0xFF21170D)
         : (isMidnightBlue ? const Color(0xFF0A172B) : const Color(0xFF111111));
-    final defaultBorder = isLightEmerald
+    final defaultBorder = isCustomHuisstijl
+        ? _customHuisstijlBorderColor(0.34)
+        : isLightEmerald
         ? _lightEmeraldBorderColor(0.34)
         : (isMiddayGold
               ? _middayGoldBorderColor(0.34)
               : (isMidnightBlue
                     ? _midnightBlueBorderColor(0.38)
                     : Colors.white.withOpacity(0.18)));
-    final defaultText = isLightEmerald
+    final defaultText = isCustomHuisstijl
+        ? _customHuisstijlTextPrimary()
+        : isLightEmerald
         ? _lightEmeraldTextPrimary()
         : (isMiddayGold
               ? _middayGoldTextPrimary()
@@ -37694,30 +37826,47 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     final isLightEmerald =
         driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
-    final activeFill = isMiddayGold
+    final isCustomHuisstijl =
+        driverThemeNotifier.value == DriverThemeVariant.customHuisstijl;
+    final activeFill = isCustomHuisstijl
+        ? Color.alphaBlend(
+            _customHuisstijlAccent().withOpacity(0.22),
+            _customHuisstijlSurface(),
+          )
+        : isMiddayGold
         ? const Color(0xFF3A2A15)
         : (isMidnightBlue ? const Color(0xFF0F2747) : const Color(0xFF17120A));
-    final idleFill = isMiddayGold
+    final idleFill = isCustomHuisstijl
+        ? _customHuisstijlSurfaceAlt()
+        : isMiddayGold
         ? const Color(0xFF23190D)
         : (isMidnightBlue ? const Color(0xFF0A1A31) : const Color(0xFF111214));
-    final activeBorder = isLightEmerald
+    final activeBorder = isCustomHuisstijl
+        ? _customHuisstijlBorderColor(0.68)
+        : isLightEmerald
         ? _lightEmeraldBorderColor(0.68)
         : (isMiddayGold
               ? _middayGoldBorderColor(0.68)
               : (isMidnightBlue
                     ? _midnightBlueBorderColor(0.72)
                     : kFluxidiYellow.withOpacity(0.68)));
-    final idleBorder = isLightEmerald
+    final idleBorder = isCustomHuisstijl
+        ? _customHuisstijlBorderColor(0.34)
+        : isLightEmerald
         ? _lightEmeraldBorderColor(0.34)
         : (isMiddayGold
               ? _middayGoldBorderColor(0.34)
               : (isMidnightBlue
                     ? _midnightBlueBorderColor(0.36)
                     : Colors.white.withOpacity(0.14)));
-    final activeText = isMiddayGold
+    final activeText = isCustomHuisstijl
+        ? _customHuisstijlTextPrimary()
+        : isMiddayGold
         ? _middayGoldTextPrimary()
         : (isMidnightBlue ? _midnightBlueTextPrimary() : kFluxidiYellow);
-    final idleText = isLightEmerald
+    final idleText = isCustomHuisstijl
+        ? _customHuisstijlTextMuted()
+        : isLightEmerald
         ? _lightEmeraldTextMuted()
         : (isMiddayGold
               ? _middayGoldTextMuted()
@@ -38234,11 +38383,17 @@ class _DriverHomePageState extends State<DriverHomePage>
         driverThemeNotifier.value == DriverThemeVariant.highContrast;
     final isLightEmerald =
         driverThemeNotifier.value == DriverThemeVariant.lightEmerald;
+    final isCustomHuisstijl =
+        driverThemeNotifier.value == DriverThemeVariant.customHuisstijl;
 
-    final drawerBg = isMidnightBlue
+    final drawerBg = isCustomHuisstijl
+        ? _customHuisstijlBackground()
+        : isMidnightBlue
         ? const Color(0xFF020711)
         : (isMiddayGold ? const Color(0xFF100B06) : const Color(0xFF050505));
-    final drawerGradient = isMidnightBlue
+    final drawerGradient = isCustomHuisstijl
+        ? _customHuisstijlSurfaceGradient(soft: true)
+        : isMidnightBlue
         ? const LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
@@ -38259,29 +38414,43 @@ class _DriverHomePageState extends State<DriverHomePage>
                   end: Alignment.bottomCenter,
                   colors: [Color(0xFF050505), Color(0xFF101010)],
                 ));
-    final cardBg = isMidnightBlue
+    final cardBg = isCustomHuisstijl
+        ? _customHuisstijlSurface()
+        : isMidnightBlue
         ? const Color(0xFF07111F)
         : (isMiddayGold ? const Color(0xFF17110A) : const Color(0xFF101010));
-    final rowBg = isMidnightBlue
+    final rowBg = isCustomHuisstijl
+        ? _customHuisstijlSurfaceAlt()
+        : isMidnightBlue
         ? const Color(0xFF0B1B33)
         : (isMiddayGold ? const Color(0xFF2C2113) : const Color(0xFF121212));
-    final sidebarAccent = isMidnightBlue
+    final sidebarAccent = isCustomHuisstijl
+        ? _customHuisstijlAccent()
+        : isMidnightBlue
         ? const Color(0xFF4DA3FF)
         : (isMiddayGold ? const Color(0xFFFFDFA3) : const Color(0xFFE5B641));
-    final sidebarAccentSoft = isMidnightBlue
+    final sidebarAccentSoft = isCustomHuisstijl
+        ? _customHuisstijlAccent().withOpacity(0.50)
+        : isMidnightBlue
         ? const Color(0xFF4DA3FF).withOpacity(0.50)
         : (isMiddayGold
               ? const Color(0xFFE8C57E).withOpacity(0.52)
               : const Color(0x33E5B641));
-    final sidebarTextPrimary = isMidnightBlue
+    final sidebarTextPrimary = isCustomHuisstijl
+        ? _customHuisstijlTextPrimary()
+        : isMidnightBlue
         ? const Color(0xFFEAF6FF)
         : (isMiddayGold ? const Color(0xFFFFF0D0) : Colors.white);
-    final sidebarTextMuted = isMidnightBlue
+    final sidebarTextMuted = isCustomHuisstijl
+        ? _customHuisstijlTextMuted()
+        : isMidnightBlue
         ? const Color(0xFFAFCBEA)
         : (isMiddayGold
               ? const Color(0xFFE1CCA0)
               : Colors.white.withOpacity(0.83));
-    final divider = isMidnightBlue
+    final divider = isCustomHuisstijl
+        ? _customHuisstijlAccent().withOpacity(0.32)
+        : isMidnightBlue
         ? const Color(0xFF4DA3FF).withOpacity(0.32)
         : (isMiddayGold
               ? const Color(0xFFE8C57E).withOpacity(0.34)

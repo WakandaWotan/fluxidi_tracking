@@ -15,6 +15,7 @@ class DriverThemeCycleButton extends StatelessWidget {
     required this.themeListenable,
     required this.onApply,
     required this.semanticLabel,
+    this.onPressed,
     this.heroOverlay = false,
     this.onCycled,
     this.size = 48,
@@ -23,7 +24,10 @@ class DriverThemeCycleButton extends StatelessWidget {
   /// Active driver theme source (standalone or company chauffeur-view preview).
   final ValueListenable<DriverThemeVariant> themeListenable;
 
-  /// Canonical apply/persist path for the resolved next theme.
+  /// Opens the chauffeur appearance selector. When set, tap no longer cycles.
+  final VoidCallback? onPressed;
+
+  /// Canonical apply/persist path retained for non-header cycle callers.
   final Future<void> Function(DriverThemeVariant next) onApply;
 
   /// Localized tooltip / Semantics label (NL/EN/FR/ES from the host).
@@ -42,6 +46,10 @@ class DriverThemeCycleButton extends StatelessWidget {
   static const Key buttonKey = Key('driver_theme_cycle_button');
 
   Future<void> _onTap() async {
+    if (onPressed != null) {
+      onPressed!();
+      return;
+    }
     final next = nextDriverThemeVariant(themeListenable.value);
     await onApply(next);
     onCycled?.call(next);

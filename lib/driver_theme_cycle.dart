@@ -33,5 +33,7 @@ String driverThemeProductLabel(DriverThemeVariant variant) {
       return 'Midday Gold';
     case DriverThemeVariant.lightEmerald:
       return 'Light Emerald';
+    case DriverThemeVariant.customHuisstijl:
+      return 'Brand Signature Gold';
   }
 }

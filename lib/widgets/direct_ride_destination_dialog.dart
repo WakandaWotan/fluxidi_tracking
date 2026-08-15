@@ -34,6 +34,24 @@ class _DirectRideDestinationTheme {
 }
 
 _DirectRideDestinationTheme _themeForDriverVariant(DriverThemeVariant variant) {
+  if (variant == DriverThemeVariant.customHuisstijl) {
+    final palette = paletteForDriverTheme(variant);
+    return _DirectRideDestinationTheme(
+      dialogBg: palette.surface,
+      fieldFill: palette.surfaceAlt,
+      fieldBorder: palette.border.withOpacity(0.55),
+      fieldFocusedBorder: palette.accent,
+      panelBg: palette.surfaceAlt,
+      panelBorder: palette.border.withOpacity(0.55),
+      divider: palette.border.withOpacity(0.28),
+      primaryText: palette.textPrimary,
+      mutedText: palette.textMuted,
+      accent: palette.accent,
+      buttonForeground: palette.isDark
+          ? const Color(0xFF1A1408)
+          : const Color(0xFFF8F0D8),
+    );
+  }
   if (variant == DriverThemeVariant.midnightBlue) {
     return const _DirectRideDestinationTheme(
       dialogBg: Color(0xFF0A1222),
