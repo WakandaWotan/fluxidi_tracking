@@ -457,14 +457,10 @@ String _receiptText(String key) {
       );
     case 'onlinePayInstruction':
       return _tr(
-        nl:
-            'Open de beveiligde betaalpagina of scan de QR-code. Kies daarna een van de beschikbare betaalmethodes.',
-        en:
-            'Open the secure payment page or scan the QR code. Then choose one of the available payment methods.',
-        fr:
-            'Ouvrez la page de paiement sécurisée ou scannez le code QR. Choisissez ensuite l’une des méthodes disponibles.',
-        es:
-            'Abre la página de pago segura o escanea el código QR. Luego elige uno de los métodos disponibles.',
+        nl: 'Open de beveiligde betaalpagina of scan de QR-code. Kies daarna een van de beschikbare betaalmethodes.',
+        en: 'Open the secure payment page or scan the QR code. Then choose one of the available payment methods.',
+        fr: 'Ouvrez la page de paiement sécurisée ou scannez le code QR. Choisissez ensuite l’une des méthodes disponibles.',
+        es: 'Abre la página de pago segura o escanea el código QR. Luego elige uno de los métodos disponibles.',
       );
     case 'waitingForPayment':
       return _tr(
@@ -697,6 +693,20 @@ String _receiptText(String key) {
         fr: 'Espèces reçues',
         es: 'Efectivo recibido',
       );
+    case 'cashReceivedPendingSync':
+      return _tr(
+        nl: 'Contant ontvangen · wacht op synchronisatie',
+        en: 'Cash received · waiting for sync',
+        fr: 'Espèces reçues · en attente de synchronisation',
+        es: 'Efectivo recibido · esperando sincronización',
+      );
+    case 'cashReceivedMethodConflict':
+      return _tr(
+        nl: 'Conflict: rit is al met een andere methode betaald.',
+        en: 'Conflict: this ride is already paid with another method.',
+        fr: 'Conflit : cette course est déjà payée autrement.',
+        es: 'Conflicto: este viaje ya está pagado con otro método.',
+      );
     case 'paidByCardTerminal':
       // Manual Bancontact confirmation only — NOT Mollie Tap to Pay / POS.
       return _tr(
@@ -756,14 +766,10 @@ String _receiptText(String key) {
       );
     case 'tapToPayPendingRecheck':
       return _tr(
-        nl:
-            'Terminalbetaling nog open. Tik opnieuw op Tap to Pay om de status te controleren — er wordt geen tweede bedrag gestart zolang deze poging open is.',
-        en:
-            'Terminal payment still open. Tap Tap to Pay again to recheck status — no second charge while this attempt is open.',
-        fr:
-            'Paiement terminal encore ouvert. Retapez Tap to Pay pour vérifier — pas de second montant tant que la tentative est ouverte.',
-        es:
-            'El pago en terminal sigue abierto. Vuelve a pulsar Tap to Pay para comprobar — sin un segundo cargo mientras siga abierto.',
+        nl: 'Terminalbetaling nog open. Tik opnieuw op Tap to Pay om de status te controleren — er wordt geen tweede bedrag gestart zolang deze poging open is.',
+        en: 'Terminal payment still open. Tap Tap to Pay again to recheck status — no second charge while this attempt is open.',
+        fr: 'Paiement terminal encore ouvert. Retapez Tap to Pay pour vérifier — pas de second montant tant que la tentative est ouverte.',
+        es: 'El pago en terminal sigue abierto. Vuelve a pulsar Tap to Pay para comprobar — sin un segundo cargo mientras siga abierto.',
       );
     case 'tapToPayRecheck':
       return _tr(

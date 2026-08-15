@@ -59,6 +59,7 @@ import 'package:fluxidi_tracking/company/business_first_run_fleet_bootstrap_page
 import 'package:fluxidi_tracking/main_parts/business_help_manual_page.dart';
 import 'package:fluxidi_tracking/main_parts/direct_ride_booking_link.dart';
 import 'package:fluxidi_tracking/main_parts/planned_stop_durability.dart';
+import 'package:fluxidi_tracking/main_parts/offline_cash_payment_durability.dart';
 import 'package:fluxidi_tracking/main_parts/planned_ride_price_presentation.dart';
 import 'package:fluxidi_tracking/main_parts/driver_planned_street_ride_filter.dart';
 import 'package:fluxidi_tracking/main_parts/driver_ride_start_auth_guard.dart';

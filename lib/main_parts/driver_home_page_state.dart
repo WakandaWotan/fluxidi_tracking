@@ -3305,6 +3305,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     // still materialize the trip / trips_index / driver-history rows after a
     // stop was lost to poor network or process death.
     unawaited(_drainPlannedStopIntents());
+    unawaited(_drainOfflineCashPayments());
     _activeDriverThemeListenable.addListener(_onDriverThemeSourceChanged);
     driverBrandSignaturePaletteNotifier.addListener(
       _onDriverThemeSourceChanged,
@@ -14226,6 +14227,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     // outbox without requiring an app restart.
     if (!wasUsable && usable) {
       unawaited(_recoverPendingDirectTripSession());
+      unawaited(_drainOfflineCashPayments());
     }
   }
 

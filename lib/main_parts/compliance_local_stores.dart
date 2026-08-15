@@ -383,8 +383,9 @@ class _LocalDirectTripHistoryStore {
             keptLines.add(jsonEncode(map));
             continue;
           }
-          final tripId =
-              (map['trip_id'] ?? map['tripId'] ?? '').toString().trim();
+          final tripId = (map['trip_id'] ?? map['tripId'] ?? '')
+              .toString()
+              .trim();
           if (tripId.isNotEmpty &&
               confirmed.contains(tripId) &&
               isOfflineStopPendingFinalizeRecord(map)) {
@@ -447,7 +448,9 @@ class _DirectTripSessionStore {
           .copyWith(
             tenantId: normalizedTenant,
             companyId: normalizedCompany,
-            driverId: driverId.trim().isEmpty ? session.driverId : driverId.trim(),
+            driverId: driverId.trim().isEmpty
+                ? session.driverId
+                : driverId.trim(),
             updatedAtIso: DateTime.now().toUtc().toIso8601String(),
           )
           .toJson();
@@ -663,6 +666,347 @@ class _PlannedStopIntentStore {
     await save(
       intent.markAttemptFailed(nowUtc: DateTime.now().toUtc(), error: error),
     );
+  }
+}
+
+/// OFFLINE-CASH-COLLECTION-P0: durable pending cash mark-paid intents.
+/// Same tenant/company directory as [_DirectTripSessionStore] /
+/// [_PlannedStopIntentStore]. Reconnect and receipt resume drain this file;
+/// Chiron STOP remains a separate outbox.
+class _OfflineCashPaymentStore {
+  static const String _fileName = 'offline_cash_payments_v1.json';
+
+  static Future<File> _scopedFile({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    final base = await getApplicationDocumentsDirectory();
+    final scopedDir = Directory(
+      '${base.path}${Platform.pathSeparator}compliance_state${Platform.pathSeparator}tenant_${_localScopePathSegment(tenantId)}${Platform.pathSeparator}company_${_localScopePathSegment(companyId)}',
+    );
+    if (!await scopedDir.exists()) {
+      await scopedDir.create(recursive: true);
+    }
+    return File('${scopedDir.path}${Platform.pathSeparator}$_fileName');
+  }
+
+  static Future<List<OfflineCashPaymentIntent>> _readAll({
+    required String tenantId,
+    required String companyId,
+  }) async {
+    try {
+      final file = await _scopedFile(tenantId: tenantId, companyId: companyId);
+      if (!await file.exists()) return const <OfflineCashPaymentIntent>[];
+      final raw = (await file.readAsString()).trim();
+      if (raw.isEmpty) return const <OfflineCashPaymentIntent>[];
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const <OfflineCashPaymentIntent>[];
+      return decoded
+          .map(OfflineCashPaymentIntent.fromJson)
+          .whereType<OfflineCashPaymentIntent>()
+          .toList();
+    } catch (_) {
+      return const <OfflineCashPaymentIntent>[];
+    }
+  }
+
+  static Future<bool> _writeAll(
+    List<OfflineCashPaymentIntent> intents, {
+    required String tenantId,
+    required String companyId,
+  }) async {
+    try {
+      final file = await _scopedFile(tenantId: tenantId, companyId: companyId);
+      await file.writeAsString(
+        jsonEncode(intents.map((e) => e.toJson()).toList()),
+        flush: true,
+      );
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<bool> save(OfflineCashPaymentIntent intent) async {
+    if (kIsWeb) return false;
+    final tenantId = intent.tenantId.trim();
+    final companyId = intent.companyId.trim();
+    if (tenantId.isEmpty || companyId.isEmpty) return false;
+    final existing = await _readAll(tenantId: tenantId, companyId: companyId);
+    final ok = await _writeAll(
+      upsertOfflineCashIntent(existing, intent),
+      tenantId: tenantId,
+      companyId: companyId,
+    );
+    if (ok) bumpOfflineCashPaymentRevision();
+    debugPrint(
+      '[OFFLINE_CASH][PERSIST] ok=$ok key=${intent.idempotencyKey} '
+      'status=${intent.status.name} booking=${_maskLocalScopeId(intent.bookingId)}',
+    );
+    return ok;
+  }
+
+  static Future<List<OfflineCashPaymentIntent>> pending({
+    required String tenantId,
+    required String companyId,
+    required String driverId,
+  }) async {
+    if (kIsWeb) return const <OfflineCashPaymentIntent>[];
+    final all = await _readAll(tenantId: tenantId, companyId: companyId);
+    return pendingOfflineCashIntents(
+      all,
+      tenantId: tenantId,
+      companyId: companyId,
+      driverId: driverId,
+    );
+  }
+
+  static Future<OfflineCashPaymentIntent?> forRide({
+    required String tenantId,
+    required String companyId,
+    required String bookingId,
+    String tripId = '',
+  }) async {
+    if (kIsWeb) return null;
+    final all = await _readAll(tenantId: tenantId, companyId: companyId);
+    return offlineCashIntentForRide(
+      all,
+      tenantId: tenantId,
+      companyId: companyId,
+      bookingId: bookingId,
+      tripId: tripId,
+    );
+  }
+}
+
+Future<bool> _persistOfflineCashPaymentIntent(OfflineCashPaymentIntent intent) {
+  return _OfflineCashPaymentStore.save(intent);
+}
+
+Future<OfflineCashPaymentIntent?> _loadOfflineCashPaymentForRide({
+  required String tenantId,
+  required String companyId,
+  required String bookingId,
+  String tripId = '',
+}) {
+  return _OfflineCashPaymentStore.forRide(
+    tenantId: tenantId,
+    companyId: companyId,
+    bookingId: bookingId,
+    tripId: tripId,
+  );
+}
+
+Future<void> _markOfflineCashPaymentSynced(OfflineCashPaymentIntent intent) {
+  return _OfflineCashPaymentStore.save(
+    intent.copyWith(
+      status: OfflineCashIntentStatus.synced,
+      updatedAtIso: DateTime.now().toUtc().toIso8601String(),
+      lastError: '',
+    ),
+  );
+}
+
+Future<void> _markOfflineCashPaymentConflict(
+  OfflineCashPaymentIntent intent, {
+  String conflictMethod = '',
+}) {
+  return _OfflineCashPaymentStore.save(
+    intent.copyWith(
+      status: OfflineCashIntentStatus.conflict,
+      conflictMethod: conflictMethod,
+      updatedAtIso: DateTime.now().toUtc().toIso8601String(),
+    ),
+  );
+}
+
+Future<void> _recordOfflineCashPaymentAttemptFailure(
+  OfflineCashPaymentIntent intent, {
+  required String error,
+}) {
+  return _OfflineCashPaymentStore.save(
+    intent.copyWith(
+      attemptCount: intent.attemptCount + 1,
+      lastError: error,
+      updatedAtIso: DateTime.now().toUtc().toIso8601String(),
+    ),
+  );
+}
+
+/// Replays pending cash intents. Independent of Chiron STOP drain.
+Future<void> _drainOfflineCashPayments() async {
+  try {
+    final scope = _strictActiveLocalScopeIds();
+    if (scope == null) return;
+    final pending = await _OfflineCashPaymentStore.pending(
+      tenantId: scope.tenantId,
+      companyId: scope.companyId,
+      driverId: kDriverId,
+    );
+    if (pending.isEmpty) return;
+    debugPrint('[OFFLINE_CASH][DRAIN] pending=${pending.length}');
+    for (final intent in pending) {
+      await _replayOfflineCashPaymentIntent(intent);
+    }
+  } catch (e) {
+    debugPrint('[OFFLINE_CASH][DRAIN][WARN] reason=$e');
+  }
+}
+
+Future<OfflineCashServerOutcome> _replayOfflineCashPaymentIntent(
+  OfflineCashPaymentIntent intent,
+) async {
+  final key = intent.idempotencyKey;
+  if (!OfflineCashSyncGuard.tryAcquire(key)) {
+    debugPrint('[OFFLINE_CASH][REPLAY] skip=in_flight key=$key');
+    return OfflineCashServerOutcome.retryableNetwork;
+  }
+  try {
+    final authHeaders = await resolveInCarPaymentAuthHeaders();
+    if (authHeaders.mode == InCarPaymentAuthMode.none) {
+      await _recordOfflineCashPaymentAttemptFailure(
+        intent,
+        error: 'auth_required',
+      );
+      return OfflineCashServerOutcome.authRequired;
+    }
+    final scope = <String, String>{
+      'tenant_id': intent.tenantId,
+      'company_id': intent.companyId,
+    };
+    if (intent.bookingId.trim().isNotEmpty && intent.endpoint != 'trip') {
+      final existing = await _readOfflineCashCanonicalPayment(
+        bookingId: intent.bookingId,
+        headers: authHeaders.headers,
+        scope: scope,
+      );
+      if (existing != null) {
+        final classified = classifyExistingPaymentForOfflineCash(
+          paymentStatus: existing['payment_status']?.toString(),
+          paymentMethod: existing['payment_method']?.toString(),
+        );
+        if (classified == OfflineCashServerOutcome.alreadyAppliedCash) {
+          await _markOfflineCashPaymentSynced(intent);
+          return classified;
+        }
+        if (classified == OfflineCashServerOutcome.methodConflict) {
+          await _markOfflineCashPaymentConflict(
+            intent,
+            conflictMethod: existing['payment_method']?.toString() ?? '',
+          );
+          return classified;
+        }
+      }
+    }
+    final uri = _offlineCashReplayUri(intent, scope);
+    if (uri == null) {
+      await _recordOfflineCashPaymentAttemptFailure(
+        intent,
+        error: 'missing_replay_uri',
+      );
+      return OfflineCashServerOutcome.failed;
+    }
+    final res = await http
+        .post(
+          uri,
+          headers: authHeaders.headers,
+          body: jsonEncode(intent.payload),
+        )
+        .timeout(const Duration(seconds: 12));
+    Map<String, dynamic>? body;
+    try {
+      final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+      if (decoded is Map) body = Map<String, dynamic>.from(decoded);
+    } catch (_) {
+      body = null;
+    }
+    final outcome = classifyOfflineCashHttpResponse(
+      statusCode: res.statusCode,
+      body: body,
+      paymentMethod: intent.payload['payment_method']?.toString(),
+    );
+    if (outcome == OfflineCashServerOutcome.alreadyAppliedCash) {
+      await _markOfflineCashPaymentSynced(intent);
+      return outcome;
+    }
+    if (outcome == OfflineCashServerOutcome.methodConflict) {
+      await _markOfflineCashPaymentConflict(
+        intent,
+        conflictMethod:
+            (body?['payment_method'] ?? body?['paymentMethod'] ?? '')
+                .toString(),
+      );
+      return outcome;
+    }
+    await _recordOfflineCashPaymentAttemptFailure(
+      intent,
+      error: 'http_${res.statusCode}',
+    );
+    return outcome;
+  } catch (e) {
+    if (isTransientPaymentNetworkError(e)) {
+      await _recordOfflineCashPaymentAttemptFailure(intent, error: 'network');
+      return OfflineCashServerOutcome.retryableNetwork;
+    }
+    await _recordOfflineCashPaymentAttemptFailure(intent, error: '$e');
+    return OfflineCashServerOutcome.failed;
+  } finally {
+    OfflineCashSyncGuard.release(key);
+  }
+}
+
+Uri? _offlineCashReplayUri(
+  OfflineCashPaymentIntent intent,
+  Map<String, String> scope,
+) {
+  switch (intent.endpoint) {
+    case 'leg':
+      final parent = intent.parentBookingId.trim();
+      final leg = intent.legId.trim();
+      if (parent.isEmpty || leg.isEmpty) return null;
+      return Uri.parse(
+        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(parent)}/legs/${Uri.encodeComponent(leg)}/payment',
+      ).replace(queryParameters: scope);
+    case 'trip':
+      return Uri.parse(
+        '$kWorkerBaseUrl/trip/payment',
+      ).replace(queryParameters: scope);
+    default:
+      final booking = intent.bookingId.trim();
+      if (booking.isEmpty) return null;
+      return Uri.parse(
+        '$kBookingBaseUrl/bookings/${Uri.encodeComponent(booking)}/payment',
+      ).replace(queryParameters: scope);
+  }
+}
+
+Future<Map<String, dynamic>?> _readOfflineCashCanonicalPayment({
+  required String bookingId,
+  required Map<String, String> headers,
+  required Map<String, String> scope,
+}) async {
+  try {
+    final uri = Uri.parse(
+      '$kBookingBaseUrl/bookings/${Uri.encodeComponent(bookingId)}',
+    ).replace(queryParameters: scope);
+    final res = await http
+        .get(uri, headers: headers)
+        .timeout(const Duration(seconds: 12));
+    if (res.statusCode < 200 || res.statusCode >= 300) return null;
+    final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+    if (decoded is! Map) return null;
+    final root = Map<String, dynamic>.from(decoded);
+    final rec = root['record'] is Map
+        ? Map<String, dynamic>.from(root['record'] as Map)
+        : root['booking'] is Map
+        ? Map<String, dynamic>.from(root['booking'] as Map)
+        : root;
+    return <String, dynamic>{
+      'payment_status': rec['payment_status'] ?? rec['paymentStatus'],
+      'payment_method': rec['payment_method'] ?? rec['paymentMethod'],
+    };
+  } catch (_) {
+    return null;
   }
 }
 

@@ -24,6 +24,10 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
     with WidgetsBindingObserver {
   _ReceiptPaymentStatus _paymentStatus = _ReceiptPaymentStatus.pending;
 
+  /// OFFLINE-CASH-COLLECTION-P0: local durable cash intent, not server paid.
+  bool _offlineCashAwaitingSync = false;
+  bool _offlineCashConflict = false;
+
   /// STREET-ONLINE-PAYMENT-CONVERGENCE-P0: one-shot auto refresh guard so
   /// receipt open / resume / return do not spam recovery endpoints.
   bool _mollieAutoRefreshInFlight = false;
@@ -58,6 +62,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
   bool _tapToPayAvailable = false;
   bool _tapToPayInFlight = false;
   String? _tapToPayStatusMessageKey;
+
   /// Open POS payment id while foreground poll timed out; enables recheck
   /// without creating a second Mollie charge.
   String? _tapToPayPendingPaymentId;
@@ -214,6 +219,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _paymentStatus = _initialPaymentStatus();
+    offlineCashPaymentRevisionNotifier.addListener(_onOfflineCashRevision);
+    unawaited(_hydrateOfflineCashIntent());
     unawaited(_resolveReceiptPaymentStatus());
     unawaited(_ensureStreetBusinessInvoiceEligibilityResolved());
     unawaited(_refreshTapToPayCapability());
@@ -236,6 +243,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
 
   @override
   void dispose() {
+    offlineCashPaymentRevisionNotifier.removeListener(_onOfflineCashRevision);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -243,9 +251,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
-    unawaited(
-      _maybeAuthoritativeMollieCheckoutRefresh(reason: 'app_resume'),
-    );
+    unawaited(_drainOfflineCashPayments());
+    unawaited(_hydrateOfflineCashIntent());
+    unawaited(_maybeAuthoritativeMollieCheckoutRefresh(reason: 'app_resume'));
   }
 
   @override
@@ -277,6 +285,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
     _openMollieRecovery = null;
     _mollieRecoveryBusy = false;
     _mollieCheckoutLoading = false;
+    _offlineCashAwaitingSync = false;
+    _offlineCashConflict = false;
+    unawaited(_hydrateOfflineCashIntent());
     unawaited(_ensureStreetBusinessInvoiceEligibilityResolved());
     unawaited(_refreshTapToPayCapability());
     _logStreetInvoiceReentry(phase: 'receipt_reentry');
@@ -330,8 +341,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       companyId: strictScope['company_id'],
     );
     final pollHttp = (poll['http_code'] as num?)?.toInt() ?? 0;
-    final providerStatus =
-        (poll['mollie_status'] ?? poll['mollieStatus'] ?? '').toString();
+    final providerStatus = (poll['mollie_status'] ?? poll['mollieStatus'] ?? '')
+        .toString();
     final outcome = classifyCardTerminalProviderStatus(
       providerStatus: providerStatus,
       httpCode: pollHttp >= 400 ? pollHttp : null,
@@ -396,10 +407,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
     if (!mounted) return;
     if (result != 'paid') {
       setState(() {
-        _tapToPayStatusMessageKey =
-            result == 'final'
-                ? (_tapToPayStatusMessageKey ?? 'cardTerminalRetryOrOther')
-                : 'tapToPayPendingRecheck';
+        _tapToPayStatusMessageKey = result == 'final'
+            ? (_tapToPayStatusMessageKey ?? 'cardTerminalRetryOrOther')
+            : 'tapToPayPendingRecheck';
         _tapToPayInFlight = false;
       });
     }
@@ -438,8 +448,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
     // Recheck an open POS attempt after poll timeout — no second create while
     // the server still reports an open intent (idempotent reuse).
     final pendingId = (_tapToPayPendingPaymentId ?? '').trim();
-    if (pendingId.isNotEmpty &&
-        _paymentStatus != _ReceiptPaymentStatus.paid) {
+    if (pendingId.isNotEmpty && _paymentStatus != _ReceiptPaymentStatus.paid) {
       setState(() {
         _tapToPayInFlight = true;
         _tapToPayStatusMessageKey = 'tapToPayCheckingStatus';
@@ -459,8 +468,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
         return;
       }
       if (result == 'final') {
-        if (context.mounted &&
-            (_tapToPayStatusMessageKey ?? '').isNotEmpty) {
+        if (context.mounted && (_tapToPayStatusMessageKey ?? '').isNotEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(_receiptText(_tapToPayStatusMessageKey!))),
           );
@@ -2255,12 +2263,126 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
     return lines.join('\n');
   }
 
+  void _onOfflineCashRevision() {
+    unawaited(_hydrateOfflineCashIntent());
+  }
+
+  Future<void> _hydrateOfflineCashIntent() async {
+    final scope = _strictActiveBookingScopeQuery();
+    final tenant = (scope?['tenant_id'] ?? '').trim();
+    final company = (scope?['company_id'] ?? '').trim();
+    final bookingId = (item.bookingId ?? '').trim();
+    if (tenant.isEmpty || company.isEmpty || bookingId.isEmpty) return;
+    final intent = await _loadOfflineCashPaymentForRide(
+      tenantId: tenant,
+      companyId: company,
+      bookingId: bookingId,
+      tripId: item.tripId.trim(),
+    );
+    final awaiting = intent?.status == OfflineCashIntentStatus.pending;
+    final conflict = intent?.status == OfflineCashIntentStatus.conflict;
+    if (!mounted) {
+      _offlineCashAwaitingSync = awaiting;
+      _offlineCashConflict = conflict;
+      return;
+    }
+    if (_offlineCashAwaitingSync == awaiting &&
+        _offlineCashConflict == conflict) {
+      return;
+    }
+    setState(() {
+      _offlineCashAwaitingSync = awaiting;
+      _offlineCashConflict = conflict;
+      if (intent?.status == OfflineCashIntentStatus.synced &&
+          _paymentStatus != _ReceiptPaymentStatus.paid) {
+        _paymentStatus = _ReceiptPaymentStatus.paid;
+      }
+    });
+  }
+
+  Future<bool> _tryPersistOfflineCashBeforePost({
+    required Map<String, String> strictScope,
+    required String bookingId,
+    required String tripId,
+    required String endpoint,
+    required Map<String, dynamic> payload,
+    String parentBookingId = '',
+    String legId = '',
+  }) async {
+    final tenant = (strictScope['tenant_id'] ?? '').trim();
+    final company = (strictScope['company_id'] ?? '').trim();
+    if (tenant.isEmpty || company.isEmpty) return false;
+    final now = DateTime.now().toUtc().toIso8601String();
+    final intent = OfflineCashPaymentIntent(
+      idempotencyKey: offlineCashIdempotencyKey(
+        tenantId: tenant,
+        companyId: company,
+        bookingId: bookingId,
+        tripId: tripId,
+      ),
+      tenantId: tenant,
+      companyId: company,
+      driverId: kDriverId,
+      bookingId: bookingId,
+      tripId: tripId,
+      endpoint: endpoint,
+      parentBookingId: parentBookingId,
+      legId: legId,
+      payload: payload,
+      createdAtIso: now,
+      updatedAtIso: now,
+    );
+    final ok = await _persistOfflineCashPaymentIntent(intent);
+    if (!ok) return false;
+    if (mounted) {
+      setState(() {
+        _offlineCashAwaitingSync = true;
+        _offlineCashConflict = false;
+      });
+    } else {
+      _offlineCashAwaitingSync = true;
+      _offlineCashConflict = false;
+    }
+    return true;
+  }
+
+  Future<void> _completeOfflineCashFromServer({
+    required Map<String, String> strictScope,
+    required String bookingId,
+    required String tripId,
+  }) async {
+    final tenant = (strictScope['tenant_id'] ?? '').trim();
+    final company = (strictScope['company_id'] ?? '').trim();
+    if (tenant.isEmpty || company.isEmpty) return;
+    final intent = await _loadOfflineCashPaymentForRide(
+      tenantId: tenant,
+      companyId: company,
+      bookingId: bookingId,
+      tripId: tripId,
+    );
+    if (intent != null) {
+      await _markOfflineCashPaymentSynced(intent);
+    }
+    if (mounted) {
+      setState(() {
+        _offlineCashAwaitingSync = false;
+        _offlineCashConflict = false;
+      });
+    }
+  }
+
   String _paymentStatusText() {
     // Surface "Paid" whenever the hydrated JSON declares it — even if the
     // in-memory enum hasn't been flipped yet (e.g. `_resolveReceiptPaymentStatus`
     // hasn't completed, or the authoritative booking-worker record still says
     // pending while compliance already marked the ride paid).
     if (_isEffectiveReceiptPaid()) return _receiptText('paid');
+    if (_offlineCashConflict) {
+      return _receiptText('cashReceivedMethodConflict');
+    }
+    if (_offlineCashAwaitingSync) {
+      return _receiptText('cashReceivedPendingSync');
+    }
     final invoiceKey = streetBusinessInvoicePaymentStatusKey(
       hasInvoice: _hasStreetBusinessInvoice,
       invoicePaid: _streetBusinessInvoicePaid,
@@ -3954,13 +4076,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
                 'paymentStatusNotFoundError',
               ),
               statusServerErrorText: _receiptText('paymentStatusServerError'),
-              statusGenericErrorText: _receiptText(
-                'paymentStatusGenericError',
-              ),
+              statusGenericErrorText: _receiptText('paymentStatusGenericError'),
               cancelOnlinePaymentLabel: _receiptText('cancelOnlinePayment'),
-              cancelOnlinePaymentHint: _receiptText(
-                'cancelOnlinePaymentHint',
-              ),
+              cancelOnlinePaymentHint: _receiptText('cancelOnlinePaymentHint'),
               cancelOnlinePaymentBusyText: _receiptText(
                 'cancelOnlinePaymentBusy',
               ),
@@ -3975,8 +4093,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
             ),
             onAuthoritativeRefresh: () =>
                 _authoritativeMollieCheckoutRefreshAsPollOutcome(
-              reason: 'checkout_dialog',
-            ),
+                  reason: 'checkout_dialog',
+                ),
             onCancelOnlinePayment: () => _cancelOpenMollieCheckoutAsPollOutcome(
               reason: 'checkout_dialog_cancel',
             ),
@@ -4216,7 +4334,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       }
       return;
     }
-    final hasOpen = _openMollieBlocksFallback ||
+    final hasOpen =
+        _openMollieBlocksFallback ||
         receiptDetailsHaveOpenMollieCheckout(
           Map<String, dynamic>.from(item.bookingDetails),
         );
@@ -4343,8 +4462,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
 
     // STREET-ONLINE-PAYMENT-CONVERGENCE-P0: return-from-checkout boundary —
     // one Mollie GET via recovery refresh before merging booking fields.
-    if (!beforePaid &&
-        dialogOutcome != MollieStreetCheckoutPollOutcome.paid) {
+    if (!beforePaid && dialogOutcome != MollieStreetCheckoutPollOutcome.paid) {
       await _postAuthoritativeMollieCheckoutRefresh(
         reason: 'return_from_checkout',
       );
@@ -4447,12 +4565,13 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
     final authoritative = bookingId.isEmpty
         ? null
         : await _fetchAuthoritativePaymentFields(bookingId);
-    final pollData = _mollieStreetCheckoutPollPaidData ?? const <String, dynamic>{};
+    final pollData =
+        _mollieStreetCheckoutPollPaidData ?? const <String, dynamic>{};
     final paidAtIso =
         (pollData['confirmed_at'] ?? pollData['confirmedAt'] ?? '')
-                .toString()
-                .trim()
-                .isNotEmpty
+            .toString()
+            .trim()
+            .isNotEmpty
         ? (pollData['confirmed_at'] ?? pollData['confirmedAt']).toString()
         : DateTime.now().toUtc().toIso8601String();
     final extracted = <String, dynamic>{
@@ -4483,9 +4602,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       '[MOLLIE_STREET_CHECKOUT][PAID] booking=${_safeRefPreview(bookingId)}',
     );
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(_receiptText('paymentSucceeded'))),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(_receiptText('paymentSucceeded'))));
   }
 
   bool get _openMollieBlocksFallback {
@@ -4510,29 +4629,29 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
         content: Text(_receiptText('openPaymentRecoveryBody')),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(
-              MollieOpenPaymentRecoveryChoice.dismiss,
-            ),
+            onPressed: () => Navigator.of(
+              dialogContext,
+            ).pop(MollieOpenPaymentRecoveryChoice.dismiss),
             child: Text(_receiptText('close')),
           ),
           TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(
-              MollieOpenPaymentRecoveryChoice.refresh,
-            ),
+            onPressed: () => Navigator.of(
+              dialogContext,
+            ).pop(MollieOpenPaymentRecoveryChoice.refresh),
             child: Text(_receiptText('checkPaymentStatus')),
           ),
           if (info?.resumable == true)
             TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(
-                MollieOpenPaymentRecoveryChoice.resume,
-              ),
+              onPressed: () => Navigator.of(
+                dialogContext,
+              ).pop(MollieOpenPaymentRecoveryChoice.resume),
               child: Text(_receiptText('resumeOnlinePayment')),
             ),
           if (info?.cancelAllowed != false)
             FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(
-                MollieOpenPaymentRecoveryChoice.cancel,
-              ),
+              onPressed: () => Navigator.of(
+                dialogContext,
+              ).pop(MollieOpenPaymentRecoveryChoice.cancel),
               child: Text(_receiptText('cancelOnlinePayment')),
             ),
         ],
@@ -4855,9 +4974,7 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
     // routes no longer accept the removed client ADMIN_TOKEN.
     final authHeaders = await resolveInCarPaymentAuthHeaders();
     if (authHeaders.mode == InCarPaymentAuthMode.none) {
-      debugPrint(
-        '[RECEIPT_PAYMENT][AUTH] status=missing_auth method=$method',
-      );
+      debugPrint('[RECEIPT_PAYMENT][AUTH] status=missing_auth method=$method');
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(_receiptText('paymentAuthRequired'))),
@@ -4949,6 +5066,24 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
         ),
         if (amount != null) 'amount': amount,
       };
+      if (normalizedMethod == 'cash') {
+        final persisted = await _tryPersistOfflineCashBeforePost(
+          strictScope: strictScope,
+          bookingId: parentBookingId,
+          tripId: tripId,
+          endpoint: 'leg',
+          payload: payload,
+          parentBookingId: parentBookingId,
+          legId: legId,
+        );
+        if (!persisted) {
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_receiptText('paymentMarkFailed'))),
+          );
+          return;
+        }
+      }
       try {
         debugPrint(
           '[RECEIPT_PAYMENT][LEG_BOOKING_PAYMENT] parentBookingId=$parentBookingId legId=$legId tripId=$tripId method=$normalizedMethod amount=${amount ?? "-"}',
@@ -5027,6 +5162,13 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
         if (mounted) {
           setState(() => _paymentStatus = _ReceiptPaymentStatus.paid);
         }
+        if (normalizedMethod == 'cash') {
+          await _completeOfflineCashFromServer(
+            strictScope: strictScope,
+            bookingId: parentBookingId,
+            tripId: tripId,
+          );
+        }
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -5043,6 +5185,12 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
           '[RECEIPT][LEG_BOOKING_PAYMENT_FAILED] parentBookingId=${_safeRefPreview(parentBookingId)} legId=${_safeRefPreview(legId)} method=$method auth_failure=$isAuthFailure',
         );
         if (!context.mounted) return;
+        if (normalizedMethod == 'cash' && isTransientPaymentNetworkError(err)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_receiptText('cashReceivedPendingSync'))),
+          );
+          return;
+        }
         if (isAuthFailure) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(_receiptText('paymentAuthRequired'))),
@@ -5094,6 +5242,24 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
         ),
         if (amount != null) 'amount': amount,
       };
+      if (normalizedMethod == 'cash') {
+        final persisted = await _tryPersistOfflineCashBeforePost(
+          strictScope: strictScope,
+          bookingId: bookingId,
+          tripId: tripId,
+          endpoint: 'trip',
+          payload: payload,
+          parentBookingId: parentBookingId,
+          legId: legId,
+        );
+        if (!persisted) {
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_receiptText('paymentMarkFailed'))),
+          );
+          return;
+        }
+      }
       // NOTE (PAYMENT-AUTH-P0-1 scope boundary): this direct-trip fallback
       // path posts to the TRACKING worker's `/trip/payment` route, not the
       // booking-worker payment routes this repair targets. That route still
@@ -5162,6 +5328,13 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
         if (mounted) {
           setState(() => _paymentStatus = _ReceiptPaymentStatus.paid);
         }
+        if (normalizedMethod == 'cash') {
+          await _completeOfflineCashFromServer(
+            strictScope: strictScope,
+            bookingId: bookingId,
+            tripId: tripId,
+          );
+        }
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(_receiptText('paymentMarkedPaid'))),
@@ -5170,6 +5343,13 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
         debugPrint(
           '[RECEIPT][TRIP_PAYMENT_MARK_FAILED] tripId=$tripId method=$method err=$err',
         );
+        if (normalizedMethod == 'cash' && isTransientPaymentNetworkError(err)) {
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_receiptText('cashReceivedPendingSync'))),
+          );
+          return;
+        }
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(_receiptText('paymentMarkFailed'))),
@@ -5212,6 +5392,22 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       // checkout for this booking (see `manualPaymentBlockedByOpenMollieCheckout`).
       if (confirmCancelOpenMollie) 'confirm_cancel_open_mollie': true,
     };
+    if (normalizedMethod == 'cash') {
+      final persisted = await _tryPersistOfflineCashBeforePost(
+        strictScope: strictScope,
+        bookingId: bookingId,
+        tripId: tripId,
+        endpoint: 'booking',
+        payload: payload,
+      );
+      if (!persisted) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_receiptText('paymentMarkFailed'))),
+        );
+        return;
+      }
+    }
 
     if (isQrPayment) {
       debugPrint(
@@ -5298,6 +5494,61 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
           );
           return;
         }
+        if (normalizedMethod == 'cash') {
+          final cashOutcome = classifyOfflineCashHttpResponse(
+            statusCode: res.statusCode,
+            body: conflictBody,
+            paymentMethod: normalizedMethod,
+          );
+          if (cashOutcome == OfflineCashServerOutcome.alreadyAppliedCash) {
+            if (mounted) {
+              setState(() => _paymentStatus = _ReceiptPaymentStatus.paid);
+            }
+            await _completeOfflineCashFromServer(
+              strictScope: strictScope,
+              bookingId: bookingId,
+              tripId: tripId,
+            );
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(_receiptText('paymentMarkedPaid'))),
+            );
+            return;
+          }
+          if (cashOutcome == OfflineCashServerOutcome.methodConflict) {
+            final tenant = (strictScope['tenant_id'] ?? '').trim();
+            final company = (strictScope['company_id'] ?? '').trim();
+            final existing = await _loadOfflineCashPaymentForRide(
+              tenantId: tenant,
+              companyId: company,
+              bookingId: bookingId,
+              tripId: tripId,
+            );
+            if (existing != null) {
+              await _markOfflineCashPaymentConflict(
+                existing,
+                conflictMethod:
+                    (conflictBody['payment_method'] ??
+                            conflictBody['paymentMethod'] ??
+                            '')
+                        .toString(),
+              );
+            }
+            if (mounted) {
+              setState(() {
+                _offlineCashAwaitingSync = false;
+                _offlineCashConflict = true;
+              });
+            }
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(_receiptText('cashReceivedMethodConflict')),
+              ),
+            );
+            return;
+          }
+        }
         throw Exception('HTTP ${res.statusCode}');
       }
       if (res.statusCode < 200 || res.statusCode >= 300) {
@@ -5325,6 +5576,13 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
 
       if (mounted) {
         setState(() => _paymentStatus = _ReceiptPaymentStatus.paid);
+      }
+      if (normalizedMethod == 'cash') {
+        await _completeOfflineCashFromServer(
+          strictScope: strictScope,
+          bookingId: bookingId,
+          tripId: tripId,
+        );
       }
 
       final paymentBookingId = _firstDetailPathText(const [
@@ -5363,6 +5621,12 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
         );
       }
       if (!context.mounted) return;
+      if (normalizedMethod == 'cash' && isTransientPaymentNetworkError(err)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_receiptText('cashReceivedPendingSync'))),
+        );
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -5736,7 +6000,11 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
       bookingTag: _safeRefPreview(item.bookingId ?? ''),
     );
     final canRequestPayment =
-        !alreadyPaid && receiptTotal != null && receiptTotal > 0;
+        !alreadyPaid &&
+        !_offlineCashAwaitingSync &&
+        !_offlineCashConflict &&
+        receiptTotal != null &&
+        receiptTotal > 0;
     debugPrint(
       '[QR_PAYMENT][SECTION_AMOUNT] booking=${_safeRefPreview(item.bookingId ?? "")} is_planned_operational_leg=$isPlannedOperationalLeg leg_amount=${legAmountForLog ?? "-"} booking_total=${bookingTotalForLog ?? "-"} selected_amount=${receiptTotal ?? "-"} selected_scope=$selectedScope qr_enabled=$canRequestPayment',
     );
@@ -5766,7 +6034,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
             highlight: true,
           ),
           const SizedBox(height: 10),
-          if (!alreadyPaid) ...[
+          if (!alreadyPaid &&
+              !_offlineCashAwaitingSync &&
+              !_offlineCashConflict) ...[
             if (_openMollieBlocksFallback) ...[
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
@@ -5783,9 +6053,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
                 onPressed: (_mollieRecoveryBusy || !canRequestPayment)
                     ? null
                     : () => _runOpenMollieRecoveryAction(
-                          context,
-                          choice: MollieOpenPaymentRecoveryChoice.refresh,
-                        ),
+                        context,
+                        choice: MollieOpenPaymentRecoveryChoice.refresh,
+                      ),
                 icon: const Icon(Icons.refresh),
                 label: Text(_receiptText('checkPaymentStatus')),
               ),
@@ -5798,9 +6068,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
                   onPressed: (_mollieRecoveryBusy || !canRequestPayment)
                       ? null
                       : () => _runOpenMollieRecoveryAction(
-                            context,
-                            choice: MollieOpenPaymentRecoveryChoice.resume,
-                          ),
+                          context,
+                          choice: MollieOpenPaymentRecoveryChoice.resume,
+                        ),
                   icon: const Icon(Icons.open_in_browser),
                   label: Text(_receiptText('resumeOnlinePayment')),
                 ),
@@ -5810,15 +6080,16 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
                 onPressed: (_mollieRecoveryBusy || !canRequestPayment)
                     ? null
                     : () => _runOpenMollieRecoveryAction(
-                          context,
-                          choice: MollieOpenPaymentRecoveryChoice.cancel,
-                        ),
+                        context,
+                        choice: MollieOpenPaymentRecoveryChoice.cancel,
+                      ),
                 icon: const Icon(Icons.cancel_outlined),
                 label: Text(_receiptText('cancelOnlinePayment')),
               ),
               const SizedBox(height: 12),
             ],
-            if (_mollieStreetCheckoutEligible() && !_openMollieBlocksFallback) ...[
+            if (_mollieStreetCheckoutEligible() &&
+                !_openMollieBlocksFallback) ...[
               FilledButton.icon(
                 onPressed: (canRequestPayment && !_mollieCheckoutLoading)
                     ? () => _startMollieStreetCheckout(context)
@@ -5859,8 +6130,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
                   ? () => _persistInCarPayment(context: context, method: 'cash')
                   : (_openMollieBlocksFallback
                         ? () async {
-                            final choice =
-                                await _showOpenMollieRecoveryDialog(context);
+                            final choice = await _showOpenMollieRecoveryDialog(
+                              context,
+                            );
                             if (!context.mounted) return;
                             if (choice != null &&
                                 choice !=
@@ -5879,7 +6151,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
             const SizedBox(height: 8),
             if (_tapToPayAvailable) ...[
               FilledButton.icon(
-                onPressed: (canRequestPayment &&
+                onPressed:
+                    (canRequestPayment &&
                         !_tapToPayInFlight &&
                         !_openMollieBlocksFallback)
                     ? () => _startTapToPay(context)
@@ -5930,7 +6203,9 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
           // Remains available while unpaid — invoicing is a valid payment path.
           // Mounts a loading/retry slot while Tracking history omits `source`
           // and we confirm identity via the Booking Worker.
-          if (_shouldShowStreetInvoicePaymentSlot()) ...[
+          if (_shouldShowStreetInvoicePaymentSlot() &&
+              !_offlineCashAwaitingSync &&
+              !_offlineCashConflict) ...[
             if (!alreadyPaid) const SizedBox(height: 8),
             if (alreadyPaid) const SizedBox(height: 10),
             _streetBusinessInvoicePaymentSlot(alreadyPaid: alreadyPaid),
@@ -6154,8 +6429,8 @@ class _RideReceiptBodyState extends State<_RideReceiptBody>
 
   StreetBusinessInvoiceReceiptEligibility
   _resolveStreetBusinessInvoiceReceiptEligibility() {
-    final bookingId =
-        (_streetInvoiceResolvedBookingId ?? item.bookingId ?? '').trim();
+    final bookingId = (_streetInvoiceResolvedBookingId ?? item.bookingId ?? '')
+        .trim();
     final st = item.status.trim().toUpperCase().replaceAll(
       RegExp(r'[-\s]+'),
       '_',
