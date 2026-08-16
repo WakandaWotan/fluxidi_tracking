@@ -3747,19 +3747,57 @@ class _CompanySubscriptionBillingPageState
             founderCents != null &&
             lockedCents == founderCents);
 
-    // Big monthly amount: prefer the actual provider recurring when linked,
-    // else fall back to locked/normal price.
     final currentQuote = _displayQuotes?.current;
-    final int monthlyCents =
-        currentQuote?.subtotalExclVatCents ??
-        (lockedCents ?? catalog.normalPriceCents);
-    final String monthlyText = _priceFromCents(monthlyCents);
 
-    // Breakdown line only when at least one paid add-on is active.
+    // Base price and active add-on quantities. €69 is the base price only,
+    // never the full monthly total; these also feed the recurring total below.
     final int vQty = _extraVehicleActiveQuantity(profile);
     final int dQty = _extraDriverActiveQuantity(profile);
     final int baseCents = lockedCents ?? catalog.normalPriceCents;
     final String baseText = _priceFromCents(baseCents);
+
+    // Big monthly amount is the server-authoritative recurring total (base plus
+    // active recurring add-ons): first the profile recurringAmountCents, then
+    // the display quote's recurring total, then the local base + add-ons
+    // computation. It is never just the base subtotal.
+    final int monthlyCents = resolveHeroRecurringExclCents(
+      profileRecurringAmountCents: profile.recurringAmountCents,
+      quoteRecurringExclVatCents: currentQuote?.recurringExclVatCents,
+      baseExclCents: baseCents,
+      extraVehicleUnitExclCents: catalog.extraVehiclePriceCents,
+      extraDriverUnitExclCents: catalog.extraDriverPriceCents,
+      extraVehicleActiveQuantity: vQty,
+      extraDriverActiveQuantity: dQty,
+    );
+    final String monthlyText = _priceFromCents(monthlyCents);
+
+    // Recurring VAT breakdown is authoritative from the display quote only: its
+    // recurring VAT/incl fields when they match the recurring total, else the
+    // quote vat_rate applied to that total. No local VAT rate is assumed and no
+    // amount is invented.
+    int? recurringVatCents;
+    int? recurringInclCents;
+    if (currentQuote != null) {
+      final int? quoteRecurringVat = currentQuote.recurringVatAmountCents;
+      final int? quoteRecurringIncl = currentQuote.recurringInclVatCents;
+      if (quoteRecurringVat != null &&
+          quoteRecurringIncl != null &&
+          currentQuote.recurringExclVatCents == monthlyCents) {
+        recurringVatCents = quoteRecurringVat;
+        recurringInclCents = quoteRecurringIncl;
+      } else {
+        final int? vat = vatCentsFromQuoteRate(
+          monthlyCents,
+          currentQuote.vatRate,
+        );
+        if (vat != null) {
+          recurringVatCents = vat;
+          recurringInclCents = monthlyCents + vat;
+        }
+      }
+    }
+    final bool hasRecurringVat =
+        recurringVatCents != null && recurringInclCents != null;
     final String extraVehicleText = _priceFromCents(
       catalog.extraVehiclePriceCents,
     );
@@ -3798,7 +3836,12 @@ class _CompanySubscriptionBillingPageState
 
     final periodStart = profile.currentPeriodStart.trim();
     final periodEnd = profile.currentPeriodEnd.trim();
-    final renewalLine = _consolidatedRenewalLine(profile);
+    // The recurring amount is shown authoritatively in the hero total above;
+    // only the exact next charge date is still pending synchronization. The
+    // checkout confirm dialog keeps its own copy via _consolidatedRenewalLine.
+    final renewalLine = subscriptionNextChargeDatePendingText(
+      currentLanguageCode,
+    );
 
     final marketDisplay = _marketDisplayName(catalog.market);
 
@@ -3893,18 +3936,18 @@ class _CompanySubscriptionBillingPageState
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  currentQuote == null
+                  hasRecurringVat
                       ? _t(
-                          nl: '/ maand excl. btw',
-                          en: '/ month excl. VAT',
-                          fr: '/ mois HT',
-                          es: '/ mes sin IVA',
-                        )
-                      : _t(
                           nl: '/ maand',
                           en: '/ month',
                           fr: '/ mois',
                           es: '/ mes',
+                        )
+                      : _t(
+                          nl: '/ maand excl. btw',
+                          en: '/ month excl. VAT',
+                          fr: '/ mois HT',
+                          es: '/ mes sin IVA',
                         ),
                   style: TextStyle(
                     color: palette.textSecondary,
@@ -3915,13 +3958,13 @@ class _CompanySubscriptionBillingPageState
               ),
             ],
           ),
-          if (currentQuote != null) ...[
+          if (hasRecurringVat) ...[
             const SizedBox(height: 8),
             Text(
               _vatBreakdown(
-                excl: currentQuote.subtotalExclVatCents,
-                vat: currentQuote.vatAmountCents,
-                incl: currentQuote.totalInclVatCents,
+                excl: monthlyCents,
+                vat: recurringVatCents,
+                incl: recurringInclCents,
                 quote: currentQuote,
               ),
               style: TextStyle(
@@ -3999,18 +4042,16 @@ class _CompanySubscriptionBillingPageState
               icon: Icons.event_available_outlined,
             ),
           ],
-          if (renewalLine != null) ...[
-            _infoLine(
-              _t(
-                nl: 'Volgende betaling',
-                en: 'Next payment',
-                fr: 'Prochain paiement',
-                es: 'Próximo pago',
-              ),
-              renewalLine.replaceFirst(RegExp(r'^[^:]+:\s*'), ''),
-              icon: Icons.payments_outlined,
+          _infoLine(
+            _t(
+              nl: 'Volgende betaling',
+              en: 'Next payment',
+              fr: 'Prochain paiement',
+              es: 'Próximo pago',
             ),
-          ],
+            renewalLine,
+            icon: Icons.payments_outlined,
+          ),
           if (profile.billingEmail.trim().isNotEmpty)
             _infoLine(
               _t(
@@ -4465,216 +4506,219 @@ class _CompanySubscriptionBillingPageState
   Widget build(BuildContext context) {
     return ValueListenableBuilder<BusinessThemeVariant>(
       valueListenable: businessThemeNotifier,
-      builder: (context, _, __) =>
-          ValueListenableBuilder<BrandSignaturePalette>(
+      builder: (context, _, __) => ValueListenableBuilder<BrandSignaturePalette>(
         valueListenable: brandSignaturePaletteNotifier,
         builder: (context, _, __) => Scaffold(
-        backgroundColor: _bg,
-        appBar: AppBar(
           backgroundColor: _bg,
-          foregroundColor: _businessThemePalette.textPrimary,
-          title: LayoutBuilder(
-            builder: (context, constraints) {
-              return SizedBox(
-                height: 26,
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    _t(
-                      nl: 'Abonnement & facturatie',
-                      en: 'Subscription & billing',
-                      fr: 'Abonnement & facturation',
-                      es: 'Suscripción y facturación',
+          appBar: AppBar(
+            backgroundColor: _bg,
+            foregroundColor: _businessThemePalette.textPrimary,
+            title: LayoutBuilder(
+              builder: (context, constraints) {
+                return SizedBox(
+                  height: 26,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      _t(
+                        nl: 'Abonnement & facturatie',
+                        en: 'Subscription & billing',
+                        fr: 'Abonnement & facturation',
+                        es: 'Suscripción y facturación',
+                      ),
+                      maxLines: 1,
                     ),
-                    maxLines: 1,
                   ),
-                ),
-              );
-            },
-          ),
-          actions: [
-            IconButton(
-              tooltip: _t(
-                nl: 'Vernieuwen',
-                en: 'Refresh',
-                fr: 'Actualiser',
-                es: 'Actualizar',
-              ),
-              icon: const Icon(Icons.refresh),
-              onPressed: _activating ? null : _refresh,
+                );
+              },
             ),
-          ],
-        ),
-        body: FutureBuilder<BackendSubscriptionProfile>(
-          future: _future,
-          builder: (context, snap) {
-            if (snap.connectionState != ConnectionState.done) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (snap.hasError) {
-              return Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Text(
-                    _t(
-                      nl: 'Abonnementsgegevens konden niet worden geladen.',
-                      en: 'Subscription data could not be loaded.',
-                      fr: 'Les données d abonnement n ont pas pu être chargées.',
-                      es: 'No se pudieron cargar los datos de suscripción.',
-                    ),
-                    style: TextStyle(color: _businessThemePalette.textMuted),
-                    textAlign: TextAlign.center,
-                  ),
+            actions: [
+              IconButton(
+                tooltip: _t(
+                  nl: 'Vernieuwen',
+                  en: 'Refresh',
+                  fr: 'Actualiser',
+                  es: 'Actualizar',
                 ),
+                icon: const Icon(Icons.refresh),
+                onPressed: _activating ? null : _refresh,
+              ),
+            ],
+          ),
+          body: FutureBuilder<BackendSubscriptionProfile>(
+            future: _future,
+            builder: (context, snap) {
+              if (snap.connectionState != ConnectionState.done) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snap.hasError) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Text(
+                      _t(
+                        nl: 'Abonnementsgegevens konden niet worden geladen.',
+                        en: 'Subscription data could not be loaded.',
+                        fr: 'Les données d abonnement n ont pas pu être chargées.',
+                        es: 'No se pudieron cargar los datos de suscripción.',
+                      ),
+                      style: TextStyle(color: _businessThemePalette.textMuted),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                );
+              }
+              final profile =
+                  snap.data ?? BackendSubscriptionProfile.defaults();
+              // Country-aware catalog drives all visible pricing copy. If the
+              // backend profile didn't ship catalog fields the resolver fills
+              // in BE/NL/FR/ES/PT defaults from the active company's market.
+              final catalog = resolveSubscriptionCatalogEntryForMarket(
+                profile.market.trim().isNotEmpty
+                    ? profile.market
+                    : resolveActiveCompanyPricingMarket(),
               );
-            }
-            final profile = snap.data ?? BackendSubscriptionProfile.defaults();
-            // Country-aware catalog drives all visible pricing copy. If the
-            // backend profile didn't ship catalog fields the resolver fills
-            // in BE/NL/FR/ES/PT defaults from the active company's market.
-            final catalog = resolveSubscriptionCatalogEntryForMarket(
-              profile.market.trim().isNotEmpty
-                  ? profile.market
-                  : resolveActiveCompanyPricingMarket(),
-            );
-            // BE is the only market that ships Belgian-specific compliance
-            // modules (Chiron, Billit/Peppol). Non-BE supported markets see
-            // a generic automation pitch instead — no Chiron/Billit/Peppol
-            // claims.
-            final bool isBelgiumMarket = catalog.market == 'BE';
-            // Gate the paid add-ons section on the real (profile) market, not
-            // the display catalog (which falls back to BE for unsupported
-            // countries). Unsupported markets must not see paid add-ons that
-            // have no purchase path yet.
-            final bool isSupportedMarket = _isSupportedMarket(
-              _effectiveMarket(profile),
-            );
-            return ValueListenableBuilder<List<VehicleProfile>>(
-              valueListenable: vehiclesNotifier,
-              builder: (context, vehicles, _) {
-                final scopedVehicles = vehicles
-                    .where(
-                      (v) => fleetRecordBelongsToActiveCompanyOrLegacy(
-                        v.companyId,
-                      ),
-                    )
-                    .toList(growable: false);
-                return ValueListenableBuilder<List<DriverProfile>>(
-                  valueListenable: driversNotifier,
-                  builder: (context, drivers, __) {
-                    final scopedDrivers = drivers
-                        .where(
-                          (d) => fleetRecordBelongsToActiveCompanyOrLegacy(
-                            d.companyId,
-                          ),
-                        )
-                        .toList(growable: false);
-                    final usedVehicles = scopedVehicles.length;
-                    final usedDrivers = scopedDrivers.length;
-                    // Use viewPadding so gesture/nav bars are respected even
-                    // when nested MediaQuery.padding was consumed.
-                    final bottomSafeInset = MediaQuery.viewPaddingOf(
-                      context,
-                    ).bottom;
-                    return ListView(
-                      padding: EdgeInsets.fromLTRB(
-                        12,
-                        12,
-                        12,
-                        24 + bottomSafeInset,
-                      ),
-                      children: [
-                        _buildSubscriptionHero(profile, catalog),
-                        _sectionCard(
-                          title: _t(
-                            nl: 'Gebruik & limieten',
-                            en: 'Usage & limits',
-                            fr: 'Utilisation & limites',
-                            es: 'Uso & límites',
-                          ),
-                          child: _buildUsageLimitsRow(
-                            profile,
-                            catalog,
-                            usedVehicles,
-                            usedDrivers,
-                          ),
+              // BE is the only market that ships Belgian-specific compliance
+              // modules (Chiron, Billit/Peppol). Non-BE supported markets see
+              // a generic automation pitch instead — no Chiron/Billit/Peppol
+              // claims.
+              final bool isBelgiumMarket = catalog.market == 'BE';
+              // Gate the paid add-ons section on the real (profile) market, not
+              // the display catalog (which falls back to BE for unsupported
+              // countries). Unsupported markets must not see paid add-ons that
+              // have no purchase path yet.
+              final bool isSupportedMarket = _isSupportedMarket(
+                _effectiveMarket(profile),
+              );
+              return ValueListenableBuilder<List<VehicleProfile>>(
+                valueListenable: vehiclesNotifier,
+                builder: (context, vehicles, _) {
+                  final scopedVehicles = vehicles
+                      .where(
+                        (v) => fleetRecordBelongsToActiveCompanyOrLegacy(
+                          v.companyId,
                         ),
-                        if (isSupportedMarket)
+                      )
+                      .toList(growable: false);
+                  return ValueListenableBuilder<List<DriverProfile>>(
+                    valueListenable: driversNotifier,
+                    builder: (context, drivers, __) {
+                      final scopedDrivers = drivers
+                          .where(
+                            (d) => fleetRecordBelongsToActiveCompanyOrLegacy(
+                              d.companyId,
+                            ),
+                          )
+                          .toList(growable: false);
+                      final usedVehicles = scopedVehicles.length;
+                      final usedDrivers = scopedDrivers.length;
+                      // Use viewPadding so gesture/nav bars are respected even
+                      // when nested MediaQuery.padding was consumed.
+                      final bottomSafeInset = MediaQuery.viewPaddingOf(
+                        context,
+                      ).bottom;
+                      return ListView(
+                        padding: EdgeInsets.fromLTRB(
+                          12,
+                          12,
+                          12,
+                          24 + bottomSafeInset,
+                        ),
+                        children: [
+                          _buildSubscriptionHero(profile, catalog),
                           _sectionCard(
                             title: _t(
-                              nl: 'Maandelijkse uitbreidingen',
-                              en: 'Monthly add-ons',
-                              fr: 'Options mensuelles',
-                              es: 'Ampliaciones mensuales',
+                              nl: 'Gebruik & limieten',
+                              en: 'Usage & limits',
+                              fr: 'Utilisation & limites',
+                              es: 'Uso & límites',
                             ),
-                            child: _buildMonthlyAddonsSection(profile, catalog),
+                            child: _buildUsageLimitsRow(
+                              profile,
+                              catalog,
+                              usedVehicles,
+                              usedDrivers,
+                            ),
                           ),
-                        _sectionCard(
-                          title: _t(
-                            nl: 'PDF-credits',
-                            en: 'PDF credits',
-                            fr: 'Crédits PDF',
-                            es: 'Créditos PDF',
+                          if (isSupportedMarket)
+                            _sectionCard(
+                              title: _t(
+                                nl: 'Maandelijkse uitbreidingen',
+                                en: 'Monthly add-ons',
+                                fr: 'Options mensuelles',
+                                es: 'Ampliaciones mensuales',
+                              ),
+                              child: _buildMonthlyAddonsSection(
+                                profile,
+                                catalog,
+                              ),
+                            ),
+                          _sectionCard(
+                            title: _t(
+                              nl: 'PDF-credits',
+                              en: 'PDF credits',
+                              fr: 'Crédits PDF',
+                              es: 'Créditos PDF',
+                            ),
+                            child: _buildPdfCreditsSection(profile, catalog),
                           ),
-                          child: _buildPdfCreditsSection(profile, catalog),
-                        ),
-                        _sectionCard(
-                          title: _t(
-                            nl: 'Inbegrepen mogelijkheden',
-                            en: 'Included capabilities',
-                            fr: 'Fonctionnalités incluses',
-                            es: 'Capacidades incluidas',
+                          _sectionCard(
+                            title: _t(
+                              nl: 'Inbegrepen mogelijkheden',
+                              en: 'Included capabilities',
+                              fr: 'Fonctionnalités incluses',
+                              es: 'Capacidades incluidas',
+                            ),
+                            child: _buildIncludedFeatures(
+                              profile,
+                              catalog,
+                              isBelgiumMarket,
+                            ),
                           ),
-                          child: _buildIncludedFeatures(
-                            profile,
-                            catalog,
-                            isBelgiumMarket,
-                          ),
-                        ),
-                        Container(
-                          margin: const EdgeInsets.only(top: 2),
-                          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-                          decoration: BoxDecoration(
-                            color: _panel,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: _businessThemePalette.border.withOpacity(
-                                _businessThemePalette.isDark ? 0.75 : 0.85,
+                          Container(
+                            margin: const EdgeInsets.only(top: 2),
+                            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                            decoration: BoxDecoration(
+                              color: _panel,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: _businessThemePalette.border.withOpacity(
+                                  _businessThemePalette.isDark ? 0.75 : 0.85,
+                                ),
+                              ),
+                            ),
+                            child: Text(
+                              isBelgiumMarket
+                                  ? _t(
+                                      nl: 'Externe Billit/providerkosten en Mollie-transactiekosten zijn voor rekening van het bedrijf en lopen via je eigen account.',
+                                      en: 'External Billit/provider costs and Mollie transaction fees are paid by the company via its own account.',
+                                      fr: 'Les frais Billit/fournisseur externes et les frais de transaction Mollie sont à la charge de l\'entreprise via son propre compte.',
+                                      es: 'Los costes externos de Billit/proveedor y las comisiones de transacción de Mollie corren a cargo de la empresa a través de su propia cuenta.',
+                                    )
+                                  : _t(
+                                      nl: 'Mollie-transactiekosten zijn voor rekening van het bedrijf en lopen via je eigen account.',
+                                      en: 'Mollie transaction fees are paid by the company via its own account.',
+                                      fr: 'Les frais de transaction Mollie sont à la charge de l\'entreprise via son propre compte.',
+                                      es: 'Las comisiones de transacción de Mollie corren a cargo de la empresa a través de su propia cuenta.',
+                                    ),
+                              style: TextStyle(
+                                color: _businessThemePalette.textSecondary,
+                                fontSize: 12,
+                                height: 1.35,
                               ),
                             ),
                           ),
-                          child: Text(
-                            isBelgiumMarket
-                                ? _t(
-                                    nl: 'Externe Billit/providerkosten en Mollie-transactiekosten zijn voor rekening van het bedrijf en lopen via je eigen account.',
-                                    en: 'External Billit/provider costs and Mollie transaction fees are paid by the company via its own account.',
-                                    fr: 'Les frais Billit/fournisseur externes et les frais de transaction Mollie sont à la charge de l\'entreprise via son propre compte.',
-                                    es: 'Los costes externos de Billit/proveedor y las comisiones de transacción de Mollie corren a cargo de la empresa a través de su propia cuenta.',
-                                  )
-                                : _t(
-                                    nl: 'Mollie-transactiekosten zijn voor rekening van het bedrijf en lopen via je eigen account.',
-                                    en: 'Mollie transaction fees are paid by the company via its own account.',
-                                    fr: 'Les frais de transaction Mollie sont à la charge de l\'entreprise via son propre compte.',
-                                    es: 'Las comisiones de transacción de Mollie corren a cargo de la empresa a través de su propia cuenta.',
-                                  ),
-                            style: TextStyle(
-                              color: _businessThemePalette.textSecondary,
-                              fontSize: 12,
-                              height: 1.35,
-                            ),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                );
-              },
-            );
-          },
+                        ],
+                      );
+                    },
+                  );
+                },
+              );
+            },
+          ),
         ),
       ),
-        ),
     );
   }
 }

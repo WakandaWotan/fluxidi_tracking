@@ -163,4 +163,122 @@ void main() {
       expect(money.inclCents, 700);
     });
   });
+
+  group('authoritative recurring monthly total (hero)', () {
+    test('FLX-00001: €69 base + 2 × €19 vehicle = €107 recurring excl.', () {
+      expect(
+        resolveHeroRecurringExclCents(
+          profileRecurringAmountCents: null,
+          quoteRecurringExclVatCents: null,
+          baseExclCents: beBase,
+          extraVehicleUnitExclCents: beVehicleUnit,
+          extraDriverUnitExclCents: beDriverUnit,
+          extraVehicleActiveQuantity: 2,
+          extraDriverActiveQuantity: 0,
+        ),
+        10700,
+      );
+    });
+
+    test('€107 excl → €22,47 VAT → €129,47 incl at the quote vat_rate', () {
+      const recurringExcl = 10700;
+      final vat = vatCentsFromQuoteRate(recurringExcl, beSaasVatRate);
+      expect(vat, 2247);
+      expect(recurringExcl + vat!, 12947);
+    });
+
+    test('zero add-ons shows the €69 base', () {
+      expect(
+        resolveHeroRecurringExclCents(
+          profileRecurringAmountCents: null,
+          quoteRecurringExclVatCents: null,
+          baseExclCents: beBase,
+          extraVehicleUnitExclCents: beVehicleUnit,
+          extraDriverUnitExclCents: beDriverUnit,
+          extraVehicleActiveQuantity: 0,
+          extraDriverActiveQuantity: 0,
+        ),
+        6900,
+      );
+    });
+
+    test('server recurringAmountCents wins over a deviating local calc', () {
+      // A local recomputation here would give 6900 + 1 × 1900 = 8800, but the
+      // server recurring total is authoritative and must not be overridden.
+      expect(
+        resolveHeroRecurringExclCents(
+          profileRecurringAmountCents: 10700,
+          quoteRecurringExclVatCents: 9999,
+          baseExclCents: beBase,
+          extraVehicleUnitExclCents: beVehicleUnit,
+          extraDriverUnitExclCents: beDriverUnit,
+          extraVehicleActiveQuantity: 1,
+          extraDriverActiveQuantity: 0,
+        ),
+        10700,
+      );
+    });
+
+    test('safe fallback to quote then local when server value is missing', () {
+      expect(
+        resolveHeroRecurringExclCents(
+          profileRecurringAmountCents: null,
+          quoteRecurringExclVatCents: 10700,
+          baseExclCents: beBase,
+          extraVehicleUnitExclCents: beVehicleUnit,
+          extraDriverUnitExclCents: beDriverUnit,
+          extraVehicleActiveQuantity: 2,
+          extraDriverActiveQuantity: 0,
+        ),
+        10700,
+      );
+      // A null or non-positive server value is treated as missing and the
+      // computation falls through to the local base + add-ons total.
+      expect(
+        resolveHeroRecurringExclCents(
+          profileRecurringAmountCents: 0,
+          quoteRecurringExclVatCents: null,
+          baseExclCents: beBase,
+          extraVehicleUnitExclCents: beVehicleUnit,
+          extraDriverUnitExclCents: beDriverUnit,
+          extraVehicleActiveQuantity: 2,
+          extraDriverActiveQuantity: 0,
+        ),
+        10700,
+      );
+    });
+  });
+
+  group('next-charge copy pends the date only, not the amount', () {
+    test('every locale scopes the pending state to the date', () {
+      const amountWords = <String>['bedrag', 'amount', 'montant', 'importe'];
+      for (final lang in const <String>['nl', 'en', 'fr', 'es']) {
+        final copy = subscriptionNextChargeDatePendingText(lang);
+        final lower = copy.toLowerCase();
+        final mentionsDate =
+            lower.contains('datum') ||
+            lower.contains('date') ||
+            lower.contains('fecha');
+        expect(
+          mentionsDate,
+          isTrue,
+          reason: 'locale $lang must scope the pending state to the date',
+        );
+        for (final word in amountWords) {
+          expect(
+            lower.contains(word),
+            isFalse,
+            reason: 'locale $lang must not claim the amount is unknown',
+          );
+        }
+      }
+    });
+
+    test('Dutch copy is the date-pending phrasing', () {
+      expect(
+        subscriptionNextChargeDatePendingText('nl'),
+        'Afschrijfdatum nog niet gesynchroniseerd.',
+      );
+    });
+  });
 }

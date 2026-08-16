@@ -77,3 +77,57 @@ int subscriptionHeroRecurringExclCents({
       extraVehicleActiveQuantity * extraVehicleUnitExclCents +
       extraDriverActiveQuantity * extraDriverUnitExclCents;
 }
+
+/// Authoritative recurring monthly total (excl. VAT) for the subscription hero.
+///
+/// Precedence, server-authoritative first:
+///   1. the server profile `recurringAmountCents` — the consolidated base plus
+///      the active recurring add-ons the backend actually bills;
+///   2. the display quote `recurringExclVatCents`;
+///   3. the local base plus active recurring add-ons computation.
+///
+/// A positive server value always wins, even when a local recomputation would
+/// differ, so the hero can never understate the amount that is really billed.
+/// A null or non-positive server value falls through safely to the next source.
+int resolveHeroRecurringExclCents({
+  int? profileRecurringAmountCents,
+  int? quoteRecurringExclVatCents,
+  required int baseExclCents,
+  required int extraVehicleUnitExclCents,
+  required int extraDriverUnitExclCents,
+  required int extraVehicleActiveQuantity,
+  required int extraDriverActiveQuantity,
+}) {
+  if (profileRecurringAmountCents != null && profileRecurringAmountCents > 0) {
+    return profileRecurringAmountCents;
+  }
+  if (quoteRecurringExclVatCents != null && quoteRecurringExclVatCents > 0) {
+    return quoteRecurringExclVatCents;
+  }
+  return subscriptionHeroRecurringExclCents(
+    baseExclCents: baseExclCents,
+    extraVehicleUnitExclCents: extraVehicleUnitExclCents,
+    extraDriverUnitExclCents: extraDriverUnitExclCents,
+    extraVehicleActiveQuantity: extraVehicleActiveQuantity,
+    extraDriverActiveQuantity: extraDriverActiveQuantity,
+  );
+}
+
+/// Next-charge line for the hero when the recurring amount is already known but
+/// the exact next charge date has not yet been synchronized from the provider.
+///
+/// It only states that the date is pending — never that the amount is unknown —
+/// and it never invents a provider charge date.
+String subscriptionNextChargeDatePendingText(String languageCode) {
+  switch (languageCode) {
+    case 'en':
+      return 'Next charge date not yet synchronized.';
+    case 'fr':
+      return 'Date du prochain prélèvement pas encore synchronisée.';
+    case 'es':
+      return 'Fecha del próximo cargo aún no sincronizada.';
+    case 'nl':
+    default:
+      return 'Afschrijfdatum nog niet gesynchroniseerd.';
+  }
+}
