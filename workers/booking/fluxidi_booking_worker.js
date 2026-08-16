@@ -81,6 +81,17 @@ import {
 
 export { HumanBookingIdSequenceDO };
 import {
+  applyPrimaryCompanyEmailChange,
+  collectPrimaryCompanyRecoveryEmails,
+  COMPANY_EMAIL_CHALLENGE_PURPOSE_PENDING,
+  COMPANY_EMAIL_CHALLENGE_PURPOSE_RECOVERY,
+  isPendingCompanyEmailConfirmTarget,
+  isPrimaryCompanyRecoveryEmail,
+  markPrimaryCompanyEmailVerified,
+  projectCompanyEmailIdentityFields,
+  promotePendingCompanyEmail,
+} from "./modules/company_primary_email_recovery.mjs";
+import {
   BILLIT_PROVIDER,
   BILLIT_OAUTH_STATE_TTL_SECONDS,
   DEFAULT_BILLIT_PAYMENT_TERMS_DAYS,
@@ -12022,6 +12033,18 @@ const DEFAULT_BUSINESS_PROFILE = {
   phone: "",
   companyEmail: "",
   email: "",
+  pending_email: "",
+  pendingEmail: "",
+  email_verification_status: "",
+  emailVerificationStatus: "",
+  email_verified_at: "",
+  emailVerifiedAt: "",
+  pending_email_requested_at: "",
+  pendingEmailRequestedAt: "",
+  email_revision: 0,
+  emailRevision: 0,
+  email_audit: null,
+  emailAudit: null,
   supportEmail: "",
   replyToEmail: "",
   website: "",
@@ -12716,6 +12739,10 @@ function normalizeBusinessProfile(input = {}) {
     phone: sanitizeTenantString(source.phone ?? DEFAULT_BUSINESS_PROFILE.phone, 64),
     companyEmail,
     email,
+    ...projectCompanyEmailIdentityFields({
+      ...source,
+      email,
+    }),
     supportEmail: sanitizeTenantString(source.supportEmail ?? source.support_email ?? DEFAULT_BUSINESS_PROFILE.supportEmail, 160),
     replyToEmail: sanitizeTenantString(source.replyToEmail ?? source.reply_to_email ?? source.reply_to ?? DEFAULT_BUSINESS_PROFILE.replyToEmail, 160),
     website: sanitizeTenantString(source.website ?? DEFAULT_BUSINESS_PROFILE.website, 200),
@@ -13756,7 +13783,7 @@ async function saveBusinessProfile(
   env,
   profile,
   scope = null,
-  { allowTenantLegacyWrite = true } = {},
+  { allowTenantLegacyWrite = true, applyEmailChangePolicy = true } = {},
 ) {
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const scopedKeys = buildScopedSettingsKeys(scope);
@@ -13775,7 +13802,14 @@ async function saveBusinessProfile(
     existing || DEFAULT_BUSINESS_PROFILE,
     profile,
   );
-  const normalized = normalizeBusinessProfile(preserved);
+  const emailChange = applyEmailChangePolicy
+    ? applyPrimaryCompanyEmailChange(
+        existing || DEFAULT_BUSINESS_PROFILE,
+        preserved,
+        new Date().toISOString(),
+      )
+    : { profile: preserved };
+  const normalized = normalizeBusinessProfile(emailChange.profile);
   await env.BOOKING_KV.put(targetKey, JSON.stringify({
     version: 1,
     updated_at: new Date().toISOString(),
@@ -18022,37 +18056,7 @@ async function _companyRecoveryVerifyClientHash(request) {
 }
 
 function _collectBusinessProfileRecoveryEmails(businessProfile) {
-  if (!businessProfile || typeof businessProfile !== "object" || Array.isArray(businessProfile)) {
-    return [];
-  }
-  const out = [];
-  const seen = new Set();
-  const candidates = [
-    businessProfile.companyEmail,
-    businessProfile.company_email,
-    businessProfile.email,
-    businessProfile.ownerEmail,
-    businessProfile.owner_email,
-    businessProfile.notificationEmail,
-    businessProfile.notification_email,
-    businessProfile.bookingEmail,
-    businessProfile.booking_email,
-    businessProfile.billingEmail,
-    businessProfile.billing_email,
-    businessProfile.invoiceEmail,
-    businessProfile.invoice_email,
-    businessProfile.supportEmail,
-    businessProfile.support_email,
-    businessProfile.replyToEmail,
-    businessProfile.reply_to_email,
-  ];
-  for (const raw of candidates) {
-    const normalized = _normalizeRecoveryEmail(raw);
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    out.push(normalized);
-  }
-  return out;
+  return collectPrimaryCompanyRecoveryEmails(businessProfile);
 }
 
 function _projectPublicRecoveryStartResponse(challengeId, email) {
@@ -21880,6 +21884,99 @@ async function handlePublicCompanyRegister(body, env) {
   );
 }
 
+async function _startPendingEmailConfirmationChallenge({
+  env,
+  scope,
+  companyCode,
+  email,
+  deviceLabel = "",
+  deviceType = "",
+}) {
+  const challengeId = _companyRecoveryChallengeId();
+  const genericResponse = _projectPublicRecoveryStartResponse(challengeId, email);
+  const codeValidation = validatePublicCompanyCode(companyCode);
+  if (!env?.BOOKING_KV || !codeValidation.ok || !email || !scope?.tenant_id || !scope?.company_id) {
+    return { ok: false, challengeId, genericResponse };
+  }
+  const emailHash = await _hashRecoveryStartRateKeyPart(email);
+  const rateKey = _companyRecoveryStartRateKey(codeValidation.code, emailHash);
+  if (rateKey) {
+    const rawRate = await env.BOOKING_KV.get(rateKey, { type: "json" });
+    const rateSource = rawRate && typeof rawRate === "object" && !Array.isArray(rawRate)
+      ? rawRate
+      : {};
+    const count = Number.isFinite(Number(rateSource.count))
+      ? Math.max(0, Math.round(Number(rateSource.count)))
+      : 0;
+    if (count >= COMPANY_RECOVERY_START_RATE_MAX) {
+      return { ok: false, challengeId, genericResponse, rateLimited: true };
+    }
+    await env.BOOKING_KV.put(
+      rateKey,
+      JSON.stringify({
+        count: count + 1,
+        updated_at: new Date().toISOString(),
+      }),
+      { expirationTtl: COMPANY_RECOVERY_START_RATE_WINDOW_SECONDS },
+    );
+  }
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAt = new Date(nowMs + COMPANY_RECOVERY_CHALLENGE_TTL_SECONDS * 1000).toISOString();
+  const otp = _generateCompanyRecoveryOtp();
+  const otpHash = await _sha256Hex(`${challengeId}:${codeValidation.code}:${email}:${otp}`);
+  const challengeKey = _companyRecoveryChallengeKey(challengeId);
+  if (!challengeKey) {
+    return { ok: false, challengeId, genericResponse };
+  }
+  const challenge = {
+    version: 1,
+    challenge_id: challengeId,
+    tenant_id: scope.tenant_id,
+    company_id: scope.company_id,
+    company_code: codeValidation.code,
+    email_hash: await _sha256Hex(email),
+    otp_hash: otpHash,
+    attempts: 0,
+    max_attempts: COMPANY_RECOVERY_MAX_ATTEMPTS,
+    created_at: nowIso,
+    expires_at: expiresAt,
+    consumed_at: null,
+    verification_channel: "email_otp",
+    purpose: COMPANY_EMAIL_CHALLENGE_PURPOSE_PENDING,
+    device_label: sanitizeTenantString(deviceLabel, 120),
+    device_type: sanitizeTenantString(deviceType, 40).toLowerCase(),
+  };
+  await env.BOOKING_KV.put(challengeKey, JSON.stringify(challenge), {
+    expirationTtl: COMPANY_RECOVERY_CHALLENGE_TTL_SECONDS,
+  });
+  try {
+    await _sendCompanyRecoveryOtpEmail({
+      env,
+      tenantId: scope.tenant_id,
+      companyId: scope.company_id,
+      recipientEmail: email,
+      otp,
+    });
+  } catch (_) {
+    // Same as public recovery: generic response even if send fails.
+  }
+  const out = { ...genericResponse };
+  const debugOtpRequested = sanitizeTenantString(env?.COMPANY_RECOVERY_DEBUG_OTP, 16) === "1";
+  const explicitDebugOtpAllow = sanitizeTenantString(env?.FLUXIDI_ALLOW_DEBUG_OTP_ECHO, 16) === "1";
+  const environmentRaw = sanitizeTenantString(
+    env?.ENVIRONMENT ?? env?.NODE_ENV,
+    32,
+  ).toLowerCase();
+  const nonProductionEnvironmentDeclared =
+    !!environmentRaw && environmentRaw !== "production" && environmentRaw !== "prod";
+  if (debugOtpRequested && (explicitDebugOtpAllow || nonProductionEnvironmentDeclared)) {
+    out.recovery_code = otp;
+    out.recoveryCode = otp;
+  }
+  return { ok: true, challengeId, genericResponse: out, otp };
+}
+
 async function handlePublicCompanyRecoveryStart(body, env) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return json({ ok: false, error: "invalid_body" }, 400);
@@ -21987,6 +22084,7 @@ async function handlePublicCompanyRecoveryStart(body, env) {
     expires_at: expiresAt,
     consumed_at: null,
     verification_channel: "email_otp",
+    purpose: COMPANY_EMAIL_CHALLENGE_PURPOSE_RECOVERY,
     device_label: sanitizeTenantString(body.device_label ?? body.deviceLabel, 120),
     device_type: sanitizeTenantString(body.device_type ?? body.deviceType, 40).toLowerCase(),
   };
@@ -22199,11 +22297,33 @@ async function handlePublicCompanyRecoveryVerify(body, env, request = null) {
   });
   const allowedEmails = _collectBusinessProfileRecoveryEmails(businessProfile);
   const emailMatches = allowedEmails.some((entry) => _constantTimeEquals(entry, email));
-  if (!emailMatches) {
+  const challengePurpose = sanitizeTenantString(challenge.purpose, 64);
+  const pendingConfirm =
+    challengePurpose === COMPANY_EMAIL_CHALLENGE_PURPOSE_PENDING &&
+    isPendingCompanyEmailConfirmTarget(businessProfile, email);
+  if (!emailMatches && !pendingConfirm) {
     console.log(
       `[COMPANY_RECOVERY][VERIFY][FAILED] company=${_maskPublicDriverLoginValue(codeValidation.code)} email=${maskEmailForLog(email) || "-"} challenge=${_maskRecoveryChallengeId(challengeId)} bucket=email_mismatch`,
     );
     return json({ ok: false, error: "verification_failed" }, 403);
+  }
+  if (pendingConfirm) {
+    const promoted = promotePendingCompanyEmail(businessProfile, email, nowIso);
+    if (!promoted.ok) {
+      return json({ ok: false, error: "verification_failed" }, 403);
+    }
+    await saveBusinessProfile(env, promoted.profile, scope, {
+      allowTenantLegacyWrite: false,
+      applyEmailChangePolicy: false,
+    });
+  } else if (isPrimaryCompanyRecoveryEmail(businessProfile, email)) {
+    const verified = markPrimaryCompanyEmailVerified(businessProfile, email, nowIso);
+    if (verified.ok) {
+      await saveBusinessProfile(env, verified.profile, scope, {
+        allowTenantLegacyWrite: false,
+        applyEmailChangePolicy: false,
+      });
+    }
   }
 
   const basePayload = _projectCompanyAdminSessionPayload(companyRecord, nowIso);
@@ -44591,10 +44711,44 @@ export default {
             `[ADMIN_BUSINESS_PROFILE][WARN] reason=company_code_ensure_failed tenant=${_maskPublicDriverLoginValue(explicitScope.tenant_id)} company=${_maskPublicDriverLoginValue(explicitScope.company_id)} error=${sanitizeTenantString(err?.message ?? err, 140) || "unknown"}`,
           );
         }
+        const requestedEmail = _normalizeRecoveryEmail(incoming?.email);
+        const pendingEmail = _normalizeRecoveryEmail(
+          profile?.pending_email ?? profile?.pendingEmail,
+        );
+        let confirmationRequired = false;
+        let pendingChallenge = null;
+        if (
+          pendingEmail &&
+          requestedEmail &&
+          requestedEmail === pendingEmail &&
+          (resolvedCompanyCode || ensuredPublicCompanyCode)
+        ) {
+          pendingChallenge = await _startPendingEmailConfirmationChallenge({
+            env,
+            scope: explicitScope,
+            companyCode: resolvedCompanyCode || ensuredPublicCompanyCode,
+            email: pendingEmail,
+          });
+          confirmationRequired = true;
+        }
         return json({
           ok: true,
           key: scopedKeys?.businessProfileKey || TENANT_BUSINESS_PROFILE_KEY,
           business_profile: profile,
+          ...(confirmationRequired
+            ? {
+                confirmation_required: true,
+                confirmationRequired: true,
+                challenge_id: pendingChallenge?.challengeId || "",
+                challengeId: pendingChallenge?.challengeId || "",
+                ...(pendingChallenge?.genericResponse?.recovery_code
+                  ? {
+                      recovery_code: pendingChallenge.genericResponse.recovery_code,
+                      recoveryCode: pendingChallenge.genericResponse.recovery_code,
+                    }
+                  : {}),
+              }
+            : {}),
           ...(resolvedCompanyCode
             ? {
                 company_code: resolvedCompanyCode,
