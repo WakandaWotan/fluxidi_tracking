@@ -464,83 +464,83 @@ class ChironComplianceDashboardPage extends StatelessWidget {
                   ),
                 ),
                 _HubActionCard(
-                title: _t(
-                  nl: 'Checklist & voorbereiding',
-                  en: 'Checklist & readiness',
-                  fr: 'Checklist et préparation',
-                  es: 'Checklist y preparación',
+                  title: _t(
+                    nl: 'Checklist & voorbereiding',
+                    en: 'Checklist & readiness',
+                    fr: 'Checklist et préparation',
+                    es: 'Checklist y preparación',
+                  ),
+                  subtitle: _t(
+                    nl: 'Controleer bedrijfsprofiel, chauffeurs en voertuigen voor dagelijks gebruik.',
+                    en: 'Check company profile, drivers and vehicles for day-to-day use.',
+                    fr: 'Vérifiez le profil entreprise, les chauffeurs et les véhicules pour un usage quotidien.',
+                    es: 'Revisa perfil de empresa, conductores y vehículos para el uso diario.',
+                  ),
+                  trailingIcon: Icons.fact_check_outlined,
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const _ChironReadinessChecklistPage(),
+                      ),
+                    );
+                  },
                 ),
-                subtitle: _t(
-                  nl: 'Controleer bedrijfsprofiel, chauffeurs en voertuigen voor dagelijks gebruik.',
-                  en: 'Check company profile, drivers and vehicles for day-to-day use.',
-                  fr: 'Vérifiez le profil entreprise, les chauffeurs et les véhicules pour un usage quotidien.',
-                  es: 'Revisa perfil de empresa, conductores y vehículos para el uso diario.',
+                _HubActionCard(
+                  title: _t(
+                    nl: 'Backendmeldingen',
+                    en: 'Backend messages',
+                    fr: 'Messages système',
+                    es: 'Mensajes del sistema',
+                  ),
+                  subtitle: _t(
+                    nl: 'Bekijk recente alleen-lezen meldingen uit de compliancemodule.',
+                    en: 'View recent read-only messages from the compliance module.',
+                    fr: 'Consultez les messages récents en lecture seule du module de conformité.',
+                    es: 'Consulta los mensajes recientes de solo lectura del módulo de cumplimiento.',
+                  ),
+                  note: _t(
+                    nl: 'Alleen lezen · handmatig verversen',
+                    en: 'Read-only · manual refresh',
+                    fr: 'Lecture seule · rafraîchissement manuel',
+                    es: 'Solo lectura · actualización manual',
+                  ),
+                  trailingIcon: Icons.cloud_done_outlined,
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const _ChironRemoteCompliancePage(),
+                      ),
+                    );
+                  },
                 ),
-                trailingIcon: Icons.fact_check_outlined,
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => const _ChironReadinessChecklistPage(),
-                    ),
-                  );
-                },
-              ),
-              _HubActionCard(
-                title: _t(
-                  nl: 'Backendmeldingen',
-                  en: 'Backend messages',
-                  fr: 'Messages système',
-                  es: 'Mensajes del sistema',
+                _HubActionCard(
+                  title: _t(
+                    nl: 'Lokaal rittenregister',
+                    en: 'Local ride register',
+                    fr: 'Registre local des trajets',
+                    es: 'Registro local de viajes',
+                  ),
+                  subtitle: _t(
+                    nl: 'Bekijk lokale ritregistraties van afgeronde ritten.',
+                    en: 'View local compliance records of completed rides.',
+                    fr: 'Consultez les enregistrements locaux de conformité des courses terminées.',
+                    es: 'Consulta registros locales de cumplimiento de viajes completados.',
+                  ),
+                  note: _t(
+                    nl: 'Alleen lezen',
+                    en: 'Read-only',
+                    fr: 'Lecture seule',
+                    es: 'Solo lectura',
+                  ),
+                  trailingIcon: Icons.receipt_long_outlined,
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const _ChironLocalLedgerPage(),
+                      ),
+                    );
+                  },
                 ),
-                subtitle: _t(
-                  nl: 'Bekijk recente alleen-lezen meldingen uit de compliancemodule.',
-                  en: 'View recent read-only messages from the compliance module.',
-                  fr: 'Consultez les messages récents en lecture seule du module de conformité.',
-                  es: 'Consulta los mensajes recientes de solo lectura del módulo de cumplimiento.',
-                ),
-                note: _t(
-                  nl: 'Alleen lezen · handmatig verversen',
-                  en: 'Read-only · manual refresh',
-                  fr: 'Lecture seule · rafraîchissement manuel',
-                  es: 'Solo lectura · actualización manual',
-                ),
-                trailingIcon: Icons.cloud_done_outlined,
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => const _ChironRemoteCompliancePage(),
-                    ),
-                  );
-                },
-              ),
-              _HubActionCard(
-                title: _t(
-                  nl: 'Lokaal rittenregister',
-                  en: 'Local ride register',
-                  fr: 'Registre local des trajets',
-                  es: 'Registro local de viajes',
-                ),
-                subtitle: _t(
-                  nl: 'Bekijk lokale ritregistraties van afgeronde ritten.',
-                  en: 'View local compliance records of completed rides.',
-                  fr: 'Consultez les enregistrements locaux de conformité des courses terminées.',
-                  es: 'Consulta registros locales de cumplimiento de viajes completados.',
-                ),
-                note: _t(
-                  nl: 'Alleen lezen',
-                  en: 'Read-only',
-                  fr: 'Lecture seule',
-                  es: 'Solo lectura',
-                ),
-                trailingIcon: Icons.receipt_long_outlined,
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => const _ChironLocalLedgerPage(),
-                    ),
-                  );
-                },
-              ),
               ],
             ),
           ),
@@ -880,14 +880,15 @@ class _ChironComplianceOverviewState extends State<_ChironComplianceOverview> {
                       }
                       final result =
                           await _runChironMockConnectionTestViaBooking(
-                        tenantId: scope.tenantId,
-                        companyId: scope.companyId,
-                        environment: ChironConnectionEnvironment.test,
-                      );
+                            tenantId: scope.tenantId,
+                            companyId: scope.companyId,
+                            environment: ChironConnectionEnvironment.test,
+                          );
                       await refreshStatus();
                       if (!result.ok) {
                         throw Exception(
-                          (result.sanitizedError ?? result.errorCode ??
+                          (result.sanitizedError ??
+                                  result.errorCode ??
                                   'connection_failed')
                               .toString(),
                         );
@@ -963,10 +964,10 @@ class _ChironComplianceOverviewState extends State<_ChironComplianceOverview> {
                       }
                       final result =
                           await _runChironMockConnectionTestViaBooking(
-                        tenantId: scope.tenantId,
-                        companyId: scope.companyId,
-                        environment: ChironConnectionEnvironment.production,
-                      );
+                            tenantId: scope.tenantId,
+                            companyId: scope.companyId,
+                            environment: ChironConnectionEnvironment.production,
+                          );
                       await refreshStatus();
                       if (!result.ok) {
                         throw Exception(
@@ -984,13 +985,11 @@ class _ChironComplianceOverviewState extends State<_ChironComplianceOverview> {
                       }
                       final current =
                           backendChironConnectionStatusNotifier.value;
-                      final updated =
-                          await saveBackendChironConnectionStatus(
+                      final updated = await saveBackendChironConnectionStatus(
                         tenantId: scope.tenantId,
                         companyId: scope.companyId,
                         enabled: current?.enabled ?? true,
-                        environment:
-                            ChironConnectionEnvironment.production,
+                        environment: ChironConnectionEnvironment.production,
                         region: current?.region.isNotEmpty == true
                             ? current!.region
                             : ChironRegionScope.flanders,
@@ -1528,7 +1527,6 @@ class _ChironHubAdvancedDiagnosticsSectionState
     );
   }
 }
-
 
 Uri _chironBookingScopedEndpoint(
   String path, {
@@ -2363,30 +2361,38 @@ class _ChironTestflowResetConfirmDialogState<T>
       es: '¿Reiniciar el flujo de prueba de Chiron?',
     );
     final body = _t(
-      nl: 'De voortgang van de acceptatietest wordt teruggezet naar nul. '
+      nl:
+          'De voortgang van de acceptatietest wordt teruggezet naar nul. '
           'Productie wordt uitgeschakeld en de Chiron-testomgeving wordt '
           'opnieuw geactiveerd. Uw testgegevens en geslaagde OAuth2-verbinding '
           'blijven bewaard.',
-      en: 'Acceptance-test progress will be reset to zero. Production is '
+      en:
+          'Acceptance-test progress will be reset to zero. Production is '
           'disabled and the Chiron test environment is re-activated. Your '
           'test credentials and successful OAuth2 connection remain intact.',
-      fr: 'La progression du test d’acceptation sera remise à zéro. La '
+      fr:
+          'La progression du test d’acceptation sera remise à zéro. La '
           'production est désactivée et l’environnement de test Chiron est '
           'réactivé. Vos identifiants de test et votre connexion OAuth2 '
           'réussie sont conservés.',
-      es: 'El progreso de la prueba de aceptación se restablece a cero. Se '
+      es:
+          'El progreso de la prueba de aceptación se restablece a cero. Se '
           'desactiva la producción y se reactiva el entorno de prueba de '
           'Chiron. Sus credenciales de prueba y la conexión OAuth2 exitosa '
           'se mantienen.',
     );
     final preconditionText = _t(
-      nl: 'Om een nieuwe Chiron-acceptatietest te starten, wordt productie '
+      nl:
+          'Om een nieuwe Chiron-acceptatietest te starten, wordt productie '
           'uitgeschakeld en wordt de testomgeving opnieuw geactiveerd.',
-      en: 'To start a new Chiron acceptance test, production is disabled and '
+      en:
+          'To start a new Chiron acceptance test, production is disabled and '
           'the test environment is re-activated.',
-      fr: 'Pour lancer un nouveau test d’acceptation Chiron, la production '
+      fr:
+          'Pour lancer un nouveau test d’acceptation Chiron, la production '
           'est désactivée et l’environnement de test est réactivé.',
-      es: 'Para iniciar una nueva prueba de aceptación de Chiron, se '
+      es:
+          'Para iniciar una nueva prueba de aceptación de Chiron, se '
           'desactiva la producción y se reactiva el entorno de prueba.',
     );
     final cancelLabel = _t(
@@ -2410,14 +2416,18 @@ class _ChironTestflowResetConfirmDialogState<T>
     final errorLabel = _errorCode == null
         ? null
         : _t(
-            nl: 'Testflow resetten is niet gelukt. '
+            nl:
+                'Testflow resetten is niet gelukt. '
                 'De backend gaf: ${_errorCode!}. '
                 'Probeer het opnieuw of neem contact op met support.',
-            en: 'The testflow could not be reset. Backend reported: '
+            en:
+                'The testflow could not be reset. Backend reported: '
                 '${_errorCode!}. Please try again or contact support.',
-            fr: 'La réinitialisation du flux de test a échoué. Le backend a '
+            fr:
+                'La réinitialisation du flux de test a échoué. Le backend a '
                 'répondu : ${_errorCode!}. Réessayez ou contactez le support.',
-            es: 'No se pudo reiniciar el flujo de prueba. El backend '
+            es:
+                'No se pudo reiniciar el flujo de prueba. El backend '
                 'respondió: ${_errorCode!}. Vuelve a intentarlo o contacta '
                 'con soporte.',
           );
@@ -2479,11 +2489,7 @@ class _ChironTestflowResetConfirmDialogState<T>
               const SizedBox(height: 12),
               Text(
                 body,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: bodyColor,
-                  height: 1.35,
-                ),
+                style: TextStyle(fontSize: 14, color: bodyColor, height: 1.35),
               ),
               if (widget.productionActive) ...[
                 const SizedBox(height: 12),
@@ -2496,9 +2502,7 @@ class _ChironTestflowResetConfirmDialogState<T>
                   decoration: BoxDecoration(
                     color: warningBg,
                     borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: warningColor.withOpacity(0.55),
-                    ),
+                    border: Border.all(color: warningColor.withOpacity(0.55)),
                   ),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -2540,11 +2544,7 @@ class _ChironTestflowResetConfirmDialogState<T>
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(
-                        Icons.error_outline,
-                        size: 20,
-                        color: dangerColor,
-                      ),
+                      Icon(Icons.error_outline, size: 20, color: dangerColor),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
@@ -2576,10 +2576,7 @@ class _ChironTestflowResetConfirmDialogState<T>
                     const SizedBox(width: 12),
                     Text(
                       busyLabel,
-                      style: TextStyle(
-                        color: subduedColor,
-                        fontSize: 13,
-                      ),
+                      style: TextStyle(color: subduedColor, fontSize: 13),
                     ),
                   ],
                 ),
@@ -2639,7 +2636,6 @@ class _ChironTestflowResetConfirmDialogState<T>
     );
   }
 }
-
 
 class _ChironTestAccessCard extends StatefulWidget {
   const _ChironTestAccessCard({required this.lang});
@@ -3163,7 +3159,7 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
         lang: lang,
         productionActive:
             backendChironConnectionStatusNotifier.value?.productionEnabled ??
-                false,
+            false,
         onReset: () async {
           return _resetChironTestflowViaBooking(
             tenantId: scope.tenantId,
@@ -3374,19 +3370,19 @@ class _ChironTestAccessCardState extends State<_ChironTestAccessCard> {
                             es: 'Producción activa',
                           )
                         : (backendStatus?.environment ==
-                                ChironConnectionEnvironment.test
-                            ? _t(
-                                nl: 'Testomgeving actief',
-                                en: 'Test environment active',
-                                fr: 'Environnement de test actif',
-                                es: 'Entorno de prueba activo',
-                              )
-                            : _t(
-                                nl: 'Productie geblokkeerd',
-                                en: 'Production blocked',
-                                fr: 'Production bloquée',
-                                es: 'Producción bloqueada',
-                              )),
+                                  ChironConnectionEnvironment.test
+                              ? _t(
+                                  nl: 'Testomgeving actief',
+                                  en: 'Test environment active',
+                                  fr: 'Environnement de test actif',
+                                  es: 'Entorno de prueba activo',
+                                )
+                              : _t(
+                                  nl: 'Productie geblokkeerd',
+                                  en: 'Production blocked',
+                                  fr: 'Production bloquée',
+                                  es: 'Producción bloqueada',
+                                )),
                     active: true,
                     activeColor: productionEnabled
                         ? _chironSuccess
@@ -5195,8 +5191,8 @@ String _chironTechnicalReadinessScopeNote(AppLanguage lang) {
       return 'Fluxidi comprueba la conexión técnica con Chiron y los datos de viaje. Los permisos legales y el acceso oficial a Chiron siguen siendo responsabilidad del operador.';
     case AppLanguage.nl:
       return 'Fluxidi controleert de technische Chiron-koppeling en ritdata. Wettelijke vergunningen en officiële Chiron-toegang blijven de verantwoordelijkheid van de uitbater.';
-  case AppLanguage.de:
-    return 'Fluxidi checks the technical Chiron connection and ride data. Legal permits and official Chiron access remain the operator\'s responsibility.';
+    case AppLanguage.de:
+      return 'Fluxidi checks the technical Chiron connection and ride data. Legal permits and official Chiron access remain the operator\'s responsibility.';
   }
 }
 
@@ -5210,8 +5206,8 @@ String _companyChecklistScopeNote(AppLanguage lang) {
       return 'Esta puntuación cubre solo perfil de empresa, conductores y vehículos. Los documentos opcionales se siguen por separado abajo y no bloquean la preparación operativa.';
     case AppLanguage.nl:
       return 'Deze score geldt alleen voor bedrijfsprofiel, chauffeurs en voertuigen. Optionele documenten staan apart hieronder en blokkeren de operationele gereedheid niet.';
-  case AppLanguage.de:
-    return 'This score covers company profile, drivers and vehicles only. Optional documents are tracked separately below and do not block operational readiness.';
+    case AppLanguage.de:
+      return 'This score covers company profile, drivers and vehicles only. Optional documents are tracked separately below and do not block operational readiness.';
   }
 }
 
@@ -5225,8 +5221,8 @@ String _companyChecklistOptionalDocumentsNote(AppLanguage lang) {
       return 'Los documentos son opcionales y útiles para el seguimiento, el control de vencimientos y las revisiones. No bloquean la preparación operativa diaria.';
     case AppLanguage.nl:
       return 'Documenten zijn optioneel en nuttig voor opvolging, vervaldatums en controles. Ze blokkeren de operationele gereedheid voor dagelijks gebruik niet.';
-  case AppLanguage.de:
-    return 'Documents are optional and useful for follow-up, expiry tracking and controls. They do not block daily operational readiness.';
+    case AppLanguage.de:
+      return 'Documents are optional and useful for follow-up, expiry tracking and controls. They do not block daily operational readiness.';
   }
 }
 
@@ -8194,6 +8190,7 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
       animation: Listenable.merge([
         appLanguageNotifier,
         companyProfileNotifier,
+        activeCompanySessionNotifier,
         localBackendBusinessProfileNotifier,
         localBackendTaxProfileNotifier,
         vehiclesNotifier,
@@ -8322,7 +8319,6 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
           hasContactEmails,
           hasTaxProfile,
         ];
-        final companyFieldsComplete = companyChecks.every((check) => check);
         final driverChecks = <bool>[
           driverCount > 0,
           activeDriverCount > 0,
@@ -8457,20 +8453,13 @@ class _ChironReadinessChecklistPage extends StatelessWidget {
           ));
         }
 
+        final serverPaired = hasServerConfirmedCompanyPairing(
+          profile: profile,
+          session: activeCompanySessionNotifier.value,
+        );
         final companyStatusLabel = profile == null
             ? ''
-            : profile.isSuspended
-            ? profile.verificationBadgeLabel(_lang)
-            : profile.isVerified
-            ? profile.verificationBadgeLabel(_lang)
-            : companyFieldsComplete
-            ? _t(
-                nl: 'Compleet · verificatie openstaand',
-                en: 'Complete · verification pending',
-                fr: 'Complet · vérification en attente',
-                es: 'Completo · verificación pendiente',
-              )
-            : profile.verificationBadgeLabel(_lang);
+            : profile.verificationBadgeLabel(_lang, serverPaired: serverPaired);
         final technicalAttention = <({String text, bool critical})>[
           ...companyAttention,
           ...driverAttention,
@@ -9403,9 +9392,9 @@ Uri _chironBookingReadonlyEndpoint(
       params[entry.key] = entry.value;
     }
   }
-  return Uri.parse('${appConfig.bookingBaseUrl}$path').replace(
-    queryParameters: params,
-  );
+  return Uri.parse(
+    '${appConfig.bookingBaseUrl}$path',
+  ).replace(queryParameters: params);
 }
 
 class _ChironScoreSummaryCounts {
@@ -11244,7 +11233,9 @@ class _RemoteComplianceEventsSectionState
     }
   }
 
-  String _authoritativeSyncStateLabel(ChironSyncStatusPresentation presentation) {
+  String _authoritativeSyncStateLabel(
+    ChironSyncStatusPresentation presentation,
+  ) {
     switch (presentation.authoritativeLabelKey) {
       case 'synced':
         return _t(
@@ -13723,9 +13714,7 @@ class _LocalComplianceLedgerSectionState
     // Resolve the reader in initState so test factories set before navigation
     // are honored (field initializers can race with test setup ordering).
     _reader = ComplianceLedgerReader.create();
-    debugPrint(
-      '[LOCAL_RIDE_REGISTER][READER] type=${_reader.runtimeType}',
-    );
+    debugPrint('[LOCAL_RIDE_REGISTER][READER] type=${_reader.runtimeType}');
     _loadCoordinator = ChironContextLoadCoordinator(
       listenables: <Listenable>[
         activeCompanySessionNotifier,
@@ -13763,10 +13752,7 @@ class _LocalComplianceLedgerSectionState
       if (!mounted) return;
       if (_isLoading && _result == null) {
         debugPrint('[LOCAL_RIDE_REGISTER][UI_LOAD] error=hard_deadline');
-        _forceTerminal(
-          error: 'load_deadline',
-          backendError: 'load_deadline',
-        );
+        _forceTerminal(error: 'load_deadline', backendError: 'load_deadline');
       }
     });
   }
@@ -13895,9 +13881,7 @@ class _LocalComplianceLedgerSectionState
       final code = complianceLedgerLooksLikeLockError(err)
           ? 'local_file_lock'
           : 'load_failed';
-      debugPrint(
-        '[LOCAL_RIDE_REGISTER][UI_LOAD] gen=$gen error=$code',
-      );
+      debugPrint('[LOCAL_RIDE_REGISTER][UI_LOAD] gen=$gen error=$code');
       if (!_mayApply(gen)) return;
       setState(() {
         _isLoading = false;
@@ -13921,7 +13905,9 @@ class _LocalComplianceLedgerSectionState
         }
       });
     } finally {
-      if (mounted && _refreshBusy && _loadCoordinator.shouldApplyGeneration(gen)) {
+      if (mounted &&
+          _refreshBusy &&
+          _loadCoordinator.shouldApplyGeneration(gen)) {
         setState(() => _refreshBusy = false);
       }
     }
@@ -16844,10 +16830,7 @@ class _LocalComplianceLedgerSectionState
                       fr: 'Chargement du contexte entreprise…',
                       es: 'Cargando contexto de empresa…',
                     ),
-                    style: TextStyle(
-                      color: _chironTextSecondary,
-                      fontSize: 12,
-                    ),
+                    style: TextStyle(color: _chironTextSecondary, fontSize: 12),
                   );
                 }
 

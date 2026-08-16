@@ -1154,7 +1154,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               enabled: _chironEnabled,
             ),
             style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
-          )
+          ),
         ],
       ),
     );
@@ -1521,7 +1521,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       _backendCountryCtrl.text = normalizedCountryCode;
     }
     _backendPhoneCtrl.text = p.phone;
-    _backendEmailCtrl.text = p.email;
+    _backendEmailCtrl.text = resolvePrimaryCompanyContactEmail(
+      backend: p,
+      local: companyProfileNotifier.value,
+    );
     _backendWebsiteCtrl.text = p.website;
     _backendBookingEmailCtrl.text = p.bookingEmail;
     _publicLogoUrlCtrl.text = p.publicLogoUrl;
@@ -1873,6 +1876,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       country: pick(local.country, server.country),
       phone: pick(local.phone, server.phone),
       email: pick(local.email, server.email),
+      companyEmail: pick(local.companyEmail, server.companyEmail),
+      supportEmail: pick(local.supportEmail, server.supportEmail),
+      notificationEmail: pick(
+        local.notificationEmail,
+        server.notificationEmail,
+      ),
       website: pick(local.website, server.website),
       bookingEmail: pick(local.bookingEmail, server.bookingEmail),
       publicLogoUrl: pick(local.publicLogoUrl, server.publicLogoUrl),
@@ -2357,9 +2366,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return false;
   }
 
-  List<Map<String, dynamic>> _mollieActiveTerminalList() => _mollieTerminalList()
-      .where((t) => !_isMollieTerminalExcluded(t) && !_isMollieTerminalForgotten(t))
-      .toList(growable: false);
+  List<Map<String, dynamic>> _mollieActiveTerminalList() =>
+      _mollieTerminalList()
+          .where(
+            (t) =>
+                !_isMollieTerminalExcluded(t) && !_isMollieTerminalForgotten(t),
+          )
+          .toList(growable: false);
 
   List<Map<String, dynamic>> _mollieExcludedTerminalList() =>
       _mollieTerminalList()
@@ -2596,7 +2609,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   Future<void> _unlinkMollieTerminal(Map<String, dynamic> terminal) async {
     final terminalId = (terminal['id'] ?? '').toString().trim();
     if (terminalId.isEmpty || _mollieTerminalLinkBusyId != null) return;
-    final scope = _strictSettingsScopeForAction(action: 'unlink_mollie_terminal');
+    final scope = _strictSettingsScopeForAction(
+      action: 'unlink_mollie_terminal',
+    );
     if (scope == null) return;
     setState(() => _mollieTerminalLinkBusyId = terminalId);
     try {
@@ -2645,7 +2660,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   Future<void> _relinkMollieTerminal(Map<String, dynamic> terminal) async {
     final terminalId = (terminal['id'] ?? '').toString().trim();
     if (terminalId.isEmpty || _mollieTerminalLinkBusyId != null) return;
-    final scope = _strictSettingsScopeForAction(action: 'relink_mollie_terminal');
+    final scope = _strictSettingsScopeForAction(
+      action: 'relink_mollie_terminal',
+    );
     if (scope == null) return;
     setState(() => _mollieTerminalLinkBusyId = terminalId);
     try {
@@ -2691,16 +2708,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(
-          mollieTerminalLinkCopy(
-            key: 'forget_confirm_title',
-            lang: _lang.name,
-          ),
+          mollieTerminalLinkCopy(key: 'forget_confirm_title', lang: _lang.name),
         ),
         content: Text(
-          mollieTerminalLinkCopy(
-            key: 'forget_confirm_body',
-            lang: _lang.name,
-          ),
+          mollieTerminalLinkCopy(key: 'forget_confirm_body', lang: _lang.name),
         ),
         actions: [
           TextButton(
@@ -2722,7 +2733,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       ),
     );
     if (confirmed != true || !mounted) return;
-    final scope = _strictSettingsScopeForAction(action: 'forget_mollie_terminal');
+    final scope = _strictSettingsScopeForAction(
+      action: 'forget_mollie_terminal',
+    );
     if (scope == null) return;
     setState(() => _mollieTerminalLinkBusyId = terminalId);
     try {
@@ -2860,24 +2873,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             content: Text(
               permissionMissing
                   ? _t(
-                      nl:
-                          'Mollie is gekoppeld. Verbind Mollie opnieuw om de actuele accountstatus te kunnen controleren.',
-                      en:
-                          'Mollie is connected. Reconnect Mollie to verify the current account status.',
-                      fr:
-                          'Mollie est connecté. Reconnectez Mollie pour vérifier le statut actuel du compte.',
-                      es:
-                          'Mollie está conectado. Vuelve a conectar Mollie para verificar el estado actual de la cuenta.',
+                      nl: 'Mollie is gekoppeld. Verbind Mollie opnieuw om de actuele accountstatus te kunnen controleren.',
+                      en: 'Mollie is connected. Reconnect Mollie to verify the current account status.',
+                      fr: 'Mollie est connecté. Reconnectez Mollie pour vérifier le statut actuel du compte.',
+                      es: 'Mollie está conectado. Vuelve a conectar Mollie para verificar el estado actual de la cuenta.',
                     )
                   : _t(
-                      nl:
-                          'Kon Mollie-status niet live verifiëren. De laatst bekende status wordt getoond.',
-                      en:
-                          'Could not verify the live Mollie status. Showing the last known status.',
-                      fr:
-                          'Impossible de vérifier le statut Mollie en direct. Le dernier statut connu est affiché.',
-                      es:
-                          'No se pudo verificar el estado de Mollie en vivo. Se muestra el último estado conocido.',
+                      nl: 'Kon Mollie-status niet live verifiëren. De laatst bekende status wordt getoond.',
+                      en: 'Could not verify the live Mollie status. Showing the last known status.',
+                      fr: 'Impossible de vérifier le statut Mollie en direct. Le dernier statut connu est affiché.',
+                      es: 'No se pudo verificar el estado de Mollie en vivo. Se muestra el último estado conocido.',
                     ),
             ),
           ),
@@ -4008,8 +4013,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   /// (missing onboarding.read). Distinct from a transient lookup failure.
   bool _mollieOnboardingPermissionMissing() {
     final live = (_mollieConnectStatus?['status_check_error'] ?? '').toString();
-    final last =
-        (_mollieConnectStatus?['last_status_check_error'] ?? '').toString();
+    final last = (_mollieConnectStatus?['last_status_check_error'] ?? '')
+        .toString();
     return live == 'mollie_onboarding_permission_missing' ||
         last == 'mollie_onboarding_permission_missing';
   }
@@ -4093,7 +4098,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     final _SetupStatus cardStatus;
     switch (accountConnection) {
       case MollieAccountConnection.disconnected:
-        cardStatus = demoActive ? _SetupStatus.attention : _SetupStatus.incomplete;
+        cardStatus = demoActive
+            ? _SetupStatus.attention
+            : _SetupStatus.incomplete;
         break;
       case MollieAccountConnection.reconnectRequired:
         cardStatus = _SetupStatus.attention;
@@ -4279,16 +4286,16 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(
                 _t(
-                  nl:
-                      'Mollie is gekoppeld. Verbind Mollie opnieuw om de actuele accountstatus te kunnen controleren.',
-                  en:
-                      'Mollie is connected. Reconnect Mollie to verify the current account status.',
-                  fr:
-                      'Mollie est connecté. Reconnectez Mollie pour vérifier le statut actuel du compte.',
-                  es:
-                      'Mollie está conectado. Vuelve a conectar Mollie para verificar el estado actual de la cuenta.',
+                  nl: 'Mollie is gekoppeld. Verbind Mollie opnieuw om de actuele accountstatus te kunnen controleren.',
+                  en: 'Mollie is connected. Reconnect Mollie to verify the current account status.',
+                  fr: 'Mollie est connecté. Reconnectez Mollie pour vérifier le statut actuel du compte.',
+                  es: 'Mollie está conectado. Vuelve a conectar Mollie para verificar el estado actual de la cuenta.',
                 ),
-                style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
+                style: TextStyle(
+                  color: _textMuted,
+                  fontSize: 11.5,
+                  height: 1.35,
+                ),
               ),
             )
           else if (_mollieStatusCheckFailed())
@@ -4301,7 +4308,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   fr: 'La dernière vérification Mollie en direct a échoué. Le statut ci-dessus est le dernier statut connu et confirmé.',
                   es: 'No se pudo completar la última verificación en vivo de Mollie. El estado anterior es el último estado confirmado conocido.',
                 ),
-                style: TextStyle(color: _textMuted, fontSize: 11.5, height: 1.35),
+                style: TextStyle(
+                  color: _textMuted,
+                  fontSize: 11.5,
+                  height: 1.35,
+                ),
               ),
             ),
           if (_mollieConnectStatusError != null)
@@ -4444,7 +4455,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     // Server-authoritative only. Never unlock sandbox from a client dart-define.
     final allowSandbox =
         _billitStatus?['company_sandbox_oauth_allowed'] == true;
-    final productionConnectEnabled = env.toLowerCase() == 'production' &&
+    final productionConnectEnabled =
+        env.toLowerCase() == 'production' &&
         _billitStatus?['customer_connect_allowed'] == true;
     return resolveBillitCustomerConnectPresentation(
       configured: _billitStatus?['configured'] == true,
@@ -5175,10 +5187,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           if (excludedTerminals.isNotEmpty) ...[
             const SizedBox(height: 14),
             Text(
-              mollieTerminalLinkCopy(
-                key: 'unlinked_section',
-                lang: _lang.name,
-              ),
+              mollieTerminalLinkCopy(key: 'unlinked_section', lang: _lang.name),
               style: TextStyle(
                 color: _textPrimary,
                 fontSize: 12.5,
@@ -5304,8 +5313,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             es: 'desvinculado',
           )
         : (status.isNotEmpty
-            ? status
-            : _t(nl: 'active', en: 'active', fr: 'actif', es: 'activo'));
+              ? status
+              : _t(nl: 'active', en: 'active', fr: 'actif', es: 'activo'));
     final detailParts = <String>[
       if (id.isNotEmpty) id,
       statusLabel,
@@ -5388,7 +5397,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                             ? const SizedBox(
                                 width: 14,
                                 height: 14,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(Icons.link_rounded, size: 16),
                         label: Text(
@@ -5402,7 +5413,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         onPressed: busy || terminalId.isEmpty
                             ? null
                             : () => _forgetMollieTerminal(terminal),
-                        icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                        icon: const Icon(
+                          Icons.delete_outline_rounded,
+                          size: 16,
+                        ),
                         label: Text(
                           mollieTerminalLinkCopy(
                             key: 'forget',
@@ -5638,6 +5652,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   }
 
   BackendBusinessProfile _backendBusinessProfileFromForm() {
+    final cached = localBackendBusinessProfileNotifier.value;
     return BackendBusinessProfile(
       companyName: _backendCompanyNameCtrl.text.trim(),
       legalName: _backendLegalNameCtrl.text.trim(),
@@ -5649,6 +5664,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       country: _backendCountryCtrl.text.trim(),
       phone: _backendPhoneCtrl.text.trim(),
       email: _backendEmailCtrl.text.trim(),
+      companyEmail: cached?.companyEmail ?? '',
+      supportEmail: cached?.supportEmail ?? '',
+      notificationEmail: cached?.notificationEmail ?? '',
       website: _backendWebsiteCtrl.text.trim(),
       bookingEmail: _backendBookingEmailCtrl.text.trim(),
       publicLogoUrl: _publicLogoUrlCtrl.text.trim(),
@@ -5737,6 +5755,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         );
       });
       unawaited(updateLocalBackendBusinessProfileCache(merged));
+      final syncedEmail = resolvePrimaryCompanyContactEmail(backend: merged);
+      if (syncedEmail.isNotEmpty) {
+        unawaited(
+          CompanySessionStore.instance.updatePrimaryContactEmailFromBackend(
+            syncedEmail,
+          ),
+        );
+      }
       return true;
     } catch (e) {
       if (!mounted) return false;
@@ -10916,138 +10942,163 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   child: ValueListenableBuilder<CompanyProfile?>(
                     valueListenable: companyProfileNotifier,
                     builder: (context, _, __) {
-                      final p = companyProfileNotifier.value;
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
+                      return ValueListenableBuilder<ActiveCompanySession?>(
+                        valueListenable: activeCompanySessionNotifier,
+                        builder: (context, session, ___) {
+                          final p = companyProfileNotifier.value;
+                          final serverPaired = hasServerConfirmedCompanyPairing(
+                            profile: p,
+                            session: session,
+                          );
+                          return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      _t(
-                                        nl: 'Bedrijfs-/tenant-ID (alleen lezen)',
-                                        en: 'Company / tenant ID (read-only)',
-                                        fr: 'ID entreprise / tenant (lecture seule)',
-                                        es: 'ID de empresa / tenant (solo lectura)',
-                                      ),
-                                      style: const TextStyle(
-                                        color: Colors.white54,
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    SelectableText(
-                                      resolvedCompanyId,
-                                      style: TextStyle(
-                                        color: _textPrimary,
-                                        fontFamily: 'monospace',
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              IconButton(
-                                tooltip: _t(
-                                  nl: 'ID kopiëren',
-                                  en: 'Copy ID',
-                                  fr: 'Copier l ID',
-                                  es: 'Copiar ID',
-                                ),
-                                onPressed: () async {
-                                  await Clipboard.setData(
-                                    ClipboardData(text: resolvedCompanyId),
-                                  );
-                                  if (!context.mounted) return;
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                        _t(
-                                          nl: 'Bedrijfs-ID gekopieerd.',
-                                          en: 'Company ID copied.',
-                                          fr: 'ID entreprise copie.',
-                                          es: 'ID de empresa copiado.',
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          _t(
+                                            nl: 'Bedrijfs-/tenant-ID (alleen lezen)',
+                                            en: 'Company / tenant ID (read-only)',
+                                            fr: 'ID entreprise / tenant (lecture seule)',
+                                            es: 'ID de empresa / tenant (solo lectura)',
+                                          ),
+                                          style: const TextStyle(
+                                            color: Colors.white54,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                          ),
                                         ),
+                                        const SizedBox(height: 8),
+                                        SelectableText(
+                                          resolvedCompanyId,
+                                          style: TextStyle(
+                                            color: _textPrimary,
+                                            fontFamily: 'monospace',
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip: _t(
+                                      nl: 'ID kopiëren',
+                                      en: 'Copy ID',
+                                      fr: 'Copier l ID',
+                                      es: 'Copiar ID',
+                                    ),
+                                    onPressed: () async {
+                                      await Clipboard.setData(
+                                        ClipboardData(text: resolvedCompanyId),
+                                      );
+                                      if (!context.mounted) return;
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            _t(
+                                              nl: 'Bedrijfs-ID gekopieerd.',
+                                              en: 'Company ID copied.',
+                                              fr: 'ID entreprise copie.',
+                                              es: 'ID de empresa copiado.',
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    icon: Icon(Icons.copy, color: _textMuted),
+                                  ),
+                                ],
+                              ),
+                              if (p != null) ...[
+                                const SizedBox(height: 14),
+                                Text(
+                                  _t(
+                                    nl: 'Bedrijfsstatus',
+                                    en: 'Company status',
+                                    fr: 'Statut de l’entreprise',
+                                    es: 'Estado de la empresa',
+                                  ),
+                                  style: TextStyle(
+                                    color: _textMuted,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 5,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: p.isSuspended
+                                          ? const Color(0xFF3A1010)
+                                          : p.isVerified
+                                          ? const Color(0xFF12331F)
+                                          : serverPaired
+                                          ? const Color(0xFF102433)
+                                          : const Color(0xFF2A2410),
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(
+                                        color: p.isSuspended
+                                            ? Colors.red.withOpacity(0.45)
+                                            : p.isVerified
+                                            ? const Color(
+                                                0xFF4ADE80,
+                                              ).withOpacity(0.45)
+                                            : serverPaired
+                                            ? const Color(
+                                                0xFF38BDF8,
+                                              ).withOpacity(0.45)
+                                            : _accent.withOpacity(0.55),
                                       ),
                                     ),
-                                  );
-                                },
-                                icon: Icon(Icons.copy, color: _textMuted),
-                              ),
-                            ],
-                          ),
-                          if (p != null) ...[
-                            const SizedBox(height: 14),
-                            Text(
-                              _t(
-                                nl: 'Bedrijfsstatus',
-                                en: 'Company status',
-                                fr: 'Statut de l’entreprise',
-                                es: 'Estado de la empresa',
-                              ),
-                              style: TextStyle(
-                                color: _textMuted,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 5,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: p.isSuspended
-                                      ? const Color(0xFF3A1010)
-                                      : p.isVerified
-                                      ? const Color(0xFF12331F)
-                                      : const Color(0xFF2A2410),
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: p.isSuspended
-                                        ? Colors.red.withOpacity(0.45)
-                                        : p.isVerified
-                                        ? const Color(
-                                            0xFF4ADE80,
-                                          ).withOpacity(0.45)
-                                        : _accent.withOpacity(0.55),
+                                    child: Text(
+                                      p.verificationBadgeLabel(
+                                        _lang,
+                                        serverPaired: serverPaired,
+                                      ),
+                                      style: TextStyle(
+                                        color: p.isSuspended
+                                            ? const Color(0xFFFFB4B4)
+                                            : p.isVerified
+                                            ? const Color(0xFFB8F5C8)
+                                            : serverPaired
+                                            ? const Color(0xFFBAE6FD)
+                                            : const Color(0xFFE5D4A1),
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 12,
+                                      ),
+                                    ),
                                   ),
                                 ),
-                                child: Text(
-                                  p.verificationBadgeLabel(_lang),
-                                  style: TextStyle(
-                                    color: p.isSuspended
-                                        ? const Color(0xFFFFB4B4)
-                                        : p.isVerified
-                                        ? const Color(0xFFB8F5C8)
-                                        : const Color(0xFFE5D4A1),
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 12,
+                                if (p.showsPendingVerificationNotice(
+                                  serverPaired: serverPaired,
+                                )) ...[
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    p.verificationPendingNotice(_lang),
+                                    style: TextStyle(
+                                      color: _textMuted,
+                                      fontSize: 12,
+                                      height: 1.35,
+                                    ),
                                   ),
-                                ),
-                              ),
-                            ),
-                            if (p.showsPendingVerificationNotice) ...[
-                              const SizedBox(height: 8),
-                              Text(
-                                p.verificationPendingNotice(_lang),
-                                style: TextStyle(
-                                  color: _textMuted,
-                                  fontSize: 12,
-                                  height: 1.35,
-                                ),
-                              ),
+                                ],
+                              ],
                             ],
-                          ],
-                        ],
+                          );
+                        },
                       );
                     },
                   ),

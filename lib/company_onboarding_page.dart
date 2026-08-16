@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'package:fluxidi_tracking/app_config.dart';
@@ -635,7 +637,15 @@ class _CompanyOnboardingPageState extends State<CompanyOnboardingPage> {
 
 /// Edit full local company profile; preserves [CompanyProfile.companyId] and [createdAt].
 class CompanyProfileEditPage extends StatefulWidget {
-  const CompanyProfileEditPage({super.key});
+  const CompanyProfileEditPage({
+    super.key,
+    this.fetchBusinessProfile,
+    this.saveBusinessProfile,
+  });
+
+  final Future<BackendBusinessProfile> Function()? fetchBusinessProfile;
+  final Future<BackendBusinessProfile> Function(BackendBusinessProfile profile)?
+  saveBusinessProfile;
 
   @override
   State<CompanyProfileEditPage> createState() => _CompanyProfileEditPageState();
@@ -662,6 +672,21 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
   String? _companyId;
   String? _createdAt;
   String _verificationStatus = CompanyVerificationStatus.pendingVerification;
+  String? _saveError;
+
+  Future<BackendBusinessProfile> _fetchBusinessProfile() {
+    final fetch = widget.fetchBusinessProfile;
+    if (fetch != null) return fetch();
+    return fetchBackendBusinessProfile();
+  }
+
+  Future<BackendBusinessProfile> _persistBusinessProfile(
+    BackendBusinessProfile profile,
+  ) {
+    final save = widget.saveBusinessProfile;
+    if (save != null) return save(profile);
+    return saveBackendBusinessProfile(profile);
+  }
 
   String _t({required String nl, required String en}) {
     final lang = appConfig.currentLanguage;
@@ -676,7 +701,9 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
   }
 
   Future<void> _load() async {
-    final p = await CompanySessionStore.instance.loadProfile();
+    final p =
+        companyProfileNotifier.value ??
+        await CompanySessionStore.instance.loadProfile();
     if (!mounted) return;
     if (p == null) {
       setState(() => _loading = false);
@@ -687,7 +714,6 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
     _verificationStatus = p.verificationStatus;
     _companyCtrl.text = p.companyName;
     _ownerCtrl.text = p.ownerName;
-    _emailCtrl.text = p.email;
     _phoneCtrl.text = p.phone;
     _vatCtrl.text = p.vatNumber;
     _addressCtrl.text = p.addressLine;
@@ -699,6 +725,19 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
     _bookingEmailCtrl.text = p.bookingEmail;
     _notificationEmailCtrl.text = p.notificationEmail;
     _country = p.countryCode.isNotEmpty ? p.countryCode : 'BE';
+    BackendBusinessProfile? backend = localBackendBusinessProfileNotifier.value;
+    try {
+      backend = await _fetchBusinessProfile();
+      localBackendBusinessProfileNotifier.value = backend;
+      unawaited(updateLocalBackendBusinessProfileCache(backend));
+    } catch (_) {
+      backend = localBackendBusinessProfileNotifier.value ?? backend;
+    }
+    if (!mounted) return;
+    _emailCtrl.text = resolvePrimaryCompanyContactEmail(
+      backend: backend,
+      local: p,
+    );
     setState(() => _loading = false);
   }
 
@@ -723,27 +762,60 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
   Future<void> _save() async {
     if (_saving || _companyId == null || _createdAt == null) return;
     if (!_formKey.currentState!.validate()) return;
-    setState(() => _saving = true);
-    final next = CompanyProfile(
-      companyId: _companyId!,
-      companyName: _companyCtrl.text.trim(),
-      ownerName: _ownerCtrl.text.trim(),
-      email: _emailCtrl.text.trim(),
-      phone: _phoneCtrl.text.trim(),
-      vatNumber: _vatCtrl.text.trim(),
-      addressLine: _addressCtrl.text.trim(),
-      postalCode: _postalCtrl.text.trim(),
-      city: _cityCtrl.text.trim(),
-      countryCode: _country,
-      companyEmail: _companyEmailCtrl.text.trim(),
-      supportEmail: _supportEmailCtrl.text.trim(),
-      billingEmail: _billingEmailCtrl.text.trim(),
-      bookingEmail: _bookingEmailCtrl.text.trim(),
-      notificationEmail: _notificationEmailCtrl.text.trim(),
-      createdAt: _createdAt!,
-      updatedAt: DateTime.now().toUtc().toIso8601String(),
-      isActive: true,
-      verificationStatus: _verificationStatus,
+    setState(() {
+      _saving = true;
+      _saveError = null;
+    });
+    final draftEmail = _emailCtrl.text.trim();
+    final result = await savePrimaryCompanyContactEmail(
+      email: draftEmail,
+      fetchCurrent: _fetchBusinessProfile,
+      persist: _persistBusinessProfile,
+    );
+    if (!mounted) return;
+    if (!result.ok || result.saved == null) {
+      _emailCtrl.text = result.draftEmail;
+      setState(() {
+        _saving = false;
+        _saveError = _t(
+          nl: 'Opslaan/synchroniseren niet gelukt. Controleer de verbinding en probeer opnieuw.',
+          en: 'Save/sync failed. Check the connection and try again.',
+        );
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_saveError!)));
+      return;
+    }
+    final syncedEmail = resolvePrimaryCompanyContactEmail(
+      backend: result.saved,
+      local: null,
+    );
+    localBackendBusinessProfileNotifier.value = result.saved;
+    unawaited(updateLocalBackendBusinessProfileCache(result.saved));
+    final next = applyPrimaryCompanyContactEmailToLocal(
+      CompanyProfile(
+        companyId: _companyId!,
+        companyName: _companyCtrl.text.trim(),
+        ownerName: _ownerCtrl.text.trim(),
+        email: syncedEmail.isNotEmpty ? syncedEmail : draftEmail,
+        phone: _phoneCtrl.text.trim(),
+        vatNumber: _vatCtrl.text.trim(),
+        addressLine: _addressCtrl.text.trim(),
+        postalCode: _postalCtrl.text.trim(),
+        city: _cityCtrl.text.trim(),
+        countryCode: _country,
+        companyEmail: _companyEmailCtrl.text.trim(),
+        supportEmail: _supportEmailCtrl.text.trim(),
+        billingEmail: _billingEmailCtrl.text.trim(),
+        bookingEmail: _bookingEmailCtrl.text.trim(),
+        notificationEmail: _notificationEmailCtrl.text.trim(),
+        createdAt: _createdAt!,
+        updatedAt: DateTime.now().toUtc().toIso8601String(),
+        isActive: true,
+        verificationStatus: _verificationStatus,
+      ),
+      syncedEmail.isNotEmpty ? syncedEmail : draftEmail,
     );
     await CompanySessionStore.instance.updateSavedProfile(
       next,
@@ -942,6 +1014,13 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
                     _t(nl: 'Meldingen e-mail', en: 'Notification email'),
                   ),
                 ),
+                if (_saveError != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    _saveError!,
+                    style: const TextStyle(color: Color(0xFFFFB4B4)),
+                  ),
+                ],
                 const SizedBox(height: 20),
                 FilledButton(
                   onPressed: _saving ? null : _save,

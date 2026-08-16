@@ -1560,28 +1560,41 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     );
   }
 
-  ({Color bg, Color border, Color text}) _statusColors(CompanyProfile profile) {
+  ({Color bg, Color border, Color text}) _statusColors(
+    CompanyProfile profile, {
+    required bool serverPaired,
+  }) {
     return (
       bg: profile.isSuspended
           ? const Color(0xFF3A1010)
           : profile.isVerified
           ? const Color(0xFF12331F)
+          : serverPaired
+          ? const Color(0xFF102433)
           : const Color(0xFF2A2410),
       border: profile.isSuspended
           ? Colors.red.withOpacity(0.45)
           : profile.isVerified
           ? const Color(0xFF4ADE80).withOpacity(0.45)
+          : serverPaired
+          ? const Color(0xFF38BDF8).withOpacity(0.45)
           : kFluxidiYellow.withOpacity(0.55),
       text: profile.isSuspended
           ? const Color(0xFFFFB4B4)
           : profile.isVerified
           ? const Color(0xFFB8F5C8)
+          : serverPaired
+          ? const Color(0xFFBAE6FD)
           : const Color(0xFFE5D4A1),
     );
   }
 
   Widget _statusPill(CompanyProfile profile, {bool compact = false}) {
-    final colors = _statusColors(profile);
+    final serverPaired = hasServerConfirmedCompanyPairing(
+      profile: profile,
+      session: activeCompanySessionNotifier.value,
+    );
+    final colors = _statusColors(profile, serverPaired: serverPaired);
     final fontSize = compact ? 10.5 : 12.0;
     return Container(
       padding: EdgeInsets.symmetric(
@@ -1594,7 +1607,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         border: Border.all(color: colors.border),
       ),
       child: Text(
-        profile.verificationBadgeLabel(appConfig.currentLanguage),
+        profile.verificationBadgeLabel(
+          appConfig.currentLanguage,
+          serverPaired: serverPaired,
+        ),
         style: TextStyle(
           color: colors.text,
           fontWeight: FontWeight.w700,
@@ -3263,7 +3279,12 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                       ),
                     ),
                     if (!hasPublicCompanyCode &&
-                        profile.showsPendingVerificationNotice) ...[
+                        profile.showsPendingVerificationNotice(
+                          serverPaired: hasServerConfirmedCompanyPairing(
+                            profile: profile,
+                            session: activeCompanySessionNotifier.value,
+                          ),
+                        )) ...[
                       const SizedBox(height: 6),
                       Text(
                         profile.verificationPendingNotice(

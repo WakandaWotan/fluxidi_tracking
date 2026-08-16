@@ -182,8 +182,12 @@ class CompanyProfile {
   bool get isPendingVerification =>
       verificationStatus == CompanyVerificationStatus.pendingVerification;
 
-  /// Short label for dashboard/settings badges (not proof of legal verification).
-  String verificationBadgeLabel(AppLanguage lang) {
+  /// Short label for dashboard/settings badges.
+  ///
+  /// [serverPaired] is a server-confirmed company session (token + matching
+  /// company scope). It is not Mollie, Chiron, or subscription state.
+  /// `Geverifieerd` is only shown for an explicit [verified] backend fact.
+  String verificationBadgeLabel(AppLanguage lang, {bool serverPaired = false}) {
     if (isSuspended) {
       switch (lang) {
         case AppLanguage.nl:
@@ -212,6 +216,20 @@ class CompanyProfile {
           return 'Suspended';
       }
     }
+    if (serverPaired) {
+      switch (lang) {
+        case AppLanguage.nl:
+          return 'Gekoppeld';
+        case AppLanguage.en:
+          return 'Linked';
+        case AppLanguage.fr:
+          return 'Associé';
+        case AppLanguage.es:
+          return 'Vinculado';
+        case AppLanguage.de:
+          return 'Gekoppelt';
+      }
+    }
     switch (lang) {
       case AppLanguage.nl:
         return 'Niet geverifieerd';
@@ -226,8 +244,11 @@ class CompanyProfile {
     }
   }
 
-  /// Shown under the badge for provisional tenants ([draft] / [pendingVerification] / unknown non-terminal).
-  bool get showsPendingVerificationNotice => !isVerified && !isSuspended;
+  /// Shown only for a truly local, unpaired company. Old
+  /// `pending_verification` JSON stays readable but does not show this
+  /// blocking copy after a proven server pairing.
+  bool showsPendingVerificationNotice({bool serverPaired = false}) =>
+      !isVerified && !isSuspended && !serverPaired;
 
   String verificationPendingNotice(AppLanguage lang) {
     switch (lang) {
@@ -1450,7 +1471,8 @@ class CompanySessionStore {
     final safeName = companyName.trim().isEmpty
         ? (safeCode ?? resolvedCompanyId)
         : companyName.trim();
-    final profile = CompanyProfile(
+    final existingLocal = await loadProfile();
+    final drafted = CompanyProfile(
       companyId: resolvedCompanyId,
       companyName: safeName,
       ownerName: '',
@@ -1470,6 +1492,11 @@ class CompanySessionStore {
       updatedAt: nowIso,
       isActive: true,
       verificationStatus: CompanyVerificationStatus.pendingVerification,
+    );
+    final profile = mergeCompanyProfileForVerifiedPairing(
+      incoming: drafted,
+      existingLocal: existingLocal,
+      existingBackend: localBackendBusinessProfileNotifier.value,
     );
     await persistProfile(profile);
     final prev = await loadSession();
@@ -1559,6 +1586,10 @@ class CompanySessionStore {
   }
 
   /// Merge into [businessSettingsNotifier] (pricing fields preserved).
+  ///
+  /// Empty incoming contact fields keep the current branding values. The
+  /// primary contact mail is never used as a silent fallback for support,
+  /// booking, or reply-to.
   void applyProfileToBusinessNotifier(CompanyProfile p) {
     final cur = businessSettingsNotifier.value;
     final addr = <String>[
@@ -1567,23 +1598,41 @@ class CompanySessionStore {
         '${p.postalCode.trim()} ${p.city.trim()}'.trim(),
       if (p.countryCode.trim().isNotEmpty) p.countryCode.trim(),
     ].join('\n');
-    final support = p.supportEmail.trim().isNotEmpty ? p.supportEmail : p.email;
-    final book = p.bookingEmail.trim().isNotEmpty ? p.bookingEmail : p.email;
-    final reply = p.notificationEmail.trim().isNotEmpty
-        ? p.notificationEmail
-        : support;
     updateBusinessSettings(
       cur.copyWith(
-        companyName: p.companyName,
-        supportEmail: support,
-        supportPhone: p.phone,
-        vatCompanyNumber: p.vatNumber,
-        address: addr,
-        bookingSender: book,
-        bookingReplyTo: reply,
-        whatsappNumber: p.phone,
+        companyName: p.companyName.trim().isNotEmpty
+            ? p.companyName
+            : cur.companyName,
+        supportEmail: p.supportEmail.trim().isNotEmpty
+            ? p.supportEmail
+            : cur.supportEmail,
+        supportPhone: p.phone.trim().isNotEmpty ? p.phone : cur.supportPhone,
+        vatCompanyNumber: p.vatNumber.trim().isNotEmpty
+            ? p.vatNumber
+            : cur.vatCompanyNumber,
+        address: addr.trim().isNotEmpty ? addr : cur.address,
+        bookingSender: p.bookingEmail.trim().isNotEmpty
+            ? p.bookingEmail
+            : cur.bookingSender,
+        bookingReplyTo: p.notificationEmail.trim().isNotEmpty
+            ? p.notificationEmail
+            : cur.bookingReplyTo,
+        whatsappNumber: p.phone.trim().isNotEmpty
+            ? p.phone
+            : cur.whatsappNumber,
       ),
     );
+  }
+
+  /// Updates only the local primary contact mail after a successful backend save.
+  Future<void> updatePrimaryContactEmailFromBackend(String email) async {
+    final current = await loadProfile();
+    if (current == null) return;
+    final next = current.copyWith(
+      email: email.trim(),
+      updatedAt: DateTime.now().toUtc().toIso8601String(),
+    );
+    await persistProfile(next);
   }
 
   /// Update profile preserving [companyId] and [createdAt].
@@ -1691,6 +1740,253 @@ String primaryContactEmailFromCompany(CompanyProfile local) {
   return local.supportEmail.trim();
 }
 
+String _firstNonEmpty(Iterable<String> values) {
+  for (final value in values) {
+    final trimmed = value.trim();
+    if (trimmed.isNotEmpty) return trimmed;
+  }
+  return '';
+}
+
+/// Server-confirmed pairing: matching active company scope plus a session token.
+/// Mollie/Chiron/subscription flags are intentionally not consulted.
+bool hasServerConfirmedCompanyPairing({
+  CompanyProfile? profile,
+  ActiveCompanySession? session,
+}) {
+  final resolvedProfile = profile ?? companyProfileNotifier.value;
+  final resolvedSession = session ?? activeCompanySessionNotifier.value;
+  if (resolvedProfile == null || resolvedSession == null) return false;
+  if (!resolvedProfile.isActive) return false;
+  final profileId = resolvedProfile.companyId.trim();
+  final sessionId = resolvedSession.companyId.trim();
+  if (profileId.isEmpty || sessionId.isEmpty || profileId != sessionId) {
+    return false;
+  }
+  return (resolvedSession.companySessionToken ?? '').trim().isNotEmpty;
+}
+
+enum CompanyLinkDisplayKind { suspended, verified, paired, localUnverified }
+
+/// Display kind for the local-company status badge.
+///
+/// [mollieLive] and [chironProductionEnabled] are accepted only so tests can
+/// prove they never change the result.
+CompanyLinkDisplayKind resolveCompanyLinkDisplayKind({
+  required CompanyProfile profile,
+  ActiveCompanySession? session,
+  bool? mollieLive,
+  bool? chironProductionEnabled,
+}) {
+  final _ = (mollieLive, chironProductionEnabled);
+  if (profile.isSuspended) return CompanyLinkDisplayKind.suspended;
+  if (profile.isVerified) return CompanyLinkDisplayKind.verified;
+  if (hasServerConfirmedCompanyPairing(profile: profile, session: session)) {
+    return CompanyLinkDisplayKind.paired;
+  }
+  return CompanyLinkDisplayKind.localUnverified;
+}
+
+/// Canonical primary company contact mail: Booking `business_profile.email`,
+/// with `companyEmail` only as a backend compatibility fallback.
+String resolvePrimaryCompanyContactEmail({
+  BackendBusinessProfile? backend,
+  CompanyProfile? local,
+}) {
+  final fromBackend = _firstNonEmpty(<String>[
+    backend?.email ?? '',
+    backend?.companyEmail ?? '',
+  ]);
+  if (fromBackend.isNotEmpty) return fromBackend;
+  return (local?.email ?? '').trim();
+}
+
+({String mijnEmail, String officialEmail}) hydratePrimaryContactEmails({
+  BackendBusinessProfile? backend,
+  CompanyProfile? local,
+}) {
+  final email = resolvePrimaryCompanyContactEmail(
+    backend: backend,
+    local: local,
+  );
+  return (mijnEmail: email, officialEmail: email);
+}
+
+/// Writes only the primary contact mail. Support, billing, booking,
+/// notification, and a distinct `companyEmail` stay untouched.
+BackendBusinessProfile applyPrimaryCompanyContactEmail(
+  BackendBusinessProfile current,
+  String email,
+) {
+  return current.copyWith(email: email.trim());
+}
+
+CompanyProfile applyPrimaryCompanyContactEmailToLocal(
+  CompanyProfile local,
+  String email,
+) {
+  return local.copyWith(email: email.trim());
+}
+
+class PrimaryCompanyContactSaveResult {
+  const PrimaryCompanyContactSaveResult._({
+    required this.ok,
+    required this.saved,
+    required this.draftEmail,
+    this.error,
+  });
+
+  factory PrimaryCompanyContactSaveResult.success({
+    required BackendBusinessProfile saved,
+    required String draftEmail,
+  }) {
+    return PrimaryCompanyContactSaveResult._(
+      ok: true,
+      saved: saved,
+      draftEmail: draftEmail,
+    );
+  }
+
+  factory PrimaryCompanyContactSaveResult.failure({
+    required String draftEmail,
+    required Object error,
+  }) {
+    return PrimaryCompanyContactSaveResult._(
+      ok: false,
+      saved: null,
+      draftEmail: draftEmail,
+      error: error,
+    );
+  }
+
+  final bool ok;
+  final BackendBusinessProfile? saved;
+  final String draftEmail;
+  final Object? error;
+
+  String get persistPath => kAdminBusinessProfilePath;
+}
+
+Future<PrimaryCompanyContactSaveResult> savePrimaryCompanyContactEmail({
+  required String email,
+  required Future<BackendBusinessProfile> Function() fetchCurrent,
+  required Future<BackendBusinessProfile> Function(
+    BackendBusinessProfile profile,
+  )
+  persist,
+}) async {
+  final draft = email.trim();
+  try {
+    final current = await fetchCurrent();
+    final next = applyPrimaryCompanyContactEmail(current, draft);
+    if (next.supportEmail != current.supportEmail ||
+        next.invoiceEmail != current.invoiceEmail ||
+        next.bookingEmail != current.bookingEmail ||
+        next.notificationEmail != current.notificationEmail ||
+        next.companyEmail != current.companyEmail) {
+      throw StateError('primary_contact_email_must_not_overwrite_other_routes');
+    }
+    final saved = await persist(next);
+    return PrimaryCompanyContactSaveResult.success(
+      saved: saved,
+      draftEmail: draft,
+    );
+  } catch (error) {
+    return PrimaryCompanyContactSaveResult.failure(
+      draftEmail: draft,
+      error: error,
+    );
+  }
+}
+
+/// Re-pair keeps existing local/backend contact fields when incoming is empty.
+CompanyProfile mergeCompanyProfileForVerifiedPairing({
+  required CompanyProfile incoming,
+  CompanyProfile? existingLocal,
+  BackendBusinessProfile? existingBackend,
+}) {
+  final sameCompany =
+      existingLocal != null &&
+      existingLocal.companyId.trim().isNotEmpty &&
+      existingLocal.companyId.trim() == incoming.companyId.trim();
+  final useBackend =
+      existingBackend != null && (sameCompany || existingLocal == null);
+
+  String pick(String incomingValue, String localValue, String backendValue) {
+    final fromIncoming = incomingValue.trim();
+    if (fromIncoming.isNotEmpty) return fromIncoming;
+    if (sameCompany && localValue.trim().isNotEmpty) return localValue.trim();
+    if (useBackend && backendValue.trim().isNotEmpty)
+      return backendValue.trim();
+    return incomingValue;
+  }
+
+  return incoming.copyWith(
+    ownerName: pick(incoming.ownerName, existingLocal?.ownerName ?? '', ''),
+    email: pick(
+      incoming.email,
+      existingLocal?.email ?? '',
+      existingBackend?.email ?? '',
+    ),
+    phone: pick(
+      incoming.phone,
+      existingLocal?.phone ?? '',
+      existingBackend?.phone ?? '',
+    ),
+    vatNumber: pick(
+      incoming.vatNumber,
+      existingLocal?.vatNumber ?? '',
+      existingBackend?.vatNumber ?? '',
+    ),
+    addressLine: pick(
+      incoming.addressLine,
+      existingLocal?.addressLine ?? '',
+      existingBackend?.address ?? '',
+    ),
+    postalCode: pick(
+      incoming.postalCode,
+      existingLocal?.postalCode ?? '',
+      existingBackend?.postcode ?? '',
+    ),
+    city: pick(
+      incoming.city,
+      existingLocal?.city ?? '',
+      existingBackend?.city ?? '',
+    ),
+    companyEmail: pick(
+      incoming.companyEmail,
+      existingLocal?.companyEmail ?? '',
+      existingBackend?.companyEmail ?? '',
+    ),
+    supportEmail: pick(
+      incoming.supportEmail,
+      existingLocal?.supportEmail ?? '',
+      existingBackend?.supportEmail ?? '',
+    ),
+    billingEmail: pick(
+      incoming.billingEmail,
+      existingLocal?.billingEmail ?? '',
+      existingBackend?.invoiceEmail ?? '',
+    ),
+    bookingEmail: pick(
+      incoming.bookingEmail,
+      existingLocal?.bookingEmail ?? '',
+      existingBackend?.bookingEmail ?? '',
+    ),
+    notificationEmail: pick(
+      incoming.notificationEmail,
+      existingLocal?.notificationEmail ?? '',
+      existingBackend?.notificationEmail ?? '',
+    ),
+    createdAt: sameCompany && existingLocal.createdAt.trim().isNotEmpty
+        ? existingLocal.createdAt
+        : incoming.createdAt,
+    verificationStatus: sameCompany
+        ? existingLocal.verificationStatus
+        : incoming.verificationStatus,
+  );
+}
+
 /// When [base] still looks like empty/template Worker fields, overlay local onboarding data.
 /// Does not replace values that clearly diverge from app defaults (user or API edits).
 BackendBusinessProfile mergeLocalIntoBackendPreview(
@@ -1721,6 +2017,9 @@ BackendBusinessProfile mergeLocalIntoBackendPreview(
     country: take(base.country, local.countryCode, d.country),
     phone: take(base.phone, local.phone, d.phone),
     email: take(base.email, primaryEmail, d.email),
+    companyEmail: base.companyEmail,
+    supportEmail: base.supportEmail,
+    notificationEmail: base.notificationEmail,
     website: base.website,
     bookingEmail: take(base.bookingEmail, local.bookingEmail, d.bookingEmail),
     invoiceEmail: take(base.invoiceEmail, local.billingEmail, d.invoiceEmail),

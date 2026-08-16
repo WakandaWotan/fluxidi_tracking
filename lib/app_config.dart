@@ -306,6 +306,9 @@ class BackendBusinessProfile {
   final String country;
   final String phone;
   final String email;
+  final String companyEmail;
+  final String supportEmail;
+  final String notificationEmail;
   final String website;
   final String bookingEmail;
   final String publicLogoUrl;
@@ -347,6 +350,9 @@ class BackendBusinessProfile {
     required this.country,
     required this.phone,
     required this.email,
+    this.companyEmail = '',
+    this.supportEmail = '',
+    this.notificationEmail = '',
     required this.website,
     required this.bookingEmail,
     this.publicLogoUrl = '',
@@ -385,6 +391,9 @@ class BackendBusinessProfile {
     country: 'BE',
     phone: appConfig.supportPhone,
     email: appConfig.supportEmail,
+    companyEmail: '',
+    supportEmail: '',
+    notificationEmail: '',
     website: '',
     bookingEmail: '',
     publicLogoUrl: '',
@@ -482,7 +491,16 @@ class BackendBusinessProfile {
       city: text('city', fallback.city),
       country: text('country', fallback.country),
       phone: text('phone', fallback.phone),
-      email: text('email', fallback.email),
+      email: textAny(const ['email', 'companyEmail'], fallback.email),
+      companyEmail: textAny(const ['companyEmail', 'email'], ''),
+      supportEmail: textAny(const [
+        'supportEmail',
+        'support_email',
+      ], fallback.supportEmail),
+      notificationEmail: textAny(const [
+        'notificationEmail',
+        'notification_email',
+      ], fallback.notificationEmail),
       website: text('website', fallback.website),
       bookingEmail: text('bookingEmail', fallback.bookingEmail),
       publicLogoUrl: textAny(const [
@@ -610,6 +628,10 @@ class BackendBusinessProfile {
     'country': country,
     'phone': phone,
     'email': email,
+    if (companyEmail.trim().isNotEmpty) 'companyEmail': companyEmail,
+    if (supportEmail.trim().isNotEmpty) 'supportEmail': supportEmail,
+    if (notificationEmail.trim().isNotEmpty)
+      'notificationEmail': notificationEmail,
     'website': website,
     'bookingEmail': bookingEmail,
     'publicLogoUrl': publicLogoUrl,
@@ -661,6 +683,106 @@ class BackendBusinessProfile {
     'mollieTokenRef': mollieTokenRef,
     'mollie_token_ref': mollieTokenRef,
   };
+
+  BackendBusinessProfile copyWith({
+    String? companyCode,
+    String? publicCompanyCode,
+    String? publicCompanySlug,
+    String? publicDisplayCode,
+    String? companyName,
+    String? legalName,
+    String? vatNumber,
+    String? companyRegistrationNumber,
+    String? address,
+    String? postcode,
+    String? city,
+    String? country,
+    String? phone,
+    String? email,
+    String? companyEmail,
+    String? supportEmail,
+    String? notificationEmail,
+    String? website,
+    String? bookingEmail,
+    String? publicLogoUrl,
+    String? publicHeroPhotoUrl,
+    String? publicServedPostcodes,
+    String? publicCoverageLat,
+    String? publicCoverageLng,
+    String? publicServiceRadiusKm,
+    List<String>? publicPaymentOptions,
+    List<String>? publicServiceIds,
+    bool? publicServicesConfigured,
+    String? publicPartnerProfilePublishedAt,
+    String? publicPartnerProfilePublishStatus,
+    String? invoiceEmail,
+    String? iban,
+    String? paymentReferencePrefix,
+    String? invoiceReceiptFooterText,
+    String? paymentOwnerMode,
+    bool? paymentDemoMode,
+    bool? mollieConnected,
+    bool? livePaymentsEnabled,
+    bool? mollieForcedTestMode,
+    String? mollieOrganizationId,
+    String? mollieProfileId,
+    String? mollieTokenRef,
+  }) {
+    return BackendBusinessProfile(
+      companyCode: companyCode ?? this.companyCode,
+      publicCompanyCode: publicCompanyCode ?? this.publicCompanyCode,
+      publicCompanySlug: publicCompanySlug ?? this.publicCompanySlug,
+      publicDisplayCode: publicDisplayCode ?? this.publicDisplayCode,
+      companyName: companyName ?? this.companyName,
+      legalName: legalName ?? this.legalName,
+      vatNumber: vatNumber ?? this.vatNumber,
+      companyRegistrationNumber:
+          companyRegistrationNumber ?? this.companyRegistrationNumber,
+      address: address ?? this.address,
+      postcode: postcode ?? this.postcode,
+      city: city ?? this.city,
+      country: country ?? this.country,
+      phone: phone ?? this.phone,
+      email: email ?? this.email,
+      companyEmail: companyEmail ?? this.companyEmail,
+      supportEmail: supportEmail ?? this.supportEmail,
+      notificationEmail: notificationEmail ?? this.notificationEmail,
+      website: website ?? this.website,
+      bookingEmail: bookingEmail ?? this.bookingEmail,
+      publicLogoUrl: publicLogoUrl ?? this.publicLogoUrl,
+      publicHeroPhotoUrl: publicHeroPhotoUrl ?? this.publicHeroPhotoUrl,
+      publicServedPostcodes:
+          publicServedPostcodes ?? this.publicServedPostcodes,
+      publicCoverageLat: publicCoverageLat ?? this.publicCoverageLat,
+      publicCoverageLng: publicCoverageLng ?? this.publicCoverageLng,
+      publicServiceRadiusKm:
+          publicServiceRadiusKm ?? this.publicServiceRadiusKm,
+      publicPaymentOptions: publicPaymentOptions ?? this.publicPaymentOptions,
+      publicServiceIds: publicServiceIds ?? this.publicServiceIds,
+      publicServicesConfigured:
+          publicServicesConfigured ?? this.publicServicesConfigured,
+      publicPartnerProfilePublishedAt:
+          publicPartnerProfilePublishedAt ??
+          this.publicPartnerProfilePublishedAt,
+      publicPartnerProfilePublishStatus:
+          publicPartnerProfilePublishStatus ??
+          this.publicPartnerProfilePublishStatus,
+      invoiceEmail: invoiceEmail ?? this.invoiceEmail,
+      iban: iban ?? this.iban,
+      paymentReferencePrefix:
+          paymentReferencePrefix ?? this.paymentReferencePrefix,
+      invoiceReceiptFooterText:
+          invoiceReceiptFooterText ?? this.invoiceReceiptFooterText,
+      paymentOwnerMode: paymentOwnerMode ?? this.paymentOwnerMode,
+      paymentDemoMode: paymentDemoMode ?? this.paymentDemoMode,
+      mollieConnected: mollieConnected ?? this.mollieConnected,
+      livePaymentsEnabled: livePaymentsEnabled ?? this.livePaymentsEnabled,
+      mollieForcedTestMode: mollieForcedTestMode ?? this.mollieForcedTestMode,
+      mollieOrganizationId: mollieOrganizationId ?? this.mollieOrganizationId,
+      mollieProfileId: mollieProfileId ?? this.mollieProfileId,
+      mollieTokenRef: mollieTokenRef ?? this.mollieTokenRef,
+    );
+  }
 }
 
 class BackendTaxProfile {
@@ -917,8 +1039,7 @@ class BackendChironConnectionStatus {
           textAny(const [
                 'effective_chiron_environment',
                 'effectiveChironEnvironment',
-              ], ChironConnectionEnvironment.test)
-                  .toLowerCase() ==
+              ], ChironConnectionEnvironment.test).toLowerCase() ==
               ChironConnectionEnvironment.production
           ? ChironConnectionEnvironment.production
           : ChironConnectionEnvironment.test,
@@ -1489,6 +1610,7 @@ class BackendSubscriptionProfile {
   final String paymentProvider;
   final String providerCustomerId;
   final String providerSubscriptionId;
+
   /// True when Mollie DELETE after base cancel failed and needs retry.
   final bool providerCancelPending;
   // Patch 2.14: purchased PDF credits (never expire) + consolidated renewal.
@@ -2517,8 +2639,7 @@ const String kFluxidiE2eCompanyCode = String.fromEnvironment(
 const String kFluxidiProductionBookingHost =
     'fluxidi-booking-api.fluxidi.workers.dev';
 const String kFluxidiE2eBookingHostMarker = 'fluxidi-booking-vat-e2e-test';
-const String kFluxidiE2eBannerText =
-    'FLUXIDI E2E TEST — GEEN ECHTE BETALING';
+const String kFluxidiE2eBannerText = 'FLUXIDI E2E TEST — GEEN ECHTE BETALING';
 
 /// Pure guard used by production/E2E builds and unit tests.
 String? fluxidiBookingEndpointGuardError({
@@ -2559,10 +2680,12 @@ Map<String, String> withFluxidiE2eHeaders(Map<String, String> headers) {
   if (token.isEmpty) return headers;
   return <String, String>{...headers, 'X-Fluxidi-E2E-Token': token};
 }
+
 const String kMapboxToken = String.fromEnvironment(
   'MAPBOX_TOKEN',
   defaultValue: '',
 );
+
 /// CLOUD-NAV-2: Navigation Worker route proxy (disabled by default).
 const bool kUseNavigationWorker = bool.fromEnvironment(
   'USE_NAVIGATION_WORKER',
@@ -2572,6 +2695,7 @@ const String kNavigationWorkerBaseUrlOverride = String.fromEnvironment(
   'NAVIGATION_WORKER_BASE_URL',
   defaultValue: '',
 );
+
 /// CLOUD-AI-2: Dispatch Intelligence advice client (disabled by default,
 /// advice-only — never mutates bookings or assignment decisions).
 const bool kUseDispatchIntelligenceWorker = bool.fromEnvironment(
@@ -2689,11 +2813,9 @@ String get currentLanguageCode {
     case AppLanguage.fr:
       return 'fr';
     case AppLanguage.es:
-
       return 'es';
 
     case AppLanguage.de:
-
       return 'de';
   }
 }
@@ -3720,11 +3842,9 @@ String _languageCode(AppLanguage l) {
     case AppLanguage.fr:
       return 'fr';
     case AppLanguage.es:
-
       return 'es';
 
     case AppLanguage.de:
-
       return 'de';
   }
 }
@@ -5679,7 +5799,9 @@ Future<void> syncLocalCompanyInventoryToBackend({
   final syncCompanyAuth = await resolveCompanyOwnerAuthHeaders();
   if (syncCompanyAuth.mode == CompanyOwnerAuthMode.none) {
     _companyInventorySyncInFlight = false;
-    debugPrint('[COMPANY_SYNC][SKIP_NO_COMPANY_SESSION] reason=$reason source=post_context');
+    debugPrint(
+      '[COMPANY_SYNC][SKIP_NO_COMPANY_SESSION] reason=$reason source=post_context',
+    );
     return;
   }
   debugPrint(
@@ -5875,12 +5997,15 @@ Future<void> syncLocalCompanyInventoryToBackend({
   }
 }
 
+/// Booking Worker route that owns `business_profile:v1`.
+const String kAdminBusinessProfilePath = '/admin/business/profile';
+
 Future<BackendBusinessProfile> fetchBackendBusinessProfile({
   String? tenantId,
   String? companyId,
 }) async {
   final endpoint = _withAdminTenantCompanyScope(
-    Uri.parse('${appConfig.bookingBaseUrl}/admin/business/profile'),
+    Uri.parse('${appConfig.bookingBaseUrl}$kAdminBusinessProfilePath'),
     tenantId: tenantId,
     companyId: companyId,
   );
@@ -5925,7 +6050,7 @@ Future<BackendBusinessProfile> saveBackendBusinessProfile(
   String? companyId,
 }) async {
   final endpoint = _withAdminTenantCompanyScope(
-    Uri.parse('${appConfig.bookingBaseUrl}/admin/business/profile'),
+    Uri.parse('${appConfig.bookingBaseUrl}$kAdminBusinessProfilePath'),
     tenantId: tenantId,
     companyId: companyId,
   );
@@ -6206,9 +6331,7 @@ Future<BackendSubscriptionProfile> undoCancelCompanySubscription({
     companyId: companyId,
   );
   final endpoint = _withAdminTenantCompanyScope(
-    Uri.parse(
-      '${appConfig.bookingBaseUrl}/company/subscription/cancel/undo',
-    ),
+    Uri.parse('${appConfig.bookingBaseUrl}/company/subscription/cancel/undo'),
     tenantId: scope['tenant_id'],
     companyId: scope['company_id'],
   );
@@ -6695,9 +6818,7 @@ class SubscriptionCheckoutQuote {
       for (final row in rawItems) {
         if (row is Map) {
           items.add(
-            SubscriptionQuoteLineItem.fromJson(
-              Map<String, dynamic>.from(row),
-            ),
+            SubscriptionQuoteLineItem.fromJson(Map<String, dynamic>.from(row)),
           );
         }
       }
@@ -6727,13 +6848,13 @@ class SubscriptionCheckoutQuote {
         'recurringInclVatCents',
       ),
       unitExclVatCents: intField('unit_excl_vat_cents', 'unitExclVatCents'),
-      unitVatAmountCents: intField('unit_vat_amount_cents', 'unitVatAmountCents'),
+      unitVatAmountCents: intField(
+        'unit_vat_amount_cents',
+        'unitVatAmountCents',
+      ),
       unitInclVatCents: intField('unit_incl_vat_cents', 'unitInclVatCents'),
       vatAmountCents: intField('vat_amount_cents', 'vatAmountCents'),
-      totalInclVatCents: intField(
-        'total_incl_vat_cents',
-        'totalInclVatCents',
-      ),
+      totalInclVatCents: intField('total_incl_vat_cents', 'totalInclVatCents'),
       mollieAmountCents: intField('mollie_amount_cents', 'mollieAmountCents'),
       taxBasis: textField('tax_basis', 'taxBasis'),
       taxTreatment: textField('tax_treatment', 'taxTreatment'),
@@ -6999,7 +7120,8 @@ startCompanySubscriptionCheckout({
     ...scope,
     if (returnUrl != null && returnUrl.trim().isNotEmpty)
       'return_url': returnUrl.trim(),
-    if (quoteId != null && quoteId.trim().isNotEmpty) 'quote_id': quoteId.trim(),
+    if (quoteId != null && quoteId.trim().isNotEmpty)
+      'quote_id': quoteId.trim(),
   };
   try {
     final auth = await resolveCompanyOwnerAuthHeaders();
@@ -7108,7 +7230,8 @@ startCompanySubscriptionAddonCheckout({
     'quantity': quantity,
     if (returnUrl != null && returnUrl.trim().isNotEmpty)
       'return_url': returnUrl.trim(),
-    if (quoteId != null && quoteId.trim().isNotEmpty) 'quote_id': quoteId.trim(),
+    if (quoteId != null && quoteId.trim().isNotEmpty)
+      'quote_id': quoteId.trim(),
   };
   try {
     final auth = await resolveCompanyOwnerAuthHeaders();
@@ -7528,9 +7651,7 @@ Future<OperatorMintedDriverSession> mintOperatorDriverSession({
   }
 
   final tokenOut =
-      (decoded['driver_session_token'] ??
-              decoded['driverSessionToken'] ??
-              '')
+      (decoded['driver_session_token'] ?? decoded['driverSessionToken'] ?? '')
           .toString()
           .trim();
   final expiresAt =
@@ -7540,16 +7661,19 @@ Future<OperatorMintedDriverSession> mintOperatorDriverSession({
               '')
           .toString()
           .trim();
-  final expiresInRaw =
-      decoded['expires_in'] ?? decoded['expiresIn'] ?? 0;
+  final expiresInRaw = decoded['expires_in'] ?? decoded['expiresIn'] ?? 0;
   final expiresIn = expiresInRaw is num ? expiresInRaw.toInt() : 0;
-  final tenantOut =
-      (decoded['tenant_id'] ?? decoded['tenantId'] ?? '').toString().trim();
-  final companyOut =
-      (decoded['company_id'] ?? decoded['companyId'] ?? '').toString().trim();
+  final tenantOut = (decoded['tenant_id'] ?? decoded['tenantId'] ?? '')
+      .toString()
+      .trim();
+  final companyOut = (decoded['company_id'] ?? decoded['companyId'] ?? '')
+      .toString()
+      .trim();
   final driverMap = decoded['driver'];
   final driverIdOut = driverMap is Map
-      ? (driverMap['driver_id'] ?? driverMap['driverId'] ?? '').toString().trim()
+      ? (driverMap['driver_id'] ?? driverMap['driverId'] ?? '')
+            .toString()
+            .trim()
       : driverId;
   final driverNameOut = driverMap is Map
       ? (driverMap['driver_name'] ?? driverMap['driverName'] ?? '')
@@ -7563,14 +7687,16 @@ Future<OperatorMintedDriverSession> mintOperatorDriverSession({
             .toString()
             .trim()
       : '';
-  final originOut =
-      (decoded['origin'] ?? kOperatorMintDriverLinkMethod).toString().trim();
+  final originOut = (decoded['origin'] ?? kOperatorMintDriverLinkMethod)
+      .toString()
+      .trim();
   final linkMethodOut =
       (decoded['link_method'] ?? kOperatorMintDriverLinkMethod)
           .toString()
           .trim();
-  final issuedAtOut =
-      (decoded['issued_at'] ?? decoded['issuedAt'] ?? '').toString().trim();
+  final issuedAtOut = (decoded['issued_at'] ?? decoded['issuedAt'] ?? '')
+      .toString()
+      .trim();
 
   if (tokenOut.isEmpty || expiresAt.isEmpty || driverIdOut.isEmpty) {
     debugPrint(
@@ -7593,8 +7719,9 @@ Future<OperatorMintedDriverSession> mintOperatorDriverSession({
     driverName: driverNameOut.isEmpty ? null : driverNameOut,
     assignedVehicleId: vehicleOut.isEmpty ? null : vehicleOut,
     origin: originOut.isEmpty ? kOperatorMintDriverLinkMethod : originOut,
-    linkMethod:
-        linkMethodOut.isEmpty ? kOperatorMintDriverLinkMethod : linkMethodOut,
+    linkMethod: linkMethodOut.isEmpty
+        ? kOperatorMintDriverLinkMethod
+        : linkMethodOut,
     issuedAtUtc: issuedAtOut.isEmpty ? null : issuedAtOut,
   );
 }
@@ -8082,8 +8209,9 @@ Future<bool> tryFluxidiE2eAutoLogin() async {
   final token = kFluxidiE2eTestToken.trim();
   final companyCode = kFluxidiE2eCompanyCode.trim().toUpperCase();
   if (token.isEmpty || companyCode.isEmpty) return false;
-  final existingCode =
-      (activeCompanySessionNotifier.value?.companyCode ?? '').trim().toUpperCase();
+  final existingCode = (activeCompanySessionNotifier.value?.companyCode ?? '')
+      .trim()
+      .toUpperCase();
   if (existingCode == companyCode &&
       CompanySessionStore.instance.hasValidCompanyContext) {
     return true;
@@ -8100,10 +8228,13 @@ Future<bool> tryFluxidiE2eAutoLogin() async {
   final tenantId = (verified['tenant_id'] ?? '').toString().trim();
   final companyId = (verified['company_id'] ?? '').toString().trim();
   final sessionToken =
-      (verified['company_session_token'] ?? verified['companySessionToken'] ?? '')
+      (verified['company_session_token'] ??
+              verified['companySessionToken'] ??
+              '')
           .toString()
           .trim();
-  if (tenantId.isEmpty || companyId.isEmpty || sessionToken.isEmpty) return false;
+  if (tenantId.isEmpty || companyId.isEmpty || sessionToken.isEmpty)
+    return false;
   final companyMap = verified['company'] is Map
       ? Map<String, dynamic>.from(verified['company'] as Map)
       : <String, dynamic>{};
@@ -8111,7 +8242,8 @@ Future<bool> tryFluxidiE2eAutoLogin() async {
     tenantId: tenantId,
     companyId: companyId,
     companyCode: (verified['company_code'] ?? companyCode).toString(),
-    companyName: (companyMap['display_name'] ?? 'Fluxidi VAT E2E Test').toString(),
+    companyName: (companyMap['display_name'] ?? 'Fluxidi VAT E2E Test')
+        .toString(),
     countryCode: (companyMap['country'] ?? 'BE').toString(),
     issuedAt: DateTime.tryParse((verified['issued_at'] ?? '').toString()),
     expiresAt: DateTime.tryParse((verified['expires_at'] ?? '').toString()),
@@ -8119,7 +8251,8 @@ Future<bool> tryFluxidiE2eAutoLogin() async {
     expiresInSeconds: int.tryParse(
       (verified['expires_in'] ?? verified['expiresIn'] ?? '').toString(),
     ),
-    linkMethod: (verified['link_method'] ?? verified['linkMethod'] ?? '').toString(),
+    linkMethod: (verified['link_method'] ?? verified['linkMethod'] ?? '')
+        .toString(),
   );
   return CompanySessionStore.instance.hasValidCompanyContext;
 }
@@ -8418,10 +8551,7 @@ Map<String, dynamic> sanitizePublicCustomerProfilePayload(
       payload.containsKey('billing_address') ||
       payload.containsKey('billingAddress')) {
     final street = hasBillingStreet
-        ? (readAny(const [
-                'billing_street',
-                'billingStreet',
-              ]).isNotEmpty
+        ? (readAny(const ['billing_street', 'billingStreet']).isNotEmpty
               ? readAny(const ['billing_street', 'billingStreet'])
               : readNested(billingAddress, const ['street']))
         : '';
@@ -8431,10 +8561,7 @@ Map<String, dynamic> sanitizePublicCustomerProfilePayload(
                 'billingPostalCode',
               ]).isNotEmpty
               ? readAny(const ['billing_postal_code', 'billingPostalCode'])
-              : readNested(billingAddress, const [
-                  'postal_code',
-                  'postalCode',
-                ]))
+              : readNested(billingAddress, const ['postal_code', 'postalCode']))
         : '';
     final city = hasBillingCity
         ? (readAny(const ['billing_city', 'billingCity']).isNotEmpty
@@ -8442,16 +8569,13 @@ Map<String, dynamic> sanitizePublicCustomerProfilePayload(
               : readNested(billingAddress, const ['city']))
         : '';
     final country = hasBillingCountry
-        ? (readAny(const [
-                'billing_country',
-                'billingCountry',
-              ]).isNotEmpty
-              ? readAny(const ['billing_country', 'billingCountry'])
-              : readNested(billingAddress, const [
-                  'country',
-                  'country_code',
-                  'countryCode',
-                ]))
+        ? (readAny(const ['billing_country', 'billingCountry']).isNotEmpty
+                  ? readAny(const ['billing_country', 'billingCountry'])
+                  : readNested(billingAddress, const [
+                      'country',
+                      'country_code',
+                      'countryCode',
+                    ]))
               .toUpperCase()
         : '';
     if (hasBillingStreet) out['billing_street'] = street;
@@ -8475,14 +8599,9 @@ Map<String, dynamic> sanitizePublicCustomerProfilePayload(
   final hasPeppolScheme =
       hasAnyKey(const ['peppol_scheme', 'peppolScheme']) ||
       peppolBlock.containsKey('scheme');
-  if (hasPeppolEndpoint ||
-      hasPeppolScheme ||
-      payload.containsKey('peppol')) {
+  if (hasPeppolEndpoint || hasPeppolScheme || payload.containsKey('peppol')) {
     final endpoint = hasPeppolEndpoint
-        ? (readAny(const [
-                'peppol_endpoint_id',
-                'peppolEndpointId',
-              ]).isNotEmpty
+        ? (readAny(const ['peppol_endpoint_id', 'peppolEndpointId']).isNotEmpty
               ? readAny(const ['peppol_endpoint_id', 'peppolEndpointId'])
               : readNested(peppolBlock, const [
                   'endpoint_id',
