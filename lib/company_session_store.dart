@@ -1626,12 +1626,13 @@ class CompanySessionStore {
 
   /// Updates only the local primary contact mail after a successful backend save.
   Future<void> updatePrimaryContactEmailFromBackend(String email) async {
-    final current = await loadProfile();
+    final current = companyProfileNotifier.value ?? await loadProfile();
     if (current == null) return;
     final next = current.copyWith(
       email: email.trim(),
       updatedAt: DateTime.now().toUtc().toIso8601String(),
     );
+    companyProfileNotifier.value = next;
     await persistProfile(next);
   }
 
@@ -1834,6 +1835,7 @@ class PrimaryCompanyContactSaveResult {
     required this.saved,
     required this.draftEmail,
     this.error,
+    this.confirmationRequired = false,
   });
 
   factory PrimaryCompanyContactSaveResult.success({
@@ -1844,6 +1846,18 @@ class PrimaryCompanyContactSaveResult {
       ok: true,
       saved: saved,
       draftEmail: draftEmail,
+    );
+  }
+
+  factory PrimaryCompanyContactSaveResult.pending({
+    required BackendBusinessProfile saved,
+    required String draftEmail,
+  }) {
+    return PrimaryCompanyContactSaveResult._(
+      ok: false,
+      saved: saved,
+      draftEmail: draftEmail,
+      confirmationRequired: true,
     );
   }
 
@@ -1863,6 +1877,7 @@ class PrimaryCompanyContactSaveResult {
   final BackendBusinessProfile? saved;
   final String draftEmail;
   final Object? error;
+  final bool confirmationRequired;
 
   String get persistPath => kAdminBusinessProfilePath;
 }
@@ -1887,6 +1902,14 @@ Future<PrimaryCompanyContactSaveResult> savePrimaryCompanyContactEmail({
       throw StateError('primary_contact_email_must_not_overwrite_other_routes');
     }
     final saved = await persist(next);
+    final pending = saved.pendingEmail.trim();
+    if (saved.confirmationRequired ||
+        (pending.isNotEmpty && pending == draft.toLowerCase())) {
+      return PrimaryCompanyContactSaveResult.pending(
+        saved: saved,
+        draftEmail: draft,
+      );
+    }
     return PrimaryCompanyContactSaveResult.success(
       saved: saved,
       draftEmail: draft,
@@ -1897,6 +1920,26 @@ Future<PrimaryCompanyContactSaveResult> savePrimaryCompanyContactEmail({
       error: error,
     );
   }
+}
+
+Future<BackendBusinessProfile> confirmPendingCompanyContactEmail({
+  required String email,
+  required String challengeId,
+  required String otp,
+  required String companyCode,
+  required Future<BackendBusinessProfile> Function() fetchConfirmed,
+}) async {
+  await verifyPublicCompanyRecovery(
+    payload: <String, dynamic>{
+      'company_code': companyCode,
+      'companyCode': companyCode,
+      'email': email.trim(),
+      'challenge_id': challengeId,
+      'challengeId': challengeId,
+      'otp': otp.trim(),
+    },
+  );
+  return fetchConfirmed();
 }
 
 /// Re-pair keeps existing local/backend contact fields when incoming is empty.
@@ -2020,6 +2063,10 @@ BackendBusinessProfile mergeLocalIntoBackendPreview(
     companyEmail: base.companyEmail,
     supportEmail: base.supportEmail,
     notificationEmail: base.notificationEmail,
+    pendingEmail: base.pendingEmail,
+    emailVerificationStatus: base.emailVerificationStatus,
+    confirmationRequired: base.confirmationRequired,
+    emailChallengeId: base.emailChallengeId,
     website: base.website,
     bookingEmail: take(base.bookingEmail, local.bookingEmail, d.bookingEmail),
     invoiceEmail: take(base.invoiceEmail, local.billingEmail, d.invoiceEmail),

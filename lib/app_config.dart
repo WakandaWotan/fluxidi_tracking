@@ -309,6 +309,10 @@ class BackendBusinessProfile {
   final String companyEmail;
   final String supportEmail;
   final String notificationEmail;
+  final String pendingEmail;
+  final String emailVerificationStatus;
+  final bool confirmationRequired;
+  final String emailChallengeId;
   final String website;
   final String bookingEmail;
   final String publicLogoUrl;
@@ -353,6 +357,10 @@ class BackendBusinessProfile {
     this.companyEmail = '',
     this.supportEmail = '',
     this.notificationEmail = '',
+    this.pendingEmail = '',
+    this.emailVerificationStatus = '',
+    this.confirmationRequired = false,
+    this.emailChallengeId = '',
     required this.website,
     required this.bookingEmail,
     this.publicLogoUrl = '',
@@ -501,6 +509,19 @@ class BackendBusinessProfile {
         'notificationEmail',
         'notification_email',
       ], fallback.notificationEmail),
+      pendingEmail: textAny(const ['pendingEmail', 'pending_email'], ''),
+      emailVerificationStatus: textAny(const [
+        'emailVerificationStatus',
+        'email_verification_status',
+      ], ''),
+      confirmationRequired:
+          json['confirmationRequired'] == true ||
+          json['confirmation_required'] == true,
+      emailChallengeId: textAny(const [
+        'emailChallengeId',
+        'challenge_id',
+        'challengeId',
+      ], ''),
       website: text('website', fallback.website),
       bookingEmail: text('bookingEmail', fallback.bookingEmail),
       publicLogoUrl: textAny(const [
@@ -632,6 +653,23 @@ class BackendBusinessProfile {
     if (supportEmail.trim().isNotEmpty) 'supportEmail': supportEmail,
     if (notificationEmail.trim().isNotEmpty)
       'notificationEmail': notificationEmail,
+    if (pendingEmail.trim().isNotEmpty) ...<String, dynamic>{
+      'pendingEmail': pendingEmail,
+      'pending_email': pendingEmail,
+    },
+    if (emailVerificationStatus.trim().isNotEmpty) ...<String, dynamic>{
+      'emailVerificationStatus': emailVerificationStatus,
+      'email_verification_status': emailVerificationStatus,
+    },
+    if (confirmationRequired) ...<String, dynamic>{
+      'confirmationRequired': true,
+      'confirmation_required': true,
+    },
+    if (emailChallengeId.trim().isNotEmpty) ...<String, dynamic>{
+      'emailChallengeId': emailChallengeId,
+      'challenge_id': emailChallengeId,
+      'challengeId': emailChallengeId,
+    },
     'website': website,
     'bookingEmail': bookingEmail,
     'publicLogoUrl': publicLogoUrl,
@@ -702,6 +740,10 @@ class BackendBusinessProfile {
     String? companyEmail,
     String? supportEmail,
     String? notificationEmail,
+    String? pendingEmail,
+    String? emailVerificationStatus,
+    bool? confirmationRequired,
+    String? emailChallengeId,
     String? website,
     String? bookingEmail,
     String? publicLogoUrl,
@@ -747,6 +789,11 @@ class BackendBusinessProfile {
       companyEmail: companyEmail ?? this.companyEmail,
       supportEmail: supportEmail ?? this.supportEmail,
       notificationEmail: notificationEmail ?? this.notificationEmail,
+      pendingEmail: pendingEmail ?? this.pendingEmail,
+      emailVerificationStatus:
+          emailVerificationStatus ?? this.emailVerificationStatus,
+      confirmationRequired: confirmationRequired ?? this.confirmationRequired,
+      emailChallengeId: emailChallengeId ?? this.emailChallengeId,
       website: website ?? this.website,
       bookingEmail: bookingEmail ?? this.bookingEmail,
       publicLogoUrl: publicLogoUrl ?? this.publicLogoUrl,
@@ -6097,7 +6144,18 @@ Future<BackendBusinessProfile> saveBackendBusinessProfile(
       mergedProfile[key] = topText;
     }
   }
-  return BackendBusinessProfile.fromJson(mergedProfile);
+  final parsed = BackendBusinessProfile.fromJson(mergedProfile);
+  return parsed.copyWith(
+    confirmationRequired:
+        decodedMap['confirmation_required'] == true ||
+        decodedMap['confirmationRequired'] == true,
+    emailChallengeId:
+        (decodedMap['challenge_id'] ??
+                decodedMap['challengeId'] ??
+                parsed.emailChallengeId)
+            .toString()
+            .trim(),
+  );
 }
 
 Future<BackendTaxProfile> fetchBackendTaxProfile({

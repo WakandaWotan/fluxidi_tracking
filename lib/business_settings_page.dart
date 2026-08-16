@@ -1882,6 +1882,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         local.notificationEmail,
         server.notificationEmail,
       ),
+      pendingEmail: pick(local.pendingEmail, server.pendingEmail),
+      emailVerificationStatus: pick(
+        local.emailVerificationStatus,
+        server.emailVerificationStatus,
+      ),
+      confirmationRequired:
+          server.confirmationRequired || local.confirmationRequired,
+      emailChallengeId: pick(local.emailChallengeId, server.emailChallengeId),
       website: pick(local.website, server.website),
       bookingEmail: pick(local.bookingEmail, server.bookingEmail),
       publicLogoUrl: pick(local.publicLogoUrl, server.publicLogoUrl),
@@ -5667,6 +5675,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       companyEmail: cached?.companyEmail ?? '',
       supportEmail: cached?.supportEmail ?? '',
       notificationEmail: cached?.notificationEmail ?? '',
+      pendingEmail: cached?.pendingEmail ?? '',
+      emailVerificationStatus: cached?.emailVerificationStatus ?? '',
       website: _backendWebsiteCtrl.text.trim(),
       bookingEmail: _backendBookingEmailCtrl.text.trim(),
       publicLogoUrl: _publicLogoUrlCtrl.text.trim(),
@@ -5745,23 +5755,35 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         local: formProfile,
         server: saved,
       );
+      final pending = merged.pendingEmail.trim();
+      final confirmationRequired =
+          saved.confirmationRequired || pending.isNotEmpty;
       setState(() {
         _hydrateBackendBusinessProfile(merged);
-        _backendProfilesStatus = _t(
-          nl: 'Bedrijfsprofiel opgeslagen.',
-          en: 'Business profile saved.',
-          fr: 'Profil entreprise enregistre.',
-          es: 'Perfil empresarial guardado.',
-        );
+        _backendProfilesStatus = confirmationRequired
+            ? _t(
+                nl: 'Bevestiging nodig. De huidige herstelmail blijft actief tot de nieuwe e-mail is bevestigd.',
+                en: 'Confirmation required. The current recovery email stays active until the new email is confirmed.',
+                fr: 'Confirmation requise. L e-mail de recuperation actuel reste actif jusqu a confirmation.',
+                es: 'Se requiere confirmacion. El correo de recuperacion actual sigue activo hasta confirmar.',
+              )
+            : _t(
+                nl: 'Bedrijfsprofiel opgeslagen.',
+                en: 'Business profile saved.',
+                fr: 'Profil entreprise enregistre.',
+                es: 'Perfil empresarial guardado.',
+              );
       });
       unawaited(updateLocalBackendBusinessProfileCache(merged));
-      final syncedEmail = resolvePrimaryCompanyContactEmail(backend: merged);
-      if (syncedEmail.isNotEmpty) {
-        unawaited(
-          CompanySessionStore.instance.updatePrimaryContactEmailFromBackend(
-            syncedEmail,
-          ),
-        );
+      if (!confirmationRequired) {
+        final syncedEmail = resolvePrimaryCompanyContactEmail(backend: merged);
+        if (syncedEmail.isNotEmpty) {
+          unawaited(
+            CompanySessionStore.instance.updatePrimaryContactEmailFromBackend(
+              syncedEmail,
+            ),
+          );
+        }
       }
       return true;
     } catch (e) {

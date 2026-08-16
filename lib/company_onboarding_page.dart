@@ -641,11 +641,19 @@ class CompanyProfileEditPage extends StatefulWidget {
     super.key,
     this.fetchBusinessProfile,
     this.saveBusinessProfile,
+    this.confirmPendingEmail,
   });
 
   final Future<BackendBusinessProfile> Function()? fetchBusinessProfile;
   final Future<BackendBusinessProfile> Function(BackendBusinessProfile profile)?
   saveBusinessProfile;
+  final Future<BackendBusinessProfile> Function({
+    required String email,
+    required String challengeId,
+    required String otp,
+    required String companyCode,
+  })?
+  confirmPendingEmail;
 
   @override
   State<CompanyProfileEditPage> createState() => _CompanyProfileEditPageState();
@@ -673,6 +681,12 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
   String? _createdAt;
   String _verificationStatus = CompanyVerificationStatus.pendingVerification;
   String? _saveError;
+  String? _pendingNotice;
+  String? _confirmSuccess;
+  String _pendingEmail = '';
+  String _emailChallengeId = '';
+  final _otpCtrl = TextEditingController();
+  bool _confirming = false;
 
   Future<BackendBusinessProfile> _fetchBusinessProfile() {
     final fetch = widget.fetchBusinessProfile;
@@ -738,6 +752,14 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
       backend: backend,
       local: p,
     );
+    _pendingEmail = (backend?.pendingEmail ?? '').trim();
+    _emailChallengeId = (backend?.emailChallengeId ?? '').trim();
+    if (_pendingEmail.isNotEmpty) {
+      _pendingNotice = _t(
+        nl: 'Nieuwe e-mail wacht op bevestiging. De huidige herstelmail blijft actief tot de code is bevestigd.',
+        en: 'The new email is waiting for confirmation. The current recovery email stays active until the code is confirmed.',
+      );
+    }
     setState(() => _loading = false);
   }
 
@@ -756,6 +778,7 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
     _billingEmailCtrl.dispose();
     _bookingEmailCtrl.dispose();
     _notificationEmailCtrl.dispose();
+    _otpCtrl.dispose();
     super.dispose();
   }
 
@@ -765,6 +788,7 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
     setState(() {
       _saving = true;
       _saveError = null;
+      _confirmSuccess = null;
     });
     final draftEmail = _emailCtrl.text.trim();
     final result = await savePrimaryCompanyContactEmail(
@@ -773,6 +797,29 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
       persist: _persistBusinessProfile,
     );
     if (!mounted) return;
+    if (result.confirmationRequired && result.saved != null) {
+      localBackendBusinessProfileNotifier.value = result.saved;
+      unawaited(updateLocalBackendBusinessProfileCache(result.saved));
+      _emailCtrl.text = resolvePrimaryCompanyContactEmail(
+        backend: result.saved,
+        local: null,
+      );
+      setState(() {
+        _saving = false;
+        _pendingEmail = result.saved!.pendingEmail.trim().isNotEmpty
+            ? result.saved!.pendingEmail.trim()
+            : result.draftEmail;
+        _emailChallengeId = result.saved!.emailChallengeId.trim();
+        _pendingNotice = _t(
+          nl: 'Bevestiging nodig. Voer de code in die naar de nieuwe e-mail is gestuurd. Beide schermen worden pas na bevestiging bijgewerkt.',
+          en: 'Confirmation required. Enter the code sent to the new email. Both screens update only after confirmation.',
+        );
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_pendingNotice!)));
+      return;
+    }
     if (!result.ok || result.saved == null) {
       _emailCtrl.text = result.draftEmail;
       setState(() {
@@ -830,6 +877,90 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
       ),
     );
     Navigator.of(context).pop();
+  }
+
+  Future<void> _confirmPending() async {
+    if (_confirming || _pendingEmail.isEmpty || _emailChallengeId.isEmpty) {
+      return;
+    }
+    final otp = _otpCtrl.text.trim();
+    if (otp.isEmpty) return;
+    final companyCode = (activeCompanySessionNotifier.value?.companyCode ?? '')
+        .trim();
+    if (companyCode.isEmpty) {
+      setState(() {
+        _saveError = _t(
+          nl: 'Bevestigen niet gelukt. Bedrijfscode ontbreekt.',
+          en: 'Confirmation failed. Company code is missing.',
+        );
+      });
+      return;
+    }
+    setState(() {
+      _confirming = true;
+      _saveError = null;
+    });
+    try {
+      final confirm = widget.confirmPendingEmail;
+      final confirmed = confirm != null
+          ? await confirm(
+              email: _pendingEmail,
+              challengeId: _emailChallengeId,
+              otp: otp,
+              companyCode: companyCode,
+            )
+          : await confirmPendingCompanyContactEmail(
+              email: _pendingEmail,
+              challengeId: _emailChallengeId,
+              otp: otp,
+              companyCode: companyCode,
+              fetchConfirmed: _fetchBusinessProfile,
+            );
+      if (!mounted) return;
+      final syncedEmail = resolvePrimaryCompanyContactEmail(
+        backend: confirmed,
+        local: null,
+      );
+      localBackendBusinessProfileNotifier.value = confirmed;
+      _emailCtrl.text = syncedEmail;
+      final currentLocal = companyProfileNotifier.value;
+      if (currentLocal != null && syncedEmail.isNotEmpty) {
+        companyProfileNotifier.value = currentLocal.copyWith(
+          email: syncedEmail,
+        );
+      }
+      try {
+        unawaited(updateLocalBackendBusinessProfileCache(confirmed));
+      } catch (_) {}
+      if (_companyId != null && _createdAt != null) {
+        unawaited(
+          CompanySessionStore.instance.updatePrimaryContactEmailFromBackend(
+            syncedEmail,
+          ),
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        _confirming = false;
+        _pendingEmail = '';
+        _emailChallengeId = '';
+        _pendingNotice = null;
+        _saveError = null;
+        _confirmSuccess = _t(nl: 'E-mail bevestigd.', en: 'Email confirmed.');
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_confirmSuccess!)));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _confirming = false;
+        _saveError = _t(
+          nl: 'Bevestiging mislukt. Controleer de code en probeer opnieuw.',
+          en: 'Confirmation failed. Check the code and try again.',
+        );
+      });
+    }
   }
 
   @override
@@ -1014,6 +1145,38 @@ class _CompanyProfileEditPageState extends State<CompanyProfileEditPage> {
                     _t(nl: 'Meldingen e-mail', en: 'Notification email'),
                   ),
                 ),
+                if (_pendingNotice != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    _pendingNotice!,
+                    style: const TextStyle(color: Color(0xFFE5D4A1)),
+                  ),
+                  if (_pendingEmail.isNotEmpty)
+                    Text(
+                      _pendingEmail,
+                      style: const TextStyle(color: Color(0xFFE5D4A1)),
+                    ),
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: _otpCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _inp(
+                      _t(nl: 'Bevestigingscode', en: 'Confirmation code'),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton(
+                    onPressed: _confirming ? null : _confirmPending,
+                    child: Text(_t(nl: 'Code bevestigen', en: 'Confirm code')),
+                  ),
+                ],
+                if (_confirmSuccess != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    _confirmSuccess!,
+                    style: const TextStyle(color: Color(0xFFE5D4A1)),
+                  ),
+                ],
                 if (_saveError != null) ...[
                   const SizedBox(height: 12),
                   Text(

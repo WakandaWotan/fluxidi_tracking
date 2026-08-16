@@ -160,6 +160,33 @@ void main() {
       },
     );
 
+    test('toJson/fromJson keep pending email and challenge metadata', () {
+      final original = _backend().copyWith(
+        pendingEmail: 'new-contact@fluxidi.com',
+        emailVerificationStatus: 'legacy_unverified',
+        confirmationRequired: true,
+        emailChallengeId: 'chg_pending',
+      );
+      final roundTrip = BackendBusinessProfile.fromJson(original.toJson());
+      expect(roundTrip.email, original.email);
+      expect(roundTrip.pendingEmail, 'new-contact@fluxidi.com');
+      expect(roundTrip.emailVerificationStatus, 'legacy_unverified');
+      expect(roundTrip.confirmationRequired, isTrue);
+      expect(roundTrip.emailChallengeId, 'chg_pending');
+    });
+
+    test('pending email does not hydrate either screen to the new address', () {
+      final hydrated = hydratePrimaryContactEmails(
+        backend: _backend(email: 'contact@fluxidi.com').copyWith(
+          pendingEmail: 'new-contact@fluxidi.com',
+          confirmationRequired: true,
+        ),
+        local: _localProfile(email: 'stale-local@example.com'),
+      );
+      expect(hydrated.mijnEmail, 'contact@fluxidi.com');
+      expect(hydrated.officialEmail, 'contact@fluxidi.com');
+    });
+
     test(
       'primary-contact save reaches /admin/business/profile and only changes email',
       () async {
@@ -184,6 +211,25 @@ void main() {
         expect(posted!.notificationEmail, current.notificationEmail);
       },
     );
+
+    test('pending email save is not a false success', () async {
+      final current = _backend();
+      final result = await savePrimaryCompanyContactEmail(
+        email: 'new-contact@fluxidi.com',
+        fetchCurrent: () async => current,
+        persist: (profile) async => profile.copyWith(
+          email: current.email,
+          pendingEmail: 'new-contact@fluxidi.com',
+          confirmationRequired: true,
+          emailChallengeId: 'chg_pending',
+        ),
+      );
+      expect(result.ok, isFalse);
+      expect(result.confirmationRequired, isTrue);
+      expect(result.saved?.email, current.email);
+      expect(result.saved?.pendingEmail, 'new-contact@fluxidi.com');
+      expect(result.saved?.supportEmail, current.supportEmail);
+    });
 
     test('backend failure keeps the draft and is not success', () async {
       final result = await savePrimaryCompanyContactEmail(

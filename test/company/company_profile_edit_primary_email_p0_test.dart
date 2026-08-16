@@ -71,6 +71,7 @@ void main() {
   tearDown(() {
     companyProfileNotifier.value = null;
     localBackendBusinessProfileNotifier.value = null;
+    activeCompanySessionNotifier.value = null;
   });
 
   Future<void> pumpEditor(
@@ -78,6 +79,13 @@ void main() {
     required Future<BackendBusinessProfile> Function() fetch,
     required Future<BackendBusinessProfile> Function(BackendBusinessProfile)
     save,
+    Future<BackendBusinessProfile> Function({
+      required String email,
+      required String challengeId,
+      required String otp,
+      required String companyCode,
+    })?
+    confirm,
   }) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
@@ -88,6 +96,7 @@ void main() {
         home: CompanyProfileEditPage(
           fetchBusinessProfile: fetch,
           saveBusinessProfile: save,
+          confirmPendingEmail: confirm,
         ),
       ),
     );
@@ -175,4 +184,161 @@ void main() {
       expect(find.text('Mijn bedrijfsgegevens'), findsOneWidget);
     },
   );
+
+  testWidgets('pending email save asks for confirmation instead of Saved', (
+    tester,
+  ) async {
+    await pumpEditor(
+      tester,
+      fetch: () async => _backend(),
+      save: (profile) async => profile.copyWith(
+        email: 'contact@fluxidi.com',
+        pendingEmail: 'new-contact@fluxidi.com',
+        confirmationRequired: true,
+        emailChallengeId: 'chg_1',
+      ),
+    );
+    final emailField = find.widgetWithText(
+      TextFormField,
+      'contact@fluxidi.com',
+    );
+    await tester.enterText(emailField, 'new-contact@fluxidi.com');
+    await tester.ensureVisible(find.widgetWithText(FilledButton, 'Opslaan'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Opslaan'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text('Opgeslagen.'), findsNothing);
+    expect(find.textContaining('Bevestiging nodig'), findsWidgets);
+    expect(find.text('new-contact@fluxidi.com'), findsWidgets);
+    expect(find.text('Code bevestigen'), findsOneWidget);
+  });
+
+  testWidgets('confirm code updates both screens after existing verify', (
+    tester,
+  ) async {
+    activeCompanySessionNotifier.value = const ActiveCompanySession(
+      companyId: 'fluxidi_fluxidi_ddmh9g',
+      role: 'companyAdmin',
+      createdAt: '2026-08-16T08:00:00.000Z',
+      lastUsedAt: '2026-08-16T08:00:00.000Z',
+      companyCode: 'FLX-00001',
+    );
+    String? confirmedEmail;
+    String? confirmedChallenge;
+    String? confirmedOtp;
+    String? confirmedCode;
+    await pumpEditor(
+      tester,
+      fetch: () async => _backend(),
+      save: (profile) async => profile.copyWith(
+        email: 'contact@fluxidi.com',
+        pendingEmail: 'new-contact@fluxidi.com',
+        confirmationRequired: true,
+        emailChallengeId: 'chg_1',
+      ),
+      confirm:
+          ({
+            required String email,
+            required String challengeId,
+            required String otp,
+            required String companyCode,
+          }) async {
+            confirmedEmail = email;
+            confirmedChallenge = challengeId;
+            confirmedOtp = otp;
+            confirmedCode = companyCode;
+            return _backend(email: 'new-contact@fluxidi.com').copyWith(
+              pendingEmail: '',
+              confirmationRequired: false,
+              emailChallengeId: '',
+              emailVerificationStatus: 'verified',
+            );
+          },
+    );
+    final emailField = find.widgetWithText(
+      TextFormField,
+      'contact@fluxidi.com',
+    );
+    await tester.enterText(emailField, 'new-contact@fluxidi.com');
+    await tester.ensureVisible(find.widgetWithText(FilledButton, 'Opslaan'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Opslaan'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    final otpField = find.widgetWithText(TextFormField, 'Bevestigingscode');
+    await tester.ensureVisible(otpField);
+    await tester.enterText(otpField, '123456');
+    await tester.ensureVisible(find.text('Code bevestigen'));
+    await tester.tap(find.text('Code bevestigen'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(confirmedEmail, 'new-contact@fluxidi.com');
+    expect(confirmedChallenge, 'chg_1');
+    expect(confirmedOtp, '123456');
+    expect(confirmedCode, 'FLX-00001');
+    expect(find.text('E-mail bevestigd.'), findsWidgets);
+    expect(find.text('Bevestiging nodig'), findsNothing);
+    expect(
+      find.widgetWithText(TextFormField, 'new-contact@fluxidi.com'),
+      findsOneWidget,
+    );
+    expect(
+      localBackendBusinessProfileNotifier.value?.email,
+      'new-contact@fluxidi.com',
+    );
+    expect(companyProfileNotifier.value?.email, 'new-contact@fluxidi.com');
+  });
+
+  testWidgets('wrong confirmation code keeps pending and shows an error', (
+    tester,
+  ) async {
+    activeCompanySessionNotifier.value = const ActiveCompanySession(
+      companyId: 'fluxidi_fluxidi_ddmh9g',
+      role: 'companyAdmin',
+      createdAt: '2026-08-16T08:00:00.000Z',
+      lastUsedAt: '2026-08-16T08:00:00.000Z',
+      companyCode: 'FLX-00001',
+    );
+    await pumpEditor(
+      tester,
+      fetch: () async => _backend(),
+      save: (profile) async => profile.copyWith(
+        email: 'contact@fluxidi.com',
+        pendingEmail: 'new-contact@fluxidi.com',
+        confirmationRequired: true,
+        emailChallengeId: 'chg_1',
+      ),
+      confirm:
+          ({
+            required String email,
+            required String challengeId,
+            required String otp,
+            required String companyCode,
+          }) async {
+            throw Exception('expired_or_replayed');
+          },
+    );
+    final emailField = find.widgetWithText(
+      TextFormField,
+      'contact@fluxidi.com',
+    );
+    await tester.enterText(emailField, 'new-contact@fluxidi.com');
+    await tester.ensureVisible(find.widgetWithText(FilledButton, 'Opslaan'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Opslaan'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    final otpField = find.widgetWithText(TextFormField, 'Bevestigingscode');
+    await tester.ensureVisible(otpField);
+    await tester.enterText(otpField, '000000');
+    await tester.ensureVisible(find.text('Code bevestigen'));
+    await tester.tap(find.text('Code bevestigen'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.textContaining('Bevestiging mislukt'), findsWidgets);
+    expect(find.text('E-mail bevestigd.'), findsNothing);
+    expect(find.text('Code bevestigen'), findsOneWidget);
+    expect(
+      find.widgetWithText(TextFormField, 'contact@fluxidi.com'),
+      findsOneWidget,
+    );
+  });
 }
