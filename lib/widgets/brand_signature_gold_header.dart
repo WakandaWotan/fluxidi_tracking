@@ -27,6 +27,7 @@ const EdgeInsets kBrandSignatureGoldHeaderLogoPadding = EdgeInsets.fromLTRB(
 );
 const double kBrandSignatureGoldHeaderRadius = 18;
 const double kBrandSignatureGoldHeaderActionInset = 10;
+const double kBrandSignatureGoldHeaderActionGap = 8;
 
 double brandSignatureGoldHeaderHeightForLayout({
   required bool isTabletLandscape,
@@ -51,6 +52,7 @@ class BrandSignatureGoldHeader extends StatelessWidget {
     this.onOpenThemeSelector,
     this.paletteListenable,
     this.trailing,
+    this.accountMenu,
   });
 
   final double height;
@@ -67,6 +69,15 @@ class BrandSignatureGoldHeader extends StatelessWidget {
   /// theme / profile controls in this same top-right inset.
   final Widget? trailing;
 
+  /// GOLD-THEME-ACCOUNT-MENU-RESTORE-P0: optional shared business account /
+  /// company menu trigger. When set (company Gold), it is rendered as a
+  /// separate button to the left of the retained palette (theme) control in
+  /// the same top-right inset. When null (chauffeur Gold, previews, default),
+  /// only the palette control shows — unchanged behaviour. This slot never
+  /// replaces the palette button; [trailing] (chauffeur) still fully overrides
+  /// the inset when provided.
+  final Widget? accountMenu;
+
   @override
   Widget build(BuildContext context) {
     final logo = hasCompanyLogo ? _CompanyLogo(ref: logoRef) : null;
@@ -77,6 +88,26 @@ class BrandSignatureGoldHeader extends StatelessWidget {
         final palette = paletteForBusinessTheme(
           BusinessThemeVariant.brandSignatureGold,
         );
+        // Palette (theme) control — retained exactly as before, its own hit
+        // target and key ([BusinessThemeCycleButton.buttonKey]).
+        final themeControl = BusinessThemeCycleButton(
+          goldThemeAsset: kBrandSignatureGoldThemeAsset,
+          onPressed:
+              onOpenThemeSelector ??
+              () => showBusinessThemeSelectorSheet(context),
+        );
+        // Two separate buttons when the account menu slot is provided; palette
+        // only otherwise. Both sit in the same top-right inset.
+        final Widget actions = accountMenu == null
+            ? themeControl
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  accountMenu!,
+                  const SizedBox(width: kBrandSignatureGoldHeaderActionGap),
+                  themeControl,
+                ],
+              );
         return SizedBox(
           key: kBrandSignatureGoldHeaderKey,
           height: height,
@@ -111,14 +142,7 @@ class BrandSignatureGoldHeader extends StatelessWidget {
                 Positioned(
                   top: kBrandSignatureGoldHeaderActionInset,
                   right: kBrandSignatureGoldHeaderActionInset,
-                  child:
-                      trailing ??
-                      BusinessThemeCycleButton(
-                        goldThemeAsset: kBrandSignatureGoldThemeAsset,
-                        onPressed:
-                            onOpenThemeSelector ??
-                            () => showBusinessThemeSelectorSheet(context),
-                      ),
+                  child: trailing ?? actions,
                 ),
               ],
             ),

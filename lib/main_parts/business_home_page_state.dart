@@ -1,5 +1,11 @@
 part of '../main.dart';
 
+/// GOLD-THEME-ACCOUNT-MENU-RESTORE-P0: stable key for the single shared
+/// business account/company menu trigger. The non-gold header and the Brand
+/// Signature Gold header both mount the same button under this key, so tests
+/// can locate it in either theme.
+const Key kBusinessAccountMenuButtonKey = Key('business_account_menu_button');
+
 class _BusinessHomePageState extends State<BusinessHomePage>
     with WidgetsBindingObserver, RouteAware {
   String _t({
@@ -3037,6 +3043,34 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   }
 
   Widget _topBar(BuildContext context, CompanyProfile? profile) {
+    final screenW = MediaQuery.of(context).size.width;
+    const customerReferenceLogoWidth = 178.0;
+    final businessLogoWidth = math.max(
+      120.0,
+      math.min(customerReferenceLogoWidth, screenW - 250),
+    );
+    return Row(
+      children: [
+        _businessHomeLogo(width: businessLogoWidth),
+        const Spacer(),
+        _businessAccountMenuButton(context, profile),
+      ],
+    );
+  }
+
+  // GOLD-THEME-ACCOUNT-MENU-RESTORE-P0: single shared business account /
+  // company menu. The non-gold header ([_topBar]) and the Brand Signature Gold
+  // header both render THIS one PopupMenuButton — same menu state, callbacks,
+  // company identity, verification status and primary company e-mail (from
+  // [companyProfileNotifier] via [profile]) and language selection (from
+  // [appLanguageNotifier]). Only the trigger's visual differs for Gold
+  // ([compact]); the menu content and navigation are identical everywhere.
+  // Do not fork this menu or introduce another identity/e-mail source.
+  Widget _businessAccountMenuButton(
+    BuildContext context,
+    CompanyProfile? profile, {
+    bool compact = false,
+  }) {
     final palette = _businessThemePalette;
     final themeVariant = businessThemeNotifier.value;
     final isExecutiveGold = themeVariant == BusinessThemeVariant.executiveGold;
@@ -3076,12 +3110,6 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       _t(nl: 'Bedrijf', en: 'Business', fr: 'Entreprise', es: 'Empresa'),
     ]);
     final companyName = companyIdentityName;
-    final screenW = MediaQuery.of(context).size.width;
-    const customerReferenceLogoWidth = 178.0;
-    final businessLogoWidth = math.max(
-      120.0,
-      math.min(customerReferenceLogoWidth, screenW - 250),
-    );
     PopupMenuItem<String> languageMenuItem({
       required String value,
       required AppLanguage language,
@@ -3110,408 +3138,462 @@ class _BusinessHomePageState extends State<BusinessHomePage>
       );
     }
 
-    return Row(
-      children: [
-        _businessHomeLogo(width: businessLogoWidth),
-        const Spacer(),
-        PopupMenuButton<String>(
-          color: isCleanProfessional
-              ? palette.surface
-              : (isCorporateBlue ? palette.surface : const Color(0xFF111111)),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-            side: BorderSide(
-              color: isExecutiveGold
-                  ? kFluxidiYellow.withOpacity(0.36)
-                  : palette.accent.withOpacity(0.42),
-            ),
-          ),
-          onSelected: (value) {
-            if (value == 'details') {
-              _openCompanyDetails(context);
-              return;
-            }
-            if (value == 'privacy_account') {
-              // GOOGLE-PLAY-PRIVACY-READINESS-P0: authority resolved from the
-              // real active company session + AppRole (fail-closed) instead of
-              // a hardcoded true.
-              final companySession = activeCompanySessionNotifier.value;
-              final isOwnerOrAdmin = resolveIsCompanyOwnerOrAdmin(
-                hasCompanySession:
-                    CompanySessionStore.instance.hasValidCompanyContext &&
-                    companySession != null,
-                companySessionToken: companySession?.companySessionToken,
-                companyId: companySession?.companyId,
-                sessionRole: companySession?.role,
-                appRoleIsCompanyAdmin:
-                    appRoleNotifier.value == AppRole.companyAdmin,
-              );
-              openFluxidiPrivacyAccountPage(
-                context,
-                audience: FluxidiPrivacyAudience.business,
-                isCompanyOwnerOrAdmin: isOwnerOrAdmin,
-              );
-              return;
-            }
-            if (value == 'help_manual') {
-              _openBusinessHelpManual(context);
-              return;
-            }
-            if (value == 'verify_company') {
-              unawaited(_verifyCompanyFromBusinessHome(context));
-              return;
-            }
-            if (value == 'pair_new_device') {
-              unawaited(_showNewDeviceActivationCodeDialog(context));
-              return;
-            }
-            if (value == 'switch') {
-              _switchCompany(context);
-              return;
-            }
-            if (value == 'lang_nl') {
-              setAppLanguage(AppLanguage.nl);
-              return;
-            }
-            if (value == 'lang_en') {
-              setAppLanguage(AppLanguage.en);
-              return;
-            }
-            if (value == 'lang_fr') {
-              setAppLanguage(AppLanguage.fr);
-              return;
-            }
-            if (value == 'lang_es') {
-              setAppLanguage(AppLanguage.es);
-            }
-          },
-          itemBuilder: (_) => [
-            if (profile != null)
-              PopupMenuItem<String>(
-                enabled: false,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (hasPublicCompanyCode)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 3.5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: isCleanProfessional
-                              ? palette.surfaceAlt
-                              : const Color(0xFF12331F),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: isCleanProfessional
-                                ? palette.accent.withOpacity(0.34)
-                                : const Color(0xFF4ADE80).withOpacity(0.45),
-                          ),
-                        ),
-                        child: Text(
-                          _t(
-                            nl: 'Geverifieerd',
-                            en: 'Verified',
-                            fr: 'Vérifiée',
-                            es: 'Verificada',
-                          ),
-                          style: TextStyle(
-                            color: isCleanProfessional
-                                ? palette.textSecondary
-                                : const Color(0xFFB8F5C8),
-                            fontWeight: FontWeight.w700,
-                            fontSize: 10.5,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      )
-                    else
-                      _statusPill(profile, compact: true),
-                    const SizedBox(height: 8),
-                    Text(
-                      companyIdentityName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
+    return PopupMenuButton<String>(
+      key: kBusinessAccountMenuButtonKey,
+      tooltip: _t(
+        nl: 'Account & bedrijf',
+        en: 'Account & company',
+        fr: 'Compte & entreprise',
+        es: 'Cuenta y empresa',
+      ),
+      color: isCleanProfessional
+          ? palette.surface
+          : (isCorporateBlue ? palette.surface : const Color(0xFF111111)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(
+          color: isExecutiveGold
+              ? kFluxidiYellow.withOpacity(0.36)
+              : palette.accent.withOpacity(0.42),
+        ),
+      ),
+      onSelected: (value) {
+        if (value == 'details') {
+          _openCompanyDetails(context);
+          return;
+        }
+        if (value == 'privacy_account') {
+          // GOOGLE-PLAY-PRIVACY-READINESS-P0: authority resolved from the
+          // real active company session + AppRole (fail-closed) instead of
+          // a hardcoded true.
+          final companySession = activeCompanySessionNotifier.value;
+          final isOwnerOrAdmin = resolveIsCompanyOwnerOrAdmin(
+            hasCompanySession:
+                CompanySessionStore.instance.hasValidCompanyContext &&
+                companySession != null,
+            companySessionToken: companySession?.companySessionToken,
+            companyId: companySession?.companyId,
+            sessionRole: companySession?.role,
+            appRoleIsCompanyAdmin:
+                appRoleNotifier.value == AppRole.companyAdmin,
+          );
+          openFluxidiPrivacyAccountPage(
+            context,
+            audience: FluxidiPrivacyAudience.business,
+            isCompanyOwnerOrAdmin: isOwnerOrAdmin,
+          );
+          return;
+        }
+        if (value == 'help_manual') {
+          _openBusinessHelpManual(context);
+          return;
+        }
+        if (value == 'verify_company') {
+          unawaited(_verifyCompanyFromBusinessHome(context));
+          return;
+        }
+        if (value == 'pair_new_device') {
+          unawaited(_showNewDeviceActivationCodeDialog(context));
+          return;
+        }
+        if (value == 'switch') {
+          _switchCompany(context);
+          return;
+        }
+        if (value == 'lang_nl') {
+          setAppLanguage(AppLanguage.nl);
+          return;
+        }
+        if (value == 'lang_en') {
+          setAppLanguage(AppLanguage.en);
+          return;
+        }
+        if (value == 'lang_fr') {
+          setAppLanguage(AppLanguage.fr);
+          return;
+        }
+        if (value == 'lang_es') {
+          setAppLanguage(AppLanguage.es);
+        }
+      },
+      itemBuilder: (_) => [
+        if (profile != null)
+          PopupMenuItem<String>(
+            enabled: false,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (hasPublicCompanyCode)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3.5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isCleanProfessional
+                          ? palette.surfaceAlt
+                          : const Color(0xFF12331F),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
                         color: isCleanProfessional
-                            ? palette.textPrimary
-                            : Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w800,
+                            ? palette.accent.withOpacity(0.34)
+                            : const Color(0xFF4ADE80).withOpacity(0.45),
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    if (publicCompanyCode != null) ...[
-                      Text(
-                        '${_t(nl: 'Fluxidi-code', en: 'Fluxidi code', fr: 'Code Fluxidi', es: 'Código Fluxidi')}: $publicCompanyCode',
-                        style: TextStyle(
-                          color: isCleanProfessional
-                              ? palette.textSecondary
-                              : Colors.white70,
-                          fontSize: 11.5,
-                          fontFamily: 'monospace',
-                        ),
+                    child: Text(
+                      _t(
+                        nl: 'Geverifieerd',
+                        en: 'Verified',
+                        fr: 'Vérifiée',
+                        es: 'Verificada',
                       ),
-                      const SizedBox(height: 4),
-                    ],
-                    Text(
-                      '${_t(nl: 'Interne referentie', en: 'Internal reference', fr: 'Référence interne', es: 'Referencia interna')}: ${profile.companyId}',
-                      style: TextStyle(
-                        color: isCleanProfessional
-                            ? palette.textMuted
-                            : Colors.white54,
-                        fontSize: 10.5,
-                        fontFamily: 'monospace',
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      profile.email.trim(),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: isCleanProfessional
                             ? palette.textSecondary
-                            : Colors.white70,
-                        fontSize: 11.5,
+                            : const Color(0xFFB8F5C8),
+                        fontWeight: FontWeight.w700,
+                        fontSize: 10.5,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    if (!hasPublicCompanyCode &&
-                        profile.showsPendingVerificationNotice(
-                          serverPaired: hasServerConfirmedCompanyPairing(
-                            profile: profile,
-                            session: activeCompanySessionNotifier.value,
-                          ),
-                        )) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        profile.verificationPendingNotice(
-                          appConfig.currentLanguage,
-                        ),
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: isCleanProfessional
-                              ? palette.textMuted
-                              : Colors.white54,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            PopupMenuItem<String>(
-              value: 'details',
-              child: Text(
-                _t(
-                  nl: 'Bedrijfsgegevens',
-                  en: 'Company details',
-                  fr: 'Données de l’entreprise',
-                  es: 'Datos de empresa',
-                ),
-                style: isCleanProfessional
-                    ? TextStyle(color: palette.textPrimary)
-                    : null,
-              ),
-            ),
-            PopupMenuItem<String>(
-              value: 'privacy_account',
-              child: Text(
-                _t(
-                  nl: 'Privacy & account',
-                  en: 'Privacy & account',
-                  fr: 'Confidentialité & compte',
-                  es: 'Privacidad y cuenta',
-                ),
-                style: isCleanProfessional
-                    ? TextStyle(color: palette.textPrimary)
-                    : null,
-              ),
-            ),
-            PopupMenuItem<String>(
-              value: 'help_manual',
-              child: Text(
-                _t(
-                  nl: 'Help & handleiding',
-                  en: 'Help & guide',
-                  fr: 'Aide & guide',
-                  es: 'Ayuda y guía',
-                ),
-                style: isCleanProfessional
-                    ? TextStyle(color: palette.textPrimary)
-                    : null,
-              ),
-            ),
-            if (!hasPublicCompanyCode)
-              PopupMenuItem<String>(
-                value: 'verify_company',
-                child: Text(
-                  _t(
-                    nl: 'Bedrijf verifiëren',
-                    en: 'Verify company',
-                    fr: 'Vérifier l’entreprise',
-                    es: 'Verificar empresa',
+                  )
+                else
+                  _statusPill(profile, compact: true),
+                const SizedBox(height: 8),
+                Text(
+                  companyIdentityName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isCleanProfessional
+                        ? palette.textPrimary
+                        : Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
                   ),
-                  style: isCleanProfessional
-                      ? TextStyle(color: palette.textPrimary)
-                      : null,
                 ),
-              ),
-            if (hasPublicCompanyCode)
-              PopupMenuItem<String>(
-                value: 'pair_new_device',
-                child: Text(
-                  _t(
-                    nl: 'Nieuw toestel koppelen',
-                    en: 'Pair new device',
-                    fr: 'Associer un nouvel appareil',
-                    es: 'Vincular nuevo dispositivo',
-                  ),
-                  style: isCleanProfessional
-                      ? TextStyle(color: palette.textPrimary)
-                      : null,
-                ),
-              ),
-            PopupMenuItem<String>(
-              value: 'switch',
-              child: Text(
-                _t(
-                  nl: 'Ander bedrijf',
-                  en: 'Other company',
-                  fr: 'Autre entreprise',
-                  es: 'Otra empresa',
-                ),
-                style: TextStyle(color: Colors.redAccent.shade100),
-              ),
-            ),
-            const PopupMenuDivider(),
-            PopupMenuItem<String>(
-              enabled: false,
-              child: Text(
-                _t(nl: 'Taal', en: 'Language', fr: 'Langue', es: 'Idioma'),
-                style: TextStyle(
-                  color: palette.textSecondary,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12.5,
-                ),
-              ),
-            ),
-            languageMenuItem(
-              value: 'lang_nl',
-              language: AppLanguage.nl,
-              code: 'NL',
-            ),
-            languageMenuItem(
-              value: 'lang_en',
-              language: AppLanguage.en,
-              code: 'EN',
-            ),
-            languageMenuItem(
-              value: 'lang_fr',
-              language: AppLanguage.fr,
-              code: 'FR',
-            ),
-            languageMenuItem(
-              value: 'lang_es',
-              language: AppLanguage.es,
-              code: 'ES',
-            ),
-          ],
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-            decoration: BoxDecoration(
-              color: isCleanProfessional
-                  ? palette.surface
-                  : const Color(0xFF101010),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: isExecutiveGold
-                    ? kFluxidiYellow.withOpacity(0.32)
-                    : palette.accent.withOpacity(0.38),
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: isCleanProfessional || isCorporateBlue
-                        ? palette.surfaceAlt
-                        : const Color(0xFF15120A),
-                    border: Border.all(
-                      color: isExecutiveGold
-                          ? kFluxidiYellow.withOpacity(0.5)
-                          : palette.accent.withOpacity(0.56),
-                    ),
-                  ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    _companyInitials(profile),
+                const SizedBox(height: 4),
+                if (publicCompanyCode != null) ...[
+                  Text(
+                    '${_t(nl: 'Fluxidi-code', en: 'Fluxidi code', fr: 'Code Fluxidi', es: 'Código Fluxidi')}: $publicCompanyCode',
                     style: TextStyle(
-                      color: isExecutiveGold
-                          ? const Color(0xFFE5B641)
-                          : palette.accent,
-                      fontWeight: FontWeight.w800,
+                      color: isCleanProfessional
+                          ? palette.textSecondary
+                          : Colors.white70,
+                      fontSize: 11.5,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                ],
+                Text(
+                  '${_t(nl: 'Interne referentie', en: 'Internal reference', fr: 'Référence interne', es: 'Referencia interna')}: ${profile.companyId}',
+                  style: TextStyle(
+                    color: isCleanProfessional
+                        ? palette.textMuted
+                        : Colors.white54,
+                    fontSize: 10.5,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  profile.email.trim(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isCleanProfessional
+                        ? palette.textSecondary
+                        : Colors.white70,
+                    fontSize: 11.5,
+                  ),
+                ),
+                if (!hasPublicCompanyCode &&
+                    profile.showsPendingVerificationNotice(
+                      serverPaired: hasServerConfirmedCompanyPairing(
+                        profile: profile,
+                        session: activeCompanySessionNotifier.value,
+                      ),
+                    )) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    profile.verificationPendingNotice(
+                      appConfig.currentLanguage,
+                    ),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: isCleanProfessional
+                          ? palette.textMuted
+                          : Colors.white54,
                       fontSize: 11,
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 110),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        companyName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: isCleanProfessional
-                              ? palette.textPrimary
-                              : Colors.white,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 12.5,
-                        ),
-                      ),
-                      Text(
-                        _t(
-                          nl: 'Bedrijf',
-                          en: 'Business',
-                          fr: 'Entreprise',
-                          es: 'Empresa',
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: isCleanProfessional
-                              ? palette.textSecondary
-                              : Colors.white.withOpacity(0.68),
-                          fontSize: 10.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Icon(
-                  Icons.keyboard_arrow_down_rounded,
-                  color: isExecutiveGold
-                      ? kFluxidiYellow.withOpacity(0.95)
-                      : palette.accent.withOpacity(0.96),
-                  size: 18,
-                ),
+                ],
               ],
             ),
           ),
+        PopupMenuItem<String>(
+          value: 'details',
+          child: Text(
+            _t(
+              nl: 'Bedrijfsgegevens',
+              en: 'Company details',
+              fr: 'Données de l’entreprise',
+              es: 'Datos de empresa',
+            ),
+            style: isCleanProfessional
+                ? TextStyle(color: palette.textPrimary)
+                : null,
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'privacy_account',
+          child: Text(
+            _t(
+              nl: 'Privacy & account',
+              en: 'Privacy & account',
+              fr: 'Confidentialité & compte',
+              es: 'Privacidad y cuenta',
+            ),
+            style: isCleanProfessional
+                ? TextStyle(color: palette.textPrimary)
+                : null,
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'help_manual',
+          child: Text(
+            _t(
+              nl: 'Help & handleiding',
+              en: 'Help & guide',
+              fr: 'Aide & guide',
+              es: 'Ayuda y guía',
+            ),
+            style: isCleanProfessional
+                ? TextStyle(color: palette.textPrimary)
+                : null,
+          ),
+        ),
+        if (!hasPublicCompanyCode)
+          PopupMenuItem<String>(
+            value: 'verify_company',
+            child: Text(
+              _t(
+                nl: 'Bedrijf verifiëren',
+                en: 'Verify company',
+                fr: 'Vérifier l’entreprise',
+                es: 'Verificar empresa',
+              ),
+              style: isCleanProfessional
+                  ? TextStyle(color: palette.textPrimary)
+                  : null,
+            ),
+          ),
+        if (hasPublicCompanyCode)
+          PopupMenuItem<String>(
+            value: 'pair_new_device',
+            child: Text(
+              _t(
+                nl: 'Nieuw toestel koppelen',
+                en: 'Pair new device',
+                fr: 'Associer un nouvel appareil',
+                es: 'Vincular nuevo dispositivo',
+              ),
+              style: isCleanProfessional
+                  ? TextStyle(color: palette.textPrimary)
+                  : null,
+            ),
+          ),
+        PopupMenuItem<String>(
+          value: 'switch',
+          child: Text(
+            _t(
+              nl: 'Ander bedrijf',
+              en: 'Other company',
+              fr: 'Autre entreprise',
+              es: 'Otra empresa',
+            ),
+            style: TextStyle(color: Colors.redAccent.shade100),
+          ),
+        ),
+        const PopupMenuDivider(),
+        PopupMenuItem<String>(
+          enabled: false,
+          child: Text(
+            _t(nl: 'Taal', en: 'Language', fr: 'Langue', es: 'Idioma'),
+            style: TextStyle(
+              color: palette.textSecondary,
+              fontWeight: FontWeight.w700,
+              fontSize: 12.5,
+            ),
+          ),
+        ),
+        languageMenuItem(
+          value: 'lang_nl',
+          language: AppLanguage.nl,
+          code: 'NL',
+        ),
+        languageMenuItem(
+          value: 'lang_en',
+          language: AppLanguage.en,
+          code: 'EN',
+        ),
+        languageMenuItem(
+          value: 'lang_fr',
+          language: AppLanguage.fr,
+          code: 'FR',
+        ),
+        languageMenuItem(
+          value: 'lang_es',
+          language: AppLanguage.es,
+          code: 'ES',
         ),
       ],
+      child: compact
+          ? _businessAccountMenuCompactTrigger(
+              profile: profile,
+              palette: palette,
+            )
+          : Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: isCleanProfessional
+                    ? palette.surface
+                    : const Color(0xFF101010),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: isExecutiveGold
+                      ? kFluxidiYellow.withOpacity(0.32)
+                      : palette.accent.withOpacity(0.38),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isCleanProfessional || isCorporateBlue
+                          ? palette.surfaceAlt
+                          : const Color(0xFF15120A),
+                      border: Border.all(
+                        color: isExecutiveGold
+                            ? kFluxidiYellow.withOpacity(0.5)
+                            : palette.accent.withOpacity(0.56),
+                      ),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      _companyInitials(profile),
+                      style: TextStyle(
+                        color: isExecutiveGold
+                            ? const Color(0xFFE5B641)
+                            : palette.accent,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 110),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          companyName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: isCleanProfessional
+                                ? palette.textPrimary
+                                : Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12.5,
+                          ),
+                        ),
+                        Text(
+                          _t(
+                            nl: 'Bedrijf',
+                            en: 'Business',
+                            fr: 'Entreprise',
+                            es: 'Empresa',
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: isCleanProfessional
+                                ? palette.textSecondary
+                                : Colors.white.withOpacity(0.68),
+                            fontSize: 10.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    color: isExecutiveGold
+                        ? kFluxidiYellow.withOpacity(0.95)
+                        : palette.accent.withOpacity(0.96),
+                    size: 18,
+                  ),
+                ],
+              ),
+            ),
+    );
+  }
+
+  // GOLD-THEME-ACCOUNT-MENU-RESTORE-P0: Gold-only compact visual for the shared
+  // account menu trigger. Visual only — it is the child of the exact same
+  // [_businessAccountMenuButton] PopupMenuButton (same menu, state, callbacks,
+  // identity and primary company e-mail). Sized to sit beside the palette
+  // button in the Brand Signature Gold header without overflow.
+  Widget _businessAccountMenuCompactTrigger({
+    required CompanyProfile? profile,
+    required BusinessThemePalette palette,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: palette.surfaceAlt.withOpacity(palette.isDark ? 0.92 : 1.0),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: palette.accent.withOpacity(0.55)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: palette.surface,
+              border: Border.all(color: palette.accent.withOpacity(0.56)),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              _companyInitials(profile),
+              style: TextStyle(
+                color: palette.accent,
+                fontWeight: FontWeight.w800,
+                fontSize: 11,
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Icon(
+            Icons.keyboard_arrow_down_rounded,
+            color: palette.accent.withOpacity(0.96),
+            size: 18,
+          ),
+        ],
+      ),
     );
   }
 
@@ -4425,6 +4507,15 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 companyName: companyName,
                                 onOpenThemeSelector: () => unawaited(
                                   showBusinessThemeSelectorSheet(context),
+                                ),
+                                // GOLD-THEME-ACCOUNT-MENU-RESTORE-P0: reuse the
+                                // exact same shared account/company menu as the
+                                // non-gold header, rendered beside the retained
+                                // palette button. Same state/callbacks/e-mail.
+                                accountMenu: _businessAccountMenuButton(
+                                  context,
+                                  profile,
+                                  compact: true,
                                 ),
                               );
                             },
