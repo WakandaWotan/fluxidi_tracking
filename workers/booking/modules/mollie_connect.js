@@ -82,6 +82,57 @@ export function buildScopedMollieConnectAuthKey(scope = null) {
   return `tenant:${tenantId}:company:${companyId}:mollie_connect_auth:v1`;
 }
 
+export function buildScopedMollieConnectStatusKey(scope = null) {
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
+  if (!tenantId || !companyId) return null;
+  return `tenant:${tenantId}:company:${companyId}:integration:mollie:status:v1`;
+}
+
+export function publicMollieConnectStatusSnapshot(record, existing = null, scope = null) {
+  const rec = record && typeof record === "object" ? record : {};
+  const statusRaw = safeStr(rec.status, 64).toLowerCase() || "not_configured";
+  const connected = rec.connected === true && statusRaw === "connected";
+  const mode = safeStr(rec.mollie_mode ?? rec.mollieMode, 16).toLowerCase();
+  const demo = rec.payment_demo_mode === true
+    || rec.paymentDemoMode === true
+    || rec.testmode === true
+    || rec.testMode === true;
+  const updated = safeStr(
+    rec.updatedAt ?? rec.updated_at ?? rec.lastConnectedAt ?? rec.last_connected_at,
+    64,
+  ) || new Date().toISOString();
+  const prevRev = Number(existing?.source_revision);
+  const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId ?? rec.tenant_id, 80);
+  const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId ?? rec.company_id, 80);
+  return {
+    ...(tenantId && companyId ? { tenant_id: tenantId, company_id: companyId } : {}),
+    status: connected
+      ? "connected"
+      : (statusRaw === "disconnected" || rec.connected === false ? "disconnected" : (statusRaw || "unknown")),
+    mollie_mode: mode === "test" || mode === "live" ? mode : null,
+    payment_demo_mode: demo,
+    connected,
+    updated_at: updated,
+    source_updated_at: updated,
+    source_revision: Number.isInteger(prevRev) && prevRev >= 1 ? prevRev + 1 : 1,
+  };
+}
+
+async function persistPublicMollieConnectStatus(env, scope, record) {
+  const key = buildScopedMollieConnectStatusKey(scope);
+  if (!key || !env?.BOOKING_KV) return;
+  let existing = null;
+  try {
+    const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    existing = raw && typeof raw === "object" ? raw : null;
+  } catch (_) {
+    existing = null;
+  }
+  const snapshot = publicMollieConnectStatusSnapshot(record, existing, scope);
+  await env.BOOKING_KV.put(key, JSON.stringify(snapshot));
+}
+
 export function buildScopedMollieConnectNonceKey(scope = null, nonce = "") {
   const tenantId = sanitizeTenantString(scope?.tenant_id ?? scope?.tenantId, 80);
   const companyId = sanitizeTenantString(scope?.company_id ?? scope?.companyId, 80);
@@ -374,6 +425,11 @@ export async function saveScopedMollieConnectAuthRecord(env, scope, nextRecord) 
   const scopedKey = buildScopedMollieConnectAuthKey(scope);
   if (!scopedKey) throw _mollieConnectOauthError("missing_tenant_scope");
   await env.BOOKING_KV.put(scopedKey, JSON.stringify(nextRecord));
+  try {
+    await persistPublicMollieConnectStatus(env, scope, nextRecord);
+  } catch (_) {
+    // Auth remains authoritative. Command Center reads the public snapshot only.
+  }
   return { scopedKey };
 }
 
