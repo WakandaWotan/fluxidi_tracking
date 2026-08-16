@@ -21,6 +21,10 @@ class _CompanySubscriptionBillingPageState
   // surfaces without introducing a Corporate Blue hex or concept-image blue.
   Color get _warn {
     final p = _businessThemePalette;
+    // GOLD-THEME-BILLING-CONTRAST-P0: on the light Gold surface the rose-gold
+    // blend is too faint for cancel buttons, warning chips and thin borders;
+    // use the accessible dark coral so every destructive/warning element reads.
+    if (_isGoldOnLight) return _billingDanger;
     return Color.lerp(p.danger, p.accent, 0.30) ?? p.danger;
   }
 
@@ -315,6 +319,31 @@ class _CompanySubscriptionBillingPageState
   Color get _gold => _businessThemePalette.accent;
   Color get _green => _businessThemePalette.success;
 
+  // GOLD-THEME-BILLING-CONTRAST-P0: Brand Signature Gold renders billing on a
+  // light ivory surface, where the bright metallic accent (`_gold`) is only
+  // legible as decoration / icons / filled backgrounds — NOT as small text or
+  // thin borders. On that light Gold surface, gold text/borders use a dark
+  // bronze and destructive actions use an accessible dark coral (never a
+  // low-opacity peach). Other themes and dark Gold palettes are unchanged.
+  bool get _isGoldOnLight =>
+      businessThemeNotifier.value == BusinessThemeVariant.brandSignatureGold &&
+      !_businessThemePalette.isDark;
+
+  /// Gold used for TEXT and thin borders. Dark bronze on a light Gold surface;
+  /// the bright accent everywhere else.
+  Color get _goldInk => _isGoldOnLight ? const Color(0xFF7A5C0E) : _gold;
+
+  /// Foreground for a FILLED gold button (bright gold fill) — near-black on the
+  /// light Gold surface for strong contrast; the palette default otherwise.
+  Color get _onGoldFill => _isGoldOnLight
+      ? const Color(0xFF231B05)
+      : _businessThemePalette.textOnAccent;
+
+  /// Destructive text/border/fill on the billing page. Accessible dark coral on
+  /// the light Gold surface; the palette danger token otherwise.
+  Color get _billingDanger =>
+      _isGoldOnLight ? const Color(0xFFB3261E) : _businessThemePalette.danger;
+
   /// Secondary accent derived from the active palette (never a fixed mock blue).
   Color get _secondaryAccent => Color.lerp(_gold, _green, 0.42) ?? _gold;
 
@@ -555,6 +584,40 @@ class _CompanySubscriptionBillingPageState
       en: '${_priceFromCents(excl ?? 0)} excl. VAT · ${_priceFromCents(vat ?? 0)} VAT · ${_priceFromCents(incl ?? 0)} incl. VAT',
       fr: '${_priceFromCents(excl ?? 0)} HT · ${_priceFromCents(vat ?? 0)} TVA · ${_priceFromCents(incl ?? 0)} TTC',
       es: '${_priceFromCents(excl ?? 0)} sin IVA · ${_priceFromCents(vat ?? 0)} IVA · ${_priceFromCents(incl ?? 0)} con IVA',
+    );
+  }
+
+  /// Format an authoritative VAT fraction in the 0..1 range as a localized
+  /// percent label (e.g. "21%"). Never assumes a rate — only formats a
+  /// provided one from the quote.
+  String _vatRatePercent(double rate) {
+    final double pct = rate * 100;
+    final String rounded = (pct - pct.roundToDouble()).abs() < 0.05
+        ? pct.round().toString()
+        : pct.toStringAsFixed(1);
+    return '$rounded%';
+  }
+
+  /// The VAT line for the hero breakdown: "VAT 21%: €22.47" when the quote
+  /// carries an authoritative rate, else "VAT: €22.47". The amount is always
+  /// the derived recurring VAT; nothing is invented.
+  String _recurringVatLine(int vatCents, SubscriptionCheckoutQuote? quote) {
+    final double? rate = quote?.vatRate;
+    final String vatText = _priceFromCents(vatCents);
+    if (rate != null && rate > 0) {
+      final String pct = _vatRatePercent(rate);
+      return _t(
+        nl: 'Btw $pct: $vatText',
+        en: 'VAT $pct: $vatText',
+        fr: 'TVA $pct : $vatText',
+        es: 'IVA $pct: $vatText',
+      );
+    }
+    return _t(
+      nl: 'Btw: $vatText',
+      en: 'VAT: $vatText',
+      fr: 'TVA : $vatText',
+      es: 'IVA: $vatText',
     );
   }
 
@@ -1286,20 +1349,24 @@ class _CompanySubscriptionBillingPageState
           style: TextStyle(color: _businessThemePalette.textMuted),
         ),
         actions: [
+          // Destructive action: distinct, accessible coral/red, kept secondary
+          // so the safe action is the prominent default.
           TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(
-              _t(nl: 'Behouden', en: 'Keep', fr: 'Conserver', es: 'Mantener'),
-            ),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: _warn,
-              foregroundColor: Colors.black,
-            ),
+            style: TextButton.styleFrom(foregroundColor: _billingDanger),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: Text(
               _t(nl: 'Opzeggen', en: 'Cancel', fr: 'Résilier', es: 'Cancelar'),
+            ),
+          ),
+          // Safe action: prominent filled gold with near-black text.
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: _gold,
+              foregroundColor: _onGoldFill,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Behouden', en: 'Keep', fr: 'Conserver', es: 'Mantener'),
             ),
           ),
         ],
@@ -1576,8 +1643,8 @@ class _CompanySubscriptionBillingPageState
                   ? null
                   : () => _startExtraVehicleAddonCheckout(profile),
               style: OutlinedButton.styleFrom(
-                foregroundColor: _gold,
-                side: BorderSide(color: _gold.withOpacity(0.85)),
+                foregroundColor: _goldInk,
+                side: BorderSide(color: _goldInk.withOpacity(0.85)),
                 minimumSize: const Size.fromHeight(44),
               ),
               icon: _startingAddonCheckout
@@ -1731,20 +1798,24 @@ class _CompanySubscriptionBillingPageState
           style: TextStyle(color: _businessThemePalette.textMuted),
         ),
         actions: [
+          // Destructive action: distinct, accessible coral/red, kept secondary
+          // so the safe action is the prominent default.
           TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(
-              _t(nl: 'Behouden', en: 'Keep', fr: 'Conserver', es: 'Mantener'),
-            ),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: _warn,
-              foregroundColor: Colors.black,
-            ),
+            style: TextButton.styleFrom(foregroundColor: _billingDanger),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: Text(
               _t(nl: 'Opzeggen', en: 'Cancel', fr: 'Résilier', es: 'Cancelar'),
+            ),
+          ),
+          // Safe action: prominent filled gold with near-black text.
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: _gold,
+              foregroundColor: _onGoldFill,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Behouden', en: 'Keep', fr: 'Conserver', es: 'Mantener'),
             ),
           ),
         ],
@@ -2009,8 +2080,8 @@ class _CompanySubscriptionBillingPageState
                   ? null
                   : () => _startExtraDriverAddonCheckout(profile),
               style: OutlinedButton.styleFrom(
-                foregroundColor: _gold,
-                side: BorderSide(color: _gold.withOpacity(0.85)),
+                foregroundColor: _goldInk,
+                side: BorderSide(color: _goldInk.withOpacity(0.85)),
                 minimumSize: const Size.fromHeight(44),
               ),
               icon: _startingExtraDriverAddonCheckout
@@ -2310,20 +2381,24 @@ class _CompanySubscriptionBillingPageState
           ),
         ),
         actions: [
+          // Destructive action: distinct, accessible coral/red, kept secondary
+          // so the safe action is the prominent default.
           TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(
-              _t(nl: 'Behouden', en: 'Keep', fr: 'Conserver', es: 'Mantener'),
-            ),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: _warn,
-              foregroundColor: Colors.black,
-            ),
+            style: TextButton.styleFrom(foregroundColor: _billingDanger),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: Text(
               _t(nl: 'Opzeggen', en: 'Cancel', fr: 'Résilier', es: 'Cancelar'),
+            ),
+          ),
+          // Safe action: prominent filled gold with near-black text.
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: _gold,
+              foregroundColor: _onGoldFill,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              _t(nl: 'Behouden', en: 'Keep', fr: 'Conserver', es: 'Mantener'),
             ),
           ),
         ],
@@ -3505,7 +3580,7 @@ class _CompanySubscriptionBillingPageState
                         bundle.priceCents,
                   ),
                   style: TextStyle(
-                    color: _gold,
+                    color: _goldInk,
                     fontSize: 22,
                     fontWeight: FontWeight.w900,
                     height: 1.05,
@@ -3888,7 +3963,7 @@ class _CompanySubscriptionBillingPageState
                         es: 'Fluxidi Pro',
                       ),
                       style: TextStyle(
-                        color: _gold,
+                        color: _goldInk,
                         fontWeight: FontWeight.w900,
                         fontSize: 13.5,
                         letterSpacing: 0.4,
@@ -3924,8 +3999,14 @@ class _CompanySubscriptionBillingPageState
             crossAxisAlignment: CrossAxisAlignment.baseline,
             textBaseline: TextBaseline.alphabetic,
             children: [
+              // Most prominent figure: the final monthly payable amount incl.
+              // VAT when the authoritative VAT is known; otherwise the
+              // excl.-VAT subtotal. The excl.-VAT subtotal is then shown
+              // smaller below so incl. VAT stays visually dominant.
               Text(
-                monthlyText,
+                hasRecurringVat
+                    ? _priceFromCents(recurringInclCents)
+                    : monthlyText,
                 style: TextStyle(
                   color: palette.textPrimary,
                   fontSize: 34,
@@ -3938,10 +4019,10 @@ class _CompanySubscriptionBillingPageState
                 child: Text(
                   hasRecurringVat
                       ? _t(
-                          nl: '/ maand',
-                          en: '/ month',
-                          fr: '/ mois',
-                          es: '/ mes',
+                          nl: '/ maand incl. btw',
+                          en: '/ month incl. VAT',
+                          fr: '/ mois TTC',
+                          es: '/ mes con IVA',
                         )
                       : _t(
                           nl: '/ maand excl. btw',
@@ -3960,17 +4041,63 @@ class _CompanySubscriptionBillingPageState
           ),
           if (hasRecurringVat) ...[
             const SizedBox(height: 8),
+            // Transparent breakdown: subtotal excl. VAT + applicable rate + VAT
+            // amount. Derived from the authoritative quote — never hard-coded.
             Text(
-              _vatBreakdown(
-                excl: monthlyCents,
-                vat: recurringVatCents,
-                incl: recurringInclCents,
-                quote: currentQuote,
+              _t(
+                nl: 'Subtotaal excl. btw: $monthlyText',
+                en: 'Subtotal excl. VAT: $monthlyText',
+                fr: 'Sous-total HT : $monthlyText',
+                es: 'Subtotal sin IVA: $monthlyText',
               ),
               style: TextStyle(
-                color: palette.textPrimary,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
+                color: palette.textSecondary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              _recurringVatLine(recurringVatCents, currentQuote),
+              style: TextStyle(
+                color: palette.textSecondary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                height: 1.35,
+              ),
+            ),
+          ] else if (currentQuote?.isReverseCharge == true) ...[
+            const SizedBox(height: 8),
+            Text(
+              _t(
+                nl: 'Btw verlegd — te betalen zoals getoond (excl. btw)',
+                en: 'VAT reverse-charged — payable as shown (excl. VAT)',
+                fr: 'TVA autoliquidée — à payer tel qu’indiqué (HT)',
+                es: 'IVA invertido — a pagar como se muestra (sin IVA)',
+              ),
+              style: TextStyle(
+                color: palette.textSecondary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                height: 1.35,
+              ),
+            ),
+          ] else ...[
+            const SizedBox(height: 8),
+            // Honest state when no authoritative VAT is available: never invent
+            // a total; checkout/server amounts stay authoritative.
+            Text(
+              _t(
+                nl: 'Btw wordt bij het afrekenen berekend',
+                en: 'VAT calculated at checkout',
+                fr: 'TVA calculée au paiement',
+                es: 'IVA calculado al finalizar',
+              ),
+              style: TextStyle(
+                color: palette.textSecondary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
                 height: 1.35,
               ),
             ),
