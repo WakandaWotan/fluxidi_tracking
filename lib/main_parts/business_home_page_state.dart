@@ -3077,6 +3077,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     final isCorporateBlue = themeVariant == BusinessThemeVariant.corporateBlue;
     final isCleanProfessional =
         themeVariant == BusinessThemeVariant.cleanProfessional;
+    final isBrandSignatureGold =
+        themeVariant == BusinessThemeVariant.brandSignatureGold;
+    // GOLD-THEME-ACCOUNT-FLYOUT-CONTRAST-P0: Brand Signature Gold renders the
+    // account/profile flyout on the same light ivory surface as its dashboard,
+    // with explicit readable on-surface tokens — never the near-black fallback
+    // plus inherited dark text (which was invisible). Clean Professional already
+    // uses this light path; Corporate Blue and the dark presets are untouched.
+    final flyoutOnLightSurface = isCleanProfessional || isBrandSignatureGold;
     final currentLanguage = appLanguageNotifier.value;
     final publicCompanyCode = _resolvePublicBookingCompanyCodeForDashboard();
     final hasPublicCompanyCode = publicCompanyCode != null;
@@ -3127,7 +3135,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
                   color: selected
                       ? palette.accent
-                      : (isCleanProfessional ? palette.textPrimary : null),
+                      : (flyoutOnLightSurface ? palette.textPrimary : null),
                 ),
               ),
             ),
@@ -3146,9 +3154,9 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         fr: 'Compte & entreprise',
         es: 'Cuenta y empresa',
       ),
-      color: isCleanProfessional
+      color: flyoutOnLightSurface || isCorporateBlue
           ? palette.surface
-          : (isCorporateBlue ? palette.surface : const Color(0xFF111111)),
+          : const Color(0xFF111111),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
         side: BorderSide(
@@ -3230,14 +3238,18 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                       vertical: 3.5,
                     ),
                     decoration: BoxDecoration(
-                      color: isCleanProfessional
-                          ? palette.surfaceAlt
-                          : const Color(0xFF12331F),
+                      color: isBrandSignatureGold
+                          ? const Color(0xFF1B7A4B).withOpacity(0.12)
+                          : (isCleanProfessional
+                                ? palette.surfaceAlt
+                                : const Color(0xFF12331F)),
                       borderRadius: BorderRadius.circular(20),
                       border: Border.all(
-                        color: isCleanProfessional
-                            ? palette.accent.withOpacity(0.34)
-                            : const Color(0xFF4ADE80).withOpacity(0.45),
+                        color: isBrandSignatureGold
+                            ? const Color(0xFF1B7A4B).withOpacity(0.55)
+                            : (isCleanProfessional
+                                  ? palette.accent.withOpacity(0.34)
+                                  : const Color(0xFF4ADE80).withOpacity(0.45)),
                       ),
                     ),
                     child: Text(
@@ -3248,9 +3260,11 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                         es: 'Verificada',
                       ),
                       style: TextStyle(
-                        color: isCleanProfessional
-                            ? palette.textSecondary
-                            : const Color(0xFFB8F5C8),
+                        color: isBrandSignatureGold
+                            ? const Color(0xFF1B7A4B)
+                            : (isCleanProfessional
+                                  ? palette.textSecondary
+                                  : const Color(0xFFB8F5C8)),
                         fontWeight: FontWeight.w700,
                         fontSize: 10.5,
                       ),
@@ -3266,7 +3280,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: isCleanProfessional
+                    color: flyoutOnLightSurface
                         ? palette.textPrimary
                         : Colors.white,
                     fontSize: 13,
@@ -3278,7 +3292,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   Text(
                     '${_t(nl: 'Fluxidi-code', en: 'Fluxidi code', fr: 'Code Fluxidi', es: 'Código Fluxidi')}: $publicCompanyCode',
                     style: TextStyle(
-                      color: isCleanProfessional
+                      color: flyoutOnLightSurface
                           ? palette.textSecondary
                           : Colors.white70,
                       fontSize: 11.5,
@@ -3290,7 +3304,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 Text(
                   '${_t(nl: 'Interne referentie', en: 'Internal reference', fr: 'Référence interne', es: 'Referencia interna')}: ${profile.companyId}',
                   style: TextStyle(
-                    color: isCleanProfessional
+                    color: flyoutOnLightSurface
                         ? palette.textMuted
                         : Colors.white54,
                     fontSize: 10.5,
@@ -3303,7 +3317,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: isCleanProfessional
+                    color: flyoutOnLightSurface
                         ? palette.textSecondary
                         : Colors.white70,
                     fontSize: 11.5,
@@ -3324,7 +3338,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                     maxLines: 3,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: isCleanProfessional
+                      color: flyoutOnLightSurface
                           ? palette.textMuted
                           : Colors.white54,
                       fontSize: 11,
@@ -3343,7 +3357,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               fr: 'Données de l’entreprise',
               es: 'Datos de empresa',
             ),
-            style: isCleanProfessional
+            style: flyoutOnLightSurface
                 ? TextStyle(color: palette.textPrimary)
                 : null,
           ),
@@ -3357,7 +3371,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               fr: 'Confidentialité & compte',
               es: 'Privacidad y cuenta',
             ),
-            style: isCleanProfessional
+            style: flyoutOnLightSurface
                 ? TextStyle(color: palette.textPrimary)
                 : null,
           ),
@@ -3371,7 +3385,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               fr: 'Aide & guide',
               es: 'Ayuda y guía',
             ),
-            style: isCleanProfessional
+            style: flyoutOnLightSurface
                 ? TextStyle(color: palette.textPrimary)
                 : null,
           ),
@@ -3386,7 +3400,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 fr: 'Vérifier l’entreprise',
                 es: 'Verificar empresa',
               ),
-              style: isCleanProfessional
+              style: flyoutOnLightSurface
                   ? TextStyle(color: palette.textPrimary)
                   : null,
             ),
@@ -3401,7 +3415,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                 fr: 'Associer un nouvel appareil',
                 es: 'Vincular nuevo dispositivo',
               ),
-              style: isCleanProfessional
+              style: flyoutOnLightSurface
                   ? TextStyle(color: palette.textPrimary)
                   : null,
             ),
@@ -3415,7 +3429,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               fr: 'Autre entreprise',
               es: 'Otra empresa',
             ),
-            style: TextStyle(color: Colors.redAccent.shade100),
+            // Destructive action stays clearly red; on the light Gold flyout a
+            // stronger red keeps sufficient contrast (light redAccent would wash
+            // out on ivory).
+            style: TextStyle(
+              color: isBrandSignatureGold
+                  ? const Color(0xFFB3261E)
+                  : Colors.redAccent.shade100,
+            ),
           ),
         ),
         const PopupMenuDivider(),
