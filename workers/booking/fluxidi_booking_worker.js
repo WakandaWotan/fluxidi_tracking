@@ -96,6 +96,15 @@ import {
   stampBusinessProfileRecord,
 } from "./modules/business_profile_revision.mjs";
 import {
+  deletedVehicleIdList,
+  filterActiveVehicles,
+  mergeVehicleTombstones,
+  normalizeDeletedVehicleMap,
+  resolveFleetRevision,
+  sanitizeVehicleTombstoneId,
+  toMonotonicRevision,
+} from "./modules/fleet_vehicle_tombstone.mjs";
+import {
   BILLIT_PROVIDER,
   BILLIT_OAUTH_STATE_TTL_SECONDS,
   DEFAULT_BILLIT_PAYMENT_TERMS_DAYS,
@@ -28319,11 +28328,28 @@ async function handleCompanyBootstrap(request, env) {
     allowLegacyFallback: false,
   });
   const vehiclesRaw = Array.isArray(fleetRead?.vehiclesRaw) ? fleetRead.vehiclesRaw : [];
+  // Server-owned vehicle tombstones: never surface a deleted vehicle as an
+  // active vehicle, even if a legacy stored list still contains it. The ids
+  // stay available separately (deleted_vehicle_ids) for historical ride /
+  // document / invoice / Chiron references.
+  const deletedVehicleMap =
+    fleetRead && typeof fleetRead.deletedVehicleIds === "object"
+      ? fleetRead.deletedVehicleIds
+      : {};
   const vehicles = [];
   for (const row of vehiclesRaw) {
     if (!row || typeof row !== "object") continue;
     const normalized = _normalizeVehicleEntry(row, { scope });
     if (!normalized) continue;
+    const normalizedVehicleId = sanitizeVehicleTombstoneId(
+      normalized.vehicle_id ?? normalized.id ?? normalized.vehicleId,
+    );
+    if (
+      normalizedVehicleId &&
+      Object.prototype.hasOwnProperty.call(deletedVehicleMap, normalizedVehicleId)
+    ) {
+      continue;
+    }
     const vehiclePhotoUrl = _normalizeSafeRemoteMediaRef(
       normalized.vehicle_photo_url ??
         normalized.vehiclePhotoUrl ??
@@ -28394,6 +28420,12 @@ async function handleCompanyBootstrap(request, env) {
     .filter((driverId) => !!driverId);
   console.log(
     `[COMPANY_BOOTSTRAP][DELETED_DRIVERS] count=${deletedDriverIds.length}`,
+  );
+  const deletedVehicleIds = deletedVehicleIdList(deletedVehicleMap)
+    .map((vehicleId) => sanitizeVehicleTombstoneId(vehicleId))
+    .filter((vehicleId) => !!vehicleId);
+  console.log(
+    `[COMPANY_BOOTSTRAP][DELETED_VEHICLES] count=${deletedVehicleIds.length}`,
   );
   const driverRatingAggregates = await _loadDriverRatingAggregatesByDriverIds(
     env,
@@ -28760,6 +28792,8 @@ async function handleCompanyBootstrap(request, env) {
       drivers,
       deleted_driver_ids: deletedDriverIds,
       deletedDriverIds: deletedDriverIds,
+      deleted_vehicle_ids: deletedVehicleIds,
+      deletedVehicleIds: deletedVehicleIds,
       media: {
         ...(companyLogoUrl
           ? {
@@ -44031,13 +44065,47 @@ export default {
         const scopedKey = fleetInventoryScopedKeyForScope(scope);
         const scopeMasked =
           `${_maskPublicDriverLoginValue(scope.tenant_id)}:${_maskPublicDriverLoginValue(scope.company_id)}`;
+        const nowIso = new Date().toISOString();
         const existingFleet = await _loadFleetInventoryRawForScope(env, scope, {
           allowLegacyFallback: false,
         });
         const existingNormalized = (Array.isArray(existingFleet?.vehiclesRaw) ? existingFleet.vehiclesRaw : [])
           .map((entry) => _normalizeVehicleEntry(entry, { scope }))
           .filter((v) => v !== null);
-        if (kvComparableEqual(existingNormalized, normalized)) {
+        // Server-owned vehicle deletion tombstones (mirrors the driver index
+        // deleted_drivers map). A client payload may only ADD tombstones via
+        // deleted_vehicle_ids; existing server tombstones are always preserved
+        // (an older full list can never resurrect a deleted vehicle), the
+        // client cannot force the revision, and a tombstoned vehicle is never
+        // stored as active even if a stale list still contains it.
+        const existingDeleted =
+          existingFleet && typeof existingFleet.deletedVehicleIds === "object"
+            ? existingFleet.deletedVehicleIds
+            : {};
+        const incomingDeleted = Array.isArray(body)
+          ? {}
+          : normalizeDeletedVehicleMap(
+              body?.deleted_vehicle_ids ?? body?.deletedVehicleIds,
+              { nowIso },
+            );
+        const { map: mergedDeleted } = mergeVehicleTombstones(
+          existingDeleted,
+          incomingDeleted,
+        );
+        const activeNormalized = filterActiveVehicles(
+          normalized,
+          mergedDeleted,
+          (v) => v.vehicle_id ?? v.id ?? v.vehicleId,
+        );
+        const deletedIdList = deletedVehicleIdList(mergedDeleted);
+        const activeUnchanged = kvComparableEqual(existingNormalized, activeNormalized);
+        const deletedUnchanged = kvComparableEqual(existingDeleted, mergedDeleted);
+        const changed = !activeUnchanged || !deletedUnchanged;
+        const sourceRevision = resolveFleetRevision({
+          existingRevision: existingFleet?.sourceRevision,
+          changed,
+        });
+        if (!changed) {
           console.log(
             `[KV_WRITE][SKIP_UNCHANGED] route=/admin/fleet/vehicles scope=${scopeMasked}`,
           );
@@ -44048,18 +44116,23 @@ export default {
             source: "scoped",
             scoped_key: scopedKey,
             legacy_key: VEHICLE_INVENTORY_KEY,
-            count: normalized.length,
-            vehicles: normalized,
+            count: activeNormalized.length,
+            vehicles: activeNormalized,
+            deleted_vehicle_ids: deletedIdList,
+            deleted_count: deletedIdList.length,
+            source_revision: sourceRevision,
           }, 200);
         }
         const payload = {
           version: 1,
-          updated_at: new Date().toISOString(),
-          vehicles: normalized,
+          updated_at: nowIso,
+          source_revision: sourceRevision,
+          vehicles: activeNormalized,
+          deleted_vehicle_ids: mergedDeleted,
         };
         await env.BOOKING_KV.put(scopedKey, JSON.stringify(payload));
         console.log(
-          `[KV_WRITE][PUT] route=/admin/fleet/vehicles changed=true scope=${scopeMasked}`,
+          `[KV_WRITE][PUT] route=/admin/fleet/vehicles changed=true scope=${scopeMasked} revision=${sourceRevision} deleted=${deletedIdList.length}`,
         );
         return json({
           ok: true,
@@ -44068,8 +44141,11 @@ export default {
           source: "scoped",
           scoped_key: scopedKey,
           legacy_key: VEHICLE_INVENTORY_KEY,
-          count: normalized.length,
-          vehicles: normalized,
+          count: activeNormalized.length,
+          vehicles: activeNormalized,
+          deleted_vehicle_ids: deletedIdList,
+          deleted_count: deletedIdList.length,
+          source_revision: sourceRevision,
         }, 200);
       }
 
@@ -77657,6 +77733,18 @@ async function _loadFleetInventoryRawForScope(env, scope, { allowLegacyFallback 
   const scopedKey = fleetInventoryScopedKeyForScope(normalizedScope);
   const scopedRaw = await env.BOOKING_KV.get(scopedKey, { type: "json" });
   const scopedVehiclesRaw = _fleetVehiclesRawFromKv(scopedRaw);
+  // Server-owned vehicle tombstones + monotone fleet revision travel with the
+  // record even when the active list is empty (all vehicles deleted).
+  const scopedRecord =
+    scopedRaw && typeof scopedRaw === "object" && !Array.isArray(scopedRaw)
+      ? scopedRaw
+      : null;
+  const deletedVehicleIds = normalizeDeletedVehicleMap(
+    scopedRecord?.deleted_vehicle_ids ?? scopedRecord?.deletedVehicleIds,
+  );
+  const sourceRevision = toMonotonicRevision(
+    scopedRecord?.source_revision ?? scopedRecord?.sourceRevision,
+  );
   if (scopedVehiclesRaw.length > 0) {
     const response = {
       key: scopedKey,
@@ -77664,6 +77752,8 @@ async function _loadFleetInventoryRawForScope(env, scope, { allowLegacyFallback 
       scoped_key: scopedKey,
       legacy_key: VEHICLE_INVENTORY_KEY,
       vehiclesRaw: scopedVehiclesRaw,
+      deletedVehicleIds,
+      sourceRevision,
     };
     if (allowLegacyFallback) {
       const legacyRaw = await env.BOOKING_KV.get(VEHICLE_INVENTORY_KEY, { type: "json" });
@@ -77680,6 +77770,8 @@ async function _loadFleetInventoryRawForScope(env, scope, { allowLegacyFallback 
       scoped_key: scopedKey,
       legacy_key: VEHICLE_INVENTORY_KEY,
       vehiclesRaw: [],
+      deletedVehicleIds,
+      sourceRevision,
     };
   }
   const legacyRaw = await env.BOOKING_KV.get(VEHICLE_INVENTORY_KEY, { type: "json" });
@@ -77690,6 +77782,8 @@ async function _loadFleetInventoryRawForScope(env, scope, { allowLegacyFallback 
     scoped_key: scopedKey,
     legacy_key: VEHICLE_INVENTORY_KEY,
     vehiclesRaw: [],
+    deletedVehicleIds,
+    sourceRevision,
     legacyVehiclesRaw,
     legacy_source: "legacy_diagnostic",
   };
