@@ -3068,6 +3068,163 @@ void _decodeDeletedDriverTombstonesFromPersistence(dynamic raw) {
   }
 }
 
+// VEHICLE-DELETE-DURABILITY-P0: local vehicle deletion tombstones, mirroring
+// the driver deleted_driver tombstone chain above (same scoped id-set pattern,
+// not a divergent second mechanism). A tombstoned vehicle can never be
+// resurrected by the local cache, the bootstrap merge, or the inventory
+// backfill.
+final Map<String, Set<String>> _deletedVehicleIdsByScope =
+    <String, Set<String>>{};
+
+String _normalizedVehicleIdForTombstone(String value) => value.trim();
+
+String _deletedVehicleScopeKey({
+  required String tenantId,
+  required String companyId,
+}) {
+  final normalizedTenant = tenantId.trim();
+  final normalizedCompany = companyId.trim();
+  if (normalizedTenant.isEmpty || normalizedCompany.isEmpty) return '';
+  return '$normalizedTenant::$normalizedCompany';
+}
+
+Set<String> _deletedVehicleIdsForScope({
+  required String tenantId,
+  required String companyId,
+}) {
+  final key = _deletedVehicleScopeKey(tenantId: tenantId, companyId: companyId);
+  if (key.isEmpty) return const <String>{};
+  return _deletedVehicleIdsByScope[key] ?? const <String>{};
+}
+
+bool _isVehicleIdTombstonedForScope({
+  required String tenantId,
+  required String companyId,
+  required String vehicleId,
+}) {
+  final normalizedVehicleId = _normalizedVehicleIdForTombstone(vehicleId);
+  if (normalizedVehicleId.isEmpty) return false;
+  final ids = _deletedVehicleIdsForScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  return ids.contains(normalizedVehicleId);
+}
+
+void _markDeletedVehicleForScope({
+  required String tenantId,
+  required String companyId,
+  required String vehicleId,
+}) {
+  final normalizedVehicleId = _normalizedVehicleIdForTombstone(vehicleId);
+  if (normalizedVehicleId.isEmpty) return;
+  final key = _deletedVehicleScopeKey(tenantId: tenantId, companyId: companyId);
+  if (key.isEmpty) return;
+  final current = _deletedVehicleIdsByScope[key] ?? <String>{};
+  current.add(normalizedVehicleId);
+  _deletedVehicleIdsByScope[key] = current;
+}
+
+Map<String, dynamic> _encodeDeletedVehicleTombstonesForPersistence() {
+  if (_deletedVehicleIdsByScope.isEmpty) return const <String, dynamic>{};
+  final out = <String, dynamic>{};
+  for (final entry in _deletedVehicleIdsByScope.entries) {
+    final ids =
+        entry.value
+            .map((e) => _normalizedVehicleIdForTombstone(e))
+            .where((e) => e.isNotEmpty)
+            .toSet()
+            .toList(growable: false)
+          ..sort();
+    if (ids.isEmpty) continue;
+    out[entry.key] = ids;
+  }
+  return out;
+}
+
+void _decodeDeletedVehicleTombstonesFromPersistence(dynamic raw) {
+  _deletedVehicleIdsByScope.clear();
+  if (raw is! Map) return;
+  for (final entry in raw.entries) {
+    final key = entry.key.toString().trim();
+    if (key.isEmpty) continue;
+    final parts = key.split('::');
+    if (parts.length != 2) continue;
+    final normalizedKey = _deletedVehicleScopeKey(
+      tenantId: parts.first,
+      companyId: parts.last,
+    );
+    if (normalizedKey.isEmpty) continue;
+    if (entry.value is! List) continue;
+    final ids = <String>{};
+    for (final item in (entry.value as List)) {
+      final normalized = _normalizedVehicleIdForTombstone('$item');
+      if (normalized.isEmpty) continue;
+      ids.add(normalized);
+    }
+    if (ids.isEmpty) continue;
+    _deletedVehicleIdsByScope[normalizedKey] = ids;
+  }
+}
+
+/// Pure reconciliation of a bootstrap (remote) vehicle list with the current
+/// local list under vehicle tombstones. Mirrors the driver tombstone merge:
+///   - a tombstoned vehicle is dropped from the remote list (a stale backend
+///     copy never returns);
+///   - a matching remote+local pair prefers local edits via [mergePreferLocal];
+///   - a local-only vehicle (absent from the remote list) is retained UNLESS it
+///     is tombstoned, so a genuine new, not-yet-synced vehicle stays while a
+///     deleted one is never re-surfaced;
+///   - counts derived from the returned list therefore include only active,
+///     non-tombstoned vehicles.
+List<VehicleProfile> reconcileBootstrapVehiclesWithTombstones({
+  required List<VehicleProfile> remoteVehicles,
+  required List<VehicleProfile> localVehicles,
+  required Set<String> deletedVehicleIds,
+  String? scopeCompanyId,
+  VehicleProfile Function(VehicleProfile remote, VehicleProfile local)?
+  mergePreferLocal,
+}) {
+  final tombstoned = deletedVehicleIds
+      .map((e) => _normalizedVehicleIdForTombstone(e))
+      .where((e) => e.isNotEmpty)
+      .toSet();
+  final localById = <String, VehicleProfile>{
+    for (final v in localVehicles)
+      if (v.id.trim().isNotEmpty) v.id.trim(): v,
+  };
+  final next = <VehicleProfile>[];
+  final remoteIds = <String>{};
+  for (final remote in remoteVehicles) {
+    final id = remote.id.trim();
+    if (id.isEmpty) continue;
+    if (tombstoned.contains(id)) continue;
+    remoteIds.add(id);
+    final local = localById[id];
+    next.add(
+      local == null
+          ? remote
+          : (mergePreferLocal != null
+                ? mergePreferLocal(remote, local)
+                : remote),
+    );
+  }
+  for (final local in localVehicles) {
+    final id = local.id.trim();
+    if (id.isEmpty || remoteIds.contains(id)) continue;
+    if (tombstoned.contains(id)) continue;
+    final localCompany = (local.companyId ?? '').trim();
+    if (scopeCompanyId != null &&
+        scopeCompanyId.trim().isNotEmpty &&
+        localCompany.isNotEmpty &&
+        localCompany != scopeCompanyId.trim()) {
+      continue;
+    }
+    next.add(local);
+  }
+  return next;
+}
+
 String _normalizeDriverIdentityText(String raw) {
   return raw.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
 }
@@ -3705,10 +3862,42 @@ void updateVehicle(String id, VehicleProfile updated) {
 }
 
 void deleteVehicle(String id) {
+  final strictScope = _activeStrictPrivateCompanyScope();
+  // Write the durable tombstone FIRST so a crash or a failed backend sync
+  // between the local removal and the upload can never let the bootstrap merge
+  // or the inventory backfill resurrect the vehicle. Mirrors deleteDriver.
+  if (strictScope != null) {
+    _markDeletedVehicleForScope(
+      tenantId: strictScope.tenantId,
+      companyId: strictScope.companyId,
+      vehicleId: id,
+    );
+    debugPrint(
+      '[VEHICLE_DELETE][TOMBSTONE] vehicle=${_maskVehicleIdForDiag(id)} tenant=${_maskCompanyScopeForLog(strictScope.tenantId)} company=${_maskCompanyScopeForLog(strictScope.companyId)}',
+    );
+  } else {
+    debugPrint(
+      '[PRIVATE_SCOPE][ADMIN][SKIP] reason=missing_active_company_context op=vehicle_tombstone',
+    );
+  }
   vehiclesNotifier.value = vehiclesNotifier.value
       .where((v) => v.id != id)
       .toList(growable: false);
   _persistLocalTenantState();
+  if (strictScope != null) {
+    // Sync the active list + tombstone to Booking. Fire-and-forget: the
+    // tombstone is already persisted, so a network failure keeps it durable.
+    unawaited(
+      syncFleetInventoryToBackend(
+        tenantId: strictScope.tenantId,
+        companyId: strictScope.companyId,
+      ),
+    );
+  } else {
+    debugPrint(
+      '[PRIVATE_SCOPE][ADMIN][SKIP] reason=missing_active_company_context op=fleet_sync_after_vehicle_delete',
+    );
+  }
 }
 
 void addDriver(DriverProfile driver) {
@@ -4414,6 +4603,8 @@ Future<void> _persistLocalTenantState() async {
           .map(_encodeDriver)
           .toList(growable: false),
       'deletedDriverIdsByScope': _encodeDeletedDriverTombstonesForPersistence(),
+      'deletedVehicleIdsByScope':
+          _encodeDeletedVehicleTombstonesForPersistence(),
     };
     await file.writeAsString(jsonEncode(payload));
     debugPrint(
@@ -4751,6 +4942,7 @@ Future<bool> _postFleetVehiclesWithTruthfulResult({
   required Uri endpoint,
   required Map<String, String> scope,
   required List<Map<String, dynamic>> fleetPayload,
+  List<String> deletedVehicleIds = const <String>[],
 }) async {
   for (final payload in fleetPayload) {
     _logVehicleAssignmentSyncOut(payload);
@@ -4761,6 +4953,9 @@ Future<bool> _postFleetVehiclesWithTruthfulResult({
       debugPrint('[COMPANY_SYNC][VEHICLES_ERROR] reason=missing_auth');
       return false;
     }
+    // Only the active list + additive deleted_vehicle_ids are sent. Server-owned
+    // tombstone timestamps and the fleet source_revision are never forced by the
+    // client; the backend unions tombstones and computes the revision.
     final response = await http
         .post(
           endpoint,
@@ -4768,6 +4963,8 @@ Future<bool> _postFleetVehiclesWithTruthfulResult({
           body: jsonEncode(<String, dynamic>{
             ...scope,
             'vehicles': fleetPayload,
+            if (deletedVehicleIds.isNotEmpty)
+              'deleted_vehicle_ids': deletedVehicleIds,
           }),
         )
         .timeout(const Duration(seconds: 12));
@@ -5440,7 +5637,13 @@ Future<bool> syncFleetInventoryToBackend({
       tenantId: scope['tenant_id'],
       companyId: scope['company_id'],
     );
+    final tombstonedVehicleIds = _deletedVehicleIdsForScope(
+      tenantId: scope['tenant_id'] ?? '',
+      companyId: scope['company_id'] ?? '',
+    );
     final fleetPayload = vehiclesNotifier.value
+        // Never upload a tombstoned vehicle, even if one lingers in the notifier.
+        .where((vehicle) => !tombstonedVehicleIds.contains(vehicle.id.trim()))
         .map(
           (vehicle) => _encodeVehicleForBackendFleet(
             vehicle,
@@ -5454,6 +5657,7 @@ Future<bool> syncFleetInventoryToBackend({
       endpoint: endpoint,
       scope: scope,
       fleetPayload: fleetPayload,
+      deletedVehicleIds: tombstonedVehicleIds.toList(growable: false)..sort(),
     );
   } catch (_) {
     // Keep local-first UX stable even when backend sync fails.
@@ -5871,6 +6075,12 @@ Future<void> syncLocalCompanyInventoryToBackend({
         companyId: scope['company_id'] ?? '',
       ),
     };
+    final tombstonedVehicleIds = <String>{
+      ..._deletedVehicleIdsForScope(
+        tenantId: scope['tenant_id'] ?? '',
+        companyId: scope['company_id'] ?? '',
+      ),
+    };
     final syncTenantId = scope['tenant_id'] ?? '';
     final syncCompanyId = scope['company_id'] ?? '';
     final syncTenantMasked = _maskCompanyScopeForLog(syncTenantId);
@@ -5919,6 +6129,8 @@ Future<void> syncLocalCompanyInventoryToBackend({
         companyId: scope['company_id'],
       );
       final fleetPayload = scopedVehicles
+          // The inventory backfill must never re-upload a tombstoned vehicle.
+          .where((vehicle) => !tombstonedVehicleIds.contains(vehicle.id.trim()))
           .map(
             (vehicle) => _encodeVehicleForBackendFleet(
               vehicle,
@@ -5928,11 +6140,18 @@ Future<void> syncLocalCompanyInventoryToBackend({
           )
           .where((e) => (e['vehicle_id'] as String).isNotEmpty)
           .toList(growable: false);
-      await _postFleetVehiclesWithTruthfulResult(
-        endpoint: endpoint,
-        scope: scope,
-        fleetPayload: fleetPayload,
-      );
+      // Only backfill when at least one active (non-tombstoned) vehicle remains,
+      // so a backfill can never wipe the backend fleet with an empty list while
+      // still preserving the server-owned tombstones.
+      if (fleetPayload.isNotEmpty) {
+        await _postFleetVehiclesWithTruthfulResult(
+          endpoint: endpoint,
+          scope: scope,
+          fleetPayload: fleetPayload,
+          deletedVehicleIds: tombstonedVehicleIds.toList(growable: false)
+            ..sort(),
+        );
+      }
     }
 
     if (scopedDrivers.isNotEmpty) {
@@ -9174,15 +9393,33 @@ Future<bool> hydrateCompanyStateFromBootstrap(
 
     var rawVehiclesCount = 0;
     var mappedVehiclesCount = 0;
+    final remoteDeletedVehicleIds = <String>{};
+    final deletedVehicleIdsRaw =
+        bootstrap['deleted_vehicle_ids'] ?? bootstrap['deletedVehicleIds'];
+    if (deletedVehicleIdsRaw is List) {
+      for (final row in deletedVehicleIdsRaw) {
+        final vehicleId = _normalizedVehicleIdForTombstone('$row');
+        if (vehicleId.isEmpty) continue;
+        remoteDeletedVehicleIds.add(vehicleId);
+      }
+    }
+    debugPrint(
+      '[VEHICLE_DELETE][REMOTE_TOMBSTONE_SYNC] count=${remoteDeletedVehicleIds.length}',
+    );
+    if (tenantId.isNotEmpty && bootstrapScopeCompanyId.isNotEmpty) {
+      for (final vehicleId in remoteDeletedVehicleIds) {
+        _markDeletedVehicleForScope(
+          tenantId: tenantId,
+          companyId: bootstrapScopeCompanyId,
+          vehicleId: vehicleId,
+        );
+      }
+    }
     final vehiclesRaw = bootstrap['vehicles'];
     if (vehiclesRaw is List) {
       rawVehiclesCount = vehiclesRaw.length;
-      final existingVehiclesById = <String, VehicleProfile>{
-        for (final item in vehiclesNotifier.value)
-          if (item.id.trim().isNotEmpty) item.id.trim(): item,
-      };
-      final nextVehicles = <VehicleProfile>[];
-      final remoteVehicleIds = <String>{};
+      final localVehiclesSnapshot = vehiclesNotifier.value;
+      final remoteVehicles = <VehicleProfile>[];
       for (final row in vehiclesRaw) {
         if (row is! Map) continue;
         final map = Map<String, dynamic>.from(row);
@@ -9192,7 +9429,6 @@ Future<bool> hydrateCompanyStateFromBootstrap(
           map['id'],
         ]);
         if (vehicleId.isEmpty) continue;
-        remoteVehicleIds.add(vehicleId);
         final assignedDriver = map['assigned_driver'] is Map
             ? Map<String, dynamic>.from(map['assigned_driver'] as Map)
             : <String, dynamic>{};
@@ -9293,23 +9529,26 @@ Future<bool> hydrateCompanyStateFromBootstrap(
           galleryPhotoRefs: galleryPhotoRefs,
           publicPhotoUrl: vehiclePhotoUrl,
         );
-        final existingVehicle = existingVehiclesById[vehicleId];
-        nextVehicles.add(
-          existingVehicle == null
-              ? remoteVehicle
-              : mergeVehiclePreferLocal(remoteVehicle, existingVehicle),
-        );
+        remoteVehicles.add(remoteVehicle);
       }
-      for (final local in vehiclesNotifier.value) {
-        final localId = local.id.trim();
-        if (localId.isEmpty || remoteVehicleIds.contains(localId)) continue;
-        final localCompany = (local.companyId ?? '').trim();
-        if (localCompany.isNotEmpty &&
-            localCompany != bootstrapScopeCompanyId) {
-          continue;
-        }
-        nextVehicles.add(local);
-      }
+      // Combined vehicle tombstones: remote (bootstrap deleted_vehicle_ids,
+      // marked into the local store above) plus persisted local tombstones, so
+      // a deleted vehicle is dropped whether the delete signal is remote or
+      // local, while a genuine new local-only vehicle still survives.
+      final combinedDeletedVehicleIds = <String>{
+        ...remoteDeletedVehicleIds,
+        ..._deletedVehicleIdsForScope(
+          tenantId: tenantId,
+          companyId: bootstrapScopeCompanyId,
+        ),
+      };
+      final nextVehicles = reconcileBootstrapVehiclesWithTombstones(
+        remoteVehicles: remoteVehicles,
+        localVehicles: localVehiclesSnapshot,
+        deletedVehicleIds: combinedDeletedVehicleIds,
+        scopeCompanyId: bootstrapScopeCompanyId,
+        mergePreferLocal: mergeVehiclePreferLocal,
+      );
       mappedVehiclesCount = nextVehicles.length;
       vehiclesNotifier.value = nextVehicles;
     }
@@ -10804,6 +11043,7 @@ Future<Map<String, dynamic>> pollDriverMollieTerminalPaymentStatus({
 Future<void> loadLocalTenantState() async {
   try {
     _deletedDriverIdsByScope.clear();
+    _deletedVehicleIdsByScope.clear();
     final file = await _tenantStateFile();
     final exists = await file.exists();
     debugPrint('tenant_state_load path=${file.path} exists=$exists');
@@ -10816,6 +11056,9 @@ Future<void> loadLocalTenantState() async {
     final map = Map<String, dynamic>.from(decoded);
     _decodeDeletedDriverTombstonesFromPersistence(
       map['deletedDriverIdsByScope'],
+    );
+    _decodeDeletedVehicleTombstonesFromPersistence(
+      map['deletedVehicleIdsByScope'],
     );
 
     final currentBusiness = businessSettingsNotifier.value;
