@@ -92,6 +92,10 @@ import {
   promotePendingCompanyEmail,
 } from "./modules/company_primary_email_recovery.mjs";
 import {
+  resolveBusinessProfileRevision,
+  stampBusinessProfileRecord,
+} from "./modules/business_profile_revision.mjs";
+import {
   BILLIT_PROVIDER,
   BILLIT_OAUTH_STATE_TTL_SECONDS,
   DEFAULT_BILLIT_PAYMENT_TERMS_DAYS,
@@ -9241,9 +9245,11 @@ async function updateBusinessProfileMollieMetadata(env, scope, metadata = {}) {
   const scopedKeys = buildScopedSettingsKeys(scope);
   const targetKey = scopedKeys?.businessProfileKey;
   if (!targetKey) throw new Error("missing_tenant_scope");
-  const existing = await loadBusinessProfile(env, scope, {
-    allowTenantLegacyFallback: false,
-  });
+  const { record: existingRecord, profile: existing } = await loadBusinessProfileRecord(
+    env,
+    scope,
+    { allowTenantLegacyFallback: false },
+  );
   const tokenRef = buildScopedMollieConnectAuthKey(scope) || "";
   const connected = metadata.connected === true;
   const merged = {
@@ -9274,12 +9280,20 @@ async function updateBusinessProfileMollieMetadata(env, scope, metadata = {}) {
     paymentDemoMode: connected ? false : existing.payment_demo_mode === true,
   };
   const normalized = normalizeBusinessProfile(merged);
-  await env.BOOKING_KV.put(targetKey, JSON.stringify({
-    version: 1,
-    updated_at: new Date().toISOString(),
-    business_profile: normalized,
-  }));
-  return normalized;
+  const nowIso = new Date().toISOString();
+  const revision = resolveBusinessProfileRevision({
+    existingRecord,
+    existingProfile: existing,
+    nextProfile: normalized,
+    nowIso,
+  });
+  const stamped = stampBusinessProfileRecord({
+    profile: normalized,
+    sourceRevision: revision.source_revision,
+    updatedAt: revision.updated_at,
+  });
+  await env.BOOKING_KV.put(targetKey, JSON.stringify(stamped.record));
+  return stamped.profile;
 }
 
 /* Mollie Connect token/credentials/terminal helpers moved to ./modules/mollie_connect.js (patch BW-M4A). */
@@ -13746,6 +13760,35 @@ async function loadBusinessProfile(
 }
 
 /**
+ * Load the raw stored wrapper alongside the normalized profile. The raw wrapper
+ * carries the record-level `source_revision`/`updated_at` needed to compute the
+ * next monotone profile revision; the normalized profile is the semantic view
+ * used both for change detection and by callers.
+ */
+async function loadBusinessProfileRecord(
+  env,
+  scope = null,
+  { allowTenantLegacyFallback = true } = {},
+) {
+  if (!env?.BOOKING_KV) {
+    return { record: null, profile: normalizeBusinessProfile(DEFAULT_BUSINESS_PROFILE) };
+  }
+  const scopedKeys = buildScopedSettingsKeys(scope);
+  let raw = null;
+  if (scopedKeys) {
+    raw = await env.BOOKING_KV.get(scopedKeys.businessProfileKey, { type: "json" });
+  }
+  if (!raw && allowTenantLegacyFallback) {
+    raw = await env.BOOKING_KV.get(TENANT_BUSINESS_PROFILE_KEY, { type: "json" });
+  }
+  const record = raw && typeof raw === "object" ? raw : null;
+  const profile = normalizeBusinessProfile(
+    record?.business_profile ?? record ?? DEFAULT_BUSINESS_PROFILE,
+  );
+  return { record, profile };
+}
+
+/**
  * Resolve + validate seller identity for NEW Document Core invoice issues.
  * Never rewrites an existing issued seller_snapshot. Fail-closed when the
  * legal seller identity is incomplete (trading name alone is insufficient).
@@ -13790,32 +13833,44 @@ async function saveBusinessProfile(
   const targetKey = scopedKeys?.businessProfileKey ||
     (allowTenantLegacyWrite ? TENANT_BUSINESS_PROFILE_KEY : "");
   if (!targetKey) throw new Error("missing_tenant_scope");
+  let existingRecord = null;
   let existing = null;
   try {
-    existing = await loadBusinessProfile(env, scope, {
+    const loaded = await loadBusinessProfileRecord(env, scope, {
       allowTenantLegacyFallback: allowTenantLegacyWrite,
     });
+    existingRecord = loaded.record;
+    existing = loaded.profile;
   } catch (_) {
+    existingRecord = null;
     existing = null;
   }
   const preserved = preserveServerOwnedBusinessProfilePaymentFields(
     existing || DEFAULT_BUSINESS_PROFILE,
     profile,
   );
+  const nowIso = new Date().toISOString();
   const emailChange = applyEmailChangePolicy
     ? applyPrimaryCompanyEmailChange(
         existing || DEFAULT_BUSINESS_PROFILE,
         preserved,
-        new Date().toISOString(),
+        nowIso,
       )
     : { profile: preserved };
   const normalized = normalizeBusinessProfile(emailChange.profile);
-  await env.BOOKING_KV.put(targetKey, JSON.stringify({
-    version: 1,
-    updated_at: new Date().toISOString(),
-    business_profile: normalized,
-  }));
-  return normalized;
+  const revision = resolveBusinessProfileRevision({
+    existingRecord,
+    existingProfile: existing,
+    nextProfile: normalized,
+    nowIso,
+  });
+  const stamped = stampBusinessProfileRecord({
+    profile: normalized,
+    sourceRevision: revision.source_revision,
+    updatedAt: revision.updated_at,
+  });
+  await env.BOOKING_KV.put(targetKey, JSON.stringify(stamped.record));
+  return stamped.profile;
 }
 
 /* Patch B8d: pure, throw-free normalizer that reads the two persisted
