@@ -8,7 +8,6 @@
 import {
   RATEHAWK_CONTENT_HOTEL_INFO_PATH,
   RATEHAWK_DISCLOSURE_LOCALES,
-  applyOfflineContentWrite,
   livePriceKeysPresent,
   normalizeOfflineHotelProjection,
   shouldRunRatehawkContentSync,
@@ -19,6 +18,12 @@ import {
   RATEHAWK_CONTENT_STRATEGIES,
   resolveRatehawkContentStrategy,
 } from "./ratehawk_content_strategy.mjs";
+import {
+  RATEHAWK_AUTHORITATIVE_REMOVAL_REASONS,
+  RATEHAWK_TRANSIENT_CONTENT_ERRORS,
+  applyRatehawkContentOutcome,
+  openRatehawkContentStore,
+} from "./ratehawk_content_store.mjs";
 import {
   RATEHAWK_QUOTA_ENDPOINTS,
   parseRatehawkRateLimitHeaders,
@@ -68,6 +73,15 @@ function _emptyTransport({ reason, invoked = false, rateLimit = null }) {
     rate_limit: rateLimit,
     retryable: reason === "timeout" || reason === "provider_error" || reason === "endpoint_exceeded_limit",
   };
+}
+
+export function mapRatehawkHotelInfoError(code) {
+  const normalized = _text(code, 80).toLowerCase();
+  if (normalized === "hotel_not_found" || normalized === "not_found") {
+    return "hotel_not_found";
+  }
+  if (normalized === "content_removed") return "content_removed";
+  return normalized || "provider_error";
 }
 
 function _unwrapHotel(payload) {
@@ -174,20 +188,30 @@ export async function fetchRatehawkHotelInfo({
         retry_after: rateLimit.retry_after,
       };
     }
+    let payload = null;
+    if (typeof response?.json === "function") {
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+    }
     if (httpStatus < 200 || httpStatus >= 300) {
+      const mapped = mapRatehawkHotelInfoError(payload?.error);
+      const reason =
+        mapped === "hotel_not_found" || mapped === "content_removed"
+          ? mapped
+          : "provider_error";
       return {
         ..._emptyTransport({
-          reason: "provider_error",
+          reason,
           invoked: true,
           rateLimit,
         }),
         http_status: httpStatus,
       };
     }
-    let payload = null;
-    try {
-      payload = await response.json();
-    } catch {
+    if (payload == null) {
       return {
         ..._emptyTransport({
           reason: "provider_malformed_response",
@@ -199,10 +223,9 @@ export async function fetchRatehawkHotelInfo({
     }
     const etgStatus = _text(payload?.status, 24).toLowerCase();
     if (etgStatus !== "ok") {
-      const code = _text(payload?.error, 80).toLowerCase();
       return {
         ..._emptyTransport({
-          reason: code || "provider_error",
+          reason: mapRatehawkHotelInfoError(payload?.error),
           invoked: true,
           rateLimit,
         }),
@@ -280,6 +303,27 @@ export async function executeRatehawkContentJob({
     return { ok: false, invoked: false, reason: "locale_unsupported", requeue: false, hid, locale: null };
   }
 
+  const storage = openRatehawkContentStore(env, store);
+  if (storage.ok !== true) {
+    return {
+      ok: false,
+      invoked: false,
+      reason: storage.reason || "storage_not_configured",
+      requeue: false,
+      hid,
+      locale,
+    };
+  }
+
+  let generation = Number(job.generation);
+  if (!Number.isFinite(generation) || generation < 1) {
+    const allocated = await storage.store.allocateRun({
+      market_key: job.market_key ?? null,
+      now,
+    });
+    generation = allocated.generation;
+  }
+
   const quota = await reserveRatehawkProviderQuota({
     env,
     endpoint: RATEHAWK_QUOTA_ENDPOINTS.HOTEL_CONTENT,
@@ -316,6 +360,20 @@ export async function executeRatehawkContentJob({
     });
   }
   if (transport.ok !== true) {
+    const outcome = RATEHAWK_AUTHORITATIVE_REMOVAL_REASONS.includes(transport.reason)
+      ? transport.reason
+      : RATEHAWK_TRANSIENT_CONTENT_ERRORS.includes(transport.reason)
+        ? transport.reason
+        : transport.reason;
+    await applyRatehawkContentOutcome(storage.store, {
+      hid,
+      locale,
+      generation,
+      now,
+      job_id: job.job_id,
+      outcome,
+      retry_after: transport.retry_after ?? transport.rate_limit?.retry_after ?? null,
+    });
     return redactRatehawkSecrets({
       ok: false,
       invoked: transport.invoked === true,
@@ -328,6 +386,7 @@ export async function executeRatehawkContentJob({
       locale,
       http_status: transport.http_status,
       rate_limit: transport.rate_limit,
+      tombstoned: RATEHAWK_AUTHORITATIVE_REMOVAL_REASONS.includes(transport.reason),
     }, env);
   }
 
@@ -338,8 +397,17 @@ export async function executeRatehawkContentJob({
     market_key: job.market_key ?? null,
   });
   const stored = toStoredStaticHotelProjection(projection);
-  if (store && stored.ok === true) {
-    await applyOfflineContentWrite(store, stored);
+  if (stored.ok === true) {
+    await applyRatehawkContentOutcome(storage.store, {
+      projection: stored,
+      generation,
+      now,
+      hid,
+      locale,
+      job_id: job.job_id,
+      market_key: job.market_key ?? null,
+      outcome: "ok",
+    });
   }
   return redactRatehawkSecrets({
     ok: stored.ok === true,

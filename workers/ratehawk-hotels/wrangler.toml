@@ -37,12 +37,19 @@ RATEHAWK_CONTENT_BATCH_ENABLED = "0"
 # Future: [triggers] crons — do not enable until markets and the sync gate
 # are explicit. scheduled() is wired but no cron is configured.
 
-# Future storage (not created in this task):
-# [[d1_databases]] binding = "RATEHAWK_HOTELS_DB"  — searchable hid index
-# [[kv_namespaces]] binding = "RATEHAWK_CONTENT_KV" — localized policy documents
+# Future D1 (not created in this task; do not invent a database_id):
+# [[d1_databases]]
+# binding = "RATEHAWK_HOTELS_DB"
+# database_name = "fluxidi-ratehawk-hotels-db"
+# migrations_dir = "migrations"
+# database_id — create later, do not invent
+#
+# RATEHAWK_CONTENT_KV is not used. Market caps stay small enough that one D1
+# can atomically coordinate identity, locale content and sync revisions.
+# Split/KV storage may be introduced later only from measured evidence.
 # [[queues]] — optional later batch consumer
-# Deploy/migration order after those exist:
-#   1. create D1/KV/Queue
+# Deploy/migration order after D1 exists:
+#   1. create RATEHAWK_HOTELS_DB and apply migrations
 #   2. fluxidi-ratehawk-hotels-api (this worker + quota DO migration)
 #   3. fluxidi-booking-api
 

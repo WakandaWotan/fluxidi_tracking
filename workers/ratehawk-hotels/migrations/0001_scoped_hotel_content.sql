@@ -1,17 +1,6 @@
--- RATEHAWK_HOTELS_DB — scoped localized static hotel content.
--- Not applied in this task. Do not invent a database_id or create the D1
--- resource yet.
---
--- RATEHAWK_CONTENT_KV is not used. Fluxidi caps hotels per configured
--- market, so one D1 can atomically coordinate identity, locale content
--- and server-owned sync generations. Split storage may be introduced
--- later only from measured evidence.
---
--- Never stored: API credentials, Authorization, live prices,
--- book_hash/match_hash, reconciliation, affiliate remuneration,
--- customer data, raw provider responses, hotel email/phone values,
--- or image binaries.
--- description_struct lives on locale rows only and is never indexed.
+-- wrangler D1 migration for future RATEHAWK_HOTELS_DB.
+-- Do not apply or create the database in this task.
+-- RATEHAWK_CONTENT_KV is not used.
 
 CREATE TABLE IF NOT EXISTS hotel_identity (
   hid INTEGER PRIMARY KEY,
@@ -74,7 +63,6 @@ CREATE TABLE IF NOT EXISTS hotel_content_locale (
   PRIMARY KEY (hid, locale)
 );
 
--- Searchable projection. Do not add description_struct to this table.
 CREATE TABLE IF NOT EXISTS hotel_search_index (
   hid INTEGER NOT NULL,
   locale TEXT NOT NULL,

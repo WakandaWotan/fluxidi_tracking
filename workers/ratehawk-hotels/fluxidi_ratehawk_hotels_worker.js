@@ -24,6 +24,10 @@ import {
   shouldRunRatehawkContentSync,
 } from "./modules/ratehawk_content_sync.mjs";
 import { executeRatehawkContentJobs } from "./modules/ratehawk_content_transport.mjs";
+import {
+  isRatehawkHotelsDbConfigured,
+  openRatehawkContentStore,
+} from "./modules/ratehawk_content_store.mjs";
 import { RatehawkProviderQuotaDO } from "./modules/ratehawk_provider_quota.mjs";
 import { buildSafeRatehawkProviderStatus } from "./modules/ratehawk_provider.mjs";
 import { verifyRatehawkViewStayContext } from "./modules/ratehawk_view_stay_context.mjs";
@@ -116,6 +120,8 @@ export async function handleRatehawkHotelsWorkerFetch(
         ).strategy,
         batch_content_by_ids: isRatehawkBatchContentStrategyEnabled(),
       },
+      hotels_db_configured: isRatehawkHotelsDbConfigured(env),
+      content_storage: isRatehawkHotelsDbConfigured(env) ? "d1" : "not_configured",
       ratehawk: buildSafeRatehawkProviderStatus(env),
     });
   }
@@ -217,11 +223,30 @@ export async function handleRatehawkContentSyncRequest({
   if (!shouldExecute || !planned.jobs?.length) {
     return planned;
   }
+  const storage = openRatehawkContentStore(env, body.store ?? null);
+  if (storage.ok !== true) {
+    return {
+      ...planned,
+      executed: false,
+      provider_requested: false,
+      reason: storage.reason || "storage_not_configured",
+    };
+  }
+  const allocated = await storage.store.allocateRun({ now });
+  const jobs = planned.jobs.map((job) => ({
+    ...job,
+    run_id: allocated.run_id,
+    generation: allocated.generation,
+    job_id: `job_${allocated.run_id}_${job.hid}_${job.locale}`,
+  }));
+  for (const job of jobs) {
+    await storage.store.planJob(job, now);
+  }
   const results = await executeRatehawkContentJobs({
     env,
-    jobs: planned.jobs,
+    jobs,
     fetchImpl,
-    store: body.store ?? null,
+    store: storage.store,
     now,
     trigger,
   });
@@ -229,6 +254,8 @@ export async function handleRatehawkContentSyncRequest({
     ...planned,
     executed: true,
     provider_requested: results.some((row) => row.invoked === true),
+    run_id: allocated.run_id,
+    generation: allocated.generation,
     results,
   };
 }

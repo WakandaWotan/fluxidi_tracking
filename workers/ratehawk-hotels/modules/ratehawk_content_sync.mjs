@@ -219,6 +219,7 @@ export function planScopedContentSync({
       }
     }
   }
+  const storageConfigured = Boolean(env?.RATEHAWK_HOTELS_DB?.prepare);
   return {
     ok: true,
     jobs,
@@ -227,6 +228,8 @@ export function planScopedContentSync({
     provider_requested: false,
     limits: config.limits,
     strategy: RATEHAWK_CONTENT_STRATEGIES.SINGLE_HID_INFO,
+    storage_configured: storageConfigured,
+    storage: storageConfigured ? "d1" : "not_configured",
   };
 }
 
@@ -341,6 +344,10 @@ export function normalizeOfflineHotelProjection(
     ok: true,
     kind: "offline_static",
     hid: Number(hid),
+    legacy_id:
+      staticHotel.id != null && String(staticHotel.id) !== hid
+        ? String(staticHotel.id)
+        : null,
     locale,
     market_key,
     name: staticHotel.name ?? null,

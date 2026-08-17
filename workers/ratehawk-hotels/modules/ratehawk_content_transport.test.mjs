@@ -23,6 +23,7 @@ import {
   shouldRunRatehawkContentSync,
   toPublicStaticHotelCard,
 } from "./ratehawk_content_sync.mjs";
+import { createRatehawkContentRepository } from "./ratehawk_content_store.mjs";
 import {
   executeRatehawkContentJob,
   executeRatehawkContentJobs,
@@ -206,15 +207,18 @@ test("6. quota denial produces zero transport", async () => {
     calls += 1;
     return okResponse();
   };
+  const store = createRatehawkContentRepository({ memory: true });
   const first = await executeRatehawkContentJob({
     env,
     job: { hid: 8473727, locale: "en", strategy: "single_hid_info" },
+    store,
     fetchImpl,
     now: 1_000,
   });
   const second = await executeRatehawkContentJob({
     env,
     job: { hid: 8473727, locale: "nl", strategy: "single_hid_info" },
+    store,
     fetchImpl,
     now: 1_100,
   });
@@ -260,6 +264,7 @@ test("8. timeout and provider errors are redacted", async () => {
   const errored = await executeRatehawkContentJob({
     env,
     job: { hid: 8473727, locale: "en", strategy: "single_hid_info" },
+    store: createRatehawkContentRepository({ memory: true }),
     fetchImpl: async () => ({
       status: 500,
       headers: { get: () => null },
@@ -280,6 +285,7 @@ test("9. no automatic retry", async () => {
   await executeRatehawkContentJob({
     env,
     job: { hid: 8473727, locale: "en", strategy: "single_hid_info" },
+    store: createRatehawkContentRepository({ memory: true }),
     fetchImpl: async () => {
       calls += 1;
       return {
@@ -417,6 +423,7 @@ test("waiting jobs requeue instead of busy-looping after remaining=0", async () 
   const env = contentEnv();
   const results = await executeRatehawkContentJobs({
     env,
+    store: createRatehawkContentRepository({ memory: true }),
     jobs: [
       { hid: 8473727, locale: "en", strategy: "single_hid_info" },
       { hid: 8473727, locale: "nl", strategy: "single_hid_info" },
