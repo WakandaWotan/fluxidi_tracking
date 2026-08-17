@@ -13,6 +13,7 @@ import '../customer_bookings_store.dart';
 import '../customer_profile_store.dart';
 import '../customer_session_store.dart';
 import 'limousine_accepted_booking.dart';
+import 'limousine_accepted_booking_vault.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_customer_quote_api.dart';
 import 'limousine_quote_inbox.dart';
@@ -172,6 +173,8 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
     this.providerName = '',
     this.entryEnabled = false,
     this.quoteController,
+    this.resumeRepository,
+    this.reviewSnapshot,
     LimousineAcceptedBookingCustomerLoader? customerLoader,
     LimousineAcceptedBookingPersister? persister,
     LimousineAcceptedBookingCustomer? customerOverride,
@@ -190,6 +193,8 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
   final String providerName;
   final bool entryEnabled;
   final LimousineCustomerQuoteController? quoteController;
+  final LimousineAcceptedBookingResumeRepository? resumeRepository;
+  final LimousineAcceptedBookingReview? reviewSnapshot;
   final LimousineAcceptedBookingGateway _gateway;
   final LimousineAcceptedBookingCustomerLoader _customerLoader;
   final LimousineAcceptedBookingPersister _persister;
@@ -220,6 +225,9 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
   void _onSessionCleared() {
     _sessionCleared = true;
     quoteController?.clearAcceptedHandoff();
+    if (quoteController == null) {
+      unawaited(resumeRepository?.discard());
+    }
     handoffCleared = quoteController?.handoff == null;
     if (phase != LimousineAcceptedBookingPhase.success) {
       error = LimousineAcceptedBookingError.missingCustomerScope;
@@ -240,14 +248,15 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
   }
 
   LimousineAcceptedBookingReview reviewFor(AppLanguage language) {
-    return buildLimousineAcceptedBookingReview(
-      handoff: handoff,
-      draft: draft,
-      request: request,
-      offer: offer,
-      providerName: providerName,
-      language: language,
-    );
+    return reviewSnapshot ??
+        buildLimousineAcceptedBookingReview(
+          handoff: handoff,
+          draft: draft,
+          request: request,
+          offer: offer,
+          providerName: providerName,
+          language: language,
+        );
   }
 
   Future<bool> confirmBooking() async {
@@ -296,6 +305,9 @@ class LimousineAcceptedBookingController extends ChangeNotifier {
       result = booked;
       phase = LimousineAcceptedBookingPhase.success;
       quoteController?.clearAcceptedHandoff();
+      if (quoteController == null) {
+        await resumeRepository?.discard();
+      }
       handoffCleared =
           quoteController == null || quoteController?.handoff == null;
       _safeLog('booking_created');

@@ -1,9 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../app_config.dart';
 import '../app_strings.dart';
 import '../customer_theme_palette.dart';
 import '../customer_theme_store.dart';
+import 'limousine_accepted_booking_page.dart';
+import 'limousine_accepted_booking_resume_ui.dart';
+import 'limousine_accepted_booking_vault.dart';
 import 'limousine_customer_entry.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_marketplace_labels.dart';
@@ -22,10 +27,12 @@ class LimousineCustomerQuotePage extends StatefulWidget {
     this.initialPublicPartnerId,
     this.initialOffer,
     this.initialCompanyName = '',
+    this.resumeRepository,
   });
 
   final LimousineCustomerQuoteController? controller;
   final LimousineCustomerQuoteGateway? gateway;
+  final LimousineAcceptedBookingResumeRepository? resumeRepository;
   final bool? entryEnabled;
   final String? initialPublicPartnerId;
   final LimousinePublishedOffer? initialOffer;
@@ -64,8 +71,12 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
         existing ??
         LimousineCustomerQuoteController(
           gateway: widget.gateway ?? HttpLimousineCustomerQuoteGateway(),
+          resumeRepository: widget.resumeRepository,
         );
     _controller.addListener(_onChanged);
+    if (widget.resumeRepository != null) {
+      unawaited(_controller.detectSecureResume());
+    }
     final initialOffer = widget.initialOffer;
     final initialPartner = (widget.initialPublicPartnerId ?? '').trim();
     if (initialOffer != null && initialPartner.isNotEmpty) {
@@ -142,6 +153,19 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
               const SizedBox(height: 12),
               _stepChip(),
               const SizedBox(height: 12),
+              if (_controller.restoredFromSecureResume &&
+                  _controller.handoff != null) ...[
+                LimousineAcceptedBookingContinueAction(
+                  language: _lang,
+                  onContinue: () => openLimousineAcceptedBookingReview(
+                    context,
+                    quoteController: _controller,
+                    entryEnabled: _entryEnabled,
+                  ),
+                  onDiscard: () => unawaited(_controller.discardSecureResume()),
+                ),
+                const SizedBox(height: 12),
+              ],
               if (_controller.phase == LimousineCustomerQuotePhase.unavailable)
                 LimousineCustomerUnavailableBanner(language: _lang)
               else if (_controller.request != null)
@@ -150,7 +174,8 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
                   language: _lang,
                   palette: _palette,
                 )
-              else
+              else if (!(_controller.restoredFromSecureResume &&
+                  _controller.handoff != null))
                 ..._draftSteps(),
             ],
           ),
@@ -653,6 +678,7 @@ void openLimousineCustomerQuoteFlow(
         initialPublicPartnerId: publicPartnerId,
         initialOffer: offer,
         initialCompanyName: companyName,
+        resumeRepository: LimousineAcceptedBookingResumeRepository(),
       ),
     ),
   );

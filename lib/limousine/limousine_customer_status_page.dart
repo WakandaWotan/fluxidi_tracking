@@ -5,6 +5,7 @@ import '../customer_theme_palette.dart';
 import 'limousine_accepted_booking.dart';
 import 'limousine_accepted_booking_labels.dart';
 import 'limousine_accepted_booking_page.dart';
+import 'limousine_accepted_booking_resume_labels.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_customer_quote_api.dart';
 import 'limousine_customer_quote_labels.dart';
@@ -150,14 +151,22 @@ class LimousineCustomerStatusView extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: FilledButton(
-              key: kLimousineAcceptedBookingOpenReviewKey,
+              key: controller.restoredFromSecureResume
+                  ? kLimousineAcceptedBookingContinueKey
+                  : kLimousineAcceptedBookingOpenReviewKey,
               onPressed:
                   onOpenBookingReview ??
                   () => openLimousineAcceptedBookingReview(
                     context,
                     quoteController: controller,
                   ),
-              child: Text(_t(kLimousineAcceptedBookingOpenReview)),
+              child: Text(
+                _t(
+                  controller.restoredFromSecureResume
+                      ? kLimousineAcceptedBookingContinue
+                      : kLimousineAcceptedBookingOpenReview,
+                ),
+              ),
             ),
           ),
         Align(

@@ -9,10 +9,23 @@ import 'package:http/http.dart' as http;
 
 import '../app_config.dart';
 import '../customer_session_store.dart';
+import 'limousine_accepted_booking.dart';
+import 'limousine_accepted_booking_resume.dart';
+import 'limousine_accepted_booking_vault.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_quote_inbox.dart';
 
 typedef LimousineCustomerAuthHeaders = Future<Map<String, String>> Function();
+
+Future<String?> _defaultLimousineResumeCustomerId() async {
+  try {
+    final session = await CustomerSessionStore.instance.loadValidSession();
+    final customerId = (session?.customerId ?? '').trim();
+    return customerId.isEmpty ? null : customerId;
+  } catch (_) {
+    return null;
+  }
+}
 
 abstract class LimousineCustomerQuoteGateway {
   Future<List<LimousineDiscoveredProvider>> discoverNearby({
@@ -338,14 +351,21 @@ class HttpLimousineCustomerQuoteGateway
   }
 }
 
+typedef LimousineAcceptedResumeCustomerIdLoader = Future<String?> Function();
+
 class LimousineCustomerQuoteController extends ChangeNotifier {
   LimousineCustomerQuoteController({
     required LimousineCustomerQuoteGateway gateway,
     LimousineStatusReferenceStore? statusStore,
+    LimousineAcceptedBookingResumeRepository? resumeRepository,
+    LimousineAcceptedResumeCustomerIdLoader? customerIdLoader,
     String accountScope = 'customer',
     DateTime Function()? clock,
   }) : _gateway = gateway,
        _statusStore = statusStore ?? LimousineInMemoryStatusReferenceStore(),
+       _resumeRepository = resumeRepository,
+       _customerIdLoader =
+           customerIdLoader ?? _defaultLimousineResumeCustomerId,
        _accountScope = accountScope,
        _clock = clock ?? DateTime.now {
     CustomerSessionStore.instance.addClearedListener(_onSessionCleared);
@@ -353,6 +373,8 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
 
   final LimousineCustomerQuoteGateway _gateway;
   final LimousineStatusReferenceStore _statusStore;
+  final LimousineAcceptedBookingResumeRepository? _resumeRepository;
+  final LimousineAcceptedResumeCustomerIdLoader _customerIdLoader;
   final String _accountScope;
   final DateTime Function() _clock;
 
@@ -364,6 +386,8 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   LimousinePublishedOffer? selectedOffer;
   LimousineQuoteRequest? request;
   LimousineAcceptedQuoteHandoff? handoff;
+  LimousineAcceptedBookingReview? secureResumeReview;
+  bool restoredFromSecureResume = false;
   List<LimousineCustomerDraftError> draftErrors = const [];
   String safeError = '';
   bool quoteUpdated = false;
@@ -399,17 +423,71 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     _logSink.add(message);
   }
 
+  @visibleForTesting
+  void handleSessionClearedForTests() => _onSessionCleared();
+
   void _onSessionCleared() {
     unawaited(_statusStore.clearAll());
-    _statusRef = null;
-    _acceptanceRef = null;
-    handoff = null;
+    _forgetAcceptedHandoff();
     notifyListeners();
   }
 
-  void clearAcceptedHandoff() {
+  void _forgetAcceptedHandoff() {
     _acceptanceRef = null;
     handoff = null;
+    secureResumeReview = null;
+    restoredFromSecureResume = false;
+    unawaited(_resumeRepository?.discard());
+  }
+
+  void clearAcceptedHandoff() {
+    _forgetAcceptedHandoff();
+    notifyListeners();
+  }
+
+  void applySecureResumeEnvelope(
+    LimousineAcceptedBookingResumeEnvelope envelope,
+  ) {
+    handoff = envelope.handoff;
+    draft = envelope.draft;
+    secureResumeReview = envelope.review;
+    restoredFromSecureResume = true;
+    _acceptanceRef = envelope.handoff.acceptanceReference;
+    step = LimousineCustomerQuoteStep.acceptOffer;
+    notifyListeners();
+  }
+
+  Future<LimousineAcceptedBookingResumeEnvelope?> restoreAcceptedResume({
+    required LimousineAcceptedBookingResumeScope scope,
+  }) async {
+    final repo = _resumeRepository;
+    if (repo == null) return null;
+    final envelope = await repo.restore(scope: scope);
+    if (envelope == null) {
+      if (restoredFromSecureResume) {
+        _acceptanceRef = null;
+        handoff = null;
+        secureResumeReview = null;
+        restoredFromSecureResume = false;
+        notifyListeners();
+      }
+      return null;
+    }
+    applySecureResumeEnvelope(envelope);
+    return envelope;
+  }
+
+  Future<LimousineAcceptedBookingResumeEnvelope?> detectSecureResume() async {
+    if (_resumeRepository == null) return null;
+    final customerId = ((await _customerIdLoader()) ?? '').trim();
+    if (customerId.isEmpty) return null;
+    return restoreAcceptedResume(
+      scope: LimousineAcceptedBookingResumeScope(customerId: customerId),
+    );
+  }
+
+  Future<void> discardSecureResume() async {
+    _forgetAcceptedHandoff();
     notifyListeners();
   }
 
@@ -583,8 +661,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
           previousRevision > 0) {
         quoteUpdated = true;
         termsAcknowledged = false;
-        _acceptanceRef = null;
-        handoff = null;
+        _forgetAcceptedHandoff();
       }
       request = request == null ? next : request!.mergeAuthoritative(next);
       if (LimousineQuoteStateId.isTerminal(request!.state) ||
@@ -688,6 +765,15 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
           to: draft.to,
           scheduledPickupIso: result.request.scheduledPickupIso,
         );
+        restoredFromSecureResume = false;
+        secureResumeReview = buildLimousineAcceptedBookingReview(
+          handoff: handoff!,
+          draft: draft,
+          request: result.request,
+          offer: selectedOffer,
+          providerName: selectedProvider?.provider.companyName ?? '',
+        );
+        await _persistAcceptedResume(result);
       }
       phase = LimousineCustomerQuotePhase.live;
       step = LimousineCustomerQuoteStep.acceptOffer;
@@ -697,8 +783,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       return true;
     } on LimousineCustomerQuoteException catch (error) {
       if (generation != _acceptGeneration) return false;
-      _acceptanceRef = null;
-      handoff = null;
+      _forgetAcceptedHandoff();
       phase = LimousineCustomerQuotePhase.live;
       if (error.stale) {
         quoteUpdated = true;
@@ -712,5 +797,24 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       notifyListeners();
       return false;
     }
+  }
+
+  Future<void> _persistAcceptedResume(LimousineQuoteAcceptResult result) async {
+    final repo = _resumeRepository;
+    final live = handoff;
+    final snapshot = secureResumeReview;
+    if (repo == null || live == null || snapshot == null) return;
+    final expiresAt = DateTime.tryParse(result.expiresAt.trim());
+    if (expiresAt == null) return;
+    final customerId = ((await _customerIdLoader()) ?? '').trim();
+    if (customerId.isEmpty) return;
+    await repo.persistAccepted(
+      handoff: live,
+      draft: draft,
+      review: snapshot,
+      customerId: customerId,
+      expiresAt: expiresAt.toUtc(),
+      providerName: selectedProvider?.provider.companyName ?? '',
+    );
   }
 }

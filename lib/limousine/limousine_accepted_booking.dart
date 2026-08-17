@@ -31,6 +31,12 @@ const Key kLimousineAcceptedBookingCreatingKey = ValueKey<String>(
 const Key kLimousineAcceptedBookingOpenReviewKey = ValueKey<String>(
   'limousine_accepted_booking_open_review',
 );
+const Key kLimousineAcceptedBookingContinueKey = ValueKey<String>(
+  'limousine_accepted_booking_continue',
+);
+const Key kLimousineAcceptedBookingDiscardKey = ValueKey<String>(
+  'limousine_accepted_booking_discard',
+);
 const Key kLimousineAcceptedBookingBackToQuoteKey = ValueKey<String>(
   'limousine_accepted_booking_back_quote',
 );

@@ -281,6 +281,7 @@ void openLimousineAcceptedBookingReview(
     providerName: quoteController.selectedProvider?.provider.companyName ?? '',
     entryEnabled: enabled,
     quoteController: quoteController,
+    reviewSnapshot: quoteController.secureResumeReview,
     gateway: gateway ?? HttpLimousineAcceptedBookingGateway(),
   );
   Navigator.of(context)
