@@ -117,10 +117,14 @@ import {
   applyLimousineQuoteTransition as _applyLimousineQuoteTransition,
   assertLimousineQuoteAcceptable as _assertLimousineQuoteAcceptable,
   buildLimousineAcceptanceBinding as _buildLimousineAcceptanceBinding,
+  buildLimousineCustomerFingerprint as _buildLimousineCustomerFingerprint,
   buildLimousineDecline as _buildLimousineDecline,
   buildLimousineQuoteAuditEntry as _buildLimousineQuoteAuditEntry,
+  isLimousineCommercialCompanyAction as _isLimousineCommercialCompanyAction,
   limousineManualQuoteGateEnabled as _limousineManualQuoteGateEnabledRaw,
   limousineQuoteRequestKey as _limousineQuoteRequestKey,
+  observeLimousineQuoteExpiry as _observeLimousineQuoteExpiry,
+  publicLimousineQuoteView as _publicLimousineQuoteView,
   validateLimousineCompanyQuote as _validateLimousineCompanyQuote,
   validateLimousineQuoteRequest as _validateLimousineQuoteRequest,
 } from "./modules/limousine_manual_quote.mjs";
@@ -129,6 +133,23 @@ import {
   sealLimousineAcceptance as _sealLimousineAcceptance,
   unsealLimousineAcceptance as _unsealLimousineAcceptance,
 } from "./modules/limousine_acceptance_token.mjs";
+import {
+  sealLimousineStatusRef as _sealLimousineStatusRef,
+  ttlMinutesFromRange as _limousineStatusTtlMinutesFromRange,
+} from "./modules/limousine_status_token.mjs";
+import {
+  buildLimousineCompanyInboxView as _buildLimousineCompanyInboxView,
+  emptyLimousineInboxIndex as _emptyLimousineInboxIndex,
+  executeLimousineStatusRead as _executeLimousineStatusRead,
+  limousineInboxIndexKey as _limousineInboxIndexKey,
+  limousineStatusRateKey as _limousineStatusRateKey,
+  LIMOUSINE_STATUS_RATE_MAX as _LIMOUSINE_STATUS_RATE_MAX,
+  LIMOUSINE_STATUS_RATE_WINDOW_SECONDS as _LIMOUSINE_STATUS_RATE_WINDOW_SECONDS,
+  normalizeLimousineInboxIndex as _normalizeLimousineInboxIndex,
+  pageLimousineInboxEntries as _pageLimousineInboxEntries,
+  parseLimousineInboxQuery as _parseLimousineInboxQuery,
+  upsertLimousineInboxEntry as _upsertLimousineInboxEntry,
+} from "./modules/limousine_quote_inbox.mjs";
 import {
   allocateLimousineOperationalLegs as _allocateLimousineOperationalLegs,
 } from "./modules/limousine_operational_legs.mjs";
@@ -184,7 +205,78 @@ async function _saveLimousineQuoteRecord(env, record) {
     _limousineQuoteRecordKey(record.quote_request_id),
     JSON.stringify(record),
   );
+  await _upsertLimousineInboxIndex(env, record);
   return record;
+}
+
+/// Company-scoped inbox index. One KV document per tenant/company — never a
+/// namespace list(). Tombstones and history stay in the index; entries are
+/// not removed when a company is suspended or deleted.
+async function _loadLimousineInboxIndex(env, scope) {
+  const key = _limousineInboxIndexKey(scope?.tenant_id, scope?.company_id);
+  if (!key || !env?.BOOKING_KV) return _emptyLimousineInboxIndex(scope?.tenant_id, scope?.company_id);
+  try {
+    const raw = await env.BOOKING_KV.get(key, { type: "json" });
+    return _normalizeLimousineInboxIndex(raw, scope?.tenant_id, scope?.company_id);
+  } catch (_) {
+    return _emptyLimousineInboxIndex(scope?.tenant_id, scope?.company_id);
+  }
+}
+
+async function _upsertLimousineInboxIndex(env, record) {
+  const rec = record && typeof record === "object" ? record : {};
+  const key = _limousineInboxIndexKey(rec.tenant_id, rec.company_id);
+  if (!key || !env?.BOOKING_KV) return;
+  const current = await _loadLimousineInboxIndex(env, rec);
+  const upserted = _upsertLimousineInboxEntry(current, {
+    tenant_id: rec.tenant_id,
+    company_id: rec.company_id,
+    quote_request_id: rec.quote_request_id,
+    updated_at: rec.updated_at,
+    revision: rec.revision,
+    state: rec.state,
+  });
+  if (!upserted.changed) return;
+  await env.BOOKING_KV.put(key, JSON.stringify(upserted.index));
+}
+
+async function _observeAndPersistLimousineExpiry(env, record, nowIso) {
+  const observed = _observeLimousineQuoteExpiry(record, { nowIso });
+  if (!observed.ok || !observed.changed) {
+    return { record: observed.record || record, wrote: false };
+  }
+  const next = _appendLimousineQuoteAudit(observed.record, observed.audit);
+  try {
+    await _saveLimousineQuoteRecord(env, next);
+    return { record: next, wrote: true };
+  } catch (_) {
+    return { record: next, wrote: false };
+  }
+}
+
+function _limousineInboxNotFound() {
+  return json({ ok: false, error: "not_found" }, 404);
+}
+
+async function _resealLimousineStatusRef(env, record) {
+  const access = record?.status_access && typeof record.status_access === "object"
+    ? record.status_access
+    : null;
+  if (!access?.customer_fingerprint || !access?.issued_at) return null;
+  const sealed = await _sealLimousineStatusRef({
+    secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
+    binding: {
+      purpose: "customer_status",
+      tenant_id: record.tenant_id,
+      company_id: record.company_id,
+      quote_request_id: record.quote_request_id,
+      customer_fingerprint: access.customer_fingerprint,
+      created_revision: access.created_revision ?? 1,
+    },
+    issuedAtIso: access.issued_at,
+    ttlMinutes: _limousineStatusTtlMinutesFromRange(access.issued_at, access.expires_at),
+  });
+  return sealed.ok ? sealed : null;
 }
 
 /// Company/tenant authorization for a manual-quote record. A record may only be
@@ -199,53 +291,6 @@ function _limousineQuoteScopeMatches(record, scope) {
     sanitizeTenantString(rec.tenant_id, 96) === tenant &&
     sanitizeTenantString(rec.company_id, 96) === company
   );
-}
-
-/// Customer/company-safe projection of a manual-quote record. Never exposes
-/// internal costs, the operating-base address, driver data, subscription
-/// internals or raw provider payloads.
-function _publicLimousineQuoteView(record) {
-  const rec = record && typeof record === "object" ? record : {};
-  const req = rec.request && typeof rec.request === "object" ? rec.request : {};
-  const quote = rec.quote && typeof rec.quote === "object" ? rec.quote : null;
-  return {
-    quote_request_id: sanitizeTenantString(rec.quote_request_id, 120),
-    state: sanitizeTenantString(rec.state, 40),
-    revision: Number(rec.revision) || 0,
-    offer_id: sanitizeTenantString(req.offer_id, 64),
-    service_class_id: sanitizeTenantString(req.service_class_id, 64),
-    ...(req.vehicle_id ? { vehicle_id: sanitizeTenantString(req.vehicle_id, 96) } : {}),
-    journey_type: sanitizeTenantString(req.journey_type, 32),
-    scheduled_pickup_iso: sanitizeTenantString(req.scheduled_pickup_iso, 40),
-    roundtrip: req.roundtrip === true,
-    pax: Number(req.pax) || null,
-    bags: Number(req.bags) || null,
-    selected_extra_ids: Array.isArray(req.selected_extra_ids) ? req.selected_extra_ids : [],
-    itinerary_fingerprint: sanitizeTenantString(req.itinerary_fingerprint, 64),
-    ...(quote
-      ? {
-          quote: {
-            total_incl_vat_cents: Number(quote.total_incl_vat_cents) || 0,
-            currency: sanitizeTenantString(quote.currency, 3).toUpperCase(),
-            vat_treatment: sanitizeTenantString(quote.vat_treatment, 16),
-            vat_rate: Number(quote.vat_rate) || 0,
-            public_text: quote.public_text || {},
-            included_services: quote.included_services || [],
-            separately_priced_extras: quote.separately_priced_extras || [],
-            mobilisation_disclosure: quote.mobilisation_disclosure || {},
-            terms_revision: Number(quote.terms_revision) || 0,
-            expires_at: sanitizeTenantString(quote.expires_at, 40),
-            quoted_at: sanitizeTenantString(quote.quoted_at, 40),
-          },
-        }
-      : {}),
-    ...(rec.decline ? { decline: rec.decline } : {}),
-    ...(rec.booking_reference
-      ? { booking_reference: sanitizeTenantString(rec.booking_reference, 64) }
-      : {}),
-    created_at: sanitizeTenantString(rec.created_at, 40),
-    updated_at: sanitizeTenantString(rec.updated_at, 40),
-  };
 }
 
 /// Loads the authoritative published offer for a manual-quote request.
@@ -44577,13 +44622,17 @@ export default {
           return json({ ok: false, error: validated.reason, field: validated.field }, 400);
         }
         const nowIso = new Date().toISOString();
+        const customerSession = await _loadCustomerSessionFromRequest(request, env);
+        const customerRef = sanitizeTenantString(
+          customerSession?.customer_id ||
+            body?.customer_reference ||
+            body?.customerReference,
+          160,
+        );
         const requestKey = _limousineQuoteRequestKey({
           tenantId: scope.tenant_id,
           companyId: scope.company_id,
-          customerRef: sanitizeTenantString(
-            body?.customer_reference ?? body?.customerReference,
-            160,
-          ),
+          customerRef,
           request: validated.request,
         });
         // Idempotent submission: the same intent returns the same record.
@@ -44591,10 +44640,42 @@ export default {
         if (existingId) {
           const existing = await _loadLimousineQuoteRecord(env, existingId);
           if (existing && _limousineQuoteScopeMatches(existing, scope)) {
-            return json({ ok: true, idempotent: true, quote_request: _publicLimousineQuoteView(existing) }, 200);
+            await _upsertLimousineInboxIndex(env, existing);
+            const replayed = await _resealLimousineStatusRef(env, existing);
+            return json(
+              {
+                ok: true,
+                idempotent: true,
+                quote_request: _publicLimousineQuoteView(existing),
+                ...(replayed
+                  ? { status_ref: replayed.reference, status_expires_at: replayed.expires_at }
+                  : {}),
+              },
+              200,
+            );
           }
         }
         const quoteRequestId = `limq_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
+        const customerFingerprint = _buildLimousineCustomerFingerprint({
+          tenantId: scope.tenant_id,
+          companyId: scope.company_id,
+          customerRef,
+          quoteRequestId,
+          itineraryFingerprint: validated.request.itinerary_fingerprint,
+        });
+        const sealedStatus = await _sealLimousineStatusRef({
+          secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
+          binding: {
+            purpose: "customer_status",
+            tenant_id: scope.tenant_id,
+            company_id: scope.company_id,
+            quote_request_id: quoteRequestId,
+            customer_fingerprint: customerFingerprint,
+            created_revision: 1,
+          },
+          issuedAtIso: nowIso,
+        });
+        if (!sealedStatus.ok) return json({ ok: false, error: sealedStatus.error }, 500);
         let record = {
           quote_request_id: quoteRequestId,
           tenant_id: scope.tenant_id,
@@ -44608,6 +44689,12 @@ export default {
           created_at: nowIso,
           updated_at: nowIso,
           audit: [],
+          status_access: {
+            customer_fingerprint: customerFingerprint,
+            issued_at: sealedStatus.issued_at,
+            expires_at: sealedStatus.expires_at,
+            created_revision: 1,
+          },
         };
         record = _appendLimousineQuoteAudit(
           record,
@@ -44622,7 +44709,15 @@ export default {
         );
         await _saveLimousineQuoteRecord(env, record);
         await env.BOOKING_KV.put(requestKey, quoteRequestId, { expirationTtl: 60 * 60 * 24 * 30 });
-        return json({ ok: true, quote_request: _publicLimousineQuoteView(record) }, 200);
+        return json(
+          {
+            ok: true,
+            quote_request: _publicLimousineQuoteView(record),
+            status_ref: sealedStatus.reference,
+            status_expires_at: sealedStatus.expires_at,
+          },
+          200,
+        );
       }
 
       if (url.pathname === "/admin/limousine/quote-requests/respond" && request.method === "POST") {
@@ -44650,6 +44745,11 @@ export default {
           return json({ ok: false, error: "unauthorized_scope" }, 403);
         }
         const action = sanitizeTenantString(body?.action, 32).toLowerCase();
+        // Suspended companies may read history but cannot quote/decline/withdraw.
+        if (_isLimousineCommercialCompanyAction(action)) {
+          const suspensionGuard = await _assertFluxidiCompanyCanCreateNewBooking(env, scope);
+          if (!suspensionGuard.ok) return _subscriptionBlockedResponse({ scope: "company" });
+        }
         const expectedRevision = body?.expected_revision ?? body?.expectedRevision;
         const nowIso = new Date().toISOString();
 
@@ -44776,6 +44876,121 @@ export default {
           },
           200,
         );
+      }
+
+      // LIMOUSINE-MARKETPLACE-P2C2A — company inbox list (scoped, cursor page).
+      if (url.pathname === "/admin/limousine/quote-requests" && request.method === "GET") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return json({ ok: false, error: "manual_quote_gate_off" }, 404);
+        }
+        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body: null,
+          routeLabel: "ADMIN_LIMOUSINE_QUOTE_INBOX",
+        });
+        if (!authScope.ok) return authScope.response;
+        const scope = authScope.explicitScope;
+        const parsed = _parseLimousineInboxQuery(url.searchParams);
+        if (!parsed.ok) {
+          return json({ ok: false, error: parsed.reason }, 400);
+        }
+        const nowIso = new Date().toISOString();
+        const index = await _loadLimousineInboxIndex(env, scope);
+        const page = _pageLimousineInboxEntries(index, parsed);
+        const suspensionGuard = await _assertFluxidiCompanyCanCreateNewBooking(env, scope);
+        const transitionsBlocked = !suspensionGuard.ok;
+        const items = [];
+        for (const entry of page.entries) {
+          const loaded = await _loadLimousineQuoteRecord(env, entry.quote_request_id);
+          if (!loaded || !_limousineQuoteScopeMatches(loaded, scope)) continue;
+          const observed = await _observeAndPersistLimousineExpiry(env, loaded, nowIso);
+          if (parsed.state && observed.record.state !== parsed.state) continue;
+          items.push(
+            _buildLimousineCompanyInboxView(observed.record, {
+              activity_seq: entry.activity_seq,
+              transitions_blocked: transitionsBlocked,
+            }),
+          );
+        }
+        return json(
+          {
+            ok: true,
+            items,
+            next_cursor: page.next_cursor,
+            has_more: page.has_more,
+          },
+          200,
+        );
+      }
+
+      // LIMOUSINE-MARKETPLACE-P2C2A — company quote-request detail.
+      // Missing and cross-scope records share the same non-enumerating 404.
+      const _limousineInboxDetail = url.pathname.match(
+        /^\/admin\/limousine\/quote-requests\/([A-Za-z0-9_-]{1,120})$/,
+      );
+      if (_limousineInboxDetail && request.method === "GET") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return json({ ok: false, error: "manual_quote_gate_off" }, 404);
+        }
+        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body: null,
+          routeLabel: "ADMIN_LIMOUSINE_QUOTE_DETAIL",
+        });
+        if (!authScope.ok) return authScope.response;
+        const scope = authScope.explicitScope;
+        const record = await _loadLimousineQuoteRecord(env, _limousineInboxDetail[1]);
+        if (!record || !_limousineQuoteScopeMatches(record, scope)) {
+          return _limousineInboxNotFound();
+        }
+        const nowIso = new Date().toISOString();
+        const observed = await _observeAndPersistLimousineExpiry(env, record, nowIso);
+        const index = await _loadLimousineInboxIndex(env, scope);
+        const indexed = (index.entries || []).find(
+          (e) => e.quote_request_id === observed.record.quote_request_id,
+        );
+        const suspensionGuard = await _assertFluxidiCompanyCanCreateNewBooking(env, scope);
+        return json(
+          {
+            ok: true,
+            quote_request: _buildLimousineCompanyInboxView(observed.record, {
+              activity_seq: indexed?.activity_seq ?? null,
+              transitions_blocked: !suspensionGuard.ok,
+            }),
+          },
+          200,
+        );
+      }
+
+      // LIMOUSINE-MARKETPLACE-P2C2A — customer status poll via opaque ref.
+      // Malformed bodies are rejected before KV. Rate-limit denial performs
+      // zero quote-record reads. Polling never issues an acceptance reference.
+      if (url.pathname === "/limousine/quote-requests/status" && request.method === "POST") {
+        if (!_limousineManualQuoteGateEnabled(env)) {
+          return json({ ok: false, error: "manual_quote_gate_off" }, 404);
+        }
+        const body = await safeJson(request);
+        const result = await _executeLimousineStatusRead({
+          body,
+          secret: env.LIMOUSINE_ACCEPTANCE_SECRET,
+          bookingKvPresent: !!env.BOOKING_KV,
+          loadCustomerSession: () => _loadCustomerSessionFromRequest(request, env),
+          rateLimit: async (statusRef) => _incrementSimpleRateLimit({
+            env,
+            rateKey: _limousineStatusRateKey(statusRef),
+            maxCount: _LIMOUSINE_STATUS_RATE_MAX,
+            windowSeconds: _LIMOUSINE_STATUS_RATE_WINDOW_SECONDS,
+          }),
+          loadRecord: (id) => _loadLimousineQuoteRecord(env, id),
+          persistExpired: (next) => _saveLimousineQuoteRecord(env, next),
+        });
+        return json(result.body, result.status);
       }
 
       // GET /partners/nearby?postcode=... or /partners/nearby?lat=..&lng=..&radius_km=..

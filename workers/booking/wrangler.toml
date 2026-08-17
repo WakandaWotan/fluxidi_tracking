@@ -37,7 +37,8 @@ LIMOUSINE_BOOK_ENABLED = "0"
 # (quote_required offers, indicative confirmation, quote-required extras).
 # Default OFF: gate-off performs zero manual-quote reads or writes.
 # LIMOUSINE_ACCEPTANCE_SECRET is a Cloudflare SECRET (never committed) used to
-# seal the opaque customer acceptance reference.
+# seal the opaque customer acceptance reference AND the customer status
+# reference (`limqs1`). Never commit the secret value.
 LIMOUSINE_MANUAL_QUOTE_ENABLED = "0"
 # GOOGLE-PLAY-REVIEW-ACCESS-P0 — non-secret company allowlist. The reusable
 # credential hash MUST be set via: wrangler secret put PLAY_REVIEW_ACCESS_CODE_HASH

@@ -589,3 +589,118 @@ export function limousineManualQuoteGateEnabled(rawValue) {
   const token = normalizeLimousineToken(rawValue);
   return token === "1" || token === "true" || token === "yes" || token === "on";
 }
+
+/// Known quote-lifecycle state. Unknown filter values fail closed.
+export function isLimousineQuoteState(value) {
+  return Object.values(S).includes(normalizeLimousineToken(value));
+}
+
+/// Commercial company actions that a suspended company must not perform.
+/// History reads and the non-commercial "viewed" ack stay allowed.
+export function isLimousineCommercialCompanyAction(action) {
+  const token = normalizeLimousineToken(action);
+  return token === "quote" || token === "decline" || token === "withdraw";
+}
+
+/// Customer/request identity bound into the opaque status reference.
+/// Does not include contact data — only scoped identifiers and the itinerary
+/// fingerprint already stored on the request.
+export function buildLimousineCustomerFingerprint({
+  tenantId = "",
+  companyId = "",
+  customerRef = "",
+  quoteRequestId = "",
+  itineraryFingerprint = "",
+} = {}) {
+  const raw = [
+    safeText(tenantId, 96),
+    safeText(companyId, 96),
+    safeText(customerRef, 160).toLowerCase(),
+    safeText(quoteRequestId, 120),
+    safeText(itineraryFingerprint, 64),
+  ].join("~");
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < raw.length; i++) {
+    hash ^= raw.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `limcf_${hash.toString(16)}`;
+}
+
+/// On-read expiry: if the company-set quote expiry has elapsed and the record
+/// can still leave its current state, transition to `expired`. Already-expired
+/// and terminal-preserved records are idempotent no-ops. Expired quotes cannot
+/// re-enter an active state (the transition matrix forbids it).
+export function observeLimousineQuoteExpiry(record, { nowIso = null } = {}) {
+  const rec = asObject(record);
+  const now = nowIso || new Date().toISOString();
+  const state = normalizeLimousineToken(rec.state);
+  if (state === S.EXPIRED) {
+    return { ok: true, changed: false, reason: LIMOUSINE_QUOTE_REASONS.IDEMPOTENT_REPLAY, record: rec };
+  }
+  const quote = asObject(rec.quote);
+  const expiry = Date.parse(safeText(quote.expires_at, 40));
+  const nowMs = Date.parse(now);
+  if (!Number.isFinite(expiry) || !Number.isFinite(nowMs) || nowMs <= expiry) {
+    return { ok: true, changed: false, record: rec };
+  }
+  if (!canTransitionLimousineQuote(state, S.EXPIRED)) {
+    return { ok: true, changed: false, reason: "terminal_preserved", record: rec };
+  }
+  return applyLimousineQuoteTransition(rec, {
+    to: S.EXPIRED,
+    expectedRevision: rec.revision,
+    actorType: "system",
+    reasonCode: "quote_expired",
+    nowIso: now,
+  });
+}
+
+/// Customer/company-safe projection of a manual-quote record. Never exposes
+/// internal costs, the operating-base address, driver data, subscription
+/// internals, audit, status tokens or raw provider payloads.
+export function publicLimousineQuoteView(record) {
+  const rec = asObject(record);
+  const req = asObject(rec.request);
+  const quote = rec.quote && typeof rec.quote === "object" && !Array.isArray(rec.quote)
+    ? rec.quote
+    : null;
+  return {
+    quote_request_id: safeText(rec.quote_request_id, 120),
+    state: safeText(rec.state, 40),
+    revision: toInt(rec.revision) ?? 0,
+    offer_id: safeText(req.offer_id, 64),
+    service_class_id: safeText(req.service_class_id, 64),
+    ...(req.vehicle_id ? { vehicle_id: safeText(req.vehicle_id, 96) } : {}),
+    journey_type: safeText(req.journey_type, 32),
+    scheduled_pickup_iso: safeText(req.scheduled_pickup_iso, 40),
+    roundtrip: req.roundtrip === true,
+    pax: toInt(req.pax),
+    bags: toInt(req.bags),
+    selected_extra_ids: Array.isArray(req.selected_extra_ids) ? req.selected_extra_ids : [],
+    itinerary_fingerprint: safeText(req.itinerary_fingerprint, 64),
+    ...(quote
+      ? {
+          quote: {
+            total_incl_vat_cents: toInt(quote.total_incl_vat_cents) ?? 0,
+            currency: normalizeCurrency(quote.currency),
+            vat_treatment: safeText(quote.vat_treatment, 16),
+            vat_rate: Number(quote.vat_rate) || 0,
+            public_text: asObject(quote.public_text),
+            included_services: Array.isArray(quote.included_services) ? quote.included_services : [],
+            separately_priced_extras: Array.isArray(quote.separately_priced_extras)
+              ? quote.separately_priced_extras
+              : [],
+            mobilisation_disclosure: asObject(quote.mobilisation_disclosure),
+            terms_revision: toInt(quote.terms_revision) ?? 0,
+            expires_at: safeText(quote.expires_at, 40),
+            quoted_at: safeText(quote.quoted_at, 40),
+          },
+        }
+      : {}),
+    ...(rec.decline ? { decline: rec.decline } : {}),
+    ...(rec.booking_reference ? { booking_reference: safeText(rec.booking_reference, 64) } : {}),
+    created_at: safeText(rec.created_at, 40),
+    updated_at: safeText(rec.updated_at, 40),
+  };
+}
