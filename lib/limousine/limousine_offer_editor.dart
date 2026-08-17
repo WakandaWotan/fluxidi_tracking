@@ -52,7 +52,10 @@ Map<String, dynamic> _mapOf(Object? raw) {
 
 List<Map<String, dynamic>> _listOf(Object? raw) {
   if (raw is! List) return <Map<String, dynamic>>[];
-  return raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+  return raw
+      .whereType<Map>()
+      .map((e) => Map<String, dynamic>.from(e))
+      .toList();
 }
 
 /// A localized NL/EN/FR/ES text block. Each language is edited and stored
@@ -250,9 +253,9 @@ class _LimousineOfferEditorDialogState
       text: (mob['operating_base_address'] ?? '').toString(),
     );
 
-    _includedServices = _listOf(
-      _base['included_services'],
-    ).map(_IncludedServiceDraft.fromJson).toList();
+    _includedServices = _listOf(_base['included_services'])
+        .map(_IncludedServiceDraft.fromJson)
+        .toList();
     _paidExtras = _listOf(
       _base['paid_extras'],
     ).map(_PaidExtraDraft.fromJson).toList();
@@ -361,9 +364,7 @@ class _LimousineOfferEditorDialogState
         'per_km_incl_vat_cents': _centsFromText(_dtPerKm.text),
         'per_minute_incl_vat_cents': _centsFromText(_dtPerMinute.text),
         'minimum_incl_vat_cents': _centsFromText(_dtMinimum.text),
-        'vat_rate': double.tryParse(
-          _dtVatRate.text.trim().replaceAll(',', '.'),
-        ),
+        'vat_rate': double.tryParse(_dtVatRate.text.trim().replaceAll(',', '.')),
         'currency': widget.currency,
       },
       'mobilisation': <String, dynamic>{
@@ -480,8 +481,7 @@ class _LimousineOfferEditorDialogState
                     ],
                   ),
                   DropdownButtonFormField<String>(
-                    value:
-                        LimousineJourneyTypeId.all.contains(
+                    value: LimousineJourneyTypeId.all.contains(
                           limousineOfferToken(rule['journey_type']),
                         )
                         ? limousineOfferToken(rule['journey_type'])
@@ -514,26 +514,24 @@ class _LimousineOfferEditorDialogState
                       children: [
                         Expanded(
                           child: TextFormField(
-                            initialValue: (rule['airport_iata'] ?? '')
-                                .toString(),
+                            initialValue: (rule['airport_iata'] ?? '').toString(),
                             decoration: const InputDecoration(
                               isDense: true,
                               labelText: 'IATA',
                             ),
                             onChanged: (v) => setState(
-                              () => _fixedRules[i]['airport_iata'] = v
-                                  .trim()
-                                  .toUpperCase(),
+                              () => _fixedRules[i]['airport_iata'] =
+                                  v.trim().toUpperCase(),
                             ),
                           ),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: DropdownButtonFormField<String>(
-                            value:
-                                ['to_airport', 'from_airport', 'both'].contains(
-                                  limousineOfferToken(rule['direction']),
-                                )
+                            value: ['to_airport', 'from_airport', 'both']
+                                    .contains(
+                                      limousineOfferToken(rule['direction']),
+                                    )
                                 ? limousineOfferToken(rule['direction'])
                                 : null,
                             isExpanded: true,
@@ -560,8 +558,9 @@ class _LimousineOfferEditorDialogState
                                 child: Text('both'),
                               ),
                             ],
-                            onChanged: (v) =>
-                                setState(() => _fixedRules[i]['direction'] = v),
+                            onChanged: (v) => setState(
+                              () => _fixedRules[i]['direction'] = v,
+                            ),
                           ),
                         ),
                       ],
@@ -569,14 +568,8 @@ class _LimousineOfferEditorDialogState
                     const SizedBox(height: 6),
                   ],
                   DropdownButtonFormField<String>(
-                    value:
-                        const [
-                          'none',
-                          'postcode',
-                          'city',
-                          'country',
-                          'radius',
-                        ].contains(limousineOfferToken(rule['zone_type']))
+                    value: const ['none', 'postcode', 'city', 'country', 'radius']
+                            .contains(limousineOfferToken(rule['zone_type']))
                         ? limousineOfferToken(rule['zone_type'])
                         : 'none',
                     isExpanded: true,
@@ -596,10 +589,7 @@ class _LimousineOfferEditorDialogState
                         child: Text('postcode'),
                       ),
                       DropdownMenuItem(value: 'city', child: Text('city')),
-                      DropdownMenuItem(
-                        value: 'country',
-                        child: Text('country'),
-                      ),
+                      DropdownMenuItem(value: 'country', child: Text('country')),
                       DropdownMenuItem(value: 'radius', child: Text('radius')),
                     ],
                     onChanged: (v) =>
@@ -653,8 +643,7 @@ class _LimousineOfferEditorDialogState
                       ],
                     ),
                     const SizedBox(height: 6),
-                  ] else if (limousineOfferToken(rule['zone_type']) !=
-                      'none') ...[
+                  ] else if (limousineOfferToken(rule['zone_type']) != 'none') ...[
                     TextFormField(
                       initialValue: (rule['zone_value'] ?? '').toString(),
                       decoration: InputDecoration(
@@ -667,9 +656,8 @@ class _LimousineOfferEditorDialogState
                         ),
                       ),
                       onChanged: (v) => setState(
-                        () => _fixedRules[i]['zone_value'] = v
-                            .trim()
-                            .toUpperCase(),
+                        () => _fixedRules[i]['zone_value'] =
+                            v.trim().toUpperCase(),
                       ),
                     ),
                     const SizedBox(height: 6),
@@ -794,7 +782,12 @@ class _LimousineOfferEditorDialogState
                     ],
                   ),
                   _localizedMatrix(
-                    _t(nl: 'Label', en: 'Label', fr: 'Libellé', es: 'Etiqueta'),
+                    _t(
+                      nl: 'Label',
+                      en: 'Label',
+                      fr: 'Libellé',
+                      es: 'Etiqueta',
+                    ),
                     draft.label,
                   ),
                 ],
@@ -854,7 +847,12 @@ class _LimousineOfferEditorDialogState
                     ],
                   ),
                   _localizedMatrix(
-                    _t(nl: 'Label', en: 'Label', fr: 'Libellé', es: 'Etiqueta'),
+                    _t(
+                      nl: 'Label',
+                      en: 'Label',
+                      fr: 'Libellé',
+                      es: 'Etiqueta',
+                    ),
                     draft.label,
                   ),
                   CheckboxListTile(
@@ -1100,8 +1098,7 @@ class _LimousineOfferEditorDialogState
                     ),
                   )
                   .toList(growable: false),
-              onChanged: (v) =>
-                  setState(() => _presentation = v ?? _presentation),
+              onChanged: (v) => setState(() => _presentation = v ?? _presentation),
             ),
             const SizedBox(height: 6),
             _money(
@@ -1299,7 +1296,12 @@ class _LimousineOfferEditorDialogState
               ),
               _money(
                 _dtMinimum,
-                _t(nl: 'Minimum', en: 'Minimum', fr: 'Minimum', es: 'Mínimo'),
+                _t(
+                  nl: 'Minimum',
+                  en: 'Minimum',
+                  fr: 'Minimum',
+                  es: 'Mínimo',
+                ),
               ),
               _number(
                 _dtVatRate,
@@ -1489,7 +1491,12 @@ class _LimousineOfferEditorDialogState
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: Text(
-            _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
+            _t(
+              nl: 'Annuleren',
+              en: 'Cancel',
+              fr: 'Annuler',
+              es: 'Cancelar',
+            ),
           ),
         ),
         FilledButton(
@@ -1497,7 +1504,12 @@ class _LimousineOfferEditorDialogState
               ? () => Navigator.of(context).pop(buildOffer())
               : null,
           child: Text(
-            _t(nl: 'Bewaren', en: 'Save', fr: 'Enregistrer', es: 'Guardar'),
+            _t(
+              nl: 'Bewaren',
+              en: 'Save',
+              fr: 'Enregistrer',
+              es: 'Guardar',
+            ),
           ),
         ),
       ],
@@ -1549,18 +1561,17 @@ class _PaidExtraDraft {
     required this.public,
   });
 
-  factory _PaidExtraDraft.fromJson(Map<String, dynamic> json) =>
-      _PaidExtraDraft(
-        extraId: (json['extra_id'] ?? '').toString(),
-        label: LimousineLocalizedField(json['label']),
-        amount: TextEditingController(
-          text: _textFromCents(limousineCentsOf(json['amount_cents'])),
-        ),
-        quoteRequired: json['quote_required'] == true,
-        currency: (json['currency'] ?? 'EUR').toString(),
-        active: json['active'] != false,
-        public: json['public'] != false,
-      );
+  factory _PaidExtraDraft.fromJson(Map<String, dynamic> json) => _PaidExtraDraft(
+    extraId: (json['extra_id'] ?? '').toString(),
+    label: LimousineLocalizedField(json['label']),
+    amount: TextEditingController(
+      text: _textFromCents(limousineCentsOf(json['amount_cents'])),
+    ),
+    quoteRequired: json['quote_required'] == true,
+    currency: (json['currency'] ?? 'EUR').toString(),
+    active: json['active'] != false,
+    public: json['public'] != false,
+  );
 
   factory _PaidExtraDraft.empty(String id, String currency) => _PaidExtraDraft(
     extraId: id,

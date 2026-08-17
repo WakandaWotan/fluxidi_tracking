@@ -1965,8 +1965,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
         .where(_driverVisibleInManagementUi)
         .length;
 
-    int effectiveMax =
-        (includedVehicleLimit > 0 ? includedVehicleLimit : 1) * 3;
+    int effectiveMax = (includedVehicleLimit > 0 ? includedVehicleLimit : 1) * 3;
     String limitSource = 'fallback';
 
     final scopeId = _activeCompanyIdForFleetUi();

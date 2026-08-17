@@ -44,19 +44,9 @@ Map<String, dynamic> _offer({Map<String, dynamic> overrides = const {}}) {
     'price_presentation': LimousinePricePresentation.exactFixed,
     'currency': 'EUR',
     'journey_types': <String>['airport_transfer', 'hourly_package'],
-    'title': {
-      'nl': 'Executive',
-      'en': 'Executive',
-      'fr': 'Exécutive',
-      'es': 'Ejecutiva',
-    },
+    'title': {'nl': 'Executive', 'en': 'Executive', 'fr': 'Exécutive', 'es': 'Ejecutiva'},
     'description': {'nl': 'NL', 'en': 'EN', 'fr': 'FR', 'es': 'ES'},
-    'important_information': {
-      'nl': 'NLi',
-      'en': 'ENi',
-      'fr': 'FRi',
-      'es': 'ESi',
-    },
+    'important_information': {'nl': 'NLi', 'en': 'ENi', 'fr': 'FRi', 'es': 'ESi'},
     'fixed_rules': <Map<String, dynamic>>[
       {
         'rule_id': 'r_bru',
@@ -106,12 +96,7 @@ Map<String, dynamic> _offer({Map<String, dynamic> overrides = const {}}) {
     'paid_extras': <Map<String, dynamic>>[
       {
         'extra_id': 'wait',
-        'label': {
-          'nl': 'Wachttijd',
-          'en': 'Waiting',
-          'fr': 'Attente',
-          'es': 'Espera',
-        },
+        'label': {'nl': 'Wachttijd', 'en': 'Waiting', 'fr': 'Attente', 'es': 'Espera'},
         'amount_cents': 2500,
         'currency': 'EUR',
         'active': true,
@@ -142,9 +127,8 @@ void main() {
   }
 
   group('editor completeness (source contract)', () {
-    final editor = File(
-      'lib/limousine/limousine_offer_editor.dart',
-    ).readAsStringSync();
+    final editor =
+        File('lib/limousine/limousine_offer_editor.dart').readAsStringSync();
 
     test('every required sub-editor exists', () {
       for (final marker in const [
@@ -167,9 +151,7 @@ void main() {
     });
 
     test('settings page delegates to the complete editor', () {
-      final settings = File(
-        'lib/business_settings_page.dart',
-      ).readAsStringSync();
+      final settings = File('lib/business_settings_page.dart').readAsStringSync();
       expect(settings.contains('LimousineOfferEditorDialog('), isTrue);
       // The old active-language-only inline dialog is gone.
       expect(settings.contains('_langKey()'), isFalse);
@@ -218,18 +200,13 @@ void main() {
     test('inactive / non-limousine / missing vehicle removes the offer', () {
       for (final id in const ['vh_inactive', 'vh_taxi', 'vh_missing']) {
         expect(
-          project(<Map<String, dynamic>>[
-            _offer(overrides: {'vehicle_id': id}),
-          ]),
+          project(<Map<String, dynamic>>[_offer(overrides: {'vehicle_id': id})]),
           isEmpty,
           reason: id,
         );
       }
       expect(buildSafePublicLimousineVehicle(null), isNull);
-      expect(
-        buildSafePublicLimousineVehicle(_vehicle(isActive: false)),
-        isNull,
-      );
+      expect(buildSafePublicLimousineVehicle(_vehicle(isActive: false)), isNull);
       expect(
         buildSafePublicLimousineVehicle(_vehicle(serviceClassId: '')),
         isNull,
@@ -288,12 +265,7 @@ void main() {
     });
 
     test('unpublished and invalid offers are excluded', () {
-      expect(
-        project(<Map<String, dynamic>>[
-          _offer(overrides: {'published': false}),
-        ]),
-        isEmpty,
-      );
+      expect(project(<Map<String, dynamic>>[_offer(overrides: {'published': false})]), isEmpty);
       final invalid = _offer(
         overrides: {
           'hourly': {
@@ -312,9 +284,10 @@ void main() {
     test('modes are identical across every presentation token', () {
       final modes = limousineOfferSupportedPricingModes(_offer())..sort();
       for (final p in LimousinePricePresentation.all) {
-        final other = limousineOfferSupportedPricingModes(
-          _offer(overrides: {'price_presentation': p}),
-        )..sort();
+        final other =
+            limousineOfferSupportedPricingModes(
+              _offer(overrides: {'price_presentation': p}),
+            )..sort();
         expect(other, modes, reason: p);
       }
       expect(modes.contains(LimousineOfferPricingMode.fixed), isTrue);
@@ -325,13 +298,11 @@ void main() {
     test('no computable mode falls back to manual', () {
       expect(
         limousineOfferSupportedPricingModes(
-          _offer(
-            overrides: {
-              'fixed_rules': <Map<String, dynamic>>[],
-              'hourly': <String, dynamic>{},
-              'distance_time': <String, dynamic>{},
-            },
-          ),
+          _offer(overrides: {
+            'fixed_rules': <Map<String, dynamic>>[],
+            'hourly': <String, dynamic>{},
+            'distance_time': <String, dynamic>{},
+          }),
         ),
         <String>[LimousineOfferPricingMode.manual],
       );
@@ -346,9 +317,7 @@ void main() {
         LimousinePricePresentation.unavailable,
       ]) {
         expect(
-          limousineOfferCanResolvePrice(
-            _offer(overrides: {'price_presentation': p}),
-          ),
+          limousineOfferCanResolvePrice(_offer(overrides: {'price_presentation': p})),
           isFalse,
           reason: p,
         );
@@ -371,17 +340,11 @@ void main() {
     });
 
     test('taxi and airport stores stay separate and preserved', () {
-      final worker = File(
-        'workers/booking/fluxidi_booking_worker.js',
-      ).readAsStringSync();
+      final worker =
+          File('workers/booking/fluxidi_booking_worker.js').readAsStringSync();
+      expect(worker.contains('normalized.limousine = preservedLimousine'), isTrue);
       expect(
-        worker.contains('normalized.limousine = preservedLimousine'),
-        isTrue,
-      );
-      expect(
-        worker.contains(
-          'const mergedProfile = { ...rawProfile, limousine: nextSection };',
-        ),
+        worker.contains('const mergedProfile = { ...rawProfile, limousine: nextSection };'),
         isTrue,
       );
       expect(worker.contains('buildScopedAirportFixedFaresKey'), isTrue);

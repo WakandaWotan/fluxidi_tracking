@@ -441,12 +441,7 @@ abstract final class LimousineOfferPricingMode {
   static const String distanceTime = 'distance_time';
   static const String manual = 'manual';
 
-  static const List<String> all = <String>[
-    fixed,
-    package,
-    distanceTime,
-    manual,
-  ];
+  static const List<String> all = <String>[fixed, package, distanceTime, manual];
 }
 
 List<String> limousineOfferSupportedPricingModes(Map<String, dynamic> offer) {
@@ -494,8 +489,7 @@ Map<String, dynamic>? buildSafePublicLimousineVehicle(VehicleProfile? vehicle) {
     'service_class_id': classId,
     if (vehicle.passengerCapacity > 0)
       'passenger_capacity': vehicle.passengerCapacity,
-    if (vehicle.luggageCapacity > 0)
-      'luggage_capacity': vehicle.luggageCapacity,
+    if (vehicle.luggageCapacity > 0) 'luggage_capacity': vehicle.luggageCapacity,
     if (vehicle.color.trim().isNotEmpty) 'color': vehicle.color.trim(),
     if (safePhoto.isNotEmpty) 'photo_url': safePhoto,
   };
@@ -538,8 +532,7 @@ List<Map<String, dynamic>> buildSafePublicLimousineOffers(
     // Authoritative vehicle join: an exact-vehicle offer publishes only when the
     // fleet record still resolves to an active, classified limousine.
     Map<String, dynamic>? safeVehicle;
-    if (limousineOfferToken(offer['target_type']) ==
-        LimousineOfferTarget.vehicle) {
+    if (limousineOfferToken(offer['target_type']) == LimousineOfferTarget.vehicle) {
       final vehicleId = (offer['vehicle_id'] ?? '').toString().trim();
       VehicleProfile? record;
       for (final v in vehicles) {
