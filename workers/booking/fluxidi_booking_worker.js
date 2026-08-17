@@ -182,6 +182,19 @@ import {
   IN_PROGRESS_STALL_MS as BILLIT_IN_PROGRESS_STALL_MS,
 } from "./modules/billit_export_recovery.js";
 import {
+  BILLIT_OUTBOX_PREFIX,
+  BILLIT_OUTBOX_DUE_PREFIX,
+  BILLIT_OUTBOX_DUE_MIGRATION_KEY,
+  BILLIT_OUTBOX_DUE_MIGRATION_BATCH,
+  advanceBillitOutboxMigrationState,
+  billitOutboxDueAtMs,
+  buildBillitOutboxDueMarkerKey,
+  buildBillitOutboxDueMarkerMetadata,
+  desiredBillitDueMarkerKey,
+  normalizeBillitOutboxMigrationState,
+  selectDueBillitMarkers,
+} from "./modules/billit_outbox_due_index.js";
+import {
   todayNLBrussels,
   DEFAULT_COMPANY_TIMEZONE,
 } from "./modules/brussels_datetime.js";
@@ -1401,6 +1414,98 @@ async function persistDocumentPaymentMethodTruthMetadata(
   }
 }
 
+/* ===================== BILLIT-KV-COST-P0 due-marker maintenance ===================== */
+
+// Write the ordered due marker for an authoritative outbox record.
+//
+// Marker keys are deterministic (due-at + outbox ref), so re-arming the same
+// due time is an idempotent overwrite rather than a duplicate. The marker value
+// is empty: identity travels in KV metadata, which list() returns for free.
+//
+// Callers MUST arm before persisting the authoritative record. A crash between
+// the two leaves a marker whose record is older or absent, which processing
+// self-heals; the reverse order could leave due work with no marker at all.
+async function _armBillitOutboxDueMarker(env, outboxKey, record) {
+  if (!env?.BOOKING_KV || !outboxKey) return null;
+  const dueAtMs = billitOutboxDueAtMs(record);
+  if (dueAtMs === null) return null;
+  const markerKey = buildBillitOutboxDueMarkerKey(dueAtMs, outboxKey);
+  const metadata = buildBillitOutboxDueMarkerMetadata(record);
+  if (!markerKey || !metadata) return null;
+  try {
+    await env.BOOKING_KV.put(markerKey, "", { metadata });
+    return markerKey;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function _deleteBillitOutboxDueMarker(env, markerKey) {
+  if (!env?.BOOKING_KV || !markerKey) return false;
+  try {
+    await env.BOOKING_KV.delete(markerKey);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Retire specific due markers. Bounded to the keys the caller already owns;
+// never lists the marker keyspace. Deletes are idempotent.
+async function _retireBillitOutboxDueMarkers(env, markerKeys = []) {
+  const seen = new Set();
+  let removed = 0;
+  for (const candidate of markerKeys) {
+    const key = safeStr(candidate, 512);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    if (await _deleteBillitOutboxDueMarker(env, key)) removed += 1;
+  }
+  return removed;
+}
+
+// Crash-safe write of an authoritative outbox record plus its due marker.
+//
+// Order is: arm new marker -> persist authoritative record -> retire the
+// superseded marker. Every interruption point leaves either a duplicate or a
+// stale marker, both harmless because processing re-reads the authoritative
+// record and reconciles. Due work is never left unmarked.
+async function _persistBillitOutboxRecordWithDueMarker(env, outboxKey, nextRecord, {
+  previousMarkerKey = null,
+} = {}) {
+  if (!env?.BOOKING_KV || !outboxKey || !nextRecord) {
+    return { ok: false, error: "missing_input" };
+  }
+  const markerKey = await _armBillitOutboxDueMarker(env, outboxKey, nextRecord);
+  const stored = { ...nextRecord, due_marker_key: markerKey || null };
+  try {
+    await env.BOOKING_KV.put(outboxKey, JSON.stringify(stored));
+  } catch (_) {
+    return { ok: false, error: "outbox_persist_failed", marker_key: markerKey };
+  }
+  const superseded =
+    safeStr(previousMarkerKey, 512) || safeStr(nextRecord.due_marker_key, 512);
+  if (superseded && superseded !== markerKey) {
+    await _deleteBillitOutboxDueMarker(env, superseded);
+  }
+  return { ok: true, record: stored, marker_key: markerKey };
+}
+
+// Authoritative record wins over the marker. Called when a due marker resolved
+// to a record that is NOT actually due (stale duplicate, reschedule race, or a
+// terminal state that raced the marker delete). Performs no Billit work.
+async function _reconcileBillitOutboxDueMarker(env, outboxKey, markerKey, record) {
+  const wantKey = desiredBillitDueMarkerKey(outboxKey, record);
+  if (!wantKey) {
+    await _retireBillitOutboxDueMarkers(env, [markerKey, record?.due_marker_key]);
+    return "retired";
+  }
+  if (wantKey === markerKey) return "kept";
+  await _armBillitOutboxDueMarker(env, outboxKey, record);
+  await _deleteBillitOutboxDueMarker(env, markerKey);
+  return "rescheduled";
+}
+
 /* Persist envelope-only billit_link_status on an issued invoice and optionally
  * write/clear a durable create outbox entry. Never stores tokens/secrets.
  * Always re-reads the latest registry record before writing so a concurrent
@@ -1460,10 +1565,25 @@ async function persistBillitLinkAttemptAndMaybeOutbox(env, scope, opts = {}) {
   const outboxKey = buildBillitCreateOutboxKey(scope, documentId);
   if (outboxKey) {
     if (options.clearOutbox === true || options.state === BILLIT_LINK_STATES.LINKED) {
+      // BILLIT-KV-COST-P0: learn the owned due marker before the authoritative
+      // record disappears so the ordered index does not accumulate orphans.
+      // This is a once-per-export success transition, never a cron steady read.
+      let clearedMarkerKey = null;
+      try {
+        const existingForClear = await env.BOOKING_KV.get(outboxKey, {
+          type: "json",
+        });
+        clearedMarkerKey = safeStr(existingForClear?.due_marker_key, 512) || null;
+      } catch (_) {
+        clearedMarkerKey = null;
+      }
       try {
         await env.BOOKING_KV.delete(outboxKey);
       } catch (_) {
         // non-fatal
+      }
+      if (clearedMarkerKey) {
+        await _retireBillitOutboxDueMarkers(env, [clearedMarkerKey]);
       }
     } else if (options.retryable === true) {
       // BILLIT-DURABLE-EXPORT-RECOVERY-P0-1: outbox failure writes use the
@@ -1511,11 +1631,11 @@ async function persistBillitLinkAttemptAndMaybeOutbox(env, scope, opts = {}) {
         if (!merged.booking_id && options.bookingId) {
           merged.booking_id = safeStr(options.bookingId, 200);
         }
-        try {
-          await env.BOOKING_KV.put(outboxKey, JSON.stringify(merged));
-        } catch (_) {
-          // non-fatal
-        }
+        // BILLIT-KV-COST-P0: the authoritative backoff computed above is what
+        // schedules the ordered due marker. Marker first, record second.
+        await _persistBillitOutboxRecordWithDueMarker(env, outboxKey, merged, {
+          previousMarkerKey: safeStr(existingRaw?.due_marker_key, 512) || null,
+        });
       }
     }
   }
@@ -1559,12 +1679,15 @@ async function persistPendingBillitExportOutboxOnce(env, scope, opts = {}) {
     invoiceIdempotencyKey: options.invoiceIdempotencyKey,
   });
   if (!rec) return { ok: false, error: "invalid_pending_record" };
-  try {
-    await env.BOOKING_KV.put(outboxKey, JSON.stringify(rec));
-    return { ok: true, existed: false };
-  } catch (_) {
-    return { ok: false, error: "outbox_persist_failed" };
+  // BILLIT-KV-COST-P0: a pending record is immediately due, so arm its ordered
+  // marker in the same step. Marker-first ordering means a crash can only leave
+  // a marker without a record (self-healing), never recovery work the scheduled
+  // pass cannot see.
+  const persisted = await _persistBillitOutboxRecordWithDueMarker(env, outboxKey, rec);
+  if (!persisted.ok) {
+    return { ok: false, error: persisted.error || "outbox_persist_failed" };
   }
+  return { ok: true, existed: false };
 }
 
 /**
@@ -1691,12 +1814,29 @@ async function runBillitDurableExportAttempt(env, scope, opts = {}) {
           idempotencyKey: buildBillitSandboxOrderCreateIdempotencyKey(documentId),
           invoiceIdempotencyKey: options.invoiceIdempotencyKey,
         });
+    // BILLIT-KV-COST-P0: track which ordered due marker this attempt owns so a
+    // terminal outcome can retire it without scanning the marker keyspace.
+    const priorMarkerKey =
+      safeStr(existingRaw?.due_marker_key, 512) ||
+      safeStr(options.dueMarkerKey, 512) ||
+      null;
+    let ownedMarkerKey = priorMarkerKey;
     if (previous && typeof previous === "object") {
       const st = safeStr(previous.state, 40);
+      // A terminal record must own no due marker, so a marker that raced the
+      // terminal transition is retired here instead of being re-read forever.
       if (st === BILLIT_EXPORT_STATES.SYNCED) {
+        await _retireBillitOutboxDueMarkers(env, [
+          priorMarkerKey,
+          safeStr(options.dueMarkerKey, 512) || null,
+        ]);
         return { ok: true, skipped: true, reason: "already_synced" };
       }
       if (st === BILLIT_EXPORT_STATES.PERMANENT_ERROR) {
+        await _retireBillitOutboxDueMarkers(env, [
+          priorMarkerKey,
+          safeStr(options.dueMarkerKey, 512) || null,
+        ]);
         return {
           ok: false,
           skipped: true,
@@ -1707,11 +1847,16 @@ async function runBillitDurableExportAttempt(env, scope, opts = {}) {
     }
     if (outboxKey && previous) {
       const inProgress = markOutboxInProgress(previous);
-      try {
-        await env.BOOKING_KV.put(outboxKey, JSON.stringify(inProgress));
-      } catch (_) {
-        // non-fatal
-      }
+      // in_progress reschedules the marker to the stall deadline, so an isolate
+      // that dies mid-attempt is recovered by the ordered index rather than by
+      // re-reading every outbox value.
+      const persisted = await _persistBillitOutboxRecordWithDueMarker(
+        env,
+        outboxKey,
+        inProgress,
+        { previousMarkerKey: priorMarkerKey },
+      );
+      if (persisted.ok) ownedMarkerKey = persisted.marker_key || null;
     }
 
     // Invoke the existing idempotent orchestrator. It internally re-issues
@@ -1742,6 +1887,13 @@ async function runBillitDurableExportAttempt(env, scope, opts = {}) {
           // non-fatal
         }
       }
+      // BILLIT-KV-COST-P0: synced work owns no due marker. Deletes are
+      // idempotent, so retiring an already-retired marker is harmless.
+      await _retireBillitOutboxDueMarkers(env, [
+        ownedMarkerKey,
+        priorMarkerKey,
+        safeStr(options.dueMarkerKey, 512) || null,
+      ]);
       return {
         ok: true,
         skipped: false,
@@ -1769,12 +1921,16 @@ async function runBillitDurableExportAttempt(env, scope, opts = {}) {
   }
 }
 
-/**
- * Sweep due Billit export outbox entries and retry each once. Called from
- * the cron-triggered `scheduled` handler and (for the current booking only)
- * from the documents-list refresh handler. Idempotent and bounded: capped
- * by `limit` per pass so a single run cannot exhaust the isolate.
- */
+// Explicit full-scan sweep of the Billit export outbox. Retries each due entry
+// once, bounded by `limit`.
+//
+// BILLIT-KV-COST-P0 — DO NOT wire this into the cron or any request path. It
+// value-GETs every key on the listed page just to discover due-ness, which cost
+// roughly 3,450 BOOKING_KV reads per scheduled run (about 2.16M reads/day with
+// no customers). The scheduled pass now uses processBillitDueOutboxIndex and
+// the documents route uses nudgeBillitDueOutboxForBooking; both read only
+// records already proven due. This remains solely an operator/diagnostic
+// escape hatch and is covered by the pre-existing recovery regressions.
 async function sweepBillitDurableRecoveryOutbox(env, ctx, options = {}) {
   const opts = options && typeof options === "object" ? options : {};
   const source = safeStr(opts.source, 64) || "durable_recovery_sweep";
@@ -1876,6 +2032,353 @@ async function sweepBillitDurableRecoveryOutbox(env, ctx, options = {}) {
   };
 }
 
+/* ===================== BILLIT-KV-COST-P0 bounded scheduled recovery ===================== */
+
+// Process due Billit export work through the ordered due-marker index.
+//
+// One list() of the marker keyspace resolves candidate work with zero value
+// reads because identity rides in KV metadata. Markers sort by due time, so the
+// first future marker ends the scan. Only records already proven due are read.
+async function processBillitDueOutboxIndex(env, options = {}) {
+  const opts = options && typeof options === "object" ? options : {};
+  const source = safeStr(opts.source, 64) || "due_index";
+  const limit = Math.max(1, Math.min(50, Number(opts.limit) || 20));
+  const now = opts.now instanceof Date ? opts.now : new Date();
+  const nowMs = now.getTime();
+  if (!env?.BOOKING_KV) {
+    return { ok: false, error: "missing_binding", listed: 0, due: 0, retried: 0 };
+  }
+  // Small over-read past `limit` so one pass can also retire stale/duplicate
+  // markers it happens to observe. Still a single bounded list operation.
+  const listLimit = Math.min(1000, limit * 2 + 5);
+  let page = null;
+  try {
+    page = await env.BOOKING_KV.list({
+      prefix: BILLIT_OUTBOX_DUE_PREFIX,
+      limit: listLimit,
+    });
+  } catch (_) {
+    return {
+      ok: false,
+      error: "due_index_list_failed",
+      listed: 0,
+      due: 0,
+      retried: 0,
+    };
+  }
+  const entries = Array.isArray(page?.keys) ? page.keys : [];
+  const selection = selectDueBillitMarkers(entries, { nowMs, limit });
+
+  let orphaned = 0;
+  for (const orphan of selection.orphans) {
+    if (await _deleteBillitOutboxDueMarker(env, orphan.markerKey)) orphaned += 1;
+  }
+  let deduped = 0;
+  for (const duplicate of selection.duplicates) {
+    if (await _deleteBillitOutboxDueMarker(env, duplicate.markerKey)) deduped += 1;
+  }
+
+  let attempted = 0;
+  let succeeded = 0;
+  let failed = 0;
+  let skipped = 0;
+  let permanent = 0;
+  let reconciled = 0;
+  const errors = [];
+
+  for (const marker of selection.selected) {
+    // Only markers already proven due ever reach a value read.
+    let raw = null;
+    try {
+      raw = await env.BOOKING_KV.get(marker.outboxKey, { type: "json" });
+    } catch (_) {
+      raw = null;
+    }
+    if (!raw || typeof raw !== "object") {
+      // The authoritative record is gone (exported and cleared, or a crash
+      // landed between marker and record). Retire the orphan marker.
+      if (await _deleteBillitOutboxDueMarker(env, marker.markerKey)) orphaned += 1;
+      continue;
+    }
+    const normalized = normalizeLegacyOutboxRecord(raw, { now });
+    if (!isBillitOutboxDue(normalized, { now })) {
+      // Authoritative state wins over the marker. Never a Billit call here.
+      await _reconcileBillitOutboxDueMarker(env, marker.outboxKey, marker.markerKey, {
+        ...normalized,
+        due_marker_key: safeStr(raw.due_marker_key, 512) || null,
+      });
+      reconciled += 1;
+      continue;
+    }
+    const scope = {
+      tenant_id: normalized.tenant_id,
+      company_id: normalized.company_id,
+    };
+    const documentId = normalized.document_id;
+    const bookingId = normalized.booking_id;
+    if (!scope.tenant_id || !scope.company_id || !documentId || !bookingId) {
+      skipped += 1;
+      continue;
+    }
+    attempted += 1;
+    try {
+      const outcome = await runBillitDurableExportAttempt(env, scope, {
+        documentId,
+        documentNumber: normalized.document_number,
+        bookingId,
+        invoiceIdempotencyKey: normalized.invoice_idempotency_key,
+        source,
+        dueMarkerKey: marker.markerKey,
+      });
+      if (outcome.ok && !outcome.skipped) {
+        succeeded += 1;
+      } else if (outcome.skipped) {
+        skipped += 1;
+      } else {
+        failed += 1;
+        if (outcome.permanent) permanent += 1;
+        if (outcome.error_code) errors.push(outcome.error_code);
+      }
+    } catch (_) {
+      failed += 1;
+      errors.push("recovery_exception");
+    }
+  }
+
+  console.log(
+    `[BILLIT_DUE_INDEX][PASS] source=${source} listed=${entries.length} selected=${selection.selected.length} attempted=${attempted} ok=${succeeded} failed=${failed} skipped=${skipped} permanent=${permanent} reconciled=${reconciled} orphaned=${orphaned} deduped=${deduped} stopped_future=${selection.stoppedAtFuture} stopped_limit=${selection.stoppedAtLimit} errors=${errors.slice(0, 5).join(",")}`,
+  );
+  return {
+    ok: true,
+    listed: entries.length,
+    inspected: selection.inspected,
+    due: selection.selected.length,
+    retried: attempted,
+    succeeded,
+    failed,
+    skipped,
+    permanent,
+    reconciled,
+    orphaned,
+    deduped,
+    stopped_at_future: selection.stoppedAtFuture === true,
+    stopped_at_limit: selection.stoppedAtLimit === true,
+  };
+}
+
+// Bounded, resumable migration that arms due markers for legacy outbox records
+// written before the index existed.
+//
+// Contract: at most BILLIT_OUTBOX_DUE_MIGRATION_BATCH legacy value reads per
+// invocation, a server-owned monotonic cursor, each record examined at most
+// once, idempotent completion, and no deletion or rewrite of any authoritative
+// legacy record. After completion the scheduled pass never lists outbox values
+// again — only the single migration-state read remains.
+async function runBillitOutboxDueMigrationStep(env, options = {}) {
+  const opts = options && typeof options === "object" ? options : {};
+  const now = opts.now instanceof Date ? opts.now : new Date();
+  const batch = Math.max(
+    1,
+    Math.min(
+      BILLIT_OUTBOX_DUE_MIGRATION_BATCH,
+      Number(opts.batch) || BILLIT_OUTBOX_DUE_MIGRATION_BATCH,
+    ),
+  );
+  if (!env?.BOOKING_KV) {
+    return { ok: false, error: "missing_binding", completed: false, scanned: 0, marked: 0 };
+  }
+  let storedState = null;
+  try {
+    storedState = await env.BOOKING_KV.get(BILLIT_OUTBOX_DUE_MIGRATION_KEY, {
+      type: "json",
+    });
+  } catch (_) {
+    storedState = null;
+  }
+  const state = normalizeBillitOutboxMigrationState(storedState, { now });
+  if (state.completed) {
+    return {
+      ok: true,
+      completed: true,
+      scanned: 0,
+      marked: 0,
+      skipped: "already_complete",
+    };
+  }
+
+  let page = null;
+  try {
+    page = await env.BOOKING_KV.list({
+      prefix: BILLIT_OUTBOX_PREFIX,
+      limit: batch,
+      ...(state.cursor ? { cursor: state.cursor } : {}),
+    });
+  } catch (_) {
+    return {
+      ok: false,
+      error: "migration_list_failed",
+      completed: false,
+      scanned: 0,
+      marked: 0,
+    };
+  }
+  const keys = Array.isArray(page?.keys) ? page.keys : [];
+  let scanned = 0;
+  let marked = 0;
+  let terminal = 0;
+  for (const entry of keys) {
+    const outboxKey = safeStr(entry?.name, 512);
+    if (!outboxKey || !outboxKey.startsWith(BILLIT_OUTBOX_PREFIX)) continue;
+    // Bounded by the list limit above, so this can never exceed `batch`.
+    scanned += 1;
+    let raw = null;
+    try {
+      raw = await env.BOOKING_KV.get(outboxKey, { type: "json" });
+    } catch (_) {
+      continue;
+    }
+    if (!raw || typeof raw !== "object") continue;
+    const normalized = normalizeLegacyOutboxRecord(raw, { now });
+    if (billitOutboxDueAtMs(normalized) === null) {
+      // synced / permanent_error records get no active due marker.
+      terminal += 1;
+      continue;
+    }
+    // Marker-only: the authoritative legacy record is never rewritten here, so
+    // a concurrent live attempt can never be clobbered by a stale snapshot.
+    if (await _armBillitOutboxDueMarker(env, outboxKey, normalized)) marked += 1;
+  }
+
+  const next = advanceBillitOutboxMigrationState(state, {
+    cursor: safeStr(page?.cursor, 1024) || null,
+    listComplete: page?.list_complete === true,
+    scanned,
+    marked,
+    now,
+  });
+  try {
+    await env.BOOKING_KV.put(
+      BILLIT_OUTBOX_DUE_MIGRATION_KEY,
+      JSON.stringify(next),
+    );
+  } catch (_) {
+    // Non-fatal: the same bounded batch is retried next invocation. Marker
+    // writes are deterministic, so the replay re-derives identical markers.
+  }
+  console.log(
+    `[BILLIT_DUE_INDEX][MIGRATION] scanned=${scanned} marked=${marked} terminal=${terminal} batches=${next.batches} completed=${next.completed}`,
+  );
+  return {
+    ok: true,
+    completed: next.completed === true,
+    scanned,
+    marked,
+    terminal,
+    batches: next.batches,
+  };
+}
+
+// One scheduled recovery pass: advance the bounded legacy migration, then
+// process due work through the ordered index. Replaces the former full-scan
+// sweep on the cron path.
+async function runBillitDurableRecoveryScheduledPass(env, options = {}) {
+  const opts = options && typeof options === "object" ? options : {};
+  const source = safeStr(opts.source, 64) || "cron";
+  const limit = Math.max(1, Math.min(50, Number(opts.limit) || 20));
+  const now = opts.now instanceof Date ? opts.now : new Date();
+  if (!env?.BOOKING_KV) {
+    return { ok: false, error: "missing_binding" };
+  }
+  const migration = await runBillitOutboxDueMigrationStep(env, { now });
+  const processed = await processBillitDueOutboxIndex(env, { source, limit, now });
+  return { ok: processed.ok !== false, migration, processed };
+}
+
+// Targeted Billit recovery nudge for ONE booking's documents.
+//
+// BILLIT-KV-COST-P0: the previous implementation called the global outbox sweep
+// with a booking filter, which still listed and value-GET the entire first page
+// on every documents refresh. This resolves the deterministic outbox key for
+// each document already listed for THIS booking and reads only those records.
+// No prefix list, no global first page, no unrelated value read.
+async function nudgeBillitDueOutboxForBooking(env, scope, options = {}) {
+  const opts = options && typeof options === "object" ? options : {};
+  const bookingId = safeStr(opts.bookingId, 200);
+  const source = safeStr(opts.source, 64) || "documents_refresh_nudge";
+  const limit = Math.max(1, Math.min(10, Number(opts.limit) || 4));
+  const now = opts.now instanceof Date ? opts.now : new Date();
+  if (!env?.BOOKING_KV) return { ok: false, error: "missing_binding", retried: 0 };
+  if (!bookingId) return { ok: false, error: "missing_booking_id", retried: 0 };
+  const nudgeScope = {
+    tenant_id: safeStr(scope?.tenant_id ?? scope?.tenantId, 96),
+    company_id: safeStr(scope?.company_id ?? scope?.companyId, 96),
+  };
+  if (!nudgeScope.tenant_id || !nudgeScope.company_id) {
+    return { ok: false, error: "missing_tenant_scope", retried: 0 };
+  }
+  const documentIds = [];
+  const seenDocumentIds = new Set();
+  for (const doc of Array.isArray(opts.documents) ? opts.documents : []) {
+    const documentId = safeStr(doc?.document_id ?? doc?.documentId, 200);
+    if (!documentId || seenDocumentIds.has(documentId)) continue;
+    seenDocumentIds.add(documentId);
+    documentIds.push(documentId);
+    if (documentIds.length >= limit) break;
+  }
+
+  let inspected = 0;
+  let due = 0;
+  let attempted = 0;
+  let succeeded = 0;
+  let failed = 0;
+  let skipped = 0;
+  const errors = [];
+  for (const documentId of documentIds) {
+    const outboxKey = buildBillitCreateOutboxKey(nudgeScope, documentId);
+    if (!outboxKey) continue;
+    let raw = null;
+    try {
+      raw = await env.BOOKING_KV.get(outboxKey, { type: "json" });
+    } catch (_) {
+      raw = null;
+    }
+    inspected += 1;
+    if (!raw || typeof raw !== "object") continue;
+    const normalized = normalizeLegacyOutboxRecord(raw, { now });
+    // Tenant/company came from the caller's authorized scope; the booking bind
+    // is re-checked so a mis-indexed document can never nudge another ride.
+    if (safeStr(normalized.booking_id, 200) !== bookingId) continue;
+    if (!isBillitOutboxDue(normalized, { now })) continue;
+    due += 1;
+    attempted += 1;
+    try {
+      const outcome = await runBillitDurableExportAttempt(env, nudgeScope, {
+        documentId,
+        documentNumber: normalized.document_number,
+        bookingId,
+        invoiceIdempotencyKey: normalized.invoice_idempotency_key,
+        source,
+        dueMarkerKey: safeStr(raw.due_marker_key, 512) || null,
+      });
+      if (outcome.ok && !outcome.skipped) {
+        succeeded += 1;
+      } else if (outcome.skipped) {
+        skipped += 1;
+      } else {
+        failed += 1;
+        if (outcome.error_code) errors.push(outcome.error_code);
+      }
+    } catch (_) {
+      failed += 1;
+      errors.push("recovery_exception");
+    }
+  }
+  console.log(
+    `[BILLIT_DUE_INDEX][DOC_NUDGE] source=${source} inspected=${inspected} due=${due} retried=${attempted} ok=${succeeded} failed=${failed} skipped=${skipped} errors=${errors.slice(0, 3).join(",")}`,
+  );
+  return { ok: true, inspected, due, retried: attempted, succeeded, failed, skipped };
+}
+
 /* ===================== END BILLIT-DURABLE-EXPORT-RECOVERY-P0-1 ===================== */
 
 /**
@@ -1943,9 +2446,15 @@ async function handleAdminBillitExportRequeue({ request, url, env, documentId })
   if (!requeued) {
     return json({ ok: false, error: "requeue_failed" }, 409);
   }
-  try {
-    await env.BOOKING_KV.put(outboxKey, JSON.stringify(requeued));
-  } catch (_) {
+  // BILLIT-KV-COST-P0: a requeue is immediately due, so it must own an ordered
+  // marker or the bounded scheduled pass would never see it again.
+  const requeuePersist = await _persistBillitOutboxRecordWithDueMarker(
+    env,
+    outboxKey,
+    requeued,
+    { previousMarkerKey: safeStr(raw?.due_marker_key, 512) || null },
+  );
+  if (!requeuePersist.ok) {
     return json({ ok: false, error: "outbox_persist_failed" }, 500);
   }
   // Best-effort immediate attempt (same idempotency key). Failure leaves the
@@ -8100,6 +8609,14 @@ export {
   runBillitDurableExportAttempt,
   sweepBillitDurableRecoveryOutbox,
   persistPendingBillitExportOutboxOnce,
+};
+// BILLIT-KV-COST-P0 bounded recovery surface. Hermetic counting-KV tests only;
+// production paths call these internally.
+export {
+  processBillitDueOutboxIndex,
+  runBillitOutboxDueMigrationStep,
+  runBillitDurableRecoveryScheduledPass,
+  nudgeBillitDueOutboxForBooking,
 };
 export { reconcileConsumerSaleForCompletedBooking };
 // Hermetic CONSUMER-BILLIT-EXACTLY-ONCE-CREATE-P0 concurrency tests only.
@@ -34534,7 +35051,7 @@ export default {
           ? `cron:${event.cron}`
           : "cron";
       ctx.waitUntil(
-        sweepBillitDurableRecoveryOutbox(env, ctx, {
+        runBillitDurableRecoveryScheduledPass(env, {
           source,
           limit: 20,
         }).catch((err) => {
@@ -37518,9 +38035,10 @@ export default {
             // depends on the cron sweep. Bounded to at most 4 attempts per
             // refresh so the request stays fast.
             try {
-              const swept = await sweepBillitDurableRecoveryOutbox(env, null, {
+              const swept = await nudgeBillitDueOutboxForBooking(env, scope, {
                 source: "documents_refresh_nudge",
                 bookingId: sourceBookingId,
+                documents: listed.documents,
                 limit: 4,
               });
               if (swept?.retried > 0) {
