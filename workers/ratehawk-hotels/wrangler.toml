@@ -25,3 +25,28 @@ enabled = true
 RATEHAWK_ENABLED = "0"
 RATEHAWK_HOTELPAGE_ENABLED = "0"
 RATEHAWK_CONTENT_SYNC_ENABLED = "0"
+# Production quotas must be set explicitly or Hotelpage/SERP fail closed:
+# RATEHAWK_QUOTA_HOTELPAGE_LIMIT
+# RATEHAWK_QUOTA_HOTELPAGE_WINDOW_SECONDS
+# RATEHAWK_QUOTA_SERP_LIMIT
+# RATEHAWK_QUOTA_SERP_WINDOW_SECONDS
+# RATEHAWK_CONTENT_MARKETS — JSON array; empty until explicitly supplied
+# Future: [triggers] crons — do not enable until markets and the sync gate
+# are explicit. scheduled() is wired but no cron is configured.
+
+# Future storage (not created in this task):
+# [[d1_databases]] binding = "RATEHAWK_HOTELS_DB"  — searchable hid index
+# [[kv_namespaces]] binding = "RATEHAWK_CONTENT_KV" — localized policy documents
+# [[queues]] — optional later batch consumer
+# Deploy/migration order after those exist:
+#   1. create D1/KV/Queue
+#   2. fluxidi-ratehawk-hotels-api (this worker + quota DO migration)
+#   3. fluxidi-booking-api
+
+[[durable_objects.bindings]]
+name = "RATEHAWK_PROVIDER_QUOTA"
+class_name = "RatehawkProviderQuotaDO"
+
+[[migrations]]
+tag = "ratehawk-provider-quota-v1"
+new_sqlite_classes = ["RatehawkProviderQuotaDO"]

@@ -29,6 +29,7 @@ import {
   isRatehawkOperationAllowed,
   redactRatehawkSecrets,
 } from "./ratehawk_provider.mjs";
+import { createRatehawkQuotaBinding } from "./ratehawk_provider_quota.mjs";
 
 const TEST_API_KEY = "rh_test_secret_do_not_leak_xyz";
 const TEST_KEY_ID = "18292";
@@ -69,6 +70,7 @@ function validEnv(overrides = {}) {
     RATEHAWK_ENABLED: "1",
     RATEHAWK_HOTELPAGE_ENABLED: "1",
     RATEHAWK_OFFER_REF_SECRET: "rh_offer_ref_test_secret_not_real",
+    RATEHAWK_PROVIDER_QUOTA: createRatehawkQuotaBinding(),
     ...overrides,
   };
 }

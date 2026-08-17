@@ -25,6 +25,7 @@ import {
   handleRatehawkHotelpageRequest,
   isRatehawkContentSyncAllowedOnCustomerRequest,
 } from "../../ratehawk-hotels/modules/ratehawk_hotelpage_worker.mjs";
+import { createRatehawkQuotaBinding } from "../../ratehawk-hotels/modules/ratehawk_provider_quota.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TEST_API_KEY = "rh_test_secret_do_not_leak_xyz";
@@ -60,6 +61,7 @@ function hotelsEnv(overrides = {}) {
     RATEHAWK_HOTELPAGE_ENABLED: "1",
     RATEHAWK_OFFER_REF_SECRET: OFFER_SECRET,
     RATEHAWK_VIEW_STAY_CONTEXT_SECRET: CONTEXT_SECRET,
+    RATEHAWK_PROVIDER_QUOTA: createRatehawkQuotaBinding(),
     ...overrides,
   };
 }

@@ -7,19 +7,28 @@
  * Internal operations:
  *   GET  /internal/status
  *   POST /internal/hotelpage
+ *   POST /internal/content-sync  (admin-internal / scheduled only)
  */
 
 import {
   handleRatehawkHotelpageRequest,
   isRatehawkContentSyncAllowedOnCustomerRequest,
 } from "./modules/ratehawk_hotelpage_worker.mjs";
+import {
+  planScopedContentSync,
+  shouldRunRatehawkContentSync,
+} from "./modules/ratehawk_content_sync.mjs";
+import { RatehawkProviderQuotaDO } from "./modules/ratehawk_provider_quota.mjs";
 import { buildSafeRatehawkProviderStatus } from "./modules/ratehawk_provider.mjs";
 import { verifyRatehawkViewStayContext } from "./modules/ratehawk_view_stay_context.mjs";
+
+export { RatehawkProviderQuotaDO };
 
 export const RATEHAWK_HOTELS_WORKER_NAME = "fluxidi-ratehawk-hotels-api";
 export const RATEHAWK_HOTELS_INTERNAL_PROXY = "booking_worker_v1";
 export const RATEHAWK_HOTELS_STATUS_PATH = "/internal/status";
 export const RATEHAWK_HOTELS_HOTELPAGE_PATH = "/internal/hotelpage";
+export const RATEHAWK_HOTELS_CONTENT_SYNC_PATH = "/internal/content-sync";
 
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
@@ -130,11 +139,58 @@ export async function handleRatehawkHotelsWorkerFetch(
     return json(dto);
   }
 
+  if (
+    url.pathname === RATEHAWK_HOTELS_CONTENT_SYNC_PATH &&
+    request.method === "POST"
+  ) {
+    let body = {};
+    try {
+      body = await request.json();
+    } catch {
+      body = {};
+    }
+    return json(await handleRatehawkContentSyncRequest({ env, body, trigger: "admin_internal" }));
+  }
+
   return _notFound();
+}
+
+export async function handleRatehawkContentSyncRequest({
+  env,
+  body = {},
+  trigger = "admin_internal",
+} = {}) {
+  const gate = shouldRunRatehawkContentSync({ trigger, env });
+  if (gate.run !== true) {
+    return {
+      ok: true,
+      executed: false,
+      provider_requested: false,
+      reason: gate.reason,
+      jobs: [],
+    };
+  }
+  return planScopedContentSync({
+    env,
+    markets: body.markets ?? null,
+    hidLists: body.hid_lists ?? {},
+    locales: body.locales,
+  });
+}
+
+export async function handleRatehawkHotelsScheduled(event, env) {
+  return handleRatehawkContentSyncRequest({
+    env,
+    body: {},
+    trigger: "scheduled",
+  });
 }
 
 export default {
   async fetch(request, env) {
     return handleRatehawkHotelsWorkerFetch(request, env);
+  },
+  async scheduled(event, env) {
+    return handleRatehawkHotelsScheduled(event, env);
   },
 };

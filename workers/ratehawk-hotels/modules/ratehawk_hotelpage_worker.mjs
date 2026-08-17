@@ -35,6 +35,10 @@ import {
   isRatehawkHotelpageInvocationAllowed,
   redactRatehawkSecrets,
 } from "./ratehawk_provider.mjs";
+import {
+  RATEHAWK_QUOTA_ENDPOINTS,
+  reserveRatehawkProviderQuota,
+} from "./ratehawk_provider_quota.mjs";
 
 export const RATEHAWK_HOTELPAGE_PUBLIC_PATH =
   "/public/hotels/ratehawk/hotelpage";
@@ -306,6 +310,7 @@ function _safeDto({
   hotelpage = null,
   locale = "nl",
   refreshFailed = false,
+  retryAfter = null,
 }) {
   const adapter = buildHotelStayDetailAdapter({
     stay,
@@ -328,6 +333,7 @@ function _safeDto({
       retrieved_at: retrievedAt,
       expires_at: expiresAt,
       path: RATEHAWK_HOTELPAGE_PATH,
+      retry_after: retryAfter,
     },
     commercial: {
       fluxidi_role: "affiliate",
@@ -499,6 +505,26 @@ async function _executeHotelpageTransport({
   timeoutMs,
   now,
 }) {
+  const quota = await reserveRatehawkProviderQuota({
+    env,
+    endpoint: RATEHAWK_QUOTA_ENDPOINTS.HOTELPAGE,
+    now,
+  });
+  if (quota.allowed !== true) {
+    return _redactDto(
+      _safeDto({
+        stay,
+        state: "retryable",
+        reason: quota.reason || "provider_quota_exhausted",
+        invoked: false,
+        locale,
+        refreshFailed: true,
+        retryAfter: quota.retry_after,
+      }),
+      env,
+    );
+  }
+
   const transport = await fetchRatehawkHotelpage({
     env,
     body: request.body,
