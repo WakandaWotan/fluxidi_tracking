@@ -12,17 +12,21 @@ import {
   RATEHAWK_SERP_HOTELS_PATH,
   RATEHAWK_TEST_HOTEL_HID,
   annotateSearchResultMetadata,
+  assertPublicSearchStayDates,
   buildProposedTestSearchRequest,
   createRateCache,
   createSearchFlightController,
   createStaticContentStore,
   dedupeHotelsByHid,
+  hasForbiddenPublicSearchClientControl,
   isLiveSearchCriteriaComplete,
   nextHotelIdChunk,
+  parseConfiguredSearchMarkets,
   planImmediateExistingCards,
   rateCacheKey,
   resolveEnabledMarket,
   resolveMarketSearchConfig,
+  resolvePublicSearchMarket,
   shouldIssueRatehawkSearch,
 } from "./ratehawk_market_search_limits.mjs";
 
@@ -30,6 +34,7 @@ const EXAMPLE_TEST_MARKETS = Object.freeze([
   {
     country_code: "BE",
     city_key: "brussels",
+    aliases: ["brussel", "brussels", "bruxelles"],
     region_id: "test-region-example-not-production",
     enabled: true,
   },
@@ -288,4 +293,60 @@ test("proposed first test-search request is hotels-by-hid and is not executed", 
   assert.equal(request.body.checkin, "2026-09-15");
   assert.equal(request.body.checkout, "2026-09-16");
   assert.equal(request.url.startsWith("https://api.ratehawk.com"), true);
+});
+
+test("public destination resolves to exactly one enabled market or fails closed", () => {
+  const empty = parseConfiguredSearchMarkets({});
+  assert.deepEqual(empty.enabled_markets, []);
+  assert.equal(
+    resolvePublicSearchMarket(empty, { city: "Brussel", country: "BE" }).reason,
+    "production_markets_unconfigured",
+  );
+
+  const config = exampleConfig();
+  const brussels = resolvePublicSearchMarket(config, {
+    city: "Brussel",
+    country: "Belgium",
+  });
+  assert.equal(brussels.ok, true);
+  assert.equal(brussels.market.city_key, "brussels");
+
+  const missing = resolvePublicSearchMarket(config, {
+    city: "Paris",
+    country: "FR",
+  });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.reason, "unsupported_market");
+
+  const ambiguousConfig = resolveMarketSearchConfig({}, {
+    markets: [
+      ...EXAMPLE_TEST_MARKETS,
+      {
+        country_code: "FR",
+        city_key: "bruxelles-sud",
+        aliases: ["brussels"],
+        region_id: "1",
+      },
+    ],
+  });
+  const ambiguous = resolvePublicSearchMarket(ambiguousConfig, {
+    city: "brussels",
+  });
+  assert.equal(ambiguous.ok, false);
+  assert.equal(ambiguous.reason, "ambiguous_destination");
+});
+
+test("public search rejects client transport controls and out-of-bound dates", () => {
+  assert.equal(hasForbiddenPublicSearchClientControl({ city: "Brussel" }), false);
+  assert.equal(hasForbiddenPublicSearchClientControl({ region_id: "2395" }), true);
+  assert.equal(hasForbiddenPublicSearchClientControl({ hid: 8473727 }), true);
+  assert.equal(hasForbiddenPublicSearchClientControl({ host: "api.ratehawk.com" }), true);
+  assert.equal(hasForbiddenPublicSearchClientControl({ latitude: 50.8 }), true);
+
+  const now = Date.parse("2026-08-17T10:00:00Z");
+  const ok = assertPublicSearchStayDates("2026-09-03", "2026-09-04", now);
+  assert.equal(ok.ok, true);
+  const longStay = assertPublicSearchStayDates("2026-09-03", "2026-10-20", now);
+  assert.equal(longStay.ok, false);
+  assert.equal(longStay.reason, "stay_dates_out_of_bounds");
 });

@@ -21,6 +21,23 @@ import { createRatehawkQuotaBinding } from "../../ratehawk-hotels/modules/rateha
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
+function memoryBookingKv(seed = {}) {
+  const data = new Map(Object.entries(seed));
+  return {
+    async get(key, opts) {
+      const raw = data.get(key);
+      if (raw == null) return null;
+      if (opts?.type === "json") {
+        return typeof raw === "string" ? JSON.parse(raw) : raw;
+      }
+      return raw;
+    },
+    async put(key, value) {
+      data.set(key, value);
+    },
+  };
+}
+
 function productionHotelsEnv(overrides = {}) {
   return {
     RATEHAWK_WORKER_SURFACE: "production",
@@ -54,6 +71,7 @@ test("public search uses only RATEHAWK_HOTELS and stays fail-closed", async () =
   });
   const dto = await handlePublicRatehawkSearch({
     env: {
+      BOOKING_KV: memoryBookingKv(),
       RATEHAWK_HOTELS: hotels.binding,
       RATEHAWK_HOTELS_TEST: {
         fetch: async () => {
@@ -85,6 +103,7 @@ test("missing production binding does not use the test binding", async () => {
   let testCalls = 0;
   const dto = await handlePublicRatehawkSearch({
     env: {
+      BOOKING_KV: memoryBookingKv(),
       RATEHAWK_HOTELS_TEST: {
         fetch: async () => {
           testCalls += 1;
@@ -100,15 +119,15 @@ test("missing production binding does not use the test binding", async () => {
   assert.equal(dto.warnings.includes("hotels_worker_binding_missing"), true);
 });
 
-test("page-open and incomplete criteria issue zero provider transport", () => {
-  const pageOpen = handleRatehawkPublicSearchRequest({
+test("page-open and incomplete criteria issue zero provider transport", async () => {
+  const pageOpen = await handleRatehawkPublicSearchRequest({
     env: productionHotelsEnv({
       RATEHAWK_ENABLED: "1",
       RATEHAWK_SEARCH_ENABLED: "1",
     }),
     body: { trigger: "page_open" },
   });
-  const incomplete = handleRatehawkPublicSearchRequest({
+  const incomplete = await handleRatehawkPublicSearchRequest({
     env: productionHotelsEnv({
       RATEHAWK_ENABLED: "1",
       RATEHAWK_SEARCH_ENABLED: "1",
@@ -123,8 +142,8 @@ test("page-open and incomplete criteria issue zero provider transport", () => {
   assert.equal(incomplete.count, 0);
 });
 
-test("enabled search gates still do not call RateHawk in this seam", () => {
-  const dto = handleRatehawkPublicSearchRequest({
+test("enabled search gates still do not call RateHawk without markets", async () => {
+  const dto = await handleRatehawkPublicSearchRequest({
     env: productionHotelsEnv({
       RATEHAWK_ENABLED: "1",
       RATEHAWK_SEARCH_ENABLED: "1",
@@ -145,7 +164,7 @@ test("enabled search gates still do not call RateHawk in this seam", () => {
   });
   assert.equal(dto.invoked, false);
   assert.equal(dto.count, 0);
-  assert.equal(dto.reason, "ratehawk_search_not_implemented");
+  assert.equal(dto.reason, "production_markets_unconfigured");
   assert.equal(dto.warnings.includes("ratehawk_invocation_blocked"), true);
 });
 

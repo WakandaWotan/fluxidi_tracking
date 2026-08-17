@@ -40656,6 +40656,7 @@ export default {
             query,
             env,
             requestUrl: url.toString(),
+            request,
           }),
         );
       }
@@ -48443,6 +48444,14 @@ function _normalizePublicHotelsSearchQuery(url) {
   const adultsRaw = String(url?.searchParams?.get("adults") ?? "").trim();
   const childrenRaw = String(url?.searchParams?.get("children") ?? "").trim();
   const childAgesRaw = String(url?.searchParams?.get("child_ages") ?? "").trim();
+  const marketKeyRaw = String(url?.searchParams?.get("market_key") ?? "").trim();
+  const residencyRaw = String(url?.searchParams?.get("residency") ?? "").trim();
+  const languageRaw = String(url?.searchParams?.get("language") ?? "").trim();
+  const currencyRaw = String(url?.searchParams?.get("currency") ?? "").trim();
+  const hidRaw = String(url?.searchParams?.get("hid") ?? "").trim();
+  const regionIdRaw = String(url?.searchParams?.get("region_id") ?? "").trim();
+  const hostRaw = String(url?.searchParams?.get("host") ?? "").trim();
+  const endpointRaw = String(url?.searchParams?.get("endpoint") ?? "").trim();
   const warnings = [];
 
   const latitude = _publicEventsToNumberOrNull(latRaw);
@@ -48478,6 +48487,14 @@ function _normalizePublicHotelsSearchQuery(url) {
     adults: adultsRaw,
     children: childrenRaw,
     child_ages: childAgesRaw,
+    market_key: marketKeyRaw.slice(0, 80),
+    residency: residencyRaw.slice(0, 2),
+    language: languageRaw.slice(0, 8),
+    currency: currencyRaw.slice(0, 3),
+    hid: hidRaw.slice(0, 40),
+    region_id: regionIdRaw.slice(0, 40),
+    host: hostRaw.slice(0, 200),
+    endpoint: endpointRaw.slice(0, 200),
     warnings,
   };
 }
@@ -50098,7 +50115,7 @@ async function _buildNativeHotelsSearchPayload({ query, env, warnings = [] } = {
   });
 }
 
-async function _buildPublicHotelsSearchPayload({ query, env, requestUrl = "" } = {}) {
+async function _buildPublicHotelsSearchPayload({ query, env, requestUrl = "", request = null } = {}) {
   const source = String(query?.source ?? "approved-local").trim() || "approved-local";
   const warnings = Array.isArray(query?.warnings) ? [...query.warnings] : [];
 
@@ -50107,6 +50124,7 @@ async function _buildPublicHotelsSearchPayload({ query, env, requestUrl = "" } =
       env,
       query: { ...query, source, warnings },
       warnings,
+      request,
     });
   }
 

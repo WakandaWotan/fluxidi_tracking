@@ -17,6 +17,7 @@ import {
   assertRatehawkTestStay,
   hasForbiddenRatehawkTestClientControl,
 } from "../../ratehawk-hotels/modules/ratehawk_test_activation.mjs";
+import { hasForbiddenPublicSearchClientControl } from "../../ratehawk-hotels/modules/ratehawk_market_search_limits.mjs";
 
 export const RATEHAWK_HOTELPAGE_PUBLIC_PATH =
   "/public/hotels/ratehawk/hotelpage";
@@ -44,6 +45,8 @@ export const RATEHAWK_SEARCH_SOURCES = Object.freeze([
 
 const HOTELPAGE_RATE_MAX = 20;
 const HOTELPAGE_RATE_WINDOW_SECONDS = 60;
+const SEARCH_RATE_MAX = 20;
+const SEARCH_RATE_WINDOW_SECONDS = 60;
 
 function _text(value, max = 200) {
   const text = String(value ?? "").trim();
@@ -195,6 +198,73 @@ async function _incrementHotelpageRateLimit(env, request) {
   return { ok: true, limited: false, count: count + 1 };
 }
 
+async function _incrementSearchRateLimit(env, request) {
+  if (!env?.BOOKING_KV || typeof env.BOOKING_KV.get !== "function") {
+    return { ok: false, limited: true, reason: "rate_limit_binding_missing" };
+  }
+  const ip = _text(
+    request?.headers?.get("cf-connecting-ip") ||
+      request?.headers?.get("x-forwarded-for") ||
+      "unknown",
+    80,
+  );
+  const clientHash = await sha256Hex(`ratehawk-search:${ip}`);
+  const rateKey = `ratehawk:search:${clientHash}`;
+  const rawRate = await env.BOOKING_KV.get(rateKey, { type: "json" });
+  const rateSource =
+    rawRate && typeof rawRate === "object" && !Array.isArray(rawRate)
+      ? rawRate
+      : {};
+  const count = Number.isFinite(Number(rateSource.count))
+    ? Math.max(0, Math.round(Number(rateSource.count)))
+    : 0;
+  if (count >= SEARCH_RATE_MAX) {
+    return { ok: true, limited: true, reason: "rate_limited", count };
+  }
+  await env.BOOKING_KV.put(
+    rateKey,
+    JSON.stringify({
+      count: count + 1,
+      updated_at: new Date().toISOString(),
+    }),
+    { expirationTtl: SEARCH_RATE_WINDOW_SECONDS },
+  );
+  return { ok: true, limited: false, count: count + 1 };
+}
+
+function _safePublicSearchUnavailable({
+  reason,
+  warnings = [],
+  source = "ratehawk",
+  retryAfter = null,
+} = {}) {
+  const nextWarnings = Array.isArray(warnings) ? [...warnings] : [];
+  if (!nextWarnings.includes("ratehawk_invocation_blocked")) {
+    nextWarnings.push("ratehawk_invocation_blocked");
+  }
+  return {
+    ok: true,
+    invoked: false,
+    reason,
+    source,
+    provider: "ratehawk",
+    count: 0,
+    stays: [],
+    warnings: [...new Set(nextWarnings)],
+    retry_after:
+      retryAfter == null || !Number.isFinite(Number(retryAfter))
+        ? null
+        : Math.max(1, Math.round(Number(retryAfter))),
+    ratehawk: {
+      invocation_allowed: false,
+      connected: false,
+      status: "fail_closed",
+    },
+    stay22_fallback_retained: true,
+    mobility_independent_of_ratehawk: true,
+  };
+}
+
 export async function fetchRatehawkHotelsStatus(env) {
   if (!env?.RATEHAWK_HOTELS || typeof env.RATEHAWK_HOTELS.fetch !== "function") {
     return {
@@ -239,6 +309,7 @@ export async function handlePublicRatehawkSearch({
   env,
   query = {},
   warnings = [],
+  request = null,
 } = {}) {
   const source = isRatehawkSearchSource(query?.source)
     ? "ratehawk"
@@ -250,6 +321,23 @@ export async function handlePublicRatehawkSearch({
 
   if (bookingWorkerHasRatehawkCredentials(env)) {
     return buildRatehawkPublicSearchGuardPayload({
+      warnings: nextWarnings,
+      source,
+    });
+  }
+
+  if (hasForbiddenPublicSearchClientControl(query)) {
+    return _safePublicSearchUnavailable({
+      reason: "client_control_forbidden",
+      warnings: nextWarnings,
+      source,
+    });
+  }
+
+  const abuse = await _incrementSearchRateLimit(env, request);
+  if (abuse.ok !== true || abuse.limited === true) {
+    return _safePublicSearchUnavailable({
+      reason: abuse.reason || "rate_limited",
       warnings: nextWarnings,
       source,
     });
@@ -295,8 +383,13 @@ export async function handlePublicRatehawkSearch({
             city: _text(query?.city, 120),
             country: _text(query?.country, 80),
             region: _text(query?.region, 120),
+            destination: _text(query?.searchText, 200),
+            market_key: _text(query?.market_key, 80),
             checkin: _text(query?.checkin, 16),
             checkout: _text(query?.checkout, 16),
+            residency: _text(query?.residency, 2),
+            language: _text(query?.language, 8),
+            currency: _text(query?.currency, 3),
             guests,
           }),
         },

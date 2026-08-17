@@ -128,6 +128,7 @@ class BookingRatehawkHotelSearchClient implements RatehawkHotelSearchClient {
         rooms: criteria.rooms,
         adults: criteria.adults,
         childAges: criteria.childAges,
+        language: currentLanguageCode,
       );
       if (payload == null) {
         return const RatehawkSearchResponse(
@@ -571,13 +572,20 @@ RatehawkSearchResponse parseRatehawkPublicSearchPayload(
   final invocationAllowed = ratehawk is Map
       ? ratehawk['invocation_allowed'] == true
       : false;
+  DateTime? retrievedAt;
+  final retrievedRaw = payload['retrieved_at'];
+  if (retrievedRaw is num && retrievedRaw.isFinite) {
+    retrievedAt = DateTime.fromMillisecondsSinceEpoch(retrievedRaw.round());
+  } else {
+    retrievedAt = DateTime.tryParse('${retrievedRaw ?? ''}');
+  }
   return RatehawkSearchResponse(
     ok: true,
     stays: attachEnvelopeViewStay(stays: stays, payload: payload),
     warnings: warnings,
     invocationAllowed: invocationAllowed,
     reason: payload['reason']?.toString(),
-    retrievedAt: DateTime.tryParse('${payload['retrieved_at'] ?? ''}'),
+    retrievedAt: retrievedAt,
   );
 }
 

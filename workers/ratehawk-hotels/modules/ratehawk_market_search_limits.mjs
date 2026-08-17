@@ -108,6 +108,119 @@ export function resolveMarketSearchConfig(env = {}, { markets = null } = {}) {
   };
 }
 
+export const RATEHAWK_PUBLIC_SEARCH_FORBIDDEN_CLIENT_KEYS = Object.freeze([
+  "host",
+  "base_url",
+  "api_key",
+  "apiKey",
+  "authorization",
+  "endpoint",
+  "url",
+  "path",
+  "hid",
+  "hids",
+  "ids",
+  "region_id",
+  "regionId",
+  "latitude",
+  "longitude",
+  "lat",
+  "lng",
+  "radius",
+  "radius_m",
+  "radius_km",
+  "radiusKm",
+  "book_hash",
+  "match_hash",
+  "RATEHAWK_API_KEY",
+  "RATEHAWK_KEY_ID",
+  "provider_host",
+  "search_endpoint",
+  "hotels_path",
+]);
+
+export const RATEHAWK_PUBLIC_SEARCH_DATE_BOUNDS = Object.freeze({
+  max_nights: 30,
+  max_lead_days: 365,
+  past_slack_days: 1,
+});
+
+export const RATEHAWK_PUBLIC_SEARCH_GUEST_BOUNDS = Object.freeze({
+  max_rooms: 8,
+  max_adults: 6,
+  max_children: 4,
+  min_child_age: 0,
+  max_child_age: 17,
+});
+
+export const RATEHAWK_PUBLIC_SEARCH_LANGUAGES = Object.freeze({
+  nl: "nl",
+  en: "en",
+  fr: "fr",
+  es: "es",
+});
+
+const COUNTRY_NAME_ALIASES = Object.freeze({
+  BE: Object.freeze(["belgium", "belgie", "belgique", "belgica"]),
+  NL: Object.freeze(["netherlands", "nederland", "pays bas", "holanda"]),
+  FR: Object.freeze(["france", "frankrijk"]),
+  ES: Object.freeze(["spain", "spanje", "espana"]),
+  DE: Object.freeze(["germany", "duitsland", "deutschland", "allemagne"]),
+  GB: Object.freeze(["united kingdom", "uk", "great britain", "britain"]),
+});
+
+function _aliasKey(value) {
+  const text = String(value ?? "")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  return text.length > 80 ? text.slice(0, 80) : text;
+}
+
+function _uniqueAliases(values) {
+  const seen = new Set();
+  const out = [];
+  for (const value of values) {
+    const key = _aliasKey(value);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+}
+
+function _normalizeCountryCode(value) {
+  const raw = _text(value, 80);
+  if (!raw) return "";
+  if (/^[A-Za-z]{2}$/.test(raw)) return raw.toUpperCase();
+  const alias = _aliasKey(raw);
+  for (const [code, names] of Object.entries(COUNTRY_NAME_ALIASES)) {
+    if (names.includes(alias)) return code;
+  }
+  return "";
+}
+
+function _ymdParts(value) {
+  const text = _text(value, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const utc = Date.UTC(year, month - 1, day);
+  const check = new Date(utc);
+  if (
+    check.getUTCFullYear() !== year ||
+    check.getUTCMonth() !== month - 1 ||
+    check.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return { ymd: text, utc };
+}
+
 function _normalizeMarket(raw) {
   if (!raw || typeof raw !== "object") return null;
   const countryCode = _text(raw.country_code ?? raw.country, 8).toUpperCase();
@@ -120,11 +233,49 @@ function _normalizeMarket(raw) {
   const hasRegion = Boolean(regionId);
   const hasGeo = lat != null && lng != null && radiusM != null && radiusM > 0;
   if (!hasRegion && !hasGeo) return null;
+  const marketKey = _text(raw.market_key, 80).toLowerCase() ||
+    `${countryCode.toLowerCase()}:${cityKey}`;
+  const aliases = _uniqueAliases([
+    cityKey,
+    marketKey,
+    raw.city,
+    raw.city_key,
+    raw.name,
+    raw.name_nl,
+    raw.name_en,
+    raw.name_fr,
+    raw.name_es,
+    ...(Array.isArray(raw.aliases) ? raw.aliases : []),
+  ]);
+  const countryAliases = _uniqueAliases([
+    countryCode,
+    raw.country,
+    ...(COUNTRY_NAME_ALIASES[countryCode] || []),
+    ...(Array.isArray(raw.country_aliases) ? raw.country_aliases : []),
+  ]);
   return {
+    market_key: marketKey,
     country_code: countryCode,
     city_key: cityKey,
+    aliases,
+    country_aliases: countryAliases,
     region_id: hasRegion ? regionId : null,
     geo: hasGeo ? { lat, lng, radius_m: radiusM } : null,
+    initial_hotel_limit: _clamp(
+      _int(raw.initial_hotel_limit, RATEHAWK_DEFAULT_SEARCH_LIMITS.initial_hotel_limit),
+      1,
+      RATEHAWK_DEFAULT_SEARCH_LIMITS.absolute_maximum,
+    ),
+    load_more_limit: _clamp(
+      _int(raw.load_more_limit ?? raw.load_more_increment, RATEHAWK_DEFAULT_SEARCH_LIMITS.load_more_increment),
+      1,
+      RATEHAWK_DEFAULT_SEARCH_LIMITS.absolute_maximum,
+    ),
+    absolute_maximum: _clamp(
+      _int(raw.absolute_maximum, RATEHAWK_DEFAULT_SEARCH_LIMITS.absolute_maximum),
+      1,
+      RATEHAWK_DEFAULT_SEARCH_LIMITS.max_hids_per_request,
+    ),
     enabled: raw.enabled !== false,
   };
 }
@@ -146,6 +297,227 @@ export function resolveEnabledMarket(config, destination = {}) {
     return { ok: false, reason: "market_not_enabled", market: null };
   }
   return { ok: true, reason: null, market };
+}
+
+export function parseConfiguredSearchMarkets(env = {}, markets = null) {
+  if (Array.isArray(markets)) {
+    return resolveMarketSearchConfig(env, { markets });
+  }
+  const raw = _text(env?.RATEHAWK_SEARCH_MARKETS, 8000) ||
+    _text(env?.RATEHAWK_CONTENT_MARKETS, 8000);
+  if (!raw) return resolveMarketSearchConfig(env, { markets: [] });
+  try {
+    const parsed = JSON.parse(raw);
+    return resolveMarketSearchConfig(env, {
+      markets: Array.isArray(parsed) ? parsed : [],
+    });
+  } catch {
+    return resolveMarketSearchConfig(env, { markets: [] });
+  }
+}
+
+export function hasForbiddenPublicSearchClientControl(input = {}) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return false;
+  for (const key of RATEHAWK_PUBLIC_SEARCH_FORBIDDEN_CLIENT_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
+    const value = input[key];
+    if (value == null || value === "") continue;
+    if (Array.isArray(value) && value.length === 0) continue;
+    return true;
+  }
+  return false;
+}
+
+export function canonicalizePublicSearchLanguage(value) {
+  const raw = _text(value, 8).toLowerCase();
+  if (!raw) return { ok: true, language: "en", defaulted: true };
+  const mapped = RATEHAWK_PUBLIC_SEARCH_LANGUAGES[raw];
+  if (!mapped) return { ok: false, reason: "language_unsupported", language: null };
+  return { ok: true, language: mapped, defaulted: false };
+}
+
+export function canonicalizePublicSearchCurrency(value) {
+  const raw = _text(value, 3).toUpperCase();
+  if (!raw) return { ok: true, currency: "EUR", defaulted: true };
+  if (!/^[A-Z]{3}$/.test(raw)) {
+    return { ok: false, reason: "currency_unsupported", currency: null };
+  }
+  return { ok: true, currency: raw, defaulted: false };
+}
+
+export function canonicalizePublicSearchResidency(value, market = null) {
+  const raw = _text(value, 2).toLowerCase();
+  if (/^[a-z]{2}$/.test(raw)) {
+    return { ok: true, residency: raw, defaulted: false };
+  }
+  const fromMarket = _text(market?.country_code, 2).toLowerCase();
+  if (/^[a-z]{2}$/.test(fromMarket)) {
+    return { ok: true, residency: fromMarket, defaulted: true };
+  }
+  return { ok: false, reason: "residency_required", residency: null };
+}
+
+export function canonicalizePublicSearchGuests(guests = []) {
+  const rooms = Array.isArray(guests) ? guests : [];
+  if (!rooms.length) {
+    return { ok: false, reason: "guests_incomplete", guests: [] };
+  }
+  if (rooms.length > RATEHAWK_PUBLIC_SEARCH_GUEST_BOUNDS.max_rooms) {
+    return { ok: false, reason: "guests_out_of_bounds", guests: [] };
+  }
+  const canonical = [];
+  for (const room of rooms) {
+    const adults = _int(room?.adults, 0);
+    const childrenRaw = Array.isArray(room?.children) ? room.children : [];
+    if (adults < 1 || adults > RATEHAWK_PUBLIC_SEARCH_GUEST_BOUNDS.max_adults) {
+      return { ok: false, reason: "guests_out_of_bounds", guests: [] };
+    }
+    if (childrenRaw.length > RATEHAWK_PUBLIC_SEARCH_GUEST_BOUNDS.max_children) {
+      return { ok: false, reason: "guests_out_of_bounds", guests: [] };
+    }
+    const children = [];
+    for (const age of childrenRaw) {
+      const n = _int(age, -1);
+      if (
+        n < RATEHAWK_PUBLIC_SEARCH_GUEST_BOUNDS.min_child_age ||
+        n > RATEHAWK_PUBLIC_SEARCH_GUEST_BOUNDS.max_child_age
+      ) {
+        return { ok: false, reason: "guests_out_of_bounds", guests: [] };
+      }
+      children.push(n);
+    }
+    canonical.push({ adults, children });
+  }
+  return { ok: true, guests: canonical };
+}
+
+export function assertPublicSearchStayDates(checkin, checkout, now = Date.now()) {
+  const inDate = _ymdParts(checkin);
+  const outDate = _ymdParts(checkout);
+  if (!inDate || !outDate) {
+    return { ok: false, reason: "live_search_incomplete" };
+  }
+  if (outDate.utc <= inDate.utc) {
+    return { ok: false, reason: "live_search_incomplete" };
+  }
+  const nights = Math.round((outDate.utc - inDate.utc) / 86_400_000);
+  if (nights < 1 || nights > RATEHAWK_PUBLIC_SEARCH_DATE_BOUNDS.max_nights) {
+    return { ok: false, reason: "stay_dates_out_of_bounds" };
+  }
+  const today = new Date(Number(now));
+  const todayUtc = Date.UTC(
+    today.getUTCFullYear(),
+    today.getUTCMonth(),
+    today.getUTCDate(),
+  );
+  const minUtc =
+    todayUtc - RATEHAWK_PUBLIC_SEARCH_DATE_BOUNDS.past_slack_days * 86_400_000;
+  const maxUtc =
+    todayUtc + RATEHAWK_PUBLIC_SEARCH_DATE_BOUNDS.max_lead_days * 86_400_000;
+  if (inDate.utc < minUtc || inDate.utc > maxUtc) {
+    return { ok: false, reason: "stay_dates_out_of_bounds" };
+  }
+  return {
+    ok: true,
+    checkin: inDate.ymd,
+    checkout: outDate.ymd,
+    nights,
+  };
+}
+
+export function isPublicLiveSearchCriteriaComplete({
+  destination = {},
+  checkin = "",
+  checkout = "",
+  guests = [],
+} = {}) {
+  const marketKey = _text(destination.market_key, 80);
+  const country = _text(destination.country_code ?? destination.country, 80);
+  const city = _text(destination.city_key ?? destination.city, 80);
+  const region = _text(destination.region, 80);
+  const destinationText = _text(destination.destination ?? destination.q, 80);
+  const hasDestination = Boolean(
+    marketKey || city || region || destinationText || (country && city),
+  );
+  const dates = assertPublicSearchStayDates(checkin, checkout, Date.now());
+  const datesOk = Boolean(_ymdParts(checkin) && _ymdParts(checkout) && _text(checkout, 10) > _text(checkin, 10));
+  const guestsOk = canonicalizePublicSearchGuests(guests).ok === true;
+  return {
+    complete: hasDestination && datesOk && guestsOk,
+    has_destination: hasDestination,
+    has_dates: datesOk,
+    has_guests: guestsOk,
+    stay_dates_ok: dates.ok === true,
+  };
+}
+
+export function resolvePublicSearchMarket(config, destination = {}) {
+  const markets = (Array.isArray(config?.enabled_markets) ? config.enabled_markets : [])
+    .filter((item) => item && item.enabled !== false);
+  if (!markets.length) {
+    return { ok: false, reason: "production_markets_unconfigured", market: null };
+  }
+
+  const marketKey = _aliasKey(destination.market_key);
+  if (marketKey) {
+    const exact = markets.filter((item) => _aliasKey(item.market_key) === marketKey);
+    if (exact.length === 1) return { ok: true, reason: null, market: exact[0] };
+    if (exact.length > 1) {
+      return { ok: false, reason: "ambiguous_destination", market: null };
+    }
+    return { ok: false, reason: "unsupported_market", market: null };
+  }
+
+  const country = _normalizeCountryCode(
+    destination.country_code ?? destination.country,
+  );
+  const texts = _uniqueAliases([
+    destination.city_key,
+    destination.city,
+    destination.region,
+    destination.destination,
+    destination.q,
+  ]);
+  if (!texts.length) {
+    return { ok: false, reason: "destination_incomplete", market: null };
+  }
+
+  const matches = markets.filter((item) => {
+    if (country && item.country_code !== country) return false;
+    return texts.some((text) => item.aliases.includes(text));
+  });
+  if (matches.length === 1) return { ok: true, reason: null, market: matches[0] };
+  if (matches.length > 1) {
+    return { ok: false, reason: "ambiguous_destination", market: null };
+  }
+  return { ok: false, reason: "unsupported_market", market: null };
+}
+
+export function resolvePublicSearchResultLimit(config, market, trigger) {
+  const limits = config?.limits || RATEHAWK_DEFAULT_SEARCH_LIMITS;
+  const initial = _clamp(
+    _int(market?.initial_hotel_limit, limits.initial_hotel_limit),
+    1,
+    RATEHAWK_DEFAULT_SEARCH_LIMITS.absolute_maximum,
+  );
+  const loadMore = _clamp(
+    _int(market?.load_more_limit, limits.load_more_increment),
+    1,
+    RATEHAWK_DEFAULT_SEARCH_LIMITS.absolute_maximum,
+  );
+  const absolute = _clamp(
+    _int(market?.absolute_maximum, limits.absolute_maximum),
+    1,
+    RATEHAWK_DEFAULT_SEARCH_LIMITS.max_hids_per_request,
+  );
+  const size =
+    trigger === RATEHAWK_SEARCH_TRIGGERS.LOAD_MORE ? loadMore : initial;
+  return {
+    initial_hotel_limit: initial,
+    load_more_increment: loadMore,
+    absolute_maximum: absolute,
+    take: Math.min(size, absolute, RATEHAWK_DEFAULT_SEARCH_LIMITS.absolute_maximum),
+  };
 }
 
 export function isLiveSearchCriteriaComplete({

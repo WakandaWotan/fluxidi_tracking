@@ -7,6 +7,7 @@
  * Internal operations:
  *   GET  /internal/status
  *   POST /internal/hotelpage
+ *   POST /internal/search
  *   POST /internal/test-search
  *   POST /internal/test-hotelpage
  *   POST /internal/content-sync  (admin-internal / scheduled only)
@@ -187,7 +188,7 @@ export async function handleRatehawkHotelsWorkerFetch(
   ) {
     if (isRatehawkIsolatedTestWorker(env)) {
       return json(
-        handleRatehawkPublicSearchRequest({
+        await handleRatehawkPublicSearchRequest({
           env,
           body: {},
         }),
@@ -202,7 +203,14 @@ export async function handleRatehawkHotelsWorkerFetch(
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       body = {};
     }
-    return json(handleRatehawkPublicSearchRequest({ env, body }));
+    return json(
+      await handleRatehawkPublicSearchRequest({
+        env,
+        body,
+        fetchImpl,
+        now,
+      }),
+    );
   }
 
   if (

@@ -8682,10 +8682,20 @@ Future<Map<String, dynamic>?> fetchPublicHotelSearch({
   int? rooms,
   int? adults,
   List<int> childAges = const <int>[],
+  String? language,
+  String? residency,
+  String? currency,
+  String? marketKey,
 }) async {
   final qp = <String, String>{
     'source': source.trim().isEmpty ? 'approved-local' : source.trim(),
   };
+  final normalizedSource = qp['source']!;
+  final isRatehawkSource =
+      normalizedSource == 'ratehawk' ||
+      normalizedSource == 'rate-hawk' ||
+      normalizedSource == 'etg' ||
+      normalizedSource == 'emerging-travel';
   final normalizedCity = (city ?? '').trim();
   final normalizedCountry = (country ?? '').trim();
   final normalizedRegion = (region ?? '').trim();
@@ -8694,11 +8704,21 @@ Future<Map<String, dynamic>?> fetchPublicHotelSearch({
   if (normalizedCountry.isNotEmpty) qp['country'] = normalizedCountry;
   if (normalizedRegion.isNotEmpty) qp['region'] = normalizedRegion;
   if (normalizedSearchText.isNotEmpty) qp['q'] = normalizedSearchText;
-  if (lat != null && lat.isFinite) qp['lat'] = lat.toStringAsFixed(6);
-  if (lng != null && lng.isFinite) qp['lng'] = lng.toStringAsFixed(6);
-  if (radiusKm != null && radiusKm.isFinite && radiusKm >= 0) {
-    qp['radius_km'] = radiusKm.toStringAsFixed(2);
+  if (!isRatehawkSource) {
+    if (lat != null && lat.isFinite) qp['lat'] = lat.toStringAsFixed(6);
+    if (lng != null && lng.isFinite) qp['lng'] = lng.toStringAsFixed(6);
+    if (radiusKm != null && radiusKm.isFinite && radiusKm >= 0) {
+      qp['radius_km'] = radiusKm.toStringAsFixed(2);
+    }
   }
+  final normalizedLanguage = (language ?? '').trim().toLowerCase();
+  if (normalizedLanguage.isNotEmpty) qp['language'] = normalizedLanguage;
+  final normalizedResidency = (residency ?? '').trim().toLowerCase();
+  if (normalizedResidency.isNotEmpty) qp['residency'] = normalizedResidency;
+  final normalizedCurrency = (currency ?? '').trim().toUpperCase();
+  if (normalizedCurrency.isNotEmpty) qp['currency'] = normalizedCurrency;
+  final normalizedMarketKey = (marketKey ?? '').trim();
+  if (normalizedMarketKey.isNotEmpty) qp['market_key'] = normalizedMarketKey;
   final normalizedCheckin = (checkin ?? '').trim();
   final normalizedCheckout = (checkout ?? '').trim();
   if (RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(normalizedCheckin)) {
