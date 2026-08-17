@@ -10,14 +10,25 @@
 import { sha256Hex } from "./crypto_utils.js";
 import {
   issueRatehawkViewStayContext,
+  openRatehawkViewStayContext,
   verifyRatehawkViewStayContext,
 } from "../../ratehawk-hotels/modules/ratehawk_view_stay_context.mjs";
+import {
+  assertRatehawkTestStay,
+  hasForbiddenRatehawkTestClientControl,
+} from "../../ratehawk-hotels/modules/ratehawk_test_activation.mjs";
 
 export const RATEHAWK_HOTELPAGE_PUBLIC_PATH =
   "/public/hotels/ratehawk/hotelpage";
 export const RATEHAWK_HOTELS_BINDING = "RATEHAWK_HOTELS";
 export const RATEHAWK_HOTELS_SERVICE_NAME = "fluxidi-ratehawk-hotels-api";
 export const RATEHAWK_HOTELS_INTERNAL_PROXY = "booking_worker_v1";
+export const RATEHAWK_HOTELS_TEST_SEARCH_PATH = "/internal/test-search";
+export const RATEHAWK_HOTELS_TEST_HOTELPAGE_PATH = "/internal/test-hotelpage";
+export const RATEHAWK_ADMIN_TEST_SEARCH_PATH =
+  "/admin/hotels/ratehawk/test/search";
+export const RATEHAWK_ADMIN_TEST_HOTELPAGE_PATH =
+  "/admin/hotels/ratehawk/test/hotelpage";
 export const RATEHAWK_SEARCH_SOURCES = Object.freeze([
   "ratehawk",
   "rate-hawk",
@@ -32,6 +43,18 @@ function _text(value, max = 200) {
   const text = String(value ?? "").trim();
   if (!text) return "";
   return text.length > max ? text.slice(0, max) : text;
+}
+
+function _flag(value) {
+  return ["1", "true", "yes", "on"].includes(String(value ?? "").trim().toLowerCase());
+}
+
+export function isBookingRatehawkTestSearchEnabled(env = {}) {
+  return _flag(env.RATEHAWK_TEST_SEARCH_ENABLED);
+}
+
+export function isBookingRatehawkTestHotelpageEnabled(env = {}) {
+  return _flag(env.RATEHAWK_TEST_HOTELPAGE_ENABLED);
 }
 
 function _lower(value) {
@@ -264,6 +287,121 @@ export async function handlePublicRatehawkHotelpage({
   }
 }
 
+function _safeTestUnavailable(reason) {
+  return {
+    ok: false,
+    invoked: false,
+    binding_called: false,
+    reason,
+    source: "ratehawk",
+    provider: "ratehawk",
+    count: 0,
+    stays: [],
+    view_stay_context: null,
+    stay22_fallback_retained: true,
+    mobility_independent_of_ratehawk: true,
+    commercial: {
+      fluxidi_role: "affiliate",
+      customer_pays_fluxidi: false,
+      mollie_involved: false,
+    },
+  };
+}
+
+async function _proxyHotelsTestPath(env, path, body) {
+  if (!env?.RATEHAWK_HOTELS || typeof env.RATEHAWK_HOTELS.fetch !== "function") {
+    return { ok: false, dto: _safeTestUnavailable("hotels_worker_binding_missing") };
+  }
+  try {
+    const resp = await env.RATEHAWK_HOTELS.fetch(
+      new Request(`https://fluxidi-ratehawk-hotels-api.internal${path}`, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          "x-fluxidi-internal-proxy": RATEHAWK_HOTELS_INTERNAL_PROXY,
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+    const dto = await resp.json();
+    if (!dto || typeof dto !== "object") {
+      return { ok: false, dto: _safeTestUnavailable("hotels_worker_unavailable") };
+    }
+    return { ok: true, dto };
+  } catch {
+    return { ok: false, dto: _safeTestUnavailable("hotels_worker_unavailable") };
+  }
+}
+
+export async function handleAdminRatehawkTestSearch({
+  env,
+  body = {},
+  now = Date.now(),
+} = {}) {
+  const requestBody =
+    body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  if (bookingWorkerHasRatehawkCredentials(env)) {
+    return _safeTestUnavailable("booking_worker_must_not_hold_ratehawk_secrets");
+  }
+  if (hasForbiddenRatehawkTestClientControl(requestBody)) {
+    return _safeTestUnavailable("client_control_forbidden");
+  }
+  if (!isBookingRatehawkTestSearchEnabled(env)) {
+    return _safeTestUnavailable("test_search_disabled");
+  }
+  if (!_text(env?.RATEHAWK_VIEW_STAY_CONTEXT_SECRET, 800)) {
+    return _safeTestUnavailable("view_stay_context_secret_missing");
+  }
+  const proxied = await _proxyHotelsTestPath(
+    env,
+    RATEHAWK_HOTELS_TEST_SEARCH_PATH,
+    {},
+  );
+  return proxied.dto;
+}
+
+export async function handleAdminRatehawkTestHotelpage({
+  env,
+  body = {},
+  now = Date.now(),
+} = {}) {
+  const requestBody =
+    body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  if (bookingWorkerHasRatehawkCredentials(env)) {
+    return _safeTestUnavailable("booking_worker_must_not_hold_ratehawk_secrets");
+  }
+  if (hasForbiddenRatehawkTestClientControl(requestBody)) {
+    return _safeTestUnavailable("client_control_forbidden");
+  }
+  if (!isBookingRatehawkTestHotelpageEnabled(env)) {
+    return _safeTestUnavailable("test_hotelpage_disabled");
+  }
+  const contextSecret = _text(env?.RATEHAWK_VIEW_STAY_CONTEXT_SECRET, 800);
+  const opened = await openRatehawkViewStayContext(
+    contextSecret,
+    requestBody.view_stay_context ?? requestBody.selected_card_context,
+    { now },
+  );
+  if (opened.ok !== true) {
+    return _safeTestUnavailable(opened.reason);
+  }
+  const stayCheck = assertRatehawkTestStay(opened.claims, now);
+  if (stayCheck.ok !== true) {
+    return _safeTestUnavailable(stayCheck.reason);
+  }
+  const proxied = await _proxyHotelsTestPath(
+    env,
+    RATEHAWK_HOTELS_TEST_HOTELPAGE_PATH,
+    {
+      view_stay_context:
+        requestBody.view_stay_context ?? requestBody.selected_card_context,
+      locale: _text(requestBody.locale, 8) || "nl",
+    },
+  );
+  return proxied.dto;
+}
+
 export function runTaxiBookingIsolationProbe(input = {}) {
   const distanceKm = Number(input.distance_km);
   const amountMinor = Number.isFinite(distanceKm)
@@ -278,4 +416,8 @@ export function runTaxiBookingIsolationProbe(input = {}) {
   };
 }
 
-export { issueRatehawkViewStayContext, verifyRatehawkViewStayContext };
+export {
+  issueRatehawkViewStayContext,
+  openRatehawkViewStayContext,
+  verifyRatehawkViewStayContext,
+};

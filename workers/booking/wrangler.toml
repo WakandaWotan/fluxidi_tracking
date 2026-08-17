@@ -49,6 +49,9 @@ PLAY_REVIEW_COMPANY_CODE = "FLX-00020"
 # RATEHAWK_VIEW_STAY_CONTEXT_SECRET — HMAC for server-issued View stay context
 # (wrangler secret put; never commit). Hotelpage stays fail-closed until live
 # RateHawk search issues that context.
+# Admin test-search / test-Hotelpage stay fail-closed until explicitly enabled.
+RATEHAWK_TEST_SEARCH_ENABLED = "0"
+RATEHAWK_TEST_HOTELPAGE_ENABLED = "0"
 # Deploy order: 1) fluxidi-ratehawk-hotels-api  2) fluxidi-booking-api
 
 # Internal company-session Billit sandbox OAuth (fail-closed). Requires BOTH

@@ -119,6 +119,45 @@ export async function issueRatehawkViewStayContext(
   };
 }
 
+export async function openRatehawkViewStayContext(
+  secret,
+  token,
+  { now = Date.now() } = {},
+) {
+  const signingSecret = _text(secret, 800);
+  if (!signingSecret) {
+    return { ok: false, reason: "view_stay_context_secret_missing" };
+  }
+  const raw = _text(token, 4000);
+  const parts = raw.split(".");
+  if (
+    parts.length !== 3 ||
+    parts[0] !== RATEHAWK_VIEW_STAY_CONTEXT_PREFIX ||
+    !parts[1] ||
+    !parts[2]
+  ) {
+    return { ok: false, reason: "view_stay_context_required" };
+  }
+  let payload = null;
+  try {
+    payload = jsonBase64urlDecode(parts[1]);
+  } catch {
+    return { ok: false, reason: "view_stay_context_malformed" };
+  }
+  const validSig = await _hmacVerify(signingSecret, parts[1], parts[2]);
+  if (!validSig) {
+    return { ok: false, reason: "view_stay_context_tampered" };
+  }
+  if (Number(now) >= Number(payload?.exp)) {
+    return { ok: false, reason: "view_stay_context_expired" };
+  }
+  const issued = canonicalizeViewStayContextClaims(payload);
+  if (!_claimsComplete(issued)) {
+    return { ok: false, reason: "view_stay_context_incomplete" };
+  }
+  return { ok: true, claims: issued, expires_at: Number(payload.exp) };
+}
+
 export async function verifyRatehawkViewStayContext(
   secret,
   token,

@@ -107,6 +107,8 @@ import {
 import {
   buildRatehawkPublicSearchGuardPayload,
   fetchRatehawkHotelsStatus,
+  handleAdminRatehawkTestHotelpage,
+  handleAdminRatehawkTestSearch,
   handlePublicRatehawkHotelpage,
   isRatehawkSearchSource,
 } from "./modules/ratehawk_hotels_facade.mjs";
@@ -40709,6 +40711,50 @@ export default {
           );
         }
         return json(await _buildAdminHotelsProvidersStatusPayload(env));
+      }
+
+      if (
+        url.pathname === "/admin/hotels/ratehawk/test/search" &&
+        request.method === "POST"
+      ) {
+        try {
+          _requireAdmin(request, url, env);
+        } catch (err) {
+          const message = String(err?.message || "Unauthorized");
+          return json(
+            { ok: false, error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable" },
+            message === "Unauthorized" ? 401 : 500,
+          );
+        }
+        const testSearchBody = await safeJson(request);
+        return json(
+          await handleAdminRatehawkTestSearch({
+            env,
+            body: testSearchBody,
+          }),
+        );
+      }
+
+      if (
+        url.pathname === "/admin/hotels/ratehawk/test/hotelpage" &&
+        request.method === "POST"
+      ) {
+        try {
+          _requireAdmin(request, url, env);
+        } catch (err) {
+          const message = String(err?.message || "Unauthorized");
+          return json(
+            { ok: false, error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable" },
+            message === "Unauthorized" ? 401 : 500,
+          );
+        }
+        const testHotelpageBody = await safeJson(request);
+        return json(
+          await handleAdminRatehawkTestHotelpage({
+            env,
+            body: testHotelpageBody,
+          }),
+        );
       }
 
       if (url.pathname === "/public/quote" && request.method === "POST") {
