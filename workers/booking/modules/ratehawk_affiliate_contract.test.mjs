@@ -527,11 +527,15 @@ test("valid no-show amount, currency and hotel-local from_time are disclosed", (
   );
   assert.equal(offer.ok, true);
   assert.equal(offer.no_show.disclosed, true);
+  assert.equal(offer.no_show.obligation_kind, "conditional_hotel_no_show_penalty");
   assert.equal(offer.no_show.amount.amount_minor, 2500);
   assert.equal(offer.no_show.currency, "EUR");
   assert.equal(offer.no_show.from_time, "18:00:00");
   assert.equal(offer.no_show.timezone_context, "hotel_local_time");
+  assert.equal(offer.no_show.included_in_room_total, false);
+  assert.equal(offer.no_show.converted, false);
   assert.equal(offer.no_show.customer_disclosure_required, true);
+  assert.equal(offer.no_show.currency_relation, "matches_display_and_charge");
 });
 
 test("malformed rate-level no_show fails closed", () => {
@@ -554,6 +558,194 @@ test("malformed rate-level no_show fails closed", () => {
   );
   assert.equal(unknown.ok, false);
   assert.equal(unknown.reason, "no_show_unknown_field");
+});
+
+function mixedCurrencyNowRate({
+  showAmount = "180.00",
+  showCurrency = "EUR",
+  chargeAmount = "195.00",
+  chargeCurrency = "USD",
+  noShow = null,
+} = {}) {
+  const rate = affiliateNowRate({ no_show: noShow });
+  const payment = rate.payment_options.payment_types[0];
+  payment.show_amount = showAmount;
+  payment.show_currency_code = showCurrency;
+  payment.amount = chargeAmount;
+  payment.currency_code = chargeCurrency;
+  rate.cancellation_penalties.policies = [
+    {
+      start_at: null,
+      end_at: "2026-09-01T10:00:00",
+      amount_charge: "0.00",
+      amount_show: "0.00",
+    },
+    {
+      start_at: "2026-09-01T10:00:00",
+      end_at: null,
+      amount_charge: chargeAmount,
+      amount_show: showAmount,
+    },
+  ];
+  return rate;
+}
+
+test("no-show EUR is kept when customer total is EUR and ETG reconciliation is USD", () => {
+  const offer = normalizeRatehawkRateOffer(
+    mixedCurrencyNowRate({
+      noShow: officialNoShow({ amount: "25.00", currency_code: "EUR" }),
+    }),
+  );
+  assert.equal(offer.ok, true);
+  assert.equal(offer.customer_total.currency, "EUR");
+  assert.equal(offer.customer_total.amount_minor, 18000);
+  assert.equal(offer.reconciliation_amount.currency, "USD");
+  assert.equal(offer.reconciliation_amount.amount_minor, 19500);
+  assert.equal(offer.no_show.currency, "EUR");
+  assert.equal(offer.no_show.amount.amount_minor, 2500);
+  assert.equal(offer.no_show.currency_relation, "matches_customer_display_currency");
+  assert.equal(offer.no_show.currency_matches_customer_display, true);
+  assert.equal(offer.no_show.currency_matches_charge, false);
+});
+
+test("no-show USD is kept when customer total and charge are EUR", () => {
+  const offer = normalizeRatehawkRateOffer(
+    affiliateNowRate({
+      no_show: officialNoShow({ amount: "30.00", currency_code: "USD" }),
+    }),
+  );
+  assert.equal(offer.ok, true);
+  assert.equal(offer.customer_total.currency, "EUR");
+  assert.equal(offer.reconciliation_amount.currency, "EUR");
+  assert.equal(offer.no_show.currency, "USD");
+  assert.equal(offer.no_show.amount.amount_minor, 3000);
+  assert.equal(offer.no_show.currency_relation, "separate_hotel_currency");
+  assert.equal(offer.no_show.currency_matches_customer_display, false);
+  assert.equal(offer.no_show.currency_matches_charge, false);
+});
+
+test("no-show currency matching display currency is classified, not converted", () => {
+  const offer = normalizeRatehawkRateOffer(
+    mixedCurrencyNowRate({
+      noShow: officialNoShow({ currency_code: "EUR" }),
+    }),
+  );
+  assert.equal(offer.ok, true);
+  assert.equal(offer.no_show.currency_relation, "matches_customer_display_currency");
+  assert.equal(offer.no_show.converted, false);
+  assert.equal(offer.no_show.included_in_room_total, false);
+});
+
+test("no-show currency matching charge currency is classified, not converted", () => {
+  const offer = normalizeRatehawkRateOffer(
+    mixedCurrencyNowRate({
+      noShow: officialNoShow({ amount: "40.00", currency_code: "USD" }),
+    }),
+  );
+  assert.equal(offer.ok, true);
+  assert.equal(offer.no_show.currency, "USD");
+  assert.equal(offer.no_show.currency_relation, "matches_charge_currency");
+  assert.equal(offer.no_show.currency_matches_charge, true);
+  assert.equal(offer.no_show.converted, false);
+});
+
+test("valid separate hotel no-show currency is accepted on pay-at-hotel rates", () => {
+  const rate = affiliateHotelPayRate({
+    no_show: officialNoShow({ amount: "20.00", currency_code: "GBP" }),
+  });
+  const offer = normalizeRatehawkRateOffer(rate);
+  assert.equal(offer.ok, true);
+  assert.equal(offer.payment.payment_type, "hotel");
+  assert.equal(offer.no_show.currency, "GBP");
+  assert.equal(offer.no_show.currency_relation, "separate_hotel_currency");
+  assert.equal(
+    offer.no_show.hotel_payment_currency_relationship,
+    "separate_from_hotel_charge_currency",
+  );
+  assert.equal(offer.no_show.converted, false);
+});
+
+test("no-show is never converted or added into the room total", () => {
+  const offer = normalizeRatehawkRateOffer(
+    mixedCurrencyNowRate({
+      showAmount: "180.00",
+      chargeAmount: "195.00",
+      noShow: officialNoShow({ amount: "25.00", currency_code: "EUR" }),
+    }),
+  );
+  assert.equal(offer.ok, true);
+  assert.equal(offer.customer_total.amount_minor, 18000);
+  assert.equal(offer.reconciliation_amount.amount_minor, 19500);
+  assert.equal(offer.no_show.amount.amount_minor, 2500);
+  assert.notEqual(offer.customer_total.amount_minor, 18000 + 2500);
+  assert.notEqual(offer.reconciliation_amount.amount_minor, 19500 + 2500);
+  assert.equal(offer.no_show.included_in_room_total, false);
+  assert.equal(offer.no_show.converted, false);
+});
+
+test("invalid no-show ISO currency fails closed", () => {
+  const offer = normalizeRatehawkRateOffer(
+    affiliateNowRate({
+      no_show: officialNoShow({ currency_code: "EURO" }),
+    }),
+  );
+  assert.equal(offer.ok, false);
+  assert.equal(offer.hard_stop, true);
+  assert.equal(offer.reason, "no_show_currency_required");
+});
+
+test("malformed no-show amount or time fails closed", () => {
+  const badAmount = normalizeRatehawkRateOffer(
+    affiliateNowRate({
+      no_show: officialNoShow({ amount: "twenty-five" }),
+    }),
+  );
+  assert.equal(badAmount.ok, false);
+  assert.equal(badAmount.reason, "no_show_amount_unmapped");
+
+  const badTime = normalizeRatehawkRateOffer(
+    affiliateNowRate({
+      no_show: officialNoShow({ from_time: "25:00:00" }),
+    }),
+  );
+  assert.equal(badTime.ok, false);
+  assert.equal(badTime.reason, "no_show_from_time_unmapped");
+});
+
+test("unknown no-show key fails closed", () => {
+  const offer = normalizeRatehawkRateOffer(
+    affiliateNowRate({
+      no_show: officialNoShow({ extra_fee: "1.00" }),
+    }),
+  );
+  assert.equal(offer.ok, false);
+  assert.equal(offer.reason, "no_show_unknown_field");
+});
+
+test("payment type deposit remains rejected when a valid no-show is present", () => {
+  const offer = normalizeRatehawkRateOffer(
+    depositRate({ no_show: officialNoShow() }),
+  );
+  assert.equal(offer.ok, false);
+  assert.equal(offer.hard_stop, true);
+  assert.equal(offer.reason, "deposit_requires_fluxidi_to_fund_etg");
+});
+
+test("prebook no-show amount or currency change must be redisplayed", () => {
+  const before = normalizeRatehawkRateOffer(
+    affiliateNowRate({ no_show: officialNoShow() }),
+  );
+  const after = normalizeRatehawkRateOffer(
+    affiliateNowRate({
+      no_show: officialNoShow({ amount: "40.00", currency_code: "USD" }),
+    }),
+  );
+  const change = evaluateRatehawkPrebookChange(before, after);
+  assert.equal(change.ok, true);
+  assert.equal(change.price_changed, false);
+  assert.equal(change.no_show_changed, true);
+  assert.equal(change.must_redisplay_to_customer, true);
+  assert.equal(change.auto_finish_forbidden, true);
 });
 
 test("cancellation terms normalize from selected payment_types, not rate top level", () => {

@@ -528,24 +528,67 @@ export function normalizeRatehawkRateDeposit(
   };
 }
 
+function classifyNoShowCurrencyRelation(
+  noShowCurrency,
+  displayCurrency,
+  chargeCurrency,
+) {
+  const matchesDisplay = Boolean(
+    noShowCurrency && displayCurrency && noShowCurrency === displayCurrency,
+  );
+  const matchesCharge = Boolean(
+    noShowCurrency && chargeCurrency && noShowCurrency === chargeCurrency,
+  );
+  let currency_relation = "separate_hotel_currency";
+  if (matchesDisplay && matchesCharge) {
+    currency_relation = "matches_display_and_charge";
+  } else if (matchesDisplay) {
+    currency_relation = "matches_customer_display_currency";
+  } else if (matchesCharge) {
+    currency_relation = "matches_charge_currency";
+  }
+  return {
+    currency_matches_customer_display: matchesDisplay,
+    currency_matches_charge: matchesCharge,
+    currency_relation,
+  };
+}
+
+function undisclosedNoShow() {
+  return {
+    ok: true,
+    disclosed: false,
+    obligation_kind: null,
+    amount: null,
+    currency: null,
+    from_time: null,
+    timezone_context: null,
+    included_in_room_total: false,
+    converted: false,
+    currency_matches_customer_display: false,
+    currency_matches_charge: false,
+    currency_relation: null,
+    hotel_payment_currency_relationship: null,
+    customer_disclosure_required: false,
+  };
+}
+
 /**
- * Official ETG rate.no_show: separate no-show penalty in hotel local time.
- * null = no separate no-show data at this stage.
+ * Official ETG rate.no_show: a separately denominated conditional hotel
+ * no-show penalty. Preserve the provider amount and ISO currency exactly.
+ * Never convert, never fold into the room total, and never reject only
+ * because that currency differs from the selected payment option.
  */
 export function normalizeRatehawkRateNoShow(
   noShow,
-  { chargeCurrency = null } = {},
+  {
+    displayCurrency = null,
+    chargeCurrency = null,
+    paymentType = null,
+  } = {},
 ) {
   if (noShow == null) {
-    return {
-      ok: true,
-      disclosed: false,
-      amount: null,
-      currency: null,
-      from_time: null,
-      timezone_context: null,
-      customer_disclosure_required: false,
-    };
+    return undisclosedNoShow();
   }
   if (typeof noShow !== "object" || Array.isArray(noShow)) {
     return _failClosed("no_show_malformed");
@@ -571,20 +614,33 @@ export function normalizeRatehawkRateNoShow(
         : "no_show_amount_unmapped",
     );
   }
-  if (chargeCurrency && money.currency !== chargeCurrency) {
-    return _failClosed("no_show_currency_mismatch");
-  }
   const fromTime = _text(noShow.from_time, 8);
   if (!HOTEL_LOCAL_TIME_RE.test(fromTime)) {
     return _failClosed("no_show_from_time_unmapped");
   }
+  const relation = classifyNoShowCurrencyRelation(
+    money.currency,
+    displayCurrency,
+    chargeCurrency,
+  );
+  let hotel_payment_currency_relationship = null;
+  if (paymentType === "hotel") {
+    hotel_payment_currency_relationship = relation.currency_matches_charge
+      ? "matches_hotel_charge_currency"
+      : "separate_from_hotel_charge_currency";
+  }
   return {
     ok: true,
     disclosed: true,
+    obligation_kind: "conditional_hotel_no_show_penalty",
     amount: money,
     currency: money.currency,
     from_time: fromTime,
     timezone_context: "hotel_local_time",
+    included_in_room_total: false,
+    converted: false,
+    ...relation,
+    hotel_payment_currency_relationship,
     customer_disclosure_required: true,
   };
 }
@@ -744,7 +800,9 @@ export function normalizeRatehawkRateOffer(rate = {}, { locale = "en" } = {}) {
   }
 
   const noShow = normalizeRatehawkRateNoShow(rate.no_show, {
+    displayCurrency: showMoney.currency,
     chargeCurrency: chargeMoney.currency,
+    paymentType: payment.payment_type,
   });
   if (noShow.ok !== true) {
     return { ...noShow, payment };
@@ -907,13 +965,24 @@ export function evaluateRatehawkPrebookChange(beforeOffer, afterOffer) {
   const after = afterOffer.customer_total;
   const currencyChanged = before.currency !== after.currency;
   const amountChanged = before.amount_minor !== after.amount_minor;
+  const beforeNoShow = beforeOffer.no_show || {};
+  const afterNoShow = afterOffer.no_show || {};
+  const noShowChanged =
+    Boolean(beforeNoShow.disclosed) !== Boolean(afterNoShow.disclosed) ||
+    beforeNoShow.currency !== afterNoShow.currency ||
+    (beforeNoShow.amount?.amount_minor ?? null) !==
+      (afterNoShow.amount?.amount_minor ?? null);
   return {
     ok: true,
     price_changed: amountChanged || currencyChanged,
     currency_changed: currencyChanged,
     previous_total: before,
     new_total: after,
-    must_redisplay_to_customer: amountChanged || currencyChanged,
+    no_show_changed: noShowChanged,
+    previous_no_show: beforeNoShow,
+    new_no_show: afterNoShow,
+    must_redisplay_to_customer:
+      amountChanged || currencyChanged || noShowChanged,
     auto_finish_forbidden: true,
   };
 }
