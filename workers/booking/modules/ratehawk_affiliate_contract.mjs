@@ -103,7 +103,8 @@ const CRITICAL_UNMAPPED_HINTS = Object.freeze([
   "cvc",
 ]);
 
-const GEO_MATCH_MAX_METERS = 75;
+export const RATEHAWK_GEO_MATCH_MAX_METERS = 75;
+const GEO_MATCH_MAX_METERS = RATEHAWK_GEO_MATCH_MAX_METERS;
 
 function _text(value, max = 400) {
   const text = String(value ?? "").trim();
