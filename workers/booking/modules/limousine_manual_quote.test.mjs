@@ -225,7 +225,9 @@ test("8/12) quote-required extra is carried; customer pricing is rejected", () =
 test("state machine: only defined transitions are allowed", () => {
   assert.equal(canTransitionLimousineQuote(S.REQUESTED, S.QUOTED), true);
   assert.equal(canTransitionLimousineQuote(S.QUOTED, S.CUSTOMER_ACCEPTANCE_REQUIRED), true);
+  assert.equal(canTransitionLimousineQuote(S.CUSTOMER_ACCEPTANCE_REQUIRED, S.QUOTED), true);
   assert.equal(canTransitionLimousineQuote(S.CUSTOMER_ACCEPTANCE_REQUIRED, S.ACCEPTED), true);
+  assert.equal(canTransitionLimousineQuote(S.QUOTED, S.QUOTED), false);
   assert.equal(canTransitionLimousineQuote(S.ACCEPTED, S.BOOKING_CREATED), true);
   // Contradictory / unknown transitions fail closed.
   assert.equal(canTransitionLimousineQuote(S.REQUESTED, S.ACCEPTED), false);
@@ -336,6 +338,10 @@ test("13) acceptance binds to exact amount, currency, itinerary, extras and term
   assert.equal(binding.terms_revision, 3);
   assert.equal(binding.offer_id, "off_1");
   assert.equal(binding.quote_revision, 3);
+  assert.equal(binding.vat_treatment, "incl");
+  assert.equal(binding.offer_source_revision, 7);
+  assert.equal(binding.pricing_section_revision, 5);
+  assert.equal(binding.expires_at, "2099-01-01T00:00:00Z");
   assert.equal(binding.itinerary_fingerprint, record.request.itinerary_fingerprint);
   // Any change to the authoritative record invalidates the binding.
   const changedAmount = buildLimousineAcceptanceBinding({

@@ -122,11 +122,15 @@ export function limousineAcceptanceBindingMatches(binding, expected) {
     "quote_revision",
     "total_incl_vat_cents",
     "currency",
+    "vat_treatment",
     "offer_id",
+    "offer_source_revision",
+    "pricing_section_revision",
     "itinerary_fingerprint",
     "service_class_id",
     "vehicle_id",
     "terms_revision",
+    "expires_at",
   ];
   for (const key of keys) {
     if (String(a[key] ?? "") !== String(b[key] ?? "")) {
@@ -137,6 +141,18 @@ export function limousineAcceptanceBindingMatches(binding, expected) {
   const bExtras = Array.isArray(b.selected_extra_ids) ? [...b.selected_extra_ids].sort() : [];
   if (aExtras.join(",") !== bExtras.join(",")) {
     return { ok: false, mismatched_field: "selected_extra_ids" };
+  }
+  const langs = ["nl", "en", "fr", "es"];
+  const aMob = a.mobilisation_disclosure && typeof a.mobilisation_disclosure === "object"
+    ? a.mobilisation_disclosure
+    : {};
+  const bMob = b.mobilisation_disclosure && typeof b.mobilisation_disclosure === "object"
+    ? b.mobilisation_disclosure
+    : {};
+  for (const lang of langs) {
+    if (String(aMob[lang] ?? "") !== String(bMob[lang] ?? "")) {
+      return { ok: false, mismatched_field: "mobilisation_disclosure" };
+    }
   }
   return { ok: true };
 }

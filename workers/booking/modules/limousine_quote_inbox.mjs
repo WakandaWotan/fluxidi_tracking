@@ -76,6 +76,7 @@ export const LIMOUSINE_INBOX_FORBIDDEN_KEYS = Object.freeze([
   "margin",
   "provider_payload",
   "audit",
+  "itinerary_fingerprint",
 ]);
 
 function asObject(raw) {

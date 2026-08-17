@@ -114,6 +114,7 @@ import {
 import {
   LIMOUSINE_QUOTE_STATES as _LIMOUSINE_QUOTE_STATES,
   appendLimousineQuoteAudit as _appendLimousineQuoteAudit,
+  applyLimousineCompanyQuoteAction as _applyLimousineCompanyQuoteAction,
   applyLimousineQuoteTransition as _applyLimousineQuoteTransition,
   assertLimousineQuoteAcceptable as _assertLimousineQuoteAcceptable,
   buildLimousineAcceptanceBinding as _buildLimousineAcceptanceBinding,
@@ -44788,39 +44789,33 @@ export default {
 
         const validatedQuote = _validateLimousineCompanyQuote(body?.quote ?? body, { nowIso });
         if (!validatedQuote.ok) {
-          return json({ ok: false, error: validatedQuote.reason, missing: validatedQuote.missing }, 400);
+          return json({
+            ok: false,
+            error: validatedQuote.reason,
+            missing: validatedQuote.missing,
+            unknown: validatedQuote.unknown,
+          }, 400);
         }
-        // A newer quote supersedes the previous one; the customer must accept
-        // the new revision.
-        const quoted = _applyLimousineQuoteTransition(record, {
-          to: _LIMOUSINE_QUOTE_STATES.QUOTED,
+        const quoted = _applyLimousineCompanyQuoteAction(record, {
           expectedRevision,
-          actorType: "company",
-          reasonCode: "quoted",
+          quote: validatedQuote.quote,
           nowIso,
-          patch: {
-            quote: validatedQuote.quote,
-            superseded_revision:
-              record.state === _LIMOUSINE_QUOTE_STATES.QUOTED ||
-              record.state === _LIMOUSINE_QUOTE_STATES.CUSTOMER_ACCEPTANCE_REQUIRED
-                ? record.revision
-                : undefined,
-          },
         });
         if (!quoted.ok) {
-          return json({ ok: false, error: quoted.reason, current_revision: quoted.current_revision }, 409);
+          return json({
+            ok: false,
+            error: quoted.reason,
+            current_revision: quoted.current_revision,
+            current_terms_revision: quoted.current_terms_revision,
+          }, 409);
         }
-        let next = _appendLimousineQuoteAudit(quoted.record, quoted.audit);
-        const awaiting = _applyLimousineQuoteTransition(next, {
-          to: _LIMOUSINE_QUOTE_STATES.CUSTOMER_ACCEPTANCE_REQUIRED,
-          actorType: "system",
-          reasonCode: "awaiting_customer_acceptance",
-          nowIso,
-        });
-        if (awaiting.ok && awaiting.changed) {
-          next = _appendLimousineQuoteAudit(awaiting.record, awaiting.audit);
+        let next = quoted.record;
+        if (quoted.changed) {
+          for (const audit of quoted.audits || (quoted.audit ? [quoted.audit] : [])) {
+            next = _appendLimousineQuoteAudit(next, audit);
+          }
+          await _saveLimousineQuoteRecord(env, next);
         }
-        await _saveLimousineQuoteRecord(env, next);
         return json({ ok: true, quote_request: _publicLimousineQuoteView(next) }, 200);
       }
 

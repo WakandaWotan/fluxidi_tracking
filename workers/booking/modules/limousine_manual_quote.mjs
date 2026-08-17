@@ -44,7 +44,10 @@ const TRANSITIONS = Object.freeze({
   [S.REQUESTED]: [S.VIEWED_BY_COMPANY, S.QUOTED, ...ALWAYS_ALLOWED_TERMINALS],
   [S.VIEWED_BY_COMPANY]: [S.QUOTED, ...ALWAYS_ALLOWED_TERMINALS],
   [S.QUOTED]: [S.CUSTOMER_ACCEPTANCE_REQUIRED, S.SUPERSEDED, ...ALWAYS_ALLOWED_TERMINALS],
-  [S.CUSTOMER_ACCEPTANCE_REQUIRED]: [S.ACCEPTED, S.SUPERSEDED, ...ALWAYS_ALLOWED_TERMINALS],
+  // Re-quote: company replaces an unaccepted quote. SUPERSEDED remains the
+  // terminal kill for the whole request; the live record stays one document
+  // and records superseded_revision on the replacement.
+  [S.CUSTOMER_ACCEPTANCE_REQUIRED]: [S.ACCEPTED, S.QUOTED, S.SUPERSEDED, ...ALWAYS_ALLOWED_TERMINALS],
   // Once accepted the quote may only become a booking or be cancelled.
   [S.ACCEPTED]: [S.BOOKING_CREATED, S.CANCELLED, S.EXPIRED],
   [S.BOOKING_CREATED]: [],
@@ -75,6 +78,9 @@ export const LIMOUSINE_QUOTE_REASONS = Object.freeze({
   INVALID_AMOUNT: "invalid_amount",
   INVALID_CURRENCY: "invalid_currency",
   MISSING_TERMS: "missing_terms",
+  QUOTE_TERMS_INCOMPLETE: "quote_terms_incomplete",
+  STALE_TERMS_REVISION: "stale_terms_revision",
+  UNKNOWN_CRITICAL_FIELD: "unknown_critical_field",
 });
 
 const ISO_CURRENCY = /^[A-Z]{3}$/;
@@ -87,6 +93,18 @@ function asObject(raw) {
 function toInt(value) {
   const n = Number(value);
   return Number.isFinite(n) ? Math.trunc(n) : null;
+}
+
+function isNonNegInt(value) {
+  if (typeof value === "boolean" || value == null || value === "") return false;
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 0;
+}
+
+function isPositiveInt(value) {
+  if (typeof value === "boolean" || value == null || value === "") return false;
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0;
 }
 
 function safeText(value, max) {
@@ -213,6 +231,55 @@ export const LIMOUSINE_REQUIRED_TERMS_KEYS = Object.freeze([
   "overtime_cents_per_hour",
 ]);
 
+export const LIMOUSINE_KNOWN_TERMS_KEYS = Object.freeze([
+  "terms_revision",
+  "termsRevision",
+  ...LIMOUSINE_REQUIRED_TERMS_KEYS,
+  "cancellationDeadlineHours",
+  "cancellationPenaltyPercent",
+  "waitingTimeIncludedMinutes",
+  "waitingTimeOverageCentsPerMinute",
+  "noShowPenaltyPercent",
+  "overtimeCentsPerHour",
+  "included_services",
+  "includedServices",
+  "paid_extras",
+  "paidExtras",
+  "mobilisation_disclosure",
+  "mobilisationDisclosure",
+  "customer_obligations",
+  "customerObligations",
+  "important_information",
+  "importantInformation",
+]);
+
+export const LIMOUSINE_PUBLIC_FORBIDDEN_KEYS = Object.freeze([
+  "authorization",
+  "headers",
+  "cookie",
+  "card",
+  "cvc",
+  "pan",
+  "api_key",
+  "secret",
+  "token",
+  "acceptance_reference",
+  "status_ref",
+  "status_access",
+  "customer_fingerprint",
+  "email",
+  "phone",
+  "customer_name",
+  "customer_reference",
+  "operating_base_address",
+  "internal_cost",
+  "margin",
+  "provider_payload",
+  "audit",
+  "itinerary_fingerprint",
+  "vat_rate_source",
+]);
+
 export function normalizeLimousineTerms(raw) {
   const src = asObject(raw);
   const out = {
@@ -246,15 +313,203 @@ export function normalizeLimousineTerms(raw) {
   return out;
 }
 
+export function unknownLimousineTermsKeys(raw) {
+  const src = asObject(raw);
+  return Object.keys(src).filter((key) => !LIMOUSINE_KNOWN_TERMS_KEYS.includes(key));
+}
+
+const TERMS_CAMEL = Object.freeze({
+  terms_revision: "termsRevision",
+  cancellation_deadline_hours: "cancellationDeadlineHours",
+  cancellation_penalty_percent: "cancellationPenaltyPercent",
+  waiting_time_included_minutes: "waitingTimeIncludedMinutes",
+  waiting_time_overage_cents_per_minute: "waitingTimeOverageCentsPerMinute",
+  no_show_penalty_percent: "noShowPenaltyPercent",
+  overtime_cents_per_hour: "overtimeCentsPerHour",
+});
+
+function rawTermsValue(src, key) {
+  if (Object.prototype.hasOwnProperty.call(src, key)) return src[key];
+  const camel = TERMS_CAMEL[key];
+  if (camel && Object.prototype.hasOwnProperty.call(src, camel)) return src[camel];
+  return undefined;
+}
+
 export function validateLimousineTerms(raw) {
-  const terms = normalizeLimousineTerms(raw);
+  const src = asObject(raw);
+  const terms = normalizeLimousineTerms(src);
   const missing = [];
   for (const key of LIMOUSINE_REQUIRED_TERMS_KEYS) {
-    const value = terms[key];
-    if (value == null || value < 0) missing.push(key);
+    const rawValue = rawTermsValue(src, key);
+    if (!isNonNegInt(rawValue)) missing.push(key);
   }
-  if ((toInt(terms.terms_revision) ?? 0) <= 0) missing.push("terms_revision");
-  return { valid: missing.length === 0, missing, terms };
+  const rawRevision = rawTermsValue(src, "terms_revision");
+  if (!isPositiveInt(rawRevision)) missing.push("terms_revision");
+  if (Array.isArray(src.paid_extras ?? src.paidExtras)) {
+    for (const extra of terms.paid_extras) {
+      if (!isNonNegInt(extra.amount_cents)) {
+        missing.push("paid_extras");
+        break;
+      }
+    }
+  }
+  const unknown = unknownLimousineTermsKeys(src);
+  return {
+    valid: missing.length === 0 && unknown.length === 0,
+    missing,
+    unknown,
+    terms,
+  };
+}
+
+/// Projects the stored terms object for the public DTO. Required booking-
+/// critical keys are always present; missing values stay `null` rather than
+/// being omitted or invented.
+export function projectPublicLimousineQuoteTerms(quote) {
+  const q = asObject(quote);
+  const rawTerms = asObject(q.terms);
+  const normalized = normalizeLimousineTerms(rawTerms);
+  const unknown = unknownLimousineTermsKeys(rawTerms);
+  const missing = [];
+  const terms = {
+    terms_revision: isPositiveInt(q.terms_revision ?? normalized.terms_revision)
+      ? toInt(q.terms_revision ?? normalized.terms_revision)
+      : null,
+    cancellation_deadline_hours: isNonNegInt(normalized.cancellation_deadline_hours)
+      ? normalized.cancellation_deadline_hours
+      : null,
+    cancellation_penalty_percent: isNonNegInt(normalized.cancellation_penalty_percent)
+      ? normalized.cancellation_penalty_percent
+      : null,
+    waiting_time_included_minutes: isNonNegInt(normalized.waiting_time_included_minutes)
+      ? normalized.waiting_time_included_minutes
+      : null,
+    waiting_time_overage_cents_per_minute: isNonNegInt(
+      normalized.waiting_time_overage_cents_per_minute,
+    )
+      ? normalized.waiting_time_overage_cents_per_minute
+      : null,
+    no_show_penalty_percent: isNonNegInt(normalized.no_show_penalty_percent)
+      ? normalized.no_show_penalty_percent
+      : null,
+    overtime_cents_per_hour: isNonNegInt(normalized.overtime_cents_per_hour)
+      ? normalized.overtime_cents_per_hour
+      : null,
+  };
+  if (terms.terms_revision == null) missing.push("terms_revision");
+  for (const key of LIMOUSINE_REQUIRED_TERMS_KEYS) {
+    if (terms[key] == null) missing.push(key);
+  }
+  if (normalized.included_services.length) {
+    terms.included_services = normalized.included_services;
+  }
+  if (normalized.paid_extras.length) {
+    terms.paid_extras = normalized.paid_extras;
+  }
+  if (Object.keys(normalized.mobilisation_disclosure).length) {
+    terms.mobilisation_disclosure = normalized.mobilisation_disclosure;
+  }
+  if (Object.keys(normalized.customer_obligations).length) {
+    terms.customer_obligations = normalized.customer_obligations;
+  }
+  if (Object.keys(normalized.important_information).length) {
+    terms.important_information = normalized.important_information;
+  }
+  return { terms, missing, unknown };
+}
+
+/// Completeness of the authoritative stored quote. Does not invent defaults.
+export function evaluateLimousineQuoteTermsCompleteness(quote) {
+  const R = LIMOUSINE_QUOTE_REASONS;
+  const q = asObject(quote);
+  if (!Object.keys(q).length) {
+    return { ok: false, reason: R.QUOTE_TERMS_INCOMPLETE, missing: ["quote"], unknown: [] };
+  }
+  if (!isNonNegInt(q.total_incl_vat_cents) || Number(q.total_incl_vat_cents) <= 0) {
+    return { ok: false, reason: R.INVALID_AMOUNT, missing: [], unknown: [] };
+  }
+  if (!normalizeCurrency(q.currency)) {
+    return { ok: false, reason: R.INVALID_CURRENCY, missing: [], unknown: [] };
+  }
+  const termsCheck = validateLimousineTerms(q.terms);
+  const missing = [...termsCheck.missing];
+  const quoteRev = q.terms_revision;
+  const innerRev = termsCheck.terms.terms_revision;
+  if (!isPositiveInt(quoteRev) || !isPositiveInt(innerRev) || toInt(quoteRev) !== toInt(innerRev)) {
+    if (!missing.includes("terms_revision")) missing.push("terms_revision");
+  }
+  if (termsCheck.unknown.length) {
+    return {
+      ok: false,
+      reason: R.UNKNOWN_CRITICAL_FIELD,
+      missing,
+      unknown: termsCheck.unknown,
+    };
+  }
+  if (missing.length) {
+    return { ok: false, reason: R.QUOTE_TERMS_INCOMPLETE, missing, unknown: [] };
+  }
+  if (!Number.isFinite(Date.parse(safeText(q.expires_at, 40)))) {
+    return { ok: false, reason: R.QUOTE_TERMS_INCOMPLETE, missing: ["expires_at"], unknown: [] };
+  }
+  return { ok: true, reason: R.OK, missing: [], unknown: [], terms: termsCheck.terms };
+}
+
+/// Read-only acceptance gate used by the public view and accept path.
+export function evaluateLimousineQuoteAcceptanceReadiness(record, { nowIso = null } = {}) {
+  const R = LIMOUSINE_QUOTE_REASONS;
+  const rec = asObject(record);
+  const state = normalizeLimousineToken(rec.state);
+  const quote = rec.quote && typeof rec.quote === "object" && !Array.isArray(rec.quote)
+    ? rec.quote
+    : null;
+  const currentRevision = toInt(rec.revision) ?? 0;
+  const base = { acceptance_allowed: false, state, current_revision: currentRevision };
+
+  if (!quote) {
+    if (state !== S.QUOTED && state !== S.CUSTOMER_ACCEPTANCE_REQUIRED) {
+      return { ok: false, ...base, reason: R.NOT_ACCEPTABLE_STATE };
+    }
+    return { ok: false, ...base, reason: R.QUOTE_TERMS_INCOMPLETE, missing: ["quote"] };
+  }
+
+  const completeness = evaluateLimousineQuoteTermsCompleteness(quote);
+  if (!completeness.ok) {
+    return {
+      ok: false,
+      ...base,
+      reason: completeness.reason,
+      missing: completeness.missing,
+      unknown: completeness.unknown,
+    };
+  }
+
+  if (state !== S.QUOTED && state !== S.CUSTOMER_ACCEPTANCE_REQUIRED) {
+    return { ok: false, ...base, reason: R.NOT_ACCEPTABLE_STATE };
+  }
+
+  const now = Date.parse(nowIso || new Date().toISOString());
+  const expiry = Date.parse(safeText(quote.expires_at, 40));
+  if (Number.isFinite(expiry) && Number.isFinite(now) && now > expiry) {
+    return { ok: false, ...base, reason: R.QUOTE_EXPIRED };
+  }
+
+  const binding = buildLimousineAcceptanceBinding(rec);
+  if ((toInt(binding.terms_revision) ?? 0) !== (toInt(quote.terms_revision) ?? 0)) {
+    return { ok: false, ...base, reason: R.QUOTE_TERMS_INCOMPLETE, missing: ["terms_revision"] };
+  }
+  if ((toInt(binding.quote_revision) ?? 0) !== currentRevision) {
+    return { ok: false, ...base, reason: R.STALE_REVISION };
+  }
+
+  return {
+    ok: true,
+    acceptance_allowed: true,
+    reason: R.OK,
+    state,
+    current_revision: currentRevision,
+    binding,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -428,6 +683,9 @@ export function validateLimousineCompanyQuote(input, { nowIso = null } = {}) {
 
   const termsCheck = validateLimousineTerms(src.terms);
   if (!termsCheck.valid) {
+    if (termsCheck.unknown?.length) {
+      return { ok: false, reason: R.UNKNOWN_CRITICAL_FIELD, unknown: termsCheck.unknown };
+    }
     return { ok: false, reason: R.MISSING_TERMS, missing: termsCheck.missing };
   }
 
@@ -493,33 +751,38 @@ export function buildLimousineAcceptanceBinding(record) {
       : [],
     mobilisation_disclosure: asObject(quote.mobilisation_disclosure),
     terms_revision: toInt(quote.terms_revision) ?? 0,
+    expires_at: safeText(quote.expires_at, 40),
   };
 }
 
-/// Guards customer acceptance: state, expiry and exact revision binding.
+/// Guards customer acceptance: state, expiry, complete terms and revision.
 export function assertLimousineQuoteAcceptable(record, {
   expectedRevision = null,
   nowIso = null,
 } = {}) {
-  const R = LIMOUSINE_QUOTE_REASONS;
-  const rec = asObject(record);
-  const state = normalizeLimousineToken(rec.state);
-  if (state !== S.CUSTOMER_ACCEPTANCE_REQUIRED && state !== S.QUOTED) {
-    return { ok: false, reason: R.NOT_ACCEPTABLE_STATE, state };
-  }
-  const quote = asObject(rec.quote);
-  const now = Date.parse(nowIso || new Date().toISOString());
-  const expiry = Date.parse(safeText(quote.expires_at, 40));
-  if (Number.isFinite(expiry) && now > expiry) {
-    return { ok: false, reason: R.QUOTE_EXPIRED };
+  const readiness = evaluateLimousineQuoteAcceptanceReadiness(record, { nowIso });
+  if (!readiness.ok) {
+    return {
+      ok: false,
+      reason: readiness.reason,
+      state: readiness.state,
+      missing: readiness.missing,
+      unknown: readiness.unknown,
+      current_revision: readiness.current_revision,
+    };
   }
   if (expectedRevision != null) {
     const expected = toInt(expectedRevision);
-    if (expected == null || expected !== (toInt(rec.revision) ?? 0)) {
-      return { ok: false, reason: R.STALE_REVISION, current_revision: toInt(rec.revision) ?? 0 };
+    const currentRevision = toInt(asObject(record).revision) ?? 0;
+    if (expected == null || expected !== currentRevision) {
+      return {
+        ok: false,
+        reason: LIMOUSINE_QUOTE_REASONS.STALE_REVISION,
+        current_revision: currentRevision,
+      };
     }
   }
-  return { ok: true, binding: buildLimousineAcceptanceBinding(rec) };
+  return { ok: true, binding: buildLimousineAcceptanceBinding(record) };
 }
 
 // ---------------------------------------------------------------------------
@@ -658,13 +921,15 @@ export function observeLimousineQuoteExpiry(record, { nowIso = null } = {}) {
 
 /// Customer/company-safe projection of a manual-quote record. Never exposes
 /// internal costs, the operating-base address, driver data, subscription
-/// internals, audit, status tokens or raw provider payloads.
-export function publicLimousineQuoteView(record) {
+/// internals, audit, status tokens, itinerary fingerprints or raw payloads.
+export function publicLimousineQuoteView(record, { nowIso = null } = {}) {
   const rec = asObject(record);
   const req = asObject(rec.request);
   const quote = rec.quote && typeof rec.quote === "object" && !Array.isArray(rec.quote)
     ? rec.quote
     : null;
+  const readiness = evaluateLimousineQuoteAcceptanceReadiness(rec, { nowIso });
+  const termsProjection = quote ? projectPublicLimousineQuoteTerms(quote) : null;
   return {
     quote_request_id: safeText(rec.quote_request_id, 120),
     state: safeText(rec.state, 40),
@@ -678,7 +943,6 @@ export function publicLimousineQuoteView(record) {
     pax: toInt(req.pax),
     bags: toInt(req.bags),
     selected_extra_ids: Array.isArray(req.selected_extra_ids) ? req.selected_extra_ids : [],
-    itinerary_fingerprint: safeText(req.itinerary_fingerprint, 64),
     ...(quote
       ? {
           quote: {
@@ -695,6 +959,7 @@ export function publicLimousineQuoteView(record) {
             terms_revision: toInt(quote.terms_revision) ?? 0,
             expires_at: safeText(quote.expires_at, 40),
             quoted_at: safeText(quote.quoted_at, 40),
+            terms: termsProjection.terms,
           },
         }
       : {}),
@@ -702,5 +967,189 @@ export function publicLimousineQuoteView(record) {
     ...(rec.booking_reference ? { booking_reference: safeText(rec.booking_reference, 64) } : {}),
     created_at: safeText(rec.created_at, 40),
     updated_at: safeText(rec.updated_at, 40),
+    acceptance_allowed: readiness.acceptance_allowed === true,
+    ...(readiness.acceptance_allowed
+      ? {}
+      : {
+          acceptance_blocked_reason: readiness.reason,
+          ...(readiness.missing?.length ? { missing_terms: readiness.missing } : {}),
+        }),
+  };
+}
+
+function companyQuoteIdentity(quote) {
+  const q = asObject(quote);
+  return JSON.stringify({
+    total_incl_vat_cents: toInt(q.total_incl_vat_cents),
+    currency: normalizeCurrency(q.currency),
+    vat_treatment: safeText(q.vat_treatment, 16),
+    vat_rate: Number(q.vat_rate) || 0,
+    public_text: asObject(q.public_text),
+    terms: normalizeLimousineTerms(q.terms),
+    terms_revision: toInt(q.terms_revision) ?? 0,
+    expires_at: safeText(q.expires_at, 40),
+  });
+}
+
+function hasAuthoritativeCompanyQuote(quote) {
+  const q = asObject(quote);
+  return (toInt(q.total_incl_vat_cents) ?? 0) > 0 || (toInt(q.terms_revision) ?? 0) > 0;
+}
+
+/// Company quote / re-quote orchestrator. First quote and replacement of an
+/// unaccepted quote both end at customer_acceptance_required. The live record
+/// stays one document; superseded_revision records the replaced revision.
+/// SUPERSEDED remains the terminal kill for the whole request.
+export function applyLimousineCompanyQuoteAction(record, {
+  expectedRevision = null,
+  quote = null,
+  nowIso = null,
+} = {}) {
+  const R = LIMOUSINE_QUOTE_REASONS;
+  const rec = asObject(record);
+  const state = normalizeLimousineToken(rec.state);
+  const now = nowIso || new Date().toISOString();
+  const nextQuote = asObject(quote);
+  if ((toInt(nextQuote.total_incl_vat_cents) ?? 0) <= 0) {
+    return { ok: false, reason: R.INVALID_AMOUNT };
+  }
+  if (!normalizeCurrency(nextQuote.currency)) {
+    return { ok: false, reason: R.INVALID_CURRENCY };
+  }
+
+  const currentRevision = toInt(rec.revision) ?? 0;
+  if (expectedRevision != null) {
+    const expected = toInt(expectedRevision);
+    if (expected == null || expected !== currentRevision) {
+      return { ok: false, reason: R.STALE_REVISION, current_revision: currentRevision };
+    }
+  }
+
+  const identical = hasAuthoritativeCompanyQuote(rec.quote)
+    && companyQuoteIdentity(rec.quote) === companyQuoteIdentity(nextQuote);
+
+  if (identical && state === S.CUSTOMER_ACCEPTANCE_REQUIRED) {
+    return {
+      ok: true,
+      changed: false,
+      reason: R.IDEMPOTENT_REPLAY,
+      record: rec,
+      audit: null,
+      audits: [],
+    };
+  }
+
+  if (state === S.ACCEPTED || isTerminalLimousineQuoteState(state)) {
+    return { ok: false, reason: R.INVALID_TRANSITION, from: state, to: S.QUOTED };
+  }
+
+  const firstQuoteStates = new Set([S.REQUESTED, S.VIEWED_BY_COMPANY]);
+  if (!firstQuoteStates.has(state) && state !== S.QUOTED && state !== S.CUSTOMER_ACCEPTANCE_REQUIRED) {
+    return { ok: false, reason: R.INVALID_TRANSITION, from: state, to: S.QUOTED };
+  }
+
+  if (
+    !identical
+    && hasAuthoritativeCompanyQuote(rec.quote)
+    && (state === S.QUOTED || state === S.CUSTOMER_ACCEPTANCE_REQUIRED)
+  ) {
+    const prevTermsRev = toInt(asObject(rec.quote).terms_revision) ?? 0;
+    const nextTermsRev = toInt(nextQuote.terms_revision) ?? 0;
+    if (nextTermsRev <= prevTermsRev) {
+      return {
+        ok: false,
+        reason: R.STALE_TERMS_REVISION,
+        current_terms_revision: prevTermsRev,
+      };
+    }
+  }
+
+  const audits = [];
+  let current = rec;
+
+  if (identical && state === S.QUOTED) {
+    const awaiting = applyLimousineQuoteTransition(current, {
+      to: S.CUSTOMER_ACCEPTANCE_REQUIRED,
+      expectedRevision,
+      actorType: "system",
+      reasonCode: "awaiting_customer_acceptance",
+      nowIso: now,
+    });
+    if (!awaiting.ok) return awaiting;
+    return {
+      ok: true,
+      changed: awaiting.changed === true,
+      reason: awaiting.changed ? R.OK : R.IDEMPOTENT_REPLAY,
+      record: awaiting.record,
+      audit: awaiting.audit,
+      audits: awaiting.audit ? [awaiting.audit] : [],
+    };
+  }
+
+  if (state === S.CUSTOMER_ACCEPTANCE_REQUIRED) {
+    const requote = applyLimousineQuoteTransition(current, {
+      to: S.QUOTED,
+      expectedRevision,
+      actorType: "company",
+      reasonCode: "requoted",
+      nowIso: now,
+      patch: {
+        quote: nextQuote,
+        superseded_revision: current.revision,
+      },
+    });
+    if (!requote.ok) return requote;
+    current = requote.record;
+    if (requote.audit) audits.push(requote.audit);
+  } else if (firstQuoteStates.has(state)) {
+    const quoted = applyLimousineQuoteTransition(current, {
+      to: S.QUOTED,
+      expectedRevision,
+      actorType: "company",
+      reasonCode: "quoted",
+      nowIso: now,
+      patch: { quote: nextQuote },
+    });
+    if (!quoted.ok) return quoted;
+    current = quoted.record;
+    if (quoted.audit) audits.push(quoted.audit);
+  } else if (state === S.QUOTED) {
+    const awaiting = applyLimousineQuoteTransition(current, {
+      to: S.CUSTOMER_ACCEPTANCE_REQUIRED,
+      expectedRevision,
+      actorType: "company",
+      reasonCode: "requoted",
+      nowIso: now,
+      patch: {
+        quote: nextQuote,
+        superseded_revision: current.revision,
+      },
+    });
+    if (!awaiting.ok) return awaiting;
+    return {
+      ok: true,
+      changed: true,
+      reason: R.OK,
+      record: awaiting.record,
+      audit: awaiting.audit,
+      audits: awaiting.audit ? [awaiting.audit] : [],
+    };
+  }
+
+  const awaiting = applyLimousineQuoteTransition(current, {
+    to: S.CUSTOMER_ACCEPTANCE_REQUIRED,
+    actorType: "system",
+    reasonCode: "awaiting_customer_acceptance",
+    nowIso: now,
+  });
+  if (!awaiting.ok) return awaiting;
+  if (awaiting.changed && awaiting.audit) audits.push(awaiting.audit);
+  return {
+    ok: true,
+    changed: true,
+    reason: R.OK,
+    record: awaiting.changed ? awaiting.record : current,
+    audit: audits[audits.length - 1] || null,
+    audits,
   };
 }
