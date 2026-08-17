@@ -108,6 +108,10 @@ import {
   stampLimousineProjectionOnProfile as _stampLimousineProjectionOnProfile,
 } from "./modules/limousine_projection.mjs";
 import {
+  buildSafePublicLimousineOffers as _buildSafePublicLimousineOffers,
+  normalizeLimousineOffers as _normalizeLimousineOffers,
+} from "./modules/limousine_offers.mjs";
+import {
   limousineQuoteGateEnabled as _limousineQuoteGateEnabledRaw,
   normalizeLimousinePricingSection as _normalizeLimousinePricingSection,
   resolveLimousineQuote as _resolveLimousineQuote,
@@ -45313,7 +45317,19 @@ export default {
         } catch (_) {
           _existingScopedPartnerRecord = null;
         }
-        const _limousineProjection = _buildLimousineProjection(normalizedProfile);
+        // Full safe offer array, computed from authoritative server state only.
+        const _limousinePublicOffers = await _buildAuthoritativeLimousinePublicOffers(
+          env,
+          explicitScope,
+          normalizedProfile,
+        );
+        normalizedProfile = {
+          ...normalizedProfile,
+          limousine_offers: _limousinePublicOffers,
+        };
+        const _limousineProjection = _buildLimousineProjection(normalizedProfile, {
+          safeOfferCount: _limousinePublicOffers.length,
+        });
         const _limousineRevision = _resolveLimousineProjectionRevision({
           existingRecord: _existingScopedPartnerRecord,
           existingProfile: _existingScopedPartnerRecord?.partner_profile ?? null,
@@ -76983,6 +76999,41 @@ async function _setLimousineEntitledInProfileArray(env, key, partnerId, entitled
   return true;
 }
 
+/// LIMOUSINE-MARKETPLACE-P2B2C: builds the customer-safe public offer array
+/// entirely from AUTHORITATIVE server state — the company's `pricing:v1`
+/// limousine offers joined against the scoped fleet record. Flutter-submitted
+/// public vehicle/offer fields are never trusted here. Fails closed to [].
+async function _buildAuthoritativeLimousinePublicOffers(env, scope, profile) {
+  try {
+    const section = await _loadLimousinePricingSection(env, scope);
+    const offers = _normalizeLimousineOffers(section?.offers);
+    if (offers.length === 0) return [];
+    let fleetVehicles = [];
+    try {
+      const fleetRaw = await env.BOOKING_KV.get(
+        fleetInventoryScopedKeyForScope(scope),
+        { type: "json" },
+      );
+      fleetVehicles = _fleetVehiclesRawFromKv(fleetRaw)
+        .map((entry) => _normalizeVehicleEntry(entry, { scope }))
+        .filter((v) => v !== null);
+    } catch (_) {
+      fleetVehicles = [];
+    }
+    const eligible = _isEligibleLimousineProvider(profile);
+    return _buildSafePublicLimousineOffers(offers, {
+      eligible,
+      knownVehicles: fleetVehicles,
+      knownClassIds: fleetVehicles
+        .map((v) => v.service_class)
+        .filter((c) => !!c),
+      readiness: eligible,
+    });
+  } catch (_) {
+    return [];
+  }
+}
+
 /// Shared, server-owned recomputation of the public Limousine readiness
 /// projection for a company. Reuses the authoritative subscription entitlement
 /// and the eligibility resolver — it never duplicates composition logic. It is
@@ -77009,8 +77060,19 @@ async function refreshPartnerLimousineProjection(env, scope) {
     } catch (_) {
       entitled = false;
     }
-    const nextProfileBase = { ...existingProfile, limousine_entitled: entitled };
-    const projection = _buildLimousineProjection(nextProfileBase);
+    const publicOffers = await _buildAuthoritativeLimousinePublicOffers(
+      env,
+      scope,
+      { ...existingProfile, limousine_entitled: entitled },
+    );
+    const nextProfileBase = {
+      ...existingProfile,
+      limousine_entitled: entitled,
+      limousine_offers: publicOffers,
+    };
+    const projection = _buildLimousineProjection(nextProfileBase, {
+      safeOfferCount: publicOffers.length,
+    });
     const revision = _resolveLimousineProjectionRevision({
       existingRecord: record,
       existingProfile,
@@ -77850,6 +77912,134 @@ function _normalizePublicBookingCapabilities(raw, profileEnabled) {
   };
 }
 
+/// LIMOUSINE-MARKETPLACE-P2B2C: bounded whitelist for the published safe offer
+/// array. Anything not listed here is dropped, so a private vehicle field can
+/// never survive a profile round-trip.
+function _sanitizePublicLimousineOffersForProfile(raw) {
+  if (!Array.isArray(raw)) return [];
+  const localized = (value) => {
+    const src = value && typeof value === "object" ? value : {};
+    const out = {};
+    for (const lang of ["nl", "en", "fr", "es"]) {
+      const text = _safePublicText(src[lang], 600);
+      if (text) out[lang] = text;
+    }
+    return out;
+  };
+  const out = [];
+  for (const entry of raw.slice(0, 40)) {
+    if (!entry || typeof entry !== "object") continue;
+    const offerId = _safePublicText(entry.offer_id, 64);
+    if (!offerId) continue;
+    const vehicle = entry.vehicle && typeof entry.vehicle === "object" ? entry.vehicle : null;
+    out.push({
+      offer_id: offerId,
+      target_type: _safePublicText(entry.target_type, 24),
+      service_class_id: _safePublicText(entry.service_class_id, 64),
+      ...(vehicle
+        ? {
+            vehicle: {
+              vehicle_id: _safePublicText(vehicle.vehicle_id, 96),
+              service_class_id: _safePublicText(vehicle.service_class_id, 64),
+              ...(vehicle.passenger_capacity != null
+                ? { passenger_capacity: _safePublicInt(vehicle.passenger_capacity, 0, 0, 99) }
+                : {}),
+              ...(vehicle.luggage_capacity != null
+                ? { luggage_capacity: _safePublicInt(vehicle.luggage_capacity, 0, 0, 99) }
+                : {}),
+              ...(vehicle.color ? { color: _safePublicText(vehicle.color, 40) } : {}),
+              ...(vehicle.photo_url
+                ? { photo_url: _safePublicHttpsUrl(vehicle.photo_url, 600) }
+                : {}),
+            },
+            vehicle_id: _safePublicText(entry.vehicle_id, 96),
+          }
+        : {}),
+      title: localized(entry.title),
+      description: localized(entry.description),
+      ...(entry.important_information
+        ? { important_information: localized(entry.important_information) }
+        : {}),
+      pricing_modes: _safePublicStringList(entry.pricing_modes, {
+        maxItems: 4,
+        maxItemLen: 24,
+      }),
+      price_presentation: _safePublicText(entry.price_presentation, 24),
+      ...(entry.display_amount_cents != null
+        ? {
+            display_amount_cents: _safePublicInt(
+              entry.display_amount_cents,
+              0,
+              0,
+              100000000,
+            ),
+          }
+        : {}),
+      currency: _safePublicText(entry.currency, 3).toUpperCase(),
+      journey_types: _safePublicStringList(entry.journey_types, {
+        maxItems: 8,
+        maxItemLen: 32,
+      }),
+      ...(entry.hourly && typeof entry.hourly === "object"
+        ? {
+            hourly: {
+              first_hour_cents: _safePublicInt(entry.hourly.first_hour_cents, 0, 0, 100000000),
+              additional_hour_cents: _safePublicInt(
+                entry.hourly.additional_hour_cents,
+                0,
+                0,
+                100000000,
+              ),
+              minimum_duration_minutes: _safePublicInt(
+                entry.hourly.minimum_duration_minutes,
+                0,
+                0,
+                100000,
+              ),
+              ...(entry.hourly.included_hours != null
+                ? { included_hours: _safePublicInt(entry.hourly.included_hours, 0, 0, 1000) }
+                : {}),
+            },
+          }
+        : {}),
+      included_services: (Array.isArray(entry.included_services)
+        ? entry.included_services
+        : []
+      )
+        .slice(0, 20)
+        .map((s) => ({
+          item_id: _safePublicText(s?.item_id, 64),
+          label: localized(s?.label),
+        })),
+      paid_extras: (Array.isArray(entry.paid_extras) ? entry.paid_extras : [])
+        .slice(0, 20)
+        .map((e) => ({
+          extra_id: _safePublicText(e?.extra_id, 64),
+          label: localized(e?.label),
+          quote_required: _safePublicBool(e?.quote_required, false),
+          ...(e?.amount_cents != null
+            ? { amount_cents: _safePublicInt(e.amount_cents, 0, 0, 100000000) }
+            : {}),
+          currency: _safePublicText(e?.currency, 3).toUpperCase(),
+        })),
+      ...(entry.mobilisation && typeof entry.mobilisation === "object"
+        ? {
+            mobilisation: {
+              included: _safePublicBool(entry.mobilisation.included, false),
+              charged_separately: _safePublicBool(
+                entry.mobilisation.charged_separately,
+                false,
+              ),
+              disclosure: localized(entry.mobilisation.disclosure),
+            },
+          }
+        : {}),
+      source_revision: _safePublicInt(entry.source_revision, 0, 0, 1000000000),
+    });
+  }
+  return out;
+}
+
 function _normalizePublicPartnerProfileEntry(raw) {
   if (!raw || typeof raw !== "object") return null;
   const partnerId = _safePublicText(raw.partner_id ?? raw.partnerId, 120);
@@ -77897,6 +78087,9 @@ function _normalizePublicPartnerProfileEntry(raw) {
     // monotonic source_revision through re-normalization (no private data).
     ...(raw.source_revision != null
       ? { source_revision: _safePublicInt(raw.source_revision, 0, 0, 1000000000) }
+      : {}),
+    ...(Array.isArray(raw.limousine_offers)
+      ? { limousine_offers: _sanitizePublicLimousineOffersForProfile(raw.limousine_offers) }
       : {}),
     ...(raw.limousine_projection && typeof raw.limousine_projection === "object"
       ? {
@@ -78312,6 +78505,19 @@ function _normalizeVehicleEntry(raw, { scope = null } = {}) {
     120,
   );
   const color = sanitizeTenantString(raw.color, 80);
+  // LIMOUSINE-MARKETPLACE-P2B2C: preserve the authoritative limousine
+  // classification on the scoped fleet record. `tier` keeps its existing taxi
+  // matching semantics and is never used to infer a limousine class.
+  const serviceCategory = sanitizeTenantString(
+    raw.service_category ?? raw.serviceCategory,
+    40,
+  ).toLowerCase();
+  const serviceClassId = sanitizeTenantString(
+    raw.service_class ?? raw.serviceClass ?? raw.service_class_id ?? raw.serviceClassId,
+    64,
+  )
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
   const primaryPhotoRef = _normalizeVehiclePhotoRef(
     raw.primary_photo_ref ?? raw.primaryPhotoRef ?? raw.photo_ref ?? raw.photoRef,
   );
@@ -78379,6 +78585,8 @@ function _normalizeVehicleEntry(raw, { scope = null } = {}) {
           brandModel: brandModel,
         }
       : {}),
+    ...(serviceCategory ? { service_category: serviceCategory } : {}),
+    ...(serviceClassId ? { service_class: serviceClassId } : {}),
     ...(licensePlate
       ? {
           license_plate: licensePlate,

@@ -5517,6 +5517,13 @@ Map<String, dynamic> _encodeVehicleForBackendFleet(
     'isActive': v.isActive,
     'tier': v.tierId.trim().toLowerCase(),
     'tierId': v.tierId.trim().toLowerCase(),
+    // LIMOUSINE-MARKETPLACE-P2B2C: the authoritative scoped fleet record is the
+    // source of truth for the limousine classification used by the public offer
+    // join. Emitted only when explicitly configured (never inferred).
+    if (v.serviceCategory.trim().isNotEmpty)
+      'service_category': v.serviceCategory.trim().toLowerCase(),
+    if (v.serviceClassId.trim().isNotEmpty)
+      'service_class': v.serviceClassId.trim().toLowerCase(),
     'passenger_capacity': v.passengerCapacity < 0 ? 0 : v.passengerCapacity,
     'passengerCapacity': v.passengerCapacity < 0 ? 0 : v.passengerCapacity,
     'luggage_capacity': v.luggageCapacity < 0 ? 0 : v.luggageCapacity,

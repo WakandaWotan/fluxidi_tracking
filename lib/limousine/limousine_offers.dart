@@ -429,8 +429,81 @@ Map<String, dynamic>? selectLimousineOfferForRequest(
   return null;
 }
 
-/// Only `exact_fixed` may ever become a resolved, bookable price. `from_price`
-/// and `indicative` are marketing and must never enter a snapshot.
+/// PRICING MODE vs PRESENTATION are independent axes.
+///
+/// `pricing mode` = HOW a total is computed (fixed journey, hourly/package,
+/// limousine distance-time, manual). `price presentation` = WHAT the customer
+/// is shown. An `exact_fixed` presentation may therefore be produced by an
+/// hourly/package or distance/time calculation, not only by a fixed journey.
+abstract final class LimousineOfferPricingMode {
+  static const String fixed = 'fixed';
+  static const String package = 'package';
+  static const String distanceTime = 'distance_time';
+  static const String manual = 'manual';
+
+  static const List<String> all = <String>[
+    fixed,
+    package,
+    distanceTime,
+    manual,
+  ];
+}
+
+List<String> limousineOfferSupportedPricingModes(Map<String, dynamic> offer) {
+  final modes = <String>[];
+  final fixedRules = _listOf(offer['fixed_rules']);
+  if (fixedRules.any((r) => _boolOf(r['enabled']))) {
+    modes.add(LimousineOfferPricingMode.fixed);
+  }
+  if (_boolOf(_mapOf(offer['hourly'])['enabled'])) {
+    modes.add(LimousineOfferPricingMode.package);
+  }
+  if (_boolOf(_mapOf(offer['distance_time'])['enabled'])) {
+    modes.add(LimousineOfferPricingMode.distanceTime);
+  }
+  if (modes.isEmpty) modes.add(LimousineOfferPricingMode.manual);
+  return modes;
+}
+
+/// Fields that must never leave the authoritative vehicle record.
+const List<String> kLimousinePrivateVehicleFields = <String>[
+  'license_plate',
+  'vin',
+  'vehicle_registration_number',
+  'exploitation_license_number',
+  'assigned_driver',
+  'driver_id',
+  'notes',
+  'base_address',
+];
+
+/// Customer-safe vehicle block resolved from the AUTHORITATIVE fleet record.
+/// Returns null when the vehicle is missing, inactive or not an explicitly
+/// classified limousine (fail closed). Plate, VIN, licences, driver data and
+/// private notes are never emitted.
+Map<String, dynamic>? buildSafePublicLimousineVehicle(VehicleProfile? vehicle) {
+  if (vehicle == null) return null;
+  if (!vehicle.isActive) return null;
+  if (limousineOfferToken(vehicle.serviceCategory) != 'limousine') return null;
+  final classId = limousineOfferToken(vehicle.serviceClassId);
+  if (classId.isEmpty) return null;
+  final photo = (vehicle.publicPhotoUrl ?? '').trim();
+  final safePhoto = photo.toLowerCase().startsWith('https://') ? photo : '';
+  return <String, dynamic>{
+    'vehicle_id': vehicle.id.trim(),
+    'service_class_id': classId,
+    if (vehicle.passengerCapacity > 0)
+      'passenger_capacity': vehicle.passengerCapacity,
+    if (vehicle.luggageCapacity > 0)
+      'luggage_capacity': vehicle.luggageCapacity,
+    if (vehicle.color.trim().isNotEmpty) 'color': vehicle.color.trim(),
+    if (safePhoto.isNotEmpty) 'photo_url': safePhoto,
+  };
+}
+
+/// Only an "exact" presentation may become a resolved, bookable total — but it
+/// may be produced by ANY pricing mode. `from_price` and `indicative` are
+/// marketing and must never enter a snapshot.
 bool limousineOfferCanResolvePrice(Map<String, dynamic> offer) =>
     limousineOfferToken(offer['price_presentation']) ==
     LimousinePricePresentation.exactFixed;
@@ -462,6 +535,23 @@ List<Map<String, dynamic>> buildSafePublicLimousineOffers(
     final presentation = limousineOfferToken(offer['price_presentation']);
     if (presentation == LimousinePricePresentation.unavailable) continue;
 
+    // Authoritative vehicle join: an exact-vehicle offer publishes only when the
+    // fleet record still resolves to an active, classified limousine.
+    Map<String, dynamic>? safeVehicle;
+    if (limousineOfferToken(offer['target_type']) ==
+        LimousineOfferTarget.vehicle) {
+      final vehicleId = (offer['vehicle_id'] ?? '').toString().trim();
+      VehicleProfile? record;
+      for (final v in vehicles) {
+        if (v.id == vehicleId) {
+          record = v;
+          break;
+        }
+      }
+      safeVehicle = buildSafePublicLimousineVehicle(record);
+      if (safeVehicle == null) continue;
+    }
+
     final display = limousineCentsOf(offer['display_amount_cents']);
     final showsAmount =
         presentation != LimousinePricePresentation.quoteRequired &&
@@ -476,12 +566,20 @@ List<Map<String, dynamic>> buildSafePublicLimousineOffers(
     out.add(<String, dynamic>{
       'offer_id': (offer['offer_id'] ?? '').toString(),
       'target_type': limousineOfferToken(offer['target_type']),
-      if (limousineOfferToken(offer['target_type']) ==
-          LimousineOfferTarget.vehicle)
-        'vehicle_id': (offer['vehicle_id'] ?? '').toString(),
-      'service_class_id': limousineOfferToken(offer['service_class_id']),
+      if (safeVehicle != null) ...{
+        'vehicle': safeVehicle,
+        'vehicle_id': safeVehicle['vehicle_id'],
+      },
+      'service_class_id': safeVehicle != null
+          ? safeVehicle['service_class_id']
+          : limousineOfferToken(offer['service_class_id']),
       'title': limousineLocalizedOf(offer['title']),
       'description': limousineLocalizedOf(offer['description']),
+      if (!_localizedIsEmpty(offer['important_information']))
+        'important_information': limousineLocalizedOf(
+          offer['important_information'],
+        ),
+      'pricing_modes': limousineOfferSupportedPricingModes(offer),
       'price_presentation': presentation,
       if (showsAmount) 'display_amount_cents': display,
       'currency': limousineCurrencyOf(offer['currency']),

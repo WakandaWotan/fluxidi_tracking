@@ -31,6 +31,12 @@ export function buildLimousineProjection(profile, options = {}) {
     eligible_vehicle_count: eligibleVehicleCount,
     reason: evaluation.reason,
   };
+  if (options && Number.isFinite(Number(options.safeOfferCount))) {
+    return {
+      ...base,
+      published_offer_count: Math.max(0, Math.trunc(Number(options.safeOfferCount))),
+    };
+  }
   if (!options || options.offers == null) return base;
   const safeOffers = buildSafePublicLimousineOffers(options.offers, {
     eligible: evaluation.eligible,

@@ -274,6 +274,10 @@ export function normalizeLimousineOffer(raw) {
     journey_types: journeyTypes,
     title: normalizeLocalizedText(src.title, { max: 120 }),
     description: normalizeLocalizedText(src.description, { max: 600 }),
+    important_information: normalizeLocalizedText(
+      src.important_information ?? src.importantInformation,
+      { max: 600 },
+    ),
     display_amount_cents: toCents(src.display_amount_cents ?? src.displayAmountCents),
     fixed_rules: Array.isArray(src.fixed_rules ?? src.fixedRules)
       ? (src.fixed_rules ?? src.fixedRules).map(normalizeOfferFixedRule)
@@ -382,17 +386,27 @@ export function validateLimousineOffer(
   const classIds = new Set(knownClassIds.map((c) => normalizeId(c)));
 
   if (o.target_type === LIMOUSINE_OFFER_TARGETS.VEHICLE) {
-    const vehicle = knownVehicles.find((v) => String(v?.id ?? "").trim() === o.vehicle_id);
+    // Accept both the local model shape (`id`) and the authoritative scoped
+    // fleet record shape (`vehicle_id` / `service_class`).
+    const vehicle = knownVehicles.find(
+      (v) => String(v?.vehicle_id ?? v?.id ?? "").trim() === o.vehicle_id,
+    );
     if (!o.vehicle_id || !vehicle) {
       errors.push(E.UNKNOWN_VEHICLE);
     } else {
-      if (vehicle.is_active === false) errors.push(E.INACTIVE_VEHICLE);
-      if (normalizeLimousineToken(vehicle.service_category) !== "limousine") {
+      if (vehicle.is_active === false || vehicle.isActive === false) {
+        errors.push(E.INACTIVE_VEHICLE);
+      }
+      if (
+        normalizeLimousineToken(vehicle.service_category ?? vehicle.serviceCategory) !==
+        "limousine"
+      ) {
         errors.push(E.VEHICLE_NOT_LIMOUSINE);
       }
-      if (!classIds.has(normalizeId(vehicle.service_class_id))) {
-        errors.push(E.UNKNOWN_SERVICE_CLASS);
-      }
+      const vehicleClassId = normalizeId(
+        vehicle.service_class_id ?? vehicle.service_class ?? vehicle.serviceClassId,
+      );
+      if (!classIds.has(vehicleClassId)) errors.push(E.UNKNOWN_SERVICE_CLASS);
     }
   } else if (o.target_type === LIMOUSINE_OFFER_TARGETS.SERVICE_CLASS) {
     if (!classIds.has(o.service_class_id)) errors.push(E.UNKNOWN_SERVICE_CLASS);
@@ -517,7 +531,37 @@ export function selectLimousineOfferForRequest(
   return null;
 }
 
-/// Only an `exact_fixed` presentation may become a resolved, bookable price.
+/// PRICING MODE vs PRESENTATION are independent axes.
+///
+/// `pricing_mode` describes HOW a total is computed (fixed journey, hourly /
+/// package, limousine distance-time, or manual). `price_presentation`
+/// describes WHAT the customer is shown (an exact bookable price, a "from"
+/// price, an indicative price, quote required, or unavailable).
+///
+/// An `exact_fixed` presentation may therefore be produced by a fixed rule, an
+/// hourly/package calculation OR a distance/time calculation — the token name
+/// is historical and must never restrict resolution to fixed journeys only.
+export const LIMOUSINE_OFFER_PRICING_MODES = Object.freeze({
+  FIXED: "fixed",
+  PACKAGE: "package",
+  DISTANCE_TIME: "distance_time",
+  MANUAL: "manual",
+});
+
+/// Every pricing mode this offer can actually compute with, independent of how
+/// the price is presented.
+export function offerSupportedPricingModes(offer) {
+  const o = normalizeLimousineOffer(offer);
+  const modes = [];
+  if (o.fixed_rules.some((r) => r.enabled)) modes.push(LIMOUSINE_OFFER_PRICING_MODES.FIXED);
+  if (o.hourly?.enabled) modes.push(LIMOUSINE_OFFER_PRICING_MODES.PACKAGE);
+  if (o.distance_time?.enabled) modes.push(LIMOUSINE_OFFER_PRICING_MODES.DISTANCE_TIME);
+  if (modes.length === 0) modes.push(LIMOUSINE_OFFER_PRICING_MODES.MANUAL);
+  return modes;
+}
+
+/// Only an "exact" presentation may become a resolved, bookable total — but it
+/// may be produced by ANY pricing mode (fixed, package or distance/time).
 export function offerCanProduceResolvedPrice(offer) {
   const o = normalizeLimousineOffer(offer);
   return o.price_presentation === LIMOUSINE_PRICE_PRESENTATIONS.EXACT_FIXED;
@@ -532,6 +576,60 @@ export function offerAmountIsSnapshotEligible(offer) {
 // ---------------------------------------------------------------------------
 // Safe public projection
 // ---------------------------------------------------------------------------
+
+/// Fields that must NEVER leave the authoritative vehicle record. Kept as an
+/// explicit deny-list so a future field addition cannot silently leak.
+export const LIMOUSINE_PRIVATE_VEHICLE_FIELDS = Object.freeze([
+  "license_plate",
+  "licensePlate",
+  "vin",
+  "vehicle_registration_number",
+  "vehicleRegistrationNumber",
+  "exploitation_license_number",
+  "exploitationLicenseNumber",
+  "assigned_driver",
+  "assigned_driver_id",
+  "driver_id",
+  "driverId",
+  "notes",
+  "internal_notes",
+  "base_address",
+  "current_address",
+]);
+
+/// Builds the customer-safe vehicle block from the AUTHORITATIVE scoped fleet
+/// record. Returns null when the vehicle is missing, inactive or not an
+/// explicitly classified limousine (fail closed). Never reads Flutter-submitted
+/// public vehicle fields and never emits a private field.
+export function buildSafePublicVehicle(vehicle) {
+  const v = asObject(vehicle);
+  const id = String(v.vehicle_id ?? v.id ?? "").trim();
+  if (!id) return null;
+  if (v.is_active === false || v.isActive === false) return null;
+  for (const key of ["deleted", "is_deleted", "tombstoned", "suspended"]) {
+    if (toBool(v[key], false)) return null;
+  }
+  if (normalizeLimousineToken(v.service_category ?? v.serviceCategory) !== "limousine") {
+    return null;
+  }
+  const serviceClassId = normalizeId(
+    v.service_class ?? v.serviceClass ?? v.service_class_id ?? v.serviceClassId,
+  );
+  if (!serviceClassId) return null;
+  const pax = toInt(v.passenger_capacity ?? v.passengerCapacity ?? v.pax);
+  const luggage = toInt(v.luggage_capacity ?? v.luggageCapacity ?? v.luggage);
+  const color = String(v.color ?? "").trim().slice(0, 40);
+  const photoUrl = String(v.public_photo_url ?? v.publicPhotoUrl ?? "").trim();
+  const safePhoto = /^https:\/\//i.test(photoUrl) ? photoUrl.slice(0, 600) : "";
+  return {
+    vehicle_id: id,
+    service_class_id: serviceClassId,
+    ...(pax != null && pax > 0 ? { passenger_capacity: pax } : {}),
+    ...(luggage != null && luggage > 0 ? { luggage_capacity: luggage } : {}),
+    ...(color ? { color } : {}),
+    ...(safePhoto ? { photo_url: safePhoto } : {}),
+  };
+}
 
 function safePublicMobilisation(mobilisation) {
   if (!mobilisation) return null;
@@ -564,6 +662,17 @@ export function buildSafePublicLimousineOffers(
     if (!valid) continue;
     if (offer.price_presentation === LIMOUSINE_PRICE_PRESENTATIONS.UNAVAILABLE) continue;
 
+    // Authoritative vehicle join: an exact-vehicle offer only publishes when the
+    // scoped fleet record still resolves to an active, classified limousine.
+    let safeVehicle = null;
+    if (offer.target_type === LIMOUSINE_OFFER_TARGETS.VEHICLE) {
+      const record = knownVehicles.find(
+        (v) => String(v?.vehicle_id ?? v?.id ?? "").trim() === offer.vehicle_id,
+      );
+      safeVehicle = buildSafePublicVehicle(record);
+      if (!safeVehicle) continue;
+    }
+
     const showsAmount =
       offer.price_presentation !== LIMOUSINE_PRICE_PRESENTATIONS.QUOTE_REQUIRED &&
       offer.display_amount_cents != null &&
@@ -572,12 +681,16 @@ export function buildSafePublicLimousineOffers(
     out.push({
       offer_id: offer.offer_id,
       target_type: offer.target_type,
-      ...(offer.target_type === LIMOUSINE_OFFER_TARGETS.VEHICLE
-        ? { vehicle_id: offer.vehicle_id }
-        : {}),
-      service_class_id: offer.service_class_id,
+      ...(safeVehicle ? { vehicle: safeVehicle, vehicle_id: safeVehicle.vehicle_id } : {}),
+      service_class_id: safeVehicle
+        ? safeVehicle.service_class_id
+        : offer.service_class_id,
       title: offer.title,
       description: offer.description,
+      ...(localizedIsEmpty(offer.important_information)
+        ? {}
+        : { important_information: offer.important_information }),
+      pricing_modes: offerSupportedPricingModes(offer),
       price_presentation: offer.price_presentation,
       ...(showsAmount ? { display_amount_cents: offer.display_amount_cents } : {}),
       currency: offer.currency,
