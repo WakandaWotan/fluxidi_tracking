@@ -1165,7 +1165,7 @@ test("32. taxi isolation cannot reach test prebook", () => {
   assert.equal(fleet.includes("/internal/test-prebook"), false);
 });
 
-test("33. all production and test prebook gates remain 0", () => {
+test("33. production prebook stays off while only the test gate is activated", () => {
   const hotels = readFileSync(join(HERE, "../wrangler.toml"), "utf8");
   const booking = readFileSync(join(HERE, "../../booking/wrangler.toml"), "utf8");
   const top = hotels.slice(0, hotels.indexOf("[env.test]"));
@@ -1173,16 +1173,23 @@ test("33. all production and test prebook gates remain 0", () => {
   assert.match(top, /RATEHAWK_PREBOOK_ENABLED = "0"/);
   assert.match(top, /RATEHAWK_TEST_PREBOOK_ENABLED = "0"/);
   assert.match(testSection, /RATEHAWK_PREBOOK_ENABLED = "0"/);
-  assert.match(testSection, /RATEHAWK_TEST_PREBOOK_ENABLED = "0"/);
-  assert.match(booking, /RATEHAWK_TEST_PREBOOK_ENABLED = "0"/);
+  assert.match(testSection, /RATEHAWK_TEST_PREBOOK_ENABLED = "1"/);
+  assert.match(booking, /RATEHAWK_TEST_PREBOOK_ENABLED = "1"/);
   assert.equal(/RATEHAWK_PREBOOK_ENABLED\s*=\s*"1"/.test(hotels), false);
-  assert.equal(/RATEHAWK_TEST_PREBOOK_ENABLED\s*=\s*"1"/.test(hotels), false);
-  assert.equal(/RATEHAWK_TEST_PREBOOK_ENABLED\s*=\s*"1"/.test(booking), false);
+  assert.equal(/RATEHAWK_PREBOOK_ENABLED\s*=\s*"1"/.test(booking), false);
+  assert.equal(/RATEHAWK_TEST_PREBOOK_ENABLED\s*=\s*"1"/.test(top), false);
   assert.equal(
     evaluateRatehawkTestPrebookGate({
       RATEHAWK_PREBOOK_ENABLED: "1",
       RATEHAWK_TEST_PREBOOK_ENABLED: "0",
       RATEHAWK_WORKER_SURFACE: "test",
+    }).ok,
+    false,
+  );
+  assert.equal(
+    evaluateRatehawkTestPrebookGate({
+      RATEHAWK_TEST_PREBOOK_ENABLED: "1",
+      RATEHAWK_WORKER_SURFACE: "production",
     }).ok,
     false,
   );

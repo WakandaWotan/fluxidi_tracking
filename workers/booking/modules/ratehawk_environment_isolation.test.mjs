@@ -82,7 +82,6 @@ test("test Hotels env is a private isolated Worker with no D1 or content sync", 
     "RATEHAWK_HOTELPAGE_ENABLED",
     "RATEHAWK_SEARCH_ENABLED",
     "RATEHAWK_PREBOOK_ENABLED",
-    "RATEHAWK_TEST_PREBOOK_ENABLED",
     "RATEHAWK_CONTENT_SYNC_ENABLED",
     "RATEHAWK_CONTENT_BATCH_ENABLED",
   ]) {
@@ -90,6 +89,7 @@ test("test Hotels env is a private isolated Worker with no D1 or content sync", 
   }
   assert.match(testEnv, /RATEHAWK_TEST_SEARCH_ENABLED = "1"/);
   assert.match(testEnv, /RATEHAWK_TEST_HOTELPAGE_ENABLED = "1"/);
+  assert.match(testEnv, /RATEHAWK_TEST_PREBOOK_ENABLED = "1"/);
 });
 
 test("Booking binds production and test Hotels Workers separately", () => {
@@ -103,8 +103,8 @@ test("Booking binds production and test Hotels Workers separately", () => {
   assert.equal(/RATEHAWK_OFFER_REF_SECRET\s*=/.test(wrangler), false);
   assert.match(wrangler, /RATEHAWK_TEST_SEARCH_ENABLED = "1"/);
   assert.match(wrangler, /RATEHAWK_TEST_HOTELPAGE_ENABLED = "1"/);
-  assert.match(wrangler, /RATEHAWK_TEST_PREBOOK_ENABLED = "0"/);
-  assert.equal(/RATEHAWK_TEST_PREBOOK_ENABLED\s*=\s*"1"/.test(wrangler), false);
+  assert.match(wrangler, /RATEHAWK_TEST_PREBOOK_ENABLED = "1"/);
+  assert.equal(/RATEHAWK_PREBOOK_ENABLED\s*=\s*"1"/.test(wrangler), false);
 });
 
 test("production facade paths cannot use RATEHAWK_HOTELS_TEST", () => {

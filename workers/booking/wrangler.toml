@@ -52,11 +52,11 @@ PLAY_REVIEW_COMPANY_CODE = "FLX-00020"
 #   (wrangler secret put; never commit). Must match the test Hotels Worker
 #   RATEHAWK_VIEW_STAY_CONTEXT_SECRET. Do not reuse the production secret.
 # Isolated admin test-search / test-Hotelpage / test-prebook.
-# Public RateHawk stays blocked. Do not flip test-prebook until a
-# dedicated gates-off deploy is explicitly requested.
+# Public RateHawk stays blocked. These admin routes reach the isolated test
+# Hotels Worker only; production prebook stays gated off.
 RATEHAWK_TEST_SEARCH_ENABLED = "1"
 RATEHAWK_TEST_HOTELPAGE_ENABLED = "1"
-RATEHAWK_TEST_PREBOOK_ENABLED = "0"
+RATEHAWK_TEST_PREBOOK_ENABLED = "1"
 # Deploy order after the test Worker exists:
 #   1) fluxidi-ratehawk-hotels-api
 #   2) fluxidi-ratehawk-hotels-api-test

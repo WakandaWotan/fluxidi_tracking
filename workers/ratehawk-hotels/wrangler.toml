@@ -104,7 +104,9 @@ RATEHAWK_CONTENT_SYNC_ENABLED = "0"
 RATEHAWK_CONTENT_BATCH_ENABLED = "0"
 RATEHAWK_TEST_SEARCH_ENABLED = "1"
 RATEHAWK_TEST_HOTELPAGE_ENABLED = "1"
-RATEHAWK_TEST_PREBOOK_ENABLED = "0"
+# Controlled activation window for the isolated admin test-prebook chain.
+# Only ever "1" on this test environment; production stays "0".
+RATEHAWK_TEST_PREBOOK_ENABLED = "1"
 
 [[env.test.durable_objects.bindings]]
 name = "RATEHAWK_PROVIDER_QUOTA"
