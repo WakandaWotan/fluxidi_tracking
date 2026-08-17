@@ -404,6 +404,13 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     _statusRef = null;
     _acceptanceRef = null;
     handoff = null;
+    notifyListeners();
+  }
+
+  void clearAcceptedHandoff() {
+    _acceptanceRef = null;
+    handoff = null;
+    notifyListeners();
   }
 
   @override

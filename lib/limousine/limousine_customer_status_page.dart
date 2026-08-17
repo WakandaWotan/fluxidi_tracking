@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../app_strings.dart';
 import '../customer_theme_palette.dart';
+import 'limousine_accepted_booking.dart';
+import 'limousine_accepted_booking_labels.dart';
+import 'limousine_accepted_booking_page.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_customer_quote_api.dart';
 import 'limousine_customer_quote_labels.dart';
@@ -31,11 +34,13 @@ class LimousineCustomerStatusView extends StatelessWidget {
     required this.controller,
     required this.language,
     required this.palette,
+    this.onOpenBookingReview,
   });
 
   final LimousineCustomerQuoteController controller;
   final AppLanguage language;
   final CustomerThemePalette palette;
+  final VoidCallback? onOpenBookingReview;
 
   String _t(LocalizedText text) => text.of(language);
 
@@ -141,6 +146,20 @@ class LimousineCustomerStatusView extends StatelessWidget {
             child: Text(_t(kLimousineCustomerAcceptAction)),
           ),
         ],
+        if (controller.handoff != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: FilledButton(
+              key: kLimousineAcceptedBookingOpenReviewKey,
+              onPressed:
+                  onOpenBookingReview ??
+                  () => openLimousineAcceptedBookingReview(
+                    context,
+                    quoteController: controller,
+                  ),
+              child: Text(_t(kLimousineAcceptedBookingOpenReview)),
+            ),
+          ),
         Align(
           alignment: Alignment.centerLeft,
           child: TextButton(
