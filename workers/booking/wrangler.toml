@@ -42,6 +42,18 @@ PLAY_REVIEW_COMPANY_CODE = "FLX-00020"
 # FLUXIDI_SUBSCRIPTION_MOLLIE_API_KEY   — Fluxidi-owned Mollie API key (test_… or live_…)
 # FLUXIDI_SUBSCRIPTION_WEBHOOK_SECRET   — path-secret used in /webhooks/subscription/mollie/{secret}
 # FLUXIDI_SUBSCRIPTION_MOLLIE_MODE      — optional, "test" or "live", for logging only
+#
+# RateHawk / ETG hotel provider (P0 foundation) — set via Cloudflare secrets,
+# never commit values. TEST keys must use https://api.ratehawk.com.
+# SANDBOX keys must use https://api-sandbox.ratehawk.com. No silent fallback
+# from unknown/test to production. RATEHAWK_API_KEY must never appear in
+# [vars], Flutter, D1, logs, or public API responses.
+# RATEHAWK_KEY_ID
+# RATEHAWK_API_KEY
+# RATEHAWK_BASE_URL
+# RATEHAWK_ENVIRONMENT          — sandbox | test | production (required)
+# RATEHAWK_PRODUCTION_ENABLED   — extra production booking/probe gate (P3)
+RATEHAWK_ENABLED = "0"
 
 # Internal company-session Billit sandbox OAuth (fail-closed). Requires BOTH
 # the master flag and an explicit company_id allowlist. Ordinary customers

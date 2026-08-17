@@ -105,6 +105,11 @@ import {
   toMonotonicRevision,
 } from "./modules/fleet_vehicle_tombstone.mjs";
 import {
+  buildRatehawkPublicSearchGuardPayload,
+  buildSafeRatehawkProviderStatus,
+  isRatehawkSearchSource,
+} from "./modules/ratehawk_provider.mjs";
+import {
   BILLIT_PROVIDER,
   BILLIT_OAUTH_STATE_TTL_SECONDS,
   DEFAULT_BILLIT_PAYMENT_TERMS_DAYS,
@@ -49395,6 +49400,7 @@ async function _buildAdminHotelsProvidersStatusPayload(env) {
   };
   const bookingComCj = _adminBookingComCjProviderStatus(env);
   const googlePlacesHotels = _adminGooglePlacesHotelsProviderStatus(env);
+  const ratehawk = buildSafeRatehawkProviderStatus(env);
 
   const nativeReady =
     expediaRapid.configured === true ||
@@ -49427,6 +49433,7 @@ async function _buildAdminHotelsProvidersStatusPayload(env) {
       stay22,
       booking_com_cj: bookingComCj,
       google_places_hotels: googlePlacesHotels,
+      ratehawk,
     },
     warnings,
   };
@@ -50021,6 +50028,10 @@ async function _buildNativeHotelsSearchPayload({ query, env, warnings = [] } = {
 async function _buildPublicHotelsSearchPayload({ query, env, requestUrl = "" } = {}) {
   const source = String(query?.source ?? "approved-local").trim() || "approved-local";
   const warnings = Array.isArray(query?.warnings) ? [...query.warnings] : [];
+
+  if (isRatehawkSearchSource(source)) {
+    return buildRatehawkPublicSearchGuardPayload({ env, warnings, source });
+  }
 
   if (source === "approved-local") {
     return _buildApprovedLocalHotelsPayload({ query, warnings });
