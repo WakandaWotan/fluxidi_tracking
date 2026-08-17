@@ -112,6 +112,14 @@ import {
   normalizeLimousineOffers as _normalizeLimousineOffers,
 } from "./modules/limousine_offers.mjs";
 import {
+  buildLimousineAcceptedSnapshot as _buildLimousineAcceptedSnapshot,
+  buildLimousineQuoteResult as _buildLimousineQuoteResult,
+  compareLimousineQuoteForBook as _compareLimousineQuoteForBook,
+  composeLimousineTotal as _composeLimousineTotal,
+  limousineBookGateEnabled as _limousineBookGateEnabledRaw,
+  limousineQuoteFingerprint as _limousineQuoteFingerprint,
+} from "./modules/limousine_booking.mjs";
+import {
   limousineQuoteGateEnabled as _limousineQuoteGateEnabledRaw,
   normalizeLimousinePricingSection as _normalizeLimousinePricingSection,
   resolveLimousineQuote as _resolveLimousineQuote,
@@ -121,6 +129,263 @@ import {
 /// non-truthy means no Limousine quote. Taxi/airport quoting is unaffected.
 function _limousineQuoteGateEnabled(env) {
   return _limousineQuoteGateEnabledRaw(env?.LIMOUSINE_QUOTE_ENABLED ?? "0");
+}
+
+/// LIMOUSINE-MARKETPLACE-P2C1: INDEPENDENT server-owned book gate. Default OFF.
+/// Gate-off makes zero Limousine booking writes.
+function _limousineBookGateEnabled(env) {
+  return _limousineBookGateEnabledRaw(env?.LIMOUSINE_BOOK_ENABLED ?? "0");
+}
+
+/// True when the request carries explicit Limousine intent. Taxi, airport,
+/// hotel, event and business rides never match.
+function _isLimousineServiceRequest(body) {
+  const src = body && typeof body === "object" ? body : {};
+  return (
+    isLimousineServiceToken(src.service_category ?? src.serviceCategory) ||
+    isLimousineServiceToken(src.service)
+  );
+}
+
+/// Authoritative provider eligibility for the scoped company.
+async function _resolveLimousineProviderEligibility(env, scope) {
+  try {
+    const partnerKeys = buildScopedPartnerKeys(scope);
+    if (!partnerKeys) return false;
+    const record = await env.BOOKING_KV.get(partnerKeys.profileKey, { type: "json" });
+    const profile = record?.partner_profile;
+    if (!profile) return false;
+    return _isEligibleLimousineProvider(profile);
+  } catch (_) {
+    return false;
+  }
+}
+
+/// Server-calculated mobilisation legs: operating base -> pickup and
+/// dropoff -> operating base. The private base address is read Worker-side only
+/// and never returned to Flutter or any public payload. Missing base or route
+/// failure fails closed.
+async function _computeLimousineMobilisationRoutes(env, offer, { from, to }) {
+  const mob = (offer && typeof offer === "object" ? offer.mobilisation : null) || {};
+  const method = String(mob.method || "").trim().toLowerCase();
+  const charged = mob.outbound_charged === true || mob.return_charged === true;
+  if (!charged || method !== "distance_time") return { ok: true, routes: {} };
+  const baseAddress = String(mob.operating_base_address || "").trim();
+  if (!baseAddress) return { ok: false, reason: "mobilisation_incomplete" };
+  try {
+    const routes = {};
+    if (mob.outbound_charged === true) {
+      const out = await routeFromTextsWithStopsDetailed({
+        fromText: baseAddress,
+        toText: from,
+        stopsTexts: [],
+        token: env.MAPBOX_TOKEN,
+      });
+      routes.mobilisation_outbound = {
+        distance_km: round1((out?.route?.distance || 0) / 1000),
+        duration_min: Math.round((out?.route?.duration || 0) / 60),
+      };
+    }
+    if (mob.return_charged === true) {
+      const back = await routeFromTextsWithStopsDetailed({
+        fromText: to,
+        toText: baseAddress,
+        stopsTexts: [],
+        token: env.MAPBOX_TOKEN,
+      });
+      routes.mobilisation_return = {
+        distance_km: round1((back?.route?.distance || 0) / 1000),
+        duration_min: Math.round((back?.route?.duration || 0) / 60),
+      };
+    }
+    return { ok: true, routes };
+  } catch (_) {
+    return { ok: false, reason: "mobilisation_incomplete" };
+  }
+}
+
+/// LIMOUSINE-MARKETPLACE-P2C1: /book pre-flight. Runs BEFORE booking-intent
+/// idempotency and reference allocation, so a rejected request performs zero
+/// writes and allocates no reference. It re-resolves entitlement/readiness,
+/// re-loads the authoritative offer, recalculates routes, recomputes the
+/// complete price and compares it with the quote the client is booking against.
+/// Client totals are ignored entirely.
+async function _prepareLimousineBooking(env, scope, payload, { from, to, stops }) {
+  const unavailable = (error, extra = {}) => ({
+    ok: false,
+    response: { ok: false, error, service_category: "limousine", ...extra },
+  });
+
+  // 1) Server route for the passenger itinerary.
+  let routeOut = null;
+  try {
+    routeOut = await routeFromTextsWithStopsDetailed({
+      fromText: from,
+      toText: to,
+      fromPoint: readExplicitCoordinatePair(payload, "from"),
+      toPoint: readExplicitCoordinatePair(payload, "to"),
+      stopsTexts: Array.isArray(stops) ? stops : [],
+      token: env.MAPBOX_TOKEN,
+    });
+  } catch (_) {
+    return unavailable("limousine_route_failed");
+  }
+  if (!routeOut?.route) return unavailable("limousine_route_failed");
+  const mainRoute = {
+    distance_km: round1((routeOut.route.distance || 0) / 1000),
+    duration_min: Math.round((routeOut.route.duration || 0) / 60),
+  };
+
+  // 2) Optional roundtrip return leg (server-calculated, direction aware).
+  const roundtrip =
+    payload?.roundtrip === true ||
+    payload?.return_enabled === true ||
+    payload?.returnEnabled === true;
+  let returnRoute = null;
+  if (roundtrip) {
+    const returnFrom = safeStr(payload?.return_from ?? payload?.returnFrom) || to;
+    const returnTo = safeStr(payload?.return_to ?? payload?.returnTo) || from;
+    try {
+      const back = await routeFromTextsWithStopsDetailed({
+        fromText: returnFrom,
+        toText: returnTo,
+        stopsTexts: [],
+        token: env.MAPBOX_TOKEN,
+      });
+      if (!back?.route) return unavailable("limousine_route_failed");
+      returnRoute = {
+        distance_km: round1((back.route.distance || 0) / 1000),
+        duration_min: Math.round((back.route.duration || 0) / 60),
+      };
+    } catch (_) {
+      return unavailable("limousine_route_failed");
+    }
+  }
+
+  // 3) Authoritative recompute from server state only.
+  const { total } = await _resolveAuthoritativeLimousineTotal(env, scope, payload, {
+    mainRoute,
+    returnRoute,
+  });
+  if (!total || total.ok !== true) {
+    const reason = total?.reason || "unavailable";
+    if (total?.manual_quote_required === true) {
+      return unavailable("limousine_manual_quote_required", { reason });
+    }
+    return unavailable("limousine_unavailable", { reason });
+  }
+
+  // 4) Compare with the quote the client is booking against. A stale or changed
+  // quote is rejected with a safe refresh-required result; a different or
+  // higher total is never silently accepted.
+  const comparison = _compareLimousineQuoteForBook({
+    recomputed: total,
+    clientQuoteReference: safeStr(payload?.quote_reference ?? payload?.quoteReference),
+    requireQuoteReference: true,
+  });
+  if (!comparison.ok) {
+    return unavailable("limousine_quote_refresh_required", {
+      reason: comparison.reason,
+      quote_reference: comparison.quote_reference,
+    });
+  }
+
+  // 5) Immutable accepted-price snapshot.
+  const snapshot = _buildLimousineAcceptedSnapshot({
+    total,
+    quoteReference: comparison.quote_reference,
+    acceptedAtIso: new Date().toISOString(),
+    scheduledPickupIso: safeStr(payload?.pickup_iso),
+    companyId: scope?.company_id || "",
+    publicPartnerId: safeStr(payload?.public_partner_id ?? payload?.publicPartnerId),
+  });
+
+  const pricing = {
+    price_ex_vat: total.price_ex_vat,
+    price_vat: total.price_vat,
+    price_incl_vat: total.price_incl_vat,
+    note: `limousine:${total.pricing_mode}`,
+    breakdown: {
+      kind: "limousine",
+      pricing_mode: total.pricing_mode,
+      components: total.components,
+      legs: total.legs,
+      currency: total.currency,
+      subtotal_cents: total.subtotal_cents,
+      total_incl_vat_cents: total.total_incl_vat_cents,
+    },
+  };
+
+  return {
+    ok: true,
+    routeOut,
+    accepted: {
+      total,
+      snapshot,
+      pricing,
+      quoteReference: comparison.quote_reference,
+      pricingSource: `limousine_${total.pricing_mode}`,
+      ruleReference: total.components[0]?.reference || "",
+    },
+  };
+}
+
+/// Shared authoritative Limousine resolution used by BOTH /quote and /book.
+/// Loads the offer, company eligibility and pricing revision server-side and
+/// composes the itemized total from SERVER routes only. Never reads a client
+/// total, per-km value, VAT, mobilisation amount or presentation.
+async function _resolveAuthoritativeLimousineTotal(env, scope, body, { mainRoute, returnRoute }) {
+  const eligible = await _resolveLimousineProviderEligibility(env, scope);
+  if (!eligible) {
+    return { total: { ok: false, unavailable: true, reason: "not_eligible" }, eligible: false };
+  }
+  const section = await _loadLimousinePricingSection(env, scope);
+  const offerId = String(body.offer_id ?? body.offerId ?? "").trim();
+  const normalizedOffers = _normalizeLimousineOffers(section?.offers);
+  const matchedOffer = normalizedOffers.find(
+    (o) => o.offer_id === offerId.toLowerCase(),
+  );
+  const mobilisationRoutes = matchedOffer
+    ? await _computeLimousineMobilisationRoutes(env, matchedOffer, {
+        from: body.from,
+        to: body.to,
+      })
+    : { ok: true, routes: {} };
+  if (!mobilisationRoutes.ok) {
+    return {
+      total: { ok: false, unavailable: true, reason: mobilisationRoutes.reason },
+      eligible: true,
+    };
+  }
+  const total = _composeLimousineTotal({
+    section,
+    offerId,
+    request: {
+      service_category: "limousine",
+      service_class_id: body.service_class_id ?? body.serviceClassId,
+      vehicle_id: body.vehicle_id ?? body.vehicleId,
+      journey_type: body.journey_type ?? body.journeyType,
+      direction: body.airport_direction ?? body.direction,
+      return_direction: body.return_direction ?? body.returnDirection,
+      airport_iata: body.airport_iata ?? body.airportIata,
+      currency: body.currency,
+      requested_duration_minutes:
+        body.requested_duration_minutes ?? body.requestedDurationMinutes,
+      return_requested_duration_minutes:
+        body.return_requested_duration_minutes ?? body.returnRequestedDurationMinutes,
+      selected_extra_ids: body.selected_extra_ids ?? body.selectedExtraIds,
+      roundtrip:
+        body.roundtrip === true ||
+        body.return_enabled === true ||
+        body.returnEnabled === true,
+    },
+    routes: {
+      main: mainRoute,
+      return: returnRoute,
+      ...mobilisationRoutes.routes,
+    },
+  });
+  return { total, eligible: true };
 }
 
 /// Reads the optional `limousine` pricing section from the raw company
@@ -26237,45 +26502,64 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
     isLimousineServiceToken(body.service);
   if (_isLimousineQuoteRequest) {
     const gateEnabled = _limousineQuoteGateEnabled(env);
-    let limoEligible = false;
-    if (gateEnabled) {
-      try {
-        const partnerKeys = buildScopedPartnerKeys(quoteScope);
-        if (partnerKeys) {
-          const partnerRecord = await env.BOOKING_KV.get(partnerKeys.profileKey, {
-            type: "json",
-          });
-          const partnerProfile = partnerRecord?.partner_profile;
-          if (partnerProfile) {
-            limoEligible = _isEligibleLimousineProvider(partnerProfile);
-          }
-        }
-      } catch (_) {
-        limoEligible = false;
-      }
+    // Gate off => zero Limousine pricing execution.
+    if (!gateEnabled) {
+      return {
+        status: 200,
+        out: {
+          ok: true,
+          service_category: "limousine",
+          distance_km,
+          duration_min: duration_route_min,
+          pricing_source: "limousine_unavailable",
+          limousine: {
+            resolved: false,
+            manual_quote_required: false,
+            unavailable: true,
+            reason: "gate_off",
+          },
+        },
+      };
     }
-    const limousineSection = gateEnabled
-      ? await _loadLimousinePricingSection(env, quoteScope)
-      : null;
-    const limoResolution = _resolveLimousineQuote({
-      gateEnabled,
-      eligible: limoEligible,
-      section: limousineSection,
-      request: {
-        service_category: "limousine",
-        service_class_id: body.service_class_id ?? body.serviceClassId,
-        journey_type: body.journey_type ?? body.journeyType,
-        direction: body.airport_direction ?? body.direction,
-        airport_iata: body.airport_iata ?? body.airportIata,
-        postcode: body.postcode ?? body.fixed_fare_zone_value,
-        city: body.city,
-        country: body.country ?? body.country_code,
-        lat: routeResolvedPickupCoords?.lat,
-        lng: routeResolvedPickupCoords?.lng,
-        currency: body.currency,
-      },
-      route: { distance_km, duration_min: duration_route_min },
-    });
+    // LIMOUSINE-MARKETPLACE-P2C1: itemized authoritative total. An offer_id
+    // uses the full composer (extras, mobilisation, roundtrip); without one we
+    // keep the P2B1 class/offer resolution for backwards compatibility.
+    const hasOfferId = String(body.offer_id ?? body.offerId ?? "").trim().length > 0;
+    let limoResolution;
+    if (hasOfferId) {
+      const { total } = await _resolveAuthoritativeLimousineTotal(env, quoteScope, body, {
+        mainRoute: { distance_km, duration_min: duration_route_min },
+        returnRoute: null,
+      });
+      limoResolution = _buildLimousineQuoteResult(total, {
+        distanceKm: distance_km,
+        durationMin: duration_route_min,
+        scheduledPickupIso: `${body.date}T${body.time}`,
+        pax,
+        bags,
+      });
+    } else {
+      const limoEligible = await _resolveLimousineProviderEligibility(env, quoteScope);
+      limoResolution = _resolveLimousineQuote({
+        gateEnabled,
+        eligible: limoEligible,
+        section: await _loadLimousinePricingSection(env, quoteScope),
+        request: {
+          service_category: "limousine",
+          service_class_id: body.service_class_id ?? body.serviceClassId,
+          journey_type: body.journey_type ?? body.journeyType,
+          direction: body.airport_direction ?? body.direction,
+          airport_iata: body.airport_iata ?? body.airportIata,
+          postcode: body.postcode ?? body.fixed_fare_zone_value,
+          city: body.city,
+          country: body.country ?? body.country_code,
+          lat: routeResolvedPickupCoords?.lat,
+          lng: routeResolvedPickupCoords?.lng,
+          currency: body.currency,
+        },
+        route: { distance_km, duration_min: duration_route_min },
+      });
+    }
     const limoOut = {
       ok: true,
       service_category: "limousine",
@@ -63497,6 +63781,26 @@ async function handleBooking(payload, env, request, options = {}) {
 
     if (!pickup_iso) return { ok: false, error: "Could not create pickup_iso" };
 
+    // LIMOUSINE-MARKETPLACE-P2C1: explicit Limousine booking pre-flight. Runs
+    // BEFORE idempotency mapping and reference allocation so a rejected request
+    // performs zero writes. Gate is INDEPENDENT of the quote gate and default
+    // OFF; taxi, airport, hotel, event and business rides never enter here.
+    let _limousineAccepted = null;
+    let _limousineRouteCache = null;
+    if (_isLimousineServiceRequest(payload)) {
+      if (!_limousineBookGateEnabled(env)) {
+        return { ok: false, error: "limousine_book_disabled" };
+      }
+      const limousinePreflight = await _prepareLimousineBooking(env, tenantContext, payload, {
+        from,
+        to,
+        stops,
+      });
+      if (!limousinePreflight.ok) return limousinePreflight.response;
+      _limousineAccepted = limousinePreflight.accepted;
+      _limousineRouteCache = limousinePreflight.routeOut;
+    }
+
     const bookingIntent = buildBookingIntentDescriptor({
       tenant_id: tenantContext.tenant_id,
       company_id: tenantContext.company_id,
@@ -63652,7 +63956,10 @@ async function handleBooking(payload, env, request, options = {}) {
     // Compute server-side quote (source of truth)
     const fromPoint = readExplicitCoordinatePair(payload, "from");
     const toPoint = readExplicitCoordinatePair(payload, "to");
-    const routeOut = await routeFromTextsWithStopsDetailed({
+    // LIMOUSINE-MARKETPLACE-P2C1: reuse the route already computed by the
+    // Limousine pre-flight so the same authoritative distance/duration is used
+    // and Mapbox is not called twice.
+    const routeOut = _limousineRouteCache || await routeFromTextsWithStopsDetailed({
       fromText: from,
       toText: to,
       fromPoint,
@@ -63773,6 +64080,12 @@ async function handleBooking(payload, env, request, options = {}) {
     if (!pricingProfile.return_enabled) {
       ret.enabled = false;
     }
+    // LIMOUSINE-MARKETPLACE-P2C1: a Limousine roundtrip is priced by the
+    // authoritative composer (both legs + mobilisation, no duplication), so the
+    // taxi return-leg calculation must never run for it.
+    if (_limousineAccepted) {
+      ret.enabled = false;
+    }
 
     // If UI provides a separate return date/time, we treat the return leg as a separate trip moment.
     const return_date = safeStr(payload?.return_date || payload?.returnDate);
@@ -63782,6 +64095,7 @@ async function handleBooking(payload, env, request, options = {}) {
     const bookingReturnRequested = ret.enabled || hasReturnSchedule;
     const bookingExplicitScopeAllowed = _hasExplicitAirportFixedFareScope(payload, tenantContext);
     const bookingFixedFareEligible =
+      !_limousineAccepted &&
       _isAirportFixedFareEligiblePayload(payload) &&
       bookingExplicitScopeAllowed;
     let fixedFareBookingResult = {
@@ -63800,7 +64114,11 @@ async function handleBooking(payload, env, request, options = {}) {
       });
     }
     const bookingMainUsesFixedFare = bookingFixedFareEligible && fixedFareBookingResult.matched === true;
-    const bookingMainPricingSource = bookingMainUsesFixedFare ? "airport_fixed_fare" : "route_calc";
+    const bookingMainPricingSource = _limousineAccepted
+      ? _limousineAccepted.pricingSource
+      : bookingMainUsesFixedFare
+      ? "airport_fixed_fare"
+      : "route_calc";
     const bookingMainFixedFareApplied = bookingMainUsesFixedFare;
     const bookingMainFixedFareRuleId = bookingMainUsesFixedFare
       ? (fixedFareBookingResult.fixed_fare_rule_id || null)
@@ -63998,7 +64316,11 @@ async function handleBooking(payload, env, request, options = {}) {
     }
 
     const when = normalizeWhen(date, time);
-    const mainPricing = bookingMainUsesFixedFare
+    // LIMOUSINE-MARKETPLACE-P2C1: an accepted Limousine total replaces the taxi
+    // calculation entirely — never calcPrice, never an airport taxi fixed fare.
+    const mainPricing = _limousineAccepted
+      ? _limousineAccepted.pricing
+      : bookingMainUsesFixedFare
       ? fixedFareBookingResult.pricing
       : calcPrice({
         distance_km,
@@ -64018,6 +64340,15 @@ async function handleBooking(payload, env, request, options = {}) {
 
     // Total pricing = main + (optional) return
     const totalPricing = (() => {
+      // LIMOUSINE-MARKETPLACE-P2C1: the authoritative Limousine total is already
+      // itemized and rounded exactly once by the composer.
+      if (_limousineAccepted) {
+        return {
+          price_ex_vat: _limousineAccepted.total.price_ex_vat,
+          price_vat: _limousineAccepted.total.price_vat,
+          price_incl_vat: _limousineAccepted.total.price_incl_vat,
+        };
+      }
       const main = mainPricing || {};
       const retp = (ret.enabled && returnPricing) ? returnPricing : null;
 
@@ -64036,7 +64367,9 @@ async function handleBooking(payload, env, request, options = {}) {
 
       return { price_ex_vat: ex, price_vat: vat, price_incl_vat: incl };
     })();
-    const bookingPricingSource = ret.enabled
+    const bookingPricingSource = _limousineAccepted
+      ? _limousineAccepted.pricingSource
+      : ret.enabled
       ? (bookingMainFixedFareApplied && bookingReturnUsesFixedFare
         ? "airport_fixed_fare"
         : (bookingMainFixedFareApplied || bookingReturnUsesFixedFare
@@ -66046,6 +66379,13 @@ Retour route: ${return_from || to} → ${return_to || from}`,
         pricing_main: mainPricing,
         pricing_return: returnPricing,
         pricing_profile: pricingProfile,
+        // LIMOUSINE-MARKETPLACE-P2C1: immutable accepted-price snapshot with
+        // full provenance. It must never be recomputed from later company
+        // pricing changes, offer disablement, entitlement loss or vehicle
+        // suspension.
+        ...(_limousineAccepted
+          ? { limousine_accepted_price: _limousineAccepted.snapshot }
+          : {}),
         pricing_source: bookingPricingSource,
         pricing_source_main: bookingMainPricingSource,
         pricing_source_return: bookingReturnPricingSource,

@@ -360,7 +360,14 @@ test("10/26) /quote wiring: gated, eligibility, no taxi fallback, no booking", (
   // limousine branch is guarded by the request category AND returns early
   assert.ok(workerSource.includes("const _isLimousineQuoteRequest ="), "limousine branch guard present");
   assert.ok(workerSource.includes("_limousineQuoteGateEnabled(env)"), "server gate checked");
-  assert.ok(workerSource.includes("_isEligibleLimousineProvider(partnerProfile)"), "eligibility required");
+  assert.ok(
+    workerSource.includes("_resolveLimousineProviderEligibility(env, quoteScope)"),
+    "eligibility required",
+  );
+  assert.ok(
+    workerSource.includes("return _isEligibleLimousineProvider(profile);"),
+    "eligibility resolved from the authoritative partner profile",
+  );
   assert.ok(workerSource.includes("_resolveLimousineQuote({"), "resolver invoked");
   // the branch returns before the airport/taxi pricing branch (no fallback)
   const branchIdx = workerSource.indexOf("if (_isLimousineQuoteRequest) {");
