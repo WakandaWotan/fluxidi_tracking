@@ -489,6 +489,35 @@ test("7. production Worker rejects /internal/test-prebook", async () => {
   assert.equal(state.calls, 0);
 });
 
+test("7b. test prebook cannot run on a production Worker surface even if gate is 1", async () => {
+  const { state, fetchImpl } = trackingFetch(async () => {
+    throw new Error("must_not_call_ratehawk");
+  });
+  assert.equal(
+    evaluateRatehawkTestPrebookGate({
+      RATEHAWK_TEST_PREBOOK_ENABLED: "1",
+      RATEHAWK_WORKER_SURFACE: "production",
+    }).reason,
+    "test_worker_required",
+  );
+  const dto = await handleRatehawkTestPrebookRequest({
+    env: testEnv({
+      RATEHAWK_WORKER_SURFACE: "production",
+      RATEHAWK_TEST_PREBOOK_ENABLED: "1",
+    }),
+    body: {
+      trigger: RATEHAWK_TEST_PREBOOK_TRIGGER,
+      offer_ref: "rh1.aaa.bbb",
+      locale: "nl",
+    },
+    fetchImpl,
+    now: NOW,
+  });
+  assert.equal(state.calls, 0);
+  assert.equal(dto.invoked, false);
+  assert.equal(dto.reason, "test_worker_required");
+});
+
 test("8. test Worker rejects production /internal/prebook", async () => {
   const { state, fetchImpl } = trackingFetch(async () => {
     throw new Error("must_not_call_ratehawk");
@@ -1185,6 +1214,13 @@ test("33. all production and test prebook gates remain 0", () => {
       RATEHAWK_WORKER_SURFACE: "test",
     }).ok,
     false,
+  );
+  assert.equal(
+    evaluateRatehawkTestPrebookGate({
+      RATEHAWK_TEST_PREBOOK_ENABLED: "1",
+      RATEHAWK_WORKER_SURFACE: "production",
+    }).reason,
+    "test_worker_required",
   );
 });
 

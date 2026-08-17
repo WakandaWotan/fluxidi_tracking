@@ -115,6 +115,7 @@ import {
   handlePublicRatehawkPrebookAccept,
   handlePublicRatehawkSearch,
   isRatehawkSearchSource,
+  readPublicRatehawkJsonBody,
 } from "./modules/ratehawk_hotels_facade.mjs";
 import {
   BILLIT_PROVIDER,
@@ -40683,28 +40684,38 @@ export default {
         if (request.method !== "POST") {
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
-        const prebookBody = await safeJson(request);
-        return json(
-          await handlePublicRatehawkPrebook({
-            env,
-            request,
-            body: prebookBody,
-          }),
-        );
+        const parsedPrebook = await readPublicRatehawkJsonBody(request);
+        if (parsedPrebook.ok !== true) {
+          return json({ ok: false, error: parsedPrebook.error }, 400);
+        }
+        const prebookDto = await handlePublicRatehawkPrebook({
+          env,
+          request,
+          body: parsedPrebook.body,
+        });
+        if (prebookDto?.http_status === 400 && prebookDto?.error) {
+          return json({ ok: false, error: prebookDto.error }, 400);
+        }
+        return json(prebookDto);
       }
 
       if (url.pathname === "/public/hotels/ratehawk/prebook/accept") {
         if (request.method !== "POST") {
           return json({ ok: false, error: "method_not_allowed" }, 405);
         }
-        const acceptBody = await safeJson(request);
-        return json(
-          await handlePublicRatehawkPrebookAccept({
-            env,
-            request,
-            body: acceptBody,
-          }),
-        );
+        const parsedAccept = await readPublicRatehawkJsonBody(request);
+        if (parsedAccept.ok !== true) {
+          return json({ ok: false, error: parsedAccept.error }, 400);
+        }
+        const acceptDto = await handlePublicRatehawkPrebookAccept({
+          env,
+          request,
+          body: parsedAccept.body,
+        });
+        if (acceptDto?.http_status === 400 && acceptDto?.error) {
+          return json({ ok: false, error: acceptDto.error }, 400);
+        }
+        return json(acceptDto);
       }
 
       if (url.pathname === "/public/hotels/google-place-photo") {

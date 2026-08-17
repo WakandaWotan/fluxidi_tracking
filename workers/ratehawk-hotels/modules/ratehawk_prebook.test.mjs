@@ -11,9 +11,11 @@ import assert from "node:assert/strict";
 
 import { sha256Hex } from "./crypto_utils.js";
 import { normalizeRatehawkRateOffer } from "./ratehawk_affiliate_contract.mjs";
+import worker from "../../booking/fluxidi_booking_worker.js";
 import {
   handlePublicRatehawkPrebook,
   handlePublicRatehawkPrebookAccept,
+  readPublicRatehawkJsonBody,
 } from "../../booking/modules/ratehawk_hotels_facade.mjs";
 import {
   RATEHAWK_HOTELS_INTERNAL_PROXY,
@@ -887,6 +889,7 @@ test("Booking accept facade performs zero provider reconstruction", async () => 
     body: {
       trigger: "accept_prebook_terms",
       prebook_ref: "rhp1.aaa.bbb",
+      terms_revision: "terms-rev-test",
       locale: "nl",
     },
   });
@@ -917,4 +920,349 @@ test("test worker fetch rejects public prebook surface", async () => {
   const dto = await resp.json();
   assert.equal(dto.reason, "production_path_forbidden_on_test_worker");
   assert.equal(dto.invoked, false);
+});
+
+const PUBLIC_PREBOOK_PATH = "/public/hotels/ratehawk/prebook";
+const PUBLIC_ACCEPT_PATH = "/public/hotels/ratehawk/prebook/accept";
+
+function trackingBookingKv(seed = null) {
+  const state = { gets: 0, puts: 0 };
+  return {
+    state,
+    kv: {
+      async get() {
+        state.gets += 1;
+        return seed;
+      },
+      async put() {
+        state.puts += 1;
+      },
+    },
+  };
+}
+
+function trackingHotelsBinding() {
+  const state = { calls: 0 };
+  return {
+    state,
+    binding: {
+      async fetch() {
+        state.calls += 1;
+        throw new Error("must_not_call_hotels");
+      },
+    },
+  };
+}
+
+function assertPrivacySafeClientError(dto, error) {
+  assert.equal(dto.ok, false);
+  assert.equal(dto.error, error);
+  assert.equal(dto.http_status, 400);
+  const text = JSON.stringify(dto);
+  assert.equal(text.includes("rh1."), false);
+  assert.equal(text.includes("rhp1."), false);
+  assert.equal(text.includes("{not"), false);
+  assert.equal(text.includes("book_hash"), false);
+}
+
+async function postPublicPrebookRoute(path, { raw, body } = {}) {
+  const kv = trackingBookingKv();
+  const hotels = trackingHotelsBinding();
+  const init = {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+  };
+  if (raw !== undefined) init.body = raw;
+  else if (body !== undefined) {
+    init.body = typeof body === "string" ? body : JSON.stringify(body);
+  }
+  const res = await worker.fetch(
+    new Request(`https://fluxidi-booking-api.internal${path}`, init),
+    {
+      BOOKING_KV: kv.kv,
+      RATEHAWK_HOTELS: hotels.binding,
+    },
+    {},
+  );
+  const dto = await res.json();
+  return { res, dto, kv: kv.state, hotels: hotels.state };
+}
+
+test("public prebook routes reject malformed JSON before KV and Hotels", async () => {
+  for (const path of [PUBLIC_PREBOOK_PATH, PUBLIC_ACCEPT_PATH]) {
+    const parsed = await readPublicRatehawkJsonBody(
+      new Request(`https://fluxidi-booking-api.internal${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{not-json",
+      }),
+    );
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error, "invalid_json_body");
+    const { res, dto, kv, hotels } = await postPublicPrebookRoute(path, {
+      raw: "{not-json",
+    });
+    assert.equal(res.status, 400);
+    assert.equal(dto.ok, false);
+    assert.equal(dto.error, "invalid_json_body");
+    assert.equal(kv.puts, 0);
+    assert.equal(kv.gets, 0);
+    assert.equal(hotels.calls, 0);
+    assert.equal(JSON.stringify(dto).includes("{not-json"), false);
+  }
+});
+
+test("public prebook routes reject empty bodies before KV and Hotels", async () => {
+  for (const path of [PUBLIC_PREBOOK_PATH, PUBLIC_ACCEPT_PATH]) {
+    for (const raw of ["", "   "]) {
+      const { res, dto, kv, hotels } = await postPublicPrebookRoute(path, { raw });
+      assert.equal(res.status, 400, path);
+      assert.equal(dto.error, "invalid_json_body");
+      assert.equal(kv.puts, 0);
+      assert.equal(hotels.calls, 0);
+    }
+  }
+});
+
+test("public prebook routes reject JSON array/string/null before KV and Hotels", async () => {
+  for (const path of [PUBLIC_PREBOOK_PATH, PUBLIC_ACCEPT_PATH]) {
+    for (const raw of ["[]", "\"hello\"", "null"]) {
+      const { res, dto, kv, hotels } = await postPublicPrebookRoute(path, { raw });
+      assert.equal(res.status, 400, `${path} ${raw}`);
+      assert.equal(dto.error, "invalid_request_body");
+      assert.equal(kv.puts, 0);
+      assert.equal(hotels.calls, 0);
+    }
+    const handler =
+      path === PUBLIC_PREBOOK_PATH
+        ? handlePublicRatehawkPrebook
+        : handlePublicRatehawkPrebookAccept;
+    for (const body of [[], "hello", null]) {
+      const kv = trackingBookingKv();
+      const hotels = trackingHotelsBinding();
+      const dto = await handler({
+        env: { BOOKING_KV: kv.kv, RATEHAWK_HOTELS: hotels.binding },
+        body,
+      });
+      assertPrivacySafeClientError(dto, "invalid_request_body");
+      assert.equal(kv.state.puts, 0);
+      assert.equal(hotels.state.calls, 0);
+    }
+  }
+});
+
+test("public prebook routes reject missing required fields before KV and Hotels", async () => {
+  const prebookKv = trackingBookingKv();
+  const prebookHotels = trackingHotelsBinding();
+  const missingTrigger = await handlePublicRatehawkPrebook({
+    env: { BOOKING_KV: prebookKv.kv, RATEHAWK_HOTELS: prebookHotels.binding },
+    body: { offer_ref: "rh1.aaa.bbb", locale: "nl" },
+  });
+  assertPrivacySafeClientError(missingTrigger, "invalid_request_body");
+  const missingOffer = await handlePublicRatehawkPrebook({
+    env: { BOOKING_KV: prebookKv.kv, RATEHAWK_HOTELS: prebookHotels.binding },
+    body: { trigger: "prebook_revalidation", locale: "nl" },
+  });
+  assertPrivacySafeClientError(missingOffer, "missing_offer_ref");
+  const invalidOffer = await handlePublicRatehawkPrebook({
+    env: { BOOKING_KV: prebookKv.kv, RATEHAWK_HOTELS: prebookHotels.binding },
+    body: { trigger: "prebook_revalidation", offer_ref: "not-opaque", locale: "nl" },
+  });
+  assertPrivacySafeClientError(invalidOffer, "missing_offer_ref");
+  assert.equal(prebookKv.state.puts, 0);
+  assert.equal(prebookHotels.state.calls, 0);
+
+  const acceptKv = trackingBookingKv();
+  const acceptHotels = trackingHotelsBinding();
+  const missingAcceptTrigger = await handlePublicRatehawkPrebookAccept({
+    env: { BOOKING_KV: acceptKv.kv, RATEHAWK_HOTELS: acceptHotels.binding },
+    body: { prebook_ref: "rhp1.aaa.bbb", terms_revision: "rev", locale: "nl" },
+  });
+  assertPrivacySafeClientError(missingAcceptTrigger, "invalid_request_body");
+  const missingPrebookRef = await handlePublicRatehawkPrebookAccept({
+    env: { BOOKING_KV: acceptKv.kv, RATEHAWK_HOTELS: acceptHotels.binding },
+    body: { trigger: "accept_prebook_terms", terms_revision: "rev", locale: "nl" },
+  });
+  assertPrivacySafeClientError(missingPrebookRef, "missing_prebook_ref");
+  const missingRevision = await handlePublicRatehawkPrebookAccept({
+    env: { BOOKING_KV: acceptKv.kv, RATEHAWK_HOTELS: acceptHotels.binding },
+    body: { trigger: "accept_prebook_terms", prebook_ref: "rhp1.aaa.bbb", locale: "nl" },
+  });
+  assertPrivacySafeClientError(missingRevision, "missing_terms_revision");
+  assert.equal(acceptKv.state.puts, 0);
+  assert.equal(acceptHotels.state.calls, 0);
+
+  const offerHttp = await postPublicPrebookRoute(PUBLIC_PREBOOK_PATH, {
+    body: { trigger: "prebook_revalidation", locale: "nl" },
+  });
+  assert.equal(offerHttp.res.status, 400);
+  assert.equal(offerHttp.dto.error, "missing_offer_ref");
+  assert.equal(offerHttp.kv.puts, 0);
+  assert.equal(offerHttp.hotels.calls, 0);
+  const revisionHttp = await postPublicPrebookRoute(PUBLIC_ACCEPT_PATH, {
+    body: { trigger: "accept_prebook_terms", prebook_ref: "rhp1.aaa.bbb" },
+  });
+  assert.equal(revisionHttp.res.status, 400);
+  assert.equal(revisionHttp.dto.error, "missing_terms_revision");
+  assert.equal(revisionHttp.kv.puts, 0);
+  assert.equal(revisionHttp.hotels.calls, 0);
+});
+
+test("public prebook forbidden client-control still fails closed before KV and Hotels", async () => {
+  for (const [handler, body] of [
+    [
+      handlePublicRatehawkPrebook,
+      {
+        trigger: "prebook_revalidation",
+        offer_ref: "rh1.aaa.bbb",
+        hash: "client-hash",
+        locale: "nl",
+      },
+    ],
+    [
+      handlePublicRatehawkPrebookAccept,
+      {
+        trigger: "accept_prebook_terms",
+        prebook_ref: "rhp1.aaa.bbb",
+        terms_revision: "rev",
+        price: "1.00",
+        locale: "nl",
+      },
+    ],
+  ]) {
+    const kv = trackingBookingKv();
+    const hotels = trackingHotelsBinding();
+    const dto = await handler({
+      env: { BOOKING_KV: kv.kv, RATEHAWK_HOTELS: hotels.binding },
+      body,
+    });
+    assert.equal(dto.ok, true);
+    assert.equal(dto.invoked, false);
+    assert.equal(dto.reason, "client_control_forbidden");
+    assert.equal(kv.state.puts, 0);
+    assert.equal(hotels.state.calls, 0);
+  }
+});
+
+test("structurally valid public prebook and accept still reach the limiter", async () => {
+  const prebookKv = trackingBookingKv();
+  const prebookHotels = trackingHotelsBinding();
+  const prebook = await handlePublicRatehawkPrebook({
+    env: { BOOKING_KV: prebookKv.kv, RATEHAWK_HOTELS: prebookHotels.binding },
+    request: new Request("https://booking.internal/public/hotels/ratehawk/prebook", {
+      headers: { "cf-connecting-ip": "203.0.113.21" },
+    }),
+    body: { trigger: "prebook_revalidation", offer_ref: "rh1.aaa.bbb", locale: "nl" },
+  });
+  assert.equal(prebookKv.state.puts, 1);
+  assert.equal(prebookHotels.state.calls, 1);
+  assert.equal(prebook.reason, "hotels_worker_unavailable");
+
+  const acceptKv = trackingBookingKv();
+  const acceptHotels = trackingHotelsBinding();
+  const accepted = await handlePublicRatehawkPrebookAccept({
+    env: { BOOKING_KV: acceptKv.kv, RATEHAWK_HOTELS: acceptHotels.binding },
+    request: new Request("https://booking.internal/public/hotels/ratehawk/prebook/accept", {
+      headers: { "cf-connecting-ip": "203.0.113.22" },
+    }),
+    body: {
+      trigger: "accept_prebook_terms",
+      prebook_ref: "rhp1.aaa.bbb",
+      terms_revision: "terms-rev-test",
+      locale: "nl",
+    },
+  });
+  assert.equal(acceptKv.state.puts, 1);
+  assert.equal(acceptHotels.state.calls, 1);
+  assert.equal(accepted.reason, "hotels_worker_unavailable");
+});
+
+test("public accept limiter denial makes zero Hotels calls", async () => {
+  let hotelsCalls = 0;
+  const dto = await handlePublicRatehawkPrebookAccept({
+    env: {
+      BOOKING_KV: {
+        async get() {
+          return { count: 20 };
+        },
+        async put() {
+          throw new Error("must_not_write_after_limit");
+        },
+      },
+      RATEHAWK_HOTELS: {
+        async fetch() {
+          hotelsCalls += 1;
+          throw new Error("must_not_call_hotels");
+        },
+      },
+    },
+    request: new Request("https://booking.internal/public/hotels/ratehawk/prebook/accept", {
+      method: "POST",
+      headers: { "cf-connecting-ip": "203.0.113.9" },
+    }),
+    body: {
+      trigger: "accept_prebook_terms",
+      prebook_ref: "rhp1.aaa.bbb",
+      terms_revision: "terms-rev-test",
+      locale: "nl",
+    },
+  });
+  assert.equal(hotelsCalls, 0);
+  assert.equal(dto.invoked, false);
+  assert.equal(dto.reason, "rate_limited");
+});
+
+test("public prebook route order rejects before limiter and Hotels binding", () => {
+  const workerSource = readFileSync(
+    join(HERE, "../../booking/fluxidi_booking_worker.js"),
+    "utf8",
+  );
+  const facade = readFileSync(
+    join(HERE, "../../booking/modules/ratehawk_hotels_facade.mjs"),
+    "utf8",
+  );
+  const prebookRoute = workerSource.slice(
+    workerSource.indexOf('url.pathname === "/public/hotels/ratehawk/prebook"'),
+    workerSource.indexOf('url.pathname === "/public/hotels/ratehawk/prebook/accept"'),
+  );
+  const acceptRoute = workerSource.slice(
+    workerSource.indexOf('url.pathname === "/public/hotels/ratehawk/prebook/accept"'),
+    workerSource.indexOf('url.pathname === "/public/hotels/google-place-photo"'),
+  );
+  for (const route of [prebookRoute, acceptRoute]) {
+    assert.match(route, /readPublicRatehawkJsonBody/);
+    assert.equal(route.includes("safeJson"), false);
+    assert.ok(route.indexOf("readPublicRatehawkJsonBody") < route.indexOf("handlePublicRatehawk"));
+    assert.ok(route.indexOf("parsed") < route.indexOf("handlePublicRatehawk"));
+    assert.match(route, /http_status === 400/);
+  }
+  const prebookFn = facade.slice(
+    facade.indexOf("export async function handlePublicRatehawkPrebook"),
+    facade.indexOf("export async function handlePublicRatehawkPrebookAccept"),
+  );
+  const acceptFn = facade.slice(
+    facade.indexOf("export async function handlePublicRatehawkPrebookAccept"),
+    facade.indexOf("function _safeTestUnavailable"),
+  );
+  assert.ok(
+    prebookFn.indexOf("hasForbiddenPublicPrebookClientControl") <
+      prebookFn.indexOf("_incrementPrebookRateLimit"),
+  );
+  assert.ok(prebookFn.indexOf("missing_offer_ref") < prebookFn.indexOf("_incrementPrebookRateLimit"));
+  assert.ok(
+    prebookFn.indexOf("_incrementPrebookRateLimit") <
+      prebookFn.indexOf("_proxyProductionHotelsPath"),
+  );
+  assert.ok(
+    acceptFn.indexOf("hasForbiddenPublicPrebookClientControl") <
+      acceptFn.indexOf("_incrementPrebookRateLimit"),
+  );
+  assert.ok(acceptFn.indexOf("missing_prebook_ref") < acceptFn.indexOf("_incrementPrebookRateLimit"));
+  assert.ok(
+    acceptFn.indexOf("missing_terms_revision") < acceptFn.indexOf("_incrementPrebookRateLimit"),
+  );
+  assert.ok(
+    acceptFn.indexOf("_incrementPrebookRateLimit") <
+      acceptFn.indexOf("_proxyProductionHotelsPath"),
+  );
 });

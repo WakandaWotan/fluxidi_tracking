@@ -22,7 +22,12 @@ import {
   hasForbiddenRatehawkTestClientControl,
 } from "../../ratehawk-hotels/modules/ratehawk_test_activation.mjs";
 import { hasForbiddenPublicSearchClientControl } from "../../ratehawk-hotels/modules/ratehawk_market_search_limits.mjs";
-import { hasForbiddenPublicPrebookClientControl } from "../../ratehawk-hotels/modules/ratehawk_prebook_contract.mjs";
+import {
+  RATEHAWK_PREBOOK_ACCEPT_TRIGGER,
+  RATEHAWK_PREBOOK_REF_PREFIX,
+  RATEHAWK_PREBOOK_TRIGGER,
+  hasForbiddenPublicPrebookClientControl,
+} from "../../ratehawk-hotels/modules/ratehawk_prebook_contract.mjs";
 import {
   RATEHAWK_HOTELS_PREBOOK_ACCEPT_PATH,
   RATEHAWK_HOTELS_PREBOOK_PATH,
@@ -539,6 +544,57 @@ async function _incrementPrebookRateLimit(env, request) {
   return { ok: true, limited: false, count: count + 1 };
 }
 
+const RATEHAWK_PUBLIC_OFFER_REF_PREFIX = "rh1";
+
+function _publicPrebookClientError(error) {
+  return {
+    ok: false,
+    error,
+    http_status: 400,
+  };
+}
+
+function _opaquePublicRef(value, prefix) {
+  const text = String(value ?? "").trim();
+  if (!text || text.length > 4000) return "";
+  const parts = text.split(".");
+  if (parts.length !== 3 || parts[0] !== prefix || !parts[1] || !parts[2]) {
+    return "";
+  }
+  if (/\s/.test(text)) return "";
+  return text;
+}
+
+export async function readPublicRatehawkJsonBody(request) {
+  let raw = "";
+  try {
+    raw = await request.text();
+  } catch {
+    return { ok: false, error: "invalid_json_body" };
+  }
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) {
+    return { ok: false, error: "invalid_json_body" };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return { ok: false, error: "invalid_json_body" };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ok: false, error: "invalid_request_body" };
+  }
+  return { ok: true, body: parsed };
+}
+
+function _assertPublicPrebookObject(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, error: "invalid_request_body" };
+  }
+  return { ok: true, body };
+}
+
 function _safePrebookUnavailable(reason) {
   return {
     ok: true,
@@ -598,13 +654,26 @@ export async function handlePublicRatehawkPrebook({
   request = null,
   body = {},
 } = {}) {
-  const requestBody =
-    body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  const shaped = _assertPublicPrebookObject(body);
+  if (shaped.ok !== true) {
+    return _publicPrebookClientError(shaped.error);
+  }
+  const requestBody = shaped.body;
   if (bookingWorkerHasRatehawkCredentials(env)) {
     return _safePrebookUnavailable("booking_worker_must_not_hold_ratehawk_secrets");
   }
   if (hasForbiddenPublicPrebookClientControl(requestBody)) {
     return _safePrebookUnavailable("client_control_forbidden");
+  }
+  if (_text(requestBody.trigger, 40) !== RATEHAWK_PREBOOK_TRIGGER) {
+    return _publicPrebookClientError("invalid_request_body");
+  }
+  const offerRef = _opaquePublicRef(
+    requestBody.offer_ref,
+    RATEHAWK_PUBLIC_OFFER_REF_PREFIX,
+  );
+  if (!offerRef) {
+    return _publicPrebookClientError("missing_offer_ref");
   }
   const rate = await _incrementPrebookRateLimit(env, request);
   if (rate.ok !== true || rate.limited === true) {
@@ -614,8 +683,8 @@ export async function handlePublicRatehawkPrebook({
     env,
     RATEHAWK_HOTELS_PREBOOK_PATH,
     {
-      trigger: "prebook_revalidation",
-      offer_ref: _text(requestBody.offer_ref, 4000),
+      trigger: RATEHAWK_PREBOOK_TRIGGER,
+      offer_ref: offerRef,
       locale: _text(requestBody.locale, 8) || "nl",
     },
   );
@@ -627,13 +696,30 @@ export async function handlePublicRatehawkPrebookAccept({
   request = null,
   body = {},
 } = {}) {
-  const requestBody =
-    body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  const shaped = _assertPublicPrebookObject(body);
+  if (shaped.ok !== true) {
+    return _publicPrebookClientError(shaped.error);
+  }
+  const requestBody = shaped.body;
   if (bookingWorkerHasRatehawkCredentials(env)) {
     return _safePrebookUnavailable("booking_worker_must_not_hold_ratehawk_secrets");
   }
   if (hasForbiddenPublicPrebookClientControl(requestBody)) {
     return _safePrebookUnavailable("client_control_forbidden");
+  }
+  if (_text(requestBody.trigger, 40) !== RATEHAWK_PREBOOK_ACCEPT_TRIGGER) {
+    return _publicPrebookClientError("invalid_request_body");
+  }
+  const prebookRef = _opaquePublicRef(
+    requestBody.prebook_ref,
+    RATEHAWK_PREBOOK_REF_PREFIX,
+  );
+  if (!prebookRef) {
+    return _publicPrebookClientError("missing_prebook_ref");
+  }
+  const termsRevision = _text(requestBody.terms_revision, 120);
+  if (!termsRevision) {
+    return _publicPrebookClientError("missing_terms_revision");
   }
   const rate = await _incrementPrebookRateLimit(env, request);
   if (rate.ok !== true || rate.limited === true) {
@@ -643,9 +729,9 @@ export async function handlePublicRatehawkPrebookAccept({
     env,
     RATEHAWK_HOTELS_PREBOOK_ACCEPT_PATH,
     {
-      trigger: "accept_prebook_terms",
-      prebook_ref: _text(requestBody.prebook_ref, 4000),
-      terms_revision: _text(requestBody.terms_revision, 120),
+      trigger: RATEHAWK_PREBOOK_ACCEPT_TRIGGER,
+      prebook_ref: prebookRef,
+      terms_revision: termsRevision,
       locale: _text(requestBody.locale, 8) || "nl",
     },
   );

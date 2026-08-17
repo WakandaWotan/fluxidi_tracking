@@ -36,6 +36,7 @@ import { postRatehawkTestOnce } from "./ratehawk_test_transport.mjs";
 import { fetchRatehawkTestSerp } from "./ratehawk_serp_transport.mjs";
 import { handleRatehawkTestSearchRequest } from "./ratehawk_test_search.mjs";
 import { handleRatehawkTestHotelpageRequest } from "./ratehawk_test_hotelpage.mjs";
+import { handleRatehawkTestPrebookRequest } from "./ratehawk_test_prebook.mjs";
 import {
   handleRatehawkHotelsWorkerFetch,
   RATEHAWK_HOTELS_INTERNAL_PROXY,
@@ -203,6 +204,35 @@ test("production worker surface cannot run test search even when gates are on", 
     now: NOW,
   });
   assert.equal(state.calls, 0);
+  assert.equal(dto.reason, "test_worker_required");
+});
+
+test("production worker surface cannot run test prebook even when its test gate is on", async () => {
+  const { state, fetchImpl } = trackingFetch(async () => {
+    throw new Error("must_not_call_ratehawk");
+  });
+  assert.equal(
+    evaluateRatehawkTestPrebookGate({
+      RATEHAWK_TEST_PREBOOK_ENABLED: "1",
+      RATEHAWK_WORKER_SURFACE: "production",
+    }).reason,
+    "test_worker_required",
+  );
+  const dto = await handleRatehawkTestPrebookRequest({
+    env: hotelsEnv({
+      RATEHAWK_WORKER_SURFACE: "production",
+      RATEHAWK_TEST_PREBOOK_ENABLED: "1",
+    }),
+    body: {
+      trigger: "test_prebook_revalidation",
+      offer_ref: "rh1.aaa.bbb",
+      locale: "nl",
+    },
+    fetchImpl,
+    now: NOW,
+  });
+  assert.equal(state.calls, 0);
+  assert.equal(dto.invoked, false);
   assert.equal(dto.reason, "test_worker_required");
 });
 
