@@ -22,7 +22,12 @@ export const RATEHAWK_HOTELPAGE_PUBLIC_PATH =
   "/public/hotels/ratehawk/hotelpage";
 export const RATEHAWK_HOTELS_BINDING = "RATEHAWK_HOTELS";
 export const RATEHAWK_HOTELS_SERVICE_NAME = "fluxidi-ratehawk-hotels-api";
+export const RATEHAWK_HOTELS_TEST_BINDING = "RATEHAWK_HOTELS_TEST";
+export const RATEHAWK_HOTELS_TEST_SERVICE_NAME =
+  "fluxidi-ratehawk-hotels-api-test";
 export const RATEHAWK_HOTELS_INTERNAL_PROXY = "booking_worker_v1";
+export const RATEHAWK_TEST_VIEW_STAY_CONTEXT_SECRET_NAME =
+  "RATEHAWK_TEST_VIEW_STAY_CONTEXT_SECRET";
 export const RATEHAWK_HOTELS_TEST_SEARCH_PATH = "/internal/test-search";
 export const RATEHAWK_HOTELS_TEST_HOTELPAGE_PATH = "/internal/test-hotelpage";
 export const RATEHAWK_ADMIN_TEST_SEARCH_PATH =
@@ -309,12 +314,18 @@ function _safeTestUnavailable(reason) {
 }
 
 async function _proxyHotelsTestPath(env, path, body) {
-  if (!env?.RATEHAWK_HOTELS || typeof env.RATEHAWK_HOTELS.fetch !== "function") {
-    return { ok: false, dto: _safeTestUnavailable("hotels_worker_binding_missing") };
+  if (
+    !env?.RATEHAWK_HOTELS_TEST ||
+    typeof env.RATEHAWK_HOTELS_TEST.fetch !== "function"
+  ) {
+    return {
+      ok: false,
+      dto: _safeTestUnavailable("hotels_test_worker_binding_missing"),
+    };
   }
   try {
-    const resp = await env.RATEHAWK_HOTELS.fetch(
-      new Request(`https://fluxidi-ratehawk-hotels-api.internal${path}`, {
+    const resp = await env.RATEHAWK_HOTELS_TEST.fetch(
+      new Request(`https://fluxidi-ratehawk-hotels-api-test.internal${path}`, {
         method: "POST",
         headers: {
           accept: "application/json",
@@ -350,7 +361,7 @@ export async function handleAdminRatehawkTestSearch({
   if (!isBookingRatehawkTestSearchEnabled(env)) {
     return _safeTestUnavailable("test_search_disabled");
   }
-  if (!_text(env?.RATEHAWK_VIEW_STAY_CONTEXT_SECRET, 800)) {
+  if (!_text(env?.RATEHAWK_TEST_VIEW_STAY_CONTEXT_SECRET, 800)) {
     return _safeTestUnavailable("view_stay_context_secret_missing");
   }
   const proxied = await _proxyHotelsTestPath(
@@ -377,7 +388,7 @@ export async function handleAdminRatehawkTestHotelpage({
   if (!isBookingRatehawkTestHotelpageEnabled(env)) {
     return _safeTestUnavailable("test_hotelpage_disabled");
   }
-  const contextSecret = _text(env?.RATEHAWK_VIEW_STAY_CONTEXT_SECRET, 800);
+  const contextSecret = _text(env?.RATEHAWK_TEST_VIEW_STAY_CONTEXT_SECRET, 800);
   const opened = await openRatehawkViewStayContext(
     contextSecret,
     requestBody.view_stay_context ?? requestBody.selected_card_context,
@@ -413,6 +424,7 @@ export function runTaxiBookingIsolationProbe(input = {}) {
     amount_minor: amountMinor,
     currency: "EUR",
     invoked_ratehawk: false,
+    invoked_ratehawk_test: false,
   };
 }
 

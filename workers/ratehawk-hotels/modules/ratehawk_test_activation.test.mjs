@@ -62,6 +62,7 @@ function hotelsEnv(overrides = {}) {
     RATEHAWK_ENVIRONMENT: "test",
     RATEHAWK_ENABLED: "0",
     RATEHAWK_HOTELPAGE_ENABLED: "0",
+    RATEHAWK_WORKER_SURFACE: "test",
     RATEHAWK_TEST_SEARCH_ENABLED: "1",
     RATEHAWK_TEST_HOTELPAGE_ENABLED: "1",
     RATEHAWK_OFFER_REF_SECRET: OFFER_SECRET,
@@ -183,6 +184,22 @@ test("1. search gate off performs zero transport", async () => {
   assert.equal(dto.invoked, false);
   assert.equal(dto.reason, "test_search_disabled");
   assert.equal(dto.view_stay_context, null);
+});
+
+test("production worker surface cannot run test search even when gates are on", async () => {
+  const { state, fetchImpl } = trackingFetch(async () => {
+    throw new Error("must_not_call_ratehawk");
+  });
+  const dto = await handleRatehawkTestSearchRequest({
+    env: hotelsEnv({
+      RATEHAWK_WORKER_SURFACE: "production",
+      RATEHAWK_TEST_SEARCH_ENABLED: "1",
+    }),
+    fetchImpl,
+    now: NOW,
+  });
+  assert.equal(state.calls, 0);
+  assert.equal(dto.reason, "test_worker_required");
 });
 
 test("production gates do not enable test search", async () => {

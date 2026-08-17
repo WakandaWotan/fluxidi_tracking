@@ -60,6 +60,7 @@ function hotelsEnv(overrides = {}) {
     RATEHAWK_API_KEY: TEST_API_KEY,
     RATEHAWK_BASE_URL: "https://api.ratehawk.com",
     RATEHAWK_ENVIRONMENT: "test",
+    RATEHAWK_WORKER_SURFACE: "production",
     RATEHAWK_ENABLED: "1",
     RATEHAWK_HOTELPAGE_ENABLED: "1",
     RATEHAWK_OFFER_REF_SECRET: OFFER_SECRET,
@@ -76,6 +77,31 @@ function bookingEnv(hotelsBinding, overrides = {}) {
     RATEHAWK_HOTELS: hotelsBinding,
     ...overrides,
   };
+}
+
+function bookingTestEnv(testBinding, overrides = {}) {
+  return {
+    BOOKING_KV: memoryKv(),
+    RATEHAWK_TEST_VIEW_STAY_CONTEXT_SECRET: CONTEXT_SECRET,
+    RATEHAWK_HOTELS_TEST: testBinding,
+    RATEHAWK_HOTELS: {
+      fetch: async () => {
+        throw new Error("production_hotels_must_not_be_called");
+      },
+    },
+    ...overrides,
+  };
+}
+
+function testHotelsEnv(overrides = {}) {
+  return hotelsEnv({
+    RATEHAWK_WORKER_SURFACE: "test",
+    RATEHAWK_ENABLED: "0",
+    RATEHAWK_HOTELPAGE_ENABLED: "0",
+    RATEHAWK_TEST_SEARCH_ENABLED: "1",
+    RATEHAWK_TEST_HOTELPAGE_ENABLED: "1",
+    ...overrides,
+  });
 }
 
 function stay() {
@@ -239,6 +265,8 @@ test("1. Booking Worker has no RateHawk credentials", () => {
   assert.match(wrangler, /RATEHAWK_TEST_HOTELPAGE_ENABLED = "0"/);
   assert.match(wrangler, /binding = "RATEHAWK_HOTELS"/);
   assert.match(wrangler, /service = "fluxidi-ratehawk-hotels-api"/);
+  assert.match(wrangler, /binding = "RATEHAWK_HOTELS_TEST"/);
+  assert.match(wrangler, /service = "fluxidi-ratehawk-hotels-api-test"/);
 });
 
 test("2. Booking Worker cannot construct provider Authorization", () => {
@@ -517,11 +545,11 @@ test("14. Existing safe customer DTO remains unchanged", async () => {
 });
 
 test("15. disabled test search makes zero binding calls", async () => {
-  const hotels = hotelsBinding(hotelsEnv(), async () => {
+  const hotels = hotelsBinding(testHotelsEnv(), async () => {
     throw new Error("must_not_call_hotels");
   });
   const dto = await handleAdminRatehawkTestSearch({
-    env: bookingEnv(hotels.binding, { RATEHAWK_TEST_SEARCH_ENABLED: "0" }),
+    env: bookingTestEnv(hotels.binding, { RATEHAWK_TEST_SEARCH_ENABLED: "0" }),
     now: RETRIEVED_AT,
   });
   assert.equal(hotels.state.calls, 0);
@@ -530,7 +558,7 @@ test("15. disabled test search makes zero binding calls", async () => {
 });
 
 test("16. disabled test Hotelpage makes zero binding calls", async () => {
-  const hotels = hotelsBinding(hotelsEnv(), async () => {
+  const hotels = hotelsBinding(testHotelsEnv(), async () => {
     throw new Error("must_not_call_hotels");
   });
   const stay = resolveRatehawkTestStay(RETRIEVED_AT);
@@ -538,7 +566,7 @@ test("16. disabled test Hotelpage makes zero binding calls", async () => {
     now: RETRIEVED_AT,
   });
   const dto = await handleAdminRatehawkTestHotelpage({
-    env: bookingEnv(hotels.binding, { RATEHAWK_TEST_HOTELPAGE_ENABLED: "0" }),
+    env: bookingTestEnv(hotels.binding, { RATEHAWK_TEST_HOTELPAGE_ENABLED: "0" }),
     body: { view_stay_context: issued.token },
     now: RETRIEVED_AT,
   });
@@ -547,11 +575,12 @@ test("16. disabled test Hotelpage makes zero binding calls", async () => {
 });
 
 test("17. missing context secret fails only RateHawk test functionality", async () => {
-  const hotels = hotelsBinding(hotelsEnv(), async () => {
+  const hotels = hotelsBinding(testHotelsEnv(), async () => {
     throw new Error("must_not_call_hotels");
   });
-  const env = bookingEnv(hotels.binding, {
-    RATEHAWK_VIEW_STAY_CONTEXT_SECRET: "",
+  const env = bookingTestEnv(hotels.binding, {
+    RATEHAWK_TEST_VIEW_STAY_CONTEXT_SECRET: "",
+    RATEHAWK_VIEW_STAY_CONTEXT_SECRET: CONTEXT_SECRET,
     RATEHAWK_TEST_SEARCH_ENABLED: "1",
     RATEHAWK_TEST_HOTELPAGE_ENABLED: "1",
   });
@@ -567,6 +596,7 @@ test("17. missing context secret fails only RateHawk test functionality", async 
   assert.equal(hotelpage.reason, "view_stay_context_secret_missing");
   assert.equal(taxi.ok, true);
   assert.equal(taxi.invoked_ratehawk, false);
+  assert.equal(taxi.invoked_ratehawk_test, false);
 });
 
 test("18. public RateHawk search remains guarded and empty", () => {
@@ -586,16 +616,20 @@ test("19. taxi-shaped work cannot reach test routes", () => {
   const fleet = readFileSync(join(HERE, "fleet_vehicle_tombstone.mjs"), "utf8");
   assert.equal(street.includes("/admin/hotels/ratehawk/test/search"), false);
   assert.equal(street.includes("/internal/test-search"), false);
+  assert.equal(street.includes("RATEHAWK_HOTELS"), false);
+  assert.equal(street.includes("RATEHAWK_HOTELS_TEST"), false);
   assert.equal(fleet.includes("/admin/hotels/ratehawk/test/hotelpage"), false);
   assert.equal(fleet.includes("/internal/test-hotelpage"), false);
+  assert.equal(fleet.includes("RATEHAWK_HOTELS"), false);
+  assert.equal(fleet.includes("RATEHAWK_HOTELS_TEST"), false);
 });
 
 test("Booking verifies context before proxying test Hotelpage", async () => {
-  const hotels = hotelsBinding(hotelsEnv(), async () => {
+  const hotels = hotelsBinding(testHotelsEnv(), async () => {
     throw new Error("must_not_call_hotels");
   });
   const dto = await handleAdminRatehawkTestHotelpage({
-    env: bookingEnv(hotels.binding, { RATEHAWK_TEST_HOTELPAGE_ENABLED: "1" }),
+    env: bookingTestEnv(hotels.binding, { RATEHAWK_TEST_HOTELPAGE_ENABLED: "1" }),
     body: { view_stay_context: "rhctx1.not-a-token.nope" },
     now: RETRIEVED_AT,
   });

@@ -14,14 +14,16 @@ find_additional_modules = false
 enabled = true
 
 [vars]
-# RateHawk / ETG hotel provider — secrets via `wrangler secret put`, never commit.
+# Production security domain. Do not put RateHawk test credentials, the test
+# host, or RATEHAWK_ENVIRONMENT=test on this Worker.
+# Secrets via `wrangler secret put` on this Worker only, never commit:
 # RATEHAWK_KEY_ID
 # RATEHAWK_API_KEY
-# RATEHAWK_BASE_URL
-# RATEHAWK_ENVIRONMENT          — sandbox | test | production
+# RATEHAWK_OFFER_REF_SECRET
+# RATEHAWK_VIEW_STAY_CONTEXT_SECRET
+# RATEHAWK_BASE_URL / RATEHAWK_ENVIRONMENT stay unset here until production.
 # RATEHAWK_PRODUCTION_ENABLED   — extra production gate (P3)
-# RATEHAWK_OFFER_REF_SECRET     — mandatory AES-GCM offer-reference secret
-# RATEHAWK_VIEW_STAY_CONTEXT_SECRET — HMAC for server-issued View stay context
+RATEHAWK_WORKER_SURFACE = "production"
 RATEHAWK_ENABLED = "0"
 RATEHAWK_HOTELPAGE_ENABLED = "0"
 RATEHAWK_CONTENT_SYNC_ENABLED = "0"
@@ -60,4 +62,44 @@ class_name = "RatehawkProviderQuotaDO"
 
 [[migrations]]
 tag = "ratehawk-provider-quota-v1"
+new_sqlite_classes = ["RatehawkProviderQuotaDO"]
+
+# Isolated test security domain. Bindings/vars/secrets do not inherit.
+# Deploy later only with: npx wrangler deploy --env test
+# That first deploy would create fluxidi-ratehawk-hotels-api-test and a
+# separate RatehawkProviderQuotaDO namespace. Do not share script_name
+# with production. No D1, cron, route, workers.dev or preview URL.
+[env.test]
+name = "fluxidi-ratehawk-hotels-api-test"
+main = "fluxidi_ratehawk_hotels_worker.js"
+compatibility_date = "2026-04-30"
+workers_dev = false
+preview_urls = false
+find_additional_modules = false
+
+[env.test.observability.logs]
+enabled = true
+
+[env.test.vars]
+# Future secrets (wrangler secret put --env test), never commit:
+# RATEHAWK_KEY_ID
+# RATEHAWK_API_KEY
+# RATEHAWK_OFFER_REF_SECRET
+# RATEHAWK_VIEW_STAY_CONTEXT_SECRET
+RATEHAWK_WORKER_SURFACE = "test"
+RATEHAWK_ENVIRONMENT = "test"
+RATEHAWK_BASE_URL = "https://api.ratehawk.com"
+RATEHAWK_ENABLED = "0"
+RATEHAWK_HOTELPAGE_ENABLED = "0"
+RATEHAWK_CONTENT_SYNC_ENABLED = "0"
+RATEHAWK_CONTENT_BATCH_ENABLED = "0"
+RATEHAWK_TEST_SEARCH_ENABLED = "0"
+RATEHAWK_TEST_HOTELPAGE_ENABLED = "0"
+
+[[env.test.durable_objects.bindings]]
+name = "RATEHAWK_PROVIDER_QUOTA"
+class_name = "RatehawkProviderQuotaDO"
+
+[[env.test.migrations]]
+tag = "ratehawk-provider-quota-test-v1"
 new_sqlite_classes = ["RatehawkProviderQuotaDO"]

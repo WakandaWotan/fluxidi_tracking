@@ -28,6 +28,7 @@ function hotelsEnv(overrides = {}) {
     RATEHAWK_API_KEY: TEST_API_KEY,
     RATEHAWK_BASE_URL: "https://api.ratehawk.com",
     RATEHAWK_ENVIRONMENT: "test",
+    RATEHAWK_WORKER_SURFACE: "test",
     RATEHAWK_ENABLED: "0",
     RATEHAWK_HOTELPAGE_ENABLED: "0",
     RATEHAWK_TEST_SEARCH_ENABLED: "1",
@@ -62,11 +63,17 @@ test("17. unauthenticated admin test routes return 401 and make zero binding cal
     ADMIN_TOKEN,
     RATEHAWK_TEST_SEARCH_ENABLED: "1",
     RATEHAWK_TEST_HOTELPAGE_ENABLED: "1",
-    RATEHAWK_VIEW_STAY_CONTEXT_SECRET: CONTEXT_SECRET,
+    RATEHAWK_TEST_VIEW_STAY_CONTEXT_SECRET: CONTEXT_SECRET,
     RATEHAWK_HOTELS: {
       fetch: async () => {
         state.calls += 1;
-        throw new Error("must_not_call_binding");
+        throw new Error("must_not_call_production_binding");
+      },
+    },
+    RATEHAWK_HOTELS_TEST: {
+      fetch: async () => {
+        state.calls += 1;
+        throw new Error("must_not_call_test_binding");
       },
     },
   };
@@ -94,10 +101,17 @@ test("Hotels binding failure affects only the test hotel route", async () => {
   const env = {
     RATEHAWK_TEST_SEARCH_ENABLED: "1",
     RATEHAWK_TEST_HOTELPAGE_ENABLED: "1",
-    RATEHAWK_VIEW_STAY_CONTEXT_SECRET: CONTEXT_SECRET,
+    RATEHAWK_TEST_VIEW_STAY_CONTEXT_SECRET: CONTEXT_SECRET,
     RATEHAWK_HOTELS: {
+      fetch: async () => ({
+        json: async () => {
+          throw new Error("production_hotels_must_not_be_called");
+        },
+      }),
+    },
+    RATEHAWK_HOTELS_TEST: {
       fetch: async () => {
-        throw new Error("hotels_down");
+        throw new Error("hotels_test_down");
       },
     },
   };
@@ -171,8 +185,13 @@ test("authenticated test search proxies only the private test-search path", asyn
   const dto = await handleAdminRatehawkTestSearch({
     env: {
       RATEHAWK_TEST_SEARCH_ENABLED: "1",
-      RATEHAWK_VIEW_STAY_CONTEXT_SECRET: CONTEXT_SECRET,
-      RATEHAWK_HOTELS: binding,
+      RATEHAWK_TEST_VIEW_STAY_CONTEXT_SECRET: CONTEXT_SECRET,
+      RATEHAWK_HOTELS: {
+        fetch: async () => {
+          throw new Error("production_hotels_must_not_be_called");
+        },
+      },
+      RATEHAWK_HOTELS_TEST: binding,
     },
     now: NOW,
   });

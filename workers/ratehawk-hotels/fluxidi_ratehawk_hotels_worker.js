@@ -34,8 +34,11 @@ import { RatehawkProviderQuotaDO } from "./modules/ratehawk_provider_quota.mjs";
 import { buildSafeRatehawkProviderStatus } from "./modules/ratehawk_provider.mjs";
 import { verifyRatehawkViewStayContext } from "./modules/ratehawk_view_stay_context.mjs";
 import {
+  isRatehawkIsolatedTestWorker,
   isRatehawkTestHotelpageEnabled,
   isRatehawkTestSearchEnabled,
+  resolveRatehawkWorkerName,
+  resolveRatehawkWorkerSurface,
 } from "./modules/ratehawk_test_activation.mjs";
 import { handleRatehawkTestSearchRequest } from "./modules/ratehawk_test_search.mjs";
 import { handleRatehawkTestHotelpageRequest } from "./modules/ratehawk_test_hotelpage.mjs";
@@ -120,7 +123,8 @@ export async function handleRatehawkHotelsWorkerFetch(
   if (url.pathname === RATEHAWK_HOTELS_STATUS_PATH && request.method === "GET") {
     return json({
       ok: true,
-      worker: RATEHAWK_HOTELS_WORKER_NAME,
+      worker: resolveRatehawkWorkerName(env),
+      worker_surface: resolveRatehawkWorkerSurface(env),
       public_route: false,
       content_sync_on_customer_request:
         isRatehawkContentSyncAllowedOnCustomerRequest(),
@@ -142,6 +146,9 @@ export async function handleRatehawkHotelsWorkerFetch(
     url.pathname === RATEHAWK_HOTELS_HOTELPAGE_PATH &&
     request.method === "POST"
   ) {
+    if (isRatehawkIsolatedTestWorker(env)) {
+      return json(_unavailable("production_path_forbidden_on_test_worker"));
+    }
     let body = {};
     try {
       body = await request.json();
@@ -173,6 +180,14 @@ export async function handleRatehawkHotelsWorkerFetch(
     url.pathname === RATEHAWK_HOTELS_TEST_SEARCH_PATH &&
     request.method === "POST"
   ) {
+    if (!isRatehawkIsolatedTestWorker(env)) {
+      return json({
+        ok: false,
+        invoked: false,
+        reason: "test_worker_required",
+        view_stay_context: null,
+      });
+    }
     let body = {};
     try {
       body = await request.json();
@@ -196,6 +211,9 @@ export async function handleRatehawkHotelsWorkerFetch(
     url.pathname === RATEHAWK_HOTELS_TEST_HOTELPAGE_PATH &&
     request.method === "POST"
   ) {
+    if (!isRatehawkIsolatedTestWorker(env)) {
+      return json(_unavailable("test_worker_required"));
+    }
     let body = {};
     try {
       body = await request.json();
@@ -219,6 +237,15 @@ export async function handleRatehawkHotelsWorkerFetch(
     url.pathname === RATEHAWK_HOTELS_CONTENT_SYNC_PATH &&
     request.method === "POST"
   ) {
+    if (isRatehawkIsolatedTestWorker(env)) {
+      return json({
+        ok: true,
+        executed: false,
+        provider_requested: false,
+        reason: "production_path_forbidden_on_test_worker",
+        jobs: [],
+      });
+    }
     let body = {};
     try {
       body = await request.json();
@@ -319,6 +346,15 @@ export async function handleRatehawkContentSyncRequest({
 }
 
 export async function handleRatehawkHotelsScheduled(event, env) {
+  if (isRatehawkIsolatedTestWorker(env)) {
+    return {
+      ok: true,
+      executed: false,
+      provider_requested: false,
+      reason: "production_path_forbidden_on_test_worker",
+      jobs: [],
+    };
+  }
   return handleRatehawkContentSyncRequest({
     env,
     body: {},

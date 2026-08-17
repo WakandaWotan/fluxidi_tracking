@@ -18,6 +18,10 @@ import { RATEHAWK_HOTELPAGE_PATH } from "./ratehawk_hotelpage_contract.mjs";
 
 export const RATEHAWK_TEST_SEARCH_GATE = "RATEHAWK_TEST_SEARCH_ENABLED";
 export const RATEHAWK_TEST_HOTELPAGE_GATE = "RATEHAWK_TEST_HOTELPAGE_ENABLED";
+export const RATEHAWK_WORKER_SURFACE_PRODUCTION = "production";
+export const RATEHAWK_WORKER_SURFACE_TEST = "test";
+export const RATEHAWK_PRODUCTION_WORKER_NAME = "fluxidi-ratehawk-hotels-api";
+export const RATEHAWK_TEST_WORKER_NAME = "fluxidi-ratehawk-hotels-api-test";
 export const RATEHAWK_TEST_OPERATION_SERP = "test_serp_hotels";
 export const RATEHAWK_TEST_OPERATION_HOTELPAGE = "test_hotelpage";
 export const RATEHAWK_TEST_HID = Number(RATEHAWK_TEST_HOTEL_HID);
@@ -116,6 +120,23 @@ export function resolveRatehawkTestStay(now = Date.now()) {
     language: RATEHAWK_TEST_LANGUAGE,
     guests: [{ adults: RATEHAWK_TEST_ADULTS, children: [] }],
   };
+}
+
+export function resolveRatehawkWorkerSurface(env) {
+  const value = String(env?.RATEHAWK_WORKER_SURFACE || "").trim().toLowerCase();
+  return value === RATEHAWK_WORKER_SURFACE_TEST
+    ? RATEHAWK_WORKER_SURFACE_TEST
+    : RATEHAWK_WORKER_SURFACE_PRODUCTION;
+}
+
+export function isRatehawkIsolatedTestWorker(env) {
+  return resolveRatehawkWorkerSurface(env) === RATEHAWK_WORKER_SURFACE_TEST;
+}
+
+export function resolveRatehawkWorkerName(env) {
+  return isRatehawkIsolatedTestWorker(env)
+    ? RATEHAWK_TEST_WORKER_NAME
+    : RATEHAWK_PRODUCTION_WORKER_NAME;
 }
 
 export function isRatehawkTestSearchEnabled(env) {
@@ -227,12 +248,18 @@ export function evaluateRatehawkTestSearchGate(env) {
   if (!isRatehawkTestSearchEnabled(env)) {
     return { ok: false, allowed: false, reason: "test_search_disabled" };
   }
+  if (!isRatehawkIsolatedTestWorker(env)) {
+    return { ok: false, allowed: false, reason: "test_worker_required" };
+  }
   return { ok: true, allowed: true, reason: null };
 }
 
 export function evaluateRatehawkTestHotelpageGate(env) {
   if (!isRatehawkTestHotelpageEnabled(env)) {
     return { ok: false, allowed: false, reason: "test_hotelpage_disabled" };
+  }
+  if (!isRatehawkIsolatedTestWorker(env)) {
+    return { ok: false, allowed: false, reason: "test_worker_required" };
   }
   return { ok: true, allowed: true, reason: null };
 }
