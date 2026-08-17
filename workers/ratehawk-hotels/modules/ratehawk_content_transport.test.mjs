@@ -419,6 +419,24 @@ test("15. future batch strategy can reuse the same normalized projection", async
   assert.equal(refused.reason, "batch_content_by_ids_unavailable");
 });
 
+test("absent rate-limit remaining does not stall later locale jobs", async () => {
+  const env = contentEnv();
+  const results = await executeRatehawkContentJobs({
+    env,
+    store: createRatehawkContentRepository({ memory: true }),
+    jobs: [
+      { hid: 8473727, locale: "en", strategy: "single_hid_info" },
+      { hid: 8473727, locale: "nl", strategy: "single_hid_info" },
+      { hid: 8473727, locale: "fr", strategy: "single_hid_info" },
+      { hid: 8473727, locale: "es", strategy: "single_hid_info" },
+    ],
+    fetchImpl: async () => okResponse(),
+  });
+  assert.equal(results.length, 4);
+  assert.ok(results.every((row) => row.invoked === true));
+  assert.equal(results.some((row) => row.reason === "waiting_for_quota"), false);
+});
+
 test("waiting jobs requeue instead of busy-looping after remaining=0", async () => {
   const env = contentEnv();
   const results = await executeRatehawkContentJobs({

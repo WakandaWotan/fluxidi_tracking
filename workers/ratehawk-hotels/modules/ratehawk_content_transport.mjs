@@ -350,7 +350,7 @@ export async function executeRatehawkContentJob({
     fetchImpl,
     timeoutMs,
   });
-  if (transport.rate_limit) {
+  if (transport.rate_limit && transport.rate_limit.remaining != null) {
     await reconcileRatehawkProviderQuota({
       env,
       endpoint: RATEHAWK_QUOTA_ENDPOINTS.HOTEL_CONTENT,
@@ -460,7 +460,8 @@ export async function executeRatehawkContentJobs({
       trigger,
     });
     results.push(result);
-    if (result.requeue === true || Number(result.rate_limit?.remaining) === 0) {
+    const remaining = result.rate_limit?.remaining;
+    if (result.requeue === true || (remaining != null && Number(remaining) === 0)) {
       wait = result.retry_after ?? 1;
     }
   }

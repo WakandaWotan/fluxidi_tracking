@@ -37,6 +37,7 @@ function _trim(value, max = 200) {
 }
 
 function _int(value) {
+  if (value == null || value === "") return null;
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
   return Math.trunc(n);
@@ -56,6 +57,8 @@ export function parseRatehawkRateLimitHeaders(headers) {
     return headers[name] ?? headers[name.toLowerCase()] ?? null;
   };
   const remaining = _int(get("X-RateLimit-Remaining") ?? get("x-ratelimit-remaining"));
+  // Missing/empty remaining must stay null. Number(null) is 0 and would
+  // falsely stall later locale jobs as quota-exhausted.
   const reset = get("X-RateLimit-Reset") ?? get("x-ratelimit-reset");
   return {
     seconds_number: get("X-RateLimit-SecondsNumber") ?? get("x-ratelimit-secondsnumber"),
