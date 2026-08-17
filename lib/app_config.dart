@@ -1777,6 +1777,7 @@ class BackendSubscriptionProfile {
         'public_booking': true,
         'receipt_pdf': true,
         'whatsapp_email_receipts': true,
+        'limousine': false,
       },
       createdAt: '',
       updatedAt: '',
@@ -1984,6 +1985,10 @@ class BackendSubscriptionProfile {
         'whatsapp_email_receipts': feature(
           'whatsapp_email_receipts',
           fallback.features['whatsapp_email_receipts'] ?? true,
+        ),
+        'limousine': feature(
+          'limousine',
+          fallback.features['limousine'] ?? false,
         ),
       },
       createdAt: text('created_at', 'createdAt', fallback.createdAt),
@@ -5382,6 +5387,22 @@ Uri _withAdminTenantCompanyScope(
   final merged = <String, String>{...endpoint.queryParameters, ...scope};
   return endpoint.replace(queryParameters: merged);
 }
+
+/// Public wrappers for company-scoped admin HTTP (limousine inbox/detail).
+Map<String, String> adminTenantCompanyScope({
+  String? tenantId,
+  String? companyId,
+}) => _resolveAdminTenantCompanyScope(tenantId: tenantId, companyId: companyId);
+
+Uri adminTenantCompanyScopedUri(
+  Uri endpoint, {
+  String? tenantId,
+  String? companyId,
+}) => _withAdminTenantCompanyScope(
+  endpoint,
+  tenantId: tenantId,
+  companyId: companyId,
+);
 
 String normalizeExplicitIsoCurrencyCode(String raw) {
   final upper = raw.trim().toUpperCase();

@@ -1,0 +1,492 @@
+import 'package:flutter/material.dart';
+
+import '../app_config.dart';
+import '../app_strings.dart';
+import '../business_theme_palette.dart';
+import '../business_theme_store.dart';
+import 'limousine_quote_inbox.dart';
+import 'limousine_quote_inbox_api.dart';
+import 'limousine_quote_inbox_labels.dart';
+import 'limousine_quote_respond_form.dart';
+
+class LimousineQuoteDetailPage extends StatefulWidget {
+  const LimousineQuoteDetailPage({
+    super.key,
+    required this.quoteRequestId,
+    this.initial,
+    this.gateway,
+    this.embedded = false,
+  });
+
+  final String quoteRequestId;
+  final LimousineQuoteRequest? initial;
+  final LimousineQuoteInboxGateway? gateway;
+  final bool embedded;
+
+  @override
+  State<LimousineQuoteDetailPage> createState() =>
+      _LimousineQuoteDetailPageState();
+}
+
+class _LimousineQuoteDetailPageState extends State<LimousineQuoteDetailPage> {
+  late final LimousineQuoteInboxGateway _gateway;
+  late final LimousineQuoteInboxController _controller;
+  bool _loading = true;
+  String? _banner;
+  int _generation = 0;
+
+  AppLanguage get _lang => appLanguageNotifier.value;
+
+  String _t(LocalizedText text) => text.of(_lang);
+
+  @override
+  void initState() {
+    super.initState();
+    _gateway = widget.gateway ?? HttpLimousineQuoteInboxGateway();
+    _controller = LimousineQuoteInboxController(gateway: _gateway);
+    _controller.detail = widget.initial;
+    _load();
+  }
+
+  Future<void> _load() async {
+    final gen = ++_generation;
+    setState(() {
+      _loading = widget.initial == null;
+    });
+    try {
+      final record = await _gateway.detail(widget.quoteRequestId);
+      if (!mounted || gen != _generation) return;
+      setState(() {
+        _controller.detail = record;
+        _loading = false;
+      });
+    } on LimousineQuoteInboxException catch (error) {
+      if (!mounted || gen != _generation) return;
+      setState(() {
+        _controller.error = error;
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _markViewed(LimousineQuoteRequest record) async {
+    final gen = _generation;
+    try {
+      await _controller.respond(action: 'viewed', record: record);
+      if (!mounted || gen != _generation) return;
+      setState(() {});
+    } on LimousineQuoteInboxException catch (error) {
+      if (!mounted || gen != _generation) return;
+      setState(() {
+        _banner = error.kind == LimousineQuoteInboxErrorKind.staleRevision
+            ? _t(kLimousineQuoteStaleRevision)
+            : limousineQuoteErrorLabel(error, _lang);
+      });
+    }
+  }
+
+  Future<void> _openQuoteEditor(LimousineQuoteRequest record) async {
+    final gen = _generation;
+    final draft = await Navigator.of(context).push<LimousineCompanyQuoteDraft>(
+      MaterialPageRoute(
+        builder: (_) => LimousineQuoteEditorPage(
+          record: record,
+          onSubmit: (next) async {
+            await _controller.respond(
+              action: 'quote',
+              record: record,
+              quote: next.toWorkerQuote(),
+            );
+          },
+        ),
+      ),
+    );
+    if (!mounted || gen != _generation) return;
+    if (draft != null) setState(() {});
+  }
+
+  Future<void> _decline(LimousineQuoteRequest record) async {
+    final gen = _generation;
+    final draft = await showLimousineDeclineDialog(
+      context: context,
+      language: _lang,
+    );
+    if (draft == null || !mounted || gen != _generation) return;
+    try {
+      await _controller.respond(
+        action: 'decline',
+        record: record,
+        decline: draft,
+      );
+      if (!mounted || gen != _generation) return;
+      setState(() {});
+    } on LimousineQuoteInboxException catch (error) {
+      if (!mounted || gen != _generation) return;
+      setState(() {
+        _banner = error.kind == LimousineQuoteInboxErrorKind.staleRevision
+            ? _t(kLimousineQuoteStaleRevision)
+            : limousineQuoteErrorLabel(error, _lang);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<BusinessThemeVariant>(
+      valueListenable: businessThemeNotifier,
+      builder: (context, variant, _) {
+        final palette = paletteForBusinessTheme(variant);
+        final record = _controller.detail;
+        final body = _buildBody(palette, record);
+        if (widget.embedded) {
+          return KeyedSubtree(key: kLimousineQuoteDetailPageKey, child: body);
+        }
+        return Scaffold(
+          key: kLimousineQuoteDetailPageKey,
+          backgroundColor: palette.background,
+          appBar: AppBar(
+            backgroundColor: palette.background,
+            foregroundColor: palette.textPrimary,
+            title: Text(_t(kLimousineQuoteInboxTitle)),
+          ),
+          body: body,
+        );
+      },
+    );
+  }
+
+  Widget _buildBody(
+    BusinessThemePalette palette,
+    LimousineQuoteRequest? record,
+  ) {
+    if (_loading) {
+      return const Center(
+        child: CircularProgressIndicator(key: kLimousineQuoteInboxLoadingKey),
+      );
+    }
+    final error = _controller.error;
+    if (record == null) {
+      return _message(
+        palette,
+        error == null
+            ? _t(kLimousineQuoteNotFound)
+            : limousineQuoteErrorLabel(error, _lang),
+      );
+    }
+    final actions = limousineQuoteActionsFor(record);
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+      children: [
+        if (_banner != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(_banner!, style: TextStyle(color: palette.accent)),
+          ),
+        if (actions.readOnly && !actions.canMarkViewed)
+          Container(
+            key: kLimousineQuoteReadOnlyBannerKey,
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: palette.surfaceAlt,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: palette.border),
+            ),
+            child: Text(
+              record.transitionsBlocked || record.isUnknownState
+                  ? _t(kLimousineQuoteReadOnlyHistory)
+                  : limousineQuoteStateLabel(record.state, _lang),
+              style: TextStyle(color: palette.textSecondary, height: 1.35),
+            ),
+          ),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _chip(palette, limousineQuoteStateLabel(record.state, _lang)),
+            if (record.isUnread) _chip(palette, _t(kLimousineQuoteUnread)),
+          ],
+        ),
+        const SizedBox(height: 16),
+        _journeyCard(palette, record),
+        const SizedBox(height: 12),
+        _termsCard(palette, record),
+        const SizedBox(height: 20),
+        if (actions.canMarkViewed)
+          _actionButton(
+            key: kLimousineQuoteMarkViewedKey,
+            palette: palette,
+            label: _t(kLimousineQuoteMarkViewed),
+            onPressed: _controller.submitting
+                ? null
+                : () => _markViewed(record),
+          ),
+        if (actions.canQuote) ...[
+          const SizedBox(height: 8),
+          _actionButton(
+            key: kLimousineQuoteSubmitKey,
+            palette: palette,
+            label: _t(kLimousineQuoteSendQuote),
+            onPressed: _controller.submitting
+                ? null
+                : () => _openQuoteEditor(record),
+          ),
+        ],
+        if (actions.canDecline) ...[
+          const SizedBox(height: 8),
+          _actionButton(
+            key: kLimousineQuoteDeclineKey,
+            palette: palette,
+            label: _t(kLimousineQuoteDecline),
+            danger: true,
+            onPressed: _controller.submitting ? null : () => _decline(record),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _journeyCard(
+    BusinessThemePalette palette,
+    LimousineQuoteRequest record,
+  ) {
+    final fulfilment = record.fulfilment;
+    final rows = <Widget>[];
+    void add(LocalizedText label, String? value) {
+      final text = (value ?? '').trim();
+      if (text.isEmpty) return;
+      rows.add(_kv(palette, _t(label), text));
+    }
+
+    if (record.journeyType.isNotEmpty) {
+      final journey =
+          kLimousineJourneyTypeLabels[record.journeyType]?.of(_lang) ??
+          record.journeyType;
+      add(kLimousineQuoteJourneyCard, journey);
+    }
+    add(kLimousineQuotePickup, fulfilment?.from);
+    add(kLimousineQuoteDestination, fulfilment?.to);
+    if (fulfilment != null && fulfilment.stops.isNotEmpty) {
+      add(kLimousineQuoteStops, fulfilment.stops.join(' · '));
+    }
+    if (record.scheduledPickupIso.isNotEmpty) {
+      add(kLimousineQuoteUpdated, record.scheduledPickupIso);
+    }
+    if (record.pax != null) add(kLimousineQuotePassengers, '${record.pax}');
+    if (record.bags != null) add(kLimousineQuoteLuggage, '${record.bags}');
+    add(kLimousineQuoteCustomerNote, fulfilment?.customerNote);
+    if (record.serviceClassId.isNotEmpty) {
+      rows.add(
+        _kv(palette, _t(kLimousineQuoteServiceClass), record.serviceClassId),
+      );
+    }
+    if (record.vehicleId.isNotEmpty) {
+      rows.add(_kv(palette, _t(kLimousineQuoteVehicle), record.vehicleId));
+    }
+    if (record.offerId.isNotEmpty) {
+      rows.add(_kv(palette, _t(kLimousineQuoteOffer), record.offerId));
+    }
+    if (rows.isEmpty) return const SizedBox.shrink();
+    return _card(
+      palette,
+      title: _t(kLimousineQuoteJourneyCard),
+      children: rows,
+    );
+  }
+
+  Widget _termsCard(
+    BusinessThemePalette palette,
+    LimousineQuoteRequest record,
+  ) {
+    final quote = record.quote;
+    final rows = <Widget>[];
+    if (quote != null) {
+      rows.add(
+        _kv(
+          palette,
+          _t(kLimousineQuoteTotal),
+          formatLimousineMoney(quote.totalInclVatCents, quote.currency),
+        ),
+      );
+      if (quote.vatTreatment.isNotEmpty) {
+        rows.add(
+          _kv(palette, _t(kLimousineQuoteVatTreatment), quote.vatTreatment),
+        );
+      }
+      if (quote.expiresAt.isNotEmpty) {
+        rows.add(_kv(palette, _t(kLimousineQuoteExpires), quote.expiresAt));
+      }
+      if (quote.termsRevision != null) {
+        rows.add(
+          _kv(
+            palette,
+            _t(kLimousineQuoteTermsRevision),
+            '${quote.termsRevision}',
+          ),
+        );
+      }
+      final note = localizedLimousineText(
+        quote.publicText,
+        languageCode: _lang.name,
+      );
+      if (note.isNotEmpty) {
+        rows.add(_kv(palette, _t(kLimousineQuoteImportantInfo), note));
+      }
+      final mobilisation = localizedLimousineText(
+        quote.mobilisationDisclosure,
+        languageCode: _lang.name,
+      );
+      if (mobilisation.isNotEmpty) {
+        rows.add(_kv(palette, _t(kLimousineQuoteMobilisation), mobilisation));
+      }
+      if (quote.includedServices.isNotEmpty) {
+        rows.add(
+          _kv(
+            palette,
+            _t(kLimousineQuoteIncludedServices),
+            '${quote.includedServices.length}',
+          ),
+        );
+      }
+      if (quote.separatelyPricedExtras.isNotEmpty) {
+        rows.add(
+          _kv(
+            palette,
+            _t(kLimousineQuotePaidExtras),
+            '${quote.separatelyPricedExtras.length}',
+          ),
+        );
+      }
+      final terms = quote.terms;
+      if (terms != null) {
+        for (final key in kLimousineRequiredTermsKeys) {
+          final value = terms[key];
+          if (value == null) continue;
+          final label = kLimousineQuoteFieldLabels[key]?.of(_lang) ?? key;
+          rows.add(_kv(palette, label, '$value'));
+        }
+      }
+    }
+    if (record.decline != null) {
+      final reason = localizedLimousineText(
+        record.decline!.publicText,
+        languageCode: _lang.name,
+      );
+      if (reason.isNotEmpty) {
+        rows.add(_kv(palette, _t(kLimousineQuoteDecline), reason));
+      }
+    }
+    if (record.bookingReference.isNotEmpty) {
+      rows.add(
+        _kv(palette, _t(kLimousineQuoteBookingRef), record.bookingReference),
+      );
+    }
+    if (record.updatedAt.isNotEmpty) {
+      rows.add(_kv(palette, _t(kLimousineQuoteUpdated), record.updatedAt));
+    }
+    if (rows.isEmpty) return const SizedBox.shrink();
+    return _card(palette, title: _t(kLimousineQuoteTermsCard), children: rows);
+  }
+
+  Widget _card(
+    BusinessThemePalette palette, {
+    required String title,
+    required List<Widget> children,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: palette.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              color: palette.textPrimary,
+              fontWeight: FontWeight.w800,
+              fontSize: 16,
+            ),
+          ),
+          const SizedBox(height: 10),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  Widget _kv(BusinessThemePalette palette, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: TextStyle(color: palette.textMuted, fontSize: 12)),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: TextStyle(color: palette.textPrimary, height: 1.35),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _chip(BusinessThemePalette palette, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: palette.accent.withOpacity(0.14),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: palette.accent.withOpacity(0.45)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: palette.accent,
+          fontWeight: FontWeight.w700,
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+
+  Widget _actionButton({
+    required Key key,
+    required BusinessThemePalette palette,
+    required String label,
+    required VoidCallback? onPressed,
+    bool danger = false,
+  }) {
+    return SizedBox(
+      height: 48,
+      width: double.infinity,
+      child: FilledButton(
+        key: key,
+        onPressed: onPressed,
+        style: FilledButton.styleFrom(
+          backgroundColor: danger ? palette.danger : palette.accent,
+          foregroundColor: palette.textOnAccent,
+        ),
+        child: Text(label),
+      ),
+    );
+  }
+
+  Widget _message(BusinessThemePalette palette, String text) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: palette.textSecondary, height: 1.4),
+        ),
+      ),
+    );
+  }
+}

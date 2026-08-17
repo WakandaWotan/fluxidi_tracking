@@ -79,6 +79,8 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   String? _kpiPendingRerunReason;
   bool _routeObserverSubscribed = false;
   bool _businessAccessGuardTriggered = false;
+  bool? _limousineQuoteInboxEntitled;
+  int _limousineQuoteInboxEntitlementGeneration = 0;
 
   BusinessDashboardKpiView get _kpiView {
     final scope = _activeDashboardKpiScope();
@@ -237,6 +239,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     // load as soon as ready. This prevents pairing a valid company-session
     // bearer with the default `fluxidi` tenant/company fallback.
     unawaited(_refreshDashboardKpis(reason: BusinessKpiCycleReason.init));
+    unawaited(_refreshLimousineQuoteInboxEntitlement());
   }
 
   void _hydrateDashboardKpisFromScopedCache({required String reason}) {
@@ -445,6 +448,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         _refreshDashboardKpis(reason: BusinessKpiCycleReason.scopeReady),
       );
     }
+    unawaited(_refreshLimousineQuoteInboxEntitlement());
   }
 
   void _clearDashboardKpisForScopeChange({required String reason}) {
@@ -1563,6 +1567,39 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     if (!mounted) return;
     unawaited(
       _refreshDashboardKpis(reason: BusinessKpiCycleReason.routeReturn),
+    );
+  }
+
+  bool get _showLimousineQuoteInboxEntry =>
+      limousineQuoteInboxEntryVisible(entitled: _limousineQuoteInboxEntitled);
+
+  Future<void> _refreshLimousineQuoteInboxEntitlement() async {
+    final gen = ++_limousineQuoteInboxEntitlementGeneration;
+    final scope = _activeDashboardKpiScope();
+    if (scope == null) {
+      if (!mounted || gen != _limousineQuoteInboxEntitlementGeneration) return;
+      setState(() => _limousineQuoteInboxEntitled = false);
+      return;
+    }
+    try {
+      final profile = await fetchCompanySubscriptionProfile(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      if (!mounted || gen != _limousineQuoteInboxEntitlementGeneration) return;
+      setState(() {
+        _limousineQuoteInboxEntitled = profile.features['limousine'] == true;
+      });
+    } catch (_) {
+      if (!mounted || gen != _limousineQuoteInboxEntitlementGeneration) return;
+      setState(() => _limousineQuoteInboxEntitled = false);
+    }
+  }
+
+  Future<void> _openLimousineQuoteInbox(BuildContext context) async {
+    if (!_showLimousineQuoteInboxEntry) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const LimousineQuoteInboxPage()),
     );
   }
 
@@ -3935,6 +3972,20 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               ),
               onTap: () => _openBusinessBookingsOverview(context),
             ),
+            if (_showLimousineQuoteInboxEntry)
+              KeyedSubtree(
+                key: kLimousineQuoteInboxEntryKey,
+                child: card(
+                  actionKey: 'limousine_quotes',
+                  title: kLimousineQuoteInboxEntryTitle.of(
+                    appLanguageNotifier.value,
+                  ),
+                  subtitle: kLimousineQuoteInboxEntrySubtitle.of(
+                    appLanguageNotifier.value,
+                  ),
+                  onTap: () => _openLimousineQuoteInbox(context),
+                ),
+              ),
             card(
               actionKey: 'ai_dispatch',
               title: _t(
@@ -5501,6 +5552,23 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                     useImageBackground:
                                         useTabletVisualMode ||
                                         useVisualMobileMode,
+                                    compact: compactQuickAction,
+                                  ),
+                                ),
+                              if (_showLimousineQuoteInboxEntry)
+                                SizedBox(
+                                  key: kLimousineQuoteInboxEntryKey,
+                                  width: cardWidth,
+                                  height: businessQuickActionCardHeight,
+                                  child: _quickActionCard(
+                                    icon: Icons.request_quote_outlined,
+                                    title: kLimousineQuoteInboxEntryTitle.of(
+                                      appLanguageNotifier.value,
+                                    ),
+                                    subtitle: kLimousineQuoteInboxEntrySubtitle
+                                        .of(appLanguageNotifier.value),
+                                    onTap: () =>
+                                        _openLimousineQuoteInbox(context),
                                     compact: compactQuickAction,
                                   ),
                                 ),
