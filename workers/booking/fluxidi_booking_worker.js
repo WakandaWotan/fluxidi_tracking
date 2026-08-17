@@ -44366,6 +44366,91 @@ export default {
         }, 200);
       }
 
+      // LIMOUSINE-MARKETPLACE-P2B2 — read/write ONLY the additive `limousine`
+      // section of pricing:v1. Every unrelated pricing field is preserved
+      // byte-for-byte; the taxi profile and airport fixed-fare store are never
+      // touched. The source revision is server-owned and monotonic.
+      if (url.pathname === "/admin/pricing/limousine" && request.method === "GET") {
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          routeLabel: "ADMIN_PRICING_LIMOUSINE_GET",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
+        const scopedKeys = buildScopedSettingsKeys(explicitScope);
+        const rawProfile = await _loadRawTenantPricingProfileObject(env, explicitScope, {
+          allowTenantLegacyFallback: false,
+        });
+        const section = _normalizeLimousinePricingSection(rawProfile?.limousine ?? null);
+        return json({
+          ok: true,
+          key: scopedKeys?.pricingProfileKey || TENANT_PRICING_PROFILE_KEY,
+          limousine: section,
+        }, 200);
+      }
+
+      if (url.pathname === "/admin/pricing/limousine" && request.method === "POST") {
+        if (!env.BOOKING_KV) return json({ ok: false, error: "BOOKING_KV binding is missing" }, 500);
+        const body = await safeJson(request);
+        const authScope = await _requireAdminOrCompanySessionForExplicitScope({
+          request,
+          url,
+          env,
+          body,
+          routeLabel: "ADMIN_PRICING_LIMOUSINE_POST",
+        });
+        if (!authScope.ok) return authScope.response;
+        const explicitScope = authScope.explicitScope;
+        const bodyScopeCheck = _validateSettingsPayloadScope(body, explicitScope);
+        if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
+        const incomingSection = body?.limousine && typeof body.limousine === "object"
+          ? body.limousine
+          : null;
+        if (!incomingSection) {
+          return json({ ok: false, error: "limousine object is required" }, 400);
+        }
+        const scopedKeys = buildScopedSettingsKeys(explicitScope);
+        if (!scopedKeys?.pricingProfileKey) {
+          return json(missingTenantScopeError(), 400);
+        }
+        const rawProfile = (await _loadRawTenantPricingProfileObject(env, explicitScope, {
+          allowTenantLegacyFallback: false,
+        })) || {};
+        const existingSection = _normalizeLimousinePricingSection(rawProfile.limousine ?? null);
+        const nextSection = _normalizeLimousinePricingSection(incomingSection);
+        // Monotonic: an older revision may never overwrite newer configuration.
+        const clientRevision = Number(incomingSection.source_revision ?? 0) || 0;
+        if (clientRevision > 0 && clientRevision < existingSection.source_revision) {
+          return json({
+            ok: false,
+            error: "stale_source_revision",
+            current_source_revision: existingSection.source_revision,
+          }, 409);
+        }
+        const nowIso = new Date().toISOString();
+        nextSection.source_revision = existingSection.source_revision + 1;
+        nextSection.updated_at = nowIso;
+        // Preserve every unrelated pricing:v1 field byte-for-byte.
+        const mergedProfile = { ...rawProfile, limousine: nextSection };
+        await env.BOOKING_KV.put(
+          scopedKeys.pricingProfileKey,
+          JSON.stringify({ version: 1, updated_at: nowIso, pricing_profile: mergedProfile }),
+        );
+        try {
+          await refreshPartnerLimousineProjection(env, explicitScope);
+        } catch (_) {
+          // non-fatal
+        }
+        return json({
+          ok: true,
+          changed: true,
+          key: scopedKeys.pricingProfileKey,
+          limousine: nextSection,
+        }, 200);
+      }
+
       if (url.pathname === "/admin/cancellation-policy/profile" && request.method === "GET") {
         const authScope = await _requireAdminOrCompanySessionForExplicitScope({
           request,
@@ -73038,6 +73123,24 @@ async function _loadTenantPricingProfile(
   return _normalizeTenantPricingProfile(incoming);
 }
 
+/// Reads the raw stored pricing_profile object (unnormalized) so additive
+/// sections such as `limousine` survive a taxi-only save.
+async function _loadRawTenantPricingProfileObject(env, scope, { allowTenantLegacyFallback = true } = {}) {
+  if (!env?.BOOKING_KV) return null;
+  const scopedKeys = buildScopedSettingsKeys(scope);
+  let raw = null;
+  if (scopedKeys?.pricingProfileKey) {
+    raw = await env.BOOKING_KV.get(scopedKeys.pricingProfileKey, { type: "json" });
+  }
+  if (!raw && allowTenantLegacyFallback) {
+    raw = await env.BOOKING_KV.get(TENANT_PRICING_PROFILE_KEY, { type: "json" });
+  }
+  if (!raw || typeof raw !== "object") return null;
+  return raw.pricing_profile && typeof raw.pricing_profile === "object"
+    ? raw.pricing_profile
+    : raw;
+}
+
 async function _saveTenantPricingProfile(
   env,
   incoming,
@@ -73046,6 +73149,27 @@ async function _saveTenantPricingProfile(
 ) {
   if (!env?.BOOKING_KV) throw new Error("BOOKING_KV binding is missing");
   const normalized = _normalizeTenantPricingProfile(incoming);
+  // LIMOUSINE-MARKETPLACE-P2B2: `_normalizeTenantPricingProfile` whitelists taxi
+  // keys, so a taxi-only save would otherwise DROP the additive `limousine`
+  // section. Preserve it verbatim unless the caller explicitly supplies one.
+  const incomingLimousine =
+    incoming && typeof incoming === "object" ? incoming.limousine : undefined;
+  let preservedLimousine = incomingLimousine;
+  if (preservedLimousine === undefined) {
+    try {
+      const existingRaw = await _loadRawTenantPricingProfileObject(env, scope, {
+        allowTenantLegacyFallback: allowTenantLegacyWrite,
+      });
+      if (existingRaw && existingRaw.limousine !== undefined) {
+        preservedLimousine = existingRaw.limousine;
+      }
+    } catch (_) {
+      preservedLimousine = undefined;
+    }
+  }
+  if (preservedLimousine !== undefined) {
+    normalized.limousine = preservedLimousine;
+  }
   const scopedKeys = buildScopedSettingsKeys(scope);
   const targetKey = scopedKeys?.pricingProfileKey ||
     (allowTenantLegacyWrite ? TENANT_PRICING_PROFILE_KEY : "");

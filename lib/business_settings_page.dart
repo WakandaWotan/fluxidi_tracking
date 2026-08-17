@@ -16,6 +16,7 @@ import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/chiron_company_connection_config.dart';
 import 'package:fluxidi_tracking/company/billit_customer_connect_gate.dart';
 import 'package:fluxidi_tracking/limousine/limousine_marketplace_labels.dart';
+import 'package:fluxidi_tracking/limousine/limousine_offers.dart';
 import 'package:fluxidi_tracking/limousine/limousine_service_capability.dart';
 import 'package:fluxidi_tracking/limousine/limousine_state_composition.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
@@ -161,6 +162,7 @@ class BusinessSettingsPage extends StatefulWidget {
 /// policy, public partner profile, local company) remain reachable only
 /// via the full settings page.
 const Set<String> _kStepFocusableSectionIds = <String>{
+  'limousine_offers_pricing',
   'official_company_details',
   'vat_settings',
   'service_setup',
@@ -403,6 +405,17 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return out;
   }
 
+  // LIMOUSINE-MARKETPLACE-P2B2 — limousine offers & pricing section state.
+  bool _limousineOffersLoading = false;
+  bool _limousineOffersSaving = false;
+  bool _limousineOffersDirty = false;
+  bool _limousineSectionEnabled = false;
+  String _limousineOffersCurrency = 'EUR';
+  int _limousineOffersRevision = 0;
+  String? _limousineOffersError;
+  String? _limousineOffersStatus;
+  List<Map<String, dynamic>> _limousineOffers = <Map<String, dynamic>>[];
+
   bool _airportFixedFaresLoading = false;
   bool _airportFixedFaresSaving = false;
   bool _airportFixedFaresDirty = false;
@@ -552,6 +565,1081 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // LIMOUSINE-MARKETPLACE-P2B2 — Limousine offers and pricing
+  //
+  // Owns pricing rules, packages, terms and publication. Deliberately separate
+  // from the taxi Pricing engine, Airport fixed fares and driver management.
+  // Prices are never configured per driver.
+  // ===========================================================================
+
+  List<VehicleProfile> get _limousineVehicles => vehiclesNotifier.value
+      .where((v) => v.serviceCategory.trim().toLowerCase() == 'limousine')
+      .toList(growable: false);
+
+  List<String> get _limousineKnownClassIds => appConfig
+      .enabledLimousineServiceClasses
+      .map((o) => o.id)
+      .toList(growable: false);
+
+  String _limousineMoneyLabel(int? cents, String currency) {
+    if (cents == null) return '—';
+    final amount = (cents / 100).toStringAsFixed(2);
+    return '$amount ${currency.isEmpty ? '' : currency}'.trim();
+  }
+
+  Future<void> _loadLimousineOffers() async {
+    final scope = _strictSettingsScopeForAction(
+      action: 'limousine_offers_load',
+    );
+    if (scope == null) return;
+    setState(() {
+      _limousineOffersLoading = true;
+      _limousineOffersError = null;
+    });
+    try {
+      final data = await fetchAdminLimousinePricing(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      final section = (data['limousine'] is Map)
+          ? Map<String, dynamic>.from(data['limousine'] as Map)
+          : <String, dynamic>{};
+      final offers = (section['offers'] is List)
+          ? (section['offers'] as List)
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList()
+          : <Map<String, dynamic>>[];
+      if (!mounted) return;
+      setState(() {
+        _limousineOffers = offers;
+        _limousineSectionEnabled = section['enabled'] == true;
+        _limousineOffersCurrency =
+            limousineCurrencyOf(section['currency']).isEmpty
+            ? 'EUR'
+            : limousineCurrencyOf(section['currency']);
+        _limousineOffersRevision =
+            int.tryParse('${section['source_revision'] ?? 0}') ?? 0;
+        _limousineOffersDirty = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _limousineOffersError = e.toString());
+    } finally {
+      if (mounted) setState(() => _limousineOffersLoading = false);
+    }
+  }
+
+  Future<void> _saveLimousineOffers() async {
+    final scope = _strictSettingsScopeForAction(
+      action: 'limousine_offers_save',
+    );
+    if (scope == null) return;
+    setState(() {
+      _limousineOffersSaving = true;
+      _limousineOffersError = null;
+      _limousineOffersStatus = null;
+    });
+    try {
+      final payload = <String, dynamic>{
+        'enabled': _limousineSectionEnabled,
+        'currency': _limousineOffersCurrency,
+        'source_revision': _limousineOffersRevision,
+        'offers': _limousineOffers,
+      };
+      final data = await saveAdminLimousinePricing(
+        payload,
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      final section = (data['limousine'] is Map)
+          ? Map<String, dynamic>.from(data['limousine'] as Map)
+          : <String, dynamic>{};
+      if (!mounted) return;
+      setState(() {
+        _limousineOffersRevision =
+            int.tryParse('${section['source_revision'] ?? 0}') ??
+            _limousineOffersRevision;
+        _limousineOffersDirty = false;
+        _limousineOffersStatus = _t(
+          nl: 'Limousineaanbod opgeslagen.',
+          en: 'Limousine offers saved.',
+          fr: 'Offres limousine enregistrées.',
+          es: 'Ofertas de limusina guardadas.',
+        );
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _limousineOffersError = e.toString());
+    } finally {
+      if (mounted) setState(() => _limousineOffersSaving = false);
+    }
+  }
+
+  /// Read-only validation feedback for one offer, using the shared domain
+  /// resolver (no duplicated eligibility/pricing logic inside the widget).
+  List<String> _limousineOfferErrors(Map<String, dynamic> offer) {
+    return validateLimousineOffer(
+      offer,
+      vehicles: vehiclesNotifier.value,
+      knownClassIds: _limousineKnownClassIds,
+      readiness: true,
+    ).errors;
+  }
+
+  Widget _limousineOfferRow(int index) {
+    final offer = _limousineOffers[index];
+    final presentation = limousineOfferToken(offer['price_presentation']);
+    final currency = limousineCurrencyOf(offer['currency']);
+    final title = limousineLocalizedFor(offer['title'], _lang);
+    final targetType = limousineOfferToken(offer['target_type']);
+    final targetLabel = targetType == LimousineOfferTarget.vehicle
+        ? '${_t(nl: 'Voertuig', en: 'Vehicle', fr: 'Véhicule', es: 'Vehículo')}: ${offer['vehicle_id'] ?? ''}'
+        : '${_t(nl: 'Klasse', en: 'Class', fr: 'Classe', es: 'Clase')}: ${limousineServiceClassLabel(offer['service_class_id']?.toString(), _lang)}';
+    final errors = _limousineOfferErrors(offer);
+    final published = offer['published'] == true;
+    final enabled = offer['enabled'] == true;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _inputFill,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _inputBorderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title.isEmpty ? (offer['offer_id'] ?? '').toString() : title,
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (!enabled)
+                Text(
+                  _t(
+                    nl: 'Uitgeschakeld',
+                    en: 'Disabled',
+                    fr: 'Désactivé',
+                    es: 'Desactivado',
+                  ),
+                  style: TextStyle(color: _textMuted, fontSize: 11),
+                )
+              else if (published)
+                Text(
+                  _t(
+                    nl: 'Gepubliceerd',
+                    en: 'Published',
+                    fr: 'Publié',
+                    es: 'Publicado',
+                  ),
+                  style: const TextStyle(
+                    color: Color(0xFF34D29A),
+                    fontSize: 11,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            targetLabel,
+            style: TextStyle(color: _textSecondary, fontSize: 12),
+          ),
+          Text(
+            '${limousinePresentationLabel(presentation, _lang)}'
+            '${limousineCentsOf(offer['display_amount_cents']) != null ? ' · ${_limousineMoneyLabel(limousineCentsOf(offer['display_amount_cents']), currency)}' : ''}',
+            style: TextStyle(color: _textSecondary, fontSize: 12),
+          ),
+          if (errors.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            ...errors.map(
+              (code) => Text(
+                '• ${limousineOfferErrorLabel(code, _lang)}',
+                style: const TextStyle(
+                  color: Colors.orangeAccent,
+                  fontSize: 11.5,
+                ),
+              ),
+            ),
+          ],
+          Row(
+            children: [
+              TextButton.icon(
+                onPressed: _limousineOffersSaving
+                    ? null
+                    : () => _editLimousineOffer(index: index),
+                icon: const Icon(Icons.edit_outlined, size: 16),
+                label: Text(
+                  _t(nl: 'Bewerken', en: 'Edit', fr: 'Modifier', es: 'Editar'),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _limousineOffersSaving
+                    ? null
+                    : () => setState(() {
+                        // Disabling stops new discovery; existing bookings,
+                        // snapshots and configuration are preserved.
+                        _limousineOffers[index] = <String, dynamic>{
+                          ...offer,
+                          'enabled': !enabled,
+                        };
+                        _limousineOffersDirty = true;
+                      }),
+                icon: Icon(
+                  enabled
+                      ? Icons.pause_circle_outline
+                      : Icons.play_circle_outline,
+                  size: 16,
+                ),
+                label: Text(
+                  enabled
+                      ? _t(
+                          nl: 'Uitschakelen',
+                          en: 'Disable',
+                          fr: 'Désactiver',
+                          es: 'Desactivar',
+                        )
+                      : _t(
+                          nl: 'Inschakelen',
+                          en: 'Enable',
+                          fr: 'Activer',
+                          es: 'Activar',
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _limousineOffersCard() {
+    return _collapsibleSettingsCard(
+      id: 'limousine_offers_pricing',
+      icon: Icons.workspace_premium_outlined,
+      title: _t(
+        nl: 'Limousineaanbod en prijzen',
+        en: 'Limousine offers and pricing',
+        fr: 'Offres et tarifs limousine',
+        es: 'Ofertas y precios de limusina',
+      ),
+      subtitle: _t(
+        nl: 'Aanbod per voertuig of klasse, uurhuur, voorrijden en publicatie',
+        en: 'Offers per vehicle or class, hourly hire, mobilisation and publication',
+        fr: 'Offres par véhicule ou classe, location horaire, acheminement et publication',
+        es: 'Ofertas por vehículo o clase, alquiler por horas, movilización y publicación',
+      ),
+      status: _limousineOffers.isEmpty
+          ? _SetupStatus.optional
+          : (_limousineOffers.any((o) => _limousineOfferErrors(o).isNotEmpty)
+                ? _SetupStatus.attention
+                : _SetupStatus.complete),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              nl: 'Deze sectie staat los van de taxi-prijsmotor en de luchthaven vaste tarieven. Prijzen worden nooit per chauffeur ingesteld.',
+              en: 'This section is separate from the taxi pricing engine and the airport fixed fares. Prices are never configured per driver.',
+              fr: 'Cette section est distincte du moteur tarifaire taxi et des forfaits aéroport. Les prix ne sont jamais configurés par chauffeur.',
+              es: 'Esta sección es independiente del motor de tarifas de taxi y de las tarifas fijas de aeropuerto. Los precios nunca se configuran por conductor.',
+            ),
+            style: TextStyle(color: _textMuted, fontSize: 11.5),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _t(
+                    nl: 'Limousineaanbod actief',
+                    en: 'Limousine offers active',
+                    fr: 'Offres limousine actives',
+                    es: 'Ofertas de limusina activas',
+                  ),
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Switch(
+                value: _limousineSectionEnabled,
+                onChanged: _limousineOffersSaving
+                    ? null
+                    : (v) => setState(() {
+                        _limousineSectionEnabled = v;
+                        _limousineOffersDirty = true;
+                      }),
+              ),
+            ],
+          ),
+          if (_limousineOffersLoading)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                _t(
+                  nl: 'Laden…',
+                  en: 'Loading…',
+                  fr: 'Chargement…',
+                  es: 'Cargando…',
+                ),
+                style: TextStyle(color: _textMuted, fontSize: 12),
+              ),
+            ),
+          if (_limousineOffers.isEmpty && !_limousineOffersLoading)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                _t(
+                  nl: 'Nog geen limousineaanbod geconfigureerd.',
+                  en: 'No limousine offers configured yet.',
+                  fr: 'Aucune offre limousine configurée.',
+                  es: 'Aún no hay ofertas de limusina configuradas.',
+                ),
+                style: TextStyle(color: _textSecondary, fontSize: 12),
+              ),
+            ),
+          ..._limousineOffers.asMap().entries.map(
+            (e) => _limousineOfferRow(e.key),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _limousineOffersSaving
+                    ? null
+                    : () => _editLimousineOffer(),
+                icon: const Icon(Icons.add, size: 16),
+                label: Text(
+                  _t(
+                    nl: 'Aanbod toevoegen',
+                    en: 'Add offer',
+                    fr: 'Ajouter une offre',
+                    es: 'Añadir oferta',
+                  ),
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: _limousineOffersLoading || _limousineOffersSaving
+                    ? null
+                    : _loadLimousineOffers,
+                icon: const Icon(Icons.refresh, size: 16),
+                label: Text(
+                  _t(
+                    nl: 'Vernieuwen',
+                    en: 'Refresh',
+                    fr: 'Actualiser',
+                    es: 'Actualizar',
+                  ),
+                ),
+              ),
+              FilledButton.icon(
+                onPressed: _limousineOffersSaving || !_limousineOffersDirty
+                    ? null
+                    : _saveLimousineOffers,
+                icon: const Icon(Icons.save_outlined, size: 16),
+                label: Text(
+                  _t(
+                    nl: 'Opslaan',
+                    en: 'Save',
+                    fr: 'Enregistrer',
+                    es: 'Guardar',
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (_limousineOffersStatus != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _limousineOffersStatus!,
+              style: const TextStyle(color: Color(0xFF34D29A), fontSize: 11.8),
+            ),
+          ],
+          if (_limousineOffersError != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _limousineOffersError!,
+              style: TextStyle(color: _danger, fontSize: 11.8),
+            ),
+          ],
+          const SizedBox(height: 10),
+          _limousineOffersPublicPreview(),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _editLimousineOffer({int? index}) async {
+    final existing = index == null
+        ? <String, dynamic>{}
+        : Map<String, dynamic>.from(_limousineOffers[index]);
+
+    var offerId = (existing['offer_id'] ?? '').toString().trim();
+    if (offerId.isEmpty) {
+      offerId = 'offer_${DateTime.now().millisecondsSinceEpoch}';
+    }
+    var enabled = existing['enabled'] == true || index == null;
+    var published = existing['published'] == true;
+    var targetType = limousineOfferToken(existing['target_type']).isEmpty
+        ? LimousineOfferTarget.serviceClass
+        : limousineOfferToken(existing['target_type']);
+    var vehicleId = (existing['vehicle_id'] ?? '').toString();
+    var serviceClassId = limousineOfferToken(existing['service_class_id']);
+    var presentation =
+        limousineOfferToken(existing['price_presentation']).isEmpty
+        ? LimousinePricePresentation.quoteRequired
+        : limousineOfferToken(existing['price_presentation']);
+    final journeyTypes = <String>{
+      ...((existing['journey_types'] as List?) ?? const [])
+          .map(limousineOfferToken)
+          .where((t) => t.isNotEmpty),
+    };
+    final titleCtrl = TextEditingController(
+      text: limousineLocalizedFor(existing['title'], _lang),
+    );
+    final descriptionCtrl = TextEditingController(
+      text: limousineLocalizedFor(existing['description'], _lang),
+    );
+    final displayCtrl = TextEditingController(
+      text: limousineCentsOf(existing['display_amount_cents']) == null
+          ? ''
+          : (limousineCentsOf(existing['display_amount_cents'])! / 100)
+                .toStringAsFixed(2),
+    );
+
+    final hourly = Map<String, dynamic>.from(
+      (existing['hourly'] as Map?) ?? <String, dynamic>{},
+    );
+    var hourlyEnabled = hourly['enabled'] == true;
+    final firstHourCtrl = TextEditingController(
+      text: limousineCentsOf(hourly['first_hour_cents']) == null
+          ? ''
+          : (limousineCentsOf(hourly['first_hour_cents'])! / 100)
+                .toStringAsFixed(2),
+    );
+    final additionalHourCtrl = TextEditingController(
+      text: limousineCentsOf(hourly['additional_hour_cents']) == null
+          ? ''
+          : (limousineCentsOf(hourly['additional_hour_cents'])! / 100)
+                .toStringAsFixed(2),
+    );
+    final minDurationCtrl = TextEditingController(
+      text: (hourly['minimum_duration_minutes'] ?? '').toString(),
+    );
+
+    final mobilisation = Map<String, dynamic>.from(
+      (existing['mobilisation'] as Map?) ?? <String, dynamic>{},
+    );
+    var mobilisationMethod = limousineOfferToken(mobilisation['method']).isEmpty
+        ? LimousineMobilisationMethod.included
+        : limousineOfferToken(mobilisation['method']);
+    var outboundCharged = mobilisation['outbound_charged'] == true;
+    var returnCharged = mobilisation['return_charged'] == true;
+    final mobilisationFeeCtrl = TextEditingController(
+      text: limousineCentsOf(mobilisation['fee_cents']) == null
+          ? ''
+          : (limousineCentsOf(mobilisation['fee_cents'])! / 100)
+                .toStringAsFixed(2),
+    );
+
+    int? centsFrom(TextEditingController c) {
+      final text = c.text.trim().replaceAll(',', '.');
+      if (text.isEmpty) return null;
+      final value = double.tryParse(text);
+      if (value == null) return null;
+      return (value * 100).round();
+    }
+
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setLocal) {
+          Map<String, dynamic> buildOffer() {
+            final localized = <String, String>{
+              _langKey(): titleCtrl.text.trim(),
+            };
+            final localizedDesc = <String, String>{
+              _langKey(): descriptionCtrl.text.trim(),
+            };
+            return <String, dynamic>{
+              ...existing,
+              'offer_id': offerId,
+              'enabled': enabled,
+              'published': published,
+              'target_type': targetType,
+              if (targetType == LimousineOfferTarget.vehicle)
+                'vehicle_id': vehicleId,
+              'service_class_id': targetType == LimousineOfferTarget.vehicle
+                  ? limousineOfferToken(
+                      _limousineVehicles
+                          .where((v) => v.id == vehicleId)
+                          .map((v) => v.serviceClassId)
+                          .join(),
+                    )
+                  : serviceClassId,
+              'price_presentation': presentation,
+              'currency': _limousineOffersCurrency,
+              'journey_types': journeyTypes.toList(growable: false),
+              'title': {
+                ...limousineLocalizedOf(existing['title']),
+                ...localized,
+              },
+              'description': {
+                ...limousineLocalizedOf(existing['description']),
+                ...localizedDesc,
+              },
+              'display_amount_cents': centsFrom(displayCtrl),
+              'hourly': <String, dynamic>{
+                ...hourly,
+                'enabled': hourlyEnabled,
+                'first_hour_cents': centsFrom(firstHourCtrl),
+                'additional_hour_cents': centsFrom(additionalHourCtrl),
+                'minimum_duration_minutes': int.tryParse(
+                  minDurationCtrl.text.trim(),
+                ),
+                'currency': _limousineOffersCurrency,
+              },
+              'mobilisation': <String, dynamic>{
+                ...mobilisation,
+                'method': mobilisationMethod,
+                'outbound_charged': outboundCharged,
+                'return_charged': returnCharged,
+                'fee_cents': centsFrom(mobilisationFeeCtrl),
+                'currency': _limousineOffersCurrency,
+              },
+            };
+          }
+
+          final draft = buildOffer();
+          final errors = _limousineOfferErrors(draft);
+
+          return AlertDialog(
+            backgroundColor: _panelBg,
+            scrollable: true,
+            title: Text(
+              index == null
+                  ? _t(
+                      nl: 'Aanbod toevoegen',
+                      en: 'Add offer',
+                      fr: 'Ajouter une offre',
+                      es: 'Añadir oferta',
+                    )
+                  : _t(
+                      nl: 'Aanbod bewerken',
+                      en: 'Edit offer',
+                      fr: 'Modifier l’offre',
+                      es: 'Editar oferta',
+                    ),
+            ),
+            content: SizedBox(
+              width: 460,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: titleCtrl,
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Titel',
+                        en: 'Title',
+                        fr: 'Titre',
+                        es: 'Título',
+                      ),
+                    ),
+                    onChanged: (_) => setLocal(() {}),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: descriptionCtrl,
+                    maxLines: 2,
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Omschrijving',
+                        en: 'Description',
+                        fr: 'Description',
+                        es: 'Descripción',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: targetType,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Aanbod voor',
+                        en: 'Offer target',
+                        fr: 'Cible de l’offre',
+                        es: 'Destino de la oferta',
+                      ),
+                    ),
+                    items: [
+                      DropdownMenuItem(
+                        value: LimousineOfferTarget.serviceClass,
+                        child: Text(
+                          _t(
+                            nl: 'Serviceklasse',
+                            en: 'Service class',
+                            fr: 'Classe de service',
+                            es: 'Clase de servicio',
+                          ),
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: LimousineOfferTarget.vehicle,
+                        child: Text(
+                          _t(
+                            nl: 'Exact voertuig',
+                            en: 'Exact vehicle',
+                            fr: 'Véhicule exact',
+                            es: 'Vehículo exacto',
+                          ),
+                        ),
+                      ),
+                    ],
+                    onChanged: (v) =>
+                        setLocal(() => targetType = v ?? targetType),
+                  ),
+                  const SizedBox(height: 8),
+                  if (targetType == LimousineOfferTarget.vehicle)
+                    DropdownButtonFormField<String>(
+                      value: _limousineVehicles.any((v) => v.id == vehicleId)
+                          ? vehicleId
+                          : null,
+                      isExpanded: true,
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Voertuig',
+                          en: 'Vehicle',
+                          fr: 'Véhicule',
+                          es: 'Vehículo',
+                        ),
+                      ),
+                      items: _limousineVehicles
+                          .map(
+                            (v) => DropdownMenuItem(
+                              value: v.id,
+                              child: Text(
+                                '${v.vehicleName} · ${v.brandModel}',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (v) => setLocal(() => vehicleId = v ?? ''),
+                    )
+                  else
+                    DropdownButtonFormField<String>(
+                      value:
+                          isKnownActiveLimousineServiceClassId(serviceClassId)
+                          ? serviceClassId
+                          : null,
+                      isExpanded: true,
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Limousineklasse',
+                          en: 'Limousine class',
+                          fr: 'Classe de limousine',
+                          es: 'Clase de limusina',
+                        ),
+                      ),
+                      items: appConfig.enabledLimousineServiceClasses
+                          .map(
+                            (c) => DropdownMenuItem(
+                              value: c.id,
+                              child: Text(c.labelFor(_lang)),
+                            ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (v) =>
+                          setLocal(() => serviceClassId = v ?? ''),
+                    ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: presentation,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Prijsweergave',
+                        en: 'Price presentation',
+                        fr: 'Présentation du prix',
+                        es: 'Presentación del precio',
+                      ),
+                    ),
+                    items: LimousinePricePresentation.all
+                        .map(
+                          (p) => DropdownMenuItem(
+                            value: p,
+                            child: Text(limousinePresentationLabel(p, _lang)),
+                          ),
+                        )
+                        .toList(growable: false),
+                    onChanged: (v) =>
+                        setLocal(() => presentation = v ?? presentation),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: displayCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Getoond bedrag ($_limousineOffersCurrency)',
+                        en: 'Display amount ($_limousineOffersCurrency)',
+                        fr: 'Montant affiché ($_limousineOffersCurrency)',
+                        es: 'Importe mostrado ($_limousineOffersCurrency)',
+                      ),
+                    ),
+                    onChanged: (_) => setLocal(() {}),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _t(
+                      nl: 'Van toepassing op',
+                      en: 'Applicable journey types',
+                      fr: 'Types de trajet applicables',
+                      es: 'Tipos de trayecto aplicables',
+                    ),
+                    style: TextStyle(color: _textSecondary, fontSize: 12),
+                  ),
+                  Wrap(
+                    spacing: 6,
+                    children: LimousineJourneyTypeId.all
+                        .map(
+                          (j) => FilterChip(
+                            label: Text(limousineJourneyTypeLabel(j, _lang)),
+                            selected: journeyTypes.contains(j),
+                            onSelected: (on) => setLocal(() {
+                              if (on) {
+                                journeyTypes.add(j);
+                              } else {
+                                journeyTypes.remove(j);
+                              }
+                            }),
+                          ),
+                        )
+                        .toList(growable: false),
+                  ),
+                  const SizedBox(height: 12),
+                  SwitchListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    value: hourlyEnabled,
+                    title: Text(
+                      _t(
+                        nl: 'Uurhuur met chauffeur',
+                        en: 'Chauffeur-driven hourly hire',
+                        fr: 'Location horaire avec chauffeur',
+                        es: 'Alquiler por horas con chófer',
+                      ),
+                    ),
+                    onChanged: (v) => setLocal(() => hourlyEnabled = v),
+                  ),
+                  if (hourlyEnabled) ...[
+                    TextField(
+                      controller: firstHourCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Eerste uur',
+                          en: 'First hour',
+                          fr: 'Première heure',
+                          es: 'Primera hora',
+                        ),
+                      ),
+                      onChanged: (_) => setLocal(() {}),
+                    ),
+                    TextField(
+                      controller: additionalHourCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Bijkomend uur',
+                          en: 'Additional hour',
+                          fr: 'Heure supplémentaire',
+                          es: 'Hora adicional',
+                        ),
+                      ),
+                      onChanged: (_) => setLocal(() {}),
+                    ),
+                    TextField(
+                      controller: minDurationCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Minimumduur (minuten)',
+                          en: 'Minimum duration (minutes)',
+                          fr: 'Durée minimale (minutes)',
+                          es: 'Duración mínima (minutos)',
+                        ),
+                      ),
+                      onChanged: (_) => setLocal(() {}),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: mobilisationMethod,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        nl: 'Voorrijden',
+                        en: 'Mobilisation',
+                        fr: 'Acheminement',
+                        es: 'Movilización',
+                      ),
+                    ),
+                    items: LimousineMobilisationMethod.all
+                        .map(
+                          (m) => DropdownMenuItem(
+                            value: m,
+                            child: Text(limousineMobilisationLabel(m, _lang)),
+                          ),
+                        )
+                        .toList(growable: false),
+                    onChanged: (v) => setLocal(
+                      () => mobilisationMethod = v ?? mobilisationMethod,
+                    ),
+                  ),
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    value: outboundCharged,
+                    title: Text(
+                      _t(
+                        nl: 'Heenrit voorrijden aanrekenen',
+                        en: 'Charge outbound mobilisation',
+                        fr: 'Facturer l’acheminement aller',
+                        es: 'Cobrar movilización de ida',
+                      ),
+                    ),
+                    onChanged: (v) =>
+                        setLocal(() => outboundCharged = v == true),
+                  ),
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    value: returnCharged,
+                    title: Text(
+                      _t(
+                        nl: 'Terugrit voorrijden aanrekenen',
+                        en: 'Charge return mobilisation',
+                        fr: 'Facturer l’acheminement retour',
+                        es: 'Cobrar movilización de vuelta',
+                      ),
+                    ),
+                    onChanged: (v) => setLocal(() => returnCharged = v == true),
+                  ),
+                  if (mobilisationMethod ==
+                      LimousineMobilisationMethod.fixedFee)
+                    TextField(
+                      controller: mobilisationFeeCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: _t(
+                          nl: 'Vaste voorrijkost',
+                          en: 'Fixed mobilisation fee',
+                          fr: 'Frais d’acheminement fixes',
+                          es: 'Tarifa fija de movilización',
+                        ),
+                      ),
+                      onChanged: (_) => setLocal(() {}),
+                    ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _t(
+                      nl: 'Je exacte standplaats blijft privé en wordt nooit gepubliceerd.',
+                      en: 'Your exact operating base stays private and is never published.',
+                      fr: 'Votre base exacte reste privée et n’est jamais publiée.',
+                      es: 'Tu base exacta permanece privada y nunca se publica.',
+                    ),
+                    style: TextStyle(color: _textMuted, fontSize: 11),
+                  ),
+                  const SizedBox(height: 12),
+                  SwitchListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    value: enabled,
+                    title: Text(
+                      _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo'),
+                    ),
+                    onChanged: (v) => setLocal(() => enabled = v),
+                  ),
+                  SwitchListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    value: published,
+                    title: Text(
+                      _t(
+                        nl: 'Publiceren',
+                        en: 'Publish',
+                        fr: 'Publier',
+                        es: 'Publicar',
+                      ),
+                    ),
+                    onChanged: (v) => setLocal(() => published = v),
+                  ),
+                  if (errors.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    ...errors.map(
+                      (code) => Text(
+                        '• ${limousineOfferErrorLabel(code, _lang)}',
+                        style: const TextStyle(
+                          color: Colors.orangeAccent,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: Text(
+                  _t(
+                    nl: 'Annuleren',
+                    en: 'Cancel',
+                    fr: 'Annuler',
+                    es: 'Cancelar',
+                  ),
+                ),
+              ),
+              FilledButton(
+                onPressed: errors.isEmpty
+                    ? () => Navigator.of(dialogContext).pop(buildOffer())
+                    : null,
+                child: Text(
+                  _t(
+                    nl: 'Bewaren',
+                    en: 'Save',
+                    fr: 'Enregistrer',
+                    es: 'Guardar',
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (result == null) return;
+    setState(() {
+      if (index == null) {
+        _limousineOffers.add(result);
+      } else {
+        _limousineOffers[index] = result;
+      }
+      _limousineOffersDirty = true;
+    });
+  }
+
+  String _langKey() {
+    switch (_lang) {
+      case AppLanguage.nl:
+        return 'nl';
+      case AppLanguage.fr:
+        return 'fr';
+      case AppLanguage.es:
+        return 'es';
+      case AppLanguage.en:
+      case AppLanguage.de:
+        return 'en';
+    }
+  }
+
+  /// Read-only safe preview of what customers would see. Uses the shared safe
+  /// projection so the private operating base can never leak.
+  Widget _limousineOffersPublicPreview() {
+    final safe = buildSafePublicLimousineOffers(
+      _limousineOffers,
+      eligible: true,
+      vehicles: vehiclesNotifier.value,
+      knownClassIds: _limousineKnownClassIds,
+      readiness: true,
+    );
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _subPanelBg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _inputBorderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              nl: 'Veilige publieke preview',
+              en: 'Safe public preview',
+              fr: 'Aperçu public sécurisé',
+              es: 'Vista previa pública segura',
+            ),
+            style: TextStyle(color: _textPrimary, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _t(
+              nl: 'Alleen gepubliceerd en geldig aanbod. Je exacte standplaats wordt nooit gedeeld.',
+              en: 'Published and valid offers only. Your exact operating base is never shared.',
+              fr: 'Offres publiées et valides uniquement. Votre base exacte n’est jamais partagée.',
+              es: 'Solo ofertas publicadas y válidas. Tu base exacta nunca se comparte.',
+            ),
+            style: TextStyle(color: _textMuted, fontSize: 11),
+          ),
+          const SizedBox(height: 8),
+          if (safe.isEmpty)
+            Text(
+              _t(
+                nl: 'Nog niets zichtbaar voor klanten.',
+                en: 'Nothing visible to customers yet.',
+                fr: 'Rien de visible pour les clients.',
+                es: 'Nada visible para los clientes todavía.',
+              ),
+              style: TextStyle(color: _textSecondary, fontSize: 12),
+            )
+          else
+            ...safe.map((o) {
+              final presentation = (o['price_presentation'] ?? '').toString();
+              final cents = limousineCentsOf(o['display_amount_cents']);
+              final currency = (o['currency'] ?? '').toString();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  '• ${limousineLocalizedFor(o['title'], _lang)} — '
+                  '${limousinePresentationLabel(presentation, _lang)}'
+                  '${cents != null ? ' ${_limousineMoneyLabel(cents, currency)}' : ''}',
+                  style: TextStyle(color: _textSecondary, fontSize: 12),
+                ),
+              );
+            }),
         ],
       ),
     );
@@ -738,6 +1826,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _loadBillitIntegrationStatus();
     _loadBillitAutoCreateSettings();
     _loadAirportFixedFareRules();
+    _loadLimousineOffers();
     _loadChironConnectionStatus();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -12438,6 +13527,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                       const SizedBox(height: 10),
                       _limousineReadinessSummary(),
                       const SizedBox(height: 10),
+                      // LIMOUSINE-MARKETPLACE-P2B2 — publication surface only.
+                      // Read-only mirror of what will be published; pricing is
+                      // authored in "Limousine offers and pricing".
+                      _limousineOffersPublicPreview(),
+                      const SizedBox(height: 10),
                       FilledButton.icon(
                         onPressed: _publicPartnerProfilePublishing
                             ? null
@@ -12970,6 +14064,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 ),
               if (_shouldShowSection('airport_fixed_fares'))
                 _airportFixedFareCard(),
+              // LIMOUSINE-MARKETPLACE-P2B2 — dedicated, visually and
+              // semantically separate from the taxi pricing engine and the
+              // airport fixed fares above.
+              if (_shouldShowSection('limousine_offers_pricing'))
+                _limousineOffersCard(),
               const SizedBox(height: 4),
               if (_isActiveStepMode)
                 // SafeArea ensures the wizard's primary "Save and

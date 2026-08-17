@@ -7810,6 +7810,79 @@ Future<Map<String, dynamic>> saveAdminAirportFixedFares(
   return map;
 }
 
+/// LIMOUSINE-MARKETPLACE-P2B2 — reads ONLY the additive `limousine` section of
+/// pricing:v1. The taxi pricing profile and airport fixed-fare store are never
+/// touched by this endpoint.
+Future<Map<String, dynamic>> fetchAdminLimousinePricing({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/pricing/limousine'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .get(endpoint, headers: auth.headers)
+      .timeout(const Duration(seconds: 12));
+  final dynamic decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception(
+      _adminApiErrorMessageFromResponse(
+        map,
+        res.statusCode,
+        fallback: 'limousine_pricing_fetch_failed',
+      ),
+    );
+  }
+  return map;
+}
+
+/// Writes ONLY the `limousine` section. The server preserves every unrelated
+/// pricing:v1 field and owns the monotonic source revision.
+Future<Map<String, dynamic>> saveAdminLimousinePricing(
+  Map<String, dynamic> limousineSection, {
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/pricing/limousine'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{
+          ...scope,
+          'limousine': limousineSection,
+        }),
+      )
+      .timeout(const Duration(seconds: 12));
+  final dynamic decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception(
+      _adminApiErrorMessageFromResponse(
+        map,
+        res.statusCode,
+        fallback: 'limousine_pricing_save_failed',
+      ),
+    );
+  }
+  return map;
+}
+
 int? _lastCompanyBootstrapHttpStatusCode;
 int? get lastCompanyBootstrapHttpStatusCode =>
     _lastCompanyBootstrapHttpStatusCode;

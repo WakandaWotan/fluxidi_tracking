@@ -13,19 +13,45 @@ import {
   isEligibleLimousineVehicle,
   projectLimousineEntitled,
 } from "./limousine_provider_eligibility.mjs";
+import { buildSafePublicLimousineOffers } from "./limousine_offers.mjs";
 
 /// Safe, public-only readiness projection. Contains no price/plan/customer data.
-export function buildLimousineProjection(profile) {
+///
+/// LIMOUSINE-MARKETPLACE-P2B2: when commercial `offers` are supplied, a safe
+/// `published_offer_count` is added (published + enabled + valid + eligible
+/// only). Omitting `offers` keeps the projection byte-identical to P2A.
+export function buildLimousineProjection(profile, options = {}) {
   const p = profile && typeof profile === "object" ? profile : {};
   const evaluation = evaluateLimousineProviderEligibility(p);
   const vehicles = Array.isArray(p.vehicles) ? p.vehicles : [];
   const eligibleVehicleCount = vehicles.filter((v) => isEligibleLimousineVehicle(v)).length;
-  return {
+  const base = {
     limousine_service_enabled: companyEnabledLimousine(p),
     limousine_available: evaluation.eligible,
     eligible_vehicle_count: eligibleVehicleCount,
     reason: evaluation.reason,
   };
+  if (!options || options.offers == null) return base;
+  const safeOffers = buildSafePublicLimousineOffers(options.offers, {
+    eligible: evaluation.eligible,
+    knownVehicles: options.knownVehicles || [],
+    knownClassIds: options.knownClassIds || [],
+    readiness: evaluation.eligible,
+  });
+  return { ...base, published_offer_count: safeOffers.length };
+}
+
+/// The customer-safe offer list. Never includes the private operating-base
+/// address, driver/customer data, internal costs or unpublished rules.
+export function buildLimousinePublicOffers(profile, options = {}) {
+  const p = profile && typeof profile === "object" ? profile : {};
+  const evaluation = evaluateLimousineProviderEligibility(p);
+  return buildSafePublicLimousineOffers(options.offers, {
+    eligible: evaluation.eligible,
+    knownVehicles: options.knownVehicles || [],
+    knownClassIds: options.knownClassIds || [],
+    readiness: evaluation.eligible,
+  });
 }
 
 /// Deterministic fingerprint of the safe projection + the entitlement input, so

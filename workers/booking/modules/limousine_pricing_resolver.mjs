@@ -24,6 +24,11 @@ import {
   isLimousineServiceToken,
   normalizeLimousineToken,
 } from "./limousine_provider_eligibility.mjs";
+import {
+  LIMOUSINE_PRICE_PRESENTATIONS,
+  normalizeLimousineOffers,
+  selectLimousineOfferForRequest,
+} from "./limousine_offers.mjs";
 
 export const LIMOUSINE_PRICING_REASONS = Object.freeze({
   RESOLVED: "resolved",
@@ -254,6 +259,9 @@ export function normalizeLimousinePricingSection(raw) {
     source_revision: toInt(src.source_revision ?? src.sourceRevision) ?? 0,
     updated_at: String(src.updated_at ?? src.updatedAt ?? "").trim(),
     classes: Array.isArray(src.classes) ? src.classes.map(normalizeClassPricing) : [],
+    // LIMOUSINE-MARKETPLACE-P2B2: commercial offers (additive; P2B1 records
+    // without `offers` keep parsing and resolving exactly as before).
+    offers: normalizeLimousineOffers(src.offers),
   };
 }
 
@@ -429,6 +437,166 @@ function pricedResult({
   };
 }
 
+/// Hourly hire total in integer cents. Enforces the minimum hire duration and
+/// the configured maximum; returns null when the configuration is incomplete.
+export function computeOfferHourlyCents(hourly, requestedMinutes) {
+  if (!hourly || !hourly.enabled) return null;
+  if (hourly.first_hour_cents == null || hourly.first_hour_cents < 0) return null;
+  if (hourly.additional_hour_cents == null || hourly.additional_hour_cents < 0) return null;
+  if (hourly.minimum_duration_minutes == null || hourly.minimum_duration_minutes <= 0) {
+    return null;
+  }
+  const requested = Number.isFinite(Number(requestedMinutes))
+    ? Math.max(0, Math.trunc(Number(requestedMinutes)))
+    : 0;
+  if (
+    hourly.maximum_duration_minutes != null &&
+    hourly.maximum_duration_minutes > 0 &&
+    requested > hourly.maximum_duration_minutes
+  ) {
+    return null;
+  }
+  // A package covers the whole hire when it is fully configured and long enough.
+  if (
+    hourly.package_amount_cents != null &&
+    hourly.package_amount_cents > 0 &&
+    hourly.package_duration_minutes != null &&
+    hourly.package_duration_minutes > 0 &&
+    requested <= hourly.package_duration_minutes
+  ) {
+    return hourly.package_amount_cents;
+  }
+  const billableMinutes = Math.max(requested, hourly.minimum_duration_minutes);
+  const hours = Math.max(1, Math.ceil(billableMinutes / 60));
+  return hourly.first_hour_cents + hourly.additional_hour_cents * (hours - 1);
+}
+
+/// Resolves an outcome from a matched commercial offer. Returns null when the
+/// offer cannot decide and the legacy class-level path should be consulted.
+function resolveFromOffer({
+  offer,
+  classId,
+  journeyType,
+  request,
+  route,
+  nowMs,
+  sectionCurrency,
+}) {
+  const R = LIMOUSINE_PRICING_REASONS;
+  const P = LIMOUSINE_PRICE_PRESENTATIONS;
+
+  if (offer.price_presentation === P.UNAVAILABLE) return unresolved(R.UNAVAILABLE);
+  // Marketing-only presentations never produce a final customer price.
+  if (
+    offer.price_presentation === P.QUOTE_REQUIRED ||
+    offer.price_presentation === P.FROM_PRICE ||
+    offer.price_presentation === P.INDICATIVE
+  ) {
+    return unresolved(R.MANUAL_QUOTE);
+  }
+  if (offer.price_presentation !== P.EXACT_FIXED) return unresolved(R.UNAVAILABLE);
+
+  const currency =
+    normalizeCurrency(request.currency) || offer.currency || sectionCurrency;
+  if (!currency) return unresolved(R.CURRENCY_MISMATCH);
+  if (offer.currency && offer.currency !== currency) return unresolved(R.CURRENCY_MISMATCH);
+
+  // 1) Fixed journey rules on the offer.
+  const candidates = offer.fixed_rules.filter((rule) => {
+    if (!rule.enabled) return false;
+    if (rule.amount_cents == null || rule.amount_cents <= 0) return false;
+    if (rule.currency && rule.currency !== currency) return false;
+    if (rule.journey_type !== journeyType) return false;
+    if (journeyType === "airport_transfer") {
+      const reqIata = String(request.airport_iata || "").trim().toUpperCase();
+      if (!rule.airport_iata || !reqIata || rule.airport_iata !== reqIata) return false;
+      if (!directionMatches(rule.direction, normalizeDirection(request.direction))) return false;
+    }
+    if (!zoneMatches(rule, request)) return false;
+    if (!ruleActive(rule, nowMs)) return false;
+    return true;
+  });
+  if (candidates.length > 0) {
+    const { rule, ambiguous } = selectBestFixedRule(
+      candidates.map((r) => ({ ...r, priority: r.priority ?? 0 })),
+    );
+    if (ambiguous) return unresolved(R.AMBIGUOUS_FIXED_RULE);
+    if (rule) {
+      return pricedResult({
+        mode: LIMOUSINE_PRICING_MODES.FIXED,
+        classId,
+        journeyType,
+        request,
+        route,
+        ruleRef: `${offer.offer_id}:${rule.rule_id}`,
+        sourceRevision: offer.source_revision,
+        inclVatCents: rule.amount_cents,
+        vatRate: rule.vat_rate,
+        currency,
+      });
+    }
+  }
+
+  // 2) Hourly hire (only for an hourly journey).
+  if (journeyType === "hourly_package" && offer.hourly?.enabled) {
+    if (offer.hourly.currency && offer.hourly.currency !== currency) {
+      return unresolved(R.CURRENCY_MISMATCH);
+    }
+    const cents = computeOfferHourlyCents(offer.hourly, request.requested_duration_minutes);
+    if (cents == null) return unresolved(R.INCOMPLETE_PACKAGE);
+    return pricedResult({
+      mode: LIMOUSINE_PRICING_MODES.PACKAGE,
+      classId,
+      journeyType,
+      request,
+      route,
+      ruleRef: `${offer.offer_id}:hourly`,
+      sourceRevision: offer.source_revision,
+      inclVatCents: cents,
+      vatRate: offer.hourly.vat_rate ?? 0,
+      currency,
+    });
+  }
+
+  // 3) Offer-level limousine distance/time using the SERVER route only.
+  const dt = offer.distance_time;
+  if (dt && dt.enabled) {
+    const incomplete =
+      dt.base_incl_vat_cents == null ||
+      dt.per_km_incl_vat_cents == null ||
+      dt.per_minute_incl_vat_cents == null ||
+      dt.minimum_incl_vat_cents == null ||
+      !dt.currency;
+    if (incomplete) return unresolved(R.INCOMPLETE_DISTANCE_TIME);
+    if (dt.currency !== currency) return unresolved(R.CURRENCY_MISMATCH);
+    if (!route || !Number.isFinite(route.distance_km) || !Number.isFinite(route.duration_min)) {
+      return unresolved(R.ROUTE_FAILED);
+    }
+    const km = Math.max(0, Number(route.distance_km));
+    const min = Math.max(0, Number(route.duration_min));
+    const rawCents =
+      dt.base_incl_vat_cents +
+      Math.round(km * dt.per_km_incl_vat_cents) +
+      Math.round(min * dt.per_minute_incl_vat_cents);
+    return pricedResult({
+      mode: LIMOUSINE_PRICING_MODES.DISTANCE_TIME,
+      classId,
+      journeyType,
+      request,
+      route,
+      ruleRef: `${offer.offer_id}:distance_time`,
+      sourceRevision: offer.source_revision,
+      inclVatCents: Math.max(dt.minimum_incl_vat_cents, rawCents),
+      vatRate: dt.vat_rate,
+      currency,
+    });
+  }
+
+  // An exact_fixed offer that cannot price this request fails closed rather
+  // than falling back to taxi pricing or to another company's configuration.
+  return unresolved(R.UNAVAILABLE);
+}
+
 /// Full authoritative resolution for an explicit Limousine quote request.
 /// Encapsulates the server gate + provider eligibility + the pricing hierarchy
 /// so the whole decision is a single, pure, testable unit. Never returns a taxi
@@ -464,14 +632,37 @@ export function resolveLimousineQuote({
     }
   }
 
+  const journeyTypeEarly = normalizeJourneyType(request.journey_type);
+  if (!journeyTypeEarly || !SUPPORTED_JOURNEY_TYPES.has(journeyTypeEarly)) {
+    return unresolved(R.UNSUPPORTED_JOURNEY_TYPE);
+  }
+
+  // LIMOUSINE-MARKETPLACE-P2B2: a configured commercial offer wins, with an
+  // exact vehicle offer overriding a service-class offer. Only `exact_fixed`
+  // may resolve; from/indicative are marketing and quote_required is manual.
+  const matchedOffer = selectLimousineOfferForRequest(normalizedSection.offers, {
+    vehicleId: request.vehicle_id,
+    serviceClassId: classId,
+    journeyType: journeyTypeEarly,
+  });
+  if (matchedOffer) {
+    const offerOutcome = resolveFromOffer({
+      offer: matchedOffer,
+      classId,
+      journeyType: journeyTypeEarly,
+      request,
+      route,
+      nowMs,
+      sectionCurrency: normalizedSection.currency,
+    });
+    if (offerOutcome) return offerOutcome;
+  }
+
   const classPricing = findLimousineClassPricing(normalizedSection, classId);
   if (!classPricing) return unresolved(R.UNKNOWN_CLASS);
   if (!classPricing.enabled) return unresolved(R.CLASS_DISABLED);
 
-  const journeyType = normalizeJourneyType(request.journey_type);
-  if (!journeyType || !SUPPORTED_JOURNEY_TYPES.has(journeyType)) {
-    return unresolved(R.UNSUPPORTED_JOURNEY_TYPE);
-  }
+  const journeyType = journeyTypeEarly;
 
   const expectedCurrency =
     normalizeCurrency(request.currency) ||
