@@ -119,6 +119,9 @@ List<Map<String, dynamic>> filterLimousineEligibleProviders(
 bool isEligibleLimousineVehicle(Map<String, dynamic> vehicle) {
   if (_recordIsDeletedOrSuspended(vehicle)) return false;
   final hasExplicitLimousineConfig =
+      // LIMOUSINE-MARKETPLACE-P2A: authoritative configured classification.
+      isLimousineServiceToken(vehicle['service_category']?.toString()) ||
+      isLimousineServiceToken(vehicle['serviceCategory']?.toString()) ||
       partnerHasExplicitLimousineCapability(vehicle) ||
       serviceCollectionContainsLimousine(vehicle['features']) ||
       serviceCollectionContainsLimousine(vehicle['service_ids']) ||

@@ -2629,6 +2629,14 @@ class AppConfig {
   final List<AppOption> enabledServices;
   final List<AppOption> enabledTiers;
   final List<AppOption> enabledExtraOptions;
+
+  /// LIMOUSINE-MARKETPLACE-P2A: authoritative, data-driven limousine
+  /// service-class catalog owned by Service setup. Stable IDs (never localized
+  /// labels, never free text). A vehicle becomes limousine-eligible only when
+  /// the company explicitly sets service category = limousine AND picks one of
+  /// these active class IDs. Selecting a taxi tier never implies limousine.
+  final List<AppOption> enabledLimousineServiceClasses;
+
   final AppLabels labels;
   final AppFeatures features;
 
@@ -2645,6 +2653,7 @@ class AppConfig {
     required this.enabledExtraOptions,
     required this.labels,
     required this.features,
+    this.enabledLimousineServiceClasses = kDefaultLimousineServiceClasses,
   });
 
   // Backward-compatible aliases for existing code usage.
@@ -2669,6 +2678,85 @@ class AppConfig {
   bool get showDetailedBreakdown => businessDefaults.showDetailedBreakdown;
   AppLanguage get currentLanguage => appLanguageNotifier.value;
   AppStrings get strings => AppStrings.forLanguage(currentLanguage);
+}
+
+/// LIMOUSINE-MARKETPLACE-P2A — provisional authoritative limousine service-class
+/// catalog. These are configuration classes (not commercial SKUs, not pricing).
+/// Stable IDs are the source of truth; labels are localized separately. The
+/// final catalog membership is a product decision; extend/curate here rather
+/// than inferring classes from vehicle brand/model/name or a taxi tier.
+const List<AppOption> kDefaultLimousineServiceClasses = <AppOption>[
+  AppOption(
+    id: 'executive_sedan',
+    label: LocalizedText(
+      nl: 'Executive sedan',
+      en: 'Executive sedan',
+      fr: 'Berline executive',
+      es: 'Sedan ejecutivo',
+    ),
+    payloadValue: 'EXECUTIVE_SEDAN',
+  ),
+  AppOption(
+    id: 'first_class_sedan',
+    label: LocalizedText(
+      nl: 'First class sedan',
+      en: 'First class sedan',
+      fr: 'Berline premiere classe',
+      es: 'Sedan primera clase',
+    ),
+    payloadValue: 'FIRST_CLASS_SEDAN',
+  ),
+  AppOption(
+    id: 'business_van',
+    label: LocalizedText(
+      nl: 'Business van',
+      en: 'Business van',
+      fr: 'Van affaires',
+      es: 'Furgoneta business',
+    ),
+    payloadValue: 'BUSINESS_VAN',
+  ),
+  AppOption(
+    id: 'luxury_van',
+    label: LocalizedText(
+      nl: 'Luxe van',
+      en: 'Luxury van',
+      fr: 'Van de luxe',
+      es: 'Furgoneta de lujo',
+    ),
+    payloadValue: 'LUXURY_VAN',
+  ),
+  AppOption(
+    id: 'stretch_limousine',
+    label: LocalizedText(
+      nl: 'Stretchlimousine',
+      en: 'Stretch limousine',
+      fr: 'Limousine allongee',
+      es: 'Limusina alargada',
+    ),
+    payloadValue: 'STRETCH_LIMOUSINE',
+  ),
+];
+
+/// Returns the authoritative limousine service class for a stable [id], or null
+/// when the id is unknown/inactive (fails closed). Never resolves from brand,
+/// model, name, or a taxi tier.
+AppOption? limousineServiceClassById(String? id) {
+  final needle = (id ?? '').trim().toLowerCase();
+  if (needle.isEmpty) return null;
+  for (final option in appConfig.enabledLimousineServiceClasses) {
+    if (option.id.trim().toLowerCase() == needle) return option;
+  }
+  return null;
+}
+
+bool isKnownActiveLimousineServiceClassId(String? id) =>
+    limousineServiceClassById(id) != null;
+
+String limousineServiceClassLabel(String? id, AppLanguage language) {
+  final option = limousineServiceClassById(id);
+  if (option == null) return '';
+  return option.labelFor(language);
 }
 
 final ValueNotifier<AppLanguage> appLanguageNotifier =

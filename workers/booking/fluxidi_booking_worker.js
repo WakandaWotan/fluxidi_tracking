@@ -102,6 +102,11 @@ import {
   resolveNearbyServiceFilter as _resolveNearbyServiceFilter,
 } from "./modules/limousine_provider_eligibility.mjs";
 import {
+  buildLimousineProjection as _buildLimousineProjection,
+  resolveLimousineProjectionRevision as _resolveLimousineProjectionRevision,
+  stampLimousineProjectionOnProfile as _stampLimousineProjectionOnProfile,
+} from "./modules/limousine_projection.mjs";
+import {
   deletedVehicleIdList,
   filterActiveVehicles,
   mergeVehicleTombstones,
@@ -14064,6 +14069,16 @@ async function saveSubscriptionProfile(
       updated_at: nowIso,
     },
   }));
+  // LIMOUSINE-MARKETPLACE-P2A: entitlement can change on any subscription write
+  // (activate / suspend / cancel / recurring / admin edit). Recompute the safe
+  // public Limousine projection so a revoke/restore propagates without a manual
+  // republish. Best-effort + fingerprint-guarded: a no-op when nothing changed
+  // and never allowed to break the subscription save.
+  try {
+    await refreshPartnerLimousineProjection(env, scope);
+  } catch (_) {
+    // non-fatal
+  }
   return {
     ...normalized,
     created_at: normalized.created_at || nowIso,
@@ -44152,6 +44167,14 @@ export default {
         console.log(
           `[KV_WRITE][PUT] route=/admin/fleet/vehicles changed=true scope=${scopeMasked} revision=${sourceRevision} deleted=${deletedIdList.length}`,
         );
+        // LIMOUSINE-MARKETPLACE-P2A: a fleet change can affect readiness.
+        // Recompute the safe public projection (fingerprint-guarded no-op when
+        // unchanged; never breaks the fleet write).
+        try {
+          await refreshPartnerLimousineProjection(env, scope);
+        } catch (_) {
+          // non-fatal
+        }
         return json({
           ok: true,
           changed: true,
@@ -45070,7 +45093,7 @@ export default {
         } catch (_) {
           _limousineEntitledProjection = false;
         }
-        const normalizedProfile = _normalizePublicPartnerProfileEntry({
+        let normalizedProfile = _normalizePublicPartnerProfileEntry({
           ...incoming,
           partner_id: canonicalPartnerId,
           partnerId: canonicalPartnerId,
@@ -45088,6 +45111,31 @@ export default {
         if (!normalizedProfile) {
           return json({ ok: false, error: "invalid partner_profile payload" }, 400);
         }
+        // LIMOUSINE-MARKETPLACE-P2A: stamp the safe readiness projection with a
+        // server-owned monotonic source_revision (reuses the existing revision
+        // contract). Older republishes cannot lower the revision.
+        let _existingScopedPartnerRecord = null;
+        try {
+          _existingScopedPartnerRecord = await env.BOOKING_KV.get(
+            scopedPartnerKeys.profileKey,
+            { type: "json" },
+          );
+        } catch (_) {
+          _existingScopedPartnerRecord = null;
+        }
+        const _limousineProjection = _buildLimousineProjection(normalizedProfile);
+        const _limousineRevision = _resolveLimousineProjectionRevision({
+          existingRecord: _existingScopedPartnerRecord,
+          existingProfile: _existingScopedPartnerRecord?.partner_profile ?? null,
+          nextProjection: _limousineProjection,
+          entitled: _limousineEntitledProjection,
+        });
+        normalizedProfile = _stampLimousineProjectionOnProfile({
+          profile: normalizedProfile,
+          entitled: _limousineEntitledProjection,
+          projection: _limousineProjection,
+          sourceRevision: _limousineRevision.source_revision,
+        });
 
         const rawProfiles = await env.BOOKING_KV.get(PARTNER_PROFILES_KEY, { type: "json" });
         const currentProfiles = Array.isArray(rawProfiles)
@@ -45154,6 +45202,7 @@ export default {
           JSON.stringify({
             version: 1,
             updated_at: partnerScopedUpdatedAt,
+            source_revision: normalizedProfile.source_revision,
             tenant_id: explicitScope.tenant_id,
             company_id: explicitScope.company_id,
             partner_profile: normalizedProfile,
@@ -76678,6 +76727,108 @@ function _logNearbyCapabilitiesDiagnostics(partnerId, payload) {
   );
 }
 
+// LIMOUSINE-MARKETPLACE-P2A: set `limousine_entitled` on a single partner entry
+// inside a stored profile array, preserving every other entry and field. The
+// stored entries are already normalized, so no re-normalization is applied.
+async function _setLimousineEntitledInProfileArray(env, key, partnerId, entitled, wrapper) {
+  const raw = await env.BOOKING_KV.get(key, { type: "json" });
+  const list = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === "object" && Array.isArray(raw.profiles)
+      ? raw.profiles
+      : null;
+  if (!Array.isArray(list)) return false;
+  let changed = false;
+  const next = list.map((entry) => {
+    if (entry && typeof entry === "object" && entry.partner_id === partnerId) {
+      if (entry.limousine_entitled !== entitled) changed = true;
+      return { ...entry, limousine_entitled: entitled };
+    }
+    return entry;
+  });
+  if (!changed) return false;
+  const payload = wrapper
+    ? { ...wrapper, profiles: next }
+    : { profiles: next };
+  await env.BOOKING_KV.put(key, JSON.stringify(payload));
+  return true;
+}
+
+/// Shared, server-owned recomputation of the public Limousine readiness
+/// projection for a company. Reuses the authoritative subscription entitlement
+/// and the eligibility resolver — it never duplicates composition logic. It is
+/// a safe no-op when the company has no published public profile, only touches
+/// limousine fields (+ monotonic revision), and never throws into callers.
+async function refreshPartnerLimousineProjection(env, scope) {
+  try {
+    if (!env?.BOOKING_KV) return { ok: false, reason: "no_kv" };
+    const scopedKeys = buildScopedPartnerKeys(scope);
+    if (!scopedKeys) return { ok: false, reason: "no_scope" };
+    const record = await env.BOOKING_KV.get(scopedKeys.profileKey, { type: "json" });
+    const existingProfile =
+      record && typeof record === "object" ? record.partner_profile : null;
+    if (!existingProfile || typeof existingProfile !== "object") {
+      return { ok: false, reason: "no_profile" };
+    }
+    let entitled = false;
+    try {
+      const sub = await loadSubscriptionProfile(env, scope);
+      entitled = _projectLimousineEntitled({
+        features: sub?.features,
+        subscriptionStatus: sub?.subscription_status ?? sub?.status,
+      });
+    } catch (_) {
+      entitled = false;
+    }
+    const nextProfileBase = { ...existingProfile, limousine_entitled: entitled };
+    const projection = _buildLimousineProjection(nextProfileBase);
+    const revision = _resolveLimousineProjectionRevision({
+      existingRecord: record,
+      existingProfile,
+      nextProjection: projection,
+      entitled,
+    });
+    if (!revision.changed) {
+      return { ok: true, changed: false, source_revision: revision.source_revision };
+    }
+    const stamped = _stampLimousineProjectionOnProfile({
+      profile: nextProfileBase,
+      entitled,
+      projection,
+      sourceRevision: revision.source_revision,
+    });
+    await env.BOOKING_KV.put(
+      scopedKeys.profileKey,
+      JSON.stringify({
+        ...(record && typeof record === "object" ? record : {}),
+        version: record?.version ?? 1,
+        updated_at: revision.updated_at,
+        source_revision: revision.source_revision,
+        partner_profile: stamped,
+      }),
+    );
+    // Propagate the entitlement change to the discovery arrays so a revocation
+    // takes effect without a manual republish.
+    await _setLimousineEntitledInProfileArray(
+      env,
+      PARTNER_PROFILES_KEY,
+      existingProfile.partner_id,
+      entitled,
+      null,
+    );
+    await _setLimousineEntitledInProfileArray(
+      env,
+      PUBLIC_PARTNER_PROFILES_V2_KEY,
+      existingProfile.partner_id,
+      entitled,
+      { version: 2, updated_at: revision.updated_at },
+    );
+    return { ok: true, changed: true, source_revision: revision.source_revision };
+  } catch (_) {
+    return { ok: false, reason: "error" };
+  }
+}
+
 async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, radiusKm = null, service = null } = {}) {
   const needle = _normalizePostcode(postcode);
   const hasGeoQuery = Number.isFinite(lat) && Number.isFinite(lng);
@@ -77513,6 +77664,38 @@ function _normalizePublicPartnerProfileEntry(raw) {
     // subscription profile; any client-submitted value is overwritten there.
     // Missing => false (fail closed).
     limousine_entitled: raw.limousine_entitled === true,
+    // LIMOUSINE-MARKETPLACE-P2A: preserve the safe readiness projection +
+    // monotonic source_revision through re-normalization (no private data).
+    ...(raw.source_revision != null
+      ? { source_revision: _safePublicInt(raw.source_revision, 0, 0, 1000000000) }
+      : {}),
+    ...(raw.limousine_projection && typeof raw.limousine_projection === "object"
+      ? {
+          limousine_projection: {
+            limousine_service_enabled: _safePublicBool(
+              raw.limousine_projection.limousine_service_enabled,
+              false,
+            ),
+            limousine_available: _safePublicBool(
+              raw.limousine_projection.limousine_available,
+              false,
+            ),
+            eligible_vehicle_count: _safePublicInt(
+              raw.limousine_projection.eligible_vehicle_count,
+              0,
+              0,
+              9999,
+            ),
+            reason: _safePublicText(raw.limousine_projection.reason, 48),
+            source_revision: _safePublicInt(
+              raw.limousine_projection.source_revision,
+              0,
+              0,
+              1000000000,
+            ),
+          },
+        }
+      : {}),
     tagline: _safePublicText(raw.tagline, 180),
     about_short: _safePublicText(raw.about_short ?? raw.aboutShort, 400),
     about_long: _safePublicText(raw.about_long ?? raw.aboutLong, 2000),

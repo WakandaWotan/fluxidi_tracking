@@ -17,6 +17,7 @@ import 'package:fluxidi_tracking/chiron_company_connection_config.dart';
 import 'package:fluxidi_tracking/company/billit_customer_connect_gate.dart';
 import 'package:fluxidi_tracking/limousine/limousine_marketplace_labels.dart';
 import 'package:fluxidi_tracking/limousine/limousine_service_capability.dart';
+import 'package:fluxidi_tracking/limousine/limousine_state_composition.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/widgets/chiron_environment_status_labels.dart';
 import 'package:fluxidi_tracking/widgets/chiron_self_service_wizard.dart';
@@ -465,6 +466,132 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       case AppLanguage.de:
         return en;
     }
+  }
+
+  /// LIMOUSINE-MARKETPLACE-P2A: read-only readiness summary using the typed
+  /// domain resolver (no duplicated eligibility logic in the widget). Shows the
+  /// authoritative six-state result; missing/stale state fails closed. No
+  /// subscription-private detail (price/plan) is shown.
+  Map<String, dynamic> _limousineReadinessCandidate({
+    required String subscriptionStatus,
+    required bool entitled,
+  }) {
+    final services = _mappedPublicServiceIds();
+    final vehicles = <Map<String, dynamic>>[];
+    for (final v in vehiclesNotifier.value) {
+      if (!v.isActive) continue;
+      final category = v.serviceCategory.trim().toLowerCase();
+      final classId = v.serviceClassId.trim();
+      if (category != 'limousine') continue;
+      if (!isKnownActiveLimousineServiceClassId(classId)) continue;
+      vehicles.add(<String, dynamic>{
+        'service_category': 'limousine',
+        'service_class': classId,
+        'category': 'limousine',
+        'is_active': true,
+      });
+    }
+    return <String, dynamic>{
+      'subscription_status': subscriptionStatus,
+      'features': <String, dynamic>{'limousine': entitled},
+      'is_active': true,
+      'services': services,
+      'profile_enabled': _isPublicPartnerProfilePublished(),
+      'published_at': _publicPartnerProfilePublishedAt,
+      'bookable': true,
+      'vehicles': vehicles,
+    };
+  }
+
+  Widget _limousineReadinessRow(LimousinePublicAvailabilityState state) {
+    final label = limousineAvailabilityStateLabelFor(state, _lang);
+    final available =
+        state == LimousinePublicAvailabilityState.publiclyAvailable;
+    final blocked =
+        state == LimousinePublicAvailabilityState.suspendedOrBlocked;
+    final Color dot = available
+        ? const Color(0xFF34D29A)
+        : (blocked ? const Color(0xFFE5534B) : _textMuted);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _inputFill,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _inputBorderColor),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Limousine-status',
+                    en: 'Limousine readiness',
+                    fr: 'État limousine',
+                    es: 'Estado de limusina',
+                  ),
+                  style: TextStyle(color: _textMuted, fontSize: 11),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _limousineReadinessSummary() {
+    final scopeId = _strictSettingsScopeForAction(
+      action: 'limousine_readiness',
+    )?.companyId;
+    if (scopeId == null || scopeId.trim().isEmpty) {
+      return _limousineReadinessRow(
+        LimousinePublicAvailabilityState.suspendedOrBlocked,
+      );
+    }
+    return FutureBuilder<BackendSubscriptionProfile>(
+      future: fetchCompanySubscriptionProfile(
+        tenantId: scopeId,
+        companyId: scopeId,
+      ),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return _limousineReadinessRow(
+            LimousinePublicAvailabilityState.unavailableUnderSubscription,
+          );
+        }
+        final profile = snapshot.data;
+        final status = profile == null
+            ? ''
+            : (profile.subscriptionStatus.trim().isNotEmpty
+                  ? profile.subscriptionStatus
+                  : profile.status);
+        final entitled = profile?.features['limousine'] == true;
+        final candidate = _limousineReadinessCandidate(
+          subscriptionStatus: status,
+          entitled: entitled,
+        );
+        final composition = composeLimousinePublicAvailability(candidate);
+        return _limousineReadinessRow(composition.state);
+      },
+    );
   }
 
   /// True when the page is rendering a single focused setup step. False when
@@ -12308,6 +12435,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                           ],
                         ],
                       ),
+                      const SizedBox(height: 10),
+                      _limousineReadinessSummary(),
                       const SizedBox(height: 10),
                       FilledButton.icon(
                         onPressed: _publicPartnerProfilePublishing
