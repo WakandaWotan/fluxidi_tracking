@@ -96,6 +96,12 @@ import {
   stampBusinessProfileRecord,
 } from "./modules/business_profile_revision.mjs";
 import {
+  isEligibleLimousineProvider as _isEligibleLimousineProvider,
+  projectLimousineEntitled as _projectLimousineEntitled,
+  publicLimousineSignals as _publicLimousineSignals,
+  resolveNearbyServiceFilter as _resolveNearbyServiceFilter,
+} from "./modules/limousine_provider_eligibility.mjs";
+import {
   deletedVehicleIdList,
   filterActiveVehicles,
   mergeVehicleTombstones,
@@ -12150,6 +12156,10 @@ const DEFAULT_SUBSCRIPTION_PROFILE = {
     public_booking: false,
     receipt_pdf: true,
     whatsapp_email_receipts: true,
+    // LIMOUSINE-MARKETPLACE-P1: included in the existing Fluxidi business
+    // subscription. Explicit in the produced feature map; an explicit false
+    // (admin revoke) fails closed. No new plan/SKU/checkout is introduced.
+    limousine: true,
   },
   // Additive subscription-foundation fields (Patch 1). All optional; when a
   // legacy record lacks them they default safely and existing behaviour for
@@ -13192,6 +13202,7 @@ function normalizeSubscriptionProfile(input = {}, scope = null) {
       public_booking: typeof inFeatures.public_booking === "boolean" ? inFeatures.public_booking : defaultFeatures.public_booking,
       receipt_pdf: typeof inFeatures.receipt_pdf === "boolean" ? inFeatures.receipt_pdf : defaultFeatures.receipt_pdf,
       whatsapp_email_receipts: typeof inFeatures.whatsapp_email_receipts === "boolean" ? inFeatures.whatsapp_email_receipts : defaultFeatures.whatsapp_email_receipts,
+      limousine: typeof inFeatures.limousine === "boolean" ? inFeatures.limousine : defaultFeatures.limousine,
     },
     warnings,
     created_at: sanitizeTenantString(source.created_at ?? source.createdAt ?? DEFAULT_SUBSCRIPTION_PROFILE.created_at, 48),
@@ -43887,6 +43898,11 @@ export default {
         const lat = hasGeoInput ? _safePublicNumber(latRaw, { min: -90, max: 90 }) : null;
         const lng = hasGeoInput ? _safePublicNumber(lngRaw, { min: -180, max: 180 }) : null;
         const radiusKm = _normalizeNearbyRadiusKm(url.searchParams.get("radius_km"));
+        // LIMOUSINE-MARKETPLACE-P1: optional vertical filter. Unknown values
+        // resolve to null (no filter) via _resolveNearbyServiceFilter and never
+        // silently become limousine. Existing airport/taxi discovery unchanged.
+        const service = url.searchParams.get("service");
+        const serviceFilter = _resolveNearbyServiceFilter(service);
         if (!hasGeoInput && hasAnyGeoParam) {
           return json({ ok: false, error: "valid lat and lng are required" }, 400);
         }
@@ -43901,12 +43917,14 @@ export default {
           lat,
           lng,
           radiusKm,
+          service: serviceFilter,
         });
         return json({
           ok: true,
           postcode,
           ...(lat != null && lng != null ? { lat, lng } : {}),
           ...(radiusKm != null ? { radius_km: radiusKm } : {}),
+          ...(serviceFilter ? { service: serviceFilter } : {}),
           count: partners.length,
           partners,
         }, 200);
@@ -45037,10 +45055,26 @@ export default {
           incoming.partner_id ?? incoming.partnerId,
           120,
         );
+        // LIMOUSINE-MARKETPLACE-P1: derive the entitlement from the
+        // authoritative subscription profile (server-owned). Never trust a
+        // client-submitted entitlement value.
+        let _limousineEntitledProjection = false;
+        try {
+          const _subscriptionForLimousine = await loadSubscriptionProfile(env, explicitScope);
+          _limousineEntitledProjection = _projectLimousineEntitled({
+            features: _subscriptionForLimousine?.features,
+            subscriptionStatus:
+              _subscriptionForLimousine?.subscription_status ??
+              _subscriptionForLimousine?.status,
+          });
+        } catch (_) {
+          _limousineEntitledProjection = false;
+        }
         const normalizedProfile = _normalizePublicPartnerProfileEntry({
           ...incoming,
           partner_id: canonicalPartnerId,
           partnerId: canonicalPartnerId,
+          limousine_entitled: _limousineEntitledProjection,
           ...(incomingPartnerAlias && incomingPartnerAlias !== canonicalPartnerId
             ? {
                 legacy_partner_id: incomingPartnerAlias,
@@ -76644,11 +76678,15 @@ function _logNearbyCapabilitiesDiagnostics(partnerId, payload) {
   );
 }
 
-async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, radiusKm = null } = {}) {
+async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, radiusKm = null, service = null } = {}) {
   const needle = _normalizePostcode(postcode);
   const hasGeoQuery = Number.isFinite(lat) && Number.isFinite(lng);
   if (!hasGeoQuery && !needle) return [];
   const normalizedQueryRadiusKm = _normalizeNearbyRadiusKm(radiusKm);
+  // LIMOUSINE-MARKETPLACE-P1: optional server-side vertical filter. Unknown /
+  // empty `service` values resolve to null (no filter) and never become
+  // limousine. Airport filtering and default taxi discovery are unaffected.
+  const serviceFilter = _resolveNearbyServiceFilter(service);
   const partners = await _loadPartnerDirectory(env);
   const profiles = await _loadPublicPartnerProfiles(env);
   const routes = await _loadPartnerBookingRoutes(env);
@@ -76658,6 +76696,17 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
       .map((entry) => [entry.partner_id, entry]),
   );
   const visibleProfiles = profiles.filter((profile) => _isPublicPartnerProfileVisible(profile));
+  // Authoritative limousine eligibility per visible profile (market handled by
+  // the existing nearby geo/postcode match below). Fails closed.
+  const limousineEligibleByPartnerId = new Map(
+    visibleProfiles.map((profile) => [
+      profile.partner_id,
+      _isEligibleLimousineProvider(profile),
+    ]),
+  );
+  const limousineSignalsByPartnerId = new Map(
+    visibleProfiles.map((profile) => [profile.partner_id, _publicLimousineSignals(profile)]),
+  );
   const publicMediaByPartnerId = new Map(
     visibleProfiles
       .map((profile) => {
@@ -76802,6 +76851,13 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
       };
     })
     .filter((entry) => entry.matches)
+    .filter((entry) => {
+      // LIMOUSINE-MARKETPLACE-P1: when service=limousine, keep only providers
+      // that pass authoritative limousine eligibility. Without the filter,
+      // discovery is unchanged.
+      if (serviceFilter !== "limousine") return true;
+      return limousineEligibleByPartnerId.get(entry.p.partner_id) === true;
+    })
     .sort((a, b) => {
       if (hasGeoQuery) {
         return (a.distanceKm ?? Number.POSITIVE_INFINITY) - (b.distanceKm ?? Number.POSITIVE_INFINITY);
@@ -76830,6 +76886,9 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
       const p = entry.p;
       const media = publicMediaByPartnerId.get(p.partner_id) || {};
       const capabilitySignals = nearbyCapabilitySignalsByPartnerId.get(p.partner_id) || {};
+      const limousineSignals = serviceFilter === "limousine"
+        ? limousineSignalsByPartnerId.get(p.partner_id) || {}
+        : {};
       _logNearbyCapabilitiesDiagnostics(p.partner_id, capabilitySignals);
       return {
         partner_id: p.partner_id,
@@ -76843,6 +76902,7 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
         hero_photo_url: _safePublicHttpsUrl(media.hero_photo_url, 600),
         logo_url: _safePublicHttpsUrl(media.logo_url, 600),
         ...capabilitySignals,
+        ...limousineSignals,
       };
     });
 }
@@ -77327,10 +77387,24 @@ function _normalizePublicVehicles(raw) {
   const out = [];
   for (const row of raw) {
     if (!row || typeof row !== "object") continue;
+    // LIMOUSINE-MARKETPLACE-P1: authoritative, configured classification only.
+    // `category` remains the human tier label; `service_category` /
+    // `service_class` are the machine-authoritative identifiers used by
+    // eligibility. Empty when not configured (fails closed downstream).
+    const serviceCategory = _safePublicText(row.service_category ?? row.serviceCategory, 40)
+      .toLowerCase();
+    const serviceClass = _safePublicText(
+      row.service_class ?? row.serviceClass ?? row.service_class_id ?? row.serviceClassId,
+      64,
+    )
+      .toLowerCase()
+      .replace(/[\s-]+/g, "_");
     out.push({
       name: _safePublicText(row.name, 120),
       brand_model: _safePublicText(row.brand_model ?? row.brandModel, 120),
       category: _safePublicText(row.category, 80),
+      ...(serviceCategory ? { service_category: serviceCategory } : {}),
+      ...(serviceClass ? { service_class: serviceClass } : {}),
       pax: _safePublicInt(row.pax, 0, 0, 99),
       luggage: _safePublicInt(row.luggage, 0, 0, 99),
       features: _safePublicStringList(row.features, { maxItems: 12, maxItemLen: 80 }),
@@ -77390,6 +77464,9 @@ function _normalizePublicBookingCapabilities(raw, profileEnabled) {
     online_payments: _safePublicBool(src.online_payments ?? src.onlinePayments, false),
     instant_quote: _safePublicBool(src.instant_quote ?? src.instantQuote, false),
     profile_enabled: !!profileEnabled,
+    // LIMOUSINE-MARKETPLACE-P1: safe, non-private company-enable signal. Taxi
+    // and airport capabilities are unaffected.
+    limousine: _safePublicBool(src.limousine ?? src.limousine_service, false),
   };
 }
 
@@ -77431,6 +77508,11 @@ function _normalizePublicPartnerProfileEntry(raw) {
     is_active: isActive,
     subscription_status: subscriptionStatus,
     ...(publishedAt ? { published_at: publishedAt } : {}),
+    // LIMOUSINE-MARKETPLACE-P1: server-projected entitlement (safe boolean).
+    // The publish handler stamps `limousine_entitled` from the authoritative
+    // subscription profile; any client-submitted value is overwritten there.
+    // Missing => false (fail closed).
+    limousine_entitled: raw.limousine_entitled === true,
     tagline: _safePublicText(raw.tagline, 180),
     about_short: _safePublicText(raw.about_short ?? raw.aboutShort, 400),
     about_long: _safePublicText(raw.about_long ?? raw.aboutLong, 2000),

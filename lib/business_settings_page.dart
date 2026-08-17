@@ -6740,10 +6740,18 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               'ev_available',
           };
           final photoUrl = _publicVehiclePhotoUrlForPublish(v);
+          // LIMOUSINE-MARKETPLACE-P1: emit authoritative configured
+          // classification only. `category` stays the human tier label; the
+          // machine-authoritative service_category/service_class are emitted
+          // solely when explicitly configured (never inferred from tier/brand).
+          final serviceCategory = v.serviceCategory.trim().toLowerCase();
+          final serviceClass = v.serviceClassId.trim().toLowerCase();
           return <String, dynamic>{
             'name': v.vehicleName.trim(),
             'brand_model': brand,
             'category': _publicTierCategoryLabel(v.tierId),
+            if (serviceCategory.isNotEmpty) 'service_category': serviceCategory,
+            if (serviceClass.isNotEmpty) 'service_class': serviceClass,
             'pax': v.passengerCapacity < 0 ? 0 : v.passengerCapacity,
             'luggage': v.luggageCapacity < 0 ? 0 : v.luggageCapacity,
             'features': features.toList(growable: false),

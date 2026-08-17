@@ -2375,6 +2375,13 @@ class VehicleProfile {
   final String primaryPhotoRef;
   final List<String> galleryPhotoRefs;
   final String? publicPhotoUrl;
+
+  /// LIMOUSINE-MARKETPLACE-P1: authoritative, configured service classification.
+  /// Empty unless explicitly configured by the company. Eligibility never
+  /// infers these from vehicle brand/model/name or the taxi [tierId].
+  final String serviceCategory;
+  final String serviceClassId;
+
   // Backward-compatible alias for legacy UI/code paths.
   String get photoRef => primaryPhotoRef;
 
@@ -2397,6 +2404,8 @@ class VehicleProfile {
     required this.primaryPhotoRef,
     required this.galleryPhotoRefs,
     this.publicPhotoUrl,
+    this.serviceCategory = '',
+    this.serviceClassId = '',
   });
 
   VehicleProfile copyWith({
@@ -2416,6 +2425,8 @@ class VehicleProfile {
     String? primaryPhotoRef,
     List<String>? galleryPhotoRefs,
     String? publicPhotoUrl,
+    String? serviceCategory,
+    String? serviceClassId,
   }) {
     return VehicleProfile(
       id: id ?? this.id,
@@ -2436,6 +2447,8 @@ class VehicleProfile {
       primaryPhotoRef: primaryPhotoRef ?? this.primaryPhotoRef,
       galleryPhotoRefs: galleryPhotoRefs ?? this.galleryPhotoRefs,
       publicPhotoUrl: publicPhotoUrl ?? this.publicPhotoUrl,
+      serviceCategory: serviceCategory ?? this.serviceCategory,
+      serviceClassId: serviceClassId ?? this.serviceClassId,
     );
   }
 }
@@ -4288,6 +4301,9 @@ Map<String, dynamic> _encodeVehicle(VehicleProfile v) {
     'primaryPhotoRef': v.primaryPhotoRef,
     'galleryPhotoRefs': v.galleryPhotoRefs,
     'publicPhotoUrl': v.publicPhotoUrl,
+    if (v.serviceCategory.trim().isNotEmpty)
+      'serviceCategory': v.serviceCategory,
+    if (v.serviceClassId.trim().isNotEmpty) 'serviceClassId': v.serviceClassId,
     // Keep legacy key for backward readability/debug
     'photoRef': v.primaryPhotoRef,
   };
@@ -4389,6 +4405,17 @@ VehicleProfile _decodeVehicle(
     primaryPhotoRef: primaryPhoto,
     galleryPhotoRefs: gallery,
     publicPhotoUrl: publicPhotoUrl,
+    serviceCategory:
+        (m['serviceCategory'] ??
+                m['service_category'] ??
+                fallback.serviceCategory)
+            .toString(),
+    serviceClassId:
+        (m['serviceClassId'] ??
+                m['service_class'] ??
+                m['service_class_id'] ??
+                fallback.serviceClassId)
+            .toString(),
   );
 }
 
