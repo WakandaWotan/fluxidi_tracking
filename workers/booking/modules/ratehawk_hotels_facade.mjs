@@ -2,8 +2,9 @@
  * Booking Worker RateHawk facade.
  *
  * Public app routes stay POST /public/hotels/ratehawk/hotelpage,
- * POST /public/hotels/ratehawk/prebook and
- * POST /public/hotels/ratehawk/prebook/accept.
+ * POST /public/hotels/ratehawk/prebook,
+ * POST /public/hotels/ratehawk/prebook/accept and the gated booking
+ * form/confirm/status facade. Booking never uses RATEHAWK_HOTELS_TEST.
  * This module must not resolve RateHawk credentials, construct provider
  * Authorization, call the provider host, decrypt offer references, or
  * normalize raw provider payloads.
@@ -29,9 +30,25 @@ import {
   hasForbiddenPublicPrebookClientControl,
 } from "../../ratehawk-hotels/modules/ratehawk_prebook_contract.mjs";
 import {
+  RATEHAWK_ACCEPTED_REF_PREFIX,
+  RATEHAWK_BOOKING_CONFIRM_TRIGGER,
+  RATEHAWK_BOOKING_FORM_TRIGGER,
+  RATEHAWK_BOOKING_STATUS_TRIGGER,
+  hasForbiddenPublicBookingClientControl,
+  hasPublicBookingPanOrCvc,
+  isRatehawkBookingFinishEnabled,
+  isRatehawkBookingFormEnabled,
+  isRatehawkBookingStatusEnabled,
+} from "../../ratehawk-hotels/modules/ratehawk_booking_contract.mjs";
+import {
   RATEHAWK_HOTELS_PREBOOK_ACCEPT_PATH,
   RATEHAWK_HOTELS_PREBOOK_PATH,
 } from "../../ratehawk-hotels/modules/ratehawk_prebook_worker.mjs";
+import {
+  RATEHAWK_HOTELS_BOOKING_CONFIRM_PATH,
+  RATEHAWK_HOTELS_BOOKING_FORM_PATH,
+  RATEHAWK_HOTELS_BOOKING_STATUS_PATH,
+} from "../../ratehawk-hotels/modules/ratehawk_booking_worker.mjs";
 import {
   RATEHAWK_HOTELS_TEST_PREBOOK_ACCEPT_PATH,
   RATEHAWK_HOTELS_TEST_PREBOOK_PATH,
@@ -43,6 +60,12 @@ export const RATEHAWK_PREBOOK_PUBLIC_PATH =
   "/public/hotels/ratehawk/prebook";
 export const RATEHAWK_PREBOOK_ACCEPT_PUBLIC_PATH =
   "/public/hotels/ratehawk/prebook/accept";
+export const RATEHAWK_BOOKING_FORM_PUBLIC_PATH =
+  "/public/hotels/ratehawk/booking/form";
+export const RATEHAWK_BOOKING_CONFIRM_PUBLIC_PATH =
+  "/public/hotels/ratehawk/booking/confirm";
+export const RATEHAWK_BOOKING_STATUS_PUBLIC_PATH =
+  "/public/hotels/ratehawk/booking/status";
 export const RATEHAWK_HOTELS_BINDING = "RATEHAWK_HOTELS";
 export const RATEHAWK_HOTELS_SERVICE_NAME = "fluxidi-ratehawk-hotels-api";
 export const RATEHAWK_HOTELS_TEST_BINDING = "RATEHAWK_HOTELS_TEST";
@@ -95,6 +118,18 @@ export function isBookingRatehawkTestHotelpageEnabled(env = {}) {
 
 export function isBookingRatehawkTestPrebookEnabled(env = {}) {
   return _flag(env.RATEHAWK_TEST_PREBOOK_ENABLED);
+}
+
+export function isBookingRatehawkBookingFormEnabled(env = {}) {
+  return isRatehawkBookingFormEnabled(env);
+}
+
+export function isBookingRatehawkBookingFinishEnabled(env = {}) {
+  return isRatehawkBookingFinishEnabled(env);
+}
+
+export function isBookingRatehawkBookingStatusEnabled(env = {}) {
+  return isRatehawkBookingStatusEnabled(env);
 }
 
 function _lower(value) {
@@ -736,6 +771,195 @@ export async function handlePublicRatehawkPrebookAccept({
     },
   );
   return proxied.dto;
+}
+
+async function _incrementBookingRateLimit(env, request) {
+  if (!env?.BOOKING_KV || typeof env.BOOKING_KV.get !== "function") {
+    return { ok: false, limited: true, reason: "rate_limit_binding_missing" };
+  }
+  const ip = _text(
+    request?.headers?.get("cf-connecting-ip") ||
+      request?.headers?.get("x-forwarded-for") ||
+      "unknown",
+    80,
+  );
+  const clientHash = await sha256Hex(`ratehawk-booking:${ip}`);
+  const rateKey = `ratehawk:booking:${clientHash}`;
+  const rawRate = await env.BOOKING_KV.get(rateKey, { type: "json" });
+  const rateSource =
+    rawRate && typeof rawRate === "object" && !Array.isArray(rawRate)
+      ? rawRate
+      : {};
+  const count = Number.isFinite(Number(rateSource.count))
+    ? Math.max(0, Math.round(Number(rateSource.count)))
+    : 0;
+  if (count >= HOTELPAGE_RATE_MAX) {
+    return { ok: true, limited: true, reason: "rate_limited", count };
+  }
+  await env.BOOKING_KV.put(
+    rateKey,
+    JSON.stringify({
+      count: count + 1,
+      updated_at: new Date().toISOString(),
+    }),
+    { expirationTtl: HOTELPAGE_RATE_WINDOW_SECONDS },
+  );
+  return { ok: true, limited: false, count: count + 1 };
+}
+
+function _safePublicBookingUnavailable(reason) {
+  return {
+    ok: true,
+    invoked: false,
+    binding_called: false,
+    reason,
+    progress_blocked: true,
+    accepted_ref: null,
+    booking_attempt_id: null,
+    confirmation: null,
+    stay22_fallback_retained: true,
+    mobility_independent_of_ratehawk: true,
+    existing_actions: [
+      "saved",
+      "nearby_events",
+      "taxi_to_this_event",
+      "taxi_to_this_stay",
+      "airport_transfer",
+      "stay22_fallback_availability",
+    ],
+    commercial: {
+      fluxidi_role: "affiliate",
+      customer_pays_fluxidi: false,
+      mollie_involved: false,
+    },
+  };
+}
+
+function _assertPublicBookingObject(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, error: "invalid_request_body" };
+  }
+  return { ok: true, body };
+}
+
+function _publicBookingClientError(error) {
+  return {
+    ok: false,
+    error,
+    http_status: 400,
+  };
+}
+
+async function _handlePublicBookingFacade({
+  env,
+  request,
+  body,
+  trigger,
+  gateEnabled,
+  disabledReason,
+  hotelsPath,
+  requireTermsRevision = false,
+} = {}) {
+  const shaped = _assertPublicBookingObject(body);
+  if (shaped.ok !== true) {
+    return _publicBookingClientError(shaped.error);
+  }
+  const requestBody = shaped.body;
+  if (bookingWorkerHasRatehawkCredentials(env)) {
+    return _safePublicBookingUnavailable(
+      "booking_worker_must_not_hold_ratehawk_secrets",
+    );
+  }
+  if (hasPublicBookingPanOrCvc(requestBody)) {
+    return _publicBookingClientError("pan_or_cvc_forbidden");
+  }
+  if (hasForbiddenPublicBookingClientControl(requestBody)) {
+    return _safePublicBookingUnavailable("client_control_forbidden");
+  }
+  if (_text(requestBody.trigger, 40) !== trigger) {
+    return _publicBookingClientError("invalid_request_body");
+  }
+  const acceptedRef = _opaquePublicRef(
+    requestBody.accepted_ref,
+    RATEHAWK_ACCEPTED_REF_PREFIX,
+  );
+  if (!acceptedRef) {
+    return _publicBookingClientError("missing_accepted_ref");
+  }
+  const termsRevision = _text(requestBody.terms_revision, 120);
+  if (requireTermsRevision && !termsRevision) {
+    return _publicBookingClientError("missing_terms_revision");
+  }
+  const rate = await _incrementBookingRateLimit(env, request);
+  if (rate.ok !== true || rate.limited === true) {
+    return _safePublicBookingUnavailable(rate.reason || "rate_limited");
+  }
+  if (gateEnabled !== true) {
+    return _safePublicBookingUnavailable(disabledReason);
+  }
+  const proxied = await _proxyProductionHotelsPath(env, hotelsPath, {
+    trigger,
+    accepted_ref: acceptedRef,
+    locale: _text(requestBody.locale, 8) || "nl",
+    terms_revision: termsRevision || undefined,
+    confirm: requestBody.confirm === true,
+    guest: requestBody.guest,
+    contact: requestBody.contact,
+    provider_payment_ref: _text(requestBody.provider_payment_ref, 4000) || undefined,
+    tenant_id: _text(requestBody.tenant_id, 80) || undefined,
+    customer_id: _text(requestBody.customer_id, 80) || undefined,
+    session_id: _text(requestBody.session_id, 80) || undefined,
+  });
+  return proxied.dto;
+}
+
+export async function handlePublicRatehawkBookingForm({
+  env,
+  request = null,
+  body = {},
+} = {}) {
+  return _handlePublicBookingFacade({
+    env,
+    request,
+    body,
+    trigger: RATEHAWK_BOOKING_FORM_TRIGGER,
+    gateEnabled: isBookingRatehawkBookingFormEnabled(env),
+    disabledReason: "booking_form_disabled",
+    hotelsPath: RATEHAWK_HOTELS_BOOKING_FORM_PATH,
+  });
+}
+
+export async function handlePublicRatehawkBookingConfirm({
+  env,
+  request = null,
+  body = {},
+} = {}) {
+  return _handlePublicBookingFacade({
+    env,
+    request,
+    body,
+    trigger: RATEHAWK_BOOKING_CONFIRM_TRIGGER,
+    gateEnabled: isBookingRatehawkBookingFinishEnabled(env),
+    disabledReason: "booking_finish_disabled",
+    hotelsPath: RATEHAWK_HOTELS_BOOKING_CONFIRM_PATH,
+    requireTermsRevision: true,
+  });
+}
+
+export async function handlePublicRatehawkBookingStatus({
+  env,
+  request = null,
+  body = {},
+} = {}) {
+  return _handlePublicBookingFacade({
+    env,
+    request,
+    body,
+    trigger: RATEHAWK_BOOKING_STATUS_TRIGGER,
+    gateEnabled: isBookingRatehawkBookingStatusEnabled(env),
+    disabledReason: "booking_status_disabled",
+    hotelsPath: RATEHAWK_HOTELS_BOOKING_STATUS_PATH,
+  });
 }
 
 function _safeTestUnavailable(reason) {

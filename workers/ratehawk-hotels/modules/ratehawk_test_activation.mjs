@@ -48,8 +48,11 @@ export const RATEHAWK_TEST_DENIED_PATHS = Object.freeze([
   "/api/b2b/v3/hotel/prebook/",
   "/api/b2b/v3/hotel/order/booking/form/",
   "/api/b2b/v3/hotel/order/booking/finish/",
+  "/api/b2b/v3/hotel/order/booking/finish/status/",
+  "/api/b2b/v3/hotel/order/info/",
   "/api/b2b/v3/hotel/order/cancel/",
   "/api/b2b/v3/hotel/order/document/voucher/",
+  "/api/b2b/v3/hotel/order/document/voucher/download/",
 ]);
 
 export const RATEHAWK_TEST_FORBIDDEN_CLIENT_KEYS = Object.freeze([

@@ -110,6 +110,9 @@ import {
   handleAdminRatehawkTestPrebook,
   handleAdminRatehawkTestPrebookAccept,
   handleAdminRatehawkTestSearch,
+  handlePublicRatehawkBookingConfirm,
+  handlePublicRatehawkBookingForm,
+  handlePublicRatehawkBookingStatus,
   handlePublicRatehawkHotelpage,
   handlePublicRatehawkPrebook,
   handlePublicRatehawkPrebookAccept,
@@ -40716,6 +40719,63 @@ export default {
           return json({ ok: false, error: acceptDto.error }, 400);
         }
         return json(acceptDto);
+      }
+
+      if (url.pathname === "/public/hotels/ratehawk/booking/form") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const parsedBookingForm = await readPublicRatehawkJsonBody(request);
+        if (parsedBookingForm.ok !== true) {
+          return json({ ok: false, error: parsedBookingForm.error }, 400);
+        }
+        const bookingFormDto = await handlePublicRatehawkBookingForm({
+          env,
+          request,
+          body: parsedBookingForm.body,
+        });
+        if (bookingFormDto?.http_status === 400 && bookingFormDto?.error) {
+          return json({ ok: false, error: bookingFormDto.error }, 400);
+        }
+        return json(bookingFormDto);
+      }
+
+      if (url.pathname === "/public/hotels/ratehawk/booking/confirm") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const parsedBookingConfirm = await readPublicRatehawkJsonBody(request);
+        if (parsedBookingConfirm.ok !== true) {
+          return json({ ok: false, error: parsedBookingConfirm.error }, 400);
+        }
+        const bookingConfirmDto = await handlePublicRatehawkBookingConfirm({
+          env,
+          request,
+          body: parsedBookingConfirm.body,
+        });
+        if (bookingConfirmDto?.http_status === 400 && bookingConfirmDto?.error) {
+          return json({ ok: false, error: bookingConfirmDto.error }, 400);
+        }
+        return json(bookingConfirmDto);
+      }
+
+      if (url.pathname === "/public/hotels/ratehawk/booking/status") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const parsedBookingStatus = await readPublicRatehawkJsonBody(request);
+        if (parsedBookingStatus.ok !== true) {
+          return json({ ok: false, error: parsedBookingStatus.error }, 400);
+        }
+        const bookingStatusDto = await handlePublicRatehawkBookingStatus({
+          env,
+          request,
+          body: parsedBookingStatus.body,
+        });
+        if (bookingStatusDto?.http_status === 400 && bookingStatusDto?.error) {
+          return json({ ok: false, error: bookingStatusDto.error }, 400);
+        }
+        return json(bookingStatusDto);
       }
 
       if (url.pathname === "/public/hotels/google-place-photo") {

@@ -17,6 +17,10 @@ export const RATEHAWK_QUOTA_ENDPOINTS = Object.freeze({
   SERP: "serp",
   HOTEL_CONTENT: "hotel_content",
   PREBOOK: "prebook",
+  BOOKING_FORM: "booking_form",
+  BOOKING_FINISH: "booking_finish",
+  BOOKING_STATUS: "booking_status",
+  ORDER_INFO: "order_info",
 });
 
 export const RATEHAWK_TEST_ACCOUNT_QUOTAS = Object.freeze({
@@ -31,6 +35,10 @@ const QUOTA_ENV_PREFIX = Object.freeze({
   serp: "RATEHAWK_QUOTA_SERP",
   hotel_content: "RATEHAWK_QUOTA_HOTEL_CONTENT",
   prebook: "RATEHAWK_QUOTA_PREBOOK",
+  booking_form: "RATEHAWK_QUOTA_BOOKING_FORM",
+  booking_finish: "RATEHAWK_QUOTA_BOOKING_FINISH",
+  booking_status: "RATEHAWK_QUOTA_BOOKING_STATUS",
+  order_info: "RATEHAWK_QUOTA_ORDER_INFO",
 });
 
 function _trim(value, max = 200) {
@@ -140,6 +148,39 @@ export function resolveRatehawkProviderQuotaConfig(env = {}) {
       serp,
       hotel_content: hotelContent,
       ...(prebook ? { prebook } : {}),
+    },
+  };
+}
+
+export function resolveRatehawkBookingQuotaConfig(env = {}) {
+  const environment = _environment(env);
+  const production = environment === "production";
+  const form = _readQuota(env, RATEHAWK_QUOTA_ENDPOINTS.BOOKING_FORM, null);
+  const finish = _readQuota(env, RATEHAWK_QUOTA_ENDPOINTS.BOOKING_FINISH, null);
+  const status = _readQuota(env, RATEHAWK_QUOTA_ENDPOINTS.BOOKING_STATUS, null);
+  const orderInfo = _readQuota(env, RATEHAWK_QUOTA_ENDPOINTS.ORDER_INFO, null);
+  if (form?.ok === false) return form;
+  if (finish?.ok === false) return finish;
+  if (status?.ok === false) return status;
+  if (orderInfo?.ok === false) return orderInfo;
+  if (production && (!form || !finish || !status)) {
+    return {
+      ok: false,
+      reason: "production_quota_unconfigured",
+      environment,
+      endpoints: {},
+    };
+  }
+  return {
+    ok: true,
+    reason: null,
+    environment: environment || null,
+    production,
+    endpoints: {
+      ...(form ? { booking_form: form } : {}),
+      ...(finish ? { booking_finish: finish } : {}),
+      ...(status ? { booking_status: status } : {}),
+      ...(orderInfo ? { order_info: orderInfo } : {}),
     },
   };
 }

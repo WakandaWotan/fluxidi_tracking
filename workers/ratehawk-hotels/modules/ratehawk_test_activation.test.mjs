@@ -168,6 +168,9 @@ test("20. all six RateHawk gates default to 0", () => {
     "RATEHAWK_TEST_SEARCH_ENABLED",
     "RATEHAWK_TEST_HOTELPAGE_ENABLED",
     "RATEHAWK_TEST_PREBOOK_ENABLED",
+    "RATEHAWK_BOOKING_FORM_ENABLED",
+    "RATEHAWK_BOOKING_FINISH_ENABLED",
+    "RATEHAWK_BOOKING_STATUS_ENABLED",
   ]) {
     assert.match(wrangler, new RegExp(`${name} = "0"`));
   }

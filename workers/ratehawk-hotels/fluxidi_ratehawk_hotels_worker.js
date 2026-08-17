@@ -10,6 +10,9 @@
  *   POST /internal/search
  *   POST /internal/prebook
  *   POST /internal/prebook/accept
+ *   POST /internal/booking/form
+ *   POST /internal/booking/confirm
+ *   POST /internal/booking/status
  *   POST /internal/test-search
  *   POST /internal/test-hotelpage
  *   POST /internal/test-prebook
@@ -64,6 +67,19 @@ import {
   handleRatehawkPrebookAcceptRequest,
   handleRatehawkPrebookRequest,
 } from "./modules/ratehawk_prebook_worker.mjs";
+import {
+  RATEHAWK_HOTELS_BOOKING_CONFIRM_PATH,
+  RATEHAWK_HOTELS_BOOKING_FORM_PATH,
+  RATEHAWK_HOTELS_BOOKING_STATUS_PATH,
+  handleRatehawkBookingConfirmRequest,
+  handleRatehawkBookingFormRequest,
+  handleRatehawkBookingStatusRequest,
+} from "./modules/ratehawk_booking_worker.mjs";
+import {
+  isRatehawkBookingFinishEnabled,
+  isRatehawkBookingFormEnabled,
+  isRatehawkBookingStatusEnabled,
+} from "./modules/ratehawk_booking_contract.mjs";
 
 export { RatehawkProviderQuotaDO };
 
@@ -75,6 +91,11 @@ export { RATEHAWK_HOTELS_SEARCH_PATH };
 export const RATEHAWK_HOTELS_TEST_SEARCH_PATH = "/internal/test-search";
 export const RATEHAWK_HOTELS_TEST_HOTELPAGE_PATH = "/internal/test-hotelpage";
 export { RATEHAWK_HOTELS_TEST_PREBOOK_PATH, RATEHAWK_HOTELS_TEST_PREBOOK_ACCEPT_PATH };
+export {
+  RATEHAWK_HOTELS_BOOKING_FORM_PATH,
+  RATEHAWK_HOTELS_BOOKING_CONFIRM_PATH,
+  RATEHAWK_HOTELS_BOOKING_STATUS_PATH,
+};
 export const RATEHAWK_HOTELS_CONTENT_SYNC_PATH = "/internal/content-sync";
 
 function json(obj, status = 200) {
@@ -163,6 +184,9 @@ export async function handleRatehawkHotelsWorkerFetch(
       test_search_enabled: isRatehawkTestSearchEnabled(env),
       test_hotelpage_enabled: isRatehawkTestHotelpageEnabled(env),
       test_prebook_enabled: isRatehawkTestPrebookEnabled(env),
+      booking_form_enabled: isRatehawkBookingFormEnabled(env),
+      booking_finish_enabled: isRatehawkBookingFinishEnabled(env),
+      booking_status_enabled: isRatehawkBookingStatusEnabled(env),
       ratehawk: buildSafeRatehawkProviderStatus(env),
     });
   }
@@ -408,6 +432,108 @@ export async function handleRatehawkHotelsWorkerFetch(
       await handleRatehawkTestPrebookAcceptRequest({
         env,
         body,
+        now,
+      }),
+    );
+  }
+
+  if (
+    url.pathname === RATEHAWK_HOTELS_BOOKING_FORM_PATH &&
+    request.method === "POST"
+  ) {
+    if (isRatehawkIsolatedTestWorker(env)) {
+      return json(
+        await handleRatehawkBookingFormRequest({
+          env,
+          body: {},
+        }),
+      );
+    }
+    let bookingFormBody = {};
+    try {
+      bookingFormBody = await request.json();
+    } catch {
+      bookingFormBody = {};
+    }
+    if (
+      !bookingFormBody ||
+      typeof bookingFormBody !== "object" ||
+      Array.isArray(bookingFormBody)
+    ) {
+      bookingFormBody = {};
+    }
+    return json(
+      await handleRatehawkBookingFormRequest({
+        env,
+        body: bookingFormBody,
+        now,
+      }),
+    );
+  }
+
+  if (
+    url.pathname === RATEHAWK_HOTELS_BOOKING_CONFIRM_PATH &&
+    request.method === "POST"
+  ) {
+    if (isRatehawkIsolatedTestWorker(env)) {
+      return json(
+        await handleRatehawkBookingConfirmRequest({
+          env,
+          body: {},
+        }),
+      );
+    }
+    let bookingConfirmBody = {};
+    try {
+      bookingConfirmBody = await request.json();
+    } catch {
+      bookingConfirmBody = {};
+    }
+    if (
+      !bookingConfirmBody ||
+      typeof bookingConfirmBody !== "object" ||
+      Array.isArray(bookingConfirmBody)
+    ) {
+      bookingConfirmBody = {};
+    }
+    return json(
+      await handleRatehawkBookingConfirmRequest({
+        env,
+        body: bookingConfirmBody,
+        now,
+      }),
+    );
+  }
+
+  if (
+    url.pathname === RATEHAWK_HOTELS_BOOKING_STATUS_PATH &&
+    request.method === "POST"
+  ) {
+    if (isRatehawkIsolatedTestWorker(env)) {
+      return json(
+        await handleRatehawkBookingStatusRequest({
+          env,
+          body: {},
+        }),
+      );
+    }
+    let bookingStatusBody = {};
+    try {
+      bookingStatusBody = await request.json();
+    } catch {
+      bookingStatusBody = {};
+    }
+    if (
+      !bookingStatusBody ||
+      typeof bookingStatusBody !== "object" ||
+      Array.isArray(bookingStatusBody)
+    ) {
+      bookingStatusBody = {};
+    }
+    return json(
+      await handleRatehawkBookingStatusRequest({
+        env,
+        body: bookingStatusBody,
         now,
       }),
     );
