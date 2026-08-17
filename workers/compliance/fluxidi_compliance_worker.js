@@ -3541,6 +3541,54 @@ async function _chironLoadScopedHydrationCache(env, scope, includeOfficialDraft 
   };
 }
 
+// CHIRON-COMPLIANCE-KV-COST-P0
+//
+// One reconcile pass processes events for a SINGLE tenant/company, yet every
+// considered event previously re-read the identical scoped hydration triple
+// (business profile, fleet, driver index) and rebuilt the identical booking
+// leg-type map from the identical `contextEntries`. That cost
+// `considered x (3 + distinct_legless_bookings)` BOOKING_KV reads per scope per
+// tick (~7,700 measured in production) for values that cannot change within the
+// pass.
+//
+// This envelope carries those two values, keyed both by the scope they were
+// built for and by the exact `contextEntries` array the leg map was derived
+// from. A consumer may only reuse it when BOTH match, so a cross-tenant event
+// inside a batch can never receive another scope's profile, fleet, drivers or
+// leg types, and a differently-shaped entry batch can never receive a stale map.
+//
+// The envelope is created per scheduled scope pass and handed down by argument
+// only. It is never stored in module scope and never outlives the pass.
+function _chironBuildScopePreload(scope, {
+  hydrationCache = null,
+  bookingLegTypeMap = null,
+  contextEntries = null,
+} = {}) {
+  const tenantId = cleanText(scope?.tenant_id, 128);
+  const companyId = cleanText(scope?.company_id, 128);
+  if (!tenantId || !companyId) return null;
+  return Object.freeze({
+    tenant_id: tenantId,
+    company_id: companyId,
+    hydrationCache: hydrationCache || null,
+    bookingLegTypeMap: bookingLegTypeMap instanceof Map ? bookingLegTypeMap : null,
+    contextEntries: Array.isArray(contextEntries) ? contextEntries : null,
+  });
+}
+
+// Return the preload only when it was built for exactly this tenant/company.
+// Any mismatch yields null, which makes the caller fall back to the original
+// per-event load. Fail-closed by construction.
+function _chironPreloadForScope(preload, scope) {
+  if (!preload || typeof preload !== "object") return null;
+  const tenantId = cleanText(scope?.tenant_id, 128);
+  const companyId = cleanText(scope?.company_id, 128);
+  if (!tenantId || !companyId) return null;
+  if (preload.tenant_id !== tenantId) return null;
+  if (preload.company_id !== companyId) return null;
+  return preload;
+}
+
 function _chironResolveAssignedVehicleId(event, blueprint) {
   const safeEvent = event && typeof event === "object" && !Array.isArray(event) ? event : {};
   const eventVehicle =
@@ -11686,11 +11734,14 @@ async function _chironBuildOfficialDraftForSingleEvent(
     return { error: "missing_scope" };
   }
 
-  const scopedHydrationCache = await _chironLoadScopedHydrationCache(
-    env,
-    scope,
-    true,
-  );
+  // CHIRON-COMPLIANCE-KV-COST-P0: reuse the pass-scoped hydration triple when it
+  // was built for exactly this tenant/company. No preload, or any scope
+  // mismatch, falls back to the original per-event load, so the resulting cache
+  // contents are identical either way.
+  const scopePreload = _chironPreloadForScope(options?.scopePreload, scope);
+  const scopedHydrationCache = scopePreload?.hydrationCache
+    ? scopePreload.hydrationCache
+    : await _chironLoadScopedHydrationCache(env, scope, true);
 
   let contextEntries = null;
   if (Array.isArray(options?.preloadedContextEntries)) {
@@ -11740,7 +11791,16 @@ async function _chironBuildOfficialDraftForSingleEvent(
 
   // Single-leg booking stamping (existing behavior, only fires when the
   // booking record itself carries exactly one leg or is explicitly one-way).
-  const legTypeMap = await _chironLoadBookingLegTypeMap(env, entries);
+  // CHIRON-COMPLIANCE-KV-COST-P0: the map is a pure function of `entries`, so a
+  // preload is only reused when it was derived from this exact array. When the
+  // target event had to be appended to the batch the identity check fails and
+  // the map is rebuilt, keeping the stamped result byte-identical.
+  const legTypeMap =
+    scopePreload &&
+    scopePreload.bookingLegTypeMap &&
+    scopePreload.contextEntries === entries
+      ? scopePreload.bookingLegTypeMap
+      : await _chironLoadBookingLegTypeMap(env, entries);
   _chironStampResolvedLegTypeOnEntries(entries, legTypeMap);
   // Roundtrip inference for legless ride_start events (see helper docstring).
   _chironInferLegTypeForLeglessRideStarts(entries);
@@ -11868,6 +11928,9 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
       eventKey,
       {
         preloadedContextEntries: contextEntries,
+        // CHIRON-COMPLIANCE-KV-COST-P0: forwarded verbatim. The consumer
+        // re-validates scope and entry identity before reusing anything.
+        scopePreload: options?.scopePreload || null,
       },
     );
     if (built.error) {
@@ -12600,6 +12663,30 @@ async function _chironAutoReconcileScopeBestEffort(
       return 0;
     });
 
+    // CHIRON-COMPLIANCE-KV-COST-P0: build the scope-invariant hydration triple
+    // and booking leg-type map exactly once for this pass rather than once per
+    // considered event. Both are pure functions of (scope, contextEntries) and
+    // neither changes inside the loop. A build failure degrades to null so every
+    // event falls back to the original per-event load; a partially built
+    // envelope is never published to any event or to another scope.
+    let scopePreload = null;
+    if (candidates.length > 0) {
+      const passScope = { tenant_id: tenantId, company_id: companyId };
+      try {
+        const [passHydrationCache, passLegTypeMap] = await Promise.all([
+          _chironLoadScopedHydrationCache(env, passScope, true),
+          _chironLoadBookingLegTypeMap(env, contextEntries),
+        ]);
+        scopePreload = _chironBuildScopePreload(passScope, {
+          hydrationCache: passHydrationCache,
+          bookingLegTypeMap: passLegTypeMap,
+          contextEntries,
+        });
+      } catch (_) {
+        scopePreload = null;
+      }
+    }
+
     let processed = 0;
     for (const c of candidates) {
       if (processed >= CHIRON_AUTO_RECONCILE_MAX_PROCESS) break;
@@ -12607,6 +12694,7 @@ async function _chironAutoReconcileScopeBestEffort(
       const submitOutcome = await _chironAutoSubmitOneEvent(env, c.event, c.key, {
         source,
         preloadedContextEntries: contextEntries,
+        scopePreload,
       });
       // FLUXIDI-CHIRON-MISSING-POST-ACCEPTANCE-RIDE-P0-1: already-synced
       // historical events must not consume the per-pass process budget, or
@@ -12930,6 +13018,11 @@ export const __testInternals = {
   _chironIsDuplicateVertrekRejection,
   _chironListConnectionScopes,
   _chironCronReconcileAllScopesBestEffort,
+  // CHIRON-COMPLIANCE-KV-COST-P0 read-count / isolation regressions only.
+  _chironBuildScopePreload,
+  _chironPreloadForScope,
+  _chironLoadScopedHydrationCache,
+  _chironLoadBookingLegTypeMap,
   parseChironTaxiritSubmitResponse,
   // CHIRON-OFFLINE-ARRIVAL-P0-2
   CHIRON_NEVER_CONFIRMING_FOUTCODES,
