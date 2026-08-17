@@ -31,6 +31,7 @@
 // authoritative; a missed index write is healed on the next save or on an
 // idempotent create replay.
 
+import { sha256Hex } from "./crypto_utils.js";
 import {
   LIMOUSINE_QUOTE_STATES,
   appendLimousineQuoteAudit,
@@ -90,16 +91,6 @@ function safeText(value, max) {
   return String(value ?? "").trim().slice(0, max);
 }
 
-function fnv1a(text) {
-  let hash = 0x811c9dc5;
-  const raw = String(text ?? "");
-  for (let i = 0; i < raw.length; i++) {
-    hash ^= raw.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash.toString(16);
-}
-
 function sanitizeScopePart(value) {
   return safeText(value, 96).toLowerCase().replace(/[^a-z0-9._:-]+/g, "");
 }
@@ -111,10 +102,13 @@ export function limousineInboxIndexKey(tenantId, companyId) {
   return `limousine_quote_inbox_v1:${tenant}:${company}`;
 }
 
-export function limousineStatusRateKey(statusRef) {
+/// One-way digest of the complete token. The token itself is never stored
+/// as the rate-limit key.
+export async function limousineStatusRateKey(statusRef) {
   const ref = safeText(statusRef, 800);
   if (!ref) return "";
-  return `limousine_status_rl:v1:${fnv1a(ref)}`;
+  const digest = await sha256Hex(ref);
+  return `limousine_status_rl:v1:${digest.slice(0, 32)}`;
 }
 
 export function emptyLimousineInboxIndex(tenantId, companyId) {

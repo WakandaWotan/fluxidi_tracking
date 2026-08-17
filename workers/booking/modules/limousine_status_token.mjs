@@ -1,32 +1,19 @@
-// LIMOUSINE-MARKETPLACE-P2C2A — opaque, expiring customer status reference.
+// LIMOUSINE-MARKETPLACE-P2C2B — opaque, expiring customer status reference.
 //
 // Issued at quote-request creation so the customer can poll status without a
-// guessable request id. The token is HMAC-sealed with the same server-only
-// secret as the acceptance reference (LIMOUSINE_ACCEPTANCE_SECRET) but uses a
-// distinct version prefix (`limqs1`) so the two tokens cannot be confused.
+// guessable request id. The token is AES-GCM sealed under a purpose-separated
+// key derived from LIMOUSINE_ACCEPTANCE_SECRET:
+//   limqs1.<iv>.<ciphertext>
 //
-// This is a binding proof, not a store: status reads still load the
-// authoritative quote record. The client cannot read or alter the payload.
+// The previous HMAC form is rejected (intentional pre-activation break).
+// Status and acceptance keys are never interchangeable.
 
 import {
-  base64urlEncodeBytes,
-  base64urlDecodeToBytes,
-  constantTimeEquals,
-} from "./crypto_utils.js";
-
-const encoder = new TextEncoder();
-
-async function hmacSign(secret, message) {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(String(secret)),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(message));
-  return base64urlEncodeBytes(new Uint8Array(signature));
-}
+  LIMOUSINE_STATUS_KEY_PURPOSE,
+  looksLikeLimousineAeadToken,
+  sealLimousineAead,
+  unsealLimousineAead,
+} from "./limousine_aead_token.mjs";
 
 export const LIMOUSINE_STATUS_TOKEN_VERSION = "limqs1";
 export const LIMOUSINE_STATUS_PURPOSE = "customer_status";
@@ -41,10 +28,14 @@ export const LIMOUSINE_STATUS_ERRORS = Object.freeze({
   PURPOSE_MISMATCH: "invalid_status_ref",
 });
 
+function mapAeadError(error) {
+  if (error === "secret_unusable") return LIMOUSINE_STATUS_ERRORS.MISSING_SECRET;
+  return LIMOUSINE_STATUS_ERRORS.MALFORMED;
+}
+
 /// Shape check only — no crypto, no KV. A bare quote-request id fails this.
 export function limousineStatusRefLooksWellFormed(value) {
-  const text = String(value ?? "").trim();
-  return /^limqs1\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$/.test(text);
+  return looksLikeLimousineAeadToken(value, LIMOUSINE_STATUS_TOKEN_VERSION);
 }
 
 export function ttlMinutesFromRange(issuedAtIso, expiresAtIso, fallback = LIMOUSINE_STATUS_REF_TTL_MINUTES) {
@@ -56,14 +47,13 @@ export function ttlMinutesFromRange(issuedAtIso, expiresAtIso, fallback = LIMOUS
   return Math.max(1, Math.round((expires - issued) / 60000));
 }
 
-/// Seals a customer-status binding into an opaque, expiring reference.
+/// Seals a customer-status binding into an opaque, expiring AES-GCM reference.
 export async function sealLimousineStatusRef({
   secret,
   binding,
   issuedAtIso = null,
   ttlMinutes = LIMOUSINE_STATUS_REF_TTL_MINUTES,
 } = {}) {
-  if (!secret) return { ok: false, error: LIMOUSINE_STATUS_ERRORS.MISSING_SECRET };
   const issuedAt = issuedAtIso || new Date().toISOString();
   const expiresAt = new Date(
     Date.parse(issuedAt) + Math.max(1, Number(ttlMinutes) || LIMOUSINE_STATUS_REF_TTL_MINUTES) * 60000,
@@ -83,43 +73,42 @@ export async function sealLimousineStatusRef({
     issued_at: issuedAt,
     expires_at: expiresAt,
   };
-  const body = base64urlEncodeBytes(encoder.encode(JSON.stringify(payload)));
-  const signature = await hmacSign(secret, body);
+  const sealed = await sealLimousineAead({
+    secret,
+    version: LIMOUSINE_STATUS_TOKEN_VERSION,
+    purpose: LIMOUSINE_STATUS_KEY_PURPOSE,
+    payload,
+  });
+  if (!sealed.ok) return { ok: false, error: mapAeadError(sealed.error) };
   return {
     ok: true,
-    reference: `${LIMOUSINE_STATUS_TOKEN_VERSION}.${body}.${signature}`,
+    reference: sealed.reference,
     issued_at: issuedAt,
     expires_at: expiresAt,
   };
 }
 
-/// Unseals and verifies a status reference. Tampered, expired, wrong-version
-/// or wrong-purpose tokens all fail closed with the same public error.
+/// Unseals and verifies a status reference. Tampered, expired, wrong-version,
+/// wrong-purpose, old HMAC or auth-failed tokens all fail closed with the
+/// same public error (except a missing/unusable secret).
 export async function unsealLimousineStatusRef({
   secret,
   reference,
   nowIso = null,
 } = {}) {
-  if (!secret) return { ok: false, error: LIMOUSINE_STATUS_ERRORS.MISSING_SECRET };
-  if (!limousineStatusRefLooksWellFormed(reference)) {
+  const text = String(reference || "").trim();
+  if (!limousineStatusRefLooksWellFormed(text)) {
     return { ok: false, error: LIMOUSINE_STATUS_ERRORS.MALFORMED };
   }
-  const parts = String(reference || "").split(".");
-  const [version, body, signature] = parts;
-  if (version !== LIMOUSINE_STATUS_TOKEN_VERSION) {
-    return { ok: false, error: LIMOUSINE_STATUS_ERRORS.VERSION_MISMATCH };
-  }
-  const expected = await hmacSign(secret, body);
-  if (!constantTimeEquals(expected, signature)) {
-    return { ok: false, error: LIMOUSINE_STATUS_ERRORS.BAD_SIGNATURE };
-  }
-  let payload = null;
-  try {
-    payload = JSON.parse(new TextDecoder().decode(base64urlDecodeToBytes(body)));
-  } catch (_) {
-    return { ok: false, error: LIMOUSINE_STATUS_ERRORS.MALFORMED };
-  }
-  if (!payload || payload.v !== LIMOUSINE_STATUS_TOKEN_VERSION) {
+  const opened = await unsealLimousineAead({
+    secret,
+    version: LIMOUSINE_STATUS_TOKEN_VERSION,
+    purpose: LIMOUSINE_STATUS_KEY_PURPOSE,
+    reference: text,
+  });
+  if (!opened.ok) return { ok: false, error: mapAeadError(opened.error) };
+  const payload = opened.payload;
+  if (payload.v !== LIMOUSINE_STATUS_TOKEN_VERSION) {
     return { ok: false, error: LIMOUSINE_STATUS_ERRORS.VERSION_MISMATCH };
   }
   if (payload.purpose !== LIMOUSINE_STATUS_PURPOSE) {

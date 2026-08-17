@@ -1,52 +1,19 @@
-// LIMOUSINE-MARKETPLACE-P2C2 — sealed, expiring acceptance reference.
+// LIMOUSINE-MARKETPLACE-P2C2B — sealed, expiring acceptance reference.
 //
-// After a customer accepts a manual quote the server issues an OPAQUE token
-// that binds every fact the booking must honour. The client cannot read or
-// alter the payload: it is base64url JSON sealed with an HMAC-SHA256 signature
-// over a server-only secret, and it carries its own expiry.
+// After a customer accepts a manual quote the server issues a truly opaque
+// AES-GCM token (`limacc1.<iv>.<ciphertext>`). The client cannot read or
+// alter the payload. The previous HMAC form (readable base64url JSON + MAC)
+// is rejected; this is an intentional pre-activation format break.
 //
 // The token is a binding proof, not a store: /book still re-reads the
 // authoritative quote record and re-validates eligibility.
 
-const encoder = new TextEncoder();
-
-function base64UrlEncode(bytes) {
-  let binary = "";
-  for (const b of bytes) binary += String.fromCharCode(b);
-  // btoa is available in Workers and Node 18+.
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function base64UrlDecodeToBytes(text) {
-  const normalized = String(text || "").replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
-  const binary = atob(padded);
-  const out = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
-  return out;
-}
-
-async function hmacSign(secret, message) {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(String(secret)),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(message));
-  return base64UrlEncode(new Uint8Array(signature));
-}
-
-/// Constant-time-ish comparison (length-safe, no early exit on content).
-function safeEqual(a, b) {
-  const x = String(a || "");
-  const y = String(b || "");
-  if (x.length !== y.length) return false;
-  let diff = 0;
-  for (let i = 0; i < x.length; i++) diff |= x.charCodeAt(i) ^ y.charCodeAt(i);
-  return diff === 0;
-}
+import {
+  LIMOUSINE_ACCEPTANCE_KEY_PURPOSE,
+  looksLikeLimousineAeadToken,
+  sealLimousineAead,
+  unsealLimousineAead,
+} from "./limousine_aead_token.mjs";
 
 export const LIMOUSINE_ACCEPTANCE_TOKEN_VERSION = "limacc1";
 
@@ -58,62 +25,77 @@ export const LIMOUSINE_ACCEPTANCE_ERRORS = Object.freeze({
   VERSION_MISMATCH: "acceptance_reference_version",
 });
 
-/// Seals an acceptance binding into an opaque, expiring reference.
+function mapAeadError(error) {
+  if (error === "secret_unusable") return LIMOUSINE_ACCEPTANCE_ERRORS.MISSING_SECRET;
+  if (error === "auth") return LIMOUSINE_ACCEPTANCE_ERRORS.BAD_SIGNATURE;
+  return LIMOUSINE_ACCEPTANCE_ERRORS.MALFORMED;
+}
+
+/// Seals an acceptance binding into an opaque, expiring AES-GCM reference.
 export async function sealLimousineAcceptance({
   secret,
   binding,
   acceptedAtIso = null,
   ttlMinutes = 60,
 } = {}) {
-  if (!secret) return { ok: false, error: LIMOUSINE_ACCEPTANCE_ERRORS.MISSING_SECRET };
   const acceptedAt = acceptedAtIso || new Date().toISOString();
   const expiresAt = new Date(
     Date.parse(acceptedAt) + Math.max(1, Number(ttlMinutes) || 60) * 60000,
   ).toISOString();
   const payload = {
     v: LIMOUSINE_ACCEPTANCE_TOKEN_VERSION,
+    purpose: LIMOUSINE_ACCEPTANCE_KEY_PURPOSE,
     binding: binding && typeof binding === "object" ? binding : {},
+    issued_at: acceptedAt,
     accepted_at: acceptedAt,
     expires_at: expiresAt,
   };
-  const body = base64UrlEncode(encoder.encode(JSON.stringify(payload)));
-  const signature = await hmacSign(secret, body);
+  const sealed = await sealLimousineAead({
+    secret,
+    version: LIMOUSINE_ACCEPTANCE_TOKEN_VERSION,
+    purpose: LIMOUSINE_ACCEPTANCE_KEY_PURPOSE,
+    payload,
+  });
+  if (!sealed.ok) return { ok: false, error: mapAeadError(sealed.error) };
   return {
     ok: true,
-    reference: `${LIMOUSINE_ACCEPTANCE_TOKEN_VERSION}.${body}.${signature}`,
+    reference: sealed.reference,
     accepted_at: acceptedAt,
     expires_at: expiresAt,
   };
 }
 
-/// Unseals and verifies an acceptance reference. A tampered payload, a wrong
-/// signature, an unknown version or an elapsed expiry all fail closed.
+/// Unseals and verifies an acceptance reference. Tampered, expired, wrong
+/// purpose/key, old HMAC format or an unknown version all fail closed.
 export async function unsealLimousineAcceptance({
   secret,
   reference,
   nowIso = null,
 } = {}) {
-  if (!secret) return { ok: false, error: LIMOUSINE_ACCEPTANCE_ERRORS.MISSING_SECRET };
-  const parts = String(reference || "").split(".");
-  if (parts.length !== 3) {
+  const text = String(reference || "").trim();
+  const prefix = text.split(".")[0] || "";
+  if (prefix !== LIMOUSINE_ACCEPTANCE_TOKEN_VERSION) {
+    if (/^lim(acc|qs)\d+$/.test(prefix)) {
+      return { ok: false, error: LIMOUSINE_ACCEPTANCE_ERRORS.VERSION_MISMATCH };
+    }
     return { ok: false, error: LIMOUSINE_ACCEPTANCE_ERRORS.MALFORMED };
   }
-  const [version, body, signature] = parts;
-  if (version !== LIMOUSINE_ACCEPTANCE_TOKEN_VERSION) {
+  if (!looksLikeLimousineAeadToken(text, LIMOUSINE_ACCEPTANCE_TOKEN_VERSION)) {
+    return { ok: false, error: LIMOUSINE_ACCEPTANCE_ERRORS.MALFORMED };
+  }
+  const opened = await unsealLimousineAead({
+    secret,
+    version: LIMOUSINE_ACCEPTANCE_TOKEN_VERSION,
+    purpose: LIMOUSINE_ACCEPTANCE_KEY_PURPOSE,
+    reference: text,
+  });
+  if (!opened.ok) return { ok: false, error: mapAeadError(opened.error) };
+  const payload = opened.payload;
+  if (payload.v !== LIMOUSINE_ACCEPTANCE_TOKEN_VERSION) {
     return { ok: false, error: LIMOUSINE_ACCEPTANCE_ERRORS.VERSION_MISMATCH };
   }
-  const expected = await hmacSign(secret, body);
-  if (!safeEqual(expected, signature)) {
+  if (payload.purpose && payload.purpose !== LIMOUSINE_ACCEPTANCE_KEY_PURPOSE) {
     return { ok: false, error: LIMOUSINE_ACCEPTANCE_ERRORS.BAD_SIGNATURE };
-  }
-  let payload = null;
-  try {
-    payload = JSON.parse(new TextDecoder().decode(base64UrlDecodeToBytes(body)));
-  } catch (_) {
-    return { ok: false, error: LIMOUSINE_ACCEPTANCE_ERRORS.MALFORMED };
-  }
-  if (!payload || payload.v !== LIMOUSINE_ACCEPTANCE_TOKEN_VERSION) {
-    return { ok: false, error: LIMOUSINE_ACCEPTANCE_ERRORS.VERSION_MISMATCH };
   }
   const now = Date.parse(nowIso || new Date().toISOString());
   const expiry = Date.parse(String(payload.expires_at || ""));
@@ -123,7 +105,8 @@ export async function unsealLimousineAcceptance({
   return {
     ok: true,
     binding: payload.binding && typeof payload.binding === "object" ? payload.binding : {},
-    accepted_at: String(payload.accepted_at || ""),
+    accepted_at: String(payload.accepted_at || payload.issued_at || ""),
+    issued_at: String(payload.issued_at || payload.accepted_at || ""),
     expires_at: String(payload.expires_at || ""),
   };
 }

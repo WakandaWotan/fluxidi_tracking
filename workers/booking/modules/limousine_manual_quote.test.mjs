@@ -370,26 +370,19 @@ test("14) sealed acceptance reference: opaque, tamper-evident and expiring", asy
   assert.equal(good.ok, true);
   assert.equal(good.binding.total_incl_vat_cents, 45000);
 
-  // Tampered payload fails the signature check.
-  const [v, body, sig] = sealed.reference.split(".");
-  const tamperedBody = Buffer.from(
-    JSON.stringify({ v, binding: { ...binding, total_incl_vat_cents: 1 }, accepted_at: "x", expires_at: "2099-01-01T00:00:00Z" }),
-  )
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+  // Tampered ciphertext fails authentication.
+  const [v, iv, ct] = sealed.reference.split(".");
   const tampered = await unsealLimousineAcceptance({
     secret: SECRET,
-    reference: `${v}.${tamperedBody}.${sig}`,
+    reference: `${v}.${iv}.${ct.slice(0, -1)}x`,
     nowIso: "2026-08-17T10:30:00Z",
   });
   assert.equal(tampered.ok, false);
   assert.equal(tampered.error, LIMOUSINE_ACCEPTANCE_ERRORS.BAD_SIGNATURE);
 
-  // A different secret cannot verify.
+  // A different usable secret cannot decrypt.
   const wrongSecret = await unsealLimousineAcceptance({
-    secret: "other",
+    secret: "other-secret-value-16",
     reference: sealed.reference,
     nowIso: "2026-08-17T10:30:00Z",
   });

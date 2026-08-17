@@ -300,7 +300,7 @@ test("8/9) customer status requires a well-formed opaque reference, not a bare i
   assert.equal(prevalidateLimousineStatusBody({ status_ref: "limq_1" }).ok, false);
   assert.equal(prevalidateLimousineStatusBody({ status_ref: "limqs1.abc.def" }).ok, false);
   assert.equal(
-    limousineStatusRefLooksWellFormed("limqs1.abcdefghij.klmnopqr"),
+    limousineStatusRefLooksWellFormed("limqs1.abcdefghijklmnop.klmnopqrstuvwxyzabcdef"),
     true,
   );
 });
@@ -433,7 +433,7 @@ test("15/16/17) public and inbox projections stay bounded and secret-free", asyn
   assert.ok(!JSON.stringify(result.body).includes("hidden@example.com"));
 });
 
-test("18) inbox-index updates are idempotent and reject stale revisions", () => {
+test("18) inbox-index updates are idempotent and reject stale revisions", async () => {
   let index = emptyLimousineInboxIndex("t1", "c1");
   const first = upsertLimousineInboxEntry(index, {
     tenant_id: "t1",
@@ -467,7 +467,9 @@ test("18) inbox-index updates are idempotent and reject stale revisions", () => 
   assert.equal(stale.reason, "stale_revision");
   assert.equal(stale.index.entries[0].state, S.QUOTED);
   assert.equal(limousineInboxIndexKey("t1", "c1"), "limousine_quote_inbox_v1:t1:c1");
-  assert.ok(limousineStatusRateKey("limqs1.aaa.bbb").startsWith("limousine_status_rl:v1:"));
+  const rateKey = await limousineStatusRateKey("limqs1.aaa.bbb");
+  assert.ok(rateKey.startsWith("limousine_status_rl:v1:"));
+  assert.ok(!rateKey.includes("limqs1.aaa.bbb"));
 });
 
 test("19) expiry observation is monotonic and cannot revive a terminal quote", () => {

@@ -44983,7 +44983,7 @@ export default {
           loadCustomerSession: () => _loadCustomerSessionFromRequest(request, env),
           rateLimit: async (statusRef) => _incrementSimpleRateLimit({
             env,
-            rateKey: _limousineStatusRateKey(statusRef),
+            rateKey: await _limousineStatusRateKey(statusRef),
             maxCount: _LIMOUSINE_STATUS_RATE_MAX,
             windowSeconds: _LIMOUSINE_STATUS_RATE_WINDOW_SECONDS,
           }),
