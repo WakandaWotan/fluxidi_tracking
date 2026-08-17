@@ -18,6 +18,10 @@ import {
   RATEHAWK_DEFAULT_SEARCH_LIMITS,
   resolveMarketSearchConfig,
 } from "./ratehawk_market_search_limits.mjs";
+import {
+  RATEHAWK_CONTENT_STRATEGIES,
+  resolveRatehawkContentStrategy,
+} from "./ratehawk_content_strategy.mjs";
 import { envFlag } from "./parsing_utils.js";
 
 export const RATEHAWK_CONTENT_DUMP_PATH = "/api/b2b/v3/hotel/info/dump/";
@@ -41,6 +45,9 @@ export const RATEHAWK_CONTENT_CUSTOMER_TRIGGERS = Object.freeze([
   "card_render",
   "list_card",
   "customer_request",
+  "public_hotel_search",
+  "prebook",
+  "booking",
 ]);
 
 const LIVE_PRICE_KEYS = Object.freeze([
@@ -81,7 +88,9 @@ export function isRatehawkFullDumpRequest(pathOrOperation) {
     raw.includes("incremental_dump") ||
     raw.includes("dump_all") ||
     raw.includes("full_dump") ||
-    raw.includes("all_hotels_dump")
+    raw.includes("all_hotels_dump") ||
+    raw.includes("custom_dump") ||
+    slashed.includes("hotel/info/custom")
   );
 }
 
@@ -142,9 +151,23 @@ export function planScopedContentSync({
   markets = null,
   locales = RATEHAWK_DISCLOSURE_LOCALES,
   hidLists = {},
+  strategy = RATEHAWK_CONTENT_STRATEGIES.SINGLE_HID_INFO,
 } = {}) {
   const dump = assertContentOperationAllowed("hotel_content_by_ids");
-  if (dump.ok !== true) return { ok: false, jobs: [], reason: dump.reason };
+  if (dump.ok !== true) {
+    return { ok: false, jobs: [], reason: dump.reason, executed: false, provider_requested: false };
+  }
+  const resolved = resolveRatehawkContentStrategy(strategy);
+  if (resolved.ok !== true) {
+    return {
+      ok: false,
+      jobs: [],
+      reason: resolved.reason,
+      executed: false,
+      provider_requested: false,
+      fallback_used: false,
+    };
+  }
   const config = parseConfiguredContentMarkets(env, markets);
   const enabled = (config.enabled_markets || []).filter((row) => row.enabled !== false);
   if (!enabled.length) {
@@ -157,6 +180,9 @@ export function planScopedContentSync({
     };
   }
   const jobs = [];
+  const supportedLocales = (Array.isArray(locales) ? locales : RATEHAWK_DISCLOSURE_LOCALES).filter(
+    (locale) => RATEHAWK_DISCLOSURE_LOCALES.includes(locale),
+  );
   for (const market of enabled) {
     const marketKey = `${market.country_code}:${market.city_key}`;
     const supplied = Array.isArray(hidLists[marketKey]) ? hidLists[marketKey] : [];
@@ -174,36 +200,42 @@ export function planScopedContentSync({
       config.limits.max_hids_per_request,
     );
     const hids = unique.slice(0, cap);
-    for (const locale of locales) {
-      jobs.push({
-        market_key: marketKey,
-        country_code: market.country_code,
-        city_key: market.city_key,
-        locale,
-        hids,
-        hid_limit: cap,
-        truncated: unique.length > cap,
-        path: RATEHAWK_CONTENT_HOTEL_INFO_PATH,
-        dump_forbidden: true,
-      });
+    for (const hid of hids) {
+      for (const locale of supportedLocales) {
+        jobs.push({
+          strategy: RATEHAWK_CONTENT_STRATEGIES.SINGLE_HID_INFO,
+          market_key: marketKey,
+          country_code: market.country_code,
+          city_key: market.city_key,
+          hid,
+          locale,
+          hids: [hid],
+          hid_limit: 1,
+          truncated: unique.length > cap,
+          path: RATEHAWK_CONTENT_HOTEL_INFO_PATH,
+          dump_forbidden: true,
+          batch: false,
+        });
+      }
     }
   }
   return {
     ok: true,
     jobs,
-    reason: null,
+    reason: jobs.length ? null : "no_configured_hids",
     executed: false,
     provider_requested: false,
     limits: config.limits,
+    strategy: RATEHAWK_CONTENT_STRATEGIES.SINGLE_HID_INFO,
   };
 }
 
 function _imageReferences(hotel) {
-  const raw = Array.isArray(hotel?.images)
-    ? hotel.images
-    : Array.isArray(hotel?.image_refs)
-      ? hotel.image_refs
-      : [];
+  const raw = [
+    ...(Array.isArray(hotel?.images) ? hotel.images : []),
+    ...(Array.isArray(hotel?.images_ext) ? hotel.images_ext : []),
+    ...(Array.isArray(hotel?.image_refs) ? hotel.image_refs : []),
+  ];
   return raw
     .map((image) => {
       if (typeof image === "string") return { ref: image, binary: false };
@@ -331,13 +363,61 @@ export function normalizeOfflineHotelProjection(
       retrieved_at,
       locale,
     },
+    description_struct: staticHotel.description_struct ?? [],
+    description_indexed: false,
+    searchable_text_excludes: Object.freeze(["description_struct"]),
+    restricted_contact: {
+      email_present: Boolean(_text(staticHotel.email, 200)),
+      phone_present: Boolean(_text(staticHotel.phone, 80)),
+      values_retained: false,
+    },
     live_price_excluded: true,
     has_live_rates: false,
     unmapped_critical_field_names: review.unmapped_critical_field_names,
     unmapped_fields_for_review: review.unmapped_fields_for_review,
+    state: review.unmapped_critical_field_names.length ? "review_required" : "accepted",
+    public_ready: review.unmapped_critical_field_names.length === 0,
     discarded: false,
     tombstone: false,
     required_categories: RATEHAWK_REQUIRED_CONTENT_CATEGORIES,
+  };
+}
+
+export function toStoredStaticHotelProjection(projection = {}) {
+  if (!projection || projection.ok !== true) return projection;
+  const stored = { ...projection };
+  delete stored.email;
+  delete stored.phone;
+  if (livePriceKeysPresent(stored) || livePriceKeysPresent(stored.categories)) {
+    return { ok: false, reason: "live_price_forbidden_in_static_content" };
+  }
+  stored.description_indexed = false;
+  stored.restricted_contact = {
+    email_present: projection.restricted_contact?.email_present === true,
+    phone_present: projection.restricted_contact?.phone_present === true,
+    values_retained: false,
+  };
+  return stored;
+}
+
+export function toPublicStaticHotelCard(projection = {}) {
+  const stored = toStoredStaticHotelProjection(projection);
+  if (!stored || stored.ok !== true) {
+    return { ok: false, reason: stored?.reason || "projection_unavailable" };
+  }
+  return {
+    ok: true,
+    hid: stored.hid,
+    locale: stored.locale,
+    name: stored.name,
+    address: stored.address,
+    coordinates: stored.coordinates,
+    image_refs: stored.image_refs,
+    star_rating: stored.star_rating,
+    description_struct: stored.description_struct ?? [],
+    description_indexed: false,
+    restricted_contact_excluded: true,
+    live_price_excluded: true,
   };
 }
 
@@ -352,26 +432,31 @@ export function createMemoryContentStore() {
       return documents.get(keyOf(hid, locale)) || null;
     },
     async put(projection) {
-      const key = keyOf(projection.hid, projection.locale);
+      const stored = toStoredStaticHotelProjection(projection);
+      if (!stored || stored.ok !== true) {
+        return { written: false, reason: stored?.reason || "projection_unavailable" };
+      }
+      const key = keyOf(stored.hid, stored.locale);
       const existing = documents.get(key);
       if (existing && !existing.tombstone) {
         const existingRev = _int(existing.provenance?.content_revision, 0);
-        const incomingRev = _int(projection.provenance?.content_revision, 0);
+        const incomingRev = _int(stored.provenance?.content_revision, 0);
         const existingAt = _int(existing.provenance?.retrieved_at, 0);
-        const incomingAt = _int(projection.provenance?.retrieved_at, 0);
+        const incomingAt = _int(stored.provenance?.retrieved_at, 0);
         if (incomingRev < existingRev || incomingAt < existingAt) {
           return { written: false, reason: "older_content_rejected" };
         }
       }
-      documents.set(key, projection);
+      documents.set(key, stored);
       index.set(key, {
-        hid: projection.hid,
-        locale: projection.locale,
-        market_key: projection.market_key,
-        name: projection.name,
-        revision: projection.provenance?.content_revision ?? null,
-        retrieved_at: projection.provenance?.retrieved_at ?? null,
-        tombstone: projection.tombstone === true,
+        hid: stored.hid,
+        locale: stored.locale,
+        market_key: stored.market_key,
+        name: stored.name,
+        revision: stored.provenance?.content_revision ?? null,
+        retrieved_at: stored.provenance?.retrieved_at ?? null,
+        tombstone: stored.tombstone === true,
+        description_indexed: false,
       });
       return { written: true, reason: null };
     },

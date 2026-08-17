@@ -66,6 +66,8 @@ test("full dump cannot be requested", () => {
   assert.equal(denied.reason, "full_dump_forbidden");
   const allowed = assertContentOperationAllowed("hotel_content_by_ids");
   assert.equal(allowed.ok, true);
+  const custom = assertContentOperationAllowed("custom_dump");
+  assert.equal(custom.ok, false);
 });
 
 test("empty production markets produce no work", () => {
@@ -89,12 +91,14 @@ test("only configured markets and hids are scheduled", () => {
       "FR:paris": [9],
     },
   });
-  assert.equal(planned.jobs.length, 8);
+  assert.equal(planned.jobs.length, 12);
   const keys = new Set(planned.jobs.map((job) => job.market_key));
   assert.deepEqual([...keys].sort(), ["BE:antwerp", "BE:brussels"]);
-  const brussels = planned.jobs.find((job) => job.market_key === "BE:brussels");
-  assert.deepEqual(brussels.hids, [8473727]);
-  assert.equal(brussels.dump_forbidden, true);
+  const brussels = planned.jobs.filter((job) => job.market_key === "BE:brussels");
+  assert.equal(brussels.length, 4);
+  assert.ok(brussels.every((job) => job.hid === 8473727 && job.hids.length === 1));
+  assert.equal(brussels[0].dump_forbidden, true);
+  assert.equal(brussels[0].strategy, "single_hid_info");
 });
 
 test("hotel limits are enforced", () => {
@@ -108,8 +112,8 @@ test("hotel limits are enforced", () => {
     hidLists: { "BE:brussels": many },
     locales: ["en"],
   });
-  assert.equal(planned.jobs.length, 1);
-  assert.equal(planned.jobs[0].hids.length, 3);
+  assert.equal(planned.jobs.length, 3);
+  assert.ok(planned.jobs.every((job) => job.hids.length === 1 && job.locale === "en"));
   assert.equal(planned.jobs[0].truncated, true);
 });
 
@@ -121,6 +125,8 @@ test("customer requests cannot trigger sync", async () => {
     "view_stay",
     "hotelpage",
     "customer_request",
+    "prebook",
+    "booking",
   ]) {
     const gate = shouldRunRatehawkContentSync({ trigger, env });
     assert.equal(gate.run, false, trigger);
@@ -227,6 +233,13 @@ test("production quota is fail-closed when absent", async () => {
   assert.equal(reserved.allowed, false);
   assert.equal(RATEHAWK_TEST_ACCOUNT_QUOTAS.hotelpage.limit, 5);
   assert.equal(RATEHAWK_TEST_ACCOUNT_QUOTAS.serp.limit, 15);
+  assert.equal(RATEHAWK_TEST_ACCOUNT_QUOTAS.hotel_content.limit, 30);
+  const content = await reserveRatehawkProviderQuota({
+    env: { RATEHAWK_ENVIRONMENT: "production" },
+    endpoint: "hotel_content",
+  });
+  assert.equal(content.allowed, false);
+  assert.equal(content.reason, "production_quota_unconfigured");
 });
 
 test("locale projections stay separated", async () => {
@@ -409,7 +422,8 @@ test("customer hotelpage and public worker paths cannot start content sync", asy
   const planned = await admin.json();
   assert.equal(planned.executed, false);
   assert.equal(planned.provider_requested, false);
-  assert.equal(planned.jobs.length, 8);
+  assert.equal(planned.jobs.length, 4);
+  assert.ok(planned.jobs.every((job) => job.hid === 8473727 && job.hids.length === 1));
 });
 
 test("missing quota coordinator denies with zero transport", async () => {

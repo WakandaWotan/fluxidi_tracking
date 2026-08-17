@@ -426,6 +426,12 @@ function _basicAuthHeader(keyId, apiKey) {
   return `Basic ${token}`;
 }
 
+export function ratehawkProviderAuthHeader(env) {
+  const { keyId, apiKey } = _authMaterial(env);
+  if (!keyId || !apiKey) return null;
+  return _basicAuthHeader(keyId, apiKey);
+}
+
 function _isAbortError(err) {
   const name = String(err?.name || "");
   const message = String(err?.message || "").toLowerCase();

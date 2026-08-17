@@ -15,11 +15,19 @@ import { envFlag } from "./parsing_utils.js";
 export const RATEHAWK_QUOTA_ENDPOINTS = Object.freeze({
   HOTELPAGE: "hotelpage",
   SERP: "serp",
+  HOTEL_CONTENT: "hotel_content",
 });
 
 export const RATEHAWK_TEST_ACCOUNT_QUOTAS = Object.freeze({
   hotelpage: Object.freeze({ limit: 5, window_seconds: 60 }),
   serp: Object.freeze({ limit: 15, window_seconds: 60 }),
+  hotel_content: Object.freeze({ limit: 30, window_seconds: 60 }),
+});
+
+const QUOTA_ENV_PREFIX = Object.freeze({
+  hotelpage: "RATEHAWK_QUOTA_HOTELPAGE",
+  serp: "RATEHAWK_QUOTA_SERP",
+  hotel_content: "RATEHAWK_QUOTA_HOTEL_CONTENT",
 });
 
 function _trim(value, max = 200) {
@@ -34,15 +42,43 @@ function _int(value) {
   return Math.trunc(n);
 }
 
+function _resetMs(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function parseRatehawkRateLimitHeaders(headers) {
+  const get = (name) => {
+    if (!headers) return null;
+    if (typeof headers.get === "function") return headers.get(name);
+    return headers[name] ?? headers[name.toLowerCase()] ?? null;
+  };
+  const remaining = _int(get("X-RateLimit-Remaining") ?? get("x-ratelimit-remaining"));
+  const reset = get("X-RateLimit-Reset") ?? get("x-ratelimit-reset");
+  return {
+    seconds_number: get("X-RateLimit-SecondsNumber") ?? get("x-ratelimit-secondsnumber"),
+    requests_number: get("X-RateLimit-RequestsNumber") ?? get("x-ratelimit-requestsnumber"),
+    remaining,
+    reset: reset == null ? null : String(reset),
+    retry_after: (() => {
+      const resetMs = _resetMs(reset);
+      if (remaining != null && remaining <= 0 && resetMs != null) {
+        return Math.max(1, Math.ceil((resetMs - Date.now()) / 1000));
+      }
+      return null;
+    })(),
+  };
+}
+
 function _environment(env) {
   return _trim(env?.RATEHAWK_ENVIRONMENT, 32).toLowerCase();
 }
 
 function _readQuota(env, endpoint, fallback) {
-  const prefix =
-    endpoint === RATEHAWK_QUOTA_ENDPOINTS.HOTELPAGE
-      ? "RATEHAWK_QUOTA_HOTELPAGE"
-      : "RATEHAWK_QUOTA_SERP";
+  const prefix = QUOTA_ENV_PREFIX[endpoint];
+  if (!prefix) return { ok: false, reason: "quota_endpoint_unknown", endpoint };
   const limit = _int(env?.[`${prefix}_LIMIT`]);
   const windowSeconds = _int(env?.[`${prefix}_WINDOW_SECONDS`]);
   if (limit == null && windowSeconds == null) {
@@ -64,9 +100,15 @@ export function resolveRatehawkProviderQuotaConfig(env = {}) {
     fallback?.hotelpage,
   );
   const serp = _readQuota(env, RATEHAWK_QUOTA_ENDPOINTS.SERP, fallback?.serp);
+  const hotelContent = _readQuota(
+    env,
+    RATEHAWK_QUOTA_ENDPOINTS.HOTEL_CONTENT,
+    fallback?.hotel_content,
+  );
   if (hotelpage?.ok === false) return hotelpage;
   if (serp?.ok === false) return serp;
-  if (!hotelpage || !serp) {
+  if (hotelContent?.ok === false) return hotelContent;
+  if (!hotelpage || !serp || !hotelContent) {
     return {
       ok: false,
       reason: production
@@ -84,6 +126,7 @@ export function resolveRatehawkProviderQuotaConfig(env = {}) {
     endpoints: {
       hotelpage,
       serp,
+      hotel_content: hotelContent,
     },
   };
 }
@@ -120,15 +163,21 @@ export class RatehawkProviderQuotaDO {
     const action = _trim(body?.action, 40).toLowerCase();
     if (action === "consume") return this._consume(body);
     if (action === "status") return this._status(body);
+    if (action === "reconcile") return this._reconcile(body);
     return this._json({ ok: false, reason: "unknown_action" }, 400);
+  }
+
+  _knownEndpoint(endpoint) {
+    return (
+      endpoint === RATEHAWK_QUOTA_ENDPOINTS.HOTELPAGE ||
+      endpoint === RATEHAWK_QUOTA_ENDPOINTS.SERP ||
+      endpoint === RATEHAWK_QUOTA_ENDPOINTS.HOTEL_CONTENT
+    );
   }
 
   async _consume(body) {
     const endpoint = _trim(body?.endpoint, 40).toLowerCase();
-    if (
-      endpoint !== RATEHAWK_QUOTA_ENDPOINTS.HOTELPAGE &&
-      endpoint !== RATEHAWK_QUOTA_ENDPOINTS.SERP
-    ) {
+    if (!this._knownEndpoint(endpoint)) {
       return this._json({ ok: false, allowed: false, reason: "quota_endpoint_unknown" });
     }
     const limit = _int(body?.limit);
@@ -144,6 +193,16 @@ export class RatehawkProviderQuotaDO {
     const nowMs = Number.isFinite(now) ? now : Date.now();
     const windowMs = windowSeconds * 1000;
     const result = await this.state.storage.transaction(async (txn) => {
+      const blockedUntil = Number(await txn.get(`blocked_until:${endpoint}`));
+      if (Number.isFinite(blockedUntil) && blockedUntil > nowMs) {
+        return {
+          allowed: false,
+          remaining: 0,
+          retry_after: Math.max(1, Math.ceil((blockedUntil - nowMs) / 1000)),
+          count: limit,
+          blocked_until: blockedUntil,
+        };
+      }
       const key = `stamps:${endpoint}`;
       const raw = (await txn.get(key)) || [];
       const stamps = Array.isArray(raw) ? raw.map((n) => Number(n)).filter(Number.isFinite) : [];
@@ -184,6 +243,35 @@ export class RatehawkProviderQuotaDO {
       ok: true,
       endpoint,
       count: Array.isArray(stamps) ? stamps.length : 0,
+    });
+  }
+
+  async _reconcile(body) {
+    const endpoint = _trim(body?.endpoint, 40).toLowerCase();
+    if (!this._knownEndpoint(endpoint)) {
+      return this._json({ ok: false, reason: "quota_endpoint_unknown" });
+    }
+    const remaining = _int(body?.remaining);
+    const nowMs = Number.isFinite(Number(body?.now)) ? Number(body.now) : Date.now();
+    const resetMs = _resetMs(body?.reset);
+    await this.state.storage.transaction(async (txn) => {
+      if (remaining != null && remaining <= 0 && resetMs != null && resetMs > nowMs) {
+        await txn.put(`blocked_until:${endpoint}`, resetMs);
+        return;
+      }
+      if (remaining != null && remaining > 0) {
+        await txn.put(`blocked_until:${endpoint}`, 0);
+      }
+    });
+    return this._json({
+      ok: true,
+      endpoint,
+      remaining,
+      reset: resetMs,
+      retry_after:
+        remaining != null && remaining <= 0 && resetMs != null && resetMs > nowMs
+          ? Math.max(1, Math.ceil((resetMs - nowMs) / 1000))
+          : null,
     });
   }
 
@@ -296,6 +384,33 @@ export async function reserveRatehawkProviderQuota({
     remaining: payload?.remaining ?? null,
     endpoint,
   };
+}
+
+export async function reconcileRatehawkProviderQuota({
+  env,
+  endpoint,
+  remaining,
+  reset,
+  now = Date.now(),
+} = {}) {
+  const stub = _quotaStub(env);
+  if (!stub || typeof stub.fetch !== "function") {
+    return { ok: false, reason: "quota_coordinator_missing", endpoint };
+  }
+  const resp = await stub.fetch(
+    new Request("https://ratehawk-provider-quota.internal/reconcile", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "reconcile",
+        endpoint,
+        remaining,
+        reset,
+        now,
+      }),
+    }),
+  );
+  return resp.json();
 }
 
 export function envFlagOn(env, name) {

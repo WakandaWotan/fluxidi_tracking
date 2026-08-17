@@ -1,6 +1,8 @@
 -- Future RATEHAWK_HOTELS_DB searchable index. Not applied in this task.
 -- Localized policy documents belong in RATEHAWK_CONTENT_KV / later R2.
 -- Image binaries are never stored here.
+-- description_struct may live in the localized document only — never index it.
+-- email/phone are restricted contact fields and must not appear here.
 
 CREATE TABLE IF NOT EXISTS hotel_index (
   hid INTEGER NOT NULL,
@@ -20,8 +22,11 @@ CREATE TABLE IF NOT EXISTS hotel_index (
 CREATE TABLE IF NOT EXISTS sync_job_state (
   job_id TEXT PRIMARY KEY,
   market_key TEXT,
+  hid INTEGER,
   locale TEXT,
+  strategy TEXT,
   hid_offset INTEGER NOT NULL DEFAULT 0,
   updated_at INTEGER,
-  status TEXT
+  status TEXT,
+  retry_after INTEGER
 );

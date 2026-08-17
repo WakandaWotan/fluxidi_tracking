@@ -25,11 +25,14 @@ enabled = true
 RATEHAWK_ENABLED = "0"
 RATEHAWK_HOTELPAGE_ENABLED = "0"
 RATEHAWK_CONTENT_SYNC_ENABLED = "0"
-# Production quotas must be set explicitly or Hotelpage/SERP fail closed:
+RATEHAWK_CONTENT_BATCH_ENABLED = "0"
+# Production quotas must be set explicitly or Hotelpage/SERP/content fail closed:
 # RATEHAWK_QUOTA_HOTELPAGE_LIMIT
 # RATEHAWK_QUOTA_HOTELPAGE_WINDOW_SECONDS
 # RATEHAWK_QUOTA_SERP_LIMIT
 # RATEHAWK_QUOTA_SERP_WINDOW_SECONDS
+# RATEHAWK_QUOTA_HOTEL_CONTENT_LIMIT
+# RATEHAWK_QUOTA_HOTEL_CONTENT_WINDOW_SECONDS
 # RATEHAWK_CONTENT_MARKETS — JSON array; empty until explicitly supplied
 # Future: [triggers] crons — do not enable until markets and the sync gate
 # are explicit. scheduled() is wired but no cron is configured.

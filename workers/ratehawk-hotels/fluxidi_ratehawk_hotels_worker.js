@@ -15,9 +15,15 @@ import {
   isRatehawkContentSyncAllowedOnCustomerRequest,
 } from "./modules/ratehawk_hotelpage_worker.mjs";
 import {
+  RATEHAWK_CONTENT_STRATEGIES,
+  isRatehawkBatchContentStrategyEnabled,
+  resolveRatehawkContentStrategy,
+} from "./modules/ratehawk_content_strategy.mjs";
+import {
   planScopedContentSync,
   shouldRunRatehawkContentSync,
 } from "./modules/ratehawk_content_sync.mjs";
+import { executeRatehawkContentJobs } from "./modules/ratehawk_content_transport.mjs";
 import { RatehawkProviderQuotaDO } from "./modules/ratehawk_provider_quota.mjs";
 import { buildSafeRatehawkProviderStatus } from "./modules/ratehawk_provider.mjs";
 import { verifyRatehawkViewStayContext } from "./modules/ratehawk_view_stay_context.mjs";
@@ -104,6 +110,12 @@ export async function handleRatehawkHotelsWorkerFetch(
       public_route: false,
       content_sync_on_customer_request:
         isRatehawkContentSyncAllowedOnCustomerRequest(),
+      content_strategy: {
+        single_hid_info: resolveRatehawkContentStrategy(
+          RATEHAWK_CONTENT_STRATEGIES.SINGLE_HID_INFO,
+        ).strategy,
+        batch_content_by_ids: isRatehawkBatchContentStrategyEnabled(),
+      },
       ratehawk: buildSafeRatehawkProviderStatus(env),
     });
   }
@@ -149,7 +161,15 @@ export async function handleRatehawkHotelsWorkerFetch(
     } catch {
       body = {};
     }
-    return json(await handleRatehawkContentSyncRequest({ env, body, trigger: "admin_internal" }));
+    return json(
+      await handleRatehawkContentSyncRequest({
+        env,
+        body,
+        trigger: "admin_internal",
+        fetchImpl,
+        now,
+      }),
+    );
   }
 
   return _notFound();
@@ -159,6 +179,8 @@ export async function handleRatehawkContentSyncRequest({
   env,
   body = {},
   trigger = "admin_internal",
+  fetchImpl = null,
+  now = Date.now(),
 } = {}) {
   const gate = shouldRunRatehawkContentSync({ trigger, env });
   if (gate.run !== true) {
@@ -170,12 +192,45 @@ export async function handleRatehawkContentSyncRequest({
       jobs: [],
     };
   }
-  return planScopedContentSync({
+  if (
+    body.batch === true ||
+    body.strategy === RATEHAWK_CONTENT_STRATEGIES.BATCH_CONTENT_BY_IDS
+  ) {
+    return {
+      ok: false,
+      executed: false,
+      provider_requested: false,
+      reason: "batch_content_by_ids_unavailable",
+      fallback_used: false,
+      jobs: [],
+    };
+  }
+  const planned = planScopedContentSync({
     env,
     markets: body.markets ?? null,
     hidLists: body.hid_lists ?? {},
     locales: body.locales,
+    strategy: body.strategy,
   });
+  const shouldExecute =
+    body.execute === true || trigger === "scheduled" || trigger === "queue";
+  if (!shouldExecute || !planned.jobs?.length) {
+    return planned;
+  }
+  const results = await executeRatehawkContentJobs({
+    env,
+    jobs: planned.jobs,
+    fetchImpl,
+    store: body.store ?? null,
+    now,
+    trigger,
+  });
+  return {
+    ...planned,
+    executed: true,
+    provider_requested: results.some((row) => row.invoked === true),
+    results,
+  };
 }
 
 export async function handleRatehawkHotelsScheduled(event, env) {
