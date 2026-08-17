@@ -197,6 +197,18 @@ class CustomerSessionStore {
     _cache = normalized;
   }
 
+  static final List<VoidCallback> _clearedListeners = <VoidCallback>[];
+
+  void addClearedListener(VoidCallback listener) {
+    if (!_clearedListeners.contains(listener)) {
+      _clearedListeners.add(listener);
+    }
+  }
+
+  void removeClearedListener(VoidCallback listener) {
+    _clearedListeners.remove(listener);
+  }
+
   Future<void> clear() async {
     _cache = null;
     try {
@@ -205,6 +217,9 @@ class CustomerSessionStore {
         await file.delete();
       }
     } catch (_) {}
+    for (final listener in List<VoidCallback>.from(_clearedListeners)) {
+      listener();
+    }
   }
 
   bool isValid(CustomerSession session) {

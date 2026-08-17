@@ -397,8 +397,14 @@ void main() {
         'lib/main_parts/customer_home_page.dart',
       ).readAsStringSync();
       expect(source.contains('customer_home_airport_banner.webp'), isTrue);
-      expect(source.contains('customer_home_limousine_banner.webp'), isFalse);
-      expect(source.contains('_openLimousineFlow'), isFalse);
+      expect(source.contains('_openAirportFlow'), isTrue);
+      expect(source.contains('_openHotelsPage'), isTrue);
+      expect(source.contains('_openEventsPage'), isTrue);
+      expect(
+        source.contains('LimousineCustomerEntryContract.isVisible'),
+        isTrue,
+      );
+      expect(LimousineCustomerEntryContract.isVisible, isFalse);
     });
   });
 

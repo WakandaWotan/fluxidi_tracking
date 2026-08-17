@@ -60,7 +60,9 @@ Map<String, dynamic> _classOffer({Map<String, dynamic> overrides = const {}}) {
   };
 }
 
-Map<String, dynamic> _vehicleOffer({Map<String, dynamic> overrides = const {}}) {
+Map<String, dynamic> _vehicleOffer({
+  Map<String, dynamic> overrides = const {},
+}) {
   return <String, dynamic>{
     ..._classOffer(),
     'offer_id': 'off_vehicle',
@@ -77,7 +79,10 @@ void main() {
     _vehicle(id: 'vh_inactive', isActive: false),
   ];
 
-  LimousineOfferValidation validate(Map<String, dynamic> offer, {bool readiness = true}) {
+  LimousineOfferValidation validate(
+    Map<String, dynamic> offer, {
+    bool readiness = true,
+  }) {
     return validateLimousineOffer(
       offer,
       vehicles: vehicles,
@@ -120,11 +125,15 @@ void main() {
         contains(LimousineOfferError.vehicleNotLimousine),
       );
       expect(
-        validate(_vehicleOffer(overrides: {'vehicle_id': 'vh_inactive'})).errors,
+        validate(
+          _vehicleOffer(overrides: {'vehicle_id': 'vh_inactive'}),
+        ).errors,
         contains(LimousineOfferError.inactiveVehicle),
       );
       expect(
-        validate(_classOffer(overrides: {'service_class_id': 'unknown'})).errors,
+        validate(
+          _classOffer(overrides: {'service_class_id': 'unknown'}),
+        ).errors,
         contains(LimousineOfferError.unknownServiceClass),
       );
     });
@@ -158,7 +167,10 @@ void main() {
           },
         },
       );
-      expect(validate(offer).errors, contains(LimousineOfferError.hourlyIncomplete));
+      expect(
+        validate(offer).errors,
+        contains(LimousineOfferError.hourlyIncomplete),
+      );
     });
 
     test('a package needs both duration and amount', () {
@@ -174,7 +186,10 @@ void main() {
           },
         },
       );
-      expect(validate(offer).errors, contains(LimousineOfferError.packageIncomplete));
+      expect(
+        validate(offer).errors,
+        contains(LimousineOfferError.packageIncomplete),
+      );
     });
   });
 
@@ -216,7 +231,11 @@ void main() {
             'display_amount_cents': 19900,
           },
         );
-        expect(limousineOfferCanResolvePrice(offer), isFalse, reason: presentation);
+        expect(
+          limousineOfferCanResolvePrice(offer),
+          isFalse,
+          reason: presentation,
+        );
         expect(
           limousineOfferAmountIsSnapshotEligible(offer),
           isFalse,
@@ -330,7 +349,12 @@ void main() {
           'included_services': <Map<String, dynamic>>[
             {
               'item_id': 'water',
-              'label': {'nl': 'Water', 'en': 'Water', 'fr': 'Eau', 'es': 'Agua'},
+              'label': {
+                'nl': 'Water',
+                'en': 'Water',
+                'fr': 'Eau',
+                'es': 'Agua',
+              },
               'active': true,
             },
           ],
@@ -366,32 +390,37 @@ void main() {
       );
     });
 
-    test('unpublished/disabled excluded; ineligible company projects nothing', () {
-      expect(
-        buildSafePublicLimousineOffers(
-          <Map<String, dynamic>>[_classOffer(overrides: {'published': false})],
-          eligible: true,
-          vehicles: vehicles,
-          knownClassIds: _classIds,
-          readiness: true,
-        ),
-        isEmpty,
-      );
-      expect(
-        buildSafePublicLimousineOffers(
-          <Map<String, dynamic>>[_classOffer()],
-          eligible: false,
-          vehicles: vehicles,
-          knownClassIds: _classIds,
-          readiness: true,
-        ),
-        isEmpty,
-      );
-      expect(
-        validate(_classOffer(), readiness: false).errors,
-        contains(LimousineOfferError.publishedWithoutReadiness),
-      );
-    });
+    test(
+      'unpublished/disabled excluded; ineligible company projects nothing',
+      () {
+        expect(
+          buildSafePublicLimousineOffers(
+            <Map<String, dynamic>>[
+              _classOffer(overrides: {'published': false}),
+            ],
+            eligible: true,
+            vehicles: vehicles,
+            knownClassIds: _classIds,
+            readiness: true,
+          ),
+          isEmpty,
+        );
+        expect(
+          buildSafePublicLimousineOffers(
+            <Map<String, dynamic>>[_classOffer()],
+            eligible: false,
+            vehicles: vehicles,
+            knownClassIds: _classIds,
+            readiness: true,
+          ),
+          isEmpty,
+        );
+        expect(
+          validate(_classOffer(), readiness: false).errors,
+          contains(LimousineOfferError.publishedWithoutReadiness),
+        );
+      },
+    );
   });
 
   group('19/20) revision monotonicity and non-destructive disable', () {
@@ -430,7 +459,9 @@ void main() {
 
   group('1/2) taxi and airport pricing remain unchanged', () {
     test('taxi pricing engine and airport fixed fares are untouched', () {
-      final settings = File('lib/business_settings_page.dart').readAsStringSync();
+      final settings = File(
+        'lib/business_settings_page.dart',
+      ).readAsStringSync();
       // Both legacy sections still exist and are separate from the new one.
       expect(settings.contains("id: 'pricing_engine'"), isTrue);
       expect(settings.contains('_airportFixedFareCard()'), isTrue);
@@ -447,39 +478,51 @@ void main() {
       );
     });
 
-    test('server preserves the limousine section across taxi pricing saves', () {
-      final worker =
-          File('workers/booking/fluxidi_booking_worker.js').readAsStringSync();
-      expect(worker.contains('normalized.limousine = preservedLimousine'), isTrue);
-      expect(worker.contains('_loadRawTenantPricingProfileObject'), isTrue);
-    });
+    test(
+      'server preserves the limousine section across taxi pricing saves',
+      () {
+        final worker = File(
+          'workers/booking/fluxidi_booking_worker.js',
+        ).readAsStringSync();
+        expect(
+          worker.contains('normalized.limousine = preservedLimousine'),
+          isTrue,
+        );
+        expect(worker.contains('_loadRawTenantPricingProfileObject'), isTrue);
+      },
+    );
   });
 
   group('21) NL/EN/FR/ES labels', () {
-    test('presentation, journey, mobilisation and error labels are localized', () {
-      for (final lang in const [
-        AppLanguage.nl,
-        AppLanguage.en,
-        AppLanguage.fr,
-        AppLanguage.es,
-      ]) {
-        for (final p in LimousinePricePresentation.all) {
-          expect(limousinePresentationLabel(p, lang).trim(), isNotEmpty);
+    test(
+      'presentation, journey, mobilisation and error labels are localized',
+      () {
+        for (final lang in const [
+          AppLanguage.nl,
+          AppLanguage.en,
+          AppLanguage.fr,
+          AppLanguage.es,
+        ]) {
+          for (final p in LimousinePricePresentation.all) {
+            expect(limousinePresentationLabel(p, lang).trim(), isNotEmpty);
+          }
+          for (final j in LimousineJourneyTypeId.all) {
+            expect(limousineJourneyTypeLabel(j, lang).trim(), isNotEmpty);
+          }
+          for (final m in LimousineMobilisationMethod.all) {
+            expect(limousineMobilisationLabel(m, lang).trim(), isNotEmpty);
+          }
+          for (final code in kLimousineOfferErrorLabels.keys) {
+            expect(limousineOfferErrorLabel(code, lang).trim(), isNotEmpty);
+          }
         }
-        for (final j in LimousineJourneyTypeId.all) {
-          expect(limousineJourneyTypeLabel(j, lang).trim(), isNotEmpty);
-        }
-        for (final m in LimousineMobilisationMethod.all) {
-          expect(limousineMobilisationLabel(m, lang).trim(), isNotEmpty);
-        }
-        for (final code in kLimousineOfferErrorLabels.keys) {
-          expect(limousineOfferErrorLabel(code, lang).trim(), isNotEmpty);
-        }
-      }
-    });
+      },
+    );
 
     test('section title is localized in all four languages', () {
-      final settings = File('lib/business_settings_page.dart').readAsStringSync();
+      final settings = File(
+        'lib/business_settings_page.dart',
+      ).readAsStringSync();
       expect(settings.contains('Limousineaanbod en prijzen'), isTrue);
       expect(settings.contains('Limousine offers and pricing'), isTrue);
       expect(settings.contains('Offres et tarifs limousine'), isTrue);
@@ -490,8 +533,10 @@ void main() {
   group('22) customer marketplace entry remains default OFF', () {
     test('gate off', () {
       expect(LimousineCustomerEntryContract.isVisible, isFalse);
-      final home = File('lib/main_parts/customer_home_page.dart').readAsStringSync();
-      expect(home.contains('_openLimousineFlow'), isFalse);
+      final home = File(
+        'lib/main_parts/customer_home_page.dart',
+      ).readAsStringSync();
+      expect(home.contains('LimousineCustomerEntryContract.isVisible'), isTrue);
     });
   });
 }

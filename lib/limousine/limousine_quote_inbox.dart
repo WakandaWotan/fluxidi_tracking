@@ -305,6 +305,16 @@ String _text(Object? raw, {int max = 240}) {
 
 int? _intOf(Object? raw) => limousineCentsOf(raw);
 
+List<String> _stringList(Object? raw, {int max = 64}) {
+  if (raw is! List) return const <String>[];
+  final out = <String>[];
+  for (final item in raw.take(20)) {
+    final text = _text(item, max: max);
+    if (text.isNotEmpty) out.add(text);
+  }
+  return out;
+}
+
 Map<String, String> _localized(Object? raw, {int max = 1200}) {
   final src = _asMap(raw);
   final out = <String, String>{};
@@ -560,6 +570,9 @@ class LimousineQuoteRequest {
     this.updatedAt = '',
     this.fulfilment,
     this.inbox = const LimousineQuoteInboxMeta(),
+    this.acceptanceAllowed,
+    this.acceptanceBlockedReason = '',
+    this.missingTerms = const <String>[],
   });
 
   final String quoteRequestId;
@@ -581,6 +594,9 @@ class LimousineQuoteRequest {
   final String updatedAt;
   final LimousineQuoteFulfilment? fulfilment;
   final LimousineQuoteInboxMeta inbox;
+  final bool? acceptanceAllowed;
+  final String acceptanceBlockedReason;
+  final List<String> missingTerms;
 
   bool get isUnread =>
       LimousineQuoteStateId.normalize(state) == LimousineQuoteStateId.requested;
@@ -647,6 +663,19 @@ class LimousineQuoteRequest {
           ? LimousineQuoteFulfilment.fromJson(map['fulfilment'])
           : null,
       inbox: LimousineQuoteInboxMeta.fromJson(map['inbox']),
+      acceptanceAllowed: map.containsKey('acceptance_allowed')
+          ? map['acceptance_allowed'] == true
+          : (map.containsKey('acceptanceAllowed')
+                ? map['acceptanceAllowed'] == true
+                : null),
+      acceptanceBlockedReason: _text(
+        map['acceptance_blocked_reason'] ?? map['acceptanceBlockedReason'],
+        max: 64,
+      ),
+      missingTerms: _stringList(
+        map['missing_terms'] ?? map['missingTerms'],
+        max: 64,
+      ),
     );
   }
 
@@ -685,6 +714,9 @@ class LimousineQuoteRequest {
               incoming.inbox.transitionsBlocked
           ? incoming.inbox
           : inbox,
+      acceptanceAllowed: incoming.acceptanceAllowed ?? acceptanceAllowed,
+      acceptanceBlockedReason: incoming.acceptanceBlockedReason,
+      missingTerms: incoming.missingTerms,
     );
   }
 }
