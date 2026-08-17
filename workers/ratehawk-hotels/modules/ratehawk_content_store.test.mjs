@@ -469,9 +469,9 @@ test("18. RateHawk storage stays isolated from taxi", async () => {
   assert.equal(taxi.amount_minor, 1500);
   const wrangler = readFileSync(join(HERE, "../wrangler.toml"), "utf8");
   const schema = readFileSync(join(HERE, "../schema.sql"), "utf8");
-  assert.match(wrangler, /# \[\[d1_databases\]\]/);
+  assert.match(wrangler, /^\s*\[\[d1_databases\]\]/m);
   assert.match(wrangler, /binding = "RATEHAWK_HOTELS_DB"/);
-  assert.equal(/^\s*\[\[d1_databases\]\]/m.test(wrangler), false);
+  assert.match(wrangler, /database_name = "fluxidi-ratehawk-hotels-db"/);
   assert.equal(/^\s*\[\[kv_namespaces\]\]/m.test(wrangler), false);
   assert.match(schema, /RATEHAWK_CONTENT_KV is not used/);
   assert.match(schema, /CREATE TABLE IF NOT EXISTS hotel_identity/);
