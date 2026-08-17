@@ -43,19 +43,13 @@ PLAY_REVIEW_COMPANY_CODE = "FLX-00020"
 # FLUXIDI_SUBSCRIPTION_WEBHOOK_SECRET   — path-secret used in /webhooks/subscription/mollie/{secret}
 # FLUXIDI_SUBSCRIPTION_MOLLIE_MODE      — optional, "test" or "live", for logging only
 #
-# RateHawk / ETG hotel provider (P0 foundation) — set via Cloudflare secrets,
-# never commit values. TEST keys must use https://api.ratehawk.com.
-# SANDBOX keys must use https://api-sandbox.ratehawk.com. No silent fallback
-# from unknown/test to production. RATEHAWK_API_KEY must never appear in
-# [vars], Flutter, D1, logs, or public API responses.
-# RATEHAWK_KEY_ID
-# RATEHAWK_API_KEY
-# RATEHAWK_BASE_URL
-# RATEHAWK_ENVIRONMENT          — sandbox | test | production (required)
-# RATEHAWK_PRODUCTION_ENABLED   — extra production booking/probe gate (P3)
-# RATEHAWK_HOTELPAGE_ENABLED    — live hotelpage after View stay (P1)
-RATEHAWK_ENABLED = "0"
-RATEHAWK_HOTELPAGE_ENABLED = "0"
+# RateHawk credentials, host allowlist, Hotelpage transport and offer
+# references live on fluxidi-ratehawk-hotels-api. This Booking Worker must
+# not hold RATEHAWK_API_KEY / RATEHAWK_KEY_ID / RATEHAWK_OFFER_REF_SECRET.
+# RATEHAWK_VIEW_STAY_CONTEXT_SECRET — HMAC for server-issued View stay context
+# (wrangler secret put; never commit). Hotelpage stays fail-closed until live
+# RateHawk search issues that context.
+# Deploy order: 1) fluxidi-ratehawk-hotels-api  2) fluxidi-booking-api
 
 # Internal company-session Billit sandbox OAuth (fail-closed). Requires BOTH
 # the master flag and an explicit company_id allowlist. Ordinary customers
@@ -66,6 +60,10 @@ BILLIT_SANDBOX_OAUTH_COMPANY_ALLOWLIST = "fluxidi_fluxidi_ddmh9g"
 [[services]]
 binding = "COMPLIANCE_WORKER"
 service = "fluxidi-compliance-api"
+
+[[services]]
+binding = "RATEHAWK_HOTELS"
+service = "fluxidi-ratehawk-hotels-api"
 
 [observability.logs]
 enabled = true

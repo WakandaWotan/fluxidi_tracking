@@ -1,0 +1,27 @@
+name = "fluxidi-ratehawk-hotels-api"
+main = "fluxidi_ratehawk_hotels_worker.js"
+compatibility_date = "2026-04-30"
+workers_dev = false
+preview_urls = false
+find_additional_modules = false
+
+# Private Service Binding worker. No public customer route.
+# Future deployment order:
+#   1. fluxidi-ratehawk-hotels-api
+#   2. fluxidi-booking-api (contains [[services]] RATEHAWK_HOTELS)
+
+[observability.logs]
+enabled = true
+
+[vars]
+# RateHawk / ETG hotel provider — secrets via `wrangler secret put`, never commit.
+# RATEHAWK_KEY_ID
+# RATEHAWK_API_KEY
+# RATEHAWK_BASE_URL
+# RATEHAWK_ENVIRONMENT          — sandbox | test | production
+# RATEHAWK_PRODUCTION_ENABLED   — extra production gate (P3)
+# RATEHAWK_OFFER_REF_SECRET     — mandatory AES-GCM offer-reference secret
+# RATEHAWK_VIEW_STAY_CONTEXT_SECRET — HMAC for server-issued View stay context
+RATEHAWK_ENABLED = "0"
+RATEHAWK_HOTELPAGE_ENABLED = "0"
+RATEHAWK_CONTENT_SYNC_ENABLED = "0"

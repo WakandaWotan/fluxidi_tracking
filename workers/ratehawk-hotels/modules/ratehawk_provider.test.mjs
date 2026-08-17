@@ -1,7 +1,7 @@
 // RATEHAWK-P0 fail-closed provider foundation
 //
 // Run:
-//   node --test workers/booking/modules/ratehawk_provider.test.mjs
+//   node --test workers/ratehawk-hotels/modules/ratehawk_provider.test.mjs
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

@@ -1,7 +1,7 @@
 // RATEHAWK-P1 live hotelpage Worker integration
 //
 // Run:
-//   node --test workers/booking/modules/ratehawk_hotelpage_worker.test.mjs
+//   node --test workers/ratehawk-hotels/modules/ratehawk_hotelpage_worker.test.mjs
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -68,6 +68,7 @@ function validEnv(overrides = {}) {
     RATEHAWK_ENVIRONMENT: "test",
     RATEHAWK_ENABLED: "1",
     RATEHAWK_HOTELPAGE_ENABLED: "1",
+    RATEHAWK_OFFER_REF_SECRET: "rh_offer_ref_test_secret_not_real",
     ...overrides,
   };
 }

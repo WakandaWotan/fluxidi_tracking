@@ -1,7 +1,7 @@
 // RATEHAWK-P1 content completeness and live-price freshness contract
 //
 // Run:
-//   node --test workers/booking/modules/ratehawk_content_freshness_contract.test.mjs
+//   node --test workers/ratehawk-hotels/modules/ratehawk_content_freshness_contract.test.mjs
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

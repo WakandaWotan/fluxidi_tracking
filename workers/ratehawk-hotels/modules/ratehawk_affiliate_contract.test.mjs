@@ -1,7 +1,7 @@
 // RATEHAWK-P1 mocked affiliate contract — existing hotel page mapping
 //
 // Run:
-//   node --test workers/booking/modules/ratehawk_affiliate_contract.test.mjs
+//   node --test workers/ratehawk-hotels/modules/ratehawk_affiliate_contract.test.mjs
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

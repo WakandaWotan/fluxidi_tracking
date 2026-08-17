@@ -113,11 +113,30 @@ function _resolveHid(body, stay) {
   return { ok: true, hid };
 }
 
+export function hasRatehawkOfferRefSecret(env) {
+  return Boolean(_text(env?.RATEHAWK_OFFER_REF_SECRET, 800));
+}
+
+export function isRatehawkContentSyncAllowedOnCustomerRequest() {
+  return false;
+}
+
+const _hotelpageInflight = new Map();
+
+function _singleFlightHotelpage(key, fn) {
+  const existing = _hotelpageInflight.get(key);
+  if (existing) return existing;
+  const pending = Promise.resolve()
+    .then(fn)
+    .finally(() => {
+      _hotelpageInflight.delete(key);
+    });
+  _hotelpageInflight.set(key, pending);
+  return pending;
+}
+
 async function _deriveOfferAesKey(env) {
-  const secret = _text(
-    env?.RATEHAWK_OFFER_REF_SECRET || env?.RATEHAWK_API_KEY,
-    800,
-  );
+  const secret = _text(env?.RATEHAWK_OFFER_REF_SECRET, 800);
   if (!secret) return null;
   const material = new TextEncoder().encode(`${secret}|${OFFER_REF_PURPOSE}`);
   const digest = await crypto.subtle.digest("SHA-256", material);
@@ -411,6 +430,19 @@ export async function handleRatehawkHotelpageRequest({
     );
   }
 
+  if (!hasRatehawkOfferRefSecret(env)) {
+    return _redactDto(
+      _safeDto({
+        stay,
+        state: "unavailable",
+        reason: "offer_ref_secret_missing",
+        invoked: false,
+        locale,
+      }),
+      env,
+    );
+  }
+
   const request = buildRatehawkHotelpageRequest({
     hid: hidResult.hid,
     hotelName: requestBody.hotel_name ?? requestBody.hotelName ?? null,
@@ -444,6 +476,29 @@ export async function handleRatehawkHotelpageRequest({
     );
   }
 
+  const flightKey = JSON.stringify(request.search_context);
+  return _singleFlightHotelpage(flightKey, () =>
+    _executeHotelpageTransport({
+      env,
+      stay,
+      locale,
+      request,
+      fetchImpl,
+      timeoutMs,
+      now,
+    }),
+  );
+}
+
+async function _executeHotelpageTransport({
+  env,
+  stay,
+  locale,
+  request,
+  fetchImpl,
+  timeoutMs,
+  now,
+}) {
   const transport = await fetchRatehawkHotelpage({
     env,
     body: request.body,

@@ -1,7 +1,7 @@
 // RATEHAWK-P1 mocked hotelpage contract for existing View stay
 //
 // Run:
-//   node --test workers/booking/modules/ratehawk_hotelpage_contract.test.mjs
+//   node --test workers/ratehawk-hotels/modules/ratehawk_hotelpage_contract.test.mjs
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

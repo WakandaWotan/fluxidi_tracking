@@ -1,7 +1,7 @@
 // RATEHAWK-P1 mocked search DTO for existing hotel cards
 //
 // Run:
-//   node --test workers/booking/modules/ratehawk_hotel_card_search.test.mjs
+//   node --test workers/ratehawk-hotels/modules/ratehawk_hotel_card_search.test.mjs
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

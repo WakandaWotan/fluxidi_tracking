@@ -105,13 +105,11 @@ import {
   toMonotonicRevision,
 } from "./modules/fleet_vehicle_tombstone.mjs";
 import {
-  handleRatehawkHotelpageRequest,
-} from "./modules/ratehawk_hotelpage_worker.mjs";
-import {
   buildRatehawkPublicSearchGuardPayload,
-  buildSafeRatehawkProviderStatus,
+  fetchRatehawkHotelsStatus,
+  handlePublicRatehawkHotelpage,
   isRatehawkSearchSource,
-} from "./modules/ratehawk_provider.mjs";
+} from "./modules/ratehawk_hotels_facade.mjs";
 import {
   BILLIT_PROVIDER,
   BILLIT_OAUTH_STATE_TTL_SECONDS,
@@ -40666,8 +40664,9 @@ export default {
         }
         const hotelpageBody = await safeJson(request);
         return json(
-          await handleRatehawkHotelpageRequest({
+          await handlePublicRatehawkHotelpage({
             env,
+            request,
             body: hotelpageBody,
           }),
         );
@@ -49416,7 +49415,7 @@ async function _buildAdminHotelsProvidersStatusPayload(env) {
   };
   const bookingComCj = _adminBookingComCjProviderStatus(env);
   const googlePlacesHotels = _adminGooglePlacesHotelsProviderStatus(env);
-  const ratehawk = buildSafeRatehawkProviderStatus(env);
+  const ratehawk = await fetchRatehawkHotelsStatus(env);
 
   const nativeReady =
     expediaRapid.configured === true ||

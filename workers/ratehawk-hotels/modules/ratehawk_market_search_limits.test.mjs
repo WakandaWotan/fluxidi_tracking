@@ -1,7 +1,7 @@
 // RATEHAWK-P1 mocked market-scope and search-limit contract
 //
 // Run:
-//   node --test workers/booking/modules/ratehawk_market_search_limits.test.mjs
+//   node --test workers/ratehawk-hotels/modules/ratehawk_market_search_limits.test.mjs
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
