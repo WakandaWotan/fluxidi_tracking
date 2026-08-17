@@ -53,7 +53,9 @@ PLAY_REVIEW_COMPANY_CODE = "FLX-00020"
 # RATEHAWK_BASE_URL
 # RATEHAWK_ENVIRONMENT          — sandbox | test | production (required)
 # RATEHAWK_PRODUCTION_ENABLED   — extra production booking/probe gate (P3)
+# RATEHAWK_HOTELPAGE_ENABLED    — live hotelpage after View stay (P1)
 RATEHAWK_ENABLED = "0"
+RATEHAWK_HOTELPAGE_ENABLED = "0"
 
 # Internal company-session Billit sandbox OAuth (fail-closed). Requires BOTH
 # the master flag and an explicit company_id allowlist. Ordinary customers

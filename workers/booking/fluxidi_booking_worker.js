@@ -105,6 +105,9 @@ import {
   toMonotonicRevision,
 } from "./modules/fleet_vehicle_tombstone.mjs";
 import {
+  handleRatehawkHotelpageRequest,
+} from "./modules/ratehawk_hotelpage_worker.mjs";
+import {
   buildRatehawkPublicSearchGuardPayload,
   buildSafeRatehawkProviderStatus,
   isRatehawkSearchSource,
@@ -40653,6 +40656,19 @@ export default {
             query,
             env,
             requestUrl: url.toString(),
+          }),
+        );
+      }
+
+      if (url.pathname === "/public/hotels/ratehawk/hotelpage") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const hotelpageBody = await safeJson(request);
+        return json(
+          await handleRatehawkHotelpageRequest({
+            env,
+            body: hotelpageBody,
           }),
         );
       }

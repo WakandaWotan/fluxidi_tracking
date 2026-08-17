@@ -192,7 +192,15 @@ test("feature gate blocks invocation when RATEHAWK_ENABLED is off", async () => 
 test("feature gate never allows search, booking, prebook or cancel", () => {
   const env = validTestEnv();
   assert.equal(isRatehawkOperationAllowed(env, "overview"), true);
-  for (const op of ["search", "prebook", "booking", "finish", "cancel", "voucher"]) {
+  for (const op of [
+    "search",
+    "prebook",
+    "booking",
+    "finish",
+    "cancel",
+    "voucher",
+    "hotelpage",
+  ]) {
     assert.equal(isRatehawkOperationAllowed(env, op), false, op);
   }
   const guard = buildRatehawkPublicSearchGuardPayload({ env });

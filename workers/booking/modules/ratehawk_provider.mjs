@@ -1,12 +1,14 @@
 /**
- * RateHawk / Emerging Travel Group provider foundation (P0).
+ * RateHawk / Emerging Travel Group provider foundation.
  *
- * Isolated, fail-closed config + mocked-transport overview probe only.
+ * Isolated, fail-closed config + overview probe + gated hotelpage transport.
  * This module must never:
  *   - default a TEST key onto the sandbox host (or vice versa);
  *   - treat unknown/test as production;
  *   - return API keys, Basic auth material, or raw ETG payloads;
- *   - call RateHawk from existing booking/search flows.
+ *   - call RateHawk from existing card/list/search flows;
+ *   - retry provider requests automatically;
+ *   - log Authorization, API keys, book_hash, or match_hash.
  *
  * Official host contract (docs.emergingtravel.com):
  *   sandbox     → https://api-sandbox.ratehawk.com
@@ -38,7 +40,9 @@ export const RATEHAWK_ALLOWED_HOSTS = Object.freeze([
 ]);
 
 export const RATEHAWK_OVERVIEW_PATH = "/api/b2b/v3/overview/";
+export const RATEHAWK_HOTELPAGE_PATH = "/api/b2b/v3/search/hp/";
 export const RATEHAWK_DEFAULT_TIMEOUT_MS = 12_000;
+export const RATEHAWK_HOTELPAGE_TIMEOUT_MS = 30_000;
 export const RATEHAWK_MIN_TIMEOUT_MS = 1_000;
 export const RATEHAWK_MAX_TIMEOUT_MS = 60_000;
 
@@ -191,7 +195,11 @@ export function redactRatehawkSecrets(value, env = null) {
     if (Array.isArray(node)) return node.map((item) => walk(item));
     const out = {};
     for (const [key, child] of Object.entries(node)) {
-      if (/api[_-]?key|authorization|secret|password|token|basic/i.test(key)) {
+      if (
+        /api[_-]?key|authorization|secret|password|token|basic|book_hash|match_hash|search_hash/i.test(
+          key,
+        )
+      ) {
         out[key] = "[redacted]";
         continue;
       }
@@ -309,14 +317,22 @@ export function isRatehawkInvocationAllowed(env) {
 }
 
 /**
- * Hard gate: only the overview probe may ever talk to RateHawk, and only
- * after config + feature + environment gates pass. Search/booking/cancel
- * are always denied in this P0 foundation.
+ * Hard gate for the overview-only allowlist. Hotelpage uses a dedicated
+ * RATEHAWK_HOTELPAGE_ENABLED gate and is never implied by this list.
+ * Search/prebook/booking/cancel remain denied here.
  */
 export function isRatehawkOperationAllowed(env, operation) {
   const op = _trim(operation, 40).toLowerCase();
   if (!RATEHAWK_ALLOWED_OPERATIONS.includes(op)) return false;
   return isRatehawkInvocationAllowed(env);
+}
+
+export function isRatehawkHotelpageEnabled(env) {
+  return envFlag(env?.RATEHAWK_HOTELPAGE_ENABLED);
+}
+
+export function isRatehawkHotelpageInvocationAllowed(env) {
+  return isRatehawkInvocationAllowed(env) && isRatehawkHotelpageEnabled(env);
 }
 
 export function buildSafeRatehawkProviderStatus(env) {
@@ -351,6 +367,8 @@ export function buildSafeRatehawkProviderStatus(env) {
     // Never claim LIVE/connected from config alone. A later live probe
     // (production + production gate + successful overview) may set this.
     connected: false,
+    hotelpage_enabled: isRatehawkHotelpageEnabled(env),
+    hotelpage_invocation_allowed: isRatehawkHotelpageInvocationAllowed(env),
     reasons: [...config.reasons],
   };
 }
@@ -594,6 +612,213 @@ export async function probeRatehawkOverview({
       });
     }
     return _emptyConnectivity({
+      config,
+      status: "provider_fetch_failed",
+      reason: "provider_fetch_failed",
+      invoked: true,
+    });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function _emptyHotelpage({ config, status, reason, invoked = false }) {
+  return {
+    ok: false,
+    provider: RATEHAWK_PROVIDER,
+    operation: "hotelpage",
+    invoked: invoked === true,
+    environment: config?.environment || null,
+    host: config?.host || null,
+    status,
+    reason,
+    http_status: null,
+    hotels: [],
+    hotel_count: 0,
+  };
+}
+
+function _hotelpageRequestBody(body) {
+  const src = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  const next = {
+    hid: src.hid,
+    checkin: src.checkin,
+    checkout: src.checkout,
+    residency: src.residency,
+    language: src.language,
+    currency: src.currency,
+    guests: src.guests,
+    timeout: src.timeout,
+  };
+  if (src.filter && typeof src.filter === "object" && !Array.isArray(src.filter)) {
+    next.filter = src.filter;
+  }
+  return next;
+}
+
+function _extractHotelpageHotels(payload) {
+  const data = payload?.data;
+  if (Array.isArray(data?.hotels)) return data.hotels;
+  if (Array.isArray(data)) return data;
+  return [];
+}
+
+/**
+ * Environment-gated POST /api/b2b/v3/search/hp/.
+ *
+ * Transport fires only after RATEHAWK_ENABLED, RATEHAWK_HOTELPAGE_ENABLED,
+ * and resolveRatehawkConfig all pass. No automatic retry. Inject fetchImpl
+ * in tests. Never returns Authorization material or the raw ETG payload.
+ */
+export async function fetchRatehawkHotelpage({
+  env,
+  body = null,
+  fetchImpl = null,
+  timeoutMs = null,
+} = {}) {
+  const config = resolveRatehawkConfig(env);
+  if (!isRatehawkHotelpageInvocationAllowed(env)) {
+    const status = buildSafeRatehawkProviderStatus(env).status;
+    return _emptyHotelpage({
+      config,
+      status: isRatehawkHotelpageEnabled(env) ? status : "hotelpage_disabled",
+      reason: isRatehawkHotelpageEnabled(env)
+        ? config.reasons[0] || "disabled"
+        : "hotelpage_disabled",
+      invoked: false,
+    });
+  }
+
+  const fetchFn =
+    typeof fetchImpl === "function"
+      ? fetchImpl
+      : typeof fetch === "function"
+        ? fetch
+        : null;
+  if (!fetchFn) {
+    return _emptyHotelpage({
+      config,
+      status: "transport_unavailable",
+      reason: "transport_unavailable",
+      invoked: false,
+    });
+  }
+
+  const { keyId, apiKey } = _authMaterial(env);
+  if (!keyId || !apiKey) {
+    return _emptyHotelpage({
+      config,
+      status: "provider_not_configured",
+      reason: "missing_configuration",
+      invoked: false,
+    });
+  }
+
+  const requestBody = _hotelpageRequestBody(body);
+  const url = `${config.base_url}${RATEHAWK_HOTELPAGE_PATH}`;
+  const timeoutSeconds = Number(requestBody.timeout);
+  const effectiveTimeout = _clampTimeoutMs(
+    timeoutMs ??
+      (Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
+        ? timeoutSeconds * 1000
+        : RATEHAWK_HOTELPAGE_TIMEOUT_MS),
+    RATEHAWK_HOTELPAGE_TIMEOUT_MS,
+  );
+  const controller =
+    typeof AbortController === "function" ? new AbortController() : null;
+  const timer =
+    controller && typeof setTimeout === "function"
+      ? setTimeout(() => controller.abort(), effectiveTimeout)
+      : null;
+
+  try {
+    const response = await fetchFn(url, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: _basicAuthHeader(keyId, apiKey),
+      },
+      body: JSON.stringify(requestBody),
+      signal: controller?.signal,
+    });
+    const httpStatus = Number(response?.status || 0);
+    if (httpStatus === 429) {
+      return {
+        ..._emptyHotelpage({
+          config,
+          status: "rate_limited",
+          reason: "endpoint_exceeded_limit",
+          invoked: true,
+        }),
+        http_status: httpStatus,
+      };
+    }
+    if (httpStatus < 200 || httpStatus >= 300) {
+      return {
+        ..._emptyHotelpage({
+          config,
+          status: "provider_error",
+          reason: "provider_error",
+          invoked: true,
+        }),
+        http_status: httpStatus,
+      };
+    }
+
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch {
+      return {
+        ..._emptyHotelpage({
+          config,
+          status: "provider_malformed_response",
+          reason: "provider_malformed_response",
+          invoked: true,
+        }),
+        http_status: httpStatus,
+      };
+    }
+
+    const etgStatus = _trim(payload?.status, 24).toLowerCase();
+    const etgError = _allowlistedProviderError(payload?.error);
+    if (etgStatus !== "ok") {
+      return {
+        ..._emptyHotelpage({
+          config,
+          status: "provider_error",
+          reason: payload?.error ? etgError : "provider_error",
+          invoked: true,
+        }),
+        http_status: httpStatus,
+      };
+    }
+
+    const hotels = _extractHotelpageHotels(payload);
+    return {
+      ok: true,
+      provider: RATEHAWK_PROVIDER,
+      operation: "hotelpage",
+      invoked: true,
+      environment: config.environment,
+      host: config.host,
+      status: "hotelpage_ok",
+      reason: null,
+      http_status: httpStatus,
+      hotels,
+      hotel_count: hotels.length,
+    };
+  } catch (err) {
+    if (_isAbortError(err)) {
+      return _emptyHotelpage({
+        config,
+        status: "timeout",
+        reason: "timeout",
+        invoked: true,
+      });
+    }
+    return _emptyHotelpage({
       config,
       status: "provider_fetch_failed",
       reason: "provider_fetch_failed",
