@@ -97,6 +97,7 @@ import {
 } from "./modules/business_profile_revision.mjs";
 import {
   isEligibleLimousineProvider as _isEligibleLimousineProvider,
+  isLimousineServiceToken,
   projectLimousineEntitled as _projectLimousineEntitled,
   publicLimousineSignals as _publicLimousineSignals,
   resolveNearbyServiceFilter as _resolveNearbyServiceFilter,
@@ -106,6 +107,40 @@ import {
   resolveLimousineProjectionRevision as _resolveLimousineProjectionRevision,
   stampLimousineProjectionOnProfile as _stampLimousineProjectionOnProfile,
 } from "./modules/limousine_projection.mjs";
+import {
+  limousineQuoteGateEnabled as _limousineQuoteGateEnabledRaw,
+  normalizeLimousinePricingSection as _normalizeLimousinePricingSection,
+  resolveLimousineQuote as _resolveLimousineQuote,
+} from "./modules/limousine_pricing_resolver.mjs";
+
+/// LIMOUSINE-MARKETPLACE-P2B1: server-owned quote gate. Default OFF; missing or
+/// non-truthy means no Limousine quote. Taxi/airport quoting is unaffected.
+function _limousineQuoteGateEnabled(env) {
+  return _limousineQuoteGateEnabledRaw(env?.LIMOUSINE_QUOTE_ENABLED ?? "0");
+}
+
+/// Reads the optional `limousine` pricing section from the raw company
+/// `pricing:v1` record WITHOUT touching the taxi profile normalization (taxi
+/// quotes remain byte-for-byte unchanged). Returns a disabled section on any
+/// failure (fail closed).
+async function _loadLimousinePricingSection(env, scope) {
+  try {
+    if (!env?.BOOKING_KV) return _normalizeLimousinePricingSection(null);
+    const scopedKeys = buildScopedSettingsKeys(scope);
+    let raw = null;
+    if (scopedKeys?.pricingProfileKey) {
+      raw = await env.BOOKING_KV.get(scopedKeys.pricingProfileKey, { type: "json" });
+    }
+    if (!raw) {
+      raw = await env.BOOKING_KV.get(TENANT_PRICING_PROFILE_KEY, { type: "json" });
+    }
+    const profile = raw?.pricing_profile ?? raw ?? null;
+    const section = profile?.limousine ?? profile?.limousine_pricing ?? null;
+    return _normalizeLimousinePricingSection(section);
+  } catch (_) {
+    return _normalizeLimousinePricingSection(null);
+  }
+}
 import {
   deletedVehicleIdList,
   filterActiveVehicles,
@@ -26188,6 +26223,76 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
 
   const distance_km = round1(route.distance / 1000);
   const duration_route_min = Math.round(route.duration / 60);
+
+  // LIMOUSINE-MARKETPLACE-P2B1: explicit Limousine quote path. Gated OFF by
+  // default. Only taken for an explicit limousine service category; taxi and
+  // airport-transfer requests never enter here. Uses the same server route,
+  // never the taxi profile, and never falls back to taxi pricing.
+  const _isLimousineQuoteRequest =
+    isLimousineServiceToken(body.service_category ?? body.serviceCategory) ||
+    isLimousineServiceToken(body.service);
+  if (_isLimousineQuoteRequest) {
+    const gateEnabled = _limousineQuoteGateEnabled(env);
+    let limoEligible = false;
+    if (gateEnabled) {
+      try {
+        const partnerKeys = buildScopedPartnerKeys(quoteScope);
+        if (partnerKeys) {
+          const partnerRecord = await env.BOOKING_KV.get(partnerKeys.profileKey, {
+            type: "json",
+          });
+          const partnerProfile = partnerRecord?.partner_profile;
+          if (partnerProfile) {
+            limoEligible = _isEligibleLimousineProvider(partnerProfile);
+          }
+        }
+      } catch (_) {
+        limoEligible = false;
+      }
+    }
+    const limousineSection = gateEnabled
+      ? await _loadLimousinePricingSection(env, quoteScope)
+      : null;
+    const limoResolution = _resolveLimousineQuote({
+      gateEnabled,
+      eligible: limoEligible,
+      section: limousineSection,
+      request: {
+        service_category: "limousine",
+        service_class_id: body.service_class_id ?? body.serviceClassId,
+        journey_type: body.journey_type ?? body.journeyType,
+        direction: body.airport_direction ?? body.direction,
+        airport_iata: body.airport_iata ?? body.airportIata,
+        postcode: body.postcode ?? body.fixed_fare_zone_value,
+        city: body.city,
+        country: body.country ?? body.country_code,
+        lat: routeResolvedPickupCoords?.lat,
+        lng: routeResolvedPickupCoords?.lng,
+        currency: body.currency,
+      },
+      route: { distance_km, duration_min: duration_route_min },
+    });
+    const limoOut = {
+      ok: true,
+      service_category: "limousine",
+      distance_km,
+      duration_min: duration_route_min,
+      limousine: limoResolution,
+    };
+    if (limoResolution.resolved) {
+      limoOut.price_ex_vat = limoResolution.price_ex_vat;
+      limoOut.price_vat = limoResolution.price_vat;
+      limoOut.price_incl_vat = limoResolution.price_incl_vat;
+      limoOut.currency = limoResolution.currency;
+      limoOut.pricing_source = `limousine_${limoResolution.pricing_mode}`;
+    } else {
+      // Manual/unavailable carry NO numeric customer price.
+      limoOut.pricing_source = limoResolution.manual_quote_required
+        ? "limousine_manual_quote"
+        : "limousine_unavailable";
+    }
+    return { status: 200, out: limoOut };
+  }
 
   const mainWhen = normalizeWhen(body.date, body.time);
   const quoteReturnRequested = _fixedFareReturnRequested(body);
