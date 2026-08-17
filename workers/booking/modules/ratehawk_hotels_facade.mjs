@@ -28,6 +28,7 @@ export const RATEHAWK_HOTELS_TEST_SERVICE_NAME =
 export const RATEHAWK_HOTELS_INTERNAL_PROXY = "booking_worker_v1";
 export const RATEHAWK_TEST_VIEW_STAY_CONTEXT_SECRET_NAME =
   "RATEHAWK_TEST_VIEW_STAY_CONTEXT_SECRET";
+export const RATEHAWK_HOTELS_SEARCH_PATH = "/internal/search";
 export const RATEHAWK_HOTELS_TEST_SEARCH_PATH = "/internal/test-search";
 export const RATEHAWK_HOTELS_TEST_HOTELPAGE_PATH = "/internal/test-hotelpage";
 export const RATEHAWK_ADMIN_TEST_SEARCH_PATH =
@@ -231,6 +232,99 @@ export async function fetchRatehawkHotelsStatus(env) {
       status: "hotels_worker_status_unavailable",
       isolated: true,
     };
+  }
+}
+
+export async function handlePublicRatehawkSearch({
+  env,
+  query = {},
+  warnings = [],
+} = {}) {
+  const source = isRatehawkSearchSource(query?.source)
+    ? "ratehawk"
+    : _text(query?.source, 64) || "ratehawk";
+  const nextWarnings = Array.isArray(warnings) ? [...warnings] : [];
+  if (Array.isArray(query?.warnings)) {
+    nextWarnings.push(...query.warnings);
+  }
+
+  if (bookingWorkerHasRatehawkCredentials(env)) {
+    return buildRatehawkPublicSearchGuardPayload({
+      warnings: nextWarnings,
+      source,
+    });
+  }
+
+  if (!env?.RATEHAWK_HOTELS || typeof env.RATEHAWK_HOTELS.fetch !== "function") {
+    return buildRatehawkPublicSearchGuardPayload({
+      warnings: [...nextWarnings, "hotels_worker_binding_missing"],
+      source,
+    });
+  }
+
+  const rooms = Number(query?.rooms);
+  const adults = Number(query?.adults);
+  const children = Number(query?.children);
+  const childAges = Array.isArray(query?.child_ages)
+    ? query.child_ages
+    : String(query?.child_ages || "")
+        .split(",")
+        .map((value) => Number(String(value).trim()))
+        .filter((value) => Number.isFinite(value));
+  const guests =
+    Number.isFinite(rooms) && rooms >= 1 && Number.isFinite(adults) && adults >= 1
+      ? Array.from({ length: Math.min(8, Math.round(rooms)) }, () => ({
+          adults: Math.max(1, Math.round(adults)),
+          children: childAges.slice(0, Math.max(0, Math.round(children) || 0)),
+        }))
+      : [];
+
+  try {
+    const resp = await env.RATEHAWK_HOTELS.fetch(
+      new Request(
+        `https://fluxidi-ratehawk-hotels-api.internal${RATEHAWK_HOTELS_SEARCH_PATH}`,
+        {
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            "content-type": "application/json",
+            "x-fluxidi-internal-proxy": RATEHAWK_HOTELS_INTERNAL_PROXY,
+          },
+          body: JSON.stringify({
+            trigger: "live_search",
+            city: _text(query?.city, 120),
+            country: _text(query?.country, 80),
+            region: _text(query?.region, 120),
+            checkin: _text(query?.checkin, 16),
+            checkout: _text(query?.checkout, 16),
+            guests,
+          }),
+        },
+      ),
+    );
+    const dto = await resp.json();
+    if (!dto || typeof dto !== "object" || Array.isArray(dto)) {
+      return buildRatehawkPublicSearchGuardPayload({
+        warnings: nextWarnings,
+        source,
+      });
+    }
+    const stays = Array.isArray(dto.stays) ? dto.stays : [];
+    const dtoWarnings = Array.isArray(dto.warnings) ? dto.warnings : [];
+    return {
+      ...dto,
+      ok: true,
+      source,
+      provider: "ratehawk",
+      count: stays.length,
+      stays,
+      warnings: [...new Set([...nextWarnings, ...dtoWarnings])],
+    };
+  } catch {
+    return buildRatehawkPublicSearchGuardPayload({
+      warnings: nextWarnings,
+      source,
+    });
   }
 }
 

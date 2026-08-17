@@ -8677,6 +8677,11 @@ Future<Map<String, dynamic>?> fetchPublicHotelSearch({
   double? lng,
   double? radiusKm,
   String source = 'approved-local',
+  String? checkin,
+  String? checkout,
+  int? rooms,
+  int? adults,
+  List<int> childAges = const <int>[],
 }) async {
   final qp = <String, String>{
     'source': source.trim().isEmpty ? 'approved-local' : source.trim(),
@@ -8693,6 +8698,20 @@ Future<Map<String, dynamic>?> fetchPublicHotelSearch({
   if (lng != null && lng.isFinite) qp['lng'] = lng.toStringAsFixed(6);
   if (radiusKm != null && radiusKm.isFinite && radiusKm >= 0) {
     qp['radius_km'] = radiusKm.toStringAsFixed(2);
+  }
+  final normalizedCheckin = (checkin ?? '').trim();
+  final normalizedCheckout = (checkout ?? '').trim();
+  if (RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(normalizedCheckin)) {
+    qp['checkin'] = normalizedCheckin;
+  }
+  if (RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(normalizedCheckout)) {
+    qp['checkout'] = normalizedCheckout;
+  }
+  if (rooms != null && rooms > 0) qp['rooms'] = rooms.toString();
+  if (adults != null && adults > 0) qp['adults'] = adults.toString();
+  if (childAges.isNotEmpty) {
+    qp['children'] = childAges.length.toString();
+    qp['child_ages'] = childAges.join(',');
   }
   final endpoint = Uri.parse(
     '${appConfig.bookingBaseUrl}/public/hotels/search',

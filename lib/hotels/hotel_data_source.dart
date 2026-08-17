@@ -21,6 +21,11 @@ class HotelStayQuery {
     this.lng,
     this.radiusKm,
     this.source = 'approved-local',
+    this.checkin,
+    this.checkout,
+    this.rooms,
+    this.adults,
+    this.childAges = const <int>[],
   });
 
   final String? city;
@@ -31,6 +36,11 @@ class HotelStayQuery {
   final double? lng;
   final double? radiusKm;
   final String source;
+  final String? checkin;
+  final String? checkout;
+  final int? rooms;
+  final int? adults;
+  final List<int> childAges;
 }
 
 abstract class HotelDataSource {
@@ -67,6 +77,11 @@ class RemoteHotelDataSource implements HotelDataSource {
         lng: query.lng,
         radiusKm: query.radiusKm,
         source: query.source,
+        checkin: query.checkin,
+        checkout: query.checkout,
+        rooms: query.rooms,
+        adults: query.adults,
+        childAges: query.childAges,
       );
       if (payload == null) return const <HotelStay>[];
       if (payload['ok'] != true) return const <HotelStay>[];
@@ -96,6 +111,14 @@ bool _isSafeApprovedCatalogValue(String? value) {
 bool _isGooglePlacesCatalogValue(String? value) {
   final normalized = (value ?? '').trim().toLowerCase().replaceAll('_', '-');
   return normalized == 'google-places' || normalized == 'places';
+}
+
+bool isRatehawkCatalogValue(String? value) {
+  final normalized = (value ?? '').trim().toLowerCase().replaceAll('_', '-');
+  return normalized == 'ratehawk' ||
+      normalized == 'rate-hawk' ||
+      normalized == 'etg' ||
+      normalized == 'emerging-travel';
 }
 
 bool _readBool(dynamic value) {
@@ -177,23 +200,24 @@ String _resolvePublicHotelImageRef(Map<String, dynamic> json) {
 
 /// Maps a `/public/hotels/search` stay row to [HotelStay] when customer-safe.
 HotelStay? hotelStayFromPublicHotelJson(Map<String, dynamic> json) {
-  final id = _readString(json, const <String>['id']);
   final name = _readString(json, const <String>['name']);
-  if (id == null || name == null) return null;
+  if (name == null) return null;
 
   final provider = _readString(json, const <String>['provider']);
   final source = _readString(json, const <String>['source']);
   final isGooglePlaces =
       _isGooglePlacesCatalogValue(provider) ||
       _isGooglePlacesCatalogValue(source);
+  final isRatehawk =
+      isRatehawkCatalogValue(provider) || isRatehawkCatalogValue(source);
 
-  if (!isGooglePlaces) {
+  if (!isGooglePlaces && !isRatehawk) {
     if (!_readBool(json['is_real_approved'])) return null;
     if (!_isSafeApprovedCatalogValue(provider) &&
         !_isSafeApprovedCatalogValue(source)) {
       return null;
     }
-  } else if (!_readBool(json['is_real_approved'])) {
+  } else if (isGooglePlaces && !_readBool(json['is_real_approved'])) {
     return null;
   }
 
@@ -211,7 +235,9 @@ HotelStay? hotelStayFromPublicHotelJson(Map<String, dynamic> json) {
   ]);
   final imageUrl = _resolvePublicHotelImageUrl(imageUrlRaw);
 
-  if (!isGooglePlaces && imageRef.isEmpty && imageUrl == null) return null;
+  if (!isGooglePlaces && !isRatehawk && imageRef.isEmpty && imageUrl == null) {
+    return null;
+  }
 
   final providerId = _readString(json, const <String>[
     'provider_id',
@@ -259,9 +285,22 @@ HotelStay? hotelStayFromPublicHotelJson(Map<String, dynamic> json) {
     if ((availabilityLabel ?? '').trim().isNotEmpty) availabilityLabel!.trim(),
     if ((photoAttribution ?? '').trim().isNotEmpty) photoAttribution!.trim(),
   ];
+  final hidRaw = _readString(json, const <String>['hid', 'provider_id']);
+  final hid = int.tryParse(hidRaw ?? '');
+  final retrievedRaw = json['retrieved_at'] ?? json['retrievedAt'];
+  DateTime? retrievedAt;
+  if (retrievedRaw is num && retrievedRaw.isFinite) {
+    retrievedAt = DateTime.fromMillisecondsSinceEpoch(retrievedRaw.round());
+  } else if (retrievedRaw is String) {
+    retrievedAt = DateTime.tryParse(retrievedRaw.trim());
+  }
+
+  final explicitId = _readString(json, const <String>['id']);
+  final resolvedId = explicitId ?? (hid != null ? 'ratehawk:$hid' : null);
+  if (resolvedId == null) return null;
 
   return HotelStay(
-    id: id,
+    id: resolvedId,
     name: name,
     type: _normalizeHotelStayType(_readString(json, const <String>['type'])),
     city: city,
@@ -281,11 +320,14 @@ HotelStay? hotelStayFromPublicHotelJson(Map<String, dynamic> json) {
     externalProviderReference: providerId,
     externalProviderId: providerId,
     source: (source ?? 'approved_local').replaceAll('-', '_'),
-    sourceId: providerId ?? id,
+    sourceId: providerId ?? resolvedId,
     priceHint: priceLabel,
     rating: rating,
     externalAvailabilityUrl: externalUrl,
     preferredBookingUrl: externalUrl,
     isRealApproved: true,
+    hid: hid,
+    availabilityLabel: availabilityLabel,
+    retrievedAt: retrievedAt,
   );
 }

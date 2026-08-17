@@ -23,6 +23,8 @@ import '../nearby_partners_page.dart';
 import 'hotel_data_source.dart';
 import 'hotel_geo_taxonomy.dart';
 import 'hotel_model.dart';
+import 'ratehawk_search.dart';
+import 'ratehawk_search_panel.dart';
 
 enum _HotelExternalProvider {
   stay22Allez,
@@ -40,6 +42,7 @@ class HotelsPage extends StatefulWidget {
     this.onOpenAirportReturnFlow,
     this.tenantId,
     this.companyId,
+    this.ratehawkSearchClient,
     super.key,
   });
 
@@ -55,6 +58,7 @@ class HotelsPage extends StatefulWidget {
   final Future<void> Function()? onOpenAirportReturnFlow;
   final String? tenantId;
   final String? companyId;
+  final RatehawkHotelSearchClient? ratehawkSearchClient;
 
   @override
   State<HotelsPage> createState() => _HotelsPageState();
@@ -96,6 +100,7 @@ class _HotelsPageState extends State<HotelsPage> {
   bool _showSavedOnly = false;
   Timer? _googlePlacesRefreshDebounce;
   bool _googlePlacesFetchInFlight = false;
+  late final RatehawkSearchController _ratehawkSearch;
 
   String get _languageCode => appConfig.currentLanguage.name;
 
@@ -124,10 +129,47 @@ class _HotelsPageState extends State<HotelsPage> {
     customerThemeNotifier.addListener(_onThemeChanged);
     _allStays = List<HotelStay>.from(widget.stays ?? const <HotelStay>[]);
     _searchController.addListener(_onSearchChanged);
+    _ratehawkSearch = RatehawkSearchController(
+      client: widget.ratehawkSearchClient,
+      reduceMotion: false,
+    );
+    _ratehawkSearch.addListener(_onRatehawkSearchChanged);
+    _syncRatehawkDestinationHint(notify: false);
     _loadSavedStayIds();
     if (widget.stays == null) {
       unawaited(_fetchGooglePlacesStays());
     }
+  }
+
+  void _onRatehawkSearchChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  void _syncRatehawkDestinationHint({bool notify = true}) {
+    String? city;
+    String? country;
+    if (_selectedSettlementKey != _allKey) {
+      for (final option in _settlementOptions) {
+        if (option.value == _selectedSettlementKey) {
+          city = option.label.trim();
+          break;
+        }
+      }
+    }
+    if (_selectedCountryCode != _allKey) {
+      for (final option in _countryOptions) {
+        if (option.value == _selectedCountryCode) {
+          country = option.label.trim();
+          break;
+        }
+      }
+    }
+    _ratehawkSearch.setDestinationHint(
+      city: city,
+      country: (country == null || country.isEmpty) ? 'Belgium' : country,
+      notify: notify,
+    );
   }
 
   // Google Places: official place discovery via worker — not booking inventory.
@@ -202,6 +244,9 @@ class _HotelsPageState extends State<HotelsPage> {
   void dispose() {
     customerThemeNotifier.removeListener(_onThemeChanged);
     _googlePlacesRefreshDebounce?.cancel();
+    _ratehawkSearch
+      ..removeListener(_onRatehawkSearchChanged)
+      ..dispose();
     _searchController
       ..removeListener(_onSearchChanged)
       ..dispose();
@@ -405,7 +450,8 @@ class _HotelsPageState extends State<HotelsPage> {
       country: 'Belgium',
       address: 'Belgische kust, Belgium',
       description: 'Ritplanning regio — geen hotelinventaris.',
-      imageRef: 'approved_asset:assets/fluxidi/customer_home_events_banner.webp',
+      imageRef:
+          'approved_asset:assets/fluxidi/customer_home_events_banner.webp',
       lat: 51.2301,
       lng: 2.9196,
       provider: 'fluxidi-discovery',
@@ -438,7 +484,7 @@ class _HotelsPageState extends State<HotelsPage> {
   bool _isApprovedCustomerFacingStay(HotelStay stay) {
     if (!stay.isRealApproved) return false;
     if (stay.source == 'discovery') return false;
-    if (_isGooglePlacesStay(stay)) {
+    if (_isGooglePlacesStay(stay) || isRatehawkStay(stay)) {
       return stay.name.trim().isNotEmpty && _hasStayCoordinates(stay);
     }
     final imageRef = stay.imageRef.trim();
@@ -511,12 +557,7 @@ class _HotelsPageState extends State<HotelsPage> {
   }
 
   String get _viewRealAccommodationsLabel {
-    return _t(
-      nl: 'Bekijk via Stay22',
-      en: 'View via Stay22',
-      fr: 'Voir via Stay22',
-      es: 'Ver vía Stay22',
-    );
+    return ratehawkNeutralAvailabilityLabel(_languageCode);
   }
 
   String get _externalHotelDestinationRequiredLabel {
@@ -530,10 +571,10 @@ class _HotelsPageState extends State<HotelsPage> {
 
   String get _stay22AvailabilitySubtitle {
     return _t(
-      nl: 'Hotelkaarten worden native getoond. De externe Stay22-kaart opent met partnerbeschikbaarheid.',
-      en: 'Hotel cards are shown natively. The external Stay22 map opens with partner availability.',
-      fr: 'Les fiches hôtels sont affichées nativement. La carte Stay22 externe s’ouvre avec les disponibilités partenaires.',
-      es: 'Las fichas de hotel se muestran de forma nativa. El mapa externo de Stay22 se abre con disponibilidad de socios.',
+      nl: 'Hotelkaarten worden native getoond. Externe beschikbaarheid opent met partnertracking.',
+      en: 'Hotel cards are shown natively. External availability opens with partner tracking.',
+      fr: 'Les fiches hôtels sont affichées nativement. La disponibilité externe s’ouvre avec le suivi partenaire.',
+      es: 'Las fichas de hotel se muestran de forma nativa. La disponibilidad externa se abre con seguimiento de socio.',
     );
   }
 
@@ -566,19 +607,19 @@ class _HotelsPageState extends State<HotelsPage> {
 
   String get _discoveryRegionCardDescription {
     return _t(
-      nl: 'Geen prijsinventaris — bekijk prijzen en beschikbaarheid extern via Stay22 voor deze regio.',
-      en: 'No price inventory — check prices and availability externally via Stay22 for this region.',
-      fr: 'Pas d’inventaire de prix — consultez les prix et disponibilités via Stay22 pour cette région.',
-      es: 'Sin inventario de precios — consulta precios y disponibilidad vía Stay22 para esta región.',
+      nl: 'Geen prijsinventaris — bekijk prijzen en beschikbaarheid extern voor deze regio.',
+      en: 'No price inventory — check prices and availability externally for this region.',
+      fr: 'Pas d’inventaire de prix — consultez les prix et disponibilités en externe pour cette région.',
+      es: 'Sin inventario de precios — consulta precios y disponibilidad en externo para esta región.',
     );
   }
 
   String get _nativeProviderPendingNotice {
     return _t(
-      nl: 'Native hotelkaarten zijn beschikbaar waar ondersteund. Prijzen en beschikbaarheid openen extern via Stay22.',
-      en: 'Native hotel cards are available where supported. Prices and availability open externally via Stay22.',
-      fr: 'Les fiches hôtels natives sont disponibles lorsque prises en charge. Les prix et disponibilités s’ouvrent via Stay22.',
-      es: 'Las fichas nativas de hotel están disponibles cuando son compatibles. Los precios y la disponibilidad se abren vía Stay22.',
+      nl: 'Native hotelkaarten zijn beschikbaar waar ondersteund. Prijzen en beschikbaarheid kunnen extern worden geopend.',
+      en: 'Native hotel cards are available where supported. Prices and availability can be opened externally.',
+      fr: 'Les fiches hôtels natives sont disponibles lorsque prises en charge. Les prix et disponibilités peuvent s’ouvrir en externe.',
+      es: 'Las fichas nativas de hotel están disponibles cuando son compatibles. Los precios y la disponibilidad se pueden abrir en externo.',
     );
   }
 
@@ -619,10 +660,10 @@ class _HotelsPageState extends State<HotelsPage> {
 
   String get _externalAvailabilityLabel {
     return _t(
-      nl: 'Bekijk beschikbaarheid via Stay22',
-      en: 'Check availability via Stay22',
-      fr: 'Voir les disponibilités via Stay22',
-      es: 'Ver disponibilidad vía Stay22',
+      nl: 'Bekijk beschikbaarheid',
+      en: 'Check availability',
+      fr: 'Voir les disponibilités',
+      es: 'Ver disponibilidad',
     );
   }
 
@@ -808,6 +849,9 @@ class _HotelsPageState extends State<HotelsPage> {
   }
 
   String _displayPriceHint(HotelStay stay) {
+    if (isRatehawkStalePrice(stay)) {
+      return ratehawkStalePriceLabel(_languageCode);
+    }
     return formatDiscoveryPriceHint(stay.priceHint, fromLabel: _fromLabel);
   }
 
@@ -1486,9 +1530,15 @@ class _HotelsPageState extends State<HotelsPage> {
         .toList(growable: false);
     final hasTrustedNativeStays = approvedRealStays.isNotEmpty;
     final showingDiscoveryRegions = !hasTrustedNativeStays && !_showSavedOnly;
-    final displayCards = _showSavedOnly
+    final baseCards = _showSavedOnly
         ? approvedRealStays
         : (hasTrustedNativeStays ? approvedRealStays : _discoveryRegionStays);
+    final displayCards = _showSavedOnly
+        ? baseCards
+        : mergeRatehawkHotelStays(
+            existing: baseCards,
+            incoming: _ratehawkSearch.insertedStays,
+          );
     final resultCount = displayCards.length;
 
     return Scaffold(
@@ -1504,6 +1554,12 @@ class _HotelsPageState extends State<HotelsPage> {
                   _buildSearchField(),
                   const SizedBox(height: 8),
                   _buildCompactFilterChips(),
+                  const SizedBox(height: 8),
+                  RatehawkSearchStrip(
+                    controller: _ratehawkSearch,
+                    languageCode: _languageCode,
+                    palette: _themePalette,
+                  ),
                   const SizedBox(height: 8),
                   _buildLiveAccommodationsPanel(),
                   if (showingDiscoveryRegions) ...[
@@ -1521,6 +1577,12 @@ class _HotelsPageState extends State<HotelsPage> {
                   ],
                   const SizedBox(height: 8),
                   _buildReturnFlowPanel(),
+                  const SizedBox(height: 8),
+                  RatehawkSearchStatusPanel(
+                    controller: _ratehawkSearch,
+                    languageCode: _languageCode,
+                    palette: _themePalette,
+                  ),
                   const SizedBox(height: 8),
                   _buildCardsGrid(displayCards),
                 ],
@@ -1665,6 +1727,7 @@ class _HotelsPageState extends State<HotelsPage> {
       _selectedRegionKey = _allKey;
       _selectedSettlementKey = _allKey;
     });
+    _syncRatehawkDestinationHint();
     _scheduleGooglePlacesRefresh();
   }
 
@@ -1684,6 +1747,7 @@ class _HotelsPageState extends State<HotelsPage> {
       _selectedRegionKey = selected;
       _selectedSettlementKey = _allKey;
     });
+    _syncRatehawkDestinationHint();
     _scheduleGooglePlacesRefresh();
   }
 
@@ -1701,6 +1765,7 @@ class _HotelsPageState extends State<HotelsPage> {
     );
     if (selected == null) return;
     setState(() => _selectedSettlementKey = selected);
+    _syncRatehawkDestinationHint();
     _scheduleGooglePlacesRefresh();
   }
 
@@ -1959,6 +2024,7 @@ class _HotelsPageState extends State<HotelsPage> {
       _selectedSettlementKey = _allKey;
       _selectedType = _allKey;
     });
+    _syncRatehawkDestinationHint();
     _scheduleGooglePlacesRefresh();
   }
 
@@ -2845,30 +2911,32 @@ class _HotelsPageState extends State<HotelsPage> {
         final columns = constraints.maxWidth >= 900
             ? 3
             : (constraints.maxWidth >= 620 ? 2 : 1);
+        final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+        final safeMainAxisExtent = (392.0 * textScale).clamp(392.0, 500.0);
         if (columns == 1) {
           return Column(
             children: [
               for (var i = 0; i < stays.length; i++) ...[
-                _buildStayCard(stays[i]),
+                SizedBox(
+                  height: safeMainAxisExtent,
+                  child: _buildStayCard(stays[i]),
+                ),
                 if (i != stays.length - 1) const SizedBox(height: 8),
               ],
             ],
           );
         }
-        final textScale = MediaQuery.textScalerOf(context).scale(1.0);
-        final safeMainAxisExtent = (392.0 * textScale).clamp(392.0, 500.0);
         const spacing = 8.0;
-        return GridView.builder(
+        return GridView(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          itemCount: stays.length,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
             crossAxisSpacing: spacing,
             mainAxisSpacing: spacing,
             mainAxisExtent: safeMainAxisExtent,
           ),
-          itemBuilder: (_, index) => _buildStayCard(stays[index]),
+          children: <Widget>[for (final stay in stays) _buildStayCard(stay)],
         );
       },
     );
@@ -2881,6 +2949,7 @@ class _HotelsPageState extends State<HotelsPage> {
   bool _shouldShowStayProviderLabel(HotelStay stay) {
     if (stay.source == 'discovery') return false;
     if (!stay.isRealApproved) return false;
+    if (isRatehawkStay(stay)) return false;
     if (_isGooglePlacesStay(stay)) return true;
     return stay.providerType == HotelStayProviderType.localApproved ||
         (stay.providerLabel?.trim().isNotEmpty ?? false);
@@ -3227,6 +3296,19 @@ class _HotelsPageState extends State<HotelsPage> {
                           ),
                         ),
                       ],
+                      if (stay.retrievedAt != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          stay.retrievedAt!.toLocal().toString(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: _softText.withOpacity(0.86),
+                            fontSize: 10.2,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                       const Spacer(),
                       if (isDiscoveryCard || !canShowTaxiCta)
                         SizedBox(
@@ -3458,19 +3540,19 @@ class HotelStayDetailPage extends StatelessWidget {
 
   String get _discoveryRegionCardDescription {
     return _t(
-      nl: 'Geen prijsinventaris — bekijk prijzen en beschikbaarheid extern via Stay22 voor deze regio.',
-      en: 'No price inventory — check prices and availability externally via Stay22 for this region.',
-      fr: 'Pas d’inventaire de prix — consultez les prix et disponibilités via Stay22 pour cette région.',
-      es: 'Sin inventario de precios — consulta precios y disponibilidad vía Stay22 para esta región.',
+      nl: 'Geen prijsinventaris — bekijk prijzen en beschikbaarheid extern voor deze regio.',
+      en: 'No price inventory — check prices and availability externally for this region.',
+      fr: 'Pas d’inventaire de prix — consultez les prix et disponibilités en externe pour cette région.',
+      es: 'Sin inventario de precios — consulta precios y disponibilidad en externo para esta región.',
     );
   }
 
   String get _stay22AvailabilitySubtitle {
     return _t(
-      nl: 'Hotelkaarten worden native getoond. Prijzen en beschikbaarheid openen extern via Stay22.',
-      en: 'Hotel cards are shown natively. Prices and availability open externally via Stay22.',
-      fr: 'Les fiches hôtels sont affichées nativement. Les prix et disponibilités s’ouvrent via Stay22.',
-      es: 'Las fichas de hotel se muestran de forma nativa. Los precios y la disponibilidad se abren vía Stay22.',
+      nl: 'Hotelkaarten worden native getoond. Prijzen en beschikbaarheid kunnen extern worden geopend.',
+      en: 'Hotel cards are shown natively. Prices and availability can be opened externally.',
+      fr: 'Les fiches hôtels sont affichées nativement. Les prix et disponibilités peuvent s’ouvrir en externe.',
+      es: 'Las fichas de hotel se muestran de forma nativa. Los precios y la disponibilidad se pueden abrir en externo.',
     );
   }
 

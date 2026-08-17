@@ -335,6 +335,14 @@ export function isRatehawkHotelpageInvocationAllowed(env) {
   return isRatehawkInvocationAllowed(env) && isRatehawkHotelpageEnabled(env);
 }
 
+export function isRatehawkSearchEnabled(env) {
+  return envFlag(env?.RATEHAWK_SEARCH_ENABLED);
+}
+
+export function isRatehawkSearchInvocationAllowed(env) {
+  return isRatehawkInvocationAllowed(env) && isRatehawkSearchEnabled(env);
+}
+
 export function buildSafeRatehawkProviderStatus(env) {
   const config = resolveRatehawkConfig(env);
   let status = "provider_not_configured";

@@ -42,6 +42,10 @@ import {
 } from "./modules/ratehawk_test_activation.mjs";
 import { handleRatehawkTestSearchRequest } from "./modules/ratehawk_test_search.mjs";
 import { handleRatehawkTestHotelpageRequest } from "./modules/ratehawk_test_hotelpage.mjs";
+import {
+  RATEHAWK_HOTELS_SEARCH_PATH,
+  handleRatehawkPublicSearchRequest,
+} from "./modules/ratehawk_public_search.mjs";
 
 export { RatehawkProviderQuotaDO };
 
@@ -49,6 +53,7 @@ export const RATEHAWK_HOTELS_WORKER_NAME = "fluxidi-ratehawk-hotels-api";
 export const RATEHAWK_HOTELS_INTERNAL_PROXY = "booking_worker_v1";
 export const RATEHAWK_HOTELS_STATUS_PATH = "/internal/status";
 export const RATEHAWK_HOTELS_HOTELPAGE_PATH = "/internal/hotelpage";
+export { RATEHAWK_HOTELS_SEARCH_PATH };
 export const RATEHAWK_HOTELS_TEST_SEARCH_PATH = "/internal/test-search";
 export const RATEHAWK_HOTELS_TEST_HOTELPAGE_PATH = "/internal/test-hotelpage";
 export const RATEHAWK_HOTELS_CONTENT_SYNC_PATH = "/internal/content-sync";
@@ -174,6 +179,30 @@ export async function handleRatehawkHotelsWorkerFetch(
       now,
     });
     return json(dto);
+  }
+
+  if (
+    url.pathname === RATEHAWK_HOTELS_SEARCH_PATH &&
+    request.method === "POST"
+  ) {
+    if (isRatehawkIsolatedTestWorker(env)) {
+      return json(
+        handleRatehawkPublicSearchRequest({
+          env,
+          body: {},
+        }),
+      );
+    }
+    let body = {};
+    try {
+      body = await request.json();
+    } catch {
+      body = {};
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      body = {};
+    }
+    return json(handleRatehawkPublicSearchRequest({ env, body }));
   }
 
   if (

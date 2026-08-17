@@ -159,6 +159,7 @@ test("20. all six RateHawk gates default to 0", () => {
   for (const name of [
     "RATEHAWK_ENABLED",
     "RATEHAWK_HOTELPAGE_ENABLED",
+    "RATEHAWK_SEARCH_ENABLED",
     "RATEHAWK_CONTENT_SYNC_ENABLED",
     "RATEHAWK_CONTENT_BATCH_ENABLED",
     "RATEHAWK_TEST_SEARCH_ENABLED",

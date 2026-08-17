@@ -105,11 +105,11 @@ import {
   toMonotonicRevision,
 } from "./modules/fleet_vehicle_tombstone.mjs";
 import {
-  buildRatehawkPublicSearchGuardPayload,
   fetchRatehawkHotelsStatus,
   handleAdminRatehawkTestHotelpage,
   handleAdminRatehawkTestSearch,
   handlePublicRatehawkHotelpage,
+  handlePublicRatehawkSearch,
   isRatehawkSearchSource,
 } from "./modules/ratehawk_hotels_facade.mjs";
 import {
@@ -48437,6 +48437,12 @@ function _normalizePublicHotelsSearchQuery(url) {
   const lngRaw = String(url?.searchParams?.get("lng") ?? "").trim();
   const radiusRaw = String(url?.searchParams?.get("radius_km") ?? "").trim();
   const sourceRaw = String(url?.searchParams?.get("source") ?? "").trim();
+  const checkinRaw = String(url?.searchParams?.get("checkin") ?? "").trim();
+  const checkoutRaw = String(url?.searchParams?.get("checkout") ?? "").trim();
+  const roomsRaw = String(url?.searchParams?.get("rooms") ?? "").trim();
+  const adultsRaw = String(url?.searchParams?.get("adults") ?? "").trim();
+  const childrenRaw = String(url?.searchParams?.get("children") ?? "").trim();
+  const childAgesRaw = String(url?.searchParams?.get("child_ages") ?? "").trim();
   const warnings = [];
 
   const latitude = _publicEventsToNumberOrNull(latRaw);
@@ -48466,6 +48472,12 @@ function _normalizePublicHotelsSearchQuery(url) {
     longitude,
     radiusKm,
     source: sourceNormalized || "approved-local",
+    checkin: /^\d{4}-\d{2}-\d{2}$/.test(checkinRaw) ? checkinRaw : "",
+    checkout: /^\d{4}-\d{2}-\d{2}$/.test(checkoutRaw) ? checkoutRaw : "",
+    rooms: roomsRaw,
+    adults: adultsRaw,
+    children: childrenRaw,
+    child_ages: childAgesRaw,
     warnings,
   };
 }
@@ -50091,7 +50103,11 @@ async function _buildPublicHotelsSearchPayload({ query, env, requestUrl = "" } =
   const warnings = Array.isArray(query?.warnings) ? [...query.warnings] : [];
 
   if (isRatehawkSearchSource(source)) {
-    return buildRatehawkPublicSearchGuardPayload({ env, warnings, source });
+    return handlePublicRatehawkSearch({
+      env,
+      query: { ...query, source, warnings },
+      warnings,
+    });
   }
 
   if (source === "approved-local") {

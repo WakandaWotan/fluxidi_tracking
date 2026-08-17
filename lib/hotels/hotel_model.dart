@@ -177,6 +177,9 @@ class HotelStay {
     this.ambience,
     this.popularFor = const <String>[],
     this.isRealApproved = false,
+    this.hid,
+    this.availabilityLabel,
+    this.retrievedAt,
   });
 
   final String id;
@@ -216,6 +219,9 @@ class HotelStay {
   final String? ambience;
   final List<String> popularFor;
   final bool isRealApproved;
+  final int? hid;
+  final String? availabilityLabel;
+  final DateTime? retrievedAt;
 
   String? get effectiveBookingUrl {
     final directAvailability = _normalizeHttpUrl(externalAvailabilityUrl);
@@ -260,6 +266,92 @@ class HotelStay {
     final scheme = uri.scheme.toLowerCase();
     if (scheme != 'http' && scheme != 'https') return null;
     return trimmed;
+  }
+
+  HotelStay copyWith({
+    String? id,
+    String? name,
+    String? type,
+    String? city,
+    String? region,
+    String? country,
+    String? address,
+    String? description,
+    String? imageRef,
+    double? lat,
+    double? lng,
+    double? latitude,
+    double? longitude,
+    String? imageUrl,
+    String? websiteUrl,
+    String? bookingUrl,
+    String? provider,
+    HotelStayProviderType? providerType,
+    String? providerLabel,
+    String? externalAvailabilityUrl,
+    String? externalProviderReference,
+    String? externalProviderId,
+    String? affiliateTrackingId,
+    String? directBookingUrl,
+    String? preferredBookingUrl,
+    String? source,
+    String? sourceId,
+    String? priceHint,
+    double? rating,
+    List<String>? tags,
+    List<String>? travelStyles,
+    String? ambience,
+    List<String>? popularFor,
+    bool? isRealApproved,
+    int? hid,
+    String? availabilityLabel,
+    DateTime? retrievedAt,
+    bool clearPriceHint = false,
+    bool clearAvailabilityLabel = false,
+  }) {
+    return HotelStay(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      type: type ?? this.type,
+      city: city ?? this.city,
+      region: region ?? this.region,
+      country: country ?? this.country,
+      address: address ?? this.address,
+      description: description ?? this.description,
+      imageRef: imageRef ?? this.imageRef,
+      lat: lat ?? this.lat,
+      lng: lng ?? this.lng,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
+      imageUrl: imageUrl ?? this.imageUrl,
+      websiteUrl: websiteUrl ?? this.websiteUrl,
+      bookingUrl: bookingUrl ?? this.bookingUrl,
+      provider: provider ?? this.provider,
+      providerType: providerType ?? this.providerType,
+      providerLabel: providerLabel ?? this.providerLabel,
+      externalAvailabilityUrl:
+          externalAvailabilityUrl ?? this.externalAvailabilityUrl,
+      externalProviderReference:
+          externalProviderReference ?? this.externalProviderReference,
+      externalProviderId: externalProviderId ?? this.externalProviderId,
+      affiliateTrackingId: affiliateTrackingId ?? this.affiliateTrackingId,
+      directBookingUrl: directBookingUrl ?? this.directBookingUrl,
+      preferredBookingUrl: preferredBookingUrl ?? this.preferredBookingUrl,
+      source: source ?? this.source,
+      sourceId: sourceId ?? this.sourceId,
+      priceHint: clearPriceHint ? null : (priceHint ?? this.priceHint),
+      rating: rating ?? this.rating,
+      tags: tags ?? this.tags,
+      travelStyles: travelStyles ?? this.travelStyles,
+      ambience: ambience ?? this.ambience,
+      popularFor: popularFor ?? this.popularFor,
+      isRealApproved: isRealApproved ?? this.isRealApproved,
+      hid: hid ?? this.hid,
+      availabilityLabel: clearAvailabilityLabel
+          ? null
+          : (availabilityLabel ?? this.availabilityLabel),
+      retrievedAt: retrievedAt ?? this.retrievedAt,
+    );
   }
 
   String get effectiveProvider {
