@@ -79399,6 +79399,39 @@ async function _loadPublicPartnerProfiles(env) {
   return Array.isArray(out?.profiles) ? out.profiles : [];
 }
 
+/// LIMOUSINE-MARKETPLACE-P2D2A — GET /partners/profile must pass through the
+/// already-sanitized public limousine projection. Entitlement internals stay
+/// off this whitelist.
+function _publicLimousineShowroomFieldsFromStoredProfile(profile) {
+  const src = profile && typeof profile === "object" ? profile : {};
+  const out = {};
+  const projection =
+    src.limousine_projection && typeof src.limousine_projection === "object"
+      ? src.limousine_projection
+      : null;
+  if (projection) {
+    out.limousine_projection = {
+      limousine_service_enabled: projection.limousine_service_enabled === true,
+      limousine_available: projection.limousine_available === true,
+      ...(projection.eligible_vehicle_count != null
+        ? { eligible_vehicle_count: _safePublicInt(projection.eligible_vehicle_count, 0, 0, 999) }
+        : {}),
+      ...(projection.published_offer_count != null
+        ? { published_offer_count: _safePublicInt(projection.published_offer_count, 0, 0, 999) }
+        : {}),
+      ...(projection.reason ? { reason: _safePublicText(projection.reason, 80) } : {}),
+    };
+    if (projection.limousine_available === true) out.limousine_available = true;
+    if (projection.limousine_service_enabled === true) out.limousine_service_enabled = true;
+  }
+  if (src.limousine_available === true) out.limousine_available = true;
+  if (src.limousine_service_enabled === true) out.limousine_service_enabled = true;
+  if (Array.isArray(src.limousine_offers)) {
+    out.limousine_offers = _sanitizePublicLimousineOffersForProfile(src.limousine_offers);
+  }
+  return out;
+}
+
 async function getPublicPartnerProfileById(env, partnerId) {
   const needle = _safePublicText(partnerId, 120);
   if (!needle) return null;
@@ -79447,6 +79480,7 @@ async function getPublicPartnerProfileById(env, partnerId) {
     drivers: profile.drivers,
     trust: profile.trust,
     booking_capabilities: profile.booking_capabilities,
+    ..._publicLimousineShowroomFieldsFromStoredProfile(profile),
   };
   try {
     const ratingScope = await _resolvePublicPartnerRatingScope(env, needle);

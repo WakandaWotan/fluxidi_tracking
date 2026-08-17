@@ -370,6 +370,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   bool termsAcknowledged = false;
   bool discovering = false;
   bool loadingProvider = false;
+  bool providerOfferLocked = false;
   int lastDiscoveryCount = 0;
   String lastDiscoveryService = '';
 
@@ -452,7 +453,29 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
     }
   }
 
+  void applyShowroomSelection({
+    required String publicPartnerId,
+    required LimousinePublishedOffer offer,
+    String companyName = '',
+  }) {
+    final partnerId = publicPartnerId.trim();
+    if (partnerId.isEmpty || offer.offerId.trim().isEmpty) return;
+    selectedProvider = LimousineProviderDetail(
+      provider: LimousineDiscoveredProvider(
+        partnerId: partnerId,
+        companyName: companyName.trim(),
+        limousineAvailable: true,
+      ),
+      offers: <LimousinePublishedOffer>[offer],
+    );
+    selectedOffer = offer;
+    providerOfferLocked = true;
+    draft = draft.copyWith(publicPartnerId: partnerId, offerId: offer.offerId);
+    notifyListeners();
+  }
+
   Future<void> selectProvider(LimousineDiscoveredProvider provider) async {
+    if (providerOfferLocked) return;
     loadingProvider = true;
     notifyListeners();
     try {
@@ -473,6 +496,7 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   }
 
   void selectOffer(LimousinePublishedOffer offer) {
+    if (providerOfferLocked) return;
     selectedOffer = offer;
     draft = draft.copyWith(offerId: offer.offerId);
     notifyListeners();

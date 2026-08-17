@@ -436,3 +436,14 @@ test("13/14/16) worker preserves taxi + airport data and publishes offers", () =
   // Server does not trust Flutter-submitted public vehicle fields for the join.
   assert.ok(worker.includes("_normalizeVehicleEntry(entry, { scope })"));
 });
+
+test("P2D2A) GET /partners/profile passes through sanitized limousine showroom fields", () => {
+  const worker = readFileSync(join(__dirname, "..", "fluxidi_booking_worker.js"), "utf8");
+  const start = worker.indexOf("async function getPublicPartnerProfileById");
+  const end = worker.indexOf("function _normTierForVehicleMatch");
+  assert.ok(start > 0 && end > start);
+  const getter = worker.slice(start, end);
+  assert.ok(getter.includes("_publicLimousineShowroomFieldsFromStoredProfile(profile)"));
+  assert.ok(worker.includes("out.limousine_offers = _sanitizePublicLimousineOffersForProfile"));
+  assert.ok(!getter.includes("limousine_entitled"));
+});

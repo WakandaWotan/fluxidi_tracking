@@ -187,6 +187,7 @@ class LimousinePublishedOffer {
     this.passengerCapacity,
     this.luggageCapacity,
     this.photoUrl = '',
+    this.color = '',
     this.includedServices = const <Map<String, dynamic>>[],
     this.paidExtras = const <Map<String, dynamic>>[],
     this.mobilisationDisclosure = const <String, String>{},
@@ -206,6 +207,7 @@ class LimousinePublishedOffer {
   final int? passengerCapacity;
   final int? luggageCapacity;
   final String photoUrl;
+  final String color;
   final List<Map<String, dynamic>> includedServices;
   final List<Map<String, dynamic>> paidExtras;
   final Map<String, String> mobilisationDisclosure;
@@ -263,6 +265,7 @@ class LimousinePublishedOffer {
             map['luggage_capacity'],
       ),
       photoUrl: _httpsOnly(vehicle['photo_url'] ?? map['photo_url']),
+      color: (vehicle['color'] ?? '').toString().trim(),
       includedServices: _objectList(map['included_services']),
       paidExtras: _objectList(map['paid_extras']),
       mobilisationDisclosure: _localized(

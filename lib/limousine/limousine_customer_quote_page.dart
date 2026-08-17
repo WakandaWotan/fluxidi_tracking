@@ -19,11 +19,17 @@ class LimousineCustomerQuotePage extends StatefulWidget {
     this.controller,
     this.gateway,
     this.entryEnabled,
+    this.initialPublicPartnerId,
+    this.initialOffer,
+    this.initialCompanyName = '',
   });
 
   final LimousineCustomerQuoteController? controller;
   final LimousineCustomerQuoteGateway? gateway;
   final bool? entryEnabled;
+  final String? initialPublicPartnerId;
+  final LimousinePublishedOffer? initialOffer;
+  final String initialCompanyName;
 
   @override
   State<LimousineCustomerQuotePage> createState() =>
@@ -60,6 +66,15 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
           gateway: widget.gateway ?? HttpLimousineCustomerQuoteGateway(),
         );
     _controller.addListener(_onChanged);
+    final initialOffer = widget.initialOffer;
+    final initialPartner = (widget.initialPublicPartnerId ?? '').trim();
+    if (initialOffer != null && initialPartner.isNotEmpty) {
+      _controller.applyShowroomSelection(
+        publicPartnerId: initialPartner,
+        offer: initialOffer,
+        companyName: widget.initialCompanyName,
+      );
+    }
     _from.text = _controller.draft.from;
     _to.text = _controller.draft.to;
     _note.text = _controller.draft.customerNote;
@@ -337,17 +352,20 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
   }
 
   List<Widget> _providerStep() {
+    final locked = _controller.providerOfferLocked;
     return [
-      _field(_t(kLimousineCustomerSearchHint), _postcode),
-      Align(
-        alignment: Alignment.centerLeft,
-        child: FilledButton(
-          onPressed: _controller.discovering
-              ? null
-              : () => _controller.discover(postcode: _postcode.text),
-          child: Text(_t(kLimousineCustomerSearchAction)),
+      if (!locked) ...[
+        _field(_t(kLimousineCustomerSearchHint), _postcode),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton(
+            onPressed: _controller.discovering
+                ? null
+                : () => _controller.discover(postcode: _postcode.text),
+            child: Text(_t(kLimousineCustomerSearchAction)),
+          ),
         ),
-      ),
+      ],
       if (_controller.discovering) const LinearProgressIndicator(),
       if (!_controller.discovering &&
           _controller.lastDiscoveryCount == 0 &&
@@ -365,7 +383,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
           selected:
               _controller.selectedProvider?.provider.partnerId ==
               provider.partnerId,
-          onTap: () => _controller.selectProvider(provider),
+          onTap: locked ? null : () => _controller.selectProvider(provider),
         ),
       if (_controller.selectedProvider != null) ...[
         const SizedBox(height: 8),
@@ -382,7 +400,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
                 _lang,
               ),
             ),
-            onChanged: (_) => _controller.selectOffer(offer),
+            onChanged: locked ? null : (_) => _controller.selectOffer(offer),
           ),
       ],
       _navRow(
@@ -621,8 +639,21 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
   }
 }
 
-void openLimousineCustomerQuoteFlow(BuildContext context) {
+void openLimousineCustomerQuoteFlow(
+  BuildContext context, {
+  String? publicPartnerId,
+  LimousinePublishedOffer? offer,
+  String companyName = '',
+  bool? entryEnabled,
+}) {
   Navigator.of(context).push(
-    MaterialPageRoute<void>(builder: (_) => const LimousineCustomerQuotePage()),
+    MaterialPageRoute<void>(
+      builder: (_) => LimousineCustomerQuotePage(
+        entryEnabled: entryEnabled,
+        initialPublicPartnerId: publicPartnerId,
+        initialOffer: offer,
+        initialCompanyName: companyName,
+      ),
+    ),
   );
 }
