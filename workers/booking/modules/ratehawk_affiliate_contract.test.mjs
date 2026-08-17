@@ -17,6 +17,8 @@ import {
   evaluateRatehawkPrebookChange,
   mapRatehawkHotelToExistingStayCard,
   moneyFromRatehawkAmount,
+  normalizeRatehawkRateDeposit,
+  normalizeRatehawkRateNoShow,
   normalizeRatehawkRateOffer,
   resolveRatehawkHotelMatch,
 } from "./ratehawk_affiliate_contract.mjs";
@@ -61,6 +63,8 @@ function affiliateNowRate(overrides = {}) {
         },
       ],
     },
+    deposit: null,
+    no_show: null,
     cancellation_penalties: {
       free_cancellation_before: "2026-09-01T10:00:00",
       policies: [
@@ -68,31 +72,30 @@ function affiliateNowRate(overrides = {}) {
           start_at: null,
           end_at: "2026-09-01T10:00:00",
           amount_charge: "0.00",
-          currency_code: "EUR",
+          amount_show: "0.00",
         },
         {
           start_at: "2026-09-01T10:00:00",
           end_at: null,
           amount_charge: "180.00",
-          currency_code: "EUR",
+          amount_show: "180.00",
         },
       ],
-      no_show: { deadline: "2026-09-10T18:00:00", amount_charge: "180.00" },
     },
     ...overrides,
   };
 }
 
-function affiliateHotelPayRate() {
-  const rate = affiliateNowRate({ book_hash: "h-mock-hotel" });
+function affiliateHotelPayRate(overrides = {}) {
+  const rate = affiliateNowRate({ book_hash: "h-mock-hotel", ...overrides });
   rate.payment_options.payment_types[0].type = "hotel";
   rate.payment_options.payment_types[0].is_need_credit_card_data = false;
   rate.payment_options.payment_types[0].is_need_cvc = false;
   return rate;
 }
 
-function depositRate() {
-  const rate = affiliateNowRate({ book_hash: "h-mock-deposit" });
+function depositRate(overrides = {}) {
+  const rate = affiliateNowRate({ book_hash: "h-mock-deposit", ...overrides });
   rate.payment_options.payment_types[0].type = "deposit";
   return rate;
 }
@@ -307,4 +310,366 @@ test("static content fetch is forbidden during live card render", () => {
   assert.equal(live.ok, false);
   const sync = assertOfflineContentNotUsedDuringLiveRender("offline_sync");
   assert.equal(sync.ok, true);
+});
+
+function hotelDeposit(overrides = {}) {
+  return {
+    amount: "50.00",
+    currency_code: "EUR",
+    is_refundable: true,
+    ...overrides,
+  };
+}
+
+function officialNoShow(overrides = {}) {
+  return {
+    amount: "25.00",
+    currency_code: "EUR",
+    from_time: "18:00:00",
+    ...overrides,
+  };
+}
+
+function nestedCancellation({
+  freeCancellationBefore = "2026-09-01T10:00:00",
+  chargeAmount = "180.00",
+  showAmount = "180.00",
+} = {}) {
+  return {
+    free_cancellation_before: freeCancellationBefore,
+    policies: [
+      {
+        start_at: null,
+        end_at: freeCancellationBefore,
+        amount_charge: freeCancellationBefore ? "0.00" : chargeAmount,
+        amount_show: freeCancellationBefore ? "0.00" : showAmount,
+      },
+      ...(freeCancellationBefore
+        ? [
+            {
+              start_at: freeCancellationBefore,
+              end_at: null,
+              amount_charge: chargeAmount,
+              amount_show: showAmount,
+            },
+          ]
+        : []),
+    ],
+  };
+}
+
+function sanitizedSerpRateShape(index) {
+  const paymentType = index % 2 === 0 ? "hotel" : "now";
+  const mixedCurrency = index % 5 === 0;
+  const showCurrency = "EUR";
+  const chargeCurrency = mixedCurrency ? "USD" : "EUR";
+  const showAmount = (100 + index).toFixed(2);
+  const chargeAmount = mixedCurrency ? (110 + index).toFixed(2) : showAmount;
+  const depositMode = index % 3;
+  const noShowMode = index % 4;
+  const freeCancel = index % 3 === 1 ? "2026-09-01T10:00:00" : null;
+
+  let deposit = null;
+  if (paymentType === "hotel" && depositMode !== 0) {
+    deposit = {
+      amount: "50.00",
+      currency_code: chargeCurrency,
+      is_refundable: depositMode === 1,
+    };
+  }
+
+  const noShow =
+    noShowMode === 0
+      ? null
+      : {
+          amount: "25.00",
+          currency_code: chargeCurrency,
+          from_time: "18:00:00",
+        };
+
+  return {
+    book_hash: `h-sanitized-${String(index + 1).padStart(2, "0")}`,
+    match_hash: `m-sanitized-${String(index + 1).padStart(2, "0")}`,
+    daily_prices: [showAmount],
+    meal: "nomeal",
+    meal_data: {
+      value: "nomeal",
+      has_breakfast: false,
+      no_child_meal: true,
+    },
+    room_name: "Sanitized Double",
+    room_name_info: { original_rate_name: "Sanitized Double" },
+    room_data_trans: {
+      main_room_type: "Double",
+      main_name: "Double",
+      bathroom: null,
+      bedding_type: "double",
+      misc_room_type: null,
+    },
+    rg_ext: { class: 3, quality: 2, sex: 0, bathroom: 1, bedding: 2 },
+    serp_filters: ["has_bathroom"],
+    allotment: 2,
+    amenities_data: ["non-smoking"],
+    any_residency: true,
+    is_package: false,
+    sell_price_limits: null,
+    legal_info: {
+      provider: { name: "", address: "" },
+      hotel: { name: "Test Hotel", address: "Test Street" },
+    },
+    deposit,
+    no_show: noShow,
+    payment_options: {
+      payment_types: [
+        {
+          type: paymentType,
+          amount: chargeAmount,
+          show_amount: showAmount,
+          currency_code: chargeCurrency,
+          show_currency_code: showCurrency,
+          is_need_credit_card_data: paymentType === "now",
+          is_need_cvc: paymentType === "now",
+          tax_data: {
+            taxes: [
+              {
+                name: "vat",
+                included_by_supplier: true,
+                amount: "10.00",
+                currency_code: chargeCurrency,
+              },
+            ],
+          },
+          cancellation_penalties: nestedCancellation({
+            freeCancellationBefore: freeCancel,
+            chargeAmount,
+            showAmount,
+          }),
+        },
+      ],
+    },
+  };
+}
+
+test("rate-level deposit null means no hotel deposit disclosed", () => {
+  const direct = normalizeRatehawkRateDeposit(null);
+  assert.equal(direct.ok, true);
+  assert.equal(direct.disclosed, false);
+  assert.equal(direct.customer_disclosure_required, false);
+
+  const offer = normalizeRatehawkRateOffer(affiliateNowRate({ deposit: null }));
+  assert.equal(offer.ok, true);
+  assert.equal(offer.deposit.disclosed, false);
+  assert.equal(offer.reason, undefined);
+});
+
+test("valid refundable hotel deposit is displayed, not rejected for its key name", () => {
+  const rate = affiliateHotelPayRate();
+  rate.deposit = hotelDeposit({ is_refundable: true });
+  const offer = normalizeRatehawkRateOffer(rate);
+  assert.equal(offer.ok, true);
+  assert.equal(offer.payment.payment_type, "hotel");
+  assert.equal(offer.deposit.disclosed, true);
+  assert.equal(offer.deposit.refundable, true);
+  assert.equal(offer.deposit.amount.amount_minor, 5000);
+  assert.equal(offer.deposit.currency, "EUR");
+  assert.equal(offer.deposit.payment_recipient, "hotel");
+  assert.equal(offer.deposit.payment_timing, "at_hotel");
+  assert.equal(offer.deposit.customer_disclosure_required, true);
+});
+
+test("valid non-refundable hotel deposit is displayed", () => {
+  const rate = affiliateHotelPayRate();
+  rate.deposit = hotelDeposit({ is_refundable: false, amount: "75.00" });
+  const offer = normalizeRatehawkRateOffer(rate);
+  assert.equal(offer.ok, true);
+  assert.equal(offer.deposit.disclosed, true);
+  assert.equal(offer.deposit.refundable, false);
+  assert.equal(offer.deposit.amount.amount_minor, 7500);
+});
+
+test("malformed rate-level deposit fails closed", () => {
+  const missing = normalizeRatehawkRateOffer(
+    affiliateHotelPayRate({ deposit: { amount: "50.00", currency_code: "EUR" } }),
+  );
+  assert.equal(missing.ok, false);
+  assert.equal(missing.hard_stop, true);
+  assert.equal(missing.reason, "deposit_incomplete");
+
+  const unknown = normalizeRatehawkRateOffer(
+    affiliateHotelPayRate({
+      deposit: { ...hotelDeposit(), prepaid_by: "guest" },
+    }),
+  );
+  assert.equal(unknown.ok, false);
+  assert.equal(unknown.reason, "deposit_unknown_field");
+
+  const notObject = normalizeRatehawkRateOffer(
+    affiliateHotelPayRate({ deposit: "50.00" }),
+  );
+  assert.equal(notObject.ok, false);
+  assert.equal(notObject.reason, "deposit_malformed");
+});
+
+test("rate-level no_show null means no separate no-show data", () => {
+  const direct = normalizeRatehawkRateNoShow(null);
+  assert.equal(direct.ok, true);
+  assert.equal(direct.disclosed, false);
+  assert.equal(direct.customer_disclosure_required, false);
+
+  const offer = normalizeRatehawkRateOffer(affiliateNowRate({ no_show: null }));
+  assert.equal(offer.ok, true);
+  assert.equal(offer.no_show.disclosed, false);
+});
+
+test("valid no-show amount, currency and hotel-local from_time are disclosed", () => {
+  const offer = normalizeRatehawkRateOffer(
+    affiliateNowRate({ no_show: officialNoShow() }),
+  );
+  assert.equal(offer.ok, true);
+  assert.equal(offer.no_show.disclosed, true);
+  assert.equal(offer.no_show.amount.amount_minor, 2500);
+  assert.equal(offer.no_show.currency, "EUR");
+  assert.equal(offer.no_show.from_time, "18:00:00");
+  assert.equal(offer.no_show.timezone_context, "hotel_local_time");
+  assert.equal(offer.no_show.customer_disclosure_required, true);
+});
+
+test("malformed rate-level no_show fails closed", () => {
+  const missing = normalizeRatehawkRateOffer(
+    affiliateNowRate({ no_show: { amount: "25.00", currency_code: "EUR" } }),
+  );
+  assert.equal(missing.ok, false);
+  assert.equal(missing.reason, "no_show_incomplete");
+
+  const badTime = normalizeRatehawkRateOffer(
+    affiliateNowRate({ no_show: officialNoShow({ from_time: "8pm" }) }),
+  );
+  assert.equal(badTime.ok, false);
+  assert.equal(badTime.reason, "no_show_from_time_unmapped");
+
+  const unknown = normalizeRatehawkRateOffer(
+    affiliateNowRate({
+      no_show: officialNoShow({ deadline: "2026-09-10T18:00:00" }),
+    }),
+  );
+  assert.equal(unknown.ok, false);
+  assert.equal(unknown.reason, "no_show_unknown_field");
+});
+
+test("cancellation terms normalize from selected payment_types, not rate top level", () => {
+  const rate = affiliateNowRate();
+  delete rate.cancellation_penalties;
+  rate.payment_options.payment_types[0].cancellation_penalties =
+    nestedCancellation({
+      freeCancellationBefore: "2026-09-02T12:00:00",
+    });
+  const offer = normalizeRatehawkRateOffer(rate);
+  assert.equal(offer.ok, true);
+  assert.equal(offer.cancellation_source, "payment_type");
+  assert.equal(offer.refundable, true);
+  assert.equal(offer.free_cancellation_before, "2026-09-02T12:00:00");
+  assert.equal(offer.cancellation_penalties.length, 2);
+  assert.equal(offer.no_show.disclosed, false);
+});
+
+test("absent or null free_cancellation_before is never invented as free cancellation", () => {
+  const absent = affiliateNowRate();
+  delete absent.cancellation_penalties;
+  const absentOffer = normalizeRatehawkRateOffer(absent);
+  assert.equal(absentOffer.ok, true);
+  assert.equal(absentOffer.refundable, false);
+  assert.equal(absentOffer.free_cancellation_before, null);
+
+  const explicitNull = affiliateNowRate();
+  explicitNull.cancellation_penalties = {
+    free_cancellation_before: null,
+    policies: [
+      {
+        start_at: null,
+        end_at: null,
+        amount_charge: "180.00",
+        amount_show: "180.00",
+      },
+    ],
+  };
+  const nullOffer = normalizeRatehawkRateOffer(explicitNull);
+  assert.equal(nullOffer.ok, true);
+  assert.equal(nullOffer.refundable, false);
+  assert.equal(nullOffer.free_cancellation_before, null);
+});
+
+test("payment type deposit remains rejected even when rate-level deposit is valid", () => {
+  const rate = depositRate();
+  rate.deposit = hotelDeposit();
+  const offer = normalizeRatehawkRateOffer(rate);
+  assert.equal(offer.ok, false);
+  assert.equal(offer.hard_stop, true);
+  assert.equal(offer.reason, "deposit_requires_fluxidi_to_fund_etg");
+});
+
+test("rate-level deposit with payment type hotel is accepted", () => {
+  const rate = affiliateHotelPayRate();
+  rate.deposit = hotelDeposit({ is_refundable: true });
+  rate.no_show = officialNoShow();
+  const offer = normalizeRatehawkRateOffer(rate);
+  assert.equal(offer.ok, true);
+  assert.equal(offer.payment.payment_type, "hotel");
+  assert.equal(offer.deposit.disclosed, true);
+  assert.equal(offer.no_show.disclosed, true);
+});
+
+test("customer-facing show currency stays separate from charge currency", () => {
+  const rate = affiliateNowRate();
+  rate.payment_options.payment_types[0].show_amount = "180.00";
+  rate.payment_options.payment_types[0].show_currency_code = "EUR";
+  rate.payment_options.payment_types[0].amount = "195.00";
+  rate.payment_options.payment_types[0].currency_code = "USD";
+  rate.cancellation_penalties.policies = [
+    {
+      start_at: null,
+      end_at: "2026-09-01T10:00:00",
+      amount_charge: "0.00",
+      amount_show: "0.00",
+    },
+    {
+      start_at: "2026-09-01T10:00:00",
+      end_at: null,
+      amount_charge: "195.00",
+      amount_show: "180.00",
+    },
+  ];
+  const offer = normalizeRatehawkRateOffer(rate);
+  assert.equal(offer.ok, true);
+  assert.equal(offer.customer_total.currency, "EUR");
+  assert.equal(offer.customer_total.amount_minor, 18000);
+  assert.equal(offer.reconciliation_amount.currency, "USD");
+  assert.equal(offer.reconciliation_amount.amount_minor, 19500);
+  assert.notEqual(
+    offer.customer_total.currency,
+    offer.reconciliation_amount.currency,
+  );
+  assert.equal(offer.cancellation_penalties[1].show_amount.currency, "EUR");
+  assert.equal(offer.cancellation_penalties[1].charge_amount.currency, "USD");
+});
+
+test("all 25 sanitized SERP rate shapes pass when known fields are valid", () => {
+  const shapes = Array.from({ length: 25 }, (_, index) =>
+    sanitizedSerpRateShape(index),
+  );
+  assert.equal(shapes.length, 25);
+  const paymentTypes = new Set();
+  for (const [index, shape] of shapes.entries()) {
+    const offer = normalizeRatehawkRateOffer(shape);
+    assert.equal(offer.ok, true, `shape ${index + 1} ${offer.reason || ""}`);
+    assert.equal(offer.hard_stop, false);
+    assert.ok(["hotel", "now"].includes(offer.payment.payment_type));
+    assert.notEqual(offer.payment.payment_type, "deposit");
+    assert.equal(offer.customer_total.currency, "EUR");
+    assert.ok(["EUR", "USD"].includes(offer.reconciliation_amount.currency));
+    if (offer.customer_total.currency !== offer.reconciliation_amount.currency) {
+      assert.equal(offer.reconciliation_amount.currency, "USD");
+    }
+    paymentTypes.add(offer.payment.payment_type);
+  }
+  assert.deepEqual([...paymentTypes].sort(), ["hotel", "now"]);
 });

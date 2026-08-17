@@ -10,7 +10,10 @@
  *     subscription, no tenant payout, no Fluxidi hotel invoice).
  *   - Customer-facing amount is RateHawk's amount unchanged.
  *   - Allowed payment types: affiliate `now` (ETG charges) and `hotel`
- *     (customer pays the hotel). `deposit` is a hard stop.
+ *     (customer pays the hotel). payment_types[].type == "deposit" is a
+ *     hard stop (Fluxidi would have to fund ETG). That is not the same
+ *     as rate-level `deposit`, which is a hotel/security deposit and
+ *     must be displayed when valid.
  *
  * This module is fixture/mapping only. It must not call RateHawk, Mollie,
  * or any booking/search/prebook/cancel endpoint.
@@ -72,7 +75,9 @@ const KNOWN_RATE_KEYS = Object.freeze([
   "match_hash",
   "search_hash",
   "room_name",
+  "room_name_info",
   "room_description",
+  "room_data_trans",
   "rg_ext",
   "occupancy",
   "bed_type",
@@ -83,8 +88,43 @@ const KNOWN_RATE_KEYS = Object.freeze([
   "cancellation_penalties",
   "allotment",
   "amenities",
+  "amenities_data",
   "serp_filters",
+  "sell_price_limits",
+  "any_residency",
+  "is_package",
+  "legal_info",
+  "deposit",
+  "no_show",
 ]);
+
+const KNOWN_RATE_DEPOSIT_KEYS = Object.freeze([
+  "amount",
+  "currency_code",
+  "is_refundable",
+]);
+
+const KNOWN_RATE_NO_SHOW_KEYS = Object.freeze([
+  "amount",
+  "currency_code",
+  "from_time",
+]);
+
+const KNOWN_CANCELLATION_KEYS = Object.freeze([
+  "free_cancellation_before",
+  "policies",
+  "commission_info",
+]);
+
+const KNOWN_CANCELLATION_POLICY_KEYS = Object.freeze([
+  "start_at",
+  "end_at",
+  "amount_charge",
+  "amount_show",
+  "commission_info",
+]);
+
+const HOTEL_LOCAL_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/;
 
 const CRITICAL_UNMAPPED_HINTS = Object.freeze([
   "payment",
@@ -185,8 +225,9 @@ export function formatCustomerFacingMoney(money) {
 }
 
 /**
- * Affiliate payment-type gate. Hard-stops deposit and any type that would
- * make Fluxidi collect customer funds or fund an ETG partner deposit.
+ * Affiliate payment-type gate. Hard-stops payment_types[].type == "deposit"
+ * and any type that would make Fluxidi collect customer funds or fund an
+ * ETG partner deposit. Rate-level `deposit` is handled separately.
  */
 export function classifyRatehawkPaymentType(paymentTypeRaw) {
   const type = _lower(paymentTypeRaw);
@@ -343,6 +384,19 @@ export function collectUnmappedFields(raw, knownKeys = KNOWN_RATE_KEYS) {
   };
 }
 
+function _unknownKeys(obj, knownKeys) {
+  return Object.keys(obj || {}).filter((key) => !knownKeys.includes(key));
+}
+
+function _failClosed(reason, extra = {}) {
+  return {
+    ok: false,
+    hard_stop: true,
+    reason,
+    ...extra,
+  };
+}
+
 function _taxLine(tax) {
   const included = tax?.included_by_supplier === true;
   const money = moneyFromRatehawkAmount(tax?.amount, tax?.currency_code);
@@ -355,83 +409,365 @@ function _taxLine(tax) {
   };
 }
 
-function _penaltyLine(policy) {
-  const charge = moneyFromRatehawkAmount(
-    policy?.amount_charge ?? policy?.amount_show,
-    policy?.currency_code ?? policy?.amount_show_currency,
-  );
+function _penaltyLine(policy, chargeCurrency, showCurrency) {
+  if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
+    return { mapping_ok: false, reason: "cancellation_policy_malformed" };
+  }
+  const unknown = _unknownKeys(policy, KNOWN_CANCELLATION_POLICY_KEYS);
+  if (unknown.length > 0) {
+    return {
+      mapping_ok: false,
+      reason: "cancellation_policy_unknown_field",
+      unknown_field_names: unknown,
+    };
+  }
+  const hasCharge = Object.prototype.hasOwnProperty.call(policy, "amount_charge");
+  const hasShow = Object.prototype.hasOwnProperty.call(policy, "amount_show");
+  const charge = hasCharge
+    ? moneyFromRatehawkAmount(policy.amount_charge, chargeCurrency)
+    : null;
+  const show = hasShow
+    ? moneyFromRatehawkAmount(policy.amount_show, showCurrency)
+    : null;
+  if (hasCharge && !charge.ok) {
+    return { mapping_ok: false, reason: "cancellation_charge_unmapped" };
+  }
+  if (hasShow && !show.ok) {
+    return { mapping_ok: false, reason: "cancellation_show_unmapped" };
+  }
   return {
-    start_at: policy?.start_at ?? null,
-    end_at: policy?.end_at ?? null,
-    amount: charge.ok ? charge : null,
-    mapping_ok: policy?.amount_charge == null && policy?.amount_show == null
-      ? true
-      : charge.ok === true,
+    start_at: policy.start_at ?? null,
+    end_at: policy.end_at ?? null,
+    charge_amount: charge?.ok ? charge : null,
+    show_amount: show?.ok ? show : null,
+    mapping_ok: true,
+  };
+}
+
+function selectAffiliatePaymentOption(paymentTypes) {
+  if (!Array.isArray(paymentTypes) || paymentTypes.length === 0) {
+    const payment = assertAffiliatePaymentSafe("");
+    return _failClosed(payment.reason, { payment });
+  }
+  for (const option of paymentTypes) {
+    const classified = classifyRatehawkPaymentType(option?.type);
+    if (classified.payment_type === "deposit") {
+      return _failClosed(classified.reason, { payment: classified });
+    }
+  }
+  for (const option of paymentTypes) {
+    const classified = classifyRatehawkPaymentType(option?.type);
+    if (classified.allowed === true) {
+      return { ok: true, hard_stop: false, option, payment: classified };
+    }
+  }
+  const payment = assertAffiliatePaymentSafe(paymentTypes[0]?.type);
+  return _failClosed(payment.reason, { payment });
+}
+
+/**
+ * Official ETG rate.deposit: hotel/security deposit on a rate.
+ * null = not disclosed. Non-null objects must be complete and known.
+ * Never treat this as payment_types[].type == "deposit".
+ */
+export function normalizeRatehawkRateDeposit(
+  deposit,
+  { chargeCurrency = null, paymentType = null } = {},
+) {
+  if (deposit == null) {
+    return {
+      ok: true,
+      disclosed: false,
+      amount: null,
+      currency: null,
+      refundable: null,
+      payment_timing: null,
+      payment_recipient: null,
+      customer_disclosure_required: false,
+    };
+  }
+  if (typeof deposit !== "object" || Array.isArray(deposit)) {
+    return _failClosed("deposit_malformed");
+  }
+  const unknown = _unknownKeys(deposit, KNOWN_RATE_DEPOSIT_KEYS);
+  if (unknown.length > 0) {
+    return _failClosed("deposit_unknown_field", {
+      unknown_field_names: unknown,
+    });
+  }
+  if (
+    !Object.prototype.hasOwnProperty.call(deposit, "amount") ||
+    !Object.prototype.hasOwnProperty.call(deposit, "currency_code") ||
+    !Object.prototype.hasOwnProperty.call(deposit, "is_refundable")
+  ) {
+    return _failClosed("deposit_incomplete");
+  }
+  if (typeof deposit.is_refundable !== "boolean") {
+    return _failClosed("deposit_refundable_unmapped");
+  }
+  const money = moneyFromRatehawkAmount(deposit.amount, deposit.currency_code);
+  if (!money.ok) {
+    return _failClosed(
+      money.reason === "currency_required"
+        ? "deposit_currency_required"
+        : "deposit_amount_unmapped",
+    );
+  }
+  if (chargeCurrency && money.currency !== chargeCurrency) {
+    return _failClosed("deposit_currency_mismatch");
+  }
+  return {
+    ok: true,
+    disclosed: true,
+    amount: money,
+    currency: money.currency,
+    refundable: deposit.is_refundable,
+    payment_recipient: "hotel",
+    payment_timing: paymentType === "hotel" ? "at_hotel" : null,
+    customer_disclosure_required: true,
+  };
+}
+
+/**
+ * Official ETG rate.no_show: separate no-show penalty in hotel local time.
+ * null = no separate no-show data at this stage.
+ */
+export function normalizeRatehawkRateNoShow(
+  noShow,
+  { chargeCurrency = null } = {},
+) {
+  if (noShow == null) {
+    return {
+      ok: true,
+      disclosed: false,
+      amount: null,
+      currency: null,
+      from_time: null,
+      timezone_context: null,
+      customer_disclosure_required: false,
+    };
+  }
+  if (typeof noShow !== "object" || Array.isArray(noShow)) {
+    return _failClosed("no_show_malformed");
+  }
+  const unknown = _unknownKeys(noShow, KNOWN_RATE_NO_SHOW_KEYS);
+  if (unknown.length > 0) {
+    return _failClosed("no_show_unknown_field", {
+      unknown_field_names: unknown,
+    });
+  }
+  if (
+    !Object.prototype.hasOwnProperty.call(noShow, "amount") ||
+    !Object.prototype.hasOwnProperty.call(noShow, "currency_code") ||
+    !Object.prototype.hasOwnProperty.call(noShow, "from_time")
+  ) {
+    return _failClosed("no_show_incomplete");
+  }
+  const money = moneyFromRatehawkAmount(noShow.amount, noShow.currency_code);
+  if (!money.ok) {
+    return _failClosed(
+      money.reason === "currency_required"
+        ? "no_show_currency_required"
+        : "no_show_amount_unmapped",
+    );
+  }
+  if (chargeCurrency && money.currency !== chargeCurrency) {
+    return _failClosed("no_show_currency_mismatch");
+  }
+  const fromTime = _text(noShow.from_time, 8);
+  if (!HOTEL_LOCAL_TIME_RE.test(fromTime)) {
+    return _failClosed("no_show_from_time_unmapped");
+  }
+  return {
+    ok: true,
+    disclosed: true,
+    amount: money,
+    currency: money.currency,
+    from_time: fromTime,
+    timezone_context: "hotel_local_time",
+    customer_disclosure_required: true,
+  };
+}
+
+function normalizeCancellationPenalties(
+  block,
+  chargeCurrency,
+  showCurrency,
+) {
+  if (block == null) {
+    return {
+      ok: true,
+      refundable: false,
+      free_cancellation_before: null,
+      policies: [],
+      source: null,
+    };
+  }
+  if (typeof block !== "object" || Array.isArray(block)) {
+    return _failClosed("cancellation_penalties_malformed");
+  }
+  const unknown = _unknownKeys(block, KNOWN_CANCELLATION_KEYS);
+  if (unknown.length > 0) {
+    return _failClosed("cancellation_penalties_unknown_field", {
+      unknown_field_names: unknown,
+    });
+  }
+  const before = Object.prototype.hasOwnProperty.call(
+    block,
+    "free_cancellation_before",
+  )
+    ? block.free_cancellation_before
+    : null;
+  if (before != null && typeof before !== "string") {
+    return _failClosed("free_cancellation_before_malformed");
+  }
+  const freeBefore = typeof before === "string" && before.trim() ? before : null;
+  const policiesRaw = Object.prototype.hasOwnProperty.call(block, "policies")
+    ? block.policies
+    : [];
+  if (policiesRaw == null) {
+    return {
+      ok: true,
+      refundable: Boolean(freeBefore),
+      free_cancellation_before: freeBefore,
+      policies: [],
+    };
+  }
+  if (!Array.isArray(policiesRaw)) {
+    return _failClosed("cancellation_policies_malformed");
+  }
+  const policies = [];
+  for (const policy of policiesRaw) {
+    const line = _penaltyLine(policy, chargeCurrency, showCurrency);
+    if (line.mapping_ok !== true) {
+      return _failClosed(line.reason || "cancellation_penalty_unmapped", {
+        unknown_field_names: line.unknown_field_names,
+      });
+    }
+    policies.push(line);
+  }
+  return {
+    ok: true,
+    refundable: Boolean(freeBefore),
+    free_cancellation_before: freeBefore,
+    policies,
+  };
+}
+
+function resolveCancellationPenalties(rate, selectedOption, chargeCurrency, showCurrency) {
+  const nested = selectedOption?.cancellation_penalties;
+  const top = rate?.cancellation_penalties;
+  if (nested !== undefined) {
+    const normalized = normalizeCancellationPenalties(
+      nested,
+      chargeCurrency,
+      showCurrency,
+    );
+    return { ...normalized, source: nested == null ? "payment_type_null" : "payment_type" };
+  }
+  if (top !== undefined) {
+    const normalized = normalizeCancellationPenalties(
+      top,
+      chargeCurrency,
+      showCurrency,
+    );
+    return { ...normalized, source: top == null ? "rate_null" : "rate" };
+  }
+  return {
+    ok: true,
+    refundable: false,
+    free_cancellation_before: null,
+    policies: [],
+    source: null,
   };
 }
 
 /**
  * Normalize one RateHawk rate into the Fluxidi stay-detail contract.
- * Fail closed on deposit / unknown payment / unmapped critical fields.
+ * Fail closed on payment-type deposit / unknown payment / unmapped
+ * critical fields. Rate-level deposit and no_show are mapped terms.
  */
 export function normalizeRatehawkRateOffer(rate = {}, { locale = "en" } = {}) {
   const paymentTypes = Array.isArray(rate?.payment_options?.payment_types)
     ? rate.payment_options.payment_types
     : [];
-  const primary = paymentTypes[0] || {};
-  const payment = assertAffiliatePaymentSafe(primary.type);
-  if (payment.hard_stop) {
-    return {
-      ok: false,
-      hard_stop: true,
-      reason: payment.reason,
-      payment,
-    };
+  const selected = selectAffiliatePaymentOption(paymentTypes);
+  if (selected.ok !== true) {
+    return selected;
+  }
+  const primary = selected.option;
+  const payment = selected.payment;
+
+  if (
+    !Object.prototype.hasOwnProperty.call(primary, "show_amount") ||
+    !Object.prototype.hasOwnProperty.call(primary, "show_currency_code")
+  ) {
+    return _failClosed("show_amount_required", { payment });
+  }
+  if (
+    !Object.prototype.hasOwnProperty.call(primary, "amount") ||
+    !Object.prototype.hasOwnProperty.call(primary, "currency_code")
+  ) {
+    return _failClosed("charge_amount_required", { payment });
   }
 
   const showMoney = moneyFromRatehawkAmount(
-    primary.show_amount ?? primary.amount,
-    primary.show_currency_code ?? primary.currency_code,
+    primary.show_amount,
+    primary.show_currency_code,
   );
   const chargeMoney = moneyFromRatehawkAmount(
     primary.amount,
     primary.currency_code,
   );
-  if (!showMoney.ok || !chargeMoney.ok) {
-    return {
-      ok: false,
-      hard_stop: true,
-      reason: showMoney.reason || chargeMoney.reason || "price_unmapped",
+  if (!showMoney.ok) {
+    return _failClosed(showMoney.reason || "show_amount_unmapped", { payment });
+  }
+  if (!chargeMoney.ok) {
+    return _failClosed(chargeMoney.reason || "charge_amount_unmapped", {
       payment,
-    };
+    });
   }
 
   const taxes = Array.isArray(primary.tax_data?.taxes)
     ? primary.tax_data.taxes.map(_taxLine)
     : [];
   if (taxes.some((tax) => tax.mapping_ok !== true)) {
-    return {
-      ok: false,
-      hard_stop: true,
-      reason: "tax_unmapped",
-      payment,
-    };
+    return _failClosed("tax_unmapped", { payment });
+  }
+
+  const deposit = normalizeRatehawkRateDeposit(rate.deposit, {
+    chargeCurrency: chargeMoney.currency,
+    paymentType: payment.payment_type,
+  });
+  if (deposit.ok !== true) {
+    return { ...deposit, payment };
+  }
+
+  const noShow = normalizeRatehawkRateNoShow(rate.no_show, {
+    chargeCurrency: chargeMoney.currency,
+  });
+  if (noShow.ok !== true) {
+    return { ...noShow, payment };
+  }
+
+  const cancellation = resolveCancellationPenalties(
+    rate,
+    primary,
+    chargeMoney.currency,
+    showMoney.currency,
+  );
+  if (cancellation.ok !== true) {
+    return { ...cancellation, payment };
   }
 
   const unmapped = collectUnmappedFields(rate);
   if (unmapped.fail_closed) {
-    return {
-      ok: false,
-      hard_stop: true,
-      reason: "unmapped_critical_field",
+    return _failClosed("unmapped_critical_field", {
       unmapped_critical_field_names: unmapped.unmapped_critical_field_names,
       payment,
-    };
+    });
   }
 
-  const policies = Array.isArray(rate?.cancellation_penalties?.policies)
-    ? rate.cancellation_penalties.policies.map(_penaltyLine)
-    : [];
   const mealValue = _text(rate?.meal_data?.value ?? rate?.meal, 40);
   const remaining =
     _finiteNumber(rate?.allotment) ?? _finiteNumber(rate?.rooms_available);
@@ -457,11 +793,12 @@ export function normalizeRatehawkRateOffer(rate = {}, { locale = "en" } = {}) {
     payment,
     card_data_required: primary.is_need_credit_card_data === true,
     cvc_required: primary.is_need_cvc === true,
-    refundable: Boolean(rate?.cancellation_penalties?.free_cancellation_before),
-    free_cancellation_before:
-      rate?.cancellation_penalties?.free_cancellation_before ?? null,
-    cancellation_penalties: policies,
-    no_show: rate?.cancellation_penalties?.no_show ?? null,
+    refundable: cancellation.refundable === true,
+    free_cancellation_before: cancellation.free_cancellation_before,
+    cancellation_penalties: cancellation.policies,
+    cancellation_source: cancellation.source,
+    deposit,
+    no_show: noShow,
     remaining_availability: remaining,
     unmapped_field_names: unmapped.unmapped_field_names,
     fluxidi_affiliate_remuneration_percent:
