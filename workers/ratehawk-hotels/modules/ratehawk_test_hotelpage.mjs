@@ -19,6 +19,12 @@ import {
   sealRatehawkOfferReference,
   toCustomerHotelpageOffer,
 } from "./ratehawk_hotelpage_worker.mjs";
+import { sha256Hex } from "./crypto_utils.js";
+import {
+  RATEHAWK_OFFER_REF_PURPOSE,
+  buildOfferDisplaySnapshot,
+  fingerprintOfferDisplaySnapshot,
+} from "./ratehawk_prebook_contract.mjs";
 import { redactRatehawkSecrets } from "./ratehawk_provider.mjs";
 import {
   RATEHAWK_QUOTA_ENDPOINTS,
@@ -27,6 +33,7 @@ import {
 import {
   RATEHAWK_TEST_HID,
   RATEHAWK_TEST_OPERATION_HOTELPAGE,
+  RATEHAWK_TEST_TOKEN_SURFACE,
   RATEHAWK_TEST_TIMEOUT_MS,
   assertRatehawkTestProviderConfig,
   assertRatehawkTestStay,
@@ -274,8 +281,14 @@ async function _execute({
   const sealedOffers = [];
   for (const offer of page.offers || []) {
     if (offer?.freshness?.bookable !== true) continue;
+    const displaySnapshot = buildOfferDisplaySnapshot(offer);
+    const displayFingerprint = await sha256Hex(
+      fingerprintOfferDisplaySnapshot(displaySnapshot),
+    );
     const sealed = await sealRatehawkOfferReference(env, {
       v: 1,
+      purpose: RATEHAWK_OFFER_REF_PURPOSE,
+      surface: RATEHAWK_TEST_TOKEN_SURFACE,
       hid: page.hid,
       book_hash: offer.book_hash,
       match_hash: offer.match_hash,
@@ -286,6 +299,8 @@ async function _execute({
       residency: request.body.residency,
       currency: request.body.currency,
       guests: request.body.guests,
+      display_snapshot: displaySnapshot,
+      display_fingerprint: displayFingerprint,
     });
     if (sealed.ok !== true) continue;
     sealedOffers.push({ ...offer, offer_ref: sealed.offer_ref });

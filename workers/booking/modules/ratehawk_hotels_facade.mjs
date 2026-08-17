@@ -16,6 +16,8 @@ import {
   verifyRatehawkViewStayContext,
 } from "../../ratehawk-hotels/modules/ratehawk_view_stay_context.mjs";
 import {
+  RATEHAWK_TEST_PREBOOK_ACCEPT_TRIGGER,
+  RATEHAWK_TEST_PREBOOK_TRIGGER,
   assertRatehawkTestStay,
   hasForbiddenRatehawkTestClientControl,
 } from "../../ratehawk-hotels/modules/ratehawk_test_activation.mjs";
@@ -25,6 +27,10 @@ import {
   RATEHAWK_HOTELS_PREBOOK_ACCEPT_PATH,
   RATEHAWK_HOTELS_PREBOOK_PATH,
 } from "../../ratehawk-hotels/modules/ratehawk_prebook_worker.mjs";
+import {
+  RATEHAWK_HOTELS_TEST_PREBOOK_ACCEPT_PATH,
+  RATEHAWK_HOTELS_TEST_PREBOOK_PATH,
+} from "../../ratehawk-hotels/modules/ratehawk_test_prebook.mjs";
 
 export const RATEHAWK_HOTELPAGE_PUBLIC_PATH =
   "/public/hotels/ratehawk/hotelpage";
@@ -43,10 +49,15 @@ export const RATEHAWK_TEST_VIEW_STAY_CONTEXT_SECRET_NAME =
 export const RATEHAWK_HOTELS_SEARCH_PATH = "/internal/search";
 export const RATEHAWK_HOTELS_TEST_SEARCH_PATH = "/internal/test-search";
 export const RATEHAWK_HOTELS_TEST_HOTELPAGE_PATH = "/internal/test-hotelpage";
+export { RATEHAWK_HOTELS_TEST_PREBOOK_PATH, RATEHAWK_HOTELS_TEST_PREBOOK_ACCEPT_PATH };
 export const RATEHAWK_ADMIN_TEST_SEARCH_PATH =
   "/admin/hotels/ratehawk/test/search";
 export const RATEHAWK_ADMIN_TEST_HOTELPAGE_PATH =
   "/admin/hotels/ratehawk/test/hotelpage";
+export const RATEHAWK_ADMIN_TEST_PREBOOK_PATH =
+  "/admin/hotels/ratehawk/test/prebook";
+export const RATEHAWK_ADMIN_TEST_PREBOOK_ACCEPT_PATH =
+  "/admin/hotels/ratehawk/test/prebook/accept";
 export const RATEHAWK_SEARCH_SOURCES = Object.freeze([
   "ratehawk",
   "rate-hawk",
@@ -75,6 +86,10 @@ export function isBookingRatehawkTestSearchEnabled(env = {}) {
 
 export function isBookingRatehawkTestHotelpageEnabled(env = {}) {
   return _flag(env.RATEHAWK_TEST_HOTELPAGE_ENABLED);
+}
+
+export function isBookingRatehawkTestPrebookEnabled(env = {}) {
+  return _flag(env.RATEHAWK_TEST_PREBOOK_ENABLED);
 }
 
 function _lower(value) {
@@ -756,6 +771,102 @@ export async function handleAdminRatehawkTestHotelpage({
     },
   );
   return proxied.dto;
+}
+
+function _safeTestPrebookUnavailable(reason) {
+  return {
+    ok: true,
+    invoked: false,
+    binding_called: false,
+    reason,
+    progress_blocked: true,
+    acceptance_allowed: false,
+    prebook_ref: null,
+    accepted_ref: null,
+    changes: [],
+    stay22_fallback_retained: true,
+    mobility_independent_of_ratehawk: true,
+    existing_actions: [
+      "saved",
+      "nearby_events",
+      "taxi_to_this_event",
+      "taxi_to_this_stay",
+      "airport_transfer",
+      "stay22_fallback_availability",
+    ],
+    commercial: {
+      fluxidi_role: "affiliate",
+      customer_pays_fluxidi: false,
+      mollie_involved: false,
+    },
+  };
+}
+
+export async function handleAdminRatehawkTestPrebook({
+  env,
+  body = {},
+} = {}) {
+  const requestBody =
+    body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  if (bookingWorkerHasRatehawkCredentials(env)) {
+    return _safeTestPrebookUnavailable("booking_worker_must_not_hold_ratehawk_secrets");
+  }
+  if (
+    hasForbiddenRatehawkTestClientControl(requestBody) ||
+    hasForbiddenPublicPrebookClientControl(requestBody)
+  ) {
+    return _safeTestPrebookUnavailable("client_control_forbidden");
+  }
+  if (!isBookingRatehawkTestPrebookEnabled(env)) {
+    return _safeTestPrebookUnavailable("test_prebook_disabled");
+  }
+  const proxied = await _proxyHotelsTestPath(
+    env,
+    RATEHAWK_HOTELS_TEST_PREBOOK_PATH,
+    {
+      trigger: RATEHAWK_TEST_PREBOOK_TRIGGER,
+      offer_ref: _text(requestBody.offer_ref, 4000),
+      locale: _text(requestBody.locale, 8) || "nl",
+    },
+  );
+  return proxied.ok === true ? proxied.dto : {
+    ..._safeTestPrebookUnavailable(proxied.dto?.reason || "hotels_test_worker_binding_missing"),
+    reason: proxied.dto?.reason || "hotels_test_worker_binding_missing",
+  };
+}
+
+export async function handleAdminRatehawkTestPrebookAccept({
+  env,
+  body = {},
+} = {}) {
+  const requestBody =
+    body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  if (bookingWorkerHasRatehawkCredentials(env)) {
+    return _safeTestPrebookUnavailable("booking_worker_must_not_hold_ratehawk_secrets");
+  }
+  if (
+    hasForbiddenRatehawkTestClientControl(requestBody) ||
+    hasForbiddenPublicPrebookClientControl(requestBody)
+  ) {
+    return _safeTestPrebookUnavailable("client_control_forbidden");
+  }
+  if (!isBookingRatehawkTestPrebookEnabled(env)) {
+    return _safeTestPrebookUnavailable("test_prebook_disabled");
+  }
+  const proxied = await _proxyHotelsTestPath(
+    env,
+    RATEHAWK_HOTELS_TEST_PREBOOK_ACCEPT_PATH,
+    {
+      trigger: RATEHAWK_TEST_PREBOOK_ACCEPT_TRIGGER,
+      prebook_ref: _text(requestBody.prebook_ref, 4000),
+      terms_revision: _text(requestBody.terms_revision, 120),
+      locale: _text(requestBody.locale, 8) || "nl",
+    },
+  );
+  return proxied.ok === true ? proxied.dto : {
+    ..._safeTestPrebookUnavailable(proxied.dto?.reason || "hotels_test_worker_binding_missing"),
+    reason: proxied.dto?.reason || "hotels_test_worker_binding_missing",
+  };
 }
 
 export function runTaxiBookingIsolationProbe(input = {}) {

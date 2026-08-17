@@ -615,11 +615,15 @@ test("19. taxi-shaped work cannot reach test routes", () => {
   const street = readFileSync(join(HERE, "street_ride_never_planned.test.mjs"), "utf8");
   const fleet = readFileSync(join(HERE, "fleet_vehicle_tombstone.mjs"), "utf8");
   assert.equal(street.includes("/admin/hotels/ratehawk/test/search"), false);
+  assert.equal(street.includes("/admin/hotels/ratehawk/test/prebook"), false);
   assert.equal(street.includes("/internal/test-search"), false);
+  assert.equal(street.includes("/internal/test-prebook"), false);
   assert.equal(street.includes("RATEHAWK_HOTELS"), false);
   assert.equal(street.includes("RATEHAWK_HOTELS_TEST"), false);
   assert.equal(fleet.includes("/admin/hotels/ratehawk/test/hotelpage"), false);
+  assert.equal(fleet.includes("/admin/hotels/ratehawk/test/prebook"), false);
   assert.equal(fleet.includes("/internal/test-hotelpage"), false);
+  assert.equal(fleet.includes("/internal/test-prebook"), false);
   assert.equal(fleet.includes("RATEHAWK_HOTELS"), false);
   assert.equal(fleet.includes("RATEHAWK_HOTELS_TEST"), false);
 });

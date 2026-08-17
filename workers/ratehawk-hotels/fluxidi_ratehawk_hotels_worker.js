@@ -12,6 +12,8 @@
  *   POST /internal/prebook/accept
  *   POST /internal/test-search
  *   POST /internal/test-hotelpage
+ *   POST /internal/test-prebook
+ *   POST /internal/test-prebook/accept
  *   POST /internal/content-sync  (admin-internal / scheduled only)
  */
 
@@ -39,12 +41,19 @@ import { verifyRatehawkViewStayContext } from "./modules/ratehawk_view_stay_cont
 import {
   isRatehawkIsolatedTestWorker,
   isRatehawkTestHotelpageEnabled,
+  isRatehawkTestPrebookEnabled,
   isRatehawkTestSearchEnabled,
   resolveRatehawkWorkerName,
   resolveRatehawkWorkerSurface,
 } from "./modules/ratehawk_test_activation.mjs";
 import { handleRatehawkTestSearchRequest } from "./modules/ratehawk_test_search.mjs";
 import { handleRatehawkTestHotelpageRequest } from "./modules/ratehawk_test_hotelpage.mjs";
+import {
+  RATEHAWK_HOTELS_TEST_PREBOOK_ACCEPT_PATH,
+  RATEHAWK_HOTELS_TEST_PREBOOK_PATH,
+  handleRatehawkTestPrebookAcceptRequest,
+  handleRatehawkTestPrebookRequest,
+} from "./modules/ratehawk_test_prebook.mjs";
 import {
   RATEHAWK_HOTELS_SEARCH_PATH,
   handleRatehawkPublicSearchRequest,
@@ -65,6 +74,7 @@ export const RATEHAWK_HOTELS_HOTELPAGE_PATH = "/internal/hotelpage";
 export { RATEHAWK_HOTELS_SEARCH_PATH };
 export const RATEHAWK_HOTELS_TEST_SEARCH_PATH = "/internal/test-search";
 export const RATEHAWK_HOTELS_TEST_HOTELPAGE_PATH = "/internal/test-hotelpage";
+export { RATEHAWK_HOTELS_TEST_PREBOOK_PATH, RATEHAWK_HOTELS_TEST_PREBOOK_ACCEPT_PATH };
 export const RATEHAWK_HOTELS_CONTENT_SYNC_PATH = "/internal/content-sync";
 
 function json(obj, status = 200) {
@@ -152,6 +162,7 @@ export async function handleRatehawkHotelsWorkerFetch(
       content_storage: isRatehawkHotelsDbConfigured(env) ? "d1" : "not_configured",
       test_search_enabled: isRatehawkTestSearchEnabled(env),
       test_hotelpage_enabled: isRatehawkTestHotelpageEnabled(env),
+      test_prebook_enabled: isRatehawkTestPrebookEnabled(env),
       ratehawk: buildSafeRatehawkProviderStatus(env),
     });
   }
@@ -334,6 +345,69 @@ export async function handleRatehawkHotelsWorkerFetch(
         env,
         body,
         fetchImpl,
+        now,
+      }),
+    );
+  }
+
+  if (
+    url.pathname === RATEHAWK_HOTELS_TEST_PREBOOK_PATH &&
+    request.method === "POST"
+  ) {
+    if (!isRatehawkIsolatedTestWorker(env)) {
+      return json({
+        ok: true,
+        invoked: false,
+        reason: "test_worker_required",
+        progress_blocked: true,
+        acceptance_allowed: false,
+      });
+    }
+    let body = {};
+    try {
+      body = await request.json();
+    } catch {
+      body = {};
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      body = {};
+    }
+    return json(
+      await handleRatehawkTestPrebookRequest({
+        env,
+        body,
+        fetchImpl,
+        now,
+      }),
+    );
+  }
+
+  if (
+    url.pathname === RATEHAWK_HOTELS_TEST_PREBOOK_ACCEPT_PATH &&
+    request.method === "POST"
+  ) {
+    if (!isRatehawkIsolatedTestWorker(env)) {
+      return json({
+        ok: true,
+        invoked: false,
+        reason: "test_worker_required",
+        progress_blocked: true,
+        acceptance_allowed: false,
+      });
+    }
+    let body = {};
+    try {
+      body = await request.json();
+    } catch {
+      body = {};
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      body = {};
+    }
+    return json(
+      await handleRatehawkTestPrebookAcceptRequest({
+        env,
+        body,
         now,
       }),
     );

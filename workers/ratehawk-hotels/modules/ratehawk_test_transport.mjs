@@ -234,7 +234,7 @@ export async function postRatehawkTestOnce({
       : Array.isArray(data)
         ? data
         : [];
-    return redactRatehawkSecrets({
+    return {
       ok: true,
       provider: RATEHAWK_PROVIDER,
       operation,
@@ -246,7 +246,7 @@ export async function postRatehawkTestOnce({
       http_status: httpStatus,
       hotels,
       hotel_count: hotels.length,
-    });
+    };
   } catch (err) {
     if (_isAbortError(err)) {
       return _empty({

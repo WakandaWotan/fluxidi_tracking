@@ -10,6 +10,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  handleAdminRatehawkTestPrebook,
   handleAdminRatehawkTestSearch,
   handlePublicRatehawkHotelpage,
   issueRatehawkViewStayContext,
@@ -52,6 +53,7 @@ test("production Hotels config has no test host, environment or credentials", ()
     "RATEHAWK_CONTENT_BATCH_ENABLED",
     "RATEHAWK_TEST_SEARCH_ENABLED",
     "RATEHAWK_TEST_HOTELPAGE_ENABLED",
+    "RATEHAWK_TEST_PREBOOK_ENABLED",
   ]) {
     assert.match(top, new RegExp(`${name} = "0"`));
   }
@@ -80,6 +82,7 @@ test("test Hotels env is a private isolated Worker with no D1 or content sync", 
     "RATEHAWK_HOTELPAGE_ENABLED",
     "RATEHAWK_SEARCH_ENABLED",
     "RATEHAWK_PREBOOK_ENABLED",
+    "RATEHAWK_TEST_PREBOOK_ENABLED",
     "RATEHAWK_CONTENT_SYNC_ENABLED",
     "RATEHAWK_CONTENT_BATCH_ENABLED",
   ]) {
@@ -100,6 +103,8 @@ test("Booking binds production and test Hotels Workers separately", () => {
   assert.equal(/RATEHAWK_OFFER_REF_SECRET\s*=/.test(wrangler), false);
   assert.match(wrangler, /RATEHAWK_TEST_SEARCH_ENABLED = "1"/);
   assert.match(wrangler, /RATEHAWK_TEST_HOTELPAGE_ENABLED = "1"/);
+  assert.match(wrangler, /RATEHAWK_TEST_PREBOOK_ENABLED = "0"/);
+  assert.equal(/RATEHAWK_TEST_PREBOOK_ENABLED\s*=\s*"1"/.test(wrangler), false);
 });
 
 test("production facade paths cannot use RATEHAWK_HOTELS_TEST", () => {
@@ -124,7 +129,9 @@ test("production facade paths cannot use RATEHAWK_HOTELS_TEST", () => {
   assert.match(publicFn, /RATEHAWK_HOTELS_PREBOOK_PATH/);
   assert.equal(publicFn.includes("RATEHAWK_HOTELS_TEST"), false);
   assert.equal(publicSearchFn.includes("/internal/test-search"), false);
+  assert.equal(publicSearchFn.includes("/internal/test-prebook"), false);
   assert.equal(publicSearchFn.includes("/admin/hotels/ratehawk/test"), false);
+  assert.equal(publicFn.includes("/internal/test-prebook"), false);
   assert.match(statusFn, /env\?\.RATEHAWK_HOTELS/);
   assert.equal(statusFn.includes("RATEHAWK_HOTELS_TEST"), false);
 });
@@ -141,12 +148,18 @@ test("admin test paths cannot use RATEHAWK_HOTELS", () => {
   );
   const hotelpageFn = facade.slice(
     facade.indexOf("export async function handleAdminRatehawkTestHotelpage"),
+    facade.indexOf("export async function handleAdminRatehawkTestPrebook"),
+  );
+  const prebookFn = facade.slice(
+    facade.indexOf("export async function handleAdminRatehawkTestPrebook"),
     facade.indexOf("export function runTaxiBookingIsolationProbe"),
   );
   assert.match(proxyFn, /RATEHAWK_HOTELS_TEST/);
   assert.equal(proxyFn.includes("env?.RATEHAWK_HOTELS.fetch"), false);
   assert.equal(searchFn.includes("env.RATEHAWK_HOTELS"), false);
   assert.equal(hotelpageFn.includes("env.RATEHAWK_HOTELS"), false);
+  assert.equal(prebookFn.includes("env.RATEHAWK_HOTELS"), false);
+  assert.match(prebookFn, /RATEHAWK_HOTELS_TEST_PREBOOK_PATH/);
   assert.match(searchFn, /RATEHAWK_TEST_VIEW_STAY_CONTEXT_SECRET/);
   assert.match(hotelpageFn, /RATEHAWK_TEST_VIEW_STAY_CONTEXT_SECRET/);
   assert.equal(searchFn.includes("RATEHAWK_VIEW_STAY_CONTEXT_SECRET"), false);
@@ -182,6 +195,13 @@ test("missing test binding fails only admin RateHawk test routes", async () => {
   const search = await handleAdminRatehawkTestSearch({ env, now: NOW });
   assert.equal(search.reason, "hotels_test_worker_binding_missing");
   assert.equal(search.binding_called, false);
+  const prebook = await handleAdminRatehawkTestPrebook({
+    env: { ...env, RATEHAWK_TEST_PREBOOK_ENABLED: "1" },
+    body: { trigger: "test_prebook_revalidation", offer_ref: "rh1.aaa.bbb", locale: "nl" },
+  });
+  assert.equal(prebook.reason, "hotels_test_worker_binding_missing");
+  assert.equal(prebook.binding_called, false);
+  assert.equal(prebook.progress_blocked, true);
   const issued = await issueRatehawkViewStayContext(
     CONTEXT_SECRET,
     {
@@ -236,6 +256,41 @@ test("production Hotels Worker rejects test routes", async () => {
   const dto = await resp.json();
   assert.equal(dto.invoked, false);
   assert.equal(dto.reason, "test_worker_required");
+  const prebook = await handleRatehawkHotelsWorkerFetch(
+    new Request("https://fluxidi-ratehawk-hotels-api.internal/internal/test-prebook", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-fluxidi-internal-proxy": RATEHAWK_HOTELS_INTERNAL_PROXY,
+      },
+      body: "{}",
+    }),
+    {
+      RATEHAWK_WORKER_SURFACE: "production",
+      RATEHAWK_TEST_PREBOOK_ENABLED: "1",
+      RATEHAWK_PROVIDER_QUOTA: createRatehawkQuotaBinding(),
+    },
+  );
+  const prebookDto = await prebook.json();
+  assert.equal(prebookDto.invoked, false);
+  assert.equal(prebookDto.reason, "test_worker_required");
+  const accept = await handleRatehawkHotelsWorkerFetch(
+    new Request("https://fluxidi-ratehawk-hotels-api.internal/internal/test-prebook/accept", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-fluxidi-internal-proxy": RATEHAWK_HOTELS_INTERNAL_PROXY,
+      },
+      body: "{}",
+    }),
+    {
+      RATEHAWK_WORKER_SURFACE: "production",
+      RATEHAWK_TEST_PREBOOK_ENABLED: "1",
+    },
+  );
+  const acceptDto = await accept.json();
+  assert.equal(acceptDto.invoked, false);
+  assert.equal(acceptDto.reason, "test_worker_required");
 });
 
 test("test Hotels Worker rejects production Hotelpage and content sync", async () => {

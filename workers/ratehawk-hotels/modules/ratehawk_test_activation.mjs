@@ -18,12 +18,17 @@ import { RATEHAWK_HOTELPAGE_PATH } from "./ratehawk_hotelpage_contract.mjs";
 
 export const RATEHAWK_TEST_SEARCH_GATE = "RATEHAWK_TEST_SEARCH_ENABLED";
 export const RATEHAWK_TEST_HOTELPAGE_GATE = "RATEHAWK_TEST_HOTELPAGE_ENABLED";
+export const RATEHAWK_TEST_PREBOOK_GATE = "RATEHAWK_TEST_PREBOOK_ENABLED";
 export const RATEHAWK_WORKER_SURFACE_PRODUCTION = "production";
 export const RATEHAWK_WORKER_SURFACE_TEST = "test";
 export const RATEHAWK_PRODUCTION_WORKER_NAME = "fluxidi-ratehawk-hotels-api";
 export const RATEHAWK_TEST_WORKER_NAME = "fluxidi-ratehawk-hotels-api-test";
 export const RATEHAWK_TEST_OPERATION_SERP = "test_serp_hotels";
 export const RATEHAWK_TEST_OPERATION_HOTELPAGE = "test_hotelpage";
+export const RATEHAWK_TEST_OPERATION_PREBOOK = "test_prebook";
+export const RATEHAWK_TEST_TOKEN_SURFACE = "test";
+export const RATEHAWK_TEST_PREBOOK_TRIGGER = "test_prebook_revalidation";
+export const RATEHAWK_TEST_PREBOOK_ACCEPT_TRIGGER = "test_accept_prebook_terms";
 export const RATEHAWK_TEST_HID = Number(RATEHAWK_TEST_HOTEL_HID);
 export const RATEHAWK_TEST_RESIDENCY = "be";
 export const RATEHAWK_TEST_CURRENCY = "EUR";
@@ -70,6 +75,12 @@ export const RATEHAWK_TEST_FORBIDDEN_CLIENT_KEYS = Object.freeze([
   "latitude",
   "book_hash",
   "match_hash",
+  "hash",
+  "price",
+  "price_override",
+  "show_amount",
+  "payment_type",
+  "cancellation",
   "RATEHAWK_API_KEY",
   "RATEHAWK_KEY_ID",
 ]);
@@ -145,6 +156,10 @@ export function isRatehawkTestSearchEnabled(env) {
 
 export function isRatehawkTestHotelpageEnabled(env) {
   return envFlag(env?.[RATEHAWK_TEST_HOTELPAGE_GATE]);
+}
+
+export function isRatehawkTestPrebookEnabled(env) {
+  return envFlag(env?.[RATEHAWK_TEST_PREBOOK_GATE]);
 }
 
 export function isRatehawkTestPathDenied(path) {
@@ -262,6 +277,43 @@ export function evaluateRatehawkTestHotelpageGate(env) {
     return { ok: false, allowed: false, reason: "test_worker_required" };
   }
   return { ok: true, allowed: true, reason: null };
+}
+
+export function evaluateRatehawkTestPrebookGate(env) {
+  if (!isRatehawkTestPrebookEnabled(env)) {
+    return { ok: false, allowed: false, reason: "test_prebook_disabled" };
+  }
+  if (!isRatehawkIsolatedTestWorker(env)) {
+    return { ok: false, allowed: false, reason: "test_worker_required" };
+  }
+  return { ok: true, allowed: true, reason: null };
+}
+
+export function assertRatehawkTestOfferClaims(claims = {}, now = Date.now()) {
+  if (!claims || typeof claims !== "object") {
+    return { ok: false, reason: "offer_ref_invalid" };
+  }
+  if (claims.surface !== RATEHAWK_TEST_TOKEN_SURFACE) {
+    return { ok: false, reason: "production_offer_ref_forbidden" };
+  }
+  if (claims.purpose && claims.purpose !== "hotelpage_offer") {
+    return { ok: false, reason: "offer_ref_purpose_mismatch" };
+  }
+  if (!claims.book_hash || !claims.display_snapshot) {
+    return { ok: false, reason: "offer_ref_incomplete" };
+  }
+  return assertRatehawkTestStay(
+    {
+      hid: claims.hid,
+      checkin: claims.checkin,
+      checkout: claims.checkout,
+      residency: claims.residency,
+      currency: claims.currency,
+      guests: claims.guests,
+      language: claims.language || RATEHAWK_TEST_LANGUAGE,
+    },
+    now,
+  );
 }
 
 export function buildRatehawkTestSerpRequest(now = Date.now()) {

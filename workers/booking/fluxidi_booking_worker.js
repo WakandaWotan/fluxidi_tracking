@@ -107,6 +107,8 @@ import {
 import {
   fetchRatehawkHotelsStatus,
   handleAdminRatehawkTestHotelpage,
+  handleAdminRatehawkTestPrebook,
+  handleAdminRatehawkTestPrebookAccept,
   handleAdminRatehawkTestSearch,
   handlePublicRatehawkHotelpage,
   handlePublicRatehawkPrebook,
@@ -40784,6 +40786,50 @@ export default {
           await handleAdminRatehawkTestHotelpage({
             env,
             body: testHotelpageBody,
+          }),
+        );
+      }
+
+      if (
+        url.pathname === "/admin/hotels/ratehawk/test/prebook" &&
+        request.method === "POST"
+      ) {
+        try {
+          _requireAdmin(request, url, env);
+        } catch (err) {
+          const message = String(err?.message || "Unauthorized");
+          return json(
+            { ok: false, error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable" },
+            message === "Unauthorized" ? 401 : 500,
+          );
+        }
+        const testPrebookBody = await safeJson(request);
+        return json(
+          await handleAdminRatehawkTestPrebook({
+            env,
+            body: testPrebookBody,
+          }),
+        );
+      }
+
+      if (
+        url.pathname === "/admin/hotels/ratehawk/test/prebook/accept" &&
+        request.method === "POST"
+      ) {
+        try {
+          _requireAdmin(request, url, env);
+        } catch (err) {
+          const message = String(err?.message || "Unauthorized");
+          return json(
+            { ok: false, error: message === "Unauthorized" ? "unauthorized" : "admin_unavailable" },
+            message === "Unauthorized" ? 401 : 500,
+          );
+        }
+        const testAcceptBody = await safeJson(request);
+        return json(
+          await handleAdminRatehawkTestPrebookAccept({
+            env,
+            body: testAcceptBody,
           }),
         );
       }

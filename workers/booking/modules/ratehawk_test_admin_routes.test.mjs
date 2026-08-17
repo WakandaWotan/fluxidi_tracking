@@ -80,6 +80,8 @@ test("17. unauthenticated admin test routes return 401 and make zero binding cal
   for (const path of [
     "/admin/hotels/ratehawk/test/search",
     "/admin/hotels/ratehawk/test/hotelpage",
+    "/admin/hotels/ratehawk/test/prebook",
+    "/admin/hotels/ratehawk/test/prebook/accept",
   ]) {
     const res = await worker.fetch(
       new Request(`https://fluxidi-booking-api.internal${path}`, {

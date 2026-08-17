@@ -28,6 +28,7 @@ import {
   assertRatehawkTestStay,
   buildRatehawkTestSerpRequest,
   evaluateRatehawkTestHotelpageGate,
+  evaluateRatehawkTestPrebookGate,
   evaluateRatehawkTestSearchGate,
   resolveRatehawkTestStay,
 } from "./ratehawk_test_activation.mjs";
@@ -165,6 +166,7 @@ test("20. all six RateHawk gates default to 0", () => {
     "RATEHAWK_CONTENT_BATCH_ENABLED",
     "RATEHAWK_TEST_SEARCH_ENABLED",
     "RATEHAWK_TEST_HOTELPAGE_ENABLED",
+    "RATEHAWK_TEST_PREBOOK_ENABLED",
   ]) {
     assert.match(wrangler, new RegExp(`${name} = "0"`));
   }
@@ -204,7 +206,7 @@ test("production worker surface cannot run test search even when gates are on", 
   assert.equal(dto.reason, "test_worker_required");
 });
 
-test("production gates do not enable test search", async () => {
+test("production gates do not enable test search or test prebook", async () => {
   const { state, fetchImpl } = trackingFetch(async () => {
     throw new Error("must_not_call_ratehawk");
   });
@@ -212,11 +214,20 @@ test("production gates do not enable test search", async () => {
     env: hotelsEnv({
       RATEHAWK_ENABLED: "1",
       RATEHAWK_HOTELPAGE_ENABLED: "1",
+      RATEHAWK_PREBOOK_ENABLED: "1",
       RATEHAWK_TEST_SEARCH_ENABLED: "0",
     }),
     fetchImpl,
     now: NOW,
   });
+  assert.equal(
+    evaluateRatehawkTestPrebookGate({
+      RATEHAWK_PREBOOK_ENABLED: "1",
+      RATEHAWK_TEST_PREBOOK_ENABLED: "0",
+      RATEHAWK_WORKER_SURFACE: "test",
+    }).reason,
+    "test_prebook_disabled",
+  );
   assert.equal(state.calls, 0);
   assert.equal(dto.reason, "test_search_disabled");
 });
