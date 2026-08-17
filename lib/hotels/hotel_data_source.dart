@@ -2,6 +2,7 @@ import 'package:fluxidi_tracking/app_config.dart';
 
 import 'approved_hotel_data.dart';
 import 'hotel_model.dart';
+import 'ratehawk_view_stay.dart';
 
 // TODO(HOTELS-PARTNER): Switch HotelsPage source to partner-approved once catalog has rows.
 // TODO(HOTELS-PROVIDER): Do not add travelpayouts/expedia-rapid/agoda/booking-demand to the
@@ -329,5 +330,6 @@ HotelStay? hotelStayFromPublicHotelJson(Map<String, dynamic> json) {
     hid: hid,
     availabilityLabel: availabilityLabel,
     retrievedAt: retrievedAt,
+    viewStay: parseRatehawkViewStaySnapshot(json, hid: hid),
   );
 }

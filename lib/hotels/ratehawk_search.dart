@@ -4,6 +4,7 @@ import 'package:fluxidi_tracking/app_config.dart';
 
 import 'hotel_data_source.dart';
 import 'hotel_model.dart';
+import 'ratehawk_view_stay.dart';
 
 const int kRatehawkInitialHotelLimit = 20;
 const int kRatehawkLoadMoreIncrement = 20;
@@ -480,10 +481,26 @@ List<HotelStay> mergeRatehawkHotelStays({
   return merged;
 }
 
+List<HotelStay> attachEnvelopeViewStay({
+  required List<HotelStay> stays,
+  required Map<String, dynamic> payload,
+}) {
+  final envelope = parseRatehawkViewStaySnapshot(payload);
+  if (envelope == null) return stays;
+  return stays
+      .map((stay) {
+        final hid = parseRatehawkHid(stay);
+        if (hid == null || hid != envelope.hid) return stay;
+        return stay.copyWith(hid: hid, viewStay: envelope);
+      })
+      .toList(growable: false);
+}
+
 HotelStay overlayRatehawkLiveFields(HotelStay existing, HotelStay incoming) {
   final stale = isRatehawkStalePrice(incoming);
   return existing.copyWith(
     hid: incoming.hid ?? existing.hid,
+    viewStay: incoming.viewStay ?? existing.viewStay,
     priceHint: stale ? kRatehawkStalePriceLabelNl : incoming.priceHint,
     availabilityLabel: stale
         ? kRatehawkStalePriceLabelNl
@@ -556,7 +573,7 @@ RatehawkSearchResponse parseRatehawkPublicSearchPayload(
       : false;
   return RatehawkSearchResponse(
     ok: true,
-    stays: stays,
+    stays: attachEnvelopeViewStay(stays: stays, payload: payload),
     warnings: warnings,
     invocationAllowed: invocationAllowed,
     reason: payload['reason']?.toString(),

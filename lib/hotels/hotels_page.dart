@@ -23,6 +23,8 @@ import '../nearby_partners_page.dart';
 import 'hotel_data_source.dart';
 import 'hotel_geo_taxonomy.dart';
 import 'hotel_model.dart';
+import 'ratehawk_hotelpage.dart';
+import 'ratehawk_hotelpage_panel.dart';
 import 'ratehawk_search.dart';
 import 'ratehawk_search_panel.dart';
 
@@ -43,6 +45,7 @@ class HotelsPage extends StatefulWidget {
     this.tenantId,
     this.companyId,
     this.ratehawkSearchClient,
+    this.ratehawkHotelpageClient,
     super.key,
   });
 
@@ -59,6 +62,7 @@ class HotelsPage extends StatefulWidget {
   final String? tenantId;
   final String? companyId;
   final RatehawkHotelSearchClient? ratehawkSearchClient;
+  final RatehawkHotelpageClient? ratehawkHotelpageClient;
 
   @override
   State<HotelsPage> createState() => _HotelsPageState();
@@ -1440,6 +1444,7 @@ class _HotelsPageState extends State<HotelsPage> {
           externalAvailabilityHint: stay.source == 'discovery'
               ? _stay22AvailabilitySubtitle
               : null,
+          ratehawkHotelpageClient: widget.ratehawkHotelpageClient,
         ),
       ),
     );
@@ -3431,6 +3436,7 @@ class HotelStayDetailPage extends StatelessWidget {
     required this.onProviderSearchTap,
     required this.externalAvailabilityLabel,
     this.externalAvailabilityHint,
+    this.ratehawkHotelpageClient,
     super.key,
   });
 
@@ -3446,6 +3452,7 @@ class HotelStayDetailPage extends StatelessWidget {
   final VoidCallback onProviderSearchTap;
   final String externalAvailabilityLabel;
   final String? externalAvailabilityHint;
+  final RatehawkHotelpageClient? ratehawkHotelpageClient;
   CustomerThemePalette get _themePalette =>
       paletteForCustomerTheme(customerThemeNotifier.value);
   bool get _isDarkTheme => _themePalette.isDark;
@@ -3837,6 +3844,10 @@ class HotelStayDetailPage extends StatelessWidget {
   }
 
   String _displayPriceHint() {
+    if (isRatehawkStalePrice(stay) ||
+        (isRatehawkStay(stay) && (stay.priceHint ?? '').trim().isEmpty)) {
+      return ratehawkExpiredAvailabilityLabel(_languageCode);
+    }
     return formatDiscoveryPriceHint(stay.priceHint, fromLabel: _fromLabel);
   }
 
@@ -4280,18 +4291,29 @@ class HotelStayDetailPage extends StatelessWidget {
                                   .toList(),
                             ),
                           ],
-                          const SizedBox(height: 12),
-                          Text(
-                            stay.displayProviderLabel(_languageCode),
-                            style: TextStyle(
-                              color: _softText.withOpacity(0.95),
-                              fontSize: 11.7,
-                              fontWeight: FontWeight.w600,
+                          if (!isRatehawkStay(stay)) ...[
+                            const SizedBox(height: 12),
+                            Text(
+                              stay.displayProviderLabel(_languageCode),
+                              style: TextStyle(
+                                color: _softText.withOpacity(0.95),
+                                fontSize: 11.7,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
-                          ),
+                          ],
                         ],
                       ),
                     ),
+                    if (isRatehawkStay(stay) || stay.viewStay != null) ...[
+                      const SizedBox(height: 12),
+                      RatehawkHotelpageSection(
+                        stay: stay,
+                        languageCode: _languageCode,
+                        palette: _themePalette,
+                        client: ratehawkHotelpageClient,
+                      ),
+                    ],
                     if (hasAnyNearbyEvents) ...[
                       const SizedBox(height: 12),
                       Container(

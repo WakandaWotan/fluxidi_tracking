@@ -8733,6 +8733,49 @@ Future<Map<String, dynamic>?> fetchPublicHotelSearch({
   }
 }
 
+Future<Map<String, dynamic>?> fetchPublicRatehawkHotelpage({
+  required int hid,
+  required String viewStayContext,
+  required String checkin,
+  required String checkout,
+  required String residency,
+  required String currency,
+  required List<Map<String, dynamic>> guests,
+}) async {
+  final token = viewStayContext.trim();
+  if (hid <= 0 || !token.startsWith('rhctx1.')) return null;
+  final endpoint = Uri.parse(
+    '${appConfig.bookingBaseUrl}/public/hotels/ratehawk/hotelpage',
+  );
+  try {
+    final res = await http
+        .post(
+          endpoint,
+          headers: const <String, String>{
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'trigger': 'view_stay',
+            'hid': hid,
+            'view_stay_context': token,
+            'checkin': checkin,
+            'checkout': checkout,
+            'residency': residency,
+            'currency': currency,
+            'guests': guests,
+          }),
+        )
+        .timeout(const Duration(seconds: 35));
+    if (res.statusCode < 200 || res.statusCode >= 300) return null;
+    final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+    if (decoded is! Map) return null;
+    return Map<String, dynamic>.from(decoded);
+  } catch (_) {
+    return null;
+  }
+}
+
 Map<String, dynamic> sanitizePublicCustomerProfilePayload(
   Map<String, dynamic> payload,
 ) {

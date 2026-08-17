@@ -1,5 +1,7 @@
 import 'package:fluxidi_tracking/discovery/discovery_models.dart';
 
+import 'ratehawk_view_stay.dart';
+
 // TODO(HOTELS-PROVIDER): Expedia Rapid content/availability will be resolved server-side
 // via Cloudflare Worker — never add API secrets or direct Rapid calls in Flutter.
 // TODO(HOTELS-PROVIDER): Affiliate/deeplink URLs (Booking, Stay22, Travelpayouts) must be
@@ -180,6 +182,7 @@ class HotelStay {
     this.hid,
     this.availabilityLabel,
     this.retrievedAt,
+    this.viewStay,
   });
 
   final String id;
@@ -222,6 +225,7 @@ class HotelStay {
   final int? hid;
   final String? availabilityLabel;
   final DateTime? retrievedAt;
+  final RatehawkViewStaySnapshot? viewStay;
 
   String? get effectiveBookingUrl {
     final directAvailability = _normalizeHttpUrl(externalAvailabilityUrl);
@@ -306,6 +310,7 @@ class HotelStay {
     int? hid,
     String? availabilityLabel,
     DateTime? retrievedAt,
+    RatehawkViewStaySnapshot? viewStay,
     bool clearPriceHint = false,
     bool clearAvailabilityLabel = false,
   }) {
@@ -351,6 +356,7 @@ class HotelStay {
           ? null
           : (availabilityLabel ?? this.availabilityLabel),
       retrievedAt: retrievedAt ?? this.retrievedAt,
+      viewStay: viewStay ?? this.viewStay,
     );
   }
 

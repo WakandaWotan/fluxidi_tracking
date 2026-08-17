@@ -4,6 +4,7 @@ import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/hotels/hotel_model.dart';
 import 'package:fluxidi_tracking/hotels/hotels_page.dart';
+import 'package:fluxidi_tracking/hotels/ratehawk_hotelpage.dart';
 import 'package:fluxidi_tracking/hotels/ratehawk_search.dart';
 
 HotelStay _localStay() {
@@ -27,13 +28,18 @@ HotelStay _localStay() {
   );
 }
 
-Widget _hotelsPage(RatehawkHotelSearchClient client) {
+Widget _hotelsPage(
+  RatehawkHotelSearchClient client, {
+  RatehawkHotelpageClient? hotelpageClient,
+}) {
   return MaterialApp(
     home: MediaQuery(
       data: const MediaQueryData(size: Size(1200, 1800)),
       child: HotelsPage(
         stays: <HotelStay>[_localStay()],
         ratehawkSearchClient: client,
+        ratehawkHotelpageClient:
+            hotelpageClient ?? RecordingRatehawkHotelpageClient(),
       ),
     ),
   );
@@ -57,12 +63,14 @@ void main() {
     tester,
   ) async {
     final client = RecordingRatehawkHotelSearchClient();
+    final hotelpage = RecordingRatehawkHotelpageClient();
     await tester.binding.setSurfaceSize(const Size(1200, 1800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(_hotelsPage(client));
+    await tester.pumpWidget(_hotelsPage(client, hotelpageClient: hotelpage));
     await tester.pump();
     expect(find.text('Warwick Brussels'), findsWidgets);
     expect(client.calls, isEmpty);
+    expect(hotelpage.calls, isEmpty);
     expect(find.text('Bekijk beschikbaarheid'), findsWidgets);
     expect(find.textContaining('Stay22'), findsNothing);
     expect(find.text('Taxi naar dit verblijf'), findsWidgets);
@@ -74,9 +82,10 @@ void main() {
     tester,
   ) async {
     final client = RecordingRatehawkHotelSearchClient();
+    final hotelpage = RecordingRatehawkHotelpageClient();
     await tester.binding.setSurfaceSize(const Size(1200, 1800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(_hotelsPage(client));
+    await tester.pumpWidget(_hotelsPage(client, hotelpageClient: hotelpage));
     await tester.pump();
     expect(find.text('Warwick Brussels'), findsWidgets);
     expect(find.text('Evenementen in de buurt'), findsNothing);
@@ -88,5 +97,6 @@ void main() {
     expect(find.text('Evenementen in de buurt'), findsWidgets);
     expect(find.text('Bekijk beschikbaarheid'), findsWidgets);
     expect(client.calls, isEmpty);
+    expect(hotelpage.calls, isEmpty);
   });
 }
