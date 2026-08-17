@@ -109,6 +109,8 @@ import {
   handleAdminRatehawkTestHotelpage,
   handleAdminRatehawkTestSearch,
   handlePublicRatehawkHotelpage,
+  handlePublicRatehawkPrebook,
+  handlePublicRatehawkPrebookAccept,
   handlePublicRatehawkSearch,
   isRatehawkSearchSource,
 } from "./modules/ratehawk_hotels_facade.mjs";
@@ -40671,6 +40673,34 @@ export default {
             env,
             request,
             body: hotelpageBody,
+          }),
+        );
+      }
+
+      if (url.pathname === "/public/hotels/ratehawk/prebook") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const prebookBody = await safeJson(request);
+        return json(
+          await handlePublicRatehawkPrebook({
+            env,
+            request,
+            body: prebookBody,
+          }),
+        );
+      }
+
+      if (url.pathname === "/public/hotels/ratehawk/prebook/accept") {
+        if (request.method !== "POST") {
+          return json({ ok: false, error: "method_not_allowed" }, 405);
+        }
+        const acceptBody = await safeJson(request);
+        return json(
+          await handlePublicRatehawkPrebookAccept({
+            env,
+            request,
+            body: acceptBody,
           }),
         );
       }

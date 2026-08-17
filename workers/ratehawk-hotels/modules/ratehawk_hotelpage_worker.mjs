@@ -14,6 +14,7 @@
 import {
   base64urlDecodeToBytes,
   base64urlEncodeBytes,
+  sha256Hex,
 } from "./crypto_utils.js";
 import {
   EXISTING_HOTEL_PAGE_ACTIONS,
@@ -39,6 +40,11 @@ import {
   RATEHAWK_QUOTA_ENDPOINTS,
   reserveRatehawkProviderQuota,
 } from "./ratehawk_provider_quota.mjs";
+import {
+  RATEHAWK_OFFER_REF_PURPOSE,
+  buildOfferDisplaySnapshot,
+  fingerprintOfferDisplaySnapshot,
+} from "./ratehawk_prebook_contract.mjs";
 
 export const RATEHAWK_HOTELPAGE_PUBLIC_PATH =
   "/public/hotels/ratehawk/hotelpage";
@@ -587,8 +593,13 @@ async function _executeHotelpageTransport({
   const sealedOffers = [];
   for (const offer of page.offers || []) {
     if (offer?.freshness?.bookable !== true) continue;
+    const displaySnapshot = buildOfferDisplaySnapshot(offer);
+    const displayFingerprint = await sha256Hex(
+      fingerprintOfferDisplaySnapshot(displaySnapshot),
+    );
     const sealed = await sealRatehawkOfferReference(env, {
       v: 1,
+      purpose: RATEHAWK_OFFER_REF_PURPOSE,
       hid: page.hid,
       book_hash: offer.book_hash,
       match_hash: offer.match_hash,
@@ -599,6 +610,8 @@ async function _executeHotelpageTransport({
       residency: request.body.residency,
       currency: request.body.currency,
       guests: request.body.guests,
+      display_snapshot: displaySnapshot,
+      display_fingerprint: displayFingerprint,
     });
     if (sealed.ok !== true) continue;
     sealedOffers.push({ ...offer, offer_ref: sealed.offer_ref });

@@ -387,6 +387,9 @@ test("5. mocked successful hotelpage response normalizes correctly", async () =>
   assert.equal(opened.ok, true);
   assert.equal(opened.claims.book_hash, BOOK_HASH);
   assert.equal(opened.claims.match_hash, MATCH_HASH);
+  assert.equal(opened.claims.purpose, "hotelpage_offer");
+  assert.equal(opened.claims.display_snapshot.customer_total.currency, "EUR");
+  assert.equal(typeof opened.claims.display_fingerprint, "string");
   assert.equal(opened.claims.expires_at - opened.claims.retrieved_at, RATEHAWK_HOTELPAGE_TTL_MS);
   assert.equal(opened.claims.expires_at - RETRIEVED_AT <= RATEHAWK_HOTELPAGE_TTL_MS, true);
   assertNoSecretsOrHashes(dto);

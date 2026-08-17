@@ -16,18 +16,21 @@ export const RATEHAWK_QUOTA_ENDPOINTS = Object.freeze({
   HOTELPAGE: "hotelpage",
   SERP: "serp",
   HOTEL_CONTENT: "hotel_content",
+  PREBOOK: "prebook",
 });
 
 export const RATEHAWK_TEST_ACCOUNT_QUOTAS = Object.freeze({
   hotelpage: Object.freeze({ limit: 5, window_seconds: 60 }),
   serp: Object.freeze({ limit: 15, window_seconds: 60 }),
   hotel_content: Object.freeze({ limit: 30, window_seconds: 60 }),
+  prebook: Object.freeze({ limit: 5, window_seconds: 60 }),
 });
 
 const QUOTA_ENV_PREFIX = Object.freeze({
   hotelpage: "RATEHAWK_QUOTA_HOTELPAGE",
   serp: "RATEHAWK_QUOTA_SERP",
   hotel_content: "RATEHAWK_QUOTA_HOTEL_CONTENT",
+  prebook: "RATEHAWK_QUOTA_PREBOOK",
 });
 
 function _trim(value, max = 200) {
@@ -108,9 +111,15 @@ export function resolveRatehawkProviderQuotaConfig(env = {}) {
     RATEHAWK_QUOTA_ENDPOINTS.HOTEL_CONTENT,
     fallback?.hotel_content,
   );
+  const prebook = _readQuota(
+    env,
+    RATEHAWK_QUOTA_ENDPOINTS.PREBOOK,
+    fallback?.prebook,
+  );
   if (hotelpage?.ok === false) return hotelpage;
   if (serp?.ok === false) return serp;
   if (hotelContent?.ok === false) return hotelContent;
+  if (prebook?.ok === false) return prebook;
   if (!hotelpage || !serp || !hotelContent) {
     return {
       ok: false,
@@ -130,6 +139,7 @@ export function resolveRatehawkProviderQuotaConfig(env = {}) {
       hotelpage,
       serp,
       hotel_content: hotelContent,
+      ...(prebook ? { prebook } : {}),
     },
   };
 }
@@ -174,7 +184,8 @@ export class RatehawkProviderQuotaDO {
     return (
       endpoint === RATEHAWK_QUOTA_ENDPOINTS.HOTELPAGE ||
       endpoint === RATEHAWK_QUOTA_ENDPOINTS.SERP ||
-      endpoint === RATEHAWK_QUOTA_ENDPOINTS.HOTEL_CONTENT
+      endpoint === RATEHAWK_QUOTA_ENDPOINTS.HOTEL_CONTENT ||
+      endpoint === RATEHAWK_QUOTA_ENDPOINTS.PREBOOK
     );
   }
 
@@ -345,7 +356,10 @@ export async function reserveRatehawkProviderQuota({
       ok: false,
       allowed: false,
       invoked: false,
-      reason: "quota_endpoint_unknown",
+      reason:
+        endpoint === RATEHAWK_QUOTA_ENDPOINTS.PREBOOK && config.production
+          ? "production_quota_unconfigured"
+          : "quota_endpoint_unknown",
       retryable: true,
       retry_after: null,
       endpoint,

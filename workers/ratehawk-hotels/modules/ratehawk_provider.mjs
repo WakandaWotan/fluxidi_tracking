@@ -41,6 +41,7 @@ export const RATEHAWK_ALLOWED_HOSTS = Object.freeze([
 
 export const RATEHAWK_OVERVIEW_PATH = "/api/b2b/v3/overview/";
 export const RATEHAWK_HOTELPAGE_PATH = "/api/b2b/v3/search/hp/";
+export const RATEHAWK_PREBOOK_PATH = "/api/b2b/v3/hotel/prebook/";
 export const RATEHAWK_DEFAULT_TIMEOUT_MS = 12_000;
 export const RATEHAWK_HOTELPAGE_TIMEOUT_MS = 30_000;
 export const RATEHAWK_MIN_TIMEOUT_MS = 1_000;
@@ -341,6 +342,18 @@ export function isRatehawkSearchEnabled(env) {
 
 export function isRatehawkSearchInvocationAllowed(env) {
   return isRatehawkInvocationAllowed(env) && isRatehawkSearchEnabled(env);
+}
+
+export function isRatehawkPrebookEnabled(env) {
+  return envFlag(env?.RATEHAWK_PREBOOK_ENABLED);
+}
+
+export function isRatehawkPrebookInvocationAllowed(env) {
+  return (
+    isRatehawkInvocationAllowed(env) &&
+    isRatehawkHotelpageEnabled(env) &&
+    isRatehawkPrebookEnabled(env)
+  );
 }
 
 export function buildSafeRatehawkProviderStatus(env) {

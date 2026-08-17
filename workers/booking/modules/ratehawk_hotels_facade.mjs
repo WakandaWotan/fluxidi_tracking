@@ -1,7 +1,9 @@
 /**
  * Booking Worker RateHawk facade.
  *
- * Public app route stays POST /public/hotels/ratehawk/hotelpage.
+ * Public app routes stay POST /public/hotels/ratehawk/hotelpage,
+ * POST /public/hotels/ratehawk/prebook and
+ * POST /public/hotels/ratehawk/prebook/accept.
  * This module must not resolve RateHawk credentials, construct provider
  * Authorization, call the provider host, decrypt offer references, or
  * normalize raw provider payloads.
@@ -18,9 +20,18 @@ import {
   hasForbiddenRatehawkTestClientControl,
 } from "../../ratehawk-hotels/modules/ratehawk_test_activation.mjs";
 import { hasForbiddenPublicSearchClientControl } from "../../ratehawk-hotels/modules/ratehawk_market_search_limits.mjs";
+import { hasForbiddenPublicPrebookClientControl } from "../../ratehawk-hotels/modules/ratehawk_prebook_contract.mjs";
+import {
+  RATEHAWK_HOTELS_PREBOOK_ACCEPT_PATH,
+  RATEHAWK_HOTELS_PREBOOK_PATH,
+} from "../../ratehawk-hotels/modules/ratehawk_prebook_worker.mjs";
 
 export const RATEHAWK_HOTELPAGE_PUBLIC_PATH =
   "/public/hotels/ratehawk/hotelpage";
+export const RATEHAWK_PREBOOK_PUBLIC_PATH =
+  "/public/hotels/ratehawk/prebook";
+export const RATEHAWK_PREBOOK_ACCEPT_PUBLIC_PATH =
+  "/public/hotels/ratehawk/prebook/accept";
 export const RATEHAWK_HOTELS_BINDING = "RATEHAWK_HOTELS";
 export const RATEHAWK_HOTELS_SERVICE_NAME = "fluxidi-ratehawk-hotels-api";
 export const RATEHAWK_HOTELS_TEST_BINDING = "RATEHAWK_HOTELS_TEST";
@@ -477,6 +488,153 @@ export async function handlePublicRatehawkHotelpage({
   } catch {
     return _safeHotelUnavailable("hotels_worker_unavailable");
   }
+}
+
+async function _incrementPrebookRateLimit(env, request) {
+  if (!env?.BOOKING_KV || typeof env.BOOKING_KV.get !== "function") {
+    return { ok: false, limited: true, reason: "rate_limit_binding_missing" };
+  }
+  const ip = _text(
+    request?.headers?.get("cf-connecting-ip") ||
+      request?.headers?.get("x-forwarded-for") ||
+      "unknown",
+    80,
+  );
+  const clientHash = await sha256Hex(`ratehawk-prebook:${ip}`);
+  const rateKey = `ratehawk:prebook:${clientHash}`;
+  const rawRate = await env.BOOKING_KV.get(rateKey, { type: "json" });
+  const rateSource =
+    rawRate && typeof rawRate === "object" && !Array.isArray(rawRate)
+      ? rawRate
+      : {};
+  const count = Number.isFinite(Number(rateSource.count))
+    ? Math.max(0, Math.round(Number(rateSource.count)))
+    : 0;
+  if (count >= HOTELPAGE_RATE_MAX) {
+    return { ok: true, limited: true, reason: "rate_limited", count };
+  }
+  await env.BOOKING_KV.put(
+    rateKey,
+    JSON.stringify({
+      count: count + 1,
+      updated_at: new Date().toISOString(),
+    }),
+    { expirationTtl: HOTELPAGE_RATE_WINDOW_SECONDS },
+  );
+  return { ok: true, limited: false, count: count + 1 };
+}
+
+function _safePrebookUnavailable(reason) {
+  return {
+    ok: true,
+    invoked: false,
+    reason,
+    progress_blocked: true,
+    acceptance_allowed: false,
+    prebook_ref: null,
+    accepted_ref: null,
+    changes: [],
+    stay22_fallback_retained: true,
+    mobility_independent_of_ratehawk: true,
+    existing_actions: [
+      "saved",
+      "nearby_events",
+      "taxi_to_this_event",
+      "taxi_to_this_stay",
+      "airport_transfer",
+      "stay22_fallback_availability",
+    ],
+    commercial: {
+      fluxidi_role: "affiliate",
+      customer_pays_fluxidi: false,
+      mollie_involved: false,
+    },
+  };
+}
+
+async function _proxyProductionHotelsPath(env, path, body) {
+  if (!env?.RATEHAWK_HOTELS || typeof env.RATEHAWK_HOTELS.fetch !== "function") {
+    return { ok: false, dto: _safePrebookUnavailable("hotels_worker_binding_missing") };
+  }
+  try {
+    const resp = await env.RATEHAWK_HOTELS.fetch(
+      new Request(`https://fluxidi-ratehawk-hotels-api.internal${path}`, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          "x-fluxidi-internal-proxy": RATEHAWK_HOTELS_INTERNAL_PROXY,
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+    const dto = await resp.json();
+    if (!dto || typeof dto !== "object") {
+      return { ok: false, dto: _safePrebookUnavailable("hotels_worker_unavailable") };
+    }
+    return { ok: true, dto };
+  } catch {
+    return { ok: false, dto: _safePrebookUnavailable("hotels_worker_unavailable") };
+  }
+}
+
+export async function handlePublicRatehawkPrebook({
+  env,
+  request = null,
+  body = {},
+} = {}) {
+  const requestBody =
+    body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  if (bookingWorkerHasRatehawkCredentials(env)) {
+    return _safePrebookUnavailable("booking_worker_must_not_hold_ratehawk_secrets");
+  }
+  if (hasForbiddenPublicPrebookClientControl(requestBody)) {
+    return _safePrebookUnavailable("client_control_forbidden");
+  }
+  const rate = await _incrementPrebookRateLimit(env, request);
+  if (rate.ok !== true || rate.limited === true) {
+    return _safePrebookUnavailable(rate.reason || "rate_limited");
+  }
+  const proxied = await _proxyProductionHotelsPath(
+    env,
+    RATEHAWK_HOTELS_PREBOOK_PATH,
+    {
+      trigger: "prebook_revalidation",
+      offer_ref: _text(requestBody.offer_ref, 4000),
+      locale: _text(requestBody.locale, 8) || "nl",
+    },
+  );
+  return proxied.dto;
+}
+
+export async function handlePublicRatehawkPrebookAccept({
+  env,
+  request = null,
+  body = {},
+} = {}) {
+  const requestBody =
+    body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  if (bookingWorkerHasRatehawkCredentials(env)) {
+    return _safePrebookUnavailable("booking_worker_must_not_hold_ratehawk_secrets");
+  }
+  if (hasForbiddenPublicPrebookClientControl(requestBody)) {
+    return _safePrebookUnavailable("client_control_forbidden");
+  }
+  const rate = await _incrementPrebookRateLimit(env, request);
+  if (rate.ok !== true || rate.limited === true) {
+    return _safePrebookUnavailable(rate.reason || "rate_limited");
+  }
+  const proxied = await _proxyProductionHotelsPath(
+    env,
+    RATEHAWK_HOTELS_PREBOOK_ACCEPT_PATH,
+    {
+      trigger: "accept_prebook_terms",
+      prebook_ref: _text(requestBody.prebook_ref, 4000),
+      terms_revision: _text(requestBody.terms_revision, 120),
+      locale: _text(requestBody.locale, 8) || "nl",
+    },
+  );
+  return proxied.dto;
 }
 
 function _safeTestUnavailable(reason) {

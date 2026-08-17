@@ -303,6 +303,7 @@ class RatehawkHotelpageController {
   DateTime? retrievedAt;
   String? reason;
   int requestCount = 0;
+  final Set<String> staleOfferRefs = <String>{};
   int _generation = 0;
   final List<void Function()> _listeners = <void Function()>[];
 
@@ -334,6 +335,7 @@ class RatehawkHotelpageController {
     state = RatehawkHotelpageLifecycleState.checkingRooms;
     reason = null;
     selected = null;
+    staleOfferRefs.clear();
     _notify();
     final response = await client.load(snapshot);
     if (generation != _generation) return;
@@ -345,12 +347,27 @@ class RatehawkHotelpageController {
   }
 
   void selectOffer(RatehawkHotelpageOffer offer) {
-    if (!offer.isSelectable) return;
+    if (!isOfferSelectable(offer)) return;
     selected = RatehawkSelectedOffer(
       offerRef: offer.offerRef,
       roomName: offer.roomName,
       customerTotalLabel: offer.customerTotalLabel ?? offer.customerTotal,
     );
+    _notify();
+  }
+
+  bool isOfferSelectable(RatehawkHotelpageOffer offer) {
+    return offer.isSelectable && !staleOfferRefs.contains(offer.offerRef);
+  }
+
+  void clearSelected() {
+    selected = null;
+    _notify();
+  }
+
+  void markSelectedStale() {
+    final ref = selected?.offerRef;
+    if (ref != null) staleOfferRefs.add(ref);
     _notify();
   }
 

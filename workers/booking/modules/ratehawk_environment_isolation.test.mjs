@@ -47,6 +47,7 @@ test("production Hotels config has no test host, environment or credentials", ()
     "RATEHAWK_ENABLED",
     "RATEHAWK_HOTELPAGE_ENABLED",
     "RATEHAWK_SEARCH_ENABLED",
+    "RATEHAWK_PREBOOK_ENABLED",
     "RATEHAWK_CONTENT_SYNC_ENABLED",
     "RATEHAWK_CONTENT_BATCH_ENABLED",
     "RATEHAWK_TEST_SEARCH_ENABLED",
@@ -78,6 +79,7 @@ test("test Hotels env is a private isolated Worker with no D1 or content sync", 
     "RATEHAWK_ENABLED",
     "RATEHAWK_HOTELPAGE_ENABLED",
     "RATEHAWK_SEARCH_ENABLED",
+    "RATEHAWK_PREBOOK_ENABLED",
     "RATEHAWK_CONTENT_SYNC_ENABLED",
     "RATEHAWK_CONTENT_BATCH_ENABLED",
   ]) {
@@ -119,6 +121,8 @@ test("production facade paths cannot use RATEHAWK_HOTELS_TEST", () => {
   assert.match(publicSearchFn, /env\?\.RATEHAWK_HOTELS/);
   assert.match(publicSearchFn, /RATEHAWK_HOTELS_SEARCH_PATH/);
   assert.equal(publicSearchFn.includes("RATEHAWK_HOTELS_TEST"), false);
+  assert.match(publicFn, /RATEHAWK_HOTELS_PREBOOK_PATH/);
+  assert.equal(publicFn.includes("RATEHAWK_HOTELS_TEST"), false);
   assert.equal(publicSearchFn.includes("/internal/test-search"), false);
   assert.equal(publicSearchFn.includes("/admin/hotels/ratehawk/test"), false);
   assert.match(statusFn, /env\?\.RATEHAWK_HOTELS/);
@@ -278,6 +282,34 @@ test("test Hotels Worker rejects production Hotelpage and content sync", async (
   assert.equal(searchDto.invoked, false);
   assert.equal(searchDto.count, 0);
   assert.equal(searchDto.reason, "production_path_forbidden_on_test_worker");
+  const prebook = await handleRatehawkHotelsWorkerFetch(
+    new Request("https://fluxidi-ratehawk-hotels-api-test.internal/internal/prebook", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-fluxidi-internal-proxy": RATEHAWK_HOTELS_INTERNAL_PROXY,
+      },
+      body: "{}",
+    }),
+    { RATEHAWK_WORKER_SURFACE: "test" },
+  );
+  const prebookDto = await prebook.json();
+  assert.equal(prebookDto.invoked, false);
+  assert.equal(prebookDto.reason, "production_path_forbidden_on_test_worker");
+  const accept = await handleRatehawkHotelsWorkerFetch(
+    new Request("https://fluxidi-ratehawk-hotels-api-test.internal/internal/prebook/accept", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-fluxidi-internal-proxy": RATEHAWK_HOTELS_INTERNAL_PROXY,
+      },
+      body: "{}",
+    }),
+    { RATEHAWK_WORKER_SURFACE: "test" },
+  );
+  const acceptDto = await accept.json();
+  assert.equal(acceptDto.invoked, false);
+  assert.equal(acceptDto.reason, "production_path_forbidden_on_test_worker");
 });
 
 test("taxi isolation cannot call either Hotels binding", () => {

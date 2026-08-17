@@ -8796,6 +8796,75 @@ Future<Map<String, dynamic>?> fetchPublicRatehawkHotelpage({
   }
 }
 
+Future<Map<String, dynamic>?> fetchPublicRatehawkPrebook({
+  required String offerRef,
+  required String locale,
+}) async {
+  final token = offerRef.trim();
+  if (!token.startsWith('rh1.')) return null;
+  final endpoint = Uri.parse(
+    '${appConfig.bookingBaseUrl}/public/hotels/ratehawk/prebook',
+  );
+  try {
+    final res = await http
+        .post(
+          endpoint,
+          headers: const <String, String>{
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'trigger': 'prebook_revalidation',
+            'offer_ref': token,
+            'locale': locale,
+          }),
+        )
+        .timeout(const Duration(seconds: 35));
+    if (res.statusCode < 200 || res.statusCode >= 300) return null;
+    final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+    if (decoded is! Map) return null;
+    return Map<String, dynamic>.from(decoded);
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<Map<String, dynamic>?> fetchPublicRatehawkPrebookAccept({
+  required String prebookRef,
+  required String locale,
+  String? termsRevision,
+}) async {
+  final token = prebookRef.trim();
+  if (!token.startsWith('rhp1.')) return null;
+  final endpoint = Uri.parse(
+    '${appConfig.bookingBaseUrl}/public/hotels/ratehawk/prebook/accept',
+  );
+  try {
+    final res = await http
+        .post(
+          endpoint,
+          headers: const <String, String>{
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode(<String, dynamic>{
+            'trigger': 'accept_prebook_terms',
+            'prebook_ref': token,
+            'locale': locale,
+            if (termsRevision != null && termsRevision.trim().isNotEmpty)
+              'terms_revision': termsRevision.trim(),
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    if (res.statusCode < 200 || res.statusCode >= 300) return null;
+    final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+    if (decoded is! Map) return null;
+    return Map<String, dynamic>.from(decoded);
+  } catch (_) {
+    return null;
+  }
+}
+
 Map<String, dynamic> sanitizePublicCustomerProfilePayload(
   Map<String, dynamic> payload,
 ) {

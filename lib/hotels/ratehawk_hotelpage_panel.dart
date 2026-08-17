@@ -3,6 +3,8 @@ import 'package:fluxidi_tracking/customer_theme_palette.dart';
 
 import 'hotel_model.dart';
 import 'ratehawk_hotelpage.dart';
+import 'ratehawk_prebook.dart';
+import 'ratehawk_prebook_panel.dart';
 import 'ratehawk_search.dart';
 
 class RatehawkHotelpageSection extends StatefulWidget {
@@ -11,6 +13,7 @@ class RatehawkHotelpageSection extends StatefulWidget {
     required this.languageCode,
     required this.palette,
     this.client,
+    this.prebookClient,
     this.controller,
     this.autoLoad = true,
     super.key,
@@ -20,6 +23,7 @@ class RatehawkHotelpageSection extends StatefulWidget {
   final String languageCode;
   final CustomerThemePalette palette;
   final RatehawkHotelpageClient? client;
+  final RatehawkPrebookClient? prebookClient;
   final RatehawkHotelpageController? controller;
   final bool autoLoad;
 
@@ -154,7 +158,10 @@ class _RatehawkHotelpageSectionState extends State<RatehawkHotelpageSection> {
                 languageCode: language,
                 palette: widget.palette,
                 selected: _controller.selected?.offerRef == offer.offerRef,
-                onSelect: () => _controller.selectOffer(offer),
+                onSelect: _controller.isOfferSelectable(offer)
+                    ? () => _controller.selectOffer(offer)
+                    : () {},
+                selectable: _controller.isOfferSelectable(offer),
               ),
               const SizedBox(height: 8),
             ],
@@ -168,6 +175,16 @@ class _RatehawkHotelpageSectionState extends State<RatehawkHotelpageSection> {
                 fontWeight: FontWeight.w600,
                 height: 1.3,
               ),
+            ),
+            RatehawkPrebookSection(
+              key: ValueKey<String>(_controller.selected!.offerRef),
+              offerRef: _controller.selected!.offerRef,
+              languageCode: language,
+              palette: widget.palette,
+              client: widget.prebookClient,
+              onBlocked: _controller.markSelectedStale,
+              onRefreshAvailability: () => _controller.retry(widget.stay),
+              onOtherRooms: _controller.clearSelected,
             ),
           ],
           if (_controller.policies != null)
@@ -197,6 +214,7 @@ class _OfferCard extends StatelessWidget {
     required this.palette,
     required this.selected,
     required this.onSelect,
+    this.selectable = true,
     this.snapshot,
   });
 
@@ -206,13 +224,14 @@ class _OfferCard extends StatelessWidget {
   final CustomerThemePalette palette;
   final bool selected;
   final VoidCallback onSelect;
+  final bool selectable;
 
   @override
   Widget build(BuildContext context) {
     final gold = palette.gold;
     final text = palette.textPrimary;
     final muted = palette.textMuted;
-    final expired = !offer.isSelectable;
+    final expired = !selectable;
     final nights = snapshot?.nightCount ?? 0;
     return Container(
       width: double.infinity,

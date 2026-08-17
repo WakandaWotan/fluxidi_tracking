@@ -8,6 +8,8 @@
  *   GET  /internal/status
  *   POST /internal/hotelpage
  *   POST /internal/search
+ *   POST /internal/prebook
+ *   POST /internal/prebook/accept
  *   POST /internal/test-search
  *   POST /internal/test-hotelpage
  *   POST /internal/content-sync  (admin-internal / scheduled only)
@@ -47,6 +49,12 @@ import {
   RATEHAWK_HOTELS_SEARCH_PATH,
   handleRatehawkPublicSearchRequest,
 } from "./modules/ratehawk_public_search.mjs";
+import {
+  RATEHAWK_HOTELS_PREBOOK_ACCEPT_PATH,
+  RATEHAWK_HOTELS_PREBOOK_PATH,
+  handleRatehawkPrebookAcceptRequest,
+  handleRatehawkPrebookRequest,
+} from "./modules/ratehawk_prebook_worker.mjs";
 
 export { RatehawkProviderQuotaDO };
 
@@ -208,6 +216,67 @@ export async function handleRatehawkHotelsWorkerFetch(
         env,
         body,
         fetchImpl,
+        now,
+      }),
+    );
+  }
+
+  if (
+    url.pathname === RATEHAWK_HOTELS_PREBOOK_PATH &&
+    request.method === "POST"
+  ) {
+    if (isRatehawkIsolatedTestWorker(env)) {
+      return json(
+        await handleRatehawkPrebookRequest({
+          env,
+          body: {},
+        }),
+      );
+    }
+    let body = {};
+    try {
+      body = await request.json();
+    } catch {
+      body = {};
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      body = {};
+    }
+    return json(
+      await handleRatehawkPrebookRequest({
+        env,
+        body,
+        fetchImpl,
+        now,
+      }),
+    );
+  }
+
+  if (
+    url.pathname === RATEHAWK_HOTELS_PREBOOK_ACCEPT_PATH &&
+    request.method === "POST"
+  ) {
+    if (isRatehawkIsolatedTestWorker(env)) {
+      return json(
+        await handleRatehawkPrebookAcceptRequest({
+          env,
+          body: {},
+        }),
+      );
+    }
+    let body = {};
+    try {
+      body = await request.json();
+    } catch {
+      body = {};
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      body = {};
+    }
+    return json(
+      await handleRatehawkPrebookAcceptRequest({
+        env,
+        body,
         now,
       }),
     );

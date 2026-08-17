@@ -25,6 +25,7 @@ import 'hotel_geo_taxonomy.dart';
 import 'hotel_model.dart';
 import 'ratehawk_hotelpage.dart';
 import 'ratehawk_hotelpage_panel.dart';
+import 'ratehawk_prebook.dart';
 import 'ratehawk_search.dart';
 import 'ratehawk_search_panel.dart';
 
@@ -46,6 +47,7 @@ class HotelsPage extends StatefulWidget {
     this.companyId,
     this.ratehawkSearchClient,
     this.ratehawkHotelpageClient,
+    this.ratehawkPrebookClient,
     super.key,
   });
 
@@ -63,6 +65,7 @@ class HotelsPage extends StatefulWidget {
   final String? companyId;
   final RatehawkHotelSearchClient? ratehawkSearchClient;
   final RatehawkHotelpageClient? ratehawkHotelpageClient;
+  final RatehawkPrebookClient? ratehawkPrebookClient;
 
   @override
   State<HotelsPage> createState() => _HotelsPageState();
@@ -1445,6 +1448,7 @@ class _HotelsPageState extends State<HotelsPage> {
               ? _stay22AvailabilitySubtitle
               : null,
           ratehawkHotelpageClient: widget.ratehawkHotelpageClient,
+          ratehawkPrebookClient: widget.ratehawkPrebookClient,
         ),
       ),
     );
@@ -3437,6 +3441,7 @@ class HotelStayDetailPage extends StatelessWidget {
     required this.externalAvailabilityLabel,
     this.externalAvailabilityHint,
     this.ratehawkHotelpageClient,
+    this.ratehawkPrebookClient,
     super.key,
   });
 
@@ -3453,6 +3458,7 @@ class HotelStayDetailPage extends StatelessWidget {
   final String externalAvailabilityLabel;
   final String? externalAvailabilityHint;
   final RatehawkHotelpageClient? ratehawkHotelpageClient;
+  final RatehawkPrebookClient? ratehawkPrebookClient;
   CustomerThemePalette get _themePalette =>
       paletteForCustomerTheme(customerThemeNotifier.value);
   bool get _isDarkTheme => _themePalette.isDark;
@@ -4312,6 +4318,7 @@ class HotelStayDetailPage extends StatelessWidget {
                         languageCode: _languageCode,
                         palette: _themePalette,
                         client: ratehawkHotelpageClient,
+                        prebookClient: ratehawkPrebookClient,
                       ),
                     ],
                     if (hasAnyNearbyEvents) ...[
