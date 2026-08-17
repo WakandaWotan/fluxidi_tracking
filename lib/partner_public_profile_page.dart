@@ -13,6 +13,8 @@ import 'customer_profile_store.dart';
 import 'customer_session_store.dart';
 import 'customer_theme_palette.dart';
 import 'customer_theme_store.dart';
+import 'limousine/limousine_marketplace_labels.dart';
+import 'limousine/limousine_service_capability.dart';
 import 'nearby/public_partner_bookability.dart';
 import 'nearby/tablet_partner_branding_layout.dart';
 import 'payment/payment_method_catalog.dart';
@@ -934,6 +936,8 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
           fr: 'Paiement en ligne',
           es: 'Pagos en línea',
         );
+      case kLimousinePublicServiceId:
+        return limousinePublicServiceLabelFor(appConfig.currentLanguage);
       case 'comfort':
         return _t(nl: 'Comfort', en: 'Comfort', fr: 'Confort', es: 'Confort');
       case 'verified_professional':

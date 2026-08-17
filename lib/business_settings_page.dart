@@ -15,6 +15,8 @@ import 'package:fluxidi_tracking/business_theme_page.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/chiron_company_connection_config.dart';
 import 'package:fluxidi_tracking/company/billit_customer_connect_gate.dart';
+import 'package:fluxidi_tracking/limousine/limousine_marketplace_labels.dart';
+import 'package:fluxidi_tracking/limousine/limousine_service_capability.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/widgets/chiron_environment_status_labels.dart';
 import 'package:fluxidi_tracking/widgets/chiron_self_service_wizard.dart';
@@ -180,6 +182,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     'event_mobility',
     'hotel_bnb_pickup',
     'online_payments',
+    kLimousinePublicServiceId,
   ];
   static const List<String> _publicPaymentOptionCatalog = <String>[
     'cash',
@@ -6338,6 +6341,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           fr: 'Paiement en ligne',
           es: 'Pago online',
         );
+      case kLimousinePublicServiceId:
+        return limousinePublicServiceLabelFor(_lang);
       default:
         return id;
     }
@@ -6706,6 +6711,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         : (localCompany?.phone.trim() ?? '');
     final onlinePaymentsEnabled = services.contains('online_payments');
     final airportServiceEnabled = services.contains('airport_transfer');
+    final limousineServiceEnabled = services.contains(
+      kLimousinePublicServiceId,
+    );
     final publicPaymentMethods = _orderedPublicPaymentOptionIds(
       _publicPaymentOptionIds,
     );
@@ -6849,9 +6857,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       'airportServiceEnabled': airportServiceEnabled,
       'airport_transfer_enabled': airportServiceEnabled,
       'airportTransferEnabled': airportServiceEnabled,
+      'limousine_service_enabled': limousineServiceEnabled,
+      'limousineServiceEnabled': limousineServiceEnabled,
       'capabilities': <String, dynamic>{
         'airport': airportServiceEnabled,
         'airport_transfer': airportServiceEnabled,
+        'limousine': limousineServiceEnabled,
       },
       'payment_methods': publicPaymentMethods,
       'vehicles': vehicles,
@@ -6870,6 +6881,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         'airportServiceEnabled': airportServiceEnabled,
         'airport_transfer_enabled': airportServiceEnabled,
         'airportTransferEnabled': airportServiceEnabled,
+        'limousine': limousineServiceEnabled,
+        'limousine_service_enabled': limousineServiceEnabled,
+        'limousineServiceEnabled': limousineServiceEnabled,
       },
     };
   }
