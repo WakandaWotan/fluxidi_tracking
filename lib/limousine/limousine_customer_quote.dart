@@ -530,6 +530,19 @@ List<LimousinePublishedOffer> sortLimousineOffersVehicleFirst(
   return list;
 }
 
+bool limousineCustomerRouteDraftChanged(
+  LimousineQuoteCreateDraft previous,
+  LimousineQuoteCreateDraft next,
+) {
+  return previous.from != next.from ||
+      previous.to != next.to ||
+      previous.scheduledPickupIso != next.scheduledPickupIso ||
+      previous.roundtrip != next.roundtrip ||
+      previous.returnPickupIso != next.returnPickupIso ||
+      previous.journeyType != next.journeyType ||
+      previous.stops.join('\u0001') != next.stops.join('\u0001');
+}
+
 List<LimousineCustomerDraftError> validateLimousineCustomerDraft(
   LimousineQuoteCreateDraft draft, {
   LimousinePublishedOffer? offer,
@@ -605,8 +618,8 @@ Map<String, dynamic> limousineCustomerCreateBody(
         .take(8)
         .toList(growable: false);
   }
-  if (draft.roundtrip) body['roundtrip'] = true;
-  if (draft.returnPickupIso.trim().isNotEmpty) {
+  if (draft.roundtrip && draft.returnPickupIso.trim().isNotEmpty) {
+    body['roundtrip'] = true;
     body['return_pickup_iso'] = draft.returnPickupIso.trim();
   }
   if (draft.requestedDurationMinutes != null) {

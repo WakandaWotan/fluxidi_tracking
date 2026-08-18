@@ -136,7 +136,7 @@ void main() {
     expect(kLimousineRequestWizardSteps, hasLength(4));
     expect(kLimousineCustomerStepJourney.nl, 'Traject');
     expect(kLimousineCustomerStepProvider.nl, 'Aanbieder');
-    expect(kLimousineCustomerStepDetails.nl, contains('extra'));
+    expect(kLimousineCustomerStepDetails.nl.toLowerCase(), contains('extra'));
     expect(kLimousineCustomerStepReview.nl, 'Controleren');
     final empty = const LimousineQuoteCreateDraft();
     expect(
@@ -200,7 +200,7 @@ void main() {
         step: LimousineRequestWizardStep.journey,
         draft: missingReturn,
       ).map((gap) => gap.code),
-      contains('return_time_required'),
+      contains('return_mode_required'),
     );
   });
 
@@ -571,10 +571,7 @@ void main() {
     expect(settings.contains('limousineFriendlyCompanyError'), isTrue);
     expect(settings.contains('kLimousineCompanyOffersStatusKey'), isTrue);
     expect(settings.contains('limousineRollbackFailedPersistence'), isTrue);
-    expect(
-      settings.contains('_limousineOffersError = e.toString()'),
-      isFalse,
-    );
+    expect(settings.contains('_limousineOffersError = e.toString()'), isFalse);
   });
 
   test('taxi/airport/RateHawk pages are not rewritten by this UX pass', () {

@@ -17,7 +17,7 @@ const Size kLimousineSmX400Portrait = Size(1320, 2112);
 const Size kLimousineTabletLandscape = Size(2112, 1320);
 const Size kLimousinePhonePortrait = Size(390, 844);
 
-const double kLimousineRequestWizardTabletMaxWidth = 720;
+const double kLimousineRequestWizardTabletMaxWidth = 960;
 const double kLimousineOfferEditorMaxWidth = 560;
 const double kLimousineOfferEditorMenuMaxHeight = 240;
 
@@ -180,6 +180,8 @@ const LocalizedText kLimousineReviewVat = LocalizedText(
 
 enum LimousineRequestWizardStep { journey, provider, details, review }
 
+enum LimousineReturnTripKind { unset, wait, later }
+
 const List<LimousineRequestWizardStep> kLimousineRequestWizardSteps =
     <LimousineRequestWizardStep>[
       LimousineRequestWizardStep.journey,
@@ -240,6 +242,46 @@ class LimousineRequestStepGap {
   final String code;
 }
 
+List<LimousineRequestStepGap> limousineReturnTripGaps({
+  required LimousineQuoteCreateDraft draft,
+  LimousineReturnTripKind returnKind = LimousineReturnTripKind.unset,
+  LimousineAddressValue? returnPickupAddress,
+  LimousineAddressValue? returnDestinationAddress,
+  bool waitDurationSupported = false,
+  int? waitMinutes,
+}) {
+  if (!draft.roundtrip) return const <LimousineRequestStepGap>[];
+  final gaps = <LimousineRequestStepGap>[];
+  if (returnPickupAddress != null && !returnPickupAddress.isRouteReady) {
+    gaps.add(const LimousineRequestStepGap('return_pickup_required'));
+  }
+  if (returnDestinationAddress != null &&
+      !returnDestinationAddress.isRouteReady) {
+    gaps.add(const LimousineRequestStepGap('return_destination_required'));
+  }
+  switch (returnKind) {
+    case LimousineReturnTripKind.unset:
+      gaps.add(const LimousineRequestStepGap('return_mode_required'));
+      return gaps;
+    case LimousineReturnTripKind.wait:
+      if (!waitDurationSupported) {
+        gaps.add(const LimousineRequestStepGap('return_wait_unavailable'));
+      } else if (waitMinutes == null || waitMinutes < 15 || waitMinutes > 240) {
+        gaps.add(const LimousineRequestStepGap('return_wait_required'));
+      }
+      return gaps;
+    case LimousineReturnTripKind.later:
+      final outbound = DateTime.tryParse(draft.scheduledPickupIso);
+      final ret = DateTime.tryParse(draft.returnPickupIso);
+      if (ret == null) {
+        gaps.add(const LimousineRequestStepGap('return_time_required'));
+      } else if (outbound != null && !ret.isAfter(outbound)) {
+        gaps.add(const LimousineRequestStepGap('return_time_order'));
+      }
+      return gaps;
+  }
+}
+
 List<LimousineRequestStepGap> limousineRequestWizardGaps({
   required LimousineRequestWizardStep step,
   required LimousineQuoteCreateDraft draft,
@@ -250,6 +292,9 @@ List<LimousineRequestStepGap> limousineRequestWizardGaps({
   List<LimousineAddressValue> stopAddresses = const <LimousineAddressValue>[],
   LimousineAddressValue? returnPickupAddress,
   LimousineAddressValue? returnDestinationAddress,
+  LimousineReturnTripKind returnKind = LimousineReturnTripKind.unset,
+  bool waitDurationSupported = false,
+  int? waitMinutes,
 }) {
   final gaps = <LimousineRequestStepGap>[];
   switch (step) {
@@ -268,25 +313,22 @@ List<LimousineRequestStepGap> limousineRequestWizardGaps({
       } else if (draft.to.trim().isEmpty) {
         gaps.add(const LimousineRequestStepGap('destination_required'));
       }
-      if (stopAddresses.any((stop) => !stop.isEmpty && !stop.isRouteReady)) {
+      if (stopAddresses.any((stop) => !stop.isRouteReady)) {
         gaps.add(const LimousineRequestStepGap('stop_address_required'));
       }
       if (DateTime.tryParse(draft.scheduledPickupIso) == null) {
         gaps.add(const LimousineRequestStepGap('pickup_time_required'));
       }
-      if (draft.roundtrip && DateTime.tryParse(draft.returnPickupIso) == null) {
-        gaps.add(const LimousineRequestStepGap('return_time_required'));
-      }
-      if (draft.roundtrip &&
-          returnPickupAddress != null &&
-          !returnPickupAddress.isRouteReady) {
-        gaps.add(const LimousineRequestStepGap('return_pickup_required'));
-      }
-      if (draft.roundtrip &&
-          returnDestinationAddress != null &&
-          !returnDestinationAddress.isRouteReady) {
-        gaps.add(const LimousineRequestStepGap('return_destination_required'));
-      }
+      gaps.addAll(
+        limousineReturnTripGaps(
+          draft: draft,
+          returnKind: returnKind,
+          returnPickupAddress: returnPickupAddress,
+          returnDestinationAddress: returnDestinationAddress,
+          waitDurationSupported: waitDurationSupported,
+          waitMinutes: waitMinutes,
+        ),
+      );
       if (limousineOfferToken(draft.journeyType) == 'hourly_package' &&
           (draft.requestedDurationMinutes == null ||
               draft.requestedDurationMinutes! <= 0)) {
@@ -310,7 +352,21 @@ List<LimousineRequestStepGap> limousineRequestWizardGaps({
       }
       break;
     case LimousineRequestWizardStep.review:
+      gaps.addAll(
+        limousineReturnTripGaps(
+          draft: draft,
+          returnKind: returnKind,
+          returnPickupAddress: returnPickupAddress,
+          returnDestinationAddress: returnDestinationAddress,
+          waitDurationSupported: waitDurationSupported,
+          waitMinutes: waitMinutes,
+        ),
+      );
       for (final error in validateLimousineCustomerDraft(draft, offer: offer)) {
+        if (error == LimousineCustomerDraftError.invalidSchedule &&
+            draft.roundtrip) {
+          continue;
+        }
         gaps.add(LimousineRequestStepGap(error.name));
       }
       break;
@@ -328,6 +384,9 @@ bool limousineRequestWizardCanAdvance({
   List<LimousineAddressValue> stopAddresses = const <LimousineAddressValue>[],
   LimousineAddressValue? returnPickupAddress,
   LimousineAddressValue? returnDestinationAddress,
+  LimousineReturnTripKind returnKind = LimousineReturnTripKind.unset,
+  bool waitDurationSupported = false,
+  int? waitMinutes,
 }) {
   return limousineRequestWizardGaps(
     step: step,
@@ -339,6 +398,9 @@ bool limousineRequestWizardCanAdvance({
     stopAddresses: stopAddresses,
     returnPickupAddress: returnPickupAddress,
     returnDestinationAddress: returnDestinationAddress,
+    returnKind: returnKind,
+    waitDurationSupported: waitDurationSupported,
+    waitMinutes: waitMinutes,
   ).isEmpty;
 }
 
@@ -353,6 +415,9 @@ bool limousineRequestWizardAllowsHttp({
   List<LimousineAddressValue> stopAddresses = const <LimousineAddressValue>[],
   LimousineAddressValue? returnPickupAddress,
   LimousineAddressValue? returnDestinationAddress,
+  LimousineReturnTripKind returnKind = LimousineReturnTripKind.unset,
+  bool waitDurationSupported = false,
+  int? waitMinutes,
 }) {
   if (action == 'discover') {
     return step == LimousineRequestWizardStep.provider &&
@@ -366,6 +431,9 @@ bool limousineRequestWizardAllowsHttp({
           stopAddresses: stopAddresses,
           returnPickupAddress: returnPickupAddress,
           returnDestinationAddress: returnDestinationAddress,
+          returnKind: returnKind,
+          waitDurationSupported: waitDurationSupported,
+          waitMinutes: waitMinutes,
         );
   }
   if (action == 'create_request' || action == 'submit') {
@@ -375,6 +443,11 @@ bool limousineRequestWizardAllowsHttp({
           draft: draft,
           offer: offer,
           hasProvider: hasProvider,
+          returnPickupAddress: returnPickupAddress,
+          returnDestinationAddress: returnDestinationAddress,
+          returnKind: returnKind,
+          waitDurationSupported: waitDurationSupported,
+          waitMinutes: waitMinutes,
         );
   }
   return false;
@@ -399,6 +472,7 @@ List<LimousineRequestReviewRow> buildLimousineRequestReviewRows({
   LimousinePublishedOffer? offer,
   String returnPickupAddress = '',
   String returnDestinationAddress = '',
+  LimousineReturnTripKind returnKind = LimousineReturnTripKind.unset,
 }) {
   final rows = <LimousineRequestReviewRow>[
     LimousineRequestReviewRow(
@@ -430,9 +504,10 @@ List<LimousineRequestReviewRow> buildLimousineRequestReviewRows({
     LimousineRequestReviewRow(
       id: 'pickup',
       label: kLimousineReviewPickup.of(language),
-      value: draft.scheduledPickupIso.trim().isEmpty
-          ? '—'
-          : draft.scheduledPickupIso.trim(),
+      value: limousineCustomerReviewScheduleLabel(
+        draft.scheduledPickupIso,
+        language,
+      ),
     ),
   );
   if (draft.roundtrip) {
@@ -440,9 +515,12 @@ List<LimousineRequestReviewRow> buildLimousineRequestReviewRows({
       LimousineRequestReviewRow(
         id: 'return',
         label: kLimousineReviewReturn.of(language),
-        value: draft.returnPickupIso.trim().isEmpty
-            ? '—'
-            : draft.returnPickupIso.trim(),
+        value: returnKind == LimousineReturnTripKind.later
+            ? limousineCustomerReviewScheduleLabel(
+                draft.returnPickupIso,
+                language,
+              )
+            : '—',
       ),
     );
     if (returnPickupAddress.trim().isNotEmpty) {
@@ -487,7 +565,7 @@ List<LimousineRequestReviewRow> buildLimousineRequestReviewRows({
       ),
     );
   }
-  final price = _displayedPriceEvidence(offer);
+  final price = _displayedPriceEvidence(offer, language);
   if (price.isNotEmpty) {
     rows.add(
       LimousineRequestReviewRow(
@@ -527,13 +605,83 @@ String _offerSummary(
   return offer.offerId;
 }
 
-String _displayedPriceEvidence(LimousinePublishedOffer? offer) {
+String limousineCustomerReviewScheduleLabel(String iso, AppLanguage language) {
+  final parsed = DateTime.tryParse(iso);
+  if (parsed == null) return '—';
+  final local = parsed.toLocal();
+  final months = switch (language) {
+    AppLanguage.fr => const [
+      'janv.',
+      'févr.',
+      'mars',
+      'avr.',
+      'mai',
+      'juin',
+      'juil.',
+      'août',
+      'sept.',
+      'oct.',
+      'nov.',
+      'déc.',
+    ],
+    AppLanguage.es => const [
+      'ene',
+      'feb',
+      'mar',
+      'abr',
+      'may',
+      'jun',
+      'jul',
+      'ago',
+      'sept',
+      'oct',
+      'nov',
+      'dic',
+    ],
+    AppLanguage.en => const [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ],
+    _ => const [
+      'jan',
+      'feb',
+      'mrt',
+      'apr',
+      'mei',
+      'jun',
+      'jul',
+      'aug',
+      'sep',
+      'okt',
+      'nov',
+      'dec',
+    ],
+  };
+  final hh = local.hour.toString().padLeft(2, '0');
+  final mm = local.minute.toString().padLeft(2, '0');
+  return '${local.day} ${months[local.month - 1]} ${local.year} · $hh:$mm';
+}
+
+String _displayedPriceEvidence(
+  LimousinePublishedOffer? offer,
+  AppLanguage language,
+) {
   if (offer == null) return '';
   final cents = offer.displayAmountCents;
   if (cents == null) {
     return limousineCustomerPresentationLabel(
       offer.pricePresentation,
-      AppLanguage.en,
+      language,
     );
   }
   final amount = (cents / 100).toStringAsFixed(2);

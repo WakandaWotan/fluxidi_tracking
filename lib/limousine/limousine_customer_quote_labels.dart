@@ -31,10 +31,10 @@ const LocalizedText kLimousineCustomerStepProvider = LocalizedText(
 );
 
 const LocalizedText kLimousineCustomerStepDetails = LocalizedText(
-  nl: 'Details en extra’s',
-  en: 'Details and extras',
-  fr: 'Détails et extras',
-  es: 'Detalles y extras',
+  nl: 'Extra’s',
+  en: 'Extras',
+  fr: 'Extras',
+  es: 'Extras',
 );
 
 const LocalizedText kLimousineCustomerStepReview = LocalizedText(

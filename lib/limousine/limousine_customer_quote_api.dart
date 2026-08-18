@@ -499,7 +499,21 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
   }
 
   void updateDraft(LimousineQuoteCreateDraft next) {
+    final previous = draft;
+    final routeChanged = limousineCustomerRouteDraftChanged(previous, next);
     draft = next;
+    if (routeChanged &&
+        !providerOfferLocked &&
+        previous.publicPartnerId.isNotEmpty &&
+        next.publicPartnerId == previous.publicPartnerId &&
+        next.offerId == previous.offerId) {
+      selectedProvider = null;
+      selectedOffer = null;
+      providers = const [];
+      lastDiscoveryCount = 0;
+      lastDiscoveryService = '';
+      draft = draft.copyWith(publicPartnerId: '', offerId: '');
+    }
     draftErrors = const [];
     notifyListeners();
   }
