@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -13,7 +14,9 @@ import 'package:fluxidi_tracking/limousine/limousine_customer_discovery.dart';
 import 'package:fluxidi_tracking/limousine/limousine_customer_discovery_api.dart';
 import 'package:fluxidi_tracking/limousine/limousine_customer_discovery_labels.dart';
 import 'package:fluxidi_tracking/limousine/limousine_customer_discovery_page.dart';
+import 'package:fluxidi_tracking/limousine/limousine_marketplace_labels.dart';
 import 'package:fluxidi_tracking/limousine/limousine_p2d4c1a_ux.dart';
+import 'package:fluxidi_tracking/limousine/limousine_state_composition.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -591,5 +594,153 @@ void main() {
       );
       expect(tester.takeException(), isNull);
     }
+  });
+
+  test('postcode and coordinates only rank; they do not filter', () {
+    expect(
+      limousineDiscoveryQueryFromAddress(
+        displayText: '9688, Maarkedal, Oost-Vlaanderen, België',
+        lat: 50.796,
+        lon: 3.621,
+      )?.postcode,
+      '9688',
+    );
+    expect(
+      limousineDiscoveryQueryFromAddress(
+        displayText: 'Korenmarkt 1, 9000 Gent, Belgium',
+        lat: 51.0543,
+        lon: 3.7174,
+      )?.lat,
+      51.0543,
+    );
+  });
+
+  test('server-eligible published profile is visible even with gates off', () {
+    final composition = composeLimousinePublicAvailability(<String, dynamic>{
+      'subscription_status': 'active',
+      'features': <String, dynamic>{'limousine': true},
+      'is_active': true,
+      'services': <String>['limousine'],
+      'profile_enabled': true,
+      'published_at': '2026-08-17T10:00:00Z',
+      'bookable': false,
+      'limousine_available': true,
+      'vehicles': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'service_category': 'limousine',
+          'service_class': 'executive_sedan',
+          'is_active': true,
+        },
+      ],
+    });
+    expect(
+      composition.state,
+      LimousinePublicAvailabilityState.publiclyAvailable,
+    );
+    expect(
+      limousineAvailabilityStateLabelFor(composition.state, AppLanguage.nl),
+      'Gepubliceerd en zichtbaar',
+    );
+  });
+
+  testWidgets('postcode keeps every company and only changes distance order', (
+    tester,
+  ) async {
+    final gateway = MemoryLimousineDiscoveryGateway(
+      searchHandler: (query) async {
+        if (query.isUnscoped) {
+          return LimousineDiscoveryPageData(
+            listingMode: 'test_preview',
+            cards: limousineDiscoveryCardsFromNearbyPartners(<dynamic>[
+              _workerCard(id: 'far', name: 'Far Coach'),
+              _workerCard(id: 'near', name: 'Near Coach'),
+            ]),
+          );
+        }
+        expect(query.postcode, '9688');
+        return LimousineDiscoveryPageData(
+          listingMode: 'test_preview',
+          cards: limousineDiscoveryCardsFromNearbyPartners(<dynamic>[
+            _workerCard(id: 'near', name: 'Near Coach', distanceKm: 2),
+            _workerCard(id: 'far', name: 'Far Coach', distanceKm: 88),
+          ]),
+        );
+      },
+    );
+    await tester.pumpWidget(_app(_page(gateway: gateway)));
+    await tester.pumpAndSettle();
+    expect(find.text('Far Coach'), findsOneWidget);
+    expect(find.text('Near Coach'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(limousineAddressInputKey(kLimousineDiscoveryFieldId)),
+      '9688, Maarkedal',
+    );
+    await tester.tap(find.byKey(kLimousineDiscoverySearchActionKey));
+    await tester.pumpAndSettle();
+    expect(find.text('Far Coach'), findsOneWidget);
+    expect(find.text('Near Coach'), findsOneWidget);
+    final names = tester
+        .widgetList<Text>(find.byType(Text))
+        .map((text) => text.data)
+        .whereType<String>()
+        .toList();
+    expect(names.indexOf('Near Coach'), lessThan(names.indexOf('Far Coach')));
+    expect(find.text(kLimousineDiscoveryEmptyTitle.nl), findsNothing);
+  });
+
+  testWidgets('empty state appears only when the public set is truly empty', (
+    tester,
+  ) async {
+    final gateway = MemoryLimousineDiscoveryGateway(
+      searchHandler: (_) async =>
+          const LimousineDiscoveryPageData(listingMode: 'test_preview'),
+    );
+    await tester.pumpWidget(_app(_page(gateway: gateway)));
+    await tester.pumpAndSettle();
+    expect(find.text(kLimousineDiscoveryEmptyTitle.nl), findsOneWidget);
+    expect(find.textContaining('in deze regio'), findsNothing);
+    expect(find.text(kLimousineDiscoveryGatesOffTitle.nl), findsNothing);
+  });
+
+  testWidgets('new search keeps previous cards visible while loading', (
+    tester,
+  ) async {
+    final next = Completer<LimousineDiscoveryPageData>();
+    var calls = 0;
+    final gateway = MemoryLimousineDiscoveryGateway(
+      searchHandler: (query) async {
+        calls += 1;
+        if (calls == 1) {
+          return LimousineDiscoveryPageData(
+            listingMode: 'test_preview',
+            cards: limousineDiscoveryCardsFromNearbyPartners(<dynamic>[
+              _workerCard(id: 'limo_1', name: 'Maison Noire'),
+            ]),
+          );
+        }
+        return next.future;
+      },
+    );
+    await tester.pumpWidget(_app(_page(gateway: gateway)));
+    await tester.pumpAndSettle();
+    expect(find.text('Maison Noire'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(limousineAddressInputKey(kLimousineDiscoveryFieldId)),
+      '9688',
+    );
+    await tester.tap(find.byKey(kLimousineDiscoverySearchActionKey));
+    await tester.pump();
+    expect(find.text('Maison Noire'), findsOneWidget);
+    expect(find.byKey(kLimousineDiscoveryLoadingKey), findsOneWidget);
+    next.complete(
+      LimousineDiscoveryPageData(
+        listingMode: 'test_preview',
+        cards: limousineDiscoveryCardsFromNearbyPartners(<dynamic>[
+          _workerCard(id: 'limo_1', name: 'Maison Noire', distanceKm: 1.2),
+        ]),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Maison Noire'), findsOneWidget);
   });
 }

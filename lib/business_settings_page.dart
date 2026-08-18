@@ -19,6 +19,7 @@ import 'package:fluxidi_tracking/limousine/limousine_business_setup.dart';
 import 'package:fluxidi_tracking/limousine/limousine_business_setup_labels.dart';
 import 'package:fluxidi_tracking/limousine/limousine_business_setup_page.dart';
 import 'package:fluxidi_tracking/limousine/limousine_customer_entry.dart';
+import 'package:fluxidi_tracking/limousine/limousine_dimensions.dart';
 import 'package:fluxidi_tracking/limousine/limousine_marketplace_labels.dart';
 import 'package:fluxidi_tracking/limousine/limousine_offers.dart';
 import 'package:fluxidi_tracking/limousine/limousine_p2d4c1a_ux.dart';
@@ -502,7 +503,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       final category = v.serviceCategory.trim().toLowerCase();
       final classId = v.serviceClassId.trim();
       if (category != 'limousine') continue;
-      if (!isKnownActiveLimousineServiceClassId(classId)) continue;
+      if (classId.isEmpty || isForbiddenClassInferenceToken(classId)) continue;
       vehicles.add(<String, dynamic>{
         'service_category': 'limousine',
         'service_class': classId,

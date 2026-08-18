@@ -370,13 +370,17 @@ void main() {
       );
     });
 
-    test('published but bookings not accepted is temporarily unavailable', () {
+    test('published but bookings not accepted stays visible', () {
       final composition = composeLimousinePublicAvailability(
         _publiclyAvailableCompany(bookable: false),
       );
       expect(
         composition.state,
-        LimousinePublicAvailabilityState.publishedButTemporarilyUnavailable,
+        LimousinePublicAvailabilityState.publiclyAvailable,
+      );
+      expect(
+        limousineAvailabilityStateLabelFor(composition.state, AppLanguage.nl),
+        'Gepubliceerd en zichtbaar',
       );
     });
 
@@ -572,7 +576,7 @@ void main() {
           LimousinePublicAvailabilityState.publiclyAvailable,
           AppLanguage.fr,
         ),
-        'Disponible publiquement',
+        'Publié et visible',
       );
     });
   });

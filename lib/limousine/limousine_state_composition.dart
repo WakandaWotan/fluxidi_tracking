@@ -160,14 +160,20 @@ LimousineAvailabilityComposition composeLimousinePublicAvailability(
       LimousinePublicAvailabilityState.enabledButProfileNotPublished,
     );
   }
-  if (!_publicBookingsAccepted(company) ||
-      !_hasEligibleActiveLimousineVehicle(company) ||
-      _temporarilyUnavailable(company)) {
+  // Transaction / bookable gates never hide a published profile. Temporary
+  // unavailability is only a real operational pause, never a missing CTA gate.
+  if (_temporarilyUnavailable(company)) {
     return result(
       LimousinePublicAvailabilityState.publishedButTemporarilyUnavailable,
     );
   }
-  return result(LimousinePublicAvailabilityState.publiclyAvailable);
+  if (_serverMarksLimousineAvailable(company) ||
+      _hasEligibleActiveLimousineVehicle(company)) {
+    return result(LimousinePublicAvailabilityState.publiclyAvailable);
+  }
+  return result(
+    LimousinePublicAvailabilityState.publishedButTemporarilyUnavailable,
+  );
 }
 
 /// Full public marketplace eligibility: the company self-state must be
@@ -251,6 +257,14 @@ bool _profilePublished(Map<String, dynamic> company) {
     if ((company[key] ?? '').toString().trim().isNotEmpty) return true;
   }
   return false;
+}
+
+bool _serverMarksLimousineAvailable(Map<String, dynamic> company) {
+  if (looksTruthyPublicFlag(company['limousine_available'])) return true;
+  final projection = asStringKeyedMap(company['limousine_projection']);
+  if (looksTruthyPublicFlag(projection['limousine_available'])) return true;
+  final reason = normalizePublicServiceToken(projection['reason']?.toString());
+  return reason == 'eligible';
 }
 
 bool _publicBookingsAccepted(Map<String, dynamic> company) {

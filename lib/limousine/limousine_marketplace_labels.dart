@@ -84,10 +84,10 @@ kLimousineAvailabilityStateLabels =
             es: 'Publicado pero temporalmente no disponible',
           ),
       LimousinePublicAvailabilityState.publiclyAvailable: LocalizedText(
-        nl: 'Publiek beschikbaar',
-        en: 'Publicly available',
-        fr: 'Disponible publiquement',
-        es: 'Disponible públicamente',
+        nl: 'Gepubliceerd en zichtbaar',
+        en: 'Published and visible',
+        fr: 'Publié et visible',
+        es: 'Publicado y visible',
       ),
     };
 

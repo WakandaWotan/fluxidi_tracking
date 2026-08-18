@@ -1,6 +1,5 @@
 import 'dart:math' as math;
 
-import '../nearby/public_partner_bookability.dart';
 import 'limousine_service_capability.dart';
 
 /// Why a company is not a limousine provider. Missing evidence fails closed.
@@ -70,11 +69,6 @@ LimousineProviderEligibility evaluateLimousineProviderEligibility(
       LimousineEligibilityDenial.profileNotPublished,
     );
   }
-  if (!isPublicPartnerBookable(company)) {
-    return const LimousineProviderEligibility.denied(
-      LimousineEligibilityDenial.notBookable,
-    );
-  }
   if (!partnerHasExplicitLimousineCapability(company)) {
     return const LimousineProviderEligibility.denied(
       LimousineEligibilityDenial.missingCapability,
@@ -85,12 +79,10 @@ LimousineProviderEligibility evaluateLimousineProviderEligibility(
       LimousineEligibilityDenial.noEligibleVehicle,
     );
   }
-  if (request != null &&
-      request.hasConstraint &&
-      !_marketMatches(company, request)) {
-    return const LimousineProviderEligibility.denied(
-      LimousineEligibilityDenial.marketMismatch,
-    );
+  // Bookable flags and market/radius coverage are transaction/ranking inputs,
+  // not visibility gates. Quote and book CTAs stay behind their own gates.
+  if (request != null && request.hasConstraint) {
+    /* location ranks nearby results; it does not exclude providers */
   }
   return const LimousineProviderEligibility.allowed();
 }

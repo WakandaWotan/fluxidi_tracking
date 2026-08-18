@@ -452,11 +452,25 @@ class _LimousineCustomerDiscoveryPageState
     }
     switch (_controller.phase) {
       case LimousineDiscoveryPhase.loading:
-        return _status(
-          key: kLimousineDiscoveryLoadingKey,
-          tokens: tokens,
-          title: _t(kLimousineDiscoveryLoading),
-          busy: true,
+        if (_controller.cards.isEmpty) {
+          return _status(
+            key: kLimousineDiscoveryLoadingKey,
+            tokens: tokens,
+            title: _t(kLimousineDiscoveryLoading),
+            busy: true,
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _status(
+              key: kLimousineDiscoveryLoadingKey,
+              tokens: tokens,
+              title: _t(kLimousineDiscoveryLoading),
+              busy: true,
+            ),
+            _cards(tokens, constraints),
+          ],
         );
       case LimousineDiscoveryPhase.needPlace:
         return _status(tokens: tokens, title: _t(kLimousineDiscoveryNeedPlace));

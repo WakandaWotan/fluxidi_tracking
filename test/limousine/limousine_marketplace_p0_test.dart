@@ -316,7 +316,7 @@ void main() {
       expect(isEligibleLimousineProvider(flx), isFalse);
     });
 
-    test('market mismatch fails closed when a request is provided', () {
+    test('market mismatch does not hide a published limousine provider', () {
       final company = _validLimousineCompany(
         extra: const {
           'coverage': <String, dynamic>{
@@ -340,8 +340,8 @@ void main() {
         evaluateLimousineProviderEligibility(
           company,
           request: const LimousineMarketRequest(postcode: '1000'),
-        ).denial,
-        LimousineEligibilityDenial.marketMismatch,
+        ).eligible,
+        isTrue,
       );
     });
   });

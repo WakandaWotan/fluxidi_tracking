@@ -8,10 +8,10 @@ const LocalizedText kLimousineDiscoveryTitle = LocalizedText(
 );
 
 const LocalizedText kLimousineDiscoverySubtitle = LocalizedText(
-  nl: 'Bekijk aanbevolen limousinebedrijven. Een regio of uw locatie verfijnt de resultaten.',
-  en: 'See recommended limousine companies. A region or your location refines the results.',
-  fr: 'Découvrez les compagnies de limousine recommandées. Une région ou votre position affine les résultats.',
-  es: 'Vea empresas de limusina recomendadas. Una región o su ubicación refina los resultados.',
+  nl: 'Bekijk alle beschikbare limousinebedrijven. Een plaats of locatie sorteert op afstand.',
+  en: 'See every available limousine company. A place or location sorts by distance.',
+  fr: 'Voir toutes les compagnies de limousine disponibles. Un lieu ou une position trie par distance.',
+  es: 'Vea todas las empresas de limusina disponibles. Un lugar o ubicación ordena por distancia.',
 );
 
 const LocalizedText kLimousineDiscoverySearchLabel = LocalizedText(
@@ -57,17 +57,17 @@ const LocalizedText kLimousineDiscoveryLoading = LocalizedText(
 );
 
 const LocalizedText kLimousineDiscoveryEmptyTitle = LocalizedText(
-  nl: 'Nog geen limousines in deze regio',
-  en: 'No limousines in this region yet',
-  fr: 'Pas encore de limousines dans cette région',
-  es: 'Aún no hay limusinas en esta región',
+  nl: 'Nog geen limousinebedrijven beschikbaar',
+  en: 'No limousine companies available yet',
+  fr: 'Aucune compagnie de limousine disponible',
+  es: 'Aún no hay empresas de limusina disponibles',
 );
 
 const LocalizedText kLimousineDiscoveryEmptyBody = LocalizedText(
-  nl: 'Er zijn momenteel geen openbare limousineaanbieders beschikbaar in het gekozen gebied. Taxi wordt hier niet als vervanger getoond.',
-  en: 'There are currently no public limousine providers available in the selected area. Taxi is not shown as a substitute.',
-  fr: 'Aucun prestataire de limousine public n’est actuellement disponible dans la zone choisie. Le taxi n’est pas proposé en remplacement.',
-  es: 'Ahora mismo no hay proveedores públicos de limusina en la zona elegida. El taxi no se muestra como alternativa.',
+  nl: 'Er zijn momenteel geen openbare limousineaanbieders beschikbaar. Taxi wordt hier niet als vervanger getoond.',
+  en: 'There are currently no public limousine providers available. Taxi is not shown as a substitute.',
+  fr: 'Aucun prestataire de limousine public n’est actuellement disponible. Le taxi n’est pas proposé en remplacement.',
+  es: 'Ahora mismo no hay proveedores públicos de limusina. El taxi no se muestra como alternativa.',
 );
 
 const LocalizedText kLimousineDiscoveryGatesOffTitle = LocalizedText(

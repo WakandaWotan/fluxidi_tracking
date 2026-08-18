@@ -100,7 +100,6 @@ class HttpLimousineDiscoveryGateway implements LimousineDiscoveryGateway {
     } else if (query.lat != null && query.lng != null) {
       parameters['lat'] = query.lat!.toStringAsFixed(6);
       parameters['lng'] = query.lng!.toStringAsFixed(6);
-      parameters['radius_km'] = '20';
     }
     final uri = Uri.parse(
       '$_base$kLimousineDiscoveryNearbyPath',
@@ -203,7 +202,6 @@ class LimousineDiscoveryController extends ChangeNotifier {
     lastQuery = resolved;
     listingMode = '';
     phase = LimousineDiscoveryPhase.loading;
-    cards = const <LimousineDiscoveryCard>[];
     profileUnavailablePartnerId = '';
     notifyListeners();
     try {
@@ -213,11 +211,7 @@ class LimousineDiscoveryController extends ChangeNotifier {
       listingMode = result.listingMode;
       if (result.networkError) {
         phase = LimousineDiscoveryPhase.network;
-        cards = const <LimousineDiscoveryCard>[];
-      } else if (result.gatesOff ||
-          (result.cards.isEmpty &&
-              resolved.isUnscoped &&
-              (result.isTestPreview || result.listingMode == 'test_preview'))) {
+      } else if (result.gatesOff) {
         phase = LimousineDiscoveryPhase.gatesOff;
         cards = const <LimousineDiscoveryCard>[];
       } else if (result.cards.isEmpty) {
