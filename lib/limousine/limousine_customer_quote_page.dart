@@ -9,6 +9,8 @@ import '../customer_theme_store.dart';
 import 'limousine_accepted_booking_page.dart';
 import 'limousine_accepted_booking_resume_ui.dart';
 import 'limousine_accepted_booking_vault.dart';
+import 'limousine_address_field.dart';
+import 'limousine_address_lookup.dart';
 import 'limousine_customer_entry.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_marketplace_labels.dart';
@@ -29,11 +31,13 @@ class LimousineCustomerQuotePage extends StatefulWidget {
     this.initialOffer,
     this.initialCompanyName = '',
     this.resumeRepository,
+    this.placeLookup,
   });
 
   final LimousineCustomerQuoteController? controller;
   final LimousineCustomerQuoteGateway? gateway;
   final LimousineAcceptedBookingResumeRepository? resumeRepository;
+  final LimousinePlaceLookup? placeLookup;
   final bool? entryEnabled;
   final String? initialPublicPartnerId;
   final LimousinePublishedOffer? initialOffer;
@@ -48,12 +52,17 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
     with WidgetsBindingObserver {
   late final LimousineCustomerQuoteController _controller;
   late final bool _ownsController;
+  late final LimousinePlaceLookup _placeLookup;
+  late final bool _ownsPlaceLookup;
+  late final LimousineAddressFieldController _pickup;
+  late final LimousineAddressFieldController _destination;
+  late final LimousineAddressFieldController _returnPickup;
+  late final LimousineAddressFieldController _returnDestination;
   final _postcode = TextEditingController();
-  final _from = TextEditingController();
-  final _to = TextEditingController();
   final _note = TextEditingController();
   final _duration = TextEditingController();
-  final List<TextEditingController> _stops = <TextEditingController>[];
+  final List<LimousineAddressFieldController> _stops =
+      <LimousineAddressFieldController>[];
 
   bool get _entryEnabled =>
       widget.entryEnabled ?? LimousineCustomerEntryContract.isVisible;
@@ -75,6 +84,12 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
           resumeRepository: widget.resumeRepository,
         );
     _controller.addListener(_onChanged);
+    _ownsPlaceLookup = widget.placeLookup == null;
+    _placeLookup = widget.placeLookup ?? LimousinePlaceLookup();
+    _pickup = _createAddressField('pickup', listen: false);
+    _destination = _createAddressField('destination', listen: false);
+    _returnPickup = _createAddressField('return_pickup', listen: false);
+    _returnDestination = _createAddressField('return_destination', listen: false);
     if (widget.resumeRepository != null) {
       unawaited(_controller.detectSecureResume());
     }
@@ -87,9 +102,54 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
         companyName: widget.initialCompanyName,
       );
     }
-    _from.text = _controller.draft.from;
-    _to.text = _controller.draft.to;
+    _pickup.seedText(_controller.draft.from);
+    _destination.seedText(_controller.draft.to);
+    for (var i = 0; i < _controller.draft.stops.length; i++) {
+      _addStop(initialText: _controller.draft.stops[i], listen: false);
+    }
     _note.text = _controller.draft.customerNote;
+    _pickup.addListener(_onAddressChanged);
+    _destination.addListener(_onAddressChanged);
+    _returnPickup.addListener(_onAddressChanged);
+    _returnDestination.addListener(_onAddressChanged);
+    for (final stop in _stops) {
+      stop.addListener(_onAddressChanged);
+    }
+  }
+
+  LimousineAddressFieldController _createAddressField(
+    String id, {
+    bool listen = true,
+  }) {
+    final field = LimousineAddressFieldController(
+      lookup: _placeLookup,
+      fieldId: id,
+      language: _lang.name,
+    );
+    if (listen) field.addListener(_onAddressChanged);
+    return field;
+  }
+
+  void _addStop({String initialText = '', bool listen = true}) {
+    if (_stops.length >= 8) return;
+    final field = _createAddressField(
+      'stop_${_stops.length}',
+      listen: listen,
+    );
+    if (initialText.isNotEmpty) field.seedText(initialText);
+    _stops.add(field);
+  }
+
+  void _onAddressChanged() {
+    _pickup.language = _lang.name;
+    _destination.language = _lang.name;
+    _returnPickup.language = _lang.name;
+    _returnDestination.language = _lang.name;
+    for (final stop in _stops) {
+      stop.language = _lang.name;
+    }
+    _controller.updateDraft(_syncedDraft());
+    if (mounted) setState(() {});
   }
 
   void _onChanged() {
@@ -112,13 +172,16 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
     _controller.stopPolling();
     if (_ownsController) _controller.dispose();
     _postcode.dispose();
-    _from.dispose();
-    _to.dispose();
+    _pickup.dispose();
+    _destination.dispose();
+    _returnPickup.dispose();
+    _returnDestination.dispose();
     _note.dispose();
     _duration.dispose();
     for (final stop in _stops) {
       stop.dispose();
     }
+    if (_ownsPlaceLookup) _placeLookup.dispose();
     super.dispose();
   }
 
@@ -138,6 +201,11 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
     draft: _syncedDraft(),
     offer: _controller.selectedOffer,
     hasProvider: _controller.selectedProvider != null,
+    pickupAddress: _pickup.value,
+    destinationAddress: _destination.value,
+    stopAddresses: _stops.map((stop) => stop.value).toList(growable: false),
+    returnPickupAddress: _returnPickup.value,
+    returnDestinationAddress: _returnDestination.value,
   );
 
   bool get _canAdvance => _gaps.isEmpty;
@@ -203,6 +271,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
             child: SizedBox(
               width: columnWidth,
               child: ListView(
+                key: kLimousineRequestWizardScrollKey,
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                 keyboardDismissBehavior:
                     ScrollViewKeyboardDismissBehavior.onDrag,
@@ -381,19 +450,17 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
 
   List<Widget> _journeyStep() {
     return [
-      _field(
-        _t(kLimousineCustomerFrom),
-        _from,
-        onChanged: (value) {
-          _controller.updateDraft(_controller.draft.copyWith(from: value));
-        },
+      LimousineAddressField(
+        controller: _pickup,
+        label: _t(kLimousineCustomerFrom),
+        tokens: _tokens,
+        language: _lang,
       ),
-      _field(
-        _t(kLimousineCustomerTo),
-        _to,
-        onChanged: (value) {
-          _controller.updateDraft(_controller.draft.copyWith(to: value));
-        },
+      LimousineAddressField(
+        controller: _destination,
+        label: _t(kLimousineCustomerTo),
+        tokens: _tokens,
+        language: _lang,
       ),
       Wrap(
         spacing: 8,
@@ -428,6 +495,14 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
         value: _controller.draft.roundtrip,
         onChanged: (value) {
           _controller.updateDraft(_controller.draft.copyWith(roundtrip: value));
+          if (value) {
+            if (_destination.isRouteReady) {
+              _returnPickup.acceptCopy(_destination.value);
+            }
+            if (_pickup.isRouteReady) {
+              _returnDestination.acceptCopy(_pickup.value);
+            }
+          }
         },
       ),
       ListTile(
@@ -441,7 +516,19 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
         ),
         onTap: () => _pickSchedule(returnTrip: false),
       ),
-      if (_controller.draft.roundtrip)
+      if (_controller.draft.roundtrip) ...[
+        LimousineAddressField(
+          controller: _returnPickup,
+          label: _t(kLimousineCustomerReturnPickupAddress),
+          tokens: _tokens,
+          language: _lang,
+        ),
+        LimousineAddressField(
+          controller: _returnDestination,
+          label: _t(kLimousineCustomerReturnDestinationAddress),
+          tokens: _tokens,
+          language: _lang,
+        ),
         ListTile(
           contentPadding: EdgeInsets.zero,
           title: Text(_t(kLimousineCustomerReturnTime)),
@@ -453,6 +540,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
           ),
           onTap: () => _pickSchedule(returnTrip: true),
         ),
+      ],
       if (_controller.draft.journeyType == 'hourly_package')
         _field(
           _t(kLimousineCustomerDuration),
@@ -474,17 +562,23 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
       Align(
         alignment: Alignment.centerLeft,
         child: TextButton.icon(
+          key: kLimousineRequestAddStopKey,
           onPressed: _stops.length >= 8
               ? null
               : () {
-                  setState(() => _stops.add(TextEditingController()));
+                  setState(_addStop);
                 },
           icon: const Icon(Icons.add),
           label: Text(_t(kLimousineCustomerAddStop)),
         ),
       ),
       for (var i = 0; i < _stops.length; i++)
-        _field('${_t(kLimousineCustomerStops)} ${i + 1}', _stops[i]),
+        LimousineAddressField(
+          controller: _stops[i],
+          label: '${_t(kLimousineCustomerStops)} ${i + 1}',
+          tokens: _tokens,
+          language: _lang,
+        ),
     ];
   }
 
@@ -504,6 +598,13 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
                       offer: _controller.selectedOffer,
                       hasProvider: _controller.selectedProvider != null,
                       action: 'discover',
+                      pickupAddress: _pickup.value,
+                      destinationAddress: _destination.value,
+                      stopAddresses: _stops
+                          .map((stop) => stop.value)
+                          .toList(growable: false),
+                      returnPickupAddress: _returnPickup.value,
+                      returnDestinationAddress: _returnDestination.value,
                     )
                 ? null
                 : () => _controller.discover(postcode: _postcode.text),
@@ -618,6 +719,8 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
       language: _lang,
       providerName: _controller.selectedProvider?.provider.companyName ?? '',
       offer: _controller.selectedOffer,
+      returnPickupAddress: _returnPickup.value.routeText,
+      returnDestinationAddress: _returnDestination.value.routeText,
     );
     return [
       Column(
@@ -751,6 +854,13 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
           offer: _controller.selectedOffer,
           hasProvider: _controller.selectedProvider != null,
           action: 'submit',
+          pickupAddress: _pickup.value,
+          destinationAddress: _destination.value,
+          stopAddresses: _stops
+              .map((stop) => stop.value)
+              .toList(growable: false),
+          returnPickupAddress: _returnPickup.value,
+          returnDestinationAddress: _returnDestination.value,
         )) {
           return;
         }
@@ -812,12 +922,17 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
   }
 
   LimousineQuoteCreateDraft _syncedDraft() {
+    final onJourney = _wizardStep == LimousineRequestWizardStep.journey;
     return _controller.draft.copyWith(
-      from: _from.text,
-      to: _to.text,
+      from: _pickup.isRouteReady
+          ? _pickup.value.routeText
+          : (onJourney ? '' : _controller.draft.from),
+      to: _destination.isRouteReady
+          ? _destination.value.routeText
+          : (onJourney ? '' : _controller.draft.to),
       customerNote: _note.text,
       stops: _stops
-          .map((controller) => controller.text.trim())
+          .map((controller) => controller.value.routeText)
           .where((text) => text.isNotEmpty)
           .toList(growable: false),
     );

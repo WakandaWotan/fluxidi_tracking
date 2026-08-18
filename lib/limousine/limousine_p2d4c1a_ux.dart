@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../app_strings.dart';
 import '../business_theme/brand_signature_palette.dart';
 import '../customer_theme_palette.dart';
+import 'limousine_address_lookup.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_customer_quote_labels.dart';
 import 'limousine_offers.dart';
@@ -42,6 +43,12 @@ const Key kLimousineRequestWizardHintKey = ValueKey<String>(
 );
 const Key kLimousineRequestReviewSummaryKey = ValueKey<String>(
   'limousine_request_review_summary',
+);
+const Key kLimousineRequestAddStopKey = ValueKey<String>(
+  'limousine_request_add_stop',
+);
+const Key kLimousineRequestWizardScrollKey = ValueKey<String>(
+  'limousine_request_wizard_scroll',
 );
 const Key kLimousineOfferEditorDialogKey = ValueKey<String>(
   'limousine_offer_editor_dialog',
@@ -119,6 +126,20 @@ const LocalizedText kLimousineReviewReturn = LocalizedText(
   en: 'Return',
   fr: 'Retour',
   es: 'Regreso',
+);
+
+const LocalizedText kLimousineReviewReturnPickup = LocalizedText(
+  nl: 'Terugrit ophaal',
+  en: 'Return pickup',
+  fr: 'Retour — prise en charge',
+  es: 'Regreso — recogida',
+);
+
+const LocalizedText kLimousineReviewReturnDestination = LocalizedText(
+  nl: 'Terugrit bestemming',
+  en: 'Return destination',
+  fr: 'Retour — destination',
+  es: 'Regreso — destino',
 );
 
 const LocalizedText kLimousineReviewPassengers = LocalizedText(
@@ -223,21 +244,49 @@ List<LimousineRequestStepGap> limousineRequestWizardGaps({
   required LimousineQuoteCreateDraft draft,
   LimousinePublishedOffer? offer,
   bool hasProvider = false,
+  LimousineAddressValue? pickupAddress,
+  LimousineAddressValue? destinationAddress,
+  List<LimousineAddressValue> stopAddresses = const <LimousineAddressValue>[],
+  LimousineAddressValue? returnPickupAddress,
+  LimousineAddressValue? returnDestinationAddress,
 }) {
   final gaps = <LimousineRequestStepGap>[];
   switch (step) {
     case LimousineRequestWizardStep.journey:
-      if (draft.from.trim().isEmpty) {
+      if (pickupAddress != null) {
+        if (!pickupAddress.isRouteReady) {
+          gaps.add(const LimousineRequestStepGap('pickup_required'));
+        }
+      } else if (draft.from.trim().isEmpty) {
         gaps.add(const LimousineRequestStepGap('pickup_required'));
       }
-      if (draft.to.trim().isEmpty) {
+      if (destinationAddress != null) {
+        if (!destinationAddress.isRouteReady) {
+          gaps.add(const LimousineRequestStepGap('destination_required'));
+        }
+      } else if (draft.to.trim().isEmpty) {
         gaps.add(const LimousineRequestStepGap('destination_required'));
+      }
+      if (stopAddresses.any(
+        (stop) => !stop.isEmpty && !stop.isRouteReady,
+      )) {
+        gaps.add(const LimousineRequestStepGap('stop_address_required'));
       }
       if (DateTime.tryParse(draft.scheduledPickupIso) == null) {
         gaps.add(const LimousineRequestStepGap('pickup_time_required'));
       }
       if (draft.roundtrip && DateTime.tryParse(draft.returnPickupIso) == null) {
         gaps.add(const LimousineRequestStepGap('return_time_required'));
+      }
+      if (draft.roundtrip &&
+          returnPickupAddress != null &&
+          !returnPickupAddress.isRouteReady) {
+        gaps.add(const LimousineRequestStepGap('return_pickup_required'));
+      }
+      if (draft.roundtrip &&
+          returnDestinationAddress != null &&
+          !returnDestinationAddress.isRouteReady) {
+        gaps.add(const LimousineRequestStepGap('return_destination_required'));
       }
       if (limousineOfferToken(draft.journeyType) == 'hourly_package' &&
           (draft.requestedDurationMinutes == null ||
@@ -275,12 +324,22 @@ bool limousineRequestWizardCanAdvance({
   required LimousineQuoteCreateDraft draft,
   LimousinePublishedOffer? offer,
   bool hasProvider = false,
+  LimousineAddressValue? pickupAddress,
+  LimousineAddressValue? destinationAddress,
+  List<LimousineAddressValue> stopAddresses = const <LimousineAddressValue>[],
+  LimousineAddressValue? returnPickupAddress,
+  LimousineAddressValue? returnDestinationAddress,
 }) {
   return limousineRequestWizardGaps(
     step: step,
     draft: draft,
     offer: offer,
     hasProvider: hasProvider,
+    pickupAddress: pickupAddress,
+    destinationAddress: destinationAddress,
+    stopAddresses: stopAddresses,
+    returnPickupAddress: returnPickupAddress,
+    returnDestinationAddress: returnDestinationAddress,
   ).isEmpty;
 }
 
@@ -290,6 +349,11 @@ bool limousineRequestWizardAllowsHttp({
   LimousinePublishedOffer? offer,
   bool hasProvider = false,
   required String action,
+  LimousineAddressValue? pickupAddress,
+  LimousineAddressValue? destinationAddress,
+  List<LimousineAddressValue> stopAddresses = const <LimousineAddressValue>[],
+  LimousineAddressValue? returnPickupAddress,
+  LimousineAddressValue? returnDestinationAddress,
 }) {
   if (action == 'discover') {
     return step == LimousineRequestWizardStep.provider &&
@@ -298,6 +362,11 @@ bool limousineRequestWizardAllowsHttp({
           draft: draft,
           offer: offer,
           hasProvider: hasProvider,
+          pickupAddress: pickupAddress,
+          destinationAddress: destinationAddress,
+          stopAddresses: stopAddresses,
+          returnPickupAddress: returnPickupAddress,
+          returnDestinationAddress: returnDestinationAddress,
         );
   }
   if (action == 'create_request' || action == 'submit') {
@@ -329,6 +398,8 @@ List<LimousineRequestReviewRow> buildLimousineRequestReviewRows({
   required AppLanguage language,
   String providerName = '',
   LimousinePublishedOffer? offer,
+  String returnPickupAddress = '',
+  String returnDestinationAddress = '',
 }) {
   final rows = <LimousineRequestReviewRow>[
     LimousineRequestReviewRow(
@@ -375,6 +446,24 @@ List<LimousineRequestReviewRow> buildLimousineRequestReviewRows({
             : draft.returnPickupIso.trim(),
       ),
     );
+    if (returnPickupAddress.trim().isNotEmpty) {
+      rows.add(
+        LimousineRequestReviewRow(
+          id: 'return_pickup_address',
+          label: kLimousineReviewReturnPickup.of(language),
+          value: returnPickupAddress.trim(),
+        ),
+      );
+    }
+    if (returnDestinationAddress.trim().isNotEmpty) {
+      rows.add(
+        LimousineRequestReviewRow(
+          id: 'return_destination_address',
+          label: kLimousineReviewReturnDestination.of(language),
+          value: returnDestinationAddress.trim(),
+        ),
+      );
+    }
   }
   rows.add(
     LimousineRequestReviewRow(

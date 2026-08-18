@@ -156,6 +156,20 @@ const LocalizedText kLimousineCustomerReturnTime = LocalizedText(
   es: 'Regreso',
 );
 
+const LocalizedText kLimousineCustomerReturnPickupAddress = LocalizedText(
+  nl: 'Terugrit ophaallocatie',
+  en: 'Return pickup location',
+  fr: 'Lieu de prise en charge du retour',
+  es: 'Lugar de recogida de regreso',
+);
+
+const LocalizedText kLimousineCustomerReturnDestinationAddress = LocalizedText(
+  nl: 'Terugrit bestemming',
+  en: 'Return destination',
+  fr: 'Destination du retour',
+  es: 'Destino de regreso',
+);
+
 const LocalizedText kLimousineCustomerRoundtrip = LocalizedText(
   nl: 'Heen en terug',
   en: 'Round trip',
