@@ -239,6 +239,37 @@ String limousineBusinessSetupTextFallback(
   );
 }
 
+bool limousineOfferIsValidPublished(
+  Map<String, dynamic> offer, {
+  List<VehicleProfile> vehicles = const <VehicleProfile>[],
+  List<String> knownClassIds = const <String>[],
+}) {
+  if (offer['enabled'] == false) return false;
+  if (offer['published'] != true) return false;
+  return validateLimousineOffer(
+    offer,
+    vehicles: vehicles,
+    knownClassIds: knownClassIds,
+    readiness: true,
+  ).errors.isEmpty;
+}
+
+bool limousineOffersPricingSectionIsComplete({
+  required bool sectionEnabled,
+  required List<Map<String, dynamic>> offers,
+  List<VehicleProfile> vehicles = const <VehicleProfile>[],
+  List<String> knownClassIds = const <String>[],
+}) {
+  if (!sectionEnabled) return false;
+  return offers.any(
+    (offer) => limousineOfferIsValidPublished(
+      offer,
+      vehicles: vehicles,
+      knownClassIds: knownClassIds,
+    ),
+  );
+}
+
 bool limousineVehicleHasSafePublicPhoto(VehicleProfile vehicle) {
   return vehicle.isActive &&
       limousineVehicleAppearsInLimousinePreview(vehicle) &&
@@ -350,7 +381,7 @@ List<String> limousineBusinessSetupOfferErrors(
   Map<String, dynamic> offer, {
   List<VehicleProfile> vehicles = const <VehicleProfile>[],
   List<String> knownClassIds = const <String>[],
-  bool readiness = false,
+  bool readiness = true,
 }) {
   return validateLimousineOffer(
     offer,

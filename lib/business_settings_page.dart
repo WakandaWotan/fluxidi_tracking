@@ -644,7 +644,15 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       icon: Icons.workspace_premium_outlined,
       title: kLimousineOffersPricingSectionTitle.of(_lang),
       subtitle: kLimousineOffersPricingSectionIntro.of(_lang),
-      status: _SetupStatus.optional,
+      status:
+          limousineOffersPricingSectionIsComplete(
+            sectionEnabled: _limousineSectionEnabled,
+            offers: _limousineOffers,
+            vehicles: vehiclesNotifier.value,
+            knownClassIds: _limousineKnownClassIds,
+          )
+          ? _SetupStatus.complete
+          : _SetupStatus.optional,
       child: Column(
         key: kLimousineCompanyOffersStatusKey,
         crossAxisAlignment: CrossAxisAlignment.start,

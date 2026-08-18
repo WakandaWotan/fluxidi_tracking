@@ -56,6 +56,7 @@ class LimousineAddressValue {
     this.lon,
     this.placeId,
     this.acceptance = LimousineAddressAcceptance.empty,
+    this.fromCurrentLocation = false,
   });
 
   final String displayText;
@@ -64,6 +65,7 @@ class LimousineAddressValue {
   final double? lon;
   final String? placeId;
   final LimousineAddressAcceptance acceptance;
+  final bool fromCurrentLocation;
 
   bool get isEmpty => displayText.trim().isEmpty;
 
@@ -80,10 +82,7 @@ class LimousineAddressValue {
 }
 
 typedef LimousinePlaceSearch =
-    Future<LimousinePlaceLookupResult> Function(
-      String query,
-      String language,
-    );
+    Future<LimousinePlaceLookupResult> Function(String query, String language);
 
 typedef LimousinePlaceReverse =
     Future<LimousinePlaceLookupResult> Function(

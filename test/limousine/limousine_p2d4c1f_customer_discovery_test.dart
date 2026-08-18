@@ -182,6 +182,43 @@ void main() {
     customerThemeNotifier.value = CustomerThemeVariant.premiumLight;
   });
 
+  test('selected postcode labels use the postcode filter, not GPS', () {
+    final query = limousineDiscoveryQueryFromAddress(
+      displayText: '9688, Maarkedal',
+      lat: 50.796,
+      lon: 3.621,
+    );
+    expect(query?.postcode, '9688');
+    expect(query?.lat, isNull);
+    expect(query?.lng, isNull);
+  });
+
+  test('street-level selected labels keep server coordinates', () {
+    final query = limousineDiscoveryQueryFromAddress(
+      displayText: 'Korenmarkt 1, 9000 Gent, Belgium',
+      lat: 51.0543,
+      lon: 3.7174,
+    );
+    expect(query?.lat, 51.0543);
+    expect(query?.lng, 3.7174);
+    expect(query?.postcode, isNull);
+  });
+
+  test(
+    'explicit current location keeps GPS even when the label has a postcode',
+    () {
+      final query = limousineDiscoveryQueryFromAddress(
+        displayText: 'Koekamerstraat 48, 9688 Maarkedal',
+        lat: 50.796,
+        lon: 3.621,
+        explicitCurrentLocation: true,
+      );
+      expect(query?.lat, 50.796);
+      expect(query?.lng, 3.621);
+      expect(query?.postcode, isNull);
+    },
+  );
+
   test('worker-shaped test-preview cards parse; excluded classes stay out', () {
     final allowlisted = tryParseLimousineDiscoveryCard(
       _workerCard(id: 'limo_1', name: 'Maison Noire'),

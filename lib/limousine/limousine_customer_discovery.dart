@@ -219,15 +219,32 @@ String? limousineDiscoveryExtractPostcode(String raw) {
   return match?.group(1);
 }
 
+bool limousineDiscoveryLabelIsPostcodeLed(String value) {
+  return RegExp(r'^\d{4}\b').hasMatch(value.trim());
+}
+
 LimousineDiscoveryQuery? limousineDiscoveryQueryFromAddress({
   required String displayText,
   double? lat,
   double? lon,
+  bool explicitCurrentLocation = false,
 }) {
-  if (lat != null && lon != null && lat.isFinite && lon.isFinite) {
+  final hasCoords = lat != null && lon != null && lat.isFinite && lon.isFinite;
+  // Explicit "Huidige locatie" always keeps GPS, even if reverse-geocode
+  // text happens to contain a Belgian postcode.
+  if (explicitCurrentLocation && hasCoords) {
     return LimousineDiscoveryQuery(lat: lat, lng: lon);
   }
   final postcode = limousineDiscoveryExtractPostcode(displayText);
+  // Postcode-led selections such as "9688, Maarkedal" or typed "9000 Gent"
+  // use the postcode filter. Street-level suggestions with server coords
+  // keep GPS so a place pick does not collapse to a private base.
+  if (postcode != null && limousineDiscoveryLabelIsPostcodeLed(displayText)) {
+    return LimousineDiscoveryQuery(postcode: postcode);
+  }
+  if (hasCoords) {
+    return LimousineDiscoveryQuery(lat: lat, lng: lon);
+  }
   if (postcode != null) {
     return LimousineDiscoveryQuery(postcode: postcode);
   }

@@ -8,6 +8,7 @@
 
 import '../app_config.dart';
 import '../app_strings.dart';
+import 'limousine_dimensions.dart';
 
 abstract final class LimousinePricePresentation {
   static const String exactFixed = 'exact_fixed';
@@ -240,7 +241,9 @@ LimousineOfferValidation validateLimousineOffer(
       if (limousineOfferToken(vehicle.serviceCategory) != 'limousine') {
         errors.add(LimousineOfferError.vehicleNotLimousine);
       }
-      if (!classIds.contains(limousineOfferToken(vehicle.serviceClassId))) {
+      final vehicleClass = limousineOfferToken(vehicle.serviceClassId);
+      if (vehicleClass.isEmpty ||
+          isForbiddenClassInferenceToken(vehicleClass)) {
         errors.add(LimousineOfferError.unknownServiceClass);
       }
     }

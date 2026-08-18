@@ -154,6 +154,7 @@ class _LimousineCustomerDiscoveryPageState
           : _place.textController.text,
       lat: value.lat,
       lon: value.lon,
+      explicitCurrentLocation: value.fromCurrentLocation,
     );
   }
 

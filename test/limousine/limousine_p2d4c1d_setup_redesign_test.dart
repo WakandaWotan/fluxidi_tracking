@@ -185,6 +185,38 @@ void main() {
     expect(ready.progress, closeTo(0.8, 0.01));
   });
 
+  test(
+    'offers section is Compleet when active with a valid published offer',
+    () {
+      expect(
+        limousineOffersPricingSectionIsComplete(
+          sectionEnabled: true,
+          offers: <Map<String, dynamic>>[_quoteOffer(published: true)],
+          vehicles: <VehicleProfile>[limo],
+          knownClassIds: const <String>['first_class_sedan', 'executive_sedan'],
+        ),
+        isTrue,
+      );
+      expect(
+        limousineOffersPricingSectionIsComplete(
+          sectionEnabled: true,
+          offers: <Map<String, dynamic>>[_quoteOffer(published: false)],
+          vehicles: <VehicleProfile>[limo],
+          knownClassIds: const <String>['executive_sedan'],
+        ),
+        isFalse,
+      );
+      expect(
+        limousineBusinessSetupOfferErrors(
+          _quoteOffer(published: true),
+          vehicles: <VehicleProfile>[limo],
+          knownClassIds: const <String>['executive_sedan'],
+        ),
+        isEmpty,
+      );
+    },
+  );
+
   test('taxi and limousine stay isolated', () {
     expect(limousineVehicleAppearsInTaxiPreview(taxi), isTrue);
     expect(limousineVehicleAppearsInLimousinePreview(taxi), isFalse);

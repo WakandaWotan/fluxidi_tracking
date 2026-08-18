@@ -168,6 +168,7 @@ class LimousineAddressFieldController extends ChangeNotifier {
       lon: other.lon,
       placeId: other.placeId,
       acceptance: other.acceptance,
+      fromCurrentLocation: other.fromCurrentLocation,
     );
     suggestions = const [];
     searched = false;
@@ -228,7 +229,10 @@ class LimousineAddressFieldController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void selectSuggestion(LimousinePlaceSuggestion suggestion) {
+  void selectSuggestion(
+    LimousinePlaceSuggestion suggestion, {
+    bool fromCurrentLocation = false,
+  }) {
     _debounce?.cancel();
     _requestId += 1;
     textController.value = TextEditingValue(
@@ -242,6 +246,7 @@ class LimousineAddressFieldController extends ChangeNotifier {
       lon: suggestion.lon,
       placeId: suggestion.placeId,
       acceptance: LimousineAddressAcceptance.selected,
+      fromCurrentLocation: fromCurrentLocation,
     );
     suggestions = const [];
     loading = false;
@@ -298,7 +303,7 @@ class LimousineAddressFieldController extends ChangeNotifier {
       final suggestion = await resolver.resolve(language: language);
       if (_disposed) return;
       if (suggestion == null) return;
-      selectSuggestion(suggestion);
+      selectSuggestion(suggestion, fromCurrentLocation: true);
     } on LimousineCurrentLocationException catch (error) {
       if (_disposed) return;
       currentLocationFailure = error.failure;
@@ -355,7 +360,9 @@ class LimousineAddressField extends StatelessWidget {
                 (controller.searched &&
                     !controller.loading &&
                     controller.suggestions.isEmpty)) &&
-            limousineAddressAllowsManualFallback(controller.textController.text);
+            limousineAddressAllowsManualFallback(
+              controller.textController.text,
+            );
         return Padding(
           padding: const EdgeInsets.only(bottom: 12),
           child: Column(
@@ -440,7 +447,9 @@ class LimousineAddressField extends StatelessWidget {
                               controller.fieldId,
                             ),
                             onPressed: controller.openAppSettings,
-                            child: Text(_t(kLimousineCurrentLocationOpenSettings)),
+                            child: Text(
+                              _t(kLimousineCurrentLocationOpenSettings),
+                            ),
                           ),
                         ),
                     ],
@@ -539,7 +548,9 @@ class LimousineAddressField extends StatelessWidget {
     );
   }
 
-  BoxConstraints? _suffixConstraints(LimousineAddressFieldController controller) {
+  BoxConstraints? _suffixConstraints(
+    LimousineAddressFieldController controller,
+  ) {
     final showClear = controller.textController.text.isNotEmpty;
     if (!showCurrentLocation && !showClear) return null;
     final count = (showCurrentLocation ? 1 : 0) + (showClear ? 1 : 0);

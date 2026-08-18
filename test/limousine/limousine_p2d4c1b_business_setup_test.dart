@@ -141,6 +141,41 @@ void main() {
   });
 
   test(
+    'classified limousine vehicles are not rejected by a catalog class check',
+    () {
+      final classified = _vehicle(
+        id: 'vh_custom',
+        name: 'Coach',
+        category: 'limousine',
+        classId: 'first_class_sedan',
+      );
+      final offer = <String, dynamic>{
+        'offer_id': 'off_vehicle',
+        'enabled': true,
+        'published': true,
+        'target_type': LimousineOfferTarget.vehicle,
+        'vehicle_id': 'vh_custom',
+        'service_class_id': 'first_class_sedan',
+        'price_presentation': LimousinePricePresentation.quoteRequired,
+        'currency': 'EUR',
+        'title': <String, String>{'nl': 'Coach'},
+        'description': <String, String>{'nl': 'Beschrijving'},
+        'hourly': <String, dynamic>{'enabled': false, 'currency': 'EUR'},
+        'distance_time': <String, dynamic>{'enabled': false, 'currency': 'EUR'},
+      };
+      expect(
+        validateLimousineOffer(
+          offer,
+          vehicles: <VehicleProfile>[classified],
+          knownClassIds: const <String>['executive_sedan'],
+          readiness: true,
+        ).errors,
+        isEmpty,
+      );
+    },
+  );
+
+  test(
     'conditional hourly validation stays off until hourly hire is enabled',
     () {
       final quote = _quoteOffer();
