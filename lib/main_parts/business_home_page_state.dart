@@ -80,6 +80,7 @@ class _BusinessHomePageState extends State<BusinessHomePage>
   bool _routeObserverSubscribed = false;
   bool _businessAccessGuardTriggered = false;
   bool? _limousineQuoteInboxEntitled;
+  int? _limousineQuoteNewCount;
   int _limousineQuoteInboxEntitlementGeneration = 0;
 
   BusinessDashboardKpiView get _kpiView {
@@ -1578,7 +1579,10 @@ class _BusinessHomePageState extends State<BusinessHomePage>
     final scope = _activeDashboardKpiScope();
     if (scope == null) {
       if (!mounted || gen != _limousineQuoteInboxEntitlementGeneration) return;
-      setState(() => _limousineQuoteInboxEntitled = false);
+      setState(() {
+        _limousineQuoteInboxEntitled = false;
+        _limousineQuoteNewCount = null;
+      });
       return;
     }
     try {
@@ -1587,12 +1591,32 @@ class _BusinessHomePageState extends State<BusinessHomePage>
         companyId: scope.companyId,
       );
       if (!mounted || gen != _limousineQuoteInboxEntitlementGeneration) return;
+      final entitled = profile.features['limousine'] == true;
       setState(() {
-        _limousineQuoteInboxEntitled = profile.features['limousine'] == true;
+        _limousineQuoteInboxEntitled = entitled;
+        if (!entitled) _limousineQuoteNewCount = null;
+      });
+      if (entitled) {
+        unawaited(_refreshLimousineQuoteInboxCount(gen));
+      }
+    } catch (_) {
+      if (!mounted || gen != _limousineQuoteInboxEntitlementGeneration) return;
+      setState(() {
+        _limousineQuoteInboxEntitled = false;
+        _limousineQuoteNewCount = null;
+      });
+    }
+  }
+
+  Future<void> _refreshLimousineQuoteInboxCount(int gen) async {
+    try {
+      final page = await HttpLimousineQuoteInboxGateway().list();
+      if (!mounted || gen != _limousineQuoteInboxEntitlementGeneration) return;
+      setState(() {
+        _limousineQuoteNewCount = limousineQuoteInboxUnreadBadge(page.items);
       });
     } catch (_) {
       if (!mounted || gen != _limousineQuoteInboxEntitlementGeneration) return;
-      setState(() => _limousineQuoteInboxEntitled = false);
     }
   }
 
@@ -3973,17 +3997,13 @@ class _BusinessHomePageState extends State<BusinessHomePage>
               onTap: () => _openBusinessBookingsOverview(context),
             ),
             if (_showLimousineQuoteInboxEntry)
-              KeyedSubtree(
-                key: kLimousineQuoteInboxEntryKey,
-                child: card(
-                  actionKey: 'limousine_quotes',
-                  title: kLimousineQuoteInboxEntryTitle.of(
-                    appLanguageNotifier.value,
-                  ),
-                  subtitle: kLimousineQuoteInboxEntrySubtitle.of(
-                    appLanguageNotifier.value,
-                  ),
-                  onTap: () => _openLimousineQuoteInbox(context),
+              SizedBox(
+                width: cardWidth,
+                height: cardHeight + kBrandSignatureGoldActionCardHeightBoost,
+                child: LimousineQuoteInboxDashboardTile(
+                  entitled: _limousineQuoteInboxEntitled,
+                  unreadCount: _limousineQuoteNewCount,
+                  onOpen: () => _openLimousineQuoteInbox(context),
                 ),
               ),
             card(
@@ -5557,19 +5577,14 @@ class _BusinessHomePageState extends State<BusinessHomePage>
                                 ),
                               if (_showLimousineQuoteInboxEntry)
                                 SizedBox(
-                                  key: kLimousineQuoteInboxEntryKey,
                                   width: cardWidth,
                                   height: businessQuickActionCardHeight,
-                                  child: _quickActionCard(
-                                    icon: Icons.request_quote_outlined,
-                                    title: kLimousineQuoteInboxEntryTitle.of(
-                                      appLanguageNotifier.value,
-                                    ),
-                                    subtitle: kLimousineQuoteInboxEntrySubtitle
-                                        .of(appLanguageNotifier.value),
-                                    onTap: () =>
-                                        _openLimousineQuoteInbox(context),
+                                  child: LimousineQuoteInboxDashboardTile(
+                                    entitled: _limousineQuoteInboxEntitled,
+                                    unreadCount: _limousineQuoteNewCount,
                                     compact: compactQuickAction,
+                                    onOpen: () =>
+                                        _openLimousineQuoteInbox(context),
                                   ),
                                 ),
                               SizedBox(

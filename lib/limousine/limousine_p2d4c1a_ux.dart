@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../app_strings.dart';
 import '../business_theme/brand_signature_palette.dart';
+import '../business_theme_palette.dart';
 import '../customer_theme_palette.dart';
 import 'limousine_address_lookup.dart';
 import 'limousine_customer_quote.dart';
@@ -267,9 +268,7 @@ List<LimousineRequestStepGap> limousineRequestWizardGaps({
       } else if (draft.to.trim().isEmpty) {
         gaps.add(const LimousineRequestStepGap('destination_required'));
       }
-      if (stopAddresses.any(
-        (stop) => !stop.isEmpty && !stop.isRouteReady,
-      )) {
+      if (stopAddresses.any((stop) => !stop.isEmpty && !stop.isRouteReady)) {
         gaps.add(const LimousineRequestStepGap('stop_address_required'));
       }
       if (DateTime.tryParse(draft.scheduledPickupIso) == null) {
@@ -716,6 +715,23 @@ class LimousineUxTokens {
     return LimousineUxTokens.fromSurface(
       background: palette.page,
       gold: palette.accent,
+    );
+  }
+
+  factory LimousineUxTokens.fromBusiness(BusinessThemePalette palette) {
+    return LimousineUxTokens(
+      background: palette.background,
+      surface: palette.surface,
+      surfaceAlt: palette.surfaceAlt,
+      onSurface: palette.textPrimary,
+      muted: palette.textMuted,
+      border: palette.border,
+      gold: palette.accent,
+      danger: palette.danger,
+      fieldFill: palette.surface,
+      onHero: palette.textPrimary,
+      heroScrim: palette.background.withOpacity(palette.isDark ? 0.55 : 0.38),
+      isDark: palette.isDark,
     );
   }
 }

@@ -18,10 +18,17 @@ const LocalizedText kLimousineQuoteInboxEntrySubtitle = LocalizedText(
 const LocalizedText kLimousineQuoteInboxTitle = kLimousineQuoteInboxEntryTitle;
 
 const LocalizedText kLimousineQuoteInboxEmpty = LocalizedText(
-  nl: 'Geen offerteaanvragen in deze weergave.',
-  en: 'No quote requests in this view.',
-  fr: 'Aucune demande de devis dans cette vue.',
-  es: 'No hay solicitudes de presupuesto en esta vista.',
+  nl: 'Nog geen offerteaanvragen.',
+  en: 'No quote requests yet.',
+  fr: 'Aucune demande de devis pour le moment.',
+  es: 'Aún no hay solicitudes de presupuesto.',
+);
+
+const LocalizedText kLimousineQuoteInboxEmptyHint = LocalizedText(
+  nl: 'Nieuwe klantaanvragen verschijnen hier zodra ze binnenkomen.',
+  en: 'New customer requests will appear here when they arrive.',
+  fr: 'Les nouvelles demandes clients apparaîtront ici dès leur arrivée.',
+  es: 'Las nuevas solicitudes de clientes aparecerán aquí cuando lleguen.',
 );
 
 const LocalizedText kLimousineQuoteInboxEmptyFiltered = LocalizedText(
@@ -53,10 +60,213 @@ const LocalizedText kLimousineQuoteReadOnlyHistory = LocalizedText(
 );
 
 const LocalizedText kLimousineQuoteGateOff = LocalizedText(
-  nl: 'Limousineoffertes zijn momenteel niet beschikbaar.',
-  en: 'Limousine quotes are currently unavailable.',
-  fr: 'Les devis limousine sont actuellement indisponibles.',
-  es: 'Los presupuestos de limusina no están disponibles ahora.',
+  nl: 'Limousineoffertes zijn nog niet actief in deze testomgeving.',
+  en: 'Limousine quotes are not active in this test environment yet.',
+  fr: 'Les devis limousine ne sont pas encore actifs dans cet environnement de test.',
+  es: 'Los presupuestos de limusina aún no están activos en este entorno de prueba.',
+);
+
+const LocalizedText kLimousineQuoteInboxHeroTitle = LocalizedText(
+  nl: 'Offerteaanvragen',
+  en: 'Quote requests',
+  fr: 'Demandes de devis',
+  es: 'Solicitudes de presupuesto',
+);
+
+const LocalizedText kLimousineQuoteInboxHeroBody = LocalizedText(
+  nl: 'Beantwoord nieuwe aanvragen en volg klantbeslissingen.',
+  en: 'Answer new requests and follow customer decisions.',
+  fr: 'Répondez aux nouvelles demandes et suivez les décisions des clients.',
+  es: 'Responda a las nuevas solicitudes y siga las decisiones del cliente.',
+);
+
+const LocalizedText kLimousineQuoteInboxManualQuotes = LocalizedText(
+  nl: 'Handmatige offertes',
+  en: 'Manual quotes',
+  fr: 'Devis manuels',
+  es: 'Presupuestos manuales',
+);
+
+const LocalizedText kLimousineQuoteInboxTestBadge = LocalizedText(
+  nl: 'Testomgeving',
+  en: 'Test environment',
+  fr: 'Environnement de test',
+  es: 'Entorno de prueba',
+);
+
+const LocalizedText kLimousineQuoteInboxSearchHint = LocalizedText(
+  nl: 'Zoek op plaats of referentie',
+  en: 'Search by place or reference',
+  fr: 'Rechercher un lieu ou une référence',
+  es: 'Buscar por lugar o referencia',
+);
+
+const LocalizedText kLimousineQuoteInboxRefresh = LocalizedText(
+  nl: 'Vernieuwen',
+  en: 'Refresh',
+  fr: 'Actualiser',
+  es: 'Actualizar',
+);
+
+const LocalizedText kLimousineQuoteInboxRequestFallback = LocalizedText(
+  nl: 'Offerteaanvraag',
+  en: 'Quote request',
+  fr: 'Demande de devis',
+  es: 'Solicitud de presupuesto',
+);
+
+const LocalizedText kLimousineQuoteInboxAmountOffered = LocalizedText(
+  nl: 'aangeboden',
+  en: 'offered',
+  fr: 'proposé',
+  es: 'ofrecido',
+);
+
+const LocalizedText kLimousineQuoteInboxAmountAccepted = LocalizedText(
+  nl: 'geaccepteerd',
+  en: 'accepted',
+  fr: 'accepté',
+  es: 'aceptado',
+);
+
+const LocalizedText kLimousineQuoteInboxCreateQuote = LocalizedText(
+  nl: 'Offerte maken',
+  en: 'Create quote',
+  fr: 'Créer un devis',
+  es: 'Crear presupuesto',
+);
+
+const LocalizedText kLimousineQuoteInboxEditQuote = LocalizedText(
+  nl: 'Offerte bewerken',
+  en: 'Edit quote',
+  fr: 'Modifier le devis',
+  es: 'Editar presupuesto',
+);
+
+const LocalizedText kLimousineQuoteInboxView = LocalizedText(
+  nl: 'Bekijken',
+  en: 'View',
+  fr: 'Voir',
+  es: 'Ver',
+);
+
+const LocalizedText kLimousineQuoteInboxViewQuote = LocalizedText(
+  nl: 'Offerte bekijken',
+  en: 'View quote',
+  fr: 'Voir le devis',
+  es: 'Ver presupuesto',
+);
+
+const LocalizedText kLimousineQuoteInboxOpenHandoff = LocalizedText(
+  nl: 'Boeking afronden',
+  en: 'Open accepted handoff',
+  fr: 'Ouvrir la passation acceptée',
+  es: 'Abrir el traspaso aceptado',
+);
+
+const LocalizedText kLimousineQuoteInboxViewBooking = LocalizedText(
+  nl: 'Boeking bekijken',
+  en: 'View booking',
+  fr: 'Voir la réservation',
+  es: 'Ver reserva',
+);
+
+const LocalizedText kLimousineQuoteInboxClose = LocalizedText(
+  nl: 'Sluiten',
+  en: 'Close',
+  fr: 'Fermer',
+  es: 'Cerrar',
+);
+
+const LocalizedText kLimousineQuoteInboxKpiNew = LocalizedText(
+  nl: 'Nieuw',
+  en: 'New',
+  fr: 'Nouveau',
+  es: 'Nuevo',
+);
+
+const LocalizedText kLimousineQuoteInboxKpiNewHint = LocalizedText(
+  nl: 'Nog niet bekeken',
+  en: 'Not yet viewed',
+  fr: 'Pas encore consulté',
+  es: 'Aún no visto',
+);
+
+const LocalizedText kLimousineQuoteInboxKpiToAnswer = LocalizedText(
+  nl: 'Te beantwoorden',
+  en: 'To answer',
+  fr: 'À répondre',
+  es: 'Por responder',
+);
+
+const LocalizedText kLimousineQuoteInboxKpiToAnswerHint = LocalizedText(
+  nl: 'Actie nodig',
+  en: 'Action needed',
+  fr: 'Action requise',
+  es: 'Acción necesaria',
+);
+
+const LocalizedText kLimousineQuoteInboxKpiWaiting = LocalizedText(
+  nl: 'Wacht op klant',
+  en: 'Waiting for customer',
+  fr: 'En attente du client',
+  es: 'Esperando al cliente',
+);
+
+const LocalizedText kLimousineQuoteInboxKpiWaitingHint = LocalizedText(
+  nl: 'Offerte verstuurd',
+  en: 'Quote sent',
+  fr: 'Devis envoyé',
+  es: 'Presupuesto enviado',
+);
+
+const LocalizedText kLimousineQuoteInboxKpiAccepted = LocalizedText(
+  nl: 'Geaccepteerd',
+  en: 'Accepted',
+  fr: 'Accepté',
+  es: 'Aceptado',
+);
+
+const LocalizedText kLimousineQuoteInboxKpiAcceptedHint = LocalizedText(
+  nl: 'Klaar voor boeking',
+  en: 'Ready for booking',
+  fr: 'Prêt pour la réservation',
+  es: 'Listo para reservar',
+);
+
+const LocalizedText kLimousineQuoteInboxMoreFilters = LocalizedText(
+  nl: 'Meer filters',
+  en: 'More filters',
+  fr: 'Plus de filtres',
+  es: 'Más filtros',
+);
+
+const LocalizedText kLimousineQuoteInboxPassengersMeta = LocalizedText(
+  nl: 'passagiers',
+  en: 'passengers',
+  fr: 'passagers',
+  es: 'pasajeros',
+);
+
+const LocalizedText kLimousineQuoteInboxLuggageMeta = LocalizedText(
+  nl: 'koffers',
+  en: 'bags',
+  fr: 'bagages',
+  es: 'maletas',
+);
+
+const LocalizedText kLimousineQuoteInboxValidUntil = LocalizedText(
+  nl: 'Geldig tot',
+  en: 'Valid until',
+  fr: 'Valable jusqu’au',
+  es: 'Válido hasta',
+);
+
+const LocalizedText kLimousineQuoteInboxAcceptedBanner = LocalizedText(
+  nl: 'Klant heeft geaccepteerd',
+  en: 'Customer has accepted',
+  fr: 'Le client a accepté',
+  es: 'El cliente ha aceptado',
 );
 
 const LocalizedText kLimousineQuoteSessionFailed = LocalizedText(
@@ -403,10 +613,10 @@ kLimousineQuoteInboxFilterLabels = <LimousineQuoteInboxFilter, LocalizedText>{
     es: 'Nuevo',
   ),
   LimousineQuoteInboxFilter.viewed: LocalizedText(
-    nl: 'Bekeken',
-    en: 'Viewed',
-    fr: 'Vu',
-    es: 'Visto',
+    nl: 'Wacht op mij',
+    en: 'Waiting for company',
+    fr: 'En attente de l’entreprise',
+    es: 'Esperando a la empresa',
   ),
   LimousineQuoteInboxFilter.waitingForCustomer: LocalizedText(
     nl: 'Wacht op klant',
@@ -415,7 +625,7 @@ kLimousineQuoteInboxFilterLabels = <LimousineQuoteInboxFilter, LocalizedText>{
     es: 'Esperando al cliente',
   ),
   LimousineQuoteInboxFilter.accepted: LocalizedText(
-    nl: 'Aanvaard',
+    nl: 'Geaccepteerd',
     en: 'Accepted',
     fr: 'Accepté',
     es: 'Aceptado',
@@ -433,6 +643,46 @@ kLimousineQuoteInboxFilterLabels = <LimousineQuoteInboxFilter, LocalizedText>{
     es: 'Cerrado',
   ),
 };
+
+const Map<String, LocalizedText> kLimousineQuoteInboxStatusLabels =
+    <String, LocalizedText>{
+      LimousineQuoteStateId.requested: LocalizedText(
+        nl: 'Nieuw',
+        en: 'New',
+        fr: 'Nouveau',
+        es: 'Nuevo',
+      ),
+      LimousineQuoteStateId.viewedByCompany: LocalizedText(
+        nl: 'Wacht op mij',
+        en: 'Waiting for company',
+        fr: 'En attente de l’entreprise',
+        es: 'Esperando a la empresa',
+      ),
+      LimousineQuoteStateId.quoted: LocalizedText(
+        nl: 'Wacht op klant',
+        en: 'Waiting for customer',
+        fr: 'En attente du client',
+        es: 'Esperando al cliente',
+      ),
+      LimousineQuoteStateId.customerAcceptanceRequired: LocalizedText(
+        nl: 'Wacht op klant',
+        en: 'Waiting for customer',
+        fr: 'En attente du client',
+        es: 'Esperando al cliente',
+      ),
+      LimousineQuoteStateId.accepted: LocalizedText(
+        nl: 'Geaccepteerd',
+        en: 'Accepted',
+        fr: 'Accepté',
+        es: 'Aceptado',
+      ),
+      LimousineQuoteStateId.bookingCreated: LocalizedText(
+        nl: 'Boeking aangemaakt',
+        en: 'Booking created',
+        fr: 'Réservation créée',
+        es: 'Reserva creada',
+      ),
+    };
 
 const Map<String, LocalizedText> kLimousineQuoteStateLabels =
     <String, LocalizedText>{

@@ -53,6 +53,39 @@ const Key kLimousineQuoteEditorPageKey = ValueKey<String>(
 const Key kLimousineQuoteDeclineDialogKey = ValueKey<String>(
   'limousine_quote_decline_dialog',
 );
+const Key kLimousineQuoteInboxHeroKey = ValueKey<String>(
+  'limousine_quote_inbox_hero',
+);
+const Key kLimousineQuoteInboxKpiRowKey = ValueKey<String>(
+  'limousine_quote_inbox_kpis',
+);
+const Key kLimousineQuoteInboxSearchKey = ValueKey<String>(
+  'limousine_quote_inbox_search',
+);
+const Key kLimousineQuoteInboxGateOffKey = ValueKey<String>(
+  'limousine_quote_inbox_gate_off',
+);
+const Key kLimousineQuoteInboxErrorKey = ValueKey<String>(
+  'limousine_quote_inbox_error',
+);
+const Key kLimousineQuoteInboxRefreshKey = ValueKey<String>(
+  'limousine_quote_inbox_refresh',
+);
+const Key kLimousineQuoteInboxTestBadgeKey = ValueKey<String>(
+  'limousine_quote_inbox_test_badge',
+);
+const Key kLimousineQuoteInboxTileVisualKey = ValueKey<String>(
+  'limousine_quote_inbox_tile_visual',
+);
+const Key kLimousineQuoteInboxTileBadgeKey = ValueKey<String>(
+  'limousine_quote_inbox_tile_badge',
+);
+
+Key limousineQuoteInboxKpiKey(String code) =>
+    ValueKey<String>('limousine_quote_inbox_kpi_$code');
+
+Key limousineQuoteInboxActionKey(String quoteRequestId, String action) =>
+    ValueKey<String>('limousine_inbox_action_${quoteRequestId}_$action');
 
 abstract final class LimousineQuoteStateId {
   static const String requested = 'requested';
