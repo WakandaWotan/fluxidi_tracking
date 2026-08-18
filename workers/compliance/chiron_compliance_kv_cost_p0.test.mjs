@@ -25,6 +25,10 @@
 import { test, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { __testInternals } from "./fluxidi_compliance_worker.js";
+import {
+  armChironDueMarker,
+  CHIRON_RECONCILE_DUE_DONE_KEY,
+} from "./chiron_reconcile_due_index.js";
 
 const {
   _chironAutoReconcileScopeBestEffort,
@@ -35,9 +39,20 @@ const {
   _chironPreloadForScope,
   _chironLoadScopedHydrationCache,
   _chironLoadBookingLegTypeMap,
+  _chironShouldRunReconcileFromStatusPoll,
   CHIRON_AUTO_RECONCILE_MAX_PROCESS,
   safeSegment,
 } = __testInternals;
+
+async function seedDueNowAndMigrationDone(h, nowMs = Date.now()) {
+  for (const key of [...h.complianceStore.keys()]) {
+    if (!key.startsWith("compliance_event_v1/")) continue;
+    await armChironDueMarker(h.env.COMPLIANCE_KV, key, nowMs);
+  }
+  await h.env.COMPLIANCE_KV.put(CHIRON_RECONCILE_DUE_DONE_KEY, JSON.stringify({ v: 1 }), {
+    metadata: { v: 1, done: true },
+  });
+}
 
 const ACC_URL = "https://mow-acc.api.vlaanderen.be/chiron/taxirit";
 const TENANT_A = "T_kvcost_a";
@@ -139,6 +154,7 @@ function eventKeyFor(tenantId, companyId, seq, label) {
  */
 function makeHarness({ scopes, bookingsPerScope, eventsPerBooking }) {
   const complianceStore = new Map();
+  const complianceMeta = new Map();
   const bookingReads = [];
   const complianceReads = [];
   let complianceLists = 0;
@@ -170,8 +186,14 @@ function makeHarness({ scopes, bookingsPerScope, eventsPerBooking }) {
         complianceReads.push(key);
         return complianceStore.get(key) ?? null;
       },
-      async put(key, value) {
+      async put(key, value, opts = {}) {
         complianceStore.set(key, value);
+        if (opts && opts.metadata) complianceMeta.set(key, opts.metadata);
+        else complianceMeta.delete(key);
+      },
+      async delete(key) {
+        complianceStore.delete(key);
+        complianceMeta.delete(key);
       },
       async list({ prefix = "", limit = 1000, cursor } = {}) {
         complianceLists += 1;
@@ -181,7 +203,7 @@ function makeHarness({ scopes, bookingsPerScope, eventsPerBooking }) {
         const next = start + slice.length;
         const complete = next >= all.length;
         return {
-          keys: slice.map((name) => ({ name })),
+          keys: slice.map((name) => ({ name, metadata: complianceMeta.get(name) || null })),
           list_complete: complete,
           cursor: complete ? undefined : Buffer.from(String(next), "utf8").toString("base64"),
         };
@@ -295,10 +317,11 @@ test("3. two scopes in one cron tick each build their own independent preload", 
     bookingsPerScope: bookings,
     eventsPerBooking: 1,
   });
+  await seedDueNowAndMigrationDone(h);
 
   const summary = await _chironCronReconcileAllScopesBestEffort(h.env, { source: "cron" });
   assert.equal(summary.ok, true);
-  assert.equal(summary.scopes, 2, "both Chiron scopes discovered");
+  assert.equal(summary.scopes, 2, "both due scopes processed");
 
   // Each scope reads its OWN hydration triple exactly once. No sharing, no
   // double-reading.
@@ -482,21 +505,25 @@ test("8. reconcile and cron counters keep their documented shape and bounds", as
   for (const field of ["scopes", "ran", "skipped_throttled", "failed"]) {
     assert.equal(typeof summary[field], "number", `${field} must remain a number`);
   }
-  assert.equal(summary.scopes, 1);
-  assert.equal(summary.ran + summary.skipped_throttled, summary.scopes);
+  assert.equal(summary.skipped_throttled, 0, "cron due-index path does not throttle");
 });
 
 test("9. the throttle marker still suppresses a second reconcile in the same window", async () => {
   const h = makeHarness({ scopes: [SCOPE_A], bookingsPerScope: 3, eventsPerBooking: 1 });
 
-  const first = await _chironCronReconcileAllScopesBestEffort(h.env, { source: "cron" });
-  assert.equal(first.scopes, 1);
-  assert.equal(first.ran, 1, "first pass runs");
-
-  const second = await _chironCronReconcileAllScopesBestEffort(h.env, { source: "cron" });
-  assert.equal(second.scopes, 1);
-  assert.equal(second.skipped_throttled, 1, "second pass inside the window is throttled");
-  assert.equal(second.ran, 0);
+  const first = await _chironAutoReconcileScopeBestEffort(h.env, TENANT_A, COMPANY_A, {
+    source: "status_poll",
+  });
+  assert.equal(first.ok, true);
+  const connRaw = h.complianceStore.get(
+    `tenant:${TENANT_A}:company:${COMPANY_A}:chiron_connection:v1`,
+  );
+  const connDoc = JSON.parse(connRaw);
+  assert.equal(
+    _chironShouldRunReconcileFromStatusPoll(connDoc),
+    false,
+    "status-poll throttle still suppresses a second pass in the 15s window",
+  );
 });
 
 /* ===================== failure and isolation ===================== */

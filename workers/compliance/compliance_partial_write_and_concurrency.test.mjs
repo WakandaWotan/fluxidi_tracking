@@ -131,7 +131,10 @@ function countDateKeys(kv, tenant = "t1", company = "c1") {
 test("canonical put failure leaves no state; retry reports fresh write (not dedup)", async () => {
   // Fail the very first put (canonical) exactly once.
   const kv = makeKV({
-    putFilter: (_key, idx) => (idx === 1 ? "simulated_canonical_put_failure" : null),
+    putFilter: (key) =>
+      key.startsWith("compliance_event_canonical_v1/")
+        ? "simulated_canonical_put_failure"
+        : null,
   });
   const env = envFor(kv);
 
@@ -169,7 +172,8 @@ test("canonical put failure leaves no state; retry reports fresh write (not dedu
 test("canonical ok + date put failure: retry recovers missing date entry, reports dedup+recovered", async () => {
   // Fail the SECOND put only (date-index write).
   const kv = makeKV({
-    putFilter: (_key, idx) => (idx === 2 ? "simulated_date_put_failure" : null),
+    putFilter: (key) =>
+      key.startsWith("compliance_event_v1/") ? "simulated_date_put_failure" : null,
   });
   const env = envFor(kv);
 
