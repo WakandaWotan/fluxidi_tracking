@@ -1,7 +1,9 @@
 // LIMOUSINE-MARKETPLACE-P2D4C1A — address lookup.
-// Reuses the proven Mapbox Geocoding v5 seam from CalculatorPage._searchPlaces
-// and airport forward-geocode. Not a second provider, key, or pricing engine.
+// Reuses the proven Mapbox Geocoding v5 seam from CalculatorPage._searchPlaces,
+// CalculatorPage._reverseGeocode and airport forward/reverse geocode.
+// Not a second provider, key, or pricing engine.
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -83,6 +85,13 @@ typedef LimousinePlaceSearch =
       String language,
     );
 
+typedef LimousinePlaceReverse =
+    Future<LimousinePlaceLookupResult> Function(
+      double lat,
+      double lon,
+      String language,
+    );
+
 bool limousineLooksLikeBelgianPostcode(String input) =>
     RegExp(r'^[1-9]\d{3}$').hasMatch(input.trim());
 
@@ -126,6 +135,31 @@ Uri limousineMapboxPlacesUri({
     '&language=${Uri.encodeComponent(language)}'
     '&limit=$kLimousineAddressMaxSuggestions',
   );
+}
+
+Uri limousineMapboxReverseGeocodeUri({
+  required double lat,
+  required double lon,
+  required String token,
+  String language = 'nl',
+}) {
+  final path = '${lon.toStringAsFixed(6)},${lat.toStringAsFixed(6)}';
+  return Uri.parse(
+    'https://$kLimousineMapboxGeocodingV5Host$kLimousineMapboxGeocodingV5PathPrefix$path.json'
+    '?access_token=${Uri.encodeComponent(token)}'
+    '&language=${Uri.encodeComponent(language)}'
+    '&country=be'
+    '&limit=1',
+  );
+}
+
+bool limousineCoordinatesAreValid(double lat, double lon) {
+  return lat.isFinite &&
+      lon.isFinite &&
+      lat >= -90 &&
+      lat <= 90 &&
+      lon >= -180 &&
+      lon <= 180;
 }
 
 List<LimousinePlaceSuggestion> parseLimousineMapboxPlaceFeatures(
@@ -172,18 +206,22 @@ class LimousinePlaceLookup {
     String? token,
     http.Client? client,
     LimousinePlaceSearch? searchOverride,
+    LimousinePlaceReverse? reverseOverride,
   }) : token = (token ?? kMapboxToken).trim(),
        _client = client,
        _searchOverride = searchOverride,
+       _reverseOverride = reverseOverride,
        _ownsClient = client == null && searchOverride == null;
 
   final String token;
   final http.Client? _client;
   final LimousinePlaceSearch? _searchOverride;
+  final LimousinePlaceReverse? _reverseOverride;
   final bool _ownsClient;
   final Map<String, LimousinePlaceLookupResult> _sessionCache =
       <String, LimousinePlaceLookupResult>{};
   int searchesStarted = 0;
+  int reverseGeocodesStarted = 0;
 
   String _cacheKey(String query, String language) =>
       '$language\u0001${limousineNormalizeAddressQuery(query)}';
@@ -238,6 +276,63 @@ class LimousinePlaceLookup {
       return const LimousinePlaceLookupResult(hadError: true);
     } finally {
       if (_ownsClient) client.close();
+    }
+  }
+
+  Future<LimousinePlaceLookupResult> reverseGeocode(
+    double lat,
+    double lon, {
+    String language = 'nl',
+  }) async {
+    if (!limousineCoordinatesAreValid(lat, lon)) {
+      return const LimousinePlaceLookupResult(hadError: true);
+    }
+    reverseGeocodesStarted += 1;
+    final override = _reverseOverride;
+    if (override != null) {
+      return override(lat, lon, language);
+    }
+    return _reverseMapbox(lat, lon, language);
+  }
+
+  Future<LimousinePlaceLookupResult> _reverseMapbox(
+    double lat,
+    double lon,
+    String language,
+  ) async {
+    if (token.isEmpty) {
+      return const LimousinePlaceLookupResult(hadError: true);
+    }
+    final uri = limousineMapboxReverseGeocodeUri(
+      lat: lat,
+      lon: lon,
+      token: token,
+      language: language,
+    );
+    final owns = _client == null;
+    final client = _client ?? http.Client();
+    try {
+      final res = await client.get(uri).timeout(kLimousineAddressLookupTimeout);
+      if (res.statusCode != 200) {
+        return const LimousinePlaceLookupResult(hadError: true);
+      }
+      final data = jsonDecode(res.body);
+      if (data is! Map) {
+        return const LimousinePlaceLookupResult(hadError: true);
+      }
+      final suggestions = parseLimousineMapboxPlaceFeatures(data['features']);
+      if (suggestions.isEmpty) {
+        return const LimousinePlaceLookupResult(hadError: true);
+      }
+      return LimousinePlaceLookupResult(
+        suggestions: <LimousinePlaceSuggestion>[suggestions.first],
+      );
+    } on TimeoutException {
+      rethrow;
+    } catch (_) {
+      return const LimousinePlaceLookupResult(hadError: true);
+    } finally {
+      if (owns) client.close();
     }
   }
 

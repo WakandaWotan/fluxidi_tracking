@@ -125,11 +125,23 @@ void main() {
     expect(uri.queryParameters['country'], 'be');
     expect(uri.queryParameters['limit'], '6');
     expect(uri.queryParameters.containsKey('access_token'), isTrue);
+    final reverse = limousineMapboxReverseGeocodeUri(
+      lat: 51.0543,
+      lon: 3.7174,
+      token: 'token',
+      language: 'nl',
+    );
+    expect(reverse.host, kLimousineMapboxGeocodingV5Host);
+    expect(reverse.path, contains('geocoding/v5/mapbox.places/'));
+    expect(reverse.path, contains('3.717400,51.054300'));
+    expect(reverse.queryParameters['limit'], '1');
+    expect(reverse.queryParameters['country'], 'be');
     final source = File(
       'lib/limousine/limousine_address_lookup.dart',
     ).readAsStringSync();
     expect(source.contains('kMapboxToken'), isTrue);
     expect(source.contains('CalculatorPage._searchPlaces'), isTrue);
+    expect(source.contains('CalculatorPage._reverseGeocode'), isTrue);
     expect(source.contains('debugPrint'), isFalse);
   });
 

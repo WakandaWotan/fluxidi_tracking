@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../app_strings.dart';
 import 'limousine_address_lookup.dart';
+import 'limousine_current_location.dart';
 import 'limousine_p2d4c1a_ux.dart';
 
 const LocalizedText kLimousineAddressHint = LocalizedText(
@@ -82,25 +83,42 @@ Key limousineAddressManualKey(String id) =>
 Key limousineAddressClearKey(String id) =>
     ValueKey<String>('limousine_address_clear_$id');
 
+Key limousineAddressCurrentLocationKey(String id) =>
+    ValueKey<String>('limousine_address_current_location_$id');
+
+Key limousineAddressCurrentLocationLoadingKey(String id) =>
+    ValueKey<String>('limousine_address_current_location_loading_$id');
+
+Key limousineAddressCurrentLocationErrorKey(String id) =>
+    ValueKey<String>('limousine_address_current_location_error_$id');
+
+Key limousineAddressOpenSettingsKey(String id) =>
+    ValueKey<String>('limousine_address_open_settings_$id');
+
 class LimousineAddressFieldController extends ChangeNotifier {
   LimousineAddressFieldController({
     required this.lookup,
     required this.fieldId,
     this.language = 'nl',
     this.debounce = kLimousineAddressDebounce,
+    this.currentLocation,
   });
 
   final LimousinePlaceLookup lookup;
   final String fieldId;
   String language;
   final Duration debounce;
+  LimousineCurrentLocationResolver? currentLocation;
   final TextEditingController textController = TextEditingController();
 
   Timer? _debounce;
   int _requestId = 0;
+  bool _disposed = false;
   bool loading = false;
   bool searched = false;
   bool hadError = false;
+  bool resolvingCurrentLocation = false;
+  LimousineCurrentLocationFailure? currentLocationFailure;
   List<LimousinePlaceSuggestion> suggestions = const [];
   LimousineAddressValue value = const LimousineAddressValue();
 
@@ -131,6 +149,7 @@ class LimousineAddressFieldController extends ChangeNotifier {
     searched = false;
     hadError = false;
     loading = false;
+    currentLocationFailure = null;
     notifyListeners();
   }
 
@@ -154,12 +173,14 @@ class LimousineAddressFieldController extends ChangeNotifier {
     searched = false;
     hadError = false;
     loading = false;
+    currentLocationFailure = null;
     notifyListeners();
   }
 
   void onTextChanged(String raw) {
     _debounce?.cancel();
     final requestId = ++_requestId;
+    currentLocationFailure = null;
     final text = raw;
     if (value.isRouteReady) {
       value = LimousineAddressValue(
@@ -226,6 +247,7 @@ class LimousineAddressFieldController extends ChangeNotifier {
     loading = false;
     searched = false;
     hadError = false;
+    currentLocationFailure = null;
     notifyListeners();
   }
 
@@ -243,6 +265,7 @@ class LimousineAddressFieldController extends ChangeNotifier {
     loading = false;
     searched = false;
     hadError = false;
+    currentLocationFailure = null;
     notifyListeners();
     return true;
   }
@@ -256,11 +279,46 @@ class LimousineAddressFieldController extends ChangeNotifier {
     loading = false;
     searched = false;
     hadError = false;
+    currentLocationFailure = null;
     notifyListeners();
+  }
+
+  Future<void> useCurrentLocation() async {
+    final resolver = currentLocation;
+    if (resolver == null || resolvingCurrentLocation) return;
+    _debounce?.cancel();
+    _requestId += 1;
+    resolvingCurrentLocation = true;
+    currentLocationFailure = null;
+    suggestions = const [];
+    loading = false;
+    searched = false;
+    _emit();
+    try {
+      final suggestion = await resolver.resolve(language: language);
+      if (_disposed) return;
+      if (suggestion == null) return;
+      selectSuggestion(suggestion);
+    } on LimousineCurrentLocationException catch (error) {
+      if (_disposed) return;
+      currentLocationFailure = error.failure;
+    } finally {
+      resolvingCurrentLocation = false;
+      _emit();
+    }
+  }
+
+  Future<void> openAppSettings() async {
+    await currentLocation?.openAppSettings();
+  }
+
+  void _emit() {
+    if (!_disposed) notifyListeners();
   }
 
   @override
   void dispose() {
+    _disposed = true;
     _debounce?.cancel();
     textController.dispose();
     super.dispose();
@@ -274,12 +332,14 @@ class LimousineAddressField extends StatelessWidget {
     required this.label,
     required this.tokens,
     required this.language,
+    this.showCurrentLocation = false,
   });
 
   final LimousineAddressFieldController controller;
   final String label;
   final LimousineUxTokens tokens;
   final AppLanguage language;
+  final bool showCurrentLocation;
 
   String _t(LocalizedText text) => text.of(language);
 
@@ -316,14 +376,8 @@ class LimousineAddressField extends StatelessWidget {
                   hintStyle: TextStyle(color: tokens.muted),
                   filled: true,
                   fillColor: tokens.fieldFill,
-                  suffixIcon: controller.textController.text.isEmpty
-                      ? null
-                      : IconButton(
-                          key: limousineAddressClearKey(controller.fieldId),
-                          tooltip: _t(kLimousineAddressClear),
-                          onPressed: controller.clear,
-                          icon: Icon(Icons.clear, color: tokens.muted),
-                        ),
+                  suffixIcon: _suffix(controller),
+                  suffixIconConstraints: _suffixConstraints(controller),
                 ),
               ),
               if (ready)
@@ -338,7 +392,61 @@ class LimousineAddressField extends StatelessWidget {
                     ),
                   ),
                 ),
-              if (controller.loading)
+              if (controller.resolvingCurrentLocation)
+                Padding(
+                  key: limousineAddressCurrentLocationLoadingKey(
+                    controller.fieldId,
+                  ),
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      LinearProgressIndicator(
+                        color: tokens.gold,
+                        backgroundColor: tokens.border,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _t(kLimousineCurrentLocationLoading),
+                        style: TextStyle(color: tokens.muted, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              if (controller.currentLocationFailure != null)
+                Padding(
+                  key: limousineAddressCurrentLocationErrorKey(
+                    controller.fieldId,
+                  ),
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _t(
+                          limousineCurrentLocationMessage(
+                            controller.currentLocationFailure!,
+                          ),
+                        ),
+                        style: TextStyle(color: tokens.muted, fontSize: 12.5),
+                      ),
+                      if (controller.currentLocationFailure ==
+                          LimousineCurrentLocationFailure
+                              .permissionPermanentlyDenied)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton(
+                            key: limousineAddressOpenSettingsKey(
+                              controller.fieldId,
+                            ),
+                            onPressed: controller.openAppSettings,
+                            child: Text(_t(kLimousineCurrentLocationOpenSettings)),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              if (controller.loading && !controller.resolvingCurrentLocation)
                 Padding(
                   key: limousineAddressLoadingKey(controller.fieldId),
                   padding: const EdgeInsets.only(top: 8),
@@ -428,6 +536,50 @@ class LimousineAddressField extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+
+  BoxConstraints? _suffixConstraints(LimousineAddressFieldController controller) {
+    final showClear = controller.textController.text.isNotEmpty;
+    if (!showCurrentLocation && !showClear) return null;
+    final count = (showCurrentLocation ? 1 : 0) + (showClear ? 1 : 0);
+    return BoxConstraints(minHeight: 48, minWidth: 48.0 * count);
+  }
+
+  Widget? _suffix(LimousineAddressFieldController controller) {
+    final showClear = controller.textController.text.isNotEmpty;
+    if (!showCurrentLocation && !showClear) return null;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (showCurrentLocation)
+          IconButton(
+            key: limousineAddressCurrentLocationKey(controller.fieldId),
+            tooltip: _t(kLimousineCurrentLocationTooltip),
+            onPressed: controller.resolvingCurrentLocation
+                ? null
+                : controller.useCurrentLocation,
+            icon: controller.resolvingCurrentLocation
+                ? SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(tokens.gold),
+                    ),
+                  )
+                : Icon(Icons.my_location, color: tokens.gold),
+          ),
+        if (showClear)
+          IconButton(
+            key: limousineAddressClearKey(controller.fieldId),
+            tooltip: _t(kLimousineAddressClear),
+            onPressed: controller.resolvingCurrentLocation
+                ? null
+                : controller.clear,
+            icon: Icon(Icons.clear, color: tokens.muted),
+          ),
+      ],
     );
   }
 }

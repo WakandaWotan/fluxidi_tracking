@@ -11,6 +11,7 @@ import 'limousine_accepted_booking_resume_ui.dart';
 import 'limousine_accepted_booking_vault.dart';
 import 'limousine_address_field.dart';
 import 'limousine_address_lookup.dart';
+import 'limousine_current_location.dart';
 import 'limousine_customer_entry.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_marketplace_labels.dart';
@@ -32,12 +33,14 @@ class LimousineCustomerQuotePage extends StatefulWidget {
     this.initialCompanyName = '',
     this.resumeRepository,
     this.placeLookup,
+    this.currentLocationPlatform,
   });
 
   final LimousineCustomerQuoteController? controller;
   final LimousineCustomerQuoteGateway? gateway;
   final LimousineAcceptedBookingResumeRepository? resumeRepository;
   final LimousinePlaceLookup? placeLookup;
+  final LimousineCurrentLocationPlatform? currentLocationPlatform;
   final bool? entryEnabled;
   final String? initialPublicPartnerId;
   final LimousinePublishedOffer? initialOffer;
@@ -87,6 +90,12 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
     _ownsPlaceLookup = widget.placeLookup == null;
     _placeLookup = widget.placeLookup ?? LimousinePlaceLookup();
     _pickup = _createAddressField('pickup', listen: false);
+    _pickup.currentLocation = LimousineCurrentLocationResolver(
+      lookup: _placeLookup,
+      platform:
+          widget.currentLocationPlatform ??
+          const LimousineCurrentLocationPlatform(),
+    );
     _destination = _createAddressField('destination', listen: false);
     _returnPickup = _createAddressField('return_pickup', listen: false);
     _returnDestination = _createAddressField('return_destination', listen: false);
@@ -455,6 +464,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
         label: _t(kLimousineCustomerFrom),
         tokens: _tokens,
         language: _lang,
+        showCurrentLocation: true,
       ),
       LimousineAddressField(
         controller: _destination,
