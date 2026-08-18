@@ -10,6 +10,7 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_fleet_operational.dart';
 import 'package:fluxidi_tracking/company/extra_vehicle_addon_purchase.dart';
 import 'package:fluxidi_tracking/company/fluxidi_play_distribution.dart';
+import 'package:fluxidi_tracking/company/subscription_checkout_quote_pipeline.dart';
 import 'package:fluxidi_tracking/company/subscription_fiscal_treatment.dart';
 import 'package:fluxidi_tracking/business_settings_page.dart';
 import 'package:fluxidi_tracking/driver_creator_dialog.dart';
@@ -2063,8 +2064,9 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
   }
 
   Future<bool> _confirmExtraVehiclePurchaseDialog(
-    ExtraVehiclePurchasePreview preview,
-  ) async {
+    ExtraVehiclePurchasePreview preview, {
+    String taxTreatment = '',
+  }) async {
     final language = currentLanguageCode;
     final accepted = await showDialog<bool>(
       context: context,
@@ -2095,6 +2097,15 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
               ),
               style: const TextStyle(fontWeight: FontWeight.w800),
             ),
+            if (taxTreatment.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                subscriptionConfirmTreatmentLine(
+                  languageCode: language,
+                  taxTreatment: taxTreatment,
+                ),
+              ),
+            ],
           ],
         ),
         actions: [
@@ -2154,52 +2165,79 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
       return false;
     }
 
-    final preview = _vehicleExtraVehiclePreview(
-      profile,
-      usedVehicles: usedVehicles,
-      capacity: capacity,
-    );
-    final confirmed = await _confirmExtraVehiclePurchaseDialog(preview);
-    if (!confirmed) {
-      session.cancelConfirmation();
-      return false;
-    }
-    if (!session.acceptConfirmation()) return false;
-    if (!mounted) return false;
-
     _startingExtraVehiclePurchase = true;
     _capacityBeforeExtraVehiclePurchase = capacity;
     try {
-      final quote =
-          quotes?.products['extra_vehicle'] ??
-          await fetchCompanySubscriptionCheckoutQuote(
-            tenantId: scopeId,
-            companyId: scopeId,
-            addonCode: 'extra_vehicle',
-          );
+      final live = await fetchCompanySubscriptionCheckoutQuoteVerdict(
+        tenantId: scopeId,
+        companyId: scopeId,
+        addonCode: kSubscriptionProductExtraVehicle,
+      );
       if (!mounted) return false;
-      if (quote == null || quote.mollieAmountCents == null) {
+      final pdf = <String, int>{};
+      for (final bundle in profile.pdfBundles) {
+        if (bundle.pdfs == 500 && bundle.priceCents > 0) {
+          pdf[kSubscriptionProductPdf500] = bundle.priceCents;
+        } else if (bundle.pdfs == 1000 && bundle.priceCents > 0) {
+          pdf[kSubscriptionProductPdf1000] = bundle.priceCents;
+        } else if (bundle.pdfs == 5000 && bundle.priceCents > 0) {
+          pdf[kSubscriptionProductPdf5000] = bundle.priceCents;
+        }
+      }
+      final resolution = resolveSubscriptionPurchaseQuote(
+        productCode: kSubscriptionProductExtraVehicle,
+        quantity: 1,
+        fiscalKnown: fiscal.isKnown,
+        fiscalTreatment: fiscal.taxTreatment,
+        fiscalMissingFields: fiscal.missingFields,
+        profilePrices: SubscriptionProfilePriceSlice(
+          baseExclCents: profile.lockedPriceCents ?? profile.normalPriceCents,
+          extraVehicleExclCents: profile.extraVehiclePriceCents,
+          extraDriverExclCents: profile.extraDriverPriceCents,
+          pdfBundleExclCents: pdf,
+          currency: profile.currency.trim().isEmpty ? 'EUR' : profile.currency,
+        ),
+        live: live,
+        quoteCallReached: true,
+      );
+      if (!resolution.canConfirm || resolution.quote == null) {
         session.markUpstreamFailure();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _t(
-                nl: 'Prijsopgave niet beschikbaar. Probeer later opnieuw.',
-                en: 'Checkout quote unavailable. Please try again later.',
-                fr: 'Devis indisponible. Réessayez plus tard.',
-                es: 'Presupuesto no disponible. Inténtalo más tarde.',
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                subscriptionQuoteFailureMessage(
+                  languageCode: currentLanguageCode,
+                  kind: resolution.failure,
+                  missingFiscalFields: fiscal.missingFields,
+                ),
               ),
             ),
-          ),
-        );
+          );
+        }
         return false;
       }
+      final preview = _vehicleExtraVehiclePreview(
+        profile,
+        usedVehicles: usedVehicles,
+        capacity: capacity,
+      );
+      final confirmed = await _confirmExtraVehiclePurchaseDialog(
+        preview,
+        taxTreatment: resolution.quote!.taxTreatment,
+      );
+      if (!confirmed) {
+        session.cancelConfirmation();
+        return false;
+      }
+      if (!session.acceptConfirmation()) return false;
+      if (!mounted) return false;
       final result = await startCompanySubscriptionAddonCheckout(
         tenantId: scopeId,
         companyId: scopeId,
         addonCode: 'extra_vehicle',
         quantity: 1,
-        quoteId: quote.quoteId,
+        quoteId: resolution.quote!.quoteId,
         returnUrl:
             '${appConfig.bookingBaseUrl}/company/subscription/add-ons/checkout/return',
       );

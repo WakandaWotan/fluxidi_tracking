@@ -523,6 +523,118 @@ class _CompanySubscriptionBillingPageState
   SubscriptionCheckoutQuote? _productQuote(String code) =>
       _displayQuotes?.products[code];
 
+  SubscriptionProfilePriceSlice _subscriptionProfilePrices(
+    BackendSubscriptionProfile profile,
+  ) {
+    final pdf = <String, int>{};
+    for (final bundle in profile.pdfBundles) {
+      if (bundle.pdfs == 500 && bundle.priceCents > 0) {
+        pdf[kSubscriptionProductPdf500] = bundle.priceCents;
+      } else if (bundle.pdfs == 1000 && bundle.priceCents > 0) {
+        pdf[kSubscriptionProductPdf1000] = bundle.priceCents;
+      } else if (bundle.pdfs == 5000 && bundle.priceCents > 0) {
+        pdf[kSubscriptionProductPdf5000] = bundle.priceCents;
+      }
+    }
+    return SubscriptionProfilePriceSlice(
+      baseExclCents: profile.lockedPriceCents ?? profile.normalPriceCents,
+      extraVehicleExclCents: profile.extraVehiclePriceCents,
+      extraDriverExclCents: profile.extraDriverPriceCents,
+      pdfBundleExclCents: pdf,
+      currency: profile.currency.trim().isEmpty ? 'EUR' : profile.currency,
+    );
+  }
+
+  SubscriptionCheckoutQuote _quoteFromAuthoritative(
+    AuthoritativePurchaseQuote quote,
+  ) {
+    return SubscriptionCheckoutQuote(
+      quoteId: quote.quoteId,
+      productType: quote.productCode,
+      currency: quote.currency,
+      unitExclVatCents: quote.unitExclVatCents,
+      subtotalExclVatCents: quote.subtotalExclVatCents,
+      vatAmountCents: quote.vatAmountCents,
+      totalInclVatCents: quote.totalInclVatCents,
+      mollieAmountCents: quote.mollieAmountCents,
+      taxTreatment: quote.taxTreatment,
+      lineItems: [
+        SubscriptionQuoteLineItem(
+          code: quote.productCode,
+          quantity: quote.quantity,
+          unitExclVatCents: quote.unitExclVatCents,
+          subtotalExclVatCents: quote.subtotalExclVatCents,
+        ),
+      ],
+    );
+  }
+
+  Future<SubscriptionPurchaseQuoteResolution> _resolveSharedPurchaseQuote({
+    required String productCode,
+    required BackendSubscriptionProfile profile,
+  }) async {
+    final fiscal = _fiscalVerdict(productCode: productCode);
+    if (fiscal.isBlocked) {
+      return resolveSubscriptionPurchaseQuote(
+        productCode: productCode,
+        quantity: 1,
+        fiscalKnown: false,
+        fiscalTreatment: fiscal.taxTreatment,
+        fiscalMissingFields: fiscal.missingFields,
+        profilePrices: _subscriptionProfilePrices(profile),
+        live: const SubscriptionQuoteFetchVerdict(
+          kind: SubscriptionQuoteFailureKind.fiscalBlocked,
+        ),
+      );
+    }
+    final scopeId = _activeCompanyId();
+    if (scopeId == null || scopeId.trim().isEmpty) {
+      return const SubscriptionPurchaseQuoteResolution(
+        failure: SubscriptionQuoteFailureKind.httpError,
+        errorToken: 'missing_company',
+      );
+    }
+    final live = await fetchCompanySubscriptionCheckoutQuoteVerdict(
+      tenantId: scopeId,
+      companyId: scopeId,
+      addonCode: productCode == kSubscriptionProductBase ? null : productCode,
+    );
+    return resolveSubscriptionPurchaseQuote(
+      productCode: productCode,
+      quantity: 1,
+      fiscalKnown: true,
+      fiscalTreatment: fiscal.taxTreatment,
+      fiscalMissingFields: fiscal.missingFields,
+      profilePrices: _subscriptionProfilePrices(profile),
+      live: live,
+      quoteCallReached: true,
+    );
+  }
+
+  Future<AuthoritativePurchaseQuote?> _requireConfirmablePurchaseQuote({
+    required String productCode,
+    required BackendSubscriptionProfile profile,
+  }) async {
+    final resolution = await _resolveSharedPurchaseQuote(
+      productCode: productCode,
+      profile: profile,
+    );
+    if (resolution.failure == SubscriptionQuoteFailureKind.fiscalBlocked) {
+      await _showFiscalBlocked(_fiscalVerdict(productCode: productCode));
+      return null;
+    }
+    if (!resolution.canConfirm || resolution.quote == null) {
+      _showSnack(
+        subscriptionQuoteFailureMessage(
+          languageCode: currentLanguageCode,
+          kind: resolution.failure,
+        ),
+      );
+      return null;
+    }
+    return resolution.quote;
+  }
+
   /// Card price is the recurring unit, never active quantity × unit.
   /// Zero/null extra-driver quote units fall back to the catalog unit plus
   /// the server quote's vat_rate / tax treatment.
@@ -706,6 +818,13 @@ class _CompanySubscriptionBillingPageState
               ),
               style: const TextStyle(fontWeight: FontWeight.w800),
             ),
+            const SizedBox(height: 6),
+            Text(
+              subscriptionConfirmTreatmentLine(
+                languageCode: language,
+                taxTreatment: quote.taxTreatment,
+              ),
+            ),
             const SizedBox(height: 10),
             Text(_quoteLineLabel(
               quote.lineItems.isEmpty
@@ -859,30 +978,20 @@ class _CompanySubscriptionBillingPageState
       return;
     }
 
-    final quote = await fetchCompanySubscriptionCheckoutQuote(
-      tenantId: scopeId,
-      companyId: scopeId,
-    );
-    if (!mounted) return;
-    if (quote == null || quote.mollieAmountCents == null) {
-      _showSnack(
-        _t(
-          nl: 'Prijsopgave niet beschikbaar. Probeer later opnieuw.',
-          en: 'Checkout quote unavailable. Please try again later.',
-          fr: 'Devis indisponible. Réessayez plus tard.',
-          es: 'Presupuesto no disponible. Inténtalo más tarde.',
-        ),
-      );
-      return;
-    }
-    final accepted = await _confirmCheckoutQuote(
-      quote,
-      trialEndsAt: profile.trialEndsAt,
-    );
-    if (accepted != true || !mounted) return;
-
     setState(() => _activating = true);
     try {
+      final authoritative = await _requireConfirmablePurchaseQuote(
+        productCode: kSubscriptionProductBase,
+        profile: profile,
+      );
+      if (!mounted) return;
+      if (authoritative == null) return;
+      final quote = _quoteFromAuthoritative(authoritative);
+      final accepted = await _confirmCheckoutQuote(
+        quote,
+        trialEndsAt: profile.trialEndsAt,
+      );
+      if (accepted != true || !mounted) return;
       final result = await startCompanySubscriptionCheckout(
         tenantId: scopeId,
         companyId: scopeId,
@@ -1024,6 +1133,8 @@ class _CompanySubscriptionBillingPageState
     final total = quote.totalInclVatCents ?? quote.mollieAmountCents;
     final recurring = quote.recurringExclVatCents ?? excl;
     final reverse = quote.isReverseCharge;
+    final hasVatAmount = reverse || vat != null;
+    final hasTotal = total != null;
     final lines = quote.lineItems.isEmpty
         ? <Widget>[
             Text(
@@ -1063,46 +1174,41 @@ class _CompanySubscriptionBillingPageState
             ),
             const SizedBox(height: 6),
             Text(
-              reverse
-                  ? _t(
-                      nl: 'Btw-behandeling: btw verlegd',
-                      en: 'VAT treatment: reverse charge',
-                      fr: 'TVA : autoliquidation',
-                      es: 'IVA: inversión del sujeto pasivo',
-                    )
-                  : _t(
-                      nl: 'Btw-behandeling: Belgische btw',
-                      en: 'VAT treatment: Belgian VAT',
-                      fr: 'TVA : TVA belge',
-                      es: 'IVA: IVA belga',
-                    ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              reverse
-                  ? _t(
-                      nl: 'Btw: €0 (verlegd)',
-                      en: 'VAT: €0 (reverse charged)',
-                      fr: 'TVA : 0 € (autoliquidation)',
-                      es: 'IVA: 0 € (inversión)',
-                    )
-                  : _t(
-                      nl: 'Btw: ${_priceFromCents(vat ?? 0)}',
-                      en: 'VAT: ${_priceFromCents(vat ?? 0)}',
-                      fr: 'TVA : ${_priceFromCents(vat ?? 0)}',
-                      es: 'IVA: ${_priceFromCents(vat ?? 0)}',
-                    ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              _t(
-                nl: 'Te betalen totaal: ${_priceFromCents(total ?? 0)}',
-                en: 'Amount due: ${_priceFromCents(total ?? 0)}',
-                fr: 'Total à payer : ${_priceFromCents(total ?? 0)}',
-                es: 'Total a pagar: ${_priceFromCents(total ?? 0)}',
+              subscriptionConfirmTreatmentLine(
+                languageCode: currentLanguageCode,
+                taxTreatment: quote.taxTreatment,
               ),
-              style: const TextStyle(fontWeight: FontWeight.w800),
             ),
+            if (hasVatAmount) ...[
+              const SizedBox(height: 6),
+              Text(
+                reverse
+                    ? _t(
+                        nl: 'Btw: €0 (verlegd)',
+                        en: 'VAT: €0 (reverse charged)',
+                        fr: 'TVA : 0 € (autoliquidation)',
+                        es: 'IVA: 0 € (inversión)',
+                      )
+                    : _t(
+                        nl: 'Btw: ${_priceFromCents(vat ?? 0)}',
+                        en: 'VAT: ${_priceFromCents(vat ?? 0)}',
+                        fr: 'TVA : ${_priceFromCents(vat ?? 0)}',
+                        es: 'IVA: ${_priceFromCents(vat ?? 0)}',
+                      ),
+              ),
+            ],
+            if (hasTotal) ...[
+              const SizedBox(height: 6),
+              Text(
+                _t(
+                  nl: 'Te betalen totaal: ${_priceFromCents(total ?? 0)}',
+                  en: 'Amount due: ${_priceFromCents(total ?? 0)}',
+                  fr: 'Total à payer : ${_priceFromCents(total ?? 0)}',
+                  es: 'Total a pagar: ${_priceFromCents(total ?? 0)}',
+                ),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ],
             if (recurring != null &&
                 recurring != excl &&
                 quote.recurringInclVatCents != null) ...[
@@ -1282,25 +1388,15 @@ class _CompanySubscriptionBillingPageState
       return;
     }
 
-    final fiscal = _fiscalVerdict(productCode: 'extra_vehicle');
-    if (fiscal.isBlocked) {
-      await _showFiscalBlocked(fiscal);
-      return;
-    }
     setState(() => _startingAddonCheckout = true);
     try {
-      final quote =
-          _productQuote('extra_vehicle') ??
-          await fetchCompanySubscriptionCheckoutQuote(
-            tenantId: scopeId,
-            companyId: scopeId,
-            addonCode: 'extra_vehicle',
-          );
+      final authoritative = await _requireConfirmablePurchaseQuote(
+        productCode: kSubscriptionProductExtraVehicle,
+        profile: profile,
+      );
       if (!mounted) return;
-      if (quote == null || quote.mollieAmountCents == null) {
-        _showSnack(_quoteUnavailableMessage());
-        return;
-      }
+      if (authoritative == null) return;
+      final quote = _quoteFromAuthoritative(authoritative);
       if (await _confirmExtraVehiclePurchase(profile: profile, quote: quote) !=
               true ||
           !mounted) {
@@ -1385,25 +1481,15 @@ class _CompanySubscriptionBillingPageState
       return;
     }
 
-    final fiscal = _fiscalVerdict(productCode: 'extra_driver');
-    if (fiscal.isBlocked) {
-      await _showFiscalBlocked(fiscal);
-      return;
-    }
     setState(() => _startingExtraDriverAddonCheckout = true);
     try {
-      final quote =
-          _productQuote('extra_driver') ??
-          await fetchCompanySubscriptionCheckoutQuote(
-            tenantId: scopeId,
-            companyId: scopeId,
-            addonCode: 'extra_driver',
-          );
+      final authoritative = await _requireConfirmablePurchaseQuote(
+        productCode: kSubscriptionProductExtraDriver,
+        profile: profile,
+      );
       if (!mounted) return;
-      if (quote == null || quote.mollieAmountCents == null) {
-        _showSnack(_quoteUnavailableMessage());
-        return;
-      }
+      if (authoritative == null) return;
+      final quote = _quoteFromAuthoritative(authoritative);
       if (await _confirmCheckoutQuote(quote) != true || !mounted) return;
       final result = await startCompanySubscriptionAddonCheckout(
         tenantId: scopeId,
@@ -2418,26 +2504,16 @@ class _CompanySubscriptionBillingPageState
       return;
     }
 
-    final fiscal = _fiscalVerdict(productCode: _pdfBundleAddonCode(pdfs));
-    if (fiscal.isBlocked) {
-      await _showFiscalBlocked(fiscal);
-      return;
-    }
     setState(() => _setPdfBundleStarting(pdfs, true));
     try {
       final code = _pdfBundleAddonCode(pdfs);
-      final quote =
-          _productQuote(code) ??
-          await fetchCompanySubscriptionCheckoutQuote(
-            tenantId: scopeId,
-            companyId: scopeId,
-            addonCode: code,
-          );
+      final authoritative = await _requireConfirmablePurchaseQuote(
+        productCode: code,
+        profile: profile,
+      );
       if (!mounted) return;
-      if (quote == null || quote.mollieAmountCents == null) {
-        _showSnack(_quoteUnavailableMessage());
-        return;
-      }
+      if (authoritative == null) return;
+      final quote = _quoteFromAuthoritative(authoritative);
       if (await _confirmCheckoutQuote(quote) != true || !mounted) return;
       final result = await startCompanySubscriptionAddonCheckout(
         tenantId: scopeId,

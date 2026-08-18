@@ -427,11 +427,18 @@ void main() {
     );
 
     test('confirm dialog shows excl VAT, treatment, VAT and total', () {
+      final quotePipeline = File(
+        'lib/company/subscription_checkout_quote_pipeline.dart',
+      ).readAsStringSync();
       expect(billingSource.contains('Basisplan excl. btw'), isTrue);
       expect(billingSource.contains('Extra voertuig'), isTrue);
       expect(billingSource.contains('Subtotaal excl. btw'), isTrue);
-      expect(billingSource.contains('Btw-behandeling'), isTrue);
-      expect(billingSource.contains('btw verlegd'), isTrue);
+      expect(
+        billingSource.contains('subscriptionConfirmTreatmentLine'),
+        isTrue,
+      );
+      expect(quotePipeline.contains('Btw-behandeling'), isTrue);
+      expect(quotePipeline.contains('btw verlegd'), isTrue);
       expect(billingSource.contains('Te betalen totaal'), isTrue);
       expect(billingSource.contains('Nieuwe recurring'), isTrue);
       expect(billingSource.contains('Proefperiode tot'), isTrue);

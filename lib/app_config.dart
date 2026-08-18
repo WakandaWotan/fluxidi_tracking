@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/chiron_company_connection_config.dart';
 import 'package:fluxidi_tracking/company/fluxidi_play_distribution.dart';
+import 'package:fluxidi_tracking/company/subscription_checkout_quote_pipeline.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/driver_session_store.dart';
 import 'package:http/http.dart' as http;
@@ -7403,13 +7404,19 @@ class BackendSubscriptionCheckoutStartResult {
 /// query string and the JSON body. Never throws on a non-2xx backend response;
 /// instead it returns a typed result carrying `ok=false`, the HTTP status, and
 /// the machine-readable error so the UI can branch (e.g. `unsupported_market`).
-Future<SubscriptionCheckoutQuote?> fetchCompanySubscriptionCheckoutQuote({
+Future<SubscriptionQuoteFetchVerdict>
+fetchCompanySubscriptionCheckoutQuoteVerdict({
   required String tenantId,
   required String companyId,
   String? addonCode,
   String? productType,
 }) async {
-  if (!kFluxidiCompanySaasCheckoutEnabled) return null;
+  if (!kFluxidiCompanySaasCheckoutEnabled) {
+    return const SubscriptionQuoteFetchVerdict(
+      kind: SubscriptionQuoteFailureKind.httpError,
+      errorToken: kFluxidiCompanySaasCheckoutDisabledError,
+    );
+  }
   final scope = _resolveAdminTenantCompanyScope(
     tenantId: tenantId,
     companyId: companyId,
@@ -7436,18 +7443,42 @@ Future<SubscriptionCheckoutQuote?> fetchCompanySubscriptionCheckoutQuote({
           }),
         )
         .timeout(const Duration(seconds: 20));
-    final decoded = jsonDecode(utf8.decode(res.bodyBytes));
-    if (decoded is! Map) return null;
-    final map = Map<String, dynamic>.from(decoded);
-    if (map['quote'] is Map) {
-      return SubscriptionCheckoutQuote.fromJson(
-        Map<String, dynamic>.from(map['quote'] as Map),
-      );
-    }
-    return SubscriptionCheckoutQuote.fromJson(map);
+    return classifySubscriptionQuoteHttp(
+      statusCode: res.statusCode,
+      contentType: res.headers['content-type'] ?? '',
+      body: utf8.decode(res.bodyBytes),
+    );
   } catch (_) {
-    return null;
+    return const SubscriptionQuoteFetchVerdict(
+      kind: SubscriptionQuoteFailureKind.networkError,
+      errorToken: 'network_error',
+    );
   }
+}
+
+Future<SubscriptionCheckoutQuote?> fetchCompanySubscriptionCheckoutQuote({
+  required String tenantId,
+  required String companyId,
+  String? addonCode,
+  String? productType,
+}) async {
+  final verdict = await fetchCompanySubscriptionCheckoutQuoteVerdict(
+    tenantId: tenantId,
+    companyId: companyId,
+    addonCode: addonCode,
+    productType: productType,
+  );
+  if (!verdict.isLiveQuote) return null;
+  return SubscriptionCheckoutQuote(
+    quoteId: verdict.quoteId,
+    currency: verdict.currency,
+    unitExclVatCents: verdict.unitExclVatCents,
+    subtotalExclVatCents: verdict.subtotalExclVatCents,
+    vatAmountCents: verdict.vatAmountCents,
+    totalInclVatCents: verdict.totalInclVatCents,
+    mollieAmountCents: verdict.mollieAmountCents,
+    taxTreatment: verdict.taxTreatment,
+  );
 }
 
 class SubscriptionDisplayQuotes {
