@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import '../app_config.dart';
 import '../app_strings.dart';
 import 'limousine_offers.dart';
+import 'limousine_p2d4c1a_ux.dart';
 
 const List<String> _kLangs = <String>['nl', 'en', 'fr', 'es'];
 
@@ -150,12 +151,19 @@ class _LimousineOfferEditorDialogState
 
   late List<_IncludedServiceDraft> _includedServices;
   late List<_PaidExtraDraft> _paidExtras;
+  late String _selectedLang;
 
   AppLanguage get _lang => widget.language;
 
   @override
   void initState() {
     super.initState();
+    _selectedLang = switch (widget.language) {
+      AppLanguage.en => 'en',
+      AppLanguage.fr => 'fr',
+      AppLanguage.es => 'es',
+      _ => 'nl',
+    };
     _base = Map<String, dynamic>.from(widget.initialOffer);
 
     final existingId = (_base['offer_id'] ?? '').toString().trim();
@@ -393,25 +401,40 @@ class _LimousineOfferEditorDialogState
     child: Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
   );
 
+  Widget _languageTabs() {
+    return Padding(
+      key: kLimousineOfferEditorLanguageTabsKey,
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Wrap(
+        spacing: 8,
+        children: [
+          for (final lang in _kLangs)
+            ChoiceChip(
+              key: limousineOfferEditorLanguageTabKey(lang),
+              label: Text(lang.toUpperCase()),
+              selected: _selectedLang == lang,
+              onSelected: (_) => setState(() => _selectedLang = lang),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _localizedMatrix(String label, LimousineLocalizedField field) {
+    final lang = _selectedLang;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
         const SizedBox(height: 4),
-        ..._kLangs.map(
-          (lang) => Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: TextField(
-              controller: field.controllers[lang],
-              decoration: InputDecoration(
-                isDense: true,
-                labelText: lang.toUpperCase(),
-                border: const OutlineInputBorder(),
-              ),
-              onChanged: (_) => setState(() {}),
-            ),
+        TextField(
+          controller: field.controllers[lang],
+          decoration: InputDecoration(
+            isDense: true,
+            labelText: label,
+            border: const OutlineInputBorder(),
           ),
+          onChanged: (_) => setState(() {}),
         ),
       ],
     );
@@ -480,6 +503,7 @@ class _LimousineOfferEditorDialogState
                     ],
                   ),
                   DropdownButtonFormField<String>(
+                    menuMaxHeight: kLimousineOfferEditorMenuMaxHeight,
                     value:
                         LimousineJourneyTypeId.all.contains(
                           limousineOfferToken(rule['journey_type']),
@@ -530,6 +554,7 @@ class _LimousineOfferEditorDialogState
                         const SizedBox(width: 8),
                         Expanded(
                           child: DropdownButtonFormField<String>(
+                            menuMaxHeight: kLimousineOfferEditorMenuMaxHeight,
                             value:
                                 ['to_airport', 'from_airport', 'both'].contains(
                                   limousineOfferToken(rule['direction']),
@@ -569,6 +594,7 @@ class _LimousineOfferEditorDialogState
                     const SizedBox(height: 6),
                   ],
                   DropdownButtonFormField<String>(
+                    menuMaxHeight: kLimousineOfferEditorMenuMaxHeight,
                     value:
                         const [
                           'none',
@@ -940,567 +966,651 @@ class _LimousineOfferEditorDialogState
     ).errors;
     final modes = limousineOfferSupportedPricingModes(draft);
 
-    return AlertDialog(
-      backgroundColor: widget.backgroundColor,
-      scrollable: true,
-      title: Text(
-        _t(
-          nl: 'Limousineaanbod',
-          en: 'Limousine offer',
-          fr: 'Offre limousine',
-          es: 'Oferta de limusina',
-        ),
-      ),
-      content: SizedBox(
-        width: 520,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _sectionHeader(
-              _t(
-                nl: 'Publieke tekst (alle talen)',
-                en: 'Public text (all languages)',
-                fr: 'Texte public (toutes les langues)',
-                es: 'Texto público (todos los idiomas)',
-              ),
-            ),
-            _localizedMatrix(
-              _t(nl: 'Titel', en: 'Title', fr: 'Titre', es: 'Título'),
-              _title,
-            ),
-            _localizedMatrix(
-              _t(
-                nl: 'Omschrijving',
-                en: 'Description',
-                fr: 'Description',
-                es: 'Descripción',
-              ),
-              _description,
-            ),
-            _localizedMatrix(
-              _t(
-                nl: 'Belangrijke info',
-                en: 'Important information',
-                fr: 'Informations importantes',
-                es: 'Información importante',
-              ),
-              _importantInfo,
-            ),
-
-            _sectionHeader(
-              _t(
-                nl: 'Aanbod voor',
-                en: 'Offer target',
-                fr: 'Cible de l’offre',
-                es: 'Destino de la oferta',
-              ),
-            ),
-            DropdownButtonFormField<String>(
-              value: _targetType,
-              isExpanded: true,
-              decoration: const InputDecoration(isDense: true),
-              items: [
-                DropdownMenuItem(
-                  value: LimousineOfferTarget.serviceClass,
+    final tokens = LimousineUxTokens.fromSurface(
+      background:
+          widget.backgroundColor ?? Theme.of(context).colorScheme.surface,
+    );
+    final media = MediaQuery.sizeOf(context);
+    return Dialog(
+      key: kLimousineOfferEditorDialogKey,
+      backgroundColor: tokens.surface,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      child: Theme(
+        data: limousineUxThemeData(tokens),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: kLimousineOfferEditorMaxWidth,
+            maxHeight: media.height * 0.86,
+          ),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
                   child: Text(
                     _t(
-                      nl: 'Serviceklasse',
-                      en: 'Service class',
-                      fr: 'Classe de service',
-                      es: 'Clase de servicio',
+                      nl: 'Limousineaanbod',
+                      en: 'Limousine offer',
+                      fr: 'Offre limousine',
+                      es: 'Oferta de limusina',
+                    ),
+                    style: TextStyle(
+                      color: tokens.onSurface,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 18,
                     ),
                   ),
                 ),
-                DropdownMenuItem(
-                  value: LimousineOfferTarget.vehicle,
-                  child: Text(
-                    _t(
-                      nl: 'Exact voertuig (heeft voorrang)',
-                      en: 'Exact vehicle (takes precedence)',
-                      fr: 'Véhicule exact (prioritaire)',
-                      es: 'Vehículo exacto (tiene prioridad)',
-                    ),
-                  ),
-                ),
-              ],
-              onChanged: (v) => setState(() => _targetType = v ?? _targetType),
-            ),
-            const SizedBox(height: 6),
-            if (_targetType == LimousineOfferTarget.vehicle)
-              DropdownButtonFormField<String>(
-                value: widget.vehicles.any((v) => v.id == _vehicleId)
-                    ? _vehicleId
-                    : null,
-                isExpanded: true,
-                decoration: InputDecoration(
-                  isDense: true,
-                  labelText: _t(
-                    nl: 'Voertuig',
-                    en: 'Vehicle',
-                    fr: 'Véhicule',
-                    es: 'Vehículo',
-                  ),
-                ),
-                items: widget.vehicles
-                    .map(
-                      (v) => DropdownMenuItem(
-                        value: v.id,
-                        child: Text(
-                          '${v.vehicleName} · ${v.brandModel}',
-                          overflow: TextOverflow.ellipsis,
+              ),
+              Expanded(
+                child: SingleChildScrollView(
+                  key: kLimousineOfferEditorScrollKey,
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _sectionHeader(
+                        _t(
+                          nl: 'Publieke tekst',
+                          en: 'Public text',
+                          fr: 'Texte public',
+                          es: 'Texto público',
                         ),
                       ),
-                    )
-                    .toList(growable: false),
-                onChanged: (v) => setState(() => _vehicleId = v ?? ''),
-              )
-            else
-              DropdownButtonFormField<String>(
-                value: isKnownActiveLimousineServiceClassId(_serviceClassId)
-                    ? _serviceClassId
-                    : null,
-                isExpanded: true,
-                decoration: InputDecoration(
-                  isDense: true,
-                  labelText: _t(
-                    nl: 'Limousineklasse',
-                    en: 'Limousine class',
-                    fr: 'Classe de limousine',
-                    es: 'Clase de limusina',
-                  ),
-                ),
-                items: appConfig.enabledLimousineServiceClasses
-                    .map(
-                      (c) => DropdownMenuItem(
-                        value: c.id,
-                        child: Text(c.labelFor(_lang)),
+                      _languageTabs(),
+                      _localizedMatrix(
+                        _t(nl: 'Titel', en: 'Title', fr: 'Titre', es: 'Título'),
+                        _title,
                       ),
-                    )
-                    .toList(growable: false),
-                onChanged: (v) => setState(() => _serviceClassId = v ?? ''),
-              ),
+                      _localizedMatrix(
+                        _t(
+                          nl: 'Omschrijving',
+                          en: 'Description',
+                          fr: 'Description',
+                          es: 'Descripción',
+                        ),
+                        _description,
+                      ),
+                      _localizedMatrix(
+                        _t(
+                          nl: 'Belangrijke info',
+                          en: 'Important information',
+                          fr: 'Informations importantes',
+                          es: 'Información importante',
+                        ),
+                        _importantInfo,
+                      ),
 
-            _sectionHeader(
-              _t(
-                nl: 'Prijsweergave',
-                en: 'Price presentation',
-                fr: 'Présentation du prix',
-                es: 'Presentación del precio',
-              ),
-            ),
-            DropdownButtonFormField<String>(
-              value: _presentation,
-              isExpanded: true,
-              decoration: const InputDecoration(isDense: true),
-              items: LimousinePricePresentation.all
-                  .map(
-                    (p) => DropdownMenuItem(
-                      value: p,
-                      child: Text(limousinePresentationLabel(p, _lang)),
-                    ),
-                  )
-                  .toList(growable: false),
-              onChanged: (v) =>
-                  setState(() => _presentation = v ?? _presentation),
-            ),
-            const SizedBox(height: 6),
-            _money(
-              _displayAmount,
-              _t(
-                nl: 'Getoond bedrag',
-                en: 'Display amount',
-                fr: 'Montant affiché',
-                es: 'Importe mostrado',
-              ),
-            ),
-            Text(
-              '${_t(nl: 'Berekeningswijze', en: 'Pricing modes', fr: 'Modes de calcul', es: 'Modos de cálculo')}: ${modes.join(', ')}',
-              style: const TextStyle(fontSize: 11.5),
-            ),
+                      _sectionHeader(
+                        _t(
+                          nl: 'Aanbod voor',
+                          en: 'Offer target',
+                          fr: 'Cible de l’offre',
+                          es: 'Destino de la oferta',
+                        ),
+                      ),
+                      DropdownButtonFormField<String>(
+                        menuMaxHeight: kLimousineOfferEditorMenuMaxHeight,
+                        value: _targetType,
+                        isExpanded: true,
+                        decoration: const InputDecoration(isDense: true),
+                        items: [
+                          DropdownMenuItem(
+                            value: LimousineOfferTarget.serviceClass,
+                            child: Text(
+                              _t(
+                                nl: 'Serviceklasse',
+                                en: 'Service class',
+                                fr: 'Classe de service',
+                                es: 'Clase de servicio',
+                              ),
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: LimousineOfferTarget.vehicle,
+                            child: Text(
+                              _t(
+                                nl: 'Exact voertuig (heeft voorrang)',
+                                en: 'Exact vehicle (takes precedence)',
+                                fr: 'Véhicule exact (prioritaire)',
+                                es: 'Vehículo exacto (tiene prioridad)',
+                              ),
+                            ),
+                          ),
+                        ],
+                        onChanged: (v) =>
+                            setState(() => _targetType = v ?? _targetType),
+                      ),
+                      const SizedBox(height: 6),
+                      if (_targetType == LimousineOfferTarget.vehicle)
+                        DropdownButtonFormField<String>(
+                          menuMaxHeight: kLimousineOfferEditorMenuMaxHeight,
+                          value: widget.vehicles.any((v) => v.id == _vehicleId)
+                              ? _vehicleId
+                              : null,
+                          isExpanded: true,
+                          decoration: InputDecoration(
+                            isDense: true,
+                            labelText: _t(
+                              nl: 'Voertuig',
+                              en: 'Vehicle',
+                              fr: 'Véhicule',
+                              es: 'Vehículo',
+                            ),
+                          ),
+                          items: widget.vehicles
+                              .map(
+                                (v) => DropdownMenuItem(
+                                  value: v.id,
+                                  child: Text(
+                                    '${v.vehicleName} · ${v.brandModel}',
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              )
+                              .toList(growable: false),
+                          onChanged: (v) =>
+                              setState(() => _vehicleId = v ?? ''),
+                        )
+                      else
+                        DropdownButtonFormField<String>(
+                          menuMaxHeight: kLimousineOfferEditorMenuMaxHeight,
+                          value:
+                              isKnownActiveLimousineServiceClassId(
+                                _serviceClassId,
+                              )
+                              ? _serviceClassId
+                              : null,
+                          isExpanded: true,
+                          decoration: InputDecoration(
+                            isDense: true,
+                            labelText: _t(
+                              nl: 'Limousineklasse',
+                              en: 'Limousine class',
+                              fr: 'Classe de limousine',
+                              es: 'Clase de limusina',
+                            ),
+                          ),
+                          items: appConfig.enabledLimousineServiceClasses
+                              .map(
+                                (c) => DropdownMenuItem(
+                                  value: c.id,
+                                  child: Text(c.labelFor(_lang)),
+                                ),
+                              )
+                              .toList(growable: false),
+                          onChanged: (v) =>
+                              setState(() => _serviceClassId = v ?? ''),
+                        ),
 
-            _sectionHeader(
-              _t(
-                nl: 'Van toepassing op',
-                en: 'Applicable journey types',
-                fr: 'Types de trajet applicables',
-                es: 'Tipos de trayecto aplicables',
-              ),
-            ),
-            Wrap(
-              spacing: 6,
-              children: LimousineJourneyTypeId.all
-                  .map(
-                    (j) => FilterChip(
-                      label: Text(limousineJourneyTypeLabel(j, _lang)),
-                      selected: _journeyTypes.contains(j),
-                      onSelected: (on) => setState(() {
-                        if (on) {
-                          _journeyTypes.add(j);
-                        } else {
-                          _journeyTypes.remove(j);
-                        }
-                      }),
-                    ),
-                  )
-                  .toList(growable: false),
-            ),
+                      _sectionHeader(
+                        _t(
+                          nl: 'Prijsweergave',
+                          en: 'Price presentation',
+                          fr: 'Présentation du prix',
+                          es: 'Presentación del precio',
+                        ),
+                      ),
+                      DropdownButtonFormField<String>(
+                        menuMaxHeight: kLimousineOfferEditorMenuMaxHeight,
+                        value: _presentation,
+                        isExpanded: true,
+                        decoration: const InputDecoration(isDense: true),
+                        items: LimousinePricePresentation.all
+                            .map(
+                              (p) => DropdownMenuItem(
+                                value: p,
+                                child: Text(
+                                  limousinePresentationLabel(p, _lang),
+                                ),
+                              ),
+                            )
+                            .toList(growable: false),
+                        onChanged: (v) =>
+                            setState(() => _presentation = v ?? _presentation),
+                      ),
+                      const SizedBox(height: 6),
+                      _money(
+                        _displayAmount,
+                        _t(
+                          nl: 'Getoond bedrag',
+                          en: 'Display amount',
+                          fr: 'Montant affiché',
+                          es: 'Importe mostrado',
+                        ),
+                      ),
+                      Text(
+                        '${_t(nl: 'Berekeningswijze', en: 'Pricing modes', fr: 'Modes de calcul', es: 'Modos de cálculo')}: ${modes.join(', ')}',
+                        style: const TextStyle(fontSize: 11.5),
+                      ),
 
-            _sectionHeader(
-              _t(
-                nl: 'Vaste ritten',
-                en: 'Fixed journeys',
-                fr: 'Trajets fixes',
-                es: 'Trayectos fijos',
-              ),
-            ),
-            _fixedRulesEditor(),
+                      _sectionHeader(
+                        _t(
+                          nl: 'Van toepassing op',
+                          en: 'Applicable journey types',
+                          fr: 'Types de trajet applicables',
+                          es: 'Tipos de trayecto aplicables',
+                        ),
+                      ),
+                      Wrap(
+                        spacing: 6,
+                        children: LimousineJourneyTypeId.all
+                            .map(
+                              (j) => FilterChip(
+                                label: Text(
+                                  limousineJourneyTypeLabel(j, _lang),
+                                ),
+                                selected: _journeyTypes.contains(j),
+                                onSelected: (on) => setState(() {
+                                  if (on) {
+                                    _journeyTypes.add(j);
+                                  } else {
+                                    _journeyTypes.remove(j);
+                                  }
+                                }),
+                              ),
+                            )
+                            .toList(growable: false),
+                      ),
 
-            _sectionHeader(
-              _t(
-                nl: 'Uurhuur en pakketten',
-                en: 'Hourly hire and packages',
-                fr: 'Location horaire et forfaits',
-                es: 'Alquiler por horas y paquetes',
-              ),
-            ),
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              value: _hourlyEnabled,
-              title: Text(
-                _t(
-                  nl: 'Uurhuur met chauffeur',
-                  en: 'Chauffeur-driven hourly hire',
-                  fr: 'Location horaire avec chauffeur',
-                  es: 'Alquiler por horas con chófer',
-                ),
-              ),
-              onChanged: (v) => setState(() => _hourlyEnabled = v),
-            ),
-            if (_hourlyEnabled) ...[
-              _money(
-                _firstHour,
-                _t(
-                  nl: 'Eerste uur',
-                  en: 'First hour',
-                  fr: 'Première heure',
-                  es: 'Primera hora',
-                ),
-              ),
-              _money(
-                _additionalHour,
-                _t(
-                  nl: 'Bijkomend uur',
-                  en: 'Additional hour',
-                  fr: 'Heure supplémentaire',
-                  es: 'Hora adicional',
-                ),
-              ),
-              _number(
-                _minDuration,
-                _t(
-                  nl: 'Minimumduur (min)',
-                  en: 'Minimum duration (min)',
-                  fr: 'Durée minimale (min)',
-                  es: 'Duración mínima (min)',
-                ),
-              ),
-              _number(
-                _maxDuration,
-                _t(
-                  nl: 'Maximumduur (min)',
-                  en: 'Maximum duration (min)',
-                  fr: 'Durée maximale (min)',
-                  es: 'Duración máxima (min)',
-                ),
-              ),
-              _number(
-                _includedHours,
-                _t(
-                  nl: 'Inbegrepen uren',
-                  en: 'Included hours',
-                  fr: 'Heures incluses',
-                  es: 'Horas incluidas',
-                ),
-              ),
-              _number(
-                _packageDuration,
-                _t(
-                  nl: 'Pakketduur (min)',
-                  en: 'Package duration (min)',
-                  fr: 'Durée du forfait (min)',
-                  es: 'Duración del paquete (min)',
-                ),
-              ),
-              _money(
-                _packageAmount,
-                _t(
-                  nl: 'Pakketprijs',
-                  en: 'Package amount',
-                  fr: 'Montant du forfait',
-                  es: 'Importe del paquete',
-                ),
-              ),
-              _money(
-                _excessHour,
-                _t(
-                  nl: 'Extra uur buiten pakket',
-                  en: 'Excess hour',
-                  fr: 'Heure excédentaire',
-                  es: 'Hora excedente',
-                ),
-              ),
-            ],
+                      _sectionHeader(
+                        _t(
+                          nl: 'Vaste ritten',
+                          en: 'Fixed journeys',
+                          fr: 'Trajets fixes',
+                          es: 'Trayectos fijos',
+                        ),
+                      ),
+                      _fixedRulesEditor(),
 
-            _sectionHeader(
-              _t(
-                nl: 'Afstand/tijd (limousine)',
-                en: 'Distance/time (limousine)',
-                fr: 'Distance/temps (limousine)',
-                es: 'Distancia/tiempo (limusina)',
-              ),
-            ),
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              value: _dtEnabled,
-              title: Text(
-                _t(
-                  nl: 'Afstand/tijd gebruiken',
-                  en: 'Use distance/time',
-                  fr: 'Utiliser distance/temps',
-                  es: 'Usar distancia/tiempo',
-                ),
-              ),
-              onChanged: (v) => setState(() => _dtEnabled = v),
-            ),
-            if (_dtEnabled) ...[
-              _money(
-                _dtBase,
-                _t(nl: 'Basis', en: 'Base', fr: 'Base', es: 'Base'),
-              ),
-              _money(
-                _dtPerKm,
-                _t(
-                  nl: 'Per kilometer',
-                  en: 'Per kilometre',
-                  fr: 'Par kilomètre',
-                  es: 'Por kilómetro',
-                ),
-              ),
-              _money(
-                _dtPerMinute,
-                _t(
-                  nl: 'Per minuut',
-                  en: 'Per minute',
-                  fr: 'Par minute',
-                  es: 'Por minuto',
-                ),
-              ),
-              _money(
-                _dtMinimum,
-                _t(nl: 'Minimum', en: 'Minimum', fr: 'Minimum', es: 'Mínimo'),
-              ),
-              _number(
-                _dtVatRate,
-                _t(
-                  nl: 'Btw-tarief (bv. 0.06)',
-                  en: 'VAT rate (e.g. 0.06)',
-                  fr: 'Taux de TVA (p.ex. 0.06)',
-                  es: 'Tipo de IVA (p.ej. 0.06)',
-                ),
-              ),
-            ],
+                      _sectionHeader(
+                        _t(
+                          nl: 'Uurhuur en pakketten',
+                          en: 'Hourly hire and packages',
+                          fr: 'Location horaire et forfaits',
+                          es: 'Alquiler por horas y paquetes',
+                        ),
+                      ),
+                      SwitchListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        value: _hourlyEnabled,
+                        title: Text(
+                          _t(
+                            nl: 'Uurhuur met chauffeur',
+                            en: 'Chauffeur-driven hourly hire',
+                            fr: 'Location horaire avec chauffeur',
+                            es: 'Alquiler por horas con chófer',
+                          ),
+                        ),
+                        onChanged: (v) => setState(() => _hourlyEnabled = v),
+                      ),
+                      if (_hourlyEnabled) ...[
+                        _money(
+                          _firstHour,
+                          _t(
+                            nl: 'Eerste uur',
+                            en: 'First hour',
+                            fr: 'Première heure',
+                            es: 'Primera hora',
+                          ),
+                        ),
+                        _money(
+                          _additionalHour,
+                          _t(
+                            nl: 'Bijkomend uur',
+                            en: 'Additional hour',
+                            fr: 'Heure supplémentaire',
+                            es: 'Hora adicional',
+                          ),
+                        ),
+                        _number(
+                          _minDuration,
+                          _t(
+                            nl: 'Minimumduur (min)',
+                            en: 'Minimum duration (min)',
+                            fr: 'Durée minimale (min)',
+                            es: 'Duración mínima (min)',
+                          ),
+                        ),
+                        _number(
+                          _maxDuration,
+                          _t(
+                            nl: 'Maximumduur (min)',
+                            en: 'Maximum duration (min)',
+                            fr: 'Durée maximale (min)',
+                            es: 'Duración máxima (min)',
+                          ),
+                        ),
+                        _number(
+                          _includedHours,
+                          _t(
+                            nl: 'Inbegrepen uren',
+                            en: 'Included hours',
+                            fr: 'Heures incluses',
+                            es: 'Horas incluidas',
+                          ),
+                        ),
+                        _number(
+                          _packageDuration,
+                          _t(
+                            nl: 'Pakketduur (min)',
+                            en: 'Package duration (min)',
+                            fr: 'Durée du forfait (min)',
+                            es: 'Duración del paquete (min)',
+                          ),
+                        ),
+                        _money(
+                          _packageAmount,
+                          _t(
+                            nl: 'Pakketprijs',
+                            en: 'Package amount',
+                            fr: 'Montant du forfait',
+                            es: 'Importe del paquete',
+                          ),
+                        ),
+                        _money(
+                          _excessHour,
+                          _t(
+                            nl: 'Extra uur buiten pakket',
+                            en: 'Excess hour',
+                            fr: 'Heure excédentaire',
+                            es: 'Hora excedente',
+                          ),
+                        ),
+                      ],
 
-            _sectionHeader(
-              _t(
-                nl: 'Voorrijden',
-                en: 'Mobilisation',
-                fr: 'Acheminement',
-                es: 'Movilización',
-              ),
-            ),
-            DropdownButtonFormField<String>(
-              value: _mobMethod,
-              isExpanded: true,
-              decoration: const InputDecoration(isDense: true),
-              items: LimousineMobilisationMethod.all
-                  .map(
-                    (m) => DropdownMenuItem(
-                      value: m,
-                      child: Text(limousineMobilisationLabel(m, _lang)),
-                    ),
-                  )
-                  .toList(growable: false),
-              onChanged: (v) => setState(() => _mobMethod = v ?? _mobMethod),
-            ),
-            CheckboxListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              value: _mobOutbound,
-              title: Text(
-                _t(
-                  nl: 'Heenrit aanrekenen',
-                  en: 'Charge outbound',
-                  fr: 'Facturer l’aller',
-                  es: 'Cobrar ida',
-                ),
-              ),
-              onChanged: (v) => setState(() => _mobOutbound = v == true),
-            ),
-            CheckboxListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              value: _mobReturn,
-              title: Text(
-                _t(
-                  nl: 'Terugrit aanrekenen',
-                  en: 'Charge return',
-                  fr: 'Facturer le retour',
-                  es: 'Cobrar vuelta',
-                ),
-              ),
-              onChanged: (v) => setState(() => _mobReturn = v == true),
-            ),
-            _number(
-              _mobIncludedKm,
-              _t(
-                nl: 'Inbegrepen km',
-                en: 'Included km',
-                fr: 'Km inclus',
-                es: 'Km incluidos',
-              ),
-            ),
-            _number(
-              _mobIncludedMinutes,
-              _t(
-                nl: 'Inbegrepen minuten',
-                en: 'Included minutes',
-                fr: 'Minutes incluses',
-                es: 'Minutos incluidos',
-              ),
-            ),
-            if (_mobMethod == LimousineMobilisationMethod.fixedFee)
-              _money(
-                _mobFee,
-                _t(
-                  nl: 'Vaste voorrijkost',
-                  en: 'Fixed mobilisation fee',
-                  fr: 'Frais fixes',
-                  es: 'Tarifa fija',
-                ),
-              ),
-            _localizedMatrix(
-              _t(
-                nl: 'Publieke uitleg voorrijden',
-                en: 'Public mobilisation disclosure',
-                fr: 'Mention publique d’acheminement',
-                es: 'Aviso público de movilización',
-              ),
-              _mobDisclosure,
-            ),
-            TextField(
-              controller: _mobBaseAddress,
-              decoration: InputDecoration(
-                isDense: true,
-                labelText: _t(
-                  nl: 'Standplaats (privé)',
-                  en: 'Operating base (private)',
-                  fr: 'Base d’exploitation (privée)',
-                  es: 'Base operativa (privada)',
-                ),
-                helperText: _t(
-                  nl: 'Nooit gepubliceerd. Alleen voor jouw berekening.',
-                  en: 'Never published. Used only for your own calculation.',
-                  fr: 'Jamais publiée. Uniquement pour votre calcul.',
-                  es: 'Nunca se publica. Solo para tu cálculo.',
-                ),
-              ),
-            ),
+                      _sectionHeader(
+                        _t(
+                          nl: 'Afstand/tijd (limousine)',
+                          en: 'Distance/time (limousine)',
+                          fr: 'Distance/temps (limousine)',
+                          es: 'Distancia/tiempo (limusina)',
+                        ),
+                      ),
+                      SwitchListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        value: _dtEnabled,
+                        title: Text(
+                          _t(
+                            nl: 'Afstand/tijd gebruiken',
+                            en: 'Use distance/time',
+                            fr: 'Utiliser distance/temps',
+                            es: 'Usar distancia/tiempo',
+                          ),
+                        ),
+                        onChanged: (v) => setState(() => _dtEnabled = v),
+                      ),
+                      if (_dtEnabled) ...[
+                        _money(
+                          _dtBase,
+                          _t(nl: 'Basis', en: 'Base', fr: 'Base', es: 'Base'),
+                        ),
+                        _money(
+                          _dtPerKm,
+                          _t(
+                            nl: 'Per kilometer',
+                            en: 'Per kilometre',
+                            fr: 'Par kilomètre',
+                            es: 'Por kilómetro',
+                          ),
+                        ),
+                        _money(
+                          _dtPerMinute,
+                          _t(
+                            nl: 'Per minuut',
+                            en: 'Per minute',
+                            fr: 'Par minute',
+                            es: 'Por minuto',
+                          ),
+                        ),
+                        _money(
+                          _dtMinimum,
+                          _t(
+                            nl: 'Minimum',
+                            en: 'Minimum',
+                            fr: 'Minimum',
+                            es: 'Mínimo',
+                          ),
+                        ),
+                        _number(
+                          _dtVatRate,
+                          _t(
+                            nl: 'Btw-tarief (bv. 0.06)',
+                            en: 'VAT rate (e.g. 0.06)',
+                            fr: 'Taux de TVA (p.ex. 0.06)',
+                            es: 'Tipo de IVA (p.ej. 0.06)',
+                          ),
+                        ),
+                      ],
 
-            _sectionHeader(
-              _t(
-                nl: 'Inbegrepen diensten',
-                en: 'Included services',
-                fr: 'Services inclus',
-                es: 'Servicios incluidos',
-              ),
-            ),
-            _includedServicesEditor(),
+                      _sectionHeader(
+                        _t(
+                          nl: 'Voorrijden',
+                          en: 'Mobilisation',
+                          fr: 'Acheminement',
+                          es: 'Movilización',
+                        ),
+                      ),
+                      DropdownButtonFormField<String>(
+                        menuMaxHeight: kLimousineOfferEditorMenuMaxHeight,
+                        value: _mobMethod,
+                        isExpanded: true,
+                        decoration: const InputDecoration(isDense: true),
+                        items: LimousineMobilisationMethod.all
+                            .map(
+                              (m) => DropdownMenuItem(
+                                value: m,
+                                child: Text(
+                                  limousineMobilisationLabel(m, _lang),
+                                ),
+                              ),
+                            )
+                            .toList(growable: false),
+                        onChanged: (v) =>
+                            setState(() => _mobMethod = v ?? _mobMethod),
+                      ),
+                      CheckboxListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        value: _mobOutbound,
+                        title: Text(
+                          _t(
+                            nl: 'Heenrit aanrekenen',
+                            en: 'Charge outbound',
+                            fr: 'Facturer l’aller',
+                            es: 'Cobrar ida',
+                          ),
+                        ),
+                        onChanged: (v) =>
+                            setState(() => _mobOutbound = v == true),
+                      ),
+                      CheckboxListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        value: _mobReturn,
+                        title: Text(
+                          _t(
+                            nl: 'Terugrit aanrekenen',
+                            en: 'Charge return',
+                            fr: 'Facturer le retour',
+                            es: 'Cobrar vuelta',
+                          ),
+                        ),
+                        onChanged: (v) =>
+                            setState(() => _mobReturn = v == true),
+                      ),
+                      _number(
+                        _mobIncludedKm,
+                        _t(
+                          nl: 'Inbegrepen km',
+                          en: 'Included km',
+                          fr: 'Km inclus',
+                          es: 'Km incluidos',
+                        ),
+                      ),
+                      _number(
+                        _mobIncludedMinutes,
+                        _t(
+                          nl: 'Inbegrepen minuten',
+                          en: 'Included minutes',
+                          fr: 'Minutes incluses',
+                          es: 'Minutos incluidos',
+                        ),
+                      ),
+                      if (_mobMethod == LimousineMobilisationMethod.fixedFee)
+                        _money(
+                          _mobFee,
+                          _t(
+                            nl: 'Vaste voorrijkost',
+                            en: 'Fixed mobilisation fee',
+                            fr: 'Frais fixes',
+                            es: 'Tarifa fija',
+                          ),
+                        ),
+                      _localizedMatrix(
+                        _t(
+                          nl: 'Publieke uitleg voorrijden',
+                          en: 'Public mobilisation disclosure',
+                          fr: 'Mention publique d’acheminement',
+                          es: 'Aviso público de movilización',
+                        ),
+                        _mobDisclosure,
+                      ),
+                      TextField(
+                        controller: _mobBaseAddress,
+                        decoration: InputDecoration(
+                          isDense: true,
+                          labelText: _t(
+                            nl: 'Standplaats (privé)',
+                            en: 'Operating base (private)',
+                            fr: 'Base d’exploitation (privée)',
+                            es: 'Base operativa (privada)',
+                          ),
+                          helperText: _t(
+                            nl: 'Nooit gepubliceerd. Alleen voor jouw berekening.',
+                            en: 'Never published. Used only for your own calculation.',
+                            fr: 'Jamais publiée. Uniquement pour votre calcul.',
+                            es: 'Nunca se publica. Solo para tu cálculo.',
+                          ),
+                        ),
+                      ),
 
-            _sectionHeader(
-              _t(
-                nl: 'Betalende extra’s',
-                en: 'Paid optional extras',
-                fr: 'Options payantes',
-                es: 'Extras de pago',
-              ),
-            ),
-            _paidExtrasEditor(),
+                      _sectionHeader(
+                        _t(
+                          nl: 'Inbegrepen diensten',
+                          en: 'Included services',
+                          fr: 'Services inclus',
+                          es: 'Servicios incluidos',
+                        ),
+                      ),
+                      _includedServicesEditor(),
 
-            _sectionHeader(
-              _t(
-                nl: 'Publicatie',
-                en: 'Publication',
-                fr: 'Publication',
-                es: 'Publicación',
-              ),
-            ),
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              value: _enabled,
-              title: Text(
-                _t(nl: 'Actief', en: 'Active', fr: 'Actif', es: 'Activo'),
-              ),
-              onChanged: (v) => setState(() => _enabled = v),
-            ),
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              value: _published,
-              title: Text(
-                _t(
-                  nl: 'Publiceren',
-                  en: 'Publish',
-                  fr: 'Publier',
-                  es: 'Publicar',
+                      _sectionHeader(
+                        _t(
+                          nl: 'Betalende extra’s',
+                          en: 'Paid optional extras',
+                          fr: 'Options payantes',
+                          es: 'Extras de pago',
+                        ),
+                      ),
+                      _paidExtrasEditor(),
+
+                      _sectionHeader(
+                        _t(
+                          nl: 'Publicatie',
+                          en: 'Publication',
+                          fr: 'Publication',
+                          es: 'Publicación',
+                        ),
+                      ),
+                      SwitchListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        value: _enabled,
+                        title: Text(
+                          _t(
+                            nl: 'Actief',
+                            en: 'Active',
+                            fr: 'Actif',
+                            es: 'Activo',
+                          ),
+                        ),
+                        onChanged: (v) => setState(() => _enabled = v),
+                      ),
+                      SwitchListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        value: _published,
+                        title: Text(
+                          _t(
+                            nl: 'Publiceren',
+                            en: 'Publish',
+                            fr: 'Publier',
+                            es: 'Publicar',
+                          ),
+                        ),
+                        onChanged: (v) => setState(() => _published = v),
+                      ),
+
+                      if (errors.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        ...errors.map(
+                          (code) => Text(
+                            '• ${limousineOfferErrorLabel(code, _lang)}',
+                            style: const TextStyle(
+                              color: Colors.orangeAccent,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
               ),
-              onChanged: (v) => setState(() => _published = v),
-            ),
-
-            if (errors.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              ...errors.map(
-                (code) => Text(
-                  '• ${limousineOfferErrorLabel(code, _lang)}',
-                  style: const TextStyle(
-                    color: Colors.orangeAccent,
-                    fontSize: 11.5,
+              Material(
+                key: kLimousineOfferEditorActionsKey,
+                color: tokens.surface,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                  child: Row(
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: Text(
+                          _t(
+                            nl: 'Annuleren',
+                            en: 'Cancel',
+                            fr: 'Annuler',
+                            es: 'Cancelar',
+                          ),
+                        ),
+                      ),
+                      const Spacer(),
+                      FilledButton(
+                        onPressed: errors.isEmpty
+                            ? () => Navigator.of(context).pop(buildOffer())
+                            : null,
+                        child: Text(
+                          _t(
+                            nl: 'Bewaren',
+                            en: 'Save',
+                            fr: 'Enregistrer',
+                            es: 'Guardar',
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ],
-          ],
+          ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(
-            _t(nl: 'Annuleren', en: 'Cancel', fr: 'Annuler', es: 'Cancelar'),
-          ),
-        ),
-        FilledButton(
-          onPressed: errors.isEmpty
-              ? () => Navigator.of(context).pop(buildOffer())
-              : null,
-          child: Text(
-            _t(nl: 'Bewaren', en: 'Save', fr: 'Enregistrer', es: 'Guardar'),
-          ),
-        ),
-      ],
     );
   }
 }

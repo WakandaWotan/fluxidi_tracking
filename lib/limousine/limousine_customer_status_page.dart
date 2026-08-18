@@ -9,6 +9,7 @@ import 'limousine_accepted_booking_resume_labels.dart';
 import 'limousine_customer_quote.dart';
 import 'limousine_customer_quote_api.dart';
 import 'limousine_customer_quote_labels.dart';
+import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_quote_inbox_labels.dart';
 
@@ -23,7 +24,7 @@ class LimousineCustomerUnavailableBanner extends StatelessWidget {
       key: kLimousineCustomerUnavailableKey,
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Text(kLimousineCustomerUnavailable.of(language)),
+        child: Text(kLimousineGatesOffFriendly.of(language)),
       ),
     );
   }

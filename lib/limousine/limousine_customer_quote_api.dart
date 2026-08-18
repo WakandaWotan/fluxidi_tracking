@@ -528,10 +528,10 @@ class LimousineCustomerQuoteController extends ChangeNotifier {
       );
       providers = filterWorkerEligibleLimousineProviders(found);
       lastDiscoveryCount = providers.length;
-    } on LimousineCustomerQuoteException {
+    } on LimousineCustomerQuoteException catch (error) {
       providers = const [];
       lastDiscoveryCount = 0;
-      safeError = 'network';
+      safeError = error.unavailable ? 'unavailable' : 'network';
     } finally {
       discovering = false;
       notifyListeners();

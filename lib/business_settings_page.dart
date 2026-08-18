@@ -18,6 +18,7 @@ import 'package:fluxidi_tracking/company/billit_customer_connect_gate.dart';
 import 'package:fluxidi_tracking/limousine/limousine_marketplace_labels.dart';
 import 'package:fluxidi_tracking/limousine/limousine_offer_editor.dart';
 import 'package:fluxidi_tracking/limousine/limousine_offers.dart';
+import 'package:fluxidi_tracking/limousine/limousine_p2d4c1a_ux.dart';
 import 'package:fluxidi_tracking/limousine/limousine_service_capability.dart';
 import 'package:fluxidi_tracking/limousine/limousine_state_composition.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
@@ -416,6 +417,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   String? _limousineOffersError;
   String? _limousineOffersStatus;
   List<Map<String, dynamic>> _limousineOffers = <Map<String, dynamic>>[];
+  LimousineOffersEditorSnapshot _limousineOffersConfirmed =
+      const LimousineOffersEditorSnapshot(
+        enabled: false,
+        offers: <Map<String, dynamic>>[],
+      );
 
   bool _airportFixedFaresLoading = false;
   bool _airportFixedFaresSaving = false;
@@ -628,10 +634,25 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         _limousineOffersRevision =
             int.tryParse('${section['source_revision'] ?? 0}') ?? 0;
         _limousineOffersDirty = false;
+        _limousineOffersConfirmed = LimousineOffersEditorSnapshot(
+          enabled: _limousineSectionEnabled,
+          offers: _limousineOffers,
+        ).copy();
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _limousineOffersError = e.toString());
+      final rolled = limousineRollbackFailedPersistence(
+        confirmed: _limousineOffersConfirmed,
+      );
+      setState(() {
+        _limousineSectionEnabled = rolled.enabled;
+        _limousineOffers = rolled.offers.toList();
+        _limousineOffersDirty = false;
+        _limousineOffersError = limousineFriendlyCompanyError(
+          e,
+          language: _lang,
+        );
+      });
     } finally {
       if (mounted) setState(() => _limousineOffersLoading = false);
     }
@@ -674,10 +695,25 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           fr: 'Offres limousine enregistrées.',
           es: 'Ofertas de limusina guardadas.',
         );
+        _limousineOffersConfirmed = LimousineOffersEditorSnapshot(
+          enabled: _limousineSectionEnabled,
+          offers: _limousineOffers,
+        ).copy();
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _limousineOffersError = e.toString());
+      final rolled = limousineRollbackFailedPersistence(
+        confirmed: _limousineOffersConfirmed,
+      );
+      setState(() {
+        _limousineSectionEnabled = rolled.enabled;
+        _limousineOffers = rolled.offers.toList();
+        _limousineOffersDirty = false;
+        _limousineOffersError = limousineFriendlyCompanyError(
+          e,
+          language: _lang,
+        );
+      });
     } finally {
       if (mounted) setState(() => _limousineOffersSaving = false);
     }
@@ -952,9 +988,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 ),
               ),
               FilledButton.icon(
-                onPressed: _limousineOffersSaving || !_limousineOffersDirty
-                    ? null
-                    : _saveLimousineOffers,
+                onPressed:
+                    limousineCompanySaveAllowed(
+                      dirty: _limousineOffersDirty,
+                      saving: _limousineOffersSaving,
+                      offerErrors: _limousineOffers.map(_limousineOfferErrors),
+                    )
+                    ? _saveLimousineOffers
+                    : null,
                 icon: const Icon(Icons.save_outlined, size: 16),
                 label: Text(
                   _t(
@@ -978,6 +1019,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             const SizedBox(height: 8),
             Text(
               _limousineOffersError!,
+              key: kLimousineCompanyOffersStatusKey,
               style: TextStyle(color: _danger, fontSize: 11.8),
             ),
           ],
@@ -1018,10 +1060,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   Widget _limousineOffersPublicPreview() {
     final safe = buildSafePublicLimousineOffers(
       _limousineOffers,
-      eligible: true,
+      eligible: _limousineSectionEnabled,
       vehicles: vehiclesNotifier.value,
       knownClassIds: _limousineKnownClassIds,
-      readiness: true,
+      readiness: _limousineSectionEnabled,
     );
     return Container(
       width: double.infinity,

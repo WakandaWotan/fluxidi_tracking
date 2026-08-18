@@ -24,24 +24,24 @@ const LocalizedText kLimousineCustomerStepJourney = LocalizedText(
 );
 
 const LocalizedText kLimousineCustomerStepProvider = LocalizedText(
-  nl: 'Aanbieder en aanbod',
-  en: 'Provider and offer',
-  fr: 'Prestataire et offre',
-  es: 'Proveedor y oferta',
+  nl: 'Aanbieder',
+  en: 'Provider',
+  fr: 'Prestataire',
+  es: 'Proveedor',
 );
 
 const LocalizedText kLimousineCustomerStepDetails = LocalizedText(
-  nl: 'Details en extras',
+  nl: 'Details en extra’s',
   en: 'Details and extras',
   fr: 'Détails et extras',
   es: 'Detalles y extras',
 );
 
 const LocalizedText kLimousineCustomerStepReview = LocalizedText(
-  nl: 'Aanvraag controleren',
-  en: 'Review request',
-  fr: 'Vérifier la demande',
-  es: 'Revisar solicitud',
+  nl: 'Controleren',
+  en: 'Review',
+  fr: 'Vérifier',
+  es: 'Revisar',
 );
 
 const LocalizedText kLimousineCustomerStepWaiting = LocalizedText(

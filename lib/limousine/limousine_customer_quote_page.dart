@@ -15,6 +15,7 @@ import 'limousine_marketplace_labels.dart';
 import 'limousine_customer_quote_api.dart';
 import 'limousine_customer_quote_labels.dart';
 import 'limousine_customer_status_page.dart';
+import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_quote_inbox_labels.dart';
 
@@ -124,8 +125,22 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
   CustomerThemePalette get _palette =>
       paletteForCustomerTheme(customerThemeNotifier.value);
 
+  LimousineUxTokens get _tokens => LimousineUxTokens.fromCustomer(_palette);
+
   bool get _tablet =>
       limousineQuoteInboxIsTablet(MediaQuery.sizeOf(context).shortestSide);
+
+  LimousineRequestWizardStep get _wizardStep =>
+      limousineRequestWizardStepOf(_controller.step);
+
+  List<LimousineRequestStepGap> get _gaps => limousineRequestWizardGaps(
+    step: _wizardStep,
+    draft: _syncedDraft(),
+    offer: _controller.selectedOffer,
+    hasProvider: _controller.selectedProvider != null,
+  );
+
+  bool get _canAdvance => _gaps.isEmpty;
 
   @override
   Widget build(BuildContext context) {
@@ -133,62 +148,107 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
       return const SizedBox.shrink();
     }
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    return Scaffold(
-      key: kLimousineCustomerQuotePageKey,
-      backgroundColor: _palette.background,
-      appBar: AppBar(
-        backgroundColor: _palette.surface,
-        foregroundColor: _palette.textPrimary,
-        title: Text(_t(kLimousineCustomerPageTitle)),
-      ),
-      body: SafeArea(
-        child: KeyedSubtree(
-          key: _tablet
-              ? kLimousineCustomerTabletLayoutKey
-              : kLimousineCustomerPhoneLayoutKey,
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-            children: [
-              _hero(reduceMotion),
-              const SizedBox(height: 12),
-              _stepChip(),
-              const SizedBox(height: 12),
-              if (_controller.restoredFromSecureResume &&
-                  _controller.handoff != null) ...[
-                LimousineAcceptedBookingContinueAction(
-                  language: _lang,
-                  onContinue: () => openLimousineAcceptedBookingReview(
-                    context,
-                    quoteController: _controller,
-                    entryEnabled: _entryEnabled,
-                  ),
-                  onDiscard: () => unawaited(_controller.discardSecureResume()),
-                ),
-                const SizedBox(height: 12),
-              ],
-              if (_controller.phase == LimousineCustomerQuotePhase.unavailable)
-                LimousineCustomerUnavailableBanner(language: _lang)
-              else if (_controller.request != null)
-                LimousineCustomerStatusView(
-                  controller: _controller,
-                  language: _lang,
-                  palette: _palette,
-                )
-              else if (!(_controller.restoredFromSecureResume &&
-                  _controller.handoff != null))
-                ..._draftSteps(),
-            ],
+    final tokens = _tokens;
+    return Theme(
+      data: limousineUxThemeData(tokens),
+      child: Scaffold(
+        key: kLimousineCustomerQuotePageKey,
+        backgroundColor: tokens.background,
+        appBar: AppBar(
+          backgroundColor: tokens.surface,
+          foregroundColor: tokens.onSurface,
+          title: Text(_t(kLimousineCustomerPageTitle)),
+        ),
+        body: SafeArea(
+          child: KeyedSubtree(
+            key: _tablet
+                ? kLimousineCustomerTabletLayoutKey
+                : kLimousineCustomerPhoneLayoutKey,
+            child: _pageBody(reduceMotion, tokens),
           ),
         ),
       ),
     );
   }
 
-  Widget _hero(bool reduceMotion) {
+  Widget _pageBody(bool reduceMotion, LimousineUxTokens tokens) {
+    final width = MediaQuery.sizeOf(context).width;
+    final columnWidth = limousineRequestWizardContentWidth(width);
+    final draftMode =
+        _controller.phase != LimousineCustomerQuotePhase.unavailable &&
+        _controller.request == null &&
+        !(_controller.restoredFromSecureResume && _controller.handoff != null);
+    return Column(
+      key: kLimousineRequestWizardKey,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: SizedBox(
+              width: columnWidth,
+              child: Column(
+                children: [
+                  _hero(reduceMotion, tokens),
+                  const SizedBox(height: 12),
+                  if (draftMode) _stepper(tokens),
+                ],
+              ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: SizedBox(
+              width: columnWidth,
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                children: [
+                  if (_controller.restoredFromSecureResume &&
+                      _controller.handoff != null) ...[
+                    LimousineAcceptedBookingContinueAction(
+                      language: _lang,
+                      onContinue: () => openLimousineAcceptedBookingReview(
+                        context,
+                        quoteController: _controller,
+                        entryEnabled: _entryEnabled,
+                      ),
+                      onDiscard: () =>
+                          unawaited(_controller.discardSecureResume()),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (_controller.phase ==
+                          LimousineCustomerQuotePhase.unavailable ||
+                      _controller.safeError == 'unavailable')
+                    LimousineCustomerUnavailableBanner(language: _lang)
+                  else if (_controller.request != null)
+                    LimousineCustomerStatusView(
+                      controller: _controller,
+                      language: _lang,
+                      palette: _palette,
+                    )
+                  else if (!(_controller.restoredFromSecureResume &&
+                      _controller.handoff != null))
+                    _stepCard(tokens),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (draftMode) _footer(tokens),
+      ],
+    );
+  }
+
+  Widget _hero(bool reduceMotion, LimousineUxTokens tokens) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(18),
       child: SizedBox(
-        height: _tablet ? 180 : 128,
+        height: _tablet ? 168 : 128,
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -197,14 +257,15 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
               fit: BoxFit.cover,
               alignment: Alignment.centerRight,
               excludeFromSemantics: true,
-              errorBuilder: (_, __, ___) => const SizedBox.expand(),
+              errorBuilder: (_, __, ___) =>
+                  ColoredBox(color: tokens.surfaceAlt),
             ),
             DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: [
-                    _palette.background.withOpacity(reduceMotion ? 0.35 : 0.15),
-                    _palette.background.withOpacity(0.72),
+                    tokens.heroScrim.withOpacity(reduceMotion ? 0.55 : 0.28),
+                    tokens.heroScrim,
                   ],
                 ),
               ),
@@ -216,9 +277,10 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
                 child: Text(
                   _t(kLimousineBookLabel),
                   style: TextStyle(
-                    color: _palette.textPrimary,
+                    color: tokens.onHero,
                     fontWeight: FontWeight.w800,
                     fontSize: 20,
+                    shadows: [Shadow(color: tokens.heroScrim, blurRadius: 8)],
                   ),
                 ),
               ),
@@ -229,38 +291,90 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
     );
   }
 
-  Widget _stepChip() {
-    final labels = <LimousineCustomerQuoteStep, LocalizedText>{
-      LimousineCustomerQuoteStep.journey: kLimousineCustomerStepJourney,
-      LimousineCustomerQuoteStep.providerOffer: kLimousineCustomerStepProvider,
-      LimousineCustomerQuoteStep.detailsExtras: kLimousineCustomerStepDetails,
-      LimousineCustomerQuoteStep.reviewRequest: kLimousineCustomerStepReview,
-      LimousineCustomerQuoteStep.waitingCompany: kLimousineCustomerStepWaiting,
-      LimousineCustomerQuoteStep.reviewQuote: kLimousineCustomerStepQuote,
-      LimousineCustomerQuoteStep.acceptOffer: kLimousineCustomerStepAccept,
-    };
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Chip(
-        backgroundColor: _palette.surfaceAlt,
-        label: Text(
-          _t(labels[_controller.step] ?? kLimousineCustomerStepJourney),
+  Widget _stepper(LimousineUxTokens tokens) {
+    final current = _wizardStep;
+    return SingleChildScrollView(
+      key: kLimousineRequestWizardStepperKey,
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (var i = 0; i < kLimousineRequestWizardSteps.length; i++) ...[
+            if (i > 0)
+              Container(
+                width: 18,
+                height: 2,
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                color: tokens.border,
+              ),
+            _stepChip(kLimousineRequestWizardSteps[i], i + 1, current, tokens),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _stepChip(
+    LimousineRequestWizardStep step,
+    int number,
+    LimousineRequestWizardStep current,
+    LimousineUxTokens tokens,
+  ) {
+    final selected = step == current;
+    final past =
+        kLimousineRequestWizardSteps.indexOf(step) <
+        kLimousineRequestWizardSteps.indexOf(current);
+    return Material(
+      key: limousineRequestWizardStepKey(step),
+      color: selected ? tokens.gold.withOpacity(0.22) : tokens.surfaceAlt,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: past
+            ? () => _controller.goTo(limousineCustomerQuoteStepOf(step))
+            : null,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          child: Text(
+            '$number  ${limousineRequestWizardStepLabel(step).of(_lang)}',
+            style: TextStyle(
+              color: tokens.onSurface,
+              fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+              fontSize: 12.5,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _stepCard(LimousineUxTokens tokens) {
+    return Card(
+      key: kLimousineRequestWizardColumnKey,
+      color: tokens.surface,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: tokens.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: _draftSteps(),
         ),
       ),
     );
   }
 
   List<Widget> _draftSteps() {
-    switch (_controller.step) {
-      case LimousineCustomerQuoteStep.journey:
+    switch (_wizardStep) {
+      case LimousineRequestWizardStep.journey:
         return _journeyStep();
-      case LimousineCustomerQuoteStep.providerOffer:
+      case LimousineRequestWizardStep.provider:
         return _providerStep();
-      case LimousineCustomerQuoteStep.detailsExtras:
+      case LimousineRequestWizardStep.details:
         return _detailsStep();
-      case LimousineCustomerQuoteStep.reviewRequest:
-        return _reviewStep();
-      default:
+      case LimousineRequestWizardStep.review:
         return _reviewStep();
     }
   }
@@ -283,6 +397,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
       ),
       Wrap(
         spacing: 8,
+        runSpacing: 8,
         children: [
           for (final type in const [
             'point_to_point',
@@ -296,6 +411,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
                 (kLimousineJourneyTypeLabels[type] ??
                         kLimousineCustomerStepJourney)
                     .of(_lang),
+                style: TextStyle(color: _tokens.onSurface),
               ),
               selected: _controller.draft.journeyType == type,
               onSelected: (_) {
@@ -319,8 +435,9 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
         title: Text(_t(kLimousineCustomerPickupTime)),
         subtitle: Text(
           _controller.draft.scheduledPickupIso.isEmpty
-              ? '—'
+              ? _t(kLimousineRequestIncompleteHint)
               : _controller.draft.scheduledPickupIso,
+          style: TextStyle(color: _tokens.muted),
         ),
         onTap: () => _pickSchedule(returnTrip: false),
       ),
@@ -330,8 +447,9 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
           title: Text(_t(kLimousineCustomerReturnTime)),
           subtitle: Text(
             _controller.draft.returnPickupIso.isEmpty
-                ? '—'
+                ? _t(kLimousineRequestIncompleteHint)
                 : _controller.draft.returnPickupIso,
+            style: TextStyle(color: _tokens.muted),
           ),
           onTap: () => _pickSchedule(returnTrip: true),
         ),
@@ -348,12 +466,6 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
           },
         ),
       ..._stopFields(),
-      _navRow(
-        onNext: () {
-          _syncDraft();
-          _controller.goTo(LimousineCustomerQuoteStep.providerOffer);
-        },
-      ),
     ];
   }
 
@@ -384,7 +496,15 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
         Align(
           alignment: Alignment.centerLeft,
           child: FilledButton(
-            onPressed: _controller.discovering
+            onPressed:
+                _controller.discovering ||
+                    !limousineRequestWizardAllowsHttp(
+                      step: LimousineRequestWizardStep.provider,
+                      draft: _syncedDraft(),
+                      offer: _controller.selectedOffer,
+                      hasProvider: _controller.selectedProvider != null,
+                      action: 'discover',
+                    )
                 ? null
                 : () => _controller.discover(postcode: _postcode.text),
             child: Text(_t(kLimousineCustomerSearchAction)),
@@ -402,7 +522,10 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
         ),
       for (final provider in _controller.providers)
         ListTile(
-          leading: const Icon(Icons.directions_car_filled_outlined),
+          leading: Icon(
+            Icons.directions_car_filled_outlined,
+            color: _tokens.onSurface,
+          ),
           title: Text(provider.companyName),
           subtitle: Text(provider.serviceArea.take(3).join(' · ')),
           selected:
@@ -428,20 +551,17 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
             onChanged: locked ? null : (_) => _controller.selectOffer(offer),
           ),
       ],
-      _navRow(
-        onBack: () => _controller.goTo(LimousineCustomerQuoteStep.journey),
-        onNext: () =>
-            _controller.goTo(LimousineCustomerQuoteStep.detailsExtras),
-      ),
     ];
   }
 
   List<Widget> _detailsStep() {
     return [
-      _stepper(_t(kLimousineCustomerPax), _controller.draft.pax ?? 1, (value) {
+      _stepperField(_t(kLimousineCustomerPax), _controller.draft.pax ?? 1, (
+        value,
+      ) {
         _controller.updateDraft(_controller.draft.copyWith(pax: value));
       }),
-      _stepper(_t(kLimousineCustomerBags), _controller.draft.bags ?? 0, (
+      _stepperField(_t(kLimousineCustomerBags), _controller.draft.bags ?? 0, (
         value,
       ) {
         _controller.updateDraft(_controller.draft.copyWith(bags: value));
@@ -489,65 +609,161 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
           );
         },
       ),
-      _navRow(
-        onBack: () =>
-            _controller.goTo(LimousineCustomerQuoteStep.providerOffer),
-        onNext: () {
-          _syncDraft();
-          _controller.goTo(LimousineCustomerQuoteStep.reviewRequest);
-        },
-      ),
     ];
   }
 
   List<Widget> _reviewStep() {
-    final errors = _controller.draftErrors;
+    final rows = buildLimousineRequestReviewRows(
+      draft: _syncedDraft(),
+      language: _lang,
+      providerName: _controller.selectedProvider?.provider.companyName ?? '',
+      offer: _controller.selectedOffer,
+    );
     return [
-      Text('${_controller.draft.from} → ${_controller.draft.to}'),
-      Text(_controller.selectedProvider?.provider.companyName ?? ''),
-      Text(_controller.selectedOffer?.offerId ?? ''),
-      if (errors.isNotEmpty)
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Text(
-            _errorText(errors.first),
-            style: TextStyle(color: _palette.danger),
-          ),
-        ),
-      _navRow(
-        onBack: () =>
-            _controller.goTo(LimousineCustomerQuoteStep.detailsExtras),
-        nextLabel: _t(kLimousineCustomerSubmit),
-        nextKey: kLimousineCustomerSubmitKey,
-        nextBusy: _controller.submitting,
-        onNext: () async {
-          _syncDraft();
-          final locale = switch (_lang) {
-            AppLanguage.fr => 'fr',
-            AppLanguage.es => 'es',
-            AppLanguage.en => 'en',
-            _ => 'nl',
-          };
-          _controller.updateDraft(_controller.draft.copyWith(locale: locale));
-          final ok = await _controller.submitRequest();
-          if (ok) _controller.startPolling();
-        },
+      Column(
+        key: kLimousineRequestReviewSummaryKey,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final row in rows)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    row.label,
+                    style: TextStyle(
+                      color: _tokens.muted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    row.value,
+                    style: TextStyle(
+                      color: _tokens.onSurface,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     ];
   }
 
-  String _errorText(LimousineCustomerDraftError error) {
-    switch (error) {
-      case LimousineCustomerDraftError.unsupportedJourney:
-        return _t(kLimousineCustomerUnsupportedJourney);
-      case LimousineCustomerDraftError.capacityExceeded:
-        return _t(kLimousineCustomerCapacity);
-      case LimousineCustomerDraftError.invalidSchedule:
-        return _t(kLimousineCustomerScheduleInvalid);
-      case LimousineCustomerDraftError.invalidDuration:
-        return _t(kLimousineCustomerDurationInvalid);
-      default:
-        return _t(kLimousineCustomerValidation);
+  Widget _footer(LimousineUxTokens tokens) {
+    final isReview = _wizardStep == LimousineRequestWizardStep.review;
+    return Material(
+      key: kLimousineRequestWizardFooterKey,
+      color: tokens.surface,
+      elevation: 6,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+          child: Align(
+            alignment: Alignment.center,
+            child: SizedBox(
+              width: limousineRequestWizardContentWidth(
+                MediaQuery.sizeOf(context).width,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (!_canAdvance)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        _t(kLimousineRequestIncompleteHint),
+                        key: kLimousineRequestWizardHintKey,
+                        style: TextStyle(color: tokens.muted, fontSize: 12.5),
+                      ),
+                    ),
+                  Row(
+                    children: [
+                      if (_wizardStep != LimousineRequestWizardStep.journey)
+                        TextButton(
+                          key: kLimousineRequestWizardBackKey,
+                          onPressed: _goBack,
+                          child: Text(_t(kLimousineCustomerBack)),
+                        ),
+                      const Spacer(),
+                      FilledButton(
+                        key: isReview
+                            ? kLimousineCustomerSubmitKey
+                            : kLimousineRequestWizardNextKey,
+                        onPressed: !_canAdvance || _controller.submitting
+                            ? null
+                            : () => unawaited(_goNext()),
+                        child: Text(
+                          isReview
+                              ? _t(kLimousineCustomerSubmit)
+                              : _t(kLimousineCustomerContinue),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _goBack() {
+    switch (_wizardStep) {
+      case LimousineRequestWizardStep.provider:
+        _controller.goTo(LimousineCustomerQuoteStep.journey);
+        break;
+      case LimousineRequestWizardStep.details:
+        _controller.goTo(LimousineCustomerQuoteStep.providerOffer);
+        break;
+      case LimousineRequestWizardStep.review:
+        _controller.goTo(LimousineCustomerQuoteStep.detailsExtras);
+        break;
+      case LimousineRequestWizardStep.journey:
+        break;
+    }
+  }
+
+  Future<void> _goNext() async {
+    _syncDraft();
+    if (!_canAdvance) return;
+    switch (_wizardStep) {
+      case LimousineRequestWizardStep.journey:
+        _controller.goTo(LimousineCustomerQuoteStep.providerOffer);
+        break;
+      case LimousineRequestWizardStep.provider:
+        _controller.goTo(LimousineCustomerQuoteStep.detailsExtras);
+        break;
+      case LimousineRequestWizardStep.details:
+        _controller.goTo(LimousineCustomerQuoteStep.reviewRequest);
+        break;
+      case LimousineRequestWizardStep.review:
+        if (!limousineRequestWizardAllowsHttp(
+          step: LimousineRequestWizardStep.review,
+          draft: _syncedDraft(),
+          offer: _controller.selectedOffer,
+          hasProvider: _controller.selectedProvider != null,
+          action: 'submit',
+        )) {
+          return;
+        }
+        final locale = switch (_lang) {
+          AppLanguage.fr => 'fr',
+          AppLanguage.es => 'es',
+          AppLanguage.en => 'en',
+          _ => 'nl',
+        };
+        _controller.updateDraft(_controller.draft.copyWith(locale: locale));
+        final ok = await _controller.submitRequest();
+        if (ok) _controller.startPolling();
+        break;
     }
   }
 
@@ -562,17 +778,19 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
       child: TextField(
         controller: controller,
         maxLines: maxLines,
+        style: TextStyle(color: _tokens.onSurface),
         onChanged: onChanged,
         decoration: InputDecoration(
           labelText: label,
+          hintStyle: TextStyle(color: _tokens.muted),
           filled: true,
-          fillColor: _palette.surface,
+          fillColor: _tokens.fieldFill,
         ),
       ),
     );
   }
 
-  Widget _stepper(String label, int value, ValueChanged<int> onChanged) {
+  Widget _stepperField(String label, int value, ValueChanged<int> onChanged) {
     return ListTile(
       contentPadding: EdgeInsets.zero,
       title: Text(label),
@@ -583,7 +801,7 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
             onPressed: value <= 0 ? null : () => onChanged(value - 1),
             icon: const Icon(Icons.remove_circle_outline),
           ),
-          Text('$value'),
+          Text('$value', style: TextStyle(color: _tokens.onSurface)),
           IconButton(
             onPressed: () => onChanged(value + 1),
             icon: const Icon(Icons.add_circle_outline),
@@ -593,46 +811,20 @@ class _LimousineCustomerQuotePageState extends State<LimousineCustomerQuotePage>
     );
   }
 
-  Widget _navRow({
-    VoidCallback? onBack,
-    VoidCallback? onNext,
-    String? nextLabel,
-    Key? nextKey,
-    bool nextBusy = false,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 16),
-      child: Row(
-        children: [
-          if (onBack != null)
-            TextButton(
-              onPressed: onBack,
-              child: Text(_t(kLimousineCustomerBack)),
-            ),
-          const Spacer(),
-          if (onNext != null)
-            FilledButton(
-              key: nextKey,
-              onPressed: nextBusy ? null : onNext,
-              child: Text(nextLabel ?? _t(kLimousineCustomerContinue)),
-            ),
-        ],
-      ),
+  LimousineQuoteCreateDraft _syncedDraft() {
+    return _controller.draft.copyWith(
+      from: _from.text,
+      to: _to.text,
+      customerNote: _note.text,
+      stops: _stops
+          .map((controller) => controller.text.trim())
+          .where((text) => text.isNotEmpty)
+          .toList(growable: false),
     );
   }
 
   void _syncDraft() {
-    _controller.updateDraft(
-      _controller.draft.copyWith(
-        from: _from.text,
-        to: _to.text,
-        customerNote: _note.text,
-        stops: _stops
-            .map((controller) => controller.text.trim())
-            .where((text) => text.isNotEmpty)
-            .toList(growable: false),
-      ),
-    );
+    _controller.updateDraft(_syncedDraft());
   }
 
   Future<void> _pickSchedule({required bool returnTrip}) async {

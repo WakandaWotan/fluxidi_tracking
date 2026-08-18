@@ -69,6 +69,7 @@ const Set<String> kLimousineCustomerCreateAllowedKeys = <String>{
 
 const Set<String> kLimousineCustomerForbiddenSubmitKeys = <String>{
   'total_incl_vat_cents',
+  'taxi_price',
   'price_incl_vat',
   'price_ex_vat',
   'price_vat',
