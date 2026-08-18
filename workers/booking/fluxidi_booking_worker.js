@@ -172,6 +172,12 @@ import {
   limousineTestCompanyAllowlistConfigured as _limousineTestCompanyAllowlistConfiguredRaw,
 } from "./modules/limousine_test_company_allowlist.mjs";
 import {
+  LIMOUSINE_DISCOVERY_LISTING_MODE_TEST_PREVIEW as _LIMOUSINE_DISCOVERY_LISTING_MODE_TEST_PREVIEW,
+  buildLimousineNearbyCardProjection as _buildLimousineNearbyCardProjection,
+  isLimousineDiscoveryListable as _isLimousineDiscoveryListable,
+  limousineNearbyAllowsUnscopedListing as _limousineNearbyAllowsUnscopedListing,
+} from "./modules/limousine_discovery_preview.mjs";
+import {
   deletedVehicleIdList,
   filterActiveVehicles,
   mergeVehicleTombstones,
@@ -45773,7 +45779,11 @@ export default {
         if (hasGeoInput && (lat == null || lng == null)) {
           return json({ ok: false, error: "valid lat and lng are required" }, 400);
         }
-        if (!hasGeoInput && !postcode) {
+        if (
+          !hasGeoInput &&
+          !postcode &&
+          !_limousineNearbyAllowsUnscopedListing({ service: serviceFilter })
+        ) {
           return json({ ok: false, error: "postcode or lat/lng is required" }, 400);
         }
         const partners = await listNearbyPartners(env, {
@@ -45789,6 +45799,9 @@ export default {
           ...(lat != null && lng != null ? { lat, lng } : {}),
           ...(radiusKm != null ? { radius_km: radiusKm } : {}),
           ...(serviceFilter ? { service: serviceFilter } : {}),
+          ...(serviceFilter === "limousine"
+            ? { limousine_listing_mode: _LIMOUSINE_DISCOVERY_LISTING_MODE_TEST_PREVIEW }
+            : {}),
           count: partners.length,
           partners,
         }, 200);
@@ -79065,12 +79078,18 @@ async function refreshPartnerLimousineProjection(env, scope) {
 async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, radiusKm = null, service = null } = {}) {
   const needle = _normalizePostcode(postcode);
   const hasGeoQuery = Number.isFinite(lat) && Number.isFinite(lng);
-  if (!hasGeoQuery && !needle) return [];
+  const serviceFilter = _resolveNearbyServiceFilter(service);
+  const unscopedLimousine = _limousineNearbyAllowsUnscopedListing({
+    service: serviceFilter,
+    postcode: needle,
+    lat,
+    lng,
+  });
+  if (!hasGeoQuery && !needle && !unscopedLimousine) return [];
   const normalizedQueryRadiusKm = _normalizeNearbyRadiusKm(radiusKm);
   // LIMOUSINE-MARKETPLACE-P1: optional server-side vertical filter. Unknown /
   // empty `service` values resolve to null (no filter) and never become
   // limousine. Airport filtering and default taxi discovery are unaffected.
-  const serviceFilter = _resolveNearbyServiceFilter(service);
   const partners = await _loadPartnerDirectory(env);
   const profiles = await _loadPublicPartnerProfiles(env);
   const routes = await _loadPartnerBookingRoutes(env);
@@ -79080,12 +79099,16 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
       .map((entry) => [entry.partner_id, entry]),
   );
   const visibleProfiles = profiles.filter((profile) => _isPublicPartnerProfileVisible(profile));
+  const profileByPartnerId = new Map(
+    visibleProfiles.map((profile) => [profile.partner_id, profile]),
+  );
   // Authoritative limousine eligibility per visible profile (market handled by
   // the existing nearby geo/postcode match below). Fails closed.
   const limousineEligibleByPartnerId = new Map(
     visibleProfiles.map((profile) => [
       profile.partner_id,
-      _isEligibleLimousineProvider(profile),
+      _isEligibleLimousineProvider(profile) &&
+        _isLimousineDiscoveryListable(profile),
     ]),
   );
   const limousineSignalsByPartnerId = new Map(
@@ -79205,6 +79228,9 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
       };
     })
     .map((entry) => {
+      if (unscopedLimousine) {
+        return { ...entry, matches: true, distanceKm: null };
+      }
       if (hasGeoQuery) {
         const hasPartnerCoverage =
           Number.isFinite(entry.coverageLat) &&
@@ -79282,7 +79308,13 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
       const limousineSignals =
         serviceFilter === "limousine" &&
         _limousineTestCompanyAllowlisted(env, nearbySignalCompanyId)
-        ? limousineSignalsByPartnerId.get(p.partner_id) || {}
+        ? {
+            ...(limousineSignalsByPartnerId.get(p.partner_id) || {}),
+            ..._buildLimousineNearbyCardProjection(
+              profileByPartnerId.get(p.partner_id),
+              { testPreview: true },
+            ),
+          }
         : {};
       _logNearbyCapabilitiesDiagnostics(p.partner_id, capabilitySignals);
       return {
@@ -79291,7 +79323,7 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
         is_active: true,
         subscription_status: p.subscription_status,
         supported_postcodes: entry.supportedPostcodes,
-        ...(entry.distanceKm != null
+        ...(entry.distanceKm != null && hasGeoQuery
           ? { distance_km: Number(entry.distanceKm.toFixed(2)) }
           : {}),
         hero_photo_url: _safePublicHttpsUrl(media.hero_photo_url, 600),
