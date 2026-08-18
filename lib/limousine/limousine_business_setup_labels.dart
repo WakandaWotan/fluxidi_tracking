@@ -16,6 +16,20 @@ const LocalizedText kLimousineBusinessSetupOpenAction = LocalizedText(
   es: 'Abrir ajustes de limusina',
 );
 
+const LocalizedText kLimousineOffersPricingSectionTitle = LocalizedText(
+  nl: 'Limousineaanbod en prijzen',
+  en: 'Limousine offers and pricing',
+  fr: 'Offres et tarifs limousine',
+  es: 'Ofertas y precios de limusina',
+);
+
+const LocalizedText kLimousineOffersPricingSectionIntro = LocalizedText(
+  nl: 'Voertuigen, aanbod, prijzen en de publieke weergave beheert u op één aparte pagina.',
+  en: 'Vehicles, offers, prices and the public presentation are managed on one dedicated page.',
+  fr: 'Les véhicules, les offres, les tarifs et la présentation publique se gèrent sur une page dédiée.',
+  es: 'Los vehículos, las ofertas, los precios y la presentación pública se gestionan en una página dedicada.',
+);
+
 const LocalizedText kLimousineBusinessSetupTestBadge = LocalizedText(
   nl: 'Testomgeving',
   en: 'Test environment',

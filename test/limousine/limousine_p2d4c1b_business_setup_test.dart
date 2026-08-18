@@ -103,7 +103,7 @@ void main() {
         'lib/business_settings_page.dart',
       ).readAsStringSync();
       expect(settings.contains('openLimousineBusinessSetup('), isTrue);
-      expect(settings.contains('LimousineOfferEditorDialog('), isTrue);
+      expect(settings.contains('LimousineOfferEditorDialog('), isFalse);
       expect(settings.contains('kLimousineBusinessSetupOpenKey'), isTrue);
       final page = File(
         'lib/limousine/limousine_business_setup_page.dart',

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
+import 'package:fluxidi_tracking/limousine/limousine_business_setup_labels.dart';
 import 'package:fluxidi_tracking/limousine/limousine_customer_entry.dart';
 import 'package:fluxidi_tracking/limousine/limousine_offers.dart';
 
@@ -520,13 +521,22 @@ void main() {
     );
 
     test('section title is localized in all four languages', () {
-      final settings = File(
-        'lib/business_settings_page.dart',
-      ).readAsStringSync();
-      expect(settings.contains('Limousineaanbod en prijzen'), isTrue);
-      expect(settings.contains('Limousine offers and pricing'), isTrue);
-      expect(settings.contains('Offres et tarifs limousine'), isTrue);
-      expect(settings.contains('Ofertas y precios de limusina'), isTrue);
+      expect(
+        kLimousineOffersPricingSectionTitle.nl,
+        'Limousineaanbod en prijzen',
+      );
+      expect(
+        kLimousineOffersPricingSectionTitle.en,
+        'Limousine offers and pricing',
+      );
+      expect(
+        kLimousineOffersPricingSectionTitle.fr,
+        'Offres et tarifs limousine',
+      );
+      expect(
+        kLimousineOffersPricingSectionTitle.es,
+        'Ofertas y precios de limusina',
+      );
     });
   });
 

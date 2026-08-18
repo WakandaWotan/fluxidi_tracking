@@ -170,7 +170,14 @@ void main() {
       final settings = File(
         'lib/business_settings_page.dart',
       ).readAsStringSync();
-      expect(settings.contains('LimousineOfferEditorDialog('), isTrue);
+      expect(settings.contains('LimousineOfferEditorDialog('), isFalse);
+      expect(settings.contains('openLimousineBusinessSetup('), isTrue);
+      expect(
+        File(
+          'lib/limousine/limousine_business_setup_page.dart',
+        ).readAsStringSync().contains('LimousineOfferEditorDialog('),
+        isTrue,
+      );
       // The old active-language-only inline dialog is gone.
       expect(settings.contains('_langKey()'), isFalse);
     });
