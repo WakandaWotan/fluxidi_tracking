@@ -178,6 +178,11 @@ import {
   limousineNearbyAllowsUnscopedListing as _limousineNearbyAllowsUnscopedListing,
 } from "./modules/limousine_discovery_preview.mjs";
 import {
+  compareLimousineNearbyRank as _compareLimousineNearbyRank,
+  limousineNearbyDistanceKm as _limousineNearbyDistanceKm,
+  publicLimousineDistanceFields as _publicLimousineDistanceFields,
+} from "./modules/limousine_distance_rank.mjs";
+import {
   deletedVehicleIdList,
   filterActiveVehicles,
   mergeVehicleTombstones,
@@ -79102,8 +79107,8 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
   const profileByPartnerId = new Map(
     visibleProfiles.map((profile) => [profile.partner_id, profile]),
   );
-  // Authoritative limousine eligibility per visible profile (market handled by
-  // the existing nearby geo/postcode match below). Fails closed.
+  // Authoritative limousine eligibility per visible profile. Location is used
+  // only for distance ranking when service=limousine. Fails closed.
   const limousineEligibleByPartnerId = new Map(
     visibleProfiles.map((profile) => [
       profile.partner_id,
@@ -79228,8 +79233,20 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
       };
     })
     .map((entry) => {
-      if (unscopedLimousine) {
-        return { ...entry, matches: true, distanceKm: null };
+      if (serviceFilter === "limousine") {
+        return {
+          ...entry,
+          matches: true,
+          distanceKm: _limousineNearbyDistanceKm({
+            postcode: needle,
+            lat,
+            lng,
+            coverageLat: entry.coverageLat,
+            coverageLng: entry.coverageLng,
+            primaryPostcode: entry.primaryPostcode,
+            supportedPostcodes: entry.supportedPostcodes,
+          }),
+        };
       }
       if (hasGeoQuery) {
         const hasPartnerCoverage =
@@ -79274,6 +79291,9 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
       return _limousineTestCompanyAllowlisted(env, nearbyCompanyId);
     })
     .sort((a, b) => {
+      if (serviceFilter === "limousine") {
+        return _compareLimousineNearbyRank(a, b);
+      }
       if (hasGeoQuery) {
         return (a.distanceKm ?? Number.POSITIVE_INFINITY) - (b.distanceKm ?? Number.POSITIVE_INFINITY);
       }
@@ -79323,9 +79343,11 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
         is_active: true,
         subscription_status: p.subscription_status,
         supported_postcodes: entry.supportedPostcodes,
-        ...(entry.distanceKm != null && hasGeoQuery
-          ? { distance_km: Number(entry.distanceKm.toFixed(2)) }
-          : {}),
+        ...(serviceFilter === "limousine"
+          ? _publicLimousineDistanceFields(entry.distanceKm)
+          : entry.distanceKm != null && hasGeoQuery
+            ? { distance_km: Number(entry.distanceKm.toFixed(2)) }
+            : {}),
         hero_photo_url: _safePublicHttpsUrl(media.hero_photo_url, 600),
         logo_url: _safePublicHttpsUrl(media.logo_url, 600),
         ...capabilitySignals,

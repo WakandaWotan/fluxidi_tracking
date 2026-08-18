@@ -213,7 +213,9 @@ test("worker nearby reuses three loaders, honors unscoped limousine, and stays b
   assert.equal(nearbyFn.includes("_buildLimousineNearbyCardProjection"), true);
   assert.equal(nearbyFn.includes("_isLimousineDiscoveryListable"), true);
   assert.equal(nearbyFn.includes("_limousineNearbyAllowsUnscopedListing"), true);
-  assert.equal(nearbyFn.includes("if (unscopedLimousine)"), true);
+  assert.equal(nearbyFn.includes('if (serviceFilter === "limousine")'), true);
+  assert.equal(nearbyFn.includes("_limousineNearbyDistanceKm"), true);
+  assert.equal(nearbyFn.includes("_compareLimousineNearbyRank"), true);
   assert.equal(nearbyFn.includes("distanceKm: null"), true);
 
   const route = worker.slice(

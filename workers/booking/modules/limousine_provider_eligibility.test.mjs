@@ -102,12 +102,13 @@ test("6) enabled but unpublished profile fails closed", () => {
   assert.equal(evaluateLimousineProviderEligibility(candidate).reason, R.PROFILE_NOT_PUBLISHED);
 });
 
-test("7) public bookings disabled fails closed", () => {
+test("7) public bookings disabled does not hide a published limousine", () => {
   const candidate = eligibleCandidate({ bookable: false });
-  assert.equal(evaluateLimousineProviderEligibility(candidate).reason, R.BOOKINGS_NOT_ACCEPTED);
+  assert.equal(evaluateLimousineProviderEligibility(candidate).eligible, true);
+  assert.equal(evaluateLimousineProviderEligibility(candidate).reason, R.ELIGIBLE);
 });
 
-test("8) market not covered fails closed", () => {
+test("8) market/postcode mismatch does not hide a published limousine", () => {
   const candidate = eligibleCandidate({
     coverage: { primary_postcode: "9000", postcodes: ["9000"], country: "BE" },
   });
@@ -116,8 +117,8 @@ test("8) market not covered fails closed", () => {
     true,
   );
   assert.equal(
-    evaluateLimousineProviderEligibility(candidate, { request: { postcode: "1000" } }).reason,
-    R.MARKET_NOT_COVERED,
+    evaluateLimousineProviderEligibility(candidate, { request: { postcode: "1000" } }).eligible,
+    true,
   );
 });
 

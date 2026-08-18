@@ -280,8 +280,12 @@ export function evaluateLimousineProviderEligibility(candidate, { request = null
   if (!resolveLimousineEntitlement(c)) return { eligible: false, reason: R.NOT_ENTITLED };
   if (!companyEnabledLimousine(c)) return { eligible: false, reason: R.NOT_ENABLED };
   if (!profilePublished(c)) return { eligible: false, reason: R.PROFILE_NOT_PUBLISHED };
-  if (!publicBookingsAccepted(c)) return { eligible: false, reason: R.BOOKINGS_NOT_ACCEPTED };
-  if (!marketCovered(c, request)) return { eligible: false, reason: R.MARKET_NOT_COVERED };
+  // Transaction gates, bookable flags and market/radius coverage never hide a
+  // published limousine profile. `request` remains accepted for callers but is
+  // ranking input only — nearby applies distance sort separately.
+  if (request && typeof request === "object") {
+    /* location is not a visibility filter */
+  }
   if (!hasEligibleLimousineVehicle(c)) return { eligible: false, reason: R.NO_ELIGIBLE_VEHICLE };
   return { eligible: true, reason: R.ELIGIBLE };
 }
