@@ -317,7 +317,10 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
 
   void _openLimousineFlow(BuildContext context) {
     if (!LimousineCustomerEntryContract.isVisible) return;
-    openLimousineCustomerQuoteFlow(context);
+    openLimousineCustomerDiscovery(
+      context,
+      customerHomeBuilder: (_) => const CustomerHomePage(),
+    );
   }
 
   Widget? _limousineCustomerCard({

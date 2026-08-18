@@ -1,0 +1,749 @@
+// LIMOUSINE-MARKETPLACE-P2D4C1E — customer marketplace discovery page.
+// Opens the existing public partner profile only after a server-confirmed
+// Limousine surface. Does not start the request wizard or call /book.
+
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+
+import '../app_config.dart';
+import '../app_strings.dart';
+import '../customer_theme_palette.dart';
+import '../customer_theme_store.dart';
+import '../partner_public_profile_page.dart';
+import 'limousine_address_field.dart';
+import 'limousine_address_lookup.dart';
+import 'limousine_current_location.dart';
+import 'limousine_customer_discovery.dart';
+import 'limousine_customer_discovery_api.dart';
+import 'limousine_customer_discovery_labels.dart';
+import 'limousine_p2d4c1a_ux.dart';
+import 'limousine_service_capability.dart';
+
+typedef LimousineDiscoveryOpenPartner =
+    Future<void> Function(
+      BuildContext context,
+      LimousineDiscoveryCard card,
+      Map<String, dynamic> profile,
+    );
+
+void openLimousineCustomerDiscovery(
+  BuildContext context, {
+  WidgetBuilder? customerHomeBuilder,
+  LimousineDiscoveryGateway? gateway,
+  LimousinePlaceLookup? placeLookup,
+  LimousineCurrentLocationPlatform? currentLocationPlatform,
+  LimousineDiscoveryOpenPartner? onOpenPartner,
+}) {
+  Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => LimousineCustomerDiscoveryPage(
+        customerHomeBuilder: customerHomeBuilder,
+        gateway: gateway,
+        placeLookup: placeLookup,
+        currentLocationPlatform: currentLocationPlatform,
+        onOpenPartner: onOpenPartner,
+      ),
+    ),
+  );
+}
+
+class LimousineCustomerDiscoveryPage extends StatefulWidget {
+  const LimousineCustomerDiscoveryPage({
+    super.key,
+    this.customerHomeBuilder,
+    this.gateway,
+    this.controller,
+    this.placeLookup,
+    this.currentLocationPlatform,
+    this.onOpenPartner,
+  });
+
+  final WidgetBuilder? customerHomeBuilder;
+  final LimousineDiscoveryGateway? gateway;
+  final LimousineDiscoveryController? controller;
+  final LimousinePlaceLookup? placeLookup;
+  final LimousineCurrentLocationPlatform? currentLocationPlatform;
+  final LimousineDiscoveryOpenPartner? onOpenPartner;
+
+  @override
+  State<LimousineCustomerDiscoveryPage> createState() =>
+      _LimousineCustomerDiscoveryPageState();
+}
+
+class _LimousineCustomerDiscoveryPageState
+    extends State<LimousineCustomerDiscoveryPage> {
+  late final LimousineDiscoveryController _controller;
+  late final bool _ownsController;
+  late final LimousinePlaceLookup _placeLookup;
+  late final bool _ownsPlaceLookup;
+  late final LimousineAddressFieldController _place;
+  late final LimousineCurrentLocationResolver _location;
+  String _lastAutoSearch = '';
+
+  AppLanguage get _lang => appLanguageNotifier.value;
+
+  String _t(LocalizedText text) => text.of(_lang);
+
+  @override
+  void initState() {
+    super.initState();
+    _ownsController = widget.controller == null;
+    _controller =
+        widget.controller ??
+        LimousineDiscoveryController(
+          gateway: widget.gateway ?? HttpLimousineDiscoveryGateway(),
+        );
+    _ownsPlaceLookup = widget.placeLookup == null;
+    _placeLookup = widget.placeLookup ?? LimousinePlaceLookup();
+    _location = LimousineCurrentLocationResolver(
+      lookup: _placeLookup,
+      platform: widget.currentLocationPlatform,
+    );
+    _place = LimousineAddressFieldController(
+      lookup: _placeLookup,
+      fieldId: kLimousineDiscoveryFieldId,
+      language: _lang.name,
+      currentLocation: _location,
+    );
+    _place.addListener(_onPlaceChanged);
+    _controller.addListener(_onControllerChanged);
+  }
+
+  @override
+  void dispose() {
+    _place.removeListener(_onPlaceChanged);
+    _controller.removeListener(_onControllerChanged);
+    _place.dispose();
+    if (_ownsController) _controller.dispose();
+    if (_ownsPlaceLookup) _placeLookup.dispose();
+    super.dispose();
+  }
+
+  void _onControllerChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onPlaceChanged() {
+    _place.language = _lang.name;
+    final value = _place.value;
+    if (value.acceptance != LimousineAddressAcceptance.selected) return;
+    final token = '${value.canonicalLabel}|${value.lat}|${value.lon}';
+    if (token == _lastAutoSearch) return;
+    _lastAutoSearch = token;
+    unawaited(_searchFromField());
+  }
+
+  LimousineDiscoveryQuery? _queryFromField() {
+    final value = _place.value;
+    return limousineDiscoveryQueryFromAddress(
+      displayText: value.displayText.isNotEmpty
+          ? value.displayText
+          : _place.textController.text,
+      lat: value.lat,
+      lon: value.lon,
+    );
+  }
+
+  Future<void> _searchFromField() {
+    return _controller.search(_queryFromField());
+  }
+
+  void _searchAnotherRegion() {
+    _lastAutoSearch = '';
+    _place.clear();
+    _controller.searchAnotherRegion();
+  }
+
+  Future<void> _openPartner(LimousineDiscoveryCard card) async {
+    final profile = await _controller.openConfirmedPublicProfile(card);
+    if (!mounted || profile == null) return;
+    final open = widget.onOpenPartner ?? _pushPublicProfile;
+    await open(context, card, profile);
+  }
+
+  Future<void> _pushPublicProfile(
+    BuildContext context,
+    LimousineDiscoveryCard card,
+    Map<String, dynamic> profile,
+  ) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PartnerPublicProfilePage(
+          partnerId: card.publicPartnerId,
+          companyNameFallback: card.companyName,
+          customerHomeBuilder:
+              widget.customerHomeBuilder ?? (_) => const SizedBox.shrink(),
+          profileOverride: profile,
+        ),
+      ),
+    );
+  }
+
+  Key _layoutKey() {
+    final size = MediaQuery.sizeOf(context);
+    final tablet = size.shortestSide >= 600;
+    if (!tablet) return kLimousineDiscoveryPhoneLayoutKey;
+    if (size.width > size.height) {
+      return kLimousineDiscoveryTabletLandscapeLayoutKey;
+    }
+    return kLimousineDiscoveryTabletPortraitLayoutKey;
+  }
+
+  int _cardColumns(BoxConstraints constraints) {
+    final size = MediaQuery.sizeOf(context);
+    if (size.shortestSide < 600) return 1;
+    if (size.width > size.height && constraints.maxWidth >= 900) return 3;
+    if (constraints.maxWidth >= 640) return 2;
+    return 1;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: appLanguageNotifier,
+      builder: (context, _, __) {
+        return ValueListenableBuilder<CustomerThemeVariant>(
+          valueListenable: customerThemeNotifier,
+          builder: (context, variant, _) {
+            final palette = paletteForCustomerTheme(variant);
+            final tokens = LimousineUxTokens.fromCustomer(palette);
+            return Scaffold(
+              key: kLimousineCustomerDiscoveryPageKey,
+              backgroundColor: tokens.background,
+              body: LayoutBuilder(
+                builder: (context, constraints) {
+                  return KeyedSubtree(
+                    key: _layoutKey(),
+                    child: CustomScrollView(
+                      slivers: [
+                        SliverToBoxAdapter(child: _hero(tokens, constraints)),
+                        SliverPadding(
+                          padding: EdgeInsets.fromLTRB(
+                            constraints.maxWidth >= 900 ? 32 : 16,
+                            20,
+                            constraints.maxWidth >= 900 ? 32 : 16,
+                            28,
+                          ),
+                          sliver: SliverToBoxAdapter(
+                            child: Align(
+                              alignment: Alignment.topCenter,
+                              child: ConstrainedBox(
+                                constraints: const BoxConstraints(
+                                  maxWidth: 1100,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    LimousineAddressField(
+                                      controller: _place,
+                                      label: _t(kLimousineDiscoverySearchLabel),
+                                      tokens: tokens,
+                                      language: _lang,
+                                      showCurrentLocation: true,
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Align(
+                                      alignment: Alignment.centerRight,
+                                      child: FilledButton(
+                                        key: kLimousineDiscoverySearchActionKey,
+                                        onPressed: _controller.isSearching
+                                            ? null
+                                            : _searchFromField,
+                                        style: FilledButton.styleFrom(
+                                          backgroundColor: tokens.gold,
+                                          foregroundColor: tokens.isDark
+                                              ? const Color(0xFF1A1408)
+                                              : const Color(0xFF1A1408),
+                                        ),
+                                        child: Text(
+                                          _t(kLimousineDiscoverySearchAction),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 20),
+                                    _body(tokens, constraints),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _hero(LimousineUxTokens tokens, BoxConstraints constraints) {
+    final minHeight = constraints.maxWidth >= 900
+        ? 280.0
+        : constraints.maxWidth >= 600
+        ? 240.0
+        : 220.0;
+    return ConstrainedBox(
+      key: kLimousineDiscoveryHeroKey,
+      constraints: BoxConstraints(minHeight: minHeight),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: Image.asset(
+              kLimousineMarketplaceHeroAsset,
+              fit: BoxFit.cover,
+              alignment: const Alignment(0.45, 0.0),
+              errorBuilder: (_, __, ___) =>
+                  ColoredBox(color: tokens.surfaceAlt),
+            ),
+          ),
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    tokens.heroScrim.withOpacity(0.18),
+                    tokens.heroScrim.withOpacity(0.78),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(8, 4, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  IconButton(
+                    tooltip: MaterialLocalizations.of(
+                      context,
+                    ).backButtonTooltip,
+                    color: tokens.onHero,
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    icon: const Icon(Icons.arrow_back),
+                  ),
+                  const SizedBox(height: 24),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 12),
+                    child: Text(
+                      _t(kLimousineDiscoveryTitle),
+                      key: kLimousineDiscoveryTitleKey,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: tokens.onHero,
+                        fontSize: 28,
+                        height: 1.15,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.4,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 12, right: 8),
+                    child: Text(
+                      _t(kLimousineDiscoverySubtitle),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: tokens.onHero.withOpacity(0.88),
+                        fontSize: 14.5,
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _body(LimousineUxTokens tokens, BoxConstraints constraints) {
+    if (_controller.openingProfile) {
+      return Padding(
+        key: kLimousineDiscoveryOpeningKey,
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Center(child: CircularProgressIndicator(color: tokens.gold)),
+      );
+    }
+    switch (_controller.phase) {
+      case LimousineDiscoveryPhase.loading:
+        return _status(
+          key: kLimousineDiscoveryLoadingKey,
+          tokens: tokens,
+          title: _t(kLimousineDiscoveryLoading),
+          busy: true,
+        );
+      case LimousineDiscoveryPhase.needPlace:
+        return _status(tokens: tokens, title: _t(kLimousineDiscoveryNeedPlace));
+      case LimousineDiscoveryPhase.network:
+        return _status(tokens: tokens, title: _t(kLimousineDiscoveryNetwork));
+      case LimousineDiscoveryPhase.gatesOff:
+        return _emptyState(
+          key: kLimousineDiscoveryGatesOffKey,
+          tokens: tokens,
+          title: _t(kLimousineDiscoveryGatesOffTitle),
+          body: _t(kLimousineDiscoveryGatesOffBody),
+        );
+      case LimousineDiscoveryPhase.empty:
+        return _emptyState(
+          key: kLimousineDiscoveryEmptyKey,
+          tokens: tokens,
+          title: _t(kLimousineDiscoveryEmptyTitle),
+          body: _t(kLimousineDiscoveryEmptyBody),
+        );
+      case LimousineDiscoveryPhase.ready:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (_controller.profileUnavailablePartnerId.isNotEmpty)
+              Padding(
+                key: kLimousineDiscoveryProfileUnavailableKey,
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(
+                  _t(kLimousineDiscoveryProfileUnavailable),
+                  style: TextStyle(color: tokens.danger, height: 1.35),
+                ),
+              ),
+            _cards(tokens, constraints),
+          ],
+        );
+      case LimousineDiscoveryPhase.idle:
+        if (_controller.profileUnavailablePartnerId.isNotEmpty) {
+          return Text(
+            key: kLimousineDiscoveryProfileUnavailableKey,
+            _t(kLimousineDiscoveryProfileUnavailable),
+            style: TextStyle(color: tokens.danger, height: 1.35),
+          );
+        }
+        return const SizedBox.shrink();
+    }
+  }
+
+  Widget _status({
+    Key? key,
+    required LimousineUxTokens tokens,
+    required String title,
+    bool busy = false,
+  }) {
+    return Padding(
+      key: key,
+      padding: const EdgeInsets.symmetric(vertical: 28),
+      child: Column(
+        children: [
+          if (busy) ...[
+            CircularProgressIndicator(color: tokens.gold),
+            const SizedBox(height: 16),
+          ],
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: tokens.muted, height: 1.4, fontSize: 15),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyState({
+    required Key key,
+    required LimousineUxTokens tokens,
+    required String title,
+    required String body,
+  }) {
+    return Container(
+      key: key,
+      padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+      decoration: BoxDecoration(
+        color: tokens.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: tokens.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              color: tokens.onSurface,
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            body,
+            style: TextStyle(color: tokens.muted, height: 1.45, fontSize: 14.5),
+          ),
+          const SizedBox(height: 16),
+          TextButton(
+            key: kLimousineDiscoverySearchOtherRegionKey,
+            onPressed: _searchAnotherRegion,
+            child: Text(_t(kLimousineDiscoverySearchOtherRegion)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _cards(LimousineUxTokens tokens, BoxConstraints constraints) {
+    final columns = _cardColumns(constraints);
+    final cards = _controller.cards;
+    if (columns == 1) {
+      return Column(
+        key: kLimousineDiscoveryCardListKey,
+        children: [
+          for (final card in cards) ...[
+            _ProviderCard(
+              card: card,
+              tokens: tokens,
+              language: _lang,
+              onOffers: () => _openPartner(card),
+              onProfile: () => _openPartner(card),
+            ),
+            const SizedBox(height: 14),
+          ],
+        ],
+      );
+    }
+    return KeyedSubtree(
+      key: kLimousineDiscoveryCardListKey,
+      child: Wrap(
+        spacing: 14,
+        runSpacing: 14,
+        children: [
+          for (final card in cards)
+            SizedBox(
+              width:
+                  (constraints.maxWidth -
+                      (columns - 1) * 14 -
+                      (constraints.maxWidth >= 900 ? 0 : 0)) /
+                  columns,
+              child: _ProviderCard(
+                card: card,
+                tokens: tokens,
+                language: _lang,
+                onOffers: () => _openPartner(card),
+                onProfile: () => _openPartner(card),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProviderCard extends StatelessWidget {
+  const _ProviderCard({
+    required this.card,
+    required this.tokens,
+    required this.language,
+    required this.onOffers,
+    required this.onProfile,
+  });
+
+  final LimousineDiscoveryCard card;
+  final LimousineUxTokens tokens;
+  final AppLanguage language;
+  final VoidCallback onOffers;
+  final VoidCallback onProfile;
+
+  @override
+  Widget build(BuildContext context) {
+    final price = limousineDiscoveryPriceLabel(card.price, language);
+    final vehicle = card.vehicles.isEmpty ? null : card.vehicles.first;
+    final serviceClass = vehicle == null
+        ? ''
+        : limousineDiscoveryServiceClassLabel(vehicle.serviceClassId);
+    final meta = <String>[
+      if (serviceClass.isNotEmpty) serviceClass,
+      if (vehicle?.passengerCapacity != null)
+        '${vehicle!.passengerCapacity} ${kLimousineDiscoveryPassengers.of(language)}',
+      if (vehicle?.luggageCapacity != null)
+        '${vehicle!.luggageCapacity} ${kLimousineDiscoveryLuggage.of(language)}',
+    ];
+    return Material(
+      key: limousineDiscoveryCardKey(card.publicPartnerId),
+      color: tokens.surface,
+      elevation: 0,
+      borderRadius: BorderRadius.circular(20),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: tokens.border),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: AspectRatio(aspectRatio: 16 / 8, child: _cover(tokens)),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      card.companyName,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: tokens.onSurface,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  if (card.verifiedPartner)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: Icon(
+                        Icons.verified,
+                        color: tokens.gold,
+                        size: 20,
+                        semanticLabel: kLimousineDiscoveryVerified.of(language),
+                      ),
+                    ),
+                ],
+              ),
+              if (card.publicCity.isNotEmpty || card.distanceKm != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  [
+                    if (card.publicCity.isNotEmpty) card.publicCity,
+                    if (card.distanceKm != null)
+                      limousineDiscoveryDistanceLabel(
+                        card.distanceKm!,
+                        language,
+                      ),
+                  ].join(' · '),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: tokens.muted, fontSize: 13.5),
+                ),
+              ],
+              if (card.vehicles.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    for (final thumb in card.vehicles.take(2)) ...[
+                      _thumb(tokens, thumb.photoUrl),
+                      const SizedBox(width: 8),
+                    ],
+                    if (meta.isNotEmpty)
+                      Expanded(
+                        child: Text(
+                          meta.join(' · '),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: tokens.muted, fontSize: 13),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+              if (price.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(
+                  price,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: tokens.gold,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton(
+                    key: limousineDiscoveryOffersCtaKey(card.publicPartnerId),
+                    onPressed: onOffers,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: tokens.gold,
+                      foregroundColor: const Color(0xFF1A1408),
+                    ),
+                    child: Text(kLimousineDiscoveryViewOffers.of(language)),
+                  ),
+                  OutlinedButton(
+                    key: limousineDiscoveryProfileCtaKey(card.publicPartnerId),
+                    onPressed: onProfile,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: tokens.onSurface,
+                      side: BorderSide(color: tokens.border),
+                    ),
+                    child: Text(kLimousineDiscoveryViewProfile.of(language)),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _cover(LimousineUxTokens tokens) {
+    final url = card.coverImageUrl.isNotEmpty
+        ? card.coverImageUrl
+        : card.logoUrl;
+    if (url.isEmpty) {
+      return ColoredBox(
+        color: tokens.surfaceAlt,
+        child: Center(
+          child: Text(
+            card.companyName.substring(0, 1).toUpperCase(),
+            style: TextStyle(
+              color: tokens.gold,
+              fontSize: 36,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      );
+    }
+    return Image.network(
+      url,
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => ColoredBox(color: tokens.surfaceAlt),
+    );
+  }
+
+  Widget _thumb(LimousineUxTokens tokens, String url) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: SizedBox(
+        width: 56,
+        height: 40,
+        child: url.isEmpty
+            ? ColoredBox(color: tokens.surfaceAlt)
+            : Image.network(
+                url,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) =>
+                    ColoredBox(color: tokens.surfaceAlt),
+              ),
+      ),
+    );
+  }
+}
