@@ -1,7 +1,14 @@
 part of '../main.dart';
 
 class CompanyBookingsOverviewPage extends StatefulWidget {
-  const CompanyBookingsOverviewPage({super.key});
+  const CompanyBookingsOverviewPage({
+    super.key,
+    this.quoteRequestsVisible,
+    this.quoteInboxGateway,
+  });
+
+  final bool? quoteRequestsVisible;
+  final LimousineQuoteInboxGateway? quoteInboxGateway;
 
   @override
   State<CompanyBookingsOverviewPage> createState() =>
@@ -23,6 +30,9 @@ class _CompanyBookingsOverviewPageState
   bool _creditAuthAdminToken = false;
   bool _creditAuthCompanySession = false;
   bool _creditAuthEnabled = false;
+  bool _quoteRequestsVisible = false;
+  LimousineBookingsSection _bookingsSection = LimousineBookingsSection.bookings;
+  int? _quoteUnreadCount;
 
   String _t({
     required String nl,
@@ -2019,8 +2029,42 @@ class _CompanyBookingsOverviewPageState
   @override
   void initState() {
     super.initState();
+    _quoteRequestsVisible = widget.quoteRequestsVisible ?? false;
     unawaited(_refreshCreditAuthState());
     unawaited(_loadBookings());
+    unawaited(_resolveQuoteRequestsVisibility());
+  }
+
+  Future<void> _resolveQuoteRequestsVisibility() async {
+    if (widget.quoteRequestsVisible != null) {
+      if (!mounted) return;
+      setState(() => _quoteRequestsVisible = widget.quoteRequestsVisible!);
+      return;
+    }
+    var offers = List<Map<String, dynamic>>.from(
+      limousineQuoteRequestsConfirmedOffers.value,
+    );
+    if (!limousineQuoteRequestsConfirmedOffersKnown) {
+      try {
+        final data = await fetchAdminLimousinePricing();
+        offers = limousineOffersFromPricingPayload(data);
+        rememberLimousineQuoteRequestsConfirmedOffers(offers);
+      } catch (_) {
+        offers = List<Map<String, dynamic>>.from(
+          limousineQuoteRequestsConfirmedOffers.value,
+        );
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _quoteRequestsVisible = limousineQuoteRequestsTabVisible(
+        serverConfirmedVehicles: vehiclesNotifier.value,
+        serverConfirmedOffers: offers,
+      );
+      if (!_quoteRequestsVisible) {
+        _bookingsSection = LimousineBookingsSection.bookings;
+      }
+    });
   }
 
   Future<void> _loadBookings() async {
@@ -3682,373 +3726,423 @@ class _CompanyBookingsOverviewPageState
         return ValueListenableBuilder<BrandSignaturePalette>(
           valueListenable: brandSignaturePaletteNotifier,
           builder: (context, _, __) {
-        final tokens = _themeTokensFor(themeVariant);
-        return Scaffold(
-          backgroundColor: tokens.background,
-          appBar: AppBar(
-            backgroundColor: tokens.appBar,
-            title: Text(
-              _t(
-                nl: 'Boekingen',
-                en: 'Bookings',
-                fr: 'Réservations',
-                es: 'Reservas',
-              ),
-              style: TextStyle(
-                fontWeight: FontWeight.w800,
-                color: tokens.textPrimary,
-              ),
-            ),
-            iconTheme: IconThemeData(color: tokens.textPrimary),
-            actions: [
-              IconButton(
-                tooltip: _t(
-                  nl: 'Vernieuwen',
-                  en: 'Refresh',
-                  fr: 'Actualiser',
-                  es: 'Actualizar',
+            final tokens = _themeTokensFor(themeVariant);
+            return Scaffold(
+              backgroundColor: tokens.background,
+              appBar: AppBar(
+                backgroundColor: tokens.appBar,
+                title: Text(
+                  _t(
+                    nl: 'Boekingen',
+                    en: 'Bookings',
+                    fr: 'Réservations',
+                    es: 'Reservas',
+                  ),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    color: tokens.textPrimary,
+                  ),
                 ),
-                onPressed: _loadBookings,
-                icon: Icon(
-                  Icons.refresh_rounded,
-                  color: tokens.accent.withOpacity(0.96),
-                ),
+                iconTheme: IconThemeData(color: tokens.textPrimary),
+                actions: [
+                  IconButton(
+                    tooltip: _t(
+                      nl: 'Vernieuwen',
+                      en: 'Refresh',
+                      fr: 'Actualiser',
+                      es: 'Actualizar',
+                    ),
+                    onPressed: _loadBookings,
+                    icon: Icon(
+                      Icons.refresh_rounded,
+                      color: tokens.accent.withOpacity(0.96),
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
-          body: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Phone-portrait / narrow-screen UX polish:
-                  //   * width < 600 → render the same filter set in a compact
-                  //     horizontally scrolling row, plus a more compact
-                  //     "Verberg alles op deze pagina" button. This frees up
-                  //     vertical space so booking cards become visible much
-                  //     higher on the screen.
-                  //   * width >= 600 → keep the approved tablet/desktop
-                  //     layout (Wrap + standard hide-all button) unchanged.
-                  // Filter semantics, selection state, counts and callbacks
-                  // are identical across both branches — only chip density
-                  // and layout differ.
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final isNarrow = constraints.maxWidth < 600;
-                      final filterDefs =
-                          <({_CompanyBookingsFilter filter, String label})>[
-                            (
-                              filter: _CompanyBookingsFilter.open,
-                              label: _t(
-                                nl: 'Open / gepland',
-                                en: 'Open / scheduled',
-                                fr: 'Ouvertes / planifiées',
-                                es: 'Abiertas / planificadas',
-                              ),
-                            ),
-                            (
-                              filter: _CompanyBookingsFilter.completed,
-                              label: _t(
-                                nl: 'Afgerond / voltooid',
-                                en: 'Completed',
-                                fr: 'Terminées',
-                                es: 'Completadas',
-                              ),
-                            ),
-                            (
-                              filter: _CompanyBookingsFilter.cancelled,
-                              label: _t(
-                                nl: 'Geannuleerd',
-                                en: 'Cancelled',
-                                fr: 'Annulées',
-                                es: 'Canceladas',
-                              ),
-                            ),
-                            (
-                              filter: _CompanyBookingsFilter.toCredit,
-                              label: _t(
-                                nl: 'Te crediteren',
-                                en: 'To credit',
-                                fr: 'À créditer',
-                                es: 'Por abonar',
-                              ),
-                            ),
-                            (
-                              filter: _CompanyBookingsFilter.refundPending,
-                              label: _t(
-                                nl: 'Terugbetaling bezig',
-                                en: 'Refund pending',
-                                fr: 'Remboursement en cours',
-                                es: 'Reembolso en curso',
-                              ),
-                            ),
-                            (
-                              filter: _CompanyBookingsFilter.refunded,
-                              label: _t(
-                                nl: 'Terugbetaald',
-                                en: 'Refunded',
-                                fr: 'Remboursées',
-                                es: 'Reembolsadas',
-                              ),
-                            ),
-                            (
-                              filter: _CompanyBookingsFilter.refundFailed,
-                              label: _t(
-                                nl: 'Terugbetaling mislukt',
-                                en: 'Refund failed',
-                                fr: 'Remboursement échoué',
-                                es: 'Reembolso fallido',
-                              ),
-                            ),
-                          ];
-                      if (isNarrow) {
-                        final showHideAll =
-                            items.isNotEmpty &&
-                            _filter != _CompanyBookingsFilter.open;
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            SizedBox(
-                              height: 36,
-                              child: SingleChildScrollView(
-                                scrollDirection: Axis.horizontal,
-                                physics: const BouncingScrollPhysics(),
-                                padding: EdgeInsets.zero,
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  crossAxisAlignment: CrossAxisAlignment.center,
+              body: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (_quoteRequestsVisible) ...[
+                        LimousineBookingsQuoteRequestsSwitch(
+                          section: _bookingsSection,
+                          unreadCount: _quoteUnreadCount,
+                          onChanged: (next) {
+                            setState(() => _bookingsSection = next);
+                          },
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                      if (_quoteRequestsVisible &&
+                          _bookingsSection ==
+                              LimousineBookingsSection.quoteRequests)
+                        Expanded(
+                          child: LimousineQuoteInboxPage(
+                            embedded: true,
+                            gateway: widget.quoteInboxGateway,
+                            onUnreadCount: (count) {
+                              if (!mounted) return;
+                              setState(() => _quoteUnreadCount = count);
+                            },
+                          ),
+                        )
+                      else ...[
+                        // Phone-portrait / narrow-screen UX polish:
+                        //   * width < 600 → render the same filter set in a compact
+                        //     horizontally scrolling row, plus a more compact
+                        //     "Verberg alles op deze pagina" button. This frees up
+                        //     vertical space so booking cards become visible much
+                        //     higher on the screen.
+                        //   * width >= 600 → keep the approved tablet/desktop
+                        //     layout (Wrap + standard hide-all button) unchanged.
+                        // Filter semantics, selection state, counts and callbacks
+                        // are identical across both branches — only chip density
+                        // and layout differ.
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final isNarrow = constraints.maxWidth < 600;
+                            final filterDefs =
+                                <
+                                  ({
+                                    _CompanyBookingsFilter filter,
+                                    String label,
+                                  })
+                                >[
+                                  (
+                                    filter: _CompanyBookingsFilter.open,
+                                    label: _t(
+                                      nl: 'Open / gepland',
+                                      en: 'Open / scheduled',
+                                      fr: 'Ouvertes / planifiées',
+                                      es: 'Abiertas / planificadas',
+                                    ),
+                                  ),
+                                  (
+                                    filter: _CompanyBookingsFilter.completed,
+                                    label: _t(
+                                      nl: 'Afgerond / voltooid',
+                                      en: 'Completed',
+                                      fr: 'Terminées',
+                                      es: 'Completadas',
+                                    ),
+                                  ),
+                                  (
+                                    filter: _CompanyBookingsFilter.cancelled,
+                                    label: _t(
+                                      nl: 'Geannuleerd',
+                                      en: 'Cancelled',
+                                      fr: 'Annulées',
+                                      es: 'Canceladas',
+                                    ),
+                                  ),
+                                  (
+                                    filter: _CompanyBookingsFilter.toCredit,
+                                    label: _t(
+                                      nl: 'Te crediteren',
+                                      en: 'To credit',
+                                      fr: 'À créditer',
+                                      es: 'Por abonar',
+                                    ),
+                                  ),
+                                  (
+                                    filter:
+                                        _CompanyBookingsFilter.refundPending,
+                                    label: _t(
+                                      nl: 'Terugbetaling bezig',
+                                      en: 'Refund pending',
+                                      fr: 'Remboursement en cours',
+                                      es: 'Reembolso en curso',
+                                    ),
+                                  ),
+                                  (
+                                    filter: _CompanyBookingsFilter.refunded,
+                                    label: _t(
+                                      nl: 'Terugbetaald',
+                                      en: 'Refunded',
+                                      fr: 'Remboursées',
+                                      es: 'Reembolsadas',
+                                    ),
+                                  ),
+                                  (
+                                    filter: _CompanyBookingsFilter.refundFailed,
+                                    label: _t(
+                                      nl: 'Terugbetaling mislukt',
+                                      en: 'Refund failed',
+                                      fr: 'Remboursement échoué',
+                                      es: 'Reembolso fallido',
+                                    ),
+                                  ),
+                                ];
+                            if (isNarrow) {
+                              final showHideAll =
+                                  items.isNotEmpty &&
+                                  _filter != _CompanyBookingsFilter.open;
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  SizedBox(
+                                    height: 36,
+                                    child: SingleChildScrollView(
+                                      scrollDirection: Axis.horizontal,
+                                      physics: const BouncingScrollPhysics(),
+                                      padding: EdgeInsets.zero,
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.center,
+                                        children: [
+                                          for (
+                                            var i = 0;
+                                            i < filterDefs.length;
+                                            i++
+                                          )
+                                            Padding(
+                                              padding: EdgeInsets.only(
+                                                right:
+                                                    i == filterDefs.length - 1
+                                                    ? 0
+                                                    : 6,
+                                              ),
+                                              child: _filterChipCompact(
+                                                filterDefs[i].filter,
+                                                filterDefs[i].label,
+                                                tokens,
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  if (showHideAll) ...[
+                                    const SizedBox(height: 6),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: OutlinedButton.icon(
+                                        onPressed: _bulkArchiving
+                                            ? null
+                                            : _hideAllVisiblePageBookings,
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: tokens.accent
+                                              .withOpacity(0.96),
+                                          side: BorderSide(
+                                            color: tokens.accent.withOpacity(
+                                              0.42,
+                                            ),
+                                          ),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 6,
+                                          ),
+                                          minimumSize: const Size(0, 34),
+                                          tapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                        ),
+                                        icon: const Icon(
+                                          Icons.visibility_off_outlined,
+                                          size: 16,
+                                        ),
+                                        label: Text(
+                                          _bulkArchiving
+                                              ? _t(
+                                                  nl: 'Bezig met verbergen...',
+                                                  en: 'Hiding...',
+                                                  fr: 'Masquage en cours...',
+                                                  es: 'Ocultando...',
+                                                )
+                                              : _t(
+                                                  nl: 'Verberg alles op deze pagina',
+                                                  en: 'Hide all on this page',
+                                                  fr: 'Tout masquer sur cette page',
+                                                  es: 'Ocultar todo en esta página',
+                                                ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: 12.4,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              );
+                            }
+                            // Tablet / wide / desktop: preserve the approved layout.
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
                                   children: [
-                                    for (var i = 0; i < filterDefs.length; i++)
-                                      Padding(
-                                        padding: EdgeInsets.only(
-                                          right: i == filterDefs.length - 1
-                                              ? 0
-                                              : 6,
-                                        ),
-                                        child: _filterChipCompact(
-                                          filterDefs[i].filter,
-                                          filterDefs[i].label,
-                                          tokens,
-                                        ),
+                                    for (final def in filterDefs)
+                                      _filterChip(
+                                        def.filter,
+                                        def.label,
+                                        tokens,
                                       ),
                                   ],
                                 ),
-                              ),
-                            ),
-                            if (showHideAll) ...[
-                              const SizedBox(height: 6),
-                              SizedBox(
-                                width: double.infinity,
-                                child: OutlinedButton.icon(
-                                  onPressed: _bulkArchiving
-                                      ? null
-                                      : _hideAllVisiblePageBookings,
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: tokens.accent.withOpacity(
-                                      0.96,
-                                    ),
-                                    side: BorderSide(
-                                      color: tokens.accent.withOpacity(0.42),
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 6,
-                                    ),
-                                    minimumSize: const Size(0, 34),
-                                    tapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                  ),
-                                  icon: const Icon(
-                                    Icons.visibility_off_outlined,
-                                    size: 16,
-                                  ),
-                                  label: Text(
-                                    _bulkArchiving
-                                        ? _t(
-                                            nl: 'Bezig met verbergen...',
-                                            en: 'Hiding...',
-                                            fr: 'Masquage en cours...',
-                                            es: 'Ocultando...',
-                                          )
-                                        : _t(
-                                            nl: 'Verberg alles op deze pagina',
-                                            en: 'Hide all on this page',
-                                            fr: 'Tout masquer sur cette page',
-                                            es: 'Ocultar todo en esta página',
-                                          ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 12.4,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        );
-                      }
-                      // Tablet / wide / desktop: preserve the approved layout.
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              for (final def in filterDefs)
-                                _filterChip(def.filter, def.label, tokens),
-                            ],
-                          ),
-                          if (items.isNotEmpty &&
-                              _filter != _CompanyBookingsFilter.open) ...[
-                            const SizedBox(height: 10),
-                            SizedBox(
-                              width: double.infinity,
-                              child: OutlinedButton.icon(
-                                onPressed: _bulkArchiving
-                                    ? null
-                                    : _hideAllVisiblePageBookings,
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: tokens.accent.withOpacity(
-                                    0.96,
-                                  ),
-                                  side: BorderSide(
-                                    color: tokens.accent.withOpacity(0.42),
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 10,
-                                  ),
-                                ),
-                                icon: const Icon(
-                                  Icons.visibility_off_outlined,
-                                  size: 18,
-                                ),
-                                label: Text(
-                                  _bulkArchiving
-                                      ? _t(
-                                          nl: 'Bezig met verbergen...',
-                                          en: 'Hiding...',
-                                          fr: 'Masquage en cours...',
-                                          es: 'Ocultando...',
-                                        )
-                                      : _t(
-                                          nl: 'Verberg alles op deze pagina',
-                                          en: 'Hide all on this page',
-                                          fr: 'Tout masquer sur cette page',
-                                          es: 'Ocultar todo en esta página',
-                                        ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  Expanded(
-                    child: _loading
-                        ? Center(
-                            child: CircularProgressIndicator(
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                tokens.accent,
-                              ),
-                            ),
-                          )
-                        : (_errorCode != null)
-                        ? Center(
-                            child: Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                color: tokens.palette.surface,
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(
-                                  color: tokens.accent.withOpacity(0.34),
-                                ),
-                              ),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    _friendlyError(_errorCode),
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: tokens.textPrimary,
-                                      height: 1.35,
-                                    ),
-                                  ),
+                                if (items.isNotEmpty &&
+                                    _filter != _CompanyBookingsFilter.open) ...[
                                   const SizedBox(height: 10),
-                                  OutlinedButton.icon(
-                                    onPressed: _loadBookings,
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: tokens.accent
-                                          .withOpacity(0.95),
-                                      side: BorderSide(
-                                        color: tokens.accent.withOpacity(0.42),
-                                      ),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(
-                                          999,
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: OutlinedButton.icon(
+                                      onPressed: _bulkArchiving
+                                          ? null
+                                          : _hideAllVisiblePageBookings,
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: tokens.accent
+                                            .withOpacity(0.96),
+                                        side: BorderSide(
+                                          color: tokens.accent.withOpacity(
+                                            0.42,
+                                          ),
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 10,
                                         ),
                                       ),
-                                    ),
-                                    icon: const Icon(
-                                      Icons.refresh_rounded,
-                                      size: 18,
-                                    ),
-                                    label: Text(
-                                      _t(
-                                        nl: 'Opnieuw proberen',
-                                        en: 'Try again',
-                                        fr: 'Réessayer',
-                                        es: 'Intentar de nuevo',
+                                      icon: const Icon(
+                                        Icons.visibility_off_outlined,
+                                        size: 18,
+                                      ),
+                                      label: Text(
+                                        _bulkArchiving
+                                            ? _t(
+                                                nl: 'Bezig met verbergen...',
+                                                en: 'Hiding...',
+                                                fr: 'Masquage en cours...',
+                                                es: 'Ocultando...',
+                                              )
+                                            : _t(
+                                                nl: 'Verberg alles op deze pagina',
+                                                en: 'Hide all on this page',
+                                                fr: 'Tout masquer sur cette page',
+                                                es: 'Ocultar todo en esta página',
+                                              ),
                                       ),
                                     ),
                                   ),
                                 ],
-                              ),
-                            ),
-                          )
-                        : items.isEmpty
-                        ? Center(
-                            child: Text(
-                              _t(
-                                nl: 'Geen boekingen gevonden voor deze filter.',
-                                en: 'No bookings found for this filter.',
-                                fr: 'Aucune réservation trouvée pour ce filtre.',
-                                es: 'No se encontraron reservas para este filtro.',
-                              ),
-                              textAlign: TextAlign.center,
-                              style: TextStyle(color: tokens.textSecondary),
-                            ),
-                          )
-                        : ListView.separated(
-                            itemCount: items.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(height: 8),
-                            itemBuilder: (context, index) =>
-                                _buildCompanyBookingPremiumCard(
-                                  items[index],
-                                  tokens,
+                              ],
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 10),
+                        Expanded(
+                          child: _loading
+                              ? Center(
+                                  child: CircularProgressIndicator(
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      tokens.accent,
+                                    ),
+                                  ),
+                                )
+                              : (_errorCode != null)
+                              ? Center(
+                                  child: Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(14),
+                                    decoration: BoxDecoration(
+                                      color: tokens.palette.surface,
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(
+                                        color: tokens.accent.withOpacity(0.34),
+                                      ),
+                                    ),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          _friendlyError(_errorCode),
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: tokens.textPrimary,
+                                            height: 1.35,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 10),
+                                        OutlinedButton.icon(
+                                          onPressed: _loadBookings,
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor: tokens.accent
+                                                .withOpacity(0.95),
+                                            side: BorderSide(
+                                              color: tokens.accent.withOpacity(
+                                                0.42,
+                                              ),
+                                            ),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                            ),
+                                          ),
+                                          icon: const Icon(
+                                            Icons.refresh_rounded,
+                                            size: 18,
+                                          ),
+                                          label: Text(
+                                            _t(
+                                              nl: 'Opnieuw proberen',
+                                              en: 'Try again',
+                                              fr: 'Réessayer',
+                                              es: 'Intentar de nuevo',
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                )
+                              : items.isEmpty
+                              ? Center(
+                                  child: Text(
+                                    _t(
+                                      nl: 'Geen boekingen gevonden voor deze filter.',
+                                      en: 'No bookings found for this filter.',
+                                      fr: 'Aucune réservation trouvée pour ce filtre.',
+                                      es: 'No se encontraron reservas para este filtro.',
+                                    ),
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: tokens.textSecondary,
+                                    ),
+                                  ),
+                                )
+                              : ListView.separated(
+                                  itemCount: items.length,
+                                  separatorBuilder: (_, __) =>
+                                      const SizedBox(height: 8),
+                                  itemBuilder: (context, index) =>
+                                      _buildCompanyBookingPremiumCard(
+                                        items[index],
+                                        tokens,
+                                      ),
                                 ),
-                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                ],
+                ),
               ),
-            ),
-          ),
-        );
+            );
           },
         );
       },

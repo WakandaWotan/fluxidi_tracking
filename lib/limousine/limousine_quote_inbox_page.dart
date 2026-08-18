@@ -48,11 +48,15 @@ class LimousineQuoteInboxPage extends StatefulWidget {
     this.gateway,
     this.entitled = true,
     this.initialFilter = LimousineQuoteInboxFilter.all,
+    this.embedded = false,
+    this.onUnreadCount,
   });
 
   final LimousineQuoteInboxGateway? gateway;
   final bool entitled;
   final LimousineQuoteInboxFilter initialFilter;
+  final bool embedded;
+  final ValueChanged<int?>? onUnreadCount;
 
   @override
   State<LimousineQuoteInboxPage> createState() =>
@@ -119,14 +123,33 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
       await _controller.refresh();
     } finally {
       _refreshing = false;
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {});
+        _emitUnreadCount();
+      }
     }
+  }
+
+  void _emitUnreadCount() {
+    widget.onUnreadCount?.call(
+      _controller.items.isEmpty
+          ? null
+          : limousineQuoteInboxUnreadBadge(_controller.items),
+    );
   }
 
   Future<void> _loadMore() async {
     if (_controller.loadingMore || !_controller.hasMore) return;
     await _controller.loadMore();
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {});
+      _emitUnreadCount();
+    }
+  }
+
+  bool get _isGateOff {
+    if (!widget.entitled) return true;
+    return _controller.error?.kind == LimousineQuoteInboxErrorKind.gateOff;
   }
 
   List<LimousineQuoteRequest> get _visible {
@@ -217,58 +240,86 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
             final tokens = LimousineUxTokens.fromBusiness(palette);
             final shortest = MediaQuery.sizeOf(context).shortestSide;
             final tablet = limousineQuoteInboxIsTablet(shortest);
+            final body = LayoutBuilder(
+              builder: (context, constraints) {
+                return Align(
+                  alignment: Alignment.topCenter,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: limousineQuoteInboxContentWidth(
+                        constraints.maxWidth,
+                      ),
+                      maxHeight: constraints.maxHeight,
+                    ),
+                    child: KeyedSubtree(
+                      key: tablet
+                          ? kLimousineQuoteInboxTabletLayoutKey
+                          : kLimousineQuoteInboxPhoneLayoutKey,
+                      child: Column(
+                        children: [
+                          if (widget.embedded && widget.entitled && !_isGateOff)
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: IconButton(
+                                key: kLimousineQuoteInboxRefreshKey,
+                                tooltip: _t(kLimousineQuoteInboxRefresh),
+                                onPressed: _refreshing ? null : _refresh,
+                                icon:
+                                    _refreshing && _controller.items.isNotEmpty
+                                    ? SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: palette.accent,
+                                        ),
+                                      )
+                                    : Icon(
+                                        Icons.refresh,
+                                        color: palette.textPrimary,
+                                      ),
+                              ),
+                            ),
+                          Expanded(child: _body(palette, tablet: tablet)),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            );
             return Theme(
               data: limousineUxThemeData(tokens),
-              child: Scaffold(
-                key: kLimousineQuoteInboxPageKey,
-                backgroundColor: palette.background,
-                appBar: AppBar(
-                  backgroundColor: palette.surface,
-                  foregroundColor: palette.textPrimary,
-                  title: Text(_t(kLimousineQuoteInboxTitle)),
-                  actions: [
-                    if (widget.entitled)
-                      IconButton(
-                        key: kLimousineQuoteInboxRefreshKey,
-                        tooltip: _t(kLimousineQuoteInboxRefresh),
-                        onPressed: _refreshing ? null : _refresh,
-                        icon: _refreshing && _controller.items.isNotEmpty
-                            ? SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: palette.accent,
-                                ),
-                              )
-                            : const Icon(Icons.refresh),
-                      ),
-                  ],
-                ),
-                body: SafeArea(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      return Align(
-                        alignment: Alignment.topCenter,
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: limousineQuoteInboxContentWidth(
-                              constraints.maxWidth,
+              child: widget.embedded
+                  ? KeyedSubtree(key: kLimousineQuoteInboxPageKey, child: body)
+                  : Scaffold(
+                      key: kLimousineQuoteInboxPageKey,
+                      backgroundColor: palette.background,
+                      appBar: AppBar(
+                        backgroundColor: palette.surface,
+                        foregroundColor: palette.textPrimary,
+                        title: Text(_t(kLimousineQuoteInboxTitle)),
+                        actions: [
+                          if (widget.entitled)
+                            IconButton(
+                              key: kLimousineQuoteInboxRefreshKey,
+                              tooltip: _t(kLimousineQuoteInboxRefresh),
+                              onPressed: _refreshing ? null : _refresh,
+                              icon: _refreshing && _controller.items.isNotEmpty
+                                  ? SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: palette.accent,
+                                      ),
+                                    )
+                                  : const Icon(Icons.refresh),
                             ),
-                            maxHeight: constraints.maxHeight,
-                          ),
-                          child: KeyedSubtree(
-                            key: tablet
-                                ? kLimousineQuoteInboxTabletLayoutKey
-                                : kLimousineQuoteInboxPhoneLayoutKey,
-                            child: _body(palette, tablet: tablet),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
+                        ],
+                      ),
+                      body: SafeArea(child: body),
+                    ),
             );
           },
         );
@@ -944,15 +995,29 @@ class _LimousineQuoteInboxPageState extends State<LimousineQuoteInboxPage> {
   Widget _gate(BusinessThemePalette palette) {
     return Padding(
       key: kLimousineQuoteInboxGateOffKey,
-      padding: const EdgeInsets.all(24),
-      child: Center(
-        child: Text(
-          _t(kLimousineQuoteGateOff),
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: palette.textSecondary,
-            height: 1.45,
-            fontSize: 16,
+      padding: EdgeInsets.all(widget.embedded ? 4 : 24),
+      child: Align(
+        alignment: widget.embedded ? Alignment.topCenter : Alignment.center,
+        child: Container(
+          width: double.infinity,
+          padding: EdgeInsets.symmetric(
+            horizontal: widget.embedded ? 12 : 16,
+            vertical: widget.embedded ? 10 : 16,
+          ),
+          decoration: BoxDecoration(
+            color: palette.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: palette.border),
+          ),
+          child: Text(
+            _t(kLimousineQuoteGateOff),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: palette.textSecondary,
+              height: 1.4,
+              fontSize: widget.embedded ? 13.5 : 16,
+              fontWeight: widget.embedded ? FontWeight.w600 : FontWeight.w400,
+            ),
           ),
         ),
       ),

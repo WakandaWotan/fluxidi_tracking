@@ -17,6 +17,16 @@ const LocalizedText kLimousineQuoteInboxEntrySubtitle = LocalizedText(
 
 const LocalizedText kLimousineQuoteInboxTitle = kLimousineQuoteInboxEntryTitle;
 
+const LocalizedText kLimousineBookingsSectionLabel = LocalizedText(
+  nl: 'Boekingen',
+  en: 'Bookings',
+  fr: 'Réservations',
+  es: 'Reservas',
+);
+
+const LocalizedText kLimousineQuoteRequestsSectionLabel =
+    kLimousineQuoteInboxEntrySubtitle;
+
 const LocalizedText kLimousineQuoteInboxEmpty = LocalizedText(
   nl: 'Nog geen offerteaanvragen.',
   en: 'No quote requests yet.',

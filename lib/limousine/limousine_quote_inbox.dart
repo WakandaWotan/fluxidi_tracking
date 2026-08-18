@@ -80,6 +80,18 @@ const Key kLimousineQuoteInboxTileVisualKey = ValueKey<String>(
 const Key kLimousineQuoteInboxTileBadgeKey = ValueKey<String>(
   'limousine_quote_inbox_tile_badge',
 );
+const Key kLimousineBookingsQuoteSwitchKey = ValueKey<String>(
+  'limousine_bookings_quote_switch',
+);
+const Key kLimousineBookingsSectionTabKey = ValueKey<String>(
+  'limousine_bookings_section_tab',
+);
+const Key kLimousineQuoteRequestsSectionTabKey = ValueKey<String>(
+  'limousine_quote_requests_section_tab',
+);
+const Key kLimousineQuoteRequestsTabBadgeKey = ValueKey<String>(
+  'limousine_quote_requests_tab_badge',
+);
 
 Key limousineQuoteInboxKpiKey(String code) =>
     ValueKey<String>('limousine_quote_inbox_kpi_$code');

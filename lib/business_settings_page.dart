@@ -22,6 +22,7 @@ import 'package:fluxidi_tracking/limousine/limousine_customer_entry.dart';
 import 'package:fluxidi_tracking/limousine/limousine_marketplace_labels.dart';
 import 'package:fluxidi_tracking/limousine/limousine_offers.dart';
 import 'package:fluxidi_tracking/limousine/limousine_p2d4c1a_ux.dart';
+import 'package:fluxidi_tracking/limousine/limousine_quote_requests_nav.dart';
 import 'package:fluxidi_tracking/limousine/limousine_service_capability.dart';
 import 'package:fluxidi_tracking/limousine/limousine_state_composition.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
@@ -613,6 +614,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 .toList()
           : <Map<String, dynamic>>[];
       if (!mounted) return;
+      rememberLimousineQuoteRequestsConfirmedOffers(offers);
       setState(() {
         _limousineOffers = offers;
         _limousineSectionEnabled = section['enabled'] == true;

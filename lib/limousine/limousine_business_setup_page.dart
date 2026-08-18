@@ -18,6 +18,7 @@ import 'limousine_business_setup_labels.dart';
 import 'limousine_offer_editor.dart';
 import 'limousine_offers.dart';
 import 'limousine_p2d4c1a_ux.dart';
+import 'limousine_quote_requests_nav.dart';
 import 'limousine_simple_offer_editor.dart';
 
 typedef LimousinePricingLoader = Future<Map<String, dynamic>> Function();
@@ -189,6 +190,7 @@ class _LimousineBusinessSetupPageState
                 .map((item) => Map<String, dynamic>.from(item))
                 .toList()
           : <Map<String, dynamic>>[];
+      rememberLimousineQuoteRequestsConfirmedOffers(offers);
       setState(() {
         _offers
           ..clear()
@@ -279,6 +281,7 @@ class _LimousineBusinessSetupPageState
       final section = (data['limousine'] is Map)
           ? Map<String, dynamic>.from(data['limousine'] as Map)
           : <String, dynamic>{};
+      rememberLimousineQuoteRequestsConfirmedOffers(offers);
       setState(() {
         _offers
           ..clear()
