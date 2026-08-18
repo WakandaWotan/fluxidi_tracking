@@ -289,7 +289,7 @@ test("7) suspension blocks commercial transitions but not history reads", () => 
   assert.ok(respond.includes("_isLimousineCommercialCompanyAction(action)"));
   assert.ok(respond.includes("_assertFluxidiCompanyCanCreateNewBooking"));
   const listStart = worker.indexOf('"/admin/limousine/quote-requests" && request.method === "GET"');
-  const list = worker.slice(listStart, listStart + 1800);
+  const list = worker.slice(listStart, listStart + 2600);
   assert.ok(list.includes("transitions_blocked"));
   assert.ok(!list.includes("return _subscriptionBlockedResponse"));
 });

@@ -383,6 +383,7 @@ export async function executeLimousineStatusRead({
   rateLimit,
   loadRecord,
   persistExpired,
+  isCompanyAllowlisted = null,
 } = {}) {
   const pre = prevalidateLimousineStatusBody(body);
   if (!pre.ok) {
@@ -423,6 +424,17 @@ export async function executeLimousineStatusRead({
     return { ...STATUS_FAIL, wrote: false, loaded_record: false, limiter_called: true };
   }
   const binding = unsealed.binding || {};
+  if (typeof isCompanyAllowlisted === "function") {
+    let allowed = false;
+    try {
+      allowed = isCompanyAllowlisted(binding.company_id) === true;
+    } catch (_) {
+      allowed = false;
+    }
+    if (!allowed) {
+      return { ...STATUS_FAIL, wrote: false, loaded_record: false, limiter_called: true };
+    }
+  }
   const record = await loadRecord(binding.quote_request_id);
   if (!record || typeof record !== "object") {
     return { ...STATUS_FAIL, wrote: false, loaded_record: true, limiter_called: true };

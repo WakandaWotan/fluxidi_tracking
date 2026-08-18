@@ -168,6 +168,10 @@ import {
   resolveLimousineQuote as _resolveLimousineQuote,
 } from "./modules/limousine_pricing_resolver.mjs";
 import {
+  isTrustedLimousineTestCompany as _isTrustedLimousineTestCompany,
+  limousineTestCompanyAllowlistConfigured as _limousineTestCompanyAllowlistConfiguredRaw,
+} from "./modules/limousine_test_company_allowlist.mjs";
+import {
   deletedVehicleIdList,
   filterActiveVehicles,
   mergeVehicleTombstones,
@@ -753,6 +757,35 @@ function _limousineManualQuoteGateEnabled(env) {
   return _limousineManualQuoteGateEnabledRaw(env?.LIMOUSINE_MANUAL_QUOTE_ENABLED ?? "0");
 }
 
+function _limousineTestCompanyAllowlisted(env, companyId) {
+  return _isTrustedLimousineTestCompany(env, companyId);
+}
+
+function _limousineAllowlistConfigured(env) {
+  return _limousineTestCompanyAllowlistConfiguredRaw(env?.LIMOUSINE_TEST_COMPANY_ALLOWLIST);
+}
+
+function _limousineAllowlistUnavailableQuote() {
+  return {
+    status: 200,
+    out: {
+      ok: true,
+      service_category: "limousine",
+      pricing_source: "limousine_unavailable",
+      limousine: {
+        resolved: false,
+        manual_quote_required: false,
+        unavailable: true,
+        reason: "unavailable",
+      },
+    },
+  };
+}
+
+function _limousineAllowlistDenied() {
+  return json({ ok: false, error: "not_found" }, 404);
+}
+
 function _limousineQuoteRecordKey(quoteRequestId) {
   return `limousine_quote_record:${sanitizeTenantString(quoteRequestId, 120)}`;
 }
@@ -955,6 +988,9 @@ async function _prepareLimousineManualBooking(env, scope, payload, { acceptanceR
   if (!unsealed.ok) return fail(unsealed.error);
 
   const binding = unsealed.binding || {};
+  if (!_limousineTestCompanyAllowlisted(env, binding.company_id)) {
+    return fail("limousine_unavailable");
+  }
   const record = await _loadLimousineQuoteRecord(env, binding.quote_request_id);
   if (!record) return fail("unknown_quote_request");
   if (!_limousineQuoteScopeMatches(record, scope)) return fail("unauthorized_scope");
@@ -1069,6 +1105,9 @@ async function _prepareLimousineBooking(env, scope, payload, { from, to, stops }
     ok: false,
     response: { ok: false, error, service_category: "limousine", ...extra },
   });
+  if (!_limousineTestCompanyAllowlisted(env, scope?.company_id ?? scope?.companyId)) {
+    return unavailable("limousine_unavailable");
+  }
 
   // 1) Server route for the passenger itinerary.
   let routeOut = null;
@@ -27258,6 +27297,29 @@ async function _handleQuoteRequestInternal({ body, env, request, url }) {
         }
       : {}),
   };
+  const _isLimousineQuoteRequestEarly =
+    isLimousineServiceToken(body.service_category ?? body.serviceCategory) ||
+    isLimousineServiceToken(body.service);
+  if (_isLimousineQuoteRequestEarly && _limousineQuoteGateEnabled(env)) {
+    let _limousineTrustedQuoteCompany = routedPublicPartner?.ok
+      ? sanitizeTenantString(routedPublicPartner.company_id, 80)
+      : "";
+    if (!_limousineTrustedQuoteCompany && _limousineAllowlistConfigured(env)) {
+      try {
+        const _limousineQuoteSession = await _loadCompanySessionFromRequest(request, env);
+        const sessionCompany = sanitizeTenantString(_limousineQuoteSession?.company_id, 80);
+        const claimedCompany = sanitizeTenantString(quoteScope.company_id, 80);
+        if (sessionCompany && (!claimedCompany || claimedCompany === sessionCompany)) {
+          _limousineTrustedQuoteCompany = sessionCompany;
+        }
+      } catch (_) {
+        _limousineTrustedQuoteCompany = "";
+      }
+    }
+    if (!_limousineTestCompanyAllowlisted(env, _limousineTrustedQuoteCompany)) {
+      return _limousineAllowlistUnavailableQuote();
+    }
+  }
   const pricingProfile = await _loadTenantPricingProfile(env, quoteScope);
   const vat_rate = clampNumber(
     pricingProfile?.vat_rate,
@@ -45276,6 +45338,21 @@ export default {
           scope = resolveExplicitBookingRequestScope({ request, url, body, allowLegacyFallback: false });
         }
         if (!scope?.hasScope) return json(missingTenantScopeError(), 400);
+        if (!requestedPartnerId) {
+          const companySession = await _loadCompanySessionFromRequest(request, env);
+          const sessionCompany = sanitizeTenantString(companySession?.company_id, 80);
+          const sessionTenant = sanitizeTenantString(companySession?.tenant_id, 80);
+          if (
+            !sessionCompany ||
+            sessionCompany !== sanitizeTenantString(scope.company_id, 80) ||
+            sessionTenant !== sanitizeTenantString(scope.tenant_id, 80)
+          ) {
+            return _limousineAllowlistDenied();
+          }
+        }
+        if (!_limousineTestCompanyAllowlisted(env, scope.company_id)) {
+          return _limousineAllowlistDenied();
+        }
         // New requests are blocked for suspended companies, exactly like /book.
         const suspensionGuard = await _assertFluxidiCompanyCanCreateNewBooking(env, scope);
         if (!suspensionGuard.ok) return _subscriptionBlockedResponse({ scope: "public" });
@@ -45408,6 +45485,9 @@ export default {
         });
         if (!authScope.ok) return authScope.response;
         const scope = authScope.explicitScope;
+        if (!_limousineTestCompanyAllowlisted(env, scope.company_id)) {
+          return _limousineAllowlistDenied();
+        }
         const record = await _loadLimousineQuoteRecord(
           env,
           body?.quote_request_id ?? body?.quoteRequestId,
@@ -45502,6 +45582,9 @@ export default {
           body?.quote_request_id ?? body?.quoteRequestId,
         );
         if (!record) return json({ ok: false, error: "unknown_quote_request" }, 404);
+        if (!_limousineTestCompanyAllowlisted(env, record.company_id)) {
+          return _limousineAllowlistDenied();
+        }
         const nowIso = new Date().toISOString();
         const acceptable = _assertLimousineQuoteAcceptable(record, {
           expectedRevision: body?.expected_revision ?? body?.expectedRevision,
@@ -45560,6 +45643,9 @@ export default {
         });
         if (!authScope.ok) return authScope.response;
         const scope = authScope.explicitScope;
+        if (!_limousineTestCompanyAllowlisted(env, scope.company_id)) {
+          return _limousineAllowlistDenied();
+        }
         const parsed = _parseLimousineInboxQuery(url.searchParams);
         if (!parsed.ok) {
           return json({ ok: false, error: parsed.reason }, 400);
@@ -45612,6 +45698,9 @@ export default {
         });
         if (!authScope.ok) return authScope.response;
         const scope = authScope.explicitScope;
+        if (!_limousineTestCompanyAllowlisted(env, scope.company_id)) {
+          return _limousineAllowlistDenied();
+        }
         const record = await _loadLimousineQuoteRecord(env, _limousineInboxDetail[1]);
         if (!record || !_limousineQuoteScopeMatches(record, scope)) {
           return _limousineInboxNotFound();
@@ -45656,6 +45745,7 @@ export default {
           }),
           loadRecord: (id) => _loadLimousineQuoteRecord(env, id),
           persistExpired: (next) => _saveLimousineQuoteRecord(env, next),
+          isCompanyAllowlisted: (companyId) => _limousineTestCompanyAllowlisted(env, companyId),
         });
         return json(result.body, result.status);
       }
@@ -45929,10 +46019,12 @@ export default {
         // LIMOUSINE-MARKETPLACE-P2A: a fleet change can affect readiness.
         // Recompute the safe public projection (fingerprint-guarded no-op when
         // unchanged; never breaks the fleet write).
-        try {
-          await refreshPartnerLimousineProjection(env, scope);
-        } catch (_) {
-          // non-fatal
+        if (_limousineTestCompanyAllowlisted(env, scope.company_id)) {
+          try {
+            await refreshPartnerLimousineProjection(env, scope);
+          } catch (_) {
+            // non-fatal
+          }
         }
         return json({
           ok: true,
@@ -46033,6 +46125,9 @@ export default {
         });
         if (!authScope.ok) return authScope.response;
         const explicitScope = authScope.explicitScope;
+        if (!_limousineTestCompanyAllowlisted(env, explicitScope.company_id)) {
+          return _limousineAllowlistDenied();
+        }
         const scopedKeys = buildScopedSettingsKeys(explicitScope);
         const rawProfile = await _loadRawTenantPricingProfileObject(env, explicitScope, {
           allowTenantLegacyFallback: false,
@@ -46057,6 +46152,9 @@ export default {
         });
         if (!authScope.ok) return authScope.response;
         const explicitScope = authScope.explicitScope;
+        if (!_limousineTestCompanyAllowlisted(env, explicitScope.company_id)) {
+          return _limousineAllowlistDenied();
+        }
         const bodyScopeCheck = _validateSettingsPayloadScope(body, explicitScope);
         if (!bodyScopeCheck.ok) return json(bodyScopeCheck, 400);
         const incomingSection = body?.limousine && typeof body.limousine === "object"
@@ -46926,8 +47024,14 @@ export default {
         // authoritative subscription profile (server-owned). Never trust a
         // client-submitted entitlement value.
         let _limousineEntitledProjection = false;
+        const _limousinePublishAllowlisted = _limousineTestCompanyAllowlisted(
+          env,
+          explicitScope.company_id,
+        );
         try {
-          const _subscriptionForLimousine = await loadSubscriptionProfile(env, explicitScope);
+          const _subscriptionForLimousine = _limousinePublishAllowlisted
+            ? await loadSubscriptionProfile(env, explicitScope)
+            : null;
           _limousineEntitledProjection = _projectLimousineEntitled({
             features: _subscriptionForLimousine?.features,
             subscriptionStatus:
@@ -46968,11 +47072,13 @@ export default {
           _existingScopedPartnerRecord = null;
         }
         // Full safe offer array, computed from authoritative server state only.
-        const _limousinePublicOffers = await _buildAuthoritativeLimousinePublicOffers(
+        const _limousinePublicOffers = _limousinePublishAllowlisted
+          ? await _buildAuthoritativeLimousinePublicOffers(
           env,
           explicitScope,
           normalizedProfile,
-        );
+        )
+          : [];
         normalizedProfile = {
           ...normalizedProfile,
           limousine_offers: _limousinePublicOffers,
@@ -65200,6 +65306,24 @@ async function handleBooking(payload, env, request, options = {}) {
       if (!_limousineBookGateEnabled(env)) {
         return { ok: false, error: "limousine_book_disabled" };
       }
+      let _limousineTrustedBookCompany = "";
+      if (tenantContext.tenant_resolution_mode === "trusted_route") {
+        _limousineTrustedBookCompany = sanitizeTenantString(tenantContext.company_id, 80);
+      } else if (_limousineAllowlistConfigured(env)) {
+        try {
+          const _limousineBookSession = await _loadCompanySessionFromRequest(request, env);
+          const sessionCompany = sanitizeTenantString(_limousineBookSession?.company_id, 80);
+          const claimedCompany = sanitizeTenantString(tenantContext.company_id, 80);
+          if (sessionCompany && sessionCompany === claimedCompany) {
+            _limousineTrustedBookCompany = sessionCompany;
+          }
+        } catch (_) {
+          _limousineTrustedBookCompany = "";
+        }
+      }
+      if (!_limousineTestCompanyAllowlisted(env, _limousineTrustedBookCompany)) {
+        return { ok: false, error: "limousine_unavailable" };
+      }
       if (_limousineAcceptanceReference) {
         // LIMOUSINE-MARKETPLACE-P2C2: accepted MANUAL quote. The human-approved
         // total is authoritative and is NEVER recomputed with taxi pricing.
@@ -78856,6 +78980,9 @@ async function _buildAuthoritativeLimousinePublicOffers(env, scope, profile) {
 /// limousine fields (+ monotonic revision), and never throws into callers.
 async function refreshPartnerLimousineProjection(env, scope) {
   try {
+    if (!_limousineTestCompanyAllowlisted(env, scope?.company_id ?? scope?.companyId)) {
+      return { ok: false, reason: "test_company_not_allowlisted" };
+    }
     if (!env?.BOOKING_KV) return { ok: false, reason: "no_kv" };
     const scopedKeys = buildScopedPartnerKeys(scope);
     if (!scopedKeys) return { ok: false, reason: "no_scope" };
@@ -79113,7 +79240,12 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
       // that pass authoritative limousine eligibility. Without the filter,
       // discovery is unchanged.
       if (serviceFilter !== "limousine") return true;
-      return limousineEligibleByPartnerId.get(entry.p.partner_id) === true;
+      if (limousineEligibleByPartnerId.get(entry.p.partner_id) !== true) return false;
+      const nearbyCompanyId =
+        entry.routeCompanyId ||
+        _scopeFromCanonicalPublicPartnerId(entry.p.partner_id)?.company_id ||
+        "";
+      return _limousineTestCompanyAllowlisted(env, nearbyCompanyId);
     })
     .sort((a, b) => {
       if (hasGeoQuery) {
@@ -79143,7 +79275,13 @@ async function listNearbyPartners(env, { postcode = "", lat = null, lng = null, 
       const p = entry.p;
       const media = publicMediaByPartnerId.get(p.partner_id) || {};
       const capabilitySignals = nearbyCapabilitySignalsByPartnerId.get(p.partner_id) || {};
-      const limousineSignals = serviceFilter === "limousine"
+      const nearbySignalCompanyId =
+        entry.routeCompanyId ||
+        _scopeFromCanonicalPublicPartnerId(p.partner_id)?.company_id ||
+        "";
+      const limousineSignals =
+        serviceFilter === "limousine" &&
+        _limousineTestCompanyAllowlisted(env, nearbySignalCompanyId)
         ? limousineSignalsByPartnerId.get(p.partner_id) || {}
         : {};
       _logNearbyCapabilitiesDiagnostics(p.partner_id, capabilitySignals);
@@ -80191,7 +80329,13 @@ async function getPublicPartnerProfileById(env, partnerId) {
     drivers: profile.drivers,
     trust: profile.trust,
     booking_capabilities: profile.booking_capabilities,
-    ..._publicLimousineShowroomFieldsFromStoredProfile(profile),
+    ...(_limousineTestCompanyAllowlisted(
+      env,
+      _scopeFromCanonicalPublicPartnerId(profile.partner_id)?.company_id ||
+        sanitizeTenantString(profile.company_id ?? profile.companyId, 80),
+    )
+      ? _publicLimousineShowroomFieldsFromStoredProfile(profile)
+      : {}),
   };
   try {
     const ratingScope = await _resolvePublicPartnerRatingScope(env, needle);

@@ -290,7 +290,8 @@ test("worker wires the module into discovery, publish projection and normalizati
   // discovery: service param parsed + server-side filter applied
   assert.ok(workerSource.includes('_resolveNearbyServiceFilter(service)'), "listNearbyPartners resolves service filter");
   assert.ok(workerSource.includes('url.searchParams.get("service")'), "route parses service param");
-  assert.ok(workerSource.includes("limousineEligibleByPartnerId.get(entry.p.partner_id) === true"), "limousine filter applied");
+  assert.ok(workerSource.includes("limousineEligibleByPartnerId.get(entry.p.partner_id) !== true"), "limousine filter applied");
+  assert.ok(workerSource.includes("_limousineTestCompanyAllowlisted(env, nearbyCompanyId)"), "allowlist applied to nearby filter");
   // publish: server-owned entitlement projection injected (client value overwritten)
   assert.ok(workerSource.includes("_projectLimousineEntitled({"), "publish projects entitlement");
   assert.ok(workerSource.includes("limousine_entitled: _limousineEntitledProjection"), "entitlement stamped on profile");

@@ -145,7 +145,8 @@ test("10) showroom GET exposes only committed public fields", () => {
   assert.ok(!fn.includes("limousine_entitled"));
   assert.ok(!fn.includes("LIMOUSINE_ACCEPTANCE_SECRET"));
   assert.ok(!fn.includes("operating_base_address"));
-  assert.ok(worker.includes("..._publicLimousineShowroomFieldsFromStoredProfile(profile)"));
+  assert.ok(worker.includes("_publicLimousineShowroomFieldsFromStoredProfile(profile)"));
+  assert.ok(worker.includes("_limousineTestCompanyAllowlisted"));
 });
 
 test("11) Billit due-index imports and scheduled callsites remain live", () => {
