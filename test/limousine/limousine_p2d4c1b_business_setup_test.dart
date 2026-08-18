@@ -317,54 +317,30 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await _reveal(
-      tester,
-      find.byKey(limousineBusinessSetupPublicLangKey('nl')),
-    );
+    await _reveal(tester, find.byKey(kLimousineBusinessSetupPublicTitleKey));
     await tester.enterText(
       find.byKey(kLimousineBusinessSetupPublicTitleKey),
       'NL titel',
     );
     await tester.pump();
-    await _reveal(
-      tester,
-      find.byKey(limousineBusinessSetupPublicLangKey('en')),
-    );
-    await tester.tap(find.byKey(limousineBusinessSetupPublicLangKey('en')));
-    await tester.pump();
+    await _reveal(tester, find.byKey(kLimousineBusinessSetupOtherLanguagesKey));
+    await tester.tap(find.byKey(kLimousineBusinessSetupOtherLanguagesKey));
+    await tester.pumpAndSettle();
     await tester.enterText(
-      find.byKey(kLimousineBusinessSetupPublicTitleKey),
+      find.byKey(limousineBusinessSetupOtherLangTitleKey('en')),
       'EN title',
     );
     await tester.pump();
-    await _reveal(
-      tester,
-      find.byKey(limousineBusinessSetupPublicLangKey('fr')),
-    );
-    await tester.tap(find.byKey(limousineBusinessSetupPublicLangKey('fr')));
-    await tester.pump();
     await tester.enterText(
-      find.byKey(kLimousineBusinessSetupPublicTitleKey),
+      find.byKey(limousineBusinessSetupOtherLangTitleKey('fr')),
       'Titre FR',
     );
     await tester.pump();
-    await _reveal(
-      tester,
-      find.byKey(limousineBusinessSetupPublicLangKey('es')),
-    );
-    await tester.tap(find.byKey(limousineBusinessSetupPublicLangKey('es')));
-    await tester.pump();
     await tester.enterText(
-      find.byKey(kLimousineBusinessSetupPublicTitleKey),
+      find.byKey(limousineBusinessSetupOtherLangTitleKey('es')),
       'Título ES',
     );
     await tester.pump();
-    await _reveal(
-      tester,
-      find.byKey(limousineBusinessSetupPublicLangKey('nl')),
-    );
-    await tester.tap(find.byKey(limousineBusinessSetupPublicLangKey('nl')));
-    await tester.pump();
     expect(
       tester
           .widget<TextField>(find.byKey(kLimousineBusinessSetupPublicTitleKey))
@@ -372,41 +348,29 @@ void main() {
           .text,
       'NL titel',
     );
-    await _reveal(
-      tester,
-      find.byKey(limousineBusinessSetupPublicLangKey('en')),
-    );
-    await tester.tap(find.byKey(limousineBusinessSetupPublicLangKey('en')));
-    await tester.pump();
     expect(
       tester
-          .widget<TextField>(find.byKey(kLimousineBusinessSetupPublicTitleKey))
+          .widget<TextField>(
+            find.byKey(limousineBusinessSetupOtherLangTitleKey('en')),
+          )
           .controller!
           .text,
       'EN title',
     );
-    await _reveal(
-      tester,
-      find.byKey(limousineBusinessSetupPublicLangKey('fr')),
-    );
-    await tester.tap(find.byKey(limousineBusinessSetupPublicLangKey('fr')));
-    await tester.pump();
     expect(
       tester
-          .widget<TextField>(find.byKey(kLimousineBusinessSetupPublicTitleKey))
+          .widget<TextField>(
+            find.byKey(limousineBusinessSetupOtherLangTitleKey('fr')),
+          )
           .controller!
           .text,
       'Titre FR',
     );
-    await _reveal(
-      tester,
-      find.byKey(limousineBusinessSetupPublicLangKey('es')),
-    );
-    await tester.tap(find.byKey(limousineBusinessSetupPublicLangKey('es')));
-    await tester.pump();
     expect(
       tester
-          .widget<TextField>(find.byKey(kLimousineBusinessSetupPublicTitleKey))
+          .widget<TextField>(
+            find.byKey(limousineBusinessSetupOtherLangTitleKey('es')),
+          )
           .controller!
           .text,
       'Título ES',

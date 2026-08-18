@@ -171,17 +171,17 @@ const LocalizedText kLimousineBusinessSetupLimousine = LocalizedText(
 );
 
 const LocalizedText kLimousineBusinessSetupQuoteCard = LocalizedText(
-  nl: 'Offerte op aanvraag',
-  en: 'Quote on request',
-  fr: 'Devis sur demande',
-  es: 'Presupuesto bajo petición',
+  nl: 'Prijs op aanvraag',
+  en: 'Price on request',
+  fr: 'Prix sur demande',
+  es: 'Precio bajo petición',
 );
 
 const LocalizedText kLimousineBusinessSetupQuoteHint = LocalizedText(
-  nl: 'Klanten vragen een offerte aan',
-  en: 'Customers request a quote',
-  fr: 'Les clients demandent un devis',
-  es: 'Los clientes solicitan un presupuesto',
+  nl: 'De klant vraagt een persoonlijke prijs aan',
+  en: 'The customer requests a personal price',
+  fr: 'Le client demande un prix personnel',
+  es: 'El cliente solicita un precio personal',
 );
 
 const LocalizedText kLimousineBusinessSetupFromCard = LocalizedText(
@@ -268,6 +268,202 @@ const LocalizedText kLimousineBusinessSetupCheckPublic = LocalizedText(
   es: 'Texto público obligatorio',
 );
 
+const LocalizedText kLimousineBusinessSetupCheckPhoto = LocalizedText(
+  nl: 'Geldige veilige publieke foto',
+  en: 'Valid safe public photo',
+  fr: 'Photo publique sûre valide',
+  es: 'Foto pública segura válida',
+);
+
+const LocalizedText kLimousineBusinessSetupOtherLanguages = LocalizedText(
+  nl: 'Andere talen',
+  en: 'Other languages',
+  fr: 'Autres langues',
+  es: 'Otros idiomas',
+);
+
+const LocalizedText kLimousineBusinessSetupAvailable = LocalizedText(
+  nl: 'Beschikbaar',
+  en: 'Available',
+  fr: 'Disponible',
+  es: 'Disponible',
+);
+
+const LocalizedText kLimousineBusinessSetupPublishedStatus = LocalizedText(
+  nl: 'Publicatiestatus',
+  en: 'Publication status',
+  fr: 'Statut de publication',
+  es: 'Estado de publicación',
+);
+
+const LocalizedText kLimousineBusinessSetupAmount = LocalizedText(
+  nl: 'Bedrag',
+  en: 'Amount',
+  fr: 'Montant',
+  es: 'Importe',
+);
+
+const LocalizedText kLimousineBusinessSetupCurrency = LocalizedText(
+  nl: 'Munteenheid',
+  en: 'Currency',
+  fr: 'Devise',
+  es: 'Moneda',
+);
+
+const LocalizedText kLimousineBusinessSetupJourneyTypes = LocalizedText(
+  nl: 'Toepasselijke trajecttypes',
+  en: 'Applicable journey types',
+  fr: 'Types de trajet applicables',
+  es: 'Tipos de trayecto aplicables',
+);
+
+const LocalizedText kLimousineBusinessSetupTarget = LocalizedText(
+  nl: 'Voertuig of serviceklasse',
+  en: 'Vehicle or service class',
+  fr: 'Véhicule ou classe de service',
+  es: 'Vehículo o clase de servicio',
+);
+
+const LocalizedText kLimousineBusinessSetupVehicle = LocalizedText(
+  nl: 'Voertuig',
+  en: 'Vehicle',
+  fr: 'Véhicule',
+  es: 'Vehículo',
+);
+
+const LocalizedText kLimousineBusinessSetupClass = LocalizedText(
+  nl: 'Serviceklasse',
+  en: 'Service class',
+  fr: 'Classe de service',
+  es: 'Clase de servicio',
+);
+
+const LocalizedText kLimousineBusinessSetupTerms = LocalizedText(
+  nl: 'Korte voorwaarden',
+  en: 'Short terms',
+  fr: 'Conditions courtes',
+  es: 'Condiciones breves',
+);
+
+const LocalizedText kLimousineBusinessSetupPickup = LocalizedText(
+  nl: 'Vertrek',
+  en: 'Departure',
+  fr: 'Départ',
+  es: 'Salida',
+);
+
+const LocalizedText kLimousineBusinessSetupDropoff = LocalizedText(
+  nl: 'Bestemming',
+  en: 'Destination',
+  fr: 'Destination',
+  es: 'Destino',
+);
+
+const LocalizedText kLimousineBusinessSetupFirstHour = LocalizedText(
+  nl: 'Eerste uur',
+  en: 'First hour',
+  fr: 'Première heure',
+  es: 'Primera hora',
+);
+
+const LocalizedText kLimousineBusinessSetupExtraHour = LocalizedText(
+  nl: 'Bijkomend uur',
+  en: 'Additional hour',
+  fr: 'Heure supplémentaire',
+  es: 'Hora adicional',
+);
+
+const LocalizedText kLimousineBusinessSetupMinDuration = LocalizedText(
+  nl: 'Minimumduur (minuten)',
+  en: 'Minimum duration (minutes)',
+  fr: 'Durée minimale (minutes)',
+  es: 'Duración mínima (minutos)',
+);
+
+const LocalizedText kLimousineBusinessSetupPackageDuration = LocalizedText(
+  nl: 'Pakketduur (minuten)',
+  en: 'Package duration (minutes)',
+  fr: 'Durée du forfait (minutes)',
+  es: 'Duración del paquete (minutos)',
+);
+
+const LocalizedText kLimousineBusinessSetupPackageAmount = LocalizedText(
+  nl: 'Pakketbedrag',
+  en: 'Package amount',
+  fr: 'Montant du forfait',
+  es: 'Importe del paquete',
+);
+
+const LocalizedText kLimousineBusinessSetupIncludedHours = LocalizedText(
+  nl: 'Inbegrepen uren',
+  en: 'Included hours',
+  fr: 'Heures incluses',
+  es: 'Horas incluidas',
+);
+
+const LocalizedText kLimousineBusinessSetupPassengers = LocalizedText(
+  nl: 'Passagiers',
+  en: 'Passengers',
+  fr: 'Passagers',
+  es: 'Pasajeros',
+);
+
+const LocalizedText kLimousineBusinessSetupLuggage = LocalizedText(
+  nl: 'Bagage',
+  en: 'Luggage',
+  fr: 'Bagages',
+  es: 'Equipaje',
+);
+
+const LocalizedText kLimousineBusinessSetupCategory = LocalizedText(
+  nl: 'Servicecategorie',
+  en: 'Service category',
+  fr: 'Catégorie de service',
+  es: 'Categoría de servicio',
+);
+
+const LocalizedText kLimousineBusinessSetupLocalPreview = LocalizedText(
+  nl: 'Lokale testvoorvertoning. Geen live publicatie.',
+  en: 'Local test preview. Not a live publication.',
+  fr: 'Aperçu de test local. Pas une publication en direct.',
+  es: 'Vista previa de prueba local. No es una publicación en vivo.',
+);
+
+const LocalizedText kLimousineBusinessSetupSave = LocalizedText(
+  nl: 'Bewaren',
+  en: 'Save',
+  fr: 'Enregistrer',
+  es: 'Guardar',
+);
+
+const LocalizedText kLimousineBusinessSetupMissingVehicles = LocalizedText(
+  nl: 'Selecteer minstens één limousinevoertuig.',
+  en: 'Select at least one limousine vehicle.',
+  fr: 'Sélectionnez au moins un véhicule limousine.',
+  es: 'Seleccione al menos un vehículo de limusina.',
+);
+
+const LocalizedText kLimousineBusinessSetupMissingOffers = LocalizedText(
+  nl: 'Stel minstens één geldig aanbod of prijs op aanvraag in.',
+  en: 'Set at least one valid offer or price on request.',
+  fr: 'Définissez au moins une offre valide ou un prix sur demande.',
+  es: 'Configure al menos una oferta válida o un precio bajo petición.',
+);
+
+const LocalizedText kLimousineBusinessSetupMissingText = LocalizedText(
+  nl: 'Vul de publieke titel en beschrijving in.',
+  en: 'Fill in the public title and description.',
+  fr: 'Renseignez le titre et la description publics.',
+  es: 'Complete el título y la descripción públicos.',
+);
+
+const LocalizedText kLimousineBusinessSetupMissingPhoto = LocalizedText(
+  nl: 'Voeg een veilige publieke voertuigfoto toe via Voertuigen.',
+  en: 'Add a safe public vehicle photo via Vehicles.',
+  fr: 'Ajoutez une photo publique sûre via Véhicules.',
+  es: 'Añada una foto pública segura en Vehículos.',
+);
+
 LocalizedText limousineBusinessSetupSectionLabel(
   LimousineBusinessSetupSection section,
 ) {
@@ -291,6 +487,10 @@ LocalizedText limousineBusinessSetupChecklistLabel(String code) {
       return kLimousineBusinessSetupCheckOffers;
     case 'public_text':
       return kLimousineBusinessSetupCheckPublic;
+    case 'public_photo':
+      return kLimousineBusinessSetupCheckPhoto;
+    case 'live_status':
+      return kLimousineBusinessSetupTestMessage;
     default:
       return kLimousineGatesOffFriendly;
   }
@@ -300,6 +500,27 @@ LocalizedText limousineBusinessSetupProgressCopy(double progress) {
   if (progress >= 1) return kLimousineBusinessSetupReady;
   if (progress >= 0.34) return kLimousineBusinessSetupAlmostReady;
   return kLimousineBusinessSetupGetStarted;
+}
+
+LocalizedText limousineBusinessSetupMissingCopy(
+  LimousineBusinessSetupReadiness readiness,
+) {
+  for (final item in readiness.items) {
+    if (item.complete) continue;
+    switch (item.code) {
+      case 'vehicles':
+        return kLimousineBusinessSetupMissingVehicles;
+      case 'offers':
+        return kLimousineBusinessSetupMissingOffers;
+      case 'public_text':
+        return kLimousineBusinessSetupMissingText;
+      case 'public_photo':
+        return kLimousineBusinessSetupMissingPhoto;
+      case 'live_status':
+        return kLimousineBusinessSetupTestMessage;
+    }
+  }
+  return kLimousineBusinessSetupReady;
 }
 
 String limousineBusinessSetupProfilePercent(

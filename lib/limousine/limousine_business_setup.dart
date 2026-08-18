@@ -70,6 +70,35 @@ const Key kLimousineBusinessSetupPublicTitleKey = ValueKey<String>(
 const Key kLimousineBusinessSetupPublicDescriptionKey = ValueKey<String>(
   'limousine_business_setup_public_description',
 );
+const Key kLimousineBusinessSetupOtherLanguagesKey = ValueKey<String>(
+  'limousine_business_setup_other_languages',
+);
+const Key kLimousineSimpleOfferEditorKey = ValueKey<String>(
+  'limousine_simple_offer_editor',
+);
+const Key kLimousineSimpleOfferAmountKey = ValueKey<String>(
+  'limousine_simple_offer_amount',
+);
+const Key kLimousineSimpleOfferEnabledKey = ValueKey<String>(
+  'limousine_simple_offer_enabled',
+);
+const Key kLimousineSimpleOfferPublishedKey = ValueKey<String>(
+  'limousine_simple_offer_published',
+);
+const Key kLimousineSimpleOfferNameKey = ValueKey<String>(
+  'limousine_simple_offer_name',
+);
+const Key kLimousineSimpleOfferFirstHourKey = ValueKey<String>(
+  'limousine_simple_offer_first_hour',
+);
+
+enum LimousineSimpleOfferMode { quote, fromPrice, fixed, hourly }
+
+Key limousineBusinessSetupVehiclePhotoKey(String vehicleId) =>
+    ValueKey<String>('limousine_business_setup_vehicle_photo_$vehicleId');
+
+Key limousineBusinessSetupOtherLangTitleKey(String lang) =>
+    ValueKey<String>('limousine_business_setup_other_title_$lang');
 
 Key limousineBusinessSetupSectionKey(LimousineBusinessSetupSection section) =>
     ValueKey<String>('limousine_business_setup_section_${section.name}');
@@ -179,12 +208,51 @@ bool limousinePublicTextIsComplete({
   return filled(title) && filled(description);
 }
 
+String limousineBusinessSetupPrimaryLangCode(AppLanguage language) {
+  switch (language) {
+    case AppLanguage.en:
+      return 'en';
+    case AppLanguage.fr:
+      return 'fr';
+    case AppLanguage.es:
+      return 'es';
+    case AppLanguage.nl:
+    case AppLanguage.de:
+      return 'nl';
+  }
+}
+
+String limousineBusinessSetupTextFallback(
+  Object? raw,
+  AppLanguage language, {
+  String? primaryLang,
+}) {
+  final direct = limousineLocalizedFor(raw, language).trim();
+  if (direct.isNotEmpty) return direct;
+  final map = limousineLocalizedOf(raw);
+  final primary =
+      map[primaryLang ?? limousineBusinessSetupPrimaryLangCode(language)] ?? '';
+  if (primary.trim().isNotEmpty) return primary.trim();
+  return map.values.firstWhere(
+    (value) => value.trim().isNotEmpty,
+    orElse: () => '',
+  );
+}
+
+bool limousineVehicleHasSafePublicPhoto(VehicleProfile vehicle) {
+  return vehicle.isActive &&
+      limousineVehicleAppearsInLimousinePreview(vehicle) &&
+      vehicle.primaryPhotoRef.trim().isNotEmpty;
+}
+
 LimousineBusinessSetupReadiness limousineBusinessSetupReadiness({
   required List<VehicleProfile> vehicles,
   required List<Map<String, dynamic>> offers,
   required Map<String, String> publicTitle,
   required Map<String, String> publicDescription,
   List<String> knownClassIds = const <String>[],
+  bool entryEnabled = false,
+  bool sectionEnabled = false,
 }) {
   final limousineVehicles = limousineSetupLimousineVehicles(vehicles);
   final hasLimousineVehicle = limousineVehicles.any(
@@ -203,6 +271,9 @@ LimousineBusinessSetupReadiness limousineBusinessSetupReadiness({
     title: publicTitle,
     description: publicDescription,
   );
+  final hasPublicPhoto = limousineVehicles.any(
+    limousineVehicleHasSafePublicPhoto,
+  );
   final items = <LimousineBusinessSetupChecklistItem>[
     LimousineBusinessSetupChecklistItem(
       code: 'vehicles',
@@ -218,6 +289,16 @@ LimousineBusinessSetupReadiness limousineBusinessSetupReadiness({
       code: 'public_text',
       section: LimousineBusinessSetupSection.publicText,
       complete: hasPublicText,
+    ),
+    LimousineBusinessSetupChecklistItem(
+      code: 'public_photo',
+      section: LimousineBusinessSetupSection.vehicles,
+      complete: hasPublicPhoto,
+    ),
+    LimousineBusinessSetupChecklistItem(
+      code: 'live_status',
+      section: LimousineBusinessSetupSection.review,
+      complete: entryEnabled && sectionEnabled,
     ),
   ];
   final done = items.where((item) => item.complete).length;
@@ -325,6 +406,155 @@ bool limousineOfferIsSimpleCard(Map<String, dynamic> offer) {
 bool _mapEnabled(Object? raw) {
   if (raw is Map) return raw['enabled'] == true;
   return false;
+}
+
+class LimousineSimpleOfferDraft {
+  const LimousineSimpleOfferDraft({
+    required this.mode,
+    required this.enabled,
+    this.published = false,
+    this.amountCents,
+    this.currency = 'EUR',
+    this.targetType = LimousineOfferTarget.serviceClass,
+    this.vehicleId = '',
+    this.serviceClassId = '',
+    this.journeyTypes = const <String>[],
+    this.primaryLang = 'nl',
+    this.title = '',
+    this.terms = '',
+    this.pickupLabel = '',
+    this.dropoffLabel = '',
+    this.firstHourCents,
+    this.additionalHourCents,
+    this.minimumDurationMinutes,
+    this.packageDurationMinutes,
+    this.packageAmountCents,
+    this.includedHours,
+  });
+
+  final LimousineSimpleOfferMode mode;
+  final bool enabled;
+  final bool published;
+  final int? amountCents;
+  final String currency;
+  final String targetType;
+  final String vehicleId;
+  final String serviceClassId;
+  final List<String> journeyTypes;
+  final String primaryLang;
+  final String title;
+  final String terms;
+  final String pickupLabel;
+  final String dropoffLabel;
+  final int? firstHourCents;
+  final int? additionalHourCents;
+  final int? minimumDurationMinutes;
+  final int? packageDurationMinutes;
+  final int? packageAmountCents;
+  final int? includedHours;
+}
+
+String limousineSimpleOfferPresentation(LimousineSimpleOfferMode mode) {
+  switch (mode) {
+    case LimousineSimpleOfferMode.quote:
+      return LimousinePricePresentation.quoteRequired;
+    case LimousineSimpleOfferMode.fromPrice:
+      return LimousinePricePresentation.fromPrice;
+    case LimousineSimpleOfferMode.fixed:
+      return LimousinePricePresentation.exactFixed;
+    case LimousineSimpleOfferMode.hourly:
+      return LimousinePricePresentation.fromPrice;
+  }
+}
+
+Map<String, dynamic> limousineApplySimpleOfferEdits(
+  Map<String, dynamic> offer,
+  LimousineSimpleOfferDraft draft,
+) {
+  final next = Map<String, dynamic>.from(offer);
+  final presentation = limousineSimpleOfferPresentation(draft.mode);
+  next['enabled'] = draft.enabled;
+  next['published'] = draft.published;
+  next['price_presentation'] = presentation;
+  next['currency'] = draft.currency;
+  next['target_type'] = draft.targetType;
+  next['vehicle_id'] = draft.targetType == LimousineOfferTarget.vehicle
+      ? draft.vehicleId
+      : '';
+  next['service_class_id'] =
+      draft.targetType == LimousineOfferTarget.serviceClass
+      ? draft.serviceClassId
+      : (next['service_class_id'] ?? '');
+  next['journey_types'] = List<String>.from(draft.journeyTypes);
+  if (draft.mode != LimousineSimpleOfferMode.quote) {
+    next['display_amount_cents'] = draft.amountCents;
+  }
+  final title = limousineLocalizedOf(next['title']);
+  final description = limousineLocalizedOf(next['description']);
+  if (draft.title.trim().isNotEmpty) {
+    title[draft.primaryLang] = draft.title.trim();
+  }
+  if (draft.terms.trim().isNotEmpty) {
+    description[draft.primaryLang] = draft.terms.trim();
+  }
+  next['title'] = title;
+  next['description'] = description;
+  if (draft.pickupLabel.trim().isNotEmpty ||
+      draft.dropoffLabel.trim().isNotEmpty) {
+    next['pickup_label'] = draft.pickupLabel.trim();
+    next['dropoff_label'] = draft.dropoffLabel.trim();
+  }
+  if (draft.mode == LimousineSimpleOfferMode.fixed &&
+      draft.amountCents != null) {
+    final rules = <Map<String, dynamic>>[
+      ...((next['fixed_rules'] as List?) ?? const <dynamic>[])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item)),
+    ];
+    if (rules.isEmpty) {
+      rules.add(<String, dynamic>{
+        'rule_id': 'rule_${next['offer_id'] ?? 'fixed'}',
+        'enabled': true,
+        'journey_type': draft.journeyTypes.isEmpty
+            ? LimousineJourneyTypeId.pointToPoint
+            : draft.journeyTypes.first,
+        'zone_type': 'none',
+        'currency': draft.currency,
+      });
+    }
+    rules[0]['enabled'] = true;
+    rules[0]['amount_cents'] = draft.amountCents;
+    rules[0]['currency'] = draft.currency;
+    if (draft.pickupLabel.trim().isNotEmpty) {
+      rules[0]['pickup_label'] = draft.pickupLabel.trim();
+    }
+    if (draft.dropoffLabel.trim().isNotEmpty) {
+      rules[0]['dropoff_label'] = draft.dropoffLabel.trim();
+    }
+    next['fixed_rules'] = rules;
+  }
+  final hourly = <String, dynamic>{
+    ...((next['hourly'] is Map)
+        ? Map<String, dynamic>.from(next['hourly'] as Map)
+        : <String, dynamic>{}),
+    'enabled': draft.mode == LimousineSimpleOfferMode.hourly,
+    'currency': draft.currency,
+  };
+  if (draft.mode == LimousineSimpleOfferMode.hourly) {
+    hourly['first_hour_cents'] = draft.firstHourCents;
+    hourly['additional_hour_cents'] = draft.additionalHourCents;
+    hourly['minimum_duration_minutes'] = draft.minimumDurationMinutes;
+    hourly['package_duration_minutes'] =
+        draft.packageDurationMinutes ??
+        (draft.includedHours == null ? null : draft.includedHours! * 60);
+    hourly['package_amount_cents'] = draft.packageAmountCents;
+    if (draft.includedHours != null) {
+      hourly['included_hours'] = draft.includedHours;
+    }
+    next['display_amount_cents'] = draft.firstHourCents ?? draft.amountCents;
+  }
+  next['hourly'] = hourly;
+  return next;
 }
 
 Map<String, dynamic> limousineSimpleOfferDraft({
