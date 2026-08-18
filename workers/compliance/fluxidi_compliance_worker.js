@@ -7175,6 +7175,15 @@ async function _chironWriteExportStatus(env, statusKey, statusDoc, options = {})
   }
   const persist = async () => {
     await env.COMPLIANCE_KV.put(statusKey, JSON.stringify(statusDoc));
+    const officialIdem = cleanText(statusDoc?.official_idempotency_key, 256);
+    if (options.skipOfficialLink !== true && options.event && officialIdem) {
+      await _chironPutOfficialCandidatePointer(
+        env,
+        options.event,
+        officialIdem,
+        statusDoc,
+      );
+    }
   };
   const eventKey =
     _chironResolveDateIndexEventKey(options.event, options.eventKey) ||
@@ -7187,6 +7196,10 @@ async function _chironWriteExportStatus(env, statusKey, statusDoc, options = {})
     }
     const nowMs = Number(options.nowMs) || Date.now();
     const dueOpts = _chironDueAtComputeOptions();
+    if (options.skipDueMarkers === true) {
+      await persist();
+      return { ok: true };
+    }
     if (eventKey) {
       if (statusDoc && typeof statusDoc === "object" && !statusDoc.source_event_key) {
         statusDoc.source_event_key = eventKey;
@@ -11695,6 +11708,150 @@ function _chironOfficialDraftReadyForSubmit({
   };
 }
 
+const CHIRON_OFFICIAL_REF_SCHEMA = "chiron_official_ref_v1";
+
+function buildChironOfficialEventRefKey(tenantId, companyId, eventId) {
+  const tenantSegment = safeSegment(tenantId, "");
+  const companySegment = safeSegment(companyId, "");
+  const eventSegment = safeSegment(eventId, "");
+  if (!tenantSegment || !companySegment || !eventSegment) return "";
+  return [
+    CHIRON_OFFICIAL_REF_SCHEMA,
+    "tenant",
+    tenantSegment,
+    "company",
+    companySegment,
+    "event",
+    eventSegment,
+  ].join("/");
+}
+
+function _chironDeriveOfficialIdempotencyKeyFromEvent(event) {
+  const tenantId = cleanText(event?.tenant_id, 128);
+  const companyId = cleanText(event?.company_id, 128);
+  const messageType = _chironAutoSubmitMessageTypeForEventType(event?.event_type);
+  const officialStatus = _chironExpectedOfficialStatusForMessageType(messageType);
+  const ritnummer = _chironResolveOfficialRitnummer(event, null);
+  const registratie = _chironResolveOfficialRegistratie(event);
+  if (!tenantId || !companyId || !officialStatus || !ritnummer || !registratie) {
+    return "";
+  }
+  return buildChironOfficialIdempotencyKey(
+    { tenant_id: tenantId, company_id: companyId },
+    registratie,
+    ritnummer,
+    officialStatus,
+  );
+}
+
+async function _chironPutOfficialCandidatePointer(
+  env,
+  event,
+  officialIdempotencyKey,
+  officialDoc,
+) {
+  const tenantId = cleanText(event?.tenant_id, 128);
+  const companyId = cleanText(event?.company_id, 128);
+  const eventId = cleanText(event?.event_id, 200);
+  const officialIdem = cleanText(officialIdempotencyKey, 256);
+  if (!env?.COMPLIANCE_KV || !tenantId || !companyId || !eventId || !officialIdem) {
+    return null;
+  }
+  const officialTenant = cleanText(officialDoc?.tenant_id, 128);
+  const officialCompany = cleanText(officialDoc?.company_id, 128);
+  if (officialTenant && safeSegment(officialTenant, "") !== safeSegment(tenantId, "")) {
+    return null;
+  }
+  if (officialCompany && safeSegment(officialCompany, "") !== safeSegment(companyId, "")) {
+    return null;
+  }
+  const refKey = buildChironOfficialEventRefKey(tenantId, companyId, eventId);
+  if (!refKey) return null;
+  await env.COMPLIANCE_KV.put(refKey, JSON.stringify({ v: 1, k: officialIdem }));
+  const candidateKey = _chironCandidateExportStatusKey(tenantId, companyId, event, null);
+  const existing = await _chironReadExportStatus(env, candidateKey);
+  const officialState = cleanText(officialDoc?.sync_state, 32).toLowerCase();
+  const officialIsTerminal =
+    officialDoc &&
+    typeof officialDoc === "object" &&
+    computeChironReconcileDueAtMs(
+      officialDoc,
+      Date.now(),
+      _chironDueAtComputeOptions(),
+    ) === null;
+  const next = {
+    schema_version: CHIRON_EXPORT_STATUS_SCHEMA,
+    tenant_id: tenantId,
+    company_id: companyId,
+    event_id: eventId,
+    trip_id: cleanText(event?.trip_id, 128) || existing?.trip_id || null,
+    booking_id: cleanText(event?.booking_id, 128) || existing?.booking_id || null,
+    official_idempotency_key: officialIdem,
+    official_ritnummer:
+      cleanText(officialDoc?.official_ritnummer, 256) ||
+      cleanText(existing?.official_ritnummer, 256) ||
+      null,
+    official_status:
+      cleanText(officialDoc?.official_status, 32) ||
+      cleanText(existing?.official_status, 32) ||
+      null,
+    official_payload_shape: "chiron_taxirit_api_v1",
+    sync_state: officialIsTerminal
+      ? officialState
+      : cleanText(existing?.sync_state, 32) || "pending_build",
+    reason_code: officialIsTerminal
+      ? null
+      : cleanText(existing?.reason_code, 96) || null,
+    failure_kind: existing?.failure_kind ?? null,
+    last_attempt_at: existing?.last_attempt_at || officialDoc?.last_attempt_at || null,
+    attempt_count: Number(existing?.attempt_count || 0),
+    auto_submit: true,
+    auto_submit_source: cleanText(existing?.auto_submit_source, 32) || null,
+    source_event_key:
+      cleanText(existing?.source_event_key, 1024) ||
+      _chironResolveDateIndexEventKey(event) ||
+      null,
+  };
+  await env.COMPLIANCE_KV.put(candidateKey, JSON.stringify(next));
+  return { refKey, candidateKey };
+}
+
+async function _chironRetireKnownDueMarkersForEvent(
+  env,
+  eventKey,
+  extraMarkerKeys,
+  statusDocs,
+  nowMs,
+) {
+  if (!env?.COMPLIANCE_KV) return 0;
+  const seen = new Set();
+  let retired = 0;
+  const retire = async (markerKey) => {
+    const key = cleanText(markerKey, 512);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    const ok = await retireChironDueMarker(env.COMPLIANCE_KV, key);
+    if (ok) retired += 1;
+  };
+  for (const extra of Array.isArray(extraMarkerKeys) ? extraMarkerKeys : []) {
+    await retire(extra);
+  }
+  const ek = cleanText(eventKey, 1024);
+  if (ek) {
+    await retire(await buildChironDueMarkerKey(0, ek));
+    for (const doc of Array.isArray(statusDocs) ? statusDocs : []) {
+      const dueAt = computeChironReconcileDueAtMs(
+        doc,
+        nowMs,
+        _chironDueAtComputeOptions(),
+      );
+      if (dueAt === null) continue;
+      await retire(await buildChironDueMarkerKey(dueAt, ek));
+    }
+  }
+  return retired;
+}
+
 function _chironCandidateExportStatusKey(tenantId, companyId, event, officialIdempotencyKey) {
   const tenantSegment = safeSegment(tenantId, "");
   const companySegment = safeSegment(companyId, "");
@@ -11779,6 +11936,7 @@ async function _chironPersistCandidateExportStatus(env, {
     event,
     eventKey: _chironResolveDateIndexEventKey(event),
     previousStatus: existing,
+    skipDueMarkers: syncState === "pending_build",
   });
   return { ok: written.ok === true, status_key: statusKey, doc };
 }
@@ -12376,6 +12534,33 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
           // Best-effort: counter repair never blocks the guard decision.
         }
       }
+      if (guard.decision === "already_synced" && officialIdempotencyKey) {
+        try {
+          await _chironPutOfficialCandidatePointer(
+            env,
+            event,
+            officialIdempotencyKey,
+            previousStatus,
+          );
+          const ek = _chironResolveDateIndexEventKey(event, eventKey);
+          const candidateLinked = await _chironReadExportStatus(
+            env,
+            _chironCandidateExportStatusKey(
+              cleanText(event?.tenant_id, 128),
+              cleanText(event?.company_id, 128),
+              event,
+              null,
+            ),
+          );
+          await _chironRetireKnownDueMarkersForEvent(
+            env,
+            ek,
+            [],
+            [candidateLinked, previousStatus],
+            Date.now(),
+          );
+        } catch (_) {}
+      }
       return {
         ok: false,
         skipped: true,
@@ -12774,13 +12959,38 @@ async function _chironReadBestExportStatusForEvent(env, event) {
     null,
   );
   const candidate = await _chironReadExportStatus(env, candidateKey);
-  const officialIdem = cleanText(candidate?.official_idempotency_key, 256);
+  let officialIdem = cleanText(candidate?.official_idempotency_key, 256);
+  if (!officialIdem) {
+    const eventId = cleanText(event?.event_id, 200);
+    const refKey = eventId
+      ? buildChironOfficialEventRefKey(tenantId, companyId, eventId)
+      : "";
+    if (refKey) {
+      const ref = await _chironReadExportStatus(env, refKey);
+      officialIdem = cleanText(ref?.k, 256);
+    }
+  }
+  if (!officialIdem) {
+    officialIdem = _chironDeriveOfficialIdempotencyKeyFromEvent(event);
+  }
   if (officialIdem) {
     const official = await _chironReadExportStatus(
       env,
       _chironCandidateExportStatusKey(tenantId, companyId, event, officialIdem),
     );
-    if (official) return official;
+    if (official) {
+      const officialTenant = cleanText(official.tenant_id, 128);
+      const officialCompany = cleanText(official.company_id, 128);
+      if (
+        officialTenant &&
+        officialCompany &&
+        (safeSegment(officialTenant, "") !== safeSegment(tenantId, "") ||
+          safeSegment(officialCompany, "") !== safeSegment(companyId, ""))
+      ) {
+        return candidate;
+      }
+      return official;
+    }
   }
   return candidate;
 }
@@ -12806,20 +13016,43 @@ async function _chironResolveDueCandidate(env, item, nowMs, expectedScope) {
     return { kind: "not_submittable" };
   }
   const status = await _chironReadBestExportStatusForEvent(env, event);
+  const candidate = await _chironReadExportStatus(
+    env,
+    _chironCandidateExportStatusKey(
+      cleanText(event.tenant_id, 128),
+      cleanText(event.company_id, 128),
+      event,
+      null,
+    ),
+  );
+  const officialIdem = cleanText(status?.official_idempotency_key, 256);
+  if (status && officialIdem && !cleanText(candidate?.official_idempotency_key, 256)) {
+    await _chironPutOfficialCandidatePointer(env, event, officialIdem, status);
+  }
   const dueAt = computeChironReconcileDueAtMs(
     status,
     nowMs,
     _chironDueAtComputeOptions(),
   );
   if (dueAt === null) {
-    if (markerKey) await retireChironDueMarker(env.COMPLIANCE_KV, markerKey);
+    await _chironRetireKnownDueMarkersForEvent(
+      env,
+      eventKey,
+      [markerKey],
+      [candidate, status],
+      nowMs,
+    );
     return { kind: "terminal", event, eventKey };
   }
   if (dueAt > nowMs) {
     const desired = await buildChironDueMarkerKey(dueAt, eventKey);
-    if (desired && desired !== markerKey) {
-      await armChironDueMarker(env.COMPLIANCE_KV, eventKey, dueAt);
-      if (markerKey) await retireChironDueMarker(env.COMPLIANCE_KV, markerKey);
+    await armChironDueMarker(env.COMPLIANCE_KV, eventKey, dueAt);
+    if (markerKey && markerKey !== desired) {
+      await retireChironDueMarker(env.COMPLIANCE_KV, markerKey);
+    }
+    const dueZero = await buildChironDueMarkerKey(0, eventKey);
+    if (dueZero && dueZero !== desired) {
+      await retireChironDueMarker(env.COMPLIANCE_KV, dueZero);
     }
     return { kind: "future" };
   }
@@ -13580,6 +13813,12 @@ export const __testInternals = {
   _chironConfirmDueMarkerAfterPersist,
   _chironAppendContextEntries,
   _chironDueAtComputeOptions,
+  _chironReadBestExportStatusForEvent,
+  _chironDeriveOfficialIdempotencyKeyFromEvent,
+  _chironPutOfficialCandidatePointer,
+  _chironRetireKnownDueMarkersForEvent,
+  _chironCandidateExportStatusKey,
+  buildChironOfficialEventRefKey,
   ChironDueIndexTestCrash,
   // CHIRON-COMPLIANCE-KV-COST-P0 read-count / isolation regressions only.
   _chironBuildScopePreload,
