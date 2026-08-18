@@ -54,13 +54,15 @@ enum _SetupStatus {
 /// Deep-link target for opening a specific settings section from external
 /// flows (e.g. Chiron readiness actions). Does not affect step-mode wizard
 /// navigation, which continues to use [BusinessSettingsPage.initialFocus].
-enum BusinessSettingsInitialSection { officialCompanyDetails }
+enum BusinessSettingsInitialSection { officialCompanyDetails, vatSettings }
 
 extension BusinessSettingsInitialSectionId on BusinessSettingsInitialSection {
   String get sectionId {
     switch (this) {
       case BusinessSettingsInitialSection.officialCompanyDetails:
         return 'official_company_details';
+      case BusinessSettingsInitialSection.vatSettings:
+        return 'vat_settings';
     }
   }
 }

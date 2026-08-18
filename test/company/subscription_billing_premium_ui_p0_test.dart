@@ -440,6 +440,14 @@ void main() {
         isTrue,
       );
       expect(billingSource.contains('Fiscale behandeling onbekend'), isTrue);
+      expect(
+        billingSource.contains('resolveCompanySubscriptionFiscalTreatment'),
+        isTrue,
+      );
+      expect(billingSource.contains('_confirmExtraVehiclePurchase'), isTrue);
+      expect(billingSource.contains('openVatSettingsActionLabel'), isTrue);
+      expect(billingSource.contains('extraVehicleCapacityLine'), isTrue);
+      expect(billingSource.contains('extraVehicleNewSubtotalLine'), isTrue);
     });
   });
 }

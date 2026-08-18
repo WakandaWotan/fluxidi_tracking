@@ -561,8 +561,177 @@ class _CompanySubscriptionBillingPageState
     );
   }
 
-  bool get _taxKnown =>
-      (_displayQuotes?.current?.taxTreatment.trim().isNotEmpty ?? false);
+  SubscriptionFiscalVerdict _fiscalVerdict({String productCode = ''}) {
+    final quotes = _displayQuotes;
+    var productTreatment = productCode.isEmpty
+        ? ''
+        : (quotes?.products[productCode]?.taxTreatment ?? '');
+    if (knownSubscriptionTaxTreatment(productTreatment) == null &&
+        quotes != null) {
+      for (final quote in quotes.products.values) {
+        if (knownSubscriptionTaxTreatment(quote.taxTreatment) != null) {
+          productTreatment = quote.taxTreatment;
+          break;
+        }
+      }
+    }
+    final business = localBackendBusinessProfileNotifier.value;
+    final company = companyProfileNotifier.value;
+    final tax = localBackendTaxProfileNotifier.value;
+    return resolveCompanySubscriptionFiscalTreatment(
+      quoteTaxTreatment: quotes?.current?.taxTreatment ?? '',
+      productQuoteTaxTreatment: productTreatment,
+      billingCountry: business?.country ?? '',
+      companyCountry: company?.countryCode ?? '',
+      vatNumber: resolveAuthoritativeVatNumber(
+        businessVatNumber: business?.vatNumber ?? '',
+        companyVatNumber: company?.vatNumber ?? '',
+      ),
+      vatEnabled: tax?.vatEnabled,
+    );
+  }
+
+  bool get _taxKnown => _fiscalVerdict().isKnown;
+
+  int _scopedVehicleUsageCount() {
+    return vehiclesNotifier.value
+        .where(
+          (vehicle) =>
+              fleetRecordBelongsToActiveCompanyOrLegacy(vehicle.companyId),
+        )
+        .length;
+  }
+
+  ExtraVehiclePurchasePreview _extraVehiclePurchasePreview(
+    BackendSubscriptionProfile profile,
+  ) {
+    final catalog = resolveSubscriptionCatalogEntryForMarket(
+      _effectiveMarket(profile),
+    );
+    final lockedCents = profile.lockedPriceCents;
+    return extraVehiclePurchasePreviewFromAuthoritative(
+      usedVehicles: _scopedVehicleUsageCount(),
+      capacity: profile.maxVehicles > 0 ? profile.maxVehicles : 1,
+      catalogExtraVehicleExclCents: catalog.extraVehiclePriceCents,
+      profileRecurringAmountCents: profile.recurringAmountCents,
+      quoteRecurringExclVatCents: _displayQuotes?.current?.recurringExclVatCents,
+      baseExclCents: lockedCents ?? catalog.normalPriceCents,
+      extraDriverUnitExclCents: catalog.extraDriverPriceCents,
+      extraVehicleActiveQuantity: _extraVehicleActiveQuantity(profile),
+      extraDriverActiveQuantity: _extraDriverActiveQuantity(profile),
+    );
+  }
+
+  Future<void> _openVatSettings() async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const BusinessSettingsPage(
+          initialSection: BusinessSettingsInitialSection.vatSettings,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showFiscalBlocked(SubscriptionFiscalVerdict verdict) async {
+    if (!mounted) return;
+    final language = currentLanguageCode;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          _t(
+            nl: 'Checkout geblokkeerd',
+            en: 'Checkout blocked',
+            fr: 'Paiement bloqué',
+            es: 'Pago bloqueado',
+          ),
+        ),
+        content: Text(
+          subscriptionFiscalBlockedMessage(
+            languageCode: language,
+            missingFields: verdict.missingFields,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text(
+              _t(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar'),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              unawaited(_openVatSettings());
+            },
+            child: Text(openVatSettingsActionLabel(language)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool?> _confirmExtraVehiclePurchase({
+    required BackendSubscriptionProfile profile,
+    required SubscriptionCheckoutQuote quote,
+  }) {
+    final preview = _extraVehiclePurchasePreview(profile);
+    final language = currentLanguageCode;
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(extraVehicleConfirmActionLabel(language)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(extraVehicleCapacityLine(languageCode: language, preview: preview)),
+            const SizedBox(height: 6),
+            Text(
+              extraVehicleAdditionalSlotLine(
+                languageCode: language,
+                preview: preview,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              extraVehicleUnitPriceLine(languageCode: language, preview: preview),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              extraVehicleNewSubtotalLine(
+                languageCode: language,
+                preview: preview,
+              ),
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 10),
+            Text(_quoteLineLabel(
+              quote.lineItems.isEmpty
+                  ? SubscriptionQuoteLineItem(
+                      code: 'extra_vehicle',
+                      quantity: 1,
+                      unitExclVatCents: preview.unitExclCents,
+                      subtotalExclVatCents: preview.unitExclCents,
+                    )
+                  : quote.lineItems.first,
+            )),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(extraVehicleCancelActionLabel(language)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(extraVehicleConfirmActionLabel(language)),
+          ),
+        ],
+      ),
+    );
+  }
 
   String _vatBreakdown({
     required int? excl,
@@ -1113,8 +1282,9 @@ class _CompanySubscriptionBillingPageState
       return;
     }
 
-    if (!_taxKnown) {
-      _showSnack(_unknownTaxMessage());
+    final fiscal = _fiscalVerdict(productCode: 'extra_vehicle');
+    if (fiscal.isBlocked) {
+      await _showFiscalBlocked(fiscal);
       return;
     }
     setState(() => _startingAddonCheckout = true);
@@ -1131,7 +1301,11 @@ class _CompanySubscriptionBillingPageState
         _showSnack(_quoteUnavailableMessage());
         return;
       }
-      if (await _confirmCheckoutQuote(quote) != true || !mounted) return;
+      if (await _confirmExtraVehiclePurchase(profile: profile, quote: quote) !=
+              true ||
+          !mounted) {
+        return;
+      }
       final result = await startCompanySubscriptionAddonCheckout(
         tenantId: scopeId,
         companyId: scopeId,
@@ -1211,8 +1385,9 @@ class _CompanySubscriptionBillingPageState
       return;
     }
 
-    if (!_taxKnown) {
-      _showSnack(_unknownTaxMessage());
+    final fiscal = _fiscalVerdict(productCode: 'extra_driver');
+    if (fiscal.isBlocked) {
+      await _showFiscalBlocked(fiscal);
       return;
     }
     setState(() => _startingExtraDriverAddonCheckout = true);
@@ -2243,8 +2418,9 @@ class _CompanySubscriptionBillingPageState
       return;
     }
 
-    if (!_taxKnown) {
-      _showSnack(_unknownTaxMessage());
+    final fiscal = _fiscalVerdict(productCode: _pdfBundleAddonCode(pdfs));
+    if (fiscal.isBlocked) {
+      await _showFiscalBlocked(fiscal);
       return;
     }
     setState(() => _setPdfBundleStarting(pdfs, true));

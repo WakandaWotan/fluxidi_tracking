@@ -8,7 +8,12 @@ import 'package:flutter/material.dart';
 import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/company/company_fleet_operational.dart';
+import 'package:fluxidi_tracking/company/extra_vehicle_addon_purchase.dart';
+import 'package:fluxidi_tracking/company/fluxidi_play_distribution.dart';
+import 'package:fluxidi_tracking/company/subscription_fiscal_treatment.dart';
+import 'package:fluxidi_tracking/business_settings_page.dart';
 import 'package:fluxidi_tracking/driver_creator_dialog.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:fluxidi_tracking/business_theme/brand_signature_palette.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
@@ -430,19 +435,39 @@ class VehicleManagementPage extends StatefulWidget {
   State<VehicleManagementPage> createState() => _VehicleManagementPageState();
 }
 
-class _VehicleManagementPageState extends State<VehicleManagementPage> {
+class _VehicleManagementPageState extends State<VehicleManagementPage>
+    with WidgetsBindingObserver {
   final ImagePicker _imagePicker = ImagePicker();
   static const int _maxPhotosPerVehicle = 5;
   bool _vehicleDocumentsLoaded = false;
   bool _didAutoOpenNewVehicleEditor = false;
+  bool _startingExtraVehiclePurchase = false;
+  bool _awaitingExtraVehicleActivation = false;
+  int _capacityBeforeExtraVehiclePurchase = 0;
+  ExtraVehiclePurchaseSession? _extraVehiclePurchaseSession;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_ensureVehicleDocumentsLoaded(refreshUi: true));
       unawaited(_maybeAutoOpenNewVehicleEditor());
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        _awaitingExtraVehicleActivation) {
+      unawaited(_completeExtraVehicleActivationIfReady());
+    }
   }
 
   Future<void> _maybeAutoOpenNewVehicleEditor() async {
@@ -1874,6 +1899,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
 
     int effectiveMax = includedVehicleLimit > 0 ? includedVehicleLimit : 1;
     String limitSource = 'fallback';
+    BackendSubscriptionProfile? liveProfile;
 
     final scopeId = _activeCompanyIdForFleetUi();
     if (scopeId != null && scopeId.trim().isNotEmpty) {
@@ -1882,6 +1908,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
           tenantId: scopeId,
           companyId: scopeId,
         );
+        liveProfile = profile;
         if (profile.maxVehicles > 0) {
           effectiveMax = profile.maxVehicles;
           limitSource = 'profile.maxVehicles';
@@ -1914,27 +1941,105 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     );
 
     if (scopedCount < effectiveMax) return true;
-
     if (!mounted) return false;
-    await showDialog<void>(
+    if (liveProfile == null || scopeId == null || scopeId.trim().isEmpty) {
+      return false;
+    }
+    return _purchaseExtraVehicleSlotThenAllowCreate(
+      profile: liveProfile,
+      scopeId: scopeId,
+      usedVehicles: scopedCount,
+      capacity: effectiveMax,
+    );
+  }
+
+  SubscriptionFiscalVerdict _vehicleFiscalVerdict({
+    SubscriptionDisplayQuotes? quotes,
+  }) {
+    var productTreatment = quotes?.products['extra_vehicle']?.taxTreatment ?? '';
+    if (knownSubscriptionTaxTreatment(productTreatment) == null &&
+        quotes != null) {
+      for (final quote in quotes.products.values) {
+        if (knownSubscriptionTaxTreatment(quote.taxTreatment) != null) {
+          productTreatment = quote.taxTreatment;
+          break;
+        }
+      }
+    }
+    final business = localBackendBusinessProfileNotifier.value;
+    final company = companyProfileNotifier.value;
+    final tax = localBackendTaxProfileNotifier.value;
+    return resolveCompanySubscriptionFiscalTreatment(
+      quoteTaxTreatment: quotes?.current?.taxTreatment ?? '',
+      productQuoteTaxTreatment: productTreatment,
+      billingCountry: business?.country ?? '',
+      companyCountry: company?.countryCode ?? '',
+      vatNumber: resolveAuthoritativeVatNumber(
+        businessVatNumber: business?.vatNumber ?? '',
+        companyVatNumber: company?.vatNumber ?? '',
+      ),
+      vatEnabled: tax?.vatEnabled,
+    );
+  }
+
+  ExtraVehiclePurchasePreview _vehicleExtraVehiclePreview(
+    BackendSubscriptionProfile profile, {
+    required int usedVehicles,
+    required int capacity,
+  }) {
+    final catalog = resolveSubscriptionCatalogEntryForMarket(
+      profile.market.trim().isNotEmpty
+          ? profile.market
+          : resolveActiveCompanyPricingMarket(),
+    );
+    var vehicleQty = profile.extraVehicleActiveQuantity;
+    if (vehicleQty <= 0) {
+      final derived = profile.maxVehicles - profile.includedVehicles;
+      vehicleQty = derived > 0 ? derived : 0;
+    }
+    return extraVehiclePurchasePreviewFromAuthoritative(
+      usedVehicles: usedVehicles,
+      capacity: capacity,
+      catalogExtraVehicleExclCents: catalog.extraVehiclePriceCents,
+      profileRecurringAmountCents: profile.recurringAmountCents,
+      baseExclCents: profile.lockedPriceCents ?? catalog.normalPriceCents,
+      extraDriverUnitExclCents: catalog.extraDriverPriceCents,
+      extraVehicleActiveQuantity: vehicleQty,
+      extraDriverActiveQuantity: profile.extraDriverActiveQuantity,
+    );
+  }
+
+  Future<void> _openVatSettingsFromVehicleGate() async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const BusinessSettingsPage(
+          initialSection: BusinessSettingsInitialSection.vatSettings,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showVehicleFiscalBlocked(SubscriptionFiscalVerdict verdict) {
+    final language = currentLanguageCode;
+    return showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: _sheetBg,
         title: Text(
           _t(
-            nl: 'Voertuiglimiet bereikt',
-            en: 'Vehicle limit reached',
-            fr: 'Limite de véhicules atteinte',
-            es: 'Límite de vehículos alcanzado',
+            nl: 'Checkout geblokkeerd',
+            en: 'Checkout blocked',
+            fr: 'Paiement bloqué',
+            es: 'Pago bloqueado',
           ),
         ),
         content: Text(
-          _t(
-            nl: 'Je huidige limiet is $effectiveMax voertuigen.\nVoeg eerst een extra voertuigslot toe via Abonnement & facturatie.',
-            en: 'Your current limit is $effectiveMax vehicles.\nAdd an extra vehicle slot first via Subscription & billing.',
-            fr: 'Votre limite actuelle est de $effectiveMax véhicules.\nAjoutez d’abord un emplacement de véhicule via Abonnement et facturation.',
-            es: 'Tu límite actual es de $effectiveMax vehículos.\nAgrega primero una plaza de vehículo en Suscripción y facturación.',
+          subscriptionFiscalBlockedMessage(
+            languageCode: language,
+            missingFields: verdict.missingFields,
           ),
+          style: TextStyle(color: _textSecondary),
         ),
         actions: [
           TextButton(
@@ -1944,10 +2049,278 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
               _t(nl: 'Sluiten', en: 'Close', fr: 'Fermer', es: 'Cerrar'),
             ),
           ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              unawaited(_openVatSettingsFromVehicleGate());
+            },
+            style: TextButton.styleFrom(foregroundColor: _gold),
+            child: Text(openVatSettingsActionLabel(language)),
+          ),
         ],
       ),
     );
-    return false;
+  }
+
+  Future<bool> _confirmExtraVehiclePurchaseDialog(
+    ExtraVehiclePurchasePreview preview,
+  ) async {
+    final language = currentLanguageCode;
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _sheetBg,
+        title: Text(extraVehicleConfirmActionLabel(language)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(extraVehicleCapacityLine(languageCode: language, preview: preview)),
+            const SizedBox(height: 6),
+            Text(
+              extraVehicleAdditionalSlotLine(
+                languageCode: language,
+                preview: preview,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              extraVehicleUnitPriceLine(languageCode: language, preview: preview),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              extraVehicleNewSubtotalLine(
+                languageCode: language,
+                preview: preview,
+              ),
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            style: TextButton.styleFrom(foregroundColor: _textSecondary),
+            child: Text(extraVehicleCancelActionLabel(language)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: _gold),
+            child: Text(extraVehicleConfirmActionLabel(language)),
+          ),
+        ],
+      ),
+    );
+    return accepted == true;
+  }
+
+  Future<bool> _purchaseExtraVehicleSlotThenAllowCreate({
+    required BackendSubscriptionProfile profile,
+    required String scopeId,
+    required int usedVehicles,
+    required int capacity,
+  }) async {
+    if (!kFluxidiCompanySaasCheckoutEnabled) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              fluxidiPlaySaasManagedOutsideMessage(
+                languageCode: currentLanguageCode,
+              ),
+            ),
+          ),
+        );
+      }
+      return false;
+    }
+    if (_startingExtraVehiclePurchase || _awaitingExtraVehicleActivation) {
+      return false;
+    }
+
+    final quotes = await fetchCompanySubscriptionDisplayQuotes(
+      tenantId: scopeId,
+      companyId: scopeId,
+    );
+    if (!mounted) return false;
+    final fiscal = _vehicleFiscalVerdict(quotes: quotes);
+    final session = ExtraVehiclePurchaseSession(
+      startingCapacity: capacity,
+      fiscal: fiscal,
+    );
+    _extraVehiclePurchaseSession = session;
+    if (session.beginConfirmation() == ExtraVehiclePurchasePhase.blockedFiscal) {
+      await _showVehicleFiscalBlocked(fiscal);
+      return false;
+    }
+
+    final preview = _vehicleExtraVehiclePreview(
+      profile,
+      usedVehicles: usedVehicles,
+      capacity: capacity,
+    );
+    final confirmed = await _confirmExtraVehiclePurchaseDialog(preview);
+    if (!confirmed) {
+      session.cancelConfirmation();
+      return false;
+    }
+    if (!session.acceptConfirmation()) return false;
+    if (!mounted) return false;
+
+    _startingExtraVehiclePurchase = true;
+    _capacityBeforeExtraVehiclePurchase = capacity;
+    try {
+      final quote =
+          quotes?.products['extra_vehicle'] ??
+          await fetchCompanySubscriptionCheckoutQuote(
+            tenantId: scopeId,
+            companyId: scopeId,
+            addonCode: 'extra_vehicle',
+          );
+      if (!mounted) return false;
+      if (quote == null || quote.mollieAmountCents == null) {
+        session.markUpstreamFailure();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Prijsopgave niet beschikbaar. Probeer later opnieuw.',
+                en: 'Checkout quote unavailable. Please try again later.',
+                fr: 'Devis indisponible. Réessayez plus tard.',
+                es: 'Presupuesto no disponible. Inténtalo más tarde.',
+              ),
+            ),
+          ),
+        );
+        return false;
+      }
+      final result = await startCompanySubscriptionAddonCheckout(
+        tenantId: scopeId,
+        companyId: scopeId,
+        addonCode: 'extra_vehicle',
+        quantity: 1,
+        quoteId: quote.quoteId,
+        returnUrl:
+            '${appConfig.bookingBaseUrl}/company/subscription/add-ons/checkout/return',
+      );
+      if (!mounted) return false;
+      if (!result.ok) {
+        session.markUpstreamFailure();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Activeren is niet gelukt. Controleer je verbinding en probeer opnieuw.',
+                en: 'Activation failed. Check your connection and try again.',
+                fr: 'Échec de l’activation. Vérifiez votre connexion et réessayez.',
+                es: 'Error en la activación. Comprueba tu conexión e inténtalo de nuevo.',
+              ),
+            ),
+          ),
+        );
+        return false;
+      }
+      final url = result.checkoutUrl.trim();
+      final uri = Uri.tryParse(url);
+      if (url.isEmpty || uri == null || !uri.isScheme('https')) {
+        session.markUpstreamFailure();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Activeren is niet gelukt. Controleer je verbinding en probeer opnieuw.',
+                en: 'Activation failed. Check your connection and try again.',
+                fr: 'Échec de l’activation. Vérifiez votre connexion et réessayez.',
+                es: 'Error en la activación. Comprueba tu conexión e inténtalo de nuevo.',
+              ),
+            ),
+          ),
+        );
+        return false;
+      }
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!mounted) return false;
+      if (!launched) {
+        session.markUpstreamFailure();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Kon het betaalvenster niet openen.',
+                en: 'Could not open the payment window.',
+                fr: 'Impossible d’ouvrir la fenêtre de paiement.',
+                es: 'No se pudo abrir la ventana de pago.',
+              ),
+            ),
+          ),
+        );
+        return false;
+      }
+      session.markAwaitingPayment();
+      _awaitingExtraVehicleActivation = true;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              nl: 'Betaalvenster geopend. Na betaling wordt je add-on automatisch bijgewerkt.',
+              en: 'Payment window opened. After payment, your add-on will update automatically.',
+              fr: 'Fenêtre de paiement ouverte. Après le paiement, votre option sera mise à jour automatiquement.',
+              es: 'Ventana de pago abierta. Después del pago, tu complemento se actualizará automáticamente.',
+            ),
+          ),
+        ),
+      );
+      return false;
+    } catch (_) {
+      session.markUpstreamFailure();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _t(
+                nl: 'Er ging iets mis. Probeer opnieuw.',
+                en: 'Something went wrong. Please try again.',
+                fr: 'Une erreur est survenue. Veuillez réessayer.',
+                es: 'Algo salió mal. Inténtalo de nuevo.',
+              ),
+            ),
+          ),
+        );
+      }
+      return false;
+    } finally {
+      if (mounted) setState(() => _startingExtraVehiclePurchase = false);
+    }
+  }
+
+  Future<void> _completeExtraVehicleActivationIfReady() async {
+    if (!_awaitingExtraVehicleActivation) return;
+    final scopeId = _activeCompanyIdForFleetUi();
+    if (scopeId == null || scopeId.trim().isEmpty) return;
+    try {
+      final profile = await fetchCompanySubscriptionProfile(
+        tenantId: scopeId,
+        companyId: scopeId,
+      );
+      final nextCapacity = profile.maxVehicles > 0
+          ? profile.maxVehicles
+          : _capacityBeforeExtraVehiclePurchase;
+      if (nextCapacity <= _capacityBeforeExtraVehiclePurchase) {
+        return;
+      }
+      _awaitingExtraVehicleActivation = false;
+      _extraVehiclePurchaseSession?.markActivated(newCapacity: nextCapacity);
+      if (!mounted) return;
+      if (_extraVehiclePurchaseSession?.mayOpenVehicleCreateForm != true) {
+        return;
+      }
+      await _openVehicleEditor();
+    } catch (_) {
+      // Leave capacity and vehicles unchanged; the user can retry.
+    }
   }
 
   /// Gate for the "add driver" action (Patch 2.7).
