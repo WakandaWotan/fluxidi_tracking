@@ -1,5 +1,6 @@
-// LIMOUSINE-MARKETPLACE-P2D4C1E — discovery search over GET /partners/nearby.
+// LIMOUSINE-MARKETPLACE-P2D4C1F — discovery search over GET /partners/nearby.
 // Preserves server order. Never calls /book or quote-create.
+// Unscoped search is the default recommended listing; region/GPS refine it.
 
 import 'dart:async';
 import 'dart:convert';
@@ -92,9 +93,6 @@ class HttpLimousineDiscoveryGateway implements LimousineDiscoveryGateway {
   Future<LimousineDiscoveryPageData> search(
     LimousineDiscoveryQuery query,
   ) async {
-    if (!query.isUsable) {
-      return const LimousineDiscoveryPageData();
-    }
     final parameters = <String, String>{'service': 'limousine'};
     final postcode = (query.postcode ?? '').trim();
     if (postcode.isNotEmpty) {
@@ -120,7 +118,10 @@ class HttpLimousineDiscoveryGateway implements LimousineDiscoveryGateway {
       final cards = raw is List
           ? limousineDiscoveryCardsFromNearbyPartners(raw)
           : const <LimousineDiscoveryCard>[];
-      return LimousineDiscoveryPageData(cards: cards);
+      return LimousineDiscoveryPageData(
+        cards: cards,
+        listingMode: (body['limousine_listing_mode'] ?? '').toString(),
+      );
     } catch (_) {
       return const LimousineDiscoveryPageData(networkError: true);
     }
@@ -172,6 +173,11 @@ class LimousineDiscoveryController extends ChangeNotifier {
   int suppressedSearchTaps = 0;
   int searchStarts = 0;
   LimousineDiscoveryQuery? lastQuery;
+  String listingMode = '';
+
+  bool get showsTestEnvironment =>
+      listingMode.trim().toLowerCase() == 'test_preview' ||
+      cards.any((card) => card.testPreview);
 
   bool get isSearching => phase == LimousineDiscoveryPhase.loading;
 
@@ -192,34 +198,38 @@ class LimousineDiscoveryController extends ChangeNotifier {
       suppressedSearchTaps += 1;
       return;
     }
-    if (query == null || !query.isUsable) {
-      phase = LimousineDiscoveryPhase.needPlace;
-      cards = const <LimousineDiscoveryCard>[];
-      notifyListeners();
-      return;
-    }
+    final resolved = query ?? const LimousineDiscoveryQuery();
     searchStarts += 1;
-    lastQuery = query;
+    lastQuery = resolved;
+    listingMode = '';
     phase = LimousineDiscoveryPhase.loading;
     cards = const <LimousineDiscoveryCard>[];
     profileUnavailablePartnerId = '';
     notifyListeners();
     try {
       final result = await _gateway
-          .search(query)
+          .search(resolved)
           .timeout(const Duration(seconds: 12));
-      if (result.gatesOff) {
-        phase = LimousineDiscoveryPhase.gatesOff;
-        cards = const <LimousineDiscoveryCard>[];
-      } else if (result.networkError) {
+      listingMode = result.listingMode;
+      if (result.networkError) {
         phase = LimousineDiscoveryPhase.network;
+        cards = const <LimousineDiscoveryCard>[];
+      } else if (result.gatesOff ||
+          (result.cards.isEmpty &&
+              resolved.isUnscoped &&
+              (result.isTestPreview || result.listingMode == 'test_preview'))) {
+        phase = LimousineDiscoveryPhase.gatesOff;
         cards = const <LimousineDiscoveryCard>[];
       } else if (result.cards.isEmpty) {
         phase = LimousineDiscoveryPhase.empty;
         cards = const <LimousineDiscoveryCard>[];
       } else {
         phase = LimousineDiscoveryPhase.ready;
-        cards = List<LimousineDiscoveryCard>.from(result.cards);
+        cards = resolved.isUnscoped
+            ? result.cards
+                  .map((card) => card.copyWith(clearDistance: true))
+                  .toList(growable: false)
+            : List<LimousineDiscoveryCard>.from(result.cards);
       }
     } on TimeoutException {
       phase = LimousineDiscoveryPhase.network;
@@ -228,11 +238,8 @@ class LimousineDiscoveryController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void searchAnotherRegion() {
-    phase = LimousineDiscoveryPhase.idle;
-    cards = const <LimousineDiscoveryCard>[];
-    profileUnavailablePartnerId = '';
-    notifyListeners();
+  Future<void> searchAnotherRegion() {
+    return search(const LimousineDiscoveryQuery());
   }
 
   Future<Map<String, dynamic>?> openConfirmedPublicProfile(

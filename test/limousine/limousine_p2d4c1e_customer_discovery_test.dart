@@ -192,6 +192,7 @@ LimousineCustomerDiscoveryPage _page({
     currentLocationPlatform: harness.platform,
     onOpenPartner: onOpenPartner,
     customerHomeBuilder: (_) => const SizedBox.shrink(),
+    autoLoadRecommended: false,
   );
 }
 
@@ -676,9 +677,9 @@ void main() {
       findsOneWidget,
     );
     _press(tester, kLimousineDiscoverySearchOtherRegionKey);
-    await tester.pump();
-    expect(find.byKey(kLimousineDiscoveryGatesOffKey), findsNothing);
-    expect(gateway.searchCalls, 1);
+    await tester.pumpAndSettle();
+    expect(gateway.searchCalls, 2);
+    expect(gateway.lastQuery?.isUnscoped, isTrue);
   });
 
   testWidgets(

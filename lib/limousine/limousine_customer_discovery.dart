@@ -1,4 +1,4 @@
-// LIMOUSINE-MARKETPLACE-P2D4C1E — customer discovery listing rules.
+// LIMOUSINE-MARKETPLACE-P2D4C1F — customer discovery listing rules.
 // Fail closed on the committed public nearby/profile projection.
 // Never infer eligibility from names, drafts, preview state or private bases.
 
@@ -60,6 +60,12 @@ const Key kLimousineDiscoveryOpeningKey = ValueKey<String>(
 const Key kLimousineDiscoveryProfileUnavailableKey = ValueKey<String>(
   'limousine_discovery_profile_unavailable',
 );
+const Key kLimousineDiscoveryRecommendedKey = ValueKey<String>(
+  'limousine_discovery_recommended',
+);
+const Key kLimousineDiscoveryTestEnvironmentKey = ValueKey<String>(
+  'limousine_discovery_test_environment',
+);
 
 Key limousineDiscoveryCardKey(String partnerId) =>
     ValueKey<String>('limousine_discovery_card_$partnerId');
@@ -70,29 +76,25 @@ Key limousineDiscoveryOffersCtaKey(String partnerId) =>
 Key limousineDiscoveryProfileCtaKey(String partnerId) =>
     ValueKey<String>('limousine_discovery_profile_$partnerId');
 
-/// Smallest Worker seam still missing on the committed nearby/profile persist
-/// path. This phase does not patch a Worker.
-const String kLimousineDiscoveryMissingWorkerContract = '''
-GET /partners/nearby currently ignores service=limousine, sorts by public
-coverage geometry, and returns partner_id, company_name, is_active,
-subscription_status, supported_postcodes, optional distance_km, hero/logo
-and services[]. It does not persist or return:
-
-1. Honor service=limousine server-side (exclude taxi-only partners).
-2. limousine_available (bool) = published partner + limousine capability
-   + ≥1 active vehicle with service_category=limousine
-   + ≥1 published limousine offer or enabled quote_required.
-3. limousine_vehicles[] (max 2): safe photo_url, service_class_id,
-   passenger_capacity, luggage_capacity — no plate, driver or private base.
-4. limousine_price_presentation: quote_required | from_price | exact_fixed
-   plus display_amount_cents/currency only when authoritative.
-5. Safe public_city or service_region.
-6. trust.verified_partner on nearby (already on GET /partners/profile).
-7. Persist service_category on public vehicles.
-8. Project limousine_offers onto GET /partners/profile.
-
+/// P2D4C1F server contract consumed by discovery. Lives on the isolated
+/// Worker branch; Flutter never invents these fields locally.
+const String kLimousineDiscoveryWorkerContract = '''
+GET /partners/nearby?service=limousine
+- Unscoped (no postcode/lat/lng) returns allowlisted test-preview companies.
+- Region or lat/lng refines the same bounded listing.
+- Same three loaders: directory, profiles, booking-routes (max 6 KV gets).
+- Fields: limousine_available, public_city/service_region,
+  trust.verified_partner, limousine_vehicles[<=2] with
+  service_category=limousine, limousine_price_presentation,
+  optional display_amount_cents/currency,
+  optional distance_km only for geo queries, test_preview,
+  limousine_listing_mode=test_preview.
+GET /partners/profile projects published limousine_offers when allowlisted.
 Do not calculate proximity from private operating-base coordinates.
 ''';
+
+const String kLimousineDiscoveryMissingWorkerContract =
+    kLimousineDiscoveryWorkerContract;
 
 enum LimousineDiscoveryPriceKind { none, quoteRequired, fromPrice, exactFixed }
 
@@ -138,6 +140,7 @@ class LimousineDiscoveryCard {
     this.price = const LimousineDiscoveryPrice(
       kind: LimousineDiscoveryPriceKind.none,
     ),
+    this.testPreview = false,
   });
 
   final String publicPartnerId;
@@ -149,6 +152,25 @@ class LimousineDiscoveryCard {
   final double? distanceKm;
   final List<LimousineDiscoveryVehicleThumb> vehicles;
   final LimousineDiscoveryPrice price;
+  final bool testPreview;
+
+  LimousineDiscoveryCard copyWith({
+    double? distanceKm,
+    bool clearDistance = false,
+  }) {
+    return LimousineDiscoveryCard(
+      publicPartnerId: publicPartnerId,
+      companyName: companyName,
+      coverImageUrl: coverImageUrl,
+      logoUrl: logoUrl,
+      verifiedPartner: verifiedPartner,
+      publicCity: publicCity,
+      distanceKm: clearDistance ? null : (distanceKm ?? this.distanceKm),
+      vehicles: vehicles,
+      price: price,
+      testPreview: testPreview,
+    );
+  }
 }
 
 class LimousineDiscoveryQuery {
@@ -158,10 +180,12 @@ class LimousineDiscoveryQuery {
   final double? lat;
   final double? lng;
 
-  bool get isUsable {
+  bool get isUnscoped {
     final code = (postcode ?? '').trim();
-    return code.isNotEmpty || (lat != null && lng != null);
+    return code.isEmpty && lat == null && lng == null;
   }
+
+  bool get isUsable => true;
 }
 
 class LimousineDiscoveryPageData {
@@ -169,11 +193,17 @@ class LimousineDiscoveryPageData {
     this.cards = const <LimousineDiscoveryCard>[],
     this.gatesOff = false,
     this.networkError = false,
+    this.listingMode = '',
   });
 
   final List<LimousineDiscoveryCard> cards;
   final bool gatesOff;
   final bool networkError;
+  final String listingMode;
+
+  bool get isTestPreview =>
+      listingMode.trim().toLowerCase() == 'test_preview' ||
+      cards.any((card) => card.testPreview);
 }
 
 final RegExp _postcodePattern = RegExp(r'(?:^|\D)(\d{4})(?:\D|$)');
@@ -201,7 +231,7 @@ LimousineDiscoveryQuery? limousineDiscoveryQueryFromAddress({
   if (postcode != null) {
     return LimousineDiscoveryQuery(postcode: postcode);
   }
-  return null;
+  return const LimousineDiscoveryQuery();
 }
 
 bool limousineDiscoveryResponseIsGatesOff(
@@ -341,6 +371,9 @@ bool _hasAuthoritativeLimousineOffer(Map<String, dynamic> partner) {
         partner['limousinePricePresentation'],
   );
   if (partnerPresentation == LimousinePricePresentation.quoteRequired ||
+      partnerPresentation == LimousinePricePresentation.fromPrice ||
+      partnerPresentation == LimousinePricePresentation.exactFixed ||
+      partnerPresentation == LimousinePricePresentation.indicative ||
       looksTruthyPublicFlag(partner['price_on_request']) ||
       looksTruthyPublicFlag(partner['quote_required'])) {
     return true;
@@ -438,6 +471,7 @@ LimousineDiscoveryCard? tryParseLimousineDiscoveryCard(
     distanceKm: _authoritativeDistanceKm(partner),
     vehicles: _publicLimousineThumbs(partner),
     price: _authoritativePrice(partner),
+    testPreview: partner['test_preview'] == true,
   );
 }
 

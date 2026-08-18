@@ -8,10 +8,10 @@ const LocalizedText kLimousineDiscoveryTitle = LocalizedText(
 );
 
 const LocalizedText kLimousineDiscoverySubtitle = LocalizedText(
-  nl: 'Kies een regio. Wij tonen alleen openbare limousinebedrijven die daar effectief rijden.',
-  en: 'Choose a region. We only show public limousine companies that actually serve that area.',
-  fr: 'Choisissez une région. Nous n’affichons que des compagnies de limousine publiques qui y circulent réellement.',
-  es: 'Elija una región. Solo mostramos empresas públicas de limusina que realmente prestan servicio allí.',
+  nl: 'Bekijk aanbevolen limousinebedrijven. Een regio of uw locatie verfijnt de resultaten.',
+  en: 'See recommended limousine companies. A region or your location refines the results.',
+  fr: 'Découvrez les compagnies de limousine recommandées. Une région ou votre position affine les résultats.',
+  es: 'Vea empresas de limusina recomendadas. Una región o su ubicación refina los resultados.',
 );
 
 const LocalizedText kLimousineDiscoverySearchLabel = LocalizedText(
@@ -26,6 +26,13 @@ const LocalizedText kLimousineDiscoverySearchAction = LocalizedText(
   en: 'Search',
   fr: 'Rechercher',
   es: 'Buscar',
+);
+
+const LocalizedText kLimousineDiscoveryRecommended = LocalizedText(
+  nl: 'Aanbevolen limousinebedrijven',
+  en: 'Recommended limousine companies',
+  fr: 'Compagnies de limousine recommandées',
+  es: 'Empresas de limusina recomendadas',
 );
 
 const LocalizedText kLimousineDiscoverySearchOtherRegion = LocalizedText(

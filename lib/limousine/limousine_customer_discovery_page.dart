@@ -1,4 +1,5 @@
-// LIMOUSINE-MARKETPLACE-P2D4C1E — customer marketplace discovery page.
+// LIMOUSINE-MARKETPLACE-P2D4C1F — customer marketplace discovery page.
+// Loads recommended limousine companies without requiring a region or GPS.
 // Opens the existing public partner profile only after a server-confirmed
 // Limousine surface. Does not start the request wizard or call /book.
 
@@ -34,6 +35,7 @@ void openLimousineCustomerDiscovery(
   LimousinePlaceLookup? placeLookup,
   LimousineCurrentLocationPlatform? currentLocationPlatform,
   LimousineDiscoveryOpenPartner? onOpenPartner,
+  bool autoLoadRecommended = true,
 }) {
   Navigator.of(context).push(
     MaterialPageRoute<void>(
@@ -43,6 +45,7 @@ void openLimousineCustomerDiscovery(
         placeLookup: placeLookup,
         currentLocationPlatform: currentLocationPlatform,
         onOpenPartner: onOpenPartner,
+        autoLoadRecommended: autoLoadRecommended,
       ),
     ),
   );
@@ -57,6 +60,7 @@ class LimousineCustomerDiscoveryPage extends StatefulWidget {
     this.placeLookup,
     this.currentLocationPlatform,
     this.onOpenPartner,
+    this.autoLoadRecommended = true,
   });
 
   final WidgetBuilder? customerHomeBuilder;
@@ -65,6 +69,7 @@ class LimousineCustomerDiscoveryPage extends StatefulWidget {
   final LimousinePlaceLookup? placeLookup;
   final LimousineCurrentLocationPlatform? currentLocationPlatform;
   final LimousineDiscoveryOpenPartner? onOpenPartner;
+  final bool autoLoadRecommended;
 
   @override
   State<LimousineCustomerDiscoveryPage> createState() =>
@@ -108,6 +113,13 @@ class _LimousineCustomerDiscoveryPageState
     );
     _place.addListener(_onPlaceChanged);
     _controller.addListener(_onControllerChanged);
+    if (widget.autoLoadRecommended) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (_controller.phase != LimousineDiscoveryPhase.idle) return;
+        unawaited(_controller.search(const LimousineDiscoveryQuery()));
+      });
+    }
   }
 
   @override
@@ -263,6 +275,7 @@ class _LimousineCustomerDiscoveryPageState
                                       ),
                                     ),
                                     const SizedBox(height: 20),
+                                    _listingChrome(tokens),
                                     _body(tokens, constraints),
                                   ],
                                 ),
@@ -367,6 +380,62 @@ class _LimousineCustomerDiscoveryPageState
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  bool get _showsRecommendedHeading {
+    final query = _controller.lastQuery;
+    if (query == null || !query.isUnscoped) return false;
+    switch (_controller.phase) {
+      case LimousineDiscoveryPhase.loading:
+      case LimousineDiscoveryPhase.ready:
+      case LimousineDiscoveryPhase.empty:
+        return true;
+      case LimousineDiscoveryPhase.idle:
+      case LimousineDiscoveryPhase.gatesOff:
+      case LimousineDiscoveryPhase.needPlace:
+      case LimousineDiscoveryPhase.network:
+        return false;
+    }
+  }
+
+  Widget _listingChrome(LimousineUxTokens tokens) {
+    final showRecommended = _showsRecommendedHeading;
+    final showTestEnvironment =
+        _controller.showsTestEnvironment &&
+        _controller.phase == LimousineDiscoveryPhase.ready;
+    if (!showRecommended && !showTestEnvironment) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (showRecommended)
+            Text(
+              _t(kLimousineDiscoveryRecommended),
+              key: kLimousineDiscoveryRecommendedKey,
+              style: TextStyle(
+                color: tokens.onSurface,
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          if (showTestEnvironment) ...[
+            if (showRecommended) const SizedBox(height: 6),
+            Text(
+              _t(kLimousineDiscoveryGatesOffTitle),
+              key: kLimousineDiscoveryTestEnvironmentKey,
+              style: TextStyle(
+                color: tokens.gold,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
         ],
       ),
     );
