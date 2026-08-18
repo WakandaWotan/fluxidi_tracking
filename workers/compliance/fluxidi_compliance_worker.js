@@ -625,12 +625,70 @@ function _chironDueAtComputeOptions() {
 async function _chironArmDueNowBestEffort(env, event, eventKey) {
   if (!_chironAutoSubmitMessageTypeForEventType(event?.event_type)) return null;
   const key = _chironResolveDateIndexEventKey(event, eventKey);
-  if (!key || !env?.COMPLIANCE_KV) return null;
-  try {
-    return await armChironDueMarker(env.COMPLIANCE_KV, key, 0);
-  } catch (_) {
-    return null;
+  if (!key || !env?.COMPLIANCE_KV) {
+    throw new Error("chiron_due_marker_arm_unavailable");
   }
+  const markerKey = await armChironDueMarker(env.COMPLIANCE_KV, key, 0);
+  if (!markerKey) {
+    throw new Error("chiron_due_marker_arm_failed");
+  }
+  return markerKey;
+}
+
+/**
+ * Bounded missing-marker watchdog: one keyed get of the deterministic
+ * due-at-0 marker after the authoritative persist. Re-arms if the get
+ * misses. Never lists historical events.
+ */
+async function _chironConfirmDueMarkerAfterPersist(env, event, eventKey) {
+  if (!_chironAutoSubmitMessageTypeForEventType(event?.event_type)) return null;
+  const key = _chironResolveDateIndexEventKey(event, eventKey);
+  if (!key || !env?.COMPLIANCE_KV) {
+    throw new Error("chiron_due_marker_confirm_unavailable");
+  }
+  const markerKey = await buildChironDueMarkerKey(0, key);
+  if (!markerKey) {
+    throw new Error("chiron_due_marker_confirm_unavailable");
+  }
+  let raw = null;
+  try {
+    raw = await env.COMPLIANCE_KV.get(markerKey);
+  } catch (_) {
+    raw = null;
+  }
+  if (raw) return markerKey;
+  const armed = await armChironDueMarker(env.COMPLIANCE_KV, key, 0);
+  if (!armed) {
+    throw new Error("chiron_due_marker_missing_after_persist");
+  }
+  return armed;
+}
+
+async function _chironAppendContextEntries(env, event, eventKey) {
+  const entries = [{ key: eventKey, event }];
+  const type = cleanText(event?.event_type, 64).toLowerCase();
+  if (!CHIRON_OFFICIAL_ARRIVAL_EVENT_TYPES.has(type)) return entries;
+  const tripId = cleanText(event?.trip_id, 128);
+  const tenantId = cleanText(event?.tenant_id, 128);
+  const companyId = cleanText(event?.company_id, 128);
+  if (!tripId || !tenantId || !companyId || !env?.COMPLIANCE_KV) return entries;
+  const siblingEventId = `ride_start:${tenantId}:${companyId}:${tripId}`;
+  const canonicalKey = buildComplianceCanonicalEventKey({
+    tenant_id: tenantId,
+    company_id: companyId,
+    event_id: siblingEventId,
+  });
+  try {
+    const raw = await env.COMPLIANCE_KV.get(canonicalKey);
+    if (!raw) return entries;
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return entries;
+    }
+    const siblingKey = _chironResolveDateIndexEventKey(parsed);
+    entries.unshift({ key: siblingKey || canonicalKey, event: parsed });
+  } catch (_) {}
+  return entries;
 }
 
 async function handleAppend(request, env, origin, ctx) {
@@ -745,6 +803,7 @@ async function handleAppend(request, env, origin, ctx) {
           dateKey,
           JSON.stringify(canonicalExisting),
         );
+        await _chironConfirmDueMarkerAfterPersist(env, canonicalExisting, dateKey);
         recovered = true;
       }
       console.log(
@@ -775,6 +834,7 @@ async function handleAppend(request, env, origin, ctx) {
     await _chironArmDueNowBestEffort(env, event, dateKey);
     await env.COMPLIANCE_KV.put(canonicalKey, JSON.stringify(event));
     await env.COMPLIANCE_KV.put(dateKey, JSON.stringify(event));
+    await _chironConfirmDueMarkerAfterPersist(env, event, dateKey);
     console.log(
       `[COMPLIANCE_STORE][${cleanText(event.event_type, 64) || "unknown"}] ok=true`,
     );
@@ -801,6 +861,7 @@ async function handleAppend(request, env, origin, ctx) {
   const key = buildEventStorageKey(event);
   await _chironArmDueNowBestEffort(env, event, key);
   await env.COMPLIANCE_KV.put(key, JSON.stringify(event));
+  await _chironConfirmDueMarkerAfterPersist(env, event, key);
   console.log(
     `[COMPLIANCE_STORE][${cleanText(event.event_type, 64) || "unknown"}] ok=true`,
   );
@@ -12639,8 +12700,14 @@ async function _chironAutoSubmitOneEvent(env, event, eventKey, options = {}) {
 //   * respects the auto-submit gate + cutoff.
 async function _chironAutoSubmitAfterAppendBestEffort(env, event, eventKey) {
   try {
+    const preloadedContextEntries = await _chironAppendContextEntries(
+      env,
+      event,
+      eventKey,
+    );
     const outcome = await _chironAutoSubmitOneEvent(env, event, eventKey, {
       source: "append",
+      preloadedContextEntries,
     });
     return outcome;
   } catch (_) {
@@ -13260,6 +13327,19 @@ async function _chironCronReconcileAllScopesBestEffort(env, options = {}) {
     summary.scopes = byScope.size;
 
     for (const list of byScope.values()) {
+      list.sort((a, b) => {
+        if (a.bookingId && a.bookingId === b.bookingId) {
+          if (a.messageType !== b.messageType) {
+            return a.messageType === "departure" ? -1 : 1;
+          }
+          return a.eventAtMs - b.eventAtMs;
+        }
+        if (b.eventAtMs !== a.eventAtMs) return b.eventAtMs - a.eventAtMs;
+        if (a.messageType !== b.messageType) {
+          return a.messageType === "departure" ? -1 : 1;
+        }
+        return 0;
+      });
       const tenantId = list[0].tenantId;
       const companyId = list[0].companyId;
       let statusPayload = null;
@@ -13497,6 +13577,8 @@ export const __testInternals = {
   _chironWriteExportStatus,
   _chironResolveDateIndexEventKey,
   _chironArmDueNowBestEffort,
+  _chironConfirmDueMarkerAfterPersist,
+  _chironAppendContextEntries,
   _chironDueAtComputeOptions,
   ChironDueIndexTestCrash,
   // CHIRON-COMPLIANCE-KV-COST-P0 read-count / isolation regressions only.

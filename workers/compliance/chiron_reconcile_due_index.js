@@ -214,7 +214,14 @@ export function computeChironReconcileDueAtMs(statusDoc, nowMs, options = {}) {
     if (last !== null && now - last < pendingStaleMs) return last + pendingStaleMs;
     return 0;
   }
-  if (state === "pending_build") return 0;
+  // A young pending_build is an in-flight append/cron attempt. Keep it off
+  // the due-at-0 lane so the same hash-ordered historical builds cannot
+  // monopolize the process cap. Once stale, it becomes immediately due again.
+  if (state === "pending_build") {
+    const last = parseIsoMs(statusDoc.last_attempt_at);
+    if (last !== null && now - last < pendingStaleMs) return last + pendingStaleMs;
+    return 0;
+  }
   if (state === "waiting_for_departure") {
     const last = parseIsoMs(statusDoc.last_attempt_at);
     const base = last !== null ? last : now;
@@ -244,7 +251,12 @@ export function computeChironReconcileDueAtMs(statusDoc, nowMs, options = {}) {
       (httpStatus < 200 ||
         httpStatus >= 300 ||
         (Number.isFinite(foutenCount) && foutenCount > 0));
-    return gotChironResponse ? 0 : null;
+    if (gotChironResponse) {
+      const last = parseIsoMs(statusDoc.last_attempt_at);
+      if (last !== null && now - last < waitingRecheckMs) return last + waitingRecheckMs;
+      return 0;
+    }
+    return null;
   }
   if (state === "blocked") {
     const last = parseIsoMs(statusDoc.last_attempt_at);
@@ -255,8 +267,27 @@ export function computeChironReconcileDueAtMs(statusDoc, nowMs, options = {}) {
 }
 
 /**
+ * Recency from the date-index event key (`.../YYYY/MM/DD/<13-digit-ms>_...`).
+ * Used only to rank already-listed due markers — no extra KV read.
+ */
+export function chironDueMarkerEventRecencyMs(eventKey) {
+  const key = safeText(eventKey, 1024);
+  const match = /\/(\d{4})\/(\d{2})\/(\d{2})\/(\d{13})_/.exec(key);
+  if (match) {
+    const ms = Number(match[4]);
+    return Number.isFinite(ms) ? ms : 0;
+  }
+  return 0;
+}
+
+/**
  * Choose due markers from a lexicographic `list()` page. Stops at the first
  * future timestamp so a quiet pass never value-reads an event.
+ *
+ * All immediately-due markers on the page are collected (the `!done`
+ * sentinel is skipped). When more than `limit` are due, newer source
+ * events are selected first so historical due-at-0 retries cannot starve
+ * a just-appended ride whose opaque ref sorts later.
  */
 export function selectDueChironMarkers(entries, { nowMs, limit, scopeFilter } = {}) {
   const rows = Array.isArray(entries) ? entries : [];
@@ -268,13 +299,12 @@ export function selectDueChironMarkers(entries, { nowMs, limit, scopeFilter } = 
   const companySeg = scopeFilter?.companySegment
     ? safeText(scopeFilter.companySegment, 128)
     : "";
-  const selected = [];
+  const duePool = [];
   const duplicates = [];
   const stale = [];
   const skip = [];
   let inspected = 0;
   let stoppedAtFuture = false;
-  let stoppedAtLimit = false;
   let sawDoneSentinel = false;
   const seenRef = new Set();
 
@@ -298,10 +328,6 @@ export function selectDueChironMarkers(entries, { nowMs, limit, scopeFilter } = 
       duplicates.push({ markerKey: parsed.markerKey, ref: parsed.ref, dueAtMs: parsed.dueAtMs });
       continue;
     }
-    if (selected.length >= cap) {
-      stoppedAtLimit = true;
-      break;
-    }
     const meta =
       entry?.metadata && typeof entry.metadata === "object" ? entry.metadata : null;
     const eventKey = safeText(meta?.ek, 1024);
@@ -312,14 +338,23 @@ export function selectDueChironMarkers(entries, { nowMs, limit, scopeFilter } = 
       }
     }
     seenRef.add(parsed.ref);
-    selected.push({
+    duePool.push({
       markerKey: parsed.markerKey,
       dueAtMs: parsed.dueAtMs,
       ref: parsed.ref,
       eventKey,
       entry,
+      recencyMs: chironDueMarkerEventRecencyMs(eventKey),
     });
   }
+
+  duePool.sort((a, b) => {
+    if (b.recencyMs !== a.recencyMs) return b.recencyMs - a.recencyMs;
+    if (a.dueAtMs !== b.dueAtMs) return a.dueAtMs - b.dueAtMs;
+    return a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0;
+  });
+  const stoppedAtLimit = duePool.length > cap;
+  const selected = duePool.slice(0, cap).map(({ recencyMs: _recency, ...row }) => row);
 
   return {
     selected,

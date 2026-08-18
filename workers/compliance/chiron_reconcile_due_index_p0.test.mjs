@@ -32,6 +32,7 @@ import {
   chironDueMarkerMetadataJsonBytes,
   chironOpaqueEventRef,
   computeChironReconcileDueAtMs,
+  chironDueMarkerEventRecencyMs,
   formatChironDueIndexLog,
   chironDueIndexLogContainsForbiddenIdentity,
   markChironDueMigrationComplete,
@@ -334,6 +335,51 @@ test("4+5. twenty due cap; more than twenty stays capped", async () => {
   assert.ok(h.eventReads().length <= CHIRON_AUTO_RECONCILE_MAX_PROCESS);
   assert.equal(h.dueLists(), 1);
   assert.ok(providerCalls.length <= 20);
+});
+
+test("6a. due-at-0 historical backlog cannot starve a newer ride", async () => {
+  const entries = [];
+  entries.push({
+    name: CHIRON_RECONCILE_DUE_DONE_KEY,
+    metadata: { v: 1, done: true },
+  });
+  for (let i = 0; i < 25; i += 1) {
+    const eventKey = eventKeyFor(TENANT_A, COMPANY_A, i, `old_${i}`);
+    const markerKey = await buildChironDueMarkerKey(0, eventKey);
+    entries.push({
+      name: markerKey,
+      metadata: { v: 1, ek: eventKey },
+    });
+  }
+  const newKey =
+    `compliance_event_v1/tenant/${safeSegment(TENANT_A, "")}/company/${safeSegment(COMPANY_A, "")}` +
+    `/2026/08/18/1787043121583_ride_start_new`;
+  const newMarker = await buildChironDueMarkerKey(0, newKey);
+  entries.push({
+    name: newMarker,
+    metadata: { v: 1, ek: newKey },
+  });
+  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const picked = selectDueChironMarkers(entries, { nowMs: NOW_MS, limit: 20 });
+  assert.equal(picked.sawDoneSentinel, true);
+  assert.equal(picked.stoppedAtLimit, true);
+  assert.equal(picked.selected.length, 20);
+  assert.equal(picked.selected[0].eventKey, newKey);
+  assert.ok(chironDueMarkerEventRecencyMs(newKey) > 1787043120000);
+});
+
+test("6b. young pending_build leaves the due-at-0 lane", () => {
+  const last = NOW_MS - 5_000;
+  const dueAt = computeChironReconcileDueAtMs(
+    {
+      sync_state: "pending_build",
+      last_attempt_at: new Date(last).toISOString(),
+    },
+    NOW_MS,
+    { pendingStaleMs: CHIRON_PENDING_STALE_MS },
+  );
+  assert.equal(dueAt, last + CHIRON_PENDING_STALE_MS);
+  assert.ok(dueAt > NOW_MS - 1);
 });
 
 test("6. stop at first future marker", async () => {
