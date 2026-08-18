@@ -538,6 +538,184 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
     return tierId;
   }
 
+  /// LIMOUSINE-MARKETPLACE-P2A: optional limousine configuration inside the
+  /// existing vehicle editor. Default OFF; explicit category + authoritative
+  /// active service class; entitlement-gated read-only state without any
+  /// upgrade/checkout CTA. Editing brand/model cannot alter this.
+  Widget _limousineVehicleConfigSection({
+    required bool limousineEntitled,
+    required bool limousineEnabled,
+    required String? limousineClassId,
+    required ValueChanged<bool> onToggle,
+    required ValueChanged<String?> onClassChanged,
+  }) {
+    final header = Text(
+      _t(
+        nl: 'Limousineservice (optioneel)',
+        en: 'Limousine service (optional)',
+        fr: 'Service limousine (optionnel)',
+        es: 'Servicio de limusina (opcional)',
+      ),
+      style: const TextStyle(fontWeight: FontWeight.w700),
+    );
+
+    if (!limousineEntitled) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          header,
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _inputFill,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _inputBorder),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.lock_outline, size: 18, color: _textMuted),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _t(
+                      nl: 'Niet beschikbaar in je huidige abonnement.',
+                      en: 'Unavailable under your current subscription.',
+                      fr: 'Indisponible avec votre abonnement actuel.',
+                      es: 'No disponible con tu suscripción actual.',
+                    ),
+                    style: TextStyle(color: _textSecondary),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    final classes = appConfig.enabledLimousineServiceClasses;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        header,
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                _t(
+                  nl: 'Limousineservice inschakelen',
+                  en: 'Enable limousine service',
+                  fr: 'Activer le service limousine',
+                  es: 'Activar el servicio de limusina',
+                ),
+                style: TextStyle(
+                  color: _textPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            Switch(
+              value: limousineEnabled,
+              activeColor: _gold,
+              activeTrackColor: _gold.withOpacity(
+                _theme.palette.isDark ? 0.46 : 0.34,
+              ),
+              inactiveThumbColor: _textSecondary,
+              inactiveTrackColor: _panelBg.withOpacity(0.72),
+              onChanged: onToggle,
+            ),
+          ],
+        ),
+        if (limousineEnabled) ...[
+          const SizedBox(height: 8),
+          if (classes.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: _inputFill,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _inputBorder),
+              ),
+              child: Text(
+                _t(
+                  nl: 'Er zijn nog geen limousineklassen geconfigureerd.',
+                  en: 'No limousine classes are configured yet.',
+                  fr: 'Aucune classe de limousine n est encore configurée.',
+                  es: 'Aún no hay clases de limusina configuradas.',
+                ),
+                style: TextStyle(color: _textSecondary),
+              ),
+            )
+          else
+            DropdownButtonFormField<String>(
+              value: limousineClassId,
+              isExpanded: true,
+              style: TextStyle(
+                color: _textPrimary,
+                fontWeight: FontWeight.w600,
+              ),
+              iconEnabledColor: _textPrimary,
+              iconDisabledColor: _textMuted,
+              dropdownColor: _dropdownBg,
+              items: classes
+                  .map(
+                    (c) => DropdownMenuItem<String>(
+                      value: c.id,
+                      child: Text(
+                        c.labelFor(_lang),
+                        style: TextStyle(color: _textPrimary),
+                      ),
+                    ),
+                  )
+                  .toList(growable: false),
+              onChanged: onClassChanged,
+              decoration: InputDecoration(
+                labelText: _t(
+                  nl: 'Limousineklasse *',
+                  en: 'Limousine class *',
+                  fr: 'Classe de limousine *',
+                  es: 'Clase de limusina *',
+                ),
+                filled: true,
+                fillColor: _inputFill,
+                labelStyle: TextStyle(color: _textSecondary),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: _inputBorder),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: _inputBorder),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: _gold.withOpacity(0.7)),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 14,
+                ),
+              ),
+            ),
+          const SizedBox(height: 6),
+          Text(
+            _t(
+              nl: 'Een actieve limousineklasse is vereist. De taxicategorie blijft ongewijzigd.',
+              en: 'An active limousine class is required. The taxi category is unaffected.',
+              fr: 'Une classe de limousine active est requise. La catégorie taxi reste inchangée.',
+              es: 'Se requiere una clase de limusina activa. La categoría de taxi no cambia.',
+            ),
+            style: TextStyle(color: _textMuted, fontSize: 11.5),
+          ),
+        ],
+      ],
+    );
+  }
+
   void _showMissingCompanyScopeSnackbar() {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1787,7 +1965,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
         .where(_driverVisibleInManagementUi)
         .length;
 
-    int effectiveMax = (includedVehicleLimit > 0 ? includedVehicleLimit : 1) * 3;
+    int effectiveMax =
+        (includedVehicleLimit > 0 ? includedVehicleLimit : 1) * 3;
     String limitSource = 'fallback';
 
     final scopeId = _activeCompanyIdForFleetUi();
@@ -2214,6 +2393,32 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
       }
     }
     var active = resolvedExisting?.isActive ?? true;
+    // LIMOUSINE-MARKETPLACE-P2A: optional, explicit, default-OFF limousine
+    // configuration. Category and class are independent of the taxi tier and are
+    // never inferred from brand/model/name.
+    var limousineEnabled =
+        (resolvedExisting?.serviceCategory ?? '').trim().toLowerCase() ==
+        'limousine';
+    String? limousineClassId = () {
+      final id = (resolvedExisting?.serviceClassId ?? '').trim();
+      return isKnownActiveLimousineServiceClassId(id) ? id : null;
+    }();
+    var limousineEntitled = false;
+    {
+      final scopeId = _activeCompanyIdForFleetUi();
+      if (scopeId != null && scopeId.trim().isNotEmpty) {
+        try {
+          final subProfile = await fetchCompanySubscriptionProfile(
+            tenantId: scopeId,
+            companyId: scopeId,
+          );
+          limousineEntitled = subProfile.features['limousine'] == true;
+        } catch (_) {
+          // Fail closed to a read-only unavailable state on a transient error.
+          limousineEntitled = false;
+        }
+      }
+    }
     final fleetScope = _activeFleetScope();
     final documentTenantId =
         fleetScope?.tenantId ?? _scopedVehicleCompanyId(resolvedExisting) ?? '';
@@ -2478,6 +2683,18 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                             ),
                           ],
                         ),
+                      ),
+                      const SizedBox(height: 14),
+                      _limousineVehicleConfigSection(
+                        limousineEntitled: limousineEntitled,
+                        limousineEnabled: limousineEnabled,
+                        limousineClassId: limousineClassId,
+                        onToggle: (v) => setLocalState(() {
+                          limousineEnabled = v;
+                          if (!v) limousineClassId = null;
+                        }),
+                        onClassChanged: (v) =>
+                            setLocalState(() => limousineClassId = v),
                       ),
                       const SizedBox(height: 14),
                       Text(
@@ -3386,6 +3603,37 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                       return;
                                     }
                                   }
+                                  // LIMOUSINE-MARKETPLACE-P2A: enabling limousine
+                                  // requires entitlement + an authoritative
+                                  // active service class. Fails closed with a
+                                  // localized validation; never inferred.
+                                  final wantsLimousine =
+                                      limousineEntitled && limousineEnabled;
+                                  if (wantsLimousine &&
+                                      !isKnownActiveLimousineServiceClassId(
+                                        limousineClassId,
+                                      )) {
+                                    if (!mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          _t(
+                                            nl: 'Kies een limousineklasse om de limousineservice op te slaan.',
+                                            en: 'Select a limousine class to save the limousine service.',
+                                            fr: 'Choisissez une classe de limousine pour enregistrer le service limousine.',
+                                            es: 'Selecciona una clase de limusina para guardar el servicio de limusina.',
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                  final resolvedServiceCategory = wantsLimousine
+                                      ? 'limousine'
+                                      : '';
+                                  final resolvedServiceClassId = wantsLimousine
+                                      ? (limousineClassId ?? '')
+                                      : '';
                                   final resolvedPublicPhoto =
                                       await _resolvePublicPhotoUrlForVehicleSave(
                                         vehicleId: vehicleId,
@@ -3422,6 +3670,8 @@ class _VehicleManagementPageState extends State<VehicleManagementPage> {
                                         .take(_maxPhotosPerVehicle)
                                         .toList(growable: false),
                                     publicPhotoUrl: resolvedPublicPhoto,
+                                    serviceCategory: resolvedServiceCategory,
+                                    serviceClassId: resolvedServiceClassId,
                                   );
                                   if (resolvedExisting == null) {
                                     addVehicle(vehicle);

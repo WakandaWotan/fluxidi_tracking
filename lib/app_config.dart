@@ -1777,6 +1777,7 @@ class BackendSubscriptionProfile {
         'public_booking': true,
         'receipt_pdf': true,
         'whatsapp_email_receipts': true,
+        'limousine': false,
       },
       createdAt: '',
       updatedAt: '',
@@ -1984,6 +1985,10 @@ class BackendSubscriptionProfile {
         'whatsapp_email_receipts': feature(
           'whatsapp_email_receipts',
           fallback.features['whatsapp_email_receipts'] ?? true,
+        ),
+        'limousine': feature(
+          'limousine',
+          fallback.features['limousine'] ?? false,
         ),
       },
       createdAt: text('created_at', 'createdAt', fallback.createdAt),
@@ -2375,6 +2380,13 @@ class VehicleProfile {
   final String primaryPhotoRef;
   final List<String> galleryPhotoRefs;
   final String? publicPhotoUrl;
+
+  /// LIMOUSINE-MARKETPLACE-P1: authoritative, configured service classification.
+  /// Empty unless explicitly configured by the company. Eligibility never
+  /// infers these from vehicle brand/model/name or the taxi [tierId].
+  final String serviceCategory;
+  final String serviceClassId;
+
   // Backward-compatible alias for legacy UI/code paths.
   String get photoRef => primaryPhotoRef;
 
@@ -2397,6 +2409,8 @@ class VehicleProfile {
     required this.primaryPhotoRef,
     required this.galleryPhotoRefs,
     this.publicPhotoUrl,
+    this.serviceCategory = '',
+    this.serviceClassId = '',
   });
 
   VehicleProfile copyWith({
@@ -2416,6 +2430,8 @@ class VehicleProfile {
     String? primaryPhotoRef,
     List<String>? galleryPhotoRefs,
     String? publicPhotoUrl,
+    String? serviceCategory,
+    String? serviceClassId,
   }) {
     return VehicleProfile(
       id: id ?? this.id,
@@ -2436,6 +2452,8 @@ class VehicleProfile {
       primaryPhotoRef: primaryPhotoRef ?? this.primaryPhotoRef,
       galleryPhotoRefs: galleryPhotoRefs ?? this.galleryPhotoRefs,
       publicPhotoUrl: publicPhotoUrl ?? this.publicPhotoUrl,
+      serviceCategory: serviceCategory ?? this.serviceCategory,
+      serviceClassId: serviceClassId ?? this.serviceClassId,
     );
   }
 }
@@ -2616,6 +2634,14 @@ class AppConfig {
   final List<AppOption> enabledServices;
   final List<AppOption> enabledTiers;
   final List<AppOption> enabledExtraOptions;
+
+  /// LIMOUSINE-MARKETPLACE-P2A: authoritative, data-driven limousine
+  /// service-class catalog owned by Service setup. Stable IDs (never localized
+  /// labels, never free text). A vehicle becomes limousine-eligible only when
+  /// the company explicitly sets service category = limousine AND picks one of
+  /// these active class IDs. Selecting a taxi tier never implies limousine.
+  final List<AppOption> enabledLimousineServiceClasses;
+
   final AppLabels labels;
   final AppFeatures features;
 
@@ -2632,6 +2658,7 @@ class AppConfig {
     required this.enabledExtraOptions,
     required this.labels,
     required this.features,
+    this.enabledLimousineServiceClasses = kDefaultLimousineServiceClasses,
   });
 
   // Backward-compatible aliases for existing code usage.
@@ -2656,6 +2683,85 @@ class AppConfig {
   bool get showDetailedBreakdown => businessDefaults.showDetailedBreakdown;
   AppLanguage get currentLanguage => appLanguageNotifier.value;
   AppStrings get strings => AppStrings.forLanguage(currentLanguage);
+}
+
+/// LIMOUSINE-MARKETPLACE-P2A — provisional authoritative limousine service-class
+/// catalog. These are configuration classes (not commercial SKUs, not pricing).
+/// Stable IDs are the source of truth; labels are localized separately. The
+/// final catalog membership is a product decision; extend/curate here rather
+/// than inferring classes from vehicle brand/model/name or a taxi tier.
+const List<AppOption> kDefaultLimousineServiceClasses = <AppOption>[
+  AppOption(
+    id: 'executive_sedan',
+    label: LocalizedText(
+      nl: 'Executive sedan',
+      en: 'Executive sedan',
+      fr: 'Berline executive',
+      es: 'Sedan ejecutivo',
+    ),
+    payloadValue: 'EXECUTIVE_SEDAN',
+  ),
+  AppOption(
+    id: 'first_class_sedan',
+    label: LocalizedText(
+      nl: 'First class sedan',
+      en: 'First class sedan',
+      fr: 'Berline premiere classe',
+      es: 'Sedan primera clase',
+    ),
+    payloadValue: 'FIRST_CLASS_SEDAN',
+  ),
+  AppOption(
+    id: 'business_van',
+    label: LocalizedText(
+      nl: 'Business van',
+      en: 'Business van',
+      fr: 'Van affaires',
+      es: 'Furgoneta business',
+    ),
+    payloadValue: 'BUSINESS_VAN',
+  ),
+  AppOption(
+    id: 'luxury_van',
+    label: LocalizedText(
+      nl: 'Luxe van',
+      en: 'Luxury van',
+      fr: 'Van de luxe',
+      es: 'Furgoneta de lujo',
+    ),
+    payloadValue: 'LUXURY_VAN',
+  ),
+  AppOption(
+    id: 'stretch_limousine',
+    label: LocalizedText(
+      nl: 'Stretchlimousine',
+      en: 'Stretch limousine',
+      fr: 'Limousine allongee',
+      es: 'Limusina alargada',
+    ),
+    payloadValue: 'STRETCH_LIMOUSINE',
+  ),
+];
+
+/// Returns the authoritative limousine service class for a stable [id], or null
+/// when the id is unknown/inactive (fails closed). Never resolves from brand,
+/// model, name, or a taxi tier.
+AppOption? limousineServiceClassById(String? id) {
+  final needle = (id ?? '').trim().toLowerCase();
+  if (needle.isEmpty) return null;
+  for (final option in appConfig.enabledLimousineServiceClasses) {
+    if (option.id.trim().toLowerCase() == needle) return option;
+  }
+  return null;
+}
+
+bool isKnownActiveLimousineServiceClassId(String? id) =>
+    limousineServiceClassById(id) != null;
+
+String limousineServiceClassLabel(String? id, AppLanguage language) {
+  final option = limousineServiceClassById(id);
+  if (option == null) return '';
+  return option.labelFor(language);
 }
 
 final ValueNotifier<AppLanguage> appLanguageNotifier =
@@ -4288,6 +4394,9 @@ Map<String, dynamic> _encodeVehicle(VehicleProfile v) {
     'primaryPhotoRef': v.primaryPhotoRef,
     'galleryPhotoRefs': v.galleryPhotoRefs,
     'publicPhotoUrl': v.publicPhotoUrl,
+    if (v.serviceCategory.trim().isNotEmpty)
+      'serviceCategory': v.serviceCategory,
+    if (v.serviceClassId.trim().isNotEmpty) 'serviceClassId': v.serviceClassId,
     // Keep legacy key for backward readability/debug
     'photoRef': v.primaryPhotoRef,
   };
@@ -4389,6 +4498,17 @@ VehicleProfile _decodeVehicle(
     primaryPhotoRef: primaryPhoto,
     galleryPhotoRefs: gallery,
     publicPhotoUrl: publicPhotoUrl,
+    serviceCategory:
+        (m['serviceCategory'] ??
+                m['service_category'] ??
+                fallback.serviceCategory)
+            .toString(),
+    serviceClassId:
+        (m['serviceClassId'] ??
+                m['service_class'] ??
+                m['service_class_id'] ??
+                fallback.serviceClassId)
+            .toString(),
   );
 }
 
@@ -5268,6 +5388,22 @@ Uri _withAdminTenantCompanyScope(
   return endpoint.replace(queryParameters: merged);
 }
 
+/// Public wrappers for company-scoped admin HTTP (limousine inbox/detail).
+Map<String, String> adminTenantCompanyScope({
+  String? tenantId,
+  String? companyId,
+}) => _resolveAdminTenantCompanyScope(tenantId: tenantId, companyId: companyId);
+
+Uri adminTenantCompanyScopedUri(
+  Uri endpoint, {
+  String? tenantId,
+  String? companyId,
+}) => _withAdminTenantCompanyScope(
+  endpoint,
+  tenantId: tenantId,
+  companyId: companyId,
+);
+
 String normalizeExplicitIsoCurrencyCode(String raw) {
   final upper = raw.trim().toUpperCase();
   if (!RegExp(r'^[A-Z]{3}$').hasMatch(upper)) return '';
@@ -5402,6 +5538,13 @@ Map<String, dynamic> _encodeVehicleForBackendFleet(
     'isActive': v.isActive,
     'tier': v.tierId.trim().toLowerCase(),
     'tierId': v.tierId.trim().toLowerCase(),
+    // LIMOUSINE-MARKETPLACE-P2B2C: the authoritative scoped fleet record is the
+    // source of truth for the limousine classification used by the public offer
+    // join. Emitted only when explicitly configured (never inferred).
+    if (v.serviceCategory.trim().isNotEmpty)
+      'service_category': v.serviceCategory.trim().toLowerCase(),
+    if (v.serviceClassId.trim().isNotEmpty)
+      'service_class': v.serviceClassId.trim().toLowerCase(),
     'passenger_capacity': v.passengerCapacity < 0 ? 0 : v.passengerCapacity,
     'passengerCapacity': v.passengerCapacity < 0 ? 0 : v.passengerCapacity,
     'luggage_capacity': v.luggageCapacity < 0 ? 0 : v.luggageCapacity,
@@ -7689,6 +7832,79 @@ Future<Map<String, dynamic>> saveAdminAirportFixedFares(
         map,
         res.statusCode,
         fallback: 'airport_fixed_fares_save_failed',
+      ),
+    );
+  }
+  return map;
+}
+
+/// LIMOUSINE-MARKETPLACE-P2B2 — reads ONLY the additive `limousine` section of
+/// pricing:v1. The taxi pricing profile and airport fixed-fare store are never
+/// touched by this endpoint.
+Future<Map<String, dynamic>> fetchAdminLimousinePricing({
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/pricing/limousine'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .get(endpoint, headers: auth.headers)
+      .timeout(const Duration(seconds: 12));
+  final dynamic decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception(
+      _adminApiErrorMessageFromResponse(
+        map,
+        res.statusCode,
+        fallback: 'limousine_pricing_fetch_failed',
+      ),
+    );
+  }
+  return map;
+}
+
+/// Writes ONLY the `limousine` section. The server preserves every unrelated
+/// pricing:v1 field and owns the monotonic source revision.
+Future<Map<String, dynamic>> saveAdminLimousinePricing(
+  Map<String, dynamic> limousineSection, {
+  String? tenantId,
+  String? companyId,
+}) async {
+  final endpoint = _withAdminTenantCompanyScope(
+    Uri.parse('${appConfig.bookingBaseUrl}/admin/pricing/limousine'),
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final scope = _resolveAdminTenantCompanyScope(
+    tenantId: tenantId,
+    companyId: companyId,
+  );
+  final auth = await resolveCompanyOwnerAuthHeaders();
+  final res = await http
+      .post(
+        endpoint,
+        headers: auth.headers,
+        body: jsonEncode(<String, dynamic>{
+          ...scope,
+          'limousine': limousineSection,
+        }),
+      )
+      .timeout(const Duration(seconds: 12));
+  final dynamic decoded = jsonDecode(utf8.decode(res.bodyBytes));
+  if (decoded is! Map) throw Exception('Invalid response');
+  final map = Map<String, dynamic>.from(decoded);
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw Exception(
+      _adminApiErrorMessageFromResponse(
+        map,
+        res.statusCode,
+        fallback: 'limousine_pricing_save_failed',
       ),
     );
   }

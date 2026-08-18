@@ -315,6 +315,31 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
     return (map[key] ?? '').trim();
   }
 
+  void _openLimousineFlow(BuildContext context) {
+    if (!LimousineCustomerEntryContract.isVisible) return;
+    openLimousineCustomerQuoteFlow(context);
+  }
+
+  Widget? _limousineCustomerCard({
+    required BuildContext context,
+    required double visualHeight,
+  }) {
+    if (!LimousineCustomerEntryContract.isVisible) return null;
+    return KeyedSubtree(
+      key: const ValueKey<String>('limousine_customer_entry_card'),
+      child: _customerWideCard(
+        context: context,
+        icon: Icons.airport_shuttle_outlined,
+        title: limousineBookLabelFor(appConfig.currentLanguage),
+        subtitle: '',
+        visualAsset: LimousineCustomerEntryContract.visualAsset,
+        visualHeight: visualHeight,
+        visualAlignment: const Alignment(0.55, 0.0),
+        onTap: () => _openLimousineFlow(context),
+      ),
+    );
+  }
+
   Future<void> _openAirportFlow(
     BuildContext context, {
     String? initialPickupAddress,
@@ -747,10 +772,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                 blurRadius: 12,
                 offset: const Offset(0, 5),
               ),
-              BoxShadow(
-                color: _premiumGold.withOpacity(0.05),
-                blurRadius: 8,
-              ),
+              BoxShadow(color: _premiumGold.withOpacity(0.05), blurRadius: 8),
             ],
           ),
           child: Row(
@@ -1390,6 +1412,12 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                                 onTap: () =>
                                     unawaited(_openBusinessTaxiFlow(context)),
                               ),
+                              if (_limousineCustomerCard(
+                                    context: context,
+                                    visualHeight: customerWideCardHeight,
+                                  )
+                                  case final limousineCard?)
+                                limousineCard,
                             ];
                             return Wrap(
                               spacing: spacing,
@@ -1472,6 +1500,14 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                           onTap: () =>
                               unawaited(_openBusinessTaxiFlow(context)),
                         ),
+                        if (_limousineCustomerCard(
+                              context: context,
+                              visualHeight: customerWideCardHeight,
+                            )
+                            case final limousineCard?) ...[
+                          const SizedBox(height: 8),
+                          limousineCard,
+                        ],
                       ],
                       const SizedBox(height: 16),
                       Align(

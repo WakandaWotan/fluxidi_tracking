@@ -13,6 +13,10 @@ import 'customer_profile_store.dart';
 import 'customer_session_store.dart';
 import 'customer_theme_palette.dart';
 import 'customer_theme_store.dart';
+import 'limousine/limousine_customer_entry.dart';
+import 'limousine/limousine_marketplace_labels.dart';
+import 'limousine/limousine_public_showroom_section.dart';
+import 'limousine/limousine_service_capability.dart';
 import 'nearby/public_partner_bookability.dart';
 import 'nearby/tablet_partner_branding_layout.dart';
 import 'payment/payment_method_catalog.dart';
@@ -23,12 +27,18 @@ class PartnerPublicProfilePage extends StatefulWidget {
   final String partnerId;
   final String companyNameFallback;
   final WidgetBuilder customerHomeBuilder;
+  final bool? limousineShowroomEnabled;
+  final Map<String, dynamic>? profileOverride;
+  final http.Client? httpClient;
 
   const PartnerPublicProfilePage({
     super.key,
     required this.partnerId,
     required this.companyNameFallback,
     required this.customerHomeBuilder,
+    this.limousineShowroomEnabled,
+    this.profileOverride,
+    this.httpClient,
   });
 
   @override
@@ -75,10 +85,20 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
     return nl;
   }
 
+  bool get _limousineShowroomEnabled =>
+      widget.limousineShowroomEnabled ??
+      LimousineCustomerEntryContract.isVisible;
+
   @override
   void initState() {
     super.initState();
-    _load();
+    final injected = widget.profileOverride;
+    if (injected != null) {
+      _profile = Map<String, dynamic>.from(injected);
+      _loading = false;
+    } else {
+      _load();
+    }
     unawaited(_loadFavoritePartnerIds());
   }
 
@@ -106,7 +126,10 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
           'ts': DateTime.now().millisecondsSinceEpoch.toString(),
         },
       );
-      final res = await http.get(uri).timeout(const Duration(seconds: 12));
+      final client = widget.httpClient;
+      final res = client != null
+          ? await client.get(uri).timeout(const Duration(seconds: 12))
+          : await http.get(uri).timeout(const Duration(seconds: 12));
       if (res.statusCode != 200) {
         throw Exception('HTTP ${res.statusCode}');
       }
@@ -934,6 +957,8 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
           fr: 'Paiement en ligne',
           es: 'Pagos en línea',
         );
+      case kLimousinePublicServiceId:
+        return limousinePublicServiceLabelFor(appConfig.currentLanguage);
       case 'comfort':
         return _t(nl: 'Comfort', en: 'Comfort', fr: 'Confort', es: 'Confort');
       case 'verified_professional':
@@ -1170,11 +1195,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                 width: double.infinity,
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    colors: [
-                      _surfaceAlt,
-                      _card,
-                      _gold.withOpacity(0.18),
-                    ],
+                    colors: [_surfaceAlt, _card, _gold.withOpacity(0.18)],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
@@ -1357,10 +1378,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                           tagline,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: _textMuted,
-                            fontSize: 13.5,
-                          ),
+                          style: TextStyle(color: _textMuted, fontSize: 13.5),
                         ),
                       ],
                       const Spacer(),
@@ -1948,6 +1966,14 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
+                        if (_limousineShowroomEnabled)
+                          LimousinePublicShowroomSection(
+                            profile: p,
+                            partnerId: widget.partnerId,
+                            companyName: companyName,
+                            language: appConfig.currentLanguage,
+                            palette: _themePalette,
+                          ),
                         if (visibleServices.isNotEmpty)
                           _section(
                             _t(

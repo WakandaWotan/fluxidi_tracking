@@ -15,6 +15,11 @@ import 'package:fluxidi_tracking/business_theme_page.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/chiron_company_connection_config.dart';
 import 'package:fluxidi_tracking/company/billit_customer_connect_gate.dart';
+import 'package:fluxidi_tracking/limousine/limousine_marketplace_labels.dart';
+import 'package:fluxidi_tracking/limousine/limousine_offer_editor.dart';
+import 'package:fluxidi_tracking/limousine/limousine_offers.dart';
+import 'package:fluxidi_tracking/limousine/limousine_service_capability.dart';
+import 'package:fluxidi_tracking/limousine/limousine_state_composition.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/widgets/chiron_environment_status_labels.dart';
 import 'package:fluxidi_tracking/widgets/chiron_self_service_wizard.dart';
@@ -158,6 +163,7 @@ class BusinessSettingsPage extends StatefulWidget {
 /// policy, public partner profile, local company) remain reachable only
 /// via the full settings page.
 const Set<String> _kStepFocusableSectionIds = <String>{
+  'limousine_offers_pricing',
   'official_company_details',
   'vat_settings',
   'service_setup',
@@ -180,6 +186,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     'event_mobility',
     'hotel_bnb_pickup',
     'online_payments',
+    kLimousinePublicServiceId,
   ];
   static const List<String> _publicPaymentOptionCatalog = <String>[
     'cash',
@@ -399,6 +406,17 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     return out;
   }
 
+  // LIMOUSINE-MARKETPLACE-P2B2 — limousine offers & pricing section state.
+  bool _limousineOffersLoading = false;
+  bool _limousineOffersSaving = false;
+  bool _limousineOffersDirty = false;
+  bool _limousineSectionEnabled = false;
+  String _limousineOffersCurrency = 'EUR';
+  int _limousineOffersRevision = 0;
+  String? _limousineOffersError;
+  String? _limousineOffersStatus;
+  List<Map<String, dynamic>> _limousineOffers = <Map<String, dynamic>>[];
+
   bool _airportFixedFaresLoading = false;
   bool _airportFixedFaresSaving = false;
   bool _airportFixedFaresDirty = false;
@@ -462,6 +480,645 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       case AppLanguage.de:
         return en;
     }
+  }
+
+  /// LIMOUSINE-MARKETPLACE-P2A: read-only readiness summary using the typed
+  /// domain resolver (no duplicated eligibility logic in the widget). Shows the
+  /// authoritative six-state result; missing/stale state fails closed. No
+  /// subscription-private detail (price/plan) is shown.
+  Map<String, dynamic> _limousineReadinessCandidate({
+    required String subscriptionStatus,
+    required bool entitled,
+  }) {
+    final services = _mappedPublicServiceIds();
+    final vehicles = <Map<String, dynamic>>[];
+    for (final v in vehiclesNotifier.value) {
+      if (!v.isActive) continue;
+      final category = v.serviceCategory.trim().toLowerCase();
+      final classId = v.serviceClassId.trim();
+      if (category != 'limousine') continue;
+      if (!isKnownActiveLimousineServiceClassId(classId)) continue;
+      vehicles.add(<String, dynamic>{
+        'service_category': 'limousine',
+        'service_class': classId,
+        'category': 'limousine',
+        'is_active': true,
+      });
+    }
+    return <String, dynamic>{
+      'subscription_status': subscriptionStatus,
+      'features': <String, dynamic>{'limousine': entitled},
+      'is_active': true,
+      'services': services,
+      'profile_enabled': _isPublicPartnerProfilePublished(),
+      'published_at': _publicPartnerProfilePublishedAt,
+      'bookable': true,
+      'vehicles': vehicles,
+    };
+  }
+
+  Widget _limousineReadinessRow(LimousinePublicAvailabilityState state) {
+    final label = limousineAvailabilityStateLabelFor(state, _lang);
+    final available =
+        state == LimousinePublicAvailabilityState.publiclyAvailable;
+    final blocked =
+        state == LimousinePublicAvailabilityState.suspendedOrBlocked;
+    final Color dot = available
+        ? const Color(0xFF34D29A)
+        : (blocked ? const Color(0xFFE5534B) : _textMuted);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _inputFill,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _inputBorderColor),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    nl: 'Limousine-status',
+                    en: 'Limousine readiness',
+                    fr: 'État limousine',
+                    es: 'Estado de limusina',
+                  ),
+                  style: TextStyle(color: _textMuted, fontSize: 11),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // LIMOUSINE-MARKETPLACE-P2B2 — Limousine offers and pricing
+  //
+  // Owns pricing rules, packages, terms and publication. Deliberately separate
+  // from the taxi Pricing engine, Airport fixed fares and driver management.
+  // Prices are never configured per driver.
+  // ===========================================================================
+
+  List<VehicleProfile> get _limousineVehicles => vehiclesNotifier.value
+      .where((v) => v.serviceCategory.trim().toLowerCase() == 'limousine')
+      .toList(growable: false);
+
+  List<String> get _limousineKnownClassIds => appConfig
+      .enabledLimousineServiceClasses
+      .map((o) => o.id)
+      .toList(growable: false);
+
+  String _limousineMoneyLabel(int? cents, String currency) {
+    if (cents == null) return '—';
+    final amount = (cents / 100).toStringAsFixed(2);
+    return '$amount ${currency.isEmpty ? '' : currency}'.trim();
+  }
+
+  Future<void> _loadLimousineOffers() async {
+    final scope = _strictSettingsScopeForAction(
+      action: 'limousine_offers_load',
+    );
+    if (scope == null) return;
+    setState(() {
+      _limousineOffersLoading = true;
+      _limousineOffersError = null;
+    });
+    try {
+      final data = await fetchAdminLimousinePricing(
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      final section = (data['limousine'] is Map)
+          ? Map<String, dynamic>.from(data['limousine'] as Map)
+          : <String, dynamic>{};
+      final offers = (section['offers'] is List)
+          ? (section['offers'] as List)
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList()
+          : <Map<String, dynamic>>[];
+      if (!mounted) return;
+      setState(() {
+        _limousineOffers = offers;
+        _limousineSectionEnabled = section['enabled'] == true;
+        _limousineOffersCurrency =
+            limousineCurrencyOf(section['currency']).isEmpty
+            ? 'EUR'
+            : limousineCurrencyOf(section['currency']);
+        _limousineOffersRevision =
+            int.tryParse('${section['source_revision'] ?? 0}') ?? 0;
+        _limousineOffersDirty = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _limousineOffersError = e.toString());
+    } finally {
+      if (mounted) setState(() => _limousineOffersLoading = false);
+    }
+  }
+
+  Future<void> _saveLimousineOffers() async {
+    final scope = _strictSettingsScopeForAction(
+      action: 'limousine_offers_save',
+    );
+    if (scope == null) return;
+    setState(() {
+      _limousineOffersSaving = true;
+      _limousineOffersError = null;
+      _limousineOffersStatus = null;
+    });
+    try {
+      final payload = <String, dynamic>{
+        'enabled': _limousineSectionEnabled,
+        'currency': _limousineOffersCurrency,
+        'source_revision': _limousineOffersRevision,
+        'offers': _limousineOffers,
+      };
+      final data = await saveAdminLimousinePricing(
+        payload,
+        tenantId: scope.tenantId,
+        companyId: scope.companyId,
+      );
+      final section = (data['limousine'] is Map)
+          ? Map<String, dynamic>.from(data['limousine'] as Map)
+          : <String, dynamic>{};
+      if (!mounted) return;
+      setState(() {
+        _limousineOffersRevision =
+            int.tryParse('${section['source_revision'] ?? 0}') ??
+            _limousineOffersRevision;
+        _limousineOffersDirty = false;
+        _limousineOffersStatus = _t(
+          nl: 'Limousineaanbod opgeslagen.',
+          en: 'Limousine offers saved.',
+          fr: 'Offres limousine enregistrées.',
+          es: 'Ofertas de limusina guardadas.',
+        );
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _limousineOffersError = e.toString());
+    } finally {
+      if (mounted) setState(() => _limousineOffersSaving = false);
+    }
+  }
+
+  /// Read-only validation feedback for one offer, using the shared domain
+  /// resolver (no duplicated eligibility/pricing logic inside the widget).
+  List<String> _limousineOfferErrors(Map<String, dynamic> offer) {
+    return validateLimousineOffer(
+      offer,
+      vehicles: vehiclesNotifier.value,
+      knownClassIds: _limousineKnownClassIds,
+      readiness: true,
+    ).errors;
+  }
+
+  Widget _limousineOfferRow(int index) {
+    final offer = _limousineOffers[index];
+    final presentation = limousineOfferToken(offer['price_presentation']);
+    final currency = limousineCurrencyOf(offer['currency']);
+    final title = limousineLocalizedFor(offer['title'], _lang);
+    final targetType = limousineOfferToken(offer['target_type']);
+    final targetLabel = targetType == LimousineOfferTarget.vehicle
+        ? '${_t(nl: 'Voertuig', en: 'Vehicle', fr: 'Véhicule', es: 'Vehículo')}: ${offer['vehicle_id'] ?? ''}'
+        : '${_t(nl: 'Klasse', en: 'Class', fr: 'Classe', es: 'Clase')}: ${limousineServiceClassLabel(offer['service_class_id']?.toString(), _lang)}';
+    final errors = _limousineOfferErrors(offer);
+    final published = offer['published'] == true;
+    final enabled = offer['enabled'] == true;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _inputFill,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _inputBorderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title.isEmpty ? (offer['offer_id'] ?? '').toString() : title,
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (!enabled)
+                Text(
+                  _t(
+                    nl: 'Uitgeschakeld',
+                    en: 'Disabled',
+                    fr: 'Désactivé',
+                    es: 'Desactivado',
+                  ),
+                  style: TextStyle(color: _textMuted, fontSize: 11),
+                )
+              else if (published)
+                Text(
+                  _t(
+                    nl: 'Gepubliceerd',
+                    en: 'Published',
+                    fr: 'Publié',
+                    es: 'Publicado',
+                  ),
+                  style: const TextStyle(
+                    color: Color(0xFF34D29A),
+                    fontSize: 11,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            targetLabel,
+            style: TextStyle(color: _textSecondary, fontSize: 12),
+          ),
+          Text(
+            '${limousinePresentationLabel(presentation, _lang)}'
+            '${limousineCentsOf(offer['display_amount_cents']) != null ? ' · ${_limousineMoneyLabel(limousineCentsOf(offer['display_amount_cents']), currency)}' : ''}',
+            style: TextStyle(color: _textSecondary, fontSize: 12),
+          ),
+          if (errors.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            ...errors.map(
+              (code) => Text(
+                '• ${limousineOfferErrorLabel(code, _lang)}',
+                style: const TextStyle(
+                  color: Colors.orangeAccent,
+                  fontSize: 11.5,
+                ),
+              ),
+            ),
+          ],
+          Row(
+            children: [
+              TextButton.icon(
+                onPressed: _limousineOffersSaving
+                    ? null
+                    : () => _editLimousineOffer(index: index),
+                icon: const Icon(Icons.edit_outlined, size: 16),
+                label: Text(
+                  _t(nl: 'Bewerken', en: 'Edit', fr: 'Modifier', es: 'Editar'),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _limousineOffersSaving
+                    ? null
+                    : () => setState(() {
+                        // Disabling stops new discovery; existing bookings,
+                        // snapshots and configuration are preserved.
+                        _limousineOffers[index] = <String, dynamic>{
+                          ...offer,
+                          'enabled': !enabled,
+                        };
+                        _limousineOffersDirty = true;
+                      }),
+                icon: Icon(
+                  enabled
+                      ? Icons.pause_circle_outline
+                      : Icons.play_circle_outline,
+                  size: 16,
+                ),
+                label: Text(
+                  enabled
+                      ? _t(
+                          nl: 'Uitschakelen',
+                          en: 'Disable',
+                          fr: 'Désactiver',
+                          es: 'Desactivar',
+                        )
+                      : _t(
+                          nl: 'Inschakelen',
+                          en: 'Enable',
+                          fr: 'Activer',
+                          es: 'Activar',
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _limousineOffersCard() {
+    return _collapsibleSettingsCard(
+      id: 'limousine_offers_pricing',
+      icon: Icons.workspace_premium_outlined,
+      title: _t(
+        nl: 'Limousineaanbod en prijzen',
+        en: 'Limousine offers and pricing',
+        fr: 'Offres et tarifs limousine',
+        es: 'Ofertas y precios de limusina',
+      ),
+      subtitle: _t(
+        nl: 'Aanbod per voertuig of klasse, uurhuur, voorrijden en publicatie',
+        en: 'Offers per vehicle or class, hourly hire, mobilisation and publication',
+        fr: 'Offres par véhicule ou classe, location horaire, acheminement et publication',
+        es: 'Ofertas por vehículo o clase, alquiler por horas, movilización y publicación',
+      ),
+      status: _limousineOffers.isEmpty
+          ? _SetupStatus.optional
+          : (_limousineOffers.any((o) => _limousineOfferErrors(o).isNotEmpty)
+                ? _SetupStatus.attention
+                : _SetupStatus.complete),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              nl: 'Deze sectie staat los van de taxi-prijsmotor en de luchthaven vaste tarieven. Prijzen worden nooit per chauffeur ingesteld.',
+              en: 'This section is separate from the taxi pricing engine and the airport fixed fares. Prices are never configured per driver.',
+              fr: 'Cette section est distincte du moteur tarifaire taxi et des forfaits aéroport. Les prix ne sont jamais configurés par chauffeur.',
+              es: 'Esta sección es independiente del motor de tarifas de taxi y de las tarifas fijas de aeropuerto. Los precios nunca se configuran por conductor.',
+            ),
+            style: TextStyle(color: _textMuted, fontSize: 11.5),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _t(
+                    nl: 'Limousineaanbod actief',
+                    en: 'Limousine offers active',
+                    fr: 'Offres limousine actives',
+                    es: 'Ofertas de limusina activas',
+                  ),
+                  style: TextStyle(
+                    color: _textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Switch(
+                value: _limousineSectionEnabled,
+                onChanged: _limousineOffersSaving
+                    ? null
+                    : (v) => setState(() {
+                        _limousineSectionEnabled = v;
+                        _limousineOffersDirty = true;
+                      }),
+              ),
+            ],
+          ),
+          if (_limousineOffersLoading)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                _t(
+                  nl: 'Laden…',
+                  en: 'Loading…',
+                  fr: 'Chargement…',
+                  es: 'Cargando…',
+                ),
+                style: TextStyle(color: _textMuted, fontSize: 12),
+              ),
+            ),
+          if (_limousineOffers.isEmpty && !_limousineOffersLoading)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                _t(
+                  nl: 'Nog geen limousineaanbod geconfigureerd.',
+                  en: 'No limousine offers configured yet.',
+                  fr: 'Aucune offre limousine configurée.',
+                  es: 'Aún no hay ofertas de limusina configuradas.',
+                ),
+                style: TextStyle(color: _textSecondary, fontSize: 12),
+              ),
+            ),
+          ..._limousineOffers.asMap().entries.map(
+            (e) => _limousineOfferRow(e.key),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _limousineOffersSaving
+                    ? null
+                    : () => _editLimousineOffer(),
+                icon: const Icon(Icons.add, size: 16),
+                label: Text(
+                  _t(
+                    nl: 'Aanbod toevoegen',
+                    en: 'Add offer',
+                    fr: 'Ajouter une offre',
+                    es: 'Añadir oferta',
+                  ),
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: _limousineOffersLoading || _limousineOffersSaving
+                    ? null
+                    : _loadLimousineOffers,
+                icon: const Icon(Icons.refresh, size: 16),
+                label: Text(
+                  _t(
+                    nl: 'Vernieuwen',
+                    en: 'Refresh',
+                    fr: 'Actualiser',
+                    es: 'Actualizar',
+                  ),
+                ),
+              ),
+              FilledButton.icon(
+                onPressed: _limousineOffersSaving || !_limousineOffersDirty
+                    ? null
+                    : _saveLimousineOffers,
+                icon: const Icon(Icons.save_outlined, size: 16),
+                label: Text(
+                  _t(
+                    nl: 'Opslaan',
+                    en: 'Save',
+                    fr: 'Enregistrer',
+                    es: 'Guardar',
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (_limousineOffersStatus != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _limousineOffersStatus!,
+              style: const TextStyle(color: Color(0xFF34D29A), fontSize: 11.8),
+            ),
+          ],
+          if (_limousineOffersError != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _limousineOffersError!,
+              style: TextStyle(color: _danger, fontSize: 11.8),
+            ),
+          ],
+          const SizedBox(height: 10),
+          _limousineOffersPublicPreview(),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _editLimousineOffer({int? index}) async {
+    final existing = index == null
+        ? <String, dynamic>{}
+        : Map<String, dynamic>.from(_limousineOffers[index]);
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) => LimousineOfferEditorDialog(
+        initialOffer: existing,
+        vehicles: _limousineVehicles,
+        currency: _limousineOffersCurrency,
+        language: _lang,
+        backgroundColor: _panelBg,
+      ),
+    );
+    if (result == null) return;
+    setState(() {
+      if (index == null) {
+        _limousineOffers.add(result);
+      } else {
+        _limousineOffers[index] = result;
+      }
+      _limousineOffersDirty = true;
+    });
+  }
+
+  /// Read-only safe preview of what customers would see. Uses the shared safe
+  /// projection so the private operating base can never leak.
+  Widget _limousineOffersPublicPreview() {
+    final safe = buildSafePublicLimousineOffers(
+      _limousineOffers,
+      eligible: true,
+      vehicles: vehiclesNotifier.value,
+      knownClassIds: _limousineKnownClassIds,
+      readiness: true,
+    );
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _subPanelBg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _inputBorderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _t(
+              nl: 'Veilige publieke preview',
+              en: 'Safe public preview',
+              fr: 'Aperçu public sécurisé',
+              es: 'Vista previa pública segura',
+            ),
+            style: TextStyle(color: _textPrimary, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _t(
+              nl: 'Alleen gepubliceerd en geldig aanbod. Je exacte standplaats wordt nooit gedeeld.',
+              en: 'Published and valid offers only. Your exact operating base is never shared.',
+              fr: 'Offres publiées et valides uniquement. Votre base exacte n’est jamais partagée.',
+              es: 'Solo ofertas publicadas y válidas. Tu base exacta nunca se comparte.',
+            ),
+            style: TextStyle(color: _textMuted, fontSize: 11),
+          ),
+          const SizedBox(height: 8),
+          if (safe.isEmpty)
+            Text(
+              _t(
+                nl: 'Nog niets zichtbaar voor klanten.',
+                en: 'Nothing visible to customers yet.',
+                fr: 'Rien de visible pour les clients.',
+                es: 'Nada visible para los clientes todavía.',
+              ),
+              style: TextStyle(color: _textSecondary, fontSize: 12),
+            )
+          else
+            ...safe.map((o) {
+              final presentation = (o['price_presentation'] ?? '').toString();
+              final cents = limousineCentsOf(o['display_amount_cents']);
+              final currency = (o['currency'] ?? '').toString();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  '• ${limousineLocalizedFor(o['title'], _lang)} — '
+                  '${limousinePresentationLabel(presentation, _lang)}'
+                  '${cents != null ? ' ${_limousineMoneyLabel(cents, currency)}' : ''}',
+                  style: TextStyle(color: _textSecondary, fontSize: 12),
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  Widget _limousineReadinessSummary() {
+    final scopeId = _strictSettingsScopeForAction(
+      action: 'limousine_readiness',
+    )?.companyId;
+    if (scopeId == null || scopeId.trim().isEmpty) {
+      return _limousineReadinessRow(
+        LimousinePublicAvailabilityState.suspendedOrBlocked,
+      );
+    }
+    return FutureBuilder<BackendSubscriptionProfile>(
+      future: fetchCompanySubscriptionProfile(
+        tenantId: scopeId,
+        companyId: scopeId,
+      ),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return _limousineReadinessRow(
+            LimousinePublicAvailabilityState.unavailableUnderSubscription,
+          );
+        }
+        final profile = snapshot.data;
+        final status = profile == null
+            ? ''
+            : (profile.subscriptionStatus.trim().isNotEmpty
+                  ? profile.subscriptionStatus
+                  : profile.status);
+        final entitled = profile?.features['limousine'] == true;
+        final candidate = _limousineReadinessCandidate(
+          subscriptionStatus: status,
+          entitled: entitled,
+        );
+        final composition = composeLimousinePublicAvailability(candidate);
+        return _limousineReadinessRow(composition.state);
+      },
+    );
   }
 
   /// True when the page is rendering a single focused setup step. False when
@@ -608,6 +1265,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _loadBillitIntegrationStatus();
     _loadBillitAutoCreateSettings();
     _loadAirportFixedFareRules();
+    _loadLimousineOffers();
     _loadChironConnectionStatus();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -6338,6 +6996,8 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           fr: 'Paiement en ligne',
           es: 'Pago online',
         );
+      case kLimousinePublicServiceId:
+        return limousinePublicServiceLabelFor(_lang);
       default:
         return id;
     }
@@ -6706,6 +7366,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         : (localCompany?.phone.trim() ?? '');
     final onlinePaymentsEnabled = services.contains('online_payments');
     final airportServiceEnabled = services.contains('airport_transfer');
+    final limousineServiceEnabled = services.contains(
+      kLimousinePublicServiceId,
+    );
     final publicPaymentMethods = _orderedPublicPaymentOptionIds(
       _publicPaymentOptionIds,
     );
@@ -6732,10 +7395,18 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
               'ev_available',
           };
           final photoUrl = _publicVehiclePhotoUrlForPublish(v);
+          // LIMOUSINE-MARKETPLACE-P1: emit authoritative configured
+          // classification only. `category` stays the human tier label; the
+          // machine-authoritative service_category/service_class are emitted
+          // solely when explicitly configured (never inferred from tier/brand).
+          final serviceCategory = v.serviceCategory.trim().toLowerCase();
+          final serviceClass = v.serviceClassId.trim().toLowerCase();
           return <String, dynamic>{
             'name': v.vehicleName.trim(),
             'brand_model': brand,
             'category': _publicTierCategoryLabel(v.tierId),
+            if (serviceCategory.isNotEmpty) 'service_category': serviceCategory,
+            if (serviceClass.isNotEmpty) 'service_class': serviceClass,
             'pax': v.passengerCapacity < 0 ? 0 : v.passengerCapacity,
             'luggage': v.luggageCapacity < 0 ? 0 : v.luggageCapacity,
             'features': features.toList(growable: false),
@@ -6849,9 +7520,12 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       'airportServiceEnabled': airportServiceEnabled,
       'airport_transfer_enabled': airportServiceEnabled,
       'airportTransferEnabled': airportServiceEnabled,
+      'limousine_service_enabled': limousineServiceEnabled,
+      'limousineServiceEnabled': limousineServiceEnabled,
       'capabilities': <String, dynamic>{
         'airport': airportServiceEnabled,
         'airport_transfer': airportServiceEnabled,
+        'limousine': limousineServiceEnabled,
       },
       'payment_methods': publicPaymentMethods,
       'vehicles': vehicles,
@@ -6870,6 +7544,9 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         'airportServiceEnabled': airportServiceEnabled,
         'airport_transfer_enabled': airportServiceEnabled,
         'airportTransferEnabled': airportServiceEnabled,
+        'limousine': limousineServiceEnabled,
+        'limousine_service_enabled': limousineServiceEnabled,
+        'limousineServiceEnabled': limousineServiceEnabled,
       },
     };
   }
@@ -12287,6 +12964,13 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                         ],
                       ),
                       const SizedBox(height: 10),
+                      _limousineReadinessSummary(),
+                      const SizedBox(height: 10),
+                      // LIMOUSINE-MARKETPLACE-P2B2 — publication surface only.
+                      // Read-only mirror of what will be published; pricing is
+                      // authored in "Limousine offers and pricing".
+                      _limousineOffersPublicPreview(),
+                      const SizedBox(height: 10),
                       FilledButton.icon(
                         onPressed: _publicPartnerProfilePublishing
                             ? null
@@ -12819,6 +13503,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 ),
               if (_shouldShowSection('airport_fixed_fares'))
                 _airportFixedFareCard(),
+              // LIMOUSINE-MARKETPLACE-P2B2 — dedicated, visually and
+              // semantically separate from the taxi pricing engine and the
+              // airport fixed fares above.
+              if (_shouldShowSection('limousine_offers_pricing'))
+                _limousineOffersCard(),
               const SizedBox(height: 4),
               if (_isActiveStepMode)
                 // SafeArea ensures the wizard's primary "Save and
