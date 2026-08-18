@@ -15,6 +15,10 @@ import 'package:fluxidi_tracking/business_theme_page.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/chiron_company_connection_config.dart';
 import 'package:fluxidi_tracking/company/billit_customer_connect_gate.dart';
+import 'package:fluxidi_tracking/limousine/limousine_business_setup.dart';
+import 'package:fluxidi_tracking/limousine/limousine_business_setup_labels.dart';
+import 'package:fluxidi_tracking/limousine/limousine_business_setup_page.dart';
+import 'package:fluxidi_tracking/limousine/limousine_customer_entry.dart';
 import 'package:fluxidi_tracking/limousine/limousine_marketplace_labels.dart';
 import 'package:fluxidi_tracking/limousine/limousine_offer_editor.dart';
 import 'package:fluxidi_tracking/limousine/limousine_offers.dart';
@@ -888,6 +892,19 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          FilledButton.icon(
+            key: kLimousineBusinessSetupOpenKey,
+            onPressed: () => openLimousineBusinessSetup(
+              context,
+              language: _lang,
+              backgroundColor: _panelBg,
+              companyName: _companyCtrl.text.trim(),
+              entryEnabled: LimousineCustomerEntryContract.isVisible,
+            ),
+            icon: const Icon(Icons.workspace_premium_outlined),
+            label: Text(kLimousineBusinessSetupOpenAction.of(_lang)),
+          ),
+          const SizedBox(height: 10),
           Text(
             _t(
               nl: 'Deze sectie staat los van de taxi-prijsmotor en de luchthaven vaste tarieven. Prijzen worden nooit per chauffeur ingesteld.',

@@ -90,6 +90,7 @@ class LimousineOfferEditorDialog extends StatefulWidget {
     required this.currency,
     required this.language,
     this.backgroundColor,
+    this.allowIncompleteDraft = false,
   });
 
   final Map<String, dynamic> initialOffer;
@@ -97,6 +98,7 @@ class LimousineOfferEditorDialog extends StatefulWidget {
   final String currency;
   final AppLanguage language;
   final Color? backgroundColor;
+  final bool allowIncompleteDraft;
 
   @override
   State<LimousineOfferEditorDialog> createState() =>
@@ -1591,8 +1593,15 @@ class _LimousineOfferEditorDialogState
                       ),
                       const Spacer(),
                       FilledButton(
-                        onPressed: errors.isEmpty
-                            ? () => Navigator.of(context).pop(buildOffer())
+                        onPressed: errors.isEmpty || widget.allowIncompleteDraft
+                            ? () {
+                                final offer = buildOffer();
+                                if (widget.allowIncompleteDraft &&
+                                    errors.isNotEmpty) {
+                                  offer['published'] = false;
+                                }
+                                Navigator.of(context).pop(offer);
+                              }
                             : null,
                         child: Text(
                           _t(
