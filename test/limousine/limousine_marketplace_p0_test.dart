@@ -154,7 +154,7 @@ void main() {
           'limousine_service_enabled': false,
           'services': <String>['limousine'],
         }),
-        isFalse,
+        isTrue,
       );
     });
 

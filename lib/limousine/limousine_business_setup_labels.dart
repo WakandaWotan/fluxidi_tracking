@@ -38,11 +38,12 @@ const LocalizedText kLimousineBusinessSetupTestBadge = LocalizedText(
 );
 
 const LocalizedText kLimousineBusinessSetupTestMessage = LocalizedText(
-  nl: 'Testomgeving: nog niet zichtbaar voor klanten',
-  en: 'Test environment: not yet visible to customers',
-  fr: 'Environnement de test : pas encore visible pour les clients',
-  es: 'Entorno de prueba: aún no visible para los clientes',
+  nl: 'Testomgeving: zichtbaar voor toegelaten testgebruikers',
+  en: 'Test environment: visible to allowed test users',
+  fr: 'Environnement de test : visible pour les utilisateurs de test autorisés',
+  es: 'Entorno de prueba: visible para usuarios de prueba autorizados',
 );
+
 
 const LocalizedText kLimousineBusinessSetupTestHint = LocalizedText(
   nl: 'Controleer en publiceer om live te gaan.',
@@ -527,7 +528,7 @@ LocalizedText limousineBusinessSetupChecklistLabel(String code) {
     case 'live_status':
       return kLimousineBusinessSetupTestMessage;
     default:
-      return kLimousineGatesOffFriendly;
+      return kLimousineBusinessSetupTestNotReadyMessage;
   }
 }
 
@@ -552,7 +553,7 @@ LocalizedText limousineBusinessSetupMissingCopy(
       case 'public_photo':
         return kLimousineBusinessSetupMissingPhoto;
       case 'live_status':
-        return kLimousineBusinessSetupTestMessage;
+        return kLimousineBusinessSetupTestNotReadyMessage;
     }
   }
   return kLimousineBusinessSetupReady;

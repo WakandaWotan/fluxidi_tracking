@@ -180,9 +180,9 @@ void main() {
     );
     expect(
       ready.items.singleWhere((item) => item.code == 'live_status').complete,
-      isFalse,
+      isTrue,
     );
-    expect(ready.progress, closeTo(0.8, 0.01));
+    expect(ready.progress, closeTo(1.0, 0.01));
   });
 
   test(

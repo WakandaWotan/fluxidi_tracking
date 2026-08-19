@@ -548,9 +548,7 @@ class _LimousineBusinessSetupPageState
         _dirty = false;
         _vehiclesSnapshot = List<VehicleProfile>.from(_vehicles);
         _status = publish
-            ? (widget.entryEnabled
-                  ? _t(kLimousineBusinessSetupPublishedLocal)
-                  : _t(kLimousineBusinessSetupTestMessage))
+            ? _t(kLimousineBusinessSetupTestMessage)
             : _t(kLimousineBusinessSetupDraftSaved);
       });
     } catch (error) {
@@ -866,21 +864,20 @@ class _LimousineBusinessSetupPageState
             onPressed: () => unawaited(_handleBack()),
           ),
           actions: [
-            if (!widget.entryEnabled)
-              Padding(
-                padding: const EdgeInsets.only(right: 12),
-                child: Chip(
-                  key: kLimousineBusinessSetupTestBadgeKey,
-                  avatar: Icon(
-                    Icons.science_outlined,
-                    color: tokens.gold,
-                    size: 16,
-                  ),
-                  label: Text(_t(kLimousineBusinessSetupTestBadge)),
-                  side: BorderSide(color: tokens.gold),
-                  backgroundColor: tokens.surfaceAlt,
+            Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: Chip(
+                key: kLimousineBusinessSetupTestBadgeKey,
+                avatar: Icon(
+                  Icons.science_outlined,
+                  color: tokens.gold,
+                  size: 16,
                 ),
+                label: Text(_t(kLimousineBusinessSetupTestBadge)),
+                side: BorderSide(color: tokens.gold),
+                backgroundColor: tokens.surfaceAlt,
               ),
+            ),
           ],
         ),
         body: SafeArea(
@@ -1758,14 +1755,12 @@ class _LimousineBusinessSetupPageState
   }
 
   Widget _preview(LimousineUxTokens tokens) {
-    final safeOffers = widget.entryEnabled
-        ? limousineSafeSetupPreviewOffers(
-            offers: _offers,
-            vehicles: _vehicles,
-            knownClassIds: _knownClasses,
-            sectionEnabled: _sectionEnabled,
-          )
-        : const <Map<String, dynamic>>[];
+    final safeOffers = limousineSafeSetupPreviewOffers(
+      offers: _offers,
+      vehicles: _vehicles,
+      knownClassIds: _knownClasses,
+      sectionEnabled: _sectionEnabled,
+    );
     final limousineVehicles = limousineSetupLimousineVehicles(_vehicles);
     final title = limousineBusinessSetupTextFallback(
       _publicTitle.toJson(),
@@ -1966,6 +1961,11 @@ class _LimousineBusinessSetupPageState
             key: kLimousineBusinessSetupErrorKey,
             style: TextStyle(color: tokens.danger),
           ),
+        const SizedBox(height: 8),
+        Text(
+          _t(kLimousineBusinessSetupTransactionsOff),
+          style: TextStyle(color: tokens.muted, fontSize: 12.5),
+        ),
         if (_loading)
           Padding(
             padding: const EdgeInsets.only(top: 8),

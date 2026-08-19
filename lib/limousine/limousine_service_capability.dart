@@ -111,10 +111,13 @@ bool serviceCollectionContainsLimousine(dynamic raw) {
 
 /// Authoritative company-level limousine opt-in.
 ///
-/// Explicit false on a known boolean wins (fail closed). A `services[]`
-/// token is accepted only when no contradictory boolean is present.
+/// The durable opt-in is a `services[]` limousine token. A defaulted
+/// `booking_capabilities.limousine=false` must not hide that token.
 /// Premium tier, vehicle names, and historical rides are ignored here.
 bool partnerHasExplicitLimousineCapability(Map<String, dynamic> source) {
+  if (serviceCollectionContainsLimousine(source['services'])) {
+    return true;
+  }
   var sawExplicitBoolean = false;
   var explicitTrue = false;
   var explicitFalse = false;
@@ -152,8 +155,7 @@ bool partnerHasExplicitLimousineCapability(Map<String, dynamic> source) {
     consider(servicesMap['limousine_service']);
   }
 
-  if (explicitFalse && !explicitTrue) return false;
   if (explicitTrue) return true;
-  if (sawExplicitBoolean) return false;
-  return serviceCollectionContainsLimousine(source['services']);
+  if (explicitFalse || sawExplicitBoolean) return false;
+  return false;
 }

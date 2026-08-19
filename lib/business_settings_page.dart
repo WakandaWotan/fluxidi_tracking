@@ -23,6 +23,7 @@ import 'package:fluxidi_tracking/limousine/limousine_dimensions.dart';
 import 'package:fluxidi_tracking/limousine/limousine_marketplace_labels.dart';
 import 'package:fluxidi_tracking/limousine/limousine_offers.dart';
 import 'package:fluxidi_tracking/limousine/limousine_p2d4c1a_ux.dart';
+import 'package:fluxidi_tracking/limousine/limousine_public_service_persist.dart';
 import 'package:fluxidi_tracking/limousine/limousine_quote_requests_nav.dart';
 import 'package:fluxidi_tracking/limousine/limousine_service_capability.dart';
 import 'package:fluxidi_tracking/limousine/limousine_state_composition.dart';
@@ -640,21 +641,55 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     }
   }
 
+  _SetupStatus _limousineOffersCardStatus() {
+    final publicOn = _mappedPublicServiceIds().contains(
+      kLimousinePublicServiceId,
+    );
+    if (limousineBusinessSettingsCardIsOptional(
+      publicServiceEnabled: publicOn,
+      sectionEnabled: _limousineSectionEnabled,
+    )) {
+      return _SetupStatus.optional;
+    }
+    final vehicles = vehiclesNotifier.value;
+    final hasVehicle = limousineSetupLimousineVehicles(
+      vehicles,
+    ).any((vehicle) => vehicle.isActive);
+    final hasOffer = _limousineOffers.any(
+      (offer) => limousineOfferIsValidPublished(
+        offer,
+        vehicles: vehicles,
+        knownClassIds: _limousineKnownClassIds,
+      ),
+    );
+    final hasText = _limousineOffers.any(
+      (offer) => limousinePublicTextIsComplete(
+        title: limousineLocalizedOf(offer['title']),
+        description: limousineLocalizedOf(offer['description']),
+      ),
+    );
+    final hasMedia =
+        _publicHeroPhotoUrlCtrl.text.trim().isNotEmpty ||
+        vehicles.any(limousineVehicleHasSafePublicPhoto);
+    return limousineBusinessSettingsCardIsComplete(
+          publicServiceEnabled: publicOn,
+          sectionEnabled: _limousineSectionEnabled || hasOffer,
+          hasEligibleVehicle: hasVehicle,
+          hasPublishedOffer: hasOffer,
+          hasPublicText: hasText,
+          hasSafePublicMedia: hasMedia,
+        )
+        ? _SetupStatus.complete
+        : _SetupStatus.incomplete;
+  }
+
   Widget _limousineOffersCard() {
     return _collapsibleSettingsCard(
       id: 'limousine_offers_pricing',
       icon: Icons.workspace_premium_outlined,
       title: kLimousineOffersPricingSectionTitle.of(_lang),
       subtitle: kLimousineOffersPricingSectionIntro.of(_lang),
-      status:
-          limousineOffersPricingSectionIsComplete(
-            sectionEnabled: _limousineSectionEnabled,
-            offers: _limousineOffers,
-            vehicles: vehiclesNotifier.value,
-            knownClassIds: _limousineKnownClassIds,
-          )
-          ? _SetupStatus.complete
-          : _SetupStatus.optional,
+      status: _limousineOffersCardStatus(),
       child: Column(
         key: kLimousineCompanyOffersStatusKey,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1874,12 +1909,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
     _publicPaymentOptionIds = _sanitizePublicPaymentOptionIds(
       p.publicPaymentOptions,
     );
-    final sanitizedPublicServices = _sanitizePublicServiceIds(
-      p.publicServiceIds,
+    final incoming = PublicServiceSelection(
+      ids: p.publicServiceIds,
+      configured: p.publicServicesConfigured,
     );
-    _publicServicesConfigured = p.publicServicesConfigured;
-    if (p.publicServicesConfigured) {
-      _publicServiceIds = sanitizedPublicServices.toSet();
+    _publicServicesConfigured =
+        incoming.configured || incoming.limousineEnabled;
+    if (_publicServicesConfigured) {
+      _publicServiceIds = incoming.ids.toSet();
     } else {
       // Backward compatibility: older profiles had no dedicated public-service
       // section. Seed once from calculator service setup mapping.
@@ -2179,12 +2216,21 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
 
     List<String> pickPublicServiceList(
       List<String> localValue,
-      List<String> serverValue,
-    ) {
-      final normalizedServer = _sanitizePublicServiceIds(serverValue);
-      if (normalizedServer.isNotEmpty) return normalizedServer.toList();
-      final normalizedLocal = _sanitizePublicServiceIds(localValue);
-      return normalizedLocal.toList();
+      List<String> serverValue, {
+      required bool localConfigured,
+      required bool serverConfigured,
+    }) {
+      return mergePublicServiceSelection(
+        local: PublicServiceSelection(
+          ids: localValue,
+          configured: localConfigured,
+        ),
+        server: PublicServiceSelection(
+          ids: serverValue,
+          configured: serverConfigured,
+        ),
+        serverFieldPresent: serverConfigured || serverValue.isNotEmpty,
+      ).ids;
     }
 
     return BackendBusinessProfile(
@@ -2258,9 +2304,22 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       publicServiceIds: pickPublicServiceList(
         local.publicServiceIds,
         server.publicServiceIds,
+        localConfigured: local.publicServicesConfigured,
+        serverConfigured: server.publicServicesConfigured,
       ),
-      publicServicesConfigured:
-          server.publicServicesConfigured || local.publicServicesConfigured,
+      publicServicesConfigured: mergePublicServiceSelection(
+        local: PublicServiceSelection(
+          ids: local.publicServiceIds,
+          configured: local.publicServicesConfigured,
+        ),
+        server: PublicServiceSelection(
+          ids: server.publicServiceIds,
+          configured: server.publicServicesConfigured,
+        ),
+        serverFieldPresent:
+            server.publicServicesConfigured ||
+            server.publicServiceIds.isNotEmpty,
+      ).configured,
       publicPartnerProfilePublishedAt: pick(
         local.publicPartnerProfilePublishedAt,
         server.publicPartnerProfilePublishedAt,
@@ -2334,14 +2393,18 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         source: 'business_profile_get',
       );
       // Merge server response over the locally cached profile so empty server
-      // fields do not wipe non-empty user-saved values.
+      // fields do not wipe non-empty user-saved values. Prefer the current
+      // form when the user already toggled public services during load.
       final cached = localBackendBusinessProfileNotifier.value;
-      final localBase =
-          cached ??
-          mergeLocalIntoBackendPreview(
-            BackendBusinessProfile.defaults(),
-            companyProfileNotifier.value,
-          );
+      final formNow = _backendBusinessProfileFromForm();
+      final localBase = _mergeBackendBusinessProfile(
+        local: cached ??
+            mergeLocalIntoBackendPreview(
+              BackendBusinessProfile.defaults(),
+              companyProfileNotifier.value,
+            ),
+        server: formNow,
+      );
       final merged = _mergeBackendBusinessProfile(
         local: localBase,
         server: rawBiz,
@@ -6026,10 +6089,14 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       publicPaymentOptions: _orderedPublicPaymentOptionIds(
         _publicPaymentOptionIds,
       ),
-      publicServiceIds: _publicServicesConfigured
+      publicServiceIds:
+          _publicServicesConfigured ||
+              _publicServiceIds.contains(kLimousinePublicServiceId)
           ? _sanitizePublicServiceIds(_publicServiceIds).toList(growable: false)
           : const <String>[],
-      publicServicesConfigured: _publicServicesConfigured,
+      publicServicesConfigured:
+          _publicServicesConfigured ||
+          _publicServiceIds.contains(kLimousinePublicServiceId),
       publicPartnerProfilePublishedAt: _publicPartnerProfilePublishedAt.trim(),
       publicPartnerProfilePublishStatus: _publicPartnerProfilePublishStatus
           .trim(),
@@ -6623,13 +6690,11 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   }
 
   List<String> _mappedPublicServiceIds() {
-    final explicit = _sanitizePublicServiceIds(_publicServiceIds);
-    if (_publicServicesConfigured) {
-      return explicit.toList(growable: false);
-    }
-    // Temporary fallback for tenants that still have no dedicated public
-    // service configuration saved yet.
-    return _legacyPublicServiceIdsFromCalculator();
+    return mappedPublicServiceIdsForPublish(
+      configured: _publicServicesConfigured,
+      selected: _publicServiceIds,
+      legacyFallback: _legacyPublicServiceIdsFromCalculator(),
+    );
   }
 
   String _publicServiceLabel(String id) {
@@ -7299,12 +7364,45 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       final payload = _buildPublicPartnerProfilePayload(
         companyId: scope.companyId,
       );
-      await publishBackendPublicPartnerProfile(
-        partnerProfile: payload,
-        tenantId: scope.tenantId,
-        companyId: scope.companyId,
-      );
+      late final Map<String, dynamic> published;
+      try {
+        published = await publishBackendPublicPartnerProfile(
+          partnerProfile: payload,
+          tenantId: scope.tenantId,
+          companyId: scope.companyId,
+        );
+      } catch (e) {
+        if (e.toString().contains('409') ||
+            e.toString().contains('stale_partner_profile_revision')) {
+          if (!mounted) return false;
+          setState(() {
+            _publicPartnerProfileError = _t(
+              nl: 'Publiceren geweigerd: een nieuwere versie staat al op de server. De lokale Limousine-keuze blijft behouden. Probeer opnieuw.',
+              en: 'Publish rejected: a newer version is already on the server. The local Limousine selection is kept. Try again.',
+              fr: 'Publication refusee : une version plus recente est deja sur le serveur. La selection Limousine locale est conservee. Reessayez.',
+              es: 'Publicacion rechazada: ya hay una version mas reciente en el servidor. La seleccion de Limusina local se conserva. Intentalo de nuevo.',
+            );
+          });
+          return false;
+        }
+        rethrow;
+      }
       if (!mounted) return false;
+      final publishedProfile = published['profile'];
+      if (publishedProfile is Map) {
+        final publishedServices = publishedProfile['services'];
+        if (publishedServices is List) {
+          final recovered = applyPublishedPartnerServices(
+            current: PublicServiceSelection(
+              ids: _mappedPublicServiceIds(),
+              configured: true,
+            ),
+            publishedServices: publishedServices.map((e) => '$e'),
+          );
+          _publicServicesConfigured = recovered.configured;
+          _publicServiceIds = recovered.ids.toSet();
+        }
+      }
       final publishedAt = DateTime.now().toUtc().toIso8601String();
       final publishedBusiness = BackendBusinessProfile(
         companyName: mergedBusiness.companyName,

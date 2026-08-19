@@ -74,10 +74,20 @@ Key limousineOfferEditorLanguageTabKey(String lang) =>
     ValueKey<String>('limousine_offer_editor_lang_$lang');
 
 const LocalizedText kLimousineGatesOffFriendly = LocalizedText(
-  nl: 'Limousineaanbod is nog niet actief in deze testomgeving.',
-  en: 'Limousine offers are not active in this test environment yet.',
-  fr: 'Les offres limousine ne sont pas encore actives dans cet environnement de test.',
-  es: 'Las ofertas de limusina aún no están activas en este entorno de prueba.',
+  nl: 'Offerteaanvragen en boekingen zijn nog niet actief in deze testomgeving.',
+  en: 'Quote requests and bookings are not active in this test environment yet.',
+  fr: 'Les demandes de devis et les réservations ne sont pas encore actives dans cet environnement de test.',
+  es: 'Las solicitudes de presupuesto y las reservas aún no están activas en este entorno de prueba.',
+);
+
+const LocalizedText kLimousineBusinessSetupTransactionsOff =
+    kLimousineGatesOffFriendly;
+
+const LocalizedText kLimousineBusinessSetupTestNotReadyMessage = LocalizedText(
+  nl: 'Testomgeving: nog niet zichtbaar. Maak voertuig, aanbod, tekst en foto compleet.',
+  en: 'Test environment: not visible yet. Complete vehicle, offer, text and photo.',
+  fr: 'Environnement de test : pas encore visible. Complétez véhicule, offre, texte et photo.',
+  es: 'Entorno de prueba: aún no visible. Complete vehículo, oferta, texto y foto.',
 );
 
 const LocalizedText kLimousineRequestIncompleteHint = LocalizedText(

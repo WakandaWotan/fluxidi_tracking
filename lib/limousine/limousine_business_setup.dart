@@ -361,7 +361,11 @@ LimousineBusinessSetupReadiness limousineBusinessSetupReadiness({
     LimousineBusinessSetupChecklistItem(
       code: 'live_status',
       section: LimousineBusinessSetupSection.review,
-      complete: entryEnabled && sectionEnabled,
+      complete:
+          hasLimousineVehicle &&
+          hasUsableOffer &&
+          hasPublicText &&
+          hasPublicPhoto,
     ),
   ];
   final done = items.where((item) => item.complete).length;
@@ -721,7 +725,7 @@ String limousineBusinessSetupFriendlyStatus({
   String? raw,
 }) {
   if (gatesOff || (raw != null && limousineLooksLikeRawException(raw))) {
-    return kLimousineGatesOffFriendly.of(language);
+    return kLimousineBusinessSetupTransactionsOff.of(language);
   }
   return (raw ?? '').trim();
 }
