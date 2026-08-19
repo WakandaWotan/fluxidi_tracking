@@ -6,6 +6,7 @@ import 'package:fluxidi_tracking/app_config.dart';
 import 'package:fluxidi_tracking/airport/airport_booking_review_page.dart';
 import 'package:fluxidi_tracking/airport/airport_catalog.generated.dart';
 import 'package:fluxidi_tracking/discovery/discovery_geo.dart';
+import 'package:fluxidi_tracking/nearby/public_partner_identity.dart';
 import 'package:fluxidi_tracking/effective_tenant_company_scope.dart';
 import 'package:fluxidi_tracking/hotels/hotel_model.dart';
 import 'package:fluxidi_tracking/hotels/hotel_seed_data.dart';
@@ -1065,9 +1066,9 @@ class _AirportPageState extends State<AirportPage> {
   Widget _buildHeader(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     final compactHeader = width < 380;
-    final selectedCompanyDisplay = _selectedCompanyLabel.trim().isNotEmpty
-        ? _selectedCompanyLabel.trim()
-        : 'Fluxidi';
+    final selectedCompanyDisplay = sanitizePublicPartnerBrandName(
+      _selectedCompanyLabel,
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 2),
       child: Row(
@@ -1110,7 +1111,8 @@ class _AirportPageState extends State<AirportPage> {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: _soft, fontSize: 11.5, height: 1.2),
                 ),
-                if (_hasSelectedPartnerScope) ...[
+                if (_hasSelectedPartnerScope &&
+                    selectedCompanyDisplay.isNotEmpty) ...[
                   const SizedBox(height: 5),
                   Row(
                     children: [

@@ -5,13 +5,14 @@ import '../app_config.dart';
 import '../app_strings.dart';
 import '../customer_theme_palette.dart';
 import '../customer_theme_store.dart';
-import 'limousine_brand_logo.dart';
+import '../nearby/public_partner_identity.dart';
 import 'limousine_customer_discovery.dart';
 import 'limousine_customer_discovery_labels.dart';
 import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_provider_showroom.dart';
 import 'limousine_provider_showroom_labels.dart';
 import 'limousine_provider_showroom_page.dart';
+import 'limousine_public_hero_overlay.dart';
 import 'limousine_public_profile.dart';
 import 'limousine_vehicle_media.dart';
 
@@ -23,12 +24,14 @@ class LimousinePublicProfilePage extends StatelessWidget {
     this.companyNameFallback = '',
     this.distanceKm,
     this.discoveryCard,
+    this.logoImage,
     this.onOpenShowroom,
   });
 
   final Map<String, dynamic> profile;
   final String partnerId;
   final String companyNameFallback;
+  final ImageProvider? logoImage;
   final double? distanceKm;
   final LimousineDiscoveryCard? discoveryCard;
   final VoidCallback? onOpenShowroom;
@@ -92,6 +95,14 @@ class LimousinePublicProfilePage extends StatelessWidget {
     LimousinePublicProfileData data,
   ) {
     final showroom = data.showroom;
+    final identity = resolvePublicPartnerHeroIdentity(
+      logoUrl: showroom.logoUrl,
+      logoImage: logoImage,
+      companyName: showroom.companyName,
+      description: showroom.tagline.isNotEmpty
+          ? showroom.tagline
+          : showroom.description,
+    );
     return Stack(
       children: [
         LimousineContainPhoto(
@@ -113,62 +124,32 @@ class LimousinePublicProfilePage extends StatelessWidget {
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  Colors.black.withOpacity(0.12),
-                  tokens.heroScrim.withOpacity(0.82),
+                  Colors.black.withOpacity(0.08),
+                  Colors.transparent,
+                  tokens.heroScrim.withOpacity(0.55),
                 ],
+                stops: const <double>[0, 0.42, 1],
               ),
             ),
           ),
         ),
         SafeArea(
           bottom: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(8, 4, 20, 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                IconButton(
-                  color: tokens.onHero,
-                  onPressed: () => Navigator.of(context).maybePop(),
-                  icon: const Icon(Icons.arrow_back),
-                ),
-                const SizedBox(height: 28),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        showroom.companyName,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: tokens.onHero,
-                          fontSize: 26,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    if (showroom.verifiedPartner)
-                      Icon(
-                        Icons.verified,
-                        color: tokens.gold,
-                        semanticLabel: kLimousineDiscoveryVerified.of(
-                          appLanguageNotifier.value,
-                        ),
-                      ),
-                  ],
-                ),
-              ],
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: IconButton(
+              color: tokens.onHero,
+              onPressed: () => Navigator.of(context).maybePop(),
+              icon: const Icon(Icons.arrow_back),
             ),
           ),
         ),
-        LimousineBrandLogoCorner(
-          alignment: Alignment.bottomRight,
-          child: LimousineBrandLogoPlaque(
-            logoUrl: showroom.logoUrl,
-            companyName: showroom.companyName,
-            minExtent: kLimousineLogoHeroMin,
-            maxExtent: kLimousineLogoHeroMax,
+        Positioned.fill(
+          child: LimousinePublicHeroOverlay(
+            identity: identity,
             tokens: tokens,
+            includeTopSafeArea: true,
+            verified: showroom.verifiedPartner,
           ),
         ),
       ],
@@ -203,10 +184,7 @@ class LimousinePublicProfilePage extends StatelessWidget {
               if (data.serviceRegion.isNotEmpty)
                 '${kLimousinePublicProfileRegion.of(language)}: ${data.serviceRegion}',
               if (showroom.distanceKm != null)
-                limousineDiscoveryDistanceLabel(
-                  showroom.distanceKm!,
-                  language,
-                ),
+                limousineDiscoveryDistanceLabel(showroom.distanceKm!, language),
             ].join(' · '),
             style: TextStyle(color: tokens.muted, height: 1.4),
           ),
@@ -226,7 +204,11 @@ class LimousinePublicProfilePage extends StatelessWidget {
           const SizedBox(height: 10),
           Text(
             showroom.description,
-            style: TextStyle(color: tokens.onSurface, height: 1.45, fontSize: 15),
+            style: TextStyle(
+              color: tokens.onSurface,
+              height: 1.45,
+              fontSize: 15,
+            ),
           ),
         ],
         if (data.hasPublicContact) ...[
@@ -257,18 +239,15 @@ class LimousinePublicProfilePage extends StatelessWidget {
                   tokens,
                   kLimousinePublicProfilePhone.of(language),
                   data.publicPhone,
-                  () => _openUri(
-                    Uri(scheme: 'tel', path: data.publicPhone),
-                  ),
+                  () => _openUri(Uri(scheme: 'tel', path: data.publicPhone)),
                 ),
               if (data.bookingEmail.isNotEmpty)
                 _contactChip(
                   tokens,
                   kLimousinePublicProfileEmail.of(language),
                   data.bookingEmail,
-                  () => _openUri(
-                    Uri(scheme: 'mailto', path: data.bookingEmail),
-                  ),
+                  () =>
+                      _openUri(Uri(scheme: 'mailto', path: data.bookingEmail)),
                 ),
             ],
           ),

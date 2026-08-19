@@ -69,5 +69,24 @@ void main() {
       expect(display, isEmpty);
       expect(looksLikeInternalPartnerIdentifier(display), isFalse);
     });
+
+    test('5) Fluxidi is never a public partner display fallback', () {
+      expect(
+        publicPartnerDisplayName(<String, dynamic>{'company_name': 'Fluxidi'}),
+        isEmpty,
+      );
+      expect(
+        publicPartnerDisplayName(<String, dynamic>{
+          'company_name': '',
+        }, fallback: 'Fluxidi'),
+        isEmpty,
+      );
+      expect(
+        publicPartnerDisplayName(<String, dynamic>{
+          'company_name': 'Maison Noire',
+        }),
+        'Maison Noire',
+      );
+    });
   });
 }

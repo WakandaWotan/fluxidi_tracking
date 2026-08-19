@@ -1,5 +1,7 @@
 /// PUBLIC-PARTNER-BOOKABILITY-P0 — customer-facing partner availability helpers.
 
+import 'public_partner_identity.dart';
+
 bool looksLikeInternalPartnerIdentifier(String? value) {
   final s = (value ?? '').trim();
   if (s.isEmpty) return false;
@@ -20,12 +22,11 @@ bool isPublicPartnerBookable(Map<String, dynamic> partner) {
   if (partner['bookable'] == true || partner['bookable'] == 'true') {
     return true;
   }
-  final availability = (partner['availability_status'] ??
-          partner['availabilityStatus'] ??
-          '')
-      .toString()
-      .trim()
-      .toLowerCase();
+  final availability =
+      (partner['availability_status'] ?? partner['availabilityStatus'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
   if (availability == 'inactive') return false;
   if (availability == 'active') return true;
   return partner['is_active'] == true || partner['isActive'] == true;
@@ -44,11 +45,12 @@ String publicPartnerDisplayName(
     'companyCode',
   ]) {
     final value = (partner[key] ?? '').toString().trim();
-    if (value.isNotEmpty && !looksLikeInternalPartnerIdentifier(value)) {
-      return value;
+    final name = sanitizePublicPartnerBrandName(value);
+    if (name.isNotEmpty && !looksLikeInternalPartnerIdentifier(name)) {
+      return name;
     }
   }
-  final safeFallback = fallback.trim();
+  final safeFallback = sanitizePublicPartnerBrandName(fallback);
   if (safeFallback.isNotEmpty &&
       !looksLikeInternalPartnerIdentifier(safeFallback)) {
     return safeFallback;

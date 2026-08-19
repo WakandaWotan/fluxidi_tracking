@@ -4,13 +4,14 @@ import '../app_config.dart';
 import '../app_strings.dart';
 import '../customer_theme_palette.dart';
 import '../customer_theme_store.dart';
-import 'limousine_brand_logo.dart';
+import '../nearby/public_partner_identity.dart';
 import 'limousine_customer_discovery.dart';
 import 'limousine_customer_discovery_labels.dart';
 import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_provider_showroom.dart';
 import 'limousine_provider_showroom_labels.dart';
 import 'limousine_public_copy.dart';
+import 'limousine_public_hero_overlay.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_public_profile_page.dart';
 import 'limousine_vehicle_detail_page.dart';
@@ -102,6 +103,12 @@ class LimousineProviderShowroomPage extends StatelessWidget {
     LimousineUxTokens tokens,
     LimousineProviderShowroomData data,
   ) {
+    final identity = resolvePublicPartnerHeroIdentity(
+      logoUrl: data.logoUrl,
+      logoImage: logoImage,
+      companyName: data.companyName,
+      description: data.tagline.isNotEmpty ? data.tagline : data.description,
+    );
     return Stack(
       children: [
         LimousineContainPhoto(
@@ -123,87 +130,38 @@ class LimousineProviderShowroomPage extends StatelessWidget {
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  Colors.black.withOpacity(0.12),
-                  tokens.heroScrim.withOpacity(0.78),
+                  Colors.black.withOpacity(0.08),
+                  Colors.transparent,
+                  tokens.heroScrim.withOpacity(0.55),
                 ],
+                stops: const <double>[0, 0.42, 1],
               ),
             ),
           ),
         ),
         SafeArea(
           bottom: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(8, 4, 20, 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                IconButton(
-                  color: tokens.onHero,
-                  onPressed: () => Navigator.of(context).maybePop(),
-                  icon: const Icon(Icons.arrow_back),
-                ),
-                const SizedBox(height: 28),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        data.companyName,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: tokens.onHero,
-                          fontSize: 26,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    if (data.verifiedPartner)
-                      Icon(
-                        Icons.verified,
-                        color: tokens.gold,
-                        semanticLabel: kLimousineDiscoveryVerified.of(
-                          appLanguageNotifier.value,
-                        ),
-                      ),
-                  ],
-                ),
-                if (data.distanceKm != null) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    limousineDiscoveryDistanceLabel(
-                      data.distanceKm!,
-                      appLanguageNotifier.value,
-                    ),
-                    style: TextStyle(
-                      color: tokens.onHero.withOpacity(0.86),
-                      fontSize: 13.5,
-                    ),
-                  ),
-                ],
-                if (data.tagline.isNotEmpty || data.description.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    data.tagline.isNotEmpty ? data.tagline : data.description,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: tokens.onHero.withOpacity(0.88),
-                      height: 1.35,
-                    ),
-                  ),
-                ],
-              ],
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: IconButton(
+              color: tokens.onHero,
+              onPressed: () => Navigator.of(context).maybePop(),
+              icon: const Icon(Icons.arrow_back),
             ),
           ),
         ),
-        LimousineBrandLogoCorner(
-          alignment: Alignment.bottomRight,
-          child: LimousineBrandLogoPlaque(
-            logoUrl: data.logoUrl,
-            companyName: data.companyName,
-            minExtent: kLimousineLogoHeroMin,
-            maxExtent: kLimousineLogoHeroMax,
+        Positioned.fill(
+          child: LimousinePublicHeroOverlay(
+            identity: identity,
             tokens: tokens,
+            includeTopSafeArea: true,
+            verified: data.verifiedPartner,
+            distanceLabel: data.distanceKm == null
+                ? ''
+                : limousineDiscoveryDistanceLabel(
+                    data.distanceKm!,
+                    appLanguageNotifier.value,
+                  ),
           ),
         ),
       ],

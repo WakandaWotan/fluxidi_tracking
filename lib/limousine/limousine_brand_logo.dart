@@ -3,7 +3,7 @@
 
 import 'package:flutter/material.dart';
 
-import '../branding/company_logo_ref.dart';
+import '../nearby/public_partner_identity.dart';
 import 'limousine_customer_discovery.dart';
 import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_provider_showroom.dart';
@@ -82,8 +82,7 @@ String limousineCompanyInitials(String companyName) {
 }
 
 bool limousinePublicLogoUrlIsRenderable(String logoUrl) {
-  return classifyCompanyLogoRef(logoUrl) == CompanyLogoRefKind.network &&
-      logoUrl.trim().startsWith('https://');
+  return publicPartnerLogoIsRenderable(logoUrl);
 }
 
 class LimousineBrandLogoPlaque extends StatelessWidget {
@@ -207,11 +206,12 @@ class LimousineCompanyIdentity extends StatelessWidget {
     final viewport = MediaQuery.sizeOf(context);
     final height = limousineCompanyIdentityLogoHeight(viewport, surface);
     final maxWidth = limousineCompanyIdentityLogoMaxWidth(viewport, surface);
-    final name = companyName.trim();
+    final name = sanitizePublicPartnerBrandName(companyName);
     final showLogo =
         logoImage != null || limousinePublicLogoUrlIsRenderable(logoUrl);
 
     Widget nameFallback() {
+      if (name.isEmpty) return const SizedBox.shrink();
       return Text(
         name,
         key: _fallbackKey,

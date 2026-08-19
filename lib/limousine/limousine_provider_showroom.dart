@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 
 import '../app_strings.dart';
+import '../nearby/public_partner_identity.dart';
 import '../vehicle_gallery_contract.dart';
 import 'limousine_customer_discovery.dart';
 import 'limousine_customer_discovery_labels.dart';
@@ -433,10 +434,10 @@ LimousineProviderShowroomData buildLimousineProviderShowroomData({
       (profile['partner_id'] ?? profile['partnerId'] ?? partnerIdFallback)
           .toString()
           .trim();
-  final companyName =
-      (profile['company_name'] ?? profile['companyName'] ?? companyNameFallback)
-          .toString()
-          .trim();
+  final companyName = sanitizePublicPartnerBrandName(
+    (profile['company_name'] ?? profile['companyName'] ?? companyNameFallback)
+        .toString(),
+  );
   final media = asStringKeyedMap(profile['media']);
   final logoUrl = _httpsOnly(
     profile['logo_url'] ??

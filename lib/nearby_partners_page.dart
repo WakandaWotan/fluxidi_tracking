@@ -821,9 +821,9 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
     final message = publicPartnerInactiveBookingMessage(
       languageCode: _languageCode(),
     );
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _openPartnerBooking(Map<String, dynamic> p) {
@@ -952,12 +952,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                _t(
-                  nl: 'Fluxidi partner',
-                  en: 'Fluxidi partner',
-                  fr: 'Partenaire Fluxidi',
-                  es: 'Socio Fluxidi',
-                ),
+                _t(nl: 'Partner', en: 'Partner', fr: 'Partenaire', es: 'Socio'),
                 style: TextStyle(
                   color: _textPrimary,
                   fontWeight: FontWeight.w700,
@@ -1002,10 +997,10 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
             child: Text(
               company.isEmpty
                   ? _t(
-                      nl: 'Fluxidi partner',
-                      en: 'Fluxidi partner',
-                      fr: 'Partenaire Fluxidi',
-                      es: 'Socio Fluxidi',
+                      nl: 'Partner',
+                      en: 'Partner',
+                      fr: 'Partenaire',
+                      es: 'Socio',
                     )
                   : company,
               maxLines: 2,
@@ -1112,9 +1107,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                             : 'Boek rit'),
                   en: !isBookable
                       ? 'Unavailable'
-                      : (widget.selectionMode
-                            ? 'Select partner'
-                            : 'Book ride'),
+                      : (widget.selectionMode ? 'Select partner' : 'Book ride'),
                   fr: !isBookable
                       ? 'Indisponible'
                       : (widget.selectionMode
@@ -1189,10 +1182,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
         const SizedBox(height: 5),
         Text(
           partnerId,
-          style: TextStyle(
-            color: _textMuted.withOpacity(0.72),
-            fontSize: 9.8,
-          ),
+          style: TextStyle(color: _textMuted.withOpacity(0.72), fontSize: 9.8),
         ),
       ],
     ];
@@ -1213,11 +1203,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
           )
         : Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              media,
-              const SizedBox(height: 8),
-              ...details,
-            ],
+            children: [media, const SizedBox(height: 8), ...details],
           );
 
     return Container(
@@ -1273,9 +1259,7 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                     backgroundColor: _gold.withOpacity(
                       _isDarkTheme ? 0.14 : 0.10,
                     ),
-                    borderColor: _gold.withOpacity(
-                      _isDarkTheme ? 0.45 : 0.34,
-                    ),
+                    borderColor: _gold.withOpacity(_isDarkTheme ? 0.45 : 0.34),
                     fallbackIconColor: _isDarkTheme
                         ? _gold.withOpacity(0.96)
                         : _bronze,
@@ -1308,10 +1292,10 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                       Text(
                         company.isEmpty
                             ? _t(
-                                nl: 'Fluxidi partner',
-                                en: 'Fluxidi partner',
-                                fr: 'Partenaire Fluxidi',
-                                es: 'Socio Fluxidi',
+                                nl: 'Partner',
+                                en: 'Partner',
+                                fr: 'Partenaire',
+                                es: 'Socio',
                               )
                             : company,
                         maxLines: 2,
@@ -1593,10 +1577,10 @@ class _NearbyPartnersPageState extends State<NearbyPartnersPage> {
                       Expanded(
                         child: Text(
                           _t(
-                            nl: 'Zoek actieve Fluxidi-partners op postcode of op basis van je huidige locatie.',
-                            en: 'Search active Fluxidi partners by postal code or by your current location.',
-                            fr: 'Recherchez des partenaires Fluxidi actifs par code postal ou via votre position actuelle.',
-                            es: 'Busca socios activos de Fluxidi por código postal o con tu ubicación actual.',
+                            nl: 'Zoek actieve partners op postcode of op basis van je huidige locatie.',
+                            en: 'Search active partners by postal code or by your current location.',
+                            fr: 'Recherchez des partenaires actifs par code postal ou via votre position actuelle.',
+                            es: 'Busca socios activos por código postal o con tu ubicación actual.',
                           ),
                           style: TextStyle(
                             color: _textMuted,

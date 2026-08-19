@@ -18,6 +18,7 @@ import 'limousine/limousine_marketplace_labels.dart';
 import 'limousine/limousine_public_showroom_section.dart';
 import 'limousine/limousine_service_capability.dart';
 import 'nearby/public_partner_bookability.dart';
+import 'nearby/public_partner_identity.dart';
 import 'nearby/tablet_partner_branding_layout.dart';
 import 'payment/payment_method_catalog.dart';
 import 'payment/payment_method_logo.dart';
@@ -656,12 +657,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
           es: 'Perfil público de vehículo',
         );
       case 'public_partner':
-        return _t(
-          nl: 'Fluxidi partner',
-          en: 'Fluxidi partner',
-          fr: 'Partenaire Fluxidi',
-          es: 'Socio Fluxidi',
-        );
+        return _t(nl: 'Partner', en: 'Partner', fr: 'Partenaire', es: 'Socio');
       default:
         return key;
     }
@@ -721,10 +717,10 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
 
   String _verifiedPartnerTrustLabel() {
     return _t(
-      nl: 'Geverifieerde Fluxidi-partner',
-      en: 'Verified Fluxidi partner',
-      fr: 'Partenaire Fluxidi vérifié',
-      es: 'Socio Fluxidi verificado',
+      nl: 'Geverifieerde partner',
+      en: 'Verified partner',
+      fr: 'Partenaire vérifié',
+      es: 'Socio verificado',
     );
   }
 
@@ -1217,83 +1213,75 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
               ),
             ),
           ),
+          if (publicPartnerLogoIsRenderable(logoUrl))
+            Positioned(
+              top: 12,
+              right: 12,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 120, maxHeight: 56),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.28),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(6),
+                    child: Image.network(
+                      logoUrl,
+                      fit: BoxFit.contain,
+                      alignment: Alignment.centerRight,
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                    ),
+                  ),
+                ),
+              ),
+            )
+          else if (sanitizePublicPartnerBrandName(companyName).isNotEmpty)
+            Positioned(
+              top: 12,
+              right: 12,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 160),
+                child: Text(
+                  sanitizePublicPartnerBrandName(companyName),
+                  maxLines: 2,
+                  textAlign: TextAlign.right,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFFF6F1E8),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+            ),
           Positioned(
             left: 12,
             right: 12,
             bottom: 12,
-            child: Padding(
-              padding: EdgeInsets.only(left: logoUrl.isNotEmpty ? 94 : 0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (tagline.isNotEmpty)
                   Text(
-                    companyName,
-                    maxLines: 3,
+                    tagline,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: _textPrimary,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 18,
+                    style: const TextStyle(
+                      color: Color(0xFFF6F1E8),
+                      fontSize: 12.5,
+                      height: 1.35,
                     ),
                   ),
-                  if (tagline.isNotEmpty)
-                    Text(
-                      tagline,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: _textMuted, fontSize: 12.5),
-                    ),
-                  const SizedBox(height: 5),
-                  _chip(
-                    _verifiedPartnerTrustLabel(),
-                    icon: Icons.verified_outlined,
-                    color: const Color(0xFF34D29A),
-                  ),
-                ],
-              ),
+                const SizedBox(height: 5),
+                _chip(
+                  _verifiedPartnerTrustLabel(),
+                  icon: Icons.verified_outlined,
+                  color: const Color(0xFF34D29A),
+                ),
+              ],
             ),
           ),
-          if (logoUrl.isNotEmpty)
-            Positioned(
-              left: 12,
-              bottom: 10,
-              child: Container(
-                width: 82,
-                height: 82,
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.72),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: _gold.withOpacity(0.62),
-                    width: 1.2,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.30),
-                      blurRadius: 10,
-                      offset: const Offset(0, 5),
-                    ),
-                  ],
-                ),
-                padding: const EdgeInsets.all(7),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Image.network(
-                    logoUrl,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      color: _surfaceAlt,
-                      alignment: Alignment.center,
-                      child: Icon(
-                        Icons.business_outlined,
-                        color: _gold.withOpacity(0.95),
-                        size: 28,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
         ],
       ),
     );
@@ -1361,17 +1349,22 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                         fallbackIconColor: _gold.withOpacity(0.95),
                         borderRadius: 0,
                       ),
-                      const SizedBox(height: 12),
-                      Text(
-                        companyName,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: _textPrimary,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 20,
+                      if (!publicPartnerLogoIsRenderable(logoUrl) &&
+                          sanitizePublicPartnerBrandName(
+                            companyName,
+                          ).isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          sanitizePublicPartnerBrandName(companyName),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: _textPrimary,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 20,
+                          ),
                         ),
-                      ),
+                      ],
                       if (tagline.isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Text(
@@ -1752,7 +1745,7 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                             ),
                             child: Row(
                               children: [
-                                if (logoUrl.isNotEmpty)
+                                if (publicPartnerLogoIsRenderable(logoUrl))
                                   CircleAvatar(
                                     radius: 20,
                                     backgroundColor: Colors.black,
@@ -1773,14 +1766,22 @@ class _PartnerPublicProfilePageState extends State<PartnerPublicProfilePage> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      Text(
-                                        companyName,
-                                        style: TextStyle(
-                                          color: _textPrimary,
-                                          fontWeight: FontWeight.w800,
-                                          fontSize: 17,
+                                      if (!publicPartnerLogoIsRenderable(
+                                            logoUrl,
+                                          ) &&
+                                          sanitizePublicPartnerBrandName(
+                                            companyName,
+                                          ).isNotEmpty)
+                                        Text(
+                                          sanitizePublicPartnerBrandName(
+                                            companyName,
+                                          ),
+                                          style: TextStyle(
+                                            color: _textPrimary,
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 17,
+                                          ),
                                         ),
-                                      ),
                                       if (tagline.isNotEmpty)
                                         Text(
                                           tagline,

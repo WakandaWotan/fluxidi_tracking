@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,12 +8,14 @@ import 'package:fluxidi_tracking/app_strings.dart';
 import 'package:fluxidi_tracking/customer_theme_store.dart';
 import 'package:fluxidi_tracking/limousine/limousine_brand_logo.dart';
 import 'package:fluxidi_tracking/limousine/limousine_customer_discovery.dart';
+import 'package:fluxidi_tracking/limousine/limousine_public_hero_overlay.dart';
 import 'package:fluxidi_tracking/limousine/limousine_hero_contract.dart';
 import 'package:fluxidi_tracking/limousine/limousine_offer_binding.dart';
 import 'package:fluxidi_tracking/limousine/limousine_offers.dart';
 import 'package:fluxidi_tracking/customer_theme_palette.dart';
 import 'package:fluxidi_tracking/limousine/limousine_provider_showroom.dart';
 import 'package:fluxidi_tracking/limousine/limousine_provider_showroom_page.dart';
+import 'package:fluxidi_tracking/limousine/limousine_public_hero_overlay.dart';
 import 'package:fluxidi_tracking/limousine/limousine_public_profile_page.dart';
 import 'package:fluxidi_tracking/limousine/limousine_vehicle_detail_page.dart';
 import 'package:fluxidi_tracking/limousine/limousine_vehicle_media.dart';
@@ -226,33 +229,109 @@ void main() {
     expect(card?.price.amountCents, 25000);
   });
 
-  testWidgets('5-6 logo plaque is visible and keeps contain aspect ratio', (
+  testWidgets('5-6 public hero logo stays top-right and keeps contain', (
     tester,
   ) async {
     final profile = _profile(hero: 'https://cdn.example/limousine-hero.jpg');
+    final logo = MemoryImage(
+      Uint8List.fromList(<int>[
+        0x89,
+        0x50,
+        0x4E,
+        0x47,
+        0x0D,
+        0x0A,
+        0x1A,
+        0x0A,
+        0x00,
+        0x00,
+        0x00,
+        0x0D,
+        0x49,
+        0x48,
+        0x44,
+        0x52,
+        0x00,
+        0x00,
+        0x00,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        0x01,
+        0x08,
+        0x06,
+        0x00,
+        0x00,
+        0x00,
+        0x1F,
+        0x15,
+        0xC4,
+        0x89,
+        0x00,
+        0x00,
+        0x00,
+        0x0D,
+        0x49,
+        0x44,
+        0x41,
+        0x54,
+        0x78,
+        0x9C,
+        0x63,
+        0x00,
+        0x01,
+        0x00,
+        0x00,
+        0x05,
+        0x00,
+        0x01,
+        0x0D,
+        0x0A,
+        0x2D,
+        0xB4,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x49,
+        0x45,
+        0x4E,
+        0x44,
+        0xAE,
+        0x42,
+        0x60,
+        0x82,
+      ]),
+    );
     await tester.pumpWidget(
       _app(
-        LimousineProviderShowroomPage(partnerId: 'limo_1', profile: profile),
+        LimousineProviderShowroomPage(
+          partnerId: 'limo_1',
+          profile: profile,
+          logoImage: logo,
+        ),
       ),
     );
     await tester.pump();
-    expect(find.byKey(kLimousineBrandLogoPlaqueKey), findsWidgets);
+    expect(find.byKey(kLimousinePublicHeroLogoKey), findsOneWidget);
+    expect(find.byKey(kLimousineBrandLogoPlaqueKey), findsNothing);
     expect(
-      find.byKey(kLimousineBrandLogoImageKey).evaluate().isNotEmpty ||
-          find.byKey(kLimousineBrandLogoInitialsKey).evaluate().isNotEmpty,
-      isTrue,
+      tester.widget<Image>(find.byKey(kLimousinePublicHeroLogoKey)).fit,
+      BoxFit.contain,
     );
-    if (find.byKey(kLimousineBrandLogoImageKey).evaluate().isNotEmpty) {
-      expect(
-        tester.widget<Image>(find.byKey(kLimousineBrandLogoImageKey).first).fit,
-        BoxFit.contain,
-      );
-    }
     await tester.pumpWidget(
-      _app(LimousinePublicProfilePage(partnerId: 'limo_1', profile: profile)),
+      _app(
+        LimousinePublicProfilePage(
+          partnerId: 'limo_1',
+          profile: profile,
+          logoImage: logo,
+        ),
+      ),
     );
     await tester.pump();
-    expect(find.byKey(kLimousineBrandLogoPlaqueKey), findsWidgets);
+    expect(find.byKey(kLimousinePublicHeroLogoKey), findsOneWidget);
+    expect(find.byKey(kLimousineBrandLogoPlaqueKey), findsNothing);
     final data = buildLimousineProviderShowroomData(profile: profile);
     await tester.pumpWidget(
       _app(
@@ -268,11 +347,11 @@ void main() {
     expect(find.byKey(kLimousineBrandLogoPlaqueKey), findsNothing);
     expect(find.byType(LimousineBrandLogoCorner), findsNothing);
     expect(find.byType(LimousineCompanyIdentity), findsOneWidget);
-    final logo = File(
+    final brandLogoSource = File(
       'lib/limousine/limousine_brand_logo.dart',
     ).readAsStringSync();
-    expect(logo.contains('BoxFit.contain'), isTrue);
-    expect(logo.contains('BoxFit.fill'), isFalse);
+    expect(brandLogoSource.contains('BoxFit.contain'), isTrue);
+    expect(brandLogoSource.contains('BoxFit.fill'), isFalse);
   });
 
   test(
