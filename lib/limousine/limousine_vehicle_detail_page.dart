@@ -118,68 +118,218 @@ class _LimousineVehicleDetailPageState
 
   Widget _hero(LimousineUxTokens tokens) {
     final photos = widget.vehicle.photoUrls;
-    return Stack(
+    final tablet = MediaQuery.sizeOf(context).shortestSide >= 600;
+    final multi = photos.length > 1;
+    return Column(
       children: [
-        if (photos.length > 1)
-          SizedBox(
-            key: kLimousineDetailGalleryKey,
-            height: 320,
-            child: PageView.builder(
-              controller: _gallery,
-              itemCount: photos.length,
-              onPageChanged: (index) => setState(() => _page = index),
-              itemBuilder: (_, index) => LimousineContainPhoto(
-                imageUrl: photos[index],
-                background: tokens.surfaceAlt,
-                gold: tokens.gold,
-                minHeight: 280,
-                aspectRatio: 16 / 9,
-                borderRadius: 0,
-                placeholderLabel: widget.vehicle.displayName,
-              ),
-            ),
-          )
-        else
-          LimousineContainPhoto(
-            imageUrl: widget.vehicle.primaryPhotoUrl,
-            background: tokens.surfaceAlt,
-            gold: tokens.gold,
-            minHeight: 280,
-            aspectRatio: 16 / 9,
-            borderRadius: 0,
-            placeholderLabel: widget.vehicle.displayName,
-          ),
-        SafeArea(
-          child: IconButton(
-            color: tokens.onHero,
-            onPressed: () => Navigator.of(context).maybePop(),
-            icon: const Icon(Icons.arrow_back),
-          ),
-        ),
-        if (photos.length > 1)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 12,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                for (var i = 0; i < photos.length; i++)
-                  Container(
-                    width: 8,
-                    height: 8,
-                    margin: const EdgeInsets.symmetric(horizontal: 3),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: i == _page
-                          ? tokens.gold
-                          : tokens.onHero.withOpacity(0.35),
+        Stack(
+          children: [
+            if (multi)
+              SizedBox(
+                key: kLimousineDetailGalleryKey,
+                height: tablet ? 360 : 320,
+                child: PageView.builder(
+                  controller: _gallery,
+                  itemCount: photos.length,
+                  onPageChanged: (index) => setState(() => _page = index),
+                  itemBuilder: (_, index) => GestureDetector(
+                    onTap: () => _openFullscreen(tokens, photos, index),
+                    child: LimousineContainPhoto(
+                      imageUrl: photos[index],
+                      background: tokens.surfaceAlt,
+                      gold: tokens.gold,
+                      minHeight: tablet ? 320 : 280,
+                      aspectRatio: 16 / 9,
+                      borderRadius: 0,
+                      placeholderLabel: widget.vehicle.displayName,
                     ),
                   ),
-              ],
+                ),
+              )
+            else
+              GestureDetector(
+                onTap: photos.isEmpty
+                    ? null
+                    : () => _openFullscreen(tokens, photos, 0),
+                child: LimousineContainPhoto(
+                  imageUrl: widget.vehicle.primaryPhotoUrl,
+                  background: tokens.surfaceAlt,
+                  gold: tokens.gold,
+                  minHeight: tablet ? 320 : 280,
+                  aspectRatio: 16 / 9,
+                  borderRadius: 0,
+                  placeholderLabel: widget.vehicle.displayName,
+                ),
+              ),
+            SafeArea(
+              child: IconButton(
+                color: tokens.onHero,
+                onPressed: () => Navigator.of(context).maybePop(),
+                icon: const Icon(Icons.arrow_back),
+              ),
+            ),
+            if (multi && tablet) ...[
+              Positioned(
+                left: 8,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: IconButton(
+                    key: kLimousineDetailGalleryPrevKey,
+                    color: tokens.onHero,
+                    onPressed: _page == 0
+                        ? null
+                        : () => _gallery.animateToPage(
+                            _page - 1,
+                            duration: const Duration(milliseconds: 220),
+                            curve: Curves.easeOut,
+                          ),
+                    icon: const Icon(Icons.chevron_left),
+                  ),
+                ),
+              ),
+              Positioned(
+                right: 8,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: IconButton(
+                    key: kLimousineDetailGalleryNextKey,
+                    color: tokens.onHero,
+                    onPressed: _page >= photos.length - 1
+                        ? null
+                        : () => _gallery.animateToPage(
+                            _page + 1,
+                            duration: const Duration(milliseconds: 220),
+                            curve: Curves.easeOut,
+                          ),
+                    icon: const Icon(Icons.chevron_right),
+                  ),
+                ),
+              ),
+            ],
+            if (multi)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 12,
+                child: Column(
+                  children: [
+                    Text(
+                      key: kLimousineDetailGalleryCounterKey,
+                      '${_page + 1} / ${photos.length}',
+                      style: TextStyle(
+                        color: tokens.onHero,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        for (var i = 0; i < photos.length; i++)
+                          Container(
+                            width: 8,
+                            height: 8,
+                            margin: const EdgeInsets.symmetric(horizontal: 3),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: i == _page
+                                  ? tokens.gold
+                                  : tokens.onHero.withOpacity(0.35),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+        if (multi)
+          SizedBox(
+            key: kLimousineDetailGalleryThumbsKey,
+            height: 72,
+            child: ListView.separated(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+              scrollDirection: Axis.horizontal,
+              itemCount: photos.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (_, index) {
+                final selected = index == _page;
+                return GestureDetector(
+                  onTap: () => _gallery.animateToPage(
+                    index,
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOut,
+                  ),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: selected ? tokens.gold : tokens.border,
+                        width: selected ? 2 : 1,
+                      ),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(9),
+                      child: Image.network(
+                        photos[index],
+                        width: 88,
+                        height: 56,
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, __, ___) => SizedBox(
+                          width: 88,
+                          height: 56,
+                          child: ColoredBox(color: tokens.surfaceAlt),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
       ],
+    );
+  }
+
+  void _openFullscreen(
+    LimousineUxTokens tokens,
+    List<String> photos,
+    int index,
+  ) {
+    if (photos.isEmpty) return;
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return Dialog(
+          backgroundColor: Colors.black,
+          insetPadding: const EdgeInsets.all(12),
+          child: Stack(
+            children: [
+              LimousineContainPhoto(
+                imageUrl: photos[index],
+                background: Colors.black,
+                gold: tokens.gold,
+                minHeight: 280,
+                aspectRatio: 16 / 9,
+                borderRadius: 12,
+                placeholderLabel: widget.vehicle.displayName,
+              ),
+              Positioned(
+                top: 4,
+                right: 4,
+                child: IconButton(
+                  color: Colors.white,
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  icon: const Icon(Icons.close),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 

@@ -20,6 +20,7 @@ import 'limousine_offers.dart';
 import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_quote_requests_nav.dart';
 import 'limousine_simple_offer_editor.dart';
+import 'limousine_vehicle_persist.dart';
 
 typedef LimousinePricingLoader = Future<Map<String, dynamic>> Function();
 typedef LimousinePricingSaver =
@@ -37,6 +38,7 @@ class LimousineBusinessSetupPage extends StatefulWidget {
     this.entryEnabled = false,
     this.companyName = '',
     this.onConfigureVehicle,
+    this.persistVehicles,
   });
 
   final LimousinePricingLoader? loadPricing;
@@ -48,6 +50,7 @@ class LimousineBusinessSetupPage extends StatefulWidget {
   final bool entryEnabled;
   final String companyName;
   final VoidCallback? onConfigureVehicle;
+  final Future<void> Function(List<VehicleProfile> vehicles)? persistVehicles;
 
   @override
   State<LimousineBusinessSetupPage> createState() =>
@@ -66,6 +69,7 @@ class _LimousineBusinessSetupPageState
   final _fieldErrorKeys = <String, GlobalKey>{};
 
   late List<VehicleProfile> _vehicles;
+  late List<VehicleProfile> _vehiclesSnapshot;
   final List<Map<String, dynamic>> _offers = <Map<String, dynamic>>[];
   late final LimousineLocalizedField _publicTitle;
   late final LimousineLocalizedField _publicDescription;
@@ -82,8 +86,6 @@ class _LimousineBusinessSetupPageState
   String? _status;
   String? _error;
   late String _primaryLang;
-  LimousineBusinessSetupPreviewTab _previewTab =
-      LimousineBusinessSetupPreviewTab.limousine;
 
   AppLanguage get _lang => widget.language ?? appLanguageNotifier.value;
   String _t(LocalizedText text) => text.of(_lang);
@@ -101,6 +103,7 @@ class _LimousineBusinessSetupPageState
     _vehicles = List<VehicleProfile>.from(
       widget.vehicles ?? vehiclesNotifier.value,
     );
+    _vehiclesSnapshot = List<VehicleProfile>.from(_vehicles);
     _publicTitle = LimousineLocalizedField(const <String, String>{});
     _publicDescription = LimousineLocalizedField(const <String, String>{});
     _primaryLang = _primaryLangCode;
@@ -200,6 +203,11 @@ class _LimousineBusinessSetupPageState
             ? 'EUR'
             : limousineCurrencyOf(section['currency']);
         _revision = int.tryParse('${section['source_revision'] ?? 0}') ?? 0;
+        if (_editEpoch == 0) {
+          _applyPersistedPublicText(section);
+          _applyPersistedSelectedVehicleIds(section);
+          _vehiclesSnapshot = List<VehicleProfile>.from(_vehicles);
+        }
         _dirty = false;
         _seedPublicText();
       });
@@ -228,6 +236,112 @@ class _LimousineBusinessSetupPageState
     }
   }
 
+  void _applyPersistedPublicText(Map<String, dynamic> section) {
+    final title = limousineLocalizedOf(section['public_title']);
+    final description = limousineLocalizedOf(section['public_description']);
+    for (final lang in const ['nl', 'en', 'fr', 'es']) {
+      final nextTitle = (title[lang] ?? '').trim();
+      if (nextTitle.isNotEmpty) {
+        _publicTitle.controllers[lang]!.text = nextTitle;
+      }
+      final nextDescription = (description[lang] ?? '').trim();
+      if (nextDescription.isNotEmpty) {
+        _publicDescription.controllers[lang]!.text = nextDescription;
+      }
+    }
+  }
+
+  void _applyPersistedSelectedVehicleIds(Map<String, dynamic> section) {
+    if (!section.containsKey('selected_vehicle_ids') &&
+        !section.containsKey('selectedVehicleIds')) {
+      return;
+    }
+    final raw =
+        section['selected_vehicle_ids'] ?? section['selectedVehicleIds'];
+    if (raw is! List) return;
+    final ids = <String>{
+      for (final item in raw)
+        if (item.toString().trim().isNotEmpty) item.toString().trim(),
+    };
+    if (ids.isEmpty) return;
+    var changed = false;
+    final next = _vehicles.map((vehicle) {
+      if (!ids.contains(vehicle.id.trim())) return vehicle;
+      if (limousineVehicleAppearsInLimousinePreview(vehicle)) return vehicle;
+      changed = true;
+      final classId = limousineOfferToken(vehicle.serviceClassId).isEmpty
+          ? (_knownClasses.isEmpty ? '' : _knownClasses.first)
+          : vehicle.serviceClassId;
+      return vehicle.copyWith(
+        serviceCategory: 'limousine',
+        serviceClassId: classId,
+      );
+    }).toList(growable: false);
+    if (!changed) return;
+    _vehicles = next;
+    if (widget.vehicles == null) {
+      for (final vehicle in next) {
+        updateVehicle(vehicle.id, vehicle);
+      }
+    }
+  }
+
+  void _restoreVehicleSelectionFromSnapshot() {
+    final originalById = <String, VehicleProfile>{
+      for (final vehicle in _vehiclesSnapshot) vehicle.id: vehicle,
+    };
+    final restored = _vehicles.map((current) {
+      final original = originalById[current.id];
+      if (original == null) return current;
+      return current.copyWith(
+        serviceCategory: original.serviceCategory,
+        serviceClassId: original.serviceClassId,
+      );
+    }).toList(growable: false);
+    _vehicles = restored;
+    if (widget.vehicles == null) {
+      for (final vehicle in restored) {
+        updateVehicle(vehicle.id, vehicle);
+      }
+    }
+  }
+
+  Future<void> _persistFleet() async {
+    final hook = widget.persistVehicles;
+    if (hook != null) {
+      await hook(List<VehicleProfile>.from(_vehicles));
+      return;
+    }
+    if (widget.vehicles != null) return;
+    for (final vehicle in _vehicles) {
+      updateVehicle(vehicle.id, vehicle);
+    }
+    await syncLocalCompanyInventoryToBackend(reason: 'limousine_setup_save');
+  }
+
+  Future<Map<String, dynamic>> _saveOffers({required bool publish}) {
+    _applyPublicTextToOffers();
+    final offers = publish
+        ? limousinePreparePublishOffers(
+            _offers,
+            vehicles: _vehicles,
+            knownClassIds: _knownClasses,
+          )
+        : limousinePrepareDraftOffers(_offers);
+    final payload = <String, dynamic>{
+      'enabled': publish ? true : _sectionEnabled,
+      'currency': _currency,
+      'source_revision': _revision,
+      'offers': offers,
+      'selected_vehicle_ids': limousineSelectedVehicleIds(_vehicles),
+      'public_title': _publicTitle.toJson(),
+      'public_description': _publicDescription.toJson(),
+    };
+    final saver =
+        widget.savePricing ?? (section) => saveAdminLimousinePricing(section);
+    return saver(payload);
+  }
+
   Future<void> _persist({required bool publish}) async {
     if (_saving) return;
     if (publish &&
@@ -253,23 +367,7 @@ class _LimousineBusinessSetupPageState
       _status = null;
     });
     try {
-      _applyPublicTextToOffers();
-      final offers = publish
-          ? limousinePreparePublishOffers(
-              _offers,
-              vehicles: _vehicles,
-              knownClassIds: _knownClasses,
-            )
-          : limousinePrepareDraftOffers(_offers);
-      final payload = <String, dynamic>{
-        'enabled': publish ? true : _sectionEnabled,
-        'currency': _currency,
-        'source_revision': _revision,
-        'offers': offers,
-      };
-      final saver =
-          widget.savePricing ?? (section) => saveAdminLimousinePricing(section);
-      final data = await saver(payload);
+      await _persistFleet();
       if (!mounted || saveId != _saveEpoch) return;
       if (startedAt != _editEpoch) {
         setState(() {
@@ -278,6 +376,33 @@ class _LimousineBusinessSetupPageState
         });
         return;
       }
+      if (publish) {
+        await _saveOffers(publish: false);
+        if (!mounted || saveId != _saveEpoch) return;
+        if (startedAt != _editEpoch) {
+          setState(() {
+            _saving = false;
+            _status = _t(kLimousineBusinessSetupUnsaved);
+          });
+          return;
+        }
+      }
+      final data = await _saveOffers(publish: publish);
+      if (!mounted || saveId != _saveEpoch) return;
+      if (startedAt != _editEpoch) {
+        setState(() {
+          _saving = false;
+          _status = _t(kLimousineBusinessSetupUnsaved);
+        });
+        return;
+      }
+      final offers = publish
+          ? limousinePreparePublishOffers(
+              _offers,
+              vehicles: _vehicles,
+              knownClassIds: _knownClasses,
+            )
+          : limousinePrepareDraftOffers(_offers);
       final section = (data['limousine'] is Map)
           ? Map<String, dynamic>.from(data['limousine'] as Map)
           : <String, dynamic>{};
@@ -291,6 +416,7 @@ class _LimousineBusinessSetupPageState
             _revision;
         _sectionEnabled = publish ? true : _sectionEnabled;
         _dirty = false;
+        _vehiclesSnapshot = List<VehicleProfile>.from(_vehicles);
         _status = publish
             ? (widget.entryEnabled
                   ? _t(kLimousineBusinessSetupPublishedLocal)
@@ -462,17 +588,66 @@ class _LimousineBusinessSetupPageState
     _markDirty();
   }
 
-  Future<void> _openVehicleSetup() async {
+  Future<void> _openVehicleSetup({String? vehicleId}) async {
     final custom = widget.onConfigureVehicle;
     if (custom != null) {
       custom();
       return;
     }
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const VehicleManagementPage()),
+      MaterialPageRoute<void>(
+        builder: (_) => VehicleManagementPage(
+          openVehicleId: vehicleId,
+          openGallery: vehicleId != null,
+        ),
+      ),
     );
     if (!mounted) return;
     _onVehicles();
+  }
+
+  Future<void> _handleBack() async {
+    if (!_dirty) {
+      if (mounted) Navigator.of(context).maybePop();
+      return;
+    }
+    final action = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          key: kLimousineBusinessSetupLeaveDialogKey,
+          title: Text(_t(kLimousineBusinessSetupUnsavedTitle)),
+          content: Text(_t(kLimousineBusinessSetupUnsavedBody)),
+          actions: [
+            TextButton(
+              key: kLimousineBusinessSetupLeaveCancelKey,
+              onPressed: () => Navigator.of(dialogContext).pop('cancel'),
+              child: Text(_t(kLimousineBusinessSetupLeaveCancel)),
+            ),
+            TextButton(
+              key: kLimousineBusinessSetupLeaveDiscardKey,
+              onPressed: () => Navigator.of(dialogContext).pop('discard'),
+              child: Text(_t(kLimousineBusinessSetupDiscard)),
+            ),
+            FilledButton(
+              key: kLimousineBusinessSetupLeaveSaveKey,
+              onPressed: () => Navigator.of(dialogContext).pop('save'),
+              child: Text(_t(kLimousineBusinessSetupSave)),
+            ),
+          ],
+        );
+      },
+    );
+    if (!mounted) return;
+    if (action == 'discard') {
+      _restoreVehicleSelectionFromSnapshot();
+      Navigator.of(context).pop();
+      return;
+    }
+    if (action == 'save') {
+      await _persist(publish: false);
+      if (mounted && !_dirty) Navigator.of(context).pop();
+    }
   }
 
   void _scrollTo(LimousineBusinessSetupSection section) {
@@ -527,7 +702,13 @@ class _LimousineBusinessSetupPageState
     final tablet = media.size.shortestSide >= 600;
     return Theme(
       data: limousineUxThemeData(tokens),
-      child: Scaffold(
+      child: PopScope(
+        canPop: !_dirty,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          unawaited(_handleBack());
+        },
+        child: Scaffold(
         key: kLimousineBusinessSetupPageKey,
         backgroundColor: tokens.background,
         appBar: AppBar(
@@ -535,6 +716,10 @@ class _LimousineBusinessSetupPageState
           foregroundColor: tokens.onSurface,
           elevation: 0,
           title: Text(_t(kLimousineBusinessSetupTitle)),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => unawaited(_handleBack()),
+          ),
           actions: [
             if (!widget.entryEnabled)
               Padding(
@@ -620,6 +805,7 @@ class _LimousineBusinessSetupPageState
             ),
           ),
         ),
+      ),
       ),
     );
   }
@@ -850,6 +1036,17 @@ class _LimousineBusinessSetupPageState
                     ),
                   ],
                 ),
+                    if (flags.limousine)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      key: limousineBusinessSetupManagePhotosKey(vehicle.id),
+                      onPressed: () =>
+                          unawaited(_openVehicleSetup(vehicleId: vehicle.id)),
+                      icon: const Icon(Icons.photo_library_outlined, size: 18),
+                      label: Text(_t(kLimousineBusinessSetupManagePhotos)),
+                    ),
+                  ),
                 if (flags.limousine && _knownClasses.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
@@ -1335,7 +1532,6 @@ class _LimousineBusinessSetupPageState
             sectionEnabled: _sectionEnabled,
           )
         : const <Map<String, dynamic>>[];
-    final taxiVehicles = limousineSetupTaxiVehicles(_vehicles);
     final limousineVehicles = limousineSetupLimousineVehicles(_vehicles);
     final title = limousineBusinessSetupTextFallback(
       _publicTitle.toJson(),
@@ -1427,74 +1623,56 @@ class _LimousineBusinessSetupPageState
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  widget.entryEnabled
-                      ? _t(kLimousineBusinessSetupPreviewHint)
-                      : _t(kLimousineBusinessSetupLocalPreview),
+                  _t(kLimousineBusinessSetupPreviewHint),
                   style: TextStyle(color: tokens.muted, fontSize: 11.5),
                 ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 6,
-                  children: [
-                    for (final tab in LimousineBusinessSetupPreviewTab.values)
-                      ChoiceChip(
-                        key: limousineBusinessSetupPreviewTabKey(tab),
-                        avatar: Icon(
-                          tab == LimousineBusinessSetupPreviewTab.taxi
-                              ? Icons.local_taxi_outlined
-                              : tab == LimousineBusinessSetupPreviewTab.airport
-                              ? Icons.flight_takeoff
-                              : Icons.workspace_premium_outlined,
-                          size: 16,
-                        ),
-                        label: Text(
-                          tab == LimousineBusinessSetupPreviewTab.taxi
-                              ? _t(kLimousineBusinessSetupTaxi)
-                              : tab == LimousineBusinessSetupPreviewTab.airport
-                              ? _t(kLimousineBusinessSetupAirport)
-                              : _t(kLimousineBusinessSetupLimousine),
-                        ),
-                        selected: _previewTab == tab,
-                        onSelected: (_) => setState(() => _previewTab = tab),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                if (_previewTab == LimousineBusinessSetupPreviewTab.taxi)
-                  ...taxiVehicles.map(
-                    (vehicle) => Text(
-                      vehicle.vehicleName.isEmpty
-                          ? vehicle.brandModel
-                          : vehicle.vehicleName,
-                      style: TextStyle(color: tokens.onSurface),
-                    ),
-                  ),
-                if (_previewTab == LimousineBusinessSetupPreviewTab.airport)
+                if (title.isNotEmpty) ...[
+                  const SizedBox(height: 8),
                   Text(
-                    _t(kLimousineBusinessSetupAirport),
-                    style: TextStyle(color: tokens.muted),
-                  ),
-                if (_previewTab ==
-                    LimousineBusinessSetupPreviewTab.limousine) ...[
-                  ...limousineVehicles.map(
-                    (vehicle) => Text(
-                      vehicle.vehicleName.isEmpty
-                          ? vehicle.brandModel
-                          : vehicle.vehicleName,
-                      style: TextStyle(color: tokens.onSurface),
-                    ),
-                  ),
-                  ...safeOffers.map(
-                    (offer) => Text(
-                      limousineBusinessSetupTextFallback(
-                        offer['title'],
-                        _lang,
-                        primaryLang: _primaryLang,
-                      ),
-                      style: TextStyle(color: tokens.muted, fontSize: 12.5),
+                    title,
+                    style: TextStyle(
+                      color: tokens.onSurface,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ],
+                if (description.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    description,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: tokens.muted, fontSize: 12.5),
+                  ),
+                ],
+                const SizedBox(height: 8),
+                ...limousineVehicles.map((vehicle) {
+                  final name = vehicle.vehicleName.isEmpty
+                      ? vehicle.brandModel
+                      : vehicle.vehicleName;
+                  final galleryCount = vehicle.galleryPhotoRefs
+                      .where((ref) => ref.trim().isNotEmpty)
+                      .length;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      galleryCount > 0
+                          ? '$name · $galleryCount'
+                          : name,
+                      style: TextStyle(color: tokens.onSurface),
+                    ),
+                  );
+                }),
+                ...safeOffers.map(
+                  (offer) => Text(
+                    limousineBusinessSetupTextFallback(
+                      offer['title'],
+                      _lang,
+                      primaryLang: _primaryLang,
+                    ),
+                    style: TextStyle(color: tokens.muted, fontSize: 12.5),
+                  ),
+                ),
               ],
             ),
           ),

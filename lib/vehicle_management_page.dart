@@ -19,6 +19,7 @@ import 'package:fluxidi_tracking/business_theme/brand_signature_palette.dart';
 import 'package:fluxidi_tracking/business_theme_palette.dart';
 import 'package:fluxidi_tracking/business_theme_store.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
+import 'package:fluxidi_tracking/vehicle_gallery_contract.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -422,6 +423,8 @@ class VehicleManagementPage extends StatefulWidget {
     super.key,
     this.autoOpenNewVehicleEditor = false,
     this.popPageAfterSuccessfulNewVehicleSave = false,
+    this.openVehicleId,
+    this.openGallery = false,
   });
 
   /// When true, opens the canonical new-vehicle editor once after first frame.
@@ -432,6 +435,12 @@ class VehicleManagementPage extends StatefulWidget {
   /// `true` so the first-run bootstrap can advance.
   final bool popPageAfterSuccessfulNewVehicleSave;
 
+  /// Opens the existing vehicle editor for this stable vehicle id.
+  final String? openVehicleId;
+
+  /// When [openVehicleId] is set, scroll the editor to the photo gallery.
+  final bool openGallery;
+
   @override
   State<VehicleManagementPage> createState() => _VehicleManagementPageState();
 }
@@ -439,9 +448,10 @@ class VehicleManagementPage extends StatefulWidget {
 class _VehicleManagementPageState extends State<VehicleManagementPage>
     with WidgetsBindingObserver {
   final ImagePicker _imagePicker = ImagePicker();
-  static const int _maxPhotosPerVehicle = 5;
+  static const int _maxPhotosPerVehicle = kVehicleGalleryMaxPhotos;
   bool _vehicleDocumentsLoaded = false;
   bool _didAutoOpenNewVehicleEditor = false;
+  bool _didAutoOpenTargetVehicle = false;
   bool _startingExtraVehiclePurchase = false;
   bool _awaitingExtraVehicleActivation = false;
   int _capacityBeforeExtraVehiclePurchase = 0;
@@ -454,6 +464,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_ensureVehicleDocumentsLoaded(refreshUi: true));
       unawaited(_maybeAutoOpenNewVehicleEditor());
+      unawaited(_maybeOpenTargetVehicle());
     });
   }
 
@@ -488,6 +499,26 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
     if (widget.popPageAfterSuccessfulNewVehicleSave && mounted) {
       Navigator.of(context).pop(saved == true);
     }
+  }
+
+  Future<void> _maybeOpenTargetVehicle() async {
+    if (_didAutoOpenTargetVehicle) return;
+    final id = (widget.openVehicleId ?? '').trim();
+    if (id.isEmpty) return;
+    _didAutoOpenTargetVehicle = true;
+    if (!mounted) return;
+    VehicleProfile? match;
+    for (final vehicle in vehiclesNotifier.value) {
+      if (vehicle.id.trim() == id) {
+        match = vehicle;
+        break;
+      }
+    }
+    if (match == null) return;
+    await _openVehicleEditor(
+      existing: match,
+      focusGallery: widget.openGallery,
+    );
   }
 
   Future<void> _ensureVehicleDocumentsLoaded({bool refreshUi = false}) async {
@@ -867,6 +898,55 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
     } catch (_) {
       return null;
     }
+  }
+
+  Future<List<String>> _resolvePublicGalleryUrlsForVehicleSave({
+    required String vehicleId,
+    required VehicleProfile? existing,
+    required List<String> galleryPhotoRefs,
+  }) async {
+    final out = <String>[];
+    for (final raw in galleryPhotoRefs) {
+      final ref = raw.trim();
+      if (ref.isEmpty) continue;
+      final https = resolvePublicHttpsMediaUrl(ref);
+      if (https.isNotEmpty) {
+        if (!out.contains(https)) out.add(https);
+        continue;
+      }
+      if (_isAssetRef(ref) || kIsWeb || !isLocalOrPrivateMediaRef(ref)) {
+        if (!out.contains(ref)) out.add(ref);
+        continue;
+      }
+      final scopeId = _vehicleMediaScopeId(existing);
+      if (scopeId == null) {
+        if (!out.contains(ref)) out.add(ref);
+        continue;
+      }
+      final source = File(ref);
+      if (!await source.exists()) {
+        if (!out.contains(ref)) out.add(ref);
+        continue;
+      }
+      try {
+        final uploaded = await uploadPublicPartnerMedia(
+          tenantId: scopeId,
+          companyId: scopeId,
+          mediaType: 'vehicle_photo',
+          entityId: vehicleId,
+          filePath: ref,
+        );
+        final url = resolvePublicHttpsMediaUrl(
+          (uploaded['url'] ?? '').toString(),
+        );
+        if (url.isNotEmpty) {
+          if (!out.contains(url)) out.add(url);
+          continue;
+        }
+      } catch (_) {}
+      if (!out.contains(ref)) out.add(ref);
+    }
+    return out.take(_maxPhotosPerVehicle).toList(growable: false);
   }
 
   bool _isAssetRef(String value) =>
@@ -2752,7 +2832,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
     );
   }
 
-  Future<bool> _openVehicleEditor({VehicleProfile? existing}) async {
+  Future<bool> _openVehicleEditor({
+    VehicleProfile? existing,
+    bool focusGallery = false,
+  }) async {
     final resolvedExisting = existing == null
         ? null
         : (vehicleProfileById(existing.id) ?? existing);
@@ -2853,6 +2936,18 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
 
     var didSave = false;
     if (!mounted) return false;
+    final gallerySectionKey = GlobalKey();
+    if (focusGallery) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final target = gallerySectionKey.currentContext;
+        if (target == null) return;
+        Scrollable.ensureVisible(
+          target,
+          alignment: 0.08,
+          duration: const Duration(milliseconds: 280),
+        );
+      });
+    }
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -3386,7 +3481,9 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
                       if (documentTenantId.isNotEmpty &&
                           documentCompanyId.isNotEmpty)
                         const SizedBox(height: 12),
-                      _photoPreviewBox(
+                      KeyedSubtree(
+                        key: gallerySectionKey,
+                        child: _photoPreviewBox(
                         photoRef: primaryPhotoRef,
                         height: 120,
                         onTap: () async {
@@ -3417,6 +3514,7 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
                           fr: 'Aucune photo définie',
                           es: 'Sin foto configurada',
                         ),
+                      ),
                       ),
                       const SizedBox(height: 8),
                       OutlinedButton.icon(
@@ -3677,10 +3775,10 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
                                         SnackBar(
                                           content: Text(
                                             _t(
-                                              nl: 'Niet alle foto\'s toegevoegd (maximaal 5).',
-                                              en: 'Not all photos added (maximum 5).',
-                                              fr: 'Toutes les photos n\'ont pas ete ajoutees (maximum 5).',
-                                              es: 'No se agregaron todas las fotos (maximo 5).',
+                                              nl: 'Niet alle foto\'s toegevoegd (maximaal 10).',
+                                              en: 'Not all photos added (maximum 10).',
+                                              fr: 'Toutes les photos n\'ont pas ete ajoutees (maximum 10).',
+                                              es: 'No se agregaron todas las fotos (maximo 10).',
                                             ),
                                           ),
                                         ),
@@ -3761,11 +3859,16 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        _t(
-                          nl: 'Maximaal 5 foto\'s per voertuig',
-                          en: 'Maximum 5 photos per vehicle',
-                          fr: 'Maximum 5 photos par véhicule',
-                          es: 'Máximo 5 fotos por vehículo',
+                        vehicleGalleryProgressLabel(
+                          count: galleryPhotoRefs.length,
+                          languageCode: appLanguageNotifier.value.name,
+                        ),
+                        style: TextStyle(color: _textSecondary, fontSize: 12),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        vehicleGalleryGuidanceLabel(
+                          appLanguageNotifier.value.name,
                         ),
                         style: TextStyle(color: _textSecondary, fontSize: 12),
                       ),
@@ -4018,8 +4121,18 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
                                   // requires entitlement + an authoritative
                                   // active service class. Fails closed with a
                                   // localized validation; never inferred.
+                                  final existingWasLimousine =
+                                      (resolvedExisting?.serviceCategory ?? '')
+                                          .trim()
+                                          .toLowerCase() ==
+                                      'limousine';
+                                  // Keep an already-saved limousine classification
+                                  // when entitlement lookup is transiently down.
+                                  // An explicit toggle-off still clears it.
                                   final wantsLimousine =
-                                      limousineEntitled && limousineEnabled;
+                                      limousineEnabled &&
+                                      (limousineEntitled ||
+                                          existingWasLimousine);
                                   if (wantsLimousine &&
                                       !isKnownActiveLimousineServiceClassId(
                                         limousineClassId,
@@ -4056,6 +4169,15 @@ class _VehicleManagementPageState extends State<VehicleManagementPage>
                                       resolvedPublicPhoto.isNotEmpty) {
                                     publicPhotoUrlCtrl.text =
                                         resolvedPublicPhoto;
+                                  }
+                                  final resolvedGallery =
+                                      await _resolvePublicGalleryUrlsForVehicleSave(
+                                        vehicleId: vehicleId,
+                                        existing: resolvedExisting,
+                                        galleryPhotoRefs: galleryPhotoRefs,
+                                      );
+                                  if (resolvedGallery.isNotEmpty) {
+                                    galleryPhotoRefs = resolvedGallery;
                                   }
                                   final vehicle = VehicleProfile(
                                     id: vehicleId,

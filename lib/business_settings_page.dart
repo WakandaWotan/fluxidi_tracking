@@ -26,6 +26,7 @@ import 'package:fluxidi_tracking/limousine/limousine_p2d4c1a_ux.dart';
 import 'package:fluxidi_tracking/limousine/limousine_quote_requests_nav.dart';
 import 'package:fluxidi_tracking/limousine/limousine_service_capability.dart';
 import 'package:fluxidi_tracking/limousine/limousine_state_composition.dart';
+import 'package:fluxidi_tracking/vehicle_gallery_contract.dart';
 import 'package:fluxidi_tracking/company_session_store.dart';
 import 'package:fluxidi_tracking/widgets/chiron_environment_status_labels.dart';
 import 'package:fluxidi_tracking/widgets/chiron_self_service_wizard.dart';
@@ -7073,13 +7074,29 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                 brand.toLowerCase().contains('ev'))
               'ev_available',
           };
-          final photoUrl = _publicVehiclePhotoUrlForPublish(v);
+          final serviceCategory = v.serviceCategory.trim().toLowerCase();
+          final serviceClass = v.serviceClassId.trim().toLowerCase();
+          final isLimousine = serviceCategory == 'limousine';
+          final galleryUrls = isLimousine
+              ? orderPublicVehicleGalleryUrls(
+                  primaryUrl: _publicVehiclePhotoUrlForPublish(v),
+                  galleryUrls: [
+                    for (final ref in v.galleryPhotoRefs)
+                      _publicPublishMediaUrl(ref),
+                  ],
+                )
+              : const <String>[];
+          final photoUrl = isLimousine
+              ? (galleryUrls.isEmpty
+                    ? _publicVehiclePhotoUrlForPublish(v)
+                    : galleryUrls.first)
+              : _publicVehiclePhotoUrlForPublish(v);
           // LIMOUSINE-MARKETPLACE-P1: emit authoritative configured
           // classification only. `category` stays the human tier label; the
           // machine-authoritative service_category/service_class are emitted
           // solely when explicitly configured (never inferred from tier/brand).
-          final serviceCategory = v.serviceCategory.trim().toLowerCase();
-          final serviceClass = v.serviceClassId.trim().toLowerCase();
+          // Gallery fields stay limousine-only so taxi/airport contracts stay
+          // a single photo_url.
           return <String, dynamic>{
             'name': v.vehicleName.trim(),
             'brand_model': brand,
@@ -7090,6 +7107,10 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
             'luggage': v.luggageCapacity < 0 ? 0 : v.luggageCapacity,
             'features': features.toList(growable: false),
             'photo_url': photoUrl,
+            if (isLimousine && photoUrl.isNotEmpty)
+              'primary_photo_url': photoUrl,
+            if (isLimousine && galleryUrls.isNotEmpty)
+              'gallery_photo_urls': galleryUrls,
           };
         })
         .toList(growable: false);

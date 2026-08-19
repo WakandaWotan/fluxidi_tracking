@@ -109,7 +109,8 @@ void main() {
         'lib/limousine/limousine_business_setup_page.dart',
       ).readAsStringSync();
       expect(page.contains('kLimousineBusinessSetupPageKey'), isTrue);
-      expect(page.contains('AlertDialog'), isFalse);
+      expect(page.contains('LimousineOfferEditorDialog('), isTrue);
+      expect(page.contains('kLimousineBusinessSetupLeaveDialogKey'), isTrue);
       expect(
         File(
           'lib/limousine/limousine_offer_editor.dart',
@@ -432,57 +433,28 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await _reveal(
-      tester,
+    expect(find.text('Voorbeeld van uw publieke limousineprofiel.'), findsWidgets);
+    expect(
       find.byKey(
         limousineBusinessSetupPreviewTabKey(
-          LimousineBusinessSetupPreviewTab.limousine,
+          LimousineBusinessSetupPreviewTab.taxi,
         ),
       ),
+      findsNothing,
     );
-    await tester.tap(
+    expect(
       find.byKey(
         limousineBusinessSetupPreviewTabKey(
-          LimousineBusinessSetupPreviewTab.limousine,
+          LimousineBusinessSetupPreviewTab.airport,
         ),
       ),
+      findsNothing,
     );
-    await tester.pump();
     expect(find.text('Cadillac'), findsWidgets);
     expect(
       find.descendant(
         of: find.byKey(kLimousineBusinessSetupPreviewKey),
         matching: find.text('Tesla Model 3'),
-      ),
-      findsNothing,
-    );
-    await _reveal(
-      tester,
-      find.byKey(
-        limousineBusinessSetupPreviewTabKey(
-          LimousineBusinessSetupPreviewTab.taxi,
-        ),
-      ),
-    );
-    await tester.tap(
-      find.byKey(
-        limousineBusinessSetupPreviewTabKey(
-          LimousineBusinessSetupPreviewTab.taxi,
-        ),
-      ),
-    );
-    await tester.pump();
-    expect(
-      find.descendant(
-        of: find.byKey(kLimousineBusinessSetupPreviewKey),
-        matching: find.text('Tesla Model 3'),
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: find.byKey(kLimousineBusinessSetupPreviewKey),
-        matching: find.text('Cadillac'),
       ),
       findsNothing,
     );

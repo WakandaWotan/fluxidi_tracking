@@ -43,6 +43,18 @@ const Key kLimousineBusinessSetupAdvancedKey = ValueKey<String>(
 const Key kLimousineBusinessSetupPreviewKey = ValueKey<String>(
   'limousine_business_setup_preview',
 );
+const Key kLimousineBusinessSetupLeaveDialogKey = ValueKey<String>(
+  'limousine_business_setup_leave_dialog',
+);
+const Key kLimousineBusinessSetupLeaveSaveKey = ValueKey<String>(
+  'limousine_business_setup_leave_save',
+);
+const Key kLimousineBusinessSetupLeaveDiscardKey = ValueKey<String>(
+  'limousine_business_setup_leave_discard',
+);
+const Key kLimousineBusinessSetupLeaveCancelKey = ValueKey<String>(
+  'limousine_business_setup_leave_cancel',
+);
 const Key kLimousineBusinessSetupStatusKey = ValueKey<String>(
   'limousine_business_setup_status',
 );
@@ -105,6 +117,9 @@ Key limousineBusinessSetupSectionKey(LimousineBusinessSetupSection section) =>
 
 Key limousineBusinessSetupVehicleKey(String vehicleId) =>
     ValueKey<String>('limousine_business_setup_vehicle_$vehicleId');
+
+Key limousineBusinessSetupManagePhotosKey(String vehicleId) =>
+    ValueKey<String>('limousine_business_setup_manage_photos_$vehicleId');
 
 Key limousineBusinessSetupOfferCardKey(String presentation) =>
     ValueKey<String>('limousine_business_setup_offer_$presentation');

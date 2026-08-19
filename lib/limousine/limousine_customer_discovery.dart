@@ -535,7 +535,12 @@ List<LimousineDiscoveryVehicleThumb> _publicLimousineThumbs(
     if (!_vehicleIsAuthoritativeLimousine(vehicle)) continue;
     thumbs.add(
       LimousineDiscoveryVehicleThumb(
-        photoUrl: _httpsOnly(vehicle['photo_url'] ?? vehicle['photoUrl']),
+        photoUrl: _httpsOnly(
+          vehicle['primary_photo_url'] ??
+              vehicle['primaryPhotoUrl'] ??
+              vehicle['photo_url'] ??
+              vehicle['photoUrl'],
+        ),
         serviceClassId: limousineOfferToken(
           vehicle['service_class_id'] ?? vehicle['serviceClassId'],
         ),
@@ -644,7 +649,9 @@ String limousinePreferredDiscoveryCoverUrl(Map<String, dynamic> partner) {
   for (final vehicle in _discoveryVehicles(partner)) {
     if (!_vehicleIsAuthoritativeLimousine(vehicle)) continue;
     final url = _httpsOnly(
-      vehicle['photo_url'] ??
+      vehicle['primary_photo_url'] ??
+          vehicle['primaryPhotoUrl'] ??
+          vehicle['photo_url'] ??
           vehicle['photoUrl'] ??
           vehicle['public_photo_url'] ??
           vehicle['publicPhotoUrl'],

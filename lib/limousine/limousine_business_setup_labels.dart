@@ -241,10 +241,45 @@ const LocalizedText kLimousineBusinessSetupDescriptionField = LocalizedText(
 );
 
 const LocalizedText kLimousineBusinessSetupPreviewHint = LocalizedText(
-  nl: 'Lokale voorvertoning. Het echte publieke Limousine-tabblad blijft server-autoritatief.',
-  en: 'Local preview. The real public Limousine tab stays server-authoritative.',
-  fr: 'Aperçu local. L’onglet limousine public réel reste autoritaire côté serveur.',
-  es: 'Vista previa local. La pestaña pública real de limusina sigue siendo del servidor.',
+  nl: 'Voorbeeld van uw publieke limousineprofiel.',
+  en: 'Preview of your public limousine profile.',
+  fr: 'Aperçu de votre profil limousine public.',
+  es: 'Vista previa de su perfil público de limusina.',
+);
+
+const LocalizedText kLimousineBusinessSetupManagePhotos = LocalizedText(
+  nl: 'Foto’s beheren',
+  en: 'Manage photos',
+  fr: 'Gérer les photos',
+  es: 'Gestionar fotos',
+);
+
+const LocalizedText kLimousineBusinessSetupUnsavedTitle = LocalizedText(
+  nl: 'Wijzigingen bewaren?',
+  en: 'Save changes?',
+  fr: 'Enregistrer les modifications ?',
+  es: '¿Guardar los cambios?',
+);
+
+const LocalizedText kLimousineBusinessSetupUnsavedBody = LocalizedText(
+  nl: 'Er zijn niet-opgeslagen limousinewijzigingen. Bewaar ze of verwerp ze voordat u deze pagina verlaat.',
+  en: 'There are unsaved limousine changes. Save or discard them before leaving this page.',
+  fr: 'Des modifications limousine ne sont pas enregistrées. Enregistrez-les ou ignorez-les avant de quitter.',
+  es: 'Hay cambios de limusina sin guardar. Guárdelos o descártelos antes de salir.',
+);
+
+const LocalizedText kLimousineBusinessSetupDiscard = LocalizedText(
+  nl: 'Verwerpen',
+  en: 'Discard',
+  fr: 'Ignorer',
+  es: 'Descartar',
+);
+
+const LocalizedText kLimousineBusinessSetupLeaveCancel = LocalizedText(
+  nl: 'Annuleren',
+  en: 'Cancel',
+  fr: 'Annuler',
+  es: 'Cancelar',
 );
 
 const LocalizedText kLimousineBusinessSetupCheckVehicles = LocalizedText(

@@ -4742,6 +4742,29 @@ Future<void> _persistLocalTenantState() async {
 // local company inventory is disabled when no company session is present
 // (previously it required the admin token being present).
 bool _companyInventorySyncInFlight = false;
+Completer<void>? _companyInventorySyncWaiters;
+
+Future<void> _awaitCompanyInventorySyncSlot() async {
+  while (_companyInventorySyncInFlight) {
+    final pending = _companyInventorySyncWaiters;
+    if (pending == null) break;
+    await pending.future;
+  }
+}
+
+void _beginCompanyInventorySync() {
+  _companyInventorySyncInFlight = true;
+  _companyInventorySyncWaiters = Completer<void>();
+}
+
+void _endCompanyInventorySync() {
+  _companyInventorySyncInFlight = false;
+  final done = _companyInventorySyncWaiters;
+  _companyInventorySyncWaiters = null;
+  if (done != null && !done.isCompleted) {
+    done.complete();
+  }
+}
 
 /// How company-owner admin API calls authenticated.
 ///
@@ -6131,7 +6154,7 @@ Future<void> syncLocalCompanyInventoryToBackend({
     debugPrint('[COMPANY_SYNC][SKIP_NO_COMPANY_TOKEN] reason=$reason');
     return;
   }
-  if (_companyInventorySyncInFlight) return;
+  await _awaitCompanyInventorySyncSlot();
   // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase C): fleet-sync from the
   // client now requires a company-session bearer instead of the retired
   // platform ADMIN_TOKEN. Skip cleanly when no company session is present.
@@ -6186,14 +6209,14 @@ Future<void> syncLocalCompanyInventoryToBackend({
     }
   }
 
-  _companyInventorySyncInFlight = true;
+  _beginCompanyInventorySync();
   // SECURITY-REMOVE-CLIENT-ADMIN-TOKEN-P0-1 (Phase C): resolve the
   // company-session bearer once per sync run and pass those headers to every
   // /admin/company/* POST. If the company session is not present we bail out
   // rather than posting unauthenticated /admin/* requests.
   final syncCompanyAuth = await resolveCompanyOwnerAuthHeaders();
   if (syncCompanyAuth.mode == CompanyOwnerAuthMode.none) {
-    _companyInventorySyncInFlight = false;
+    _endCompanyInventorySync();
     debugPrint(
       '[COMPANY_SYNC][SKIP_NO_COMPANY_SESSION] reason=$reason source=post_context',
     );
@@ -6402,7 +6425,7 @@ Future<void> syncLocalCompanyInventoryToBackend({
       );
     }
   } finally {
-    _companyInventorySyncInFlight = false;
+    _endCompanyInventorySync();
     debugPrint('[COMPANY_SYNC][DONE]');
   }
 }
@@ -9743,6 +9766,14 @@ Future<bool> hydrateCompanyStateFromBootstrap(
         publicPhotoUrl: ((remote.publicPhotoUrl ?? '').trim().isNotEmpty)
             ? remote.publicPhotoUrl
             : local.publicPhotoUrl,
+        serviceCategory: pickTextPreferRemote(
+          remote.serviceCategory,
+          local.serviceCategory,
+        ),
+        serviceClassId: pickTextPreferRemote(
+          remote.serviceClassId,
+          local.serviceClassId,
+        ),
       );
     }
 
@@ -9926,6 +9957,18 @@ Future<bool> hydrateCompanyStateFromBootstrap(
           primaryPhotoRef: primaryPhotoRef ?? '',
           galleryPhotoRefs: galleryPhotoRefs,
           publicPhotoUrl: vehiclePhotoUrl,
+          serviceCategory: textAny(<dynamic>[
+            map['service_category'],
+            map['serviceCategory'],
+            '',
+          ]).toLowerCase(),
+          serviceClassId: textAny(<dynamic>[
+            map['service_class'],
+            map['serviceClass'],
+            map['service_class_id'],
+            map['serviceClassId'],
+            '',
+          ]).toLowerCase().replaceAll(RegExp(r'[\s-]+'), '_'),
         );
         remoteVehicles.add(remoteVehicle);
       }

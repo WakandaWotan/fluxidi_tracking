@@ -5,6 +5,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../app_strings.dart';
+import '../vehicle_gallery_contract.dart';
 import 'limousine_customer_discovery.dart';
 import 'limousine_customer_discovery_labels.dart';
 import 'limousine_offers.dart';
@@ -69,6 +70,18 @@ const Key kLimousineDetailGateOffBannerKey = ValueKey<String>(
 );
 const Key kLimousineDetailGalleryKey = ValueKey<String>(
   'limousine_vehicle_detail_gallery',
+);
+const Key kLimousineDetailGalleryPrevKey = ValueKey<String>(
+  'limousine_vehicle_detail_gallery_prev',
+);
+const Key kLimousineDetailGalleryNextKey = ValueKey<String>(
+  'limousine_vehicle_detail_gallery_next',
+);
+const Key kLimousineDetailGalleryCounterKey = ValueKey<String>(
+  'limousine_vehicle_detail_gallery_counter',
+);
+const Key kLimousineDetailGalleryThumbsKey = ValueKey<String>(
+  'limousine_vehicle_detail_gallery_thumbs',
 );
 const Key kLimousinePublicProfilePageKey = ValueKey<String>(
   'limousine_public_profile_page',
@@ -290,23 +303,31 @@ LimousineShowroomVehicle? tryParseLimousineShowroomVehicle(
         vehicle['service_class_id'] ??
         vehicle['serviceClassId'],
   );
-  final photos = <String>{};
-  for (final value in <Object?>[
-    vehicle['photo_url'],
-    vehicle['photoUrl'],
-    vehicle['public_photo_url'],
-    vehicle['publicPhotoUrl'],
+  final primaryUrl = _httpsOnly(
+    vehicle['primary_photo_url'] ??
+        vehicle['primaryPhotoUrl'] ??
+        vehicle['photo_url'] ??
+        vehicle['photoUrl'] ??
+        vehicle['public_photo_url'] ??
+        vehicle['publicPhotoUrl'],
+  );
+  final galleryRaw = <Object?>[];
+  for (final key in const [
+    'gallery_photo_urls',
+    'galleryPhotoUrls',
+    'gallery',
+    'photos',
   ]) {
-    final url = _httpsOnly(value);
-    if (url.isNotEmpty) photos.add(url);
+    final raw = vehicle[key];
+    if (raw is! List) continue;
+    galleryRaw.addAll(raw);
   }
-  final gallery = vehicle['gallery'] ?? vehicle['photos'];
-  if (gallery is List) {
-    for (final item in gallery) {
-      final url = _httpsOnly(item);
-      if (url.isNotEmpty) photos.add(url);
-    }
-  }
+  final photos = orderPublicVehicleGalleryUrls(
+    primaryUrl: primaryUrl,
+    galleryUrls: [
+      for (final item in galleryRaw) _httpsOnly(item),
+    ],
+  );
   final features = <String>[];
   final rawFeatures = vehicle['features'];
   if (rawFeatures is List) {
