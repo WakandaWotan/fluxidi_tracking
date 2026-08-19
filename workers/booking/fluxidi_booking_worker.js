@@ -103,6 +103,11 @@ import {
   resolveNearbyServiceFilter as _resolveNearbyServiceFilter,
 } from "./modules/limousine_provider_eligibility.mjs";
 import {
+  isStalePartnerPublish as _isStalePartnerPublish,
+  mergeBusinessProfilePublicServices as _mergeBusinessProfilePublicServices,
+  mergePublicPartnerProfilePreserveOmitted as _mergePublicPartnerProfilePreserveOmitted,
+} from "./modules/limousine_public_service_persist.mjs";
+import {
   buildLimousineProjection as _buildLimousineProjection,
   resolveLimousineProjectionRevision as _resolveLimousineProjectionRevision,
   stampLimousineProjectionOnProfile as _stampLimousineProjectionOnProfile,
@@ -13265,6 +13270,10 @@ const DEFAULT_BUSINESS_PROFILE = {
   publicCoverageLng: "",
   publicServiceRadiusKm: "",
   publicPaymentOptions: ["cash", "qr_code", "online_payment"],
+  publicServiceIds: [],
+  public_service_ids: [],
+  publicServicesConfigured: false,
+  public_services_configured: false,
   publicPartnerProfilePublishedAt: "",
   publicPartnerProfilePublishStatus: "",
   invoiceEmail: "",
@@ -14001,6 +14010,18 @@ function normalizeBusinessProfile(input = {}) {
       source.public_payment_options ??
       DEFAULT_BUSINESS_PROFILE.publicPaymentOptions
     ),
+    ...(() => {
+      const mergedServices = _mergeBusinessProfilePublicServices(
+        DEFAULT_BUSINESS_PROFILE,
+        source,
+      );
+      return {
+        publicServiceIds: mergedServices.publicServiceIds,
+        public_service_ids: mergedServices.public_service_ids,
+        publicServicesConfigured: mergedServices.publicServicesConfigured,
+        public_services_configured: mergedServices.public_services_configured,
+      };
+    })(),
     publicPartnerProfilePublishedAt: sanitizeTenantString(
       source.publicPartnerProfilePublishedAt ??
       source.public_partner_profile_published_at ??
@@ -15050,14 +15071,22 @@ async function saveBusinessProfile(
     existing || DEFAULT_BUSINESS_PROFILE,
     profile,
   );
+  const mergedPublicServices = _mergeBusinessProfilePublicServices(
+    existing || DEFAULT_BUSINESS_PROFILE,
+    preserved,
+  );
+  const preservedWithServices = {
+    ...preserved,
+    ...mergedPublicServices,
+  };
   const nowIso = new Date().toISOString();
   const emailChange = applyEmailChangePolicy
     ? applyPrimaryCompanyEmailChange(
         existing || DEFAULT_BUSINESS_PROFILE,
-        preserved,
+        preservedWithServices,
         nowIso,
       )
-    : { profile: preserved };
+    : { profile: preservedWithServices };
   const normalized = normalizeBusinessProfile(emailChange.profile);
   const revision = resolveBusinessProfileRevision({
     existingRecord,
@@ -47039,6 +47068,40 @@ export default {
         if (!canonicalPartnerId) {
           return json({ ok: false, error: "invalid_partner_scope" }, 400);
         }
+        let _existingScopedPartnerRecord = null;
+        try {
+          _existingScopedPartnerRecord = await env.BOOKING_KV.get(
+            scopedPartnerKeys.profileKey,
+            { type: "json" },
+          );
+        } catch (_) {
+          _existingScopedPartnerRecord = null;
+        }
+        const _existingPartnerProfile =
+          _existingScopedPartnerRecord?.partner_profile &&
+          typeof _existingScopedPartnerRecord.partner_profile === "object"
+            ? _existingScopedPartnerRecord.partner_profile
+            : null;
+        if (
+          _isStalePartnerPublish({
+            existingRevision:
+              _existingScopedPartnerRecord?.source_revision ??
+              _existingPartnerProfile?.source_revision,
+            incomingRevision: incoming.source_revision ?? incoming.sourceRevision,
+          })
+        ) {
+          return json(
+            {
+              ok: false,
+              error: "stale_partner_profile_revision",
+              source_revision:
+                _existingScopedPartnerRecord?.source_revision ??
+                _existingPartnerProfile?.source_revision ??
+                0,
+            },
+            409,
+          );
+        }
         const incomingPartnerAlias = _safePublicText(
           incoming.partner_id ?? incoming.partnerId,
           120,
@@ -47064,8 +47127,12 @@ export default {
         } catch (_) {
           _limousineEntitledProjection = false;
         }
+        const _mergedIncoming = _mergePublicPartnerProfilePreserveOmitted(
+          _existingPartnerProfile || {},
+          incoming,
+        );
         let normalizedProfile = _normalizePublicPartnerProfileEntry({
-          ...incoming,
+          ..._mergedIncoming,
           partner_id: canonicalPartnerId,
           partnerId: canonicalPartnerId,
           limousine_entitled: _limousineEntitledProjection,
@@ -47085,15 +47152,6 @@ export default {
         // LIMOUSINE-MARKETPLACE-P2A: stamp the safe readiness projection with a
         // server-owned monotonic source_revision (reuses the existing revision
         // contract). Older republishes cannot lower the revision.
-        let _existingScopedPartnerRecord = null;
-        try {
-          _existingScopedPartnerRecord = await env.BOOKING_KV.get(
-            scopedPartnerKeys.profileKey,
-            { type: "json" },
-          );
-        } catch (_) {
-          _existingScopedPartnerRecord = null;
-        }
         // Full safe offer array, computed from authoritative server state only.
         const _limousinePublicOffers = _limousinePublishAllowlisted
           ? await _buildAuthoritativeLimousinePublicOffers(

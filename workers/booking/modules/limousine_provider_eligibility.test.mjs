@@ -91,10 +91,17 @@ test("5) entitled but company-disabled fails closed", () => {
   assert.equal(evaluateLimousineProviderEligibility(candidate).reason, R.NOT_ENABLED);
   // explicit booking capability false also fails closed
   const explicitOff = eligibleCandidate({
-    services: ["limousine"],
+    services: ["taxi_vvb"],
     booking_capabilities: { limousine: false },
   });
   assert.equal(companyEnabledLimousine(explicitOff), false);
+  assert.equal(
+    companyEnabledLimousine({
+      services: ["limousine"],
+      booking_capabilities: { limousine: false },
+    }),
+    true,
+  );
 });
 
 test("6) enabled but unpublished profile fails closed", () => {

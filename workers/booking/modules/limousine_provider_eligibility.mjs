@@ -94,10 +94,14 @@ function serviceTokens(raw) {
   return [];
 }
 
-/// Company explicitly enabled Limousine in its own public profile. A `services`
-/// token or an explicit capability boolean counts; an explicit false wins.
+/// Company explicitly enabled Limousine in its own public profile.
+/// The durable opt-in is `services[]` containing a limousine token. A defaulted
+/// `booking_capabilities.limousine=false` must not hide that token.
 export function companyEnabledLimousine(candidate) {
   const c = asObject(candidate);
+  if (serviceTokens(c.services).some((t) => LIMOUSINE_SERVICE_ALIASES.has(t))) {
+    return true;
+  }
   const capabilities = asObject(c.capabilities);
   const bookingCapabilities = asObject(c.booking_capabilities ?? c.bookingCapabilities);
   const explicit = [
@@ -117,10 +121,9 @@ export function companyEnabledLimousine(candidate) {
     if (looksTruthy(value)) explicitTrue = true;
     else if (looksFalsey(value)) explicitFalse = true;
   }
-  if (explicitFalse && !explicitTrue) return false;
   if (explicitTrue) return true;
-  if (sawExplicit) return false;
-  return serviceTokens(c.services).some((t) => LIMOUSINE_SERVICE_ALIASES.has(t));
+  if (explicitFalse || sawExplicit) return false;
+  return false;
 }
 
 /// Authoritative, server-owned entitlement. Reads the projected boolean
