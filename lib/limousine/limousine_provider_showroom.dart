@@ -101,6 +101,24 @@ const Key kLimousinePublicProfileFleetKey = ValueKey<String>(
 const Key kLimousineDetailPricesSectionKey = ValueKey<String>(
   'limousine_vehicle_detail_prices',
 );
+const Key kLimousineDetailCompanyLogoKey = ValueKey<String>(
+  'limousine_vehicle_detail_company_logo',
+);
+const Key kLimousineDetailCompanyNameFallbackKey = ValueKey<String>(
+  'limousine_vehicle_detail_company_name_fallback',
+);
+const Key kLimousineDetailVehicleTitleKey = ValueKey<String>(
+  'limousine_vehicle_detail_vehicle_title',
+);
+const Key kLimousineDetailComfortSectionKey = ValueKey<String>(
+  'limousine_vehicle_detail_comfort',
+);
+const Key kLimousineDetailOfferKindEyebrowKey = ValueKey<String>(
+  'limousine_vehicle_detail_offer_kind',
+);
+const Key kLimousineDetailOfferPriceKey = ValueKey<String>(
+  'limousine_vehicle_detail_offer_price',
+);
 
 Key limousineDetailOfferCardKey(String offerId) =>
     ValueKey<String>('limousine_vehicle_detail_offer_$offerId');
@@ -236,7 +254,9 @@ bool limousineShowroomPayloadLeaksPrivate(Map<String, dynamic> raw) {
 }
 
 bool limousineUrlLooksLikeTaxiCoverField(String fieldName) {
-  return kLimousineTaxiCoverKeys.contains(normalizePublicServiceToken(fieldName));
+  return kLimousineTaxiCoverKeys.contains(
+    normalizePublicServiceToken(fieldName),
+  );
 }
 
 String limousineExplicitCoverUrl(Map<String, dynamic> source) {
@@ -334,9 +354,7 @@ LimousineShowroomVehicle? tryParseLimousineShowroomVehicle(
   }
   final photos = orderPublicVehicleGalleryUrls(
     primaryUrl: primaryUrl,
-    galleryUrls: [
-      for (final item in galleryRaw) _httpsOnly(item),
-    ],
+    galleryUrls: [for (final item in galleryRaw) _httpsOnly(item)],
   );
   final features = <String>[];
   final rawFeatures = vehicle['features'];
@@ -373,13 +391,14 @@ LimousineShowroomVehicle? tryParseLimousineShowroomVehicle(
     ),
     features: features,
     color: (vehicle['color'] ?? '').toString().trim(),
-    length: (vehicle['length'] ??
-            vehicle['length_m'] ??
-            vehicle['vehicle_length'] ??
-            vehicle['vehicleLength'] ??
-            '')
-        .toString()
-        .trim(),
+    length:
+        (vehicle['length'] ??
+                vehicle['length_m'] ??
+                vehicle['vehicle_length'] ??
+                vehicle['vehicleLength'] ??
+                '')
+            .toString()
+            .trim(),
     vehicleId: vehicleId,
   );
 }
@@ -415,9 +434,7 @@ LimousineProviderShowroomData buildLimousineProviderShowroomData({
           .toString()
           .trim();
   final companyName =
-      (profile['company_name'] ??
-              profile['companyName'] ??
-              companyNameFallback)
+      (profile['company_name'] ?? profile['companyName'] ?? companyNameFallback)
           .toString()
           .trim();
   final media = asStringKeyedMap(profile['media']);

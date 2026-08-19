@@ -265,7 +265,9 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.byKey(kLimousineBrandLogoPlaqueKey), findsWidgets);
+    expect(find.byKey(kLimousineBrandLogoPlaqueKey), findsNothing);
+    expect(find.byType(LimousineBrandLogoCorner), findsNothing);
+    expect(find.byType(LimousineCompanyIdentity), findsOneWidget);
     final logo = File(
       'lib/limousine/limousine_brand_logo.dart',
     ).readAsStringSync();

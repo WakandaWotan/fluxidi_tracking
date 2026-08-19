@@ -10,6 +10,7 @@ import 'limousine_customer_discovery_labels.dart';
 import 'limousine_p2d4c1a_ux.dart';
 import 'limousine_provider_showroom.dart';
 import 'limousine_provider_showroom_labels.dart';
+import 'limousine_public_copy.dart';
 import 'limousine_quote_inbox.dart';
 import 'limousine_public_profile_page.dart';
 import 'limousine_vehicle_detail_page.dart';
@@ -74,7 +75,13 @@ class LimousineProviderShowroomPage extends StatelessWidget {
                           constraints: BoxConstraints(
                             maxWidth: tablet ? 1280 : 720,
                           ),
-                          child: _catalog(context, tokens, data, tablet, language),
+                          child: _catalog(
+                            context,
+                            tokens,
+                            data,
+                            tablet,
+                            language,
+                          ),
                         ),
                       ),
                     ),
@@ -247,14 +254,7 @@ class LimousineProviderShowroomPage extends StatelessWidget {
             key: kLimousineProviderShowroomCatalogKey,
             children: [
               for (final vehicle in data.vehicles) ...[
-                _vehicleCard(
-                  context,
-                  tokens,
-                  data,
-                  vehicle,
-                  tablet,
-                  language,
-                ),
+                _vehicleCard(context, tokens, data, vehicle, tablet, language),
                 const SizedBox(height: 16),
               ],
             ],
@@ -271,7 +271,7 @@ class LimousineProviderShowroomPage extends StatelessWidget {
     bool tablet,
     AppLanguage language,
   ) {
-        final info = _vehicleInfo(context, tokens, data, vehicle, language);
+    final info = _vehicleInfo(context, tokens, data, vehicle, language);
     final photo = LimousineContainPhoto(
       imageUrl: vehicle.primaryPhotoUrl,
       background: tokens.surfaceAlt,
@@ -312,9 +312,7 @@ class LimousineProviderShowroomPage extends StatelessWidget {
     );
     return KeyedSubtree(
       key: limousineShowroomVehicleCardKey(vehicle.key),
-      child: tablet
-          ? IntrinsicHeight(child: card)
-          : card,
+      child: tablet ? IntrinsicHeight(child: card) : card,
     );
   }
 
@@ -354,7 +352,10 @@ class LimousineProviderShowroomPage extends StatelessWidget {
           ),
           if (classLabel.isNotEmpty) ...[
             const SizedBox(height: 4),
-            Text(classLabel, style: TextStyle(color: tokens.gold, fontSize: 13.5)),
+            Text(
+              classLabel,
+              style: TextStyle(color: tokens.gold, fontSize: 13.5),
+            ),
           ],
           const SizedBox(height: 8),
           Text(
@@ -368,10 +369,16 @@ class LimousineProviderShowroomPage extends StatelessWidget {
             ].join(' · '),
             style: TextStyle(color: tokens.muted, height: 1.35),
           ),
-          if (vehicle.features.isNotEmpty) ...[
+          if (limousineMeaningfulComfortFeatures(
+            vehicle.features,
+            language: language,
+          ).isNotEmpty) ...[
             const SizedBox(height: 6),
             Text(
-              vehicle.features.join(' · '),
+              limousineMeaningfulComfortBody(
+                vehicle.features,
+                language: language,
+              ),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: tokens.muted, fontSize: 13),

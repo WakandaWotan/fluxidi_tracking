@@ -6,13 +6,48 @@ import 'package:flutter/material.dart';
 import '../branding/company_logo_ref.dart';
 import 'limousine_customer_discovery.dart';
 import 'limousine_p2d4c1a_ux.dart';
+import 'limousine_provider_showroom.dart';
+
+enum LimousineCompanyIdentitySurface { discoveryCard, vehicleDetail }
 
 double limousineDiscoveryCompanyLogoHeight(Size viewport) {
-  return viewport.shortestSide >= 600 ? 52 : 40;
+  return limousineCompanyIdentityLogoHeight(
+    viewport,
+    LimousineCompanyIdentitySurface.discoveryCard,
+  );
 }
 
 double limousineDiscoveryCompanyLogoMaxWidth(Size viewport) {
-  return viewport.shortestSide >= 600 ? 220 : 160;
+  return limousineCompanyIdentityLogoMaxWidth(
+    viewport,
+    LimousineCompanyIdentitySurface.discoveryCard,
+  );
+}
+
+double limousineCompanyIdentityLogoHeight(
+  Size viewport,
+  LimousineCompanyIdentitySurface surface,
+) {
+  final tablet = viewport.shortestSide >= 600;
+  switch (surface) {
+    case LimousineCompanyIdentitySurface.discoveryCard:
+      return tablet ? 52 : 40;
+    case LimousineCompanyIdentitySurface.vehicleDetail:
+      return tablet ? 60 : 44;
+  }
+}
+
+double limousineCompanyIdentityLogoMaxWidth(
+  Size viewport,
+  LimousineCompanyIdentitySurface surface,
+) {
+  final tablet = viewport.shortestSide >= 600;
+  switch (surface) {
+    case LimousineCompanyIdentitySurface.discoveryCard:
+      return tablet ? 220 : 160;
+    case LimousineCompanyIdentitySurface.vehicleDetail:
+      return tablet ? 280 : 200;
+  }
 }
 
 const Key kLimousineBrandLogoPlaqueKey = ValueKey<String>(
@@ -138,26 +173,40 @@ class LimousineBrandLogoPlaque extends StatelessWidget {
   }
 }
 
-/// Discovery-card company mark: logo only, no plate, never over the vehicle photo.
-class LimousineDiscoveryCompanyIdentity extends StatelessWidget {
-  const LimousineDiscoveryCompanyIdentity({
+/// Company mark for discovery cards and vehicle detail: logo only, no plate.
+class LimousineCompanyIdentity extends StatelessWidget {
+  const LimousineCompanyIdentity({
     super.key,
     required this.logoUrl,
     required this.companyName,
     required this.tokens,
     this.logoImage,
+    this.surface = LimousineCompanyIdentitySurface.discoveryCard,
   });
 
   final String logoUrl;
   final String companyName;
   final LimousineUxTokens tokens;
   final ImageProvider? logoImage;
+  final LimousineCompanyIdentitySurface surface;
+
+  Key get _logoKey {
+    return surface == LimousineCompanyIdentitySurface.vehicleDetail
+        ? kLimousineDetailCompanyLogoKey
+        : kLimousineDiscoveryCompanyLogoKey;
+  }
+
+  Key get _fallbackKey {
+    return surface == LimousineCompanyIdentitySurface.vehicleDetail
+        ? kLimousineDetailCompanyNameFallbackKey
+        : kLimousineDiscoveryCompanyNameFallbackKey;
+  }
 
   @override
   Widget build(BuildContext context) {
     final viewport = MediaQuery.sizeOf(context);
-    final height = limousineDiscoveryCompanyLogoHeight(viewport);
-    final maxWidth = limousineDiscoveryCompanyLogoMaxWidth(viewport);
+    final height = limousineCompanyIdentityLogoHeight(viewport, surface);
+    final maxWidth = limousineCompanyIdentityLogoMaxWidth(viewport, surface);
     final name = companyName.trim();
     final showLogo =
         logoImage != null || limousinePublicLogoUrlIsRenderable(logoUrl);
@@ -165,7 +214,7 @@ class LimousineDiscoveryCompanyIdentity extends StatelessWidget {
     Widget nameFallback() {
       return Text(
         name,
-        key: kLimousineDiscoveryCompanyNameFallbackKey,
+        key: _fallbackKey,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
@@ -188,7 +237,7 @@ class LimousineDiscoveryCompanyIdentity extends StatelessWidget {
         ),
         child: logoImage != null
             ? Image(
-                key: kLimousineDiscoveryCompanyLogoKey,
+                key: _logoKey,
                 image: logoImage!,
                 fit: BoxFit.contain,
                 alignment: Alignment.centerLeft,
@@ -196,7 +245,7 @@ class LimousineDiscoveryCompanyIdentity extends StatelessWidget {
               )
             : Image.network(
                 logoUrl.trim(),
-                key: kLimousineDiscoveryCompanyLogoKey,
+                key: _logoKey,
                 fit: BoxFit.contain,
                 alignment: Alignment.centerLeft,
                 filterQuality: FilterQuality.medium,
@@ -205,6 +254,17 @@ class LimousineDiscoveryCompanyIdentity extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Discovery-card company mark: logo only, no plate, never over the vehicle photo.
+class LimousineDiscoveryCompanyIdentity extends LimousineCompanyIdentity {
+  const LimousineDiscoveryCompanyIdentity({
+    super.key,
+    required super.logoUrl,
+    required super.companyName,
+    required super.tokens,
+    super.logoImage,
+  }) : super(surface: LimousineCompanyIdentitySurface.discoveryCard);
 }
 
 /// Anchors the plaque in a hero/card corner without covering the visual center.
